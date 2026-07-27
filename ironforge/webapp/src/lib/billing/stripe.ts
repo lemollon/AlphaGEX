@@ -135,11 +135,14 @@ export interface StripePriceSummary {
 
 export interface PriceSyncResult {
   lookupKey: string
+  /** True if ANYTHING was written to Stripe — including a partial run. */
   changed: boolean
   advertised: number
   wasAmount: number | null
   newPriceId?: string
   archivedPriceId?: string
+  /** Set when the price was corrected but cleanup did not finish. */
+  warning?: string
   detail: string
 }
 
@@ -175,10 +178,23 @@ export async function syncPriceToAdvertised(
   }
 
   const wantMinor = Math.round(advertisedDollars * 100)
+  const cur = (current.currency || 'usd').toUpperCase()
+
+  // Already the right amount. Still reconcile the PRODUCT DEFAULT: a stale default
+  // pointing at an old price is how a $15 price survived a correction to $10 —
+  // Stripe refuses to archive a product's default price, so the first run left it
+  // active. This makes a re-run finish the job instead of reporting "nothing to do".
   if (current.unit_amount === wantMinor) {
+    const cleanup = await retireStaleDefault(current.product, current.id, wantMinor)
     return {
-      lookupKey, changed: false, advertised: advertisedDollars, wasAmount: current.unit_amount / 100,
-      detail: 'Already matches the advertised price.',
+      lookupKey,
+      changed: cleanup.changed,
+      advertised: advertisedDollars,
+      wasAmount: current.unit_amount / 100,
+      archivedPriceId: cleanup.archivedPriceId,
+      detail: cleanup.changed
+        ? `Already ${advertisedDollars.toFixed(2)} ${cur}. ${cleanup.detail}`
+        : 'Already matches the advertised price.',
     }
   }
 
@@ -191,17 +207,68 @@ export async function syncPriceToAdvertised(
     transfer_lookup_key: true,
   })
 
-  // Only after the key has moved: archiving first would leave the key on a dead price.
-  await stripeRequest('POST', `/prices/${current.id}`, { active: false })
-
-  return {
+  // From here the price is ALREADY corrected — the lookup key now resolves to the new
+  // price, so checkout charges the right amount even if the cleanup below fails. Any
+  // failure past this point must still report changed:true, or an operator reading
+  // "nothing to do" would believe a live billing change never happened.
+  const base = {
     lookupKey,
     changed: true,
     advertised: advertisedDollars,
     wasAmount: current.unit_amount === null ? null : current.unit_amount / 100,
     newPriceId: created.id,
-    archivedPriceId: current.id,
-    detail: `Created a ${advertisedDollars.toFixed(2)} ${(current.currency || 'usd').toUpperCase()} price, moved lookup key ${lookupKey} to it, archived the old one.`,
+  }
+  try {
+    const cleanup = await retireStaleDefault(current.product, created.id, wantMinor)
+    return {
+      ...base,
+      archivedPriceId: cleanup.archivedPriceId ?? current.id,
+      detail: `Created a ${advertisedDollars.toFixed(2)} ${cur} price and moved lookup key ${lookupKey} onto it. ${cleanup.detail}`,
+    }
+  } catch (e: unknown) {
+    return {
+      ...base,
+      warning: 'PRICE CORRECTED, CLEANUP INCOMPLETE — the old price is still active. Re-run to finish.',
+      detail: `Created a ${advertisedDollars.toFixed(2)} ${cur} price and moved lookup key ${lookupKey} onto it; checkout now charges the right amount. Could not retire the old price: ${e instanceof Error ? e.message : String(e)}`,
+    }
+  }
+}
+
+/**
+ * Point the product's default price at `keepPriceId` and archive the price it displaced.
+ *
+ * Stripe REFUSES to archive a price that is its product's default ("This price cannot be
+ * archived because it is the default price of its product"), so the default must be moved
+ * first. Without this, a corrected product is left with the old amount still active AND
+ * still the default — invisible to lookup-key resolution, but live for anything that uses
+ * the product default (payment links, dashboard-created invoices).
+ *
+ * Only ever archives a price whose amount DIFFERS from the advertised one, so a legitimate
+ * second price on the same product (an annual plan, say) is never touched.
+ */
+async function retireStaleDefault(
+  productId: string,
+  keepPriceId: string,
+  advertisedMinor: number,
+): Promise<{ changed: boolean; archivedPriceId?: string; detail: string }> {
+  const product = await stripeRequest<{ default_price: string | null }>('GET', `/products/${productId}`)
+  const displaced = product.default_price
+  if (displaced === keepPriceId) return { changed: false, detail: 'Product default already correct.' }
+
+  await stripeRequest('POST', `/products/${productId}`, { default_price: keepPriceId })
+  if (!displaced) return { changed: true, detail: 'Set the product default price.' }
+
+  const old = await stripeRequest<{ id: string; active: boolean; unit_amount: number | null }>(
+    'GET', `/prices/${displaced}`,
+  )
+  if (!old.active || old.unit_amount === advertisedMinor) {
+    return { changed: true, detail: 'Set the product default price; nothing to archive.' }
+  }
+  await stripeRequest('POST', `/prices/${displaced}`, { active: false })
+  return {
+    changed: true,
+    archivedPriceId: displaced,
+    detail: `Moved the product default off the old price and archived it (was $${((old.unit_amount ?? 0) / 100).toFixed(2)}).`,
   }
 }
 

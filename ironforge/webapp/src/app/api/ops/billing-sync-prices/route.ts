@@ -85,24 +85,40 @@ export async function POST() {
   const gate = await requireOperator()
   if (gate) return gate
 
-  const results = []
+  const results: Array<Record<string, unknown>> = []
   for (const t of targets()) {
     try {
       results.push({ plan: t.plan, ...(await syncPriceToAdvertised(t.lookupKey, t.advertised)) })
     } catch (e: unknown) {
+      // A throw here means we do NOT know how far the write got — syncPriceToAdvertised
+      // reports partial success itself, so anything reaching this handler failed before
+      // writing OR failed in a way we cannot classify. Never claim it was a no-op.
       results.push({
         plan: t.plan, lookupKey: t.lookupKey, changed: false, advertised: t.advertised,
-        wasAmount: null, detail: `FAILED: ${e instanceof Error ? e.message : String(e)}`,
+        wasAmount: null, failed: true,
+        detail: `FAILED: ${e instanceof Error ? e.message : String(e)}`,
       })
     }
   }
+
   const changed = results.filter((r) => r.changed)
-  return NextResponse.json({
-    ok: true,
-    changedCount: changed.length,
-    summary: changed.length === 0
+  const failed = results.filter((r) => r.failed)
+  const warnings = results.filter((r) => r.warning)
+
+  // "Nothing to do" is only honest when nothing changed AND nothing failed. Reporting a
+  // no-op over a failure is how a partial billing change gets missed.
+  const summary = failed.length > 0
+    ? `${failed.length} plan(s) FAILED${changed.length ? `, ${changed.length} corrected` : ''} — read results and re-run.`
+    : changed.length === 0
       ? 'Nothing to do — every plan already matched.'
-      : `Corrected ${changed.length} plan(s). Re-run /api/ops/billing-readiness to confirm.`,
+      : `Corrected ${changed.length} plan(s). Re-run /api/ops/billing-readiness to confirm.`
+
+  return NextResponse.json({
+    ok: failed.length === 0,
+    changedCount: changed.length,
+    failedCount: failed.length,
+    ...(warnings.length ? { warnings: warnings.map((w) => `${w.plan}: ${w.warning}`) } : {}),
+    summary,
     results,
   })
 }
