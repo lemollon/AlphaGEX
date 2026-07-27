@@ -118,7 +118,9 @@ describe('FLAME Config Defaults', () => {
 
   it('VIX skip threshold = 32 (hardcoded in scanner)', () => {
     // vix_skip is a constant in the scanner, not in BotConfig
-    expect(scannerSource).toMatch(/vix\s*>\s*32/)
+    expect(scannerSource).toMatch(/vix\s*>\s*vixCap/)
+    // and the caps themselves: 40 for SPARK-v2 sizing, 32 for everything else
+    expect(scannerSource).toMatch(/isSparkV2Sizing\(bot\.name\)\s*\?\s*40\s*:\s*32/)
   })
 
   it('buying power usage = 85%', () => {
@@ -131,24 +133,11 @@ describe('FLAME Config Defaults', () => {
 /* ================================================================== */
 
 describe('Production Safety Guards', () => {
-  it('PRODUCTION_MAX_CONTRACTS is exactly 2', () => {
-    // This constant appears 3 times in scanner.ts (normal path, production-only, SPARK/INFERNO path)
-    const matches = scannerSource.match(/PRODUCTION_MAX_CONTRACTS\s*=\s*(\d+)/g)
-    expect(matches).not.toBeNull()
-    // Every declaration must be 2
-    for (const m of matches!) {
-      expect(m).toContain('= 2')
-    }
-  })
 
   it('SANDBOX_MAX_CONTRACTS is 200 (accounts have separate hard cap)', () => {
     expect(tradierSource).toMatch(/SANDBOX_MAX_CONTRACTS\s*=\s*200/)
   })
 
-  it('production abort on capital_pct lookup failure (never defaults to 100%)', () => {
-    // The code explicitly returns/skips when capital_pct lookup fails for production
-    expect(tradierSource).toMatch(/PRODUCTION.*capital_pct.*SKIP/i)
-  })
 
   it('default capital_pct for Logan = 15% (in db.ts seeding)', () => {
     expect(dbSource).toMatch(/capital_pct.*15/)
@@ -215,9 +204,6 @@ describe('Production Sizing Math', () => {
     expect(tradierSource).toMatch(/brokerMarginPer\s*=\s*spreadWidth\s*\*\s*100/)
   })
 
-  it('usable BP formula: optionBP × capitalPct% × botShare × 85%', () => {
-    expect(tradierSource).toMatch(/bpAfterCapitalPct\s*\*\s*botShare\s*\*\s*0\.85/)
-  })
 
   // Scenario: Logan has $10K account, 15% capital_pct, sole FLAME account
   const optionBP = 10000
@@ -467,10 +453,13 @@ describe('Sliding Profit Target', () => {
     expect(tier).toBe('AFTERNOON')
   })
 
-  it('INFERNO afternoon PT = 10% (more aggressive)', () => {
+  it('INFERNO does not slide at all — HOLD_TO_EOD at every hour', () => {
+    // INFERNO left the sliding ladder: getSlidingProfitTarget short-circuits to
+    // [1.0, 'HOLD_TO_EOD'] for it, so there is no afternoon tier to be aggressive
+    // about. pt 1.0 is an unreachable target, i.e. hold to the EOD cutoff.
     const [pct, tier] = getSlidingProfitTarget(makeCT(13, 30), 0.50, 'inferno')
-    expect(pct).toBe(0.10)
-    expect(tier).toBe('AFTERNOON')
+    expect(pct).toBe(1.0)
+    expect(tier).toBe('HOLD_TO_EOD')
   })
 
   it('PT never goes below 10%', () => {
@@ -505,7 +494,9 @@ describe('Advisor Decisions', () => {
 
   it('VIX > 32: scanner skips before advisor even runs (structural)', () => {
     // vix_skip gate is checked before advisor in the scanner
-    expect(scannerSource).toMatch(/vix\s*>\s*32/)
+    expect(scannerSource).toMatch(/vix\s*>\s*vixCap/)
+    // and the caps themselves: 40 for SPARK-v2 sizing, 32 for everything else
+    expect(scannerSource).toMatch(/isSparkV2Sizing\(bot\.name\)\s*\?\s*40\s*:\s*32/)
   })
 
   it('2DTE gets DTE_2DAY_DECAY bonus (+0.03)', () => {

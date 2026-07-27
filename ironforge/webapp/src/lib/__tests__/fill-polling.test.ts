@@ -459,8 +459,11 @@ describe('Fill Polling: Backoff Timing', () => {
     }
   })
 
-  it('uses 1s delay for first 10 polls (real timer)', async () => {
-    // 9 pending polls + 1 fill = 10 total, all at 1s interval
+  it('uses the documented 250ms/1s backoff for the first 10 polls (real timer)', async () => {
+    // 9 pending polls + 1 fill = 10 total. The cadence was tightened on
+    // 2026-05-15 from a flat 1s to 250ms for the first 5 polls, then 1s —
+    // it catches fast sandbox fills ~750ms sooner. So 9 delays is
+    // 5 x 250ms + 4 x 1000ms = 5250ms, not the 9000ms this used to expect.
     for (let i = 0; i < 9; i++) {
       mockFetch.mockResolvedValueOnce(orderResponse('pending'))
     }
@@ -472,9 +475,9 @@ describe('Fill Polling: Backoff Timing', () => {
 
     expect(price).toBe(0.33)
     expect(mockFetch).toHaveBeenCalledTimes(10)
-    // 9 delays × ~1s each ≈ 9s (allow tolerance for test runner)
-    expect(elapsed).toBeGreaterThanOrEqual(8000)
-    expect(elapsed).toBeLessThan(15000)
+    // ~5250ms, with generous tolerance for a loaded test runner.
+    expect(elapsed).toBeGreaterThanOrEqual(4500)
+    expect(elapsed).toBeLessThan(11000)
   }, 20000) // 20s timeout for this test
 })
 

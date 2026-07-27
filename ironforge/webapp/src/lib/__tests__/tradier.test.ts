@@ -446,6 +446,13 @@ describe('getSandboxAccountBalances', () => {
   })
 
   it('returns all 3 accounts even with cached IDs', async () => {
+    // getSandboxAccountBalances memoises its result in a module-level cache for
+    // SB_BALANCE_CACHE_TTL (30s), so without this the assertions below read the
+    // PREVIOUS test's balances rather than the mock set up here. Push the clock
+    // past the TTL so the cache is stale and the fetch actually runs.
+    const realNow = Date.now
+    vi.spyOn(Date, 'now').mockImplementation(() => realNow() + 60_000)
+
     // Account IDs cached from first test — only balance + positions calls needed
     mockFetch.mockImplementation(async (url: string) => {
       const urlStr = typeof url === 'string' ? url : url.toString()
@@ -476,6 +483,7 @@ describe('getSandboxAccountBalances', () => {
       expect(acct.option_buying_power).toBe(18000)
       expect(acct.open_positions_count).toBe(2)
     }
+    vi.mocked(Date.now).mockRestore()
   })
 })
 

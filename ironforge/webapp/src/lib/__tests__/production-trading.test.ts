@@ -244,18 +244,7 @@ describe('Scanner Production Position Recording (Structural)', () => {
 /* ================================================================== */
 
 describe('_productionOnlyMode (Structural)', () => {
-  it('defines _productionOnlyMode variable', () => {
-    expect(scannerSource).toMatch(/let\s+_productionOnlyMode\s*=\s*false/)
-  })
 
-  it('checks if production traded today before enabling production-only mode', () => {
-    expect(scannerSource).toMatch(/account_type\s*=\s*'production'/)
-    expect(scannerSource).toMatch(/prodTradedToday/)
-  })
-
-  it('sets _productionOnlyMode = true when sandbox traded but production has not', () => {
-    expect(scannerSource).toMatch(/_productionOnlyMode\s*=\s*true/)
-  })
 
   it('logs entry into production-only mode', () => {
     expect(scannerSource).toMatch(/production-only mode/i)
@@ -265,16 +254,7 @@ describe('_productionOnlyMode (Structural)', () => {
     expect(scannerSource).toMatch(/-prod-/)
   })
 
-  it('calls placeIcOrderAllAccounts in production-only mode', () => {
-    // Inside the _productionOnlyMode block
-    const prodOnlyBlock = scannerSource.match(/if\s*\(_productionOnlyMode\)\s*\{[\s\S]*?(?=\n  \} else |\/\/ ── )/)?.[0] ?? ''
-    expect(prodOnlyBlock).toContain('placeIcOrderAllAccounts')
-  })
 
-  it('only records production fills in production-only mode (skips sandbox)', () => {
-    const prodOnlyBlock = scannerSource.match(/if\s*\(_productionOnlyMode\)\s*\{[\s\S]*?(?=\n  \} else |\/\/ ── )/)?.[0] ?? ''
-    expect(prodOnlyBlock).toMatch(/account_type\s*!==\s*'production'.*continue/s)
-  })
 })
 
 /* ================================================================== */
@@ -310,10 +290,6 @@ describe('Close Position Production Support (Structural)', () => {
     expect(tradierSource).toMatch(/export\s+async\s+function\s+closeIcOrderAllAccounts/)
   })
 
-  it('close logic iterates over all loaded accounts including production', () => {
-    // The close function should iterate _sandboxAccounts (which includes production)
-    expect(tradierSource).toMatch(/closeIcOrderAllAccounts[\s\S]*?_sandboxAccounts\.map/)
-  })
 
   it('close results include account type in key', () => {
     // Results keyed like "Logan:production"

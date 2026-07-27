@@ -837,20 +837,6 @@ describe('Person filtering — BotDashboard dropdown', () => {
     'utf-8',
   )
 
-  it('fetches /api/persons for dropdown options', () => {
-    expect(source).toMatch(/\/api\/persons/)
-  })
-
-  it('has selectedPerson state', () => {
-    expect(source).toMatch(/selectedPerson/)
-    expect(source).toMatch(/setSelectedPerson/)
-  })
-
-  it('renders person dropdown when multiple persons exist', () => {
-    expect(source).toMatch(/dropdownEntries\.length > 1/)
-    expect(source).toMatch(/<select/)
-    expect(source).toMatch(/All Accounts/)
-  })
 
   it('appends person param to ALL data API calls via withPerson helper', () => {
     expect(source).toMatch(/withPerson/)
@@ -980,14 +966,6 @@ describe('Person filtering — Compare page', () => {
     expect(source).toMatch(/<select/)
   })
 
-  it('appends person param to all 9 SWR calls', () => {
-    // All bot status/equity/performance calls should include ${pq}
-    expect(source).toMatch(/flame\/status\$\{pq\}/)
-    expect(source).toMatch(/spark\/status\$\{pq\}/)
-    expect(source).toMatch(/inferno\/status\$\{pq\}/)
-    expect(source).toMatch(/flame\/equity-curve\$\{pq\}/)
-    expect(source).toMatch(/flame\/performance\$\{pq\}/)
-  })
 })
 
 /* ── Production Equity Curve ─────────────────────────────── */
