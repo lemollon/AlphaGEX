@@ -155,7 +155,11 @@ def build_updraft_signal(
             return _reject(
                 f"flow_not_put_heavy: imb={fi:.4f} need<={float(p['flow_max']):.4f}")
         if r30 is None:
-            return _reject("r30_unavailable")
+            # Normal between 08:31 and 09:00 CT: the volume window truncates
+            # at the open but the 30-minute return does not, so BACKDRAFT is
+            # live in that half hour and UPDRAFT is not (flow_store docstring).
+            return _reject(
+                f"r30_unavailable: {flow.get('r30_reason') or 'no r30'}")
         if r30 < float(p["r30_min"]):
             return _reject(
                 f"no_updraft: r30={r30:.1f}bp need>={float(p['r30_min']):.1f}bp")
