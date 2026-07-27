@@ -33,7 +33,11 @@ export const BOT_PLANS: Record<BotSlug, BotPlan> = {
     slug: 'spark',
     name: 'Spark',
     productName: 'IronForge Spark',
-    blurb: 'Set up a dedicated Spark account for automated 0DTE income trading.',
+    // 1DTE — dteMode('spark') === '1DTE'. This said "0DTE", which is INFERNO's
+    // expiry, not Spark's. Wording matches the canonical tagline used on /live,
+    // /onboarding/complete and the Bot Ledger, and describes the mechanics rather
+    // than promising an outcome.
+    blurb: 'Set up a dedicated Spark account that trades next-day (1DTE) SPY spreads automatically.',
     priceMonthly: 50,
     lookupKey: 'spark_monthly',
     accent: '#2F80ED', // Spark blue
@@ -44,7 +48,9 @@ export const BOT_PLANS: Record<BotSlug, BotPlan> = {
     slug: 'flame',
     name: 'Flame',
     productName: 'IronForge Flame',
-    blurb: 'Set up a dedicated Flame account for automated near-term upside trading.',
+    // 2DTE put credit spreads. "near-term upside trading" implied a directional
+    // long — Flame sells premium. Matches the canonical tagline.
+    blurb: 'Set up a dedicated Flame account that trades two-day (2DTE) SPY put credit spreads automatically.',
     priceMonthly: 50,
     lookupKey: 'flame_monthly',
     accent: '#FD5301', // Flame / brand orange
