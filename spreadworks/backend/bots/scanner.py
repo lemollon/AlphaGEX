@@ -243,11 +243,23 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
         # scan for a value they never read.
         if str(params.get("mode") or "") == "reversal" and chain.get("rsi") is None:
             if engine is not None:
+                # Seed the hourly series from Tradier so a cold snapshot table
+                # does not sideline this leg for ~2.5 sessions. Best-effort:
+                # if the provider cannot supply history the snapshot-only path
+                # still works, it just needs to warm up first.
+                seed = []
+                getter = getattr(chain_provider, "get_hourly_closes", None)
+                if callable(getter):
+                    try:
+                        seed = getter(ticker=ticker) or []
+                    except Exception as e:                  # noqa: BLE001
+                        logger.debug(f"rsi seed unavailable for {ticker}: {e}")
                 chain["rsi"] = flow_store.read_rsi_state(
                     engine, ticker=ticker,
                     now=now_ct or datetime.combine(today, time(0, 0)),
                     period=int(params.get("rsi_period") or 14),
                     threshold=float(params.get("rsi_threshold") or 30.0),
+                    seed_closes=seed,
                 ).as_dict()
             else:
                 chain["rsi"] = {"rsi": None, "recovery_cross": False,

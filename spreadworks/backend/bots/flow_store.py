@@ -371,12 +371,21 @@ def _wilder_rsi(closes: list[float], period: int = RSI_PERIOD) -> list[float]:
 
 def read_rsi_state(engine: Engine, *, ticker: str, now: datetime,
                    period: int = RSI_PERIOD,
-                   threshold: float = RSI_THRESHOLD) -> RsiState:
+                   threshold: float = RSI_THRESHOLD,
+                   seed_closes: list[tuple[str, float]] | None = None
+                   ) -> RsiState:
     """Hourly RSI from stored snapshots, and whether we just crossed back up.
 
     Only bars that have CLOSED are used. The hour containing `now` is still
     forming, and including it would let an in-progress move trigger an entry
     that the backtest could not have taken.
+
+    `seed_closes` is an optional [(ISO hour, close)] history (Tradier
+    timesales via ChainProvider.get_hourly_closes). Without it a cold table
+    needs ~2.5 SESSIONS of snapshots before RSI(14) is computable, so the leg
+    sits out for days after any reset. Snapshots WIN on overlapping hours:
+    they are the same clock the flow half of the book reads, so splicing that
+    way keeps both halves consistent.
     """
     try:
         with engine.begin() as conn:
@@ -389,7 +398,7 @@ def read_rsi_state(engine: Engine, *, ticker: str, now: datetime,
         logger.warning(f"rsi read failed: {e}")
         return RsiState(None, None, False, 0, f"db_error: {e}")
 
-    if not rows:
+    if not rows and not seed_closes:
         return RsiState(None, None, False, 0, "no_snapshots")
 
     def _dt(t):
@@ -405,6 +414,12 @@ def read_rsi_state(engine: Engine, *, ticker: str, now: datetime,
 
     # last spot of each clock hour == the hourly close
     buckets: dict[Any, float] = {}
+    # seed first so live snapshots overwrite any hour they also cover
+    for iso_hour, close in (seed_closes or []):
+        try:
+            buckets[datetime.fromisoformat(str(iso_hour) + ":00:00")] = float(close)
+        except (ValueError, TypeError):
+            continue
     for r in rows:
         t = _dt(r["snapshot_time"])
         if t is None:
