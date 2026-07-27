@@ -48,12 +48,19 @@ export default function TradeLog({
     }
     if (reportedErrors.current.has(code)) return
     reportedErrors.current.add(code)
-    track({ name: 'bot_ledger_error', props: { component: 'trade_log', error_code: code } })
+    track({
+      name: 'ledger_error',
+      props: {
+        component: 'trade_log',
+        error_code: code,
+        request_id: resource.error instanceof LedgerHttpError ? resource.error.requestId : null,
+      },
+    })
   }, [resource.error, cursor])
 
   function changeBot(next: LedgerBotFilter) {
     if (next === bot) return
-    track({ name: 'bot_ledger_bot_filter_change', props: { from: bot, to: next } })
+    track({ name: 'bot_filter_change', props: { from_bot: bot, to_bot: next } })
     setBot(next)
     setCursor(null) // a new filter starts a new pagination run
     regionRef.current?.scrollIntoView({ block: 'nearest', behavior: 'auto' })
@@ -68,8 +75,8 @@ export default function TradeLog({
     const target =
       direction === 'next' ? resource.data?.next_cursor ?? null : resource.data?.previous_cursor ?? null
     track({
-      name: 'bot_ledger_trade_log_page',
-      props: { direction, page_size: DEFAULT_TRADE_LIMIT },
+      name: 'trade_log_page',
+      props: { direction, page_size: DEFAULT_TRADE_LIMIT, bot_filter: bot },
     })
     setCursor(target)
     regionRef.current?.scrollIntoView({ block: 'nearest', behavior: 'auto' })
