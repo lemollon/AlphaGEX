@@ -1,6 +1,7 @@
 import { dbQuery, botTable, sharedTable, num, int, escapeSql, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
 import {
   getProductionPauseState,
+  getOwnerPauseState,
   getSandboxAccountBalances,
   getSpark2ProductionBalance,
   getQuoteDetail,
@@ -73,6 +74,7 @@ export async function getLiveSummary(
     latestSnapshotRows,
     intradayRows,
     pauseState,
+    ownerPause,
     balances,
     spyQuote,
   ] = await Promise.all([
@@ -141,6 +143,7 @@ export async function getLiveSummary(
        ORDER BY bucket ASC`,
     ),
     getProductionPauseState(BOT),
+    getOwnerPauseState(BOT),
     getSandboxAccountBalances().catch(() => []),
     getQuoteDetail('SPY').catch(() => null),
   ])
@@ -156,10 +159,18 @@ export async function getLiveSummary(
   const openPositions = int(positionCountRows[0]?.cnt)
   const todayTradesClosed = int(todayRealizedRows[0]?.today_trades_closed)
 
+  // The viewer's own account is paused. An operator's fleet view has no single
+  // `person`, so it never reports a self-pause — it reports the fleet switch.
+  const selfPaused = !!person && ownerPause.paused.has(person)
+
   const state = deriveCustomerState({
     botState,
     lastScanReason: hbDetails.reason || null,
-    paused: pauseState.paused,
+    // Two layers. The fleet switch is operator-level and the customer's Resume
+    // button cannot clear it; their OWN pause is theirs to undo. selfPaused
+    // drives that distinction in state.ts.
+    paused: pauseState.paused || selfPaused,
+    selfPaused,
     accountLinked: accountRows.length > 0,
     isActive: accountRows[0]?.is_active === true || accountRows[0]?.is_active === 'true',
     openPositions,

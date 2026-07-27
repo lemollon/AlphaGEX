@@ -53,6 +53,14 @@ describe('deriveCustomerState priority order', () => {
     expect(s.can_resume).toBe(true)
   })
 
+  it('a FLEET pause offers no Resume, and does not claim the customer did it', () => {
+    const s = deriveCustomerState({ ...base, paused: true, selfPaused: false })
+    expect(s.key).toBe('PAUSED')
+    // Their Resume button cannot clear an operator's halt, so it must not appear.
+    expect(s.can_resume).toBe(false)
+    expect(s.subtitle).not.toMatch(/you paused/i)
+  })
+
   it('operator toggle-off is PAUSED without a Resume CTA', () => {
     const s = deriveCustomerState({ ...base, isActive: false, openPositions: 1 })
     expect(s.key).toBe('PAUSED')

@@ -31,7 +31,6 @@
 import { createHash, timingSafeEqual } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { dbExecute, validateBot } from '@/lib/db'
-import { getSession } from '@/lib/auth/server'
 import { isPublicMode } from '@/lib/auth/access'
 import { resolveLiveViewer } from '@/lib/live/viewer'
 import type { LiveBot } from '@/lib/live/bots'
@@ -97,18 +96,23 @@ export async function POST(
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  // Auth, in order of preference:
-  //   0. public mode               — this deployment has no login at all
-  //   1. operator session          — may pause any bot
-  //   2. customer session + OWNERSHIP of this bot (resolveLiveViewer)
-  //   3. the shared pause password — legacy operator fallback
+  // Auth AND scope, in order of preference:
+  //   0. public mode               — no login on this deployment      -> FLEET
+  //   1. operator session          — may pause any bot                -> FLEET
+  //   2. customer owning this bot  — resolveLiveViewer.allowedBots    -> OWN ACCOUNT
+  //   3. the shared pause password — legacy operator fallback         -> FLEET
   //
-  // (2) is the point of this block. Previously any caller holding the shared
-  // password could pause any bot, so one customer could stop another customer's
-  // trading. Ownership is resolved through the same path the Live page uses, so
-  // a viewer can only pause a bot that appears in their own allowedBots.
+  // (2) is the point of this block, in two stages. Ownership stops one customer
+  // pausing a bot that isn't theirs. SCOPE stops the other half of the problem:
+  // ironforge_production_pause is ONE ROW PER BOT, so an authorized customer
+  // pressing Pause used to halt every other owner's real-money trading too. A
+  // customer now writes ironforge_owner_pause keyed by their own account owner
+  // and cannot reach the fleet row at all.
   let authorized = false
   let actor = 'ui'
+  // null = FLEET scope (stops the bot for every owner). A non-null value scopes
+  // the pause to that one ironforge_accounts.person.
+  let ownerScope: string | null = null
   // Public mode short-circuits the session ladder below: on a deployment with
   // the login wall lifted, none of those checks can ever pass, so the control
   // would be dead rather than open. Recorded as 'public-mode' in paused_by so
@@ -117,22 +121,33 @@ export async function POST(
     authorized = true
     actor = 'public-mode'
   }
-  try {
-    const session = await getSession()
-    if (session.userId) {
-      authorized = true
-      actor = 'operator'
-    }
-  } catch { /* no/invalid operator session — fall through */ }
 
   if (!authorized) {
     try {
+      // resolveLiveViewer is the SINGLE source of both authorization and scope.
+      // It already distinguishes the two cases correctly: isOperator is true only
+      // for a real operator session, and false while impersonating (a customer
+      // session wins — #2619). So an operator driving the customer UI as a
+      // customer pauses that customer's account, not everyone's, which is what
+      // the screen in front of them claims to be doing. Fleet pause stays
+      // available to an operator who is not impersonating.
       const viewer = await resolveLiveViewer(req)
-      // isOperator is granted by an operator session only, which is defined as
-      // "see what the owner sees"; ownership still has to include this bot.
       if (viewer.allowedBots.includes(bot as LiveBot)) {
-        authorized = true
-        actor = viewer.isOperator ? 'operator' : 'customer'
+        if (viewer.isOperator) {
+          authorized = true
+          actor = 'operator'
+        } else if (viewer.person) {
+          authorized = true
+          actor = 'customer'
+          ownerScope = viewer.person
+        } else {
+          // A customer with no account mapped has nothing of their own to pause,
+          // and must never be able to fall through to a fleet-wide stop.
+          return NextResponse.json(
+            { error: 'no_account_linked', detail: 'No trading account is linked to your profile yet.' },
+            { status: 403 },
+          )
+        }
       }
     } catch { /* fail closed — fall through to the password path */ }
   }
@@ -150,6 +165,39 @@ export async function POST(
   const by = typeof body.by === 'string' ? body.by.slice(0, 120) : actor
 
   try {
+    // OWNER-SCOPED pause (a customer stopping their own account). Writes a
+    // different table entirely, so a customer can never touch the fleet row —
+    // ironforge_production_pause is one row per bot, and before this any
+    // customer mapped to SPARK could halt every other owner's trading.
+    if (ownerScope) {
+      if (paused) {
+        await dbExecute(
+          `INSERT INTO ironforge_owner_pause (bot_name, person, paused, paused_at, paused_by, paused_reason, updated_at)
+           VALUES ($1, $2, TRUE, NOW(), $3, $4, NOW())
+           ON CONFLICT (bot_name, person) DO UPDATE SET
+             paused = TRUE,
+             paused_at = COALESCE(ironforge_owner_pause.paused_at, NOW()),
+             paused_by = EXCLUDED.paused_by,
+             paused_reason = EXCLUDED.paused_reason,
+             updated_at = NOW()`,
+          [bot.toUpperCase(), ownerScope, by, reason],
+        )
+      } else {
+        await dbExecute(
+          `INSERT INTO ironforge_owner_pause (bot_name, person, paused, paused_at, paused_by, paused_reason, updated_at)
+           VALUES ($1, $2, FALSE, NULL, $3, NULL, NOW())
+           ON CONFLICT (bot_name, person) DO UPDATE SET
+             paused = FALSE,
+             paused_at = NULL,
+             paused_by = EXCLUDED.paused_by,
+             paused_reason = NULL,
+             updated_at = NOW()`,
+          [bot.toUpperCase(), ownerScope, by],
+        )
+      }
+      return NextResponse.json({ ok: true, bot: bot.toUpperCase(), paused, scope: 'owner', person: ownerScope })
+    }
+
     // Upsert the single pause row for this bot. When paused flips to true
     // we stamp paused_at/paused_by/paused_reason; when it flips to false
     // we clear them so the "last reason" doesn't linger on the resumed row.
@@ -180,7 +228,7 @@ export async function POST(
     }
 
     const state = await getProductionPauseState(bot)
-    return NextResponse.json({ ...state, action: paused ? 'paused' : 'resumed' })
+    return NextResponse.json({ ...state, action: paused ? 'paused' : 'resumed', scope: 'fleet' })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })

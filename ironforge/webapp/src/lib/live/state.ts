@@ -15,8 +15,15 @@ export interface StateInput {
   botState: string
   /** heartbeat details.reason, e.g. "skip:vix_too_high(34.2>32)" */
   lastScanReason: string | null
-  /** production-pause flag (ironforge_production_pause) */
+  /** paused by EITHER layer: the fleet switch (ironforge_production_pause) or
+   *  this viewer's own account (ironforge_owner_pause). */
   paused: boolean
+  /**
+   * True when the pause is this viewer's OWN, i.e. they pressed Pause on their
+   * own account. False for an operator's fleet-wide halt, which a customer's
+   * Resume button must not be able to clear.
+   */
+  selfPaused?: boolean
   /**
    * Does a `{bot}_paper_account` row exist in THIS viewer's scope at all?
    *
@@ -49,7 +56,7 @@ const BLOCKED_REASON_PREFIXES = ['skip:vix_too_high', 'skip:event_blackout']
 
 export function deriveCustomerState(input: StateInput): CustomerState {
   const {
-    botState, lastScanReason, paused, accountLinked, isActive,
+    botState, lastScanReason, paused, selfPaused = true, accountLinked, isActive,
     openPositions, todayTradesClosed, sessionOpen, heartbeatAgeMin,
     agent = 'Spark',
   } = input
@@ -72,15 +79,20 @@ export function deriveCustomerState(input: StateInput): CustomerState {
   }
 
   if (paused) {
+    // Only offer Resume for the viewer's OWN pause. A fleet-wide halt is an
+    // operator action; showing a Resume button that silently cannot clear it
+    // would be worse than showing none.
     return {
       key: 'PAUSED',
       headline: `${agent} is Paused`,
-      subtitle: 'You paused trading. Open positions are still being managed safely.',
+      subtitle: selfPaused
+        ? 'You paused trading. Open positions are still being managed safely.'
+        : 'Trading is paused for maintenance. Open positions are still being managed safely.',
       check_line: null,
       dot: 'amber',
       timeline_step: null,
       paused: true,
-      can_resume: true,
+      can_resume: selfPaused,
     }
   }
 
