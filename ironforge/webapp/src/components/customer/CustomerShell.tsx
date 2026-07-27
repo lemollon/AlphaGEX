@@ -128,9 +128,9 @@ function PlanCard({ membership, variant }: { membership: PlanCardData | null; va
   )
 }
 
-/** The two customer-purchasable strategies. spark2 ("Spark paper") is an operator-only
- *  paper account, never sold, so it's not offered as an "add" — it only appears as a
- *  switch row when the /live switcher already grants access to it. */
+/** The two customer-purchasable strategies — the ONLY bots ever shown on the customer
+ *  surface. spark2 ("Spark paper") is an operator-only paper account and is never rendered
+ *  here (operators view it on the operator console, not the customer site). */
 const PURCHASABLE_BOTS: LiveBot[] = ['spark', 'flame']
 
 const strategyGlyph = (accent: string) => (
@@ -148,22 +148,22 @@ const strategyGlyph = (accent: string) => (
  *     to that strategy — a bundle upgrade (+$25/mo) if the other one is already active.
  * So a Spark-only customer's "Flame" item takes them to add Flame, and vice versa.
  */
-function StrategyChildren({ bots, activeBot, paperBots, onSwitch }: StrategyNav) {
+function StrategyChildren({ bots, activeBot, onSwitch }: StrategyNav) {
   const pathname = usePathname()
   const { data: ent } = useSWR<{ bots?: string[] }>('/api/billing/entitlements', fetcher, { shouldRetryOnError: false })
 
-  // Extra live bots the /live switcher already grants (e.g. operator "Spark paper").
-  const extras = (bots ?? []).filter((b): b is LiveBot => isLiveBot(b) && !PURCHASABLE_BOTS.includes(b))
-  const rows: LiveBot[] = [...PURCHASABLE_BOTS, ...extras]
+  // Only ever the two real products — never spark2 / paper accounts.
+  const rows: LiveBot[] = PURCHASABLE_BOTS
 
-  // Owned = billing entitlements ∪ whatever the switcher already lets this viewer see.
-  // Anything in `extras` (allowed but not a subscription, i.e. spark2) counts as owned.
-  const owned = new Set<LiveBot>([...(ent?.bots ?? bots ?? []).filter(isLiveBot), ...extras])
+  // Owned = billing entitlements (or the /live switcher's allowed bots), limited to the
+  // purchasable products. Anything not owned falls through to the "Add" flow.
+  const owned = new Set<LiveBot>(
+    (ent?.bots ?? bots ?? []).filter((b): b is LiveBot => isLiveBot(b) && PURCHASABLE_BOTS.includes(b)),
+  )
   // Only offer "Add" once we actually know ownership — never invite a paying customer
   // to re-buy a strategy they already have while entitlements are still loading.
   const known = ent !== undefined || bots !== undefined
 
-  const paperSet = new Set(paperBots ?? [])
   const onLive = pathname === '/live'
 
   return (
@@ -198,9 +198,6 @@ function StrategyChildren({ bots, activeBot, paperBots, onSwitch }: StrategyNav)
               className={`${rowBase} ${active ? `bg-forge-card font-medium ${accent}` : 'text-gray-400 hover:text-white'}`}>
               {strategyGlyph(accent)}
               <span>{LIVE_BOT_LABEL[b]}</span>
-              {paperSet.has(b) ? (
-                <span className="rounded bg-gray-700 px-1 py-px text-[9px] font-bold uppercase tracking-wider text-gray-300">Paper</span>
-              ) : null}
               <span className={`ml-auto h-1.5 w-1.5 rounded-full ${active ? dot : 'bg-gray-700'}`} />
             </button>
           )
@@ -211,9 +208,6 @@ function StrategyChildren({ bots, activeBot, paperBots, onSwitch }: StrategyNav)
           <Link key={b} href="/live" className={`${rowBase} text-gray-400 hover:text-white`}>
             {strategyGlyph(accent)}
             <span>{LIVE_BOT_LABEL[b]}</span>
-            {paperSet.has(b) ? (
-              <span className="rounded bg-gray-700 px-1 py-px text-[9px] font-bold uppercase tracking-wider text-gray-300">Paper</span>
-            ) : null}
           </Link>
         )
       })}
