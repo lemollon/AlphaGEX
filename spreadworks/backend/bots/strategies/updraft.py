@@ -203,7 +203,7 @@ def build_updraft_signal(
 
     # pt_pct is deliberately unreachable (registry sets 99.0) — the timer is
     # the exit. sl_pct 0.50 gives the researched -50% stop on premium.
-    pt_pct = float(cfg.get("pt_pct", 99.0))
+    pt_pct = float(cfg.get("pt_pct", 9.9999))   # NUMERIC(5,4) ceiling
     sl_pct = float(cfg.get("sl_pct", 0.50))
 
     return UpdraftSignal(

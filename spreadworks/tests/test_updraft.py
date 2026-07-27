@@ -172,7 +172,7 @@ def test_both_bots_are_registered_as_paper_with_no_profit_target():
         d = b["defaults"]
         assert d["hold_minutes"] == hold
         assert d["sl_pct"] == 0.50
-        assert d["pt_pct"] > 10       # unreachable == no profit target
+        assert d["pt_pct"] >= 9.9      # unreachable == no profit target
         assert d["max_concurrent_positions"] == 3
         assert d["entry_start_ct"] == "08:31"   # 09:31 ET
         assert d["entry_end_ct"] == "14:00"     # 15:00 ET

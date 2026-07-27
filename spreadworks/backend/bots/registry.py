@@ -396,9 +396,12 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "r30_min": 19.23,
             "strike_offset": 1,
             "hold_minutes": 45,
-            # NO profit target — a PT cut returns ~6x in research. 99.0 makes
-            # it unreachable, the same idiom SURGE/TIDE use for "no stop".
-            "pt_pct": 99.0,
+            # NO profit target — a PT cut returns ~6x in research. 9.9999 is
+            # the LARGEST value pt_pct NUMERIC(5,4) can hold; +999.99% of
+            # premium is unreachable over a 45-minute 0DTE hold. Do not raise
+            # it: 99.0 overflows the column and aborts create_bot_tables for
+            # EVERY bot (the seeding runs in one transaction).
+            "pt_pct": 9.9999,
             "sl_pct": 0.50,
             "min_option_price": 0.10,
             "max_spread_pct": 0.15,
@@ -445,7 +448,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "require_put_wall": True,
             "strike_offset": 1,
             "hold_minutes": 30,
-            "pt_pct": 99.0,
+            "pt_pct": 9.9999,   # see UPDRAFT — NUMERIC(5,4) ceiling
             "sl_pct": 0.50,
             "min_option_price": 0.10,
             "max_spread_pct": 0.15,
