@@ -298,9 +298,9 @@ function DesktopFeatureCards() {
           <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-300">Lifetime Return</div>
           {/* Was a hardcoded "+18.74%" — an invented return, and the first number a
               prospect saw. The card illustrates the dashboard; the real figures are
-              on /track-record, built from closed trades. */}
+              on /bot-ledger, built from closed trades. */}
           <div className="mt-2 text-xl font-bold text-white">&mdash;</div>
-          <div className="text-[10px] text-gray-500">See /track-record</div>
+          <div className="text-[10px] text-gray-500">See /bot-ledger</div>
           <div className="mt-2 flex gap-2">
             <div className="flex flex-col justify-between py-1 text-right text-[8px] text-gray-500">
               <span>20%</span>

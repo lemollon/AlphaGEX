@@ -85,7 +85,7 @@ export const SUPPORT_KB: KbEntry[] = [
   {
     topic: 'pages',
     q: 'What do the Performance and Live pages show?',
-    a: 'Performance shows your account\'s results and KPIs over time. Live shows each strategy\'s current status and lets you switch between the ones you own. Track Record (/track-record) is the public, closed-trade proof view.',
+    a: 'Performance shows your account\'s results and KPIs over time. Live shows each strategy\'s current status and lets you switch between the ones you own. The Bot Ledger (/bot-ledger) is the public, closed-trade proof view.',
   },
   {
     topic: 'faq',

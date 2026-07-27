@@ -88,7 +88,7 @@ export default function PerformanceOverviewCard() {
         <div className="text-sm text-gray-200">Performance</div>
         <p className="mt-3 text-sm text-[#B8B8B8]">
           Our full trade-by-trade record is on the{' '}
-          <Link href="/track-record" className="text-amber-500 hover:text-amber-400">
+          <Link href="/bot-ledger" className="text-amber-500 hover:text-amber-400">
             track record page
           </Link>.
         </p>
@@ -145,7 +145,7 @@ export default function PerformanceOverviewCard() {
         {lead.paper
           ? 'Simulated execution on live market data.'
           : 'Real money, our own brokerage account.'}{' '}
-        <Link href="/track-record" className="text-amber-500 hover:text-amber-400">
+        <Link href="/bot-ledger" className="text-amber-500 hover:text-amber-400">
           See every trade
         </Link>
         . Past performance does not indicate future results.

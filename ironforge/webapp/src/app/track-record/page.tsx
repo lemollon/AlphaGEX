@@ -1,25 +1,21 @@
-import type { Metadata } from 'next'
-import HomeNav from '../_home/HomeNav'
-import HomeFooter from '../_home/HomeFooter'
-import TrackRecordClient from './TrackRecordClient'
+import { permanentRedirect } from 'next/navigation'
 
+/**
+ * RETIRED — superseded by /bot-ledger (2026-07-27).
+ *
+ * Both pages published a public Spark record, but from different row sets:
+ * this one deliberately included every `account_type` (see the header comment
+ * on the now-deleted TrackRecordClient), while the Bot Ledger reproduces the
+ * operator console's filter. Two public proof surfaces disagreeing about the
+ * same bot is a credibility problem, so there is now one.
+ *
+ * A 308 rather than a delete: the URL is linked externally and from other
+ * pages, and a permanent redirect carries its SEO value across instead of
+ * 404ing it away. The route file stays so the surface classification in
+ * surface.ts continues to describe a real route.
+ */
 export const dynamic = 'force-dynamic'
 
-export const metadata: Metadata = {
-  title: 'Track record — IronForge',
-  description:
-    'Every trade the IronForge bots have closed: realised profit and loss on live '
-    + 'market data, with each strategy labelled real-money or simulated.',
-}
-
 export default function TrackRecordPage() {
-  // Own chrome, like every other marketing screen (Shell.tsx treats this route as
-  // standalone so the OPERATOR nav never renders on a page built for prospects).
-  return (
-    <div className="min-h-screen bg-forge-bg">
-      <HomeNav active="track-record" />
-      <TrackRecordClient />
-      <HomeFooter />
-    </div>
-  )
+  permanentRedirect('/bot-ledger')
 }
