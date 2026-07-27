@@ -46,6 +46,7 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/home',
   '/performance',
   '/track-record',
+  '/bot-ledger',
   '/community',
   '/support',
   '/account/trades',

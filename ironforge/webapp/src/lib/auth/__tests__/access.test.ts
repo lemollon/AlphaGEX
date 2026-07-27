@@ -33,6 +33,11 @@ describe('isPublicPath', () => {
   it('exposes the public track record but not the customer surface', () => {
     expect(isPublicPath('/track-record')).toBe(true)
     expect(isPublicPath('/api/public/track-record')).toBe(true)
+    expect(isPublicPath('/bot-ledger')).toBe(true)
+    // These pass via the /api/public/ prefix branch; asserted explicitly so a
+    // future narrowing of that branch is caught here rather than in production.
+    expect(isPublicPath('/api/public/bot-ledger/summary')).toBe(true)
+    expect(isPublicPath('/api/public/bot-ledger/trades')).toBe(true)
     for (const p of ['/home', '/live', '/performance', '/community', '/account/trades']) {
       expect(isPublicPath(p)).toBe(false)
     }
