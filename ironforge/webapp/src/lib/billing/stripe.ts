@@ -129,6 +129,80 @@ export interface StripePriceSummary {
   unit_amount: number | null
   currency: string
   recurring: { interval: string } | null
+  /** Product id this price belongs to — a corrected price must stay on the same product. */
+  product: string
+}
+
+export interface PriceSyncResult {
+  lookupKey: string
+  changed: boolean
+  advertised: number
+  wasAmount: number | null
+  newPriceId?: string
+  archivedPriceId?: string
+  detail: string
+}
+
+/**
+ * Make Stripe charge what the site advertises for ONE lookup key.
+ *
+ * Stripe prices are IMMUTABLE — an amount cannot be edited. Correcting one means
+ * creating a new price, moving the lookup key onto it (transfer_lookup_key, which
+ * detaches it from the old price atomically), and archiving the old one so nothing
+ * can resolve back to it.
+ *
+ * DELIBERATELY NOT PARAMETERISED BY AMOUNT. The caller passes the lookup key; the
+ * amount comes from `advertisedDollars`, which callers source from plans.ts. This can
+ * only ever converge Stripe TOWARD the published price — it cannot set an arbitrary
+ * number, so it is not a general-purpose "change our pricing" tool.
+ *
+ * Idempotent: already-matching prices are a no-op.
+ *
+ * Does NOT touch existing subscriptions. Anyone already subscribed keeps the price
+ * they signed up at until they are migrated — deliberate, since silently repricing a
+ * live subscriber is worse than the drift being fixed.
+ */
+export async function syncPriceToAdvertised(
+  lookupKey: string,
+  advertisedDollars: number,
+): Promise<PriceSyncResult> {
+  const current = await findPriceByLookupKey(lookupKey)
+  if (!current) {
+    return {
+      lookupKey, changed: false, advertised: advertisedDollars, wasAmount: null,
+      detail: `No active price with lookup key ${lookupKey} — create it in Stripe first.`,
+    }
+  }
+
+  const wantMinor = Math.round(advertisedDollars * 100)
+  if (current.unit_amount === wantMinor) {
+    return {
+      lookupKey, changed: false, advertised: advertisedDollars, wasAmount: current.unit_amount / 100,
+      detail: 'Already matches the advertised price.',
+    }
+  }
+
+  const created = await stripeRequest<{ id: string }>('POST', '/prices', {
+    product: current.product,
+    unit_amount: wantMinor,
+    currency: current.currency || 'usd',
+    recurring: { interval: current.recurring?.interval || 'month' },
+    lookup_key: lookupKey,
+    transfer_lookup_key: true,
+  })
+
+  // Only after the key has moved: archiving first would leave the key on a dead price.
+  await stripeRequest('POST', `/prices/${current.id}`, { active: false })
+
+  return {
+    lookupKey,
+    changed: true,
+    advertised: advertisedDollars,
+    wasAmount: current.unit_amount === null ? null : current.unit_amount / 100,
+    newPriceId: created.id,
+    archivedPriceId: current.id,
+    detail: `Created a ${advertisedDollars.toFixed(2)} ${(current.currency || 'usd').toUpperCase()} price, moved lookup key ${lookupKey} to it, archived the old one.`,
+  }
 }
 
 /**
