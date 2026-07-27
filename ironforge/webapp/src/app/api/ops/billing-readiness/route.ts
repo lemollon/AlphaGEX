@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth/server'
+import { isPublicMode } from '@/lib/auth/access'
 import { isStripeConfigured, findPriceByLookupKey } from '@/lib/billing/stripe'
 import { BOT_PLANS, BOTH_PLAN, COMMUNITY_PLAN } from '@/lib/billing/plans'
 
@@ -37,9 +38,16 @@ const EXPECTED_CURRENCY = 'usd'
 const EXPECTED_INTERVAL = 'month'
 
 export async function GET() {
-  const ops = await getSession()
-  if (!ops.userId) {
-    return NextResponse.json({ ok: false, error: 'Operator session required.' }, { status: 401 })
+  // A deployment in public mode has no login wall at all, so NO caller there can ever
+  // hold a session — demanding one makes this permanently 401 on ironforge-legacy, the
+  // console runbooks/provision-stripe.md tells you to run this from. Same bypass
+  // ops/customers uses. Nothing here is a secret: booleans and the advertised-vs-Stripe
+  // amounts, never a key.
+  if (!isPublicMode()) {
+    const ops = await getSession()
+    if (!ops.userId) {
+      return NextResponse.json({ ok: false, error: 'Operator session required.' }, { status: 401 })
+    }
   }
 
   const secretKeySet = isStripeConfigured()
