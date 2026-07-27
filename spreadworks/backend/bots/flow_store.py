@@ -307,3 +307,127 @@ def purge_old(engine: Engine, keep_days: int = 10) -> None:
                 "CURRENT_DATE - CAST(:d AS INTEGER)"), {"d": keep_days})
     except Exception as e:
         logger.warning(f"flow snapshot purge failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# HOURLY RSI — the REVERSAL leg's trigger
+# ---------------------------------------------------------------------------
+# The third leg fires when hourly RSI(14) closes back ABOVE 30 after having
+# been below it. Direction matters enormously and was measured twice:
+#
+#   entry on the RECOVERY cross (RSI back above 30)   SPY +10.68%, XSP +12.58%
+#   entry on the CROSS DOWN (buying into the fall)    SPY  -3.87%, XSP  -3.74%
+#   entry while merely oversold (RSI < 30 as a state) SPY  +1.24%, XSP  +2.66%
+#
+# So this must never fire on "RSI is low" — only on the bar where it crosses
+# back up. Buying into oversold is a losing trade, not a slightly worse one.
+#
+# The hourly series is rebuilt from the same 5-minute snapshots the flow
+# signal uses, so both halves of the book read one clock. `purge_old` keeps
+# 10 days ~= 65 hourly bars, comfortably more than RSI(14) needs. A fresh
+# deploy has no history and correctly reports unavailable until roughly three
+# sessions of snapshots accumulate.
+
+RSI_PERIOD = 14
+RSI_THRESHOLD = 30.0
+
+
+@dataclass(frozen=True)
+class RsiState:
+    """Hourly RSI(14) and whether THIS bar is the recovery cross."""
+    rsi: float | None
+    prev_rsi: float | None
+    recovery_cross: bool
+    bars_used: int
+    reason: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"rsi": self.rsi, "prev_rsi": self.prev_rsi,
+                "recovery_cross": self.recovery_cross,
+                "bars_used": self.bars_used, "reason": self.reason}
+
+
+def _wilder_rsi(closes: list[float], period: int = RSI_PERIOD) -> list[float]:
+    """Wilder's RSI. Same recursion as the research pandas ewm(alpha=1/period,
+    adjust=False), so live and backtest values agree bar for bar."""
+    out: list[float] = []
+    avg_gain = avg_loss = None
+    for i in range(1, len(closes)):
+        ch = closes[i] - closes[i - 1]
+        gain, loss = max(ch, 0.0), max(-ch, 0.0)
+        if avg_gain is None:
+            avg_gain, avg_loss = gain, loss
+        else:
+            a = 1.0 / period
+            avg_gain = avg_gain + a * (gain - avg_gain)
+            avg_loss = avg_loss + a * (loss - avg_loss)
+        if avg_loss == 0:
+            out.append(100.0 if avg_gain > 0 else 50.0)
+        else:
+            rs = avg_gain / avg_loss
+            out.append(100.0 - 100.0 / (1.0 + rs))
+    return out
+
+
+def read_rsi_state(engine: Engine, *, ticker: str, now: datetime,
+                   period: int = RSI_PERIOD,
+                   threshold: float = RSI_THRESHOLD) -> RsiState:
+    """Hourly RSI from stored snapshots, and whether we just crossed back up.
+
+    Only bars that have CLOSED are used. The hour containing `now` is still
+    forming, and including it would let an in-progress move trigger an entry
+    that the backtest could not have taken.
+    """
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(text(
+                f"SELECT snapshot_time, spot FROM {TABLE} "
+                "WHERE ticker = :tk AND snapshot_time < :now "
+                "ORDER BY snapshot_time"), {"tk": ticker, "now": now}
+            ).mappings().all()
+    except Exception as e:                                  # noqa: BLE001
+        logger.warning(f"rsi read failed: {e}")
+        return RsiState(None, None, False, 0, f"db_error: {e}")
+
+    if not rows:
+        return RsiState(None, None, False, 0, "no_snapshots")
+
+    def _dt(t):
+        """SQLite hands back an ISO STRING for TIMESTAMP columns; Postgres
+        returns a datetime. Same split `read_state._aware` exists for — and
+        the reason the first version of this crashed only under SQLite."""
+        if isinstance(t, str):
+            try:
+                return datetime.fromisoformat(t)
+            except ValueError:
+                return None
+        return t
+
+    # last spot of each clock hour == the hourly close
+    buckets: dict[Any, float] = {}
+    for r in rows:
+        t = _dt(r["snapshot_time"])
+        if t is None:
+            continue
+        key = t.replace(minute=0, second=0, microsecond=0, tzinfo=None)
+        buckets[key] = float(r["spot"])
+    if not buckets:
+        return RsiState(None, None, False, 0, "no_parseable_timestamps")
+
+    # drop the in-progress hour — an unfinished bar must never trigger
+    cur = now.replace(minute=0, second=0, microsecond=0, tzinfo=None)
+    keys = [k for k in sorted(buckets) if k < cur]
+    closes = [buckets[k] for k in keys]
+
+    need = period + 2          # +1 for the diff, +1 for a previous RSI value
+    if len(closes) < need:
+        return RsiState(None, None, False, len(closes),
+                        f"insufficient_history: {len(closes)} bars, need {need}")
+
+    series = _wilder_rsi(closes, period)
+    if len(series) < 2:
+        return RsiState(None, None, False, len(closes), "rsi_too_short")
+
+    rsi, prev = series[-1], series[-2]
+    cross = (rsi >= threshold) and (prev < threshold)
+    return RsiState(round(rsi, 2), round(prev, 2), cross, len(closes))

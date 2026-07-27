@@ -220,7 +220,8 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
         reg_defaults = (BOT_REGISTRY.get(bot, {}).get("defaults") or {})
         tunable = ("mode", "flow_max", "r30_min", "backdraft_flow_max",
                    "require_put_wall", "strike_offset", "hold_minutes",
-                   "min_option_price", "max_spread_pct", "cooldown_min")
+                   "min_option_price", "max_spread_pct", "cooldown_min",
+                   "rsi_threshold", "rsi_period")
         params = {**UPDRAFT_PARAMS,
                   **{k: reg_defaults[k] for k in tunable if k in reg_defaults},
                   **{k: config[k] for k in tunable
@@ -237,6 +238,20 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
             else:
                 chain["flow"] = {"flow_imb_30": None, "r30_bp": None,
                                  "reason": "no_engine: cannot read flow history"}
+        # REVERSAL reads hourly RSI off the same snapshot history. Attached
+        # only for that mode so the other two legs do not pay a query per
+        # scan for a value they never read.
+        if str(params.get("mode") or "") == "reversal" and chain.get("rsi") is None:
+            if engine is not None:
+                chain["rsi"] = flow_store.read_rsi_state(
+                    engine, ticker=ticker,
+                    now=now_ct or datetime.combine(today, time(0, 0)),
+                    period=int(params.get("rsi_period") or 14),
+                    threshold=float(params.get("rsi_threshold") or 30.0),
+                ).as_dict()
+            else:
+                chain["rsi"] = {"rsi": None, "recovery_cross": False,
+                                "reason": "no_engine: cannot read rsi history"}
         sig = build_updraft_signal(
             chain=chain, today=today, params=params,
             mode=str(params.get("mode") or "updraft"),
