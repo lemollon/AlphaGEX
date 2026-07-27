@@ -3,6 +3,7 @@ import type { Metadata } from 'next'
 import HomeNav from '../_home/HomeNav'
 import HomeFooter from '../_home/HomeFooter'
 import { parseBotFilter, parsePeriod } from '@/lib/botLedger/params'
+import AnalyticsSink from './AnalyticsSink'
 import LedgerHero from './LedgerHero'
 import LedgerPerformance from './LedgerPerformance'
 import PrinciplesSection from './PrinciplesSection'
@@ -62,6 +63,9 @@ export default function BotLedgerPage({
 
   return (
     <div className="min-h-screen bg-forge-bg">
+      {/* Renders nothing; installs the first-party analytics sink so the
+          events the page already emits actually reach the server. */}
+      <AnalyticsSink />
       <HomeNav />
       <main className="mx-auto max-w-[1280px] px-5 py-12 md:px-8 md:py-16">
         <LedgerPerformance
