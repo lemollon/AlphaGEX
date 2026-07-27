@@ -9,11 +9,15 @@ only in what triggers them, so one module serves both via `mode`.
     BACKDRAFT  flow_imb_30 <  flow_max   (extreme put-heavy, ~2.1x calls)
            AND spot > put_wall           (above the live intraday put wall)
 
-Economic rationale: both fade a put-buying crowd that the tape is running
-over. UPDRAFT requires momentum confirmation, BACKDRAFT requires flow
-extremity plus dealer-gamma support underneath. In research the two shared
-ZERO entry minutes, so they are genuinely separate signals rather than one
-trade wearing two hats.
+    REVERSAL   hourly RSI(14) closes back ABOVE 30 after being below
+                                         (a CONFIRMED hourly reversal)
+
+Economic rationale: UPDRAFT and BACKDRAFT both fade a put-buying crowd that
+the tape is running over — UPDRAFT requires momentum confirmation, BACKDRAFT
+requires flow extremity plus dealer-gamma support underneath. REVERSAL is a
+different mechanism entirely: a multi-day hourly oversold state resolving
+upward. In research all three shared ZERO entry minutes, so they are
+genuinely separate signals rather than one trade wearing three hats.
 
 Debit structure — entry_price is the call mid, max loss is the full premium.
 This mirrors dip_buy (UNDERTOW) exactly so the executor, mark-to-market and
@@ -51,9 +55,12 @@ DEFAULT_PARAMS: dict[str, Any] = {
     # BACKDRAFT gates
     "backdraft_flow_max": -0.35,
     "require_put_wall": True,
+    # REVERSAL gates
+    "rsi_threshold": 30.0,    # cross back ABOVE this = the trigger
+    "rsi_period": 14,
     # shared
-    "strike_offset": 1,       # +1 strike OTM
-    "hold_minutes": 45,       # UPDRAFT 45, BACKDRAFT 30 (set per bot)
+    "strike_offset": 1,       # +1 strike OTM (REVERSAL uses 0 = ATM)
+    "hold_minutes": 45,       # UPDRAFT 45, BACKDRAFT 30, REVERSAL 45
     "min_option_price": 0.10,
     "max_spread_pct": 0.15,
     "cooldown_min": 45,       # do not re-enter the same burst
@@ -68,10 +75,12 @@ class UpdraftSignal:
     call_mid: float
     spot: float
     mode: str
-    flow_imb_30: float
+    flow_imb_30: float | None       # None for REVERSAL — it has no flow gate
     r30_bp: float | None
     put_wall: float | None
     hold_minutes: int
+    rsi: float | None = None        # REVERSAL only, for the audit trail
+    prev_rsi: float | None = None
     # Fields the executor requires of every signal (see executor.open_position):
     # .debit, .contracts, .max_profit, .max_loss, .pt_target_pnl, .sl_target_pnl
     debit: float = 0.0            # premium paid per contract (== call_mid)
@@ -99,6 +108,7 @@ class UpdraftSignal:
             "call_mid": self.call_mid, "flow_imb_30": self.flow_imb_30,
             "r30_bp": self.r30_bp, "put_wall": self.put_wall,
             "hold_minutes": self.hold_minutes,
+            "rsi": self.rsi, "prev_rsi": self.prev_rsi,
         }
 
 
@@ -147,7 +157,11 @@ def build_updraft_signal(
     flow = chain.get("flow") or {}
     fi = flow.get("flow_imb_30")
     r30 = flow.get("r30_bp")
-    if fi is None:
+    # REVERSAL does not read flow at all — its trigger is the hourly RSI
+    # cross. Demanding a flow block here would blind it whenever flow_store
+    # has not yet accumulated 30 minutes, which has nothing to do with its
+    # signal.
+    if mode != "reversal" and fi is None:
         return _reject(f"flow_unavailable: {flow.get('reason', 'no flow block')}")
 
     if mode == "updraft":
@@ -176,6 +190,22 @@ def build_updraft_signal(
             if spot <= float(put_wall):
                 return _reject(
                     f"below_put_wall: spot={spot:.2f} wall={float(put_wall):.2f}")
+    elif mode == "reversal":
+        # MUST be the recovery CROSS, never "RSI is currently low". Buying
+        # into an oversold tape was measured at -3.87% (SPY) / -3.74% (XSP);
+        # waiting for the cross back up gives +10.68% / +12.58%. The sign
+        # flips on this distinction, so the flag is computed in flow_store
+        # and only the cross is honoured here.
+        rsi = chain.get("rsi") or {}
+        if rsi.get("rsi") is None:
+            return _reject(
+                f"rsi_unavailable: {rsi.get('reason') or 'no rsi block'}")
+        if not rsi.get("recovery_cross"):
+            return _reject(
+                f"no_rsi_recovery: rsi={float(rsi['rsi']):.1f} "
+                f"prev={rsi.get('prev_rsi')} "
+                f"(need prev<{float(p['rsi_threshold']):.0f}<=rsi)")
+        put_wall = None
     else:
         return _reject(f"unknown_mode: {mode}")
 
@@ -221,6 +251,8 @@ def build_updraft_signal(
         r30_bp=r30,
         put_wall=float(put_wall) if put_wall is not None else None,
         hold_minutes=int(p["hold_minutes"]),
+        rsi=(chain.get("rsi") or {}).get("rsi"),
+        prev_rsi=(chain.get("rsi") or {}).get("prev_rsi"),
         debit=debit,
         contracts=contracts,
         max_profit=pt_pct * max_loss_per,

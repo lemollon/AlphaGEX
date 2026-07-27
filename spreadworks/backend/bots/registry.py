@@ -461,6 +461,64 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "discord_alerts": False,
         },
     },
+    # REVERSAL — the third leg. Same 0DTE call, but an ATM strike and a
+    # completely different mechanism: a multi-day hourly oversold state
+    # resolving upward, rather than fading a put-buying crowd.
+    #
+    # THE ENTRY IS THE WHOLE EDGE. It fires only when hourly RSI(14) closes
+    # back ABOVE 30 having been below. Measured three ways:
+    #     recovery cross (this)      SPY +10.68%, XSP +12.58%, TEST >= TRAIN
+    #     cross down (into the fall) SPY  -3.87%, XSP  -3.74%
+    #     "RSI is low" as a state    SPY  +1.24%, XSP  +2.66%
+    # The sign flips on that distinction — never relax it to a level test.
+    #
+    # WHAT IT ADDS TO THE BOOK: not money, diversification. It shares ZERO
+    # entry minutes with UPDRAFT and BACKDRAFT. Book with it vs without:
+    #     2-leg  442 trades/yr  +14.51%  t=3.23  TEST +10.77% (t=1.47)  $3,509/yr
+    #     3-leg  441 trades/yr  +13.58%  t=3.48  TEST +11.42% (t=1.84)  $3,506/yr
+    # Same dollars, better t and better out-of-sample — it cuts the book's
+    # reliance on the single flow mechanism.
+    #
+    # NOT individually confirmed: 72 cells were screened and the best reached
+    # t=1.79, which does not clear a multiplicity bar. PAPER ONLY.
+    "reversal": {
+        "display": "REVERSAL",
+        "strategy": "updraft",          # same module, mode=reversal
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": 0,
+        "defaults": {
+            "starting_capital": 10000.0,
+            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "max_contracts": 1,
+            "bp_pct": 0.02,
+            # schema-required, unused here — see UPDRAFT.
+            "sd_mult": 1.0,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            "mode": "reversal",
+            "rsi_threshold": 30.0,
+            "rsi_period": 14,
+            # ATM, not +1 OTM. The 45-minute hold was best at EVERY strike
+            # (30m and 60m both weaker), and ATM carried the best dollars
+            # per trade of the non-artifact cells.
+            "strike_offset": 0,
+            "hold_minutes": 45,
+            "pt_pct": 9.9999,   # see UPDRAFT — NUMERIC(5,4) ceiling
+            "sl_pct": 0.50,
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+            "entry_start_ct": "08:31",
+            "entry_end_ct": "14:00",
+            "eod_close_ct": "14:45",
+            "allow_stacking": True,
+            "max_concurrent_positions": 3,
+            # One entry per hourly cross. The trigger is a single bar event,
+            # so a 60-minute cooldown spans the bar that produced it.
+            "cooldown_min": 60,
+            "discord_alerts": False,
+        },
+    },
 }
 
 
