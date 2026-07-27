@@ -122,14 +122,35 @@ interface StripeList<T> {
   data: T[]
 }
 
-/** Resolves a Stripe Price id from its lookup key. Returns null when no active price matches. */
-export async function findPriceIdByLookupKey(lookupKey: string): Promise<string | null> {
-  const res = await stripeRequest<StripeList<{ id: string }>>('GET', '/prices', {
+/** A price as Stripe reports it, enough to check it against what the site advertises. */
+export interface StripePriceSummary {
+  id: string
+  /** Minor units, e.g. 1000 for $10.00. */
+  unit_amount: number | null
+  currency: string
+  recurring: { interval: string } | null
+}
+
+/**
+ * Resolves the full active Price behind a lookup key.
+ *
+ * Returns the AMOUNT as well as the id, because the id alone cannot tell you
+ * whether Stripe is about to charge what the marketing page says. See
+ * /api/ops/billing-readiness, which uses this to catch a price drift before a
+ * customer is billed the wrong number.
+ */
+export async function findPriceByLookupKey(lookupKey: string): Promise<StripePriceSummary | null> {
+  const res = await stripeRequest<StripeList<StripePriceSummary>>('GET', '/prices', {
     lookup_keys: [lookupKey],
     active: true,
     limit: 1,
   })
-  return res.data[0]?.id ?? null
+  return res.data[0] ?? null
+}
+
+/** Resolves a Stripe Price id from its lookup key. Returns null when no active price matches. */
+export async function findPriceIdByLookupKey(lookupKey: string): Promise<string | null> {
+  return (await findPriceByLookupKey(lookupKey))?.id ?? null
 }
 
 /** Returns an existing Stripe customer id or creates one for this user. */
