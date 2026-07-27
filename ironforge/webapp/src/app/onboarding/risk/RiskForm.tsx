@@ -67,7 +67,9 @@ export default function RiskForm() {
           <div className="rounded-2xl border border-white/10 bg-forge-card/90 p-8 shadow-2xl">
             <p className="text-xs font-semibold uppercase tracking-wide text-amber-500">Your risk profile</p>
             <h1 className="mt-1 text-2xl font-bold text-white">
-              You&apos;re a <span className="text-amber-500">{result.tier}</span> investor
+              {/* "a Aggressive" — Aggressive is the only tier taking "an". */}
+              You&apos;re {result.tier === 'Aggressive' ? 'an' : 'a'}{' '}
+              <span className="text-amber-500">{result.tier}</span> investor
             </h1>
             <p className="mt-2 text-sm leading-relaxed text-gray-400">{TIER_BLURB[result.tier]}</p>
 

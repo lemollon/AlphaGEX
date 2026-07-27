@@ -77,7 +77,17 @@ export const RISK_QUESTIONS: RiskQuestion[] = [
 
 export type RiskAnswers = Record<string, string> // question key → option id
 export type RiskTier = 'Conservative' | 'Moderate' | 'Aggressive'
-export type RecommendedBot = 'FLAME' | 'SPARK' | 'INFERNO'
+/**
+ * Only bots a customer can actually subscribe to (BOT_PLANS: spark, flame).
+ *
+ * INFERNO was in this union and was what the Aggressive tier recommended, but it is
+ * an INTERNAL 0DTE bot and has never been a customer product. So the risk step told
+ * an Aggressive customer to run a bot no page will sell them, and /onboarding/complete
+ * — which only highlights SPARK/FLAME — then showed them no recommendation at all.
+ * Keep this union limited to purchasable strategies; a recommendation that cannot be
+ * bought is worse than none.
+ */
+export type RecommendedBot = 'FLAME' | 'SPARK'
 
 export interface RiskProfile {
   score: number
@@ -87,9 +97,9 @@ export interface RiskProfile {
 }
 
 export const BOT_RATIONALE: Record<RecommendedBot, string> = {
-  FLAME: '2-day-to-expiration iron condors — the most conservative, slowest-paced bot.',
-  SPARK: '1-day-to-expiration iron condors — a balanced middle ground.',
-  INFERNO: '0-day-to-expiration, aggressive and fast-paced — the highest risk and activity.',
+  FLAME: '2-day-to-expiration iron condors — the slower-paced of the two, with more time for a trade to work.',
+  // Worded to read correctly for BOTH Moderate and Aggressive, which now share it.
+  SPARK: '1-day-to-expiration iron condors — the shorter, faster-moving strategy of the two.',
 }
 
 /** The capacity answer that forces a caution regardless of total score. */
@@ -123,7 +133,9 @@ export function scoreToProfile(answers: RiskAnswers): RiskProfile {
     recommendedBot = 'SPARK'
   } else {
     tier = 'Aggressive'
-    recommendedBot = 'INFERNO'
+    // SPARK is the shortest-duration strategy on offer. The tier is still reported
+    // honestly as Aggressive; only the recommendation is clamped to what exists.
+    recommendedBot = 'SPARK'
   }
 
   const caution = tier === 'Conservative' || answers.capacity === CRITICAL_CAPACITY_OPTION

@@ -3,8 +3,10 @@ import {
   scoreToProfile,
   validateRiskAnswers,
   RISK_QUESTIONS,
+  BOT_RATIONALE,
   type RiskAnswers,
 } from '@/lib/onboarding/risk-scoring'
+import { BOT_PLANS } from '@/lib/billing/plans'
 
 // Helper: build an answers object from explicit option ids (in question order).
 function answers(ids: string[]): RiskAnswers {
@@ -48,20 +50,20 @@ describe('scoreToProfile', () => {
     expect(p.recommendedBot).toBe('SPARK')
   })
 
-  it('treats 18 as Aggressive/INFERNO', () => {
+  it('treats 18 as Aggressive, recommending SPARK (INFERNO is not a customer product)', () => {
     // experienced(4)+aggressive(4)+large(4)+add(4)+moderate(2)+longterm(0) = 18
     const p = scoreToProfile(answers(['experienced', 'aggressive', 'large', 'add', 'moderate', 'longterm']))
     expect(p.score).toBe(18)
     expect(p.tier).toBe('Aggressive')
-    expect(p.recommendedBot).toBe('INFERNO')
+    expect(p.recommendedBot).toBe('SPARK')
     expect(p.caution).toBe(false)
   })
 
-  it('scores all-highest as 24 → Aggressive/INFERNO, no caution', () => {
+  it('scores all-highest as 24 → Aggressive/SPARK, no caution', () => {
     const p = scoreToProfile(answers(['experienced', 'aggressive', 'large', 'add', 'small', 'daily']))
     expect(p.score).toBe(24)
     expect(p.tier).toBe('Aggressive')
-    expect(p.recommendedBot).toBe('INFERNO')
+    expect(p.recommendedBot).toBe('SPARK')
     expect(p.caution).toBe(false)
   })
 
@@ -91,5 +93,37 @@ describe('validateRiskAnswers', () => {
   it('rejects non-objects', () => {
     expect(validateRiskAnswers(null)).toBe(false)
     expect(validateRiskAnswers('x')).toBe(false)
+  })
+})
+
+/**
+ * Guard against recommending a bot nobody can buy.
+ *
+ * The Aggressive tier used to recommend INFERNO, an internal 0DTE bot that is not a
+ * customer product. The result card happily rendered "WE RECOMMEND INFERNO", and
+ * /onboarding/complete — which only highlights purchasable plans — then showed that
+ * customer no recommendation at all. This sweeps EVERY possible answer combination and
+ * pins the recommendation to the set of plans that actually exist, so adding a tier or
+ * retuning the thresholds cannot reintroduce it.
+ */
+describe('every possible recommendation is a plan a customer can actually buy', () => {
+  const SELLABLE = new Set(Object.keys(BOT_PLANS).map((s) => s.toUpperCase()))
+
+  it('BOT_RATIONALE only describes sellable strategies', () => {
+    for (const bot of Object.keys(BOT_RATIONALE)) expect(SELLABLE.has(bot)).toBe(true)
+  })
+
+  it('holds across all answer combinations', () => {
+    const combos = RISK_QUESTIONS.reduce<string[][]>(
+      (acc, q) => acc.flatMap((prefix) => q.options.map((o) => [...prefix, o.id])),
+      [[]],
+    )
+    // 7 questions; assert we really are sweeping the whole space, not a stub.
+    expect(combos.length).toBeGreaterThan(100)
+    for (const ids of combos) {
+      const p = scoreToProfile(answers(ids))
+      expect(SELLABLE.has(p.recommendedBot)).toBe(true)
+      expect(BOT_RATIONALE[p.recommendedBot]).toBeTruthy()
+    }
   })
 })
