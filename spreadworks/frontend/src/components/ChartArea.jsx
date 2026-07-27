@@ -20,7 +20,7 @@ export default function ChartArea({
 }) {
   // Compute shared price range from candles + strikes + GEX
   const { minPrice, maxPrice } = useMemo(() => {
-    const base = computePriceRange(candles, strikes, gexData, 0.005);
+    const base = computePriceRange(candles, strikes, gexData, 0.005, spotPrice);
 
     // If user set a range %, override based on spot price
     if (spotPrice && rangePct) {
