@@ -62,7 +62,7 @@ export async function getLiveSummary(
 ): Promise<LiveSummary> {
   const dte = dteMode(BOT)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
-  const prodFilter = scopeFilter(BOT, person)
+  const prodFilter = scopeFilter(BOT, person, allowAggregate)
 
   const [
     heartbeatRows,
@@ -193,7 +193,8 @@ export async function getLiveSummary(
   // Until ironforge_customer_bots carries the owning `person` and these queries
   // scope to it, refuse to aggregate for a non-operator. Showing an honest empty
   // state beats showing someone else's balance.
-  const aggregateBlocked = !allowAggregate && allProdBals.length > 1
+  const aggregateBlocked =
+    !allowAggregate && (!person || allProdBals.length > 1)
   const prodBals = aggregateBlocked ? [] : allProdBals
   if (aggregateBlocked) {
     console.warn(
@@ -320,10 +321,14 @@ function profitBasisPct(pnl: number, maxProfitDollars: number, maxLossDollars: n
   return Math.round((pnl / basis) * 10000) / 100
 }
 
-export async function getLiveTrade(BOT: LiveBot = 'spark', person: string | null = null): Promise<LiveTrade> {
+export async function getLiveTrade(
+  BOT: LiveBot = 'spark',
+  person: string | null = null,
+  isOperator = false,
+): Promise<LiveTrade> {
   const dte = dteMode(BOT)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
-  const prodFilter = scopeFilter(BOT, person)
+  const prodFilter = scopeFilter(BOT, person, isOperator)
 
   const [positionRows, sparkSeriesRows] = await Promise.all([
     dbQuery(

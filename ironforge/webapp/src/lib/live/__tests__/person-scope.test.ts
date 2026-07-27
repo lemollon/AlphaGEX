@@ -43,9 +43,27 @@ describe('scopeFilter', () => {
     expect(scoped).toContain("AND person = 'User'")
   })
 
-  it('degrades to the ledger filter alone when no owner is mapped', () => {
-    expect(scopeFilter('spark', null).trim()).toBe(
+  it('FAILS CLOSED for a customer with no owner mapped', () => {
+    // This test previously asserted the opposite — that a null person "degrades
+    // to the ledger filter alone", i.e. an UNSCOPED production query. That is the
+    // bug, not the contract. On 2026-07-27 the one row in ironforge_customer_bots
+    // had person = NULL, so the query returned the SPARK production account
+    // (person 'Logan', real money) to whoever loaded the page.
+    const f = scopeFilter('spark', null)
+    expect(f).toContain('AND FALSE')
+    expect(f).not.toBe("AND COALESCE(account_type, 'sandbox') = 'production'")
+  })
+
+  it('still gives an operator the unscoped fleet view', () => {
+    // The fleet aggregate is legitimate for an operator and must not regress.
+    expect(scopeFilter('spark', null, true).trim()).toBe(
       "AND COALESCE(account_type, 'sandbox') = 'production'",
     )
+  })
+
+  it('scopes to the owner when one IS mapped, operator or not', () => {
+    for (const isOperator of [false, true]) {
+      expect(scopeFilter('spark', 'Logan', isOperator)).toContain("AND person = 'Logan'")
+    }
   })
 })

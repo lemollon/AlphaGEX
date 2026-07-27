@@ -89,8 +89,30 @@ export function personFilter(person: string | null | undefined): string {
   return `AND person = '${escapeSql(person)}'`
 }
 
-/** ledgerFilter + personFilter — the pair every customer-facing query needs. */
-export function scopeFilter(bot: LiveBot, person: string | null | undefined): string {
+/**
+ * ledgerFilter + personFilter — the pair every customer-facing query needs.
+ *
+ * FAILS CLOSED. personFilter(null) is an EMPTY string, i.e. no restriction, which
+ * is correct for an operator's fleet view and catastrophic for a customer: an
+ * unscoped production query returns another person's real-money account.
+ *
+ * That is not hypothetical. On 2026-07-27 the single row in
+ * ironforge_customer_bots had person = NULL, so a signed-in customer's Live page
+ * rendered the SPARK production account (person 'Logan', a real Tradier account)
+ * as "your account" — balance, today's P&L and the open position.
+ *
+ * So a non-operator with no `person` now gets a query that matches nothing and an
+ * honest empty state. Callers must pass isOperator explicitly; the default is
+ * false, so a caller that forgets cannot leak.
+ */
+export function scopeFilter(
+  bot: LiveBot,
+  person: string | null | undefined,
+  isOperator = false,
+): string {
+  if (!isOperator && !person) {
+    return `${ledgerFilter(bot)} AND FALSE`
+  }
   return `${ledgerFilter(bot)} ${personFilter(person)}`
 }
 
@@ -132,11 +154,24 @@ export async function resolveLiveViewer(req: NextRequest): Promise<LiveViewer> {
   {
     try {
       const ops = await getSession()
-      if (ops.userId) {
+      const customer = await getCustomerSession()
+
+      // A CUSTOMER session wins over an operator one.
+      //
+      // Impersonation ("View as user") works by setting the customer session
+      // while the operator session stays put — see api/ops/impersonate. Checking
+      // the operator session first therefore defeated it entirely: an operator
+      // impersonating a customer still got isOperator = true and the unscoped
+      // FLEET view, so /live showed the SPARK production account (person
+      // 'Logan', real money) instead of what that customer actually sees.
+      //
+      // Preferring the customer session makes impersonation mean what it says,
+      // and is the safe direction: the worst case is an operator seeing less
+      // than they could, which they undo with ?clear=true.
+      if (!customer.customerId && ops.userId) {
         allowed = [...LIVE_BOTS]
         isOperator = true
       } else {
-        const customer = await getCustomerSession()
         if (customer.customerId) {
           customerId = customer.customerId
           const rows = await dbQuery<{ bot: string; person: string | null }>(
