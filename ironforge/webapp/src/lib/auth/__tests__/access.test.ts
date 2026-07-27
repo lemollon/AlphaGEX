@@ -4,9 +4,10 @@ import { isPublicPath, isCustomerPath, decideAccess } from '../access'
 describe('isPublicPath', () => {
   it('treats login, auth endpoints, and health as public', () => {
     expect(isPublicPath('/login')).toBe(true)
-    expect(isPublicPath('/api/auth/login')).toBe(true)
+    // Operator password login was retired 2026-07-27; the route no longer exists.
+    expect(isPublicPath('/api/auth/login')).toBe(false)
     expect(isPublicPath('/api/auth/logout')).toBe(true)
-    expect(isPublicPath('/api/auth/seed')).toBe(true)
+    expect(isPublicPath('/api/auth/seed')).toBe(false)
     expect(isPublicPath('/api/health')).toBe(true)
   })
   it('treats the signup page and signup endpoint as public', () => {
