@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth/server'
+import { isPublicMode } from '@/lib/auth/access'
 import { publicOrigin } from '@/lib/public-origin'
 import { isSnapTradeConfigured } from '@/lib/snaptrade'
 import { isTradierOAuthConfigured, tradierBase } from '@/lib/tradier-oauth'
@@ -46,9 +47,16 @@ function unset(...names: string[]): string[] {
 }
 
 export async function GET(req: NextRequest) {
-  const ops = await getSession()
-  if (!ops.userId) {
-    return NextResponse.json({ ok: false, error: 'Operator session required.' }, { status: 401 })
+  // A deployment in public mode has no login wall at all, so NO caller there can ever
+  // hold a session — demanding one makes this endpoint permanently 401 on the very
+  // console an operator would use it from (ironforge-legacy runs
+  // IRONFORGE_PUBLIC_MODE=true). Same bypass ops/customers already uses, and nothing
+  // here is sensitive: booleans, env var NAMES and callback URLs, never a secret value.
+  if (!isPublicMode()) {
+    const ops = await getSession()
+    if (!ops.userId) {
+      return NextResponse.json({ ok: false, error: 'Operator session required.' }, { status: 401 })
+    }
   }
 
   const origin = publicOrigin(req)
