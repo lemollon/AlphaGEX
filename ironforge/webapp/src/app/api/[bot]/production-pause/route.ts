@@ -15,6 +15,9 @@
  *   Returns the updated state.
  *
  * POST is self-guarded. The caller must be ONE of:
+ *   - any caller, when this deployment runs in public mode (isPublicMode() —
+ *     the operator console has no login wall, so no caller there can hold a
+ *     session and the dashboard's Pause button would be permanently 403), or
  *   - an operator session, or
  *   - a customer session that OWNS this bot (resolveLiveViewer.allowedBots), or
  *   - a holder of IRONFORGE_PAUSE_PASSWORD (legacy operator fallback; disabled
@@ -29,6 +32,7 @@ import { createHash, timingSafeEqual } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { dbExecute, validateBot } from '@/lib/db'
 import { getSession } from '@/lib/auth/server'
+import { isPublicMode } from '@/lib/auth/access'
 import { resolveLiveViewer } from '@/lib/live/viewer'
 import type { LiveBot } from '@/lib/live/bots'
 import { PRODUCTION_BOT, isProductionBot, getProductionPauseState } from '@/lib/tradier'
@@ -94,6 +98,7 @@ export async function POST(
   }
 
   // Auth, in order of preference:
+  //   0. public mode               — this deployment has no login at all
   //   1. operator session          — may pause any bot
   //   2. customer session + OWNERSHIP of this bot (resolveLiveViewer)
   //   3. the shared pause password — legacy operator fallback
@@ -104,6 +109,14 @@ export async function POST(
   // a viewer can only pause a bot that appears in their own allowedBots.
   let authorized = false
   let actor = 'ui'
+  // Public mode short-circuits the session ladder below: on a deployment with
+  // the login wall lifted, none of those checks can ever pass, so the control
+  // would be dead rather than open. Recorded as 'public-mode' in paused_by so
+  // the pause row still says how the change was authorised.
+  if (isPublicMode()) {
+    authorized = true
+    actor = 'public-mode'
+  }
   try {
     const session = await getSession()
     if (session.userId) {

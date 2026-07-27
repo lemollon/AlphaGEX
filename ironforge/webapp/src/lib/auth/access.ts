@@ -1,3 +1,25 @@
+/**
+ * True when this deployment runs with the login wall lifted entirely.
+ *
+ * One flag, one meaning, read in one place. Middleware skips the whole access
+ * decision, and the few routes that guard themselves *after* middleware (the
+ * operator admin tools and the production-pause control) consult this same
+ * helper — so "open" means the same thing everywhere on that service. Without
+ * it, IRONFORGE_PUBLIC_MODE opened every page while those routes kept
+ * answering 401/403, which reads as broken rather than open.
+ *
+ * Fail-secure: ANY value other than the exact string 'true' leaves the gate
+ * enforced, so losing the variable locks the site down rather than exposing it.
+ * Read at call time (never captured at module load) so middleware and a route
+ * handler can never disagree about the current value.
+ *
+ * Scope is per-deployment — it is a Render env var, set on the operator console
+ * (ironforge-legacy) and NOT on the customer site.
+ */
+export function isPublicMode(): boolean {
+  return process.env.IRONFORGE_PUBLIC_MODE === 'true'
+}
+
 /** Paths reachable without a session. */
 const PUBLIC_EXACT = new Set<string>([
   // Public marketing site (homepage + How It Works).

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth/server'
+import { isPublicMode } from '@/lib/auth/access'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { normalizeEmail } from '@/lib/signup-validation'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
@@ -30,11 +31,15 @@ interface UserRow {
 
 export async function GET(req: NextRequest) {
   const ops = await getSession()
+  // On a deployment running in public mode nobody can hold a session, so
+  // operator status comes from the flag instead — otherwise the AdminBadge and
+  // every operator affordance stay hidden on a site that is meant to be open.
+  const isOperator = Boolean(ops.userId) || isPublicMode()
 
   // Lightweight status probe for the floating AdminBadge — answers for
   // everyone (no 401) but reveals nothing unless an operator session exists.
   if (req.nextUrl.searchParams.get('status') === 'true') {
-    if (!ops.userId) return NextResponse.json({ ok: true, operator: false })
+    if (!isOperator) return NextResponse.json({ ok: true, operator: false })
     const session = await getCustomerSession()
     return NextResponse.json({
       ok: true,
@@ -43,7 +48,7 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  if (!ops.userId) {
+  if (!isOperator) {
     return NextResponse.json({ ok: false, error: 'Operator session required.' }, { status: 401 })
   }
   if (!isCustomersDbConfigured()) {
@@ -97,7 +102,7 @@ export async function GET(req: NextRequest) {
         'ADMIN_IMPERSONATE',
         req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
         req.headers.get('user-agent'),
-        JSON.stringify({ operator: ops.username ?? ops.userId }),
+        JSON.stringify({ operator: ops.username ?? ops.userId ?? 'public-mode' }),
       ],
     )
   } catch (e) {
