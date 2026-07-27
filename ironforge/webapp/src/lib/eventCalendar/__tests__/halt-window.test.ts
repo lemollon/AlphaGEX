@@ -58,18 +58,38 @@ describe('computeDayOfNewsHaltWindow (active 2026-05-06+ policy)', () => {
     expect(haltEnd.toISOString()).toBe('2026-06-17T18:30:00.000Z')
   })
 
-  it('CPI pre-market (07:30 CDT) → resume at 08:30 CDT market open', () => {
+  it('CPI pre-market (07:30 CDT) → resume 1h after the 08:30 CDT open', () => {
     const { haltStart, haltEnd } = computeDayOfNewsHaltWindow('2026-05-12', '07:30', 30)
     // 00:00 CDT → 05:00 UTC
     expect(haltStart.toISOString()).toBe('2026-05-12T05:00:00.000Z')
-    // 08:30 CDT → 13:30 UTC
-    expect(haltEnd.toISOString()).toBe('2026-05-12T13:30:00.000Z')
+    // Operator policy 2026-05-10: pre-market events resume PRE_MARKET_RESUME_DELAY_MIN
+    // (60) after the open, not at the bell, so the open-auction whipsaw clears first.
+    // 08:30 + 60m = 09:30 CDT → 14:30 UTC
+    expect(haltEnd.toISOString()).toBe('2026-05-12T14:30:00.000Z')
   })
 
-  it('NFP pre-market (07:30 CDT) → resume at 08:30 CDT market open (resumeOffset ignored)', () => {
+  it('NFP pre-market (07:30 CDT) → resume 1h after open (resumeOffset ignored)', () => {
     const { haltEnd } = computeDayOfNewsHaltWindow('2026-05-08', '07:30', 60)
-    // resumeOffset is ignored for pre-market — always resumes at market open
-    expect(haltEnd.toISOString()).toBe('2026-05-08T13:30:00.000Z')
+    // resumeOffset is ignored for pre-market — the resume time is always
+    // open + PRE_MARKET_RESUME_DELAY_MIN regardless of what is passed here.
+    // 09:30 CDT → 14:30 UTC
+    expect(haltEnd.toISOString()).toBe('2026-05-08T14:30:00.000Z')
+  })
+
+  it('pre-market resume is open + 60m exactly, whatever resumeOffset says', () => {
+    // Pins the policy constant. Both calls pass a DIFFERENT resumeOffset and must
+    // still land on the same instant — if PRE_MARKET_RESUME_DELAY_MIN is changed,
+    // this fails loudly rather than the expectation drifting silently as it did
+    // between 2026-05-10 and 2026-07-27.
+    const a = computeDayOfNewsHaltWindow('2026-06-17', '07:00', 0).haltEnd
+    const b = computeDayOfNewsHaltWindow('2026-06-17', '08:29', 999).haltEnd
+    expect(a.toISOString()).toBe('2026-06-17T14:30:00.000Z')
+    expect(b.toISOString()).toBe(a.toISOString())
+
+    // Same policy in standard time: 08:30 CST + 60m = 09:30 CST → 15:30 UTC.
+    // Guards the DST branch of the resume path, which no other case covers.
+    const winter = computeDayOfNewsHaltWindow('2026-01-28', '07:30', 30).haltEnd
+    expect(winter.toISOString()).toBe('2026-01-28T15:30:00.000Z')
   })
 
   it('Standard time mid-day (13:00 CST) handled correctly (Jan FOMC)', () => {
@@ -86,10 +106,11 @@ describe('computeDayOfNewsHaltWindow (active 2026-05-06+ policy)', () => {
     expect(haltEnd.toISOString()).toBe('2026-06-17T14:00:00.000Z')
   })
 
-  it('Edge: release at 08:29 CT is pre-market (resume at 08:30 CT)', () => {
+  it('Edge: release at 08:29 CT is pre-market (resume 1h after open)', () => {
     const { haltEnd } = computeDayOfNewsHaltWindow('2026-06-17', '08:29', 30)
-    // 08:30 CDT → 13:30 UTC
-    expect(haltEnd.toISOString()).toBe('2026-06-17T13:30:00.000Z')
+    // One minute before the open flips to the pre-market branch: 09:30 CDT → 14:30 UTC.
+    // Contrast with the 08:30 case above, which is mid-day and resumes at 09:00 CDT.
+    expect(haltEnd.toISOString()).toBe('2026-06-17T14:30:00.000Z')
   })
 
   it('Custom resume offset is honored for mid-day events', () => {
