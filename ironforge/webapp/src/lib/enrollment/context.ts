@@ -5,6 +5,7 @@ import { acceptedVersionsFor } from './service'
 import { getProductionPauseState } from '@/lib/tradier'
 import { hasUsablePaymentMethod } from '@/lib/billing/stripe'
 import type { ActivationInput } from './activation'
+import { isUuid } from './ids'
 
 /**
  * Gather every input the activation predicate judges (spec §4).
@@ -42,6 +43,10 @@ export async function loadActivationContext(
   userId: string,
   configId: string,
 ): Promise<ActivationContext | null> {
+  // A malformed id raises on the UUID cast instead of returning no rows. Same answer
+  // as an id that is not the caller's — which also avoids leaking whether one exists.
+  if (!isUuid(configId) || !isUuid(userId)) return null
+
   const config = (await customerQuery<ConfigRow>(
     `SELECT id, agent_code, rule_version, status, broker_account_id, config_json
        FROM agent_configs WHERE id = $1 AND user_id = $2 LIMIT 1`,

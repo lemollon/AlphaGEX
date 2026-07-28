@@ -3,6 +3,7 @@ import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
 import { getEnrollmentForUser } from '@/lib/enrollment/service'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
+import { isUuid } from '@/lib/enrollment/ids'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -37,6 +38,11 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     const accountId = String(body.broker_account_id ?? '')
     if (!accountId) {
       const e = errorEnvelope('VALIDATION_FAILED', 'Choose an account to continue.', { field: 'broker_account_id' })
+      return NextResponse.json(e, { status: statusFor(e.code) })
+    }
+    // A malformed id raises on the UUID cast below rather than returning no rows.
+    if (!isUuid(accountId)) {
+      const e = errorEnvelope('FORBIDDEN', 'That account is not available.')
       return NextResponse.json(e, { status: statusFor(e.code) })
     }
 
