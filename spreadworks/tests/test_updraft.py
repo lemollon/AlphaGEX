@@ -538,6 +538,24 @@ def test_or_state_reader_builds_range_from_snapshots(tmp_path):
     assert not st2.or_complete
 
 
+def test_thermal_is_updraft_ridden_to_the_close():
+    meta = get_bot("thermal")
+    d = meta["defaults"]
+    assert d["enabled"] is False, "no bot ships armed"
+    assert d["mode"] == "updraft", "THERMAL = UPDRAFT's exact signal"
+    assert d["flow_max"] == -0.1378 and d["r30_min"] == 19.23, \
+        "gates FROZEN, identical to UPDRAFT"
+    assert d["strike_offset"] == 0, "C+0 beat C+1 (DD 45% vs 72%)"
+    assert d["sl_pct"] == 0.99, "research ran NO stop — settle holds ride"
+    # the timer must never fire before the 14:57 EOD close does
+    assert d["hold_minutes"] >= 600
+    assert d["eod_close_ct"] == "14:57"
+    assert d["starting_capital"] == 1000.0, "the $1k paper framing"
+    assert d["bp_pct"] * d["starting_capital"] >= 350, \
+        "must never size to zero contracts (AFTERBURN lesson)"
+    assert meta["one_entry_per_day"] is True, "one ride per day, no k=3"
+
+
 def test_embreachq_is_embreach_on_qqq_with_own_thresholds():
     meta = get_bot("embreachq")
     d = meta["defaults"]
