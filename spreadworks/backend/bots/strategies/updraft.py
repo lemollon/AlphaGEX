@@ -278,7 +278,12 @@ def build_updraft_signal(
                 return _reject(f"not_first_touch: already breached at prior "
                                f"scan (prev_move={prev_move:+.2f}%)")
         put_wall = None
-    elif mode == "afterburn":
+    elif mode in ("afterburn", "weekender"):
+        # WEEKENDER is AFTERBURN's Friday twin: same close-momentum gate
+        # machinery, but afterburn_min_ret_pct is set to -99 in its registry
+        # entry (UNCONDITIONAL — research showed ALL Fridays positive both
+        # periods, the strong-close split had only n=30) and the hold spans
+        # the weekend (front_dte=3, hold_minutes=3936 -> Monday ~08:31 CT).
         # Strong close -> overnight 1DTE call. 9/9 research cells positive in
         # both periods, monotone in the threshold, 4/4 years. Entry window is
         # the last minutes of the session (registry: 14:50-14:59 CT), so the
@@ -345,7 +350,8 @@ def build_updraft_signal(
         side=right,
         em_move_pct=(100.0 * (spot / float((chain.get("em") or {}).get("day_open"))
                               - 1.0)
-                     if mode in ("em_breach", "afterburn") else None),
+                     if mode in ("em_breach", "afterburn", "weekender")
+                     else None),
         em_straddle_pct=(straddle if mode == "em_breach" else None),
         debit=debit,
         contracts=contracts,

@@ -553,3 +553,39 @@ def test_position_rows_store_the_MODE_not_the_module():
         assert mode == want, f"{bot}: stored strategy would be {mode}"
         assert mode in UPDRAFT_FAMILY, \
             f"{mode} missing from UPDRAFT_FAMILY -> timer exit would not fire"
+
+
+# ---------------------------------------------------------------- WEEKENDER
+def test_weekender_fires_unconditionally_with_day_state():
+    """min_ret=-99 disables the close-momentum gate: ALL Fridays trade
+    (the research base case, n=138) — a flat or weak close must NOT block."""
+    c = _ab_chain(spot=600.5, day_open=600.0)          # +0.08%, weak close
+    c["expiration"] = date(2026, 7, 31)                # Friday -> Monday exp
+    sig = build_updraft_signal(
+        chain=c, today=date(2026, 7, 28),
+        params={**DEFAULT_PARAMS, "mode": "weekender", "strike_offset": 0,
+                "hold_minutes": 3936, "afterburn_min_ret_pct": -99.0},
+        mode="weekender", config={"bp_pct": 0.10})
+    assert sig is not None
+    leg = sig.legs()[0]
+    assert leg["type"] == "call" and leg["action"] == "buy"
+    assert sig.hold_minutes == 3936
+
+
+def test_weekender_registry_weekend_mechanics():
+    meta = get_bot("weekender")
+    d = meta["defaults"]
+    assert d["enabled"] is False, "no bot ships armed"
+    assert meta["front_dte"] == 3, "Friday entry -> Monday expiry"
+    assert d["entry_days"] == "fri"
+    assert d["hold_minutes"] == 3936, "Fri 14:55 + 3936m = Mon ~08:31 CT"
+    assert d["afterburn_min_ret_pct"] == -99.0, "UNCONDITIONAL by design"
+    assert d["bp_pct"] >= 0.10, "3DTE ATM ~$450-650: smaller bp sizes to zero"
+    assert d["sl_pct"] == 0.99
+    assert meta["one_entry_per_day"] is True
+
+
+def test_weekender_mode_is_in_updraft_family():
+    from backend.bots.scanner import UPDRAFT_FAMILY
+    assert "weekender" in UPDRAFT_FAMILY, \
+        "missing from UPDRAFT_FAMILY -> the Monday timer exit would not fire"

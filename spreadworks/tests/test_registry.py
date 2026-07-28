@@ -3,7 +3,8 @@ from backend.bots.registry import BOT_REGISTRY, get_bot, list_bots
 
 def test_bots_registered():
     assert set(BOT_REGISTRY.keys()) == {"surge", "splash", "ripple", "tide", "drift", "flow", "meadow", "undertow",
-         "delta", "updraft", "backdraft", "reversal", "embreach", "afterburn"}
+         "delta", "updraft", "backdraft", "reversal", "embreach", "afterburn",
+         "weekender"}
 
 
 def test_ripple_defaults():
@@ -140,7 +141,8 @@ def test_get_bot_unknown_raises():
 
 def test_list_bots_returns_keys():
     assert sorted(list_bots()) == ["afterburn", "backdraft", "delta", "drift", "embreach", "flow", "meadow",
-         "reversal", "ripple", "splash", "surge", "tide", "undertow", "updraft"]
+         "reversal", "ripple", "splash", "surge", "tide", "undertow", "updraft",
+         "weekender"]
 
 
 def test_undertow_registered():

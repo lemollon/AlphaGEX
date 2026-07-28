@@ -624,6 +624,60 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "discord_alerts": False,
         },
     },
+    # WEEKENDER — AFTERBURN's Friday twin: buy a 3DTE ATM call at Friday's
+    # close, hold THROUGH THE WEEKEND, exit Monday ~08:31 CT. Fills the one
+    # session AFTERBURN structurally cannot trade (no 1DTE into a weekend).
+    #
+    # Research (hf_35): ALL Fridays, both periods positive — TRAIN +7.55% /
+    # TEST +13.28% (t~1.0, n=138, ~40/yr). The strong-close-Friday split was
+    # stronger (+34.5% TEST) but n=30, so the leg ships UNCONDITIONAL
+    # (afterburn_min_ret_pct=-99 disables the gate) and the split stays a
+    # config experiment for later.
+    #
+    # ⚠️ BELOW the campaign's evidence gate (t~1.0) — shipped to paper at
+    # Leron's explicit call; paper adjudicates. NEVER arm real money on this
+    # without a positive paper record.
+    #
+    # Mechanics mirror AFTERBURN: front_dte=3 (Monday expiry on a Friday;
+    # EOD close only fires on expiration day) + wall-clock hold_minutes
+    # 3936 (Fri 14:55 + 3936m = Mon ~08:31 CT; the scanner is asleep all
+    # weekend and the timer fires on Monday's first post-08:31 scan).
+    # bp_pct 0.10: a 3DTE ATM call runs ~$450-650/contract — 5% of $10k
+    # would size to zero exactly like the AFTERBURN bug.
+    "weekender": {
+        "display": "WEEKENDER",
+        "strategy": "updraft",          # same module, mode=weekender
+        "ticker": "SPY",
+        "front_dte": 3,
+        "back_dte": 3,
+        "one_entry_per_day": True,
+        "defaults": {
+            "starting_capital": 10000.0,
+            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "max_contracts": 1,
+            # schema-required, unused here — see UPDRAFT.
+            "sd_mult": 1.0,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            "mode": "weekender",
+            "bp_pct": 0.10,                  # 3DTE ATM premium ~$450-650
+            "afterburn_min_ret_pct": -99.0,  # UNCONDITIONAL (see header)
+            "strike_offset": 0,              # ATM call
+            "hold_minutes": 3936,            # Fri 14:55 -> Mon ~08:31 CT
+            "pt_pct": 9.9999,   # see UPDRAFT — NUMERIC(5,4) ceiling
+            "sl_pct": 0.99,     # no stop possible over a weekend
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+            "entry_start_ct": "14:50",
+            "entry_end_ct": "14:59",
+            "eod_close_ct": "14:45",         # only bites on expiry day (Mon)
+            "entry_days": "fri",
+            "allow_stacking": False,
+            "max_concurrent_positions": 1,
+            "cooldown_min": 390,
+            "discord_alerts": False,
+        },
+    },
 }
 
 
