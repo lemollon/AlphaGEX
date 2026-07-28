@@ -30,7 +30,7 @@ from .monitor import (
 # strategy (so the UI can say WHICH leg a position belongs to), and this set
 # is what keeps mode-labelled rows on the updraft timer-exit path. Legacy
 # rows that still say 'updraft' match too.
-UPDRAFT_FAMILY = {"updraft", "backdraft", "reversal", "em_breach", "afterburn"}
+UPDRAFT_FAMILY = {"updraft", "backdraft", "reversal", "em_breach", "afterburn", "weekender"}
 from .registry import BOT_REGISTRY, get_bot
 from .strategies.iron_butterfly import build_iron_butterfly_signal
 from .strategies.long_butterfly import build_long_butterfly_signal
@@ -273,7 +273,8 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
                                 "reason": "no_engine: cannot read rsi history"}
         # EM_BREACH reads the day-open anchor and the previous snapshot off
         # the same table. Attached only for that mode, same as rsi above.
-        if (str(params.get("mode") or "") in ("em_breach", "afterburn")
+        if (str(params.get("mode") or "") in ("em_breach", "afterburn",
+                                              "weekender")
                 and chain.get("em") is None):
             if engine is not None:
                 chain["em"] = flow_store.read_em_state(

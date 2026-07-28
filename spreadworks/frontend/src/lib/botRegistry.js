@@ -16,6 +16,7 @@ export const BOT_REGISTRY = {
   reversal: { display: 'REVERSAL', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   embreach: { display: 'EMBREACH', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   afterburn: { display: 'AFTERBURN', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
+  weekender: { display: 'WEEKENDER', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
 };
 
 export const STRATEGY_LABEL = {
@@ -26,6 +27,7 @@ export const STRATEGY_LABEL = {
   reversal:              'RSI-Recovery Call (0DTE)',
   em_breach:             'EM-Breach Put (0DTE)',
   afterburn:             'Overnight Momentum Call (1DTE)',
+  weekender:             'Weekend Hold Call (3DTE)',
   iron_butterfly:        'Iron Butterfly',
   pin_drift_combo:       'Pin + Drift Combo',
   double_calendar:       'Double Calendar',
@@ -89,6 +91,14 @@ export const BOT_THEME = {
     primaryRing: 'rgba(249,115,22,0.30)',
     glow:        'rgba(249,115,22,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(249,115,22,0.22) 0%, rgba(249,115,22,0.03) 100%)',
+  },
+  weekender: {
+    glyph:       'wave',                       // WEEKENDER = Friday close held through the weekend
+    primary:     '#38bdf8',                    // sky-400
+    primarySoft: 'rgba(56,189,248,0.10)',
+    primaryRing: 'rgba(56,189,248,0.30)',
+    glow:        'rgba(56,189,248,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(56,189,248,0.22) 0%, rgba(56,189,248,0.03) 100%)',
   },
   surge: {
     glyph:       'wave',                        // SURGE = where the pin + drift structures meet
