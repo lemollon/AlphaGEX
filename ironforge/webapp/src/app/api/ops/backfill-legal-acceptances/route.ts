@@ -46,14 +46,21 @@ function codesFromAcks(meta: Record<string, unknown> | null): string[] {
   return codes
 }
 
-/** Latest LEGAL_ACCEPTED per user who has no versioned acceptance rows yet. */
+/**
+ * Latest LEGAL_ACCEPTED per user who has no versioned acceptance rows yet.
+ *
+ * Ordered by `event_timestamp` — audit_events has no `created_at`. `user_id` is nullable
+ * on that table, and a consent record with no subject is meaningless, so those are
+ * excluded rather than backfilled onto nobody.
+ */
 async function loadCandidates(): Promise<AuditRow[]> {
   return customerQuery<AuditRow>(
     `SELECT DISTINCT ON (a.user_id) a.user_id, a.metadata, a.ip_address, a.user_agent
        FROM audit_events a
       WHERE a.event_type = 'LEGAL_ACCEPTED'
+        AND a.user_id IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM legal_acceptances la WHERE la.user_id = a.user_id)
-      ORDER BY a.user_id, a.created_at DESC`,
+      ORDER BY a.user_id, a.event_timestamp DESC`,
   )
 }
 
@@ -75,17 +82,25 @@ export async function GET() {
     return NextResponse.json(e, { status: statusFor(e.code) })
   }
 
-  const candidates = await loadCandidates()
-  const withCodes = candidates.map((c) => ({ user_id: c.user_id, codes: codesFromAcks(c.metadata) }))
-  return NextResponse.json({
-    dryRun: true,
-    candidates: withCodes.length,
-    // A candidate with no true flags is reported, never silently skipped — it means the
-    // audit row exists but records no affirmative consent, which someone should look at.
-    would_write: withCodes.filter((c) => c.codes.length > 0).length,
-    no_affirmative_flags: withCodes.filter((c) => c.codes.length === 0).map((c) => c.user_id),
-    sample: withCodes.slice(0, 10),
-  })
+  // Wrapped like POST. Without this a query error returned a BARE 500 with an empty
+  // body — which is exactly how the wrong column name (audit_events has
+  // event_timestamp, not created_at) reached production silently.
+  try {
+    const candidates = await loadCandidates()
+    const withCodes = candidates.map((c) => ({ user_id: c.user_id, codes: codesFromAcks(c.metadata) }))
+    return NextResponse.json({
+      dryRun: true,
+      candidates: withCodes.length,
+      // A candidate with no true flags is reported, never silently skipped — it means the
+      // audit row exists but records no affirmative consent, which someone should look at.
+      would_write: withCodes.filter((c) => c.codes.length > 0).length,
+      no_affirmative_flags: withCodes.filter((c) => c.codes.length === 0).map((c) => c.user_id),
+      sample: withCodes.slice(0, 10),
+    })
+  } catch (e) {
+    const env = redactProviderError('backfill-legal', e, 'INTERNAL', 'Backfill dry run failed.')
+    return NextResponse.json(env, { status: statusFor(env.code) })
+  }
 }
 
 export async function POST() {
