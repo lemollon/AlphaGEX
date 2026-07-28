@@ -510,6 +510,72 @@ class EmState:
                 "reason": self.reason}
 
 
+@dataclass(frozen=True)
+class OrState:
+    """The 08:31-09:00 CT opening range plus the previous snapshot.
+
+    FLASHPOINT fires on the first cross ABOVE the completed range, but only
+    when the range itself was WIDE relative to the day's priced move —
+    or_width_pct / open_straddle_pct is the gate. prev_spot makes the entry
+    an EVENT (same first-touch construction as EM_BREACH)."""
+    or_high: float | None
+    or_low: float | None
+    or_complete: bool
+    day_open: float | None
+    open_straddle_pct: float | None
+    prev_spot: float | None
+    reason: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"or_high": self.or_high, "or_low": self.or_low,
+                "or_complete": self.or_complete, "day_open": self.day_open,
+                "open_straddle_pct": self.open_straddle_pct,
+                "prev_spot": self.prev_spot, "reason": self.reason}
+
+
+def read_or_state(engine: Engine, *, ticker: str, now: datetime) -> OrState:
+    """Opening range = snapshots 08:30-09:00 CT (inclusive); complete once
+    `now` is past 09:01. prev = latest snapshot strictly before `now`."""
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(text(
+                f"SELECT snapshot_time, spot, straddle_pct FROM {TABLE} "
+                "WHERE ticker = :tk AND trade_date = :td AND snapshot_time < :now "
+                "ORDER BY snapshot_time"),
+                {"tk": ticker, "td": now.date(), "now": now}).mappings().all()
+    except Exception as e:                                  # noqa: BLE001
+        logger.warning(f"or state read failed: {e}")
+        return OrState(None, None, False, None, None, None, f"db_error: {e}")
+
+    def _dt(t):
+        if isinstance(t, str):
+            try:
+                return datetime.fromisoformat(t)
+            except ValueError:
+                return None
+        return t
+
+    rth, orr = [], []
+    for r in rows:
+        t = _dt(r["snapshot_time"])
+        if t is None or (t.hour, t.minute) < (8, 30):
+            continue
+        rth.append((t, r["spot"], r["straddle_pct"]))
+        if (t.hour, t.minute) <= (9, 0):
+            orr.append(float(r["spot"]))
+    if not rth:
+        return OrState(None, None, False, None, None, None,
+                       "no_rth_snapshots")
+    first, last = rth[0], rth[-1]
+    complete = (now.hour, now.minute) > (9, 0) and bool(orr)
+    return OrState(max(orr) if orr else None,
+                   min(orr) if orr else None,
+                   complete,
+                   float(first[1]),
+                   float(first[2]) if first[2] is not None else None,
+                   float(last[1]))
+
+
 def read_em_state(engine: Engine, *, ticker: str, now: datetime) -> EmState:
     """Day open = spot of the first RTH snapshot (>= 08:30 CT); prev = the
     latest snapshot strictly before `now`. Prev is what makes the entry an

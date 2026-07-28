@@ -18,6 +18,7 @@ export const BOT_REGISTRY = {
   embreachq: { display: 'EMBREACHQ', strategy: 'updraft', ticker: 'QQQ', version: 'v1.0' },
   afterburn: { display: 'AFTERBURN', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   weekender: { display: 'WEEKENDER', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
+  flashpoint: { display: 'FLASHPOINT', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
 };
 
 export const STRATEGY_LABEL = {
@@ -29,6 +30,7 @@ export const STRATEGY_LABEL = {
   em_breach:             'EM-Breach Put (0DTE)',
   afterburn:             'Overnight Momentum Call (1DTE)',
   weekender:             'Weekend Hold Call (3DTE)',
+  flashpoint:            'Wide-Range Breakout Call (0DTE)',
   iron_butterfly:        'Iron Butterfly',
   pin_drift_combo:       'Pin + Drift Combo',
   double_calendar:       'Double Calendar',
@@ -108,6 +110,14 @@ export const BOT_THEME = {
     primaryRing: 'rgba(56,189,248,0.30)',
     glow:        'rgba(56,189,248,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(56,189,248,0.22) 0%, rgba(56,189,248,0.03) 100%)',
+  },
+  flashpoint: {
+    glyph:       'wave',                       // FLASHPOINT = wide-range morning ignites a breakout
+    primary:     '#facc15',                    // yellow-400
+    primarySoft: 'rgba(250,204,21,0.10)',
+    primaryRing: 'rgba(250,204,21,0.30)',
+    glow:        'rgba(250,204,21,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(250,204,21,0.22) 0%, rgba(250,204,21,0.03) 100%)',
   },
   surge: {
     glyph:       'wave',                        // SURGE = where the pin + drift structures meet

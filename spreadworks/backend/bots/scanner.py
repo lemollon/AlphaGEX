@@ -30,7 +30,8 @@ from .monitor import (
 # strategy (so the UI can say WHICH leg a position belongs to), and this set
 # is what keeps mode-labelled rows on the updraft timer-exit path. Legacy
 # rows that still say 'updraft' match too.
-UPDRAFT_FAMILY = {"updraft", "backdraft", "reversal", "em_breach", "afterburn", "weekender"}
+UPDRAFT_FAMILY = {"updraft", "backdraft", "reversal", "em_breach", "afterburn",
+                  "weekender", "flashpoint"}
 from .registry import BOT_REGISTRY, get_bot
 from .strategies.iron_butterfly import build_iron_butterfly_signal
 from .strategies.long_butterfly import build_long_butterfly_signal
@@ -228,7 +229,8 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
                    "require_put_wall", "strike_offset", "hold_minutes",
                    "min_option_price", "max_spread_pct", "cooldown_min",
                    "rsi_threshold", "rsi_period",
-                   "em_frac", "max_open_straddle_pct", "afterburn_min_ret_pct")
+                   "em_frac", "max_open_straddle_pct", "afterburn_min_ret_pct",
+                   "or_width_min_em")
         params = {**UPDRAFT_PARAMS,
                   **{k: reg_defaults[k] for k in tunable if k in reg_defaults},
                   **{k: config[k] for k in tunable
@@ -284,6 +286,17 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
             else:
                 chain["em"] = {"day_open": None,
                                "reason": "no_engine: cannot read day state"}
+        # FLASHPOINT reads the opening range off the same snapshot table.
+        if (str(params.get("mode") or "") == "flashpoint"
+                and chain.get("orx") is None):
+            if engine is not None:
+                chain["orx"] = flow_store.read_or_state(
+                    engine, ticker=ticker,
+                    now=now_ct or datetime.combine(today, time(0, 0)),
+                ).as_dict()
+            else:
+                chain["orx"] = {"or_high": None,
+                                "reason": "no_engine: cannot read day state"}
         sig = build_updraft_signal(
             chain=chain, today=today, params=params,
             mode=str(params.get("mode") or "updraft"),

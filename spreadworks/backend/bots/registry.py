@@ -616,6 +616,58 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "discord_alerts": False,
         },
     },
+    # FLASHPOINT — wide opening range -> first break above it -> ATM call
+    # (2026-07-28). Unfiltered ORB is breakeven (+0.56/+2.36, t<1); the edge
+    # is CONDITIONAL on a wide morning: OR width (08:31-09:00 CT, as % of
+    # open) / open ATM straddle % > TRAIN q67 = 0.5709. Wide morning =
+    # realized vol already beating implied; the upward break gives direction.
+    #
+    # Research (hf frequency-frontier session): calls-only TRAIN +10.28%
+    # (t=1.8) / TEST +5.19% (t=1.1), ~56/yr; put side TRAIN-NEGATIVE — no
+    # put twin. $1,000 sim, 1 contract: -> $3,328 over 3.5y ($656/yr), max
+    # DD 54%, worst trade -$335. ⚠️ Cutoff picked among ~4 candidates and
+    # dose-response is non-monotone -> WEAKEST evidence grade of the family.
+    # PAPER ONLY at $1k; paper P&L adjudicates.
+    "flashpoint": {
+        "display": "FLASHPOINT",
+        "strategy": "updraft",          # same module, mode=flashpoint
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": 0,
+        "one_entry_per_day": True,
+        "defaults": {
+            # Leron's framing: run this one on a $1,000 paper account so the
+            # reported P&L reads directly as "what $1k does".
+            "starting_capital": 1000.0,
+            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "max_contracts": 1,
+            # ATM 0DTE calls on wide-range days run ~$100-350; 50% of $1k
+            # covers up to a $500 premium -> 1 contract, never 0 (the
+            # AFTERBURN sizing lesson).
+            "bp_pct": 0.50,
+            # schema-required, unused here — see UPDRAFT.
+            "sd_mult": 1.0,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            "mode": "flashpoint",
+            "or_width_min_em": 0.5709,       # TRAIN q67, frozen
+            "strike_offset": 0,              # ATM CALL
+            "hold_minutes": 45,
+            "pt_pct": 9.9999,   # see UPDRAFT — NUMERIC(5,4) ceiling
+            "sl_pct": 0.50,
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+            # range completes 09:00; breakout window mirrors research
+            # (entries 09:01-13:30 CT)
+            "entry_start_ct": "09:01",
+            "entry_end_ct": "13:30",
+            "eod_close_ct": "14:45",
+            "allow_stacking": False,
+            "max_concurrent_positions": 1,
+            "cooldown_min": 390,             # belt-and-braces with one/day
+            "discord_alerts": False,
+        },
+    },
     # AFTERBURN — strong close -> overnight 1DTE call. The only leg that
     # holds past the bell, and the cleanest research profile of the campaign:
     # 9/9 cells (3 strikes x 3 thresholds) positive in BOTH periods, MONOTONE
