@@ -442,6 +442,21 @@ def test_em_breach_ships_disarmed_one_entry_per_day():
     assert meta["strategy"] == "updraft"
 
 
+def test_embreachq_is_embreach_on_qqq_with_own_thresholds():
+    meta = get_bot("embreachq")
+    d = meta["defaults"]
+    assert meta["ticker"] == "QQQ"
+    assert d["enabled"] is False, "no bot ships armed"
+    assert d["mode"] == "em_breach"
+    assert d["em_frac"] == 0.8, "breach multiple is structural, carried over"
+    assert d["max_open_straddle_pct"] == 1.04, "QQQ's OWN TRAIN q90, not SPY's"
+    # QQQ ATM premium ~$150-300/contract; 2% of $10k floors to zero
+    # contracts (the AFTERBURN sizing lesson)
+    assert d["bp_pct"] >= 0.04
+    assert meta["one_entry_per_day"] is True
+    assert meta["strategy"] == "updraft"
+
+
 def test_snapshot_stores_straddle_and_em_state_reads_it(tmp_path):
     """End-to-end against a real engine: record_snapshot persists the ATM
     straddle, read_em_state returns day-open anchor + prev snapshot."""

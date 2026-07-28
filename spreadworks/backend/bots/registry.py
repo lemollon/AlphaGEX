@@ -568,6 +568,54 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "discord_alerts": False,
         },
     },
+    # EMBREACHQ — EMBREACH replicated on QQQ (2026-07-28). Same mechanism,
+    # QQQ's own thresholds (percentile transplant, never raw values): the
+    # -0.8x EM breach multiple is structural and carries over; the catalyst
+    # filter re-fits to QQQ's open-straddle TRAIN q90 = 1.04% (SPY 0.75%).
+    #
+    # Research (qqq_option_minute, 893 sessions, REAL QQQ quote costs from
+    # the 60-session sample — 1.14-1.86x the SPY model in $0.50+ buckets):
+    # P+0 45m first-cross, entries 08:31-14:00 CT, catalyst-filtered:
+    # TRAIN +3.13% / TEST +9.15% (t=1.2, n=400) — the same shape as SPY's
+    # +4.55/+8.43. ~115 events/yr: roughly DOUBLES the mechanism's trade
+    # count. Weaker t than SPY -> UNCONFIRMED. PAPER ONLY.
+    "embreachq": {
+        "display": "EMBREACHQ",
+        "strategy": "updraft",          # same module, mode=em_breach
+        "ticker": "QQQ",
+        "front_dte": 0,
+        "back_dte": 0,
+        "one_entry_per_day": True,
+        "defaults": {
+            "starting_capital": 10000.0,
+            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "max_contracts": 1,
+            # QQQ ATM 0DTE puts at breach times run ~$1.50-3.00 ($150-300 a
+            # contract). bp 2% of $10k = $200 can floor to ZERO contracts —
+            # the AFTERBURN sizing lesson — so 4% here.
+            "bp_pct": 0.04,
+            # schema-required, unused here — see UPDRAFT.
+            "sd_mult": 1.0,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            "mode": "em_breach",
+            "em_frac": 0.8,                  # structural, carried from SPY
+            "max_open_straddle_pct": 1.04,   # QQQ TRAIN q90 (SPY was 0.75)
+            "strike_offset": 0,              # ATM PUT
+            "hold_minutes": 45,
+            "pt_pct": 9.9999,   # see UPDRAFT — NUMERIC(5,4) ceiling
+            "sl_pct": 0.50,
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+            "entry_start_ct": "08:31",
+            "entry_end_ct": "14:00",
+            "eod_close_ct": "14:45",
+            "allow_stacking": False,
+            "max_concurrent_positions": 1,
+            "cooldown_min": 390,             # belt-and-braces with one/day
+            "discord_alerts": False,
+        },
+    },
     # AFTERBURN — strong close -> overnight 1DTE call. The only leg that
     # holds past the bell, and the cleanest research profile of the campaign:
     # 9/9 cells (3 strikes x 3 thresholds) positive in BOTH periods, MONOTONE
