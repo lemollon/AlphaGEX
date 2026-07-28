@@ -361,13 +361,19 @@ export async function GET(
       console.error(`[${bot}] position-monitor: Equity snapshot query failed:`, err instanceof Error ? err.message : err)
     }
 
+    // Production: return null so StatusCard falls through to the broker's own
+    // open_pl from /status (same contract as the no-positions branch above).
+    // The snapshot query has no account_type filter and the scanner snapshot can
+    // be arbitrarily stale (deploy gaps) — returning its 0 here masked a real
+    // +$33 Tradier unrealized P&L behind "$0.00" on the Live view (2026-07-28).
+    const isProduction = accountTypeParam === 'production'
     return NextResponse.json({
       positions,
-      total_unrealized_pnl: Math.round(scannerPnl * 100) / 100,
-      total_unrealized_pnl_pct: totalUnrealizedPct,
+      total_unrealized_pnl: isProduction ? null : Math.round(scannerPnl * 100) / 100,
+      total_unrealized_pnl_pct: isProduction ? null : totalUnrealizedPct,
       spot_price: positions[0]?.spot_price ?? null,
       tradier_connected: isConfigured(),
-      pnl_source: 'scanner_snapshot',
+      pnl_source: isProduction ? 'broker_fallback' : 'scanner_snapshot',
       scanner_snapshot_time: snapshotTime,
     })
   } catch (err: unknown) {
