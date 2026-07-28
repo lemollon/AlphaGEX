@@ -121,6 +121,10 @@ export const CUSTOMER_API_PREFIXES: readonly string[] = [
   '/api/community/',
   '/api/brokerage/',
   '/api/onboarding/',
+  // Enrollment spec §6 contract. The doc writes /v1/...; this app serves everything
+  // under /api, so the routes live at /api/v1/... Customer-surface only: they are
+  // session-guarded and have no meaning on the operator console.
+  '/api/v1/',
   '/api/billing/',
   '/api/support/',
 ]
