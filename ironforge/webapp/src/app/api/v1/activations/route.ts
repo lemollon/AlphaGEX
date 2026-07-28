@@ -1,29 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
-import { isCustomersDbConfigured, customerQuery, customerTransaction } from '@/lib/customers-db'
+import { isCustomersDbConfigured, customerTransaction } from '@/lib/customers-db'
 import { evaluateActivation } from '@/lib/enrollment/activation'
-import { previewHash, type ActivationSnapshot } from '@/lib/enrollment/preview'
-import { staleDocumentCodes } from '@/lib/enrollment/legal'
-import { acceptedVersionsFor } from '@/lib/enrollment/service'
+import { loadActivationContext } from '@/lib/enrollment/context'
 import { claimIdempotencyKey, completeIdempotentOperation, releaseIdempotencyKey } from '@/lib/enrollment/idempotency'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
-import { getProductionPauseState } from '@/lib/tradier'
-import { findPriceIdByLookupKey, createTrialingSubscription, hasUsablePaymentMethod } from '@/lib/billing/stripe'
+import { findPriceIdByLookupKey, createTrialingSubscription } from '@/lib/billing/stripe'
 import { BOT_PLANS } from '@/lib/billing/plans'
+import { TRIAL_ELIGIBLE_DAYS } from '@/lib/enrollment/trading-days'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const OPERATION = 'activate'
-
-interface ConfigRow {
-  id: string
-  agent_code: string
-  rule_version: string
-  status: string
-  broker_account_id: string | null
-  config_json: Record<string, unknown>
-}
 
 /**
  * POST /api/v1/activations — activate trading + start the trial (spec §3 ACT-01, §6).
@@ -79,73 +68,17 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const configId = String(body.config_id ?? '')
-    const config = (await customerQuery<ConfigRow>(
-      `SELECT id, agent_code, rule_version, status, broker_account_id, config_json
-         FROM agent_configs WHERE id = $1 AND user_id = $2 LIMIT 1`,
-      [configId, session.customerId],
-    ))[0]
-
-    if (!config) {
+    // ── Re-read every input fresh (§4), through the SAME loader the preview used ──
+    const ctx = await loadActivationContext(session.customerId, String(body.config_id ?? ''))
+    if (!ctx) {
       await releaseIdempotencyKey({ key: idemKey, operation: OPERATION })
       const e = errorEnvelope('FORBIDDEN', 'That configuration is not available.')
       return NextResponse.json(e, { status: statusFor(e.code) })
     }
-
-    // ── Re-read every input fresh (§4) ─────────────────────────────────────────
-    const acct = config.broker_account_id
-      ? (await customerQuery<{
-          id: string; eligibility: string; ineligible_reason: string | null; display_mask: string
-        }>(
-          `SELECT ba.id, ba.eligibility, ba.ineligible_reason, ba.display_mask
-             FROM broker_accounts ba
-             JOIN brokerage_connections bc ON bc.id = ba.connection_id
-            WHERE ba.id = $1 AND bc.user_id = $2 LIMIT 1`,
-          [config.broker_account_id, session.customerId],
-        ))[0]
-      : undefined
-
-    const conn = (await customerQuery<{ status: string }>(
-      `SELECT status FROM brokerage_connections WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1`,
-      [session.customerId],
-    ))[0]
-
-    const sub = (await customerQuery<{ status: string }>(
-      `SELECT status FROM customer_bot_subscriptions WHERE user_id = $1 AND bot = $2 LIMIT 1`,
-      [session.customerId, config.agent_code],
-    ))[0]
-
-    const user = (await customerQuery<{ stripe_customer_id: string | null }>(
-      `SELECT stripe_customer_id FROM users WHERE id = $1 LIMIT 1`,
-      [session.customerId],
-    ))[0]
-
-    // Kill-switch read fails CLOSED: an unreadable pause state counts as engaged.
-    const pause = await getProductionPauseState(config.agent_code).catch(() => ({ paused: true }))
-    const accepted = await acceptedVersionsFor(session.customerId)
-    const paymentOk = user?.stripe_customer_id ? await hasUsablePaymentMethod(user.stripe_customer_id) : false
-
-    const snapshot: ActivationSnapshot = {
-      userId: session.customerId,
-      brokerAccountId: acct?.id ?? '',
-      accountMask: acct?.display_mask ?? '',
-      agentCode: config.agent_code,
-      ruleVersion: config.rule_version,
-      maxDeploymentCents: Number(config.config_json?.max_deployment_cents ?? 0),
-      buyingPowerCents: Number(config.config_json?.buying_power_cents ?? 0),
-      legalVersions: accepted.map((a) => `${a.code}@${a.version}`),
-    }
-    const currentHash = previewHash(snapshot)
+    const { config, snapshot, hash: currentHash } = ctx
 
     const decision = evaluateActivation({
-      membership: (sub?.status as never) ?? 'pending',
-      paymentMethodValid: paymentOk,
-      staleLegalDocuments: staleDocumentCodes(config.agent_code, accepted),
-      brokerage: conn?.status === 'active' ? 'connected' : 'not_connected',
-      accountEligible: acct?.eligibility === 'eligible',
-      accountIneligibleReason: acct?.ineligible_reason ?? undefined,
-      agentConfig: config.status as never,
-      killSwitchEngaged: pause.paused === true,
+      ...ctx.inputs,
       riskAcknowledged: body.risk_acknowledged === true,
       authorizationAcknowledged: body.authorization_acknowledged === true,
       previewCurrent: String(body.preview_hash ?? '') === currentHash,
@@ -163,7 +96,7 @@ export async function POST(req: NextRequest) {
 
     const plan = BOT_PLANS[config.agent_code as 'spark' | 'flame']
     const priceId = plan ? await findPriceIdByLookupKey(plan.lookupKey) : null
-    if (!priceId || !user?.stripe_customer_id) {
+    if (!priceId || !ctx.stripeCustomerId) {
       await releaseIdempotencyKey({ key: idemKey, operation: OPERATION })
       const e = errorEnvelope('NOT_CONFIGURED', 'Billing is not fully configured yet.')
       return NextResponse.json(e, { status: statusFor(e.code) })
@@ -172,7 +105,7 @@ export async function POST(req: NextRequest) {
     // Stripe FIRST: it is the only step that cannot be rolled back, so if it throws
     // nothing local has been written and the released key allows a clean retry.
     const stripeSub = await createTrialingSubscription({
-      customerId: user.stripe_customer_id,
+      customerId: ctx.stripeCustomerId,
       priceId,
       userId: session.customerId,
       bot: config.agent_code,
@@ -218,7 +151,7 @@ export async function POST(req: NextRequest) {
       activation_id: activationId,
       agent: config.agent_code,
       account_mask: snapshot.accountMask,
-      trial: { status: 'active', eligible_days_used: 0, eligible_days_total: 5 },
+      trial: { status: 'active', eligible_days_used: 0, eligible_days_total: TRIAL_ELIGIBLE_DAYS },
     }
     await completeIdempotentOperation({ key: idemKey, operation: OPERATION, response })
     return NextResponse.json(response)
