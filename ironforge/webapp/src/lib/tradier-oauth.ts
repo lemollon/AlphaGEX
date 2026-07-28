@@ -60,11 +60,32 @@ export function verifyState(state: string | null | undefined, now = Date.now()):
   }
 }
 
-export function buildAuthorizeUrl(state: string): string {
+/**
+ * Is PKCE enabled for Tradier?
+ *
+ * DEFAULT OFF, deliberately. §8 says "PKCE where supported" — and sending a
+ * code_challenge that the provider ignores, then a code_verifier it does not expect on
+ * exchange, can make the exchange fail outright. Breaking a working connect flow to add
+ * a control the provider may not honour is the wrong trade.
+ *
+ * The machinery is complete and tested; flip TRADIER_OAUTH_PKCE=true once confirmed
+ * against Tradier's OAuth docs (you are a partner — this is a question they can answer
+ * directly). The other three controls in the threat row — state, one-time callback and
+ * short expiry — are UNCONDITIONAL and already active.
+ */
+export function tradierPkceEnabled(): boolean {
+  return process.env.TRADIER_OAUTH_PKCE === 'true'
+}
+
+export function buildAuthorizeUrl(state: string, codeChallenge?: string): string {
   const u = new URL('/v1/oauth/authorize', tradierBase())
   u.searchParams.set('client_id', process.env.TRADIER_OAUTH_CLIENT_ID as string)
   u.searchParams.set('scope', SCOPES)
   u.searchParams.set('state', state)
+  if (codeChallenge) {
+    u.searchParams.set('code_challenge', codeChallenge)
+    u.searchParams.set('code_challenge_method', 'S256')
+  }
   return u.toString()
 }
 
@@ -75,7 +96,7 @@ export interface TradierToken {
 }
 
 /** Exchange an authorization code for an access token (OAuth2, Basic-auth client creds). */
-export async function exchangeCodeForToken(code: string): Promise<TradierToken> {
+export async function exchangeCodeForToken(code: string, codeVerifier?: string | null): Promise<TradierToken> {
   if (!isTradierOAuthConfigured()) throw new TradierOAuthNotConfiguredError()
   const basic = Buffer.from(
     `${process.env.TRADIER_OAUTH_CLIENT_ID}:${process.env.TRADIER_OAUTH_CLIENT_SECRET}`,
@@ -87,7 +108,13 @@ export async function exchangeCodeForToken(code: string): Promise<TradierToken> 
       'Content-Type': 'application/x-www-form-urlencoded',
       Accept: 'application/json',
     },
-    body: new URLSearchParams({ grant_type: 'authorization_code', code }).toString(),
+    // The verifier is sent ONLY when a challenge was sent — an unexpected code_verifier
+    // is rejected by some providers, so the two must stay in lockstep.
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      ...(codeVerifier ? { code_verifier: codeVerifier } : {}),
+    }).toString(),
   })
   if (!res.ok) {
     const detail = await res.text().catch(() => '')

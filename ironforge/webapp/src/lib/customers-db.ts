@@ -373,6 +373,21 @@ CREATE TABLE IF NOT EXISTS trials (
 );
 CREATE INDEX IF NOT EXISTS idx_trials_status ON trials(status);
 
+-- OAuth state + PKCE verifier, SERVER-SIDE (§8 threat table: state + PKCE +
+-- one-time callback + short expiry). A stateless signed token cannot give the last
+-- two: single-use needs a record to mark, and a verifier that travels with the
+-- request defeats the point of PKCE. 10-minute TTL per §3 BROKER-01.
+CREATE TABLE IF NOT EXISTS oauth_states (
+  state TEXT PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id),
+  broker_code TEXT NOT NULL,
+  code_verifier TEXT,                                -- NULL when the broker has no PKCE
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ                            -- set exactly once; enforces one-time use
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_states_expiry ON oauth_states(expires_at);
+
 -- "Repeated payment or activation requests create one logical result" (§12).
 CREATE TABLE IF NOT EXISTS idempotency_keys (
   key TEXT NOT NULL,

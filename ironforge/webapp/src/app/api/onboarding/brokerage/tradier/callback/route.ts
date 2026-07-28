@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { publicOrigin } from '@/lib/public-origin'
 import {
   isTradierOAuthConfigured,
-  verifyState,
   exchangeCodeForToken,
   getProfileAccounts,
 } from '@/lib/tradier-oauth'
+import { consumeOAuthState } from '@/lib/enrollment/oauth-state'
 import { encryptSecret } from '@/lib/crypto/secret-box'
 import { isCustomersDbConfigured, customerQuery, customerExecute, customerTransaction } from '@/lib/customers-db'
 import { syncBrokerageConnectionToAttio } from '@/lib/attio'
@@ -32,7 +32,16 @@ export async function GET(req: NextRequest) {
   const complete = new URL('/onboarding/complete', publicOrigin(req))
 
   const code = req.nextUrl.searchParams.get('code')
-  const uid = verifyState(req.nextUrl.searchParams.get('state'))
+
+  // ONE-TIME state (§8). consumeOAuthState marks it used inside the same statement
+  // that checks it, so a replayed callback finds nothing and gets the same safe
+  // failure as a forged one — "Replayed or mismatched state returns a safe failure"
+  // (§4). It also carries the PKCE verifier, which never left the server.
+  const oauth = isCustomersDbConfigured()
+    ? await consumeOAuthState(req.nextUrl.searchParams.get('state'))
+    : null
+  const uid = oauth?.userId ?? null
+
   if (!code || !uid || !isTradierOAuthConfigured() || !isCustomersDbConfigured()) {
     brokerageStep.searchParams.set('error', '1')
     return NextResponse.redirect(brokerageStep)
@@ -49,7 +58,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(brokerageStep)
     }
 
-    const token = await exchangeCodeForToken(code)
+    const token = await exchangeCodeForToken(code, oauth?.codeVerifier)
     const accounts = await getProfileAccounts(token.accessToken)
 
     if (accounts.length === 0) {
