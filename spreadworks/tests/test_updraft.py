@@ -474,3 +474,82 @@ def test_snapshot_stores_straddle_and_em_state_reads_it(tmp_path):
     st2 = flow_store.read_em_state(eng2, ticker="SPY",
                                    now=datetime(2026, 7, 27, 9, 0))
     assert st2.day_open is None and st2.reason == "no_rth_snapshots"
+
+
+# ---------------------------------------------------------------- AFTERBURN
+def _ab_chain(*, spot=605.0, day_open=600.0, bid=3.10, ask=3.14):
+    """+0.83% session return -> above the 0.52% gate. 1DTE chain."""
+    c = _chain(spot=spot, bid=bid, ask=ask)
+    c["expiration"] = date(2026, 7, 29)     # tomorrow (front_dte=1)
+    c["em"] = {"day_open": day_open, "open_straddle_pct": 0.40,
+               "prev_spot": None, "prev_straddle_pct": None, "reason": None}
+    return c
+
+
+def _ab_params():
+    return {**DEFAULT_PARAMS, "mode": "afterburn", "strike_offset": 0,
+            "hold_minutes": 1056}
+
+
+def test_afterburn_fires_on_strong_close_and_buys_next_day_call():
+    sig = build_updraft_signal(chain=_ab_chain(), today=date(2026, 7, 28),
+                               params=_ab_params(), mode="afterburn",
+                               config={"bp_pct": 0.05})
+    assert sig is not None
+    assert sig.mode == "afterburn"
+    leg = sig.legs()[0]
+    assert leg["type"] == "call" and leg["action"] == "buy"
+    assert leg["expiration"] == "2026-07-29", "must carry TOMORROW's expiry"
+    assert sig.strike == 605.0              # ATM
+    assert sig.hold_minutes == 1056         # the overnight wall-clock timer
+    assert sig.em_move_pct is not None and sig.em_move_pct > 0.52
+
+
+def test_afterburn_rejects_a_weak_close():
+    diag = []
+    sig = build_updraft_signal(chain=_ab_chain(spot=601.0),  # +0.17%
+                               today=date(2026, 7, 28), params=_ab_params(),
+                               mode="afterburn", diag=diag)
+    assert sig is None
+    assert any("weak_close" in d for d in diag), diag
+
+
+def test_afterburn_rejects_when_day_open_unknown():
+    diag = []
+    c = _ab_chain()
+    c["em"] = {"day_open": None, "reason": "no_rth_snapshots"}
+    sig = build_updraft_signal(chain=c, today=date(2026, 7, 28),
+                               params=_ab_params(), mode="afterburn",
+                               diag=diag)
+    assert sig is None
+    assert any("em_unavailable" in d for d in diag), diag
+
+
+def test_afterburn_registry_overnight_mechanics():
+    """The overnight hold is an EMERGENT property of three settings — pin all
+    three so nobody 'simplifies' one and silently breaks the exit."""
+    meta = get_bot("afterburn")
+    d = meta["defaults"]
+    assert d["enabled"] is False, "no bot ships armed"
+    assert meta["front_dte"] == 1, "1DTE: EOD close must NOT fire on entry day"
+    assert d["hold_minutes"] == 1056, "wall-clock timer = exit ~08:31 next day"
+    assert d["entry_days"] == "mon,tue,wed,thu", "no 1DTE into a weekend"
+    assert d["entry_start_ct"] == "14:50" and d["entry_end_ct"] == "14:59"
+    assert d["sl_pct"] == 0.99, "research ran NO stop"
+    assert d["bp_pct"] >= 0.05,         "ATM 1DTE premium ~$300-400: bp 2% of $10k sizes to ZERO contracts"
+    assert meta["one_entry_per_day"] is True
+
+
+def test_position_rows_store_the_MODE_not_the_module():
+    """Four bots share strategy='updraft'; the stored strategy must be the
+    registry-default MODE so the positions UI can tell legs apart."""
+    from backend.bots.registry import BOT_REGISTRY
+    from backend.bots.scanner import UPDRAFT_FAMILY
+    for bot, want in (("updraft", "updraft"), ("backdraft", "backdraft"),
+                      ("reversal", "reversal"), ("embreach", "em_breach"),
+                      ("afterburn", "afterburn")):
+        mode = str(((BOT_REGISTRY.get(bot) or {}).get("defaults") or {})
+                   .get("mode") or "") or BOT_REGISTRY[bot]["strategy"]
+        assert mode == want, f"{bot}: stored strategy would be {mode}"
+        assert mode in UPDRAFT_FAMILY, \
+            f"{mode} missing from UPDRAFT_FAMILY -> timer exit would not fire"

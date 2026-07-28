@@ -568,6 +568,62 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "discord_alerts": False,
         },
     },
+    # AFTERBURN — strong close -> overnight 1DTE call. The only leg that
+    # holds past the bell, and the cleanest research profile of the campaign:
+    # 9/9 cells (3 strikes x 3 thresholds) positive in BOTH periods, MONOTONE
+    # dose-response in the threshold, 4/4 years positive (2026 +17.9%),
+    # placebo (unconditional overnight call) +2.35% vs +10-28% conditioned.
+    # C+0 at TRAIN-q80: TRAIN +10.08% / TEST +24.26% (t=2.35), ~38 trades/yr.
+    #
+    # MECHANICS, because they are non-obvious:
+    #   front_dte=1        -> tomorrow's expiry; decide_exit's EOD close only
+    #                         fires ON the front-leg expiration day, so the
+    #                         overnight hold needs no new exit machinery.
+    #   hold_minutes=1056  -> WALL-CLOCK timer: 14:55 entry + 1056m = ~08:31
+    #                         CT next morning = the researched exit-at-open.
+    #   entry_days mon-thu -> no Friday entries. Research had ZERO Friday
+    #                         events (no 1DTE into a weekend) — structural.
+    #   sl_pct=0.99        -> research ran NO stop (none is possible
+    #                         overnight anyway); PT unreachable as usual.
+    # TEST > TRAIN everywhere (2025-26 drift-flattered) and ~50 cells were
+    # screened -> UNCONFIRMED. PAPER ONLY.
+    "afterburn": {
+        "display": "AFTERBURN",
+        "strategy": "updraft",          # same module, mode=afterburn
+        "ticker": "SPY",
+        "front_dte": 1,
+        "back_dte": 1,
+        "one_entry_per_day": True,
+        "defaults": {
+            "starting_capital": 10000.0,
+            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "max_contracts": 1,
+            # schema-required, unused here — see UPDRAFT.
+            "sd_mult": 1.0,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            "mode": "afterburn",
+            # ATM 1DTE premium runs $300-400/contract. bp 2% of $10k = $200
+            # sizes to ZERO contracts and the bot silently never trades
+            # (caught by test). 5% = one contract at these premiums.
+            "bp_pct": 0.05,
+            "afterburn_min_ret_pct": 0.52,   # TRAIN q80 session return
+            "strike_offset": 0,              # ATM call
+            "hold_minutes": 1056,            # 14:55 -> ~08:31 CT next day
+            "pt_pct": 9.9999,   # see UPDRAFT — NUMERIC(5,4) ceiling
+            "sl_pct": 0.99,     # no stop in research; none possible overnight
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+            "entry_start_ct": "14:50",
+            "entry_end_ct": "14:59",
+            "eod_close_ct": "14:45",         # only bites on expiry day
+            "entry_days": "mon,tue,wed,thu",
+            "allow_stacking": False,
+            "max_concurrent_positions": 1,
+            "cooldown_min": 390,
+            "discord_alerts": False,
+        },
+    },
 }
 
 

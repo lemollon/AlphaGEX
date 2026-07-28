@@ -25,6 +25,12 @@ from .monitor import (
     decide_exit, pt_pct_for_time_of_day, pt_pct_for_iron_condor_tod,
     MULTI_DAY_STRATEGIES,
 )
+
+# Every mode of the updraft module. Position rows now store the MODE as their
+# strategy (so the UI can say WHICH leg a position belongs to), and this set
+# is what keeps mode-labelled rows on the updraft timer-exit path. Legacy
+# rows that still say 'updraft' match too.
+UPDRAFT_FAMILY = {"updraft", "backdraft", "reversal", "em_breach", "afterburn"}
 from .registry import BOT_REGISTRY, get_bot
 from .strategies.iron_butterfly import build_iron_butterfly_signal
 from .strategies.long_butterfly import build_long_butterfly_signal
@@ -222,7 +228,7 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
                    "require_put_wall", "strike_offset", "hold_minutes",
                    "min_option_price", "max_spread_pct", "cooldown_min",
                    "rsi_threshold", "rsi_period",
-                   "em_frac", "max_open_straddle_pct")
+                   "em_frac", "max_open_straddle_pct", "afterburn_min_ret_pct")
         params = {**UPDRAFT_PARAMS,
                   **{k: reg_defaults[k] for k in tunable if k in reg_defaults},
                   **{k: config[k] for k in tunable
@@ -267,7 +273,8 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
                                 "reason": "no_engine: cannot read rsi history"}
         # EM_BREACH reads the day-open anchor and the previous snapshot off
         # the same table. Attached only for that mode, same as rsi above.
-        if str(params.get("mode") or "") == "em_breach" and chain.get("em") is None:
+        if (str(params.get("mode") or "") in ("em_breach", "afterburn")
+                and chain.get("em") is None):
             if engine is not None:
                 chain["em"] = flow_store.read_em_state(
                     engine, ticker=ticker,
@@ -654,7 +661,14 @@ def _evaluate_entry(
     if signal is None:
         return {"outcome": "NO_TRADE", "reason": diag[0] if diag else "no signal"}
 
-    pid = open_position(engine, bot, meta["strategy"], signal, now_ct)
+    # Store the MODE (updraft/backdraft/reversal/em_breach/afterburn) as the
+    # position's strategy so four bots sharing one module stay tellable apart
+    # in the positions UI. bot_config has no mode column, so the registry
+    # defaults are the source of truth here.
+    reg_mode = str(((BOT_REGISTRY.get(bot) or {}).get("defaults") or {})
+                   .get("mode") or "")
+    pid = open_position(engine, bot, reg_mode or meta["strategy"], signal,
+                        now_ct)
     if bool(cfg.get("discord_alerts")):
         try:
             from . import discord_alerts
@@ -788,7 +802,7 @@ def run_scan_cycle(
             # timer is the real exit — pt_pct is deliberately unreachable
             # because a profit target cut returns ~6x in research.
             hold_minutes = None
-            if pos["strategy"] == "updraft":
+            if pos["strategy"] in UPDRAFT_FAMILY:
                 hold_minutes = int(cfg.get("hold_minutes")
                                    or (meta.get("defaults") or {}).get("hold_minutes", 45))
                 dip_entry_time = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
