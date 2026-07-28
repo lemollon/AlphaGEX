@@ -1,6 +1,7 @@
 import { customerQuery, customerExecute } from '@/lib/customers-db'
 import { LEGAL_DOCUMENTS, requiredDocumentsFor, staleDocumentCodes, type AcceptedVersion } from './legal'
 import type { EnrollmentState } from './states'
+import { isUuid } from './ids'
 
 /**
  * Enrollment service (Enrollment spec §3, §6).
@@ -63,6 +64,9 @@ export async function createOrResumeEnrollment(userId: string, source?: string):
 
 /** Ownership-scoped read. Returns null when the id is not this user's — never 403-by-existence. */
 export async function getEnrollmentForUser(id: string, userId: string): Promise<EnrollmentRow | null> {
+  // A malformed id would make Postgres raise on the UUID cast rather than return no
+  // rows, turning a client mistake into a 500. Same answer as "not yours": null.
+  if (!isUuid(id) || !isUuid(userId)) return null
   const rows = await customerQuery<EnrollmentRow>(
     `SELECT id, user_id, selected_plan, status, current_step
        FROM enrollments WHERE id = $1 AND user_id = $2 LIMIT 1`,

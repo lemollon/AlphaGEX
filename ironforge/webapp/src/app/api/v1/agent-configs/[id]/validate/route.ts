@@ -3,6 +3,7 @@ import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
 import { validateAgentConfig, RULE_VERSION } from '@/lib/enrollment/agent-rules'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
+import { isUuid } from '@/lib/enrollment/ids'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -34,6 +35,13 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   }
 
   try {
+    // Malformed ids raise on the UUID cast rather than returning no rows; answered the
+    // same way as an id that is not the caller's.
+    if (!isUuid(params.id)) {
+      const e = errorEnvelope('FORBIDDEN', 'That configuration is not available.')
+      return NextResponse.json(e, { status: statusFor(e.code) })
+    }
+
     const cfg = (await customerQuery<{
       id: string; agent_code: string; rule_version: string
       broker_account_id: string | null; config_json: Record<string, unknown>

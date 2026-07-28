@@ -3,6 +3,7 @@ import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { isCustomersDbConfigured, customerQuery } from '@/lib/customers-db'
 import { validateAgentConfig, isConfigurableAgent, RULE_VERSION, AGENT_RULE_SCHEMA } from '@/lib/enrollment/agent-rules'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
+import { isUuid } from '@/lib/enrollment/ids'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -37,6 +38,12 @@ export async function POST(req: NextRequest) {
 
     if (!isConfigurableAgent(agentCode)) {
       const e = errorEnvelope('VALIDATION_FAILED', 'Choose Spark or Flame.', { field: 'agent_code' })
+      return NextResponse.json(e, { status: statusFor(e.code) })
+    }
+
+    // Malformed ids raise on the UUID cast rather than returning no rows.
+    if (!isUuid(brokerAccountId)) {
+      const e = errorEnvelope('FORBIDDEN', 'That account is not available.')
       return NextResponse.json(e, { status: statusFor(e.code) })
     }
 
