@@ -21,34 +21,53 @@ const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/bot-ledger', label: 'Bot Ledger' },
 ]
 
-// App links that live BEHIND the login. Only rendered for signed-in customers;
-// a logged-out visitor never sees them (the pages themselves also require a
-// session — this just stops the public nav from advertising a locked door).
-const APP_LINKS: ReadonlyArray<{ href: string; label: string }> = [
-  { href: '/live', label: 'Live' },
+// Links shown once SIGNED IN. Community earns its place here: the feed is readable
+// while signed in and the composer swaps to a join CTA on 402, so it is a real
+// destination for someone who has not bought anything yet.
+const SIGNED_IN_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/community', label: 'Community' },
+]
+
+// Links that require actually OWNING the product. Live is the strategy dashboard;
+// there is nothing on it for someone who owns no strategy, so advertising it to a
+// free account is a dead end dressed as a feature.
+const OWNER_LINKS: ReadonlyArray<{ href: string; label: string }> = [
+  { href: '/live', label: 'Live' },
 ]
 
 // `active` is retained for backward compatibility with existing callers
 // (page.tsx passes "home"); the current page is now derived from the pathname.
 export default function HomeNav({ active: _active }: { active?: string } = {}) {
   const [open, setOpen] = useState(false)
+  // SIGNED IN — drives "My Dashboard" vs "Create Account".
   const [isCustomer, setIsCustomer] = useState(false)
+  // OWNS A STRATEGY — a strictly stronger claim, and the only thing that may reveal Live.
+  const [ownsStrategy, setOwnsStrategy] = useState(false)
   const pathname = usePathname()
 
   useEffect(() => {
-    // Logged-in customers get "My Dashboard" instead of Login/Create Account.
     fetch('/api/auth/customer-me')
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setIsCustomer(Boolean(d?.ok)))
-      .catch(() => setIsCustomer(false))
+      .then((d) => {
+        setIsCustomer(Boolean(d?.ok))
+        setOwnsStrategy(Boolean(d?.ownsStrategy))
+      })
+      .catch(() => {
+        setIsCustomer(false)
+        setOwnsStrategy(false)
+      })
   }, [])
 
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href)
 
-  // The public marketing links, plus the behind-login app links only once signed in.
-  const visibleLinks = isCustomer ? [...NAV_LINKS, ...APP_LINKS] : NAV_LINKS
+  // Both default false, so the first paint and any failed lookup show the PUBLIC nav.
+  // A signed-in visitor briefly seeing marketing links is harmless; the reverse is not.
+  const visibleLinks = [
+    ...NAV_LINKS,
+    ...(isCustomer ? SIGNED_IN_LINKS : []),
+    ...(ownsStrategy ? OWNER_LINKS : []),
+  ]
 
   return (
     <header className="sticky top-0 z-50 border-b border-white/5 bg-black">
