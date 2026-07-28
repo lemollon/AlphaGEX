@@ -15,6 +15,7 @@ export const BOT_REGISTRY = {
   backdraft: { display: 'BACKDRAFT', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   reversal: { display: 'REVERSAL', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   embreach: { display: 'EMBREACH', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
+  embreachq: { display: 'EMBREACHQ', strategy: 'updraft', ticker: 'QQQ', version: 'v1.0' },
   afterburn: { display: 'AFTERBURN', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   weekender: { display: 'WEEKENDER', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
 };
@@ -83,6 +84,14 @@ export const BOT_THEME = {
     primaryRing: 'rgba(167,139,250,0.30)',
     glow:        'rgba(167,139,250,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(167,139,250,0.22) 0%, rgba(167,139,250,0.03) 100%)',
+  },
+  embreachq: {
+    glyph:       'wave',                       // EMBREACHQ = EMBREACH on QQQ
+    primary:     '#c084fc',                    // purple-400 (violet sibling of EMBREACH)
+    primarySoft: 'rgba(192,132,252,0.10)',
+    primaryRing: 'rgba(192,132,252,0.30)',
+    glow:        'rgba(192,132,252,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(192,132,252,0.22) 0%, rgba(192,132,252,0.03) 100%)',
   },
   afterburn: {
     glyph:       'wave',                       // AFTERBURN = strong close held overnight
