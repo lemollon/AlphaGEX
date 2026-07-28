@@ -16,6 +16,12 @@ only in what triggers them, so one module serves both via `mode`.
                -em_frac x the ATM-straddle expected move  (buys a PUT:
                the day broke its priced range -> downside CONTINUATION)
 
+    AFTERBURN  the session return is a STRONG CLOSE (>= afterburn_min_ret_pct,
+               TRAIN q80 = +0.52%) near the bell -> buy a 1DTE call and hold
+               OVERNIGHT (front_dte=1; the wall-clock hold_minutes timer lands
+               the exit at ~08:31 CT next morning). Overnight momentum
+               continuation; the only leg that holds past the close.
+
 Economic rationale: UPDRAFT and BACKDRAFT both fade a put-buying crowd that
 the tape is running over — UPDRAFT requires momentum confirmation, BACKDRAFT
 requires flow extremity plus dealer-gamma support underneath. REVERSAL is a
@@ -67,6 +73,9 @@ DEFAULT_PARAMS: dict[str, Any] = {
     # skip days whose OPEN already priced a catalyst (TRAIN q90 = 0.75%):
     # the edge is in UNPRICED surprises; measured NEGATIVE above this.
     "max_open_straddle_pct": 0.75,
+    # AFTERBURN gate — session return must be at least this (TRAIN q80).
+    # Dose-response is MONOTONE above it (q70<q80<q90 at every strike).
+    "afterburn_min_ret_pct": 0.52,
     # shared
     "strike_offset": 1,       # +1 strike OTM (REVERSAL uses 0 = ATM)
     "hold_minutes": 45,       # UPDRAFT 45, BACKDRAFT 30, REVERSAL 45
@@ -269,6 +278,22 @@ def build_updraft_signal(
                 return _reject(f"not_first_touch: already breached at prior "
                                f"scan (prev_move={prev_move:+.2f}%)")
         put_wall = None
+    elif mode == "afterburn":
+        # Strong close -> overnight 1DTE call. 9/9 research cells positive in
+        # both periods, monotone in the threshold, 4/4 years. Entry window is
+        # the last minutes of the session (registry: 14:50-14:59 CT), so the
+        # day's return is effectively final when this gate is read.
+        em = chain.get("em") or {}
+        day_open = em.get("day_open")
+        if not day_open:
+            return _reject(
+                f"em_unavailable: {em.get('reason') or 'no em block'}")
+        move_pct = 100.0 * (spot / float(day_open) - 1.0)
+        need = float(p["afterburn_min_ret_pct"])
+        if move_pct < need:
+            return _reject(f"weak_close: move={move_pct:+.2f}% "
+                           f"need>={need:.2f}%")
+        put_wall = None
     else:
         return _reject(f"unknown_mode: {mode}")
 
@@ -320,7 +345,7 @@ def build_updraft_signal(
         side=right,
         em_move_pct=(100.0 * (spot / float((chain.get("em") or {}).get("day_open"))
                               - 1.0)
-                     if mode == "em_breach" else None),
+                     if mode in ("em_breach", "afterburn") else None),
         em_straddle_pct=(straddle if mode == "em_breach" else None),
         debit=debit,
         contracts=contracts,

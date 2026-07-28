@@ -13,10 +13,19 @@ export const BOT_REGISTRY = {
   delta: { display: 'DELTA', strategy: 'vertical_credit', ticker: 'multi', version: 'v1.0' },
   updraft: { display: 'UPDRAFT', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   backdraft: { display: 'BACKDRAFT', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
+  reversal: { display: 'REVERSAL', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
+  embreach: { display: 'EMBREACH', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
+  afterburn: { display: 'AFTERBURN', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
 };
 
 export const STRATEGY_LABEL = {
-  updraft:               '0DTE Long Call (Flow Fade)',
+  // updraft-module MODES — position rows store the mode as their strategy,
+  // so each card says which leg it belongs to.
+  updraft:               'Flow-Fade Call (0DTE)',
+  backdraft:             'Put-Wall Flow Call (0DTE)',
+  reversal:              'RSI-Recovery Call (0DTE)',
+  em_breach:             'EM-Breach Put (0DTE)',
+  afterburn:             'Overnight Momentum Call (1DTE)',
   iron_butterfly:        'Iron Butterfly',
   pin_drift_combo:       'Pin + Drift Combo',
   double_calendar:       'Double Calendar',
@@ -56,6 +65,30 @@ export const BOT_THEME = {
     primaryRing: 'rgba(251,113,133,0.30)',
     glow:        'rgba(251,113,133,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(251,113,133,0.22) 0%, rgba(251,113,133,0.03) 100%)',
+  },
+  reversal: {
+    glyph:       'wave',                       // REVERSAL = hourly RSI recovery cross
+    primary:     '#34d399',                    // emerald-400
+    primarySoft: 'rgba(52,211,153,0.10)',
+    primaryRing: 'rgba(52,211,153,0.30)',
+    glow:        'rgba(52,211,153,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(52,211,153,0.22) 0%, rgba(52,211,153,0.03) 100%)',
+  },
+  embreach: {
+    glyph:       'wave',                       // EMBREACH = expected-move breach put
+    primary:     '#a78bfa',                    // violet-400
+    primarySoft: 'rgba(167,139,250,0.10)',
+    primaryRing: 'rgba(167,139,250,0.30)',
+    glow:        'rgba(167,139,250,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(167,139,250,0.22) 0%, rgba(167,139,250,0.03) 100%)',
+  },
+  afterburn: {
+    glyph:       'wave',                       // AFTERBURN = strong close held overnight
+    primary:     '#f97316',                    // orange-500
+    primarySoft: 'rgba(249,115,22,0.10)',
+    primaryRing: 'rgba(249,115,22,0.30)',
+    glow:        'rgba(249,115,22,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(249,115,22,0.22) 0%, rgba(249,115,22,0.03) 100%)',
   },
   surge: {
     glyph:       'wave',                        // SURGE = where the pin + drift structures meet
