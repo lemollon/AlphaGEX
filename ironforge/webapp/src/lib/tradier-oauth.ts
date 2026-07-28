@@ -139,6 +139,11 @@ async function tradierGet(token: string, path: string): Promise<unknown> {
 export interface TradierAccount {
   account_id: string
   name?: string
+  /** Tradier classification: individual | ira | roth | joint | ... */
+  classification?: string
+  status?: string
+  /** Tradier option approval level, 0-5. Absent means UNKNOWN, never "fine". */
+  option_level?: number
 }
 
 /** List the user's Tradier accounts from their profile. */
@@ -149,8 +154,18 @@ export async function getProfileAccounts(token: string): Promise<TradierAccount[
   const raw = j.profile?.account
   const arr = Array.isArray(raw) ? raw : raw ? [raw] : []
   return arr.map((a) => {
-    const acct = a as { account_number?: string; classification?: string }
-    return { account_id: String(acct.account_number ?? ''), name: acct.classification }
+    const acct = a as {
+      account_number?: string; classification?: string; status?: string; option_level?: number
+    }
+    return {
+      account_id: String(acct.account_number ?? ''),
+      name: acct.classification,
+      classification: acct.classification,
+      status: acct.status,
+      // Left undefined when Tradier omits it — eligibility fails CLOSED on unknown
+      // rather than assuming spreads are permitted.
+      option_level: typeof acct.option_level === 'number' ? acct.option_level : undefined,
+    }
   })
 }
 
@@ -202,4 +217,24 @@ export function previewOrder(token: string, accountId: string, p: TradierOrderPa
 export async function placeOrder(token: string, accountId: string, p: TradierOrderParams): Promise<{ orderId: string | null }> {
   const j = (await tradierOrder(token, accountId, p, false)) as { order?: { id?: number | string } }
   return { orderId: j.order?.id != null ? String(j.order.id) : null }
+}
+
+/**
+ * Option buying power for one account.
+ *
+ * Fetched separately because /user/profile does not carry balances, and eligibility
+ * FAILS CLOSED on an unknown buying power — without this call every account would be
+ * refused. Returns null on any failure, which is the safe reading.
+ */
+export async function getAccountOptionBuyingPower(token: string, accountId: string): Promise<number | null> {
+  try {
+    const j = (await tradierGet(token, `/v1/accounts/${encodeURIComponent(accountId)}/balances`)) as {
+      balances?: { option_buying_power?: unknown; total_cash?: unknown }
+    }
+    const bp = j.balances?.option_buying_power ?? j.balances?.total_cash
+    const n = typeof bp === 'number' ? bp : Number(bp)
+    return Number.isFinite(n) ? n : null
+  } catch {
+    return null
+  }
 }

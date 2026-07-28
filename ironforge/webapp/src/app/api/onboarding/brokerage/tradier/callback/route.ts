@@ -4,8 +4,10 @@ import {
   isTradierOAuthConfigured,
   exchangeCodeForToken,
   getProfileAccounts,
+  getAccountOptionBuyingPower,
 } from '@/lib/tradier-oauth'
 import { consumeOAuthState } from '@/lib/enrollment/oauth-state'
+import { evaluateAccountEligibility, maskAccountNumber } from '@/lib/enrollment/eligibility'
 import { encryptSecret } from '@/lib/crypto/secret-box'
 import { isCustomersDbConfigured, customerQuery, customerExecute, customerTransaction } from '@/lib/customers-db'
 import { syncBrokerageConnectionToAttio } from '@/lib/attio'
@@ -61,6 +63,13 @@ export async function GET(req: NextRequest) {
     const token = await exchangeCodeForToken(code, oauth?.codeVerifier)
     const accounts = await getProfileAccounts(token.accessToken)
 
+    // Buying power is not on /user/profile, and eligibility FAILS CLOSED on an unknown
+    // one — without this fetch every account would be refused as ineligible.
+    const balances = new Map<string, number | null>()
+    for (const a of accounts) {
+      balances.set(a.account_id, await getAccountOptionBuyingPower(token.accessToken, a.account_id))
+    }
+
     if (accounts.length === 0) {
       brokerageStep.searchParams.set('incomplete', '1')
       return NextResponse.redirect(brokerageStep)
@@ -82,11 +91,44 @@ export async function GET(req: NextRequest) {
       // Replace only this user's Tradier rows (leave any SnapTrade connection intact).
       await run(`DELETE FROM brokerage_connections WHERE user_id = $1 AND provider = 'tradier'`, [user.id])
       for (const a of accounts) {
-        await run(
+        const inserted = (await run(
           `INSERT INTO brokerage_connections
-             (user_id, provider, account_id, account_name, brokerage_slug, status, last_synced_at)
-           VALUES ($1, 'tradier', $2, $3, 'Tradier', 'active', now())`,
+             (user_id, provider, account_id, account_name, brokerage_slug, broker_code, status, last_synced_at)
+           VALUES ($1, 'tradier', $2, $3, 'Tradier', 'tradier', 'active', now())
+           RETURNING id`,
           [user.id, a.account_id, a.name ?? 'Tradier'],
+        )) as unknown as Array<{ id: string }>
+        const connectionId = inserted?.[0]?.id
+        if (!connectionId) continue
+
+        // Record the account with its ELIGIBILITY verdict (§3 BROKER-02). Until this
+        // existed the eligibility gate had no data source at all, so the whole
+        // account-selection step could never be satisfied.
+        //
+        // The full account number is ENCRYPTED and only the mask is stored for display
+        // (§5, §8) — nothing here writes it in the clear or logs it.
+        const verdict = evaluateAccountEligibility({
+          externalRef: a.account_id,
+          accountType: a.classification ?? null,
+          optionsLevel: a.option_level ?? null,
+          status: a.status ?? 'active',
+          buyingPower: balances.get(a.account_id) ?? null,
+        })
+        await run(
+          `INSERT INTO broker_accounts
+             (connection_id, external_account_ref_ciphertext, display_mask, account_type,
+              options_level, eligibility, ineligible_reason, buying_power_cents, checked_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
+          [
+            connectionId,
+            encryptSecret(a.account_id),
+            maskAccountNumber(a.account_id),
+            a.classification ?? null,
+            a.option_level ?? null,
+            verdict.eligible ? 'eligible' : 'ineligible',
+            verdict.reason ?? null,
+            (() => { const bp = balances.get(a.account_id); return bp == null ? null : Math.round(bp * 100) })(),
+          ],
         )
       }
       await run(

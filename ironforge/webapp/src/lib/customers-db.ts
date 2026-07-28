@@ -315,6 +315,9 @@ CREATE TABLE IF NOT EXISTS broker_accounts (
   options_level INT,
   eligibility TEXT NOT NULL DEFAULT 'unknown',       -- eligible | ineligible | unknown
   ineligible_reason TEXT,
+  -- Captured at sync. The agent-config form sizes limits from this; activation
+  -- re-reads it live, and the preview hash catches any drift in between (§4).
+  buying_power_cents BIGINT,
   checked_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
