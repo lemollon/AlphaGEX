@@ -1,58 +1,33 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth/server'
 import { isPublicMode } from '@/lib/auth/access'
-import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
-import { isEligibleTradingDay, advanceTrial, TRIAL_ELIGIBLE_DAYS } from '@/lib/enrollment/trading-days'
+import { isCustomersDbConfigured } from '@/lib/customers-db'
+import { isEligibleTradingDay, TRIAL_ELIGIBLE_DAYS } from '@/lib/enrollment/trading-days'
+import {
+  runTrialDayClose,
+  loadActiveTrials,
+  marketDateKey,
+  isAfterTrialCloseTime,
+} from '@/lib/enrollment/trial-close'
 import { getCTNow } from '@/lib/pt-tiers'
-import { getProductionPauseState } from '@/lib/tradier'
-import { endTrialNow } from '@/lib/billing/stripe'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 /**
- * Trial day-close (Enrollment spec §7).
+ * Trial day-close (Enrollment spec §7) — MANUAL / diagnostic entry point.
  *
  * GET  — dry run: what today would do.
  * POST — advance the ledger by one market date and convert anyone who reaches five.
  *
- * Run once after the close, each weekday. Weekends and holidays are no-ops by
- * construction — isEligibleTradingDay refuses them — so a scheduler that fires every
- * day is harmless.
+ * The ledger normally runs ITSELF: the scanner process fires it after the close each
+ * day (see scanner.ts). This route stays for operator re-runs and for inspecting the
+ * decision, and shares the same `runTrialDayClose` so the two can never diverge.
  *
- * IDEMPOTENT PER MARKET DATE. `last_counted_market_date` means running twice on the
- * same day cannot consume two of the customer's five days. That matters more than it
- * sounds: a retried cron, a manual re-run during an incident, or two overlapping
- * schedulers would otherwise silently shorten every active trial.
- *
- * A platform-disabled day never counts — "our outage is not the customer's trial day".
+ * Weekends and holidays are no-ops by construction — isEligibleTradingDay refuses them —
+ * and the per-market-date guard makes a double run harmless.
  */
-
-interface TrialRow {
-  id: string
-  user_id: string
-  agent_code: string
-  eligible_days_used: number
-  last_counted_market_date: string | null
-  stripe_subscription_id: string | null
-}
-
-async function loadActiveTrials(): Promise<TrialRow[]> {
-  return customerQuery<TrialRow>(
-    `SELECT t.id, t.user_id, t.agent_code, t.eligible_days_used,
-            to_char(t.last_counted_market_date, 'YYYY-MM-DD') AS last_counted_market_date,
-            s.stripe_subscription_id
-       FROM trials t
-       LEFT JOIN customer_bot_subscriptions s
-         ON s.user_id = t.user_id AND s.bot = t.agent_code
-      WHERE t.status = 'active'`,
-  )
-}
-
-function marketDateKey(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
 
 async function gate() {
   if (isPublicMode()) return null
@@ -81,10 +56,15 @@ export async function GET() {
     market_date: today,
     day_is_eligible: verdict.eligible,
     reason: verdict.reason ?? null,
+    // The scheduler will not act before this flips true; surfaced so an operator can
+    // see WHY an automatic run has not happened yet today.
+    after_close: isAfterTrialCloseTime(ct),
     active_trials: trials.length,
     already_counted_today: trials.filter((t) => t.last_counted_market_date === today).length,
     would_convert: verdict.eligible
-      ? trials.filter((t) => t.last_counted_market_date !== today && t.eligible_days_used + 1 >= TRIAL_ELIGIBLE_DAYS).length
+      ? trials.filter(
+          (t) => t.last_counted_market_date !== today && t.eligible_days_used + 1 >= TRIAL_ELIGIBLE_DAYS,
+        ).length
       : 0,
   })
 }
@@ -97,66 +77,12 @@ export async function POST() {
     return NextResponse.json(e, { status: statusFor(e.code) })
   }
 
-  const ct = getCTNow()
-  const today = marketDateKey(ct)
-  const results: Array<Record<string, unknown>> = []
-
   try {
-    const trials = await loadActiveTrials()
-    for (const t of trials) {
-      // Idempotence per market date — the guard that stops a re-run stealing a day.
-      if (t.last_counted_market_date === today) {
-        results.push({ trial: t.id, skipped: 'already_counted_today' })
-        continue
-      }
-
-      // Per-bot pause participates: a bot the platform disabled today did not give the
-      // customer a trading day.
-      const pause = await getProductionPauseState(t.agent_code).catch(() => ({ paused: true }))
-      const verdict = isEligibleTradingDay({ ct, platformDisabled: pause.paused === true })
-
-      if (!verdict.eligible) {
-        results.push({ trial: t.id, counted: false, reason: verdict.reason })
-        continue
-      }
-
-      const progress = advanceTrial(t.eligible_days_used, verdict)
-      await customerExecute(
-        `UPDATE trials
-            SET eligible_days_used = $2, last_counted_market_date = $3::date, updated_at = now()
-          WHERE id = $1`,
-        [t.id, progress.daysUsed, today],
-      )
-
-      if (progress.shouldConvert) {
-        // End the Stripe trial NOW; the webhook then moves the row to active when the
-        // invoice is paid. We do NOT mark it paid ourselves — billing state is Stripe's
-        // word (§7 "Webhook state is authoritative for billing").
-        if (t.stripe_subscription_id) {
-          await endTrialNow(t.stripe_subscription_id)
-        }
-        await customerExecute(
-          `UPDATE trials SET status = 'completed', completed_at = now(), updated_at = now() WHERE id = $1`,
-          [t.id],
-        )
-        results.push({ trial: t.id, counted: true, days_used: progress.daysUsed, converted: true })
-      } else {
-        results.push({ trial: t.id, counted: true, days_used: progress.daysUsed, converted: false })
-      }
-    }
-
-    const counted = results.filter((r) => r.counted).length
-    const converted = results.filter((r) => r.converted).length
-    return NextResponse.json({
-      ok: true,
-      market_date: today,
-      counted,
-      converted,
-      summary: counted === 0
-        ? 'No trial day consumed today.'
-        : `${counted} trial(s) advanced, ${converted} converted to paid.`,
-      results,
-    })
+    // Deliberately NOT time-gated: an operator re-running this after an incident is
+    // making a considered choice, and the per-date guard still protects the ledger.
+    // The AUTOMATIC path is the one that must wait for the close.
+    const out = await runTrialDayClose(getCTNow())
+    return NextResponse.json({ ok: true, ...out })
   } catch (e) {
     const env = redactProviderError('trial-close-day', e, 'INTERNAL', 'Trial close failed.')
     return NextResponse.json(env, { status: statusFor(env.code) })
