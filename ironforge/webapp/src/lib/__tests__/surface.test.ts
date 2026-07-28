@@ -8,6 +8,7 @@ import {
   OPERATOR_PAGES,
   CUSTOMER_API_EXCEPTIONS,
   OPERATOR_LANDING,
+  isCustomerPage,
 } from '../surface'
 
 /**
@@ -207,6 +208,46 @@ describe('operator sign-in is reachable on BOTH deployments', () => {
   it('still hides the dangerous operator surfaces from customers', () => {
     for (const p of ['/accounts', '/api/accounts/manage', '/api/spark/force-trade', '/spark']) {
       expect(servesPath('customer', p), `${p} must stay hidden`).toBe(false)
+    }
+  })
+})
+
+describe('customer pages never render the operator nav', () => {
+  // THE REGRESSION THIS EXISTS FOR: Shell.tsx decided chrome from a second list of
+  // pathnames kept in sync with CUSTOMER_PAGES by hand. It drifted three times. The
+  // last drift shipped the operator bot-console nav — SPARK, SPARK2, INFERNO, BLAZE,
+  // FLARE, Compare — onto /support and /account/billing for signed-in customers, where
+  // every one of those links 404s and the internal-only bot names must never appear.
+  //
+  // Shell.tsx now calls isCustomerPage(). This asserts the property directly, so the
+  // build fails rather than a customer finding it.
+  it('classifies EVERY customer page as a customer page', () => {
+    for (const p of CUSTOMER_PAGES) {
+      expect(isCustomerPage(p), `${p} would render the operator nav`).toBe(true)
+    }
+  })
+
+  it('classifies the onboarding funnel as customer pages', () => {
+    for (const p of ['/onboarding', '/onboarding/legal', '/onboarding/risk', '/onboarding/brokerage', '/onboarding/complete']) {
+      expect(isCustomerPage(p), `${p} would render the operator nav`).toBe(true)
+    }
+  })
+
+  it('does NOT claim operator pages', () => {
+    for (const p of ['/spark', '/inferno', '/compare', '/accounts', '/volatility', '/gex']) {
+      expect(isCustomerPage(p), `${p} is operator content`).toBe(false)
+    }
+  })
+
+  it('does NOT claim /ops — it is served on both surfaces but is operator content', () => {
+    expect(isCustomerPage('/ops/login')).toBe(false)
+    expect(isCustomerPage('/ops/customers')).toBe(false)
+  })
+
+  it('every customer page is also SERVED by the customer deployment', () => {
+    // A page can only ship its own chrome on a deployment that serves it at all.
+    for (const p of CUSTOMER_PAGES) {
+      expect(servesPath('customer', p), `${p} is classified customer but not served`).toBe(true)
     }
   })
 })

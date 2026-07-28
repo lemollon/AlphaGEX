@@ -51,6 +51,7 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/support',
   '/account/trades',
   '/account/billing',
+  '/account/brokerage',
   '/login',
   '/signup',
   '/forgot-password',
@@ -184,6 +185,30 @@ export function servesPath(surface: Surface, pathname: string): boolean {
   }
   // operator
   return isOperator || !isCustomer
+}
+
+/**
+ * Is this a CUSTOMER page — one that ships its own chrome and must never render the
+ * operator bot-console nav?
+ *
+ * Shell.tsx used to answer this from a second, hand-maintained list of pathnames that
+ * had to be kept in sync with CUSTOMER_PAGES by memory. It drifted three times:
+ * /track-record and /change-password (both fixed in place, both re-adding an entry
+ * rather than the rule), and then /support and /account/billing — which shipped the
+ * operator nav, SPARK/SPARK2/INFERNO/BLAZE/FLARE/Compare and all, onto a signed-in
+ * customer's billing page. Every one of those links 404s on the customer deployment,
+ * and naming the internal-only bots customer-side is exactly what the product-surface
+ * work removed.
+ *
+ * So the chrome decision now derives from the SAME lists as routing. Adding a page to
+ * CUSTOMER_PAGES is now sufficient; there is no second place to remember.
+ *
+ * `/ops` stays operator-chromed on purpose: it is served by both deployments
+ * (SHARED_PAGE_PREFIXES) but it is operator content, not customer content.
+ */
+export function isCustomerPage(pathname: string): boolean {
+  if (matches(pathname, [], SHARED_PAGE_PREFIXES)) return false
+  return matches(pathname, CUSTOMER_PAGES, CUSTOMER_PAGE_PREFIXES)
 }
 
 /**

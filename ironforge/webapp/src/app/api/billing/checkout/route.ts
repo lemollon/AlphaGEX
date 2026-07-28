@@ -105,7 +105,11 @@ export async function POST(req: NextRequest) {
         bot: COMMUNITY_KEY,
         trialDays: 0, // charge immediately — it's a low-cost access plan, not a strategy trial
         successUrl: `${origin}/community?welcome=community&session_id={CHECKOUT_SESSION_ID}`,
-        cancelUrl: `${origin}/pricing?canceled=1`,
+        // Back to Community, where the join button is. This pointed at /pricing, which
+        // has 308'd to /#memberships since the pricing page was retired — so abandoning
+        // checkout threw a signed-in customer out to the marketing homepage AND dropped
+        // the ?canceled flag on the redirect, leaving no acknowledgment anywhere.
+        cancelUrl: `${origin}/community?canceled=community`,
       }
 
       let communityCustomerId = await getOrCreateCustomer({

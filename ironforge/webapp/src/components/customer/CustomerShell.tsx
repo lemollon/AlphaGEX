@@ -60,7 +60,9 @@ const NAV_SECONDARY = [
   // straight to /live/{bot}/open. That is per-bot and entitlement-aware; this row was
   // neither. Removed rather than repointed — there is no distinct destination for it.
   { label: 'Manage Membership', href: '/account/billing', icon: ICONS.membership },
-  { label: 'Brokerage Settings', href: '/onboarding/brokerage', icon: ICONS.brokerage },
+  // Points at the SETTINGS page, not the funnel step. /onboarding/brokerage greets a
+  // connected customer with an empty "Connect your brokerage" form and a "Skip for now".
+  { label: 'Brokerage Settings', href: '/account/brokerage', icon: ICONS.brokerage },
   // Preserved from the old top-bar avatar menu that this shell removed.
   { label: 'Change Password', href: '/change-password', icon: ICONS.password },
   // Ask Sparky (the AI support assistant); Help stays the human-contact door.

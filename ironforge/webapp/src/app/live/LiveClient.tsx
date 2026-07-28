@@ -8,6 +8,7 @@ import { LIVE_BOTS, LIVE_BOT_LABEL, type LiveBot } from '@/lib/live/bots'
 import { accentFor } from './components/accent'
 import LiveHeader from './components/LiveHeader'
 import CustomerShell from '@/components/customer/CustomerShell'
+import CheckoutNotice from '@/components/customer/CheckoutNotice'
 import SparkHeroCard from './components/SparkHeroCard'
 import LiveTradeCard from './components/LiveTradeCard'
 import NowTimelineCard from './components/NowTimelineCard'
@@ -103,6 +104,10 @@ export default function LiveClient() {
       paperBots={summary?.viewer?.paperBots ?? []}
       onSwitch={switchAccount}
     >
+          {/* Where a bot purchase lands (`?welcome=spark|flame`). The subscription row
+              is written by the Stripe webhook, so without this a customer who just paid
+              can briefly see a dashboard that says they own nothing. */}
+          <CheckoutNotice labels={LIVE_BOT_LABEL} />
           <LiveHeader viewer={summary?.viewer ?? null} onSwitch={switchAccount} />
           {summary?.empty ? (
             /* No bot mapped — a conversion surface, not a dashboard. Live paper

@@ -79,6 +79,9 @@ const CUSTOMER_EXACT = new Set<string>([
   '/support',
   '/account/trades',
   '/account/billing',
+  // Which brokerage accounts a person has linked, with masks and buying power — their
+  // own money, so gated on identity like the rest of /account.
+  '/account/brokerage',
   // Signed-in password change. Omitting it sent a customer who clicked
   // "Change password" to /ops/login — the OPERATOR door, which they can
   // never satisfy. Same class of bug as /home and /live before #2560.

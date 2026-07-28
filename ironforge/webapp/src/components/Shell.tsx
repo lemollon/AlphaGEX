@@ -4,45 +4,25 @@ import { usePathname } from 'next/navigation'
 import ClientNav from './ClientNav'
 import ScrollToTop from './ScrollToTop'
 import AdminBadge from './AdminBadge'
-import { clientSurface } from '@/lib/surface'
+import { clientSurface, isCustomerPage } from '@/lib/surface'
 
 /**
- * App chrome wrapper. Operator routes get the global nav; standalone
+ * App chrome wrapper. Operator routes get the global nav; customer and standalone
  * marketing/auth/onboarding screens ship their own chrome.
  */
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  // Standalone full-bleed marketing/auth/onboarding screens: no app nav, own chrome.
-  const isStandalone =
-    pathname === '/' ||
-    pathname === '/how-it-works' ||
-    // Public proof page. Omitting it rendered the OPERATOR nav (SPARK/INFERNO/
-    // BLAZE/Compare, "Signed in as Admin") on a page built for prospects — and
-    // Nav.tsx has no surface filtering, so those links 404 on the customer
-    // deployment. It carries its own chrome like every other marketing screen.
-    pathname === '/track-record' ||
-    pathname === '/bot-ledger' ||
-    pathname === '/signup' ||
-    pathname === '/pricing' ||
-    pathname === '/contact' ||
-    pathname === '/privacy' ||
-    pathname === '/terms' ||
-    pathname === '/login' ||
-    pathname === '/ops/login' ||
-    pathname === '/forgot-password' ||
-    pathname === '/reset-password' ||
-    pathname === '/account/trades' ||
-    pathname === '/live' ||
-    // Per-bot "Open Account" pages carry the customer chrome, not the operator
-    // nav — they are a subscribe surface, and Nav.tsx links 404 on this deployment.
-    pathname.startsWith('/live/') ||
-    pathname === '/home' ||
-    // Signed-in password change is a customer screen; without this it rendered
-    // the operator nav (SPARK/INFERNO/Compare) over a customer's account page.
-    pathname === '/change-password' ||
-    pathname === '/performance' ||
-    pathname === '/community' ||
-    pathname.startsWith('/onboarding')
+
+  // DERIVED, not hand-listed. This used to be a second list of pathnames kept in sync
+  // with surface.ts CUSTOMER_PAGES by memory, and it drifted three times — most recently
+  // leaving /support and /account/billing rendering the operator bot-console nav
+  // (SPARK/SPARK2/INFERNO/BLAZE/FLARE/Compare) on a signed-in customer's pages, where
+  // every one of those links 404s. Adding a page to CUSTOMER_PAGES is now enough;
+  // surface.test.ts fails if the two ever disagree again.
+  //
+  // /ops/login is the one deliberate extra: it is operator content (so not a customer
+  // page) but it is a bare login screen that carries its own chrome.
+  const isStandalone = isCustomerPage(pathname) || pathname === '/ops/login'
 
   // 'both' (mirror unset) keeps today's behaviour for local dev; only the
   // customer deployment actively suppresses it.

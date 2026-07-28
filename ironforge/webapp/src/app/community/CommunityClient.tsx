@@ -7,6 +7,7 @@ import { fetcher } from '@/lib/fetcher'
 import type { LiveSummary } from '@/lib/live/types'
 import type { CommunityFeed, CommunityMessage } from '@/lib/community/store'
 import CustomerShell from '@/components/customer/CustomerShell'
+import CheckoutNotice from '@/components/customer/CheckoutNotice'
 
 /** Forge Community — chat-first center column + right info rail (per the
  *  approved design). Realtime via 4s SWR polling; no websockets in this stack. */
@@ -272,6 +273,12 @@ export default function CommunityClient() {
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col px-4">
+            {/* Where Community checkout lands, success OR cancel. Distinct from the
+                evergreen welcome banner below, which is localStorage-driven and so
+                says nothing about whether this visit followed a payment. */}
+            <div className="mt-3">
+              <CheckoutNotice labels={{ community: 'Forge Community' }} />
+            </div>
             {/* Welcome banner */}
             {!welcomeDismissed && (
               <div className="mt-3 flex items-start gap-3 rounded-lg border border-amber-500/25 bg-gradient-to-r from-amber-500/10 to-transparent p-3">

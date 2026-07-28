@@ -141,6 +141,37 @@ export async function legalRequirementsFor(
  * Append-only: acceptances are inserted, never updated, so the history of what was
  * agreed and when survives every later version bump (§5).
  */
+/**
+ * Write versioned acceptances for specific document CODES. Idempotent.
+ *
+ * Extracted so the LEGACY onboarding funnel can record the same rows as the v1 chain.
+ * Before this, /onboarding/legal wrote only an `audit_events` row with three booleans —
+ * no version, nothing joinable — while `acceptedVersionsFor()` reads `legal_acceptances`
+ * alone. So a customer who completed the live funnel had ZERO acceptance rows, and
+ * `staleDocumentCodes()` would report every required document as stale, blocking
+ * activation permanently with no screen on which to re-accept.
+ *
+ * Two funnels are bad; two funnels that disagree about whether you have signed anything
+ * is worse. They now write one record.
+ */
+export async function recordAcceptedDocuments(opts: {
+  userId: string
+  enrollmentId: string | null
+  codes: string[]
+  ip: string | null
+  userAgent: string | null
+}): Promise<void> {
+  const wanted = new Set(opts.codes)
+  for (const d of LEGAL_DOCUMENTS.filter((x) => wanted.has(x.code))) {
+    await customerExecute(
+      `INSERT INTO legal_acceptances (user_id, enrollment_id, document_id, ip, user_agent)
+       SELECT $1, $2, id, $4, $5 FROM legal_documents WHERE code = $3 AND version = $6
+       ON CONFLICT (user_id, document_id) DO NOTHING`,
+      [opts.userId, opts.enrollmentId, d.code, opts.ip, opts.userAgent, d.version],
+    )
+  }
+}
+
 export async function recordAcceptances(opts: {
   userId: string
   enrollmentId: string
@@ -154,13 +185,13 @@ export async function recordAcceptances(opts: {
   const missing = required.filter((d) => !submitted.has(d.code)).map((d) => d.code)
   if (missing.length > 0) return { ok: false, missing }
 
-  for (const d of required) {
-    await customerExecute(
-      `INSERT INTO legal_acceptances (user_id, enrollment_id, document_id, ip, user_agent)
-       SELECT $1, $2, id, $4, $5 FROM legal_documents WHERE code = $3 AND version = $6`,
-      [opts.userId, opts.enrollmentId, d.code, opts.ip, opts.userAgent, d.version],
-    )
-  }
+  await recordAcceptedDocuments({
+    userId: opts.userId,
+    enrollmentId: opts.enrollmentId,
+    codes: required.map((d) => d.code),
+    ip: opts.ip,
+    userAgent: opts.userAgent,
+  })
   await customerExecute(
     `UPDATE enrollments SET status = 'billing_pending', current_step = 'billing', updated_at = now()
       WHERE id = $1 AND user_id = $2`,

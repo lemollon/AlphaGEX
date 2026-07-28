@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { ONBOARDING_COOKIE, verifyOnboardingToken } from '@/lib/auth/onboarding'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { isCustomersDbConfigured, customerExecute } from '@/lib/customers-db'
+import { createOrResumeEnrollment, recordAcceptedDocuments } from '@/lib/enrollment/service'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -67,6 +68,35 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       console.error('[onboarding] legal audit write failed:', e)
     }
+
+    // ── Record the SAME acceptance the v1 chain reads (§3 LEGAL-01) ──────────────
+    //
+    // The audit row above is a log line: three booleans, no document version, nothing
+    // joinable. `acceptedVersionsFor()` reads `legal_acceptances`, so without this a
+    // customer who completed this funnel has zero acceptance rows and every required
+    // document reads as stale — blocking activation permanently, with no screen to
+    // re-accept on.
+    //
+    // The three checkboxes map exactly onto three registry codes (see legal.ts):
+    // termsAccepted→TERMS, riskDisclosure→RISK, automatedExecution→TRADING_AUTH.
+    // ELECTRONIC_CONSENT is not collected here and is left for the activation review,
+    // which is where an Automate-scope consent belongs.
+    //
+    // Non-fatal: a customer must never be blocked at the legal step because a
+    // convergence write failed. The backfill endpoint repairs any gap.
+    try {
+      const enrollment = await createOrResumeEnrollment(userId, 'onboarding')
+      await recordAcceptedDocuments({
+        userId,
+        enrollmentId: enrollment.id,
+        codes: ['TERMS', 'RISK', 'TRADING_AUTH'],
+        ip: clientIp(req),
+        userAgent: req.headers.get('user-agent'),
+      })
+    } catch (e) {
+      console.error('[onboarding] versioned acceptance write failed:', e)
+    }
+
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[onboarding] accept-legal failed:', e)

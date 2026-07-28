@@ -103,7 +103,10 @@ export default function BillingClient() {
               {busy ? 'Opening…' : 'Manage billing'}
             </button>
           ) : (
-            <Link href="/pricing" className="rounded-lg border border-amber-500 px-4 py-2.5 text-sm font-semibold text-amber-500 transition hover:bg-amber-500/10">See plans</Link>
+            /* Straight to the membership section. This pointed at /pricing, which has
+               308'd to /#memberships since the pricing page was retired — an extra hop
+               that bounced a signed-in customer out to the marketing homepage. */
+            <Link href="/#memberships" className="rounded-lg border border-amber-500 px-4 py-2.5 text-sm font-semibold text-amber-500 transition hover:bg-amber-500/10">See plans</Link>
           )}
         </div>
         {hasPlan && (
