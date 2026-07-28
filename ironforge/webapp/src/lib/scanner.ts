@@ -1608,7 +1608,13 @@ async function monitorSinglePosition(
           if (pollAcct) {
             const accountId = await getAccountIdForKey(pollAcct.apiKey, pollAcct.baseUrl)
             if (accountId) {
-              const fill = await getOrderFillPrice(pollAcct.apiKey, accountId, userPending.order_id, 0)
+              // baseUrl MUST be passed — it defaults to the sandbox URL, which
+              // 401s forever on a production order (2026-07-28: Logan's real
+              // close order 138922666 re-polled sandbox.tradier.com at ~1/s
+              // indefinitely). Cap at 60s instead of 0 (infinite) so an
+              // unfilled limit close defers to next cycle — the null branch
+              // below already handles that — rather than wedging the scan loop.
+              const fill = await getOrderFillPrice(pollAcct.apiKey, accountId, userPending.order_id, 60_000, pollAcct.baseUrl)
               if (fill != null && fill > 0) {
                 console.log(`[scanner] ${bot.name.toUpperCase()} ${pid}: Pending close fill received! $${fill.toFixed(4)} — completing paper close (${pendingKey})`)
                 // Complete the deferred close with actual fill
