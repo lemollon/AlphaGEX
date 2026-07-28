@@ -20,6 +20,7 @@ export const BOT_REGISTRY = {
   weekender: { display: 'WEEKENDER', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   flashpoint: { display: 'FLASHPOINT', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   thermal: { display: 'THERMAL', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
+  wildfire: { display: 'WILDFIRE', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
 };
 
 export const STRATEGY_LABEL = {
@@ -111,6 +112,14 @@ export const BOT_THEME = {
     primaryRing: 'rgba(56,189,248,0.30)',
     glow:        'rgba(56,189,248,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(56,189,248,0.22) 0%, rgba(56,189,248,0.03) 100%)',
+  },
+  wildfire: {
+    glyph:       'wave',                       // WILDFIRE = backdraft that burns all day
+    primary:     '#ef4444',                    // red-500
+    primarySoft: 'rgba(239,68,68,0.10)',
+    primaryRing: 'rgba(239,68,68,0.30)',
+    glow:        'rgba(239,68,68,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(239,68,68,0.22) 0%, rgba(239,68,68,0.03) 100%)',
   },
   thermal: {
     glyph:       'wave',                       // THERMAL = the updraft you ride all day
