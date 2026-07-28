@@ -111,3 +111,43 @@ export async function hasActiveMembership(customerId: string | null): Promise<bo
     return false
   }
 }
+
+/**
+ * True when the customer owns a STRATEGY (Spark or Flame) — not merely Community.
+ *
+ * Distinct from hasActiveMembership on purpose. Community buys the chat, and its page is
+ * deliberately readable while signed in (the composer swaps to a join CTA on 402). The
+ * Live dashboard is different: it is the strategy product, and there is nothing there for
+ * someone who owns no strategy.
+ *
+ * This exists because "is a customer" was being answered by `/api/auth/customer-me`
+ * returning ok — which only ever meant SIGNED IN. Anyone who made a free account saw
+ * "Live" in the marketing nav while owning nothing. That is the same conflation of
+ * "anonymous" with "signed in, nothing bought" that has now surfaced four times.
+ *
+ * Fails CLOSED, like hasActiveMembership: an unreadable billing DB must never advertise
+ * an entitlement it cannot verify.
+ */
+export async function ownsStrategy(customerId: string | null): Promise<boolean> {
+  if (!customerId || !isCustomersDbConfigured()) return false
+  try {
+    const rows = await customerQuery<{ bot: string; status: string }>(
+      `SELECT bot, status FROM customer_bot_subscriptions WHERE user_id = $1`,
+      [customerId],
+    )
+    return ownsStrategyFromRows(rows)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The predicate, split from the query so it can be tested without a database.
+ *
+ * A row grants Live access only when it is BOTH a strategy (not Community) AND in a
+ * live status. Getting either half wrong shows the strategy dashboard to someone who
+ * bought chat, or hides it from someone mid-trial.
+ */
+export function ownsStrategyFromRows(rows: ReadonlyArray<{ bot: string; status: string }>): boolean {
+  return rows.some((r) => !isCommunityKey(r.bot) && LIVE_STATUSES.has(r.status))
+}
