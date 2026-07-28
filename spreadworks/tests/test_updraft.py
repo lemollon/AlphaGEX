@@ -442,6 +442,102 @@ def test_em_breach_ships_disarmed_one_entry_per_day():
     assert meta["strategy"] == "updraft"
 
 
+def _fp_chain(*, spot=602.0, or_high=601.5, or_low=598.5, day_open=600.0,
+              open_str=0.80, prev_spot=601.2, complete=True):
+    """Chain with an orx block. Defaults: 3-point range on a 0.80% straddle
+    -> width/EM = 0.625 > 0.5709 gate; spot just broke the range high and
+    the prior snapshot had NOT."""
+    c = _chain(spot=spot)
+    c["orx"] = {"or_high": or_high, "or_low": or_low, "or_complete": complete,
+                "day_open": day_open, "open_straddle_pct": open_str,
+                "prev_spot": prev_spot, "reason": None}
+    return c
+
+
+def _fp_params():
+    return {**DEFAULT_PARAMS, "mode": "flashpoint", "strike_offset": 0,
+            "hold_minutes": 45}
+
+
+def test_flashpoint_fires_a_CALL_on_first_break_of_a_wide_range():
+    sig = build_updraft_signal(chain=_fp_chain(), today=date(2026, 7, 28),
+                               params=_fp_params(), mode="flashpoint")
+    assert sig is not None
+    leg = sig.legs()[0]
+    assert leg["type"] == "call" and leg["action"] == "buy"
+    assert sig.strike == 602.0          # ATM
+
+
+def test_flashpoint_rejects_a_narrow_range():
+    # 3-point range but a 1.60% straddle -> width/EM = 0.3125 < gate.
+    # Unfiltered ORB is BREAKEVEN — the width gate IS the strategy.
+    diag = []
+    sig = build_updraft_signal(chain=_fp_chain(open_str=1.60),
+                               today=date(2026, 7, 28), params=_fp_params(),
+                               mode="flashpoint", diag=diag)
+    assert sig is None
+    assert any("range_too_narrow" in d for d in diag), diag
+
+
+def test_flashpoint_rejects_stale_break_and_forming_range():
+    diag = []
+    assert build_updraft_signal(chain=_fp_chain(prev_spot=601.8),
+                                today=date(2026, 7, 28), params=_fp_params(),
+                                mode="flashpoint", diag=diag) is None
+    assert any("not_first_touch" in d for d in diag), diag
+    diag2 = []
+    assert build_updraft_signal(chain=_fp_chain(complete=False),
+                                today=date(2026, 7, 28), params=_fp_params(),
+                                mode="flashpoint", diag=diag2) is None
+    assert any("or_forming" in d for d in diag2), diag2
+
+
+def test_flashpoint_registry_runs_1k_account_and_sizes_one_contract():
+    meta = get_bot("flashpoint")
+    d = meta["defaults"]
+    assert meta["ticker"] == "SPY"
+    assert d["enabled"] is False, "no bot ships armed"
+    assert d["mode"] == "flashpoint"
+    assert d["starting_capital"] == 1000.0, "Leron's $1k paper framing"
+    # ATM calls run ~$100-350; the bp budget must never floor to zero
+    # contracts (the AFTERBURN sizing lesson)
+    assert d["bp_pct"] * d["starting_capital"] >= 350
+    assert d["or_width_min_em"] == 0.5709, "TRAIN q67, frozen"
+    assert d["strike_offset"] == 0 and d["sl_pct"] == 0.50
+    assert d["entry_start_ct"] == "09:01", "range completes at 09:00 CT"
+    assert meta["one_entry_per_day"] is True
+
+
+def test_or_state_reader_builds_range_from_snapshots(tmp_path):
+    """End-to-end: 08:31-09:00 snapshots form the range; a 09:05 read is
+    complete with prev = the latest snapshot."""
+    from sqlalchemy import create_engine
+    from backend.bots import flow_store
+
+    eng = create_engine(f"sqlite:///{tmp_path/'orx.db'}")
+    flow_store.ensure_table(eng)
+    opts = [{"strike": 600.0, "type": "call", "bid": 1.20, "ask": 1.24,
+             "volume": 10},
+            {"strike": 600.0, "type": "put", "bid": 1.15, "ask": 1.19,
+             "volume": 10}]
+    t0 = datetime(2026, 7, 28, 8, 31)
+    for mins, spot in ((0, 600.0), (15, 601.4), (29, 598.9), (34, 601.0)):
+        flow_store.record_snapshot(eng, ticker="SPY",
+                                   expiration=date(2026, 7, 28),
+                                   now=t0 + timedelta(minutes=mins),
+                                   spot=spot, options=opts)
+    st = flow_store.read_or_state(eng, ticker="SPY",
+                                  now=datetime(2026, 7, 28, 9, 7))
+    assert st.or_complete
+    assert st.or_high == 601.4 and st.or_low == 598.9
+    assert st.day_open == 600.0
+    assert st.prev_spot == 601.0        # the 09:05 snapshot, outside the OR
+    # mid-range read: incomplete
+    st2 = flow_store.read_or_state(eng, ticker="SPY",
+                                   now=datetime(2026, 7, 28, 8, 50))
+    assert not st2.or_complete
+
+
 def test_embreachq_is_embreach_on_qqq_with_own_thresholds():
     meta = get_bot("embreachq")
     d = meta["defaults"]

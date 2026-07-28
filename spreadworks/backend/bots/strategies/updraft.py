@@ -76,6 +76,11 @@ DEFAULT_PARAMS: dict[str, Any] = {
     # AFTERBURN gate — session return must be at least this (TRAIN q80).
     # Dose-response is MONOTONE above it (q70<q80<q90 at every strike).
     "afterburn_min_ret_pct": 0.52,
+    # FLASHPOINT gate — the 08:31-09:00 CT range (as % of open) divided by
+    # the open ATM straddle % must exceed this (TRAIN q67 = 0.5709). Wide
+    # morning = realized vol beating implied; the upward break gives the
+    # direction. CALLS ONLY — the put side was TRAIN-negative.
+    "or_width_min_em": 0.5709,
     # shared
     "strike_offset": 1,       # +1 strike OTM (REVERSAL uses 0 = ATM)
     "hold_minutes": 45,       # UPDRAFT 45, BACKDRAFT 30, REVERSAL 45
@@ -277,6 +282,40 @@ def build_updraft_signal(
             if prev_move < -frac * float(pstr):
                 return _reject(f"not_first_touch: already breached at prior "
                                f"scan (prev_move={prev_move:+.2f}%)")
+        put_wall = None
+    elif mode == "flashpoint":
+        # Wide opening range -> first break ABOVE it -> ATM call. The gate
+        # is the RANGE-vs-PRICED-MOVE ratio, not the break alone: unfiltered
+        # ORB is breakeven; the wide-range top tercile carries the edge
+        # (TRAIN +10.28% / TEST +5.19% calls-only; $1k sim -> $3.3k in 3.5y).
+        orx = chain.get("orx") or {}
+        or_high = orx.get("or_high")
+        day_open = orx.get("day_open")
+        if or_high is None or not day_open:
+            return _reject(
+                f"or_unavailable: {orx.get('reason') or 'no orx block'}")
+        if not orx.get("or_complete"):
+            return _reject("or_forming: opening range not complete until 09:01")
+        open_str = orx.get("open_straddle_pct")
+        if not open_str:
+            return _reject("no_open_straddle: cannot scale the range")
+        or_low = orx.get("or_low")
+        width_em = (100.0 * (float(or_high) - float(or_low))
+                    / float(day_open) / float(open_str))
+        if width_em < float(p["or_width_min_em"]):
+            return _reject(f"range_too_narrow: width/EM={width_em:.2f} "
+                           f"need>={float(p['or_width_min_em']):.2f}")
+        if spot <= float(or_high):
+            return _reject(f"no_breakout: spot={spot:.2f} "
+                           f"or_high={float(or_high):.2f}")
+        # FIRST TOUCH ONLY (EM_BREACH precedent): if the previous snapshot
+        # was already above the range the break is stale. Unknown rejects.
+        ps = orx.get("prev_spot")
+        if ps is None:
+            return _reject("prev_state_unknown: no prior snapshot")
+        if float(ps) > float(or_high):
+            return _reject(f"not_first_touch: already above range at prior "
+                           f"scan (prev={float(ps):.2f})")
         put_wall = None
     elif mode in ("afterburn", "weekender"):
         # WEEKENDER is AFTERBURN's Friday twin: same close-momentum gate
