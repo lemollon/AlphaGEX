@@ -50,10 +50,15 @@ const NAV_MAIN = [
 ]
 
 const NAV_SECONDARY = [
-  // Subscribing used to have no front door of its own — you had to know to open
-  // /live and dig for the Open Account button. This makes "add a strategy" a
-  // first-class action.
-  { label: 'Add a Strategy', href: '/live', icon: 'M12 5v14M5 12h14' },
+  // "Add a Strategy" used to sit here pointing at /live — the SAME href as the "Live"
+  // item directly above it. Two rows, one destination, and because isActive matches by
+  // prefix BOTH highlighted at once, so the rail looked like it was in two places.
+  //
+  // Its original job (give subscribing a front door instead of making you dig for the
+  // Open Account button) is now done better by the Spark/Flame child rows under Live:
+  // they list both strategies ALWAYS and route by ownership, so an unowned one goes
+  // straight to /live/{bot}/open. That is per-bot and entitlement-aware; this row was
+  // neither. Removed rather than repointed — there is no distinct destination for it.
   { label: 'Manage Membership', href: '/account/billing', icon: ICONS.membership },
   { label: 'Brokerage Settings', href: '/onboarding/brokerage', icon: ICONS.brokerage },
   // Preserved from the old top-bar avatar menu that this shell removed.
