@@ -12,6 +12,10 @@ only in what triggers them, so one module serves both via `mode`.
     REVERSAL   hourly RSI(14) closes back ABOVE 30 after being below
                                          (a CONFIRMED hourly reversal)
 
+    EM_BREACH  the session's move from open first crosses BELOW
+               -em_frac x the ATM-straddle expected move  (buys a PUT:
+               the day broke its priced range -> downside CONTINUATION)
+
 Economic rationale: UPDRAFT and BACKDRAFT both fade a put-buying crowd that
 the tape is running over — UPDRAFT requires momentum confirmation, BACKDRAFT
 requires flow extremity plus dealer-gamma support underneath. REVERSAL is a
@@ -58,6 +62,11 @@ DEFAULT_PARAMS: dict[str, Any] = {
     # REVERSAL gates
     "rsi_threshold": 30.0,    # cross back ABOVE this = the trigger
     "rsi_period": 14,
+    # EM_BREACH gates
+    "em_frac": 0.8,           # breach depth, FIXED A PRIORI in research
+    # skip days whose OPEN already priced a catalyst (TRAIN q90 = 0.75%):
+    # the edge is in UNPRICED surprises; measured NEGATIVE above this.
+    "max_open_straddle_pct": 0.75,
     # shared
     "strike_offset": 1,       # +1 strike OTM (REVERSAL uses 0 = ATM)
     "hold_minutes": 45,       # UPDRAFT 45, BACKDRAFT 30, REVERSAL 45
@@ -81,6 +90,9 @@ class UpdraftSignal:
     hold_minutes: int
     rsi: float | None = None        # REVERSAL only, for the audit trail
     prev_rsi: float | None = None
+    side: str = "call"              # EM_BREACH buys a put; everyone else calls
+    em_move_pct: float | None = None
+    em_straddle_pct: float | None = None
     # Fields the executor requires of every signal (see executor.open_position):
     # .debit, .contracts, .max_profit, .max_loss, .pt_target_pnl, .sl_target_pnl
     debit: float = 0.0            # premium paid per contract (== call_mid)
@@ -97,7 +109,7 @@ class UpdraftSignal:
         exp = self.expiration
         exp_s = exp.isoformat() if hasattr(exp, "isoformat") else str(exp)
         return [{
-            "strike": self.strike, "type": SIDE, "action": "buy",
+            "strike": self.strike, "type": self.side, "action": "buy",
             "side": "long", "quantity": 1, "expiration": exp_s,
             "entry_price": self.call_mid,
         }]
@@ -110,6 +122,19 @@ class UpdraftSignal:
             "hold_minutes": self.hold_minutes,
             "rsi": self.rsi, "prev_rsi": self.prev_rsi,
         }
+
+
+def _pick_option(chain: dict, spot: float, offset: int, right: str) -> dict | None:
+    """Nearest listed strike to the target for `right` ('call' or 'put').
+
+    Calls target spot + offset (offset 1 = 1 OTM above); puts target
+    spot - offset (offset 1 = 1 OTM below). offset 0 = ATM for both.
+    """
+    pool = [o for o in chain.get("options", []) if o.get("type") == right]
+    if not pool:
+        return None
+    target = spot + float(offset) if right == "call" else spot - float(offset)
+    return min(pool, key=lambda o: abs(float(o["strike"]) - target))
 
 
 def _otm_call(chain: dict, spot: float, offset: int) -> dict | None:
@@ -161,7 +186,7 @@ def build_updraft_signal(
     # cross. Demanding a flow block here would blind it whenever flow_store
     # has not yet accumulated 30 minutes, which has nothing to do with its
     # signal.
-    if mode != "reversal" and fi is None:
+    if mode in ("updraft", "backdraft") and fi is None:
         return _reject(f"flow_unavailable: {flow.get('reason', 'no flow block')}")
 
     if mode == "updraft":
@@ -206,12 +231,51 @@ def build_updraft_signal(
                 f"prev={rsi.get('prev_rsi')} "
                 f"(need prev<{float(p['rsi_threshold']):.0f}<=rsi)")
         put_wall = None
+    elif mode == "em_breach":
+        # The day must have JUST broken below -em_frac x its priced move.
+        # Research: continuation (+6-13%/trade), beats a time-matched placebo
+        # by +28-42pts, and it is the documented exception to "long puts
+        # always lose" — the drift objection is suspended once the day has
+        # already broken its priced range.
+        em = chain.get("em") or {}
+        day_open = em.get("day_open")
+        if not day_open:
+            return _reject(
+                f"em_unavailable: {em.get('reason') or 'no em block'}")
+        from ..flow_store import atm_straddle_pct
+        straddle = atm_straddle_pct(chain.get("options") or [], spot)
+        if straddle is None or straddle <= 0:
+            return _reject("no_straddle: cannot price the expected move")
+        move_pct = 100.0 * (spot / float(day_open) - 1.0)
+        frac = float(p["em_frac"])
+        if move_pct >= -frac * straddle:
+            return _reject(f"no_breach: move={move_pct:+.2f}% "
+                           f"need<{-frac * straddle:.2f}%")
+        # catalyst filter: skip days whose OPEN priced a big move. Unknown
+        # open straddle degrades to the UNCONDITIONAL (headline) version.
+        open_str = em.get("open_straddle_pct")
+        if open_str is not None and float(open_str) >= float(p["max_open_straddle_pct"]):
+            return _reject(f"catalyst_priced: open_straddle={float(open_str):.2f}% "
+                           f">= {float(p['max_open_straddle_pct']):.2f}%")
+        # FIRST TOUCH ONLY: if the previous snapshot was already breached the
+        # move is stale (BACKDRAFT precedent: later minutes chase). Unknown
+        # prior state rejects — miss a day rather than take a stale entry.
+        ps, pstr = em.get("prev_spot"), em.get("prev_straddle_pct")
+        if ps is not None:
+            if pstr is None:
+                return _reject("prev_breach_unknown: prior snapshot has no straddle")
+            prev_move = 100.0 * (float(ps) / float(day_open) - 1.0)
+            if prev_move < -frac * float(pstr):
+                return _reject(f"not_first_touch: already breached at prior "
+                               f"scan (prev_move={prev_move:+.2f}%)")
+        put_wall = None
     else:
         return _reject(f"unknown_mode: {mode}")
 
-    call = _otm_call(chain, spot, int(p["strike_offset"]))
+    right = "put" if mode == "em_breach" else SIDE
+    call = _pick_option(chain, spot, int(p["strike_offset"]), right)
     if call is None:
-        return _reject("no_call_strikes")
+        return _reject(f"no_{right}_strikes")
     bid = float(call.get("bid") or 0)
     ask = float(call.get("ask") or 0)
     mid = (bid + ask) / 2.0
@@ -253,6 +317,11 @@ def build_updraft_signal(
         hold_minutes=int(p["hold_minutes"]),
         rsi=(chain.get("rsi") or {}).get("rsi"),
         prev_rsi=(chain.get("rsi") or {}).get("prev_rsi"),
+        side=right,
+        em_move_pct=(100.0 * (spot / float((chain.get("em") or {}).get("day_open"))
+                              - 1.0)
+                     if mode == "em_breach" else None),
+        em_straddle_pct=(straddle if mode == "em_breach" else None),
         debit=debit,
         contracts=contracts,
         max_profit=pt_pct * max_loss_per,

@@ -98,7 +98,8 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     trade_date    DATE        NOT NULL,
     spot          {dbl}       NOT NULL,
     call_volume   BIGINT      NOT NULL,
-    put_volume    BIGINT      NOT NULL
+    put_volume    BIGINT      NOT NULL,
+    straddle_pct  {dbl}
 )
 """
 
@@ -140,6 +141,16 @@ def ensure_table(engine: Engine) -> None:
     with engine.begin() as conn:
         conn.execute(text(_ddl(sqlite)))
         conn.execute(text(DDL_IDX))
+    # Widen tables created before straddle_pct existed. Postgres and SQLite
+    # both lack a portable IF NOT EXISTS here, so failure = already present.
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {TABLE} ADD COLUMN straddle_pct DOUBLE PRECISION"
+                              if engine.dialect.name != "sqlite" else
+                              f"ALTER TABLE {TABLE} ADD COLUMN straddle_pct REAL"))
+    except Exception:
+        pass
+
 
 
 def chain_volume_totals(options: list[dict[str, Any]]) -> tuple[int, int]:
@@ -175,6 +186,7 @@ def record_snapshot(engine: Engine, *, ticker: str, expiration: Any,
     table carries two identical rows per minute.
     """
     calls, puts = chain_volume_totals(options)
+    straddle = atm_straddle_pct(options, spot)
     ts = now.replace(second=0, microsecond=0)
     trade_date = now.date()
     try:
@@ -188,10 +200,11 @@ def record_snapshot(engine: Engine, *, ticker: str, expiration: Any,
             if dup is None:
                 conn.execute(text(
                     f"INSERT INTO {TABLE} (ticker, expiration, snapshot_time, "
-                    "trade_date, spot, call_volume, put_volume) "
-                    "VALUES (:tk, :ex, :ts, :td, :sp, :cv, :pv)"
+                    "trade_date, spot, call_volume, put_volume, straddle_pct) "
+                    "VALUES (:tk, :ex, :ts, :td, :sp, :cv, :pv, :st)"
                 ), {"tk": ticker, "ex": expiration, "ts": ts, "td": trade_date,
-                    "sp": float(spot), "cv": calls, "pv": puts})
+                    "sp": float(spot), "cv": calls, "pv": puts,
+                    "st": straddle})
     except Exception as e:                       # never break a scan on this
         logger.warning(f"flow snapshot write failed for {ticker}: {e}")
         return FlowState(None, None, spot, None, None, None,
@@ -446,3 +459,89 @@ def read_rsi_state(engine: Engine, *, ticker: str, now: datetime,
     rsi, prev = series[-1], series[-2]
     cross = (rsi >= threshold) and (prev < threshold)
     return RsiState(round(rsi, 2), round(prev, 2), cross, len(closes))
+
+
+# ---------------------------------------------------------------------------
+# EM-BREACH — day-open state and the ATM straddle (the day's priced move)
+# ---------------------------------------------------------------------------
+# The EM_BREACH leg fires when the session's move from open first crosses
+# BELOW -em_frac x the ATM straddle %. Research (hf_28/hf_29/em-breach memo):
+# continuation, +6-13%/trade, crushes a time-matched placebo by +28-42pts,
+# and the edge lives on ORDINARY days — it is NEGATIVE when the open already
+# priced a catalyst (top-decile open straddle), so the open straddle is
+# stored per snapshot and the first RTH snapshot's value gates the leg.
+
+
+def atm_straddle_pct(options: list[dict[str, Any]], spot: float) -> float | None:
+    """ATM call mid + put mid as % of spot — the day's priced expected move."""
+    if not spot or spot <= 0:
+        return None
+    def mids(side):
+        out = {}
+        for o in options or []:
+            if o.get("type") != side:
+                continue
+            b, a = float(o.get("bid") or 0), float(o.get("ask") or 0)
+            if b > 0 and a >= b:
+                out[float(o["strike"])] = (b + a) / 2.0
+        return out
+    cm, pm = mids("call"), mids("put")
+    shared = set(cm) & set(pm)
+    if not shared:
+        return None
+    k = min(shared, key=lambda x: abs(x - spot))
+    return 100.0 * (cm[k] + pm[k]) / spot
+
+
+@dataclass(frozen=True)
+class EmState:
+    """Day-open anchor plus the PREVIOUS snapshot, for first-touch detection."""
+    day_open: float | None
+    open_straddle_pct: float | None
+    prev_spot: float | None
+    prev_straddle_pct: float | None
+    reason: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"day_open": self.day_open,
+                "open_straddle_pct": self.open_straddle_pct,
+                "prev_spot": self.prev_spot,
+                "prev_straddle_pct": self.prev_straddle_pct,
+                "reason": self.reason}
+
+
+def read_em_state(engine: Engine, *, ticker: str, now: datetime) -> EmState:
+    """Day open = spot of the first RTH snapshot (>= 08:30 CT); prev = the
+    latest snapshot strictly before `now`. Prev is what makes the entry an
+    EVENT: the leg only fires on the scan where the breach BEGINS."""
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(text(
+                f"SELECT snapshot_time, spot, straddle_pct FROM {TABLE} "
+                "WHERE ticker = :tk AND trade_date = :td AND snapshot_time < :now "
+                "ORDER BY snapshot_time"),
+                {"tk": ticker, "td": now.date(), "now": now}).mappings().all()
+    except Exception as e:                                  # noqa: BLE001
+        logger.warning(f"em state read failed: {e}")
+        return EmState(None, None, None, None, f"db_error: {e}")
+    def _dt(t):
+        if isinstance(t, str):
+            try:
+                return datetime.fromisoformat(t)
+            except ValueError:
+                return None
+        return t
+    rth = []
+    for r in rows:
+        t = _dt(r["snapshot_time"])
+        if t is None:
+            continue
+        if (t.hour, t.minute) >= (8, 30):          # CT session open
+            rth.append((t, r["spot"], r["straddle_pct"]))
+    if not rth:
+        return EmState(None, None, None, None, "no_rth_snapshots")
+    first, last = rth[0], rth[-1]
+    return EmState(float(first[1]),
+                   float(first[2]) if first[2] is not None else None,
+                   float(last[1]),
+                   float(last[2]) if last[2] is not None else None)
