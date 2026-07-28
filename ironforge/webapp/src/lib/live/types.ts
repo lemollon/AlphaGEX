@@ -48,6 +48,18 @@ export interface LiveViewerInfo {
   allowedBots: string[]
   /** Bots currently on simulated money — drives the "Paper" badge client-side. */
   paperBots?: string[]
+  /**
+   * users.id of the signed-in customer; null for anonymous and for operators.
+   *
+   * Already present in the payload — /api/live/summary returns the resolved viewer
+   * verbatim on the empty branch — this only declares it. It is the one signal that
+   * separates "anonymous visitor" from "customer who has not added a bot yet", which
+   * the Live empty-state CTA needs: the first should be offered signup, the second
+   * must never be sent back through account creation.
+   *
+   * NOT an identifier the client acts on — it only picks copy and a destination.
+   */
+  customerId?: string | null
 }
 
 export interface LiveSummary {

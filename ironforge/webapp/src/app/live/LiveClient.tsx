@@ -90,6 +90,11 @@ export default function LiveClient() {
     }
   }
 
+  // Drives the empty-state CTA. customerId is non-null only for a signed-in
+  // customer, which is exactly the distinction the CTA needs: an existing account
+  // must never be sent back through account creation.
+  const signedIn = !!summary?.viewer?.customerId
+
   return (
     <CustomerShell
       membership={summary?.membership ?? null}
@@ -100,10 +105,19 @@ export default function LiveClient() {
     >
           <LiveHeader viewer={summary?.viewer ?? null} onSwitch={switchAccount} />
           {summary?.empty ? (
-            /* Non-customer (anonymous / no bot mapped) — this is a conversion
-               surface, not a dashboard. Show a signup CTA for each strategy
-               (Spark, then Flame). Live paper results live on /bot-ledger.
-               Customers with a mapped bot never reach this branch. */
+            /* No bot mapped — a conversion surface, not a dashboard. Live paper
+               results live on /bot-ledger. Customers WITH a mapped bot never reach
+               this branch.
+
+               Two very different visitors land here and they must not get the same
+               CTA. This used to send everyone to /signup?bot=..., so a SIGNED-IN
+               customer clicking "Sign up" on their own dashboard was handed the
+               create-an-account form and asked for their name, email and password
+               again — for an account they were already logged into. The old comment
+               said "anonymous / no bot mapped" as if those were one case; they are
+               not. Every other surface (sidebar ADD chips, /onboarding/complete,
+               /performance, /account/billing) already routes a signed-in customer to
+               /live/{bot}/open; this was the one that didn't. */
             <div className="mt-4">
               <div className="text-center">
                 <h2 className="font-display text-2xl tracking-wide text-white">Put a bot to work</h2>
@@ -117,7 +131,7 @@ export default function LiveClient() {
                 {SIGNUP_CTAS.map((c) => (
                   <a
                     key={c.slug}
-                    href={`/signup?bot=${c.slug}`}
+                    href={signedIn ? `/live/${c.slug}/open` : `/signup?bot=${c.slug}`}
                     className={`group flex items-center gap-4 rounded-xl border p-5 transition ${c.cardClass}`}
                   >
                     <img src={c.mascot} alt="" className="h-14 w-14 shrink-0" />
@@ -131,7 +145,7 @@ export default function LiveClient() {
                       <p className="mt-0.5 text-sm text-gray-400">{c.tagline}</p>
                     </div>
                     <span className={`shrink-0 rounded-md px-4 py-2 text-sm font-semibold text-white transition ${c.btnClass}`}>
-                      Sign up
+                      {signedIn ? 'Open Account' : 'Sign up'}
                     </span>
                   </a>
                 ))}
