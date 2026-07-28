@@ -109,8 +109,18 @@ export function validateAgentConfig(opts: {
     }
     if (value < f.min || value > f.max) {
       violations.push({ field: f.key, message: `${f.label} must be between ${f.min}% and ${f.max}%.` })
-      continue
     }
+    // RETAINED EVEN WHEN OUT OF RANGE — deliberately.
+    //
+    // Dropping a rejected value would make it ABSENT on the next read, and absent means
+    // "use the default", so simply re-validating an invalid draft would turn it valid
+    // without the customer changing anything.
+    // /v1/agent-configs/{id}/validate feeds the persisted config straight back in, so
+    // that path was reachable. Keeping the offending number makes re-validation
+    // reproduce the same violation, which is the only honest answer.
+    //
+    // Not a hole: the value is still allowlisted (an unknown key never reaches here),
+    // the config stays `draft`, and no limit is computed from it below.
     config[f.key] = value
   }
 
@@ -125,9 +135,12 @@ export function validateAgentConfig(opts: {
   }
 
   const pct = config[MAX_DEPLOYMENT.key] ?? MAX_DEPLOYMENT.default
-  const maxDeploymentCents = Math.floor((bp * pct) / 100)
+  // A limit derived from a rejected percentage would be a number that means nothing —
+  // and it is the number the activation snapshot would hash. Invalid configs carry no
+  // limit at all.
+  const maxDeploymentCents = violations.length === 0 ? Math.floor((bp * pct) / 100) : 0
 
-  if (opts.buyingPowerCents != null && maxDeploymentCents < 20_000) {
+  if (violations.length === 0 && opts.buyingPowerCents != null && maxDeploymentCents < 20_000) {
     // $200 is the scanner's own floor for opening a position.
     warnings.push('At this account size the strategy may not find a position it can open.')
   }
