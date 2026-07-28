@@ -135,6 +135,58 @@ export async function POST(req: NextRequest) {
         }
         break
       }
+      // ── Invoice lifecycle (Enrollment spec §7) ──────────────────────────────
+      // These were missing, and their absence had a real consequence: NOTHING ever
+      // wrote `past_due`. The activation predicate refuses to open new trading for a
+      // past_due membership (§11, "Payment fails after trial → set past_due; pause new
+      // orders"), so without these events that rule could never fire — a customer whose
+      // card failed kept full trading authority until the subscription was cancelled
+      // outright, days later.
+      //
+      // Subscription status is still Stripe's word: we read obj.subscription's status
+      // via the subscription events too, but invoice events are what arrive FIRST on a
+      // failed charge, so they are the earliest safe moment to stop new orders.
+      case 'invoice.payment_failed': {
+        const userId = await resolveUserId(obj.metadata, obj.customer)
+        const subId = typeof obj.subscription === 'string' ? obj.subscription : null
+        if (userId && subId) {
+          // Mark every bot on this subscription past_due. Scoped by subscription id so a
+          // customer with two separate subscriptions only has the failing one paused.
+          await customerExecute(
+            `UPDATE customer_bot_subscriptions
+                SET status = 'past_due', updated_at = now()
+              WHERE user_id = $1 AND stripe_subscription_id = $2
+                AND status IN ('trialing', 'active')`,
+            [userId, subId],
+          )
+          console.warn(`[billing/webhook] invoice.payment_failed → past_due for sub ${subId}`)
+        }
+        break
+      }
+      case 'invoice.paid': {
+        // Recovery: a successful invoice clears past_due. Only lifts a past_due row —
+        // it must never resurrect a canceled subscription, which is a different decision
+        // made by the subscription events.
+        const userId = await resolveUserId(obj.metadata, obj.customer)
+        const subId = typeof obj.subscription === 'string' ? obj.subscription : null
+        if (userId && subId) {
+          await customerExecute(
+            `UPDATE customer_bot_subscriptions
+                SET status = 'active', updated_at = now()
+              WHERE user_id = $1 AND stripe_subscription_id = $2
+                AND status = 'past_due'`,
+            [userId, subId],
+          )
+        }
+        break
+      }
+      case 'setup_intent.succeeded':
+        // Automate collects a payment method BEFORE any subscription exists (§7), so
+        // there is no subscription row to touch yet. Acknowledged explicitly rather than
+        // falling into `default` so the handled-event list matches the spec and a reader
+        // can see this was considered, not missed.
+        break
+
       default:
         // Ignore unhandled event types.
         break
