@@ -95,22 +95,36 @@ export interface StrategyNav {
 }
 
 function PlanCard({ membership, variant }: { membership: PlanCardData | null; variant: 'trial' | 'active' }) {
-  const plan = membership?.plan ?? 'IronForge Membership'
   const trial = membership?.trial ?? null
   const pct = trial ? Math.min(100, Math.max(0, Math.round((trial.day / trial.total_days) * 100))) : 0
+
+  // NO membership is a real, common state (signed up, nothing subscribed yet) and it
+  // must not be dressed as a paid one. This used to default to
+  // `plan ?? 'IronForge Membership'` and `badge ?? 'Active'`, so a customer with no
+  // subscription at all saw "IronForge Membership ✓ Active" in green — the card
+  // asserting a plan they had never bought, on the same screen that was asking them to
+  // sign up for one. Falsely claiming an active paid membership is the worst direction
+  // for this error to point.
+  const none = !membership
+  const plan = membership?.plan ?? 'No membership'
+
   return (
-    <div className="rounded-xl border border-amber-900/40 bg-forge-card p-3.5">
+    <div className={`rounded-xl border bg-forge-card p-3.5 ${none ? 'border-forge-border' : 'border-amber-900/40'}`}>
       <div className="flex items-start gap-2.5">
-        <Icon className="mt-0.5 h-5 w-5 shrink-0 text-amber-500"
+        <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${none ? 'text-gray-500' : 'text-amber-500'}`}
           d="M12 2l8 3v6c0 5.25-3.4 9.74-8 11-4.6-1.26-8-5.75-8-11V5z" />
         <div>
-          <div className="font-display text-base leading-tight text-amber-500">{plan}</div>
-          {variant === 'trial' && trial ? (
+          <div className={`font-display text-base leading-tight ${none ? 'text-gray-300' : 'text-amber-500'}`}>{plan}</div>
+          {none ? (
+            <a href="/account/billing" className="text-xs text-amber-500 hover:text-amber-400">
+              Choose a plan
+            </a>
+          ) : variant === 'trial' && trial ? (
             <div className="text-xs text-gray-500">{trial.label}</div>
           ) : (
             <div className="flex items-center gap-1 text-xs text-emerald-500">
               <Icon className="h-3.5 w-3.5" d="M20 6 9 17l-5-5" />
-              {membership?.badge ?? 'Active'}
+              {membership.badge ?? 'Active'}
             </div>
           )}
         </div>
