@@ -247,6 +247,148 @@ CREATE TABLE IF NOT EXISTS customer_bot_subscriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_customer_bot_subs_user ON customer_bot_subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_customer_bot_subs_sub ON customer_bot_subscriptions(stripe_subscription_id);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Enrollment / activation (Enrollment spec §5). The rule these exist to enforce:
+-- paid membership is NOT authority to trade, so membership, brokerage, agent
+-- configuration, activation and the trial are SEPARATE records with separate
+-- lifecycles. Domain rules live in lib/enrollment/ (pure + tested).
+--
+-- DELIBERATELY NOT CREATED: a memberships table. customer_bot_subscriptions
+-- above already is one, written by the verified Stripe webhook — the spec's own
+-- authority for membership state. A second would be pure redundancy.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Resumable, server-owned enrollment. Replaces reading intent off the single
+-- users.onboarding_step string, which cannot express "which plan" or "why stuck".
+CREATE TABLE IF NOT EXISTS enrollments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  selected_plan TEXT,                                -- community | spark | flame | both
+  status TEXT NOT NULL DEFAULT 'draft',              -- draft|legal_pending|billing_pending|setup_required|complete|abandoned
+  current_step TEXT,
+  source TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_enrollments_user ON enrollments(user_id);
+
+-- Immutable document versions. A changed version invalidates ONLY its own prior
+-- acceptance (§11), which is impossible to express without versioning them.
+CREATE TABLE IF NOT EXISTS legal_documents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code TEXT NOT NULL,                                -- TERMS | RISK | ELECTRONIC_CONSENT | TRADING_AUTH
+  plan_scope TEXT NOT NULL DEFAULT 'core',           -- core | automate
+  version TEXT NOT NULL,
+  effective_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  content_uri TEXT,
+  sha256 TEXT,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (code, version)
+);
+CREATE INDEX IF NOT EXISTS idx_legal_docs_active ON legal_documents(code, active);
+
+-- APPEND-ONLY evidence. Never updated or deleted: the audit requirement is that any
+-- past consent can be reconstructed with its version and timestamp (§12).
+CREATE TABLE IF NOT EXISTS legal_acceptances (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  enrollment_id UUID REFERENCES enrollments(id),
+  document_id UUID NOT NULL REFERENCES legal_documents(id),
+  accepted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ip TEXT,
+  user_agent TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_legal_acc_user ON legal_acceptances(user_id, document_id);
+
+-- One brokerage connection has MANY accounts; the existing brokerage_connections row
+-- conflated the two. Never store a full account number — mask for display, ciphertext
+-- for the reference (§8).
+CREATE TABLE IF NOT EXISTS broker_accounts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  connection_id UUID NOT NULL REFERENCES brokerage_connections(id),
+  external_account_ref_ciphertext TEXT,
+  display_mask TEXT NOT NULL,                        -- e.g. ****6411
+  account_type TEXT,
+  options_level INT,
+  eligibility TEXT NOT NULL DEFAULT 'unknown',       -- eligible | ineligible | unknown
+  ineligible_reason TEXT,
+  checked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_broker_accounts_conn ON broker_accounts(connection_id);
+
+-- Versioned config snapshot. rule_version is what makes a config go stale when the
+-- approved rule set moves under it.
+CREATE TABLE IF NOT EXISTS agent_configs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  broker_account_id UUID REFERENCES broker_accounts(id),
+  agent_code TEXT NOT NULL,                          -- spark | flame
+  rule_version TEXT NOT NULL,
+  config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status TEXT NOT NULL DEFAULT 'draft',              -- not_started|draft|valid|stale|archived
+  validated_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_configs_user ON agent_configs(user_id, agent_code);
+
+-- The record that authorizes orders. preview_hash pins the immutable snapshot the
+-- customer actually consented to (§4) so a changed account/config invalidates it.
+CREATE TABLE IF NOT EXISTS activations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  config_id UUID NOT NULL REFERENCES agent_configs(id),
+  status TEXT NOT NULL DEFAULT 'activating',         -- inactive|activating|active|paused|blocked|revoked
+  preview_hash TEXT,
+  risk_ack_at TIMESTAMPTZ,
+  authorization_at TIMESTAMPTZ,
+  activated_at TIMESTAMPTZ,
+  paused_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_activations_user ON activations(user_id, status);
+
+-- FIVE ELIGIBLE TRADING DAYS, not calendar days — Stripe's trial_period_days cannot
+-- express this, so the calendar authority lives here and Stripe stays the billing
+-- authority. Opened ONLY inside the activation transaction (§7).
+CREATE TABLE IF NOT EXISTS trials (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  agent_code TEXT NOT NULL,
+  activation_id UUID REFERENCES activations(id),
+  status TEXT NOT NULL DEFAULT 'not_started',        -- not_started|active|completed|converted|canceled
+  started_at TIMESTAMPTZ,
+  eligible_days_used INT NOT NULL DEFAULT 0,
+  last_counted_market_date DATE,                     -- makes day-counting idempotent
+  completed_at TIMESTAMPTZ,
+  converts_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (user_id, agent_code)
+);
+CREATE INDEX IF NOT EXISTS idx_trials_status ON trials(status);
+
+-- "Repeated payment or activation requests create one logical result" (§12).
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  key TEXT NOT NULL,
+  user_id UUID NOT NULL REFERENCES users(id),
+  operation TEXT NOT NULL,
+  response_json JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (key, operation)
+);
+
+-- Token lifecycle on the EXISTING connection row rather than a parallel table (§8).
+ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS broker_code TEXT;
+ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS token_ciphertext TEXT;
+ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS token_expiry TIMESTAMPTZ;
+ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS scopes TEXT;
+ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS external_user_ref TEXT;
 `
 
 let _ensured: Promise<void> | null = null
