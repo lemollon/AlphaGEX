@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { resolveCustomerUserId } from '@/lib/brokerage/identity'
-import { isTradierOAuthConfigured, signState, buildAuthorizeUrl } from '@/lib/tradier-oauth'
+import { isTradierOAuthConfigured, buildAuthorizeUrl, tradierPkceEnabled } from '@/lib/tradier-oauth'
+import { createOAuthState } from '@/lib/enrollment/oauth-state'
 import { isCustomersDbConfigured, customerExecute } from '@/lib/customers-db'
 
 export const runtime = 'nodejs'
@@ -23,7 +24,15 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const redirectURI = buildAuthorizeUrl(signState(uid))
+    // Single-use, server-side state (§8). Replaces the stateless HMAC token, which
+    // could not be made one-time: a stateless token is valid every time it is
+    // presented, so a replayed callback replayed the whole exchange.
+    const { state, codeChallenge } = await createOAuthState({
+      userId: uid,
+      brokerCode: 'tradier',
+      pkce: tradierPkceEnabled(),
+    })
+    const redirectURI = buildAuthorizeUrl(state, codeChallenge)
     await customerExecute(
       `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'BROKERAGE_CONNECT_STARTED', $2)`,
       [uid, JSON.stringify({ provider: 'tradier' })],
