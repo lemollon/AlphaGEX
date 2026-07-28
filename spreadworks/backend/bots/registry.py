@@ -516,6 +516,55 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "discord_alerts": False,
         },
     },
+    # WILDFIRE — BACKDRAFT's exact signal, ridden to the CLOSE (2026-07-28,
+    # THERMAL's twin on the book's strongest per-trade trigger). Same frozen
+    # gates (flow < -0.35 AND spot above the intraday put wall); the exit is
+    # the whole change: ATM, NO stop, one entry/day, EOD close 14:57 CT
+    # (~intrinsic, the research's settlement payoff).
+    #
+    # Research (first event/day, C+0, no stop, settle, entry cost only):
+    # TRAIN +38.5% (t=1.6) / TEST +20.6% (t=0.9), ~27/yr. $1,000 sim at 1
+    # contract -> $3,778 in 3.4y. Settle-holds only work on the MOMENTUM
+    # signals: REVERSAL-settle and FLASHPOINT-settle both bankrupt a $1k
+    # account — do not extend this pattern to reversion legs. t<2 ->
+    # UNCONFIRMED, PAPER ONLY on a $1k account.
+    "wildfire": {
+        "display": "WILDFIRE",
+        "strategy": "updraft",          # same module, mode=backdraft gates
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": 0,
+        "one_entry_per_day": True,
+        "defaults": {
+            # $1k paper framing (FLASHPOINT/THERMAL precedent)
+            "starting_capital": 1000.0,
+            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "max_contracts": 1,
+            # ATM calls ~$100-350; 50% of $1k never floors to zero contracts
+            "bp_pct": 0.50,
+            # schema-required, unused — see UPDRAFT
+            "sd_mult": 1.0,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            "mode": "backdraft",
+            "backdraft_flow_max": -0.35,     # FROZEN, same as BACKDRAFT
+            "require_put_wall": True,        # the wall IS the signal's half
+            "strike_offset": 0,              # ATM for the all-day ride
+            # timer must NEVER fire before the 14:57 EOD close (THERMAL)
+            "hold_minutes": 600,
+            "pt_pct": 9.9999,   # see UPDRAFT — NUMERIC(5,4) ceiling
+            "sl_pct": 0.99,     # research ran NO stop — settle holds ride
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+            "entry_start_ct": "08:31",
+            "entry_end_ct": "14:00",
+            "eod_close_ct": "14:57",
+            "allow_stacking": False,
+            "max_concurrent_positions": 1,
+            "cooldown_min": 390,             # belt-and-braces with one/day
+            "discord_alerts": False,
+        },
+    },
     # REVERSAL — the third leg. Same 0DTE call, but an ATM strike and a
     # completely different mechanism: a multi-day hourly oversold state
     # resolving upward, rather than fading a put-buying crowd.

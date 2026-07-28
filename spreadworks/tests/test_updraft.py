@@ -556,6 +556,20 @@ def test_thermal_is_updraft_ridden_to_the_close():
     assert meta["one_entry_per_day"] is True, "one ride per day, no k=3"
 
 
+def test_wildfire_is_backdraft_ridden_to_the_close():
+    meta = get_bot("wildfire")
+    d = meta["defaults"]
+    assert d["enabled"] is False, "no bot ships armed"
+    assert d["mode"] == "backdraft", "WILDFIRE = BACKDRAFT's exact signal"
+    assert d["backdraft_flow_max"] == -0.35 and d["require_put_wall"] is True, \
+        "gates FROZEN, identical to BACKDRAFT"
+    assert d["strike_offset"] == 0 and d["sl_pct"] == 0.99
+    assert d["hold_minutes"] >= 600 and d["eod_close_ct"] == "14:57"
+    assert d["starting_capital"] == 1000.0, "the $1k paper framing"
+    assert d["bp_pct"] * d["starting_capital"] >= 350
+    assert meta["one_entry_per_day"] is True
+
+
 def test_embreachq_is_embreach_on_qqq_with_own_thresholds():
     meta = get_bot("embreachq")
     d = meta["defaults"]
