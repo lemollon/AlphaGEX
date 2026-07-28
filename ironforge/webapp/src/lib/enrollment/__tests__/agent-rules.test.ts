@@ -88,6 +88,55 @@ describe('validateAgentConfig — bounds', () => {
   })
 })
 
+describe('validateAgentConfig — re-validation is deterministic', () => {
+  // The bug this guards: if a rejected value were dropped from the persisted config,
+  // it would read as ABSENT next time, absent means "use the default", and simply
+  // re-validating an invalid draft would flip it to valid with no customer action.
+  // /v1/agent-configs/{id}/validate feeds the persisted config straight back in.
+  it('keeps an out-of-range value so re-validating reproduces the violation', () => {
+    const first = validateAgentConfig({
+      agentCode: 'spark',
+      input: { max_deployment_pct: 200 },
+      buyingPowerCents: BP,
+    })
+    expect(first.valid).toBe(false)
+    expect(first.computed.config.max_deployment_pct).toBe(200)
+
+    const second = validateAgentConfig({
+      agentCode: 'spark',
+      input: first.computed.config,
+      buyingPowerCents: BP,
+    })
+    expect(second.valid).toBe(false)
+    expect(second.violations[0].field).toBe('max_deployment_pct')
+  })
+
+  it('computes no limit for an invalid config', () => {
+    const r = validateAgentConfig({
+      agentCode: 'spark',
+      input: { max_deployment_pct: 200 },
+      buyingPowerCents: BP,
+    })
+    // 200% of $10,000 must never be written anywhere, least of all into the hash.
+    expect(r.computed.maxDeploymentCents).toBe(0)
+  })
+
+  it('round-trips a valid config unchanged', () => {
+    const first = validateAgentConfig({
+      agentCode: 'flame',
+      input: { max_deployment_pct: 40 },
+      buyingPowerCents: BP,
+    })
+    const second = validateAgentConfig({
+      agentCode: 'flame',
+      input: first.computed.config,
+      buyingPowerCents: BP,
+    })
+    expect(second.valid).toBe(true)
+    expect(second.computed).toEqual(first.computed)
+  })
+})
+
 describe('validateAgentConfig — computed limits', () => {
   it('computes the ceiling server-side from buying power', () => {
     const r = validateAgentConfig({
