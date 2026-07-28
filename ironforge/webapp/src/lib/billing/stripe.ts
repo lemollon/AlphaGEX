@@ -305,6 +305,90 @@ export async function getOrCreateCustomer(opts: {
 }
 
 /** Creates a subscription-mode Checkout Session and returns its hosted url. */
+/**
+ * SETUP-mode checkout — collect a reusable payment method with $0 DUE TODAY (§7).
+ *
+ * Automate must "collect payment method and create subscription/trial arrangement only
+ * after setup rules are satisfied; UI shows $0 due today". Subscription-mode checkout
+ * cannot express that: it always creates a subscription, and the only way to avoid an
+ * immediate charge is trial_period_days — which starts a CALENDAR trial at checkout,
+ * exactly what §7 forbids ("Do not start the trial clock at card capture").
+ *
+ * So enrollment captures the card here, and the subscription is created later, inside
+ * the activation transaction, by createTrialingSubscription().
+ */
+export async function createSetupCheckout(opts: {
+  customerId: string
+  userId: string
+  bot: string
+  successUrl: string
+  cancelUrl: string
+}): Promise<{ id: string; url: string }> {
+  return stripeRequest<{ id: string; url: string }>('POST', '/checkout/sessions', {
+    mode: 'setup',
+    customer: opts.customerId,
+    success_url: opts.successUrl,
+    cancel_url: opts.cancelUrl,
+    // Carried so the webhook and the later activation can attribute this back.
+    metadata: { ironforge_user_id: opts.userId, bot: opts.bot },
+  })
+}
+
+/** A payment method actually attached to this customer — the §4 "payment method is valid" input. */
+export async function hasUsablePaymentMethod(customerId: string): Promise<boolean> {
+  try {
+    const res = await stripeRequest<StripeList<{ id: string }>>('GET', '/payment_methods', {
+      customer: customerId,
+      type: 'card',
+      limit: 1,
+    })
+    return (res.data?.length ?? 0) > 0
+  } catch {
+    // Unknown => treated as INVALID. The activation predicate must never be told
+    // "valid" on a failed lookup.
+    return false
+  }
+}
+
+/**
+ * Create the subscription in `trialing`, with the trial end far out.
+ *
+ * The far date is a HOLD, not the real trial length: our ledger decides when five
+ * ELIGIBLE TRADING DAYS have passed and then calls endTrialNow(). Stripe stays the
+ * billing authority; the calendar authority is lib/enrollment/trading-days.ts.
+ *
+ * Called ONLY from the activation transaction — this is the moment §7 permits the trial
+ * clock to start.
+ */
+export async function createTrialingSubscription(opts: {
+  customerId: string
+  priceId: string
+  userId: string
+  bot: string
+  /** Generous upper bound; the ledger ends it earlier. */
+  holdDays?: number
+}): Promise<{ id: string; status: string }> {
+  const holdDays = opts.holdDays ?? 60
+  const trialEnd = Math.floor(Date.now() / 1000) + holdDays * 24 * 60 * 60
+  return stripeRequest<{ id: string; status: string }>('POST', '/subscriptions', {
+    customer: opts.customerId,
+    items: [{ price: opts.priceId }],
+    trial_end: trialEnd,
+    // Without this Stripe may void the subscription when the trial ends with no
+    // default payment method; we want it to charge the card captured at enrollment.
+    trial_settings: { end_behavior: { missing_payment_method: 'cancel' } },
+    metadata: { ironforge_user_id: opts.userId, bot: opts.bot },
+  })
+}
+
+/** End the trial NOW — the ledger reached five eligible trading days; bill it (§7). */
+export async function endTrialNow(subscriptionId: string): Promise<{ id: string; status: string }> {
+  return stripeRequest<{ id: string; status: string }>('POST', `/subscriptions/${subscriptionId}`, {
+    trial_end: 'now',
+    proration_behavior: 'none',
+  })
+}
+
 export async function createSubscriptionCheckout(opts: {
   customerId: string
   priceId: string
