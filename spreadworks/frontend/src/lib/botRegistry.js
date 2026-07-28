@@ -19,6 +19,7 @@ export const BOT_REGISTRY = {
   afterburn: { display: 'AFTERBURN', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   weekender: { display: 'WEEKENDER', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   flashpoint: { display: 'FLASHPOINT', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
+  thermal: { display: 'THERMAL', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
 };
 
 export const STRATEGY_LABEL = {
@@ -110,6 +111,14 @@ export const BOT_THEME = {
     primaryRing: 'rgba(56,189,248,0.30)',
     glow:        'rgba(56,189,248,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(56,189,248,0.22) 0%, rgba(56,189,248,0.03) 100%)',
+  },
+  thermal: {
+    glyph:       'wave',                       // THERMAL = the updraft you ride all day
+    primary:     '#fb923c',                    // orange-400
+    primarySoft: 'rgba(251,146,60,0.10)',
+    primaryRing: 'rgba(251,146,60,0.30)',
+    glow:        'rgba(251,146,60,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(251,146,60,0.22) 0%, rgba(251,146,60,0.03) 100%)',
   },
   flashpoint: {
     glyph:       'wave',                       // FLASHPOINT = wide-range morning ignites a breakout

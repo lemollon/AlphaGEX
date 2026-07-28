@@ -420,6 +420,61 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "discord_alerts": False,
         },
     },
+    # THERMAL — UPDRAFT's exact signal, ridden to the CLOSE instead of 45
+    # minutes (2026-07-28). Same frozen gates (flow<=-0.1378, r30>=19.23bp);
+    # the ONLY changes are ATM strike, no stop, one entry/day, and exit at
+    # settlement (~intrinsic at the 14:59 CT MTM).
+    #
+    # Research (first event/day, C+0, no stop, settle payoff, entry-side
+    # cost only): TRAIN +25.9% / TEST +35.5% per trade (t~1.5 both), 44%
+    # win rate, ~45/yr. $1,000 sim at 1 contract: -> $9,209 in 3.4y, max DD
+    # 45%, years +37/-12/+49/+20. Heavy right skew: most of the year is a
+    # handful of trend days — expect losing streaks. t<2 -> UNCONFIRMED,
+    # PAPER ONLY on a $1k account.
+    "thermal": {
+        "display": "THERMAL",
+        "strategy": "updraft",          # same module, same mode=updraft gates
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": 0,
+        # research construction is ONE ride per day (vs UPDRAFT's k=3 bursts)
+        "one_entry_per_day": True,
+        "defaults": {
+            # $1k paper framing (FLASHPOINT precedent)
+            "starting_capital": 1000.0,
+            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "max_contracts": 1,
+            # ATM calls ~$100-350; 50% of $1k covers $500 so sizing never
+            # floors to zero (the AFTERBURN lesson)
+            "bp_pct": 0.50,
+            # schema-required, unused — see UPDRAFT
+            "sd_mult": 1.0,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            "mode": "updraft",
+            "flow_max": -0.1378,             # FROZEN, same as UPDRAFT
+            "r30_min": 19.23,                # FROZEN, same as UPDRAFT
+            "strike_offset": 0,              # ATM (C+0 beat C+1: DD 45% vs 72%)
+            # timer must NEVER fire before the close — the EOD close is the
+            # exit. 600m from a 08:31 entry lands past the bell.
+            "hold_minutes": 600,
+            "pt_pct": 9.9999,   # see UPDRAFT — NUMERIC(5,4) ceiling
+            # research ran NO stop: a settle hold rides -80% drawdowns into
+            # green closes; 0.99 is the no-stop sentinel (AFTERBURN precedent)
+            "sl_pct": 0.99,
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+            "entry_start_ct": "08:31",
+            "entry_end_ct": "14:00",
+            # as late as the 2-minute scan cycle can reliably exit before the
+            # 15:00 CT bell — ~intrinsic, the research's settlement payoff
+            "eod_close_ct": "14:57",
+            "allow_stacking": False,
+            "max_concurrent_positions": 1,
+            "cooldown_min": 390,             # belt-and-braces with one/day
+            "discord_alerts": False,
+        },
+    },
     # BACKDRAFT — the same +1 OTM 0DTE call, triggered by flow EXTREMITY plus
     # dealer-gamma support instead of momentum. Shares zero entry minutes
     # with UPDRAFT in research (43 shared days of 145/89), so the two are
