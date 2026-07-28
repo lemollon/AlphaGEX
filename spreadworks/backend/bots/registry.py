@@ -519,6 +519,55 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "discord_alerts": False,
         },
     },
+    # EMBREACH — the 4th leg and the book's FIRST PUT leg. Fires when the
+    # session's move from open first crosses BELOW -0.8x the ATM-straddle
+    # expected move: the day broke its priced range -> downside CONTINUATION.
+    #
+    # Research (em-breach memo, hf_28/29/30): P+0 45m TRAIN +4.55% / TEST
+    # +8.43%; the SAME put at the SAME time of day WITHOUT the signal loses
+    # -21%, so the event flips the sign of a structurally losing trade
+    # (edge over placebo +28pts). Edge lives on ORDINARY days: NEGATIVE when
+    # the open priced a catalyst, hence max_open_straddle_pct. 3/4 years
+    # positive; TEST t=1.3-1.6 -> UNCONFIRMED. PAPER ONLY.
+    #
+    # This is the documented exception to "long puts always lose": the
+    # upward-drift objection is suspended once the day has already broken
+    # its own priced range.
+    "embreach": {
+        "display": "EMBREACH",
+        "strategy": "updraft",          # same module, mode=em_breach
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": 0,
+        # the research construction is ONE event entry per day
+        "one_entry_per_day": True,
+        "defaults": {
+            "starting_capital": 10000.0,
+            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "max_contracts": 1,
+            "bp_pct": 0.02,
+            # schema-required, unused here — see UPDRAFT.
+            "sd_mult": 1.0,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            "mode": "em_breach",
+            "em_frac": 0.8,                  # fixed a priori in research
+            "max_open_straddle_pct": 0.75,   # TRAIN q90 of the open straddle
+            "strike_offset": 0,              # ATM PUT (P+0 was the best cell)
+            "hold_minutes": 45,
+            "pt_pct": 9.9999,   # see UPDRAFT — NUMERIC(5,4) ceiling
+            "sl_pct": 0.50,
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+            "entry_start_ct": "08:31",
+            "entry_end_ct": "14:00",
+            "eod_close_ct": "14:45",
+            "allow_stacking": False,
+            "max_concurrent_positions": 1,
+            "cooldown_min": 390,             # belt-and-braces with one/day
+            "discord_alerts": False,
+        },
+    },
 }
 
 

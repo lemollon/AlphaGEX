@@ -221,7 +221,8 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
         tunable = ("mode", "flow_max", "r30_min", "backdraft_flow_max",
                    "require_put_wall", "strike_offset", "hold_minutes",
                    "min_option_price", "max_spread_pct", "cooldown_min",
-                   "rsi_threshold", "rsi_period")
+                   "rsi_threshold", "rsi_period",
+                   "em_frac", "max_open_straddle_pct")
         params = {**UPDRAFT_PARAMS,
                   **{k: reg_defaults[k] for k in tunable if k in reg_defaults},
                   **{k: config[k] for k in tunable
@@ -264,6 +265,17 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
             else:
                 chain["rsi"] = {"rsi": None, "recovery_cross": False,
                                 "reason": "no_engine: cannot read rsi history"}
+        # EM_BREACH reads the day-open anchor and the previous snapshot off
+        # the same table. Attached only for that mode, same as rsi above.
+        if str(params.get("mode") or "") == "em_breach" and chain.get("em") is None:
+            if engine is not None:
+                chain["em"] = flow_store.read_em_state(
+                    engine, ticker=ticker,
+                    now=now_ct or datetime.combine(today, time(0, 0)),
+                ).as_dict()
+            else:
+                chain["em"] = {"day_open": None,
+                               "reason": "no_engine: cannot read day state"}
         sig = build_updraft_signal(
             chain=chain, today=today, params=params,
             mode=str(params.get("mode") or "updraft"),

@@ -353,3 +353,124 @@ def test_live_snapshots_win_over_seed_on_overlapping_hours(tmp_path):
                                    seed_closes=seed)
     # not enough bars to produce an RSI, but the merge must have kept 999
     assert st.bars_used == 1
+
+
+# ---------------------------------------------------------------- EM_BREACH
+def _em_chain(*, spot=594.0, day_open=600.0, open_str=0.40,
+              prev_spot=598.5, prev_str=0.40, bid=0.60, ask=0.64):
+    """Chain with an em block. Defaults: -1.0% move vs a ~0.21% straddle
+    at these premiums -> deeply breached; prev spot NOT breached."""
+    c = _chain(spot=spot, bid=bid, ask=ask)
+    c["em"] = {"day_open": day_open, "open_straddle_pct": open_str,
+               "prev_spot": prev_spot, "prev_straddle_pct": prev_str,
+               "reason": None}
+    return c
+
+
+def _em_params():
+    return {**DEFAULT_PARAMS, "mode": "em_breach", "strike_offset": 0,
+            "hold_minutes": 45}
+
+
+def test_em_breach_fires_and_buys_a_PUT_at_the_money():
+    sig = build_updraft_signal(chain=_em_chain(), today=date(2026, 7, 27),
+                               params=_em_params(), mode="em_breach")
+    assert sig is not None
+    assert sig.mode == "em_breach"
+    leg = sig.legs()[0]
+    assert leg["type"] == "put", "EM_BREACH is the book's PUT leg"
+    assert leg["action"] == "buy"
+    assert sig.strike == 594.0          # ATM at spot
+    assert sig.em_move_pct is not None and sig.em_move_pct < 0
+
+
+def test_em_breach_rejects_when_not_breached():
+    diag = []
+    sig = build_updraft_signal(chain=_em_chain(spot=599.5, prev_spot=599.8),
+                               today=date(2026, 7, 27), params=_em_params(),
+                               mode="em_breach", diag=diag)
+    assert sig is None
+    assert any("no_breach" in d for d in diag), diag
+
+
+def test_em_breach_rejects_catalyst_priced_open():
+    """The edge is in UNPRICED surprises — measured NEGATIVE when the open
+    straddle sat in its top decile (>= 0.75%)."""
+    diag = []
+    sig = build_updraft_signal(chain=_em_chain(open_str=0.90),
+                               today=date(2026, 7, 27), params=_em_params(),
+                               mode="em_breach", diag=diag)
+    assert sig is None
+    assert any("catalyst_priced" in d for d in diag), diag
+
+
+def test_em_breach_is_first_touch_only():
+    """Prev snapshot already breached -> stale move, no entry (the BACKDRAFT
+    first-touch precedent: later minutes chase)."""
+    diag = []
+    sig = build_updraft_signal(chain=_em_chain(prev_spot=592.0),
+                               today=date(2026, 7, 27), params=_em_params(),
+                               mode="em_breach", diag=diag)
+    assert sig is None
+    assert any("not_first_touch" in d for d in diag), diag
+
+
+def test_em_breach_degrades_to_unconditional_when_open_straddle_unknown():
+    """Missing open straddle (legacy snapshot rows) must NOT sideline the
+    leg — the headline research result is the unconditional version."""
+    sig = build_updraft_signal(chain=_em_chain(open_str=None),
+                               today=date(2026, 7, 27), params=_em_params(),
+                               mode="em_breach")
+    assert sig is not None
+
+
+def test_em_breach_ignores_flow_entirely():
+    c = _em_chain()
+    c["flow"] = {"flow_imb_30": None, "r30_bp": None, "reason": "cold"}
+    assert build_updraft_signal(chain=c, today=date(2026, 7, 27),
+                                params=_em_params(),
+                                mode="em_breach") is not None
+
+
+def test_em_breach_ships_disarmed_one_entry_per_day():
+    meta = get_bot("embreach")
+    d = meta["defaults"]
+    assert d["enabled"] is False, "no bot ships armed"
+    assert d["mode"] == "em_breach"
+    assert d["strike_offset"] == 0 and d["hold_minutes"] == 45
+    assert meta["one_entry_per_day"] is True
+    assert meta["strategy"] == "updraft"
+
+
+def test_snapshot_stores_straddle_and_em_state_reads_it(tmp_path):
+    """End-to-end against a real engine: record_snapshot persists the ATM
+    straddle, read_em_state returns day-open anchor + prev snapshot."""
+    from sqlalchemy import create_engine
+    from backend.bots import flow_store
+
+    eng = create_engine(f"sqlite:///{tmp_path/'em.db'}")
+    flow_store.ensure_table(eng)
+    opts = [{"strike": 600.0, "type": "call", "bid": 0.60, "ask": 0.64,
+             "volume": 10},
+            {"strike": 600.0, "type": "put", "bid": 0.55, "ask": 0.59,
+             "volume": 10}]
+    t0 = datetime(2026, 7, 27, 8, 31)          # CT session open
+    flow_store.record_snapshot(eng, ticker="SPY", expiration=date(2026, 7, 27),
+                               now=t0, spot=600.0, options=opts)
+    flow_store.record_snapshot(eng, ticker="SPY", expiration=date(2026, 7, 27),
+                               now=t0 + timedelta(minutes=30), spot=598.0,
+                               options=opts)
+    st = flow_store.read_em_state(eng, ticker="SPY",
+                                  now=t0 + timedelta(minutes=35))
+    assert st.day_open == 600.0
+    assert st.prev_spot == 598.0
+    assert st.open_straddle_pct is not None and st.open_straddle_pct > 0
+    # pre-RTH snapshots must not become the day open
+    eng2 = create_engine(f"sqlite:///{tmp_path/'pre.db'}")
+    flow_store.ensure_table(eng2)
+    flow_store.record_snapshot(eng2, ticker="SPY", expiration=date(2026, 7, 27),
+                               now=datetime(2026, 7, 27, 8, 0), spot=590.0,
+                               options=opts)
+    st2 = flow_store.read_em_state(eng2, ticker="SPY",
+                                   now=datetime(2026, 7, 27, 9, 0))
+    assert st2.day_open is None and st2.reason == "no_rth_snapshots"
