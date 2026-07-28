@@ -30,6 +30,9 @@ import { postFlameOpen, postFlameClose } from './discord'
 import { eventCalendarRefresh } from './eventCalendar/refresh'
 import { isEventBlackoutActive } from './eventCalendar/gate'
 import { forgeBriefingsTick } from './forgeBriefings/tick'
+import { isCustomersDbConfigured } from './customers-db'
+import { getCTNow } from './pt-tiers'
+import { runTrialDayClose, marketDateKey, isAfterTrialCloseTime } from './enrollment/trial-close'
 import {
   getQuote,
   getOptionExpirations,
@@ -6117,6 +6120,18 @@ let _volAlertsIntervalId: ReturnType<typeof setInterval> | null = null
 const ATTIO_RETRY_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
 let _attioRetryIntervalId: ReturnType<typeof setInterval> | null = null
 let _attioRetryRunning = false
+
+// Trial day-close ledger (Enrollment spec §7) — this IS the trial "cron".
+//
+// In-process rather than a Render cron job on purpose: the ledger must run on the ONE
+// instance holding the scanner lock, it needs no new billable service, and an external
+// schedule is a thing that can be forgotten at launch. The route stays for manual re-runs.
+const TRIAL_CLOSE_INTERVAL_MS = 15 * 60 * 1000 // 15 minutes
+let _trialCloseIntervalId: ReturnType<typeof setInterval> | null = null
+let _trialCloseRunning = false
+// CT market date already closed by this process. Belt to the DB's braces: the ledger is
+// idempotent per market date anyway, this just avoids the query 90× a day.
+let _trialCloseLastDate: string | null = null
 let _volAlertsRunning = false
 // Per-signal active/inactive streaks for alert debounce (in-memory; resets on
 // restart, which at worst costs one debounce window). Kills the 5-min flap.
@@ -6302,6 +6317,41 @@ function safeCheckVolAlerts(): void {
     .finally(() => { _volAlertsRunning = false })
 }
 
+/**
+ * Fire-and-forget trial day-close. Re-entrancy guarded, never throws, no-ops when the
+ * customers DB isn't configured. Independent of the trade loop.
+ *
+ * ⚠️ THE TIME GATE IS LOAD-BEARING. `isEligibleTradingDay` answers "is this DATE a
+ * trading day", not "is the session over" — so firing before the close would consume a
+ * customer's trial day before it happened, and the per-date idempotence would then lock
+ * that in. Only runs at/after 15:05 CT, and at most once per CT date per process.
+ */
+function safeTrialDayClose(): void {
+  if (_trialCloseRunning) return
+  if (!isCustomersDbConfigured()) return
+
+  const ct = getCTNow()
+  if (!isAfterTrialCloseTime(ct)) return
+  const today = marketDateKey(ct)
+  if (_trialCloseLastDate === today) return
+
+  _trialCloseRunning = true
+  runTrialDayClose(ct)
+    .then((r) => {
+      // Marked only on success, so a failed run retries on the next tick rather than
+      // silently skipping the day.
+      _trialCloseLastDate = today
+      if (r.counted > 0 || r.converted > 0) {
+        console.log(`[scanner] trial day-close ${r.market_date}: counted=${r.counted} converted=${r.converted}`)
+      }
+    })
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] safeTrialDayClose error: ${msg}`)
+    })
+    .finally(() => { _trialCloseRunning = false })
+}
+
 /** Fire-and-forget Attio retry-queue drain. Re-entrancy guarded, never throws,
  *  no-ops when Attio isn't configured. Independent of the trade loop. */
 function safeDrainAttioQueue(): void {
@@ -6355,12 +6405,19 @@ function startScannerLocked(): void {
   _attioRetryIntervalId = setInterval(safeDrainAttioQueue, ATTIO_RETRY_INTERVAL_MS)
   setTimeout(safeDrainAttioQueue, 30_000)
 
+  // Trial day-close ledger — own 15-min interval, isolated from the trade loop. Self-
+  // gates to after 15:05 CT, so ticks during the session are a cheap no-op. Kicked once
+  // at startup so a deploy that lands right after the close still counts the day.
+  _trialCloseIntervalId = setInterval(safeTrialDayClose, TRIAL_CLOSE_INTERVAL_MS)
+  setTimeout(safeTrialDayClose, 45_000)
+
   console.log('[scanner] setInterval registered, id:', _intervalId)
   console.log('[scanner] BLAZE fast monitor registered (15s), id:', _blazeFastMonitorIntervalId)
   console.log('[scanner] SPARK fast monitor registered (20s), id:', _sparkFastMonitorIntervalId)
   console.log('[scanner] INFERNO fast monitor registered (20s), id:', _infernoFastMonitorIntervalId)
   console.log('[scanner] vol-alerts checker registered (5m), id:', _volAlertsIntervalId)
   console.log('[scanner] attio retry drain registered (10m), id:', _attioRetryIntervalId)
+  console.log('[scanner] trial day-close registered (15m, gated to >=15:05 CT), id:', _trialCloseIntervalId)
 }
 
 /**
