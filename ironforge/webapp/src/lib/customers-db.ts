@@ -301,7 +301,18 @@ CREATE TABLE IF NOT EXISTS legal_acceptances (
   ip TEXT,
   user_agent TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_legal_acc_user ON legal_acceptances(user_id, document_id);
+-- UNIQUE so re-accepting is idempotent (ON CONFLICT DO NOTHING) rather than appending a
+-- duplicate row every time a customer revisits the legal step. Accepting a NEW version
+-- still creates a row, because document_id is per (code, version) — which is exactly the
+-- granularity "a changed document invalidates only that acceptance" needs.
+--
+-- A NON-unique index of the old name already shipped. CREATE UNIQUE INDEX IF NOT EXISTS
+-- under that name would find it, skip, and leave it non-unique — and then ON CONFLICT
+-- (user_id, document_id) fails at runtime with "no unique or exclusion constraint
+-- matching". So the old one is dropped by name and the unique one gets a new name.
+-- Safe: the only writer of this table is the v1 acceptances route, which has no UI yet.
+DROP INDEX IF EXISTS idx_legal_acc_user;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_legal_acc_user_doc ON legal_acceptances(user_id, document_id);
 
 -- One brokerage connection has MANY accounts; the existing brokerage_connections row
 -- conflated the two. Never store a full account number — mask for display, ciphertext

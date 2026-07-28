@@ -5,6 +5,7 @@ import Link from 'next/link'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import CustomerShell, { type PlanCardData } from '@/components/customer/CustomerShell'
+import CheckoutNotice from '@/components/customer/CheckoutNotice'
 import { BOT_PLANS, BOTH_PLAN, otherBotSlug, secondBotIncrement, type BotSlug } from '@/lib/billing/plans'
 
 interface BrokerageAccount {
@@ -96,6 +97,8 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
 
   return (
     <CustomerShell membership={summary?.membership ?? null} planVariant="trial">
+      {/* Stripe sends `?canceled=1` here on abandon; nothing used to read it. */}
+      <CheckoutNotice />
       {/* Breadcrumb */}
       <nav className="mb-4 flex items-center gap-2 text-sm">
         <Link href="/live" className="text-gray-500 transition-colors hover:text-white" style={{ color: accent }}>Live</Link>
