@@ -113,7 +113,8 @@ export async function POST() {
 
   try {
     const candidates = await loadCandidates()
-    let written = 0
+    let users = 0
+    let rowsWritten = 0
     let skipped = 0
     for (const c of candidates) {
       const codes = codesFromAcks(c.metadata)
@@ -122,20 +123,28 @@ export async function POST() {
         continue
       }
       const enrollment = await createOrResumeEnrollment(c.user_id, 'backfill')
-      await recordAcceptedDocuments({
+      // Count ACTUAL rows, not loop iterations. The first version reported
+      // "6 customer(s) now have versioned acceptances" while writing zero rows, because
+      // legal_documents was empty and a zero-row INSERT is not an error.
+      const res = await recordAcceptedDocuments({
         userId: c.user_id,
         enrollmentId: enrollment.id,
         codes,
         ip: c.ip_address,
         userAgent: c.user_agent,
       })
-      written++
+      rowsWritten += res.written
+      if (res.written > 0) users++
     }
     return NextResponse.json({
       ok: true,
-      users_backfilled: written,
+      users_backfilled: users,
+      acceptance_rows_written: rowsWritten,
       skipped_no_affirmative_flags: skipped,
-      summary: `${written} customer(s) now have versioned acceptances.`,
+      summary:
+        rowsWritten === 0
+          ? 'Nothing written — every candidate already had versioned acceptances.'
+          : `${users} customer(s), ${rowsWritten} acceptance row(s).`,
     })
   } catch (e) {
     const env = redactProviderError('backfill-legal', e, 'INTERNAL', 'Backfill failed.')

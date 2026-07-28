@@ -160,16 +160,44 @@ export async function recordAcceptedDocuments(opts: {
   codes: string[]
   ip: string | null
   userAgent: string | null
-}): Promise<void> {
+}): Promise<{ written: number; alreadyPresent: number }> {
+  // SEED FIRST. The write below is INSERT ... SELECT FROM legal_documents, so an empty
+  // registry table matches zero rows and inserts NOTHING — with no error, because a
+  // zero-row INSERT is perfectly valid SQL.
+  //
+  // Not hypothetical: legal_documents was seeded only by the three /v1/enrollments/*
+  // routes, none of which has ever run in production. The table was empty, so both this
+  // and the backfill silently wrote nothing while reporting success.
+  await ensureLegalDocumentsSeeded()
+
   const wanted = new Set(opts.codes)
+  let written = 0
+  let alreadyPresent = 0
+
   for (const d of LEGAL_DOCUMENTS.filter((x) => wanted.has(x.code))) {
-    await customerExecute(
+    const rows = await customerExecute(
       `INSERT INTO legal_acceptances (user_id, enrollment_id, document_id, ip, user_agent)
        SELECT $1, $2, id, $4, $5 FROM legal_documents WHERE code = $3 AND version = $6
        ON CONFLICT (user_id, document_id) DO NOTHING`,
       [opts.userId, opts.enrollmentId, d.code, opts.ip, opts.userAgent, d.version],
     )
+    if (rows > 0) {
+      written++
+      continue
+    }
+    // Zero rows means EITHER already accepted (fine) OR the document is missing from the
+    // registry (not fine). Only one of those is a silent failure, so distinguish them.
+    const present = await customerQuery<{ n: string }>(
+      `SELECT count(*)::text AS n
+         FROM legal_acceptances la JOIN legal_documents d ON d.id = la.document_id
+        WHERE la.user_id = $1 AND d.code = $2 AND d.version = $3`,
+      [opts.userId, d.code, d.version],
+    )
+    if (Number(present[0]?.n ?? 0) > 0) alreadyPresent++
+    else throw new Error(`legal document ${d.code}@${d.version} is not in legal_documents`)
   }
+
+  return { written, alreadyPresent }
 }
 
 export async function recordAcceptances(opts: {
