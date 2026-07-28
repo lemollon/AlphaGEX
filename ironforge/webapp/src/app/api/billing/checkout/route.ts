@@ -8,6 +8,7 @@ import {
   getOrCreateCustomer,
   createCustomer,
   createSubscriptionCheckout,
+  createSetupCheckout,
   isMissingCustomerError,
   retrieveSubscription,
   upgradeSubscriptionToBundle,
@@ -236,9 +237,36 @@ export async function POST(req: NextRequest) {
     })
     await persistCustomer(customerId)
 
+    // ── Enrollment v2 (spec §7): collect the card at $0 DUE, subscribe at ACTIVATION ──
+    //
+    // v1 (default): subscription-mode checkout with Stripe trial_period_days = 5. That
+    // starts a CALENDAR trial the moment the card is captured — exactly what §7 forbids
+    // ("Do not start the trial clock at card capture"), and a weekend plus a holiday can
+    // eat most of it before the customer sees a single trade.
+    //
+    // v2: setup-mode checkout ($0 due today). No subscription exists until
+    // POST /api/v1/activations creates it in `trialing`, and the trading-day ledger ends
+    // that trial after five ELIGIBLE days.
+    //
+    // FLAGGED, DEFAULT OFF. This is a live money path with Stripe already provisioned;
+    // flipping it changes what every new Automate customer is charged and when. It ships
+    // dark so the switch is a deliberate, reversible act rather than a deploy.
+    const enrollmentV2 = process.env.IRONFORGE_ENROLLMENT_V2 === 'true'
+
     let url: string
+    const startCheckout = async (cid: string): Promise<{ url: string }> =>
+      enrollmentV2
+        ? createSetupCheckout({
+            customerId: cid,
+            userId: checkoutArgs.userId,
+            bot: checkoutArgs.bot,
+            successUrl: checkoutArgs.successUrl,
+            cancelUrl: checkoutArgs.cancelUrl,
+          })
+        : createSubscriptionCheckout({ customerId: cid, ...checkoutArgs })
+
     try {
-      ;({ url } = await createSubscriptionCheckout({ customerId, ...checkoutArgs }))
+      ;({ url } = await startCheckout(customerId))
     } catch (e) {
       // Self-heal a stale stored customer id (wrong Stripe mode, or deleted in the dashboard):
       // mint a fresh customer, persist it, and retry once.
@@ -246,12 +274,12 @@ export async function POST(req: NextRequest) {
       console.warn('[billing/checkout] stale customer', customerId, '- recreating for user', user.id)
       customerId = await createCustomer({ email: user.email, userId: user.id })
       await persistCustomer(customerId)
-      ;({ url } = await createSubscriptionCheckout({ customerId, ...checkoutArgs }))
+      ;({ url } = await startCheckout(customerId))
     }
 
     await customerExecute(
       `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'CHECKOUT_STARTED', $2)`,
-      [user.id, JSON.stringify({ bot: plan.slug })],
+      [user.id, JSON.stringify({ bot: plan.slug, mode: enrollmentV2 ? 'setup' : 'subscription' })],
     ).catch(() => {})
 
     return NextResponse.json({ ok: true, url })
