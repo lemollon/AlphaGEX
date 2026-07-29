@@ -26,11 +26,13 @@ class FlowChainProvider(ChainProvider):
     """Serves a 0DTE SPY chain whose cumulative volume we control per scan."""
 
     def __init__(self, spot=600.0, call_vol=1000, put_vol=1000,
-                 put_wall=598.0):
+                 put_wall=598.0, bid=0.60, ask=0.64):
         self.spot = spot
         self.call_vol = call_vol
         self.put_vol = put_vol
         self.put_wall = put_wall
+        self.bid = bid
+        self.ask = ask
 
     def get_chain(self, *, ticker, dte, today):
         strikes = [self.spot + d for d in (-2, -1, 0, 1, 2, 3)]
@@ -38,7 +40,7 @@ class FlowChainProvider(ChainProvider):
         return {
             "spot": self.spot, "ticker": ticker, "expiration": today,
             "options": [
-                {"strike": s, "type": t, "bid": 0.60, "ask": 0.64,
+                {"strike": s, "type": t, "bid": self.bid, "ask": self.ask,
                  # split the session total evenly across strikes
                  "volume": (self.call_vol if t == "call" else self.put_vol) // n,
                  "open_interest": 100}
@@ -115,6 +117,11 @@ def test_updraft_opens_on_put_heavy_flow_into_a_rally(db_session):
     run_scan_cycle(engine=eng, bot="updraft",
                    now_ct=datetime(2026, 7, 27, 9, 30, tzinfo=CT),
                    chain_provider=p, event_blackout=False)
+    # PATIENT ENTRY: the signal arms a resting limit; the dip fills it.
+    p.bid, p.ask = 0.48, 0.52
+    run_scan_cycle(engine=eng, bot="updraft",
+                   now_ct=datetime(2026, 7, 27, 9, 32, tzinfo=CT),
+                   chain_provider=p, event_blackout=False)
     pos = list_open_positions(eng, "updraft")
     assert len(pos) == 1, "put-heavy flow into a rally should open a call"
 
@@ -151,11 +158,17 @@ def test_updraft_time_stop_closes_at_45_minutes(db_session):
     open_at = datetime(2026, 7, 27, 9, 30, tzinfo=CT)
     run_scan_cycle(engine=eng, bot="updraft", now_ct=open_at,
                    chain_provider=p, event_blackout=False)
+    # PATIENT ENTRY arms first; the dip two minutes later fills it, and the
+    # 45-minute timer runs from the FILL.
+    p.bid, p.ask = 0.48, 0.52
+    open_at = datetime(2026, 7, 27, 9, 32, tzinfo=CT)
+    run_scan_cycle(engine=eng, bot="updraft", now_ct=open_at,
+                   chain_provider=p, event_blackout=False)
     assert len(list_open_positions(eng, "updraft")) == 1
 
     # 45 minutes later the timer must fire
     run_scan_cycle(engine=eng, bot="updraft",
-                   now_ct=datetime(2026, 7, 27, 10, 15, tzinfo=CT),
+                   now_ct=datetime(2026, 7, 27, 10, 17, tzinfo=CT),
                    chain_provider=p, event_blackout=False)
     assert len(list_open_positions(eng, "updraft")) == 0
     row = eng.connect().execute(text(
@@ -279,7 +292,60 @@ def test_updraft_trades_once_the_baseline_sits_inside_the_session(db_session):
     run_scan_cycle(engine=eng, bot="updraft",
                    now_ct=datetime(2026, 7, 27, 9, 5, tzinfo=CT),
                    chain_provider=p, event_blackout=False)
-    assert len(list_open_positions(eng, "updraft")) == 1
+    # PATIENT ENTRY (limit_entry_frac=0.15 registry default): the signal
+    # ARMS a resting limit at 0.85 x mid instead of buying instantly.
+    assert len(list_open_positions(eng, "updraft")) == 0
+    row = eng.connect().execute(text(
+        "SELECT reason FROM updraft_scan_activity ORDER BY scan_time DESC"
+    )).mappings().first()
+    assert "limit_armed" in (row["reason"] or ""), row
+    # option dips to the limit two minutes later -> the fill scan opens at
+    # the (cheaper) ask, not the signal-time mid
+    p.bid, p.ask = 0.48, 0.52                 # 0.52 <= 0.527 limit
+    run_scan_cycle(engine=eng, bot="updraft",
+                   now_ct=datetime(2026, 7, 27, 9, 7, tzinfo=CT),
+                   chain_provider=p, event_blackout=False)
+    opens = list_open_positions(eng, "updraft")
+    assert len(opens) == 1
+    import json as _json
+    legs = opens[0]["legs"]
+    if isinstance(legs, str):
+        legs = _json.loads(legs)
+    assert abs(float(legs[0]["entry_price"]) - 0.52) < 1e-6, legs
+
+
+def test_patient_entry_expires_and_rearms_on_a_new_signal(db_session):
+    """An untouched limit dies after 10 minutes; the bot goes back to normal
+    scanning and a fresh signal arms a fresh limit."""
+    eng = db_session.get_bind()
+    _enable(eng, "updraft")
+    p = FlowChainProvider(spot=600.0, call_vol=0, put_vol=0)
+    run_scan_cycle(engine=eng, bot="updraft",
+                   now_ct=datetime(2026, 7, 27, 8, 5, tzinfo=CT),
+                   chain_provider=p, event_blackout=False)
+    p.call_vol, p.put_vol = 600, 600
+    run_scan_cycle(engine=eng, bot="updraft",
+                   now_ct=datetime(2026, 7, 27, 8, 35, tzinfo=CT),
+                   chain_provider=p, event_blackout=False)
+    p.call_vol += 600
+    p.put_vol += 3000
+    p.spot = 603.60
+    run_scan_cycle(engine=eng, bot="updraft",
+                   now_ct=datetime(2026, 7, 27, 9, 5, tzinfo=CT),
+                   chain_provider=p, event_blackout=False)
+    assert len(list_open_positions(eng, "updraft")) == 0    # armed, not filled
+    # 12 minutes later, ask never dipped: the pending is expired on read and
+    # the scan falls through to normal signal evaluation (which re-arms —
+    # cumulative volumes still show the put-heavy 30-min window).
+    run_scan_cycle(engine=eng, bot="updraft",
+                   now_ct=datetime(2026, 7, 27, 9, 17, tzinfo=CT),
+                   chain_provider=p, event_blackout=False)
+    assert len(list_open_positions(eng, "updraft")) == 0
+    row = eng.connect().execute(text(
+        "SELECT reason FROM updraft_scan_activity ORDER BY scan_time DESC"
+    )).mappings().first()
+    reason = row["reason"] or ""
+    assert ("limit_armed" in reason) or ("limit_waiting" not in reason), row
 
 
 def test_one_minute_is_snapshotted_once_across_both_bots(db_session):

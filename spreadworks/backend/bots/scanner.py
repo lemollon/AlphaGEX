@@ -685,6 +685,97 @@ def _evaluate_entry(
     if bool(meta.get("one_entry_per_day")) and count_positions_opened_on(engine, bot, now_ct) > 0:
         return {"outcome": "BLOCKED_ALREADY_OPENED_TODAY"}
 
+    # PATIENT ENTRY (2026-07-29, UPDRAFT-only research): with
+    # limit_entry_frac > 0 a fresh signal ARMS a resting limit
+    # (1-frac) x signal mid for 10 minutes instead of buying instantly;
+    # later scans FILL it if the ask touches. TEST +7.8% -> +11.9%/trade at
+    # -15%. Verified NOT to transfer to EMBREACH (flips negative) — only
+    # bots whose registry carries the knob ever enter this path.
+    reg_d = ((BOT_REGISTRY.get(bot) or {}).get("defaults") or {})
+    limit_frac = float(
+        cfg.get("limit_entry_frac")
+        if cfg.get("limit_entry_frac") is not None
+        else reg_d.get("limit_entry_frac") or 0)
+    if limit_frac > 0 and meta["strategy"] == "updraft" and engine is not None:
+        pend = flow_store.read_pending(engine, bot, now_ct)
+        if pend:
+            chain = chain_provider.get_chain(
+                ticker=meta["ticker"], dte=meta["front_dte"],
+                today=now_ct.date())
+            # A waiting limit must not blind the flow window — record the
+            # tape exactly as the signal path would (the BLOCKED-entry
+            # snapshot rule).
+            if chain:
+                try:
+                    flow_store.record_snapshot(
+                        engine, ticker=meta["ticker"],
+                        expiration=chain.get("expiration"), now=now_ct,
+                        spot=float(chain.get("spot") or 0),
+                        options=chain.get("options") or [])
+                except Exception as e:                      # noqa: BLE001
+                    logger.debug(f"[{bot}] waiting-snapshot failed: {e}")
+            opt = None
+            for o in (chain or {}).get("options") or []:
+                if (float(o.get("strike") or -1) == float(pend["strike"])
+                        and str(o.get("type") or "").lower() == str(pend["side"]).lower()):
+                    opt = o
+                    break
+            ask = float((opt or {}).get("ask") or 0)
+            if opt and 0 < ask <= float(pend["limit_price"]):
+                from .strategies.updraft import UpdraftSignal
+                from datetime import date as _date
+                debit = round(ask, 4)
+                per = debit * 100.0
+                equity = account_equity(engine, bot)
+                bp = float(cfg.get("bp_pct") or reg_d.get("bp_pct") or 0.02)
+                cap = int(cfg.get("max_contracts") or 0)
+                raw = int((equity * bp) // per) if per > 0 else 0
+                contracts = min(raw, cap) if cap > 0 else raw
+                if contracts >= 1:
+                    pt_pct = float(cfg.get("pt_pct") or 9.9999)
+                    sl_pct = float(cfg.get("sl_pct") or 0.50)
+                    reg_mode = str(reg_d.get("mode") or "updraft")
+                    fill = UpdraftSignal(
+                        ticker=meta["ticker"],
+                        expiration=_date.fromisoformat(str(pend["expiration"])),
+                        strike=float(pend["strike"]),
+                        call_mid=debit, spot=float((chain or {}).get("spot") or 0),
+                        mode=reg_mode, flow_imb_30=None, r30_bp=None,
+                        put_wall=None,
+                        hold_minutes=int(cfg.get("hold_minutes")
+                                         or reg_d.get("hold_minutes") or 45),
+                        side=str(pend["side"]), debit=debit,
+                        contracts=contracts,
+                        max_profit=pt_pct * per, max_loss=per,
+                        pt_target_pnl=pt_pct * per * contracts,
+                        sl_target_pnl=sl_pct * per * contracts)
+                    flow_store.clear_pending(engine, bot)
+                    pid = open_position(engine, bot, reg_mode, fill, now_ct,
+                                        notes="limit_fill")
+                    if bool(cfg.get("discord_alerts")):
+                        try:
+                            from . import discord_alerts
+                            discord_alerts.post_open(
+                                bot=bot, display=meta["display"],
+                                strategy=meta["strategy"], position_id=pid,
+                                legs=fill.legs(), entry_price=fill.debit,
+                                contracts=fill.contracts,
+                                max_profit=fill.max_profit * fill.contracts,
+                                max_loss=fill.max_loss * fill.contracts)
+                        except Exception as e:              # noqa: BLE001
+                            logger.warning(f"[{bot}] discord post failed: {e}")
+                    return {"outcome": "TRADE",
+                            "reason": f"LIMIT_FILLED: ask={ask:.2f} <= "
+                                      f"limit={float(pend['limit_price']):.2f} "
+                                      f"(signal mid was {float(pend['signal_mid']):.2f})",
+                            "position_id": pid}
+                flow_store.clear_pending(engine, bot)
+                return {"outcome": "NO_TRADE",
+                        "reason": f"limit_fill_size_zero: ask={ask:.2f}"}
+            return {"outcome": "NO_TRADE",
+                    "reason": f"limit_waiting: ask={ask:.2f} need<="
+                              f"{float(pend['limit_price']):.2f}"}
+
     equity = account_equity(engine, bot)
     diag: list[str] = []
     signal, _chain = _build_signal(
@@ -698,6 +789,20 @@ def _evaluate_entry(
     )
     if signal is None:
         return {"outcome": "NO_TRADE", "reason": diag[0] if diag else "no signal"}
+
+    # PATIENT ENTRY arm: a fresh signal rests a limit instead of buying.
+    if limit_frac > 0 and meta["strategy"] == "updraft" and engine is not None:
+        lim = round(float(signal.call_mid) * (1.0 - limit_frac), 2)
+        flow_store.arm_pending(
+            engine, bot, strike=float(signal.strike), side=str(signal.side),
+            expiration=(signal.expiration.isoformat()
+                        if hasattr(signal.expiration, "isoformat")
+                        else str(signal.expiration)),
+            limit_price=lim, signal_mid=float(signal.call_mid),
+            now=now_ct, ttl_min=10)
+        return {"outcome": "NO_TRADE",
+                "reason": f"limit_armed: mid={float(signal.call_mid):.2f} "
+                          f"resting {lim:.2f} for 10min"}
 
     # Store the MODE (updraft/backdraft/reversal/em_breach/afterburn) as the
     # position's strategy so four bots sharing one module stay tellable apart
