@@ -6,6 +6,7 @@ import { fetcher } from '@/lib/fetcher'
 import type { LiveSummary, LiveTrade } from '@/lib/live/types'
 import { LIVE_BOTS, LIVE_BOT_LABEL, type LiveBot } from '@/lib/live/bots'
 import { accentFor } from './components/accent'
+import { isSwingActive } from '@/lib/live/swing'
 import LiveHeader from './components/LiveHeader'
 import CustomerShell from '@/components/customer/CustomerShell'
 import CheckoutNotice from '@/components/customer/CheckoutNotice'
@@ -184,7 +185,7 @@ export default function LiveClient() {
                   leg plus today's new one. Only SPARK swings, so only SPARK reaches this
                   branch; the single-position day is untouched below. Each card carries
                   its own timeline, so NowTimelineCard is not repeated here. */}
-              {(trade?.positions?.length ?? 0) > 1 ? (
+              {isSwingActive(trade?.positions) ? (
                 <div className="order-2">
                   <SwingTradeCards positions={trade!.positions} accountValue={summary?.account?.value ?? null} />
                 </div>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveSwingMeta } from '../swing'
+import { deriveSwingMeta, isSwingActive } from '../swing'
 
 /**
  * These two values drive a badge telling a customer whether their money sat in the
@@ -72,5 +72,39 @@ describe('deriveSwingMeta', () => {
       heldOvernight: false,
       dayNumber: 1,
     })
+  })
+})
+
+describe('isSwingActive — when the extra card belongs on screen', () => {
+  const today = { held_overnight: false }
+  const swung = { held_overnight: true }
+
+  it('is false for no positions', () => {
+    expect(isSwingActive([])).toBe(false)
+    expect(isSwingActive(null)).toBe(false)
+    expect(isSwingActive(undefined)).toBe(false)
+  })
+
+  it('is false for a single position, swung or not', () => {
+    // One position has nothing to compare against; the two-card view exists to show
+    // yesterday's leg BESIDE today's.
+    expect(isSwingActive([today])).toBe(false)
+    expect(isSwingActive([swung])).toBe(false)
+  })
+
+  it('is FALSE for two positions opened the same day', () => {
+    // The bug this exists for: paper currently holds two positions both opened
+    // 2026-07-29. Triggering on count alone rendered a swing layout showing two
+    // "Opened Today" cards — a swing that never happened.
+    expect(isSwingActive([today, today])).toBe(false)
+  })
+
+  it('is true when one of two positions was carried overnight', () => {
+    expect(isSwingActive([swung, today])).toBe(true)
+    expect(isSwingActive([today, swung])).toBe(true)
+  })
+
+  it('is true when both legs were carried overnight', () => {
+    expect(isSwingActive([swung, swung])).toBe(true)
   })
 })
