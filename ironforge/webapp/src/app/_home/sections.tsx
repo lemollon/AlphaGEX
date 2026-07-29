@@ -100,8 +100,8 @@ function ValuePillars() {
  * Still defined once and used once: a price stated in two places is how /pricing and the
  * homepage drifted apart, and that rule is unchanged.
  *
- * Named "Forge Starter" to match the rest of the site — plans.ts, the Terms of Service,
- * the Bot Ledger and the support knowledge base all say Starter.
+ * The tier NAME is read from MARKETING_TIERS, not written here. plans.ts is the single
+ * source; the Terms of Service billing paragraph reads the same field.
  */
 export function ForgeStarterCard() {
   return (
@@ -120,7 +120,13 @@ export function ForgeStarterCard() {
         </div>
         <div>
           <h3 className="text-[22px] font-bold text-white">
-            Forge <span className="text-[#FD5301]">Starter</span>
+            {/* Derived, never typed literally — the tier name lives in plans.ts and is
+                also rendered by the Terms of Service, so a hardcoded copy here is how
+                the two would come to disagree. */}
+            {MARKETING_TIERS.starter.name.split(' ')[0]}{' '}
+            <span className="text-[#FD5301]">
+              {MARKETING_TIERS.starter.name.split(' ').slice(1).join(' ')}
+            </span>
           </h3>
           <p className="mt-0.5 text-sm text-gray-400">Everything in Forge Community, plus:</p>
         </div>
