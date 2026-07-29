@@ -317,6 +317,24 @@ def build_updraft_signal(
             return _reject(f"not_first_touch: already above range at prior "
                            f"scan (prev={float(ps):.2f})")
         put_wall = None
+    elif mode in ("afterglow", "ember"):
+        # Multi-day swing legs (2026-07-29 research): the day's proven
+        # intraday signal predicts the NEXT TWO DAYS. Buy a weekly ATM call
+        # at the close of any day the signal fired; exit ~2 trading days
+        # later via wall-clock timer. Placebo (same call on random days) is
+        # FLAT out-of-sample — the day-flag carries the whole edge.
+        #   afterglow -> UPDRAFT gates fired at any snapshot today
+        #                (SPY +20.7/+20.3, SPX replication +21.2/+28.4, 4/4y)
+        #   ember     -> hourly RSI recovery crossed at any bar today
+        #                (+20.9/+13.5 h1, +35.7/+25.6 h2 — candidate grade)
+        dayx = chain.get("dayx") or {}
+        if dayx.get("reason"):
+            return _reject(f"day_signal_unavailable: {dayx['reason']}")
+        fired = dayx.get("updraft_fired") if mode == "afterglow" \
+            else dayx.get("rsi_recovery_fired")
+        if not fired:
+            return _reject(f"no_{mode}_signal_today")
+        put_wall = None
     elif mode in ("afterburn", "weekender"):
         # WEEKENDER is AFTERBURN's Friday twin: same close-momentum gate
         # machinery, but afterburn_min_ret_pct is set to -99 in its registry
