@@ -10,6 +10,8 @@
  * drift; where a real route exists, name it so Sparky can link the user straight to it.
  */
 
+import { MARKETING_TIERS } from '@/lib/billing/plans'
+
 export interface KbEntry {
   topic: string
   q: string
@@ -21,7 +23,12 @@ export const SUPPORT_KB: KbEntry[] = [
   {
     topic: 'plans',
     q: 'What plans and prices does IronForge offer?',
-    a: 'Three tiers: Forge Community ($15/mo — chat + education, no trading bot), Forge Starter ($50/mo — one automated strategy), and Forge Pro ($75/mo — both strategies). Every bot plan includes Community. See /pricing.',
+    // Prices and names interpolated from MARKETING_TIERS. This answer hardcoded
+    // "Community ($15/mo)" — the price was $10, the same discrepancy caught in Stripe —
+    // and "Forge Starter", and pointed at /pricing, which has 308'd to /#memberships
+    // since that page was retired. A support bot quoting a price we do not charge is
+    // the worst place for this to be wrong.
+    a: `Three tiers: ${MARKETING_TIERS.community.name} ($${MARKETING_TIERS.community.priceMonthly}/mo — chat + education, no trading bot), ${MARKETING_TIERS.starter.name} ($${MARKETING_TIERS.starter.priceMonthly}/mo — one automated strategy), and ${MARKETING_TIERS.pro.name} ($${MARKETING_TIERS.pro.priceMonthly}/mo — both strategies). Every bot plan includes Community. See the memberships section on the homepage.`,
   },
   {
     topic: 'plans',

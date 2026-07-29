@@ -121,7 +121,11 @@ export const MARKETING_TIERS = {
   /** Community/education tier — no bot execution. Billed via COMMUNITY_PLAN ($15/mo). */
   community: { name: COMMUNITY_PLAN.name, priceMonthly: COMMUNITY_PLAN.priceMonthly },
   /** One automated bot. Same price checkout bills for a single bot. */
-  starter: { name: 'Forge Starter', priceMonthly: BOT_PLANS.spark.priceMonthly },
+  // Display name for the one-bot tier. Renamed Starter -> Automate 2026-07-29 to match
+  // the approved homepage design. Everything that shows it — the homepage card, the
+  // Terms of Service billing paragraph, the support knowledge base — reads THIS, so the
+  // rename is one line and no surface can be left saying Starter.
+  starter: { name: 'Forge Automate', priceMonthly: BOT_PLANS.spark.priceMonthly },
   /** Both bots. Same price checkout bills for the bundle. */
   pro: { name: 'Forge Pro', priceMonthly: BOTH_PLAN.priceMonthly },
 } as const
