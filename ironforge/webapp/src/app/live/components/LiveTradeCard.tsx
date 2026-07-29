@@ -4,6 +4,7 @@ import { Area, ComposedChart, ReferenceDot, ReferenceLine, ResponsiveContainer, 
 import type { CustomerState, LiveTrade } from '@/lib/live/types'
 import { formatDollarPnl } from '@/lib/format'
 import type { AccentTheme } from './accent'
+import RegimeRow from './RegimeRow'
 
 function formatCT(iso: string | null): string {
   if (!iso) return '—'
@@ -39,11 +40,14 @@ export default function LiveTradeCard({
   error,
   state,
   accent,
+  accountValue = null,
 }: {
   trade: LiveTrade | null
   error: boolean
   state: CustomerState | null
   accent: AccentTheme
+  /** Account equity, for the "% of account at risk" figure. null renders "—". */
+  accountValue?: number | null
 }) {
   const label = statusLabel(trade, state)
   const pnl = trade?.active ? trade.unrealized_pnl : trade?.today_result?.pnl ?? null
@@ -161,6 +165,15 @@ export default function LiveTradeCard({
               )}
             </div>
           )}
+
+          {/* Regime + exposure on the ORDINARY day too. These were added for the
+              swing view, which only appears when Spark carries a leg overnight — so on
+              a normal single-position day the customer could see neither the gamma
+              regime driving their trade nor how much of the account it puts at risk.
+              positions[0] is the open trade the rest of this card describes. */}
+          {trade?.active && trade.positions?.[0] ? (
+            <RegimeRow p={trade.positions[0]} accountValue={accountValue} />
+          ) : null}
 
           {!trade?.active && !trade?.today_result && trade && (
             <p className="mt-4 text-sm text-gray-400">
