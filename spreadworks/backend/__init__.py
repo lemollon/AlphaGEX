@@ -1477,6 +1477,47 @@ def _start_scheduler(app: FastAPI):
         replace_existing=True,
     )
 
+    async def settle_bots_tick():
+        """Same-day post-close settlement for settle_at_expiry bots.
+
+        The scan loop stops at 14:59 CT, so without this an expired European
+        fly (SPLASH/RIPPLE) sits OPEN overnight and only books SETTLE on the
+        next morning's 8:00 scan. The official close publishes within minutes
+        of the bell; this pass books it the same afternoon. The morning scan
+        remains the backstop.
+        """
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from .bots.scanner import run_settlement_pass
+        from .bots.registry import list_bots
+        now_ct = datetime.now(ZoneInfo("America/Chicago"))
+        if bool(content_loaded and is_market_holiday(now_ct.date())):
+            return
+        try:
+            from .bots.routes_helpers import build_live_chain_provider
+            provider = build_live_chain_provider()
+        except ImportError:
+            return
+        for bot in list_bots():
+            try:
+                booked = run_settlement_pass(
+                    engine=engine, bot=bot, now_ct=now_ct,
+                    chain_provider=provider,
+                )
+                if booked:
+                    logger.info(f"[settle_bots:{bot}] booked SETTLE: {booked}")
+            except Exception as e:
+                logger.exception(f"[settle_bots:{bot}] exception: {e}")
+
+    scheduler.add_job(
+        settle_bots_tick, "cron",
+        minute="10-45", hour="15",
+        day_of_week="mon-fri",
+        timezone=_ZoneInfo("America/Chicago"),
+        id="settle_bots", coalesce=True, max_instances=1,
+        replace_existing=True,
+    )
+
     # ------------------------------------------------------------------
     # TSUNAMI JOBS (entry Mon-Fri 10:30 CT + management every 15 min)
     # ------------------------------------------------------------------
