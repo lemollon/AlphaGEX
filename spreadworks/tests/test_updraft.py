@@ -710,6 +710,34 @@ def test_tempest_registry_is_the_whole_book_in_one_account():
     assert d["allow_stacking"] is True and d["max_concurrent_positions"] == 3
 
 
+def test_or_state_reads_utc_stored_snapshots_with_aware_now(tmp_path):
+    """PRODUCTION shape: snapshot_time lands in UTC; the caller passes a
+    tz-aware CT now. The 08:30-09:00 CT window must still find the rows
+    (2026-07-29: it matched ZERO and blinded FLASHPOINT all session)."""
+    from zoneinfo import ZoneInfo
+    from sqlalchemy import create_engine, text as _text
+    from backend.bots import flow_store
+
+    CT = ZoneInfo("America/Chicago")
+    eng = create_engine(f"sqlite:///{tmp_path/'utc.db'}")
+    flow_store.ensure_table(eng)
+    # rows as production stores them: UTC wall-clock (08:31 CT == 13:31 UTC)
+    with eng.begin() as conn:
+        for hh, mm, spot in ((13, 31, 600.0), (13, 45, 601.4), (13, 59, 598.9),
+                             (14, 5, 601.0)):
+            conn.execute(_text(
+                f"INSERT INTO {flow_store.TABLE} (ticker, snapshot_time, "
+                "trade_date, spot, call_volume, put_volume, straddle_pct) "
+                "VALUES ('SPY', :t, '2026-07-29', :s, 100, 100, 0.8)"),
+                {"t": datetime(2026, 7, 29, hh, mm), "s": spot})
+    st = flow_store.read_or_state(
+        eng, ticker="SPY", now=datetime(2026, 7, 29, 9, 7, tzinfo=CT))
+    assert st.or_complete, st
+    assert st.or_high == 601.4 and st.or_low == 598.9, st
+    assert st.day_open == 600.0
+    assert st.prev_spot == 601.0
+
+
 def test_embreachq_is_embreach_on_qqq_with_own_thresholds():
     meta = get_bot("embreachq")
     d = meta["defaults"]
