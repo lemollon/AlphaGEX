@@ -9,6 +9,26 @@
  * get wrong here — the caller resolves CT once and passes it in.
  */
 
+/**
+ * Is a SWING actually live — i.e. does the extra card belong on screen?
+ *
+ * A swing means a position was CARRIED THROUGH A CLOSE, so the test is that one of the
+ * open positions is held overnight. Position count alone is not it: Spark can hold two
+ * positions opened on the SAME day (production shows one, paper currently shows two from
+ * 2026-07-29), and rendering the swing layout for those produces two "Opened Today"
+ * cards describing a swing that never happened.
+ *
+ * Both conditions are required. A lone held-overnight position keeps the ordinary single
+ * card — there is no second trade to compare it against, which is what the two-card view
+ * exists to show.
+ */
+export function isSwingActive(
+  positions: ReadonlyArray<{ held_overnight: boolean }> | null | undefined,
+): boolean {
+  if (!positions || positions.length < 2) return false
+  return positions.some((p) => p.held_overnight)
+}
+
 export interface SwingMeta {
   /** Opened on an earlier CT date, so it was carried through a close. */
   heldOvernight: boolean
