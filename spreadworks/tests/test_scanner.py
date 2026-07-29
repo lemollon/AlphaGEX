@@ -990,6 +990,95 @@ def test_ripple_settlement_retries_without_close(db_session, fake_chain_0dte):
     assert n == 1
 
 
+def test_settlement_pass_books_same_day_after_close(db_session, fake_chain_0dte):
+    """The 15:10-15:45 CT post-close pass settles an expiry-day fly the same
+    afternoon at intrinsic vs the official close — no overnight OPEN limbo."""
+    from backend.bots.scanner import run_settlement_pass
+    engine = db_session.bind
+    provider = FakeChainProvider(
+        chain_0dte=fake_chain_0dte,
+        daily_history={"SPY": [
+            {"date": "2026-05-20", "open": 500, "high": 504, "low": 499, "close": 503},
+        ]},
+    )
+    pid = _open_ripple(engine, provider)
+    booked = run_settlement_pass(
+        engine=engine, bot="ripple",
+        now_ct=datetime(2026, 5, 20, 15, 12, tzinfo=CT),
+        chain_provider=provider,
+    )
+    assert booked == [pid]
+    with engine.begin() as conn:
+        row = conn.execute(text(
+            "SELECT close_reason, close_price FROM ripple_closed_trades "
+            "WHERE position_id=:p"
+        ), {"p": pid}).mappings().first()
+        snaps = conn.execute(text(
+            "SELECT COUNT(*) c FROM ripple_equity_snapshots"
+        )).mappings().first()["c"]
+    assert row["close_reason"] == "SETTLE"
+    assert float(row["close_price"]) == 3.0
+    # A post-settle equity snapshot ends the day's curve at settled equity.
+    assert snaps >= 1
+
+
+def test_settlement_pass_waits_until_1510_on_expiry_day(db_session, fake_chain_0dte):
+    """On the expiry day itself the pass must not read the close before
+    15:10 CT — a mid-session daily bar would fake a settlement."""
+    from backend.bots.scanner import run_settlement_pass
+    engine = db_session.bind
+    provider = FakeChainProvider(
+        chain_0dte=fake_chain_0dte,
+        daily_history={"SPY": [
+            {"date": "2026-05-20", "open": 500, "high": 504, "low": 499, "close": 503},
+        ]},
+    )
+    _open_ripple(engine, provider)
+    booked = run_settlement_pass(
+        engine=engine, bot="ripple",
+        now_ct=datetime(2026, 5, 20, 15, 5, tzinfo=CT),
+        chain_provider=provider,
+    )
+    assert booked == []
+    with engine.begin() as conn:
+        n = conn.execute(text(
+            "SELECT COUNT(*) c FROM ripple_positions WHERE status='OPEN'"
+        )).mappings().first()["c"]
+    assert n == 1
+
+
+def test_settlement_pass_retries_without_published_close(db_session, fake_chain_0dte):
+    """Close not in daily history yet -> no booking, position stays OPEN;
+    the next-morning scan path remains the backstop."""
+    from backend.bots.scanner import run_settlement_pass
+    engine = db_session.bind
+    provider = FakeChainProvider(chain_0dte=fake_chain_0dte, daily_history={})
+    _open_ripple(engine, provider)
+    booked = run_settlement_pass(
+        engine=engine, bot="ripple",
+        now_ct=datetime(2026, 5, 20, 15, 12, tzinfo=CT),
+        chain_provider=provider,
+    )
+    assert booked == []
+    with engine.begin() as conn:
+        n = conn.execute(text(
+            "SELECT COUNT(*) c FROM ripple_positions WHERE status='OPEN'"
+        )).mappings().first()["c"]
+    assert n == 1
+
+
+def test_settlement_pass_skips_non_settle_bots(db_session):
+    """A non-settle bot (surge) is a no-op for the pass."""
+    from backend.bots.scanner import run_settlement_pass
+    engine = db_session.bind
+    booked = run_settlement_pass(
+        engine=engine, bot="surge",
+        now_ct=datetime(2026, 5, 20, 15, 12, tzinfo=CT),
+        chain_provider=FakeChainProvider(),
+    )
+    assert booked == []
+
+
 def test_settlement_value_xsp_falls_back_to_spx_close_over_10():
     """Tradier may serve no XSP daily history — settlement must fall back to
     the SPX official close / 10 (XSP settles at exactly that by definition)."""

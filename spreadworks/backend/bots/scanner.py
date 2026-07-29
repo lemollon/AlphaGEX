@@ -163,6 +163,56 @@ def _settlement_value(chain_provider: ChainProvider, ticker: str,
     return round(max(0.0, val), 4)
 
 
+# Same-day settlement must not read the expiry-day close before the market
+# has actually closed and the official close has had a few minutes to
+# publish. 15:10 CT = 10 minutes after the 15:00 CT close.
+SETTLE_EARLIEST_CT = time(15, 10)
+
+
+def run_settlement_pass(*, engine: Engine, bot: str, now_ct: datetime,
+                        chain_provider: ChainProvider) -> list[str]:
+    """Same-day post-close settlement for settle_at_expiry bots.
+
+    The per-minute scan loop stops at 14:59 CT — one minute before the close
+    that determines settlement exists — so on its own an expired European fly
+    sits OPEN overnight and books SETTLE on the next morning's first scan.
+    This pass runs shortly after the close and books intrinsic vs the official
+    close as soon as Tradier publishes the expiry-day daily bar. The
+    next-morning scan path is unchanged and remains the backstop (e.g. if the
+    close never publishes in the pass window). Returns the position_ids booked.
+    """
+    meta = get_bot(bot)
+    if not bool(meta.get("settle_at_expiry")):
+        return []
+    booked: list[str] = []
+    for pos in list_open_positions(engine, bot):
+        legs = json.loads(pos["legs"])
+        pos_exp = date.fromisoformat(legs[0]["expiration"])
+        if now_ct.date() < pos_exp:
+            continue
+        if (now_ct.date() == pos_exp
+                and now_ct.timetz().replace(tzinfo=None) < SETTLE_EARLIEST_CT):
+            continue
+        settle = _settlement_value(chain_provider, pos["ticker"], legs, pos_exp)
+        if settle is None:
+            logger.info(
+                f"[{bot}] {pos['position_id']}: official close for {pos_exp} "
+                "not published yet — settlement pass retries next tick"
+            )
+            continue
+        close_position(engine, bot, pos["position_id"],
+                       close_value=settle, close_reason="SETTLE", now=now_ct)
+        _log_scan(engine, bot, now=now_ct, outcome="TRADE",
+                  reason="CLOSE_SETTLE", position_id=pos["position_id"])
+        booked.append(pos["position_id"])
+    if booked:
+        # End the day's equity curve at the settled equity instead of the
+        # last pre-close mark (which can detach from intrinsic in the final
+        # minutes as 0DTE quotes go junk).
+        _write_equity_snapshot(engine, bot, now_ct)
+    return booked
+
+
 def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
                   config: dict, equity: float, today: date,
                   ticker: str, front_dte: int, back_dte: int | None,
