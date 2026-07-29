@@ -132,6 +132,28 @@ export interface LiveOpenPosition {
   held_overnight: boolean
   /** 1 on the day it opened, 2 the next session, and so on. */
   day_number: number
+  /**
+   * Gamma regime AT ENTRY, as recorded on the position — not today's reading. It is what
+   * decided this trade's strike width and its size, so re-deriving it live would
+   * describe a different trade than the one the customer is holding.
+   *
+   * null when the chain read failed at entry, which the UI must show as unknown rather
+   * than guessing positive.
+   */
+  gex_regime: 'POSITIVE' | 'NEGATIVE' | null
+  /**
+   * Capital at risk in dollars — the position's stored max loss.
+   *
+   * Dollars, not a percentage: account value is assembled in getLiveSummary (Tradier
+   * equity, with a ledger fallback) and re-deriving it here would mean two definitions
+   * of the customer's balance. The client holds both payloads and divides.
+   */
+  capital_used: number | null
+  /**
+   * The ceiling this regime authorises, 0–1 (0.50 positive / 0.20 negative or unknown).
+   * Shown beside capital_pct so "17% of 20%" is legible as a rule, not a coincidence.
+   */
+  regime_cap_pct: number | null
 }
 
 export interface LiveTrade {

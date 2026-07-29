@@ -186,7 +186,7 @@ export default function LiveClient() {
                   its own timeline, so NowTimelineCard is not repeated here. */}
               {(trade?.positions?.length ?? 0) > 1 ? (
                 <div className="order-2">
-                  <SwingTradeCards positions={trade!.positions} />
+                  <SwingTradeCards positions={trade!.positions} accountValue={summary?.account?.value ?? null} />
                 </div>
               ) : (
                 <div className="order-2 grid gap-4 lg:grid-cols-[11fr_9fr]">
