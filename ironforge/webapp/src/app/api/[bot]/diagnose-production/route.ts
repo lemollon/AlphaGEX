@@ -193,7 +193,11 @@ export async function GET(
 
     // 5d: Simulate sizing (production uses its own pool, not shared with sandbox)
     const sameTypeCount = eligibleAccounts.filter(a => a.type === acct.type).length
-    const botShare = sameTypeCount > 1 ? 1.0 / sameTypeCount : 1.0
+    // Mirrors placeIcOrderAllAccounts: production accounts never split by
+    // account count (each owner sizes off their own OBP).
+    const botShare = acct.type === 'production'
+      ? 1.0
+      : (sameTypeCount > 1 ? 1.0 / sameTypeCount : 1.0)
     const usableBP = (bp ?? 0) * (capitalPct / 100) * botShare * 0.85
     const bpContracts = Math.floor(usableBP / brokerMargin)
     checks.push({

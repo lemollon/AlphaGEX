@@ -1750,9 +1750,13 @@ export async function placeIcOrderAllAccounts(
       const SANDBOX_MAX_CONTRACTS = 200
       const brokerMarginPer = spreadWidth * 100  // Tradier margin: $500 for $5 spread
       const sameTypeCount = eligibleAccounts.filter(a => a.type === acct.type).length
-      const botShare = botName && sameTypeCount > 1
-        ? 1.0 / sameTypeCount
-        : 1.0
+      // Production accounts are DISTINCT OWNERS trading their own capital —
+      // each already sizes off its own account's OBP, so splitting by account
+      // count would silently halve every owner's size the day a second owner
+      // is added. The equal split only applies to sandbox mirrors.
+      const botShare = acct.type === 'production'
+        ? 1.0
+        : (botName && sameTypeCount > 1 ? 1.0 / sameTypeCount : 1.0)
 
       // Per-scope bp_pct. Production reads from the siloed config row loaded
       // above; sandbox is hardcoded 0.85 (matches paper ledger).
