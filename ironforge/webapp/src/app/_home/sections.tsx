@@ -34,12 +34,11 @@ export function Hero() {
           Create Account
         </Link>
 
-        {/* Forge Starter sits between the CTA and the value pillars. */}
-        <div className="mt-9">
-          <ForgeStarterCard />
-        </div>
-
-        <div className="mt-10">
+        {/* No pricing card here. The hero states the promise and asks for the account;
+            the two tiers are compared side by side in "Choose Your Membership" below,
+            which is the only place a price appears. Putting the paid tier here made the
+            left column tower over the dashboard preview and buried Community entirely. */}
+        <div className="mt-12">
           <ValuePillars />
         </div>
       </div>
@@ -91,21 +90,25 @@ function ValuePillars() {
 }
 
 /**
- * Forge Starter card.
+ * The paid tier card.
  *
- * Defined once and rendered in the HERO, directly under the Create Account
- * button and above the value pillars — so the paid tier is the first thing a
- * visitor sees rather than something they have to scroll to.
+ * Rendered ONCE, in the membership section beside Forge Community, so the two tiers can
+ * actually be compared — which is the whole job of that section. It previously sat in
+ * the hero instead, which left "Choose Your Membership" showing a single lonely $10 card
+ * and no way to see what the paid tier included without scrolling back up.
  *
- * Deliberately NOT also rendered in the membership section below. Stating a
- * price in two places is exactly how /pricing and the homepage drifted apart.
+ * Still defined once and used once: a price stated in two places is how /pricing and the
+ * homepage drifted apart, and that rule is unchanged.
  *
- * Tier vocabulary matches the rest of the site; this card used to be called
- * "Forge Automate", a name that existed nowhere else.
+ * Named "Forge Starter" to match the rest of the site — plans.ts, the Terms of Service,
+ * the Bot Ledger and the support knowledge base all say Starter.
  */
 export function ForgeStarterCard() {
   return (
-    <div className="relative flex flex-col rounded-2xl border border-[#FD5301] bg-[#0A0B0C] p-6 md:p-7">
+    /* Green border, matching the trial badge and the trial CTA — the design uses green
+       for "start free" throughout and reserves brand orange for paid actions like Join
+       Community. h-full so it matches the Community card's height in the grid. */
+    <div className="relative flex h-full flex-col rounded-2xl border border-[#4C7A22] bg-[#0A0B0C] p-6 md:p-7">
       <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border border-[#4C7A22] bg-[#1E3B14] px-4 py-1 text-[11px] font-bold tracking-wide text-[#8FD14F]">
         5 TRADING DAY FREE TRIAL
       </div>
@@ -127,7 +130,7 @@ export function ForgeStarterCard() {
         <FeatureChecklist items={AUTOMATE_FEATURES} />
       </div>
 
-      <div className="mt-6 border-t border-white/10 pt-5">
+      <div className="mt-auto border-t border-white/10 pt-5">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="text-white">
             <span className="text-[30px] font-extrabold">${MARKETING_TIERS.starter.priceMonthly}</span>
@@ -188,10 +191,11 @@ export function MembershipSection() {
         Choose Your Membership
       </h2>
 
-      {/* Forge Starter moved into the hero, so this is a single card now.
-          Deliberately NOT duplicated here — two places quoting a price is how
-          they drift apart. */}
-      <div className="mx-auto mt-10 max-w-2xl">
+      {/* Two tiers side by side — the comparison IS the section. `items-stretch` keeps
+          both cards the same height whichever has more copy, and the paid card carries a
+          `mt-4 md:mt-0` so its floating trial badge is never clipped when the grid
+          collapses to one column on mobile. */}
+      <div className="mx-auto mt-10 grid max-w-[1000px] grid-cols-1 items-stretch gap-6 md:grid-cols-2">
         {/* Forge Community */}
         <div className="flex flex-col rounded-2xl border border-white/10 bg-[#0A0B0C] p-6 md:p-7">
           <div className="flex items-center gap-4">
@@ -208,7 +212,9 @@ export function MembershipSection() {
             <FeatureChecklist items={COMMUNITY_FEATURES} />
           </div>
 
-          <div className="mt-6 flex items-center justify-between gap-4 border-t border-white/10 pt-5">
+          {/* mt-auto pins the price row to the card's bottom edge, so both tiers' prices
+              sit on the same line however the feature lists wrap. */}
+          <div className="mt-auto flex items-center justify-between gap-4 border-t border-white/10 pt-5">
             <div className="text-white">
               <span className="text-[30px] font-extrabold">${MARKETING_TIERS.community.priceMonthly}</span>
               <span className="ml-1 text-sm text-gray-400">/month</span>
@@ -222,6 +228,10 @@ export function MembershipSection() {
           </div>
         </div>
 
+        {/* The paid tier, promoted: green border + trial badge, as in the design. */}
+        <div className="mt-4 md:mt-0">
+          <ForgeStarterCard />
+        </div>
       </div>
     </section>
   )
