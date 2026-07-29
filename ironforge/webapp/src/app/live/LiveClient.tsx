@@ -162,6 +162,22 @@ export default function LiveClient() {
             <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-6 text-sm text-gray-400">
               Live data is temporarily unavailable. We&apos;re on it — try refreshing in a moment.
             </div>
+          ) : !summary ? (
+            /* LOADING. Without this branch the page fell through to the dashboard
+               below while `summary` was still undefined — so a visitor who owns
+               nothing was shown the full trading chrome, Pause Trading included, and
+               only after the fetch resolved did it swap to the conversion surface.
+               Ownership is not yet known here, so nothing that implies ownership may
+               render. Skeletons carry no digits, so no figure is ever implied either. */
+            <div className="mt-4 flex flex-col gap-4" aria-busy="true" aria-live="polite">
+              <span className="sr-only">Loading your account…</span>
+              <div className="h-[104px] animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
+              <div className="grid gap-4 lg:grid-cols-[11fr_9fr]">
+                <div className="h-[320px] animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
+                <div className="h-[320px] animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
+              </div>
+              <div className="h-[132px] animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
+            </div>
           ) : (
             <div className="mt-4 flex flex-col gap-4">
               {/* Paper-mode disclosure. Every number below this line (account
@@ -191,7 +207,7 @@ export default function LiveClient() {
                 </div>
               ) : (
                 <div className="order-2 grid gap-4 lg:grid-cols-[11fr_9fr]">
-                  <LiveTradeCard trade={trade ?? null} error={Boolean(tradeError)} state={summary?.state ?? null} accent={accent} />
+                  <LiveTradeCard trade={trade ?? null} error={Boolean(tradeError)} state={summary?.state ?? null} accent={accent} accountValue={summary?.account?.value ?? null} />
                   <NowTimelineCard state={summary?.state ?? null} openedAt={trade?.opened_at ?? null} accent={accent} />
                 </div>
               )}
