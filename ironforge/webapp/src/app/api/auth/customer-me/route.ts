@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
-import { ownsStrategy } from '@/lib/live/membership'
+import { ownsStrategy, hasActiveMembership } from '@/lib/live/membership'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -25,6 +25,11 @@ export async function GET() {
     ok: true,
     // Fails closed inside the helper — an entitlement we cannot verify is never advertised.
     ownsStrategy: await ownsStrategy(session.customerId),
+    // ANY live subscription — a strategy OR Community. Gates the Community link, which
+    // is a $10 product: showing it to someone who has bought nothing advertises a door
+    // they cannot walk through. Discovery survives via the homepage membership section,
+    // which is where Community is actually sold.
+    hasMembership: await hasActiveMembership(session.customerId),
     customer: {
       id: session.customerId,
       email: session.email,
