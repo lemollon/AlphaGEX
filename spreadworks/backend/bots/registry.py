@@ -485,6 +485,53 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
     # with UPDRAFT in research (43 shared days of 145/89), so the two are
     # genuinely separate signals rather than one trade twice. Held-out
     # +14.32%/trade, t=1.55, ~40 trades/yr. PAPER, same caveat as UPDRAFT.
+    # TEMPEST — THE BOOK IN ONE BOT (2026-07-29, the 10-trades/week
+    # mandate). One account scanning all five proven single-leg triggers
+    # every cycle: UPDRAFT, BACKDRAFT, REVERSAL, EM_BREACH, FLASHPOINT —
+    # first signal wins, sub-mode stored per position. No single signal
+    # supports ~500/yr profitably (frequency-frontier verdict); the five
+    # combined fire ~540/yr ≈ 10-11/week with book-level OOS t=2.16
+    # (hf_32 book-4 + flashpoint). Uniform 45m timer (BACKDRAFT's leg runs
+    # 45 not its native 30 — flagged). PAPER ONLY, $1k.
+    "tempest": {
+        "display": "TEMPEST",
+        "strategy": "updraft",          # same module, mode=tempest dispatch
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": 0,
+        "defaults": {
+            "starting_capital": 1000.0,
+            "enabled": False,   # no bot ships armed
+            "max_contracts": 1,
+            "bp_pct": 0.50,
+            "sd_mult": 1.0, "delta_skew": 0, "use_gex_walls": False,
+            "mode": "tempest",
+            # each leg's own gates are FROZEN inside the tempest dispatch;
+            # these top-level knobs are the shared UPDRAFT/BACKDRAFT gates
+            "flow_max": -0.1378,
+            "r30_min": 19.23,
+            "backdraft_flow_max": -0.35,
+            "require_put_wall": True,
+            "rsi_threshold": 30.0,
+            "rsi_period": 14,
+            "em_frac": 0.8,
+            "max_open_straddle_pct": 0.75,
+            "or_width_min_em": 0.5709,
+            "strike_offset": 1,
+            "hold_minutes": 45,
+            "pt_pct": 9.9999,
+            "sl_pct": 0.50,
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+            "entry_start_ct": "08:31",
+            "entry_end_ct": "14:00",
+            "eod_close_ct": "14:45",
+            "allow_stacking": True,
+            "max_concurrent_positions": 3,
+            "cooldown_min": 45,
+            "discord_alerts": False,
+        },
+    },
     "backdraft": {
         "display": "BACKDRAFT",
         "strategy": "updraft",          # same module, mode=backdraft

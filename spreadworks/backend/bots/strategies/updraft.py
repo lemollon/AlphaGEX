@@ -193,6 +193,37 @@ def build_updraft_signal(
     if spot <= 0:
         return _reject("missing_spot")
 
+    if mode == "tempest":
+        # THE BOOK IN ONE BOT (2026-07-29, Leron's 10-trades/week mandate).
+        # No single signal supports ~500 trades/yr profitably (the frequency
+        # frontier), but the five proven legs COMBINED fire ~540/yr with a
+        # book-level OOS t=2.16 — so one bot tries each leg with its own
+        # frozen shipped parameters; first signal wins. All legs are single
+        # long calls/puts. Sub-mode is recorded on the position so the UI
+        # and the audit trail show which leg fired.
+        sub_diag: list[str] = []
+        for m2, ov in (
+            ("updraft",   {"strike_offset": 1, "hold_minutes": 45,
+                           "sl_pct": 0.50, "pt_pct": 9.9999}),
+            ("backdraft", {"strike_offset": 1, "hold_minutes": 45,
+                           "sl_pct": 0.50, "pt_pct": 9.9999}),
+            ("reversal",  {"strike_offset": 0, "hold_minutes": 45,
+                           "sl_pct": 0.99, "pt_pct": 1.50}),
+            ("em_breach", {"strike_offset": 0, "hold_minutes": 45,
+                           "sl_pct": 0.50, "pt_pct": 9.9999}),
+            ("flashpoint", {"strike_offset": 0, "hold_minutes": 45,
+                            "sl_pct": 0.50, "pt_pct": 9.9999}),
+        ):
+            sig = build_updraft_signal(
+                chain=chain, today=today, params={**p, **ov, "mode": m2},
+                mode=m2, config=config, equity=equity, diag=sub_diag)
+            if sig is not None:
+                return sig
+        if diag is not None:
+            tail = "; ".join(sub_diag[-5:]) if sub_diag else "no legs evaluable"
+            diag.append(f"no_leg: {tail}")
+        return None
+
     flow = chain.get("flow") or {}
     fi = flow.get("flow_imb_30")
     r30 = flow.get("r30_bp")

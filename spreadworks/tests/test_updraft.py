@@ -672,6 +672,42 @@ def test_squall_is_the_frequency_tier_with_the_deeper_discount():
     assert d["limit_entry_frac"] == 0.20,         "the deeper discount is what rescues the looser gate (market entry "         "at these gates is OOS-negative — the frequency-frontier verdict)"
     assert d["starting_capital"] == 1000.0
     assert d["strike_offset"] == 1 and d["sl_pct"] == 0.50
+def test_tempest_dispatch_takes_the_first_firing_leg_and_records_it():
+    """UPDRAFT-grade flow + rally: tempest returns the updraft leg with the
+    sub-mode recorded; a dead tape returns None with the leg diagnostics."""
+    c = _chain(spot=600.0, flow_imb=-0.20, r30=25.0)
+    sig = build_updraft_signal(chain=c, today=date(2026, 7, 29),
+                               params={**DEFAULT_PARAMS, "mode": "tempest"},
+                               mode="tempest")
+    assert sig is not None and sig.mode == "updraft"
+    leg = sig.legs()[0]
+    assert leg["type"] == "call" and leg["action"] == "buy"
+    # EM-breach tape (no flow edge, day broke its priced move) -> the PUT leg
+    c2 = _em_chain()
+    c2["flow"] = {"flow_imb_30": 0.0, "r30_bp": 0.0, "reason": None}
+    sig2 = build_updraft_signal(chain=c2, today=date(2026, 7, 27),
+                                params={**DEFAULT_PARAMS, "mode": "tempest"},
+                                mode="tempest")
+    assert sig2 is not None and sig2.mode == "em_breach"
+    assert sig2.legs()[0]["type"] == "put"
+    # dead tape -> None with sub-diagnostics
+    c3 = _chain(spot=600.0, flow_imb=0.0, r30=0.0)
+    diag = []
+    assert build_updraft_signal(chain=c3, today=date(2026, 7, 29),
+                                params={**DEFAULT_PARAMS, "mode": "tempest"},
+                                mode="tempest", diag=diag) is None
+    assert any("no_leg" in d for d in diag), diag
+
+
+def test_tempest_registry_is_the_whole_book_in_one_account():
+    meta = get_bot("tempest")
+    d = meta["defaults"]
+    assert d["enabled"] is False, "no bot ships armed"
+    assert d["mode"] == "tempest"
+    assert d["starting_capital"] == 1000.0
+    assert d["flow_max"] == -0.1378 and d["backdraft_flow_max"] == -0.35
+    assert d["em_frac"] == 0.8 and d["or_width_min_em"] == 0.5709
+    assert d["allow_stacking"] is True and d["max_concurrent_positions"] == 3
 
 
 def test_embreachq_is_embreach_on_qqq_with_own_thresholds():
