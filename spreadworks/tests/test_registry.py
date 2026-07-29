@@ -5,7 +5,7 @@ def test_bots_registered():
     assert set(BOT_REGISTRY.keys()) == {"surge", "splash", "ripple", "tide", "drift", "flow", "meadow", "undertow",
          "delta", "updraft", "backdraft", "reversal", "embreach", "embreachq",
          "afterburn", "weekender", "flashpoint", "thermal", "wildfire",
-         "afterglow", "ember"}
+         "afterglow", "ember", "squall"}
 
 
 def test_ripple_defaults():
@@ -143,8 +143,8 @@ def test_get_bot_unknown_raises():
 def test_list_bots_returns_keys():
     assert sorted(list_bots()) == ["afterburn", "afterglow", "backdraft", "delta", "drift", "ember",
          "embreach", "embreachq", "flashpoint", "flow", "meadow", "reversal",
-         "ripple", "splash", "surge", "thermal", "tide", "undertow",
-         "updraft", "weekender", "wildfire"]
+         "ripple", "splash", "squall", "surge", "thermal", "tide",
+         "undertow", "updraft", "weekender", "wildfire"]
 
 
 def test_undertow_registered():
