@@ -663,6 +663,17 @@ def test_day_signal_reader_flags_updraft_burst(tmp_path):
     assert not st2.updraft_fired, st2
 
 
+def test_squall_is_the_frequency_tier_with_the_deeper_discount():
+    meta = get_bot("squall")
+    d = meta["defaults"]
+    assert d["enabled"] is False, "no bot ships armed"
+    assert d["mode"] == "updraft"
+    assert d["flow_max"] == -0.0983 and d["r30_min"] == 14.44,         "TRAIN q30/q85, frozen — looser than UPDRAFT by exactly one notch"
+    assert d["limit_entry_frac"] == 0.20,         "the deeper discount is what rescues the looser gate (market entry "         "at these gates is OOS-negative — the frequency-frontier verdict)"
+    assert d["starting_capital"] == 1000.0
+    assert d["strike_offset"] == 1 and d["sl_pct"] == 0.50
+
+
 def test_embreachq_is_embreach_on_qqq_with_own_thresholds():
     meta = get_bot("embreachq")
     d = meta["defaults"]

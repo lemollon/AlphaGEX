@@ -139,6 +139,14 @@ export const BOT_THEME = {
     glow:        'rgba(244,114,182,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(244,114,182,0.22) 0%, rgba(244,114,182,0.03) 100%)',
   },
+  squall: {
+    glyph:       'wave',                       // SQUALL = more weather, smaller storms
+    primary:     '#2dd4bf',                    // teal-400
+    primarySoft: 'rgba(45,212,191,0.10)',
+    primaryRing: 'rgba(45,212,191,0.30)',
+    glow:        'rgba(45,212,191,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(45,212,191,0.22) 0%, rgba(45,212,191,0.03) 100%)',
+  },
   ember: {
     glyph:       'wave',                       // EMBER = the recovery keeps glowing
     primary:     '#fbbf24',                    // amber-400

@@ -777,6 +777,45 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "discord_alerts": False,
         },
     },
+    # SQUALL — the frequency tier of UPDRAFT x PATIENT ENTRY (2026-07-29).
+    # Gates ONE notch looser than UPDRAFT (flow q30 / r30 q85, TRAIN-frozen)
+    # trade OOS-NEGATIVE at market entries (-3.5%, the frequency-frontier
+    # verdict) — but with a -20% resting limit the discount rescues them:
+    # TRAIN +16.5% (t=2.3) / TEST +6.8% (t=1.0), ~97 fills/yr (~2/week) vs
+    # UPDRAFT's ~44. One notch looser still (q35/q80) fails even with the
+    # limit — this IS the frequency ceiling. t=1.0 -> PAPER ONLY, $1k.
+    "squall": {
+        "display": "SQUALL",
+        "strategy": "updraft",          # same module, mode=updraft
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": 0,
+        "defaults": {
+            "starting_capital": 1000.0,
+            "enabled": False,   # no bot ships armed
+            "max_contracts": 1,
+            "bp_pct": 0.50,
+            "sd_mult": 1.0, "delta_skew": 0, "use_gex_walls": False,
+            "mode": "updraft",
+            "flow_max": -0.0983,          # TRAIN q30 (UPDRAFT q20 = -0.1378)
+            "r30_min": 14.44,             # TRAIN q85 (UPDRAFT q90 = 19.23)
+            # the deeper discount is what makes the looser gate survivable
+            "limit_entry_frac": 0.20,
+            "strike_offset": 1,
+            "hold_minutes": 45,
+            "pt_pct": 9.9999,
+            "sl_pct": 0.50,
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+            "entry_start_ct": "08:31",
+            "entry_end_ct": "14:00",
+            "eod_close_ct": "14:45",
+            "allow_stacking": True,
+            "max_concurrent_positions": 3,
+            "cooldown_min": 45,
+            "discord_alerts": False,
+        },
+    },
     # AFTERGLOW — the day's UPDRAFT signal predicts the NEXT TWO DAYS
     # (2026-07-29). Buy a weekly ATM call at the close of any day the flow
     # gates fired; exit ~2 trading days later. Research (real EOD quotes,
