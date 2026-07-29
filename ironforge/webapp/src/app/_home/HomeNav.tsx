@@ -21,10 +21,11 @@ const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/bot-ledger', label: 'Bot Ledger' },
 ]
 
-// Links shown once SIGNED IN. Community earns its place here: the feed is readable
-// while signed in and the composer swaps to a join CTA on 402, so it is a real
-// destination for someone who has not bought anything yet.
-const SIGNED_IN_LINKS: ReadonlyArray<{ href: string; label: string }> = [
+// Links that require a MEMBERSHIP — any live subscription, a strategy or Community
+// itself. Community is a $10 product, so advertising it to someone who has bought
+// nothing points at a door they cannot walk through. Discovery is unaffected: the
+// homepage membership section is where Community is actually sold, and it links there.
+const MEMBER_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/community', label: 'Community' },
 ]
 
@@ -43,6 +44,8 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
   const [isCustomer, setIsCustomer] = useState(false)
   // OWNS A STRATEGY — a strictly stronger claim, and the only thing that may reveal Live.
   const [ownsStrategy, setOwnsStrategy] = useState(false)
+  // Any live subscription — strategy or Community.
+  const [hasMembership, setHasMembership] = useState(false)
   const pathname = usePathname()
 
   useEffect(() => {
@@ -51,10 +54,12 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
       .then((d) => {
         setIsCustomer(Boolean(d?.ok))
         setOwnsStrategy(Boolean(d?.ownsStrategy))
+        setHasMembership(Boolean(d?.hasMembership))
       })
       .catch(() => {
         setIsCustomer(false)
         setOwnsStrategy(false)
+        setHasMembership(false)
       })
   }, [])
 
@@ -65,7 +70,7 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
   // A signed-in visitor briefly seeing marketing links is harmless; the reverse is not.
   const visibleLinks = [
     ...NAV_LINKS,
-    ...(isCustomer ? SIGNED_IN_LINKS : []),
+    ...(hasMembership ? MEMBER_LINKS : []),
     ...(ownsStrategy ? OWNER_LINKS : []),
   ]
 

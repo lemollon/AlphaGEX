@@ -141,6 +141,19 @@ function isProductionBot(name: string): boolean {
   // scan from 2026-07-17 (301/370, then 319/388, then 73/73) while the page
   // told the customer it was "looking for an opportunity". It now trades its
   // own paper ledger and the page tells the truth.
+  //
+  // KINDLE stays listed even though it is RETIRED, and that is deliberate. Being here
+  // does NOT mean it trades: it was removed from the BOTS roster, so no scan ever
+  // reaches it — 4 closed positions, none open, last opened 2026-06-29.
+  //
+  // What this entry still buys is the KILL SWITCH. isProductionBot gates
+  // /api/{bot}/production-pause and the production close paths; dropping KINDLE would
+  // make its pause endpoint answer "not a production bot" and leave a real-money
+  // account with no way to be halted if it were ever re-armed. A line of inert code is
+  // the cheaper side of that trade.
+  //
+  // So: this list means "may touch a real account", NOT "is trading today". Read the
+  // BOTS roster for the latter.
   return name === 'spark' || name === 'kindle'
 }
 
