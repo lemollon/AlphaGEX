@@ -52,6 +52,7 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/account/trades',
   '/account/billing',
   '/account/brokerage',
+  '/enroll',
   '/login',
   '/signup',
   '/forgot-password',
