@@ -11,6 +11,7 @@ import CustomerShell from '@/components/customer/CustomerShell'
 import CheckoutNotice from '@/components/customer/CheckoutNotice'
 import SparkHeroCard from './components/SparkHeroCard'
 import LiveTradeCard from './components/LiveTradeCard'
+import SwingTradeCards from './components/SwingTradeCards'
 import NowTimelineCard from './components/NowTimelineCard'
 import MarketConditionsCard from './components/MarketConditionsCard'
 import TodayPerformanceChart from './components/TodayPerformanceChart'
@@ -179,10 +180,20 @@ export default function LiveClient() {
               <div className="order-1">
                 <SparkHeroCard state={summary?.state ?? null} market={summary?.market ?? null} bot={account} />
               </div>
-              <div className="order-2 grid gap-4 lg:grid-cols-[11fr_9fr]">
-                <LiveTradeCard trade={trade ?? null} error={Boolean(tradeError)} state={summary?.state ?? null} accent={accent} />
-                <NowTimelineCard state={summary?.state ?? null} openedAt={trade?.opened_at ?? null} accent={accent} />
-              </div>
+              {/* A SWING is live when two positions are open at once — yesterday's held
+                  leg plus today's new one. Only SPARK swings, so only SPARK reaches this
+                  branch; the single-position day is untouched below. Each card carries
+                  its own timeline, so NowTimelineCard is not repeated here. */}
+              {(trade?.positions?.length ?? 0) > 1 ? (
+                <div className="order-2">
+                  <SwingTradeCards positions={trade!.positions} />
+                </div>
+              ) : (
+                <div className="order-2 grid gap-4 lg:grid-cols-[11fr_9fr]">
+                  <LiveTradeCard trade={trade ?? null} error={Boolean(tradeError)} state={summary?.state ?? null} accent={accent} />
+                  <NowTimelineCard state={summary?.state ?? null} openedAt={trade?.opened_at ?? null} accent={accent} />
+                </div>
+              )}
               {/* Mobile stacks Today Performance before Market Conditions; desktop reads Conditions first. */}
               <div className="order-4 lg:order-3">
                 <MarketConditionsCard market={summary?.market ?? null} accent={accent} />

@@ -107,6 +107,33 @@ export interface LiveSummary {
   as_of: string
 }
 
+/**
+ * ONE open position.
+ *
+ * SPARK swings: a 1DTE condor opened yesterday is held to expiry rather than stopped
+ * out, so on any day it opens a new trade there are TWO live positions at once. The Live
+ * page described only `positionRows[0]` — the newest — so the held-overnight trade, with
+ * the customer's money in it, did not appear anywhere on the page.
+ *
+ * SPARK is the only bot that swings (isSparkStrategy in scanner.ts), so it is the only
+ * one that can produce more than one of these.
+ */
+export interface LiveOpenPosition {
+  position_id: string
+  opened_at: string | null
+  /** "Jul 28" — the card title, in CT. */
+  opened_date_label: string
+  expires_label: string | null
+  time_in_trade_min: number | null
+  unrealized_pnl: number | null
+  unrealized_pnl_pct: number | null
+  pnl_source: 'live' | 'scanner_snapshot' | 'none'
+  /** Opened on an earlier CT date — i.e. this is the swung leg. */
+  held_overnight: boolean
+  /** 1 on the day it opened, 2 the next session, and so on. */
+  day_number: number
+}
+
 export interface LiveTrade {
   active: boolean
   /** ISO open time; format client-side in CT. */
@@ -121,4 +148,12 @@ export interface LiveTrade {
   spark_series: Array<{ timestamp: string; pnl: number }>
   /** Populated when today's trading is complete (realized result). */
   today_result: { pnl: number; pct: number | null } | null
+  /**
+   * EVERY open position, newest first. The scalar fields above describe positions[0]
+   * and are kept so existing readers are unaffected; anything that must not hide a
+   * swung leg should read this instead.
+   *
+   * Empty when nothing is open.
+   */
+  positions: LiveOpenPosition[]
 }
