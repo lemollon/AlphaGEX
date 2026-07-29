@@ -279,6 +279,12 @@ describe('Per-Account Sizing', () => {
 expect(TRADIER).toMatch(/const botShare\s*=[\s\S]{0,200}sameTypeCount/)
   })
 
+  it('production accounts NEVER split botShare — each owner sizes off their own OBP', () => {
+    // A second owner's production account must not halve the first owner's
+    // sizing: the equal split applies to sandbox mirrors only.
+    expect(TRADIER).toMatch(/const botShare\s*=\s*acct\.type\s*===\s*'production'\s*\?\s*1\.0/)
+  })
+
 
   it('uses broker margin (full spread × 100), not net collateral', () => {
     expect(TRADIER).toMatch(/brokerMarginPer\s*=\s*spreadWidth\s*\*\s*100/)
