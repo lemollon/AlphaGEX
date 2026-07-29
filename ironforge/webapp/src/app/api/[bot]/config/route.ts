@@ -15,12 +15,33 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
   },
   spark: {
     sd_multiplier: 1.2, spread_width: 5.0, min_credit: 0.05,
-    profit_target_pct: 30.0, stop_loss_pct: 200.0, vix_skip: 32.0,
-    // SPARK runs the automatic GEX strategy (scanner.ts): strike width is GEX-
-    // adaptive (1.2 SD calm / 2.0 SD stormy), it SWINGS (no hard stop — stop_loss_pct
-    // is ignored), and sizing is hard-capped at 30% BP in code regardless of this
-    // value (raised from 15% on 2026-07-08 per operator decision).
+    profit_target_pct: 30.0, stop_loss_pct: 200.0,
+    // vix_skip: the SCANNER uses 40 for spark/spark2 (isSparkV2Sizing), not this
+    // value. Shown for shape only — see the override note below.
+    vix_skip: 32.0,
+    // SPARK runs the automatic GEX strategy (scanner.ts) and OVERRIDES several of
+    // these in code:
+    //   · strike width is GEX-adaptive — 1.2 SD positive gamma, 1.5 SD negative
+    //   · it SWINGS: no hard stop, so stop_loss_pct is ignored entirely
+    //   · sizing is regime-conditional, min(bp_pct, 50% positive / 20% negative
+    //     or unknown) — NOT the flat 30% this comment used to claim
+    // These values describe the row's shape, never the strategy. /api/{bot}/status
+    // carries the authoritative strategy string.
     max_contracts: 0, max_trades_per_day: 1, buying_power_usage_pct: 0.30,
+    risk_per_trade_pct: 0.15, min_win_probability: 0.42,
+    entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
+    pdt_max_day_trades: 4, starting_capital: 10000.0,
+  },
+  // spark2 — SPARK's paper twin. Same strategy code (isSparkV2Sizing +
+  // isSparkStrategy both include it), its own ledger and account.
+  //
+  // Without this entry it fell through to `DEFAULTS.inferno` and the API reported
+  // sd 1.0 / stop 1000 / PT 100 / unlimited trades — INFERNO's aggressive 0DTE
+  // profile — for a 1DTE bot that actually runs 1.2 SD and one trade a day.
+  spark2: {
+    sd_multiplier: 1.2, spread_width: 5.0, min_credit: 0.25,
+    profit_target_pct: 30.0, stop_loss_pct: 200.0, vix_skip: 32.0,
+    max_contracts: 0, max_trades_per_day: 1, buying_power_usage_pct: 0.85,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
     pdt_max_day_trades: 4, starting_capital: 10000.0,
@@ -91,7 +112,16 @@ export async function GET(
        LIMIT 1`,
     )
 
-    const defaults = DEFAULTS[bot] ?? DEFAULTS.inferno
+    // Fall back to SPARK, not INFERNO. validateBot also admits blaze, flare and
+    // kindle, none of which have an entry here — and INFERNO is the most permissive
+    // profile in the file (unlimited trades/day, 100% PT, 1000% stop, 1.0 SD). An
+    // unlisted bot inheriting THAT is the wrong direction to fail: a reader is told
+    // the bot is far more aggressive than it is. SPARK's conservative 1-trade/day
+    // profile is the safer thing to show when we do not have a real answer.
+    //
+    // Display-only either way — the scanner reads DEFAULT_CONFIG in scanner.ts, never
+    // this map. The duplication is the root problem; this only stops it lying loudly.
+    const defaults = DEFAULTS[bot] ?? DEFAULTS.spark
     if (rows.length === 0) {
       return NextResponse.json({ ...defaults, account_type: accountType, source: 'defaults' })
     }
