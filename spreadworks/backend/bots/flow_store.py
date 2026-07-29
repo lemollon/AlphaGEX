@@ -61,7 +61,46 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+_CT = ZoneInfo("America/Chicago")
+
+
+def _snap_ct(t: datetime, now: datetime) -> datetime | None:
+    """Normalise a stored snapshot_time to CT wall-clock.
+
+    PRODUCTION stores snapshots in UTC (a tz-aware now_ct is converted on
+    the way into the naive TIMESTAMP column), while the SQLite test suite
+    stores naive CT directly. The tell is the `now` the caller passes:
+    tz-aware => production => rows are UTC and must be shifted to CT;
+    naive => tests => rows already ARE CT wall-clock.
+
+    2026-07-29: this skew made read_or_state's 08:30-09:00 CT window match
+    ZERO rows in production (they sit at 13:30-14:00 UTC) — FLASHPOINT was
+    permanently 'or_unavailable', and read_em_state's pre-RTH day-open
+    filter silently no-opped (day_open anchored to a pre-market snapshot).
+    """
+    if t is None:
+        return None
+    if t.tzinfo is not None:
+        # SQLite round-trips tz-aware datetimes with their offset intact
+        return t.astimezone(_CT).replace(tzinfo=None)
+    if now.tzinfo is not None:
+        # Postgres stored a naive UTC value (aware input was converted)
+        return t.replace(tzinfo=timezone.utc).astimezone(_CT).replace(tzinfo=None)
+    return t
+
+
+def _same_clock(stored: datetime | None, now: datetime) -> tuple[datetime | None, datetime]:
+    """Return (stored, now) in one comparable clock regardless of dialect."""
+    if stored is None:
+        return None, now
+    if stored.tzinfo is not None and now.tzinfo is not None:
+        return stored.astimezone(timezone.utc), now.astimezone(timezone.utc)
+    if stored.tzinfo is None and now.tzinfo is not None:
+        return stored, now.astimezone(timezone.utc).replace(tzinfo=None)
+    return stored.replace(tzinfo=None), now.replace(tzinfo=None) if now.tzinfo else now
 from typing import Any
 
 from sqlalchemy import text
@@ -434,7 +473,8 @@ def read_pending(engine: Engine, bot: str, now: datetime) -> dict[str, Any] | No
             exp = row["expires_at"]
             if isinstance(exp, str):
                 exp = datetime.fromisoformat(exp)
-            if exp is not None and exp.replace(tzinfo=None) <= now.replace(tzinfo=None):
+            exp_c, now_c = _same_clock(exp, now)
+            if exp_c is not None and exp_c <= now_c:
                 conn.execute(text(
                     f"DELETE FROM {PENDING_TABLE} WHERE bot = :b"), {"b": bot})
                 return None
@@ -503,9 +543,9 @@ def read_day_signal_state(engine: Engine, *, ticker: str, now: datetime,
 
     snaps = []
     for r in rows:
-        t = _dt(r["snapshot_time"])
+        t = _snap_ct(_dt(r["snapshot_time"]), now)
         if t is not None and (t.hour, t.minute) >= (8, 30):
-            snaps.append((t.replace(tzinfo=None), float(r["spot"]),
+            snaps.append((t, float(r["spot"]),
                           int(r["call_volume"] or 0), int(r["put_volume"] or 0)))
     if not snaps:
         return DaySignalState(False, False, 0, "no_rth_snapshots")
@@ -729,9 +769,9 @@ def read_or_state(engine: Engine, *, ticker: str, now: datetime) -> OrState:
         with engine.begin() as conn:
             rows = conn.execute(text(
                 f"SELECT snapshot_time, spot, straddle_pct FROM {TABLE} "
-                "WHERE ticker = :tk AND trade_date = :td AND snapshot_time < :now "
+                "WHERE ticker = :tk AND trade_date = :td "
                 "ORDER BY snapshot_time"),
-                {"tk": ticker, "td": now.date(), "now": now}).mappings().all()
+                {"tk": ticker, "td": now.date()}).mappings().all()
     except Exception as e:                                  # noqa: BLE001
         logger.warning(f"or state read failed: {e}")
         return OrState(None, None, False, None, None, None, f"db_error: {e}")
@@ -746,7 +786,11 @@ def read_or_state(engine: Engine, *, ticker: str, now: datetime) -> OrState:
 
     rth, orr = [], []
     for r in rows:
-        t = _dt(r["snapshot_time"])
+        t_raw = _dt(r["snapshot_time"])
+        t_c, now_c = _same_clock(t_raw, now)
+        if t_c is None or t_c >= now_c:      # cross-dialect "< now" filter
+            continue
+        t = _snap_ct(t_raw, now)
         if t is None or (t.hour, t.minute) < (8, 30):
             continue
         rth.append((t, r["spot"], r["straddle_pct"]))
@@ -756,7 +800,8 @@ def read_or_state(engine: Engine, *, ticker: str, now: datetime) -> OrState:
         return OrState(None, None, False, None, None, None,
                        "no_rth_snapshots")
     first, last = rth[0], rth[-1]
-    complete = (now.hour, now.minute) > (9, 0) and bool(orr)
+    now_ct = now.astimezone(_CT) if now.tzinfo is not None else now
+    complete = (now_ct.hour, now_ct.minute) > (9, 0) and bool(orr)
     return OrState(max(orr) if orr else None,
                    min(orr) if orr else None,
                    complete,
@@ -788,7 +833,7 @@ def read_em_state(engine: Engine, *, ticker: str, now: datetime) -> EmState:
         return t
     rth = []
     for r in rows:
-        t = _dt(r["snapshot_time"])
+        t = _snap_ct(_dt(r["snapshot_time"]), now)
         if t is None:
             continue
         if (t.hour, t.minute) >= (8, 30):          # CT session open
