@@ -1,6 +1,7 @@
 import { dbQuery, botTable, num, int, escapeSql, dteMode } from '@/lib/db'
 import { scopeFilter, resolveAccountMode, type LiveBot } from './viewer'
 import { LIVE_BOT_LABEL, LIVE_BOT_ACCENT } from './bots'
+import { getSandboxAccountBalances } from '@/lib/tradier'
 
 /**
  * Customer Performance page payload — the viewer's all-time history, COMBINED
@@ -17,6 +18,8 @@ export interface BotPerf {
   paper: boolean
   starting_capital: number
   account_value: number
+  /** Where account_value came from — 'tradier' is the real broker equity. */
+  balance_source?: 'tradier' | 'paper_account'
   total_pnl: number
   win_rate: number | null
   trades: number
@@ -122,7 +125,42 @@ async function loadBot(
   const trades = int(statRows[0]?.trades)
   const wins = int(statRows[0]?.wins)
   const pnl = Math.round(num(statRows[0]?.pnl) * 100) / 100
-  const startingCapital = num(capRows[0]?.starting_capital)
+
+  // ── Account value: the BROKER first, the ledger only as a fallback ──────────
+  //
+  // This read starting_capital from the paper_account row and reported
+  // `starting_capital + pnl` as the account value, never consulting Tradier — while
+  // /live resolves the same number from the live broker equity. The two customer pages
+  // therefore disagreed about the SAME real-money account: /performance showed
+  // $1,233.33 (ledger baseline $1,030.58) against a true Tradier equity of $5,156.18.
+  // Both agreed on the P&L; the entire gap was a stale baseline.
+  //
+  // When the broker answers, its equity IS the account value and the baseline is
+  // derived from it (equity − realised P&L) so the pair stays coherent and the return
+  // percentage keeps meaning the same thing. Paper bots never consult Tradier.
+  const isPaper = resolveAccountMode(bot) === 'paper'
+  let startingCapital = num(capRows[0]?.starting_capital)
+  let accountValue = Math.round((startingCapital + pnl) * 100) / 100
+  let balanceSource: 'tradier' | 'paper_account' = 'paper_account'
+
+  if (!isPaper) {
+    const bals = await getSandboxAccountBalances().catch(() => [])
+    const prodBals = bals.filter(
+      (b) =>
+        b.account_type === 'production' &&
+        b.total_equity != null &&
+        // Same owner scoping as /live — never sum another customer's account.
+        (person == null || b.name === person),
+    )
+    // Refuse to aggregate for a non-operator, matching getLiveSummary: an honest
+    // ledger figure beats a total that silently includes someone else's money.
+    const mayUse = prodBals.length === 1 || (isOperator && prodBals.length > 0)
+    if (mayUse) {
+      accountValue = Math.round(prodBals.reduce((a, b) => a + num(b.total_equity), 0) * 100) / 100
+      startingCapital = Math.round((accountValue - pnl) * 100) / 100
+      balanceSource = 'tradier'
+    }
+  }
 
   const points = pointRows
     .filter((r) => r.close_time)
@@ -136,7 +174,8 @@ async function loadBot(
       accent: LIVE_BOT_ACCENT[bot],
       paper: resolveAccountMode(bot) === 'paper',
       starting_capital: startingCapital,
-      account_value: Math.round((startingCapital + pnl) * 100) / 100,
+      account_value: accountValue,
+      balance_source: balanceSource,
       total_pnl: pnl,
       win_rate: trades > 0 ? Math.round((wins / trades) * 1000) / 10 : null,
       trades,
