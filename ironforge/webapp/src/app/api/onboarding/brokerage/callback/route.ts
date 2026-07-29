@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { publicOrigin } from '@/lib/public-origin'
 import { resolveCustomerUserId } from '@/lib/brokerage/identity'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
-import { decryptSecret } from '@/lib/crypto/secret-box'
+import { decryptSecret, encryptSecret } from '@/lib/crypto/secret-box'
+import { evaluateAccountEligibility, maskAccountNumber } from '@/lib/enrollment/eligibility'
 import { isCustomersDbConfigured, customerQuery, customerExecute, customerTransaction } from '@/lib/customers-db'
 import { syncBrokerageConnectionToAttio } from '@/lib/attio'
 
@@ -68,11 +69,60 @@ export async function GET(req: NextRequest) {
       // Re-sync: replace this user's connection rows with the current account set.
       await run(`DELETE FROM brokerage_connections WHERE user_id = $1`, [user.id])
       for (const a of accounts) {
-        await run(
+        const inserted = (await run(
           `INSERT INTO brokerage_connections
              (user_id, authorization_id, brokerage_slug, account_id, account_name, status, last_synced_at)
-           VALUES ($1, $2, $3, $4, $5, 'active', now())`,
+           VALUES ($1, $2, $3, $4, $5, 'active', now())
+           RETURNING id`,
           [user.id, a.brokerage_authorization, a.institution_name, a.id, a.name ?? a.institution_name],
+        )) as unknown as Array<{ id: string }>
+        const connectionId = inserted?.[0]?.id
+        if (!connectionId) continue
+
+        // ── broker_accounts (§3 BROKER-02) ──
+        //
+        // Only the TRADIER callback wrote this table, so a customer who connected via
+        // SnapTrade produced a brokerage_connections row and nothing else — and the
+        // account-selection step reads broker_accounts, so their account list was empty
+        // with no explanation. An empty picker reads as "the product is broken"; a
+        // listed account with a reason reads as "here is what to fix".
+        //
+        // SnapTrade does NOT expose options approval level — `option_level` is sourced
+        // from Tradier alone in this codebase. evaluateAccountEligibility fails CLOSED on
+        // an unknown level, so these rows come back ineligible with
+        // OPTIONS_APPROVAL. That is the honest verdict, not a bug to work around: we
+        // genuinely cannot show a customer is approved for spreads, and guessing would
+        // authorise automated options trading on an unverified account.
+        //
+        // The account reference is ENCRYPTED and only the mask is stored for display
+        // (§5, §8); nothing here writes it in the clear or logs it.
+        const meta = a as unknown as {
+          number?: string; status?: string; meta?: { type?: string }; raw_type?: string
+        }
+        const acctRef = String(meta.number ?? a.id)
+        const verdict = evaluateAccountEligibility({
+          externalRef: acctRef,
+          accountType: meta.meta?.type ?? meta.raw_type ?? null,
+          // Not available from SnapTrade — fails closed by design, see above.
+          optionsLevel: null,
+          status: meta.status ?? 'active',
+          buyingPower: null,
+        })
+        await run(
+          `INSERT INTO broker_accounts
+             (connection_id, external_account_ref_ciphertext, display_mask, account_type,
+              options_level, eligibility, ineligible_reason, buying_power_cents, checked_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
+          [
+            connectionId,
+            encryptSecret(acctRef),
+            maskAccountNumber(acctRef),
+            meta.meta?.type ?? meta.raw_type ?? null,
+            null,
+            verdict.eligible ? 'eligible' : 'ineligible',
+            verdict.reason ?? null,
+            null,
+          ],
         )
       }
       await run(
