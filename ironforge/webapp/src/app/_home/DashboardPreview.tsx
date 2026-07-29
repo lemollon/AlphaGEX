@@ -136,7 +136,9 @@ export default async function DashboardPreview() {
             <span className="h-2.5 w-2.5 rounded-full bg-[#63C132]" />
             <span className="text-base font-semibold text-white">Active</span>
           </div>
-          <div className="mt-1 text-[11px] font-semibold text-white">
+          {/* nowrap: the ISO date was breaking mid-token in this narrow column,
+              rendering as "Last trade 2026-07-" / "28". */}
+          <div className="mt-1 whitespace-nowrap text-[11px] font-semibold text-white">
             {/* Evidence for "Active" rather than an assertion of it. */}
             {d?.lastTradeDate ? `Last trade ${d.lastTradeDate}` : 'Monitoring the market.'}
           </div>
