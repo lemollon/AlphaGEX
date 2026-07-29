@@ -184,6 +184,22 @@ const _sandboxCleanupVerifiedDate: Record<string, string> = { flame: '', spark: 
 const _lastProductionPlacedAt: Record<string, number> = {}
 const PRODUCTION_PLACE_WINDOW_MS = 5 * 60 * 1000  // 5 min — matches MAX_SCAN_DURATION_MS
 
+// SANDBOX placement race guard (added 2026-07-29). The production guard above stops a
+// zombie tick double-filling REAL money, but when it fires it sets prodAlreadyTradedToday
+// and falls through to `sandboxOnly` — so the duplicate tick still placed a PAPER order.
+//
+// That is exactly what happened: spark_positions ids 169 and 170, both sandbox, both
+// person Logan, opened 13:46:22 and 13:46:23 on 2026-07-29 with identical strikes.
+//
+// Paper is not real money, but it is not free either — the paper ledger is what
+// /bot-ledger publishes and what the homepage hero now reads, so a duplicate inflates
+// the trade count and skews the win rate on the public record.
+//
+// Same mechanism as the production guard: a synchronous read+write with no await
+// between them, which the single-threaded event loop makes atomic against concurrent
+// ticks.
+const _lastSandboxPlacedAt: Record<string, number> = {}
+
 const BOTS = [
   { name: 'flame', dte: '2DTE', minDte: 2 },
   { name: 'spark', dte: '1DTE', minDte: 1 },
@@ -3742,6 +3758,26 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       }
     }
 
+    // ── Sandbox race guard ──
+    // The production guard above protects real money and then downgrades to sandboxOnly,
+    // which left the duplicate tick free to place a PAPER order. A placement within the
+    // window means this tick is a duplicate, so it must place NOTHING — the signal it is
+    // acting on has already been traded.
+    {
+      const nowMs = Date.now()
+      const lastSbMs = _lastSandboxPlacedAt[bot.name] ?? 0
+      if (nowMs - lastSbMs < PRODUCTION_PLACE_WINDOW_MS) {
+        // Release the production slot if this tick claimed it — nothing was placed.
+        if (didClaimProdSlot) delete _lastProductionPlacedAt[bot.name]
+        console.warn(
+          `[scanner] ${bot.name.toUpperCase()}: SANDBOX RACE GUARD — ` +
+          `last placement was ${((nowMs - lastSbMs) / 1000).toFixed(1)}s ago, refusing duplicate.`,
+        )
+        return 'skip:sandbox_race_guard'
+      }
+      _lastSandboxPlacedAt[bot.name] = nowMs
+    }
+
     // ── Place Tradier orders (sandbox + conditionally production) ──
     try {
       sandboxOrderIds = await placeIcOrderAllAccounts(
@@ -3754,8 +3790,9 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       )
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
-      // Roll back the slot claim — placement threw, no order in flight.
+      // Roll back the slot claims — placement threw, no order in flight.
       if (didClaimProdSlot) delete _lastProductionPlacedAt[bot.name]
+      delete _lastSandboxPlacedAt[bot.name]
       console.warn(`[scanner] ${bot.name.toUpperCase()} order placement failed: ${msg}`)
       // Log the rejected signal
       await query(
