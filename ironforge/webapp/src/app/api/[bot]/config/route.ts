@@ -66,6 +66,37 @@ const STRING_FIELDS = ['entry_start', 'entry_end', 'eod_cutoff_et']
 const ALL_FIELDS = NUMERIC_FIELDS.concat(INT_FIELDS, STRING_FIELDS)
 
 /**
+ * Columns the SCANNER never reads — writing them changes the row and nothing else.
+ *
+ * Derived by reading `loadConfigOverrides()` in scanner.ts, which takes exactly two
+ * things from the config row: the eight columns in its DB_TO_CFG map, plus `entry_end`
+ * and `eod_cutoff_et`, both parsed from "HH:MM" strings. Everything below is absent
+ * from all three paths.
+ *
+ * This route used to accept them silently, so the row could say `vix_skip 35` while the
+ * bot skipped at 40 — which is how the config table came to describe a strategy nobody
+ * runs. A stored value that governs nothing is worse than no value: it reads as
+ * authoritative.
+ *
+ * If one of these is ever wired up, delete it here in the SAME change.
+ */
+const INERT_FIELDS: Record<string, string> = {
+  vix_skip: 'the VIX ceiling is set in code — 40 for spark/spark2, 32 for the others',
+  spread_width: 'wing width is a code constant (wing_width in DEFAULT_CONFIG)',
+  risk_per_trade_pct: 'never read; sizing is buying_power_usage_pct against the regime cap',
+  min_win_probability: 'never read by the scanner',
+  entry_start: 'only entry_end is parsed from the row; the open is a code constant',
+  pdt_max_day_trades: 'PDT is enforced from the shared ironforge_pdt_config table',
+}
+
+/**
+ * Bots that SWING — they hold to expiry and never consult a stop, so `stop_loss_pct`
+ * is stored but unused. Mirrors isSparkStrategy() in scanner.ts; these must move
+ * together.
+ */
+const SWING_BOTS = ['spark', 'spark2', 'kindle']
+
+/**
  * Normalize the account_type query param. Paper/sandbox are aliased to
  * 'sandbox' (the legacy/default scope); anything labelled 'live' or
  * 'production' is routed to the 'production' scope. Invalid values fall
@@ -137,6 +168,12 @@ export async function GET(
       }
     }
     merged.account_type = accountType
+    // Name the stored values that govern nothing, so a reader does not take the whole
+    // row as the strategy. This is the field that would have stopped me reporting
+    // SPARK's parameters from this endpoint and getting them wrong.
+    merged.inert_fields = Object.keys(INERT_FIELDS)
+      .concat(SWING_BOTS.indexOf(bot) >= 0 ? ['stop_loss_pct'] : [])
+      .join(', ')
     // Mark whether the row we matched was an exact (account_type) hit or a
     // fallback from the sandbox row. Operators debugging bleed-over can use
     // this to confirm they're editing the intended scope.
@@ -191,6 +228,33 @@ export async function PUT(
       return NextResponse.json(
         { error: 'No valid config fields provided' },
         { status: 400 },
+      )
+    }
+
+    // REJECT writes the scanner would ignore. Checked BEFORE the upsert, so a request
+    // that names even one inert field changes nothing at all — a partial write is how
+    // an operator ends up believing the whole edit landed.
+    const inert = Object.keys(filtered)
+      .filter((k) => k in INERT_FIELDS)
+      .map((k) => ({ field: k, reason: INERT_FIELDS[k] }))
+
+    // stop_loss_pct IS read into sl_mult, but swing bots never reach the stop branch,
+    // so storing it on those bots is equally misleading.
+    if (filtered.stop_loss_pct != null && SWING_BOTS.indexOf(bot) >= 0) {
+      inert.push({
+        field: 'stop_loss_pct',
+        reason: `${bot.toUpperCase()} swings — it holds to expiry and never consults a stop. Size is the risk control.`,
+      })
+    }
+
+    if (inert.length > 0) {
+      return NextResponse.json(
+        {
+          error: 'These fields do not affect this bot and were not saved.',
+          rejected: inert,
+          hint: 'Storing a value the scanner ignores makes the config row describe a strategy the bot does not run. Re-send without these fields.',
+        },
+        { status: 422 },
       )
     }
 
