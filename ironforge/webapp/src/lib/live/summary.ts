@@ -11,7 +11,7 @@ import {
 } from '@/lib/tradier'
 import { isMarketOpen, DEFAULT_EOD_CUTOFF_MIN, formatCTClock } from '@/lib/pt-tiers'
 import { deriveCustomerState, getMarketSession } from './state'
-import type { LiveSummary, LiveTrade } from './types'
+import type { LiveSummary, LiveTrade, LiveOpenPosition } from './types'
 
 /**
  * Server-side assembly for the customer Live page. Everything is scoped to
@@ -23,6 +23,7 @@ import type { LiveSummary, LiveTrade } from './types'
  */
 
 import { resolveAccountMode, scopeFilter, LIVE_BOT_LABEL, paperDisclosure, type LiveBot } from './viewer'
+import { deriveSwingMeta } from './swing'
 
 interface HeartbeatDetails {
   action?: string
@@ -419,6 +420,7 @@ export async function getLiveTrade(
       unrealized_pnl_pct: null,
       pnl_source: 'none',
       spark_series: sparkSeries,
+      positions: [],
       today_result: closedCount > 0
         ? {
             pnl,
@@ -428,7 +430,91 @@ export async function getLiveTrade(
     }
   }
 
-  // SPARK opens at most one trade a day — describe the most recent open position.
+  // ── Every open position, not just the newest ────────────────────────────────
+  //
+  // This used to read `positionRows[0]` under the comment "SPARK opens at most one
+  // trade a day". True — but SPARK SWINGS: yesterday's condor is held to expiry instead
+  // of being stopped out, so on any day it opens a new trade there are TWO open at once.
+  // The older one, holding real money, appeared nowhere on the page.
+  //
+  // Priced in parallel: each position needs its own mark-to-market, and they are
+  // independent.
+  const ctTodayDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+  const positions: LiveOpenPosition[] = await Promise.all(
+    positionRows.map(async (p): Promise<LiveOpenPosition> => {
+      const pContracts = int(p.contracts)
+      const pCredit = num(p.total_credit)
+      const pExpiration =
+        p.expiration?.toISOString?.()?.slice(0, 10) ||
+        (p.expiration ? String(p.expiration).slice(0, 10) : '')
+
+      let pnl: number | null = null
+      let pnlPct: number | null = null
+      let source: LiveTrade['pnl_source'] = 'none'
+
+      if (isConfigured()) {
+        try {
+          const mtm = await getIcMarkToMarket(
+            p.ticker || 'SPY',
+            pExpiration,
+            num(p.put_short_strike),
+            num(p.put_long_strike),
+            num(p.call_short_strike),
+            num(p.call_long_strike),
+            pCredit,
+          )
+          if (mtm) {
+            const width = num(p.spread_width) || (num(p.put_short_strike) - num(p.put_long_strike))
+            pnl = calculateIcUnrealizedPnl(pCredit, mtm.cost_to_close_last, pContracts, width)
+            const maxProfit = pContracts * pCredit * 100
+            const risk = pContracts * (width - pCredit) * 100
+            pnlPct = pnl != null ? profitBasisPct(pnl, maxProfit, risk) : null
+            source = 'live'
+          }
+        } catch {
+          // Leave null — the card shows "—" rather than a stale or invented number.
+        }
+      }
+
+      const pOpened = p.open_time ? new Date(p.open_time as string) : null
+      const pOpenedCtDate = pOpened
+        ? pOpened.toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+        : null
+      // Calendar days, so a Friday trade seen on Monday reads Day 4 rather than Day 2.
+      // Counting sessions would need the market calendar; the label says "Day N" and
+      // calendar days are the honest reading of that.
+      const { heldOvernight, dayNumber } = deriveSwingMeta(pOpenedCtDate, ctTodayDate)
+
+      return {
+        position_id: String(p.position_id ?? ''),
+        opened_at: pOpened ? pOpened.toISOString() : null,
+        opened_date_label: pOpened
+          ? pOpened.toLocaleDateString('en-US', {
+              timeZone: 'America/Chicago', month: 'short', day: 'numeric',
+            })
+          : '—',
+        expires_label:
+          pExpiration === ctTodayDate
+            ? `Today ${formatCTClock(DEFAULT_EOD_CUTOFF_MIN)} CT`
+            : pExpiration
+              ? new Date(`${pExpiration}T12:00:00`).toLocaleDateString('en-US', {
+                  weekday: 'short', month: 'short', day: 'numeric',
+                })
+              : null,
+        time_in_trade_min: pOpened
+          ? Math.max(0, Math.round((Date.now() - pOpened.getTime()) / 60_000))
+          : null,
+        unrealized_pnl: pnl,
+        unrealized_pnl_pct: pnlPct,
+        pnl_source: source,
+        held_overnight: heldOvernight,
+        day_number: dayNumber,
+      }
+    }),
+  )
+
+  // The scalar fields below still describe the NEWEST position, so every existing
+  // reader behaves exactly as before.
   const pos = positionRows[0]
   const contracts = int(pos.contracts)
   const entryCredit = num(pos.total_credit)
@@ -504,5 +590,6 @@ export async function getLiveTrade(
     pnl_source: pnlSource,
     spark_series: sparkSeries,
     today_result: null,
+    positions,
   }
 }
