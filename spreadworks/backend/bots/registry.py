@@ -394,6 +394,11 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             # vs q80 $1,491 vs q70 $395).
             "flow_max": -0.1378,
             "r30_min": 19.23,
+            # PATIENT ENTRY (2026-07-29): rest a limit 15% below the signal
+            # mid for 10 min instead of buying instantly. TRAIN-chosen -15%
+            # (TRAIN +25.6 vs +16.2 market); TEST +11.9 vs +7.8. Verified
+            # UPDRAFT-ONLY — flips EMBREACH negative; do not copy the knob.
+            "limit_entry_frac": 0.15,
             "strike_offset": 1,
             "hold_minutes": 45,
             # NO profit target — a PT cut returns ~6x in research. 9.9999 is

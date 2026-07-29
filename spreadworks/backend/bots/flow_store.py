@@ -382,6 +382,77 @@ def _wilder_rsi(closes: list[float], period: int = RSI_PERIOD) -> list[float]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# PATIENT ENTRY — resting limit orders (2026-07-29)
+# ---------------------------------------------------------------------------
+# Research: UPDRAFT's signal improves MONOTONICALLY when the entry is a limit
+# 10-20% below the signal-time mid, fill-or-skip within 10 minutes (TEST
+# +7.8% market -> +17.1% at -20%; chosen -15% on TRAIN). UPDRAFT-ONLY: the
+# same reframe FLIPS EMBREACH NEGATIVE (a put pulling back means the breach
+# is failing) — do not arm it for other legs without their own evidence.
+
+PENDING_TABLE = "spreadworks_pending_entries"
+
+
+def _ensure_pending(engine: Engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"CREATE TABLE IF NOT EXISTS {PENDING_TABLE} ("
+            "bot VARCHAR(32) PRIMARY KEY, created_at TIMESTAMP NOT NULL, "
+            "expires_at TIMESTAMP NOT NULL, strike NUMERIC NOT NULL, "
+            "side VARCHAR(8) NOT NULL, expiration VARCHAR(16) NOT NULL, "
+            "limit_price NUMERIC NOT NULL, signal_mid NUMERIC NOT NULL)"))
+
+
+def arm_pending(engine: Engine, bot: str, *, strike: float, side: str,
+                expiration: str, limit_price: float, signal_mid: float,
+                now: datetime, ttl_min: int = 10) -> None:
+    _ensure_pending(engine)
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"DELETE FROM {PENDING_TABLE} WHERE bot = :b"), {"b": bot})
+        conn.execute(text(
+            f"INSERT INTO {PENDING_TABLE} (bot, created_at, expires_at, "
+            "strike, side, expiration, limit_price, signal_mid) VALUES "
+            "(:b, :c, :e, :k, :s, :x, :l, :m)"),
+            {"b": bot, "c": now, "e": now + timedelta(minutes=ttl_min),
+             "k": strike, "s": side, "x": expiration,
+             "l": limit_price, "m": signal_mid})
+
+
+def read_pending(engine: Engine, bot: str, now: datetime) -> dict[str, Any] | None:
+    """The live pending order, or None. Expired rows are deleted on read."""
+    _ensure_pending(engine)
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(text(
+                f"SELECT strike, side, expiration, limit_price, signal_mid, "
+                f"expires_at FROM {PENDING_TABLE} WHERE bot = :b"),
+                {"b": bot}).mappings().first()
+            if row is None:
+                return None
+            exp = row["expires_at"]
+            if isinstance(exp, str):
+                exp = datetime.fromisoformat(exp)
+            if exp is not None and exp.replace(tzinfo=None) <= now.replace(tzinfo=None):
+                conn.execute(text(
+                    f"DELETE FROM {PENDING_TABLE} WHERE bot = :b"), {"b": bot})
+                return None
+            return dict(row)
+    except Exception as e:                                  # noqa: BLE001
+        logger.warning(f"pending read failed for {bot}: {e}")
+        return None
+
+
+def clear_pending(engine: Engine, bot: str) -> None:
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                f"DELETE FROM {PENDING_TABLE} WHERE bot = :b"), {"b": bot})
+    except Exception as e:                                  # noqa: BLE001
+        logger.warning(f"pending clear failed for {bot}: {e}")
+
+
 @dataclass(frozen=True)
 class DaySignalState:
     """Did a proven intraday signal fire at ANY point earlier today?
