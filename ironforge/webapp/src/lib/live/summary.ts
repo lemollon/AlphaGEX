@@ -24,6 +24,7 @@ import type { LiveSummary, LiveTrade, LiveOpenPosition } from './types'
 
 import { resolveAccountMode, scopeFilter, LIVE_BOT_LABEL, paperDisclosure, type LiveBot } from './viewer'
 import { deriveSwingMeta } from './swing'
+import { sparkRegimeBpCap, isSparkV2SizingBot } from '@/lib/spark-sizing'
 
 interface HeartbeatDetails {
   action?: string
@@ -353,7 +354,8 @@ export async function getLiveTrade(
       `SELECT position_id, ticker, expiration,
               put_short_strike, put_long_strike,
               call_short_strike, call_long_strike,
-              contracts, total_credit, spread_width, open_time
+              contracts, total_credit, spread_width, open_time,
+              gex_regime, collateral_required
        FROM ${botTable(BOT, 'positions')}
        WHERE status = 'open' ${dteFilter} ${prodFilter}
        ORDER BY open_time DESC`,
@@ -485,6 +487,11 @@ export async function getLiveTrade(
       // calendar days are the honest reading of that.
       const { heldOvernight, dayNumber } = deriveSwingMeta(pOpenedCtDate, ctTodayDate)
 
+      const rawRegime = String(p.gex_regime ?? '').toUpperCase()
+      const regimeAtEntry: 'POSITIVE' | 'NEGATIVE' | null =
+        rawRegime === 'POSITIVE' || rawRegime === 'NEGATIVE' ? rawRegime : null
+      const collateral = num(p.collateral_required)
+
       return {
         position_id: String(p.position_id ?? ''),
         opened_at: pOpened ? pOpened.toISOString() : null,
@@ -509,6 +516,16 @@ export async function getLiveTrade(
         pnl_source: source,
         held_overnight: heldOvernight,
         day_number: dayNumber,
+        // Regime AT ENTRY, straight off the row. It set this trade's strikes and size,
+        // so today's reading would describe a different trade. Anything other than the
+        // two known values reads as unknown rather than being coerced to POSITIVE.
+        gex_regime: regimeAtEntry,
+        capital_used: collateral > 0 ? collateral : null,
+        // The ceiling that regime authorises. Unknown takes the LOW cap, matching the
+        // fail-safe in the sizing path itself.
+        regime_cap_pct: isSparkV2SizingBot(BOT)
+          ? sparkRegimeBpCap(regimeAtEntry === 'POSITIVE')
+          : null,
       }
     }),
   )

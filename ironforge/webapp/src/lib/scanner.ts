@@ -110,8 +110,10 @@ const PRODUCTION_BOT_DTE = '1DTE' // Matches BOTS[] entry for PRODUCTION_BOT
  *  cannot float the count one contract higher. See the sizing block below.
  *  Raising either of these is a real-money risk change - the scanner path
  *  here and the production path in tradier.ts must move together. */
-const SPARK_BP_CAP_POS = 0.50   // positive net GEX
-const SPARK_BP_CAP_NEG = 0.20   // negative OR UNKNOWN net GEX (fail-safe)
+// Imported from lib/spark-sizing.ts — ONE definition, shared with the production path
+// in tradier.ts. These were two hand-copied pairs kept in sync by comment; they decide
+// how much real money enters a trade.
+import { SPARK_BP_CAP_POS, SPARK_BP_CAP_NEG } from './spark-sizing'
 
 function isSparkV2Sizing(name: string): boolean {
   return name === 'spark' || name === 'spark2'

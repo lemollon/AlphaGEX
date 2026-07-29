@@ -1634,6 +1634,8 @@ export async function placeIcOrderAllAccounts(
   if (productionAccts.length > 0 && botName) {
     try {
       const { loadProductionConfigFor } = await import('./scanner')
+      // Dynamic, matching this file's convention — tradier.ts has no static imports.
+      const { sparkRegimeBpCap } = await import('./spark-sizing')
       const prodCfg = await loadProductionConfigFor(botName)
       if (prodCfg && prodCfg.bp_pct > 0 && prodCfg.bp_pct <= 1) {
         // SPARK real-money risk cap (2026-07-02): hard-clamp production sizing,
@@ -1672,7 +1674,10 @@ export async function placeIcOrderAllAccounts(
         // non-negative net GEX. Undefined (no regime passed) or a failed GEX
         // read both fall to the LOW cap — unknown never gets the big size.
         const posGamma = opts?.gexPosGamma === true
-        const regimeCap = posGamma ? 0.50 : 0.20
+        // Shared with the paper path — see lib/spark-sizing.ts. Previously the literals
+        // 0.50/0.20 were repeated here with a comment asking the next reader to keep
+        // them matching scanner.ts by hand.
+        const regimeCap = sparkRegimeBpCap(posGamma)
         const isV2 = botName === 'spark' || botName === 'spark2'
         prodBpPct = isV2 ? Math.min(prodCfg.bp_pct, regimeCap) : prodCfg.bp_pct
         prodMaxContracts = Math.max(0, prodCfg.max_contracts)
