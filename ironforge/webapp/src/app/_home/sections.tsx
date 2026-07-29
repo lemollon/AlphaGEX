@@ -408,6 +408,22 @@ export function EverythingSection() {
 
 /* ── Final CTA banner ──────────────────────────────────────────────────────── */
 
+/**
+ * Closing CTA sub-line.
+ *
+ * Was "Join thousands of disciplined traders building consistency every day." IronForge
+ * has single digits of customers, so that was simply untrue — and it sat on the public
+ * homepage of a real-money trading product, next to the signup button.
+ *
+ * The replacement describes what the product IS rather than how many people use it, so
+ * it cannot go stale or become a claim we would have to defend. It mirrors the hero
+ * sub-copy and the three value pillars, all of which are already true.
+ *
+ * Declared once because the banner renders twice — desktop and mobile — and the two
+ * copies previously had to be edited together by hand.
+ */
+const CTA_SUBLINE = 'Disciplined execution, daily market intelligence, and a community of serious traders.'
+
 export function CTABanner() {
   return (
     <section className="mx-auto max-w-[1200px] px-5 pb-16 md:px-8">
@@ -417,7 +433,7 @@ export function CTABanner() {
         <div className="min-w-0 flex-1">
           <h2 className="text-2xl font-bold text-white">Ready to Build Your Edge?</h2>
           <p className="mt-1 text-sm text-gray-400">
-            Join thousands of disciplined traders building consistency every day.
+            {CTA_SUBLINE}
           </p>
         </div>
         <Link
@@ -436,7 +452,7 @@ export function CTABanner() {
         </div>
         <div className="mt-2 flex items-center gap-3">
           <p className="min-w-0 flex-1 text-[12px] leading-snug text-gray-400">
-            Join thousands of disciplined traders building consistency every day.
+            {CTA_SUBLINE}
           </p>
           <Link
             href="/signup"
