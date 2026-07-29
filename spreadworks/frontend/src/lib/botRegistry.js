@@ -33,6 +33,8 @@ export const STRATEGY_LABEL = {
   afterburn:             'Overnight Momentum Call (1DTE)',
   weekender:             'Weekend Hold Call (3DTE)',
   flashpoint:            'Wide-Range Breakout Call (0DTE)',
+  afterglow:             'Flow-Day Swing Call (weekly, 2-day hold)',
+  ember:                 'RSI-Day Swing Call (weekly, 2-day hold)',
   iron_butterfly:        'Iron Butterfly',
   pin_drift_combo:       'Pin + Drift Combo',
   double_calendar:       'Double Calendar',
@@ -128,6 +130,22 @@ export const BOT_THEME = {
     primaryRing: 'rgba(251,146,60,0.30)',
     glow:        'rgba(251,146,60,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(251,146,60,0.22) 0%, rgba(251,146,60,0.03) 100%)',
+  },
+  afterglow: {
+    glyph:       'wave',                       // AFTERGLOW = the flow day glows for two more days
+    primary:     '#f472b6',                    // pink-400
+    primarySoft: 'rgba(244,114,182,0.10)',
+    primaryRing: 'rgba(244,114,182,0.30)',
+    glow:        'rgba(244,114,182,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(244,114,182,0.22) 0%, rgba(244,114,182,0.03) 100%)',
+  },
+  ember: {
+    glyph:       'wave',                       // EMBER = the recovery keeps glowing
+    primary:     '#fbbf24',                    // amber-400
+    primarySoft: 'rgba(251,191,36,0.10)',
+    primaryRing: 'rgba(251,191,36,0.30)',
+    glow:        'rgba(251,191,36,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(251,191,36,0.22) 0%, rgba(251,191,36,0.03) 100%)',
   },
   flashpoint: {
     glyph:       'wave',                       // FLASHPOINT = wide-range morning ignites a breakout

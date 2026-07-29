@@ -382,6 +382,124 @@ def _wilder_rsi(closes: list[float], period: int = RSI_PERIOD) -> list[float]:
     return out
 
 
+@dataclass(frozen=True)
+class DaySignalState:
+    """Did a proven intraday signal fire at ANY point earlier today?
+
+    AFTERGLOW/EMBER research: the day's signal predicts the NEXT TWO DAYS.
+    These flags are read in the last minutes of the session (entry window
+    14:50-14:59 CT), so the day is effectively complete when they're read."""
+    updraft_fired: bool
+    rsi_recovery_fired: bool
+    n_snapshots: int
+    reason: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"updraft_fired": self.updraft_fired,
+                "rsi_recovery_fired": self.rsi_recovery_fired,
+                "n_snapshots": self.n_snapshots, "reason": self.reason}
+
+
+def read_day_signal_state(engine: Engine, *, ticker: str, now: datetime,
+                          flow_max: float = -0.1378, r30_min: float = 19.23,
+                          rsi_period: int = RSI_PERIOD,
+                          rsi_threshold: float = RSI_THRESHOLD,
+                          seed_closes: list[tuple[str, float]] | None = None
+                          ) -> DaySignalState:
+    """Walk today's snapshots and flag whether (a) the UPDRAFT gates
+    (flow_imb_30 <= flow_max AND r30 >= r30_min) held at any snapshot, and
+    (b) an hourly RSI recovery cross happened at any of TODAY's hourly
+    closes. Same snapshot clock and the same 30-minute window the live
+    scanner trades on."""
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(text(
+                f"SELECT snapshot_time, spot, call_volume, put_volume "
+                f"FROM {TABLE} WHERE ticker = :tk AND trade_date = :td "
+                "AND snapshot_time < :now ORDER BY snapshot_time"),
+                {"tk": ticker, "td": now.date(), "now": now}).mappings().all()
+    except Exception as e:                                  # noqa: BLE001
+        logger.warning(f"day signal read failed: {e}")
+        return DaySignalState(False, False, 0, f"db_error: {e}")
+
+    def _dt(t):
+        if isinstance(t, str):
+            try:
+                return datetime.fromisoformat(t)
+            except ValueError:
+                return None
+        return t
+
+    snaps = []
+    for r in rows:
+        t = _dt(r["snapshot_time"])
+        if t is not None and (t.hour, t.minute) >= (8, 30):
+            snaps.append((t.replace(tzinfo=None), float(r["spot"]),
+                          int(r["call_volume"] or 0), int(r["put_volume"] or 0)))
+    if not snaps:
+        return DaySignalState(False, False, 0, "no_rth_snapshots")
+
+    # (a) UPDRAFT gates at any snapshot vs the one ~30 minutes before it
+    updraft = False
+    for i, (t, spot, cv, pv) in enumerate(snaps):
+        target = t - timedelta(minutes=WINDOW_MIN)
+        best = None
+        for t0, s0, c0, p0 in snaps[:i]:
+            off = abs((t0 - target).total_seconds())
+            if off <= WINDOW_TOL_MIN * 60 and (best is None or off < best[0]):
+                best = (off, s0, c0, p0)
+        if best is None:
+            continue
+        _, s0, c0, p0 = best
+        dc, dp = cv - c0, pv - p0
+        if dc < 0 or dp < 0 or (dc + dp) <= 0 or s0 <= 0:
+            continue
+        imb = (dc - dp) / (dc + dp)
+        r30 = 1e4 * (spot / s0 - 1.0)
+        if imb <= flow_max and r30 >= r30_min:
+            updraft = True
+            break
+
+    # (b) hourly RSI recovery cross at any of TODAY's closed hourly bars
+    buckets: dict[Any, float] = {}
+    for iso_hour, close in (seed_closes or []):
+        try:
+            buckets[datetime.fromisoformat(str(iso_hour) + ":00:00")] = float(close)
+        except (ValueError, TypeError):
+            continue
+    try:
+        with engine.begin() as conn:
+            allrows = conn.execute(text(
+                f"SELECT snapshot_time, spot FROM {TABLE} "
+                "WHERE ticker = :tk AND snapshot_time < :now "
+                "ORDER BY snapshot_time"), {"tk": ticker, "now": now}
+            ).mappings().all()
+    except Exception:                                       # noqa: BLE001
+        allrows = []
+    for r in allrows:
+        t = _dt(r["snapshot_time"])
+        if t is None:
+            continue
+        buckets[t.replace(minute=0, second=0, microsecond=0,
+                          tzinfo=None)] = float(r["spot"])
+    cur = now.replace(minute=0, second=0, microsecond=0, tzinfo=None)
+    keys = [k for k in sorted(buckets) if k < cur]
+    closes = [buckets[k] for k in keys]
+    rsi_fired = False
+    if len(closes) >= rsi_period + 2:
+        series = _wilder_rsi(closes, rsi_period)
+        # series[j] corresponds to keys[len(keys)-len(series)+j]
+        off = len(keys) - len(series)
+        for j in range(1, len(series)):
+            if keys[off + j].date() != now.date():
+                continue
+            if series[j] >= rsi_threshold and series[j - 1] < rsi_threshold:
+                rsi_fired = True
+                break
+
+    return DaySignalState(updraft, rsi_fired, len(snaps))
+
+
 def read_rsi_state(engine: Engine, *, ticker: str, now: datetime,
                    period: int = RSI_PERIOD,
                    threshold: float = RSI_THRESHOLD,

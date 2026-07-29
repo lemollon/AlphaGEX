@@ -772,6 +772,89 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "discord_alerts": False,
         },
     },
+    # AFTERGLOW — the day's UPDRAFT signal predicts the NEXT TWO DAYS
+    # (2026-07-29). Buy a weekly ATM call at the close of any day the flow
+    # gates fired; exit ~2 trading days later. Research (real EOD quotes,
+    # ask-in/bid-out): SPY +20.7% TRAIN / +20.3% TEST (4/4 years, 6/6 cells
+    # positive both halves, ~35/yr); PLACEBO (same call, random days) is
+    # FLAT OOS (-0.3%); SPX replication +21.2/+28.4 (t=1.7). The strongest
+    # new find of the 5-ideas hunt. t per-cell ~1.2-1.5 -> PAPER ONLY.
+    "afterglow": {
+        "display": "AFTERGLOW",
+        "strategy": "updraft",          # same module, mode=afterglow
+        "ticker": "SPY",
+        # nearest weekly: research used the first expiry 4-9 calendar days out
+        "front_dte": 5,
+        "back_dte": 5,
+        "one_entry_per_day": True,
+        "defaults": {
+            "starting_capital": 1000.0,   # the $1k reporting frame
+            # no Friday entries: a Fri close + 2880m timer would exit Sunday
+            # and slip to Monday's first scan — a different (untested) hold.
+            "entry_days": "mon,tue,wed,thu",
+            "enabled": False,   # no bot ships armed
+            "max_contracts": 1,
+            # SPY weekly ATM ~$250-450; 50% of $1k never floors to zero
+            "bp_pct": 0.50,
+            "sd_mult": 1.0, "delta_skew": 0, "use_gex_walls": False,
+            "mode": "afterglow",
+            "flow_max": -0.1378,          # FROZEN — same gates as UPDRAFT
+            "r30_min": 19.23,
+            "strike_offset": 0,
+            # wall-clock ~2 trading days: 14:55 + 2880m = 14:55 two days on.
+            # EOD close can't preempt it (front expiry is ~a week out).
+            "hold_minutes": 2880,
+            "pt_pct": 9.9999,
+            "sl_pct": 0.99,               # research ran NO stop
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+            # read the day flag in the last minutes, AFTERBURN-style
+            "entry_start_ct": "14:50",
+            "entry_end_ct": "14:59",
+            "eod_close_ct": "14:59",
+            "allow_stacking": False,
+            "max_concurrent_positions": 1,
+            "cooldown_min": 390,
+            "discord_alerts": False,
+        },
+    },
+    # EMBER — AFTERGLOW's twin on the REVERSAL signal: hourly RSI recovery
+    # crossed at any bar today -> weekly ATM call at the close, ~2-day hold.
+    # Research: h1 +20.9/+13.5, h2 +35.7/+25.6 (both halves, beats the flat
+    # placebo), ~20/yr, n=51-70 -> CANDIDATE grade, weakest sample of the
+    # three 7/29 finds. PAPER ONLY.
+    "ember": {
+        "display": "EMBER",
+        "strategy": "updraft",          # same module, mode=ember
+        "ticker": "SPY",
+        "front_dte": 5,
+        "back_dte": 5,
+        "one_entry_per_day": True,
+        "defaults": {
+            "starting_capital": 1000.0,
+            "enabled": False,   # no bot ships armed
+            "max_contracts": 1,
+            "bp_pct": 0.50,
+            "entry_days": "mon,tue,wed,thu",
+            "sd_mult": 1.0, "delta_skew": 0, "use_gex_walls": False,
+            "mode": "ember",
+            "rsi_threshold": 30.0,        # the cross level IS the edge
+            "rsi_period": 14,
+            "strike_offset": 0,
+            "hold_minutes": 2880,
+            "pt_pct": 9.9999,
+            "sl_pct": 0.99,
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+            "entry_start_ct": "14:50",
+            "entry_end_ct": "14:59",
+            "eod_close_ct": "14:59",
+            "allow_stacking": False,
+            "max_concurrent_positions": 1,
+            "cooldown_min": 390,
+            "discord_alerts": False,
+        },
+    },
     # AFTERBURN — strong close -> overnight 1DTE call. The only leg that
     # holds past the bell, and the cleanest research profile of the campaign:
     # 9/9 cells (3 strikes x 3 thresholds) positive in BOTH periods, MONOTONE

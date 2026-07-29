@@ -570,6 +570,99 @@ def test_wildfire_is_backdraft_ridden_to_the_close():
     assert meta["one_entry_per_day"] is True
 
 
+def _glow_chain(*, updraft=True, rsi=False):
+    c = _chain(spot=600.0)
+    c["dayx"] = {"updraft_fired": updraft, "rsi_recovery_fired": rsi,
+                 "n_snapshots": 120, "reason": None}
+    return c
+
+
+def test_afterglow_fires_a_weekly_call_when_the_day_signal_fired():
+    sig = build_updraft_signal(
+        chain=_glow_chain(), today=date(2026, 7, 29),
+        params={**DEFAULT_PARAMS, "mode": "afterglow", "strike_offset": 0},
+        mode="afterglow")
+    assert sig is not None
+    leg = sig.legs()[0]
+    assert leg["type"] == "call" and leg["action"] == "buy"
+    assert sig.strike == 600.0
+
+
+def test_afterglow_and_ember_read_their_own_flags():
+    diag = []
+    assert build_updraft_signal(
+        chain=_glow_chain(updraft=False), today=date(2026, 7, 29),
+        params={**DEFAULT_PARAMS, "mode": "afterglow", "strike_offset": 0},
+        mode="afterglow", diag=diag) is None
+    assert any("no_afterglow_signal_today" in d for d in diag), diag
+    # EMBER keys on the RSI flag, not the flow flag
+    sig = build_updraft_signal(
+        chain=_glow_chain(updraft=False, rsi=True), today=date(2026, 7, 29),
+        params={**DEFAULT_PARAMS, "mode": "ember", "strike_offset": 0},
+        mode="ember")
+    assert sig is not None
+
+
+def test_afterglow_registry_two_day_swing_mechanics():
+    for bot in ("afterglow", "ember"):
+        meta = get_bot(bot)
+        d = meta["defaults"]
+        assert d["enabled"] is False, "no bot ships armed"
+        assert meta["front_dte"] == 5, "nearest weekly, the researched expiry"
+        assert d["hold_minutes"] == 2880, "wall-clock ~2 trading days"
+        assert d["sl_pct"] == 0.99, "research ran NO stop"
+        assert d["entry_start_ct"] == "14:50", "read the day flag at the close"
+        assert d["entry_days"] == "mon,tue,wed,thu", \
+            "Friday entries would hold over a weekend — untested"
+        assert d["starting_capital"] == 1000.0
+        assert d["bp_pct"] * d["starting_capital"] >= 450, \
+            "SPY weekly ATM ~$250-450 — never floor to zero contracts"
+        assert meta["one_entry_per_day"] is True
+
+
+def test_day_signal_reader_flags_updraft_burst(tmp_path):
+    """Snapshots that contain a put-heavy volume burst during a rise must set
+    updraft_fired; a quiet tape must not."""
+    from sqlalchemy import create_engine
+    from backend.bots import flow_store
+
+    eng = create_engine(f"sqlite:///{tmp_path/'glow.db'}")
+    flow_store.ensure_table(eng)
+    opts = [{"strike": 600.0, "type": "call", "bid": 0.60, "ask": 0.64,
+             "volume": 10},
+            {"strike": 600.0, "type": "put", "bid": 0.55, "ask": 0.59,
+             "volume": 10}]
+    t0 = datetime(2026, 7, 29, 9, 0)
+    # 40 snapshots, 2 min apart: cumulative put volume ramps hard while spot
+    # rises ~30bp over each 30-minute stretch
+    for i in range(40):
+        spot = 600.0 + i * 0.15               # ~+37bp per 30min: r30 > 19.23
+        flow_store.record_snapshot(
+            eng, ticker="SPY", expiration=date(2026, 7, 29),
+            now=t0 + timedelta(minutes=2 * i), spot=spot,
+            options=[{"strike": 600.0, "type": "call", "bid": 0.6, "ask": 0.64,
+                      "volume": 100 + i * 10},
+                     {"strike": 600.0, "type": "put", "bid": 0.55, "ask": 0.59,
+                      "volume": 100 + i * 60}])   # put-heavy deltas
+    st = flow_store.read_day_signal_state(
+        eng, ticker="SPY", now=t0 + timedelta(minutes=90))
+    assert st.updraft_fired, st
+    # quiet tape: balanced flow, flat spot
+    eng2 = create_engine(f"sqlite:///{tmp_path/'quiet.db'}")
+    flow_store.ensure_table(eng2)
+    for i in range(40):
+        flow_store.record_snapshot(
+            eng2, ticker="SPY", expiration=date(2026, 7, 29),
+            now=t0 + timedelta(minutes=2 * i), spot=600.0,
+            options=[{"strike": 600.0, "type": "call", "bid": 0.6, "ask": 0.64,
+                      "volume": 100 + i * 10},
+                     {"strike": 600.0, "type": "put", "bid": 0.55, "ask": 0.59,
+                      "volume": 100 + i * 10}])
+    st2 = flow_store.read_day_signal_state(
+        eng2, ticker="SPY", now=t0 + timedelta(minutes=90))
+    assert not st2.updraft_fired, st2
+
+
 def test_embreachq_is_embreach_on_qqq_with_own_thresholds():
     meta = get_bot("embreachq")
     d = meta["defaults"]

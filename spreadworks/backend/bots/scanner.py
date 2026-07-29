@@ -31,7 +31,7 @@ from .monitor import (
 # is what keeps mode-labelled rows on the updraft timer-exit path. Legacy
 # rows that still say 'updraft' match too.
 UPDRAFT_FAMILY = {"updraft", "backdraft", "reversal", "em_breach", "afterburn",
-                  "weekender", "flashpoint"}
+                  "weekender", "flashpoint", "afterglow", "ember"}
 from .registry import BOT_REGISTRY, get_bot
 from .strategies.iron_butterfly import build_iron_butterfly_signal
 from .strategies.long_butterfly import build_long_butterfly_signal
@@ -286,6 +286,30 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
             else:
                 chain["em"] = {"day_open": None,
                                "reason": "no_engine: cannot read day state"}
+        # AFTERGLOW/EMBER read the day-signal flags off the same snapshots.
+        if (str(params.get("mode") or "") in ("afterglow", "ember")
+                and chain.get("dayx") is None):
+            if engine is not None:
+                seed = []
+                getter = getattr(chain_provider, "get_hourly_closes", None)
+                if callable(getter):
+                    try:
+                        seed = getter(ticker=ticker) or []
+                    except Exception as e:                  # noqa: BLE001
+                        logger.debug(f"dayx seed unavailable: {e}")
+                chain["dayx"] = flow_store.read_day_signal_state(
+                    engine, ticker=ticker,
+                    now=now_ct or datetime.combine(today, time(0, 0)),
+                    flow_max=float(params.get("flow_max") or -0.1378),
+                    r30_min=float(params.get("r30_min") or 19.23),
+                    rsi_period=int(params.get("rsi_period") or 14),
+                    rsi_threshold=float(params.get("rsi_threshold") or 30.0),
+                    seed_closes=seed,
+                ).as_dict()
+            else:
+                chain["dayx"] = {"updraft_fired": False,
+                                 "rsi_recovery_fired": False,
+                                 "reason": "no_engine: cannot read day state"}
         # FLASHPOINT reads the opening range off the same snapshot table.
         if (str(params.get("mode") or "") == "flashpoint"
                 and chain.get("orx") is None):
