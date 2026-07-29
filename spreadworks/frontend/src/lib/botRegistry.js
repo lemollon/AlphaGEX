@@ -21,6 +21,10 @@ export const BOT_REGISTRY = {
   flashpoint: { display: 'FLASHPOINT', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   thermal: { display: 'THERMAL', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   wildfire: { display: 'WILDFIRE', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
+  afterglow: { display: 'AFTERGLOW', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
+  ember: { display: 'EMBER', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
+  squall: { display: 'SQUALL', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
+  tempest: { display: 'TEMPEST', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
 };
 
 export const STRATEGY_LABEL = {
@@ -33,6 +37,7 @@ export const STRATEGY_LABEL = {
   afterburn:             'Overnight Momentum Call (1DTE)',
   weekender:             'Weekend Hold Call (3DTE)',
   flashpoint:            'Wide-Range Breakout Call (0DTE)',
+  tempest:               'All-Signals Book (0DTE calls & puts)',
   afterglow:             'Flow-Day Swing Call (weekly, 2-day hold)',
   ember:                 'RSI-Day Swing Call (weekly, 2-day hold)',
   iron_butterfly:        'Iron Butterfly',
@@ -146,6 +151,14 @@ export const BOT_THEME = {
     primaryRing: 'rgba(45,212,191,0.30)',
     glow:        'rgba(45,212,191,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(45,212,191,0.22) 0%, rgba(45,212,191,0.03) 100%)',
+  },
+  tempest: {
+    glyph:       'wave',                       // TEMPEST = every storm at once
+    primary:     '#818cf8',                    // indigo-400
+    primarySoft: 'rgba(129,140,248,0.10)',
+    primaryRing: 'rgba(129,140,248,0.30)',
+    glow:        'rgba(129,140,248,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(129,140,248,0.22) 0%, rgba(129,140,248,0.03) 100%)',
   },
   ember: {
     glyph:       'wave',                       // EMBER = the recovery keeps glowing

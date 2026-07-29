@@ -31,7 +31,7 @@ from .monitor import (
 # is what keeps mode-labelled rows on the updraft timer-exit path. Legacy
 # rows that still say 'updraft' match too.
 UPDRAFT_FAMILY = {"updraft", "backdraft", "reversal", "em_breach", "afterburn",
-                  "weekender", "flashpoint", "afterglow", "ember"}
+                  "weekender", "flashpoint", "afterglow", "ember", "tempest"}
 from .registry import BOT_REGISTRY, get_bot
 from .strategies.iron_butterfly import build_iron_butterfly_signal
 from .strategies.long_butterfly import build_long_butterfly_signal
@@ -250,7 +250,7 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
         # REVERSAL reads hourly RSI off the same snapshot history. Attached
         # only for that mode so the other two legs do not pay a query per
         # scan for a value they never read.
-        if str(params.get("mode") or "") == "reversal" and chain.get("rsi") is None:
+        if str(params.get("mode") or "") in ("reversal", "tempest") and chain.get("rsi") is None:
             if engine is not None:
                 # Seed the hourly series from Tradier so a cold snapshot table
                 # does not sideline this leg for ~2.5 sessions. Best-effort:
@@ -276,7 +276,7 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
         # EM_BREACH reads the day-open anchor and the previous snapshot off
         # the same table. Attached only for that mode, same as rsi above.
         if (str(params.get("mode") or "") in ("em_breach", "afterburn",
-                                              "weekender")
+                                              "weekender", "tempest")
                 and chain.get("em") is None):
             if engine is not None:
                 chain["em"] = flow_store.read_em_state(
@@ -311,7 +311,7 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
                                  "rsi_recovery_fired": False,
                                  "reason": "no_engine: cannot read day state"}
         # FLASHPOINT reads the opening range off the same snapshot table.
-        if (str(params.get("mode") or "") == "flashpoint"
+        if (str(params.get("mode") or "") in ("flashpoint", "tempest")
                 and chain.get("orx") is None):
             if engine is not None:
                 chain["orx"] = flow_store.read_or_state(
@@ -810,7 +810,12 @@ def _evaluate_entry(
     # defaults are the source of truth here.
     reg_mode = str(((BOT_REGISTRY.get(bot) or {}).get("defaults") or {})
                    .get("mode") or "")
-    pid = open_position(engine, bot, reg_mode or meta["strategy"], signal,
+    # TEMPEST stores the SUB-mode that actually fired, so its positions are
+    # tellable apart leg by leg (and the per-leg exit params travel on the
+    # position row as usual).
+    store_mode = (getattr(signal, "mode", None)
+                  if reg_mode == "tempest" else reg_mode)
+    pid = open_position(engine, bot, store_mode or meta["strategy"], signal,
                         now_ct)
     if bool(cfg.get("discord_alerts")):
         try:
