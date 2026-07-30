@@ -738,6 +738,65 @@ def test_or_state_reads_utc_stored_snapshots_with_aware_now(tmp_path):
     assert st.prev_spot == 601.0
 
 
+def test_or_state_prev_excludes_current_minute(tmp_path):
+    """prev must come from an EARLIER minute than `now` — never the row the
+    scan itself just wrote. record_snapshot floors timestamps to the minute,
+    so a plain "< now" filter returns the current scan's own snapshot and
+    the flashpoint first-touch gate compares the breakout spot to itself
+    (2026-07-30: TEMPEST rejected the true breakout scan with
+    not_first_touch prev == the same-minute spot; the leg could never fire)."""
+    from sqlalchemy import create_engine
+    from backend.bots import flow_store
+
+    eng = create_engine(f"sqlite:///{tmp_path/'ft.db'}")
+    flow_store.ensure_table(eng)
+    opts = [{"strike": 600.0, "type": "call", "bid": 1.20, "ask": 1.24,
+             "volume": 10},
+            {"strike": 600.0, "type": "put", "bid": 1.15, "ask": 1.19,
+             "volume": 10}]
+    t0 = datetime(2026, 7, 30, 8, 31)
+    # range 600.0-601.4, then 9:04 still below or_high, then THIS scan's
+    # 9:05 snapshot breaks above it
+    for mins, spot in ((0, 600.0), (15, 601.4), (29, 598.9),
+                      (33, 601.0), (34, 602.5)):
+        flow_store.record_snapshot(eng, ticker="SPY",
+                                   expiration=date(2026, 7, 30),
+                                   now=t0 + timedelta(minutes=mins),
+                                   spot=spot, options=opts)
+    st = flow_store.read_or_state(
+        eng, ticker="SPY",
+        now=datetime(2026, 7, 30, 9, 5, 0, 21000))   # same minute as last row
+    assert st.prev_spot == 601.0, \
+        f"prev must be the 09:04 row, not this scan's own 09:05 row: {st}"
+
+
+def test_em_state_prev_excludes_current_minute(tmp_path):
+    """Same trap as read_or_state: the EM_BREACH first-touch gate reads prev
+    off this table, and prev == the current scan's row makes every breach
+    look stale, so the leg can never fire."""
+    from sqlalchemy import create_engine
+    from backend.bots import flow_store
+
+    eng = create_engine(f"sqlite:///{tmp_path/'emft.db'}")
+    flow_store.ensure_table(eng)
+    opts = [{"strike": 600.0, "type": "call", "bid": 0.60, "ask": 0.64,
+             "volume": 10},
+            {"strike": 600.0, "type": "put", "bid": 0.55, "ask": 0.59,
+             "volume": 10}]
+    t0 = datetime(2026, 7, 30, 8, 31)
+    for mins, spot in ((0, 600.0), (29, 599.0), (34, 590.0)):
+        flow_store.record_snapshot(eng, ticker="SPY",
+                                   expiration=date(2026, 7, 30),
+                                   now=t0 + timedelta(minutes=mins),
+                                   spot=spot, options=opts)
+    st = flow_store.read_em_state(
+        eng, ticker="SPY",
+        now=datetime(2026, 7, 30, 9, 5, 0, 21000))   # same minute as the drop
+    assert st.day_open == 600.0
+    assert st.prev_spot == 599.0, \
+        f"prev must be the 09:00 row, not this scan's own 09:05 row: {st}"
+
+
 def test_embreachq_is_embreach_on_qqq_with_own_thresholds():
     meta = get_bot("embreachq")
     d = meta["defaults"]
