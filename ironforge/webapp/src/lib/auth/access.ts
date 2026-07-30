@@ -82,6 +82,8 @@ const CUSTOMER_EXACT = new Set<string>([
   // Which brokerage accounts a person has linked, with masks and buying power — their
   // own money, so gated on identity like the rest of /account.
   '/account/brokerage',
+  // TradingView indicator perk — sets data on the customer's own record.
+  '/account/tradingview',
   // Enrollment funnel — creates a server-owned enrollment for THIS customer, so it
   // requires identity before it can do anything.
   '/enroll',
@@ -110,6 +112,8 @@ export function isCustomerPath(pathname: string): boolean {
   // The routes still self-guard with getCustomerSession; this only lets the
   // middleware consider the customer cookie at all.
   if (pathname.startsWith('/api/v1/')) return true
+  // Account-settings APIs (TradingView perk, ...). Same middleware lesson as /api/v1/.
+  if (pathname.startsWith('/api/account/')) return true
   // Sparky support chat — customer-session guarded (also self-guards in-route).
   if (pathname.startsWith('/api/support/')) return true
   return CUSTOMER_EXACT.has(pathname)
