@@ -334,6 +334,14 @@ export async function createSetupCheckout(opts: {
   return stripeRequest<{ id: string; url: string }>('POST', '/checkout/sessions', {
     mode: 'setup',
     customer: opts.customerId,
+    // Setup mode requires currency or explicit payment method types — omitting both
+    // is a live 500 ("Missing required param: currency"), which this branch shipped
+    // dark with and the first E2E walk caught. Card-only is deliberate, not just the
+    // fix: hasUsablePaymentMethod() (the §4 payment gate) counts type:'card' methods
+    // ONLY, so letting Checkout save a non-card method would collect something the
+    // activation gate then refuses to see.
+    payment_method_types: ['card'],
+    currency: 'usd',
     success_url: opts.successUrl,
     cancel_url: opts.cancelUrl,
     metadata,
