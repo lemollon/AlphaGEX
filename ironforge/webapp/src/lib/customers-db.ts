@@ -119,6 +119,12 @@ CREATE INDEX IF NOT EXISTS idx_prt_token_hash ON password_reset_tokens(token_has
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
 
+-- TradingView indicator perk (7/30): the member-provided TradingView username that
+-- invite-only script access is granted to, and when the grant was completed. Setting a
+-- NEW username resets granted_at — access follows the username, not the account.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tradingview_username TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tradingview_granted_at TIMESTAMPTZ;
+
 -- Founding promo captured at signup (e.g. FORGE50). Honoured at activation until
 -- billing/Stripe lands; then it becomes a real coupon. See lib/promo.ts.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS promo_code TEXT;
