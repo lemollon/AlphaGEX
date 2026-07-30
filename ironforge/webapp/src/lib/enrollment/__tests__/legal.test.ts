@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { requiredDocumentsFor, staleDocumentCodes, isAutomatePlan, LEGAL_DOCUMENTS } from '../legal'
 import { nextStepFor } from '../service'
 import { CUSTOMER_API_PREFIXES, CUSTOMER_PAGE_PREFIXES } from '@/lib/surface'
-import { isPublicPath } from '@/lib/auth/access'
+import { isCustomerPath, isPublicPath } from '@/lib/auth/access'
 
 describe('required documents by plan (§3 LEGAL-01 / July 29 handoff LEGAL-AUTO-01)', () => {
   it('Community gets CORE only — the clickwrap set, never a trading authorization it cannot use', () => {
@@ -110,6 +110,15 @@ describe('route wiring', () => {
   it('and is NOT public — every enrollment route needs a session', () => {
     expect(isPublicPath('/api/v1/enrollments')).toBe(false)
     expect(isPublicPath('/api/v1/enrollments/abc/legal')).toBe(false)
+  })
+
+  it('and IS a customer path — middleware must read the customer cookie for it', () => {
+    // Regression: without this classification the middleware never decrypted the
+    // customer session for /api/v1/* and 401'd the entire enrollment API in prod,
+    // while every unit test stayed green. Caught by the first live E2E walk.
+    expect(isCustomerPath('/api/v1/enrollments')).toBe(true)
+    expect(isCustomerPath('/api/v1/enrollments/abc/acceptances')).toBe(true)
+    expect(isCustomerPath('/api/v1/activations')).toBe(true)
   })
 
   it('legal document pages are customer-surface and publicly readable', () => {
