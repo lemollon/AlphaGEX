@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { isCustomersDbConfigured } from '@/lib/customers-db'
 import { getEnrollmentForUser, recordAcceptances, ensureLegalDocumentsSeeded } from '@/lib/enrollment/service'
+import { isAutomatePlan } from '@/lib/enrollment/legal'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
 
 export const runtime = 'nodejs'
@@ -35,12 +36,26 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json(e, { status: statusFor(e.code) })
   }
   try {
-    const body = (await req.json().catch(() => ({}))) as { accepted?: unknown }
+    const body = (await req.json().catch(() => ({}))) as { accepted?: unknown; signature_name?: unknown }
     const codes = Array.isArray(body.accepted) ? body.accepted.filter((c): c is string => typeof c === 'string') : []
+    const signatureName = typeof body.signature_name === 'string' ? body.signature_name.trim() : ''
 
     const enrollment = await getEnrollmentForUser(params.id, session.customerId)
     if (!enrollment) {
       const e = errorEnvelope('FORBIDDEN', 'That enrollment is not available.')
+      return NextResponse.json(e, { status: statusFor(e.code) })
+    }
+
+    // LEGAL-AUTO-01: automate acceptance requires an explicit electronic signature —
+    // the member's typed full legal name. Community acceptance is clickwrap at billing
+    // submit and carries no signature. Server-enforced; a pre-checked box or an empty
+    // string is not consent evidence.
+    if (isAutomatePlan(enrollment.selected_plan) && signatureName.length < 2) {
+      const e = errorEnvelope(
+        'VALIDATION_FAILED',
+        'Type your full legal name to sign the agreements.',
+        { field: 'signature_name' },
+      )
       return NextResponse.json(e, { status: statusFor(e.code) })
     }
 
@@ -52,6 +67,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       submittedCodes: codes,
       ip: clientIp(req),
       userAgent: req.headers.get('user-agent'),
+      signatureName: signatureName.length >= 2 ? signatureName : null,
     })
 
     if (!result.ok) {

@@ -160,6 +160,12 @@ export async function recordAcceptedDocuments(opts: {
   codes: string[]
   ip: string | null
   userAgent: string | null
+  /**
+   * The member's typed full legal name (LEGAL-AUTO-01 e-signature). Stored on each
+   * acceptance row it creates. ON CONFLICT DO NOTHING means an already-present
+   * acceptance never gains a signature retroactively — append-only, by design.
+   */
+  signatureName?: string | null
 }): Promise<{ written: number; alreadyPresent: number }> {
   // SEED FIRST. The write below is INSERT ... SELECT FROM legal_documents, so an empty
   // registry table matches zero rows and inserts NOTHING — with no error, because a
@@ -176,10 +182,10 @@ export async function recordAcceptedDocuments(opts: {
 
   for (const d of LEGAL_DOCUMENTS.filter((x) => wanted.has(x.code))) {
     const rows = await customerExecute(
-      `INSERT INTO legal_acceptances (user_id, enrollment_id, document_id, ip, user_agent)
-       SELECT $1, $2, id, $4, $5 FROM legal_documents WHERE code = $3 AND version = $6
+      `INSERT INTO legal_acceptances (user_id, enrollment_id, document_id, ip, user_agent, signature_name)
+       SELECT $1, $2, id, $4, $5, $7 FROM legal_documents WHERE code = $3 AND version = $6
        ON CONFLICT (user_id, document_id) DO NOTHING`,
-      [opts.userId, opts.enrollmentId, d.code, opts.ip, opts.userAgent, d.version],
+      [opts.userId, opts.enrollmentId, d.code, opts.ip, opts.userAgent, d.version, opts.signatureName ?? null],
     )
     if (rows > 0) {
       written++
@@ -207,6 +213,7 @@ export async function recordAcceptances(opts: {
   submittedCodes: string[]
   ip: string | null
   userAgent: string | null
+  signatureName?: string | null
 }): Promise<{ ok: true } | { ok: false; missing: string[] }> {
   const required = requiredDocumentsFor(opts.plan)
   const submitted = new Set(opts.submittedCodes)
@@ -219,6 +226,7 @@ export async function recordAcceptances(opts: {
     codes: required.map((d) => d.code),
     ip: opts.ip,
     userAgent: opts.userAgent,
+    signatureName: opts.signatureName ?? null,
   })
   await customerExecute(
     `UPDATE enrollments SET status = 'billing_pending', current_step = 'billing', updated_at = now()
