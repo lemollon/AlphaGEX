@@ -1,5 +1,6 @@
 import { customerQuery, customerExecute } from '@/lib/customers-db'
-import { LEGAL_DOCUMENTS, requiredDocumentsFor, staleDocumentCodes, type AcceptedVersion } from './legal'
+import { LEGAL_DOCUMENTS, requiredDocumentsFor, staleDocumentCodes, isAutomatePlan, type AcceptedVersion } from './legal'
+import { isStripeConfigured, hasUsablePaymentMethod } from '@/lib/billing/stripe'
 import type { EnrollmentState } from './states'
 import { isUuid } from './ids'
 
@@ -234,6 +235,54 @@ export async function recordAcceptances(opts: {
     [opts.enrollmentId, opts.userId],
   )
   return { ok: true }
+}
+
+/**
+ * Advance a billing_pending enrollment whose billing has ACTUALLY completed.
+ *
+ * The Stripe webhook is the authority for this transition, but the customer returns
+ * from hosted Checkout before the webhook necessarily lands. Called on resume
+ * (POST /v1/enrollments), this re-derives the answer from Stripe/subscription state so
+ * the funnel is immune to webhook lag: automate advances when a payment method exists
+ * on the Stripe customer; community completes when the subscription row is live.
+ * Anything not provably done stays billing_pending — fail-closed, same as the webhook.
+ */
+export async function advanceBillingIfComplete(row: EnrollmentRow): Promise<EnrollmentRow> {
+  if (row.status !== 'billing_pending') return row
+
+  if (isAutomatePlan(row.selected_plan)) {
+    if (!isStripeConfigured()) return row
+    const user = (await customerQuery<{ stripe_customer_id: string | null }>(
+      `SELECT stripe_customer_id FROM users WHERE id = $1 LIMIT 1`,
+      [row.user_id],
+    ))[0]
+    if (!user?.stripe_customer_id) return row
+    if (!(await hasUsablePaymentMethod(user.stripe_customer_id))) return row
+    await customerExecute(
+      `UPDATE enrollments SET status = 'setup_required', current_step = 'setup', updated_at = now()
+        WHERE id = $1 AND user_id = $2 AND status = 'billing_pending'`,
+      [row.id, row.user_id],
+    )
+    return { ...row, status: 'setup_required', current_step: 'setup' }
+  }
+
+  if (row.selected_plan === 'community') {
+    const sub = (await customerQuery<{ status: string }>(
+      `SELECT status FROM customer_bot_subscriptions WHERE user_id = $1 AND bot = 'community' LIMIT 1`,
+      [row.user_id],
+    ))[0]
+    if (sub && ['trialing', 'active', 'past_due'].includes(sub.status)) {
+      await customerExecute(
+        `UPDATE enrollments
+            SET status = 'complete', current_step = 'done', completed_at = now(), updated_at = now()
+          WHERE id = $1 AND user_id = $2 AND status = 'billing_pending'`,
+        [row.id, row.user_id],
+      )
+      return { ...row, status: 'complete', current_step: 'done' }
+    }
+  }
+
+  return row
 }
 
 /**

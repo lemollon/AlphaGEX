@@ -8,11 +8,17 @@ import { BOT_PLANS, COMMUNITY_PLAN, BOTH_PLAN } from '@/lib/billing/plans'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-/** Plans this deployment actually sells. Community + the per-bot model kept this session. */
+/**
+ * Plans this deployment actually sells. Community + the per-bot model kept this session.
+ * 'automate' is the PLAN-01 family value — persisted before an agent is chosen; the
+ * agent choice becomes agent_configs.agent_code at AGENT-01 and is never a second plan
+ * PUT (setEnrollmentPlan rewinds the funnel to legal by design).
+ */
 const VALID_PLANS = new Set<string>([
   COMMUNITY_PLAN.key,
   ...Object.keys(BOT_PLANS),
   'both',
+  'automate',
 ])
 
 /**

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyStripeSignature } from '@/lib/billing/stripe'
 import { isCustomersDbConfigured, customerExecute, customerQuery } from '@/lib/customers-db'
 import { getBotPlan, BOTH_PLAN, COMMUNITY_PLAN, isCommunityKey } from '@/lib/billing/plans'
+import { isUuid } from '@/lib/enrollment/ids'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -100,6 +101,29 @@ export async function POST(req: NextRequest) {
     switch (event?.type) {
       case 'checkout.session.completed': {
         const userId = await resolveUserId(obj.metadata, obj.customer)
+
+        // Setup-mode sessions capture a card at $0 — NO subscription exists and none may
+        // be written here. Without this guard a setup session whose metadata carried a
+        // bot would fabricate a 'trialing' entitlement row with a NULL subscription id,
+        // and ownsStrategy()/hasActiveMembership() treat 'trialing' as live. The only
+        // thing a completed setup session means is "payment method saved": advance the
+        // enrollment so the funnel resumes at brokerage setup. Guarded on
+        // billing_pending so a replayed event can never rewind a further-along record.
+        if (obj.mode === 'setup') {
+          // isUuid guard: a non-UUID would make Postgres RAISE on the cast (a 500-class
+          // handler error), not merely match zero rows.
+          const enrollmentId = typeof obj.metadata?.enrollment_id === 'string' ? obj.metadata.enrollment_id : null
+          if (userId && enrollmentId && isUuid(enrollmentId) && isUuid(userId)) {
+            await customerExecute(
+              `UPDATE enrollments
+                  SET status = 'setup_required', current_step = 'setup', updated_at = now()
+                WHERE id = $1 AND user_id = $2 AND status = 'billing_pending'`,
+              [enrollmentId, userId],
+            )
+          }
+          break
+        }
+
         const { bots, bundle } = botsFor(obj.metadata)
         if (userId && bots.length) {
           for (const bot of bots) {

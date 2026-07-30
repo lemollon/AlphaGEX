@@ -1,7 +1,8 @@
 import { customerQuery } from '@/lib/customers-db'
 import { previewHash, type ActivationSnapshot } from './preview'
-import { staleDocumentCodes } from './legal'
+import { staleDocumentCodes, isAutomatePlan } from './legal'
 import { acceptedVersionsFor } from './service'
+import type { MembershipState } from './states'
 import { getProductionPauseState } from '@/lib/tradier'
 import { hasUsablePaymentMethod } from '@/lib/billing/stripe'
 import type { ActivationInput } from './activation'
@@ -77,6 +78,23 @@ export async function loadActivationContext(
     [userId, config.agent_code],
   ))[0]
 
+  // v2 order: card at $0, subscription created BY activation — so before activation
+  // there is legitimately NO subscription row. That is 'setup_ready' ONLY when the open
+  // enrollment proves the customer finished billing (setup_required, automate family);
+  // any other absence stays 'pending' and blocks, fail-closed as before.
+  let membership: MembershipState = (sub?.status as MembershipState) ?? 'pending'
+  if (!sub) {
+    const enrollment = (await customerQuery<{ selected_plan: string | null; status: string }>(
+      `SELECT selected_plan, status FROM enrollments
+        WHERE user_id = $1 AND status NOT IN ('complete', 'abandoned')
+        ORDER BY created_at DESC LIMIT 1`,
+      [userId],
+    ))[0]
+    if (enrollment?.status === 'setup_required' && isAutomatePlan(enrollment.selected_plan)) {
+      membership = 'setup_ready'
+    }
+  }
+
   const user = (await customerQuery<{ stripe_customer_id: string | null }>(
     `SELECT stripe_customer_id FROM users WHERE id = $1 LIMIT 1`,
     [userId],
@@ -108,7 +126,7 @@ export async function loadActivationContext(
     snapshot,
     hash: previewHash(snapshot),
     inputs: {
-      membership: (sub?.status as never) ?? 'pending',
+      membership,
       paymentMethodValid,
       staleLegalDocuments: staleDocumentCodes(config.agent_code, accepted),
       brokerage: conn?.status === 'active' ? 'connected' : 'not_connected',

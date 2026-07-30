@@ -61,8 +61,14 @@ export interface ActivationInput {
   previewCurrent: boolean
 }
 
-/** Membership states that may hold an activation. `past_due` may NOT open new trading. */
-const MEMBERSHIP_OK: MembershipState[] = ['active']
+/**
+ * Membership states that may hold an activation. `past_due` may NOT open new trading.
+ * `setup_ready` is the v2 pre-subscription state: card captured at $0, enrollment in
+ * setup_required, subscription created BY this activation — so it must be allowed
+ * through here or v2 activation can never succeed. Card validity is still enforced
+ * separately by PAYMENT_METHOD_INVALID.
+ */
+const MEMBERSHIP_OK: MembershipState[] = ['active', 'setup_ready']
 
 export interface ActivationDecision {
   ok: boolean

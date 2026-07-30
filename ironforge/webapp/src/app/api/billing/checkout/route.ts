@@ -22,6 +22,8 @@ import {
   COMMUNITY_PLAN,
   isCommunityKey,
 } from '@/lib/billing/plans'
+import { getEnrollmentForUser } from '@/lib/enrollment/service'
+import { isAutomatePlan } from '@/lib/enrollment/legal'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -44,16 +46,38 @@ export async function POST(req: NextRequest) {
   if (!session.customerId) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
 
   let bot: string | undefined
+  let intent: string | undefined
+  let enrollmentId: string | undefined
+  let returnTo: string | undefined
   try {
-    const body = (await req.json().catch(() => null)) as { bot?: unknown } | null
+    const body = (await req.json().catch(() => null)) as {
+      bot?: unknown
+      intent?: unknown
+      enrollment_id?: unknown
+      return_to?: unknown
+    } | null
     if (body && typeof body.bot === 'string') bot = body.bot
+    if (body && typeof body.intent === 'string') intent = body.intent
+    if (body && typeof body.enrollment_id === 'string') enrollmentId = body.enrollment_id
+    // Allowlisted literal, never a URL — the only alternate return surface is /enroll.
+    if (body && body.return_to === 'enroll') returnTo = 'enroll'
   } catch {
     /* fall through to validation */
   }
+
+  // ── Enrollment funnel, automate family: setup-mode checkout ($0 due today) ──────
+  // Requested EXPLICITLY by the /enroll billing step, validated server-side against an
+  // owned enrollment in billing_pending with an automate-family plan. This is what lets
+  // the v2 funnel collect a card at $0 while IRONFORGE_ENROLLMENT_V2 stays off — that
+  // flag remains solely the legacy /live/[bot]/open cutover switch below. No bot is
+  // involved yet (the agent is chosen at AGENT-01); the subscription is created only by
+  // POST /api/v1/activations.
+  const isEnrollmentSetup = intent === 'enrollment_setup'
+
   // Community is a standalone chat/education plan, not a trading bot — it takes its own
   // simple path (no bundle logic, no trial). Everything else must resolve to a real bot.
   const isCommunity = isCommunityKey(bot)
-  if (!isCommunity && !getBotPlan(bot)) {
+  if (!isEnrollmentSetup && !isCommunity && !getBotPlan(bot)) {
     return NextResponse.json({ ok: false, error: 'Unknown bot.' }, { status: 400 })
   }
 
@@ -79,6 +103,52 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ── Enrollment funnel: setup-mode checkout, $0 due today, card only ─────────────
+    if (isEnrollmentSetup) {
+      const origin = publicOrigin(req)
+      const enrollment = enrollmentId ? await getEnrollmentForUser(enrollmentId, user.id) : null
+      if (!enrollment) {
+        return NextResponse.json({ ok: false, error: 'That enrollment is not available.' }, { status: 403 })
+      }
+      // Only the state the funnel is actually in may mint a $0 session: billing_pending
+      // on an automate-family plan. Anything else (community, already past billing, a
+      // guessed id) is refused — this branch must never be a discount door to a bot plan.
+      if (enrollment.status !== 'billing_pending' || !isAutomatePlan(enrollment.selected_plan)) {
+        return NextResponse.json({ ok: false, error: 'Billing is not the current step for this enrollment.' }, { status: 409 })
+      }
+
+      const setupArgs = {
+        userId: user.id,
+        enrollmentId: enrollment.id,
+        successUrl: `${origin}/enroll/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+        cancelUrl: `${origin}/enroll/billing?checkout=canceled`,
+      }
+
+      let setupCustomerId = await getOrCreateCustomer({
+        existingId: user.stripe_customer_id,
+        email: user.email,
+        userId: user.id,
+      })
+      await persistCustomer(setupCustomerId)
+
+      let setupUrl: string
+      try {
+        ;({ url: setupUrl } = await createSetupCheckout({ customerId: setupCustomerId, ...setupArgs }))
+      } catch (e) {
+        if (!isMissingCustomerError(e)) throw e
+        setupCustomerId = await createCustomer({ email: user.email, userId: user.id })
+        await persistCustomer(setupCustomerId)
+        ;({ url: setupUrl } = await createSetupCheckout({ customerId: setupCustomerId, ...setupArgs }))
+      }
+
+      await customerExecute(
+        `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'CHECKOUT_STARTED', $2)`,
+        [user.id, JSON.stringify({ mode: 'setup', enrollment_id: enrollment.id })],
+      ).catch(() => {})
+
+      return NextResponse.json({ ok: true, url: setupUrl })
+    }
+
     // ── Community: standalone $15 chat/education plan, no bot, no bundle, no trial ──
     if (isCommunity) {
       const origin = publicOrigin(req)
@@ -86,9 +156,13 @@ export async function POST(req: NextRequest) {
         `SELECT status FROM customer_bot_subscriptions WHERE user_id = $1 AND bot = $2 LIMIT 1`,
         [user.id, COMMUNITY_KEY],
       )
-      // Already a member → idempotent, just send them into the community.
+      // Already a member → idempotent, just send them into the community (or the
+      // enrollment completion page when the funnel initiated this).
       if (existing.some((s) => ['trialing', 'active', 'past_due'].includes(s.status))) {
-        return NextResponse.json({ ok: true, url: `${origin}/community?welcome=community` })
+        return NextResponse.json({
+          ok: true,
+          url: returnTo === 'enroll' ? `${origin}/enroll/done?welcome=community` : `${origin}/community?welcome=community`,
+        })
       }
 
       const communityPriceId = await findPriceIdByLookupKey(COMMUNITY_PLAN.lookupKey)
@@ -104,12 +178,20 @@ export async function POST(req: NextRequest) {
         userId: user.id,
         bot: COMMUNITY_KEY,
         trialDays: 0, // charge immediately — it's a low-cost access plan, not a strategy trial
-        successUrl: `${origin}/community?welcome=community&session_id={CHECKOUT_SESSION_ID}`,
-        // Back to Community, where the join button is. This pointed at /pricing, which
-        // has 308'd to /#memberships since the pricing page was retired — so abandoning
-        // checkout threw a signed-in customer out to the marketing homepage AND dropped
-        // the ?canceled flag on the redirect, leaving no acknowledgment anywhere.
-        cancelUrl: `${origin}/community?canceled=community`,
+        // The /enroll funnel returns to its own completion/billing pages so the
+        // server-owned enrollment can advance; the legacy join button keeps /community.
+        successUrl:
+          returnTo === 'enroll'
+            ? `${origin}/enroll/done?welcome=community&session_id={CHECKOUT_SESSION_ID}`
+            : `${origin}/community?welcome=community&session_id={CHECKOUT_SESSION_ID}`,
+        // Back to where the join button is. The legacy path pointed at /pricing once,
+        // which has 308'd to /#memberships since the pricing page was retired — so
+        // abandoning checkout threw a signed-in customer out to the marketing homepage
+        // AND dropped the ?canceled flag on the redirect.
+        cancelUrl:
+          returnTo === 'enroll'
+            ? `${origin}/enroll/billing?checkout=canceled`
+            : `${origin}/community?canceled=community`,
       }
 
       let communityCustomerId = await getOrCreateCustomer({
