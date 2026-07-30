@@ -29,8 +29,14 @@ interface UserRow {
 }
 
 export async function GET(req: NextRequest) {
-  const brokerageStep = new URL('/onboarding/brokerage', publicOrigin(req))
-  const complete = new URL('/onboarding/complete', publicOrigin(req))
+  // Land back on the surface that initiated the round-trip. return_to rides our own
+  // customRedirect URL (set by the connect route) and is an allowlisted literal
+  // resolved to a fixed route — never a caller-supplied URL.
+  const fromEnroll = req.nextUrl.searchParams.get('return_to') === 'enroll'
+  const brokerageStep = new URL(fromEnroll ? '/enroll/broker' : '/onboarding/brokerage', publicOrigin(req))
+  const complete = fromEnroll
+    ? new URL('/enroll/broker?connected=1', publicOrigin(req))
+    : new URL('/onboarding/complete', publicOrigin(req))
 
   const uid = await resolveCustomerUserId(req)
   if (!uid || !isSnapTradeConfigured() || !isCustomersDbConfigured()) {

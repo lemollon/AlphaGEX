@@ -16,6 +16,16 @@ export async function POST(req: NextRequest) {
   const uid = await resolveCustomerUserId(req)
   if (!uid) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
 
+  // Which surface initiated this (legacy onboarding vs the /enroll funnel). Stored on
+  // the OAuth state so the callback lands the customer back where they started.
+  let returnTo: 'enroll' | undefined
+  try {
+    const body = (await req.json().catch(() => null)) as { return_to?: unknown } | null
+    if (body?.return_to === 'enroll') returnTo = 'enroll'
+  } catch {
+    /* default onboarding */
+  }
+
   if (!isTradierOAuthConfigured() || !isCustomersDbConfigured()) {
     return NextResponse.json(
       { ok: false, error: 'Tradier connection is temporarily unavailable. Please try again shortly.' },
@@ -31,6 +41,7 @@ export async function POST(req: NextRequest) {
       userId: uid,
       brokerCode: 'tradier',
       pkce: tradierPkceEnabled(),
+      returnTo,
     })
     const redirectURI = buildAuthorizeUrl(state, codeChallenge)
     await customerExecute(

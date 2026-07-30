@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import BrokerClient from './BrokerClient'
@@ -15,5 +16,10 @@ export const metadata: Metadata = {
 export default async function EnrollBrokerPage() {
   const session = await getCustomerSession()
   if (!session.customerId) redirect('/login?next=/enroll')
-  return <BrokerClient />
+  return (
+    // Suspense: BrokerClient reads useSearchParams (?connected/?error/?incomplete).
+    <Suspense fallback={null}>
+      <BrokerClient />
+    </Suspense>
+  )
 }

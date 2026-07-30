@@ -30,9 +30,6 @@ interface UserRow {
 }
 
 export async function GET(req: NextRequest) {
-  const brokerageStep = new URL('/onboarding/brokerage', publicOrigin(req))
-  const complete = new URL('/onboarding/complete', publicOrigin(req))
-
   const code = req.nextUrl.searchParams.get('code')
 
   // ONE-TIME state (§8). consumeOAuthState marks it used inside the same statement
@@ -43,6 +40,14 @@ export async function GET(req: NextRequest) {
     ? await consumeOAuthState(req.nextUrl.searchParams.get('state'))
     : null
   const uid = oauth?.userId ?? null
+
+  // Land back on the surface that initiated the round-trip. return_to is an
+  // allowlisted literal resolved to a fixed route — never a caller-supplied URL.
+  const fromEnroll = oauth?.returnTo === 'enroll'
+  const brokerageStep = new URL(fromEnroll ? '/enroll/broker' : '/onboarding/brokerage', publicOrigin(req))
+  const complete = fromEnroll
+    ? new URL('/enroll/broker?connected=1', publicOrigin(req))
+    : new URL('/onboarding/complete', publicOrigin(req))
 
   if (!code || !uid || !isTradierOAuthConfigured() || !isCustomersDbConfigured()) {
     brokerageStep.searchParams.set('error', '1')
