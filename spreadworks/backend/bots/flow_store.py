@@ -764,7 +764,14 @@ class OrState:
 
 def read_or_state(engine: Engine, *, ticker: str, now: datetime) -> OrState:
     """Opening range = snapshots 08:30-09:00 CT (inclusive); complete once
-    `now` is past 09:01. prev = latest snapshot strictly before `now`."""
+    `now` is past 09:01. prev = latest snapshot from an EARLIER MINUTE than
+    `now` — never the current scan's own row. record_snapshot floors its
+    timestamp to the minute, so a plain "< now" filter still returns the
+    row written milliseconds ago by this very scan (or a sibling bot in the
+    same tick); prev then equals the CURRENT spot and the first-touch gates
+    (FLASHPOINT, and EM_BREACH via read_em_state) compare the breakout to
+    itself and can never pass. 2026-07-30: TEMPEST rejected its flashpoint
+    leg at the true breakout scan with prev == the same-minute spot."""
     try:
         with engine.begin() as conn:
             rows = conn.execute(text(
@@ -788,7 +795,8 @@ def read_or_state(engine: Engine, *, ticker: str, now: datetime) -> OrState:
     for r in rows:
         t_raw = _dt(r["snapshot_time"])
         t_c, now_c = _same_clock(t_raw, now)
-        if t_c is None or t_c >= now_c:      # cross-dialect "< now" filter
+        # "< now" must exclude the whole current minute (see docstring)
+        if t_c is None or t_c >= now_c.replace(second=0, microsecond=0):
             continue
         t = _snap_ct(t_raw, now)
         if t is None or (t.hour, t.minute) < (8, 30):
@@ -812,8 +820,10 @@ def read_or_state(engine: Engine, *, ticker: str, now: datetime) -> OrState:
 
 def read_em_state(engine: Engine, *, ticker: str, now: datetime) -> EmState:
     """Day open = spot of the first RTH snapshot (>= 08:30 CT); prev = the
-    latest snapshot strictly before `now`. Prev is what makes the entry an
-    EVENT: the leg only fires on the scan where the breach BEGINS."""
+    latest snapshot from an EARLIER MINUTE than `now`. Prev is what makes
+    the entry an EVENT: the leg only fires on the scan where the breach
+    BEGINS — so it must never resolve to the current scan's own row, whose
+    minute-floored timestamp sorts before `now` (see read_or_state)."""
     try:
         with engine.begin() as conn:
             rows = conn.execute(text(
@@ -833,7 +843,13 @@ def read_em_state(engine: Engine, *, ticker: str, now: datetime) -> EmState:
         return t
     rth = []
     for r in rows:
-        t = _snap_ct(_dt(r["snapshot_time"]), now)
+        t_raw = _dt(r["snapshot_time"])
+        t_c, now_c = _same_clock(t_raw, now)
+        # the SQL "< :now" filter is unreliable across dialect shapes AND
+        # must exclude the whole current minute (see docstring)
+        if t_c is None or t_c >= now_c.replace(second=0, microsecond=0):
+            continue
+        t = _snap_ct(t_raw, now)
         if t is None:
             continue
         if (t.hour, t.minute) >= (8, 30):          # CT session open
