@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
-import { nextRouteForOnboarding } from '@/lib/auth/onboarding-route'
 import { isLiveBot } from '@/lib/live/bots'
+import { ownsStrategy } from '@/lib/live/membership'
 import SignupClient from './SignupClient'
 
 export const runtime = 'nodejs'
@@ -20,12 +20,12 @@ export const dynamic = 'force-dynamic'
  * So the guard lives HERE, at the destination, where every entry passes through — and
  * server-side, so a signed-in visitor never sees a flash of the form before bouncing.
  *
- * Where they land:
- *   - ?bot=spark|flame  → that strategy's Open Account page. The CTA carried an intent
- *     ("I want this bot") and a redirect that drops it would be its own small failure.
- *   - otherwise         → nextRouteForOnboarding(), the SAME resolver login uses, so
- *     there is one rule for "where does a returning customer belong" rather than two
- *     that can drift.
+ * Where they land (cutover 7/30):
+ *   - EXISTING strategy owner with ?bot= intent → that bot's Open Account page, which
+ *     still owns the second-bot bundle upgrade ($75 total, not a second $50 sub).
+ *   - everyone else signed-in → /enroll, the ownership-aware door: it resumes an open
+ *     enrollment, routes owners to /live, community members to /community, and starts
+ *     the funnel for customers with nothing yet.
  */
 export default async function SignupPage({
   searchParams,
@@ -35,7 +35,10 @@ export default async function SignupPage({
   const session = await getCustomerSession()
   if (session.customerId) {
     const bot = searchParams?.bot
-    redirect(isLiveBot(bot) ? `/live/${bot}/open` : nextRouteForOnboarding(session.onboardingStep))
+    if (isLiveBot(bot) && (await ownsStrategy(session.customerId))) {
+      redirect(`/live/${bot}/open`)
+    }
+    redirect('/enroll')
   }
   return <SignupClient />
 }

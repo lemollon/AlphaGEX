@@ -152,7 +152,10 @@ export default function LiveClient() {
                 {SIGNUP_CTAS.map((c) => (
                   <a
                     key={c.slug}
-                    href={signedIn ? `/live/${c.slug}/open` : `/signup?bot=${c.slug}`}
+                    // Cutover (7/30): a signed-in viewer on the EMPTY state owns no
+                    // strategy, so their door is the enrollment funnel — /live/{bot}/open
+                    // remains only for existing owners adding a second bot (bundle).
+                    href={signedIn ? '/enroll' : `/signup?bot=${c.slug}`}
                     className={`group flex items-center gap-4 rounded-xl border p-5 transition ${c.cardClass}`}
                   >
                     <img src={c.mascot} alt="" className="h-14 w-14 shrink-0" />

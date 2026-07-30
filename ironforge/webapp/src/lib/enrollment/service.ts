@@ -40,11 +40,11 @@ export async function ensureLegalDocumentsSeeded(): Promise<void> {
 }
 
 /**
- * Create or RESUME. One open enrollment per user by design — "Create/resume intent"
- * (§6) — so a customer who abandons and returns continues rather than forking a second
- * funnel whose plan and acceptances disagree with the first.
+ * The user's OPEN enrollment, if any — a read that never creates. The /enroll door
+ * uses this to decide between "resume the funnel" and "this person is done, route to
+ * their product" without minting a fresh draft for every returning customer.
  */
-export async function createOrResumeEnrollment(userId: string, source?: string): Promise<EnrollmentRow> {
+export async function getOpenEnrollment(userId: string): Promise<EnrollmentRow | null> {
   const open = await customerQuery<EnrollmentRow>(
     `SELECT id, user_id, selected_plan, status, current_step
        FROM enrollments
@@ -52,7 +52,17 @@ export async function createOrResumeEnrollment(userId: string, source?: string):
       ORDER BY created_at DESC LIMIT 1`,
     [userId],
   )
-  if (open[0]) return open[0]
+  return open[0] ?? null
+}
+
+/**
+ * Create or RESUME. One open enrollment per user by design — "Create/resume intent"
+ * (§6) — so a customer who abandons and returns continues rather than forking a second
+ * funnel whose plan and acceptances disagree with the first.
+ */
+export async function createOrResumeEnrollment(userId: string, source?: string): Promise<EnrollmentRow> {
+  const open = await getOpenEnrollment(userId)
+  if (open) return open
 
   const created = await customerQuery<EnrollmentRow>(
     `INSERT INTO enrollments (user_id, status, current_step, source)

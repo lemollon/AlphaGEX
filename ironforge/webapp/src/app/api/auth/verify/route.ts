@@ -86,12 +86,15 @@ export async function GET(req: NextRequest) {
       console.error('[verify] audit write failed:', e)
     }
 
-    // Sub-project F: hand the (now-verified) prospect into the onboarding funnel.
-    // The signed cookie is what the /onboarding/* guard checks — they have no login
-    // session yet. If signing fails (secret unset), fall back to the login screen.
+    // CUTOVER (7/30): verified prospects sign in and land on /enroll — the v2 funnel
+    // requires a real customer session (its enrollment record is server-owned per
+    // user), so the cookie-only legacy hand-off into /onboarding/legal is retired.
+    // The signed onboarding cookie is still issued so anyone who wanders onto a
+    // legacy /onboarding/* link mid-flight isn't bounced, but the destination is the
+    // login door; login's resolver then routes to /enroll.
     try {
       const token = await signOnboardingToken(row.user_id)
-      const res = NextResponse.redirect(`${origin}/onboarding/legal`)
+      const res = NextResponse.redirect(`${origin}/login?verified=1`)
       res.cookies.set(ONBOARDING_COOKIE, token, onboardingCookieOptions())
       return res
     } catch (e) {
