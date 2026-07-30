@@ -17,7 +17,7 @@
  */
 
 /** Bump when any bound below changes. Existing configs on an older version go stale. */
-export const RULE_VERSION = '1.0'
+export const RULE_VERSION = '1.1'
 
 export interface RuleField {
   key: string
@@ -40,7 +40,10 @@ const MAX_DEPLOYMENT: RuleField = {
   label: 'Maximum capital deployed per trade',
   min: 10,
   max: 85,
-  default: 50,
+  // 20% is the launch default Leron approved 7/30, matching the approved ACT-01
+  // screen. Was 50 under rule 1.0; the version bump stales any config on the old
+  // default so nothing activates against a number the customer never reviewed.
+  default: 20,
   unit: 'percent',
 }
 

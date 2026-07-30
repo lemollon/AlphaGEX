@@ -49,7 +49,7 @@ describe('validateAgentConfig — bounds', () => {
     for (const input of [{}, { max_deployment_pct: '' }, { max_deployment_pct: null }]) {
       const r = validateAgentConfig({ agentCode: 'spark', input, buyingPowerCents: BP })
       expect(r.valid).toBe(true)
-      expect(r.computed.config.max_deployment_pct).toBe(50)
+      expect(r.computed.config.max_deployment_pct).toBe(20)
     }
   })
 
