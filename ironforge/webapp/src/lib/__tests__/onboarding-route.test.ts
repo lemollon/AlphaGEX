@@ -1,23 +1,25 @@
 import { describe, it, expect } from 'vitest'
 import { nextRouteForOnboarding } from '@/lib/auth/onboarding-route'
 
-describe('nextRouteForOnboarding', () => {
-  it('routes fresh / verified accounts to the legal step', () => {
-    expect(nextRouteForOnboarding('account_created')).toBe('/onboarding/legal')
-    expect(nextRouteForOnboarding('email_verified')).toBe('/onboarding/legal')
+describe('nextRouteForOnboarding (cutover 7/30: /enroll is the universal door)', () => {
+  // The legacy /onboarding/* funnel is retired as a destination. /enroll is
+  // ownership-aware server-side (resumes open enrollments, routes owners to /live,
+  // community members to /community), so ONE answer is correct for every step —
+  // this test locks the cutover in place so a future edit can't quietly resurrect
+  // the legacy funnel as a login landing.
+  it.each([
+    'account_created',
+    'email_verified',
+    'legal_accepted',
+    'risk_assessed',
+    'brokerage_connected',
+    'something_future',
+  ])('%s → /enroll', (step) => {
+    expect(nextRouteForOnboarding(step)).toBe('/enroll')
   })
-  it('routes legal-accepted to the risk-assessment step', () => {
-    expect(nextRouteForOnboarding('legal_accepted')).toBe('/onboarding/risk')
-  })
-  it('routes risk-assessed to the brokerage-connection step', () => {
-    expect(nextRouteForOnboarding('risk_assessed')).toBe('/onboarding/brokerage')
-  })
-  it('routes brokerage-connected to the completion placeholder', () => {
-    expect(nextRouteForOnboarding('brokerage_connected')).toBe('/onboarding/complete')
-  })
-  it('defaults unknown/null steps to the completion placeholder', () => {
-    expect(nextRouteForOnboarding(undefined)).toBe('/onboarding/complete')
-    expect(nextRouteForOnboarding(null)).toBe('/onboarding/complete')
-    expect(nextRouteForOnboarding('something_future')).toBe('/onboarding/complete')
+
+  it('null/undefined → /enroll', () => {
+    expect(nextRouteForOnboarding(undefined)).toBe('/enroll')
+    expect(nextRouteForOnboarding(null)).toBe('/enroll')
   })
 })
