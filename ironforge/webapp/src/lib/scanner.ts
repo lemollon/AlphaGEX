@@ -6344,6 +6344,10 @@ async function checkVolAlerts(): Promise<void> {
           headline,
           vix,
           vix3m,
+          message,
+          regimeLabel,
+          vvix,
+          proximity: typeof sig.proximity === 'number' ? sig.proximity : null,
         })
         console.log(`[scanner] vol-alert SMS ${t.signalKey} ${t.to}: ${smsRes.sent ? 'sent' : smsRes.skipped ? 'skipped (sms unconfigured)' : 'error: ' + smsRes.error}`)
       }

@@ -12,6 +12,9 @@
  *                              5551234567@vtext.com. Sends a plain-text email via
  *                              the existing Resend config (RESEND_API_KEY/EMAIL_FROM).
  *
+ *   Discord webhook (rich embed + @here ping)
+ *     ALERT_DISCORD_WEBHOOK  — full Discord webhook URL
+ *
  *   Twilio SMS
  *     TWILIO_ACCOUNT_SID     — Twilio account SID (starts "AC...")
  *     TWILIO_AUTH_TOKEN      — Twilio auth token
@@ -39,9 +42,13 @@ export function isSmsGatewayConfigured(): boolean {
   return !!(process.env.ALERT_SMS_GATEWAY_TO && isEmailConfigured())
 }
 
+export function isDiscordConfigured(): boolean {
+  return !!process.env.ALERT_DISCORD_WEBHOOK
+}
+
 /** True when at least one phone channel is configured. */
 export function isSmsConfigured(): boolean {
-  return isTwilioConfigured() || isNtfyConfigured() || isSmsGatewayConfigured()
+  return isTwilioConfigured() || isNtfyConfigured() || isSmsGatewayConfigured() || isDiscordConfigured()
 }
 
 export function smsRecipients(): string[] {
@@ -65,6 +72,11 @@ export interface VolAlertSmsParams {
   headline?: string | null
   vix?: number | null
   vix3m?: number | null
+  /** Optional extras used by the Discord embed. */
+  message?: string | null
+  vvix?: number | null
+  proximity?: number | null
+  regimeLabel?: string | null
 }
 
 export interface SmsResult {
@@ -83,6 +95,67 @@ function alertBody(p: VolAlertSmsParams): string {
       : ''
   // Keep it to one SMS segment-ish; Twilio splits longer bodies automatically.
   return `IronForge ${tag}: ${name}${dir}.${p.headline ? ' ' + p.headline : ''}${vixStr}`.slice(0, 320)
+}
+
+const IRONFORGE_ICON = 'https://ironforge.trade/apple-touch-icon.png'
+
+/** Rich Discord embed + @here ping so it lands loud in the phone's notifications. */
+async function sendViaDiscord(p: VolAlertSmsParams): Promise<string[]> {
+  const url = process.env.ALERT_DISCORD_WEBHOOK as string
+  const isEarly = p.reason === 'early-warning'
+  const bullish = (p.direction || '').toLowerCase().includes('bull')
+  const dirEmoji = bullish ? '🟢📈' : '🔴📉'
+  const color = isEarly ? 0xf59e0b : bullish ? 0x22c55e : 0xef4444
+  const name = p.signalKey.replace(/_/g, ' ')
+  const dir = p.direction ? ` (${p.direction})` : ''
+  const kicker = isEarly ? 'EARLY WARNING' : 'CONFIRMED SIGNAL'
+  const ratio =
+    typeof p.vix === 'number' && typeof p.vix3m === 'number' && p.vix3m
+      ? (p.vix / p.vix3m).toFixed(3)
+      : null
+  const fields: Array<{ name: string; value: string; inline: boolean }> = []
+  if (typeof p.vix === 'number' && typeof p.vix3m === 'number') {
+    fields.push({
+      name: 'VIX / VIX3M',
+      value: `${p.vix.toFixed(2)} / ${p.vix3m.toFixed(2)}${ratio ? ` (ratio ${ratio})` : ''}`,
+      inline: true,
+    })
+  }
+  if (typeof p.vvix === 'number') fields.push({ name: 'VVIX', value: p.vvix.toFixed(0), inline: true })
+  if (typeof p.proximity === 'number') fields.push({ name: 'Proximity', value: `${(p.proximity * 100).toFixed(0)}%`, inline: true })
+  if (p.regimeLabel) fields.push({ name: 'Regime', value: p.regimeLabel.replace(/_/g, ' '), inline: true })
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: 'IronForge',
+        avatar_url: IRONFORGE_ICON,
+        content: `@here ${dirEmoji} **IronForge ${isEarly ? 'EARLY WARN' : 'VOL ALERT'}: ${name}${dir}**${p.headline ? ` — ${p.headline}` : ''}`,
+        allowed_mentions: { parse: ['everyone'] },
+        embeds: [
+          {
+            title: `${dirEmoji} ${name}${dir} — ${kicker}`,
+            description: `${p.headline ? `**${p.headline}**` : ''}${p.message ? `\n${p.message}` : ''}`,
+            color,
+            thumbnail: { url: IRONFORGE_ICON },
+            fields,
+            footer: {
+              text: `IronForge volatility-regime monitor • ${isEarly ? 'tripped, not yet confirmed' : 'sustained and confirmed'}`,
+            },
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      }),
+    })
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      return [`discord: ${res.status} ${detail.slice(0, 140)}`]
+    }
+    return []
+  } catch (e) {
+    return [`discord: ${e instanceof Error ? e.message : 'send failed'}`]
+  }
 }
 
 async function sendViaTwilio(body: string): Promise<string[]> {
@@ -163,7 +236,7 @@ async function sendViaSmsGateway(p: VolAlertSmsParams, body: string): Promise<st
 
 /**
  * Push a short vol-alert to the operator's phone over every configured channel
- * (ntfy push, carrier SMS gateway, Twilio). Sent if at least one channel
+ * (Discord embed, ntfy push, carrier SMS gateway, Twilio). Sent if at least one channel
  * delivered; failures from the others are aggregated into `error`.
  */
 export async function sendVolAlertSms(p: VolAlertSmsParams): Promise<SmsResult> {
@@ -173,6 +246,7 @@ export async function sendVolAlertSms(p: VolAlertSmsParams): Promise<SmsResult> 
   let delivered = 0
 
   const channels: Array<[boolean, () => Promise<string[]>]> = [
+    [isDiscordConfigured(), () => sendViaDiscord(p)],
     [isNtfyConfigured(), () => sendViaNtfy(p, body)],
     [isSmsGatewayConfigured(), () => sendViaSmsGateway(p, body)],
     [isTwilioConfigured(), () => sendViaTwilio(body)],

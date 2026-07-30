@@ -10,6 +10,7 @@ import {
   isNtfyConfigured,
   isSmsGatewayConfigured,
   isTwilioConfigured,
+  isDiscordConfigured,
   smsRecipients,
   smsGatewayRecipients,
   sendVolAlertSms,
@@ -23,6 +24,7 @@ function maskPhone(p: string): string {
 
 function channels() {
   return {
+    discord: isDiscordConfigured(),
     ntfy: isNtfyConfigured(),
     sms_gateway: isSmsGatewayConfigured(),
     sms_gateway_recipients: smsGatewayRecipients().map(maskPhone),
@@ -35,7 +37,7 @@ export async function GET() {
   return NextResponse.json({
     sms_configured: isSmsConfigured(),
     channels: channels(),
-    needs: 'ALERT_NTFY_TOPIC | ALERT_SMS_GATEWAY_TO (+Resend) | TWILIO_* + ALERT_SMS_TO',
+    needs: 'ALERT_DISCORD_WEBHOOK | ALERT_NTFY_TOPIC | ALERT_SMS_GATEWAY_TO (+Resend) | TWILIO_* + ALERT_SMS_TO',
   })
 }
 
