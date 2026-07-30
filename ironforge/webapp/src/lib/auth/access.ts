@@ -100,6 +100,9 @@ export function isCustomerPath(pathname: string): boolean {
   // Customer Live/Home/Performance aggregation APIs. resolveLiveViewer() already
   // fails closed, but an anonymous caller should not reach them at all.
   if (pathname.startsWith('/api/live/')) return true
+  // The route-per-screen enrollment funnel (/enroll/plan, /enroll/legal, ...) — every
+  // screen operates on the caller's own server-owned enrollment, so identity first.
+  if (pathname.startsWith('/enroll/')) return true
   // Sparky support chat — customer-session guarded (also self-guards in-route).
   if (pathname.startsWith('/api/support/')) return true
   return CUSTOMER_EXACT.has(pathname)

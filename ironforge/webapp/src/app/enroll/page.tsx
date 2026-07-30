@@ -1,36 +1,44 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
-import EnrollClient from './EnrollClient'
+import { isCustomersDbConfigured } from '@/lib/customers-db'
+import { advanceBillingIfComplete, createOrResumeEnrollment, ensureLegalDocumentsSeeded, nextStepFor } from '@/lib/enrollment/service'
+import { routeForNextStep } from './steps'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
-  title: 'Set up your strategy — IronForge',
-  description: 'Choose a plan, accept the agreements, and connect the account your strategy will trade.',
+  title: 'Get started — IronForge',
+  description: 'Choose your membership, accept the agreements, and set up automated trading.',
 }
 
 /**
- * /enroll — the enrollment v2 funnel (spec §2).
+ * /enroll — entry + resume point for the enrollment funnel (July 29 handoff).
  *
- * Built ALONGSIDE the legacy /onboarding/* funnel, which is untouched and still the live
- * path. This route adds nothing to a customer's journey until it is linked to; nothing
- * here changes what an existing customer sees.
+ * Route-per-screen: this page only asks the server where the customer is and
+ * redirects to that screen. The server owns funnel position (§3 DONE-01); a deep link
+ * from an email lands here and cannot disagree with the record. Each screen also
+ * re-checks on mount, so nothing depends on arriving through this door.
  *
- * ⚠️ HOW FAR THIS CAN GO TODAY. Activation needs a broker_accounts row with
- * eligibility 'eligible', and that verdict requires an options approval level. Only
- * Tradier reports one, and Tradier OAuth is not provisioned — so the funnel runs
- * correctly to ACCOUNT SELECTION and then stops there, showing each connected account
- * with the real reason it cannot be used ("Options approval level 3 is required").
- *
- * That is a true screen, not a broken one, and the steps before it are fully
- * exercisable. The configure and activate steps are deliberately NOT built yet: they
- * cannot be run against real data until credentials exist, and shipping screens nobody
- * can execute is how untested paths reach customers.
+ * Still UNLINKED site-wide: nothing navigates here until the cutover flip, exactly
+ * like the spine it replaces (#2679).
  */
 export default async function EnrollPage() {
   const session = await getCustomerSession()
   if (!session.customerId) redirect('/login?next=/enroll')
-  return <EnrollClient />
+
+  let route = '/enroll/plan'
+  if (isCustomersDbConfigured()) {
+    try {
+      await ensureLegalDocumentsSeeded()
+      const enrollment = await advanceBillingIfComplete(
+        await createOrResumeEnrollment(session.customerId, 'enroll_page'),
+      )
+      route = routeForNextStep(nextStepFor(enrollment), enrollment.selected_plan).route
+    } catch {
+      // Fall through to the first screen; it resumes client-side and surfaces errors.
+    }
+  }
+  redirect(route)
 }
