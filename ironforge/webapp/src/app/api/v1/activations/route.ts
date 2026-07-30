@@ -144,6 +144,16 @@ export async function POST(req: NextRequest) {
                 updated_at = now()`,
         [session.customerId, config.agent_code, stripeSub.id, plan.lookupKey],
       )
+
+      // Close the funnel. Without this the enrollment stayed setup_required forever, so
+      // every later resume marched an ACTIVATED customer back to the brokerage screen.
+      // setup_required → complete is a legal ENROLLMENT_TRANSITIONS edge.
+      await run(
+        `UPDATE enrollments
+            SET status = 'complete', current_step = 'done', completed_at = now(), updated_at = now()
+          WHERE user_id = $1 AND status = 'setup_required'`,
+        [session.customerId],
+      )
     })
 
     const response = {
