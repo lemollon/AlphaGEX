@@ -314,6 +314,12 @@ CREATE TABLE IF NOT EXISTS legal_acceptances (
 DROP INDEX IF EXISTS idx_legal_acc_user;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_legal_acc_user_doc ON legal_acceptances(user_id, document_id);
 
+-- E-signature (July 29 handoff LEGAL-AUTO-01 / §17): the member's typed full legal
+-- name at acceptance time. Nullable ADD COLUMN on an append-only table — existing rows
+-- are never updated, so pre-signature acceptances simply have no signature. Required
+-- (server-enforced) only for automate-family plans.
+ALTER TABLE legal_acceptances ADD COLUMN IF NOT EXISTS signature_name TEXT;
+
 -- One brokerage connection has MANY accounts; the existing brokerage_connections row
 -- conflated the two. Never store a full account number — mask for display, ciphertext
 -- for the reference (§8).

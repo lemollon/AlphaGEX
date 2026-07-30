@@ -1,30 +1,43 @@
 import { describe, it, expect } from 'vitest'
-import { requiredDocumentsFor, staleDocumentCodes, LEGAL_DOCUMENTS } from '../legal'
+import { requiredDocumentsFor, staleDocumentCodes, isAutomatePlan, LEGAL_DOCUMENTS } from '../legal'
 import { nextStepFor } from '../service'
-import { CUSTOMER_API_PREFIXES } from '@/lib/surface'
+import { CUSTOMER_API_PREFIXES, CUSTOMER_PAGE_PREFIXES } from '@/lib/surface'
 import { isPublicPath } from '@/lib/auth/access'
 
-describe('required documents by plan (§3 LEGAL-01)', () => {
-  it('Community gets CORE only — never a trading authorization it cannot use', () => {
+describe('required documents by plan (§3 LEGAL-01 / July 29 handoff LEGAL-AUTO-01)', () => {
+  it('Community gets CORE only — the clickwrap set, never a trading authorization it cannot use', () => {
     const codes = requiredDocumentsFor('community').map((d) => d.code)
-    expect(codes).toEqual(['TERMS', 'RISK'])
+    expect(codes).toEqual(['TERMS', 'PRIVACY', 'REFUND'])
     expect(codes).not.toContain('TRADING_AUTH')
     expect(codes).not.toContain('ELECTRONIC_CONSENT')
+    expect(codes).not.toContain('RISK')
   })
 
-  it('Automate plans add electronic consent + trading authorization (mandatory)', () => {
-    for (const plan of ['spark', 'flame', 'both']) {
+  it('Automate plans require all SEVEN documents in the approved display order', () => {
+    for (const plan of ['spark', 'flame', 'both', 'automate']) {
       const codes = requiredDocumentsFor(plan).map((d) => d.code)
-      expect(codes).toContain('TRADING_AUTH')
-      expect(codes).toContain('ELECTRONIC_CONSENT')
-      expect(codes).toContain('TERMS')
-      expect(codes).toContain('RISK')
+      expect(codes).toEqual([
+        'TERMS',
+        'RISK',
+        'PRIVACY',
+        'ADVICE_DISCLAIMER',
+        'ELECTRONIC_CONSENT',
+        'TRADING_AUTH',
+        'REFUND',
+      ])
     }
   })
 
   it('an unknown/absent plan falls back to CORE, never to the automate set', () => {
-    expect(requiredDocumentsFor(null).map((d) => d.code)).toEqual(['TERMS', 'RISK'])
-    expect(requiredDocumentsFor('nonsense').map((d) => d.code)).toEqual(['TERMS', 'RISK'])
+    expect(requiredDocumentsFor(null).map((d) => d.code)).toEqual(['TERMS', 'PRIVACY', 'REFUND'])
+    expect(requiredDocumentsFor('nonsense').map((d) => d.code)).toEqual(['TERMS', 'PRIVACY', 'REFUND'])
+  })
+
+  it('isAutomatePlan matches the family value and the per-bot plans, nothing else', () => {
+    for (const plan of ['spark', 'flame', 'both', 'automate']) expect(isAutomatePlan(plan)).toBe(true)
+    expect(isAutomatePlan('community')).toBe(false)
+    expect(isAutomatePlan(null)).toBe(false)
+    expect(isAutomatePlan(undefined)).toBe(false)
   })
 
   it('every document carries a version and a content URI', () => {
@@ -56,10 +69,15 @@ describe('acceptance staleness (§11 "return to affected document only")', () =>
   })
 
   it('switching Community → Automate reopens ONLY the newly required documents (§12)', () => {
-    const asCommunity = all('community')          // TERMS + RISK accepted
+    const asCommunity = all('community')          // TERMS + PRIVACY + REFUND accepted
     expect(staleDocumentCodes('community', asCommunity)).toEqual([])
     // Same acceptances, now on an automate plan:
-    expect(staleDocumentCodes('spark', asCommunity)).toEqual(['ELECTRONIC_CONSENT', 'TRADING_AUTH'])
+    expect(staleDocumentCodes('spark', asCommunity)).toEqual([
+      'RISK',
+      'ADVICE_DISCLAIMER',
+      'ELECTRONIC_CONSENT',
+      'TRADING_AUTH',
+    ])
   })
 
   it('switching Automate → Community does not re-ask for anything', () => {
@@ -67,7 +85,8 @@ describe('acceptance staleness (§11 "return to affected document only")', () =>
   })
 
   it('accepting nothing leaves every required document outstanding', () => {
-    expect(staleDocumentCodes('spark', [])).toHaveLength(4)
+    expect(staleDocumentCodes('spark', [])).toHaveLength(7)
+    expect(staleDocumentCodes('community', [])).toHaveLength(3)
   })
 })
 
@@ -91,5 +110,12 @@ describe('route wiring', () => {
   it('and is NOT public — every enrollment route needs a session', () => {
     expect(isPublicPath('/api/v1/enrollments')).toBe(false)
     expect(isPublicPath('/api/v1/enrollments/abc/legal')).toBe(false)
+  })
+
+  it('legal document pages are customer-surface and publicly readable', () => {
+    expect(CUSTOMER_PAGE_PREFIXES).toContain('/legal')
+    for (const d of LEGAL_DOCUMENTS.filter((x) => x.contentUri.startsWith('/legal/'))) {
+      expect(isPublicPath(d.contentUri)).toBe(true)
+    }
   })
 })

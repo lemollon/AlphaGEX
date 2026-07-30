@@ -63,8 +63,8 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/terms',
 ]
 
-/** Page prefixes served by the customer site (onboarding funnel). */
-export const CUSTOMER_PAGE_PREFIXES: readonly string[] = ['/onboarding']
+/** Page prefixes served by the customer site (onboarding funnel + legal documents). */
+export const CUSTOMER_PAGE_PREFIXES: readonly string[] = ['/onboarding', '/legal']
 
 /** Pages served by the operator console. */
 export const OPERATOR_PAGES: readonly string[] = [
