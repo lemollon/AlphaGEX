@@ -15,6 +15,7 @@
  */
 import { customerQuery, isCustomersDbConfigured } from '@/lib/customers-db'
 import { MARKETING_TIERS, TRIAL_DAYS, COMMUNITY_PLAN, isCommunityKey } from '@/lib/billing/plans'
+import { TRIAL_ELIGIBLE_DAYS, trialLabel } from '@/lib/enrollment/trading-days'
 
 export interface MembershipCard {
   plan: string
@@ -73,18 +74,42 @@ export async function getMembership(customerId: string | null): Promise<Membersh
 
     const card: MembershipCard = { plan: planNameFor(live), badge: badgeFor(live), trial: null }
 
-    // Trial countdown, derived from Stripe's period end rather than invented.
-    const trialing = live.filter((r) => r.status === 'trialing' && r.current_period_end)
-    if (trialing.length > 0 && live.every((r) => r.status === 'trialing')) {
-      const ends = new Date(trialing[0].current_period_end as string)
-      const msLeft = ends.getTime() - Date.now()
-      const daysLeft = Math.max(0, Math.ceil(msLeft / 86_400_000))
-      const day = Math.min(TRIAL_DAYS, Math.max(1, TRIAL_DAYS - daysLeft + 1))
-      card.trial = {
-        label: daysLeft <= 1 ? 'Trial ends today' : `${daysLeft} days left in trial`,
-        day,
-        total_days: TRIAL_DAYS,
-        ends_label: `Ends ${ends.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+    if (live.every((r) => r.status === 'trialing')) {
+      // Trading-day LEDGER first. A v2 activation creates the subscription trialing
+      // with a ~60-day Stripe HOLD (the ledger ends it after five ELIGIBLE trading
+      // days), so deriving from current_period_end would tell that customer they have
+      // two months of trial. The ledger row is the authority when one is active.
+      const ledger = await customerQuery<{ eligible_days_used: string | null }>(
+        `SELECT eligible_days_used::text FROM trials
+          WHERE user_id = $1 AND status = 'active'
+          ORDER BY started_at DESC LIMIT 1`,
+        [customerId],
+      ).catch(() => [] as Array<{ eligible_days_used: string | null }>)
+
+      if (ledger[0]) {
+        const used = Math.min(TRIAL_ELIGIBLE_DAYS, Math.max(0, Number(ledger[0].eligible_days_used ?? 0)))
+        card.trial = {
+          label: trialLabel(used),
+          day: Math.min(TRIAL_ELIGIBLE_DAYS, used + 1),
+          total_days: TRIAL_ELIGIBLE_DAYS,
+          ends_label: 'Counts eligible trading days only',
+        }
+        return card
+      }
+
+      // Legacy (v1) trials: derived from Stripe's period end rather than invented.
+      const trialing = live.filter((r) => r.status === 'trialing' && r.current_period_end)
+      if (trialing.length > 0) {
+        const ends = new Date(trialing[0].current_period_end as string)
+        const msLeft = ends.getTime() - Date.now()
+        const daysLeft = Math.max(0, Math.ceil(msLeft / 86_400_000))
+        const day = Math.min(TRIAL_DAYS, Math.max(1, TRIAL_DAYS - daysLeft + 1))
+        card.trial = {
+          label: daysLeft <= 1 ? 'Trial ends today' : `${daysLeft} days left in trial`,
+          day,
+          total_days: TRIAL_DAYS,
+          ends_label: `Ends ${ends.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+        }
       }
     }
     return card
