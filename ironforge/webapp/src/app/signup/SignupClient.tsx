@@ -3,8 +3,8 @@
 import { useMemo, useState, useEffect } from 'react'
 import Link from 'next/link'
 import { US_STATES } from '@/lib/us-states'
-import { Wordmark } from '@/components/Brand'
 import HomeLink from '@/components/HomeLink'
+import EnrollShell from '@/app/enroll/EnrollShell'
 import type { Promo } from '@/lib/promo'
 import {
   checkPassword,
@@ -15,31 +15,6 @@ import {
 /* ── Inline glyphs (custom SVG, no emojis/stock icons) ─────────────── */
 
 const iconBase = 'h-4 w-4'
-
-function ShieldGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden="true">
-      <path d="M12 3l7 3v5c0 4.2-2.9 7.4-7 8.5-4.1-1.1-7-4.3-7-8.5V6l7-3z" stroke="#EE5A24" strokeWidth="1.6" strokeLinejoin="round" />
-      <path d="M9 12l2 2 4-4.2" stroke="#EE5A24" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function BoltGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden="true">
-      <path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z" stroke="#EE5A24" strokeWidth="1.6" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function BarsGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden="true">
-      <path d="M5 20V11M12 20V4M19 20v-6" stroke="#EE5A24" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  )
-}
 
 function UserIcon() {
   return (
@@ -242,50 +217,20 @@ export default function SignupClient() {
   }
 
   return (
-    <div className="min-h-screen bg-forge-bg bg-ember-glow px-4 py-8 sm:py-12">
-      <div className="mx-auto max-w-5xl">
-        <div className="mb-4 flex items-center justify-between text-sm text-gray-400">
-          <HomeLink />
-          <span>
-            Already have an account?{' '}
-            <Link href="/login" className="font-semibold text-amber-500 hover:text-amber-400">Log in</Link>
-          </span>
-        </div>
-
-        <div className="grid overflow-hidden rounded-2xl border border-white/10 bg-forge-card/60 shadow-2xl lg:grid-cols-[0.85fr_1fr]">
-          {/* Left brand panel */}
-          <aside className="relative hidden flex-col justify-between gap-10 border-r border-white/10 bg-gradient-to-b from-black/40 to-black/10 p-8 lg:flex">
-            <div>
-              <Link href="/" aria-label="IronForge home" className="inline-flex">
-                <Wordmark />
-              </Link>
-              <h2 className="mt-10 text-2xl font-bold leading-tight text-white">
-                Automated<br />Options<br />Execution
-              </h2>
-              <div className="fire-divider my-5 w-16" />
-              <p className="max-w-xs text-sm leading-relaxed text-gray-400">
-                Rules-based strategies. Automated execution. Built for traders who demand an edge.
-              </p>
-            </div>
-
-            <ul className="space-y-5">
-              <Feature glyph={<ShieldGlyph />} title="Secure & Transparent" body="Bank-grade security and total transparency." />
-              <Feature glyph={<BoltGlyph />} title="Automated Execution" body="Systematic strategies executed 24/7." />
-              <Feature glyph={<BarsGlyph />} title="You Stay in Control" body="You authorize. We execute. You decide." />
-            </ul>
-
-            <p className="text-[11px] leading-relaxed text-gray-600">
-              IronForge is not a broker dealer and does not provide investment advice.
-            </p>
-          </aside>
-
-          {/* Right form card */}
-          <div className="bg-forge-card/90 p-6 sm:p-8">
-            <h1 className="text-2xl font-bold text-white">Create your account</h1>
-            <p className="mt-2 text-sm leading-relaxed text-gray-400">
-              Start your setup for automated options execution. You will review disclosures, connect billing, and authorize your brokerage before anything is activated.
-            </p>
-            <div className="fire-divider my-5" />
+    // ACCT-01 (July 29 handoff): the same full-page split shell as the rest of
+    // enrollment — dark brand panel with the approved headline, slim top nav with the
+    // log-in affordance. The form itself is unchanged: fields, validation, promo flow
+    // and the /api/auth/signup contract are exactly what already runs in production.
+    <EnrollShell
+      headline="Built for disciplined execution."
+      subline="Create your account, choose your membership, and complete setup."
+      topRight="login"
+      maxWidthClass="max-w-2xl"
+    >
+      <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-6 lg:p-8">
+        <h1 className="text-2xl font-bold text-white">Create your account</h1>
+        <p className="mt-1 text-sm leading-relaxed text-gray-400">Enter your information to get started.</p>
+        <div className="fire-divider my-5" />
 
             <form onSubmit={onSubmit} noValidate className="space-y-4">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -393,23 +338,14 @@ export default function SignupClient() {
                 <LockSmall />
                 Your information is secure. We use bank-level encryption to protect your data.
               </p>
-            </form>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
-function Feature({ glyph, title, body }: { glyph: React.ReactNode; title: string; body: string }) {
-  return (
-    <li className="flex items-start gap-3">
-      <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-amber-900/40 bg-amber-950/20">{glyph}</span>
-      <div>
-        <p className="text-sm font-semibold text-white">{title}</p>
-        <p className="text-xs text-gray-400">{body}</p>
+              <p className="text-center text-sm text-gray-400">
+                Already have an account?{' '}
+                <Link href="/login" className="font-semibold text-amber-500 hover:text-amber-400">Log in</Link>
+              </p>
+            </form>
       </div>
-    </li>
+    </EnrollShell>
   )
 }
 
