@@ -101,6 +101,20 @@ describe('activation predicate (§4)', () => {
     expect(evaluateActivation({ ...READY, membership: 'past_due' }).ok).toBe(false)
   })
 
+  it("setup_ready MAY activate — the v2 order has no subscription row until activation creates it", () => {
+    expect(evaluateActivation({ ...READY, membership: 'setup_ready' })).toEqual({ ok: true, blockers: [] })
+  })
+
+  it("setup_ready still requires a valid payment method — it never waives the card check", () => {
+    const d = evaluateActivation({ ...READY, membership: 'setup_ready', paymentMethodValid: false })
+    expect(d.ok).toBe(false)
+    expect(d.blockers.map((b) => b.code)).toContain('PAYMENT_METHOD_INVALID')
+  })
+
+  it("a bare 'pending' membership (no sub row, no setup_required enrollment) still blocks", () => {
+    expect(evaluateActivation({ ...READY, membership: 'pending' }).ok).toBe(false)
+  })
+
   it('reports EVERY blocker so the customer is not fixed one at a time', () => {
     const d = evaluateActivation({ ...READY, brokerage: 'not_connected', agentConfig: 'draft', accountEligible: false })
     expect(d.blockers.map((b) => b.code).sort()).toEqual(

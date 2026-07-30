@@ -25,8 +25,16 @@ export type AgentConfigState = 'not_started' | 'draft' | 'valid' | 'stale' | 'ar
 export type TradingState = 'inactive' | 'activating' | 'active' | 'paused' | 'blocked' | 'revoked'
 export type TrialState = 'not_started' | 'active' | 'completed' | 'converted' | 'canceled'
 
-/** Membership states, read from customer_bot_subscriptions.status (Stripe's vocabulary). */
-export type MembershipState = 'pending' | 'active' | 'past_due' | 'paused' | 'canceled'
+/**
+ * Membership states, read from customer_bot_subscriptions.status (Stripe's vocabulary),
+ * plus one synthesized value: 'setup_ready' — no subscription row exists YET because the
+ * v2 order is card-at-$0 then subscribe-at-activation, but the enrollment is in
+ * setup_required with a payment method on file. It is the "setup_required-equivalent"
+ * state the activation predicate's contract names; without it v2 activation would be
+ * permanently blocked by MEMBERSHIP_NOT_ACTIVE (no sub row can exist before activation
+ * creates one).
+ */
+export type MembershipState = 'pending' | 'setup_ready' | 'active' | 'past_due' | 'paused' | 'canceled'
 
 type Transitions<S extends string> = Readonly<Record<S, readonly S[]>>
 

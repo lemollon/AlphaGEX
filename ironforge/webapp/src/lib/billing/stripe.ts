@@ -320,17 +320,23 @@ export async function getOrCreateCustomer(opts: {
 export async function createSetupCheckout(opts: {
   customerId: string
   userId: string
-  bot: string
+  /** Absent on the enrollment-funnel path — the agent isn't chosen until AGENT-01. */
+  bot?: string
+  /** Lets the webhook advance the right enrollment when the session completes. */
+  enrollmentId?: string
   successUrl: string
   cancelUrl: string
 }): Promise<{ id: string; url: string }> {
+  // Carried so the webhook and the later activation can attribute this back.
+  const metadata: Record<string, string> = { ironforge_user_id: opts.userId }
+  if (opts.bot) metadata.bot = opts.bot
+  if (opts.enrollmentId) metadata.enrollment_id = opts.enrollmentId
   return stripeRequest<{ id: string; url: string }>('POST', '/checkout/sessions', {
     mode: 'setup',
     customer: opts.customerId,
     success_url: opts.successUrl,
     cancel_url: opts.cancelUrl,
-    // Carried so the webhook and the later activation can attribute this back.
-    metadata: { ironforge_user_id: opts.userId, bot: opts.bot },
+    metadata,
   })
 }
 

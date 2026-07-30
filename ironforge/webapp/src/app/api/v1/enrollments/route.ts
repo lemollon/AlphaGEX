@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { isCustomersDbConfigured } from '@/lib/customers-db'
-import { createOrResumeEnrollment, ensureLegalDocumentsSeeded, nextStepFor } from '@/lib/enrollment/service'
+import { advanceBillingIfComplete, createOrResumeEnrollment, ensureLegalDocumentsSeeded, nextStepFor } from '@/lib/enrollment/service'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
 
 export const runtime = 'nodejs'
@@ -30,9 +30,14 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await req.json().catch(() => ({}))) as { source?: unknown }
     await ensureLegalDocumentsSeeded()
-    const enrollment = await createOrResumeEnrollment(
-      session.customerId,
-      typeof body.source === 'string' ? body.source.slice(0, 60) : undefined,
+    // Resume-time billing advancement: the customer returning from hosted Checkout may
+    // beat the Stripe webhook here. Re-deriving the transition from Stripe state makes
+    // the funnel immune to webhook lag; nothing advances that isn't provably paid/saved.
+    const enrollment = await advanceBillingIfComplete(
+      await createOrResumeEnrollment(
+        session.customerId,
+        typeof body.source === 'string' ? body.source.slice(0, 60) : undefined,
+      ),
     )
     return NextResponse.json({
       enrollment: {
