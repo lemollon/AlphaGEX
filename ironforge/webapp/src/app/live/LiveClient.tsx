@@ -11,6 +11,7 @@ import LiveHeader from './components/LiveHeader'
 import CustomerShell from '@/components/customer/CustomerShell'
 import CheckoutNotice from '@/components/customer/CheckoutNotice'
 import SparkHeroCard from './components/SparkHeroCard'
+import ActivationConfirmationCard from './components/ActivationConfirmationCard'
 import LiveTradeCard from './components/LiveTradeCard'
 import SwingTradeCards from './components/SwingTradeCards'
 import NowTimelineCard from './components/NowTimelineCard'
@@ -111,7 +112,20 @@ export default function LiveClient() {
               can briefly see a dashboard that says they own nothing. */}
           <CheckoutNotice labels={LIVE_BOT_LABEL} />
           <LiveHeader viewer={summary?.viewer ?? null} onSwitch={switchAccount} />
-          {summary?.empty ? (
+          {summary?.empty && summary.activation_confirmation ? (
+            /* DASH-FIRST-01, empty-viewer case: a JUST-ACTIVATED customer has no
+               ironforge_customer_bots mapping yet, so the summary is empty — but
+               showing them the "Put a bot to work" conversion CTAs would read as
+               "your activation didn't happen". The confirmation card is the truthful
+               state: authorized, waiting, account provisioning in progress. */
+            <div className="mt-4 flex flex-col gap-4">
+              <ActivationConfirmationCard confirmation={summary.activation_confirmation} />
+              <div className="rounded-xl border border-forge-border bg-forge-card/60 p-5 text-sm leading-relaxed text-gray-400">
+                Your dashboard is being provisioned — live trade data appears here once your account
+                is fully linked. Nothing is required from you.
+              </div>
+            </div>
+          ) : summary?.empty ? (
             /* No bot mapped — a conversion surface, not a dashboard. Live paper
                results live on /bot-ledger. Customers WITH a mapped bot never reach
                this branch.
@@ -195,7 +209,15 @@ export default function LiveClient() {
                 </div>
               ) : null}
               <div className="order-1">
-                <SparkHeroCard state={summary?.state ?? null} market={summary?.market ?? null} bot={account} />
+                {/* DASH-FIRST-01: the first entry after activation temporarily replaces
+                    the status card with the confirmation (once per activation id — the
+                    card stamps itself seen on mount); afterwards the normal runtime
+                    states return. Replaces, never stacks (no second banner). */}
+                {summary?.activation_confirmation ? (
+                  <ActivationConfirmationCard confirmation={summary.activation_confirmation} />
+                ) : (
+                  <SparkHeroCard state={summary?.state ?? null} market={summary?.market ?? null} bot={account} />
+                )}
               </div>
               {/* A SWING is live when two positions are open at once — yesterday's held
                   leg plus today's new one. Only SPARK swings, so only SPARK reaches this

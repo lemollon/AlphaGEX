@@ -104,6 +104,18 @@ export interface LiveSummary {
     /** Static placeholder until billing/trial state is modeled in the DB. */
     trial?: { label: string; day: number; total_days: number; ends_label: string } | null
   }
+  /**
+   * DASH-FIRST-01: present while the newest activation's first-entry confirmation has
+   * not been acknowledged. Also present on the `empty` branch — a just-activated
+   * customer has no bot mapping yet, and that is exactly when this must render.
+   */
+  activation_confirmation?: {
+    activation_id: string
+    agent: string
+    account_mask: string | null
+    trial_day: number
+    trial_total: number
+  } | null
   as_of: string
 }
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getLiveSummary } from '@/lib/live/summary'
 import { resolveLiveViewer } from '@/lib/live/viewer'
 import { getMembership } from '@/lib/live/membership'
+import { getActivationConfirmation } from '@/lib/live/activation-confirmation'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,10 +15,15 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   try {
     const viewer = await resolveLiveViewer(req)
+    // DASH-FIRST-01: attached BEFORE the empty-return on purpose — a just-activated
+    // customer typically has no ironforge_customer_bots mapping yet, so their first
+    // entry lands on the empty branch, and that is exactly the moment the activation
+    // confirmation must render.
+    const activationConfirmation = await getActivationConfirmation(viewer.customerId)
     if (!viewer.bot) {
       // Viewer has no live account (fresh signup / anonymous): empty state,
       // never another account's data.
-      return NextResponse.json({ empty: true, viewer })
+      return NextResponse.json({ empty: true, viewer, activation_confirmation: activationConfirmation })
     }
     const [summary, membership] = await Promise.all([
       getLiveSummary(viewer.bot, {
@@ -29,7 +35,7 @@ export async function GET(req: NextRequest) {
       // this replaces it with the viewer's actual plan/trial where one exists.
       getMembership(viewer.customerId),
     ])
-    return NextResponse.json({ ...summary, membership, viewer })
+    return NextResponse.json({ ...summary, membership, viewer, activation_confirmation: activationConfirmation })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })

@@ -412,6 +412,11 @@ CREATE TABLE IF NOT EXISTS oauth_states (
 CREATE INDEX IF NOT EXISTS idx_oauth_states_expiry ON oauth_states(expires_at);
 ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS return_to TEXT;
 
+-- DASH-FIRST-01: the first-entry confirmation renders ONCE per activation. A server
+-- field, not client storage, because the flow crosses a hard redirect (/enroll → /live)
+-- and a fresh device must not re-show it.
+ALTER TABLE activations ADD COLUMN IF NOT EXISTS confirmation_shown_at TIMESTAMPTZ;
+
 -- "Repeated payment or activation requests create one logical result" (§12).
 CREATE TABLE IF NOT EXISTS idempotency_keys (
   key TEXT NOT NULL,
