@@ -7,16 +7,24 @@ import EnrollShell from '../EnrollShell'
 import { useEnrollment } from '../useEnrollment'
 
 /**
- * BROKER-01 — Connect brokerage (July 29 handoff).
+ * BROKER-01 — Connect brokerage (July 29 handoff + 7/30 dual-path directive).
  *
- * Four tiles: Tradier (direct OAuth), tastytrade, Robinhood (SnapTrade hosted portal),
- * and a disabled "More brokerages — Coming soon". tastytrade has no integration yet;
- * per the approved visual it is shown alongside the others, and its Connect opens a
- * graceful "not yet supported / notify me" state that records a BROKER_INTEREST event
- * instead of dead-ending. Tiles are text lockups, visually equal — official broker
- * marks are NOT used until the production asset rights are cleared (Appendix A gate).
+ * EVERY broker tile offers TWO doors: "Connect account" for a customer who already
+ * has one, and "Open new account ↗" (broker's own signup, new tab) for one who
+ * doesn't — with the single piece of guidance that prevents the most common later
+ * failure: enable options trading (defined-risk spreads) while opening the account.
  *
- * After the OAuth round-trip (?connected=1) the account list renders with the stored
+ * Lanes per SnapTrade's institution matrix (support.snaptrade.com/brokerages, 7/30):
+ *  - Tradier    → our direct OAuth (503 until partner creds land)
+ *  - tastytrade → SnapTrade hosted portal; multi-leg options trading is GA there,
+ *                 so this is a REAL lane today
+ *  - Robinhood  → SnapTrade DATA-ONLY (no trading of any kind); connect works but
+ *                 accounts are honestly marked broker-limited
+ *
+ * Tiles are text lockups, visually equal — official broker marks are NOT used until
+ * the production asset rights are cleared (Appendix A gate).
+ *
+ * After the round-trip (?connected=1) the account list renders with the stored
  * eligibility verdicts: exactly one eligible account is auto-selected; several require
  * an explicit choice; none shows the remediable reason for each. Selection goes through
  * PUT /v1/enrollments/{id}/broker-account, which re-validates ownership + eligibility
@@ -40,11 +48,40 @@ interface Conn {
 /** sessionStorage key the agent screen reads the selected account from. */
 export const SELECTED_ACCOUNT_KEY = 'enroll_broker_account'
 
-const TILES = [
-  { key: 'tradier', name: 'Tradier' },
-  { key: 'tastytrade', name: 'tastytrade' },
-  { key: 'robinhood', name: 'Robinhood' },
-] as const
+interface Tile {
+  key: 'tradier' | 'tastytrade' | 'robinhood'
+  name: string
+  /** How "Connect account" starts: our OAuth, or the SnapTrade portal with this slug. */
+  connect: { kind: 'oauth' } | { kind: 'snaptrade'; slug: string }
+  /** The broker's own account-opening page — "Open new account" opens it in a new tab. */
+  openUrl: string
+  /** The one thing to get right while opening a new account there. */
+  openNote: string
+}
+
+const TILES: readonly Tile[] = [
+  {
+    key: 'tradier',
+    name: 'Tradier',
+    connect: { kind: 'oauth' },
+    openUrl: 'https://tradier.com/signup',
+    openNote: 'Choose a margin account and request options level 3 (spreads) during signup.',
+  },
+  {
+    key: 'tastytrade',
+    name: 'tastytrade',
+    connect: { kind: 'snaptrade', slug: 'TASTYTRADE' },
+    openUrl: 'https://open.tastytrade.com/signup',
+    openNote: 'Choose a margin account and enable options trading with defined-risk spreads.',
+  },
+  {
+    key: 'robinhood',
+    name: 'Robinhood',
+    connect: { kind: 'snaptrade', slug: 'ROBINHOOD' },
+    openUrl: 'https://robinhood.com/signup',
+    openNote: 'Robinhood accounts can be viewed here, but Robinhood does not yet allow automated trading.',
+  },
+]
 
 export default function BrokerClient() {
   const { enrollment, busy, setBusy, error, setError, call, router } = useEnrollment('broker')
@@ -52,8 +89,8 @@ export default function BrokerClient() {
   const [conns, setConns] = useState<Conn[] | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [confirmedMask, setConfirmedMask] = useState<string | null>(null)
-  const [tastyOpen, setTastyOpen] = useState(false)
-  const [tastyNotified, setTastyNotified] = useState(false)
+  /** Which tile's "Open new account" guidance is showing. */
+  const [openGuide, setOpenGuide] = useState<string | null>(null)
 
   const oauthError = params.get('error') === '1'
   const oauthIncomplete = params.get('incomplete') === '1'
@@ -72,13 +109,13 @@ export default function BrokerClient() {
     loadAccounts().catch((e) => setError(e instanceof Error ? e.message : 'Could not load your brokerage connections.'))
   }, [enrollment, loadAccounts, setError])
 
-  /** Tradier: our own OAuth. Robinhood: SnapTrade hosted portal. */
-  async function connect(provider: 'tradier' | 'robinhood') {
+  /** Tradier: our own OAuth. Everything else: SnapTrade hosted portal with the slug. */
+  async function connect(tile: Tile) {
     setBusy(true)
     setError(null)
     try {
       const d =
-        provider === 'tradier'
+        tile.connect.kind === 'oauth'
           ? await call('/api/onboarding/brokerage/tradier/connect', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
@@ -87,26 +124,13 @@ export default function BrokerClient() {
           : await call('/api/onboarding/brokerage/connect', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ broker: 'ROBINHOOD', return_to: 'enroll' }),
+              body: JSON.stringify({ broker: tile.connect.slug, return_to: 'enroll' }),
             })
       window.location.assign(d.redirectURI)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start the connection.')
       setBusy(false)
     }
-  }
-
-  async function notifyTastytrade() {
-    try {
-      await call('/api/onboarding/brokerage/interest', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ broker: 'tastytrade' }),
-      })
-    } catch {
-      // Interest logging is best-effort; the acknowledgment below is still honest.
-    }
-    setTastyNotified(true)
   }
 
   async function continueWithAccount() {
@@ -169,12 +193,17 @@ export default function BrokerClient() {
               <button
                 type="button"
                 disabled={busy}
-                onClick={() =>
-                  t.key === 'tastytrade' ? setTastyOpen(true) : connect(t.key as 'tradier' | 'robinhood')
-                }
+                onClick={() => connect(t)}
                 className="mt-3 w-full rounded-lg bg-amber-500 px-3 py-2 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Connect
+                Connect account
+              </button>
+              <button
+                type="button"
+                onClick={() => setOpenGuide((k) => (k === t.key ? null : t.key))}
+                className="mt-2 text-xs font-semibold text-gray-400 underline-offset-2 transition hover:text-white hover:underline"
+              >
+                Don&rsquo;t have one? Open an account
               </button>
             </div>
           ))}
@@ -185,39 +214,39 @@ export default function BrokerClient() {
           </div>
         </div>
 
-        {tastyOpen ? (
-          <div className="mt-4 rounded-xl border border-forge-border bg-black/20 p-4">
-            {tastyNotified ? (
-              <p className="text-sm text-gray-300">
-                <span className="font-semibold text-emerald-400">Got it.</span> We&rsquo;ll let you know the moment
-                tastytrade connections open.
-              </p>
-            ) : (
-              <>
-                <p className="text-sm text-gray-300">
-                  <strong className="text-white">tastytrade connections aren&rsquo;t open quite yet.</strong> We&rsquo;re
-                  finishing the integration. Want an email when it&rsquo;s ready?
-                </p>
-                <div className="mt-3 flex gap-3">
-                  <button
-                    type="button"
-                    onClick={notifyTastytrade}
-                    className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400"
-                  >
-                    Notify me
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTastyOpen(false)}
-                    className="rounded-lg border border-white/15 px-4 py-2 text-sm text-gray-300 transition hover:text-white"
-                  >
-                    Not now
-                  </button>
+        {openGuide
+          ? (() => {
+              const t = TILES.find((x) => x.key === openGuide)
+              if (!t) return null
+              return (
+                <div className="mt-4 rounded-xl border border-forge-border bg-black/20 p-4">
+                  <p className="text-sm text-gray-300">
+                    <strong className="text-white">Opening a new {t.name} account?</strong> {t.openNote} Account
+                    opening happens on {t.name}&rsquo;s site and usually takes 10–15 minutes plus approval time.
+                    Once it&rsquo;s open and funded, come back here and hit{' '}
+                    <span className="font-semibold text-gray-100">Connect account</span>.
+                  </p>
+                  <div className="mt-3 flex gap-3">
+                    <a
+                      href={t.openUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400"
+                    >
+                      Open a {t.name} account ↗
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setOpenGuide(null)}
+                      className="rounded-lg border border-white/15 px-4 py-2 text-sm text-gray-300 transition hover:text-white"
+                    >
+                      Close
+                    </button>
+                  </div>
                 </div>
-              </>
-            )}
-          </div>
-        ) : null}
+              )
+            })()
+          : null}
 
         {/* Connected accounts + selection */}
         {hasConnections ? (

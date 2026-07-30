@@ -20,6 +20,25 @@ export const MIN_OPTIONS_LEVEL = 3
 /** Below this, position sizing cannot produce a legal spread. Mirrors the scanner's >$200 gate. */
 export const MIN_BUYING_POWER = 200
 
+/**
+ * SnapTrade brokers where MULTI-LEG option trading is Generally Available per
+ * SnapTrade's institution support matrix (support.snaptrade.com/brokerages, checked
+ * 2026-07-30). These brokers don't expose an options approval level through SnapTrade,
+ * so the options gate for them is CAPABILITY-based: the platform can preview and place
+ * defined-risk spreads, and a permissions rejection at order preview is the enforcement
+ * backstop. Deliberately starts with tastytrade only — the lane we ship first; widening
+ * it is a one-line diff made per broker, never by default.
+ */
+export const SNAPTRADE_MLEG_SLUGS = new Set(['TASTYTRADE'])
+
+/**
+ * SnapTrade brokers that are DATA-ONLY (no trading of any kind in the matrix).
+ * Robinhood connections import accounts we can read but can never trade — saying
+ * "options approval required" there would send a customer to fix something that
+ * cannot make the account usable. BROKER_LIMITATION is the honest verdict.
+ */
+export const SNAPTRADE_DATA_ONLY_SLUGS = new Set(['ROBINHOOD'])
+
 export type IneligibleCode =
   | 'OPTIONS_APPROVAL'
   | 'ACCOUNT_TYPE'
@@ -37,6 +56,13 @@ export interface BrokerAccountFacts {
   buyingPower?: number | null
   /** Broker says this account cannot be traded via API, whatever else is true. */
   brokerBlocked?: boolean
+  /**
+   * Normalized SnapTrade institution slug (e.g. 'TASTYTRADE'), when the account came
+   * through SnapTrade. Selects the capability-based options gate for mleg-capable
+   * brokers and the honest data-only refusal for read-only ones. Absent for direct
+   * integrations (Tradier OAuth), which report a real options level.
+   */
+  brokerSlug?: string | null
 }
 
 export interface EligibilityVerdict {
@@ -44,14 +70,25 @@ export interface EligibilityVerdict {
   code?: IneligibleCode
   /** User-safe and REMEDIABLE where possible — tells them what to change. */
   reason?: string
+  /** How the options gate was satisfied — audit detail, never shown raw to customers. */
+  optionsVerification?: 'broker_level' | 'platform_capability'
 }
 
 /** Cash accounts cannot hold the short leg of a defined-risk spread. */
 const TRADEABLE_TYPES = new Set(['margin', 'ira', 'roth', 'rollover'])
 
+/** Broker type strings vary ('MARGIN', 'Individual Margin', ...) — normalize + contains. */
+function isTradeableType(raw: string): boolean {
+  if (TRADEABLE_TYPES.has(raw)) return true
+  return raw.includes('margin') || raw.includes('ira') || raw.includes('roth') || raw.includes('rollover')
+}
+
 export function evaluateAccountEligibility(a: Partial<BrokerAccountFacts>): EligibilityVerdict {
+  const slug = a.brokerSlug ? String(a.brokerSlug).toUpperCase() : null
+
   // A broker-level block beats everything else — no amount of customer action fixes it.
-  if (a.brokerBlocked === true) {
+  // SnapTrade data-only brokers (Robinhood) are exactly this: readable, never tradable.
+  if (a.brokerBlocked === true || (slug && SNAPTRADE_DATA_ONLY_SLUGS.has(slug))) {
     return {
       eligible: false,
       code: 'BROKER_LIMITATION',
@@ -69,7 +106,7 @@ export function evaluateAccountEligibility(a: Partial<BrokerAccountFacts>): Elig
 
   // Unknown type is NOT assumed tradeable.
   const type = a.accountType == null ? null : String(a.accountType).toLowerCase()
-  if (!type || !TRADEABLE_TYPES.has(type)) {
+  if (!type || !isTradeableType(type)) {
     return {
       eligible: false,
       code: 'ACCOUNT_TYPE',
@@ -79,9 +116,16 @@ export function evaluateAccountEligibility(a: Partial<BrokerAccountFacts>): Elig
     }
   }
 
-  // Unknown approval level is NOT assumed sufficient — this is the gate that decides
-  // whether a spread can legally be placed at all.
-  if (a.optionsLevel == null || a.optionsLevel < MIN_OPTIONS_LEVEL) {
+  // The options gate, two ways of satisfying it:
+  //  - broker_level: the broker reports a real approval level (Tradier direct OAuth).
+  //    Unknown or too-low is NOT assumed sufficient.
+  //  - platform_capability: an mleg-capable SnapTrade broker (tastytrade). SnapTrade
+  //    exposes no approval level, so the level read is impossible; the platform's
+  //    ability to preview/place defined-risk spreads is the gate, and a permissions
+  //    rejection at order preview is the enforcement backstop. This is a deliberate
+  //    per-broker decision, never a default.
+  const capabilityGate = slug != null && SNAPTRADE_MLEG_SLUGS.has(slug) && a.optionsLevel == null
+  if (!capabilityGate && (a.optionsLevel == null || a.optionsLevel < MIN_OPTIONS_LEVEL)) {
     return {
       eligible: false,
       code: 'OPTIONS_APPROVAL',
@@ -99,7 +143,17 @@ export function evaluateAccountEligibility(a: Partial<BrokerAccountFacts>): Elig
     }
   }
 
-  return { eligible: true }
+  return { eligible: true, optionsVerification: capabilityGate ? 'platform_capability' : 'broker_level' }
+}
+
+/**
+ * SnapTrade returns institution DISPLAY names ('tastytrade', 'Robinhood', 'Webull US');
+ * the capability sets key on slugs. Normalize: uppercase, alphanumeric only.
+ */
+export function normalizeInstitutionSlug(name: string | null | undefined): string | null {
+  if (!name) return null
+  const s = String(name).toUpperCase().replace(/[^A-Z0-9]/g, '')
+  return s.length ? s : null
 }
 
 /**

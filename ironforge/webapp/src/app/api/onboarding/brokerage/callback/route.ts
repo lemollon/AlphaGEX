@@ -3,7 +3,7 @@ import { publicOrigin } from '@/lib/public-origin'
 import { resolveCustomerUserId } from '@/lib/brokerage/identity'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { decryptSecret, encryptSecret } from '@/lib/crypto/secret-box'
-import { evaluateAccountEligibility, maskAccountNumber } from '@/lib/enrollment/eligibility'
+import { evaluateAccountEligibility, maskAccountNumber, normalizeInstitutionSlug } from '@/lib/enrollment/eligibility'
 import { isCustomersDbConfigured, customerQuery, customerExecute, customerTransaction } from '@/lib/customers-db'
 import { syncBrokerageConnectionToAttio } from '@/lib/attio'
 
@@ -71,6 +71,27 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(brokerageStep)
     }
 
+    // Buying power per account, fetched BEFORE the transaction (network calls don't
+    // belong inside it). Best-effort: a failed balance read stores null, and the
+    // BUYING_POWER gate fails closed with a remediable reason — reconnecting refreshes.
+    // Without this fetch every SnapTrade account failed eligibility on a null balance
+    // even when the options gate was satisfiable.
+    const balances = new Map<string, number | null>()
+    for (const a of accounts) {
+      try {
+        const bal = await snaptrade.accountInformation.getUserAccountBalance({
+          userId: user.snaptrade_user_id,
+          userSecret,
+          accountId: a.id,
+        })
+        const rows = Array.isArray(bal.data) ? (bal.data as Array<{ buying_power?: number | null; cash?: number | null }>) : []
+        const usd = rows[0]
+        balances.set(a.id, usd?.buying_power ?? usd?.cash ?? null)
+      } catch {
+        balances.set(a.id, null)
+      }
+    }
+
     await customerTransaction(async (run) => {
       // Re-sync: replace this user's connection rows with the current account set.
       await run(`DELETE FROM brokerage_connections WHERE user_id = $1`, [user.id])
@@ -106,13 +127,18 @@ export async function GET(req: NextRequest) {
           number?: string; status?: string; meta?: { type?: string }; raw_type?: string
         }
         const acctRef = String(meta.number ?? a.id)
+        const bp = balances.get(a.id) ?? null
+        // SnapTrade exposes no options approval level. Eligibility is slug-aware:
+        // mleg-capable brokers (tastytrade) pass the options gate on platform
+        // capability; data-only brokers (Robinhood) get the honest BROKER_LIMITATION
+        // instead of an unfixable "options approval required".
         const verdict = evaluateAccountEligibility({
           externalRef: acctRef,
           accountType: meta.meta?.type ?? meta.raw_type ?? null,
-          // Not available from SnapTrade — fails closed by design, see above.
           optionsLevel: null,
           status: meta.status ?? 'active',
-          buyingPower: null,
+          buyingPower: bp,
+          brokerSlug: normalizeInstitutionSlug(a.institution_name),
         })
         await run(
           `INSERT INTO broker_accounts
@@ -127,7 +153,7 @@ export async function GET(req: NextRequest) {
             null,
             verdict.eligible ? 'eligible' : 'ineligible',
             verdict.reason ?? null,
-            null,
+            bp == null ? null : Math.round(bp * 100),
           ],
         )
       }
