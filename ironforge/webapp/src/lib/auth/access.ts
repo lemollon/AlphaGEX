@@ -103,6 +103,13 @@ export function isCustomerPath(pathname: string): boolean {
   // The route-per-screen enrollment funnel (/enroll/plan, /enroll/legal, ...) — every
   // screen operates on the caller's own server-owned enrollment, so identity first.
   if (pathname.startsWith('/enroll/')) return true
+  // The enrollment v1 API contract. Without this clause the middleware never even
+  // READS the customer cookie for /api/v1/* (decideAccess got hasCustomerSession =
+  // false) and 401'd every call — the whole enrollment API was unreachable by real
+  // customers while every unit test passed. Found by the first live E2E walk.
+  // The routes still self-guard with getCustomerSession; this only lets the
+  // middleware consider the customer cookie at all.
+  if (pathname.startsWith('/api/v1/')) return true
   // Sparky support chat — customer-session guarded (also self-guards in-route).
   if (pathname.startsWith('/api/support/')) return true
   return CUSTOMER_EXACT.has(pathname)
