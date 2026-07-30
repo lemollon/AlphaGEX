@@ -29,6 +29,7 @@ interface ConnectionRow {
 }
 
 interface AccountRow {
+  id: string
   connection_id: string
   display_mask: string | null
   eligibility: string | null
@@ -57,7 +58,7 @@ export async function GET() {
     // Ownership through the connection join, never the account id alone.
     const accounts = conns.length
       ? await customerQuery<AccountRow>(
-          `SELECT ba.connection_id, ba.display_mask, ba.eligibility, ba.ineligible_reason,
+          `SELECT ba.id, ba.connection_id, ba.display_mask, ba.eligibility, ba.ineligible_reason,
                   ba.buying_power_cents
              FROM broker_accounts ba
              JOIN brokerage_connections bc ON bc.id = ba.connection_id
@@ -79,6 +80,9 @@ export async function GET() {
         accounts: accounts
           .filter((a) => a.connection_id === c.id)
           .map((a) => ({
+            // broker_accounts.id — what PUT /v1/enrollments/{id}/broker-account selects
+            // by (ownership still re-checked server-side through the connection join).
+            id: a.id,
             mask: a.display_mask,
             eligibility: a.eligibility,
             ineligible_reason: a.ineligible_reason,

@@ -397,6 +397,9 @@ CREATE INDEX IF NOT EXISTS idx_trials_status ON trials(status);
 -- one-time callback + short expiry). A stateless signed token cannot give the last
 -- two: single-use needs a record to mark, and a verifier that travels with the
 -- request defeats the point of PKCE. 10-minute TTL per §3 BROKER-01.
+-- return_to: which surface initiated the OAuth round-trip ('enroll' | 'onboarding').
+-- An allowlisted literal resolved to a fixed route at callback time — NEVER a raw URL,
+-- so it cannot become an open redirect.
 CREATE TABLE IF NOT EXISTS oauth_states (
   state TEXT PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id),
@@ -407,6 +410,7 @@ CREATE TABLE IF NOT EXISTS oauth_states (
   consumed_at TIMESTAMPTZ                            -- set exactly once; enforces one-time use
 );
 CREATE INDEX IF NOT EXISTS idx_oauth_states_expiry ON oauth_states(expires_at);
+ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS return_to TEXT;
 
 -- "Repeated payment or activation requests create one logical result" (§12).
 CREATE TABLE IF NOT EXISTS idempotency_keys (

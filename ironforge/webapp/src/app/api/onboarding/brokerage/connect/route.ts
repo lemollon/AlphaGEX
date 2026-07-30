@@ -27,10 +27,14 @@ export async function POST(req: NextRequest) {
 
   // Optional broker slug from the "Choose your broker" dropdown. When present, SnapTrade opens the
   // connection portal directly to that brokerage; when absent, the portal shows the full list.
+  // return_to: which surface initiated this ('enroll' funnel vs legacy onboarding) — an
+  // allowlisted literal carried on our own callback URL, never a caller-supplied URL.
   let broker: string | undefined
+  let returnTo: 'enroll' | undefined
   try {
-    const body = (await req.json().catch(() => null)) as { broker?: unknown } | null
+    const body = (await req.json().catch(() => null)) as { broker?: unknown; return_to?: unknown } | null
     if (body && typeof body.broker === 'string' && body.broker.trim()) broker = body.broker.trim()
+    if (body?.return_to === 'enroll') returnTo = 'enroll'
   } catch {
     // no/invalid body — fine, fall through to the full-list portal
   }
@@ -67,7 +71,7 @@ export async function POST(req: NextRequest) {
       userId: user.id,
       userSecret,
       connectionType: 'trade',
-      customRedirect: `${publicOrigin(req)}/api/onboarding/brokerage/callback`,
+      customRedirect: `${publicOrigin(req)}/api/onboarding/brokerage/callback${returnTo ? `?return_to=${returnTo}` : ''}`,
       ...(broker ? { broker } : {}),
     })
     const redirectURI = (login.data as { redirectURI?: string }).redirectURI

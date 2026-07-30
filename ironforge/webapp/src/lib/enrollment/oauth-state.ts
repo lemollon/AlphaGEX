@@ -25,11 +25,19 @@ import { customerQuery, customerExecute } from '@/lib/customers-db'
 /** §3 BROKER-01. */
 const STATE_TTL_MS = 10 * 60 * 1000
 
+/** Which surface initiated the round-trip. An allowlisted literal, never a URL. */
+export type OAuthReturnTo = 'enroll' | 'onboarding'
+
+export function asReturnTo(v: unknown): OAuthReturnTo {
+  return v === 'enroll' ? 'enroll' : 'onboarding'
+}
+
 export interface OAuthStateRecord {
   state: string
   userId: string
   brokerCode: string
   codeVerifier: string | null
+  returnTo: OAuthReturnTo
 }
 
 function b64url(buf: Buffer): string {
@@ -56,14 +64,16 @@ export async function createOAuthState(opts: {
   brokerCode: string
   /** Only send a challenge to providers that support PKCE — see tradier-oauth.ts. */
   pkce: boolean
+  /** Where the callback should land the customer. Allowlisted literal, never a URL. */
+  returnTo?: OAuthReturnTo
 }): Promise<{ state: string; codeChallenge?: string }> {
   const state = b64url(randomBytes(32))
   const verifier = opts.pkce ? generateCodeVerifier() : null
 
   await customerExecute(
-    `INSERT INTO oauth_states (state, user_id, broker_code, code_verifier, expires_at)
-     VALUES ($1, $2, $3, $4, now() + interval '10 minutes')`,
-    [state, opts.userId, opts.brokerCode, verifier],
+    `INSERT INTO oauth_states (state, user_id, broker_code, code_verifier, expires_at, return_to)
+     VALUES ($1, $2, $3, $4, now() + interval '10 minutes', $5)`,
+    [state, opts.userId, opts.brokerCode, verifier, asReturnTo(opts.returnTo)],
   )
 
   return verifier ? { state, codeChallenge: codeChallengeS256(verifier) } : { state }
@@ -84,19 +94,25 @@ export async function createOAuthState(opts: {
 export async function consumeOAuthState(state: string | null | undefined): Promise<OAuthStateRecord | null> {
   if (!state) return null
   const rows = await customerQuery<{
-    state: string; user_id: string; broker_code: string; code_verifier: string | null
+    state: string; user_id: string; broker_code: string; code_verifier: string | null; return_to: string | null
   }>(
     `UPDATE oauth_states
         SET consumed_at = now()
       WHERE state = $1
         AND consumed_at IS NULL
         AND expires_at > now()
-      RETURNING state, user_id, broker_code, code_verifier`,
+      RETURNING state, user_id, broker_code, code_verifier, return_to`,
     [state],
   )
   const r = rows[0]
   if (!r) return null
-  return { state: r.state, userId: r.user_id, brokerCode: r.broker_code, codeVerifier: r.code_verifier }
+  return {
+    state: r.state,
+    userId: r.user_id,
+    brokerCode: r.broker_code,
+    codeVerifier: r.code_verifier,
+    returnTo: asReturnTo(r.return_to),
+  }
 }
 
 /**
