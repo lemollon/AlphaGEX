@@ -8,6 +8,7 @@ import EnrollShell from '@/app/enroll/EnrollShell'
 import type { Promo } from '@/lib/promo'
 import {
   checkPassword,
+  isValidUsername,
   validateSignup,
   type SignupPayload,
 } from '@/lib/signup-validation'
@@ -137,7 +138,7 @@ const PASSWORD_RULE_LABELS: Array<{ key: keyof ReturnType<typeof checkPassword>[
 ]
 
 const EMPTY: SignupPayload = {
-  firstName: '', lastName: '', email: '', phone: '', state: '',
+  firstName: '', lastName: '', username: '', email: '', phone: '', state: '',
   password: '', confirmPassword: '', referralCode: '',
   ageConfirmed: false, noAdviceAcknowledged: false, electronicCommConsent: false,
 }
@@ -153,6 +154,22 @@ export default function SignupClient() {
   const [promoCode, setPromoCode] = useState('')
   const [promo, setPromo] = useState<Promo | null>(null)
   const [promoChecking, setPromoChecking] = useState(false)
+  // Live username availability (UX only — the signup POST re-checks under the
+  // unique index). null = nothing to say yet.
+  const [usernameFree, setUsernameFree] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    const u = form.username.trim()
+    if (!isValidUsername(u)) { setUsernameFree(null); return }
+    let live = true
+    const t = setTimeout(() => {
+      fetch(`/api/public/username-check?u=${encodeURIComponent(u)}`)
+        .then((r) => r.json())
+        .then((d) => { if (live) setUsernameFree(d?.valid ? Boolean(d.available) : null) })
+        .catch(() => { if (live) setUsernameFree(null) })
+    }, 350)
+    return () => { live = false; clearTimeout(t) }
+  }, [form.username])
 
   // Validate a code against the public promo list (debounced on change / on mount).
   useEffect(() => {
@@ -237,6 +254,17 @@ export default function SignupClient() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field id="firstName" label="First Name" placeholder="First Name" icon={<UserIcon />} autoComplete="given-name" value={form.firstName} error={errors.firstName} onChange={(v) => set('firstName', v)} />
                 <Field id="lastName" label="Last Name" placeholder="Last Name" icon={<UserIcon />} autoComplete="family-name" value={form.lastName} error={errors.lastName} onChange={(v) => set('lastName', v)} />
+              </div>
+
+              <div>
+                <Field id="username" label="Username" placeholder="Choose a username" icon={<UserIcon />} autoComplete="username" value={form.username} error={errors.username} onChange={(v) => set('username', v)} />
+                {usernameFree === false && !errors.username && (
+                  <p className="mt-1 text-xs text-red-400">That username is taken — try another.</p>
+                )}
+                {usernameFree === true && !errors.username && (
+                  <p className="mt-1 text-xs text-green-400">Username available.</p>
+                )}
+                <p className="mt-1 text-xs text-gray-500">Shown in the Community — 3–20 letters, numbers, or underscores.</p>
               </div>
 
               <Field id="email" label="Email Address" type="email" placeholder="name@email.com" icon={<MailIcon />} autoComplete="email" value={form.email} error={errors.email} onChange={(v) => set('email', v)} />

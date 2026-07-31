@@ -5,6 +5,7 @@
 export interface SignupPayload {
   firstName: string
   lastName: string
+  username: string
   email: string
   phone: string
   state: string
@@ -32,10 +33,22 @@ export interface PasswordCheck {
 export interface NormalizedSignup {
   firstName: string
   lastName: string
+  username: string
   email: string
   phone: string
   state: string
   referralCode: string
+}
+
+/**
+ * Public handle shown in Community. 3–20 chars, letters/numbers/underscore,
+ * must start with a letter. Case is preserved for display; uniqueness is
+ * case-insensitive (DB unique index on lower(username)).
+ */
+export const USERNAME_RE = /^[A-Za-z][A-Za-z0-9_]{2,19}$/
+
+export function isValidUsername(username: string): boolean {
+  return USERNAME_RE.test(String(username ?? '').trim())
 }
 
 export interface SignupValidation {
@@ -90,6 +103,7 @@ export function validateSignup(payload: SignupPayload): SignupValidation {
 
   const firstName = String(payload.firstName ?? '').trim()
   const lastName = String(payload.lastName ?? '').trim()
+  const username = String(payload.username ?? '').trim()
   const email = normalizeEmail(payload.email)
   const phone = normalizePhone(payload.phone)
   const state = String(payload.state ?? '').trim()
@@ -97,6 +111,12 @@ export function validateSignup(payload: SignupPayload): SignupValidation {
 
   if (!firstName) errors.firstName = 'First name is required.'
   if (!lastName) errors.lastName = 'Last name is required.'
+
+  if (!username) {
+    errors.username = 'Choose a username.'
+  } else if (!isValidUsername(username)) {
+    errors.username = 'Usernames are 3–20 characters — letters, numbers, underscores — and start with a letter.'
+  }
 
   if (!isValidEmail(payload.email)) {
     errors.email = 'Enter a valid email address.'
@@ -130,6 +150,6 @@ export function validateSignup(payload: SignupPayload): SignupValidation {
   return {
     ok: Object.keys(errors).length === 0,
     errors,
-    normalized: { firstName, lastName, email, phone, state, referralCode },
+    normalized: { firstName, lastName, username, email, phone, state, referralCode },
   }
 }

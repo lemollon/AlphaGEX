@@ -65,6 +65,7 @@ export async function POST(req: NextRequest) {
   const payload: SignupPayload = {
     firstName: String(body.firstName ?? ''),
     lastName: String(body.lastName ?? ''),
+    username: String(body.username ?? ''),
     email: String(body.email ?? ''),
     phone: String(body.phone ?? ''),
     state: String(body.state ?? ''),
@@ -116,6 +117,19 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Username uniqueness is case-insensitive (unique index on lower(username)).
+    // This pre-check gives the form a field error; the index is the enforcement.
+    const existingUsername = await customerQuery<{ id: string }>(
+      `SELECT id FROM users WHERE lower(username) = lower($1) LIMIT 1`,
+      [n.username],
+    )
+    if (existingUsername.length > 0) {
+      return NextResponse.json(
+        { ok: false, fields: { username: 'That username is taken — try another.' }, error: 'That username is taken.' },
+        { status: 400 },
+      )
+    }
+
     const passwordHash = await hashPassword(payload.password)
     const { raw: rawToken, hash: tokenHash } = generateToken()
     const expiresAt = new Date(Date.now() + TOKEN_TTL_MS).toISOString()
@@ -123,14 +137,15 @@ export async function POST(req: NextRequest) {
     const userId = await customerTransaction<string>(async (run) => {
       const rows = await run(
         `INSERT INTO users
-           (password_hash, first_name, last_name, email, phone, state, referral_code, promo_code,
+           (password_hash, first_name, last_name, username, email, phone, state, referral_code, promo_code,
             age_confirmed, no_advice_acknowledged, electronic_comm_consent)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
          RETURNING id`,
         [
           passwordHash,
           n.firstName,
           n.lastName,
+          n.username,
           n.email,
           n.phone,
           n.state,

@@ -131,6 +131,10 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS promo_code TEXT;
 
 -- Brokerage connection (Model A: customers link their own brokerage via SnapTrade) --
 ALTER TABLE users ADD COLUMN IF NOT EXISTS snaptrade_user_id TEXT;
+-- Public handle chosen at signup (shown in Community). Case preserved for
+-- display; uniqueness is case-insensitive. Fresh index name per the #2654 rule.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username_lower ON users(lower(username));
 ALTER TABLE users ADD COLUMN IF NOT EXISTS snaptrade_user_secret TEXT;       -- AES-256-GCM ciphertext
 ALTER TABLE users ADD COLUMN IF NOT EXISTS brokerage_connected BOOLEAN NOT NULL DEFAULT FALSE;
 

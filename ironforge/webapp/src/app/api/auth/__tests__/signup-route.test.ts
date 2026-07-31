@@ -33,6 +33,7 @@ function validBody() {
   return {
     firstName: 'Ada',
     lastName: 'Lovelace',
+    username: 'Ada_Lovelace',
     email: 'Ada@Example.com',
     phone: '(555) 123-4567',
     state: 'CA',
@@ -76,6 +77,17 @@ describe('POST /api/auth/signup', () => {
     expect(res.status).toBe(503)
     const data = await res.json()
     expect(data.ok).toBe(false)
+  })
+
+  it('rejects a taken username with a field error (case-insensitive)', async () => {
+    ;(customerQuery as any).mockImplementation(async (sql: string) =>
+      /lower\(username\)/i.test(sql) ? [{ id: 'someone-else' }] : [],
+    )
+    const res = await POST(post(validBody()))
+    expect(res.status).toBe(400)
+    const data = await res.json()
+    expect(data.fields?.username).toContain('taken')
+    expect(customerTransaction).not.toHaveBeenCalled()
   })
 
   it('returns 409 + logs DUPLICATE_EMAIL_ATTEMPT for an existing email', async () => {
