@@ -19,8 +19,8 @@ export default async function OnboardingBrokeragePage() {
         <h1 className="text-2xl font-bold text-white">Connect your brokerage</h1>
         <p className="mt-2 text-sm leading-relaxed text-gray-400">
           Link the brokerage account you already use. Your funds stay in your account, in your
-          name — IronForge never holds your money. You&apos;ll review and approve every trade
-          before it&apos;s placed.
+          name — IronForge never holds your money. Your agent places trades automatically once
+          you activate; you can pause it anytime.
         </p>
 
         <ul className="mt-8 space-y-5 border-t border-white/10 pt-6">
@@ -42,7 +42,7 @@ export default async function OnboardingBrokeragePage() {
             </svg>
             <div>
               <div className="text-sm font-semibold text-white">You stay in control</div>
-              <div className="text-sm text-gray-400">You approve each trade at placement time.</div>
+              <div className="text-sm text-gray-400">Pause or disconnect anytime — you set the deployment cap.</div>
             </div>
           </li>
           <li className="flex items-start gap-3">

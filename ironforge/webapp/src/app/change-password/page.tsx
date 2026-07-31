@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { checkPassword } from '@/lib/signup-validation'
 
 export default function ChangePasswordPage() {
   const router = useRouter()
@@ -18,8 +19,8 @@ export default function ChangePasswordPage() {
       setError('New passwords do not match')
       return
     }
-    if (newPassword.length < 12) {
-      setError('New password must be at least 12 characters')
+    if (!checkPassword(newPassword).valid) {
+      setError('New password must be at least 12 characters and include uppercase, lowercase, a number, and a special character.')
       return
     }
     setBusy(true)
@@ -34,7 +35,9 @@ export default function ChangePasswordPage() {
         setError(data.error || 'Could not change password')
         return
       }
-      router.push('/')
+      // Back into the app, not the marketing homepage (audit: this ejected a
+      // signed-in customer out to '/').
+      router.push('/settings')
       router.refresh()
     } catch {
       setError('Network error')

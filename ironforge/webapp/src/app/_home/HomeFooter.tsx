@@ -115,7 +115,7 @@ export default function HomeFooter() {
               Risk Disclosure
             </Link>
           </div>
-          <div className="text-xs text-gray-500 md:order-1">© 2025 IronForge. All rights reserved.</div>
+          <div className="text-xs text-gray-500 md:order-1">© {new Date().getFullYear()} IronForge. All rights reserved.</div>
         </div>
       </div>
     </footer>
