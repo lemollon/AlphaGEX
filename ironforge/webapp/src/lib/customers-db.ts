@@ -439,6 +439,45 @@ ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS token_ciphertext TEXT
 ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS token_expiry TIMESTAMPTZ;
 ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS scopes TEXT;
 ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS external_user_ref TEXT;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Phase B: customer order executor (lib/customer-executor). One row per
+-- (master position × customer) — simultaneously the durable idempotency record
+-- (the unique index below is the restart-proof double-place guard; the scanner's
+-- in-memory guards do not survive restarts) and the customer-side audit trail.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS customer_positions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  activation_id UUID,
+  config_id UUID,
+  agent_code TEXT NOT NULL,                          -- spark | flame
+  source_position_id TEXT NOT NULL,                  -- the master bot's position_id
+  broker_account_id UUID,
+  ticker TEXT NOT NULL,
+  expiration DATE NOT NULL,
+  put_short NUMERIC, put_long NUMERIC,
+  call_short NUMERIC, call_long NUMERIC,             -- 0/0 → 2-leg put credit spread
+  contracts INTEGER NOT NULL DEFAULT 0,
+  collateral_cents BIGINT,
+  status TEXT NOT NULL DEFAULT 'claimed',            -- claimed|skipped|open|close_pending|closed|close_failed|error
+  skip_reason TEXT,
+  open_order_id TEXT,
+  close_order_id TEXT,
+  close_reason TEXT,
+  close_attempts INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  detail_json JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  opened_at TIMESTAMPTZ,
+  closed_at TIMESTAMPTZ
+);
+-- Fresh unique index name (see the #2654 note above) — this IS the double-place guard.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_customer_positions_source_user
+  ON customer_positions (source_position_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_customer_positions_user ON customer_positions(user_id);
+CREATE INDEX IF NOT EXISTS idx_customer_positions_status ON customer_positions(status);
 `
 
 let _ensured: Promise<void> | null = null
