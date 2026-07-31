@@ -110,6 +110,10 @@ export default function PlanClient() {
                 >
                   Join Community
                 </button>
+                {/* Mirrors the Automate card's caption line so both bottom blocks are the
+                    same height — without it the two dividers and price baselines sit at
+                    different heights (mt-auto pins blocks of DIFFERENT sizes). */}
+                <p className="mt-2 text-center text-xs text-gray-500">Cancel anytime.</p>
               </div>
             </div>
 
