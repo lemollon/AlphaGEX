@@ -1,6 +1,7 @@
 import { customerQuery, customerExecute } from '@/lib/customers-db'
 import { LEGAL_DOCUMENTS, requiredDocumentsFor, staleDocumentCodes, isAutomatePlan, type AcceptedVersion } from './legal'
-import { isStripeConfigured, hasUsablePaymentMethod } from '@/lib/billing/stripe'
+import { isStripeConfigured, hasUsablePaymentMethod, findLiveSubscriptionForPrice, findPriceIdByLookupKey } from '@/lib/billing/stripe'
+import { COMMUNITY_PLAN } from '@/lib/billing/plans'
 import type { EnrollmentState } from './states'
 import { isUuid } from './ids'
 
@@ -277,10 +278,50 @@ export async function advanceBillingIfComplete(row: EnrollmentRow): Promise<Enro
   }
 
   if (row.selected_plan === 'community') {
-    const sub = (await customerQuery<{ status: string }>(
+    let sub = (await customerQuery<{ status: string }>(
       `SELECT status FROM customer_bot_subscriptions WHERE user_id = $1 AND bot = 'community' LIMIT 1`,
       [row.user_id],
     ))[0]
+
+    // Webhook-lag immunity (UX audit B2): the local row is written by the Stripe
+    // webhook, so a customer bouncing back from a SUCCESSFUL checkout could beat it
+    // here and be told to pay again. When the row is missing, ask Stripe directly —
+    // same discipline as the automate branch above — and write the row ourselves
+    // (the webhook later reconciles the same values idempotently).
+    if (!sub && isStripeConfigured()) {
+      try {
+        const user = (await customerQuery<{ stripe_customer_id: string | null }>(
+          `SELECT stripe_customer_id FROM users WHERE id = $1 LIMIT 1`,
+          [row.user_id],
+        ))[0]
+        const priceId = user?.stripe_customer_id
+          ? await findPriceIdByLookupKey(COMMUNITY_PLAN.lookupKey)
+          : null
+        const live = user?.stripe_customer_id && priceId
+          ? await findLiveSubscriptionForPrice(user.stripe_customer_id, priceId)
+          : null
+        if (live) {
+          await customerExecute(
+            `INSERT INTO customer_bot_subscriptions
+               (user_id, bot, status, stripe_subscription_id, price_lookup_key, current_period_end, updated_at)
+             VALUES ($1, 'community', $2, $3, $4, $5, now())
+             ON CONFLICT (user_id, bot) DO UPDATE SET
+               status = EXCLUDED.status,
+               stripe_subscription_id = EXCLUDED.stripe_subscription_id,
+               price_lookup_key = EXCLUDED.price_lookup_key,
+               current_period_end = EXCLUDED.current_period_end,
+               updated_at = now()`,
+            [row.user_id, live.status, live.id, COMMUNITY_PLAN.lookupKey,
+             live.current_period_end ? new Date(live.current_period_end * 1000).toISOString() : null],
+          )
+          sub = { status: live.status }
+        }
+      } catch (e) {
+        // Fail closed: stay billing_pending; the webhook remains the backstop.
+        console.error('[enrollment] community Stripe reconciliation failed:', e)
+      }
+    }
+
     if (sub && ['trialing', 'active', 'past_due'].includes(sub.status)) {
       await customerExecute(
         `UPDATE enrollments

@@ -66,7 +66,12 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
 
   const accountLabel = (a: BrokerageAccount) => a.name || a.institution || 'Connected account'
 
-  const canOpen = useMemo(() => connection !== '' && !busy, [connection, busy])
+  // Brokerage connection is INFORMATIONAL here, never a gate (UX audit B3): the
+  // selected value was never sent to checkout, yet an empty SnapTrade list (every
+  // Tradier-only and community-upgrade customer) left this button permanently
+  // disabled — an unopenable door at the end of the documented upgrade path.
+  // Brokerage linking is verified where it matters: at activation.
+  const canOpen = useMemo(() => !busy, [busy])
 
   async function openAccount() {
     if (busy) return
@@ -151,20 +156,27 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
           </Field>
 
           <Field label="Brokerage Connection" help="Choose an existing connected brokerage or connect a new one.">
-            <div className="relative">
-              <select
-                className="w-full appearance-none rounded-lg border border-forge-border bg-forge-bg/60 px-4 py-3 pr-10 text-sm text-white outline-none transition focus:border-white/30 disabled:cursor-not-allowed disabled:opacity-70"
-                value={connection}
-                onChange={(e) => setConnection(e.target.value)}
-                style={connection ? { borderColor: `${accent}99` } : undefined}
-              >
-                <option value="">Select brokerage connection</option>
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>{accountLabel(a)}</option>
-                ))}
-              </select>
-              <Chevron />
-            </div>
+            {accounts.length > 0 ? (
+              <div className="relative">
+                <select
+                  className="w-full appearance-none rounded-lg border border-forge-border bg-forge-bg/60 px-4 py-3 pr-10 text-sm text-white outline-none transition focus:border-white/30 disabled:cursor-not-allowed disabled:opacity-70"
+                  value={connection}
+                  onChange={(e) => setConnection(e.target.value)}
+                  style={connection ? { borderColor: `${accent}99` } : undefined}
+                >
+                  <option value="">Select brokerage connection</option>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>{accountLabel(a)}</option>
+                  ))}
+                </select>
+                <Chevron />
+              </div>
+            ) : (
+              <div className="rounded-lg border border-forge-border bg-forge-bg/60 px-4 py-3 text-sm text-gray-400">
+                No brokerage connected yet — you can connect yours after checkout from Brokerage
+                Settings. Automated trading only begins once a brokerage is linked and activated.
+              </div>
+            )}
           </Field>
         </div>
 

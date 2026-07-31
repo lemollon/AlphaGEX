@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { isCustomersDbConfigured, customerTransaction } from '@/lib/customers-db'
+import { dbExecute } from '@/lib/db'
 import { evaluateActivation } from '@/lib/enrollment/activation'
 import { loadActivationContext } from '@/lib/enrollment/context'
 import { claimIdempotencyKey, completeIdempotentOperation, releaseIdempotencyKey } from '@/lib/enrollment/idempotency'
@@ -155,6 +156,23 @@ export async function POST(req: NextRequest) {
         [session.customerId],
       )
     })
+
+    // Provision the workspace viewer mapping (UX audit B1): without this row the
+    // /agents/{bot} dashboard resolves viewer.bot = null and a PAYING customer falls
+    // to the conversion pitch for the agent they just activated, with every CTA
+    // looping back to it. person = 'User' scopes them to the agent's master paper
+    // record — the product's dashboard view today (ops can re-map to a dedicated
+    // account later without touching this). Best-effort: a trading-DB blip must not
+    // fail the activation; the confirmation card covers the provisioning window.
+    try {
+      await dbExecute(
+        `INSERT INTO ironforge_customer_bots (customer_id, bot, person) VALUES ($1, $2, 'User')
+         ON CONFLICT (customer_id, bot) DO NOTHING`,
+        [session.customerId, config.agent_code],
+      )
+    } catch (e) {
+      console.error('[activations] viewer mapping write failed (ops can map manually):', e)
+    }
 
     const response = {
       ok: true,

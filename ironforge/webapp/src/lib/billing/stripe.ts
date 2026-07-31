@@ -348,6 +348,37 @@ export async function createSetupCheckout(opts: {
   })
 }
 
+/**
+ * A live (trialing/active/past_due) subscription on this Stripe customer whose line
+ * item is the given price. The webhook-lag-immune answer to "did they actually buy
+ * this plan" — used by the community enrollment reconciliation, which previously
+ * trusted only the webhook-written local row (UX audit B2: a customer returning
+ * from a successful $10 checkout was told to pay again until the webhook landed).
+ */
+export async function findLiveSubscriptionForPrice(
+  customerId: string,
+  priceId: string,
+): Promise<{ id: string; status: string; current_period_end: number | null } | null> {
+  const res = await stripeRequest<{ data: StripeSubscription[] }>('GET', '/subscriptions', {
+    customer: customerId,
+    status: 'all',
+    limit: 10,
+  })
+  const LIVE = new Set(['trialing', 'active', 'past_due'])
+  for (const sub of res.data ?? []) {
+    if (!LIVE.has(sub.status ?? '')) continue
+    const items = (sub as { items?: { data?: Array<{ price?: { id?: string } }> } }).items?.data ?? []
+    if (items.some((i) => i.price?.id === priceId)) {
+      return {
+        id: sub.id,
+        status: sub.status ?? 'active',
+        current_period_end: typeof sub.current_period_end === 'number' ? sub.current_period_end : null,
+      }
+    }
+  }
+  return null
+}
+
 /** A payment method actually attached to this customer — the §4 "payment method is valid" input. */
 export async function hasUsablePaymentMethod(customerId: string): Promise<boolean> {
   try {
