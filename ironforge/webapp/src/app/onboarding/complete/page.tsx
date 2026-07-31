@@ -41,8 +41,8 @@ export default async function OnboardingCompletePage() {
   const recSlug = recommended === 'FLAME' ? 'flame' : recommended === 'SPARK' ? 'spark' : null
 
   const base = [
-    { ...BOT_PLANS.spark, tagline: 'Next-day SPY spreads', accent: '#2F80ED' },
-    { ...BOT_PLANS.flame, tagline: 'Two-day SPY spreads', accent: '#FD5301' },
+    { ...BOT_PLANS.spark, tagline: 'Next-day SPY spreads', accent: '#3B82F6' },
+    { ...BOT_PLANS.flame, tagline: 'Two-day SPY spreads', accent: '#EE5A24' },
   ]
   // Order the recommended strategy first.
   const strategies = recSlug ? [...base].sort((a, b) => (a.slug === recSlug ? -1 : b.slug === recSlug ? 1 : 0)) : base

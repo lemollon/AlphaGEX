@@ -94,7 +94,7 @@ export default function BrokerageSettingsClient() {
             </p>
             <Link
               href="/onboarding/brokerage"
-              className="mt-4 inline-flex rounded-lg bg-[#FD5301] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#e04a00]"
+              className="mt-4 inline-flex rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-black transition hover:bg-amber-400"
             >
               Connect a brokerage
             </Link>

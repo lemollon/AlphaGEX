@@ -371,7 +371,7 @@ function AddAccountModal({
           <button
             type="submit"
             disabled={saving}
-            className="px-4 py-2 text-sm font-medium bg-amber-600 hover:bg-amber-500 text-white rounded transition-colors disabled:opacity-50"
+            className="px-4 py-2 text-sm font-medium bg-amber-500 hover:bg-amber-400 text-black rounded transition-colors disabled:opacity-50"
           >
             {saving ? 'Saving...' : 'Add Account'}
           </button>
@@ -507,7 +507,7 @@ function EditAccountModal({
           <button
             type="submit"
             disabled={saving}
-            className="px-4 py-2 text-sm font-medium bg-amber-600 hover:bg-amber-500 text-white rounded transition-colors disabled:opacity-50"
+            className="px-4 py-2 text-sm font-medium bg-amber-500 hover:bg-amber-400 text-black rounded transition-colors disabled:opacity-50"
           >
             {saving ? 'Saving...' : 'Save'}
           </button>
@@ -769,7 +769,7 @@ export default function AccountsContent() {
           </button>
           <button
             onClick={() => openAddModal()}
-            className="px-3 py-1.5 text-sm font-medium bg-amber-600 hover:bg-amber-500 text-white rounded transition-colors"
+            className="px-3 py-1.5 text-sm font-medium bg-amber-500 hover:bg-amber-400 text-black rounded transition-colors"
           >
             + Add Account
           </button>

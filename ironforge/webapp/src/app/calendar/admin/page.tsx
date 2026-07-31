@@ -72,7 +72,7 @@ export default function CalendarAdminPage() {
         <button
           onClick={refreshNow}
           disabled={refreshing}
-          className="mt-3 px-3 py-1.5 rounded bg-amber-700 hover:bg-amber-600 text-white text-sm disabled:opacity-50"
+          className="mt-3 px-3 py-1.5 rounded bg-amber-700 hover:bg-amber-400 text-black text-sm disabled:opacity-50"
         >
           {refreshing ? 'Refreshing…' : 'Refresh now'}
         </button>
@@ -134,7 +134,7 @@ export default function CalendarAdminPage() {
             />
           </label>
           <div className="col-span-2">
-            <button type="submit" className="px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-sm">
+            <button type="submit" className="px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-400 text-black text-sm">
               Add event
             </button>
           </div>

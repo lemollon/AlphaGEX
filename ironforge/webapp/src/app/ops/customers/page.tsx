@@ -34,7 +34,7 @@ interface ListResp {
 const input =
   'w-full rounded-md border border-forge-border bg-forge-bg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-amber-500 focus:outline-none'
 const btn =
-  'rounded-md bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-500 disabled:opacity-50'
+  'rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:opacity-50'
 
 export default function OpsCustomersPage() {
   const { data, error, isLoading } = useSWR<ListResp>(KEY, fetcher)

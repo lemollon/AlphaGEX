@@ -10,7 +10,7 @@
   --bot-blaze: #06b6d4;
   --bot-flare: #f5a623;
   /* Semantic colors (mirror Tailwind emerald/red/amber unification) */
-  --pos: #34d399;
+  --pos: #22C55E;
   --neg: #f87171;
   --warn: #e0b23f;
 }
@@ -74,7 +74,7 @@ body {
 
 /* ── Skeleton loading animation ──────────────────────────────── */
 .skeleton {
-  background: #1a1a2e;
+  background: #141416;
   border-radius: 6px;
 }
 
@@ -83,8 +83,8 @@ body {
 }
 
 @keyframes skeleton-pulse {
-  0%, 100% { background-color: #1a1a2e; }
-  50%      { background-color: #2a2a4e; }
+  0%, 100% { background-color: #141416; }
+  50%      { background-color: #26262A; }
 }
 
 /* Forge Reports — subtle reveal animation for briefing cards */
@@ -95,4 +95,11 @@ body {
 .briefing-fade-in { animation: fadeInUp 0.6s ease-out; }
 @media (prefers-reduced-motion: reduce) {
   .briefing-fade-in { animation: none !important; }
+}
+
+/* Visible keyboard focus everywhere (7/31 audit: zero focus-visible styles existed).
+   Brand ring on the dark ground; inputs keep their own focus borders on top. */
+:focus-visible {
+  outline: 2px solid #EE5A24;
+  outline-offset: 2px;
 }

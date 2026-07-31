@@ -40,7 +40,7 @@ export const BOT_PLANS: Record<BotSlug, BotPlan> = {
     blurb: 'Set up a dedicated Spark account that trades next-day (1DTE) SPY spreads automatically.',
     priceMonthly: 50,
     lookupKey: 'spark_monthly',
-    accent: '#2F80ED', // Spark blue
+    accent: '#3B82F6', // Spark blue
     mascot: '/home/spark-mascot-glow.png',
     liveHref: '/agents/spark',
   },
@@ -53,7 +53,7 @@ export const BOT_PLANS: Record<BotSlug, BotPlan> = {
     blurb: 'Set up a dedicated Flame account that trades two-day (2DTE) SPY put credit spreads automatically.',
     priceMonthly: 50,
     lookupKey: 'flame_monthly',
-    accent: '#FD5301', // Flame / brand orange
+    accent: '#EE5A24', // Flame / brand orange
     mascot: '/home/flame-mascot-glow.png',
     liveHref: '/agents/flame',
   },

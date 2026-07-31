@@ -213,7 +213,7 @@ export default function BillingClient() {
                   type="button"
                   disabled={busy}
                   onClick={saveAutomateCard}
-                  className="mt-6 w-full rounded-lg bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="mt-6 w-full rounded-lg bg-emerald-500 px-5 py-3 text-sm font-semibold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {busy ? 'Starting checkout…' : 'Save Payment & Continue'}
                 </button>

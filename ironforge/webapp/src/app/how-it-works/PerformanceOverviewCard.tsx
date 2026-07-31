@@ -32,7 +32,7 @@ function Sparkline({ points, positive }: { points: number[]; positive: boolean }
   const min = Math.min(0, ...points)
   const max = Math.max(0, ...points)
   const span = max - min || 1
-  const stroke = positive ? '#56C62B' : '#E8531F'
+  const stroke = positive ? '#22C55E' : '#E8531F'
   const coords = points
     .map((p, i) => `${(i / (points.length - 1)) * 280},${100 - ((p - min) / span) * 100}`)
     .join(' ')
@@ -125,7 +125,7 @@ export default function PerformanceOverviewCard() {
         {stats.map(({ label, value, green }) => (
           <div key={label} className="rounded-lg border border-[#2B2B2B] bg-[#0E0F0F] px-3 py-2.5">
             <div className="text-[11px] text-[#B8B8B8]">{label}</div>
-            <div className={`mt-1 text-lg font-bold tabular-nums ${green ? 'text-[#56C62B]' : 'text-white'}`}>
+            <div className={`mt-1 text-lg font-bold tabular-nums ${green ? 'text-[#22C55E]' : 'text-white'}`}>
               {value}
             </div>
           </div>

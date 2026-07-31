@@ -25,7 +25,7 @@ export default async function OnboardingBrokeragePage() {
 
         <ul className="mt-8 space-y-5 border-t border-white/10 pt-6">
           <li className="flex items-start gap-3">
-            <svg aria-hidden="true" className="mt-0.5 h-6 w-6 shrink-0 text-[#FD5301]" viewBox="0 0 24 24" fill="none">
+            <svg aria-hidden="true" className="mt-0.5 h-6 w-6 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none">
               <path d="M12 3l7 3v5c0 4.4-3 8-7 10-4-2-7-5.6-7-10V6l7-3z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
               <rect x="9.25" y="10.5" width="5.5" height="4.5" rx="1" stroke="currentColor" strokeWidth="1.5" />
               <path d="M10.5 10.5V9.25a1.5 1.5 0 013 0v1.25" stroke="currentColor" strokeWidth="1.5" />
@@ -36,7 +36,7 @@ export default async function OnboardingBrokeragePage() {
             </div>
           </li>
           <li className="flex items-start gap-3">
-            <svg aria-hidden="true" className="mt-0.5 h-6 w-6 shrink-0 text-[#FD5301]" viewBox="0 0 24 24" fill="none">
+            <svg aria-hidden="true" className="mt-0.5 h-6 w-6 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none">
               <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
               <path d="M8 12.5l2.5 2.5L16 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
@@ -46,7 +46,7 @@ export default async function OnboardingBrokeragePage() {
             </div>
           </li>
           <li className="flex items-start gap-3">
-            <svg aria-hidden="true" className="mt-0.5 h-6 w-6 shrink-0 text-[#FD5301]" viewBox="0 0 24 24" fill="none">
+            <svg aria-hidden="true" className="mt-0.5 h-6 w-6 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none">
               <path d="M12 3v8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               <path d="M6.5 7a8 8 0 1011 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>

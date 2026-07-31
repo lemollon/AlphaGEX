@@ -103,7 +103,7 @@ export default function BrokerageConnectClient() {
             value={selected}
             onChange={(e) => setSelected(e.target.value)}
             disabled={busy}
-            className="w-full appearance-none rounded-lg border border-[#FD5301]/60 bg-forge-bg/60 px-4 py-3 pr-10 text-sm font-medium text-white outline-none transition focus:border-[#FD5301] disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full appearance-none rounded-lg border border-amber-500/60 bg-forge-bg/60 px-4 py-3 pr-10 text-sm font-medium text-white outline-none transition focus:border-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <option value={TRADIER}>Tradier (Recommended)</option>
             {brokers.length > 0 && (
@@ -119,7 +119,7 @@ export default function BrokerageConnectClient() {
           </select>
           <svg
             aria-hidden="true"
-            className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#FD5301]"
+            className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-amber-500"
             viewBox="0 0 20 20"
             fill="none"
           >
@@ -136,7 +136,7 @@ export default function BrokerageConnectClient() {
       <button
         onClick={connect}
         disabled={busy}
-        className="flex w-full items-center justify-center rounded-lg bg-[#FD5301] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#e04a00] disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex w-full items-center justify-center rounded-lg bg-amber-500 px-4 py-3 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {busy ? 'Starting…' : `Connect ${selectedLabel}`}
       </button>

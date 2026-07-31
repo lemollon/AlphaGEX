@@ -218,7 +218,7 @@ export default function ReviewClient() {
                     <dd>
                       <span
                         className={`rounded-md px-2 py-0.5 text-xs font-bold ${
-                          isSpark ? 'bg-spark text-white' : 'bg-amber-500 text-black'
+                          isSpark ? 'bg-spark text-black' : 'bg-amber-500 text-black'
                         }`}
                       >
                         {agentName}
@@ -312,7 +312,7 @@ export default function ReviewClient() {
               disabled={!canActivate}
               onClick={activate}
               className={`mt-6 w-full rounded-lg px-5 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                isSpark ? 'bg-spark text-white hover:bg-spark-dark' : 'bg-amber-500 text-black hover:bg-amber-400'
+                isSpark ? 'bg-spark text-black hover:bg-spark-dark' : 'bg-amber-500 text-black hover:bg-amber-400'
               }`}
             >
               {busy ? 'Activating…' : `Activate ${agentName}`}

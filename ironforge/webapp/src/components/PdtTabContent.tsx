@@ -241,7 +241,7 @@ export default function PdtTabContent({
                 onClick={() => confirmAction === 'toggle_off' ? doToggle(false) : doReset()}
                 className={`px-4 py-2 text-sm rounded-lg font-medium transition-colors ${
                   confirmAction === 'toggle_off'
-                    ? 'bg-amber-600 hover:bg-amber-500 text-white'
+                    ? 'bg-amber-500 hover:bg-amber-400 text-black'
                     : 'bg-blue-600 hover:bg-blue-500 text-white'
                 }`}
               >
@@ -317,7 +317,7 @@ export default function PdtTabContent({
                 disabled={loading}
                 className={`px-3 py-1 text-xs font-medium transition-colors ${
                   status.pdt_enabled
-                    ? 'bg-amber-600/80 text-white'
+                    ? 'bg-amber-500/80 text-black'
                     : 'bg-forge-card text-gray-500 hover:text-gray-300'
                 }`}
               >
