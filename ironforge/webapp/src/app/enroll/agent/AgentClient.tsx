@@ -161,14 +161,22 @@ export default function AgentClient() {
               </span>
               <h3 className="mt-3 text-2xl font-bold text-amber-500">Flame</h3>
               <p className="mt-2 text-sm leading-relaxed text-gray-300">
-                A more aggressive iron condor strategy designed to pursue stronger near-term upside.
+                A more aggressive premium-selling strategy — two-day SPY put credit spreads with
+                heavier capital deployment.
+              </p>
+              {/* Honesty (audit M6): Flame currently executes in simulation. Selling it
+                  as live automation while delivering paper was a trust problem. */}
+              <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-xs leading-relaxed text-amber-200">
+                Flame currently trades in simulation mode while live rollout completes — your
+                dashboard shows its real-time paper record, and your plan includes the live
+                upgrade when it ships.
               </p>
               <p className="mt-4 text-[10px] font-bold uppercase tracking-wider text-gray-500">Best for</p>
               <p className="mt-1 text-sm text-gray-400">
                 Traders comfortable with greater volatility and larger drawdowns in exchange for more potential upside.
               </p>
               <ul className="mt-4 space-y-2 border-t border-forge-border pt-4">
-                {['Higher-risk profile', 'More aggressive capital deployment', 'Near-term upside focus'].map((f) => (
+                {['Higher-risk profile', 'More aggressive capital deployment', 'Premium-selling focus'].map((f) => (
                   <li key={f} className="flex items-start gap-2 text-sm text-gray-300">
                     <span aria-hidden className="mt-0.5 font-bold text-amber-500">✓</span>
                     {f}

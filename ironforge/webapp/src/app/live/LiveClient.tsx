@@ -91,6 +91,18 @@ export default function LiveClient({ account }: { account: LiveBot }) {
               can briefly see a dashboard that says they own nothing. */}
           <CheckoutNotice labels={LIVE_BOT_LABEL} />
           <LiveHeader viewer={summary?.viewer ?? null} />
+          {/* Billing needs attention (audit M11): a failed payment previously produced
+              NO customer-facing state anywhere in the workspace. */}
+          {summary?.membership?.badge === 'Payment due' && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-600/40 bg-amber-950/25 px-4 py-3">
+              <p className="text-sm text-amber-200">
+                Your last payment didn’t go through. Update your card to keep {LIVE_BOT_LABEL[account]} running.
+              </p>
+              <a href="/account/billing" className="rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-amber-400">
+                Update payment
+              </a>
+            </div>
+          )}
           {summary?.empty && summary.activation_confirmation ? (
             /* DASH-FIRST-01, empty-viewer case: a JUST-ACTIVATED customer has no
                ironforge_customer_bots mapping yet, so the summary is empty — but

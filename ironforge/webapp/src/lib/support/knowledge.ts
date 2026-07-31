@@ -39,7 +39,7 @@ export const SUPPORT_KB: KbEntry[] = [
   {
     topic: 'plans',
     q: 'Is there a free trial?',
-    a: 'Yes — bot plans start with a 5-day free trial, so you are not charged today. Community ($15/mo) is billed immediately (no trial) since it is low-cost access.',
+    a: `Yes — strategy plans start with a 5-trading-day free trial (trading days, not calendar days), so you are not charged today. Community ($${MARKETING_TIERS.community.priceMonthly}/mo) is billed immediately (no trial) since it is low-cost access.`,
   },
   // ── Billing ─────────────────────────────────────────────────────────────────
   {
@@ -61,12 +61,12 @@ export const SUPPORT_KB: KbEntry[] = [
   {
     topic: 'onboarding',
     q: 'How do I get started / what are the steps?',
-    a: 'Sign up, accept the terms, take the short risk quiz (it recommends a strategy that fits you), optionally connect your brokerage, then open your account. The final step starts your free trial and takes you to your dashboard.',
+    a: 'Sign up, verify your email, choose your membership (Community or Forge Automate), review and sign the agreements, save a payment method, connect your brokerage, pick your agent (Spark or Flame), then review and activate. Your free trial starts at activation and you land on your agent dashboard.',
   },
   {
     topic: 'onboarding',
     q: 'Do I have to connect a brokerage right away?',
-    a: 'No — connecting a brokerage is optional during onboarding and can be done later from Brokerage Settings. You can explore the app first.',
+    a: 'For Forge Automate, yes — connecting an eligible brokerage account is a required enrollment step before activation, because the agent trades in your own account. Community membership needs no brokerage at all.',
   },
   // ── Brokerage ───────────────────────────────────────────────────────────────
   // Derived from the ordered broker catalog (lib/brokerage/catalog.ts) so ordering
@@ -108,7 +108,7 @@ export const SUPPORT_KB: KbEntry[] = [
   {
     topic: 'community',
     q: 'What is the Forge Community and how do I join?',
-    a: 'Forge Community is the in-app chat + education space. It is included with any bot plan, or available on its own for $15/mo. You can read the feed as a preview; posting requires an active membership. Join from /community or /account/billing.',
+    a: `Forge Community is the in-app chat + education space. It is included with any strategy plan, or available on its own for $${MARKETING_TIERS.community.priceMonthly}/mo. You can read the feed as a preview; posting requires an active membership. Join from /community or /account/billing.`,
   },
   // ── Account / security ──────────────────────────────────────────────────────
   {

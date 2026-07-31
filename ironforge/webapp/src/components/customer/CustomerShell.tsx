@@ -122,6 +122,14 @@ function PlanCard({ membership, variant }: { membership: PlanCardData | null; va
             </a>
           ) : variant === 'trial' && trial ? (
             <div className="text-xs text-gray-500">{trial.label}</div>
+          ) : membership.badge === 'Payment due' ? (
+            /* Audit M11: this used to render as a GREEN CHECK — "✓ Payment due" in
+               emerald — the exact state that needs attention dressed as success.
+               Amber warning + a direct path to fix the card. */
+            <a href="/account/billing" className="flex items-center gap-1 text-xs font-semibold text-amber-500 hover:text-amber-400">
+              <Icon className="h-3.5 w-3.5" d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+              Payment due — update card
+            </a>
           ) : (
             <div className="flex items-center gap-1 text-xs text-emerald-500">
               <Icon className="h-3.5 w-3.5" d="M20 6 9 17l-5-5" />
