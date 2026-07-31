@@ -9,6 +9,14 @@ vi.mock('@/lib/customers-db', () => ({
   CustomersDbNotConfiguredError: class extends Error {},
 }))
 
+// UAT-006: a valid verification link mints the customer session directly.
+const mockSession: Record<string, unknown> & { save: ReturnType<typeof vi.fn> } = {
+  save: vi.fn(),
+}
+vi.mock('@/lib/auth/customer-session-server', () => ({
+  getCustomerSession: vi.fn(async () => mockSession),
+}))
+
 import {
   isCustomersDbConfigured,
   customerQuery,
@@ -74,13 +82,21 @@ describe('GET /api/auth/verify', () => {
     expect(customerTransaction).not.toHaveBeenCalled()
   })
 
-  it('verifies a valid token: updates user + token, logs EMAIL_VERIFIED, redirects verified=1', async () => {
-    ;(customerQuery as any).mockResolvedValue([tokenRow()])
+  it('verifies a valid token: updates user + token, logs EMAIL_VERIFIED, mints the session, lands on /enroll (UAT-006)', async () => {
+    ;(customerQuery as any).mockImplementation(async (sql: string) =>
+      /FROM users/i.test(sql)
+        ? [{ email: 'ada@example.com', onboarding_step: 'email_verified' }]
+        : [tokenRow()],
+    )
     const run = vi.fn(async () => [])
     ;(customerTransaction as any).mockImplementation(async (fn: any) => fn(run))
 
     const res = await GET(get('?token=abc'))
-    expect(loc(res)).toContain('verified=1')
+    expect(loc(res)).toContain('/enroll')
+    expect(loc(res)).not.toContain('/login')
+    expect(mockSession.customerId).toBe('user-1')
+    expect(mockSession.emailVerified).toBe(true)
+    expect(mockSession.save).toHaveBeenCalled()
 
     const sqls = run.mock.calls.map((c: any[]) => String(c[0]))
     expect(sqls.some((s) => /UPDATE users/i.test(s) && /email_verified/i.test(s))).toBe(true)
@@ -91,5 +107,19 @@ describe('GET /api/auth/verify', () => {
     )
     expect(JSON.stringify(auditCall)).toContain('EMAIL_VERIFIED')
     expect(JSON.stringify(auditCall)).toContain('user-1')
+  })
+
+  it('falls back to the login door with verified=1 when the session cannot be saved', async () => {
+    ;(customerQuery as any).mockImplementation(async (sql: string) =>
+      /FROM users/i.test(sql)
+        ? [{ email: 'ada@example.com', onboarding_step: 'email_verified' }]
+        : [tokenRow()],
+    )
+    const run = vi.fn(async () => [])
+    ;(customerTransaction as any).mockImplementation(async (fn: any) => fn(run))
+    mockSession.save.mockRejectedValueOnce(new Error('secret rotated'))
+
+    const res = await GET(get('?token=abc'))
+    expect(loc(res)).toContain('verified=1')
   })
 })

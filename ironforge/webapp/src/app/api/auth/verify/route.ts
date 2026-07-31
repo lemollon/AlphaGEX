@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { publicOrigin } from '@/lib/public-origin'
+import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { hashToken, isExpired } from '@/lib/auth/verification-token'
 import {
   ONBOARDING_COOKIE,
@@ -18,9 +19,10 @@ export const dynamic = 'force-dynamic'
 
 /**
  * Email verification callback (sub-project C). Validates + consumes a token, flips
- * the user to email_verified, writes an EMAIL_VERIFIED audit, then (sub-project F)
- * issues a signed onboarding cookie and redirects into the onboarding funnel at
- * /onboarding/legal. The email that delivers this link is sub-project D.
+ * the user to email_verified, writes an EMAIL_VERIFIED audit, then mints the
+ * customer session and lands the user on /enroll (UAT-006 — the token proves
+ * control of the email; forcing a second sign-in broke the enrollment sequence).
+ * The email that delivers this link is sub-project D.
  */
 
 interface TokenRow {
@@ -86,19 +88,35 @@ export async function GET(req: NextRequest) {
       console.error('[verify] audit write failed:', e)
     }
 
-    // CUTOVER (7/30): verified prospects sign in and land on /enroll — the v2 funnel
-    // requires a real customer session (its enrollment record is server-owned per
-    // user), so the cookie-only legacy hand-off into /onboarding/legal is retired.
-    // The signed onboarding cookie is still issued so anyone who wanders onto a
-    // legacy /onboarding/* link mid-flight isn't bounced, but the destination is the
-    // login door; login's resolver then routes to /enroll.
+    // UAT-006: possession of a valid, unconsumed verification token IS proof of
+    // control of the email — mint the customer session here and land the user
+    // directly on /enroll (which resumes at the correct step server-side). The old
+    // behavior redirected to a bare Sign In page, forcing a second authentication
+    // and breaking the enrollment sequence. If the session can't be established
+    // (cross-device edge, secret rotation), fall back to the login door with the
+    // verified banner — a purposeful sign-in handoff, not a dead end.
     try {
-      const token = await signOnboardingToken(row.user_id)
-      const res = NextResponse.redirect(`${origin}/login?verified=1`)
-      res.cookies.set(ONBOARDING_COOKIE, token, onboardingCookieOptions())
+      const users = await customerQuery<{ email: string; onboarding_step: string | null }>(
+        `SELECT email, onboarding_step FROM users WHERE id = $1 LIMIT 1`,
+        [row.user_id],
+      )
+      const session = await getCustomerSession()
+      session.customerId = row.user_id
+      session.email = users[0]?.email
+      session.emailVerified = true
+      session.onboardingStep = users[0]?.onboarding_step ?? 'email_verified'
+      await session.save()
+
+      const res = NextResponse.redirect(`${origin}/enroll`)
+      // Legacy onboarding cookie is best-effort only — nothing routes to /onboarding
+      // anymore, so its failure must never demote a successfully minted session.
+      try {
+        const token = await signOnboardingToken(row.user_id)
+        res.cookies.set(ONBOARDING_COOKIE, token, onboardingCookieOptions())
+      } catch { /* legacy hand-off cookie only */ }
       return res
     } catch (e) {
-      console.error('[verify] onboarding token sign failed:', e)
+      console.error('[verify] session mint failed, falling back to login door:', e)
       return NextResponse.redirect(`${origin}/login?verified=1`)
     }
   } catch (e) {
