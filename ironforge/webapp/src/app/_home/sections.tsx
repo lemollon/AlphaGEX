@@ -356,10 +356,10 @@ function DesktopFeatureCards() {
         <div className="flex-1 rounded-xl border border-white/10 bg-[#0C0D0E] p-4">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-300">Lifetime Return</div>
           {/* Was a hardcoded "+18.74%" — an invented return, and the first number a
-              prospect saw. The card illustrates the dashboard; the real figures are
-              on /bot-ledger, built from closed trades. */}
+              prospect saw. The card only illustrates the dashboard; no number, no
+              pointer (the Bot Ledger was retired under UAT-003). */}
           <div className="mt-2 text-xl font-bold text-white">&mdash;</div>
-          <div className="text-[10px] text-gray-500">See /bot-ledger</div>
+          <div className="text-[10px] text-gray-500">Illustrative dashboard</div>
           <div className="mt-2 flex gap-2">
             <div className="flex flex-col justify-between py-1 text-right text-[8px] text-gray-500">
               <span>20%</span>
