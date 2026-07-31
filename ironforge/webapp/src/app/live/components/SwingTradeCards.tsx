@@ -66,9 +66,9 @@ function PositionCard({ p, accountValue }: { p: LiveOpenPosition; accountValue: 
   const swung = p.held_overnight
   // Blue reads "carried over", green reads "new" — matching the badge colours so the
   // card's whole state is legible at a glance.
-  const tone = swung ? '#3B82F6' : '#22C55E'
+  const tone = swung ? '#3B82F6' : '#10B981'
   const pnl = p.unrealized_pnl
-  const pnlColor = pnl == null ? 'text-gray-400' : pnl >= 0 ? 'text-[#22C55E]' : 'text-[#EF4444]'
+  const pnlColor = pnl == null ? 'text-gray-400' : pnl >= 0 ? 'text-[#10B981]' : 'text-[#EF4444]'
 
   return (
     <div className="rounded-2xl border bg-[#0A0B0C] p-5" style={{ borderColor: `${tone}66` }}>

@@ -131,9 +131,9 @@ export default async function DashboardPreview() {
       {/* Top strip: agent status / win rate / avg return / streak */}
       <div className="grid grid-cols-4 divide-x divide-white/10 rounded-xl border border-white/10 bg-[#0C0D0E]">
         <div className="p-3.5">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-[#63C132]">Spark Agent Status</div>
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-[#34D399]">Spark Agent Status</div>
           <div className="mt-1.5 flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-[#63C132]" />
+            <span className="h-2.5 w-2.5 rounded-full bg-[#34D399]" />
             <span className="text-base font-semibold text-white">Active</span>
           </div>
           {/* nowrap: the ISO date was breaking mid-token in this narrow column,
@@ -153,15 +153,15 @@ export default async function DashboardPreview() {
         </div>
         <div className="p-3.5">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Avg Return</div>
-          <div className="mt-1.5 text-lg font-bold text-[#63C132]">{d?.avgReturn ?? PLACEHOLDER}</div>
+          <div className="mt-1.5 text-lg font-bold text-[#34D399]">{d?.avgReturn ?? PLACEHOLDER}</div>
           <div className="text-[11px] font-semibold text-gray-500">per trade</div>
           <div className="mt-1 text-[10px] text-gray-500">On capital used</div>
         </div>
         <div className="p-3.5">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Win Streak</div>
           <div className="mt-1.5 flex items-center gap-2">
-            <ChartCircleIcon className="h-6 w-6 shrink-0 text-[#63C132]" />
-            <span className="text-sm font-semibold text-[#63C132]">
+            <ChartCircleIcon className="h-6 w-6 shrink-0 text-[#34D399]" />
+            <span className="text-sm font-semibold text-[#34D399]">
               {d ? `${d.streak} in a row` : PLACEHOLDER}
             </span>
           </div>
@@ -177,7 +177,7 @@ export default async function DashboardPreview() {
             <div key={label} className="rounded-lg border border-white/10 bg-[#101112] px-2 py-3.5 text-center">
               <Icon className="mx-auto h-6 w-6 text-[#FD5301]" />
               <div className="mt-2 text-[10px] text-gray-400">{label}</div>
-              <div className={`mt-1 text-[15px] font-bold ${green ? 'text-[#63C132]' : 'text-white'}`}>{value}</div>
+              <div className={`mt-1 text-[15px] font-bold ${green ? 'text-[#34D399]' : 'text-white'}`}>{value}</div>
               <div className="mt-0.5 text-[9px] leading-tight text-gray-500">{sub}</div>
             </div>
           ))}
@@ -218,7 +218,7 @@ export default async function DashboardPreview() {
                   <td className="py-2 text-white">{t ? pct(t.return_on_bp_pct, { sign: true }) : PLACEHOLDER}</td>
                   <td
                     className={`py-2 font-semibold ${
-                      t?.outcome === 'win' ? 'text-[#63C132]' : t?.outcome ? 'text-gray-300' : 'text-gray-500'
+                      t?.outcome === 'win' ? 'text-[#34D399]' : t?.outcome ? 'text-gray-300' : 'text-gray-500'
                     }`}
                   >
                     {t?.outcome ? t.outcome.toUpperCase() : PLACEHOLDER}

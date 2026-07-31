@@ -39,7 +39,7 @@ export function Hero() {
           </Link>
           <Link
             href="/signup?plan=automate"
-            className="inline-block rounded-lg bg-[#4C9A2A] px-6 py-3 text-[15px] font-semibold text-white transition-colors hover:bg-[#58AC33]"
+            className="inline-block rounded-lg bg-emerald-600 px-6 py-3 text-[15px] font-semibold text-white transition-colors hover:bg-emerald-500"
           >
             Start 5-Day Free Trial
           </Link>
@@ -119,8 +119,8 @@ export function ForgeStarterCard() {
     /* Green border, matching the trial badge and the trial CTA — the design uses green
        for "start free" throughout and reserves brand orange for paid actions like Join
        Community. h-full so it matches the Community card's height in the grid. */
-    <div className="relative flex h-full flex-col rounded-2xl border border-[#4C7A22] bg-[#0A0B0C] p-6 md:p-7">
-      <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border border-[#4C7A22] bg-[#1E3B14] px-4 py-1 text-[11px] font-bold tracking-wide text-[#8FD14F]">
+    <div className="relative flex h-full flex-col rounded-2xl border border-emerald-500/50 bg-[#0A0B0C] p-6 md:p-7">
+      <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border border-emerald-500/50 bg-emerald-950 px-4 py-1 text-[11px] font-bold tracking-wide text-emerald-400">
         5 TRADING DAY FREE TRIAL
       </div>
 
@@ -155,7 +155,7 @@ export function ForgeStarterCard() {
           </div>
           <Link
             href="/signup?plan=automate"
-            className="whitespace-nowrap rounded-lg bg-[#4C9A2A] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#58AC33] md:px-7 md:text-[15px]"
+            className="whitespace-nowrap rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 md:px-7 md:text-[15px]"
           >
             Start 5-Day Free Trial
           </Link>
