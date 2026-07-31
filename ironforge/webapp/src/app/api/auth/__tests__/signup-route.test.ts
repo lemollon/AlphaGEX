@@ -10,6 +10,16 @@ vi.mock('@/lib/customers-db', () => ({
 }))
 vi.mock('@/lib/auth/password', () => ({ hashPassword: vi.fn(async () => 'bcrypt$hash') }))
 
+// UAT-007: signup destroys any pre-existing customer session so a stale cookie can
+// never leave the browser authenticated as a previous user after account creation.
+const mockSession: { customerId?: string; destroy: ReturnType<typeof vi.fn> } = {
+  customerId: undefined,
+  destroy: vi.fn(),
+}
+vi.mock('@/lib/auth/customer-session-server', () => ({
+  getCustomerSession: vi.fn(async () => mockSession),
+}))
+
 import {
   isCustomersDbConfigured,
   customerQuery,
@@ -105,6 +115,33 @@ describe('POST /api/auth/signup', () => {
     )
     expect(JSON.stringify(auditCall)).toContain('ACCOUNT_CREATED')
     expect(JSON.stringify(auditCall)).toContain('new-user-uuid')
+  })
+
+  it('destroys a stale customer session on successful signup (UAT-007 isolation)', async () => {
+    ;(customerQuery as any).mockResolvedValue([])
+    const run = vi.fn(async (sql: string) =>
+      /INSERT INTO users/i.test(sql) ? [{ id: 'new-user-uuid' }] : [],
+    )
+    ;(customerTransaction as any).mockImplementation(async (fn: any) => fn(run))
+    mockSession.customerId = 'previous-user-uuid'
+
+    const res = await POST(post(validBody()))
+    expect(res.status).toBe(200)
+    expect(mockSession.destroy).toHaveBeenCalled()
+    mockSession.customerId = undefined
+  })
+
+  it('leaves the session machinery untouched when no stale session exists', async () => {
+    ;(customerQuery as any).mockResolvedValue([])
+    const run = vi.fn(async (sql: string) =>
+      /INSERT INTO users/i.test(sql) ? [{ id: 'new-user-uuid' }] : [],
+    )
+    ;(customerTransaction as any).mockImplementation(async (fn: any) => fn(run))
+    mockSession.customerId = undefined
+
+    const res = await POST(post(validBody()))
+    expect(res.status).toBe(200)
+    expect(mockSession.destroy).not.toHaveBeenCalled()
   })
 
   it('stores the email lowercased and the password only as a hash', async () => {

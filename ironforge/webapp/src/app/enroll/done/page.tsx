@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { hasActiveMembership } from '@/lib/live/membership'
 import EnrollShell from '../EnrollShell'
 import TradingViewPerkCard from '@/components/customer/TradingViewPerkCard'
 
@@ -16,12 +17,18 @@ export const metadata: Metadata = {
 /**
  * Enrollment completion landing — the Community checkout success return
  * (Automate never lands here: activation routes straight to /live per DASH-FIRST-01).
- * Static on purpose: the authoritative state was already advanced by the webhook or
- * resume-time reconciliation, and /community self-gates on the real subscription.
+ *
+ * NOT static: this page ASSERTS "Membership active", so it must verify it (UAT-007 —
+ * the static version told every session holder they were in, including brand-new
+ * accounts that had bought nothing). hasActiveMembership fails closed, and anyone
+ * without a live subscription is bounced to /enroll, which resumes their real state.
+ * Webhook lag is covered: the checkout return path runs resume-time reconciliation
+ * before landing here, so a just-paid member has their subscription row already.
  */
 export default async function EnrollDonePage() {
   const session = await getCustomerSession()
   if (!session.customerId) redirect('/login?next=/enroll')
+  if (!(await hasActiveMembership(session.customerId))) redirect('/enroll')
   return (
     <EnrollShell headline="Welcome to the Forge." subline="Your membership is active." topRight="none">
       <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-6 lg:p-8">
