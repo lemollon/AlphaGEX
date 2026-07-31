@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Wordmark } from '@/components/Brand'
 import HomeLink from '@/components/HomeLink'
@@ -12,6 +12,14 @@ export default function CustomerLoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [unverified, setUnverified] = useState(false)
   const [resendMsg, setResendMsg] = useState<string | null>(null)
+  // UAT-006: verified=1 is the verify route's fallback landing (session mint failed
+  // or cross-device link) — acknowledge the success instead of a bare sign-in form.
+  // window.location, not useSearchParams: this page prerenders and a searchParams
+  // hook would force a Suspense boundary for one banner.
+  const [justVerified, setJustVerified] = useState(false)
+  useEffect(() => {
+    setJustVerified(new URLSearchParams(window.location.search).get('verified') === '1')
+  }, [])
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -66,6 +74,12 @@ export default function CustomerLoginPage() {
         <div className="rounded-2xl border border-white/10 bg-forge-card/90 p-8 shadow-2xl">
           <h1 className="text-2xl font-bold text-white">Sign in</h1>
           <p className="mt-1 text-sm text-gray-400">Welcome back to IronForge.</p>
+
+          {justVerified && !unverified && (
+            <p className="mt-4 rounded-md border border-emerald-700/40 bg-emerald-950/30 px-3 py-2 text-sm text-emerald-200">
+              Email verified — sign in to continue your enrollment.
+            </p>
+          )}
 
           {unverified ? (
             <div className="mt-6 space-y-4">

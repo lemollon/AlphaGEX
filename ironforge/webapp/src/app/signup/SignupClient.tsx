@@ -213,7 +213,7 @@ export default function SignupClient() {
   }
 
   if (submittedEmail) {
-    return <VerifyEmailShell email={submittedEmail} />
+    return <VerifyEmailShell email={submittedEmail} onChangeEmail={() => setSubmittedEmail(null)} />
   }
 
   return (
@@ -382,7 +382,7 @@ function LockSmall() {
 
 /* ── Screen 2: Verify email ─────────────────────────────────────────── */
 
-function VerifyEmailShell({ email }: { email: string }) {
+function VerifyEmailShell({ email, onChangeEmail }: { email: string; onChangeEmail: () => void }) {
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
 
   async function resend() {
@@ -411,7 +411,9 @@ function VerifyEmailShell({ email }: { email: string }) {
         <h1 className="text-xl font-bold text-white">Verify your email</h1>
         <p className="mt-2 text-sm text-gray-400">We sent a verification link to:</p>
         <p className="mt-1 text-sm font-semibold text-amber-500">{email}</p>
-        <p className="mt-3 text-sm text-gray-400">Confirm your email to continue setup.</p>
+        <p className="mt-3 text-sm text-gray-400">
+          Confirm your email to continue setup. Check your inbox — and your spam folder.
+        </p>
 
         <button
           type="button"
@@ -428,6 +430,16 @@ function VerifyEmailShell({ email }: { email: string }) {
         <p className="mt-4 text-xs text-gray-500">
           Already verified?{' '}
           <Link href="/login" className="font-semibold text-amber-500 hover:text-amber-400">Continue</Link>
+        </p>
+        <p className="mt-2 text-xs text-gray-500">
+          Wrong email?{' '}
+          <button
+            type="button"
+            onClick={onChangeEmail}
+            className="font-semibold text-amber-500 hover:text-amber-400"
+          >
+            Change it
+          </button>
         </p>
 
         <div className="mt-6 flex justify-center border-t border-white/5 pt-4 text-sm">
