@@ -77,7 +77,7 @@ export default function BriefingSparkline({
   const first = ys[0]
   const delta = last - first
   const positive = delta >= 0
-  const stroke = positive ? '#34d399' : '#f87171'
+  const stroke = positive ? '#4ade80' : '#f87171'
   const fillId = positive ? 'sparkFillUp' : 'sparkFillDown'
 
   // Tiny variant: line only.
@@ -108,8 +108,8 @@ export default function BriefingSparkline({
     >
       <defs>
         <linearGradient id="sparkFillUp" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"  stopColor="#34d399" stopOpacity={0.32} />
-          <stop offset="100%" stopColor="#34d399" stopOpacity={0.0} />
+          <stop offset="0%"  stopColor="#4ade80" stopOpacity={0.32} />
+          <stop offset="100%" stopColor="#4ade80" stopOpacity={0.0} />
         </linearGradient>
         <linearGradient id="sparkFillDown" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%"  stopColor="#f87171" stopOpacity={0.32} />
