@@ -96,6 +96,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'bad payload' }, { status: 400 })
   }
 
+  // Replay/dedupe guard (audit C5): Stripe delivers at-least-once and out of order.
+  // The INSERT is the claim — a duplicate delivery matches the primary key and is
+  // acknowledged without re-running the handler, so a retry of an already-applied
+  // event can never regress a subscription row that later events (or the checkout
+  // route's immediate write) have advanced.
+  const eventId = typeof event?.id === 'string' ? event.id : null
+  if (eventId) {
+    const claimed = await customerExecute(
+      `INSERT INTO stripe_webhook_events (event_id, event_type) VALUES ($1, $2)
+       ON CONFLICT (event_id) DO NOTHING`,
+      [eventId, String(event?.type ?? 'unknown')],
+    ).catch(() => 1) // if the guard table itself is unavailable, fall through and process
+    if (claimed === 0) {
+      // Seen before. Successfully processed → ack the duplicate. Previously FAILED
+      // (dead-letter row, processed_at NULL) → this is Stripe's retry: process again.
+      const prior = await customerQuery<{ processed_at: string | null }>(
+        `SELECT processed_at FROM stripe_webhook_events WHERE event_id = $1 LIMIT 1`,
+        [eventId],
+      ).catch(() => [] as Array<{ processed_at: string | null }>)
+      if (prior[0]?.processed_at) {
+        return NextResponse.json({ ok: true, duplicate: true })
+      }
+    }
+  }
+
   try {
     const obj = event?.data?.object ?? {}
     switch (event?.type) {
@@ -216,8 +241,28 @@ export async function POST(req: NextRequest) {
         break
     }
   } catch (e) {
+    // Audit C5: this used to ack 200 on ANY handler error, permanently dropping the
+    // entitlement update (Stripe never retries a 200). A transient DB failure is the
+    // COMMON case, so: record the failure on the event row (the dead-letter), release
+    // the dedupe claim, and return 500 so Stripe retries with backoff. A genuine logic
+    // bug will exhaust Stripe's retry schedule and stop on its own — visible in the
+    // dead-letter row rather than silently swallowed.
+    const msg = e instanceof Error ? e.message : String(e)
     console.error('[billing/webhook] handler error:', e)
-    // Ack anyway — a retry storm won't help a logic bug, and the signature was valid.
+    if (eventId) {
+      await customerExecute(
+        `UPDATE stripe_webhook_events SET error = $2, processed_at = NULL WHERE event_id = $1`,
+        [eventId, msg.slice(0, 500)],
+      ).catch(() => {})
+    }
+    return NextResponse.json({ ok: false, error: 'handler failed — will retry' }, { status: 500 })
+  }
+
+  if (eventId) {
+    await customerExecute(
+      `UPDATE stripe_webhook_events SET processed_at = now() WHERE event_id = $1`,
+      [eventId],
+    ).catch(() => {})
   }
 
   return NextResponse.json({ ok: true })
