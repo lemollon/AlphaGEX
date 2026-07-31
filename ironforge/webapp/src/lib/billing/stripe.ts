@@ -80,7 +80,7 @@ function encodeForm(obj: Record<string, unknown>, prefix = ''): string[] {
 }
 
 async function stripeRequest<T = any>(
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'DELETE',
   path: string,
   params?: Record<string, unknown>,
 ): Promise<T> {
@@ -476,6 +476,41 @@ export async function retrieveSubscription(id: string): Promise<StripeSubscripti
  * Trials are preserved: if the first bot is still trialing, Stripe keeps the trial and bills the
  * bundle price when it ends. No new card entry is needed — the payment method is already on file.
  */
+/**
+ * Upgrades a Community-only subscription ($10) in place to a single-bot Automate price
+ * ($50 total — Community is included in Automate), rather than opening a second parallel
+ * subscription (which double-billed $60/mo and matched no advertised total — UAT-011).
+ *
+ * The 5-day agent trial rides on the upgrade (product decision 7/31): trial_end is set,
+ * proration is 'none' — the member keeps the Community period they already paid for, the
+ * $50 rate starts when the trial ends. metadata.bot is overwritten to the new slug so the
+ * webhook reconciles the BOT entitlement from this subscription going forward.
+ */
+export async function upgradeCommunityToBot(opts: {
+  subscriptionId: string
+  itemId: string
+  botPriceId: string
+  userId: string
+  bot: string
+  trialDays: number
+}): Promise<StripeSubscription> {
+  return stripeRequest<StripeSubscription>('POST', `/subscriptions/${encodeURIComponent(opts.subscriptionId)}`, {
+    items: [{ id: opts.itemId, price: opts.botPriceId }],
+    trial_end: Math.floor(Date.now() / 1000) + opts.trialDays * 86_400,
+    proration_behavior: 'none',
+    metadata: { ironforge_user_id: opts.userId, bot: opts.bot },
+  })
+}
+
+/**
+ * Cancels a subscription immediately. Used when an upgrade consolidates billing onto a
+ * different subscription and a parallel one would keep charging (e.g. a legacy separate
+ * Community sub after a bundle upgrade).
+ */
+export async function cancelSubscription(subscriptionId: string): Promise<StripeSubscription> {
+  return stripeRequest<StripeSubscription>('DELETE', `/subscriptions/${encodeURIComponent(subscriptionId)}`)
+}
+
 export async function upgradeSubscriptionToBundle(opts: {
   subscriptionId: string
   itemId: string

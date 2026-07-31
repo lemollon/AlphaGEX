@@ -12,6 +12,8 @@ import {
   isMissingCustomerError,
   retrieveSubscription,
   upgradeSubscriptionToBundle,
+  upgradeCommunityToBot,
+  cancelSubscription,
 } from '@/lib/billing/stripe'
 import {
   getBotPlan,
@@ -292,6 +294,82 @@ export async function POST(req: NextRequest) {
       await customerExecute(
         `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'BUNDLE_UPGRADE', $2)`,
         [user.id, JSON.stringify({ added: plan.slug, subscription: sub.id })],
+      ).catch(() => {})
+
+      // Pricing ladder (UAT-011): the bundle IS the whole $75 — a legacy PARALLEL
+      // Community subscription would keep charging $10 on top. Consolidate it.
+      const parallelCommunity = activeSubs.find(
+        (s) => s.bot === COMMUNITY_KEY && s.stripe_subscription_id && s.stripe_subscription_id !== sub.id,
+      )
+      if (parallelCommunity?.stripe_subscription_id) {
+        try {
+          await cancelSubscription(parallelCommunity.stripe_subscription_id)
+          await customerExecute(
+            `UPDATE customer_bot_subscriptions SET status = 'canceled', updated_at = now()
+              WHERE user_id = $1 AND bot = $2`,
+            [user.id, COMMUNITY_KEY],
+          )
+        } catch (e) {
+          console.error('[checkout] parallel community sub cancel failed:', e)
+        }
+      }
+
+      return NextResponse.json({ ok: true, url: `${origin}${plan.liveHref}?welcome=${plan.slug}` })
+    }
+
+    // ── Community → FIRST agent (UAT-011): an in-place UPGRADE of the existing $10
+    // subscription to the $50 bot price — Community is included in Automate, so the
+    // advertised total is $50, not $10 + $50. Never open a second parallel
+    // subscription here. The 5-day agent trial rides on the upgrade (7/31 decision).
+    const communitySub = activeSubs.find((s) => s.bot === COMMUNITY_KEY && s.stripe_subscription_id)
+    if (communitySub?.stripe_subscription_id) {
+      const botPriceId = await findPriceIdByLookupKey(plan.lookupKey)
+      if (!botPriceId) {
+        return NextResponse.json(
+          { ok: false, error: 'This plan isn’t available yet. Please try again shortly.' },
+          { status: 503 },
+        )
+      }
+      const sub = await retrieveSubscription(communitySub.stripe_subscription_id)
+      const itemId = sub.items?.data?.[0]?.id
+      if (!itemId) throw new Error('community subscription has no line item to upgrade')
+
+      const updated = await upgradeCommunityToBot({
+        subscriptionId: sub.id,
+        itemId,
+        botPriceId,
+        userId: user.id,
+        bot: plan.slug,
+        trialDays: TRIAL_DAYS,
+      })
+      const periodEnd =
+        typeof updated.current_period_end === 'number' && updated.current_period_end > 0
+          ? new Date(updated.current_period_end * 1000).toISOString()
+          : null
+      const status = updated.status || 'trialing'
+
+      // The one subscription now carries the bot price. Grant the bot entitlement and
+      // retire the standalone community row (access continues via the Automate plan).
+      await customerExecute(
+        `INSERT INTO customer_bot_subscriptions
+           (user_id, bot, status, stripe_subscription_id, price_lookup_key, current_period_end, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, now())
+         ON CONFLICT (user_id, bot) DO UPDATE SET
+           status = EXCLUDED.status,
+           stripe_subscription_id = EXCLUDED.stripe_subscription_id,
+           price_lookup_key = EXCLUDED.price_lookup_key,
+           current_period_end = EXCLUDED.current_period_end,
+           updated_at = now()`,
+        [user.id, plan.slug, status, sub.id, plan.lookupKey, periodEnd],
+      )
+      await customerExecute(
+        `UPDATE customer_bot_subscriptions SET status = 'canceled', updated_at = now()
+          WHERE user_id = $1 AND bot = $2`,
+        [user.id, COMMUNITY_KEY],
+      )
+      await customerExecute(
+        `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'COMMUNITY_TO_AUTOMATE_UPGRADE', $2)`,
+        [user.id, JSON.stringify({ bot: plan.slug, subscription: sub.id })],
       ).catch(() => {})
 
       return NextResponse.json({ ok: true, url: `${origin}${plan.liveHref}?welcome=${plan.slug}` })

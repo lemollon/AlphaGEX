@@ -5,7 +5,7 @@ import Link from 'next/link'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import CustomerShell, { type PlanCardData } from '@/components/customer/CustomerShell'
-import { BOT_PLANS, BOTH_PLAN, COMMUNITY_PLAN, COMMUNITY_KEY } from '@/lib/billing/plans'
+import { BOT_PLANS, BOTH_PLAN, COMMUNITY_PLAN, COMMUNITY_KEY, secondBotIncrement } from '@/lib/billing/plans'
 
 interface SummaryResp { membership?: PlanCardData | null }
 interface EntitlementsResp { bots?: string[] }
@@ -115,23 +115,35 @@ export default function BillingClient() {
         {error && <p className="mt-3 rounded-md border border-red-700/40 bg-red-950/30 px-3 py-2 text-sm text-red-300">{error}</p>}
       </div>
 
-      {/* Add / open a strategy */}
+      {/* Add / open a strategy. Pricing ladder (UAT-011): Community only = $10;
+          Community + FIRST agent = an UPGRADE to $50/mo TOTAL (Automate includes
+          Community — never "+$25"); only the SECOND agent is +$25 → $75 total. */}
       {notOwned.length > 0 && (
         <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-5">
-          <div className="text-sm font-semibold text-white">{hasPlan ? 'Add a strategy' : 'Open your first strategy'}</div>
+          <div className="text-sm font-semibold text-white">
+            {ownedBots.length > 0 ? 'Add a strategy' : communityActive ? 'Activate your first agent' : 'Open your first strategy'}
+          </div>
           <p className="mt-0.5 text-xs text-gray-400">
-            {hasPlan ? `Add the second strategy for +$${BOTH_PLAN.priceMonthly - (BOT_PLANS.spark.priceMonthly)}/mo — $${BOTH_PLAN.priceMonthly} total.` : 'Starts a 5-day free trial — no charge today.'}
+            {ownedBots.length > 0
+              ? `Add the second strategy for +$${secondBotIncrement(ownedBots[0])}/mo — $${BOTH_PLAN.priceMonthly} total.`
+              : communityActive
+                ? `Upgrades your membership to Forge Automate — $${BOT_PLANS.spark.priceMonthly}/mo total, Community included. Starts with a 5-day free trial.`
+                : 'Starts a 5-day free trial — no charge today.'}
           </p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {notOwned.map((b) => {
               const plan = BOT_PLANS[b]
               const accent = b === 'flame' ? '#FD5301' : '#2F80ED'
+              const label = ownedBots.length > 0 ? `Add ${plan.name}` : communityActive ? `Add ${plan.name}` : `Open ${plan.name}`
+              const price = ownedBots.length > 0
+                ? `+$${secondBotIncrement(ownedBots[0])}/mo`
+                : `$${plan.priceMonthly}/mo total`
               return (
                 <Link key={b} href={`/live/${b}/open`}
                   className="flex items-center justify-between gap-3 rounded-lg border border-forge-border bg-forge-bg/50 px-3 py-2.5 transition hover:border-white/25"
                   style={{ borderLeft: `3px solid ${accent}` }}>
-                  <span className="text-sm font-semibold text-white">{hasPlan ? `Add ${plan.name}` : `Open ${plan.name}`}</span>
-                  <span className="text-xs font-medium" style={{ color: accent }}>{hasPlan ? `+$${BOTH_PLAN.priceMonthly - BOT_PLANS.spark.priceMonthly}/mo` : `$${plan.priceMonthly}/mo`}</span>
+                  <span className="text-sm font-semibold text-white">{label}</span>
+                  <span className="text-xs font-medium" style={{ color: accent }}>{price}</span>
                 </Link>
               )
             })}

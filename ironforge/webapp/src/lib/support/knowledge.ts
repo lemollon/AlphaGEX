@@ -33,7 +33,7 @@ export const SUPPORT_KB: KbEntry[] = [
   {
     topic: 'plans',
     q: 'How much is a second strategy / the bundle?',
-    a: 'Adding a second strategy is +$25/mo, not another full $50 — it lifts a single-strategy subscription to the $75 Pro bundle covering both Spark and Flame. You can add it from your Live menu (the strategy you don\'t own yet) or from /account/billing.',
+    a: 'From Community only, activating your FIRST strategy upgrades your membership to $50/mo total (Community stays included — it is not $10 + $50). Adding a SECOND strategy is +$25/mo, lifting a single-strategy subscription to the $75 bundle covering both Spark and Flame. You can add either from /account/billing.',
   },
   {
     topic: 'plans',
