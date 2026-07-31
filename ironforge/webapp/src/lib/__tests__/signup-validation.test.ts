@@ -13,6 +13,7 @@ function validPayload(): SignupPayload {
   return {
     firstName: 'Ada',
     lastName: 'Lovelace',
+    username: 'Ada_Lovelace',
     email: 'Ada@Example.com',
     phone: '(555) 123-4567',
     state: 'CA',

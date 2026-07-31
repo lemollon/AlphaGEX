@@ -132,11 +132,14 @@ export async function touchPresence(userId: string, displayName: string): Promis
 }
 
 export async function getDisplayName(userId: string): Promise<string> {
-  const rows = await customerQuery<{ first_name: string; last_name: string; email: string }>(
-    `SELECT first_name, last_name, email FROM users WHERE id = $1`, [userId],
+  const rows = await customerQuery<{ username: string | null; first_name: string; last_name: string; email: string }>(
+    `SELECT username, first_name, last_name, email FROM users WHERE id = $1`, [userId],
   )
   const u = rows[0]
   if (!u) return 'Member'
+  // The username IS the public handle — that's what it was chosen for. Real
+  // names remain the fallback for accounts created before usernames existed.
+  if (u.username?.trim()) return u.username.trim()
   const name = `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim()
   return name || u.email.split('@')[0]
 }
