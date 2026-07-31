@@ -9,7 +9,7 @@ import { ArrowRightIcon } from './icons'
  * open a pre-filled email so signups actually reach the inbox.
  * Goes to the BUSINESS address: this was a personal Gmail while every other
  * contact point on the site is @ironforge.trade. */
-const NEWSLETTER_EMAIL = 'leron@ironforge.trade'
+const NEWSLETTER_EMAIL = 'support@ironforge.trade'
 
 /* Every label points at a page that exists and matches the label. Previously
  * About Us / Our Mission / Careers all collapsed onto /contact (three names for

@@ -45,7 +45,7 @@ export default function LegalPage({
         <div className="max-w-3xl mx-auto px-5 py-8 text-sm text-forge-muted flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
           <span>© {new Date().getFullYear()} IronForge Technologies LLC. All rights reserved.</span>
           <span>
-            <a href="mailto:leron@ironforge.trade" className="hover:text-amber-500 transition-colors">leron@ironforge.trade</a>
+            <a href="mailto:support@ironforge.trade" className="hover:text-amber-500 transition-colors">support@ironforge.trade</a>
           </span>
         </div>
       </footer>
