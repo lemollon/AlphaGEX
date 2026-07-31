@@ -4,7 +4,6 @@ import { redirect } from 'next/navigation'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { hasActiveMembership } from '@/lib/live/membership'
 import EnrollShell from '../EnrollShell'
-import TradingViewPerkCard from '@/components/customer/TradingViewPerkCard'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -48,11 +47,6 @@ export default async function EnrollDonePage() {
         </Link>
       </div>
 
-      {/* First perk, offered right where membership begins. Optional — skipping it
-          here loses nothing; the same card lives at /account/tradingview. */}
-      <div className="mt-4">
-        <TradingViewPerkCard />
-      </div>
     </EnrollShell>
   )
 }

@@ -144,8 +144,7 @@ export default function LiveClient() {
                 <h2 className="font-display text-2xl tracking-wide text-white">Put a bot to work</h2>
                 <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-gray-400">
                   Start a dedicated account for a strategy and it trades the same disciplined
-                  rules every session. Watch the live paper track record on{' '}
-                  <a href="/bot-ledger" className="font-semibold text-amber-500 hover:text-amber-400">Track Record</a>.
+                  rules every session.
                 </p>
               </div>
               <div className="mx-auto mt-6 grid max-w-xl gap-4">
