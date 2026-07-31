@@ -32,7 +32,7 @@ const MEMBER_LINKS: ReadonlyArray<{ href: string; label: string }> = [
 // there is nothing on it for someone who owns no strategy, so advertising it to a
 // free account is a dead end dressed as a feature.
 const OWNER_LINKS: ReadonlyArray<{ href: string; label: string }> = [
-  { href: '/live', label: 'Live' },
+  { href: '/live', label: 'My Agents' },
 ]
 
 // `active` is retained for backward compatibility with existing callers

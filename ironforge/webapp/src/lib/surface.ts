@@ -43,6 +43,10 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/live',
   '/live/spark/open',
   '/live/flame/open',
+  // Agent workspaces (UAT-008): the primary trading destinations. /live above is
+  // retained only as a redirect into these.
+  '/agents/spark',
+  '/agents/flame',
   '/home',
   '/performance',
   '/track-record',

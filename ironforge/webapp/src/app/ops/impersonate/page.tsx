@@ -25,7 +25,7 @@ interface Roster {
 const DESTINATIONS = [
   { label: 'Performance', next: '/performance' },
   { label: 'Community', next: '/community' },
-  { label: 'Live', next: '/live' },
+  { label: 'Agents', next: '/live' },
   { label: 'Trades', next: '/account/trades' },
 ]
 

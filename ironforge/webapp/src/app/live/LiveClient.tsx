@@ -1,10 +1,10 @@
 'use client'
 
 import useSWR, { mutate } from 'swr'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { fetcher } from '@/lib/fetcher'
 import type { LiveSummary, LiveTrade } from '@/lib/live/types'
-import { LIVE_BOTS, LIVE_BOT_LABEL, type LiveBot } from '@/lib/live/bots'
+import { LIVE_BOT_LABEL, type LiveBot } from '@/lib/live/bots'
 import { accentFor } from './components/accent'
 import { isSwingActive } from '@/lib/live/swing'
 import LiveHeader from './components/LiveHeader'
@@ -44,25 +44,10 @@ const SIGNUP_CTAS = [
   },
 ] as const
 
-export default function LiveClient() {
-  // Account-aware view: which live bot's account this page shows. The API
-  // authorizes server-side; the header toggle only appears when the viewer
-  // may see more than one account (operators; later, multi-account owners).
-  const [account, setAccount] = useState<LiveBot>('spark')
-  useEffect(() => {
-    const a = new URLSearchParams(window.location.search).get('account')
-    if (a && a !== 'spark' && (LIVE_BOTS as readonly string[]).includes(a)) {
-      setAccount(a as LiveBot)
-    }
-  }, [])
-  const switchAccount = (next: LiveBot) => {
-    setAccount(next)
-    const url = new URL(window.location.href)
-    if (next === 'spark') url.searchParams.delete('account')
-    else url.searchParams.set('account', next)
-    window.history.replaceState(null, '', url.toString())
-  }
-
+export default function LiveClient({ account }: { account: LiveBot }) {
+  // Agent workspace (UAT-008 / IF-NAV-001): the account is FIXED by the route
+  // (/agents/spark, /agents/flame) — no in-page switcher. Navigation between
+  // agents happens in the left rail, where each agent is a top-level item.
   const summaryKey = `/api/live/summary?account=${account}`
   const tradeKey = `/api/live/trade?account=${account}`
   const { data: summary, error: summaryError } = useSWR<LiveSummary>(
@@ -100,18 +85,12 @@ export default function LiveClient() {
   const signedIn = !!summary?.viewer?.customerId
 
   return (
-    <CustomerShell
-      membership={summary?.membership ?? null}
-      bots={(summary?.viewer?.allowedBots ?? []) as LiveBot[]}
-      activeBot={account}
-      paperBots={summary?.viewer?.paperBots ?? []}
-      onSwitch={switchAccount}
-    >
+    <CustomerShell membership={summary?.membership ?? null}>
           {/* Where a bot purchase lands (`?welcome=spark|flame`). The subscription row
               is written by the Stripe webhook, so without this a customer who just paid
               can briefly see a dashboard that says they own nothing. */}
           <CheckoutNotice labels={LIVE_BOT_LABEL} />
-          <LiveHeader viewer={summary?.viewer ?? null} onSwitch={switchAccount} />
+          <LiveHeader viewer={summary?.viewer ?? null} />
           {summary?.empty && summary.activation_confirmation ? (
             /* DASH-FIRST-01, empty-viewer case: a JUST-ACTIVATED customer has no
                ironforge_customer_bots mapping yet, so the summary is empty — but

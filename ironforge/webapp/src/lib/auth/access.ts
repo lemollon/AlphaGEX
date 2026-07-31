@@ -74,6 +74,9 @@ const CUSTOMER_EXACT = new Set<string>([
   // Per-bot "Open Account" (subscribe) pages — render the customer's own setup + pricing.
   '/live/spark/open',
   '/live/flame/open',
+  // Agent workspaces (UAT-008) — /live now only redirects into these.
+  '/agents/spark',
+  '/agents/flame',
   '/performance',
   '/community',
   '/support',
