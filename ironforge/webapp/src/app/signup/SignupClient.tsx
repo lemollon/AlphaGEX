@@ -188,10 +188,18 @@ export default function SignupClient() {
 
   // Prefill from an explicit ?code= link only. No default/suggested code: surfacing a
   // valid-looking example ("FORGE50") had every UAT participant reusing it (UAT-004).
+  // Also capture ?plan / ?bot intent (audit M9): a visitor who clicked "Start Trial"
+  // or a specific bot expects to land there, not on a generic chooser — persisted at
+  // signup so it survives email verification.
+  const [intendedPlan, setIntendedPlan] = useState<string | null>(null)
   useEffect(() => {
     const q = new URLSearchParams(window.location.search)
     const code = q.get('code')
     if (code) setPromoCode(code.toUpperCase())
+    const plan = q.get('plan')
+    const bot = q.get('bot')
+    if (plan === 'community') setIntendedPlan('community')
+    else if (plan === 'automate' || bot === 'spark' || bot === 'flame') setIntendedPlan('automate')
   }, [])
 
   const set = (k: keyof SignupPayload, v: string | boolean) => {
@@ -214,7 +222,7 @@ export default function SignupClient() {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...form, promoCode }),
+        body: JSON.stringify({ ...form, promoCode, intendedPlan }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {

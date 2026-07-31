@@ -8,6 +8,9 @@ import {
   getOpenEnrollment,
   createOrResumeEnrollment,
   nextStepFor,
+  setEnrollmentPlan,
+  getEnrollmentForUser,
+  consumeIntendedPlan,
 } from '@/lib/enrollment/service'
 import { ownsStrategy, hasActiveMembership } from '@/lib/live/membership'
 import { routeForNextStep } from './steps'
@@ -51,7 +54,18 @@ export default async function EnrollPage() {
       } else if (await hasActiveMembership(session.customerId)) {
         route = '/community'
       } else {
-        const enrollment = await createOrResumeEnrollment(session.customerId, 'enroll_page')
+        let enrollment = await createOrResumeEnrollment(session.customerId, 'enroll_page')
+        // Apply the plan the visitor clicked toward before signing up (audit M9), once,
+        // on a still-fresh draft. Honors the CTA instead of showing a generic chooser;
+        // the plan screen still owns any later re-choose.
+        if (enrollment.status === 'draft' && !enrollment.selected_plan) {
+          const intent = await consumeIntendedPlan(session.customerId)
+          if (intent === 'community' || intent === 'automate') {
+            await setEnrollmentPlan(enrollment.id, session.customerId, intent)
+            const refreshed = await getEnrollmentForUser(enrollment.id, session.customerId)
+            if (refreshed) enrollment = refreshed
+          }
+        }
         route = routeForNextStep(nextStepFor(enrollment), enrollment.selected_plan).route
       }
     } catch {
