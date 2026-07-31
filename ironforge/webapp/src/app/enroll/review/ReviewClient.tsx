@@ -149,7 +149,12 @@ export default function ReviewClient() {
       ? Math.round((preview.snapshot.max_deployment_cents / preview.snapshot.buying_power_cents) * 100)
       : null
   const visibleBlockers = blockers.filter((b) => b.code !== 'ACKNOWLEDGMENTS_MISSING' && b.code !== 'PREVIEW_STALE')
-  const canActivate = riskAck && authAck && !busy && preview != null
+  // Gate on the server's own verdict (audit minor): the button used to be live even
+  // while "Before you can activate:" listed blockers, so clicking just re-rendered
+  // the same list. can_activate is the authority; ACKNOWLEDGMENTS_MISSING is the only
+  // blocker the checkboxes below clear, so it doesn't count here.
+  const serverBlocks = visibleBlockers.length > 0 || (preview != null && !preview.can_activate)
+  const canActivate = riskAck && authAck && !busy && preview != null && !serverBlocks
 
   return (
     <EnrollShell
@@ -197,6 +202,13 @@ export default function ReviewClient() {
                         <Link href={BLOCKER_ROUTE[b.code]} className="text-xs font-semibold text-amber-500 hover:text-amber-400">
                           Fix this →
                         </Link>
+                      ) : !b.remediable ? (
+                        /* Non-remediable (e.g. KILL_SWITCH_ENGAGED, a platform pause):
+                           there's no self-service fix, but a dead end with no next
+                           action is worse (audit M12). Point to support. */
+                        <a href="/support" className="text-xs font-semibold text-amber-500 hover:text-amber-400">
+                          Contact support →
+                        </a>
                       ) : null}
                     </li>
                   ))}

@@ -48,11 +48,18 @@ interface Conn {
 /** sessionStorage key the agent screen reads the selected account from. */
 export const SELECTED_ACCOUNT_KEY = 'enroll_broker_account'
 
+/** Per-tile status (audit M4): all three said "Available" in green, but Tradier's
+ *  OAuth isn't provisioned yet and Robinhood can never trade — telling a customer
+ *  they can connect and letting them fail is worse than saying the truth up front. */
+type TileStatus = { label: string; tone: 'good' | 'muted' | 'coming'; canConnect: boolean }
+
 interface Tile {
   key: 'tradier' | 'tastytrade' | 'robinhood'
   name: string
   /** How "Connect account" starts: our OAuth, or the SnapTrade portal with this slug. */
   connect: { kind: 'oauth' } | { kind: 'snaptrade'; slug: string }
+  /** Honest per-broker capability, shown on the tile. */
+  status: TileStatus
   /** The broker's own account-opening page — "Open new account" opens it in a new tab. */
   openUrl: string
   /** The one thing to get right while opening a new account there. */
@@ -64,6 +71,7 @@ const TILES: readonly Tile[] = [
     key: 'tradier',
     name: 'Tradier',
     connect: { kind: 'oauth' },
+    status: { label: 'Partner · coming soon', tone: 'coming', canConnect: false },
     openUrl: 'https://tradier.com/signup',
     openNote: 'Choose a margin account and request options level 3 (spreads) during signup.',
   },
@@ -71,6 +79,7 @@ const TILES: readonly Tile[] = [
     key: 'tastytrade',
     name: 'tastytrade',
     connect: { kind: 'snaptrade', slug: 'TASTYTRADE' },
+    status: { label: 'Automated trading', tone: 'good', canConnect: true },
     openUrl: 'https://open.tastytrade.com/signup',
     openNote: 'Choose a margin account and enable options trading with defined-risk spreads.',
   },
@@ -78,6 +87,7 @@ const TILES: readonly Tile[] = [
     key: 'robinhood',
     name: 'Robinhood',
     connect: { kind: 'snaptrade', slug: 'ROBINHOOD' },
+    status: { label: 'View only', tone: 'muted', canConnect: false },
     openUrl: 'https://robinhood.com/signup',
     openNote: 'Robinhood accounts can be viewed here, but Robinhood does not yet allow automated trading.',
   },
@@ -189,14 +199,17 @@ export default function BrokerClient() {
           {TILES.map((t) => (
             <div key={t.key} className="flex flex-col items-center rounded-xl border border-forge-border bg-black/20 p-4">
               <div className="flex h-10 items-center text-base font-bold text-white">{t.name}</div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">Available</span>
+              <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                t.status.tone === 'good' ? 'text-emerald-400'
+                : t.status.tone === 'coming' ? 'text-amber-400' : 'text-gray-500'
+              }`}>{t.status.label}</span>
               <button
                 type="button"
-                disabled={busy}
+                disabled={busy || !t.status.canConnect}
                 onClick={() => connect(t)}
                 className="mt-3 w-full rounded-lg bg-amber-500 px-3 py-2 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Connect account
+                {t.status.canConnect ? 'Connect account' : t.status.tone === 'coming' ? 'Coming soon' : 'Not available'}
               </button>
               <button
                 type="button"

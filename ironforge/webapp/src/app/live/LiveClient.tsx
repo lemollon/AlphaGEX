@@ -117,9 +117,8 @@ export default function LiveClient({ account }: { account: LiveBot }) {
               </div>
             </div>
           ) : summary?.empty ? (
-            /* No bot mapped — a conversion surface, not a dashboard. Live paper
-               results live on /bot-ledger. Customers WITH a mapped bot never reach
-               this branch.
+            /* No bot mapped — a conversion surface, not a dashboard. Customers WITH
+               a mapped bot never reach this branch.
 
                Two very different visitors land here and they must not get the same
                CTA. This used to send everyone to /signup?bot=..., so a SIGNED-IN
