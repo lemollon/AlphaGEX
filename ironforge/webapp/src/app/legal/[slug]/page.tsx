@@ -126,8 +126,8 @@ const DOCS: Record<string, DocPage> = {
         <LegalSection heading="Withdrawing consent">
           <p>
             You may withdraw this consent by contacting{' '}
-            <a href="mailto:leron@ironforge.trade" className="text-amber-500 hover:underline">
-              leron@ironforge.trade
+            <a href="mailto:support@ironforge.trade" className="text-amber-500 hover:underline">
+              support@ironforge.trade
             </a>
             . Because the Service is delivered electronically, withdrawing consent will require
             closing your automated-trading enrollment. Keep your email address current so
@@ -211,8 +211,8 @@ const DOCS: Record<string, DocPage> = {
             billing periods. Trading losses are never refundable — they occur in your own
             brokerage account under the risks you accepted when activating. If you believe you
             were billed in error, contact{' '}
-            <a href="mailto:leron@ironforge.trade" className="text-amber-500 hover:underline">
-              leron@ironforge.trade
+            <a href="mailto:support@ironforge.trade" className="text-amber-500 hover:underline">
+              support@ironforge.trade
             </a>{' '}
             within 30 days of the charge and we will review it.
           </p>

@@ -113,8 +113,8 @@ export default function TermsPage() {
       <LegalSection heading="Contact">
         <p>
           Questions about these Terms? Email{' '}
-          <a href="mailto:leron@ironforge.trade" className="text-amber-500 hover:underline">
-            leron@ironforge.trade
+          <a href="mailto:support@ironforge.trade" className="text-amber-500 hover:underline">
+            support@ironforge.trade
           </a>
           .
         </p>

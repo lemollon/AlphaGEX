@@ -136,22 +136,19 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
 
         {/* Form */}
         <div className="mt-8 space-y-6">
+          {/* Fixed defaults, not choices (UAT-010): these rendered as disabled dropdowns
+              with chevrons, signalling configurability that doesn't exist. They are
+              read-only configuration rows; the values are never sent anywhere. */}
           <Field label="Account Type">
-            <div className="relative">
-              <select disabled className="w-full appearance-none rounded-lg border border-forge-border bg-forge-bg/60 px-4 py-3 pr-10 text-sm text-white outline-none transition focus:border-white/30 disabled:cursor-not-allowed disabled:opacity-70" defaultValue="dedicated">
-                <option value="dedicated">Dedicated {plan.name} Account</option>
-              </select>
-              <Chevron />
+            <div className="rounded-lg border border-forge-border bg-forge-bg/60 px-4 py-3 text-sm text-white">
+              Dedicated {plan.name} Account
             </div>
           </Field>
 
           <Field label="Separate Brokerage Account"
             help={`${plan.name} should use its own brokerage account so strategy activity stays separate from your other active strategies.`}>
-            <div className="relative">
-              <select disabled className="w-full appearance-none rounded-lg border border-forge-border bg-forge-bg/60 px-4 py-3 pr-10 text-sm text-white outline-none transition focus:border-white/30 disabled:cursor-not-allowed disabled:opacity-70" defaultValue="yes">
-                <option value="yes">Yes, use a separate brokerage account</option>
-              </select>
-              <Chevron />
+            <div className="rounded-lg border border-forge-border bg-forge-bg/60 px-4 py-3 text-sm text-white">
+              Yes, use a separate brokerage account
             </div>
           </Field>
 

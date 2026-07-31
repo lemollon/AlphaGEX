@@ -84,8 +84,8 @@ export default function PrivacyPage() {
       <LegalSection heading="Contact">
         <p>
           Questions about this policy? Email{' '}
-          <a href="mailto:leron@ironforge.trade" className="text-amber-500 hover:underline">
-            leron@ironforge.trade
+          <a href="mailto:support@ironforge.trade" className="text-amber-500 hover:underline">
+            support@ironforge.trade
           </a>
           .
         </p>

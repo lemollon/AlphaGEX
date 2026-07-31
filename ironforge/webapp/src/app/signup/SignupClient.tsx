@@ -169,10 +169,11 @@ export default function SignupClient() {
     return () => { live = false; clearTimeout(t) }
   }, [promoCode])
 
-  // Prefill from ?code= (or ?plan=founder → FORGE50) so founding CTAs land pre-filled.
+  // Prefill from an explicit ?code= link only. No default/suggested code: surfacing a
+  // valid-looking example ("FORGE50") had every UAT participant reusing it (UAT-004).
   useEffect(() => {
     const q = new URLSearchParams(window.location.search)
-    const code = q.get('code') || (q.get('plan') === 'founder' ? 'FORGE50' : '')
+    const code = q.get('code')
     if (code) setPromoCode(code.toUpperCase())
   }, [])
 
@@ -296,11 +297,11 @@ export default function SignupClient() {
               <Field id="referralCode" label="Referral Code (Optional)" placeholder="Enter referral code" icon={<TagIcon />} value={form.referralCode || ''} error={errors.referralCode} onChange={(v) => set('referralCode', v)} />
 
               <div>
-                <Field id="promoCode" label="Promo Code (Optional)" placeholder="e.g. FORGE50" icon={<TagIcon />} value={promoCode} onChange={(v) => setPromoCode(v.toUpperCase())} />
+                <Field id="promoCode" label="Promo Code (Optional)" placeholder="Enter promo code" icon={<TagIcon />} value={promoCode} onChange={(v) => setPromoCode(v.toUpperCase())} />
                 {promo ? (
                   <div className="mt-2 flex items-start gap-2 rounded-lg border border-emerald-700/40 bg-emerald-950/25 px-3 py-2 text-xs text-emerald-300">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 h-4 w-4 shrink-0"><path d="M20 6 9 17l-5-5" /></svg>
-                    <span><b>Founding rate locked</b> — {promo.headline}. {promo.terms} Applied when your account is activated.</span>
+                    <span><b>Code recognised</b> — {promo.headline}. {promo.terms}</span>
                   </div>
                 ) : promoCode.trim() && !promoChecking ? (
                   <div className="mt-2 text-xs text-gray-500">That code isn&apos;t recognised — you can still continue without it.</div>

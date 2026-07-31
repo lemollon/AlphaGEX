@@ -17,8 +17,8 @@ export default function ContactPage() {
       <LegalSection heading="Support &amp; general inquiries">
         <p>
           Email:{' '}
-          <a href="mailto:leron@ironforge.trade" className="text-amber-500 hover:underline">
-            leron@ironforge.trade
+          <a href="mailto:support@ironforge.trade" className="text-amber-500 hover:underline">
+            support@ironforge.trade
           </a>
         </p>
         <p>We aim to respond to all inquiries within two business days.</p>
@@ -28,8 +28,8 @@ export default function ContactPage() {
         <p>
           For questions about a charge, your plan, the free trial, or to cancel a
           subscription, email{' '}
-          <a href="mailto:leron@ironforge.trade" className="text-amber-500 hover:underline">
-            leron@ironforge.trade
+          <a href="mailto:support@ironforge.trade" className="text-amber-500 hover:underline">
+            support@ironforge.trade
           </a>{' '}
           with the email address on your account. Payments are processed by Stripe; IronForge does not
           store full card details.
