@@ -89,8 +89,8 @@ export default function PlanClient() {
 
         {enrollment ? (
           <div className="mt-6 grid gap-5 md:grid-cols-2">
-            {/* Forge Community */}
-            <div className="flex flex-col rounded-xl border border-forge-border bg-black/20 p-6">
+            {/* Forge Community — orange outline + accents per the approved reference (UAT-009) */}
+            <div className="flex flex-col rounded-xl border border-amber-500/50 bg-black/20 p-6">
               <h3 className="text-xl font-bold">
                 <span className="text-white">Forge </span>
                 <span className="text-amber-500">Community</span>
@@ -118,12 +118,14 @@ export default function PlanClient() {
               <span className="absolute -top-3 right-5 rounded-full border border-emerald-500/50 bg-emerald-950 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-400">
                 {TRIAL_DAYS} trading day free trial
               </span>
+              {/* Fully green per the approved reference (UAT-009) — heading + checks
+                  included, not just outline/badge/CTA. */}
               <h3 className="text-xl font-bold">
                 <span className="text-white">Forge </span>
-                <span className="text-amber-500">Automate</span>
+                <span className="text-emerald-400">Automate</span>
               </h3>
               <p className="mt-1 text-sm text-gray-400">Everything in Forge Community, plus:</p>
-              <FeatureList items={AUTOMATE_FEATURES} checkClass="text-amber-500" />
+              <FeatureList items={AUTOMATE_FEATURES} checkClass="text-emerald-400" />
               <div className="mt-auto pt-6">
                 <div className="border-t border-forge-border pt-5">
                   <span className="text-3xl font-bold text-white">${MARKETING_TIERS.starter.priceMonthly}</span>

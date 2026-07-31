@@ -27,12 +27,23 @@ export function Hero() {
           A disciplined trading ecosystem designed to help you stay informed, execute with confidence, and grow
           alongside a community of serious traders.
         </p>
-        <Link
-          href="/signup"
-          className="mt-7 inline-block rounded-lg bg-[#FD5301] px-6 py-3 text-[15px] font-semibold text-white transition-colors hover:bg-[#FF6A1F]"
-        >
-          Create Account
-        </Link>
+        {/* Two doors, same weight (UAT-002): orange = create the account, green = the
+            Automate trial path. Identical height/typography/radius; wraps as a stack
+            on narrow screens. */}
+        <div className="mt-7 flex flex-wrap items-center gap-3">
+          <Link
+            href="/signup"
+            className="inline-block rounded-lg bg-[#FD5301] px-6 py-3 text-[15px] font-semibold text-white transition-colors hover:bg-[#FF6A1F]"
+          >
+            Create Account
+          </Link>
+          <Link
+            href="/signup?plan=automate"
+            className="inline-block rounded-lg bg-[#4C9A2A] px-6 py-3 text-[15px] font-semibold text-white transition-colors hover:bg-[#58AC33]"
+          >
+            Start 5-Day Free Trial
+          </Link>
+        </div>
 
         {/* No pricing card here. The hero states the promise and asks for the account;
             the two tiers are compared side by side in "Choose Your Membership" below,
@@ -204,8 +215,13 @@ export function MembershipSection() {
       <div className="mx-auto mt-10 grid max-w-[1000px] grid-cols-1 items-stretch gap-6 md:grid-cols-2">
         {/* Forge Community */}
         <div className="flex flex-col rounded-2xl border border-white/10 bg-[#0A0B0C] p-6 md:p-7">
+          {/* Header structure mirrors ForgeStarterCard exactly (UAT-001): same 12×12
+              icon box, same title/sub-line stack, so the checklists start on the same
+              baseline in both cards. */}
           <div className="flex items-center gap-4">
-            <PeopleIcon className="h-11 w-11 text-[#FD5301]" />
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center">
+              <PeopleIcon className="h-11 w-11 text-[#FD5301]" />
+            </div>
             <div>
               <h3 className="text-[22px] font-bold text-white">
                 Forge <span className="text-[#FD5301]">Community</span>
@@ -218,19 +234,23 @@ export function MembershipSection() {
             <FeatureChecklist items={COMMUNITY_FEATURES} />
           </div>
 
-          {/* mt-auto pins the price row to the card's bottom edge, so both tiers' prices
-              sit on the same line however the feature lists wrap. */}
-          <div className="mt-auto flex items-center justify-between gap-4 border-t border-white/10 pt-5">
-            <div className="text-white">
-              <span className="text-[30px] font-extrabold">${MARKETING_TIERS.community.priceMonthly}</span>
-              <span className="ml-1 text-sm text-gray-400">/month</span>
+          {/* Bottom block mirrors ForgeStarterCard: mt-auto pins it, and the matching
+              caption line keeps both tiers' price/CTA rows on the SAME baseline —
+              without it Community's price sat lower than Automate's (UAT-001). */}
+          <div className="mt-auto border-t border-white/10 pt-5">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="text-white">
+                <span className="text-[30px] font-extrabold">${MARKETING_TIERS.community.priceMonthly}</span>
+                <span className="ml-1 text-sm text-gray-400">/month</span>
+              </div>
+              <Link
+                href="/signup?plan=community"
+                className="whitespace-nowrap rounded-lg bg-[#FD5301] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#FF6A1F] md:px-7 md:text-[15px]"
+              >
+                Join Community
+              </Link>
             </div>
-            <Link
-              href="/signup?plan=community"
-              className="whitespace-nowrap rounded-lg bg-[#FD5301] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#FF6A1F] md:px-8 md:text-[15px]"
-            >
-              Join Community
-            </Link>
+            <p className="mt-3 text-xs text-gray-500">Cancel anytime.</p>
           </div>
         </div>
 

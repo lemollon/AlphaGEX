@@ -149,7 +149,7 @@ export default function BillingClient() {
                       ${MARKETING_TIERS.community.priceMonthly.toFixed(2)}
                     </span>
                   </div>
-                  <p className="mt-1 text-xs text-gray-500">Monthly membership · Renews monthly</p>
+                  <p className="mt-1 text-xs text-gray-500">Community included · Renews monthly · No free trial</p>
                   <div className="mt-4 flex items-baseline justify-between border-t border-forge-border pt-4">
                     <span className="text-sm font-semibold text-gray-200">Due today</span>
                     <span className="text-2xl font-bold text-white">
@@ -182,7 +182,11 @@ export default function BillingClient() {
                 </>
               )}
               <p className="mt-4 flex items-center gap-1.5 text-xs text-gray-500">
-                <span aria-hidden>🔒</span> Payments are securely processed by Stripe.
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
+                  <rect x="5" y="10.5" width="14" height="9" rx="2" />
+                  <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" />
+                </svg>
+                Payments are securely processed by Stripe.
               </p>
             </div>
 
