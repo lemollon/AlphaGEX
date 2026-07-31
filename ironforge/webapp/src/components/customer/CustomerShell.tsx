@@ -42,9 +42,10 @@ const ICONS = {
   ops: 'M13 2 4 14h6l-1 8 9-12h-6l1-8z',
 }
 
+// UAT-008 / IF-NAV-001: no "Live" item — the agents ARE the primary navigation.
+// AgentNavItems renders Spark + Flame (with ACTIVE/ADD state) right after Performance.
 const NAV_MAIN = [
   { label: 'Performance', href: '/performance', icon: ICONS.performance },
-  { label: 'Live', href: '/live', icon: ICONS.live },
   { label: 'Community', href: '/community', icon: ICONS.community },
   { label: 'Trade History', href: '/account/trades', icon: ICONS.history },
 ]
@@ -161,78 +162,53 @@ const strategyGlyph = (accent: string) => (
 )
 
 /**
- * Strategy child rows under "Live" — always lists BOTH strategies (Spark + Flame).
+ * Agent navigation (UAT-008 / IF-NAV-001): Spark and Flame are TOP-LEVEL items with a
+ * state badge, replacing the removed "Live" tab.
  *
- * The row routes by ownership (read from /api/billing/entitlements):
- *   - OWNED  → switch the /live view (on /live) or navigate to /live (elsewhere).
- *   - NOT owned → the Open Account / add screen `/live/{bot}/open`, which subscribes
- *     to that strategy — a bundle upgrade (+$25/mo) if the other one is already active.
- * So a Spark-only customer's "Flame" item takes them to add Flame, and vice versa.
+ *   - OWNED  → ACTIVE badge, opens that agent's workspace at /agents/{bot}.
+ *   - NOT owned → ADD badge, opens the setup flow at /live/{bot}/open (a bundle
+ *     upgrade if the other agent is already active).
+ *
+ * Ownership reads /api/billing/entitlements; badges render only once ownership is
+ * KNOWN — never invite a paying customer to re-buy a strategy while loading.
  */
-function StrategyChildren({ bots, activeBot, onSwitch }: StrategyNav) {
+function AgentNavItems({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname()
   const { data: ent } = useSWR<{ bots?: string[] }>('/api/billing/entitlements', fetcher, { shouldRetryOnError: false })
 
-  // Only ever the two real products — never spark2 / paper accounts.
-  const rows: LiveBot[] = PURCHASABLE_BOTS
-
-  // Owned = billing entitlements (or the /live switcher's allowed bots), limited to the
-  // purchasable products. Anything not owned falls through to the "Add" flow.
   const owned = new Set<LiveBot>(
-    (ent?.bots ?? bots ?? []).filter((b): b is LiveBot => isLiveBot(b) && PURCHASABLE_BOTS.includes(b)),
+    (ent?.bots ?? []).filter((b): b is LiveBot => isLiveBot(b) && PURCHASABLE_BOTS.includes(b)),
   )
-  // Only offer "Add" once we actually know ownership — never invite a paying customer
-  // to re-buy a strategy they already have while entitlements are still loading.
-  const known = ent !== undefined || bots !== undefined
-
-  const onLive = pathname === '/live'
+  const known = ent !== undefined
 
   return (
-    <div className="ml-6 mr-3 space-y-0.5 rounded-lg bg-black/20 py-2">
-      {rows.map((b) => {
+    <>
+      {PURCHASABLE_BOTS.map((b) => {
         const flame = LIVE_BOT_ACCENT[b] === 'flame'
         const accent = flame ? 'text-flame' : 'text-spark'
-        const dot = flame ? 'bg-flame' : 'bg-spark'
+        const badgeClass = flame ? 'bg-flame/15 text-flame' : 'bg-spark/15 text-spark'
         const isOwned = owned.has(b)
-        const rowBase =
-          'flex min-h-[44px] w-full items-center gap-2.5 rounded-md px-3 text-sm transition-colors'
-
-        // NOT owned → send them to add this strategy (bundle upgrade if they own the other).
-        if (!isOwned && known) {
-          return (
-            <Link key={b} href={`/live/${b}/open`} className={`${rowBase} text-gray-400 hover:text-white`}>
-              {strategyGlyph(accent)}
-              <span>{LIVE_BOT_LABEL[b]}</span>
-              <span className={`ml-auto rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-wider ${flame ? 'bg-flame/15 text-flame' : 'bg-spark/15 text-spark'}`}>
-                Add
-              </span>
-            </Link>
-          )
-        }
-
-        // Owned + on /live with a switch handler → switch the view in place (existing UX).
-        if (isOwned && onLive && onSwitch && (bots ?? []).includes(b)) {
-          const active = b === activeBot
-          return (
-            <button key={b} type="button" onClick={() => onSwitch(b)}
-              aria-current={active ? 'true' : undefined}
-              className={`${rowBase} ${active ? `bg-forge-card font-medium ${accent}` : 'text-gray-400 hover:text-white'}`}>
-              {strategyGlyph(accent)}
-              <span>{LIVE_BOT_LABEL[b]}</span>
-              <span className={`ml-auto h-1.5 w-1.5 rounded-full ${active ? dot : 'bg-gray-700'}`} />
-            </button>
-          )
-        }
-
-        // Owned, off /live (or ownership not yet known) → go to the Live dashboard.
+        const href = isOwned || !known ? `/agents/${b}` : `/live/${b}/open`
+        const active = pathname.startsWith(`/agents/${b}`)
         return (
-          <Link key={b} href="/live" className={`${rowBase} text-gray-400 hover:text-white`}>
+          <Link key={b} href={href} onClick={onNavigate}
+            aria-current={active ? 'page' : undefined}
+            className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
+              active
+                ? `border-l-2 border-amber-500 bg-amber-500/10 font-medium ${accent}`
+                : 'border-l-2 border-transparent text-gray-400 hover:text-white'
+            }`}>
             {strategyGlyph(accent)}
             <span>{LIVE_BOT_LABEL[b]}</span>
+            {known && (
+              <span className={`ml-auto rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-wider ${badgeClass}`}>
+                {isOwned ? 'Active' : 'Add'}
+              </span>
+            )}
           </Link>
         )
       })}
-    </div>
+    </>
   )
 }
 
@@ -274,10 +250,10 @@ function NavItems({ onNavigate, strategy }: { onNavigate?: () => void; strategy?
         </Link>
       ) : null}
       {filterNavBySurface(NAV_MAIN, surface).map((item) =>
-        item.label === 'Live' ? (
-          <div key="live-group">
+        item.label === 'Performance' ? (
+          <div key="perf-and-agents">
             {renderItem(item)}
-            <StrategyChildren {...strategy} />
+            <AgentNavItems onNavigate={onNavigate} />
           </div>
         ) : (
           renderItem(item)

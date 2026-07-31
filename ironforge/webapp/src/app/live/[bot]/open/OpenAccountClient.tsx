@@ -101,9 +101,7 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
       <CheckoutNotice />
       {/* Breadcrumb */}
       <nav className="mb-4 flex items-center gap-2 text-sm">
-        <Link href="/live" className="text-gray-500 transition-colors hover:text-white" style={{ color: accent }}>Live</Link>
-        <span className="text-gray-600">›</span>
-        <Link href="/live" className="capitalize transition-colors hover:text-white" style={{ color: accent }}>{plan.name}</Link>
+        <Link href={`/agents/${bot}`} className="capitalize transition-colors hover:text-white" style={{ color: accent }}>{plan.name}</Link>
         <span className="text-gray-600">›</span>
         <span className="text-gray-400">Open Account</span>
       </nav>

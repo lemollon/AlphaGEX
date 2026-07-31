@@ -42,7 +42,7 @@ export const BOT_PLANS: Record<BotSlug, BotPlan> = {
     lookupKey: 'spark_monthly',
     accent: '#2F80ED', // Spark blue
     mascot: '/home/spark-mascot-glow.png',
-    liveHref: '/live',
+    liveHref: '/agents/spark',
   },
   flame: {
     slug: 'flame',
@@ -55,7 +55,7 @@ export const BOT_PLANS: Record<BotSlug, BotPlan> = {
     lookupKey: 'flame_monthly',
     accent: '#FD5301', // Flame / brand orange
     mascot: '/home/flame-mascot-glow.png',
-    liveHref: '/live',
+    liveHref: '/agents/flame',
   },
 }
 

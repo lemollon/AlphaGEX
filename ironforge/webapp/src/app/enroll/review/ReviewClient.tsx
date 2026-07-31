@@ -121,7 +121,7 @@ export default function ReviewClient() {
         } catch {
           /* nothing to clean */
         }
-        router.push(`/live?welcome=${body.agent}`)
+        router.push(`/agents/${body.agent}?welcome=${body.agent}`)
         return
       }
       // Blocked: render every blocker; PREVIEW_STALE additionally refreshes the
