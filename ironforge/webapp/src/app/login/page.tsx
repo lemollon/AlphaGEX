@@ -88,7 +88,7 @@ export default function CustomerLoginPage() {
               </p>
               <button
                 onClick={resend}
-                className="flex w-full items-center justify-center rounded-md bg-amber-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-amber-500"
+                className="flex w-full items-center justify-center rounded-md bg-amber-500 px-4 py-3 text-sm font-semibold text-black transition hover:bg-amber-400"
               >
                 Resend verification email
               </button>
@@ -123,7 +123,7 @@ export default function CustomerLoginPage() {
               )}
               <button
                 type="submit" disabled={busy}
-                className="flex w-full items-center justify-center rounded-md bg-amber-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex w-full items-center justify-center rounded-md bg-amber-500 px-4 py-3 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy ? 'Signing in…' : 'Sign in'}
               </button>

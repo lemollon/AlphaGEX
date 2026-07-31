@@ -96,7 +96,7 @@ export default function RiskForm() {
                 completion screen — the funnel dead-ended on its own dashboard. */}
             <Link
               href="/onboarding/brokerage"
-              className="mt-6 flex w-full items-center justify-center rounded-md bg-amber-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-amber-500"
+              className="mt-6 flex w-full items-center justify-center rounded-md bg-amber-500 px-4 py-3 text-sm font-semibold text-black transition hover:bg-amber-400"
             >
               Continue to brokerage
             </Link>
@@ -162,7 +162,7 @@ export default function RiskForm() {
             <button
               type="submit"
               disabled={!allAnswered || submitting}
-              className="flex w-full items-center justify-center rounded-md bg-amber-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex w-full items-center justify-center rounded-md bg-amber-500 px-4 py-3 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {submitting ? 'Scoring…' : 'See my recommendation'}
             </button>

@@ -4,7 +4,7 @@ import Link from 'next/link'
 import useSWR from 'swr'
 import { useIsOperator } from '@/lib/useIsOperator'
 import { usePathname, useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Wordmark } from '@/components/Brand'
 import { fetcher } from '@/lib/fetcher'
 import SparkyWidget from '@/components/support/SparkyWidget'
@@ -289,9 +289,18 @@ export function MobileNavDrawer({
   planVariant?: 'trial' | 'active'
   strategy?: StrategyNav
 }) {
+  // Dialog semantics + Escape (audit: the primary mobile navigation had neither —
+  // the pattern already existed in SparkyWidget and just wasn't reused here).
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 lg:hidden">
+    <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation menu">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} aria-hidden />
       <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-forge-border bg-forge-bg">
         <div className="flex items-center justify-between px-4 py-4">

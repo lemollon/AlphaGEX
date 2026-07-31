@@ -310,7 +310,7 @@ export default function StatusCard({
                 className={`px-4 py-2 text-sm rounded-lg font-medium transition-colors ${
                   data.is_active
                     ? 'bg-red-600 hover:bg-red-500 text-white'
-                    : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                    : 'bg-emerald-500 hover:bg-emerald-400 text-black'
                 }`}
               >
                 {data.is_active ? 'Disable' : 'Enable'}

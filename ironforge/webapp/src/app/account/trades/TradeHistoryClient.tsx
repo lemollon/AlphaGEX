@@ -120,7 +120,7 @@ export default function TradeHistoryClient() {
             <div className="mt-5 rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
               <h2 className="text-lg font-bold text-white">Sign in to see your trades</h2>
               <p className="mx-auto mt-2 max-w-md text-sm text-gray-400">Your trade history appears here once a strategy is connected to your membership.</p>
-              <Link href="/login?next=/account/trades" className="mt-4 inline-block rounded-md bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-amber-500">Sign in</Link>
+              <Link href="/login?next=/account/trades" className="mt-4 inline-block rounded-md bg-amber-500 px-5 py-2.5 text-sm font-semibold text-black hover:bg-amber-400">Sign in</Link>
             </div>
           ) : isErr ? (
             <div className="mt-5 rounded-xl border border-forge-border bg-forge-card/80 p-6 text-sm text-gray-400">Trade history is temporarily unavailable — try refreshing in a moment.</div>

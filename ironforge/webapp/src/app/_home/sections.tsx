@@ -21,7 +21,7 @@ export function Hero() {
     <section className="mx-auto grid max-w-[1200px] grid-cols-1 items-start gap-10 px-5 pb-14 pt-10 md:px-8 lg:grid-cols-[5fr_6fr] lg:gap-12 lg:pt-14">
       <div>
         <h1 className="text-[44px] font-extrabold leading-[1.05] tracking-tight text-white md:text-[56px]">
-          Build Your <span className="text-[#FD5301]">Edge.</span>
+          Build Your <span className="text-amber-500">Edge.</span>
         </h1>
         <p className="mt-5 max-w-md text-[17px] leading-relaxed text-gray-300">
           A disciplined trading ecosystem designed to help you stay informed, execute with confidence, and grow
@@ -33,13 +33,13 @@ export function Hero() {
         <div className="mt-7 flex flex-wrap items-center gap-3">
           <Link
             href="/signup"
-            className="inline-block rounded-lg bg-[#FD5301] px-6 py-3 text-[15px] font-semibold text-white transition-colors hover:bg-[#FF6A1F]"
+            className="inline-block rounded-lg bg-amber-500 px-6 py-3 text-[15px] font-semibold text-black transition-colors hover:bg-amber-400"
           >
             Create Account
           </Link>
           <Link
             href="/signup?plan=automate"
-            className="inline-block rounded-lg bg-emerald-600 px-6 py-3 text-[15px] font-semibold text-white transition-colors hover:bg-emerald-500"
+            className="inline-block rounded-lg bg-emerald-500 px-6 py-3 text-[15px] font-semibold text-black transition-colors hover:bg-emerald-400"
           >
             Start 5-Day Free Trial
           </Link>
@@ -88,7 +88,7 @@ function ValuePillars() {
       {PILLARS.map(({ icon: Icon, title, body }) => (
         <div key={title} className="text-center lg:text-left">
           <div className="flex flex-col items-center gap-2 lg:flex-row lg:items-center">
-            <Icon className="h-7 w-7 text-[#FD5301] lg:h-5 lg:w-5" />
+            <Icon className="h-7 w-7 text-amber-500 lg:h-5 lg:w-5" />
             <h3 className="whitespace-nowrap text-[12.5px] font-bold tracking-tight text-white lg:tracking-normal">
               {title}
             </h3>
@@ -126,7 +126,7 @@ export function ForgeStarterCard() {
 
       <div className="flex items-center gap-4">
         <div className="relative flex h-12 w-12 shrink-0 items-center justify-center">
-          <ShieldIcon className="h-12 w-12 text-[#FD5301]" />
+          <ShieldIcon className="h-12 w-12 text-amber-500" />
           <IFMark className="absolute h-5 w-auto" />
         </div>
         <div>
@@ -135,7 +135,7 @@ export function ForgeStarterCard() {
                 also rendered by the Terms of Service, so a hardcoded copy here is how
                 the two would come to disagree. */}
             {MARKETING_TIERS.starter.name.split(' ')[0]}{' '}
-            <span className="text-[#FD5301]">
+            <span className="text-amber-500">
               {MARKETING_TIERS.starter.name.split(' ').slice(1).join(' ')}
             </span>
           </h3>
@@ -155,7 +155,7 @@ export function ForgeStarterCard() {
           </div>
           <Link
             href="/signup?plan=automate"
-            className="whitespace-nowrap rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 md:px-7 md:text-[15px]"
+            className="whitespace-nowrap rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-black transition-colors hover:bg-emerald-400 md:px-7 md:text-[15px]"
           >
             Start 5-Day Free Trial
           </Link>
@@ -193,7 +193,7 @@ function FeatureChecklist({ items }: { items: string[] }) {
     <ul className="grid grid-cols-2 gap-x-4 gap-y-2.5">
       {items.map((f) => (
         <li key={f} className="flex items-center gap-2">
-          <CheckIcon className="h-3.5 w-3.5 shrink-0 text-[#FD5301]" />
+          <CheckIcon className="h-3.5 w-3.5 shrink-0 text-amber-500" />
           <span className="text-xs text-gray-200 md:text-[13px]">{f}</span>
         </li>
       ))}
@@ -220,11 +220,11 @@ export function MembershipSection() {
               baseline in both cards. */}
           <div className="flex items-center gap-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center">
-              <PeopleIcon className="h-11 w-11 text-[#FD5301]" />
+              <PeopleIcon className="h-11 w-11 text-amber-500" />
             </div>
             <div>
               <h3 className="text-[22px] font-bold text-white">
-                Forge <span className="text-[#FD5301]">Community</span>
+                Forge <span className="text-amber-500">Community</span>
               </h3>
               <p className="mt-0.5 text-sm text-gray-400">The foundation.</p>
             </div>
@@ -245,7 +245,7 @@ export function MembershipSection() {
               </div>
               <Link
                 href="/signup?plan=community"
-                className="whitespace-nowrap rounded-lg bg-[#FD5301] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#FF6A1F] md:px-7 md:text-[15px]"
+                className="whitespace-nowrap rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-black transition-colors hover:bg-amber-400 md:px-7 md:text-[15px]"
               >
                 Join Community
               </Link>
@@ -273,12 +273,12 @@ function PerformanceChart() {
     <svg viewBox="0 0 280 100" className="h-28 w-full" preserveAspectRatio="none" aria-hidden>
       <defs>
         <linearGradient id="perf-fill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#3C9D2E" stopOpacity="0.35" />
-          <stop offset="100%" stopColor="#3C9D2E" stopOpacity="0" />
+          <stop offset="0%" stopColor="#16A34A" stopOpacity="0.35" />
+          <stop offset="100%" stopColor="#16A34A" stopOpacity="0" />
         </linearGradient>
       </defs>
       <polygon points={`0,100 ${points} 280,100`} fill="url(#perf-fill)" />
-      <polyline points={points} fill="none" stroke="#4FBF3C" strokeWidth="1.6" />
+      <polyline points={points} fill="none" stroke="#22C55E" strokeWidth="1.6" />
     </svg>
   )
 }
@@ -293,7 +293,7 @@ function DesktopFeatureCards() {
           <div className="mt-2.5">
             <DailyBriefList compact />
           </div>
-          <div className="mt-3 text-[11px] font-semibold text-[#FD5301]">View Full Brief &rsaquo;</div>
+          <div className="mt-3 text-[11px] font-semibold text-amber-500">View Full Brief &rsaquo;</div>
         </div>
         <h3 className="mt-5 text-lg font-bold text-white">Daily Brief</h3>
         <p className="mt-1.5 text-sm leading-relaxed text-gray-400">
@@ -464,7 +464,7 @@ export function CTABanner() {
         </div>
         <Link
           href="/signup"
-          className="shrink-0 rounded-lg bg-[#FD5301] px-6 py-3 text-[15px] font-semibold text-white transition-colors hover:bg-[#FF6A1F]"
+          className="shrink-0 rounded-lg bg-amber-500 px-6 py-3 text-[15px] font-semibold text-black transition-colors hover:bg-amber-400"
         >
           Create Account
         </Link>
@@ -482,7 +482,7 @@ export function CTABanner() {
           </p>
           <Link
             href="/signup"
-            className="shrink-0 whitespace-nowrap rounded-lg bg-[#FD5301] px-4 py-2.5 text-[13px] font-semibold text-white"
+            className="shrink-0 whitespace-nowrap rounded-lg bg-amber-500 px-4 py-2.5 text-[13px] font-semibold text-black"
           >
             Create Account
           </Link>

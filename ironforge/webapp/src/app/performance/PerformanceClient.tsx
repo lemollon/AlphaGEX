@@ -67,8 +67,8 @@ export default function PerformanceClient() {
  */
 function ActivateCard() {
   const strategies = [
-    { ...BOT_PLANS.spark, accent: '#2F80ED' },
-    { ...BOT_PLANS.flame, accent: '#FD5301' },
+    { ...BOT_PLANS.spark, accent: '#3B82F6' },
+    { ...BOT_PLANS.flame, accent: '#EE5A24' },
   ]
   return (
     <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-6 sm:p-8">

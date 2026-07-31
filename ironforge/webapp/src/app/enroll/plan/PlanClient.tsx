@@ -139,7 +139,7 @@ export default function PlanClient() {
                   type="button"
                   disabled={busy}
                   onClick={() => choose('automate')}
-                  className="mt-4 w-full rounded-lg bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="mt-4 w-full rounded-lg bg-emerald-500 px-5 py-3 text-sm font-semibold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Start {TRIAL_DAYS}-Day Free Trial
                 </button>

@@ -88,7 +88,7 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
               href={link.href}
               className={
                 isActive(link.href)
-                  ? 'border-b-2 border-[#FD5301] pb-0.5 text-sm font-semibold text-white'
+                  ? 'border-b-2 border-amber-500 pb-0.5 text-sm font-semibold text-white'
                   : 'text-sm text-gray-300 transition-colors hover:text-white'
               }
             >
@@ -98,7 +98,7 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
           {isCustomer ? (
             <Link
               href="/performance"
-              className="rounded-lg bg-[#FD5301] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#FF6A1F]"
+              className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition-colors hover:bg-amber-400"
             >
               My Dashboard
             </Link>
@@ -109,7 +109,7 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
               </Link>
               <Link
                 href="/signup"
-                className="rounded-lg border border-[#FD5301] px-4 py-2 text-sm font-semibold text-[#FD5301] transition-colors hover:bg-[#FD5301] hover:text-white"
+                className="rounded-lg border border-amber-500 px-4 py-2 text-sm font-semibold text-amber-500 transition-colors hover:bg-amber-400 hover:text-black"
               >
                 Create Account
               </Link>
@@ -121,7 +121,7 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
         <div className="flex items-center gap-3 md:hidden">
           <Link
             href={isCustomer ? '/performance' : '/signup'}
-            className="rounded-lg bg-[#FD5301] px-3.5 py-2 text-sm font-semibold text-white"
+            className="rounded-lg bg-amber-500 px-3.5 py-2 text-sm font-semibold text-black"
           >
             {isCustomer ? 'My Dashboard' : 'Create Account'}
           </Link>

@@ -28,8 +28,8 @@ import {
  * page: no strategy logic, timing windows, or risk thresholds appear here.
  *
  * Design tokens (spec §4.1): page #0B0B0B, surface #141414, border #2B2B2B,
- * secondary text #B8B8B8, orange #FF4F00, spark blue #128CFF,
- * trial green #4DAA2B, success green #56C62B. */
+ * secondary text #B8B8B8, orange #EE5A24, spark blue #3B82F6,
+ * trial green #16A34A, success green #22C55E. */
 
 export const metadata: Metadata = {
   title: 'How It Works — IronForge',
@@ -97,22 +97,22 @@ function HeroSection() {
       <div>
         <h1 className="text-[38px] font-bold leading-[1.08] tracking-tight text-white md:text-[56px] md:leading-[1.05]">
           {CONFIG.hero.titleLine1[0]}
-          <span className="text-[#FF4F00]">{CONFIG.hero.titleLine1[1]}</span>
+          <span className="text-amber-500">{CONFIG.hero.titleLine1[1]}</span>
           <br />
           {CONFIG.hero.titleLine2[0]}
-          <span className="text-[#FF4F00]">{CONFIG.hero.titleLine2[1]}</span>
+          <span className="text-amber-500">{CONFIG.hero.titleLine2[1]}</span>
         </h1>
         <p className="mt-4 max-w-sm text-[16px] leading-relaxed text-gray-300">{CONFIG.hero.description}</p>
         <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-stretch">
           <Link
             href="/signup?source=how_it_works&placement=hero"
-            className="inline-flex items-center justify-center whitespace-nowrap rounded-lg bg-[#FF4F00] px-7 py-3 text-[15px] font-semibold text-white transition-[filter] hover:brightness-110"
+            className="inline-flex items-center justify-center whitespace-nowrap rounded-lg bg-amber-500 px-7 py-3 text-[15px] font-semibold text-black transition-[filter] hover:brightness-110"
           >
             Create Account
           </Link>
           <Link
             href="/signup?plan=automate&source=how_it_works&placement=hero"
-            className="inline-flex flex-col items-center justify-center whitespace-nowrap rounded-lg bg-[#4DAA2B] px-6 py-2 text-white transition-[filter] hover:brightness-110"
+            className="inline-flex flex-col items-center justify-center whitespace-nowrap rounded-lg bg-[#16A34A] px-6 py-2 text-white transition-[filter] hover:brightness-110"
           >
             <span className="text-[15px] font-semibold leading-tight">Start 5-Day Free Trial</span>
             <span className="text-[11px] leading-tight text-white/85">IronForge</span>
@@ -124,8 +124,8 @@ function HeroSection() {
               {i > 0 ? <span className="h-4 w-px bg-[#2B2B2B]" aria-hidden /> : null}
               <span className="flex items-center gap-1.5 text-[13px] text-gray-300">
                 <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden>
-                  <circle cx="12" cy="12" r="9" stroke="#FF4F00" strokeWidth="1.6" />
-                  <path d="M8.5 12.3l2.3 2.3 4.7-5.1" stroke="#FF4F00" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  <circle cx="12" cy="12" r="9" stroke="#EE5A24" strokeWidth="1.6" />
+                  <path d="M8.5 12.3l2.3 2.3 4.7-5.1" stroke="#EE5A24" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
                 {note}
               </span>
@@ -144,7 +144,7 @@ function PrinciplesStrip() {
       <div className="grid grid-cols-1 divide-y divide-[#2B2B2B] rounded-2xl border border-[#2B2B2B] bg-[#101010] md:grid-cols-3 md:divide-x md:divide-y-0">
         {CONFIG.principles.map(({ icon: Icon, title, copy }) => (
           <div key={title} className="flex items-center gap-4 px-6 py-5">
-            <Icon className="h-9 w-9 shrink-0 text-[#FF4F00]" />
+            <Icon className="h-9 w-9 shrink-0 text-amber-500" />
             <div>
               <h2 className="text-[15px] font-bold text-white">{title}</h2>
               <p className="mt-1 text-[13px] leading-snug text-[#B8B8B8]">{copy}</p>
@@ -166,14 +166,14 @@ function TradingFramework() {
         {CONFIG.framework.map(({ step, icon: Icon, title, copy }, i) => (
           <li key={step} className="contents">
             {i > 0 ? (
-              <ArrowRightIcon className="mt-2 h-5 w-5 shrink-0 rotate-90 text-[#FF4F00] md:mt-7 md:rotate-0" aria-hidden />
+              <ArrowRightIcon className="mt-2 h-5 w-5 shrink-0 rotate-90 text-amber-500 md:mt-7 md:rotate-0" aria-hidden />
             ) : null}
             <div className="flex w-44 flex-col items-center text-center">
               <div className="relative">
                 <div className="flex h-[72px] w-[72px] items-center justify-center rounded-full border border-[#3A3A3A] bg-[#101010]">
-                  <Icon className="h-7 w-7 text-[#FF4F00]" />
+                  <Icon className="h-7 w-7 text-amber-500" />
                 </div>
-                <span className="absolute -left-1.5 -top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-[#FF4F00] text-[12px] font-bold text-white">
+                <span className="absolute -left-1.5 -top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-amber-500 text-[12px] font-bold text-black">
                   {step}
                 </span>
               </div>
@@ -193,8 +193,8 @@ function StrategyCard({ strategy }: { strategy: (typeof CONFIG.strategies)[numbe
     <div
       className={`flex items-center gap-6 rounded-2xl border p-6 md:p-7 ${
         spark
-          ? 'border-[#128CFF]/70 bg-[#07111C] shadow-[inset_0_0_60px_rgba(18,140,255,0.06)]'
-          : 'border-[#FF4F00]/70 bg-[#140D08] shadow-[inset_0_0_60px_rgba(255,79,0,0.05)]'
+          ? 'border-[#3B82F6]/70 bg-[#07111C] shadow-[inset_0_0_60px_rgba(18,140,255,0.06)]'
+          : 'border-amber-500/70 bg-[#140D08] shadow-[inset_0_0_60px_rgba(255,79,0,0.05)]'
       }`}
     >
       <Image
@@ -205,13 +205,13 @@ function StrategyCard({ strategy }: { strategy: (typeof CONFIG.strategies)[numbe
         className="h-28 w-28 shrink-0 object-contain md:h-32 md:w-32"
       />
       <div>
-        <h3 className={`text-[22px] font-bold tracking-wide ${spark ? 'text-[#4DA6FF]' : 'text-[#FF4F00]'}`}>
+        <h3 className={`text-[22px] font-bold tracking-wide ${spark ? 'text-[#3B82F6]' : 'text-amber-500'}`}>
           {strategy.title}
         </h3>
         <ul className="mt-3 space-y-2">
           {strategy.bullets.map((b) => (
             <li key={b} className="flex items-center gap-2.5">
-              <CheckIcon className={`h-3.5 w-3.5 shrink-0 ${spark ? 'text-[#128CFF]' : 'text-[#FF4F00]'}`} />
+              <CheckIcon className={`h-3.5 w-3.5 shrink-0 ${spark ? 'text-[#3B82F6]' : 'text-amber-500'}`} />
               <span className="text-[14px] text-gray-200">{b}</span>
             </li>
           ))}
@@ -275,8 +275,8 @@ function MemberBenefits() {
       </h2>
       <ul className="mt-6 grid grid-cols-2 gap-y-6 md:flex md:items-center md:justify-center">
         {CONFIG.benefits.map(({ icon: Icon, label, accent, boxed }, i) => {
-          const color = accent === 'blue' ? 'text-[#128CFF]' : 'text-[#FF4F00]'
-          const border = accent === 'blue' ? 'border-[#128CFF]' : 'border-[#FF4F00]'
+          const color = accent === 'blue' ? 'text-[#3B82F6]' : 'text-amber-500'
+          const border = accent === 'blue' ? 'border-[#3B82F6]' : 'border-amber-500'
           const words = label.split(' ')
           const line1 = words.slice(0, -1).join(' ')
           const line2 = words[words.length - 1]
@@ -315,19 +315,19 @@ function FinalCTA() {
           <span className="hidden h-14 w-px bg-[#2B2B2B] md:block" aria-hidden />
           <Link
             href="/signup?source=how_it_works&placement=final_cta"
-            className="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-[#FF4F00] px-10 py-3.5 text-[16px] font-semibold text-white transition-[filter] hover:brightness-110"
+            className="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-amber-500 px-10 py-3.5 text-[16px] font-semibold text-black transition-[filter] hover:brightness-110"
           >
             Create Account
           </Link>
         </div>
         <div className="mt-5 flex flex-col items-center justify-center gap-3 border-t border-[#2B2B2B] pt-4 sm:flex-row sm:gap-0">
           <span className="flex items-center gap-2 text-[13px] text-gray-300">
-            <PersonIcon className="h-[18px] w-[18px] text-[#FF4F00]" />
+            <PersonIcon className="h-[18px] w-[18px] text-amber-500" />
             Community starts at $10/month.
           </span>
           <span className="mx-6 hidden h-4 w-px bg-[#2B2B2B] sm:block" aria-hidden />
           <span className="flex items-center gap-2 text-[13px] text-gray-300">
-            <CalendarCheckIcon className="h-[18px] w-[18px] text-[#56C62B]" />
+            <CalendarCheckIcon className="h-[18px] w-[18px] text-[#22C55E]" />
             Try IronForge free for 5 trading days.
           </span>
         </div>

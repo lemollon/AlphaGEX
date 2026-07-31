@@ -93,7 +93,7 @@ export const DAILY_BRIEF_ITEMS = [
   <>Your executed trades appear here each morning.</>,
   <>
     {/* Platform runs on Central Time everywhere else — ET here was drift. */}
-    Next execution window: <span className="text-[#FD5301]">Tomorrow 8:30 AM CT</span>
+    Next execution window: <span className="text-amber-500">Tomorrow 8:30 AM CT</span>
   </>,
 ]
 
@@ -175,7 +175,7 @@ export default async function DashboardPreview() {
         <div className="mt-3 grid grid-cols-4 gap-2.5">
           {snapshotTiles.map(({ icon: Icon, label, value, sub, green }) => (
             <div key={label} className="rounded-lg border border-white/10 bg-[#101112] px-2 py-3.5 text-center">
-              <Icon className="mx-auto h-6 w-6 text-[#FD5301]" />
+              <Icon className="mx-auto h-6 w-6 text-amber-500" />
               <div className="mt-2 text-[10px] text-gray-400">{label}</div>
               <div className={`mt-1 text-[15px] font-bold ${green ? 'text-[#4ADE80]' : 'text-white'}`}>{value}</div>
               <div className="mt-0.5 text-[9px] leading-tight text-gray-500">{sub}</div>
@@ -191,12 +191,12 @@ export default async function DashboardPreview() {
           <div className="mt-2.5">
             <DailyBriefList />
           </div>
-          <div className="mt-3 text-[11px] font-semibold text-[#FD5301]">View Full Brief &rsaquo;</div>
+          <div className="mt-3 text-[11px] font-semibold text-amber-500">View Full Brief &rsaquo;</div>
         </div>
         <div className="rounded-xl border border-white/10 bg-[#0C0D0E] p-3.5">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-300">Recent Trades</span>
-            <span className="text-[11px] font-semibold text-[#FD5301]">View All</span>
+            <span className="text-[11px] font-semibold text-amber-500">View All</span>
           </div>
           <table className="mt-2 w-full text-left">
             <thead>

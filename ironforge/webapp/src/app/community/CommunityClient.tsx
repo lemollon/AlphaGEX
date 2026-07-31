@@ -80,7 +80,7 @@ function MessageRow({ msg, canReact, onReact }: {
         <div className="flex items-center gap-1.5">
           <span className="text-xs font-semibold text-white">{msg.sender_name}</span>
           {msg.sender_type === 'FORGE' && (
-            <span className="rounded bg-amber-500 px-1 py-px text-[9px] font-bold leading-none text-white">AI</span>
+            <span className="rounded bg-amber-500 px-1 py-px text-[9px] font-bold leading-none text-black">AI</span>
           )}
           <span className="text-[10px] text-gray-500">{timeLabel(msg.created_at)}</span>
         </div>
@@ -309,7 +309,7 @@ export default function CommunityClient() {
                 <button key={c.slug} onClick={() => setChannel(c.slug)}
                   className={`rounded-full px-3 py-1 text-xs transition-colors ${
                     channel === c.slug
-                      ? 'bg-amber-500 font-medium text-white'
+                      ? 'bg-amber-500 font-medium text-black'
                       : 'border border-forge-border text-gray-300 hover:text-white'
                   }`}>
                   {c.name}
@@ -389,7 +389,7 @@ export default function CommunityClient() {
                   )}
                 </div>
                 <button onClick={() => void handleSend()} disabled={sending || (!draft.trim() && loggedIn)}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-white transition-colors hover:bg-amber-400 disabled:opacity-50"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-black transition-colors hover:bg-amber-400 disabled:opacity-50"
                   aria-label="Send">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                     strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">

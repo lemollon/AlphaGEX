@@ -92,7 +92,7 @@ export default function TradeApprovalsClient() {
                   <button
                     onClick={() => act(a.id, 'approve')}
                     disabled={busyId === a.id}
-                    className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-500 disabled:opacity-50"
+                    className="rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-black hover:bg-amber-400 disabled:opacity-50"
                   >
                     Approve
                   </button>

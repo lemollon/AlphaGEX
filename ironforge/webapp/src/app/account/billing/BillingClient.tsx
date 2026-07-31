@@ -133,7 +133,7 @@ export default function BillingClient() {
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {notOwned.map((b) => {
               const plan = BOT_PLANS[b]
-              const accent = b === 'flame' ? '#FD5301' : '#2F80ED'
+              const accent = b === 'flame' ? '#EE5A24' : '#3B82F6'
               const label = ownedBots.length > 0 ? `Add ${plan.name}` : communityActive ? `Add ${plan.name}` : `Open ${plan.name}`
               const price = ownedBots.length > 0
                 ? `+$${secondBotIncrement(ownedBots[0])}/mo`
