@@ -93,8 +93,17 @@ export async function GET(req: NextRequest) {
     }
 
     await customerTransaction(async (run) => {
-      // Re-sync: replace this user's connection rows with the current account set.
-      await run(`DELETE FROM brokerage_connections WHERE user_id = $1`, [user.id])
+      // Re-sync: replace this user's SNAPTRADE connection rows with the current account
+      // set. Scoped by provider (an unscoped DELETE here wiped a coexisting Tradier
+      // connection — UAT-012), and children first: broker_accounts has an FK with no
+      // cascade, so deleting the parent with account rows present rolled the whole
+      // re-sync back.
+      await run(
+        `DELETE FROM broker_accounts WHERE connection_id IN
+           (SELECT id FROM brokerage_connections WHERE user_id = $1 AND provider = 'snaptrade')`,
+        [user.id],
+      )
+      await run(`DELETE FROM brokerage_connections WHERE user_id = $1 AND provider = 'snaptrade'`, [user.id])
       for (const a of accounts) {
         const inserted = (await run(
           `INSERT INTO brokerage_connections

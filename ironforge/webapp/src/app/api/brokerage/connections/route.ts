@@ -23,6 +23,8 @@ export const dynamic = 'force-dynamic'
 interface ConnectionRow {
   id: string
   provider: string
+  brokerage_slug: string | null
+  account_name: string | null
   status: string
   created_at: string
   last_synced_at: string | null
@@ -46,7 +48,7 @@ export async function GET() {
 
   try {
     const conns = await customerQuery<ConnectionRow>(
-      `SELECT id, provider, status,
+      `SELECT id, provider, brokerage_slug, account_name, status,
               to_char(created_at, 'YYYY-MM-DD') AS created_at,
               to_char(last_synced_at, 'YYYY-MM-DD"T"HH24:MI:SSZ') AS last_synced_at
          FROM brokerage_connections
@@ -74,6 +76,10 @@ export async function GET() {
       connections: conns.map((c) => ({
         id: c.id,
         provider: c.provider,
+        // The real institution (e.g. "tastytrade"), not the aggregator. The client was
+        // labeling every SnapTrade connection "Robinhood" because only `provider` came
+        // back (UAT-012).
+        broker: c.brokerage_slug ?? c.account_name ?? null,
         status: c.status,
         connected_on: c.created_at,
         last_synced_at: c.last_synced_at,

@@ -344,6 +344,10 @@ CREATE TABLE IF NOT EXISTS broker_accounts (
   checked_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- buying_power_cents was added to the CREATE body AFTER the table already existed in
+-- prod, and CREATE IF NOT EXISTS is a no-op there — so pre-existing DBs lacked the
+-- column and every SELECT of it 500'd the settings + enrollment surfaces (UAT-012).
+ALTER TABLE broker_accounts ADD COLUMN IF NOT EXISTS buying_power_cents BIGINT;
 CREATE INDEX IF NOT EXISTS idx_broker_accounts_conn ON broker_accounts(connection_id);
 
 -- Versioned config snapshot. rule_version is what makes a config go stale when the

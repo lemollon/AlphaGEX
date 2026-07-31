@@ -115,8 +115,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       await customerExecute(
         `INSERT INTO broker_accounts
            (connection_id, external_account_ref_ciphertext, display_mask, account_type,
-            options_level, eligibility, ineligible_reason, checked_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+            options_level, eligibility, ineligible_reason, buying_power_cents, checked_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
         [
           params.id,
           encryptSecret(externalRef),
@@ -125,6 +125,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           typeof a.options_level === 'number' ? a.options_level : null,
           verdict.eligible ? 'eligible' : 'ineligible',
           verdict.reason ?? null,
+          typeof a.buying_power === 'number' ? Math.round(a.buying_power * 100) : null,
         ],
       )
     }

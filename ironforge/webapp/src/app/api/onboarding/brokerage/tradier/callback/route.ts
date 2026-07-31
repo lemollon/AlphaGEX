@@ -94,6 +94,13 @@ export async function GET(req: NextRequest) {
         ],
       )
       // Replace only this user's Tradier rows (leave any SnapTrade connection intact).
+      // Children first: broker_accounts FK has no cascade, so a re-connect with account
+      // rows present would otherwise fail the whole transaction (UAT-012).
+      await run(
+        `DELETE FROM broker_accounts WHERE connection_id IN
+           (SELECT id FROM brokerage_connections WHERE user_id = $1 AND provider = 'tradier')`,
+        [user.id],
+      )
       await run(`DELETE FROM brokerage_connections WHERE user_id = $1 AND provider = 'tradier'`, [user.id])
       for (const a of accounts) {
         const inserted = (await run(
