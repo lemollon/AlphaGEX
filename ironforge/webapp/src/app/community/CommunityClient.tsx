@@ -8,6 +8,7 @@ import type { LiveSummary } from '@/lib/live/types'
 import type { CommunityFeed, CommunityMessage } from '@/lib/community/store'
 import CustomerShell from '@/components/customer/CustomerShell'
 import CheckoutNotice from '@/components/customer/CheckoutNotice'
+import { COMMUNITY_PLAN } from '@/lib/billing/plans'
 
 /** Forge Community — chat-first center column + right info rail (per the
  *  approved design). Realtime via 4s SWR polling; no websockets in this stack. */
@@ -342,14 +343,14 @@ export default function CommunityClient() {
                 <div className="flex flex-col gap-2 rounded-lg border border-amber-600/40 bg-amber-950/20 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="text-sm text-gray-200">
                     <span className="font-semibold text-amber-400">Join the Forge Community</span> to post —{' '}
-                    <span className="font-semibold text-white">$15/mo</span>. Every strategy plan includes it.
+                    <span className="font-semibold text-white">${COMMUNITY_PLAN.priceMonthly}/mo</span>. Every strategy plan includes it.
                   </div>
                   <button
                     onClick={() => void joinCommunity()}
                     disabled={joining}
                     className="shrink-0 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {joining ? 'Opening…' : 'Join for $15/mo'}
+                    {joining ? 'Opening…' : `Join for $${COMMUNITY_PLAN.priceMonthly}/mo`}
                   </button>
                 </div>
               ) : (
