@@ -97,8 +97,8 @@ export function CheckIcon({ className = 'h-4 w-4' }: IconProps) {
 export function CheckCircleIcon({ className = 'h-4 w-4' }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
-      <circle cx="12" cy="12" r="10" fill="#1E3B14" />
-      <path d="M7.5 12.5l3 3 6-6.5" stroke="#63C132" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <circle cx="12" cy="12" r="10" fill="#064E3B" />
+      <path d="M7.5 12.5l3 3 6-6.5" stroke="#34D399" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>
   )
 }
