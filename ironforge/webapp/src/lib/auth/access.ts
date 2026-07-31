@@ -82,8 +82,6 @@ const CUSTOMER_EXACT = new Set<string>([
   // Which brokerage accounts a person has linked, with masks and buying power — their
   // own money, so gated on identity like the rest of /account.
   '/account/brokerage',
-  // TradingView indicator perk — sets data on the customer's own record.
-  '/account/tradingview',
   // Enrollment funnel — creates a server-owned enrollment for THIS customer, so it
   // requires identity before it can do anything.
   '/enroll',

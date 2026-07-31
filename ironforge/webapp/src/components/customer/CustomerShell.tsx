@@ -33,7 +33,6 @@ const ICONS = {
   history: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
   membership: 'M12 2l2.4 4.86 5.36.78-3.88 3.78.92 5.34L12 14.24l-4.8 2.52.92-5.34L4.24 7.64l5.36-.78z',
   brokerage: 'M3 21h18M3 10h18M5 6l7-3 7 3M5 10v11m4.5-11v11m5-11v11M19 10v11',
-  tvchart: 'M3 3v18h18M7 14l4-4 3 3 5-6',
   password: 'M7 11V7a5 5 0 0 1 10 0v4M5 11h14a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z',
   help: 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3m.08 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
   support: 'M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
@@ -64,8 +63,6 @@ const NAV_SECONDARY = [
   // Points at the SETTINGS page, not the funnel step. /onboarding/brokerage greets a
   // connected customer with an empty "Connect your brokerage" form and a "Skip for now".
   { label: 'Brokerage Settings', href: '/account/brokerage', icon: ICONS.brokerage },
-  // TradingView indicator perk — username + grant status (7/30).
-  { label: 'TradingView', href: '/account/tradingview', icon: ICONS.tvchart },
   // Preserved from the old top-bar avatar menu that this shell removed.
   { label: 'Change Password', href: '/change-password', icon: ICONS.password },
   // Ask Sparky (the AI support assistant); Help stays the human-contact door.

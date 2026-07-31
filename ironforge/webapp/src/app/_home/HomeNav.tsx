@@ -18,7 +18,6 @@ const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/how-it-works', label: 'How It Works' },
   // Public proof surface — reachable with no account, unlike /live and /performance.
   // Replaced /track-record on 2026-07-27; that URL now 308s here.
-  { href: '/bot-ledger', label: 'Bot Ledger' },
 ]
 
 // Links that require a MEMBERSHIP — any live subscription, a strategy or Community

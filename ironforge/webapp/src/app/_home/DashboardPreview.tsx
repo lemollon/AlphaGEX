@@ -125,7 +125,7 @@ export default async function DashboardPreview() {
       {/* Says exactly what these numbers are. They are REAL and they are PAPER — both
           halves matter, and the badge is the only place a visitor is told. */}
       <span className="absolute bottom-3 right-3 z-10 rounded-full border border-white/15 bg-black/70 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-gray-400">
-        Live paper results · see /bot-ledger
+        Live paper results
       </span>
 
       {/* Top strip: agent status / win rate / avg return / streak */}
