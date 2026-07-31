@@ -448,6 +448,16 @@ ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS token_expiry TIMESTAM
 ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS scopes TEXT;
 ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS external_user_ref TEXT;
 
+-- Stripe webhook replay/dedupe guard + dead-letter (audit C5). The INSERT is the
+-- processing claim; processed_at NULL + error = a failed event Stripe will retry.
+CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  processed_at TIMESTAMPTZ,
+  error TEXT
+);
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Phase B: customer order executor (lib/customer-executor). One row per
 -- (master position × customer) — simultaneously the durable idempotency record
