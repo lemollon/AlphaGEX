@@ -77,6 +77,11 @@ export async function POST(req: NextRequest) {
     electronicCommConsent: Boolean(body.electronicCommConsent),
   }
 
+  // Pre-signup plan intent from a CTA (?plan/?bot) — allowlisted, never trusted as
+  // more than a routing hint (audit M9).
+  const rawIntent = (body as { intendedPlan?: unknown }).intendedPlan
+  const intendedPlan = rawIntent === 'community' || rawIntent === 'automate' ? rawIntent : null
+
   const result = validateSignup(payload)
   if (!result.ok) {
     return NextResponse.json(
@@ -138,8 +143,8 @@ export async function POST(req: NextRequest) {
       const rows = await run(
         `INSERT INTO users
            (password_hash, first_name, last_name, username, email, phone, state, referral_code, promo_code,
-            age_confirmed, no_advice_acknowledged, electronic_comm_consent)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+            age_confirmed, no_advice_acknowledged, electronic_comm_consent, intended_plan)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
          RETURNING id`,
         [
           passwordHash,
@@ -154,6 +159,7 @@ export async function POST(req: NextRequest) {
           payload.ageConfirmed,
           payload.noAdviceAcknowledged,
           payload.electronicCommConsent,
+          intendedPlan,
         ],
       )
       const uid = rows[0].id as string

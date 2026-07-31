@@ -135,6 +135,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS snaptrade_user_id TEXT;
 -- display; uniqueness is case-insensitive. Fresh index name per the #2654 rule.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username_lower ON users(lower(username));
+-- The plan a visitor clicked toward BEFORE signing up (from ?plan= on a "Start
+-- Trial"/"Join Community" CTA). Persisted so the intent survives email
+-- verification and the enroll door can apply it instead of showing a generic
+-- chooser (audit M9). Cleared once applied.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS intended_plan TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS snaptrade_user_secret TEXT;       -- AES-256-GCM ciphertext
 ALTER TABLE users ADD COLUMN IF NOT EXISTS brokerage_connected BOOLEAN NOT NULL DEFAULT FALSE;
 

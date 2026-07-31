@@ -74,6 +74,24 @@ export async function createOrResumeEnrollment(userId: string, source?: string):
   return created[0]
 }
 
+/**
+ * Read-and-clear the pre-signup plan intent (audit M9). Returns it once, then nulls
+ * the column so a later manual re-choose from /enroll/plan is never overridden by a
+ * stale CTA click.
+ */
+export async function consumeIntendedPlan(userId: string): Promise<string | null> {
+  // RETURNING the value from the FROM-subquery, not the post-UPDATE column (which is
+  // now NULL). The single-statement form keeps read+clear atomic — no double-apply.
+  const rows = await customerQuery<{ intended_plan: string | null }>(
+    `UPDATE users u SET intended_plan = NULL
+       FROM (SELECT id, intended_plan FROM users WHERE id = $1) prev
+      WHERE u.id = prev.id AND prev.intended_plan IS NOT NULL
+      RETURNING prev.intended_plan`,
+    [userId],
+  )
+  return rows[0]?.intended_plan ?? null
+}
+
 /** Ownership-scoped read. Returns null when the id is not this user's — never 403-by-existence. */
 export async function getEnrollmentForUser(id: string, userId: string): Promise<EnrollmentRow | null> {
   // A malformed id would make Postgres raise on the UUID cast rather than return no
@@ -94,10 +112,14 @@ export async function getEnrollmentForUser(id: string, userId: string): Promise<
  * holding a stale "you're done with legal" flag.
  */
 export async function setEnrollmentPlan(id: string, userId: string, plan: string): Promise<void> {
+  // Status guard (audit C6): a deliberate re-choose from /enroll/plan rewinding an
+  // in-progress enrollment to legal is correct — but a COMPLETE (or abandoned)
+  // enrollment must never be driven backward. The state machine's transition table
+  // forbids it (ENROLLMENT_TRANSITIONS.complete = []); this is where it's enforced.
   await customerExecute(
     `UPDATE enrollments
         SET selected_plan = $3, status = 'legal_pending', current_step = 'legal', updated_at = now()
-      WHERE id = $1 AND user_id = $2`,
+      WHERE id = $1 AND user_id = $2 AND status NOT IN ('complete', 'abandoned')`,
     [id, userId, plan],
   )
 }
