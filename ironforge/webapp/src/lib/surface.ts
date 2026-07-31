@@ -101,6 +101,24 @@ export const OPERATOR_API_PREFIXES: readonly string[] = [
   '/api/ember/',
   '/api/briefings/',
   '/api/calendar/',
+  // Security audit 7/31: flat operator namespaces that don't start with /api/{bot}/
+  // fell through the unclassified→serve fallback and were reachable on the PUBLIC
+  // customer deployment. Everything below is bot-console/ops tooling.
+  '/api/kindle-check',
+  '/api/kindle-close',
+  '/api/kindle-reopen',
+  '/api/kindle-sync',
+  '/api/spark2-check',
+  '/api/sms-test',
+  '/api/sandbox/',
+  '/api/diagnose/',
+  '/api/scanner/',
+  '/api/persons/',
+  '/api/regime/',
+  '/api/gex/',
+  '/api/builder/',
+  '/api/vol-alerts/',
+  '/api/volatility/',
 ]
 
 /**
