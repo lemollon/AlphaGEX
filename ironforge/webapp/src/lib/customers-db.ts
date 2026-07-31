@@ -30,7 +30,11 @@ function getPool(): Pool {
     _pool = new Pool({
       connectionString: process.env.CUSTOMERS_DATABASE_URL,
       ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
-      max: 5,
+      // Audit R1: a pool of 5 is saturated by ~5 concurrent customers polling
+      // /api/live/summary. Bumped modestly — this DB is on a smaller instance
+      // (basic tier) with a lower connection cap than the trading DB, so 10 not 20.
+      // Env-overridable; raise CUSTOMERS_DB_POOL_MAX after upsizing the instance.
+      max: Number(process.env.CUSTOMERS_DB_POOL_MAX) || 10,
     })
   }
   return _pool
