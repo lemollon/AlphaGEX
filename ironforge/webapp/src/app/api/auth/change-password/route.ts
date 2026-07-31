@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
 import { verifyPassword, hashPassword } from '@/lib/auth/password'
+import { checkPassword } from '@/lib/signup-validation'
 
 /**
  * Signed-in CUSTOMER password change.
@@ -39,9 +40,12 @@ export async function POST(req: NextRequest) {
     const currentPassword = String(body.currentPassword || '')
     const newPassword = String(body.newPassword || '')
 
-    if (newPassword.length < MIN_LEN) {
+    // Enforce the SAME strength rules as signup (audit minor): the new password
+    // accepted only a length check while signup requires upper/lower/number/special,
+    // so a customer could weaken their own password below the standard they signed up at.
+    if (!checkPassword(newPassword).valid) {
       return NextResponse.json(
-        { error: `New password must be at least ${MIN_LEN} characters` },
+        { error: `New password must be at least ${MIN_LEN} characters and include uppercase, lowercase, a number, and a special character.` },
         { status: 400 },
       )
     }

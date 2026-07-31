@@ -51,11 +51,11 @@ describe('POST /api/auth/change-password (customer)', () => {
     vi.mocked(verifyPassword).mockResolvedValue(true)
     vi.mocked(hashPassword).mockResolvedValue('newhash')
 
-    const res = await POST(post({ currentPassword: 'old', newPassword: 'a-very-long-password' }))
+    const res = await POST(post({ currentPassword: 'old', newPassword: 'A-very-Long-Pass9!' }))
 
     expect(res.status).toBe(200)
     expect(customerExecute).toHaveBeenCalledOnce()
-    expect(hashPassword).toHaveBeenCalledWith('a-very-long-password')
+    expect(hashPassword).toHaveBeenCalledWith('A-very-Long-Pass9!')
     // Scoped to the session's own customer id — never a value from the body.
     expect(vi.mocked(customerExecute).mock.calls[0][1]).toEqual(['newhash', 'cus_123'])
   })
@@ -67,7 +67,7 @@ describe('POST /api/auth/change-password (customer)', () => {
   })
 
   it('rejects reusing the current password with 400', async () => {
-    const same = 'a-very-long-password'
+    const same = 'A-very-Long-Pass9!'
     const res = await POST(post({ currentPassword: same, newPassword: same }))
     expect(res.status).toBe(400)
     expect(customerExecute).not.toHaveBeenCalled()
@@ -77,7 +77,7 @@ describe('POST /api/auth/change-password (customer)', () => {
     vi.mocked(customerQuery).mockResolvedValue([{ password_hash: 'old' }] as never)
     vi.mocked(verifyPassword).mockResolvedValue(false)
 
-    const res = await POST(post({ currentPassword: 'wrong', newPassword: 'a-very-long-password' }))
+    const res = await POST(post({ currentPassword: 'wrong', newPassword: 'A-very-Long-Pass9!' }))
 
     expect(res.status).toBe(400)
     expect(customerExecute).not.toHaveBeenCalled()
@@ -85,14 +85,14 @@ describe('POST /api/auth/change-password (customer)', () => {
 
   it('rejects when there is no customer session with 401', async () => {
     session = {}
-    const res = await POST(post({ currentPassword: 'old', newPassword: 'a-very-long-password' }))
+    const res = await POST(post({ currentPassword: 'old', newPassword: 'A-very-Long-Pass9!' }))
     expect(res.status).toBe(401)
     expect(customerQuery).not.toHaveBeenCalled()
   })
 
   it('degrades to 503 when the customers database is not configured', async () => {
     vi.mocked(isCustomersDbConfigured).mockReturnValue(false)
-    const res = await POST(post({ currentPassword: 'old', newPassword: 'a-very-long-password' }))
+    const res = await POST(post({ currentPassword: 'old', newPassword: 'A-very-Long-Pass9!' }))
     expect(res.status).toBe(503)
     expect(customerExecute).not.toHaveBeenCalled()
   })

@@ -9,7 +9,7 @@ import { BOT_COLORS } from '@/lib/botColors'
 import Link from 'next/link'
 import type { LiveBot } from '@/lib/live/bots'
 import type { PerformanceData } from '@/lib/live/performance'
-import { BOT_PLANS } from '@/lib/billing/plans'
+import { BOT_PLANS, BOTH_PLAN, secondBotIncrement } from '@/lib/billing/plans'
 import CustomerShell from '@/components/customer/CustomerShell'
 import SparkMascot from '../live/components/SparkMascot'
 
@@ -105,7 +105,7 @@ function ActivateCard() {
               </Link>
             ))}
           </div>
-          <p className="mt-2 text-[11px] text-gray-500">Add the second strategy later for +$25/mo ($75 total).</p>
+          <p className="mt-2 text-[11px] text-gray-500">Add the second strategy later for +${secondBotIncrement('spark')}/mo (${BOTH_PLAN.priceMonthly} total).</p>
         </div>
       </div>
 

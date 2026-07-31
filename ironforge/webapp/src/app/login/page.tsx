@@ -35,7 +35,9 @@ export default function CustomerLoginPage() {
       })
       const data = await res.json().catch(() => ({}))
       if (res.ok && data.ok) {
-        window.location.href = data.next || '/onboarding/complete'
+        // Fallback is the live front door, not the retired /onboarding/complete
+        // welcome page (audit M1/M2). The login API already returns next=/enroll.
+        window.location.href = data.next || '/enroll'
         return
       }
       if (data.code === 'email_unverified') {
