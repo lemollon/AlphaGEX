@@ -33,6 +33,7 @@ import { forgeBriefingsTick } from './forgeBriefings/tick'
 import { isCustomersDbConfigured } from './customers-db'
 import { getCTNow } from './pt-tiers'
 import { runTrialDayClose, marketDateKey, isAfterTrialCloseTime } from './enrollment/trial-close'
+import { mirrorOpenToCustomers, mirrorCloseToCustomers, retryFailedCustomerCloses } from './customer-executor/executor'
 import {
   getQuote,
   getOptionExpirations,
@@ -2596,6 +2597,10 @@ async function closePosition(
     return
   }
 
+  // Phase B: close customer mirrors of this master position (fire-and-forget, never
+  // throws). Keyed by source_position_id, so -prod- suffixed rows simply match nothing.
+  void mirrorCloseToCustomers(bot.name, positionId, reason)
+
   // Update paper account — route to correct row based on account_type
   if (posAccountType === 'production') {
     // Production positions update the production paper_account (filtered by person + account_type)
@@ -3008,6 +3013,14 @@ async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Pr
     accountBalance,
   }).catch((e: unknown) => {
     console.warn(`[scanner] FLAME discord open post failed: ${e instanceof Error ? e.message : e}`)
+  })
+
+  // Phase B: mirror to activated customers (fire-and-forget, never throws, gated
+  // inside on CUSTOMER_EXECUTOR_ENABLED + kill switch + per-customer state).
+  void mirrorOpenToCustomers({
+    botName: bot.name, positionId, ticker: 'SPY', expiration,
+    putShort, putLong, callShort: 0, callLong: 0,
+    spreadWidth: WIDTH, credit: putCredit,
   })
 
   return `traded:${positionId}(put_credit_spread)`
@@ -4310,6 +4323,16 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   )
 
   console.log(`[scanner] ${botName} OPENED ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${effectiveContracts} @ $${effectiveCredit.toFixed(4)} [sandbox:${JSON.stringify(sandboxOrderIds)}]${isProductionFillOnly ? ' [Tradier-fill-only]' : ''}`)
+
+  // Phase B: mirror to activated customers (fire-and-forget, never throws, gated
+  // inside on CUSTOMER_EXECUTOR_ENABLED + kill switch + per-customer state).
+  void mirrorOpenToCustomers({
+    botName: bot.name, positionId, ticker: 'SPY', expiration,
+    putShort: strikes.putShort, putLong: strikes.putLong,
+    callShort: strikes.callShort, callLong: strikes.callLong,
+    spreadWidth, credit: effectiveCredit,
+  })
+
   return `traded:${positionId}`
 }
 
@@ -6466,6 +6489,11 @@ function startScannerLocked(): void {
   // at startup so a deploy that lands right after the close still counts the day.
   _trialCloseIntervalId = setInterval(safeTrialDayClose, TRIAL_CLOSE_INTERVAL_MS)
   setTimeout(safeTrialDayClose, 45_000)
+
+  // Phase B customer-executor safety net: re-drive stuck customer closes
+  // (close_failed / stale close_pending) during market hours. Self-gating,
+  // re-entrancy guarded, never throws — rides the same 15-min cadence.
+  setInterval(retryFailedCustomerCloses, TRIAL_CLOSE_INTERVAL_MS)
 
   console.log('[scanner] setInterval registered, id:', _intervalId)
   console.log('[scanner] BLAZE fast monitor registered (15s), id:', _blazeFastMonitorIntervalId)
