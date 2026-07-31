@@ -62,6 +62,7 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/forgot-password',
   '/reset-password',
   '/change-password',
+  '/settings',
   '/contact',
   '/privacy',
   '/terms',
