@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { publicOrigin } from '@/lib/public-origin'
+import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { validateSignup, type SignupPayload } from '@/lib/signup-validation'
 import { hashPassword } from '@/lib/auth/password'
 import { lookupPromo } from '@/lib/promo'
@@ -148,6 +149,13 @@ export async function POST(req: NextRequest) {
       )
       return uid
     })
+
+    // UAT-007 (account isolation): a successful signup must never leave the browser
+    // authenticated as a PREVIOUS user. Without this, a stale customer cookie from an
+    // earlier login rode along and every subsequent page resolved the OLD account —
+    // a brand-new signup saw someone else's "Membership active" state.
+    const staleSession = await getCustomerSession()
+    if (staleSession.customerId) staleSession.destroy()
 
     await writeAudit(userId, 'ACCOUNT_CREATED', ip, ua, {
       source: 'signup',
