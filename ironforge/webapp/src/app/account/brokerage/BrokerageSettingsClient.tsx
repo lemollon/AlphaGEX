@@ -4,6 +4,7 @@ import Link from 'next/link'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import CustomerShell from '@/components/customer/CustomerShell'
+import { brokerDisplayName } from '@/lib/brokerage/catalog'
 import type { LiveSummary } from '@/lib/live/types'
 
 /**
@@ -42,7 +43,8 @@ interface Connection {
  */
 function connectionLabel(c: Connection): string {
   if (c.provider === 'tradier') return 'Tradier'
-  if (c.broker) return `${c.broker} (via SnapTrade)`
+  const name = brokerDisplayName(c.broker)
+  if (name) return `${name} (via SnapTrade)`
   return 'Brokerage (via SnapTrade)'
 }
 

@@ -92,6 +92,8 @@ const CUSTOMER_EXACT = new Set<string>([
   // "Change password" to /ops/login — the OPERATOR door, which they can
   // never satisfy. Same class of bug as /home and /live before #2560.
   '/change-password',
+  // Settings hub (UAT-013) — the single rail entry over billing/brokerage/security.
+  '/settings',
   // The Live page's Pause control. Self-guards ownership in-route; this only
   // establishes that an anonymous caller can never reach it at all.
   '/api/spark/production-pause',
@@ -117,6 +119,10 @@ export function isCustomerPath(pathname: string): boolean {
   if (pathname.startsWith('/api/account/')) return true
   // Sparky support chat — customer-session guarded (also self-guards in-route).
   if (pathname.startsWith('/api/support/')) return true
+  // Password change is a customer-session route. It was classified NOWHERE, so the
+  // middleware never read the customer cookie and 401'd a signed-in customer's own
+  // password change — the exact /api/v1/ trap documented above, found during UAT-013.
+  if (pathname === '/api/auth/change-password') return true
   return CUSTOMER_EXACT.has(pathname)
 }
 

@@ -51,25 +51,18 @@ const NAV_MAIN = [
 ]
 
 const NAV_SECONDARY = [
-  // "Add a Strategy" used to sit here pointing at /live — the SAME href as the "Live"
-  // item directly above it. Two rows, one destination, and because isActive matches by
-  // prefix BOTH highlighted at once, so the rail looked like it was in two places.
-  //
-  // Its original job (give subscribing a front door instead of making you dig for the
-  // Open Account button) is now done better by the Spark/Flame child rows under Live:
-  // they list both strategies ALWAYS and route by ownership, so an unowned one goes
-  // straight to /live/{bot}/open. That is per-bot and entitlement-aware; this row was
-  // neither. Removed rather than repointed — there is no distinct destination for it.
-  { label: 'Manage Membership', href: '/account/billing', icon: ICONS.membership },
-  // Points at the SETTINGS page, not the funnel step. /onboarding/brokerage greets a
-  // connected customer with an empty "Connect your brokerage" form and a "Skip for now".
-  { label: 'Brokerage Settings', href: '/account/brokerage', icon: ICONS.brokerage },
-  // Preserved from the old top-bar avatar menu that this shell removed.
-  { label: 'Change Password', href: '/change-password', icon: ICONS.password },
+  // UAT-013: ONE Settings entry replaces the three account-management rows
+  // (Manage Membership / Brokerage Settings / Change Password). /settings is the
+  // labeled directory; the destinations keep their own pages and deep links.
+  { label: 'Settings', href: '/settings', icon: ICONS.membership },
   // Ask Sparky (the AI support assistant); Help stays the human-contact door.
   { label: 'Ask Sparky', href: '/support', icon: ICONS.support },
   { label: 'Help', href: '/contact', icon: ICONS.help },
 ]
+
+// Settings stays highlighted while inside any of its destinations, so the rail
+// doesn't lose its place when a deep link (/account/billing etc.) is open.
+const SETTINGS_PREFIXES = ['/settings', '/account/billing', '/account/brokerage', '/change-password']
 
 function Icon({ d, className = 'h-5 w-5 shrink-0' }: { d: string; className?: string }) {
   return (
@@ -224,7 +217,10 @@ function NavItems({ onNavigate, strategy }: { onNavigate?: () => void; strategy?
   }
 
   const renderItem = (item: { label: string; href: string; icon: string }) => {
-    const active = pathname === item.href
+    const active =
+      item.href === '/settings'
+        ? SETTINGS_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
+        : pathname === item.href
     return (
       <Link key={item.label} href={item.href} onClick={onNavigate}
         className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${

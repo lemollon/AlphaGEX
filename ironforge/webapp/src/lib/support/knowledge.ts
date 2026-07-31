@@ -11,6 +11,7 @@
  */
 
 import { MARKETING_TIERS } from '@/lib/billing/plans'
+import { SUPPORTED_BROKERS } from '@/lib/brokerage/catalog'
 
 export interface KbEntry {
   topic: string
@@ -68,15 +69,19 @@ export const SUPPORT_KB: KbEntry[] = [
     a: 'No — connecting a brokerage is optional during onboarding and can be done later from Brokerage Settings. You can explore the app first.',
   },
   // ── Brokerage ───────────────────────────────────────────────────────────────
+  // Derived from the ordered broker catalog (lib/brokerage/catalog.ts) so ordering
+  // and capability claims can never drift from the product (UAT-015): Tradier is
+  // always listed first as the partner brokerage, and only factual integration
+  // benefits are stated — never "best for you" (Sparky gives no personalized advice).
   {
     topic: 'brokerage',
-    q: 'Which brokers are supported?',
-    a: 'IronForge connects to options-capable US brokers via SnapTrade — including tastytrade, E*TRADE, Webull, Public, and (where enabled) Robinhood, Schwab, Fidelity, TradeStation, and Interactive Brokers. You connect it in Brokerage Settings.',
+    q: 'Which brokers are supported / which should I consider?',
+    a: `In order of integration depth: ${SUPPORTED_BROKERS.map((b) => `${b.displayName}${b.partner ? ' (IronForge partner — direct integration that verifies options approval level)' : b.trading === 'multi_leg' ? ' (multi-leg options via SnapTrade)' : ' (view-only via SnapTrade — automated trading is not available there)'}`).join('; ')}. You connect a broker in Brokerage Settings. Sparky states integration facts only — it does not make personalized brokerage recommendations.`,
   },
   {
     topic: 'brokerage',
     q: 'Is connecting my broker safe?',
-    a: 'Yes — the broker connection is handled through SnapTrade\'s secure flow. IronForge never sees your brokerage password.',
+    a: 'Yes — Tradier connects through its official OAuth flow and other brokers connect through SnapTrade\'s secure flow. Either way IronForge never sees your brokerage password, and your funds stay in your own account in your name.',
   },
   // ── Strategies / product ────────────────────────────────────────────────────
   {
