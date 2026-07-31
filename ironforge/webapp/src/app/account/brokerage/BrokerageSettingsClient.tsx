@@ -28,15 +28,22 @@ interface Account {
 interface Connection {
   id: string
   provider: string
+  broker: string | null
   status: string
   connected_on: string
   last_synced_at: string | null
   accounts: Account[]
 }
 
-const PROVIDER_LABEL: Record<string, string> = {
-  tradier: 'Tradier',
-  snaptrade: 'Robinhood (via SnapTrade)',
+/**
+ * Label from the real institution, not the aggregator. The old static map rendered
+ * EVERY SnapTrade connection as "Robinhood (via SnapTrade)" — a tastytrade account
+ * showed as Robinhood (UAT-012).
+ */
+function connectionLabel(c: Connection): string {
+  if (c.provider === 'tradier') return 'Tradier'
+  if (c.broker) return `${c.broker} (via SnapTrade)`
+  return 'Brokerage (via SnapTrade)'
 }
 
 function usd(cents: number | null): string {
@@ -70,7 +77,9 @@ export default function BrokerageSettingsClient() {
 
         {error && (
           <p className="mt-6 rounded-lg border border-red-700/40 bg-red-950/30 px-4 py-3 text-sm text-red-300">
-            Could not load your connections. Refresh to try again.
+            {String((error as Error)?.message ?? '').startsWith('401')
+              ? 'Your session has expired or this is not a customer account — sign in again to view your connections.'
+              : 'Could not load your connections. Refresh to try again.'}
           </p>
         )}
 
@@ -98,7 +107,7 @@ export default function BrokerageSettingsClient() {
                 <div key={c.id} className="rounded-xl border border-forge-border bg-forge-card/60 p-5">
                   <div className="flex flex-wrap items-center gap-3">
                     <span className="text-sm font-semibold text-white">
-                      {PROVIDER_LABEL[c.provider] ?? c.provider}
+                      {connectionLabel(c)}
                     </span>
                     <span
                       className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
