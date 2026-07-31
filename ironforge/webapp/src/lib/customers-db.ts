@@ -499,18 +499,60 @@ CREATE INDEX IF NOT EXISTS idx_customer_positions_status ON customer_positions(s
 `
 
 let _ensured: Promise<void> | null = null
+let _retryAfter = 0
 
+/**
+ * The INIT_DDL blob is plain idempotent DDL — no function bodies, no dollar
+ * quoting — so a semicolon at end-of-line is a statement boundary.
+ */
+function ddlStatements(): string[] {
+  return INIT_DDL
+    .split(/;\s*\n/)
+    .map((s) => s.trim())
+    .filter((s) => s.replace(/^\s*--[^\n]*$/gm, '').trim().length > 0)
+}
+
+/**
+ * Hardened per the 7/31 architecture audit (C3). The old version sent the whole
+ * ~80-statement blob as ONE implicit transaction: a single failing statement
+ * (e.g. a unique index meeting a duplicate row) rolled back EVERYTHING and — via
+ * the reset-on-error memo — re-ran the full blob and 500'd on every customer
+ * request, indefinitely. Now:
+ *  - statements run INDIVIDUALLY, so one failure can't void the other 79 (they
+ *    are all idempotent IF NOT EXISTS / ADD COLUMN IF NOT EXISTS forms);
+ *  - failures are logged loudly and the run still completes;
+ *  - a failed run (connection-level) retries at most every 30s instead of per
+ *    request, so an outage degrades to fast failures, not a DDL storm.
+ */
 export async function ensureCustomerTables(): Promise<void> {
   if (!_ensured) {
+    if (Date.now() < _retryAfter) {
+      throw new Error('customers DB unavailable (ensure cooldown) — retrying shortly')
+    }
     _ensured = (async () => {
       const client = await getPool().connect()
       try {
-        await client.query(INIT_DDL)
+        const failures: string[] = []
+        for (const stmt of ddlStatements()) {
+          try {
+            await client.query(stmt)
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            failures.push(msg)
+            console.error(`[customers-db] DDL statement failed (continuing): ${stmt.slice(0, 100).replace(/\s+/g, ' ')} :: ${msg}`)
+          }
+        }
+        if (failures.length > 0) {
+          console.error(`[customers-db] ${failures.length} DDL statement(s) failed — schema may be partial; serving queries anyway`)
+        }
       } finally {
         client.release()
       }
     })().catch((e) => {
-      _ensured = null // allow retry on next call
+      // Connection-level failure (couldn't even attempt the DDL): allow a retry,
+      // but no sooner than 30s from now.
+      _ensured = null
+      _retryAfter = Date.now() + 30_000
       throw e
     })
   }

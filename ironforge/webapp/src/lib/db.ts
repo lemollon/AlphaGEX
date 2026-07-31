@@ -524,9 +524,31 @@ CREATE INDEX IF NOT EXISTS idx_flare_daily_state_date ON flare_daily_state(trade
 /**
  * Ensure all tables exist. Runs once per server cold start.
  * Uses CREATE TABLE IF NOT EXISTS so it's safe to call repeatedly.
+ *
+ * Hardened per the 7/31 architecture audit (C2):
+ *  - In-flight dedupe: N concurrent cold requests share ONE DDL run (the old code
+ *    ran the full ~60-statement block once per concurrent request — the documented
+ *    cause of the 2026-04-20 duplicate paper_account rows).
+ *  - Failure cooldown: a failed run retries at most every 30s instead of on every
+ *    request, so a bad statement can't turn every GET into a DDL storm.
+ *  - Scanner start is DECOUPLED from DDL success: a schema hiccup used to silently
+ *    prevent the trading loop from ever starting, with one console line as the only
+ *    signal. The scanner is now kicked regardless; its own queries surface real DB
+ *    problems loudly, and the advisory lock still guarantees a single scanner.
  */
+let _ensuringTables: Promise<void> | null = null
+let _ddlRetryAfter = 0
+
 async function ensureTables(): Promise<void> {
-  if (tablesReady) return
+  if (tablesReady) { kickScannerOnce(); return }
+  if (_ensuringTables) { await _ensuringTables; kickScannerOnce(); return }
+  if (Date.now() < _ddlRetryAfter) { kickScannerOnce(); return }
+  _ensuringTables = ensureTablesOnce().finally(() => { _ensuringTables = null })
+  await _ensuringTables
+  kickScannerOnce()
+}
+
+async function ensureTablesOnce(): Promise<void> {
   const client = await getPool().connect()
   try {
     await client.query(INIT_DDL)
@@ -1206,32 +1228,44 @@ async function ensureTables(): Promise<void> {
     }
 
     tablesReady = true
-
-    // Start the scan loop in THIS process (same as API routes).
-    // Dynamic import avoids circular dependency (scanner imports db).
-    //
-    // GATED, DEFAULT OFF. The scanner places REAL orders, so exactly one process
-    // in the fleet may run it. This app is deployed as two Render services (the
-    // customer site and the operator console) off the same image; only the one
-    // with SCANNER_ENABLED=true scans. Default-off is deliberate: a new or
-    // misconfigured service must be silent, never trading.
-    //
-    // This flag alone is NOT sufficient — it does not stop two INSTANCES of the
-    // same service (scale-out, or the overlap window during a zero-downtime
-    // deploy) from both scanning. startScanner() additionally takes a Postgres
-    // advisory lock, which is the guarantee that actually holds. Both layers are
-    // intentional; do not remove either.
-    if (process.env.SCANNER_ENABLED === 'true') {
-      import('./scanner')
-        .then(m => m.ensureScannerStarted())
-        .catch(err => console.error('Scanner start failed:', err))
-    } else {
-      console.log('[scanner] not started — SCANNER_ENABLED is not "true" (this process serves web traffic only)')
-    }
   } catch (err) {
     console.error('ensureTables failed:', err)
+    _ddlRetryAfter = Date.now() + 30_000
   } finally {
     client.release()
+  }
+}
+
+/**
+ * Start the scan loop in THIS process (same as API routes).
+ * Dynamic import avoids circular dependency (scanner imports db).
+ *
+ * GATED, DEFAULT OFF. The scanner places REAL orders, so exactly one process
+ * in the fleet may run it. This app is deployed as two Render services (the
+ * customer site and the operator console) off the same image; only the one
+ * with SCANNER_ENABLED=true scans. Default-off is deliberate: a new or
+ * misconfigured service must be silent, never trading.
+ *
+ * This flag alone is NOT sufficient — it does not stop two INSTANCES of the
+ * same service (scale-out, or the overlap window during a zero-downtime
+ * deploy) from both scanning. startScanner() additionally takes a Postgres
+ * advisory lock, which is the guarantee that actually holds. Both layers are
+ * intentional; do not remove either.
+ *
+ * Deliberately NOT gated on tablesReady: a failed DDL statement must never
+ * silently keep the trading loop dark (audit C2 — that failure mode had one
+ * console line as its only signal). ensureScannerStarted() is idempotent.
+ */
+let _scannerKicked = false
+function kickScannerOnce(): void {
+  if (_scannerKicked) return
+  _scannerKicked = true
+  if (process.env.SCANNER_ENABLED === 'true') {
+    import('./scanner')
+      .then(m => m.ensureScannerStarted())
+      .catch(err => console.error('Scanner start failed:', err))
+  } else {
+    console.log('[scanner] not started — SCANNER_ENABLED is not "true" (this process serves web traffic only)')
   }
 }
 
