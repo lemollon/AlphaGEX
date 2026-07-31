@@ -14,7 +14,12 @@ function getPool(): Pool {
     _pool = new Pool({
       connectionString: process.env.DATABASE_URL,
       ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
-      max: 5,
+      // Audit R1: this process runs the scanner, three sub-minute monitors, the
+      // customer-executor fan-out AND all web traffic on ONE pool. At 5, customer
+      // dashboard polling silently queues the scan tick behind web queries. Bumped
+      // + env-overridable so the trade loop isn't starved as customers scale.
+      // (Render Pro Postgres allows ~200 connections; two pools of 20 is well within.)
+      max: Number(process.env.DB_POOL_MAX) || 20,
     })
   }
   return _pool
