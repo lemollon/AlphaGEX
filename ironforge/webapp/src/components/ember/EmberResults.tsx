@@ -181,7 +181,7 @@ function EmberEquityChart({ curve }: { curve: EquityCurvePoint[] }) {
   const last = curve[curve.length - 1]
   const isPositive = (last?.cum_pnl ?? 0) >= 0
   const fillColor = isPositive ? 'rgba(52,211,153,0.12)' : 'rgba(239,68,68,0.12)'
-  const lineColor = isPositive ? '#34d399' : '#ef4444'
+  const lineColor = isPositive ? '#4ade80' : '#ef4444'
 
   return (
     <div className="rounded-xl border border-forge-border bg-forge-card/80 p-4">

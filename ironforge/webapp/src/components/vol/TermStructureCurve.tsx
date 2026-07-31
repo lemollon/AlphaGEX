@@ -23,7 +23,7 @@ export default function TermStructureCurve({
 }) {
   const points = termStructurePoints(inputs)
   const back = isBackwardation(inputs)
-  const lineColor = back ? '#ef4444' : '#34d399'
+  const lineColor = back ? '#ef4444' : '#4ade80'
 
   return (
     <section className="rounded-xl border border-forge-border bg-forge-card/80 p-4">

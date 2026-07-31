@@ -126,7 +126,7 @@ export default function PayoffPanel({
       .filter((v): v is number => v != null && Number.isFinite(Number(v)))
       .map(Number)
     longPrices.forEach((p) => {
-      if (p >= minPrice && p <= maxPrice) lines.push({ y: pToY(p), color: '#34d399', dash: '5,4', label: `$${p}` })
+      if (p >= minPrice && p <= maxPrice) lines.push({ y: pToY(p), color: '#4ade80', dash: '5,4', label: `$${p}` })
     })
     shortPrices.forEach((p) => {
       if (p >= minPrice && p <= maxPrice) lines.push({ y: pToY(p), color: '#ef4444', dash: '5,4', label: null })
@@ -174,8 +174,8 @@ export default function PayoffPanel({
       >
         <defs>
           <linearGradient id="profitGrad" x1="1" y1="0" x2="0" y2="0">
-            <stop offset="0%" stopColor="#34d399" stopOpacity="0" />
-            <stop offset="100%" stopColor="#34d399" stopOpacity="0.5" />
+            <stop offset="0%" stopColor="#4ade80" stopOpacity="0" />
+            <stop offset="100%" stopColor="#4ade80" stopOpacity="0.5" />
           </linearGradient>
           <linearGradient id="lossGrad" x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%" stopColor="#ef4444" stopOpacity="0" />
@@ -211,7 +211,7 @@ export default function PayoffPanel({
           <>
             {paths.profitFill && <path d={paths.profitFill} fill="url(#profitGrad)" />}
             {paths.lossFill && <path d={paths.lossFill} fill="url(#lossGrad)" />}
-            <path d={paths.mainPath} fill="none" stroke="#34d399" strokeWidth="2.5" />
+            <path d={paths.mainPath} fill="none" stroke="#4ade80" strokeWidth="2.5" />
           </>
         )}
 
@@ -308,8 +308,8 @@ export default function PayoffPanel({
             const pct = closedRealizedPct ?? 0
             const isProfit = closedRealizedPnl > 0
             const nearBreakeven = Math.abs(pct) < 10
-            const badgeColor = nearBreakeven ? '#e0b23f' : isProfit ? '#34d399' : '#ef4444'
-            const bgColor = nearBreakeven ? '#e0b23f22' : isProfit ? '#34d39922' : '#ef444422'
+            const badgeColor = nearBreakeven ? '#e0b23f' : isProfit ? '#4ade80' : '#ef4444'
+            const bgColor = nearBreakeven ? '#e0b23f22' : isProfit ? '#4ade8022' : '#ef444422'
             const label = `Closed: ${formatDollarPnl(closedRealizedPnl)} (${formatSignedPct(pct)})`
             const badgeW = 150
             const badgeH = 18
@@ -358,8 +358,8 @@ export default function PayoffPanel({
             const { pnl, pctOfRisk } = pnlAtSpotPoint
             const isProfit = pnl > 0
             const nearBreakeven = Math.abs(pctOfRisk) < 10
-            const badgeColor = nearBreakeven ? '#e0b23f' : isProfit ? '#34d399' : '#ef4444'
-            const bgColor = nearBreakeven ? '#e0b23f22' : isProfit ? '#34d39922' : '#ef444422'
+            const badgeColor = nearBreakeven ? '#e0b23f' : isProfit ? '#4ade80' : '#ef4444'
+            const bgColor = nearBreakeven ? '#e0b23f22' : isProfit ? '#4ade8022' : '#ef444422'
             const label = `Now: ${formatDollarPnl(pnl)} (${formatSignedPct(pctOfRisk)})`
             const badgeW = 140
             const badgeH = 18

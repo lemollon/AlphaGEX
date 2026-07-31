@@ -13,7 +13,7 @@ import type { LiveOpenPosition } from '@/lib/live/types'
 export default function RegimeRow({ p, accountValue }: { p: LiveOpenPosition; accountValue: number | null }) {
   const known = p.gex_regime != null
   const positive = p.gex_regime === 'POSITIVE'
-  const tone = !known ? '#9CA3AF' : positive ? '#10B981' : '#F59E0B'
+  const tone = !known ? '#9CA3AF' : positive ? '#22C55E' : '#F59E0B'
 
   const usedPct =
     p.capital_used != null && accountValue != null && accountValue > 0

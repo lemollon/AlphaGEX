@@ -59,7 +59,7 @@ export default function LiveTradeCard({
   // Color by the OUTCOME the card reports, not the raw last series point — post-close
   // snapshots used to zero out and paint a −$208 day green (2026-07-17 fix).
   const outcomePnl = pnl ?? lastPnl
-  const chartColor = outcomePnl >= 0 ? '#34d399' : '#f87171'
+  const chartColor = outcomePnl >= 0 ? '#4ade80' : '#f87171'
 
   return (
     <section className="rounded-xl border border-forge-border bg-forge-card/80 p-4">

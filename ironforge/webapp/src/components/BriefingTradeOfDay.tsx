@@ -256,8 +256,8 @@ export default function BriefingTradeOfDay({ trade, macro }: Props) {
         style={{ display: 'block', fontFamily: FONT }} className="overflow-visible">
         <defs>
           <linearGradient id="payoffProfitFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%"  stopColor="#34d399" stopOpacity={0.32} />
-            <stop offset="100%" stopColor="#34d399" stopOpacity={0.02} />
+            <stop offset="0%"  stopColor="#4ade80" stopOpacity={0.32} />
+            <stop offset="100%" stopColor="#4ade80" stopOpacity={0.02} />
           </linearGradient>
           <linearGradient id="payoffLossFill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%"  stopColor="#f87171" stopOpacity={0.02} />

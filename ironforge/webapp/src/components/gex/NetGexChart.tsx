@@ -103,7 +103,7 @@ export default function NetGexChart({
               )}
               <Bar dataKey="net_gamma" barSize={6} isAnimationActive={false}>
                 {data.map((d, i) => (
-                  <Cell key={i} fill={d.net_gamma >= 0 ? '#34d399' : '#ef4444'} />
+                  <Cell key={i} fill={d.net_gamma >= 0 ? '#4ade80' : '#ef4444'} />
                 ))}
               </Bar>
             </BarChart>
