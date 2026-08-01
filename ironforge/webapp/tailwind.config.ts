@@ -30,18 +30,20 @@ const config: Config = {
         display: ['var(--font-display)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
       },
       colors: {
-        // Brand accent rides amber-* (existing re-hue, anchored on the #FF5500 family)
+        // Brand accent rides amber-*. VIVID vermilion-orange (Leron's repeated
+        // "bright colors" direction, 7/31 — the earlier #EE5A24 read muted). 500 is
+        // the brand; 400 is the lighter hover; 600 the pressed/darker.
         amber: {
-          50: '#FFF3ED',
-          100: '#FFE3D3',
-          200: '#FFC4A5',
-          300: '#FB9B6B',
-          400: '#F5743C',
-          500: '#EE5A24',
-          600: '#E8531F',
-          700: '#B83C12',
-          800: '#92300E',
-          900: '#5C1E08',
+          50: '#FFF1EC',
+          100: '#FFDED3',
+          200: '#FFB7A2',
+          300: '#FF8A69',
+          400: '#FF5E38',
+          500: '#FD3D1E',
+          600: '#EA2C10',
+          700: '#C0230C',
+          800: '#951A09',
+          900: '#5E0F05',
         },
         // Semantic unification — one green, one red, one caution everywhere
         green: POSITIVE,

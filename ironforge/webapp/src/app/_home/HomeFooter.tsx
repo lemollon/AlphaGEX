@@ -94,7 +94,7 @@ export default function HomeFooter() {
               <button
                 type="submit"
                 aria-label="Subscribe"
-                className="flex items-center bg-amber-500 px-3.5 text-black transition-colors hover:bg-amber-400"
+                className="flex items-center bg-amber-500 px-3.5 text-white transition-colors hover:bg-amber-400"
               >
                 <ArrowRightIcon className="h-4 w-4" />
               </button>
