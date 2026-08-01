@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHash, randomUUID } from 'crypto'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
-import { waitlistSchema, normalizeWaitlist, CONSENT_VERSION, WAITLIST_SOURCE } from '@/lib/waitlist'
+import { validateWaitlist, CONSENT_VERSION, WAITLIST_SOURCE } from '@/lib/waitlist'
 import { upsertWaitlistToAttio } from '@/lib/attio'
 import { sendWaitlistConfirmation } from '@/lib/email'
 
@@ -44,16 +44,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, submissionId: `wl_${randomUUID()}`, message: 'You are on the IronForge waitlist.' }, { status: 201 })
   }
 
-  const parsed = waitlistSchema.safeParse(body)
-  if (!parsed.success) {
-    const fieldErrors: Record<string, string> = {}
-    for (const i of parsed.error.issues) {
-      const k = String(i.path[0] ?? '')
-      if (k && !fieldErrors[k]) fieldErrors[k] = i.message
-    }
-    return NextResponse.json({ ok: false, code: 'VALIDATION_ERROR', fieldErrors }, { status: 422 })
+  const parsed = validateWaitlist(body as Record<string, never>)
+  if (!parsed.ok) {
+    return NextResponse.json({ ok: false, code: 'VALIDATION_ERROR', fieldErrors: parsed.fieldErrors }, { status: 422 })
   }
-  const n = normalizeWaitlist(parsed.data)
+  const n = parsed.data
 
   if (!isCustomersDbConfigured()) {
     return NextResponse.json({ ok: false, code: 'INTEGRATION_ERROR', message: 'We could not save your request. Please try again.' }, { status: 503 })

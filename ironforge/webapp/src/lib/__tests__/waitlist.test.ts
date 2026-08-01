@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { waitlistSchema, normalizeWaitlist, normalizePhone, validateWaitlistClient, CAPITAL_RANGES } from '../waitlist'
+import { validateWaitlist, normalizePhone, validateWaitlistClient, CAPITAL_RANGES } from '../waitlist'
 
 const valid = {
   firstName: 'Logan', lastName: 'Pennington', email: 'Logan@Example.com',
@@ -19,26 +19,30 @@ describe('normalizePhone', () => {
 })
 
 describe('waitlist validation', () => {
-  it('accepts a valid submission', () => {
-    expect(waitlistSchema.safeParse(valid).success).toBe(true)
-  })
-  it('normalizes email lowercase, phone E.164, state uppercase', () => {
-    const n = normalizeWaitlist(waitlistSchema.parse(valid))
-    expect(n.email).toBe('logan@example.com')
-    expect(n.phone).toBe('+12815551212')
-    expect(n.state).toBe('TX')
+  it('accepts and normalizes a valid submission', () => {
+    const r = validateWaitlist(valid)
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.data.email).toBe('logan@example.com')
+      expect(r.data.phone).toBe('+12815551212')
+      expect(r.data.state).toBe('TX')
+    }
   })
   it('requires consent = true', () => {
     const r = validateWaitlistClient({ ...valid, communicationConsent: false })
     expect(r.communicationConsent).toBeTruthy()
   })
   it('rejects a bad email and a bad phone with field messages', () => {
-    const r = validateWaitlistClient({ ...valid, email: 'nope', phone: '123' })
-    expect(r.email).toBeTruthy()
-    expect(r.phone).toBeTruthy()
+    const r = validateWaitlist({ ...valid, email: 'nope', phone: '123' })
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.fieldErrors.email).toBeTruthy()
+      expect(r.fieldErrors.phone).toBeTruthy()
+    }
   })
   it('rejects an unknown capital range', () => {
-    expect(waitlistSchema.safeParse({ ...valid, tradingCapitalRange: 'infinity' }).success).toBe(false)
+    const r = validateWaitlist({ ...valid, tradingCapitalRange: 'infinity' })
+    expect(r.ok).toBe(false)
   })
   it('the 5 approved ranges are the enum', () => {
     expect(CAPITAL_RANGES.map((r) => r.value)).toEqual(['under_5000', '5000_10000', '10000_25000', '25000_50000', '50000_plus'])

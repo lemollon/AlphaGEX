@@ -1,9 +1,8 @@
-import { z } from 'zod'
-
 /**
  * Waitlist domain: validation + normalization, shared by the /waitlist form and the
- * /api/waitlist route so client and server enforce the same rules (per the 8/26
- * developer handoff). Email is the canonical dedupe key.
+ * /api/waitlist route so client and server enforce the same rules (8/26 handoff).
+ * Hand-rolled (matches lib/signup-validation.ts) — no external validation dependency.
+ * Email is the canonical dedupe key.
  */
 
 export const CONSENT_VERSION = 'waitlist-v1-2026-08-01'
@@ -21,31 +20,21 @@ export const CAPITAL_RANGES = [
 ] as const
 
 export type CapitalRange = (typeof CAPITAL_RANGES)[number]['value']
-const CAPITAL_VALUES = CAPITAL_RANGES.map((r) => r.value) as [CapitalRange, ...CapitalRange[]]
+const CAPITAL_VALUES: readonly string[] = CAPITAL_RANGES.map((r) => r.value)
 
 const NAME_RE = /^[A-Za-z][A-Za-z '-]{0,59}$/
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-/** Normalize a US phone to E.164 (+1XXXXXXXXXX); '' when it can't be resolved. */
-export function normalizePhone(phone: string): string {
-  const d = String(phone ?? '').replace(/\D/g, '')
-  if (d.length === 10) return `+1${d}`
-  if (d.length === 11 && d.startsWith('1')) return `+${d}`
-  return ''
+export interface WaitlistRaw {
+  firstName: string
+  lastName: string
+  email: string
+  phone: string
+  city: string
+  state: string
+  tradingCapitalRange: string
+  communicationConsent: boolean
 }
-
-/** The raw client payload shape. */
-export const waitlistSchema = z.object({
-  firstName: z.string().trim().regex(NAME_RE, 'Enter your first name.'),
-  lastName: z.string().trim().regex(NAME_RE, 'Enter your last name.'),
-  email: z.string().trim().toLowerCase().email('Enter a valid email address.'),
-  phone: z.string().trim().refine((p) => normalizePhone(p) !== '', 'Enter a valid US phone number.'),
-  city: z.string().trim().min(1, 'Enter your city.').max(80),
-  state: z.string().trim().length(2, 'Select your state.'),
-  tradingCapitalRange: z.enum(CAPITAL_VALUES, { message: 'Choose a range.' }),
-  communicationConsent: z.literal(true, { message: 'Please agree to continue.' }),
-})
-
-export type WaitlistInput = z.infer<typeof waitlistSchema>
 
 export interface NormalizedWaitlist {
   firstName: string
@@ -58,31 +47,54 @@ export interface NormalizedWaitlist {
   consent: true
 }
 
-/** Server-side normalization AFTER schema validation. */
-export function normalizeWaitlist(input: WaitlistInput): NormalizedWaitlist {
-  return {
-    firstName: input.firstName.trim(),
-    lastName: input.lastName.trim(),
-    email: input.email.trim().toLowerCase(),
-    phone: normalizePhone(input.phone),
-    city: input.city.trim(),
-    state: input.state.trim().toUpperCase(),
-    tradingCapitalRange: input.tradingCapitalRange,
-    consent: true,
-  }
+/** Normalize a US phone to E.164 (+1XXXXXXXXXX); '' when it can't be resolved. */
+export function normalizePhone(phone: string): string {
+  const d = String(phone ?? '').replace(/\D/g, '')
+  if (d.length === 10) return `+1${d}`
+  if (d.length === 11 && d.startsWith('1')) return `+${d}`
+  return ''
 }
 
-/** Client-side field validation → { field: message }. Empty object = valid. */
-export function validateWaitlistClient(v: {
-  firstName: string; lastName: string; email: string; phone: string
-  city: string; state: string; tradingCapitalRange: string; communicationConsent: boolean
-}): Record<string, string> {
-  const r = waitlistSchema.safeParse(v)
-  if (r.success) return {}
-  const out: Record<string, string> = {}
-  for (const issue of r.error.issues) {
-    const key = String(issue.path[0] ?? '')
-    if (key && !out[key]) out[key] = issue.message
+/** Field-level validation → { field: message }. Empty object = valid. */
+export function validateWaitlistClient(v: Partial<WaitlistRaw>): Record<string, string> {
+  const e: Record<string, string> = {}
+  const firstName = String(v.firstName ?? '').trim()
+  const lastName = String(v.lastName ?? '').trim()
+  const email = String(v.email ?? '').trim()
+  const city = String(v.city ?? '').trim()
+  const state = String(v.state ?? '').trim()
+
+  if (!NAME_RE.test(firstName)) e.firstName = 'Enter your first name.'
+  if (!NAME_RE.test(lastName)) e.lastName = 'Enter your last name.'
+  if (!EMAIL_RE.test(email.toLowerCase())) e.email = 'Enter a valid email address.'
+  if (normalizePhone(String(v.phone ?? '')) === '') e.phone = 'Enter a valid US phone number.'
+  if (city.length < 1 || city.length > 80) e.city = 'Enter your city.'
+  if (state.length !== 2) e.state = 'Select your state.'
+  if (!CAPITAL_VALUES.includes(String(v.tradingCapitalRange ?? ''))) e.tradingCapitalRange = 'Choose a range.'
+  if (v.communicationConsent !== true) e.communicationConsent = 'Please agree to continue.'
+  return e
+}
+
+/**
+ * Server-side validate + normalize. Returns the normalized record, or the field
+ * errors when invalid.
+ */
+export function validateWaitlist(
+  input: Partial<WaitlistRaw>,
+): { ok: true; data: NormalizedWaitlist } | { ok: false; fieldErrors: Record<string, string> } {
+  const fieldErrors = validateWaitlistClient(input)
+  if (Object.keys(fieldErrors).length > 0) return { ok: false, fieldErrors }
+  return {
+    ok: true,
+    data: {
+      firstName: String(input.firstName).trim(),
+      lastName: String(input.lastName).trim(),
+      email: String(input.email).trim().toLowerCase(),
+      phone: normalizePhone(String(input.phone)),
+      city: String(input.city).trim(),
+      state: String(input.state).trim().toUpperCase(),
+      tradingCapitalRange: String(input.tradingCapitalRange) as CapitalRange,
+      consent: true,
+    },
   }
-  return out
 }
