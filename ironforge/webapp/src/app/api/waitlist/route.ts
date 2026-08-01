@@ -85,8 +85,9 @@ export async function POST(req: NextRequest) {
   // 1) Persist locally FIRST — the lead survives any downstream outage. Email is the
   //    dedupe key: a resubmit updates the row (and returns existing:true).
   let existing = false
+  let alreadyEmailed = false
   try {
-    const rows = await customerQuery<{ existed: boolean }>(
+    const rows = await customerQuery<{ existed: boolean; email_status: string }>(
       `INSERT INTO waitlist_submissions
          (submission_id, email, first_name, last_name, phone, city, state,
           trading_capital_range, consent, consent_version, source, ip_hash)
@@ -97,11 +98,14 @@ export async function POST(req: NextRequest) {
          trading_capital_range = EXCLUDED.trading_capital_range,
          consent_version = EXCLUDED.consent_version, consent_at = now(),
          ip_hash = EXCLUDED.ip_hash, updated_at = now()
-       RETURNING (xmax <> 0) AS existed`,
+       RETURNING (xmax <> 0) AS existed, email_status`,
       [submissionId, n.email, n.firstName, n.lastName, n.phone, n.city, n.state,
        n.tradingCapitalRange, CONSENT_VERSION, WAITLIST_SOURCE, iph],
     )
     existing = rows[0]?.existed === true
+    // Idempotent confirmation (handoff §7): don't re-send to someone already
+    // confirmed. A prior FAILED/pending send still re-sends on resubmit.
+    alreadyEmailed = rows[0]?.email_status === 'sent'
   } catch (e) {
     console.error('[waitlist] local persist failed:', e)
     return NextResponse.json({ ok: false, code: 'INTEGRATION_ERROR', message: 'We could not save your request. Please try again.' }, { status: 503 })
@@ -126,15 +130,18 @@ export async function POST(req: NextRequest) {
     [n.email, attio.recordId ?? null],
   ).catch(() => {})
 
-  // 3) Confirmation email — async, best-effort. A failure never discards the lead.
-  void sendWaitlistConfirmation({ to: n.email, firstName: n.firstName })
-    .then((r) =>
-      customerExecute(
-        `UPDATE waitlist_submissions SET email_status=$2, updated_at=now() WHERE lower(email)=lower($1)`,
-        [n.email, r.sent ? 'sent' : r.skipped ? 'pending' : 'failed'],
-      ).catch(() => {}),
-    )
-    .catch(() => {})
+  // 3) Confirmation email — async, best-effort, sent ONCE per confirmed prospect.
+  //    A failure never discards the lead; a resubmit after a failed send retries.
+  if (!alreadyEmailed) {
+    void sendWaitlistConfirmation({ to: n.email, firstName: n.firstName })
+      .then((r) =>
+        customerExecute(
+          `UPDATE waitlist_submissions SET email_status=$2, updated_at=now() WHERE lower(email)=lower($1)`,
+          [n.email, r.sent ? 'sent' : r.skipped ? 'pending' : 'failed'],
+        ).catch(() => {}),
+      )
+      .catch(() => {})
+  }
 
   return NextResponse.json(
     {
