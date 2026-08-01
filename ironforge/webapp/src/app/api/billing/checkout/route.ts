@@ -26,6 +26,7 @@ import {
 } from '@/lib/billing/plans'
 import { getEnrollmentForUser } from '@/lib/enrollment/service'
 import { isAutomatePlan } from '@/lib/enrollment/legal'
+import { isEnrollmentClosed, enrollmentClosedResponse } from '@/lib/enrollment-mode'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -44,6 +45,10 @@ interface UserRow {
 }
 
 export async function POST(req: NextRequest) {
+  // Enrollment closed: never create a Stripe customer/subscription from a
+  // blocked flow (handoff §4 "Persistence", §11).
+  if (isEnrollmentClosed()) return enrollmentClosedResponse()
+
   const session = await getCustomerSession()
   if (!session.customerId) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
 

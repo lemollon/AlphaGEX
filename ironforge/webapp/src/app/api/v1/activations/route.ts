@@ -9,6 +9,7 @@ import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/
 import { findPriceIdByLookupKey, createTrialingSubscription } from '@/lib/billing/stripe'
 import { BOT_PLANS } from '@/lib/billing/plans'
 import { TRIAL_ELIGIBLE_DAYS } from '@/lib/enrollment/trading-days'
+import { isEnrollmentClosed, enrollmentClosedResponse } from '@/lib/enrollment-mode'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -36,6 +37,10 @@ const OPERATION = 'activate'
  *  proves the customer consented to this exact state.
  */
 export async function POST(req: NextRequest) {
+  // Enrollment closed: no activation / membership / trial from a blocked flow
+  // (handoff §4 "Persistence", §11). THE final go-live write.
+  if (isEnrollmentClosed()) return enrollmentClosedResponse()
+
   const session = await getCustomerSession()
   if (!session.customerId) {
     const e = errorEnvelope('UNAUTHORIZED', 'Please sign in to continue.')

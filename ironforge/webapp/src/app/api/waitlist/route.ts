@@ -26,6 +26,26 @@ function clientIp(req: NextRequest): string | null {
   const xff = req.headers.get('x-forwarded-for')
   return xff ? xff.split(',')[0].trim() : null
 }
+
+// Campaign/referral attribution (handoff §5). Whitelisted, length-capped strings
+// only — never trust raw client metadata into storage. Returns null when empty.
+const CAMPAIGN_KEYS = [
+  'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
+  'referralCode', 'landingPath',
+] as const
+function sanitizeCampaign(raw: unknown): Record<string, string> | null {
+  if (!raw || typeof raw !== 'object') return null
+  const src = raw as Record<string, unknown>
+  const out: Record<string, string> = {}
+  for (const k of CAMPAIGN_KEYS) {
+    const v = src[k]
+    if (typeof v === 'string') {
+      const s = v.trim().slice(0, 200)
+      if (s) out[k] = s
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null
+}
 function ipHash(ip: string | null): string | null {
   return ip ? createHash('sha256').update(ip).digest('hex').slice(0, 32) : null
 }
@@ -81,6 +101,8 @@ export async function POST(req: NextRequest) {
   } catch { /* fall through — never block a lead on a counting error */ }
 
   const submissionId = `wl_${randomUUID()}`
+  const campaign = sanitizeCampaign((body as Record<string, unknown>).campaign)
+  const campaignJson = campaign ? JSON.stringify(campaign) : null
 
   // 1) Persist locally FIRST — the lead survives any downstream outage. Email is the
   //    dedupe key: a resubmit updates the row (and returns existing:true).
@@ -90,17 +112,20 @@ export async function POST(req: NextRequest) {
     const rows = await customerQuery<{ existed: boolean; email_status: string }>(
       `INSERT INTO waitlist_submissions
          (submission_id, email, first_name, last_name, phone, city, state,
-          trading_capital_range, consent, consent_version, source, ip_hash)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$10,$11)
+          trading_capital_range, consent, consent_version, source, ip_hash, campaign)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$10,$11,$12::jsonb)
        ON CONFLICT (lower(email)) DO UPDATE SET
          first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name,
          phone = EXCLUDED.phone, city = EXCLUDED.city, state = EXCLUDED.state,
          trading_capital_range = EXCLUDED.trading_capital_range,
          consent_version = EXCLUDED.consent_version, consent_at = now(),
-         ip_hash = EXCLUDED.ip_hash, updated_at = now()
+         ip_hash = EXCLUDED.ip_hash,
+         -- keep earlier attribution if this resubmit carried none (§6: append, don't delete)
+         campaign = COALESCE(EXCLUDED.campaign, waitlist_submissions.campaign),
+         updated_at = now()
        RETURNING (xmax <> 0) AS existed, email_status`,
       [submissionId, n.email, n.firstName, n.lastName, n.phone, n.city, n.state,
-       n.tradingCapitalRange, CONSENT_VERSION, WAITLIST_SOURCE, iph],
+       n.tradingCapitalRange, CONSENT_VERSION, WAITLIST_SOURCE, iph, campaignJson],
     )
     existing = rows[0]?.existed === true
     // Idempotent confirmation (handoff §7): don't re-send to someone already

@@ -2,6 +2,8 @@ import type { Metadata } from 'next'
 import { Inter, Oswald } from 'next/font/google'
 import './globals.css'
 import Shell from '@/components/Shell'
+import EnrollmentGate from '@/components/EnrollmentGate'
+import { isEnrollmentClosed } from '@/lib/enrollment-mode'
 
 // Single source of truth for site typography.
 // Inter = body/UI sans (--font-sans, also Tailwind's font-sans).
@@ -30,6 +32,10 @@ export default function RootLayout({
     <html lang="en" className={`dark ${inter.variable} ${oswald.variable}`}>
       <body className="font-sans antialiased min-h-screen">
         <Shell>{children}</Shell>
+        {/* Blocking waitlist overlay — self-limits to /signup + /enroll/* and is
+            inert unless ENROLLMENT_WAITLIST_MODE is on. Read server-side here so
+            the flag never reaches the client bundle. */}
+        <EnrollmentGate enabled={isEnrollmentClosed()} />
       </body>
     </html>
   )
