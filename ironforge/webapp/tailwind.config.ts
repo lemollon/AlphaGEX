@@ -12,10 +12,22 @@ import colors from 'tailwindcss/colors'
 //     teal, lime, sky, orange) → NEUTRAL, so color stays deliberate.
 // Per-bot identity is NOT a Tailwind hue — it comes from lib/botColors.ts /
 // globals.css --bot-* and is applied only as a thin accent (dot + card top-rule).
-// Vivid kelly green (Tailwind `green`), NOT the muted emerald — Leron's call
-// 7/31 ("bright green, not baby food green"). Both `green-*` and `emerald-*`
-// utilities resolve here, so this one line is the site-wide green.
-const POSITIVE = colors.green
+// VIVID bright green — Leron's direction (Tailwind's own green-500 #22C55E read
+// muted/forest on the dark ground). Custom scale anchored on a saturated grass
+// green that pops on #0B0B0D. Both `green-*` and `emerald-*` utilities resolve
+// here, so this re-skins every green (CTAs, badges, P&L up) site-wide.
+const POSITIVE = {
+  50: '#E7FCEC',
+  100: '#C2F8CF',
+  200: '#88EFA3',
+  300: '#4CE674',
+  400: '#2BE054',
+  500: '#18D63F',
+  600: '#12B534',
+  700: '#0F8E2A',
+  800: '#0C6D22',
+  900: '#08461A',
+}
 const NEGATIVE = colors.red
 const CAUTION = colors.amber
 const NEUTRAL = colors.stone
