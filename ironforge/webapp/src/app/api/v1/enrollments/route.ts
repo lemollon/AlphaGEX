@@ -3,6 +3,7 @@ import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { isCustomersDbConfigured } from '@/lib/customers-db'
 import { advanceBillingIfComplete, createOrResumeEnrollment, ensureLegalDocumentsSeeded, nextStepFor } from '@/lib/enrollment/service'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
+import { isEnrollmentClosed, enrollmentClosedResponse } from '@/lib/enrollment-mode'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -18,6 +19,9 @@ export const dynamic = 'force-dynamic'
  * routes are /api/v1/... The contract is otherwise as specified.
  */
 export async function POST(req: NextRequest) {
+  // Enrollment closed: do not begin a new enrollment intent (handoff §4/§11).
+  if (isEnrollmentClosed()) return enrollmentClosedResponse()
+
   const session = await getCustomerSession()
   if (!session.customerId) {
     const e = errorEnvelope('UNAUTHORIZED', 'Please sign in to continue.')

@@ -4,6 +4,7 @@ import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/c
 import { getEnrollmentForUser } from '@/lib/enrollment/service'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
 import { isUuid } from '@/lib/enrollment/ids'
+import { isEnrollmentClosed, enrollmentClosedResponse } from '@/lib/enrollment-mode'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -24,6 +25,10 @@ export const dynamic = 'force-dynamic'
  * stops describing what will actually happen.
  */
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+  // Enrollment closed: never create/attach a brokerage record from a blocked
+  // flow (handoff §4 "Persistence" — "brokerage record").
+  if (isEnrollmentClosed()) return enrollmentClosedResponse()
+
   const session = await getCustomerSession()
   if (!session.customerId) {
     const e = errorEnvelope('UNAUTHORIZED', 'Please sign in to continue.')

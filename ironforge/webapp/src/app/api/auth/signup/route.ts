@@ -13,6 +13,7 @@ import {
   customerExecute,
   customerTransaction,
 } from '@/lib/customers-db'
+import { isEnrollmentClosed, enrollmentClosedResponse } from '@/lib/enrollment-mode'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -55,6 +56,10 @@ async function writeAudit(
 }
 
 export async function POST(req: NextRequest) {
+  // Enrollment closed: reject account creation server-side (handoff §4/§11 — the
+  // overlay is not the security control). THE primary create path.
+  if (isEnrollmentClosed()) return enrollmentClosedResponse()
+
   let body: Partial<SignupPayload>
   try {
     body = (await req.json()) as Partial<SignupPayload>

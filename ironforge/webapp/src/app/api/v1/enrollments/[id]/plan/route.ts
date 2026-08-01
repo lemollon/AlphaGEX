@@ -4,6 +4,7 @@ import { isCustomersDbConfigured } from '@/lib/customers-db'
 import { getEnrollmentForUser, setEnrollmentPlan, legalRequirementsFor } from '@/lib/enrollment/service'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
 import { BOT_PLANS, COMMUNITY_PLAN, BOTH_PLAN } from '@/lib/billing/plans'
+import { isEnrollmentClosed, enrollmentClosedResponse } from '@/lib/enrollment-mode'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -31,6 +32,9 @@ const VALID_PLANS = new Set<string>([
  * duplicate user".
  */
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+  // Enrollment closed: freeze mid-funnel plan changes too (handoff §4/§11).
+  if (isEnrollmentClosed()) return enrollmentClosedResponse()
+
   const session = await getCustomerSession()
   if (!session.customerId) {
     const e = errorEnvelope('UNAUTHORIZED', 'Please sign in to continue.')

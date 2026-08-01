@@ -478,11 +478,14 @@ CREATE TABLE IF NOT EXISTS waitlist_submissions (
   attio_status TEXT NOT NULL DEFAULT 'pending',   -- pending | synced | failed
   attio_person_id TEXT,
   email_status TEXT NOT NULL DEFAULT 'pending',    -- pending | sent | failed
+  campaign JSONB,                                  -- UTM + referral + landing (enrollment-overlay handoff §5)
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_waitlist_email_lower ON waitlist_submissions(lower(email));
 CREATE INDEX IF NOT EXISTS idx_waitlist_ip_created ON waitlist_submissions(ip_hash, created_at);
+-- Additive on already-created DBs (CREATE TABLE IF NOT EXISTS is a no-op there).
+ALTER TABLE waitlist_submissions ADD COLUMN IF NOT EXISTS campaign JSONB;
 
 -- Stripe webhook replay/dedupe guard + dead-letter (audit C5). The INSERT is the
 -- processing claim; processed_at NULL + error = a failed event Stripe will retry.

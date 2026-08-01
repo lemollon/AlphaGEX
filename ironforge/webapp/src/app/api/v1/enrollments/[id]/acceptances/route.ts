@@ -4,6 +4,7 @@ import { isCustomersDbConfigured } from '@/lib/customers-db'
 import { getEnrollmentForUser, recordAcceptances, ensureLegalDocumentsSeeded } from '@/lib/enrollment/service'
 import { isAutomatePlan } from '@/lib/enrollment/legal'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
+import { isEnrollmentClosed, enrollmentClosedResponse } from '@/lib/enrollment-mode'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -26,6 +27,10 @@ function clientIp(req: NextRequest): string | null {
  * exactly — the §12 auditability criterion.
  */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  // Enrollment closed: never record a legal acceptance from a blocked flow
+  // (handoff §4 "Persistence" — "or legal acceptance").
+  if (isEnrollmentClosed()) return enrollmentClosedResponse()
+
   const session = await getCustomerSession()
   if (!session.customerId) {
     const e = errorEnvelope('UNAUTHORIZED', 'Please sign in to continue.')

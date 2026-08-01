@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { US_STATES } from '@/lib/us-states'
 import { CAPITAL_RANGES, CONSENT_COPY, validateWaitlistClient } from '@/lib/waitlist'
 
@@ -49,6 +49,23 @@ export default function WaitlistClient() {
   const [serverError, setServerError] = useState<string | null>(null)
   const [done, setDone] = useState<null | { existing: boolean }>(null)
   const firstRef = useRef<HTMLInputElement>(null)
+  const campaignRef = useRef<Record<string, string>>({})
+
+  // Capture UTM + referral + landing page once (handoff §5). The gate forwards
+  // these onto /waitlist; here we read them off the URL and attach to the submit.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const q = new URLSearchParams(window.location.search)
+    const c: Record<string, string> = {}
+    for (const k of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term']) {
+      const v = q.get(k)
+      if (v) c[k] = v.slice(0, 200)
+    }
+    const ref = q.get('ref') || q.get('referral') || q.get('referralCode') || q.get('code')
+    if (ref) c.referralCode = ref.slice(0, 200)
+    c.landingPath = window.location.pathname
+    campaignRef.current = c
+  }, [])
 
   const set = (k: keyof Form, v: string | boolean) => {
     setForm((f) => ({ ...f, [k]: v }))
@@ -71,7 +88,7 @@ export default function WaitlistClient() {
       const res = await fetch('/api/waitlist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, company: '' }), // company = honeypot
+        body: JSON.stringify({ ...form, company: '', campaign: campaignRef.current }), // company = honeypot
       })
       const data = await res.json().catch(() => ({}))
       if (res.ok && data.ok) { setDone({ existing: Boolean(data.existing) }); return }
