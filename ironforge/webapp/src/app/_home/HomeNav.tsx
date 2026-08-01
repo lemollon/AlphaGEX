@@ -98,7 +98,7 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
           {isCustomer ? (
             <Link
               href="/performance"
-              className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition-colors hover:bg-amber-400"
+              className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-400"
             >
               My Dashboard
             </Link>
@@ -109,7 +109,7 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
               </Link>
               <Link
                 href="/signup"
-                className="rounded-lg border border-amber-500 px-4 py-2 text-sm font-semibold text-amber-500 transition-colors hover:bg-amber-400 hover:text-black"
+                className="rounded-lg border border-amber-500 px-4 py-2 text-sm font-semibold text-amber-500 transition-colors hover:bg-amber-500 hover:text-white"
               >
                 Create Account
               </Link>
@@ -121,7 +121,7 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
         <div className="flex items-center gap-3 md:hidden">
           <Link
             href={isCustomer ? '/performance' : '/signup'}
-            className="rounded-lg bg-amber-500 px-3.5 py-2 text-sm font-semibold text-black"
+            className="rounded-lg bg-amber-500 px-3.5 py-2 text-sm font-semibold text-white"
           >
             {isCustomer ? 'My Dashboard' : 'Create Account'}
           </Link>

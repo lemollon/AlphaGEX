@@ -20,29 +20,37 @@ export function Hero() {
   return (
     <section className="mx-auto grid max-w-[1200px] grid-cols-1 items-start gap-10 px-5 pb-14 pt-10 md:px-8 lg:grid-cols-[5fr_6fr] lg:gap-12 lg:pt-14">
       <div>
-        <h1 className="text-[44px] font-extrabold leading-[1.05] tracking-tight text-white md:text-[56px]">
-          Build Your <span className="text-amber-500">Edge.</span>
+        <h1 className="text-[40px] font-extrabold leading-[1.05] tracking-tight text-white md:text-[56px]">
+          Built on <span className="text-amber-500">Discipline.</span><br />
+          Driven by <span className="text-amber-500">Data.</span>
         </h1>
         <p className="mt-5 max-w-md text-[17px] leading-relaxed text-gray-300">
-          A disciplined trading ecosystem designed to help you stay informed, execute with confidence, and grow
-          alongside a community of serious traders.
+          Automated trading powered by real-time analysis and disciplined execution.
         </p>
-        {/* Two doors, same weight (UAT-002): orange = create the account, green = the
-            Automate trial path. Identical height/typography/radius; wraps as a stack
-            on narrow screens. */}
-        <div className="mt-7 flex flex-wrap items-center gap-3">
+        {/* Two doors: bright orange = create the account, bright green = the Automate
+            trial. Full-width stacked on mobile (matches the approved mock), inline on
+            wider screens. White label on the vivid fills per the approved direction. */}
+        <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
           <Link
             href="/signup"
-            className="inline-block rounded-lg bg-amber-500 px-6 py-3 text-[15px] font-semibold text-black transition-colors hover:bg-amber-400"
+            className="rounded-lg bg-amber-500 px-6 py-3.5 text-center text-[15px] font-bold text-white shadow-lg shadow-amber-500/20 transition-colors hover:bg-amber-400"
           >
             Create Account
           </Link>
           <Link
             href="/signup?plan=automate"
-            className="inline-block rounded-lg bg-emerald-500 px-6 py-3 text-[15px] font-semibold text-black transition-colors hover:bg-emerald-400"
+            className="rounded-lg bg-green-500 px-6 py-3.5 text-center text-[15px] font-bold text-white shadow-lg shadow-green-500/20 transition-colors hover:bg-green-400"
           >
             Start 5-Day Free Trial
           </Link>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-gray-400">
+          <span className="inline-flex items-center gap-1.5">
+            <CheckIcon className="h-4 w-4 text-amber-500" /> No long-term commitment
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <CheckIcon className="h-4 w-4 text-amber-500" /> Cancel anytime
+          </span>
         </div>
 
         {/* No pricing card here. The hero states the promise and asks for the account;
@@ -155,7 +163,7 @@ export function ForgeStarterCard() {
           </div>
           <Link
             href="/signup?plan=automate"
-            className="whitespace-nowrap rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-black transition-colors hover:bg-emerald-400 md:px-7 md:text-[15px]"
+            className="whitespace-nowrap rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-400 md:px-7 md:text-[15px]"
           >
             Start 5-Day Free Trial
           </Link>
@@ -245,7 +253,7 @@ export function MembershipSection() {
               </div>
               <Link
                 href="/signup?plan=community"
-                className="whitespace-nowrap rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-black transition-colors hover:bg-amber-400 md:px-7 md:text-[15px]"
+                className="whitespace-nowrap rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-amber-400 md:px-7 md:text-[15px]"
               >
                 Join Community
               </Link>
@@ -464,7 +472,7 @@ export function CTABanner() {
         </div>
         <Link
           href="/signup"
-          className="shrink-0 rounded-lg bg-amber-500 px-6 py-3 text-[15px] font-semibold text-black transition-colors hover:bg-amber-400"
+          className="shrink-0 rounded-lg bg-amber-500 px-6 py-3 text-[15px] font-semibold text-white transition-colors hover:bg-amber-400"
         >
           Create Account
         </Link>
@@ -482,7 +490,7 @@ export function CTABanner() {
           </p>
           <Link
             href="/signup"
-            className="shrink-0 whitespace-nowrap rounded-lg bg-amber-500 px-4 py-2.5 text-[13px] font-semibold text-black"
+            className="shrink-0 whitespace-nowrap rounded-lg bg-amber-500 px-4 py-2.5 text-[13px] font-semibold text-white"
           >
             Create Account
           </Link>
