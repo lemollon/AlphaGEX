@@ -39,6 +39,7 @@ export function resolveSurface(raw?: string | null): Surface {
 export const CUSTOMER_PAGES: readonly string[] = [
   '/',
   '/how-it-works',
+  '/waitlist',
   '/pricing',
   '/live',
   '/live/spark/open',

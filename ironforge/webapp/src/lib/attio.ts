@@ -257,3 +257,96 @@ export async function drainAttioSyncQueue(limit = 25): Promise<DrainResult> {
   }
   return { processed: rows.length, synced, failed }
 }
+
+/* ── Waitlist (8/26 handoff) ─────────────────────────────────────────────────
+ * Upsert the People record by email (with primary_location), then add/update the
+ * person in the IronForge Waitlist list with waitlist-specific attributes. Reuses
+ * the existing ATTIO_API_KEY auth; the list slug comes from ATTIO_WAITLIST_LIST.
+ * Location is atomic — the full object is sent, including null street fields. */
+
+export interface WaitlistAttioContact {
+  firstName: string
+  lastName: string
+  email: string
+  phone: string
+  city: string
+  state: string
+  tradingCapitalRange: string
+  consentVersion: string
+  submissionId: string
+}
+
+export interface WaitlistAttioResult {
+  synced: boolean
+  skipped?: boolean
+  recordId?: string
+  error?: string
+}
+
+function buildWaitlistPersonAssert(c: WaitlistAttioContact): Record<string, unknown> {
+  const fullName = [c.firstName, c.lastName].filter(Boolean).join(' ').trim()
+  const values: Record<string, unknown> = {
+    name: [{ first_name: c.firstName, last_name: c.lastName, full_name: fullName }],
+    email_addresses: [{ email_address: c.email }],
+    // Location is atomic: send the whole object incl. nulls (handoff §6).
+    primary_location: [{
+      line_1: null, line_2: null, line_3: null, line_4: null,
+      locality: c.city || null,
+      region: c.state || null,
+      postcode: null,
+      country_code: 'US',
+      latitude: null, longitude: null,
+    }],
+  }
+  if (c.phone) values.phone_numbers = [{ original_phone_number: c.phone }]
+  return { data: { values } }
+}
+
+/**
+ * Upsert the waitlist prospect into Attio. Returns synced:false (with error) on any
+ * failure so the caller can keep the local row + surface the integration error —
+ * the lead is never lost. skipped:true when Attio isn't configured (dev/no-op).
+ */
+export async function upsertWaitlistToAttio(c: WaitlistAttioContact): Promise<WaitlistAttioResult> {
+  if (!isAttioConfigured()) return { synced: false, skipped: true }
+  try {
+    const res = await fetch(ATTIO_PEOPLE_ASSERT_URL, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify(buildWaitlistPersonAssert(c)),
+    })
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      return { synced: false, error: `Attio people ${res.status}: ${detail.slice(0, 300)}` }
+    }
+    const json = (await res.json().catch(() => null)) as { data?: { id?: { record_id?: string } } } | null
+    const recordId = json?.data?.id?.record_id
+    if (recordId) await addToWaitlistList(recordId, c).catch(() => { /* list add is best-effort; person is captured */ })
+    return { synced: true, recordId }
+  } catch (e) {
+    return { synced: false, error: e instanceof Error ? e.message : 'attio waitlist upsert failed' }
+  }
+}
+
+/** Add/update the person in the IronForge Waitlist list with list-level attributes. */
+async function addToWaitlistList(personRecordId: string, c: WaitlistAttioContact): Promise<void> {
+  const listSlug = process.env.ATTIO_WAITLIST_LIST
+  if (!listSlug) return
+  await fetch(`${ATTIO_BASE}/lists/${encodeURIComponent(listSlug)}/entries`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      data: {
+        parent_record_id: personRecordId,
+        parent_object: 'people',
+        entry_values: {
+          trading_capital_range: c.tradingCapitalRange,
+          communication_consent: true,
+          consent_version: c.consentVersion,
+          submission_id: c.submissionId,
+          confirmation_email_status: 'Pending',
+        },
+      },
+    }),
+  })
+}

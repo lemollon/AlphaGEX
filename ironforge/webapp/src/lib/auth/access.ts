@@ -22,9 +22,10 @@ export function isPublicMode(): boolean {
 
 /** Paths reachable without a session. */
 const PUBLIC_EXACT = new Set<string>([
-  // Public marketing site (homepage + How It Works).
+  // Public marketing site (homepage + How It Works + Waitlist).
   '/',
   '/how-it-works',
+  '/waitlist',
   '/login',
   '/signup',
   '/pricing',
@@ -140,6 +141,9 @@ export function isPublicPath(pathname: string): boolean {
   if (pathname.startsWith('/api/billing/')) return true
   // Public track-record payload: closed-trade aggregates only, no account state.
   if (pathname.startsWith('/api/public/')) return true
+  // Public waitlist submission — no auth by design; self-guards with validation,
+  // rate limits, and a honeypot in-route.
+  if (pathname === '/api/waitlist') return true
   // Forge Community APIs: GET is public-read (drives the locked preview for
   // anonymous visitors); POSTs self-guard the customer session in-route.
   if (pathname.startsWith('/api/community/')) return true

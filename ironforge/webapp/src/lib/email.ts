@@ -66,6 +66,56 @@ export async function sendVerificationEmail(params: {
   }
 }
 
+/**
+ * Waitlist confirmation (8/26 handoff). Transactional — sent immediately after the
+ * Attio record persists. Copy is the approved draft; no launch date is promised.
+ * reply_to → support@ironforge.trade per the spec.
+ */
+export async function sendWaitlistConfirmation(params: {
+  to: string
+  firstName: string
+}): Promise<SendResult> {
+  if (!isEmailConfigured()) return { sent: false, skipped: true }
+  try {
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: process.env.EMAIL_FROM,
+        to: params.to,
+        reply_to: 'support@ironforge.trade',
+        subject: 'You’re on the IronForge waitlist',
+        html: waitlistHtml(params.firstName),
+      }),
+    })
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      return { sent: false, error: `Resend ${res.status}: ${detail.slice(0, 200)}` }
+    }
+    return { sent: true }
+  } catch (e) {
+    return { sent: false, error: e instanceof Error ? e.message : 'send failed' }
+  }
+}
+
+function waitlistHtml(firstName: string): string {
+  const name = firstName ? esc(firstName) : 'there'
+  return `<!doctype html><html><body style="margin:0;background:#0B0B0D;font-family:Arial,Helvetica,sans-serif;color:#e5e5e5">
+  <div style="max-width:480px;margin:0 auto;padding:32px 24px">
+    <div style="font-size:18px;font-weight:bold;color:#ffffff;margin:0 0 20px">IRON<span style="color:#FD3D1E">FORGE</span></div>
+    <h1 style="font-size:20px;color:#ffffff;margin:0 0 12px">You’re on the waitlist</h1>
+    <p style="color:#c9c7c5;font-size:14px;line-height:1.7">Hi ${name},</p>
+    <p style="color:#c9c7c5;font-size:14px;line-height:1.7">Thanks for joining the IronForge waitlist. You’ll be among the first to receive launch updates and early-access details.</p>
+    <p style="color:#c9c7c5;font-size:14px;line-height:1.7">IronForge is being built to provide a structured, automated way to participate in trading — without requiring you to manage every step on your own.</p>
+    <p style="color:#c9c7c5;font-size:14px;line-height:1.7">We’ll be in touch as we get closer to launch.</p>
+    <p style="color:#c9c7c5;font-size:14px;line-height:1.7;margin-top:24px">— The IronForge Team<br><span style="color:#FD3D1E;font-weight:bold">Discipline. Execution. Edge.</span></p>
+    <p style="color:#6b6b6b;font-size:11px;line-height:1.6;margin-top:28px;border-top:1px solid #26262A;padding-top:16px">Risk disclosure: Trading involves risk, including the possible loss of capital. Joining the waitlist does not create an account or guarantee access.</p>
+  </div></body></html>`
+}
+
 function resetHtml(firstName: string, resetUrl: string): string {
   const name = firstName ? esc(firstName) : 'there'
   return `<!doctype html><html><body style="margin:0;background:#0B0B0D;font-family:Arial,Helvetica,sans-serif;color:#e5e5e5">

@@ -457,6 +457,33 @@ ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS token_expiry TIMESTAM
 ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS scopes TEXT;
 ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS external_user_ref TEXT;
 
+-- Public waitlist submissions (8/26 handoff). Attio is the system of record; this
+-- local row is the durable capture (a lead is never lost to an Attio/email outage),
+-- the email-idempotency source, and the rate-limit counter. Email is the dedupe key.
+CREATE TABLE IF NOT EXISTS waitlist_submissions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  submission_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  first_name TEXT NOT NULL,
+  last_name TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  city TEXT NOT NULL,
+  state TEXT NOT NULL,
+  trading_capital_range TEXT NOT NULL,
+  consent BOOLEAN NOT NULL DEFAULT TRUE,
+  consent_version TEXT NOT NULL,
+  consent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source TEXT NOT NULL,
+  ip_hash TEXT,
+  attio_status TEXT NOT NULL DEFAULT 'pending',   -- pending | synced | failed
+  attio_person_id TEXT,
+  email_status TEXT NOT NULL DEFAULT 'pending',    -- pending | sent | failed
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_waitlist_email_lower ON waitlist_submissions(lower(email));
+CREATE INDEX IF NOT EXISTS idx_waitlist_ip_created ON waitlist_submissions(ip_hash, created_at);
+
 -- Stripe webhook replay/dedupe guard + dead-letter (audit C5). The INSERT is the
 -- processing claim; processed_at NULL + error = a failed event Stripe will retry.
 CREATE TABLE IF NOT EXISTS stripe_webhook_events (
