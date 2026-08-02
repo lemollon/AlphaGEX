@@ -3,6 +3,8 @@ import { createHash, randomUUID } from 'crypto'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
 import { validateWaitlist, CONSENT_VERSION, WAITLIST_SOURCE } from '@/lib/waitlist'
 import { upsertWaitlistToAttio } from '@/lib/attio'
+import { enqueueCrmEvent } from '@/lib/crm/outbox'
+import { CAPITAL_RANGE_TO_VOLUME, toLeadSource } from '@/lib/crm/schema'
 import { sendWaitlistConfirmation } from '@/lib/email'
 
 export const runtime = 'nodejs'
@@ -12,10 +14,16 @@ export const dynamic = 'force-dynamic'
  * POST /api/waitlist (8/26 handoff). Public, unauthenticated.
  *
  * Order of operations (reliability §): validate → rate-limit/bot-check → persist the
- * lead LOCALLY (never lost to an outage) → upsert Attio (system of record) → send the
- * confirmation email asynchronously. Success is returned only after Attio persists;
- * an Attio failure returns 503 but the local row + failed status let ops recover the
- * lead. Email failure never discards the submission.
+ * lead LOCALLY (never lost to an outage) → queue the CRM event → best-effort inline Attio
+ * upsert → send the confirmation email asynchronously. Email failure never discards the
+ * submission.
+ *
+ * CHANGED with the CRM outbox: an Attio failure no longer returns 503. The original design
+ * made Attio success a precondition for 2xx, which meant a transient CRM blip told a real
+ * prospect "we could not save your request" — after the lead had already been saved — and
+ * nothing ever retried the sync. Delivery is now durable and retried, so 2xx is the truthful
+ * answer: the lead IS captured. Only a local-persist failure still 503s, because that is the
+ * one case where the lead really is lost.
  */
 
 const RATE_IP_MAX = 5 // per 15 min
@@ -136,24 +144,50 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, code: 'INTEGRATION_ERROR', message: 'We could not save your request. Please try again.' }, { status: 503 })
   }
 
-  // 2) Attio — the system of record. Success is required for a 2xx (handoff §4).
+  // 2) CRM. The outbox is the DURABLE path: enqueue first, so the event survives an Attio
+  //    outage, a bad deploy, or an unset API key and is retried until it lands (AC-CRM-010).
+  //    The inline upsert below is only a latency optimisation on top of it.
+  await enqueueCrmEvent({
+    eventId: submissionId,
+    eventType: 'crm.waitlist_submitted',
+    correlationId: submissionId,
+    payload: {
+      email: n.email,
+      firstName: n.firstName,
+      lastName: n.lastName,
+      phone: n.phone,
+      city: n.city,
+      state: n.state,
+      tradingVolume: CAPITAL_RANGE_TO_VOLUME[n.tradingCapitalRange],
+      leadSource: toLeadSource(campaign),
+      marketingConsent: true,
+      waitlistDate: new Date().toISOString(),
+    },
+  })
+
+  // Fast path: try the write inline so a normal submission appears in Attio immediately and we
+  // can record the person id locally. A failure here is NOT fatal — the lead is already saved
+  // and already queued.
   const attio = await upsertWaitlistToAttio({
     firstName: n.firstName, lastName: n.lastName, email: n.email, phone: n.phone,
     city: n.city, state: n.state, tradingCapitalRange: n.tradingCapitalRange,
     consentVersion: CONSENT_VERSION, submissionId,
   })
-  if (!attio.synced && !attio.skipped) {
+  if (attio.synced) {
     await customerExecute(
-      `UPDATE waitlist_submissions SET attio_status='failed', updated_at=now() WHERE lower(email)=lower($1)`,
+      `UPDATE waitlist_submissions SET attio_status='synced', attio_person_id=$2, updated_at=now() WHERE lower(email)=lower($1)`,
+      [n.email, attio.recordId ?? null],
+    ).catch(() => {})
+  } else {
+    // Previously this stamped 'synced' with a NULL person id whenever Attio was merely SKIPPED
+    // (ATTIO_API_KEY unset) — the DB claimed every lead was in the CRM while nothing had been
+    // sent. 'queued' is the honest state: not in Attio yet, delivery owned by the outbox.
+    if (!attio.skipped) console.error('[waitlist] inline attio upsert failed (queued for retry):', attio.error)
+    await customerExecute(
+      `UPDATE waitlist_submissions SET attio_status='queued', updated_at=now() WHERE lower(email)=lower($1)`,
       [n.email],
     ).catch(() => {})
-    console.error('[waitlist] attio upsert failed:', attio.error)
-    return NextResponse.json({ ok: false, code: 'INTEGRATION_ERROR', message: 'We could not save your request. Please try again.' }, { status: 503 })
   }
-  await customerExecute(
-    `UPDATE waitlist_submissions SET attio_status='synced', attio_person_id=$2, updated_at=now() WHERE lower(email)=lower($1)`,
-    [n.email, attio.recordId ?? null],
-  ).catch(() => {})
 
   // 3) Confirmation email — async, best-effort, sent ONCE per confirmed prospect.
   //    A failure never discards the lead; a resubmit after a failed send retries.

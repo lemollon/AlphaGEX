@@ -79,14 +79,64 @@ export const CUSTOMER_LIFECYCLE = [
   'Canceled',
 ] as const
 
+/**
+ * The six Data Dictionary bands, PLUS '$50K+'.
+ *
+ * Documented deviation: the live waitlist form (lib/waitlist.ts CAPITAL_RANGES) offers five
+ * options whose top band is the open-ended `50000_plus`. That value cannot be split into
+ * '$50K-$100K' vs '$100K+' without inventing information about the lead, and dropping it would
+ * blank out Trading Volume for exactly the segment the "Waitlist - Priority" view sorts on.
+ * '$50K+' is therefore the truthful landing spot for today's form; the two finer bands stay in
+ * the vocabulary for when the form is widened. Needs a Decision Log entry (spec §13.1).
+ */
 export const TRADING_VOLUME = [
   'Under $5K',
   '$5K-$10K',
   '$10K-$25K',
   '$25K-$50K',
+  '$50K+',
   '$50K-$100K',
   '$100K+',
 ] as const
+
+/**
+ * Waitlist form value → Trading Volume band. Exhaustive over CAPITAL_RANGES; an unrecognised
+ * value maps to undefined so the attribute is simply omitted rather than guessed at.
+ */
+export const CAPITAL_RANGE_TO_VOLUME: Record<string, string> = {
+  under_5000: 'Under $5K',
+  '5000_10000': '$5K-$10K',
+  '10000_25000': '$10K-$25K',
+  '25000_50000': '$25K-$50K',
+  '50000_plus': '$50K+',
+}
+
+/**
+ * Campaign attribution → Lead Source. The form stores raw utm_source plus a referral code;
+ * anything unmapped becomes 'Other' rather than being dropped, so attribution is never silently
+ * lost. A present referral code wins — a referred lead is a referral regardless of utm_source.
+ */
+export function toLeadSource(campaign: Record<string, unknown> | null | undefined): string {
+  if (!campaign) return 'Organic'
+  if (typeof campaign.referralCode === 'string' && campaign.referralCode.trim()) return 'Referral'
+  const raw = typeof campaign.utm_source === 'string' ? campaign.utm_source.trim().toLowerCase() : ''
+  if (!raw) return 'Organic'
+  const map: Record<string, string> = {
+    linkedin: 'LinkedIn',
+    x: 'X',
+    twitter: 'X',
+    instagram: 'Instagram',
+    ig: 'Instagram',
+    facebook: 'Facebook',
+    fb: 'Facebook',
+    referral: 'Referral',
+    partner: 'Partner',
+    organic: 'Organic',
+    google: 'Organic',
+    direct: 'Organic',
+  }
+  return map[raw] ?? 'Other'
+}
 
 export const LEAD_SOURCE = [
   'Organic',

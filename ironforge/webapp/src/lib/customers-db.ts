@@ -475,7 +475,8 @@ CREATE TABLE IF NOT EXISTS waitlist_submissions (
   consent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   source TEXT NOT NULL,
   ip_hash TEXT,
-  attio_status TEXT NOT NULL DEFAULT 'pending',   -- pending | synced | failed
+  attio_status TEXT NOT NULL DEFAULT 'pending',   -- pending | queued | synced | failed
+                                                  -- 'queued' = not in Attio yet; crm_outbox owns delivery
   attio_person_id TEXT,
   email_status TEXT NOT NULL DEFAULT 'pending',    -- pending | sent | failed
   campaign JSONB,                                  -- UTM + referral + landing (enrollment-overlay handoff §5)

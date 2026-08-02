@@ -7,6 +7,7 @@ import { lookupPromo } from '@/lib/promo'
 import { generateToken, TOKEN_TTL_MS } from '@/lib/auth/verification-token'
 import { sendVerificationEmail } from '@/lib/email'
 import { syncContactToAttio, enqueueAttioSync } from '@/lib/attio'
+import { enqueueCrmEvent } from '@/lib/crm/outbox'
 import {
   isCustomersDbConfigured,
   customerQuery,
@@ -234,6 +235,23 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       console.error('[signup] attio sync threw:', e)
     }
+
+    // CRM: account created. This is the event that attaches ironforge_user_id to the Person —
+    // the durable match key that takes over from email once an account exists (DEC-004) — and
+    // moves the lifecycle to Enrollment Started. Queued, so it survives an Attio outage; the
+    // legacy sync above only ever wrote name/email/phone as a Note.
+    await enqueueCrmEvent({
+      eventId: `acct_${userId}`,
+      eventType: 'crm.account_created',
+      userId,
+      payload: {
+        email: n.email,
+        firstName: n.firstName,
+        lastName: n.lastName,
+        phone: n.phone,
+        ironforgeUserId: userId,
+      },
+    })
 
     const resBody: { ok: true; verifyUrl?: string } = { ok: true }
     if (process.env.NODE_ENV !== 'production') {

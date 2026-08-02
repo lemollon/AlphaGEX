@@ -321,7 +321,14 @@ export async function upsertWaitlistToAttio(c: WaitlistAttioContact): Promise<Wa
     }
     const json = (await res.json().catch(() => null)) as { data?: { id?: { record_id?: string } } } | null
     const recordId = json?.data?.id?.record_id
-    if (recordId) await addToWaitlistList(recordId, c).catch(() => { /* list add is best-effort; person is captured */ })
+    // List add is best-effort — the person is captured either way — but it must be VISIBLE.
+    // This used to be `.catch(() => {})`, so a missing list, a bad slug, or an unset
+    // ATTIO_WAITLIST_LIST failed in total silence while attio_status still read 'synced'.
+    if (recordId) {
+      await addToWaitlistList(recordId, c).catch((e: unknown) => {
+        console.warn('[attio] waitlist list entry failed (person captured):', e instanceof Error ? e.message : e)
+      })
+    }
     return { synced: true, recordId }
   } catch (e) {
     return { synced: false, error: e instanceof Error ? e.message : 'attio waitlist upsert failed' }
@@ -331,8 +338,11 @@ export async function upsertWaitlistToAttio(c: WaitlistAttioContact): Promise<Wa
 /** Add/update the person in the IronForge Waitlist list with list-level attributes. */
 async function addToWaitlistList(personRecordId: string, c: WaitlistAttioContact): Promise<void> {
   const listSlug = process.env.ATTIO_WAITLIST_LIST
-  if (!listSlug) return
-  await fetch(`${ATTIO_BASE}/lists/${encodeURIComponent(listSlug)}/entries`, {
+  if (!listSlug) {
+    console.warn('[attio] ATTIO_WAITLIST_LIST unset — waitlist list entry skipped')
+    return
+  }
+  const res = await fetch(`${ATTIO_BASE}/lists/${encodeURIComponent(listSlug)}/entries`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({
@@ -349,4 +359,8 @@ async function addToWaitlistList(personRecordId: string, c: WaitlistAttioContact
       },
     }),
   })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`Attio list entry ${res.status}: ${detail.slice(0, 200)}`)
+  }
 }
