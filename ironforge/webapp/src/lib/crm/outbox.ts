@@ -32,6 +32,23 @@ function backoffSeconds(attempts: number): number {
   return BACKOFF_SECONDS[Math.min(attempts, BACKOFF_SECONDS.length - 1)]
 }
 
+/**
+ * Event id for something that can legitimately happen to the SAME subject more than once — a
+ * brokerage connection that breaks, is fixed, and breaks again weeks later.
+ *
+ * A purely subject-keyed id (`brokerage_failed:<connectionId>:broken`) would dedupe the second
+ * occurrence forever: the outbox would swallow it, Attio would keep the first failure's
+ * last_attempt_at, and the Brokerage Issues view — the whole point of which is surfacing
+ * reauthorization work — would silently miss the re-break.
+ *
+ * Bucketing to the minute keeps genuine idempotency where it matters (a redelivered webhook or a
+ * double-clicked callback within the same minute is still one event) while letting a real new
+ * occurrence through.
+ */
+export function recurringEventId(base: string, at: Date = new Date()): string {
+  return `${base}:${at.toISOString().slice(0, 16)}` // YYYY-MM-DDTHH:MM
+}
+
 export interface CrmEventInput {
   /** Stable per business event. THIS is the idempotency guarantee — never use a random uuid. */
   eventId: string

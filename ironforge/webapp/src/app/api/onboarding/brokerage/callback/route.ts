@@ -6,6 +6,8 @@ import { decryptSecret, encryptSecret } from '@/lib/crypto/secret-box'
 import { evaluateAccountEligibility, maskAccountNumber, normalizeInstitutionSlug } from '@/lib/enrollment/eligibility'
 import { isCustomersDbConfigured, customerQuery, customerExecute, customerTransaction } from '@/lib/customers-db'
 import { syncBrokerageConnectionToAttio } from '@/lib/attio'
+import { enqueueCrmEvent, recurringEventId } from '@/lib/crm/outbox'
+import { mapBrokerageStatusToCrm } from '@/lib/crm/brokerage-status'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -53,6 +55,29 @@ export async function GET(req: NextRequest) {
     )
     const user = rows[0]
     if (!user?.snaptrade_user_id || !user.snaptrade_user_secret) {
+      await customerExecute(
+        `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'BROKERAGE_CONNECT_FAILED', $2)`,
+        [uid, JSON.stringify({ reason: 'missing_snaptrade_registration' })],
+      ).catch(() => {})
+      if (user) {
+        await enqueueCrmEvent({
+          eventId: recurringEventId(`brokerage_failed:${uid}:missing_registration`),
+          eventType: 'crm.brokerage_failed',
+          userId: uid,
+          payload: {
+            email: user.email,
+            firstName: user.first_name,
+            lastName: user.last_name,
+            ironforgeUserId: uid,
+            connectionId: `pending:${uid}`,
+            connectionStatus: mapBrokerageStatusToCrm('pending').connectionStatus,
+            lastAttemptAt: new Date().toISOString(),
+            errorCode: 'missing_registration',
+            errorSummary: 'The brokerage connection could not be completed — registration was missing.',
+            reauthorizationRequired: false,
+          },
+        })
+      }
       brokerageStep.searchParams.set('error', '1')
       return NextResponse.redirect(brokerageStep)
     }
@@ -67,6 +92,27 @@ export async function GET(req: NextRequest) {
 
     if (accounts.length === 0) {
       // User opened the portal but didn't complete a connection — let them retry or skip.
+      await customerExecute(
+        `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'BROKERAGE_CONNECT_INCOMPLETE', $2)`,
+        [user.id, JSON.stringify({})],
+      ).catch(() => {})
+      await enqueueCrmEvent({
+        eventId: recurringEventId(`brokerage_failed:${user.id}:incomplete`),
+        eventType: 'crm.brokerage_failed',
+        userId: user.id,
+        payload: {
+          email: user.email,
+          firstName: user.first_name,
+          lastName: user.last_name,
+          ironforgeUserId: user.id,
+          connectionId: `pending:${user.id}`,
+          connectionStatus: mapBrokerageStatusToCrm('pending').connectionStatus,
+          lastAttemptAt: new Date().toISOString(),
+          errorCode: 'connection_incomplete',
+          errorSummary: 'The customer opened the brokerage connection portal but did not complete linking an account.',
+          reauthorizationRequired: false,
+        },
+      })
       brokerageStep.searchParams.set('incomplete', '1')
       return NextResponse.redirect(brokerageStep)
     }
@@ -92,6 +138,8 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    const createdConnections: Array<{ id: string }> = []
+
     await customerTransaction(async (run) => {
       // Re-sync: replace this user's SNAPTRADE connection rows with the current account
       // set. Scoped by provider (an unscoped DELETE here wiped a coexisting Tradier
@@ -114,6 +162,7 @@ export async function GET(req: NextRequest) {
         )) as unknown as Array<{ id: string }>
         const connectionId = inserted?.[0]?.id
         if (!connectionId) continue
+        createdConnections.push({ id: connectionId })
 
         // ── broker_accounts (§3 BROKER-02) ──
         //
@@ -179,6 +228,27 @@ export async function GET(req: NextRequest) {
       [user.id, JSON.stringify({ accounts: accounts.length })],
     ).catch(() => {})
 
+    // One CRM connection record per brokerage_connections row created above — each is keyed on
+    // its own immutable connection_id (events.ts brokerageConnection()), matching the 1:1 we just
+    // wrote to the database.
+    for (const conn of createdConnections) {
+      await enqueueCrmEvent({
+        eventId: `brokerage_connected:${conn.id}`,
+        eventType: 'crm.brokerage_connected',
+        userId: user.id,
+        payload: {
+          email: user.email,
+          firstName: user.first_name,
+          lastName: user.last_name,
+          ironforgeUserId: user.id,
+          connectionId: conn.id,
+          connectionStatus: mapBrokerageStatusToCrm('active').connectionStatus,
+          lastAttemptAt: new Date().toISOString(),
+          reauthorizationRequired: false,
+        },
+      })
+    }
+
     // Mirror the brokerage-connection milestone into Attio CRM (best-effort; never blocks
     // the redirect). Awaited like the signup sync so it runs before the handler returns.
     try {
@@ -216,6 +286,40 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(complete)
   } catch (e) {
     console.error('[brokerage/callback] failed:', e)
+    if (uid && isCustomersDbConfigured()) {
+      try {
+        const basicRows = await customerQuery<{ email: string; first_name: string; last_name: string }>(
+          `SELECT email, first_name, last_name FROM users WHERE id = $1 LIMIT 1`,
+          [uid],
+        )
+        const basic = basicRows[0]
+        if (basic) {
+          await customerExecute(
+            `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'BROKERAGE_CONNECT_FAILED', $2)`,
+            [uid, JSON.stringify({ error: (e instanceof Error ? e.message : String(e)).slice(0, 200) })],
+          ).catch(() => {})
+          await enqueueCrmEvent({
+            eventId: recurringEventId(`brokerage_failed:${uid}:exception`),
+            eventType: 'crm.brokerage_failed',
+            userId: uid,
+            payload: {
+              email: basic.email,
+              firstName: basic.first_name,
+              lastName: basic.last_name,
+              ironforgeUserId: uid,
+              connectionId: `pending:${uid}`,
+              connectionStatus: mapBrokerageStatusToCrm('pending').connectionStatus,
+              lastAttemptAt: new Date().toISOString(),
+              errorCode: 'connection_error',
+              errorSummary: 'The brokerage connection attempt failed unexpectedly.',
+              reauthorizationRequired: false,
+            },
+          })
+        }
+      } catch (inner) {
+        console.error('[brokerage/callback] failure audit/CRM emit threw:', inner)
+      }
+    }
     brokerageStep.searchParams.set('error', '1')
     return NextResponse.redirect(brokerageStep)
   }

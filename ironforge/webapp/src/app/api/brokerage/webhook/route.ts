@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHash, createHmac } from 'crypto'
-import { isCustomersDbConfigured, customerExecute } from '@/lib/customers-db'
+import { isCustomersDbConfigured, customerExecute, customerQuery } from '@/lib/customers-db'
 import {
   snaptradeCanonicalJson,
   snaptradeCanonicalJsonSpaced,
   snaptradeRawSignatureValid,
   snaptradeSignatureValid,
 } from '@/lib/snaptrade-webhook'
+import { enqueueCrmEvent, recurringEventId } from '@/lib/crm/outbox'
+import { mapBrokerageStatusToCrm } from '@/lib/crm/brokerage-status'
 
 /**
  * TEMPORARY diagnostics for webhook 401s — logs enough to distinguish "wrong consumer key in
@@ -96,12 +98,13 @@ export async function POST(req: NextRequest) {
   const snaptradeUserId = body.userId ? String(body.userId) : null
   const authorizationId = body.brokerageAuthorizationId ? String(body.brokerageAuthorizationId) : null
 
-  // Map SnapTrade events → our connection status.
+  // Map SnapTrade events → our connection status. CONNECTION_BROKEN is handled separately below —
+  // it is the reauthorization signal the Brokerage Issues view depends on, so it also needs the
+  // error columns and a CRM event, not just a status flip.
   const statusByEvent: Record<string, string> = {
     CONNECTION_ADDED: 'active',
     CONNECTION_UPDATED: 'active',
     CONNECTION_FIXED: 'active',
-    CONNECTION_BROKEN: 'disabled',
     CONNECTION_DELETED: 'removed',
     CONNECTION_REMOVED: 'removed',
   }
@@ -113,6 +116,66 @@ export async function POST(req: NextRequest) {
            WHERE user_id = (SELECT id FROM users WHERE snaptrade_user_id = $1)`,
         [snaptradeUserId],
       )
+    } else if (eventType === 'CONNECTION_BROKEN' && snaptradeUserId) {
+      const errorCode = 'connection_broken'
+      // A fixed, customer-safe sentence rather than any provider-supplied text — the safest way
+      // to guarantee nothing credential- or account-shaped ever lands in this column, on top of
+      // the events.ts firewall that would dead-letter it anyway.
+      const errorSummary = 'The brokerage connection was interrupted and needs to be reauthorized.'
+
+      const updatedRows = await customerQuery<{ id: string; user_id: string }>(
+        `UPDATE brokerage_connections
+            SET status = 'disabled', updated_at = now(), last_attempt_at = now(),
+                last_error_code = $3, last_error_summary = $4, reauthorization_required = TRUE
+          WHERE user_id = (SELECT id FROM users WHERE snaptrade_user_id = $1)
+            AND ($2::text IS NULL OR authorization_id = $2)
+          RETURNING id, user_id`,
+        [snaptradeUserId, authorizationId, errorCode, errorSummary],
+      )
+
+      // If none remain active, clear the user flag — same rule the generic branch below applies.
+      await customerExecute(
+        `UPDATE users SET brokerage_connected = FALSE, updated_at = now()
+           WHERE snaptrade_user_id = $1
+             AND NOT EXISTS (
+               SELECT 1 FROM brokerage_connections bc
+                WHERE bc.user_id = users.id AND bc.status = 'active')`,
+        [snaptradeUserId],
+      )
+
+      if (updatedRows.length) {
+        const userId = updatedRows[0].user_id
+        const personRows = await customerQuery<{ email: string; first_name: string; last_name: string }>(
+          `SELECT email, first_name, last_name FROM users WHERE id = $1 LIMIT 1`,
+          [userId],
+        ).catch(() => [] as Array<{ email: string; first_name: string; last_name: string }>)
+        const person = personRows[0]
+        if (person) {
+          for (const row of updatedRows) {
+            await customerExecute(
+              `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'BROKERAGE_CONNECTION_BROKEN', $2)`,
+              [userId, JSON.stringify({ connection_id: row.id, error_code: errorCode })],
+            ).catch(() => {})
+            await enqueueCrmEvent({
+              eventId: recurringEventId(`brokerage_failed:${row.id}:broken`),
+              eventType: 'crm.brokerage_failed',
+              userId,
+              payload: {
+                email: person.email,
+                firstName: person.first_name,
+                lastName: person.last_name,
+                ironforgeUserId: userId,
+                connectionId: row.id,
+                connectionStatus: mapBrokerageStatusToCrm('disabled').connectionStatus,
+                lastAttemptAt: new Date().toISOString(),
+                errorCode,
+                errorSummary,
+                reauthorizationRequired: true,
+              },
+            })
+          }
+        }
+      }
     } else if (statusByEvent[eventType] && snaptradeUserId) {
       const newStatus = statusByEvent[eventType]
       await customerExecute(

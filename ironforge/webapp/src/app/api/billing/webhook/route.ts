@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStripeSignature } from '@/lib/billing/stripe'
 import { isCustomersDbConfigured, customerExecute, customerQuery } from '@/lib/customers-db'
-import { getBotPlan, BOTH_PLAN, COMMUNITY_PLAN, isCommunityKey } from '@/lib/billing/plans'
+import { getBotPlan, BOTH_PLAN, COMMUNITY_PLAN, MARKETING_TIERS, isCommunityKey } from '@/lib/billing/plans'
 import { isUuid } from '@/lib/enrollment/ids'
+import { enqueueCrmEvent } from '@/lib/crm/outbox'
+import type { CrmEventType } from '@/lib/crm/events'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -74,6 +76,106 @@ function botsFor(meta: Record<string, any> | undefined): { bots: string[]; bundl
   // Single entitlement — a bot (spark/flame) or the standalone Community plan.
   const single = meta?.bot
   return { bots: isKnownPlan(single) ? [single] : [], bundle: false }
+}
+
+// ── CRM outbox emitters ──────────────────────────────────────────────────────
+// Fire-and-forget mirrors of the membership state this handler already computed and wrote to
+// customer_bot_subscriptions. enqueueCrmEvent never throws and never blocks — a CRM outage must
+// never affect Stripe's view of this webhook (audit C5's whole point).
+
+interface UserBasic {
+  email: string
+  first_name: string
+  last_name: string
+}
+
+async function getUserBasic(userId: string): Promise<UserBasic | null> {
+  const rows = await customerQuery<UserBasic>(
+    `SELECT email, first_name, last_name FROM users WHERE id = $1 LIMIT 1`,
+    [userId],
+  )
+  return rows[0] ?? null
+}
+
+/** Which bots (spark/flame/community) a given Stripe subscription currently grants. */
+async function botsForSubscription(userId: string, subscriptionId: string): Promise<{ bots: string[]; bundle: boolean }> {
+  const rows = await customerQuery<{ bot: string; price_lookup_key: string | null }>(
+    `SELECT bot, price_lookup_key FROM customer_bot_subscriptions WHERE user_id = $1 AND stripe_subscription_id = $2`,
+    [userId, subscriptionId],
+  )
+  return { bots: rows.map((r) => r.bot), bundle: rows.some((r) => r.price_lookup_key === BOTH_PLAN.lookupKey) }
+}
+
+/** Internal trialing|active|past_due|canceled|incomplete -> CRM Membership Status. */
+function membershipStatusLabel(status: string): string {
+  if (status === 'trialing' || status === 'active') return 'Active'
+  if (status === 'past_due') return 'Past Due'
+  if (status === 'canceled') return 'Canceled'
+  return 'Pending' // incomplete, and anything else we don't recognize
+}
+
+/** 'Billing Complete' on activation, 'Canceled' on cancellation. Nothing else moves lifecycle here — a
+ * past_due invoice pauses billing but is not a lifecycle transition, and 'Paused' is never emitted here. */
+function membershipLifecycleFor(status: string): string | undefined {
+  if (status === 'trialing' || status === 'active') return 'Billing Complete'
+  if (status === 'canceled') return 'Canceled'
+  return undefined
+}
+
+function membershipBotLabel(bots: string[], bundle: boolean): string {
+  if (bundle) return 'Spark + Flame Bundle'
+  const bot = bots[0]
+  if (!bot || isCommunityKey(bot)) return '—'
+  return getBotPlan(bot)?.name ?? '—'
+}
+
+function membershipPlanLabel(bots: string[], bundle: boolean): string {
+  if (!bundle && bots[0] && isCommunityKey(bots[0])) return COMMUNITY_PLAN.name
+  return MARKETING_TIERS.starter.name
+}
+
+interface MembershipEventInput {
+  eventId: string
+  eventType: CrmEventType
+  userId: string
+  bots: string[]
+  bundle: boolean
+  status: string
+  stripeCustomerId?: string | null
+  subscriptionId?: string | null
+  startDate?: string | null
+  cancellationDate?: string | null
+}
+
+/**
+ * membershipId is the Stripe subscription id when one exists, else `${userId}:${bot}` — the
+ * fallback only fires before Stripe assigns one, and it is what lets a returning customer's new
+ * subscription create a NEW membership record rather than overwrite history (AC-CRM-013).
+ */
+async function emitMembershipEvent(input: MembershipEventInput): Promise<void> {
+  const user = await getUserBasic(input.userId)
+  if (!user) return
+  const membershipId = input.subscriptionId ?? `${input.userId}:${input.bundle ? 'both' : input.bots[0] ?? 'unknown'}`
+  await enqueueCrmEvent({
+    eventId: input.eventId,
+    eventType: input.eventType,
+    userId: input.userId,
+    payload: {
+      email: user.email,
+      firstName: user.first_name,
+      lastName: user.last_name,
+      ironforgeUserId: input.userId,
+      membershipId,
+      plan: membershipPlanLabel(input.bots, input.bundle),
+      bot: membershipBotLabel(input.bots, input.bundle),
+      membershipStatus: membershipStatusLabel(input.status),
+      stripeCustomerId: input.stripeCustomerId ?? undefined,
+      stripeSubscriptionId: input.subscriptionId ?? undefined,
+      startDate: input.startDate ?? undefined,
+      cancellationDate: input.cancellationDate ?? undefined,
+      lifecycle: membershipLifecycleFor(input.status),
+    },
+  })
 }
 
 export async function POST(req: NextRequest) {
@@ -151,14 +253,28 @@ export async function POST(req: NextRequest) {
 
         const { bots, bundle } = botsFor(obj.metadata)
         if (userId && bots.length) {
+          const subscriptionId = typeof obj.subscription === 'string' ? obj.subscription : null
           for (const bot of bots) {
             await upsertSubscription({
               userId,
               bot,
               status: 'trialing',
-              subscriptionId: typeof obj.subscription === 'string' ? obj.subscription : null,
+              subscriptionId,
               currentPeriodEnd: null,
               priceLookupKey: bundle ? BOTH_PLAN.lookupKey : undefined,
+            })
+          }
+          if (eventId) {
+            await emitMembershipEvent({
+              eventId,
+              eventType: 'crm.stripe_customer_created',
+              userId,
+              bots,
+              bundle,
+              status: 'trialing',
+              stripeCustomerId: typeof obj.customer === 'string' ? obj.customer : null,
+              subscriptionId,
+              startDate: unix(event.created) ?? new Date().toISOString(),
             })
           }
         }
@@ -171,15 +287,55 @@ export async function POST(req: NextRequest) {
         const { bots, bundle } = botsFor(obj.metadata)
         if (userId && bots.length) {
           const status = event.type === 'customer.subscription.deleted' ? 'canceled' : String(obj.status ?? 'active')
+          const subscriptionId = typeof obj.id === 'string' ? obj.id : null
           for (const bot of bots) {
             await upsertSubscription({
               userId,
               bot,
               status,
-              subscriptionId: typeof obj.id === 'string' ? obj.id : null,
+              subscriptionId,
               currentPeriodEnd: unix(obj.current_period_end),
               priceLookupKey: bundle ? BOTH_PLAN.lookupKey : undefined,
             })
+          }
+          if (eventId) {
+            const stripeCustomerId = typeof obj.customer === 'string' ? obj.customer : null
+            if (event.type === 'customer.subscription.created') {
+              await emitMembershipEvent({
+                eventId,
+                eventType: 'crm.stripe_customer_created',
+                userId,
+                bots,
+                bundle,
+                status,
+                stripeCustomerId,
+                subscriptionId,
+                startDate: unix(obj.start_date) ?? unix(event.created),
+              })
+            } else if (event.type === 'customer.subscription.deleted') {
+              await emitMembershipEvent({
+                eventId,
+                eventType: 'crm.membership_canceled',
+                userId,
+                bots,
+                bundle,
+                status,
+                stripeCustomerId,
+                subscriptionId,
+                cancellationDate: unix(obj.canceled_at) ?? unix(event.created),
+              })
+            } else if (status === 'trialing' || status === 'active') {
+              await emitMembershipEvent({
+                eventId,
+                eventType: 'crm.subscription_active',
+                userId,
+                bots,
+                bundle,
+                status,
+                stripeCustomerId,
+                subscriptionId,
+              })
+            }
           }
         }
         break
@@ -209,6 +365,21 @@ export async function POST(req: NextRequest) {
             [userId, subId],
           )
           console.warn(`[billing/webhook] invoice.payment_failed → past_due for sub ${subId}`)
+          if (eventId) {
+            const { bots, bundle } = await botsForSubscription(userId, subId)
+            if (bots.length) {
+              await emitMembershipEvent({
+                eventId,
+                eventType: 'crm.subscription_active',
+                userId,
+                bots,
+                bundle,
+                status: 'past_due',
+                stripeCustomerId: typeof obj.customer === 'string' ? obj.customer : null,
+                subscriptionId: subId,
+              })
+            }
+          }
         }
         break
       }
@@ -226,6 +397,21 @@ export async function POST(req: NextRequest) {
                 AND status = 'past_due'`,
             [userId, subId],
           )
+          if (eventId) {
+            const { bots, bundle } = await botsForSubscription(userId, subId)
+            if (bots.length) {
+              await emitMembershipEvent({
+                eventId,
+                eventType: 'crm.subscription_active',
+                userId,
+                bots,
+                bundle,
+                status: 'active',
+                stripeCustomerId: typeof obj.customer === 'string' ? obj.customer : null,
+                subscriptionId: subId,
+              })
+            }
+          }
         }
         break
       }
