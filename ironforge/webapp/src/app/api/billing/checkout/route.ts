@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { publicOrigin } from '@/lib/public-origin'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
+import { billingReturn, type BillingClient } from '@/lib/mobile/deep-link'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
 import {
   isStripeConfigured,
@@ -49,8 +50,17 @@ export async function POST(req: NextRequest) {
   // blocked flow (handoff §4 "Persistence", §11).
   if (isEnrollmentClosed()) return enrollmentClosedResponse()
 
-  const session = await getCustomerSession()
-  if (!session.customerId) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
+  // Cookie OR mobile bearer. Identity comes from getCustomerIdentity so the app can buy
+  // through the same route the web uses; `source` also tells us where to send the
+  // customer back to when Stripe is done.
+  const identity = await getCustomerIdentity()
+  if (!identity) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
+  const session = { customerId: identity.customerId }
+
+  // Derived from how the caller AUTHENTICATED, never from a body flag. A spoofed
+  // {client:'mobile'} would point Stripe's return at a bridge the browser cannot use,
+  // stranding a web customer mid-checkout.
+  const client: BillingClient = identity.source === 'bearer' ? 'mobile' : 'web'
 
   let bot: string | undefined
   let intent: string | undefined
@@ -127,8 +137,8 @@ export async function POST(req: NextRequest) {
       const setupArgs = {
         userId: user.id,
         enrollmentId: enrollment.id,
-        successUrl: `${origin}/enroll/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-        cancelUrl: `${origin}/enroll/billing?checkout=canceled`,
+        successUrl: billingReturn(origin, client, '/enroll/broker', { checkout: 'success', session_id: '{CHECKOUT_SESSION_ID}' }),
+        cancelUrl: billingReturn(origin, client, '/enroll/broker', { checkout: 'canceled' }),
       }
 
       let setupCustomerId = await getOrCreateCustomer({
@@ -168,7 +178,7 @@ export async function POST(req: NextRequest) {
       if (existing.some((s) => ['trialing', 'active', 'past_due'].includes(s.status))) {
         return NextResponse.json({
           ok: true,
-          url: returnTo === 'enroll' ? `${origin}/enroll/done?welcome=community` : `${origin}/community?welcome=community`,
+          url: billingReturn(origin, client, returnTo === 'enroll' ? '/enroll/broker' : '/community', { welcome: 'community' }),
         })
       }
 
@@ -189,16 +199,16 @@ export async function POST(req: NextRequest) {
         // server-owned enrollment can advance; the legacy join button keeps /community.
         successUrl:
           returnTo === 'enroll'
-            ? `${origin}/enroll/done?welcome=community&session_id={CHECKOUT_SESSION_ID}`
-            : `${origin}/community?welcome=community&session_id={CHECKOUT_SESSION_ID}`,
+            ? billingReturn(origin, client, '/enroll/broker', { welcome: 'community', session_id: '{CHECKOUT_SESSION_ID}' })
+            : billingReturn(origin, client, '/community', { welcome: 'community', session_id: '{CHECKOUT_SESSION_ID}' }),
         // Back to where the join button is. The legacy path pointed at /pricing once,
         // which has 308'd to /#memberships since the pricing page was retired — so
         // abandoning checkout threw a signed-in customer out to the marketing homepage
         // AND dropped the ?canceled flag on the redirect.
         cancelUrl:
           returnTo === 'enroll'
-            ? `${origin}/enroll/billing?checkout=canceled`
-            : `${origin}/community?canceled=community`,
+            ? billingReturn(origin, client, '/enroll/broker', { checkout: 'canceled' })
+            : billingReturn(origin, client, '/community', { canceled: 'community' }),
       }
 
       let communityCustomerId = await getOrCreateCustomer({
@@ -249,7 +259,7 @@ export async function POST(req: NextRequest) {
 
     // Already own this exact bot → idempotent, just send them to it.
     if (activeSubs.some((s) => s.bot === plan.slug)) {
-      return NextResponse.json({ ok: true, url: `${origin}${plan.liveHref}?welcome=${plan.slug}` })
+      return NextResponse.json({ ok: true, url: billingReturn(origin, client, '/live', { welcome: plan.slug }) })
     }
 
     const other = otherBotSlug(plan.slug)
@@ -319,7 +329,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      return NextResponse.json({ ok: true, url: `${origin}${plan.liveHref}?welcome=${plan.slug}` })
+      return NextResponse.json({ ok: true, url: billingReturn(origin, client, '/live', { welcome: plan.slug }) })
     }
 
     // ── Community → FIRST agent (UAT-011): an in-place UPGRADE of the existing $10
@@ -377,7 +387,7 @@ export async function POST(req: NextRequest) {
         [user.id, JSON.stringify({ bot: plan.slug, subscription: sub.id })],
       ).catch(() => {})
 
-      return NextResponse.json({ ok: true, url: `${origin}${plan.liveHref}?welcome=${plan.slug}` })
+      return NextResponse.json({ ok: true, url: billingReturn(origin, client, '/live', { welcome: plan.slug }) })
     }
     // ────────────────────────────────────────────────────────────────────────────
 

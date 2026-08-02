@@ -8,6 +8,7 @@ import { loadSnapTradeCreds } from '@/lib/brokerage/snaptrade-user'
 import { isTradierOAuthConfigured, previewOrder as tradierPreviewOrder } from '@/lib/tradier-oauth'
 import { decryptSecret } from '@/lib/crypto/secret-box'
 import { sendTradeApprovalEmail } from '@/lib/email'
+import { dispatchToCustomers } from '@/lib/push/dispatch'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -162,6 +163,30 @@ export async function POST(req: NextRequest) {
         })
       })
       .catch((e) => console.error('[trades:create] notify failed:', e))
+
+    // Push, alongside the email. This is the single highest-value notification in the
+    // product: the approval dies in 5 minutes, so email alone loses trades for anyone
+    // not sitting in their inbox. Already on the customer service with userId in hand,
+    // so it calls dispatch directly — no service-token hop needed.
+    //
+    // Fire-and-forget with its own catch, matching the email above: a push failure must
+    // never fail the scanner's request or block the approval from being created.
+    void dispatchToCustomers(
+      {
+        category: 'trade_approval',
+        // Immutable id, never a timestamp — a timestamped key would make every retry
+        // look like a new event and defeat the dedupe entirely.
+        eventKey: `trade_approval:${inserted[0].id}`,
+        occurredAt: new Date().toISOString(),
+        route: '/account/trades',
+        routeParams: { approvalId: String(inserted[0].id) },
+        title: 'Trade awaiting your approval',
+        // No amount: the summary is instrument-only, and the money stays behind the
+        // lock screen unless the customer opted in (APP-035).
+        body: `${action} ${units} ${symbol} — expires in 5 minutes.`,
+      },
+      [userId],
+    ).catch((e) => console.error('[trades:create] push failed:', e))
 
     await customerQuery(
       `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'TRADE_APPROVAL_CREATED', $2)`,
