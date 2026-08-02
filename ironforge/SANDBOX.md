@@ -1,5 +1,39 @@
 # IronForge Sandbox
 
+## The deploy gate
+
+The sandbox tracks the **`staging`** branch, not `main`. That is the whole point:
+if it tracked `main` it would only ever run code production had already taken, so
+it could test data and flows but never catch a bad deploy before real money saw it.
+
+```
+feature branch → merge to staging → sandbox auto-deploys → click through the funnel
+                                                                    ↓
+                              production ← merge staging → main ← only after it passes
+```
+
+Concretely:
+
+```bash
+git checkout staging && git merge <your-branch> && git push origin staging
+# sandbox redeploys; test at https://ironforge-sandbox.onrender.com
+# happy? then:
+git checkout main && git merge staging && git push origin main
+```
+
+Two rules that keep the gate honest:
+
+1. **Never push straight to `main`.** A commit that skips `staging` skips the gate
+   entirely, and the gate is worthless if it is optional.
+2. **`staging` must never fall behind `main`.** If a hotfix lands on `main`
+   directly, merge `main` back into `staging` immediately — otherwise the next
+   staging→main merge silently reverts it.
+
+The sandbox runs the same image, build command and start command as production.
+The only differences are the databases, the broker host, Stripe test mode, and
+the fake customers — which is exactly what makes a pass here meaningful.
+
+
 A disposable copy of the customer product where the whole funnel — signup →
 verify → legal → Stripe → brokerage → activation → `/live` — can be exercised
 without real money, real customers, or production data.
@@ -148,6 +182,31 @@ Seven personas, one per funnel stage. Password for all: **`sandbox123`**
 
 Re-running replaces the seeded users; it never touches anything else in the
 database.
+
+### Both databases get seeded
+
+`/live` does **not** read the customer's mirrored `customer_positions`. It reads
+the master bot's book out of the **trading** database, authorized by a row in
+`ironforge_customer_bots` (`lib/live/viewer.ts`). With no such row `allowedBots`
+is empty and every `/live` route returns `{ empty: true }` — a fully-seeded
+customer still lands on a blank dashboard.
+
+So the script writes to both: the customer records to `CUSTOMERS_DATABASE_URL`,
+and a SPARK book (paper account, one open + one closed position, an intraday
+equity series, a heartbeat) to `DATABASE_URL` for `active@` only.
+
+Two things there look alarming and are not:
+
+- Those rows carry `account_type='production'`. SPARK is a production-mode bot
+  and `ledgerFilter()` returns only those rows. It is how the read path
+  partitions ledgers — not a claim about real money, which this service has
+  already been proven unable to reach.
+- Every row carries `person='Sandbox'`. `scopeFilter()` fails closed, so a NULL
+  `person` matches nothing. That is deliberate: on 2026-07-27 a NULL `person`
+  showed a signed-in customer the operator's real SPARK account.
+
+`paid@` and `connected@` have no bot mapping, so their `/live` is empty — that is
+their real state, not a gap.
 
 ---
 
