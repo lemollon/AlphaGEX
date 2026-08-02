@@ -116,8 +116,14 @@ export async function POST(req: NextRequest) {
   //    dedupe key: a resubmit updates the row (and returns existing:true).
   let existing = false
   let alreadyEmailed = false
+  /**
+   * The campaign as STORED, which is not necessarily the one just submitted: the upsert
+   * COALESCEs so a resubmit carrying no attribution keeps the original. The CRM event must use
+   * this, not the incoming request — see the enqueue below.
+   */
+  let storedCampaign: Record<string, unknown> | null = campaign
   try {
-    const rows = await customerQuery<{ existed: boolean; email_status: string }>(
+    const rows = await customerQuery<{ existed: boolean; email_status: string; campaign: Record<string, unknown> | null }>(
       `INSERT INTO waitlist_submissions
          (submission_id, email, first_name, last_name, phone, city, state,
           trading_capital_range, consent, consent_version, source, ip_hash, campaign)
@@ -131,7 +137,7 @@ export async function POST(req: NextRequest) {
          -- keep earlier attribution if this resubmit carried none (§6: append, don't delete)
          campaign = COALESCE(EXCLUDED.campaign, waitlist_submissions.campaign),
          updated_at = now()
-       RETURNING (xmax <> 0) AS existed, email_status`,
+       RETURNING (xmax <> 0) AS existed, email_status, campaign`,
       [submissionId, n.email, n.firstName, n.lastName, n.phone, n.city, n.state,
        n.tradingCapitalRange, CONSENT_VERSION, WAITLIST_SOURCE, iph, campaignJson],
     )
@@ -139,6 +145,7 @@ export async function POST(req: NextRequest) {
     // Idempotent confirmation (handoff §7): don't re-send to someone already
     // confirmed. A prior FAILED/pending send still re-sends on resubmit.
     alreadyEmailed = rows[0]?.email_status === 'sent'
+    storedCampaign = rows[0]?.campaign ?? null
   } catch (e) {
     console.error('[waitlist] local persist failed:', e)
     return NextResponse.json({ ok: false, code: 'INTEGRATION_ERROR', message: 'We could not save your request. Please try again.' }, { status: 503 })
@@ -159,7 +166,12 @@ export async function POST(req: NextRequest) {
       city: n.city,
       state: n.state,
       tradingVolume: CAPITAL_RANGE_TO_VOLUME[n.tradingCapitalRange],
-      leadSource: toLeadSource(campaign),
+      // Derived from the STORED campaign, never the incoming one. Verified live on 8/2: a
+      // resubmit with no campaign data recomputed lead_source from the empty request and
+      // overwrote the original 'LinkedIn' attribution with 'Organic'. The SQL above already
+      // guards against exactly this with COALESCE; reading the request instead of the returned
+      // row bypassed that guard.
+      leadSource: toLeadSource(storedCampaign),
       marketingConsent: true,
       waitlistDate: new Date().toISOString(),
     },
