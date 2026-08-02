@@ -214,10 +214,17 @@ const PEOPLE: CrmObject = {
       apiSlug: 'ironforge_user_id',
       title: 'IronForge User ID',
       type: 'text',
-      isUnique: true,
+      // NOT unique, though the data dictionary implies it should be. Attio rejects a new unique
+      // attribute on a STANDARD object with 400 "Cannot set attribute as unique" — verified
+      // against the live workspace, where the same is_unique:true succeeded on both custom
+      // objects. Harmless in practice: People are always upserted on email_addresses (Attio's
+      // own unique attribute), so ironforge_user_id is a stored cross-reference rather than a
+      // match key, and DEC-004's "durable identifier after account creation" still holds for
+      // every internal lookup. Worth a Decision Log entry.
       description:
-        'users.id from the customers DB. Becomes the durable match key once an account exists; ' +
-        'email remains the pre-account key (DEC-004). Unique because it is an upsert matching key.',
+        'users.id from the customers DB. Cross-reference to the durable internal identity ' +
+        '(DEC-004); email_addresses remains the Attio match key because Attio will not allow a ' +
+        'second unique attribute on People.',
     },
     {
       apiSlug: 'customer_lifecycle',

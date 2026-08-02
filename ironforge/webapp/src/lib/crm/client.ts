@@ -198,9 +198,12 @@ export function createAttribute(
     is_required: false,
     is_unique: attr.isUnique ?? false,
     is_multiselect: false,
-  }
-  if (attr.referenceTarget) {
-    data.config = { record_reference: { allowed_objects: [attr.referenceTarget] } }
+    // `config` is REQUIRED on every attribute type, not just the ones with type-specific
+    // settings. Omitting it returns 400 invalid_type at path ["data","config"] — verified
+    // against the live API, where an otherwise-identical body with config:{} returns 200.
+    config: attr.referenceTarget
+      ? { record_reference: { allowed_objects: [attr.referenceTarget] } }
+      : {},
   }
   return attioRequest<{ data?: AttioAttributeSummary }>(
     'POST',
@@ -270,9 +273,11 @@ export function createList(apiSlug: string, name: string, parentObject: string) 
         name,
         api_slug: apiSlug,
         parent_object: parentObject,
-        // Attio requires an access spec; workspace-access keeps the list visible to the team
-        // rather than only to the API actor that created it.
-        workspace_access: 'read-and-write',
+        // 'full-access' is the ONLY workspace_access value Attio accepts alongside an empty
+        // workspace_member_access — 'read-and-write' and 'read-only' both 400 with "ensure that
+        // at least some members of your workspace will have access to the list" (verified
+        // against the live API). Per-member access can be narrowed in the UI afterwards.
+        workspace_access: 'full-access',
         workspace_member_access: [],
       },
     },
@@ -305,6 +310,7 @@ export function createListAttribute(
         is_required: false,
         is_unique: false,
         is_multiselect: false,
+        config: {}, // required on list attributes too — see createAttribute
       },
     },
     SCHEMA_OPTS,
