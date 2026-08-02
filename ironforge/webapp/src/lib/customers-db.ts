@@ -647,6 +647,70 @@ CREATE INDEX IF NOT EXISTS idx_mobile_refresh_family ON mobile_refresh_tokens(fa
 -- Every minted access token carries the epoch it was signed under; bumping this
 -- invalidates all of them at the next epoch-checked (sensitive) route.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS token_epoch INT NOT NULL DEFAULT 0;
+
+-- ── Push notifications (APP-033 … APP-036) ──
+--
+-- expo_push_token is UNIQUE: a physical device that reinstalls under a different
+-- login must MOVE to the new owner, never duplicate — otherwise the previous owner
+-- keeps receiving that device's notifications.
+CREATE TABLE IF NOT EXISTS push_devices (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  expo_push_token TEXT NOT NULL UNIQUE,
+  device_id TEXT,
+  platform TEXT NOT NULL,
+  app_version TEXT,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  disabled_reason TEXT,
+  failure_count INT NOT NULL DEFAULT 0,
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_push_devices_user ON push_devices(user_id) WHERE enabled;
+
+-- Per-customer category switches. show_amounts_on_lockscreen defaults FALSE so a
+-- customer who never opens settings does not get their P&L on a locked screen in
+-- public (APP-035).
+CREATE TABLE IF NOT EXISTS notification_prefs (
+  user_id UUID PRIMARY KEY REFERENCES users(id),
+  trade_opened BOOLEAN NOT NULL DEFAULT TRUE,
+  trade_closed BOOLEAN NOT NULL DEFAULT TRUE,
+  trade_approval BOOLEAN NOT NULL DEFAULT TRUE,
+  brokerage_health BOOLEAN NOT NULL DEFAULT TRUE,
+  billing BOOLEAN NOT NULL DEFAULT TRUE,
+  community BOOLEAN NOT NULL DEFAULT FALSE,
+  show_amounts_on_lockscreen BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Dedupe + state ledger. The PK makes "once per eligible event" an atomic
+-- INSERT ... ON CONFLICT DO NOTHING RETURNING — the same idiom already proven by
+-- community_forge_posts.slot_key. The state column carries the last reported
+-- condition so a recovery does not re-alert (APP-035).
+CREATE TABLE IF NOT EXISTS notification_events (
+  event_key TEXT NOT NULL,
+  user_id UUID NOT NULL REFERENCES users(id),
+  category TEXT NOT NULL,
+  state TEXT,
+  first_sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  send_count INT NOT NULL DEFAULT 1,
+  PRIMARY KEY (event_key, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_notification_events_user ON notification_events(user_id, last_sent_at DESC);
+
+CREATE TABLE IF NOT EXISTS notification_deliveries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  push_device_id UUID REFERENCES push_devices(id),
+  event_key TEXT NOT NULL,
+  expo_ticket_id TEXT,
+  status TEXT NOT NULL,
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_notification_deliveries_created ON notification_deliveries(created_at DESC);
 `
 
 let _ensured: Promise<void> | null = null

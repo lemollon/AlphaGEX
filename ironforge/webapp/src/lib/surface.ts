@@ -70,7 +70,11 @@ export const CUSTOMER_PAGES: readonly string[] = [
 ]
 
 /** Page prefixes served by the customer site (onboarding + enrollment funnels, legal documents). */
-export const CUSTOMER_PAGE_PREFIXES: readonly string[] = ['/onboarding', '/legal', '/enroll']
+// '/app' is the mobile hand-off surface (/app/return, /app/brokerage/return): https
+// bridge pages that a third party redirects to and the installed app claims as a
+// Universal/App Link. Customer-surface only — they have no meaning on the operator
+// console, and the association files are served from the customer domain.
+export const CUSTOMER_PAGE_PREFIXES: readonly string[] = ['/onboarding', '/legal', '/enroll', '/app']
 
 /** Pages served by the operator console. */
 export const OPERATOR_PAGES: readonly string[] = [
@@ -153,6 +157,10 @@ export const CUSTOMER_API_PREFIXES: readonly string[] = [
   '/api/v1/',
   '/api/billing/',
   '/api/support/',
+  // Push notification devices, preferences, and the scanner's dispatch seam. Classified
+  // EXPLICITLY: servesPath fail-opens for unclassified paths, so leaving these out would
+  // let them work by accident today and break the day the fail-open is tightened.
+  '/api/notifications/',
 ]
 
 /** Shared infrastructure endpoints both services need. */

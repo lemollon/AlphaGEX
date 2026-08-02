@@ -120,6 +120,11 @@ export function isCustomerPath(pathname: string): boolean {
   if (pathname.startsWith('/api/account/')) return true
   // Sparky support chat — customer-session guarded (also self-guards in-route).
   if (pathname.startsWith('/api/support/')) return true
+  // Push device registration + notification preferences. /api/notifications/dispatch is
+  // the scanner's seam and passes on the service token via decideAccess's first branch;
+  // it ALSO self-guards in-route, because IRONFORGE_PUBLIC_MODE bypasses this gate and a
+  // route that can push to arbitrary customers must not inherit that.
+  if (pathname.startsWith('/api/notifications/')) return true
   // Password change is a customer-session route. It was classified NOWHERE, so the
   // middleware never read the customer cookie and 401'd a signed-in customer's own
   // password change — the exact /api/v1/ trap documented above, found during UAT-013.
