@@ -475,7 +475,8 @@ CREATE TABLE IF NOT EXISTS waitlist_submissions (
   consent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   source TEXT NOT NULL,
   ip_hash TEXT,
-  attio_status TEXT NOT NULL DEFAULT 'pending',   -- pending | synced | failed
+  attio_status TEXT NOT NULL DEFAULT 'pending',   -- pending | queued | synced | failed
+                                                  -- 'queued' = not in Attio yet; crm_outbox owns delivery
   attio_person_id TEXT,
   email_status TEXT NOT NULL DEFAULT 'pending',    -- pending | sent | failed
   campaign JSONB,                                  -- UTM + referral + landing (enrollment-overlay handoff §5)
@@ -486,6 +487,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_waitlist_email_lower ON waitlist_submission
 CREATE INDEX IF NOT EXISTS idx_waitlist_ip_created ON waitlist_submissions(ip_hash, created_at);
 -- Additive on already-created DBs (CREATE TABLE IF NOT EXISTS is a no-op there).
 ALTER TABLE waitlist_submissions ADD COLUMN IF NOT EXISTS campaign JSONB;
+-- Invitation tracking. The spec makes "Invitation sent" a P0 event and Invited a lifecycle
+-- status, but no invitation mechanism existed anywhere in the product — enrollment is closed
+-- (ENROLLMENT_WAITLIST_MODE) and there was no way to let anyone back in. invited_at is both the
+-- CRM signal and the idempotency guard: an already-invited row is never re-invited.
+ALTER TABLE waitlist_submissions ADD COLUMN IF NOT EXISTS invited_at TIMESTAMPTZ;
+ALTER TABLE waitlist_submissions ADD COLUMN IF NOT EXISTS invited_by TEXT;
+CREATE INDEX IF NOT EXISTS idx_waitlist_invited ON waitlist_submissions(invited_at);
 
 -- Stripe webhook replay/dedupe guard + dead-letter (audit C5). The INSERT is the
 -- processing claim; processed_at NULL + error = a failed event Stripe will retry.
@@ -535,6 +543,77 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_customer_positions_source_user
   ON customer_positions (source_position_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_customer_positions_user ON customer_positions(user_id);
 CREATE INDEX IF NOT EXISTS idx_customer_positions_status ON customer_positions(status);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- CRM outbox (lib/crm). Every lifecycle event destined for Attio lands here first
+-- and is delivered by a background drain, instead of each call site doing an
+-- inline Attio write and hoping. That inversion is what buys the spec's
+-- auditability and retry requirements (AC-CRM-009, AC-CRM-010):
+--   - event_id is the PRIMARY KEY, so a replayed webhook or a double-fired
+--     emitter is a no-op INSERT rather than a duplicate CRM write;
+--   - a customer request never blocks on, or fails because of, Attio;
+--   - attempts >= max flips status to 'failed' — that terminal state IS the
+--     replayable dead-letter queue (POST /api/ops/crm/replay).
+-- Deliberately separate from attio_sync_queue, which only understands the signup
+-- AttioContact shape; Phase 2 migrates those call sites onto this table.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS crm_outbox (
+  event_id TEXT PRIMARY KEY,                       -- caller-supplied, stable per business event
+  event_type TEXT NOT NULL,                        -- crm.waitlist_submitted, crm.subscription_active, …
+  payload JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',          -- pending | delivered | failed
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_error TEXT,
+  correlation_id TEXT,                             -- request id / source event id, for tracing
+  user_id UUID,                                    -- nullable: waitlist events precede the account
+  attio_record_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  delivered_at TIMESTAMPTZ
+);
+-- The drain's hot query: due work, oldest first.
+CREATE INDEX IF NOT EXISTS idx_crm_outbox_due ON crm_outbox(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_crm_outbox_user ON crm_outbox(user_id);
+
+-- audit_events is queried by user_id/event_type all over the app but shipped without
+-- an index; the CRM projection reads it per user, which makes that bite.
+CREATE INDEX IF NOT EXISTS idx_audit_events_user_type ON audit_events(user_id, event_type);
+
+-- Brokerage failure context for the CRM's Brokerage Issues view. The internal status column
+-- only carries pending|active|disabled|removed, which cannot express WHY a connection broke or
+-- whether the customer must re-authorise — so the view the spec asks for had nothing to show.
+-- These are normalized, customer-safe fields ONLY: never a token, credential, or raw provider
+-- payload (AC-CRM-007, enforced again in crm/events.ts before anything leaves the backend).
+ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ;
+ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS last_error_code TEXT;
+ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS last_error_summary TEXT;
+ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS reauthorization_required BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Claude agent action log. Every write the agent makes through /api/crm/agent/* lands here with
+-- before/after values, so AC-CRM-008 and AC-CRM-009 are demonstrable from data rather than
+-- taken on trust. Deliberately separate from audit_events: the spec requires agent activity to
+-- be distinguishable from backend events (§10), and mixing them makes "what did the AI change"
+-- unanswerable.
+CREATE TABLE IF NOT EXISTS crm_agent_actions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id TEXT NOT NULL,                          -- which agent persona acted
+  action TEXT NOT NULL,                            -- qualify | note | task | list_add | list_remove | ...
+  outcome TEXT NOT NULL,                           -- applied | blocked | approval_required
+  object_slug TEXT,
+  record_id TEXT,
+  attribute_slug TEXT,
+  before_value JSONB,
+  after_value JSONB,
+  rule_version TEXT,                               -- which instruction version produced this
+  approver TEXT,                                   -- set only for approval-required actions
+  rationale TEXT,
+  source_refs JSONB,                               -- records/events the agent reasoned from
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_crm_agent_actions_record ON crm_agent_actions(object_slug, record_id);
+CREATE INDEX IF NOT EXISTS idx_crm_agent_actions_created ON crm_agent_actions(created_at DESC);
 `
 
 let _ensured: Promise<void> | null = null

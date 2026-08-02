@@ -76,6 +76,7 @@ import { ensureVolAlertsTable, upsertRegimeDaily, recordLadderTransitions, markN
 import { sendVolAlertEmail } from './email'
 import { sendVolAlertSms } from './sms'
 import { drainAttioSyncQueue, isAttioConfigured } from './attio'
+import { drainCrmOutbox } from './crm/outbox'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -6193,8 +6194,16 @@ let _volAlertsIntervalId: ReturnType<typeof setInterval> | null = null
 // Attio CRM retry drain — re-attempts signups that failed to sync to Attio
 // (sub-project E). Fully isolated from the trade loop; this IS the retry "cron".
 const ATTIO_RETRY_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
+/**
+ * CRM outbox drain. 30s — not the 10-minute cadence of the legacy Attio retry queue — because
+ * AC-CRM-001 requires a waitlist submission to reach Attio within 60 seconds, and the drain is
+ * the only delivery path. Most ticks are a single indexed query returning zero rows.
+ */
+const CRM_OUTBOX_INTERVAL_MS = 30 * 1000
 let _attioRetryIntervalId: ReturnType<typeof setInterval> | null = null
 let _attioRetryRunning = false
+let _crmOutboxRunning = false
+let _crmOutboxIntervalId: ReturnType<typeof setInterval> | null = null
 
 // Trial day-close ledger (Enrollment spec §7) — this IS the trial "cron".
 //
@@ -6450,6 +6459,29 @@ function safeDrainAttioQueue(): void {
     .finally(() => { _attioRetryRunning = false })
 }
 
+/** Fire-and-forget CRM outbox drain — delivers queued lifecycle events to Attio. Re-entrancy
+ *  guarded so a slow Attio can't stack drains, never throws, no-ops when Attio isn't
+ *  configured. Independent of the trade loop. */
+function safeDrainCrmOutbox(): void {
+  if (_crmOutboxRunning) return
+  if (!isAttioConfigured()) return
+  _crmOutboxRunning = true
+  drainCrmOutbox()
+    .then((r) => {
+      if (r.processed > 0) {
+        console.log(
+          `[scanner] crm outbox drain: processed=${r.processed} delivered=${r.delivered} ` +
+            `retrying=${r.retrying} deadLettered=${r.deadLettered}`,
+        )
+      }
+    })
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] safeDrainCrmOutbox error: ${msg}`)
+    })
+    .finally(() => { _crmOutboxRunning = false })
+}
+
 /**
  * Register the scan loop and all satellite intervals.
  *
@@ -6484,6 +6516,11 @@ function startScannerLocked(): void {
   _attioRetryIntervalId = setInterval(safeDrainAttioQueue, ATTIO_RETRY_INTERVAL_MS)
   setTimeout(safeDrainAttioQueue, 30_000)
 
+  // CRM outbox drain — own 30s interval (AC-CRM-001's 60-second budget), isolated from the
+  // trade loop. Kicked at 5s so a deploy doesn't add half a minute to the first lead's latency.
+  _crmOutboxIntervalId = setInterval(safeDrainCrmOutbox, CRM_OUTBOX_INTERVAL_MS)
+  setTimeout(safeDrainCrmOutbox, 5_000)
+
   // Trial day-close ledger — own 15-min interval, isolated from the trade loop. Self-
   // gates to after 15:05 CT, so ticks during the session are a cheap no-op. Kicked once
   // at startup so a deploy that lands right after the close still counts the day.
@@ -6501,6 +6538,7 @@ function startScannerLocked(): void {
   console.log('[scanner] INFERNO fast monitor registered (20s), id:', _infernoFastMonitorIntervalId)
   console.log('[scanner] vol-alerts checker registered (5m), id:', _volAlertsIntervalId)
   console.log('[scanner] attio retry drain registered (10m), id:', _attioRetryIntervalId)
+  console.log('[scanner] crm outbox drain registered (30s), id:', _crmOutboxIntervalId)
   console.log('[scanner] trial day-close registered (15m, gated to >=15:05 CT), id:', _trialCloseIntervalId)
 }
 

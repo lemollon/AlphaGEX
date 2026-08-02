@@ -101,6 +101,58 @@ export async function sendWaitlistConfirmation(params: {
   }
 }
 
+/**
+ * Waitlist invitation — the message that reopens enrollment for a specific lead. Transactional,
+ * sent from the operator invite action, and idempotent at the caller (a row with invited_at set
+ * is never re-invited), so nobody receives this twice.
+ */
+export async function sendWaitlistInvitation(params: {
+  to: string
+  firstName: string
+  enrollUrl: string
+}): Promise<SendResult> {
+  if (!isEmailConfigured()) return { sent: false, skipped: true }
+  try {
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: process.env.EMAIL_FROM,
+        to: params.to,
+        reply_to: 'support@ironforge.trade',
+        subject: 'Your IronForge invitation',
+        html: invitationHtml(params.firstName, params.enrollUrl),
+      }),
+    })
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      return { sent: false, error: `Resend ${res.status}: ${detail.slice(0, 200)}` }
+    }
+    return { sent: true }
+  } catch (e) {
+    return { sent: false, error: e instanceof Error ? e.message : 'send failed' }
+  }
+}
+
+function invitationHtml(firstName: string, enrollUrl: string): string {
+  const name = firstName ? esc(firstName) : 'there'
+  const url = esc(enrollUrl)
+  return `<!doctype html><html><body style="margin:0;background:#0B0B0D;font-family:Arial,Helvetica,sans-serif;color:#e5e5e5">
+  <div style="max-width:480px;margin:0 auto;padding:32px 24px">
+    <div style="font-size:18px;font-weight:bold;color:#ffffff;margin:0 0 20px">IRON<span style="color:#FD3D1E">FORGE</span></div>
+    <h1 style="font-size:20px;color:#ffffff;margin:0 0 12px">Your invitation is ready</h1>
+    <p style="color:#c9c7c5;font-size:14px;line-height:1.7">Hi ${name},</p>
+    <p style="color:#c9c7c5;font-size:14px;line-height:1.7">A spot has opened up for you at IronForge. You can create your account and complete enrollment using the link below.</p>
+    <p style="margin:24px 0"><a href="${url}" style="background:#FD3D1E;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:6px;font-size:14px;font-weight:bold;display:inline-block">Start enrollment</a></p>
+    <p style="color:#c9c7c5;font-size:14px;line-height:1.7">If the button doesn’t work, paste this into your browser:<br><span style="color:#9a9a9a;font-size:12px;word-break:break-all">${url}</span></p>
+    <p style="color:#c9c7c5;font-size:14px;line-height:1.7;margin-top:24px">— The IronForge Team<br><span style="color:#FD3D1E;font-weight:bold">Discipline. Execution. Edge.</span></p>
+    <p style="color:#6b6b6b;font-size:11px;line-height:1.6;margin-top:28px;border-top:1px solid #26262A;padding-top:16px">Risk disclosure: Trading involves risk, including the possible loss of capital. Automated trading does not guarantee a profit or protect against loss.</p>
+  </div></body></html>`
+}
+
 function waitlistHtml(firstName: string): string {
   const name = firstName ? esc(firstName) : 'there'
   return `<!doctype html><html><body style="margin:0;background:#0B0B0D;font-family:Arial,Helvetica,sans-serif;color:#e5e5e5">

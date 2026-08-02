@@ -11,6 +11,8 @@ import { evaluateAccountEligibility, maskAccountNumber } from '@/lib/enrollment/
 import { encryptSecret } from '@/lib/crypto/secret-box'
 import { isCustomersDbConfigured, customerQuery, customerExecute, customerTransaction } from '@/lib/customers-db'
 import { syncBrokerageConnectionToAttio } from '@/lib/attio'
+import { enqueueCrmEvent } from '@/lib/crm/outbox'
+import { mapBrokerageStatusToCrm } from '@/lib/crm/brokerage-status'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -80,6 +82,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(brokerageStep)
     }
 
+    const createdConnections: Array<{ id: string }> = []
+
     await customerTransaction(async (run) => {
       await run(
         `UPDATE users
@@ -112,6 +116,7 @@ export async function GET(req: NextRequest) {
         )) as unknown as Array<{ id: string }>
         const connectionId = inserted?.[0]?.id
         if (!connectionId) continue
+        createdConnections.push({ id: connectionId })
 
         // Record the account with its ELIGIBILITY verdict (§3 BROKER-02). Until this
         // existed the eligibility gate had no data source at all, so the whole
@@ -155,6 +160,26 @@ export async function GET(req: NextRequest) {
       `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'BROKERAGE_CONNECTED', $2)`,
       [user.id, JSON.stringify({ provider: 'tradier', accounts: accounts.length })],
     ).catch(() => {})
+
+    // One CRM connection record per brokerage_connections row created above — each is keyed on
+    // its own immutable connection_id (events.ts brokerageConnection()).
+    for (const conn of createdConnections) {
+      await enqueueCrmEvent({
+        eventId: `brokerage_connected:${conn.id}`,
+        eventType: 'crm.brokerage_connected',
+        userId: user.id,
+        payload: {
+          email: user.email,
+          firstName: user.first_name,
+          lastName: user.last_name,
+          ironforgeUserId: user.id,
+          connectionId: conn.id,
+          connectionStatus: mapBrokerageStatusToCrm('active').connectionStatus,
+          lastAttemptAt: new Date().toISOString(),
+          reauthorizationRequired: false,
+        },
+      })
+    }
 
     try {
       const attioRes = await syncBrokerageConnectionToAttio(

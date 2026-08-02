@@ -4,6 +4,8 @@ import { resolveCustomerUserId } from '@/lib/brokerage/identity'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { encryptSecret, decryptSecret } from '@/lib/crypto/secret-box'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
+import { enqueueCrmEvent } from '@/lib/crm/outbox'
+import { mapBrokerageStatusToCrm } from '@/lib/crm/brokerage-status'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -19,6 +21,9 @@ interface UserRow {
   id: string
   snaptrade_user_id: string | null
   snaptrade_user_secret: string | null
+  email: string
+  first_name: string
+  last_name: string
 }
 
 export async function POST(req: NextRequest) {
@@ -49,7 +54,8 @@ export async function POST(req: NextRequest) {
   try {
     const snaptrade = getSnapTrade()
     const rows = await customerQuery<UserRow>(
-      `SELECT id, snaptrade_user_id, snaptrade_user_secret FROM users WHERE id = $1 LIMIT 1`,
+      `SELECT id, snaptrade_user_id, snaptrade_user_secret, email, first_name, last_name
+         FROM users WHERE id = $1 LIMIT 1`,
       [uid],
     )
     const user = rows[0]
@@ -79,10 +85,33 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'Could not start the connection.' }, { status: 502 })
     }
 
-    await customerExecute(
-      `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'BROKERAGE_CONNECT_STARTED', $2)`,
+    const auditRows = await customerQuery<{ id: string }>(
+      `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'BROKERAGE_CONNECT_STARTED', $2) RETURNING id`,
       [user.id, JSON.stringify(broker ? { broker } : {})],
-    ).catch(() => {})
+    ).catch(() => [] as Array<{ id: string }>)
+
+    // Mirror the attempt into the CRM as the Pending connection record. No brokerage_connections
+    // row exists yet — that's created at the callback — so connectionId is a stable placeholder
+    // per attempt (the audit row this same request just wrote), keyed the same way an eventual
+    // real connection would be.
+    const auditId = auditRows[0]?.id
+    if (auditId) {
+      await enqueueCrmEvent({
+        eventId: `brokerage_initiated:${auditId}`,
+        eventType: 'crm.brokerage_initiated',
+        userId: user.id,
+        payload: {
+          email: user.email,
+          firstName: user.first_name,
+          lastName: user.last_name,
+          ironforgeUserId: user.id,
+          connectionId: `pending:${user.id}`,
+          connectionStatus: mapBrokerageStatusToCrm('pending').connectionStatus,
+          lastAttemptAt: new Date().toISOString(),
+          reauthorizationRequired: false,
+        },
+      })
+    }
 
     return NextResponse.json({ ok: true, redirectURI })
   } catch (e) {
