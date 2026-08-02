@@ -25,8 +25,14 @@
  * a reserved-by-convention domain that cannot receive mail — so even if this were
  * somehow pointed at a real database, no real person is ever emailed.
  *
+ * It writes to BOTH databases. The customer records above live in
+ * CUSTOMERS_DATABASE_URL; the /live dashboard reads the master bot's book out of
+ * DATABASE_URL instead, so `active@` also gets a SPARK book seeded there (see
+ * seedTradingSide). With DATABASE_URL unset the customer half still seeds and
+ * /live renders its empty state.
+ *
  * USAGE
- *   IRONFORGE_ENV=sandbox CUSTOMERS_DATABASE_URL=postgres://... node scripts/seed-sandbox.js
+ *   IRONFORGE_ENV=sandbox CUSTOMERS_DATABASE_URL=... DATABASE_URL=... node scripts/seed-sandbox.js
  *   ... --reset    drop the seeded users first (default: reseed in place)
  *
  * REFUSES TO RUN unless IRONFORGE_ENV=sandbox and the sandbox guard passes. The
@@ -43,6 +49,22 @@ const { checkSandboxEnv, databaseNameOf, PRODUCTION_DB_NAMES } = require('./sand
 const PASSWORD = 'sandbox123'
 const EMAIL_DOMAIN = 'sandbox.ironforge.test'
 const RULE_VERSION = '2026-07-01'
+
+// ── Trading-side constants ───────────────────────────────────────────────────
+// /live does NOT read customer_positions. It reads the master bot's tables in the
+// TRADING database, scoped by `person` (lib/live/viewer.ts scopeFilter). So a
+// customer with a fully-seeded customer record still sees an empty dashboard
+// until these exist too.
+const SANDBOX_PERSON = 'Sandbox'
+const LIVE_BOT = 'spark'
+const LIVE_DTE = '1DTE' // dteMode('spark') — db.ts
+const HEARTBEAT_NAME = 'SPARK' // heartbeatName('spark') — db.ts HEARTBEAT_MAP
+// SPARK is a production-mode bot, so ledgerFilter('spark') keeps ONLY
+// account_type='production' rows (viewer.ts). This label is how the read path
+// partitions ledgers — it does not mean real money, and cannot: this is a
+// throwaway database and the guard has already proven no live broker or Stripe
+// credential is reachable from this process.
+const LIVE_ACCOUNT_TYPE = 'production'
 
 /** Tables to clear for seeded users, children before parents (FK order). */
 const CLEANUP_ORDER = [
@@ -289,6 +311,147 @@ async function seedPositions(client, userId, activationId, configId, agentCode) 
   )
 }
 
+/**
+ * Seed the TRADING database so the activated customer's /live page renders.
+ *
+ * Why this is separate: /live shows the master bot's book, not the customer's
+ * mirrored rows. `ironforge_customer_bots` is what authorizes a customer to see a
+ * bot at all, and it carries the `person` that every downstream query is scoped
+ * to. scopeFilter() FAILS CLOSED — a customer whose mapping has person = NULL
+ * matches nothing (deliberately: on 2026-07-27 a NULL person showed one customer
+ * the operator's real SPARK account). So person is set on every row here.
+ */
+async function seedTradingSide(customerId) {
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  })
+  await client.connect()
+  const dbName = databaseNameOf(process.env.DATABASE_URL)
+  if (PRODUCTION_DB_NAMES.has(dbName)) {
+    await client.end()
+    throw new Error(`DATABASE_URL points at production database "${dbName}". Refusing.`)
+  }
+  log(`trading db: connected to "${dbName}"`)
+
+  const { rows: exists } = await client.query(
+    `SELECT to_regclass('public.ironforge_customer_bots') IS NOT NULL AS ok`,
+  )
+  if (!exists[0].ok) {
+    await client.end()
+    throw new Error(
+      'The trading schema does not exist yet. Open the sandbox site once (or hit ' +
+        '/api/health) so the app creates its tables, then re-run this script.',
+    )
+  }
+
+  const pos = `${LIVE_BOT}_positions`
+  const acct = `${LIVE_BOT}_paper_account`
+  const snaps = `${LIVE_BOT}_equity_snapshots`
+
+  await client.query('BEGIN')
+  try {
+    // Idempotent: clear only what this script owns (person = 'Sandbox').
+    // The mapping is keyed by customer_id, and re-seeding mints new user UUIDs —
+    // so without this every run leaves an orphaned row pointing at a deleted user.
+    await tolerantDelete(client, `DELETE FROM ironforge_customer_bots WHERE person = $1`, [
+      SANDBOX_PERSON,
+    ])
+    await tolerantDelete(client, `DELETE FROM ${pos} WHERE person = $1`, [SANDBOX_PERSON])
+    await tolerantDelete(client, `DELETE FROM ${snaps} WHERE person = $1`, [SANDBOX_PERSON])
+    await tolerantDelete(client, `DELETE FROM ${acct} WHERE person = $1`, [SANDBOX_PERSON])
+
+    // 1. Authorize this customer to see SPARK. Without this row allowedBots is
+    //    empty, viewer.bot is null and every /live route returns { empty: true }.
+    await client.query(
+      `INSERT INTO ironforge_customer_bots (customer_id, bot, person)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (customer_id, bot) DO UPDATE SET person = EXCLUDED.person`,
+      [customerId, LIVE_BOT, SANDBOX_PERSON],
+    )
+
+    // 2. The account the balance/buying-power tiles read.
+    await client.query(
+      `INSERT INTO ${acct}
+         (starting_capital, current_balance, cumulative_pnl, total_trades,
+          collateral_in_use, buying_power, high_water_mark, max_drawdown,
+          is_active, dte_mode, account_type, person)
+       VALUES (10000, 10336, 336, 2, 1000, 9000, 10336, 0, TRUE, $1, $2, $3)`,
+      [LIVE_DTE, LIVE_ACCOUNT_TYPE, SANDBOX_PERSON],
+    )
+
+    // 3. One open iron condor (positions tab + collateral) and one closed today
+    //    (today's realized P&L — summary.ts filters close_time to CT today).
+    await client.query(
+      `INSERT INTO ${pos}
+         (position_id, ticker, expiration,
+          put_short_strike, put_long_strike, put_credit,
+          call_short_strike, call_long_strike, call_credit,
+          contracts, spread_width, total_credit, max_loss, max_profit,
+          collateral_required, underlying_at_entry, vix_at_entry, gex_regime,
+          status, open_time, open_date, dte_mode, account_type, person)
+       VALUES ('sbx-open-1', 'SPY', CURRENT_DATE + 1,
+          630, 625, 0.58, 655, 660, 0.57,
+          2, 5, 1.15, 770, 230,
+          1000, 747.03, 14.2, 'positive',
+          'open', now() - interval '2 hours', CURRENT_DATE, $1, $2, $3)`,
+      [LIVE_DTE, LIVE_ACCOUNT_TYPE, SANDBOX_PERSON],
+    )
+    await client.query(
+      `INSERT INTO ${pos}
+         (position_id, ticker, expiration,
+          put_short_strike, put_long_strike, put_credit,
+          call_short_strike, call_long_strike, call_credit,
+          contracts, spread_width, total_credit, max_loss, max_profit,
+          collateral_required, underlying_at_entry, vix_at_entry, gex_regime,
+          status, open_time, open_date, close_time, close_price, close_reason,
+          realized_pnl, dte_mode, account_type, person)
+       VALUES ('sbx-closed-1', 'SPY', CURRENT_DATE,
+          625, 620, 0.62, 650, 655, 0.58,
+          2, 5, 1.20, 760, 240,
+          1000, 744.10, 13.8, 'positive',
+          'closed', now() - interval '1 day', CURRENT_DATE - 1,
+          now() - interval '3 hours', 0.36, 'profit_target',
+          168, $1, $2, $3)`,
+      [LIVE_DTE, LIVE_ACCOUNT_TYPE, SANDBOX_PERSON],
+    )
+
+    // 4. Intraday equity curve. A single point draws no line (the chart needs at
+    //    least two), so lay down a series across today in CT.
+    await client.query(
+      `INSERT INTO ${snaps}
+         (snapshot_time, balance, unrealized_pnl, realized_pnl, open_positions,
+          note, dte_mode, account_type, person)
+       SELECT
+         ((CURRENT_DATE + time '08:30') AT TIME ZONE 'America/Chicago') + (g * interval '45 minutes'),
+         10000 + (g * 42), (g * 12), CASE WHEN g >= 4 THEN 168 ELSE 0 END,
+         CASE WHEN g >= 2 THEN 1 ELSE 0 END,
+         'sandbox seed', $1, $2, $3
+       FROM generate_series(0, 7) AS g`,
+      [LIVE_DTE, LIVE_ACCOUNT_TYPE, SANDBOX_PERSON],
+    )
+
+    // 5. Heartbeat so the status pill reads healthy instead of "no signal".
+    await client.query(
+      `INSERT INTO bot_heartbeats (bot_name, last_heartbeat, status, scan_count, details)
+       VALUES ($1, now(), 'running', 128, 'sandbox seed')
+       ON CONFLICT (bot_name) DO UPDATE
+         SET last_heartbeat = EXCLUDED.last_heartbeat,
+             status = EXCLUDED.status,
+             details = EXCLUDED.details`,
+      [HEARTBEAT_NAME],
+    )
+
+    await client.query('COMMIT')
+    log(`trading db: ${LIVE_BOT.toUpperCase()} book seeded for person "${SANDBOX_PERSON}"`)
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    await client.end()
+  }
+}
+
 async function main() {
   const dbName = assertSafe()
   const reset = process.argv.includes('--reset')
@@ -397,8 +560,19 @@ async function main() {
     const actId = await activate(client, u.id, cfgId, 'spark')
     await seedPositions(client, u.id, actId, cfgId, 'spark')
     made.push([u.email, 'active, trial running, 1 open + 1 closed position'])
+    const activeUserId = u.id
 
     await client.query('COMMIT')
+
+    // Trading side, AFTER the customer commit — it needs the committed user id,
+    // and it is a different database so it cannot share the transaction. Only the
+    // activated persona gets a bot mapping: `paid@` and `connected@` seeing an
+    // empty /live is the correct depiction of their state, not a gap.
+    if (process.env.DATABASE_URL) {
+      await seedTradingSide(activeUserId)
+    } else {
+      log('DATABASE_URL unset — skipped the trading side; active@ will see an EMPTY /live.')
+    }
 
     log('')
     log(`seeded ${made.length} personas — password for all: ${PASSWORD}`)
