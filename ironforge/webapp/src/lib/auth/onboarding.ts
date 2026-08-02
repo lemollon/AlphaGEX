@@ -24,17 +24,17 @@ export interface OnboardingClaims {
 
 const encoder = new TextEncoder()
 
-function b64urlFromBytes(bytes: Uint8Array): string {
+export function b64urlFromBytes(bytes: Uint8Array): string {
   let bin = ''
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
-function b64urlEncode(s: string): string {
+export function b64urlEncode(s: string): string {
   return b64urlFromBytes(encoder.encode(s))
 }
 
-function b64urlDecode(s: string): string {
+export function b64urlDecode(s: string): string {
   const b64 = s.replace(/-/g, '+').replace(/_/g, '/')
   const bin = atob(b64)
   const bytes = new Uint8Array(bin.length)
@@ -42,7 +42,7 @@ function b64urlDecode(s: string): string {
   return new TextDecoder().decode(bytes)
 }
 
-async function hmacB64url(secret: string, data: string): Promise<string> {
+export async function hmacB64url(secret: string, data: string): Promise<string> {
   const key = await crypto.subtle.importKey(
     'raw',
     encoder.encode(secret),
