@@ -143,7 +143,26 @@ async function clearSeeded(client) {
   if (rows.length === 0) return 0
   const ids = rows.map((r) => r.id)
 
-  // broker_accounts hangs off brokerage_connections, not users — clear it first.
+  // ORDER IS LOAD-BEARING. The user-keyed tables go first, because agent_configs
+  // references broker_accounts:
+  //
+  //   customer_positions → (none)
+  //   trials             → activations
+  //   activations        → agent_configs
+  //   agent_configs      → broker_accounts        ← the one that bit us
+  //   broker_accounts    → brokerage_connections
+  //   legal_acceptances  → enrollments
+  //
+  // Deleting broker_accounts before agent_configs raises
+  //   "violates foreign key constraint agent_configs_broker_account_id_fkey".
+  // That only surfaces on a RE-run — the first run has nothing to clear and
+  // returns early above, so this stayed hidden until the second seed.
+  for (const table of CLEANUP_ORDER) {
+    await tolerantDelete(client, `DELETE FROM ${table} WHERE user_id = ANY($1::uuid[])`, [ids])
+  }
+
+  // Now the brokerage chain, which hangs off brokerage_connections rather than
+  // users, so it cannot be driven by the user_id loop above.
   await tolerantDelete(
     client,
     `DELETE FROM broker_accounts WHERE connection_id IN
@@ -152,9 +171,6 @@ async function clearSeeded(client) {
   )
   await tolerantDelete(client, 'DELETE FROM brokerage_connections WHERE user_id = ANY($1::uuid[])', [ids])
 
-  for (const table of CLEANUP_ORDER) {
-    await tolerantDelete(client, `DELETE FROM ${table} WHERE user_id = ANY($1::uuid[])`, [ids])
-  }
   await client.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [ids])
   return ids.length
 }
