@@ -3,6 +3,7 @@ import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
 import { verifyPassword, hashPassword } from '@/lib/auth/password'
 import { checkPassword } from '@/lib/signup-validation'
+import { revokeAllForUser } from '@/lib/auth/mobile-session'
 
 /**
  * Signed-in CUSTOMER password change.
@@ -70,6 +71,16 @@ export async function POST(req: NextRequest) {
       newHash,
       session.customerId,
     ])
+
+    // Changing a password must end every OTHER signed-in session, or the change gives
+    // false comfort: someone who logged in on a stolen phone keeps a 60-day refresh
+    // token that the password change did nothing to. This also bumps users.token_epoch,
+    // which is the only way to kill already-issued stateless access tokens.
+    // Best-effort — the password IS changed at this point, so a revocation failure must
+    // not turn a successful change into a 500 the customer would retry.
+    await revokeAllForUser(session.customerId, 'password_change').catch((e) => {
+      console.error('[change-password] mobile revoke failed:', e)
+    })
 
     return NextResponse.json({ ok: true })
   } catch (err: unknown) {

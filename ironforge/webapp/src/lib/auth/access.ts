@@ -128,6 +128,16 @@ export function isCustomerPath(pathname: string): boolean {
 }
 
 export function isPublicPath(pathname: string): boolean {
+  // Apple/Google app-association files for Universal Links + App Links. Their fetchers
+  // arrive with no cookies, and apple-app-site-association has NO FILE EXTENSION, so the
+  // middleware page matcher (extension-anchored) matches it and would 307 it to /login —
+  // after which Universal Links silently never verify, with no error and no log. This
+  // branch is the fix; access.test.ts pins it.
+  if (pathname.startsWith('/.well-known/')) return true
+  // Mobile auth endpoints are middleware-open and self-guarded in-route: login checks the
+  // password, refresh/logout check the presented refresh token, me checks the bearer, and
+  // policy returns constants only. Same shape as /api/auth/customer-me.
+  if (pathname.startsWith('/api/auth/mobile/')) return true
   // Versioned legal document pages (/legal/risk, /legal/refund-policy, ...). Public for
   // the same reason /terms and /privacy are: partners and prospects must be able to read
   // them before signing in, and the enrollment "Review" actions open them directly.
@@ -166,6 +176,14 @@ export function decideAccess(opts: {
   isApi: boolean
   hasSession: boolean
   hasCustomerSession?: boolean
+  /**
+   * A verified mobile access token (Authorization: Bearer). Consumed at EXACTLY ONE
+   * place — the isCustomerPath branch below — and deliberately not beside
+   * hasServiceToken or hasSession. That placement is what makes a bearer token exactly
+   * as powerful as the customer cookie and no more: the operator surface stays closed
+   * by construction rather than by an allowlist that can rot as routes are added.
+   */
+  hasBearerCustomer?: boolean
   hasServiceToken: boolean
 }): AccessDecision {
   if (opts.hasServiceToken) return 'allow'
@@ -173,7 +191,7 @@ export function decideAccess(opts: {
   // Operators may see everything, including the customer surface.
   if (opts.hasSession) return 'allow'
   if (isCustomerPath(opts.pathname)) {
-    if (opts.hasCustomerSession) return 'allow'
+    if (opts.hasCustomerSession || opts.hasBearerCustomer) return 'allow'
     // Bounce to the CUSTOMER door. Sending a customer to /ops/login is the
     // failure mode this branch exists to prevent.
     return opts.isApi ? 'unauthorized' : 'redirect-customer-login'

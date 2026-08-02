@@ -4,6 +4,7 @@ import { sessionOptions, hasValidServiceToken, type SessionData } from '@/lib/au
 import { decideAccess, isCustomerPath, isPublicMode } from '@/lib/auth/access'
 import { ONBOARDING_COOKIE, verifyOnboardingToken } from '@/lib/auth/onboarding'
 import { customerSessionOptions, type CustomerSessionData } from '@/lib/auth/customer-session'
+import { bearerFrom, verifyAccessToken } from '@/lib/auth/mobile-token'
 import { resolveSurface, servesPath, OPERATOR_LANDING } from '@/lib/surface'
 
 export async function middleware(req: NextRequest) {
@@ -73,6 +74,23 @@ export async function middleware(req: NextRequest) {
     return _hasCustomerSession
   }
 
+  // Mobile bearer token, same lazy discipline as the customer cookie above: verified at
+  // most once per request, and only for paths that could actually accept it. Edge-safe
+  // (Web Crypto HMAC, no DB) — see mobile-token.ts.
+  let _bearerChecked = false
+  let _hasBearerCustomer = false
+  const bearerCustomer = async (): Promise<boolean> => {
+    if (_bearerChecked) return _hasBearerCustomer
+    _bearerChecked = true
+    try {
+      const token = bearerFrom(req.headers.get('authorization'))
+      _hasBearerCustomer = token ? Boolean(await verifyAccessToken(token)) : false
+    } catch {
+      _hasBearerCustomer = false
+    }
+    return _hasBearerCustomer
+  }
+
   // Onboarding funnel (sub-project F): reachable by a holder of a valid signed
   // onboarding cookie even though they have no login session yet. Operators (session)
   // and internal callers (service token) pass too. Everyone else is bounced to login.
@@ -86,6 +104,9 @@ export async function middleware(req: NextRequest) {
     if (claims) return res
     // A logged-in customer can resume onboarding via their own session cookie.
     if (await customerSession()) return res
+    // ...or, from the app, via a bearer token. Without this a mobile user who still
+    // has onboarding steps left is locked out of finishing them.
+    if (await bearerCustomer()) return res
     if (isApi) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const url = req.nextUrl.clone()
     url.pathname = '/login'
@@ -95,17 +116,30 @@ export async function middleware(req: NextRequest) {
 
   // Customer-surface paths need the customer cookie; everything else decides on the
   // operator session alone, so we only pay for the extra decrypt where it matters.
-  const hasCustomerSession = isCustomerPath(pathname) ? await customerSession() : false
+  const isCustomerSurface = isCustomerPath(pathname)
+  const hasCustomerSession = isCustomerSurface ? await customerSession() : false
+  // Only consulted when the cookie did not already answer, and only on the customer
+  // surface — an operator path must never be reachable with a customer bearer token.
+  const hasBearerCustomer =
+    isCustomerSurface && !hasCustomerSession ? await bearerCustomer() : false
 
   const decision = decideAccess({
     pathname,
     isApi,
     hasSession,
     hasCustomerSession,
+    hasBearerCustomer,
     hasServiceToken,
   })
   if (decision === 'allow') return res
   if (decision === 'unauthorized') {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
+  // A caller that presented an Authorization header is an API client, not a browser.
+  // Redirecting it to an HTML login page yields a 200 full of markup that the app has
+  // to guess is a failure; 401 says exactly what happened (token missing/expired →
+  // refresh, then retry).
+  if (req.headers.get('authorization')) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
   const url = req.nextUrl.clone()

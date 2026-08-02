@@ -3,6 +3,7 @@ import { hashToken, isExpired } from '@/lib/auth/verification-token'
 import { hashPassword } from '@/lib/auth/password'
 import { checkPassword } from '@/lib/signup-validation'
 import { isCustomersDbConfigured, customerQuery, customerTransaction, customerExecute } from '@/lib/customers-db'
+import { revokeAllForUser } from '@/lib/auth/mobile-session'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -57,6 +58,13 @@ export async function POST(req: NextRequest) {
     await customerTransaction(async (run) => {
       await run(`UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2`, [newHash, row.user_id])
       await run(`UPDATE password_reset_tokens SET consumed_at = now() WHERE id = $1`, [row.id])
+    })
+
+    // A reset is the "I may be compromised" path, so it must end every mobile session
+    // too — otherwise a stolen device keeps a 60-day refresh token the reset never
+    // touched. Also bumps users.token_epoch to kill outstanding access tokens.
+    await revokeAllForUser(row.user_id, 'password_change').catch((e) => {
+      console.error('[reset-password] mobile revoke failed:', e)
     })
 
     try {

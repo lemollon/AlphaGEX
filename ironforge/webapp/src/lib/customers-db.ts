@@ -614,6 +614,39 @@ CREATE TABLE IF NOT EXISTS crm_agent_actions (
 );
 CREATE INDEX IF NOT EXISTS idx_crm_agent_actions_record ON crm_agent_actions(object_slug, record_id);
 CREATE INDEX IF NOT EXISTS idx_crm_agent_actions_created ON crm_agent_actions(created_at DESC);
+
+-- ── Mobile app token auth (APP-007) ──
+--
+-- Access tokens are stateless HMAC (mobile-token.ts) and are NOT stored — only the
+-- REFRESH token is, sha256-hashed, the same shape as email_verification_tokens.
+--
+-- family_id groups a chain of rotations from one login. Presenting a token that was
+-- already rotated means the raw value leaked, so the whole family is revoked and
+-- users.token_epoch is bumped (see mobile-session.ts rotateRefreshToken).
+CREATE TABLE IF NOT EXISTS mobile_refresh_tokens (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  family_id UUID NOT NULL,
+  token_hash TEXT NOT NULL,
+  device_id TEXT,
+  platform TEXT,
+  app_version TEXT,
+  user_agent TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  last_used_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked_at TIMESTAMPTZ,
+  revoked_reason TEXT,
+  replaced_by UUID
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mobile_refresh_token_hash ON mobile_refresh_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_mobile_refresh_user_active ON mobile_refresh_tokens(user_id) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_mobile_refresh_family ON mobile_refresh_tokens(family_id);
+
+-- Kill switch for STATELESS access tokens, which cannot be withdrawn individually.
+-- Every minted access token carries the epoch it was signed under; bumping this
+-- invalidates all of them at the next epoch-checked (sensitive) route.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS token_epoch INT NOT NULL DEFAULT 0;
 `
 
 let _ensured: Promise<void> | null = null

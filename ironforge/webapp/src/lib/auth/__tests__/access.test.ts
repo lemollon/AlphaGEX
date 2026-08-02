@@ -134,3 +134,52 @@ describe('isPublicMode', () => {
     expect(isPublicMode()).toBe(true)
   })
 })
+
+// ── Mobile bearer surface ──
+//
+// A bearer token must be EXACTLY as powerful as the customer cookie and no more.
+// The whole reason hasBearerCustomer is consumed inside the isCustomerPath branch
+// (and nowhere else) is so the operator surface stays closed by construction rather
+// than by an allowlist someone has to remember to update.
+
+describe('mobile bearer access', () => {
+  const base = { isApi: true, hasSession: false, hasServiceToken: false }
+
+  it('opens the customer API surface', () => {
+    for (const p of ['/api/live/summary', '/api/live/trades', '/api/support/chat', '/api/v1/enrollment']) {
+      expect(decideAccess({ ...base, pathname: p, hasBearerCustomer: true })).toBe('allow')
+    }
+  })
+
+  it('opens customer PAGES too, so deep links resolve', () => {
+    expect(decideAccess({ ...base, isApi: false, pathname: '/live', hasBearerCustomer: true })).toBe('allow')
+  })
+
+  it('does NOT open the operator surface', () => {
+    // The failure mode this pins: a customer token reaching bot control or account CRUD.
+    for (const p of ['/api/spark/status', '/api/accounts/manage', '/api/scanner/status']) {
+      expect(decideAccess({ ...base, pathname: p, hasBearerCustomer: true })).toBe('unauthorized')
+    }
+    expect(decideAccess({ ...base, isApi: false, pathname: '/spark', hasBearerCustomer: true }))
+      .toBe('redirect-login')
+  })
+
+  it('still 401s a customer API path with no credential of any kind', () => {
+    expect(decideAccess({ ...base, pathname: '/api/live/summary' })).toBe('unauthorized')
+  })
+
+  it('treats the mobile auth endpoints as public (they self-guard in-route)', () => {
+    expect(isPublicPath('/api/auth/mobile/login')).toBe(true)
+    expect(isPublicPath('/api/auth/mobile/refresh')).toBe(true)
+    expect(isPublicPath('/api/auth/mobile/policy')).toBe(true)
+  })
+
+  // Universal Links / App Links verification files. apple-app-site-association has NO
+  // file extension, so the middleware page matcher (extension-anchored) matches it; without
+  // this branch Apple's cookieless fetcher gets a 307 to /login and Universal Links
+  // silently never verify — no error, no log, just links that always open Safari.
+  it('serves the .well-known association files unauthenticated', () => {
+    expect(isPublicPath('/.well-known/apple-app-site-association')).toBe(true)
+    expect(isPublicPath('/.well-known/assetlinks.json')).toBe(true)
+  })
+})

@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { getSession } from '@/lib/auth/server'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { dbQuery, escapeSql } from '@/lib/db'
 
 /**
@@ -154,7 +154,14 @@ export async function resolveLiveViewer(req: NextRequest): Promise<LiveViewer> {
   {
     try {
       const ops = await getSession()
-      const customer = await getCustomerSession()
+      // Cookie OR mobile bearer token — getCustomerIdentity reads next/headers exactly
+      // as getCustomerSession did, so this single substitution makes all five
+      // /api/live/* routes bearer-aware without changing a route signature anywhere.
+      //
+      // NOTE for future edits: this function takes `req` but must NOT resolve identity
+      // from it. Switching to req.cookies would look like a tidy-up and would silently
+      // break every mobile read. viewer identity comes from next/headers, deliberately.
+      const customer = (await getCustomerIdentity()) ?? { customerId: null as string | null }
 
       // A CUSTOMER session wins over an operator one.
       //
