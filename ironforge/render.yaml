@@ -34,14 +34,16 @@ databases:
   # ---- Sandbox databases ----
   # Deliberately NOT named `ironforge` / `ironforge_customers`: scripts/sandbox-guard.js
   # refuses to boot a sandbox whose DATABASE_URL resolves to a production database
-  # name, and that check is exact-match on these names.
+  # name, and that check is exact-match on those names. Any non-production name
+  # works — the live instances (created 2026-08-02 from the dashboard) ended up as
+  # `ironforge_sandbox_db` and `ironforge_sandbox_customers_db`, which is fine.
   - name: ironforge-sandbox-db
     plan: basic_256mb
-    databaseName: ironforge_sandbox
+    databaseName: ironforge_sandbox_db
     user: ironforge_sandbox
   - name: ironforge-sandbox-customers-db
     plan: basic_256mb
-    databaseName: ironforge_customers_sandbox
+    databaseName: ironforge_sandbox_customers_db
     user: ironforge_sandbox
 
 services:

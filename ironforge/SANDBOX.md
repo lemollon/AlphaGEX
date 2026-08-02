@@ -46,22 +46,37 @@ positions can't be mistaken for a real account.
 
 ---
 
-## Standing it up (one time, Render dashboard)
+## What exists (created 2026-08-02)
+
+| Resource | ID | Database name |
+|---|---|---|
+| `ironforge-sandbox` (web, starter) | `srv-d9nqr861egvs738l2990` | — |
+| `ironforge-sandbox-db` | `dpg-d9nqqpajnfac73bkjelg-a` | `ironforge_sandbox_db` |
+| `ironforge-sandbox-customers-db` | `dpg-d9nqqt3ncjis73aoeba0-a` | `ironforge_sandbox_customers_db` |
+
+URL: https://ironforge-sandbox.onrender.com
+
+The rule on database names is **"must not be a production name"**, not "must be
+one specific name" — the guard rejects `ironforge`, `ironforge_customers`,
+`alphagex` and `alphagex_backtest` by *exact* match. Render derives the database
+name from the instance name, so `ironforge_sandbox_db` is fine; anything that
+resolves to a bare production name is not.
+
+## Standing it up (if recreating from scratch)
 
 `render.yaml` describes the intended end state, but the live services are managed
 from the dashboard — so create these there.
 
-1. **Two Postgres instances** (`basic_256mb` each, ~$7/mo):
-   - `ironforge-sandbox-db` → database name **`ironforge_sandbox`**
-   - `ironforge-sandbox-customers-db` → database name **`ironforge_customers_sandbox`**
-
-   The names matter. The guard rejects the production names by exact match.
+1. **Two Postgres instances** (`basic_256mb` each, ~$7/mo) whose database names
+   are not production names (see the table above for what was actually used).
 
 2. **One web service** `ironforge-sandbox` (starter, ~$7/mo):
-   - Repo `lemollon/AlphaGEX`, branch `main`, root dir `ironforge/webapp`
-   - Build: `npm install && npm run build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public`
-   - Start: `node start.js`
-   - Health check: `/api/health`
+   - Repo `lemollon/AlphaGEX`, branch `main`
+   - Build: `cd ironforge/webapp && npm install && npm run build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public`
+   - Start: `cd ironforge/webapp && node start.js`
+   - (The monorepo path is in the commands because the Render API cannot set
+     `rootDir`; setting `rootDir: ironforge/webapp` in the dashboard and dropping
+     the `cd` is equivalent.)
 
 3. **Env vars** (see the `ironforge-sandbox` block in `render.yaml` for the full
    list with rationale):
@@ -97,6 +112,10 @@ from the dashboard — so create these there.
 
 5. **Deploy.** Watch the logs for `[sandbox-guard] OK`. If it says
    `REFUSING TO START`, it lists every offending variable — fix and redeploy.
+
+   A service created before its databases are attached **will fail its first
+   deploy on purpose**, with `✗ DATABASE_URL is unset`. That is the guard
+   working, not a misconfiguration; attach the databases and redeploy.
 
 ---
 
