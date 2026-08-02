@@ -31,6 +31,19 @@ databases:
     databaseName: ironforge
     user: ironforge
 
+  # ---- Sandbox databases ----
+  # Deliberately NOT named `ironforge` / `ironforge_customers`: scripts/sandbox-guard.js
+  # refuses to boot a sandbox whose DATABASE_URL resolves to a production database
+  # name, and that check is exact-match on these names.
+  - name: ironforge-sandbox-db
+    plan: basic_256mb
+    databaseName: ironforge_sandbox
+    user: ironforge_sandbox
+  - name: ironforge-sandbox-customers-db
+    plan: basic_256mb
+    databaseName: ironforge_customers_sandbox
+    user: ironforge_sandbox
+
 services:
   # ---- Next.js Dashboard + Scanner ----
   - type: web
@@ -140,5 +153,90 @@ services:
       # /api/{bot}/production-pause (self-guarded in-route).
       - key: IRONFORGE_PAUSE_PASSWORD
         sync: false
+      - key: NODE_ENV
+        value: production
+
+  # ---- Sandbox (ironforge-sandbox.onrender.com) ----
+  # The customer product, disposable. Same image, same customer surface, but
+  # pointed at throwaway databases, Tradier's sandbox host and Stripe test mode,
+  # and populated with fabricated customers (webapp/scripts/seed-sandbox.js) at
+  # every funnel stage. This is where enrollment → billing → activation → /live
+  # gets exercised, because production has enrollment closed behind the waitlist
+  # and its numbers are real.
+  #
+  # IRONFORGE_ENV=sandbox is load-bearing, not cosmetic: start.js runs
+  # scripts/sandbox-guard.js first, and that guard EXITS NON-ZERO if this service
+  # can see a production broker key, a live Stripe key, the scanner switch, the
+  # customer executor, or a production database. A misconfigured sandbox fails
+  # its deploy instead of quietly trading.
+  - type: web
+    name: ironforge-sandbox
+    runtime: node
+    plan: starter
+    rootDir: ironforge/webapp
+    numInstances: 1
+    buildCommand: npm install && npm run build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
+    startCommand: node start.js
+    healthCheckPath: /api/health
+    envVars:
+      # The guard's master switch. Without this the service is just another
+      # production deploy and every safety check below is skipped.
+      - key: IRONFORGE_ENV
+        value: sandbox
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ironforge-sandbox-db
+          property: connectionString
+      - key: CUSTOMERS_DATABASE_URL
+        fromDatabase:
+          name: ironforge-sandbox-customers-db
+          property: connectionString
+      - key: IRONFORGE_MODE
+        value: customer
+      - key: NEXT_PUBLIC_IRONFORGE_MODE
+        value: customer
+      # SCANNER_ENABLED and CUSTOMER_EXECUTOR_ENABLED are ABSENT and must stay so.
+      # Both default off in code; the guard additionally rejects them set to "true".
+      #
+      # NO TRADIER_* PRODUCTION KEYS. With TRADIER_API_KEY unset, tradier.ts already
+      # defaults to sandbox.tradier.com — set explicitly here so the intent is not
+      # an inference from an absent variable.
+      - key: TRADIER_BASE_URL
+        value: https://sandbox.tradier.com/v1
+      - key: TRADIER_SANDBOX_KEY_USER
+        sync: false
+      # Stripe TEST mode. The guard rejects anything not sk_test_/rk_test_.
+      # This needs its own webhook endpoint in the Stripe test dashboard pointed at
+      # https://ironforge-sandbox.onrender.com/api/billing/webhook.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      # Sessions: distinct secrets so no sandbox cookie ever decrypts in production
+      # (and vice versa) — the same reason operator and customer secrets differ.
+      - key: IRONFORGE_SESSION_SECRET
+        sync: false
+      - key: IRONFORGE_CUSTOMER_SESSION_SECRET
+        sync: false
+      - key: IRONFORGE_SERVICE_TOKEN
+        sync: false
+      # SnapTrade sandbox/test credentials — NOT the production pair.
+      - key: SNAPTRADE_CLIENT_ID
+        sync: false
+      - key: SNAPTRADE_CONSUMER_KEY
+        sync: false
+      - key: SNAPTRADE_SECRET_KEY
+        sync: false
+      # Email verification is part of the funnel under test, and seeded personas
+      # use @sandbox.ironforge.test which cannot receive mail — so Resend is allowed.
+      # ATTIO_API_KEY, TWILIO_* and DISCORD_WEBHOOK_URL are deliberately absent:
+      # they write to shared real systems and the guard rejects them unless
+      # SANDBOX_ALLOW_OUTBOUND=true.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      # ENROLLMENT_WAITLIST_MODE deliberately ABSENT — enrollment must be OPEN here.
+      # It is closed on ironforge-customer, which is precisely why this exists.
       - key: NODE_ENV
         value: production

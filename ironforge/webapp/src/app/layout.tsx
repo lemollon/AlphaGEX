@@ -3,7 +3,9 @@ import { Inter, Oswald } from 'next/font/google'
 import './globals.css'
 import Shell from '@/components/Shell'
 import EnrollmentGate from '@/components/EnrollmentGate'
+import SandboxBanner from '@/components/SandboxBanner'
 import { isEnrollmentClosed } from '@/lib/enrollment-mode'
+import { isSandbox } from '@/lib/sandbox'
 
 // Single source of truth for site typography.
 // Inter = body/UI sans (--font-sans, also Tailwind's font-sans).
@@ -36,6 +38,10 @@ export default function RootLayout({
             inert unless ENROLLMENT_WAITLIST_MODE is on. Read server-side here so
             the flag never reaches the client bundle. */}
         <EnrollmentGate enabled={isEnrollmentClosed()} />
+        {/* Sandbox ribbon. Inert unless IRONFORGE_ENV=sandbox. Read server-side
+            for the same reason as the gate above — the flag stays off the client
+            bundle, and the banner cannot be disabled from the browser. */}
+        <SandboxBanner enabled={isSandbox()} />
       </body>
     </html>
   )

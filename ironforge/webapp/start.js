@@ -1,3 +1,22 @@
+// Sandbox safety gate. No-op unless IRONFORGE_ENV=sandbox, in which case it
+// proves this service cannot reach real money (prod broker keys, live Stripe,
+// the scanner, the production databases) and exits non-zero if it can. Runs
+// BEFORE the server is loaded so a misconfigured sandbox never serves traffic.
+//
+// This is also the boot path of the LIVE services, so a failure to load the
+// guard must never be what stops the real-money scanner from starting: on
+// production we log and continue, on sandbox we fail closed.
+try {
+  require('./scripts/sandbox-guard.js').enforceSandboxGuard();
+} catch (err) {
+  if (String(process.env.IRONFORGE_ENV || '').trim().toLowerCase() === 'sandbox') {
+    console.error(`[sandbox-guard] could not load the guard: ${err.message}`);
+    console.error('[sandbox-guard] refusing to start an unverified sandbox.');
+    process.exit(1);
+  }
+  console.warn(`[sandbox-guard] skipped (not sandbox): ${err.message}`);
+}
+
 // Force 0.0.0.0 binding before Next.js reads HOSTNAME.
 // Kubernetes overrides the HOSTNAME env var with the pod name,
 // which causes the standalone server to bind to an unreachable address.
