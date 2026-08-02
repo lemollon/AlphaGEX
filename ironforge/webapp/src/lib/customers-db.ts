@@ -579,6 +579,41 @@ CREATE INDEX IF NOT EXISTS idx_crm_outbox_user ON crm_outbox(user_id);
 -- audit_events is queried by user_id/event_type all over the app but shipped without
 -- an index; the CRM projection reads it per user, which makes that bite.
 CREATE INDEX IF NOT EXISTS idx_audit_events_user_type ON audit_events(user_id, event_type);
+
+-- Brokerage failure context for the CRM's Brokerage Issues view. The internal status column
+-- only carries pending|active|disabled|removed, which cannot express WHY a connection broke or
+-- whether the customer must re-authorise — so the view the spec asks for had nothing to show.
+-- These are normalized, customer-safe fields ONLY: never a token, credential, or raw provider
+-- payload (AC-CRM-007, enforced again in crm/events.ts before anything leaves the backend).
+ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ;
+ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS last_error_code TEXT;
+ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS last_error_summary TEXT;
+ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS reauthorization_required BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Claude agent action log. Every write the agent makes through /api/crm/agent/* lands here with
+-- before/after values, so AC-CRM-008 and AC-CRM-009 are demonstrable from data rather than
+-- taken on trust. Deliberately separate from audit_events: the spec requires agent activity to
+-- be distinguishable from backend events (§10), and mixing them makes "what did the AI change"
+-- unanswerable.
+CREATE TABLE IF NOT EXISTS crm_agent_actions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id TEXT NOT NULL,                          -- which agent persona acted
+  action TEXT NOT NULL,                            -- qualify | note | task | list_add | list_remove | ...
+  outcome TEXT NOT NULL,                           -- applied | blocked | approval_required
+  object_slug TEXT,
+  record_id TEXT,
+  attribute_slug TEXT,
+  before_value JSONB,
+  after_value JSONB,
+  rule_version TEXT,                               -- which instruction version produced this
+  approver TEXT,                                   -- set only for approval-required actions
+  rationale TEXT,
+  source_refs JSONB,                               -- records/events the agent reasoned from
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_crm_agent_actions_record ON crm_agent_actions(object_slug, record_id);
+CREATE INDEX IF NOT EXISTS idx_crm_agent_actions_created ON crm_agent_actions(created_at DESC);
 `
 
 let _ensured: Promise<void> | null = null

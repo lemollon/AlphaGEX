@@ -144,6 +144,11 @@ export function isPublicPath(pathname: string): boolean {
   // Public waitlist submission — no auth by design; self-guards with validation,
   // rate limits, and a honeypot in-route.
   if (pathname === '/api/waitlist') return true
+  // CRM agent façade — middleware-open, self-guarded in-route by CRM_AGENT_TOKEN. The agent
+  // carries its own credential rather than the service token precisely so it CANNOT reach the
+  // other /api/ops/* tooling; that separation is the point, so it cannot be gated here.
+  // CRM_AGENT_TOKEN unset = every request 401s, matching the repo's fail-safe env convention.
+  if (pathname.startsWith('/api/crm/')) return true
   // Forge Community APIs: GET is public-read (drives the locked preview for
   // anonymous visitors); POSTs self-guard the customer session in-route.
   if (pathname.startsWith('/api/community/')) return true

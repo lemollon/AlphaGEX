@@ -67,7 +67,7 @@ function sleep(ms: number): Promise<void> {
  * event_id primary key, so a duplicate attempt is safe.
  */
 export async function attioRequest<T = unknown>(
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   body?: unknown,
   opts: RequestOptions = {},

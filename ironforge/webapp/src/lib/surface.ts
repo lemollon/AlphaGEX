@@ -156,7 +156,10 @@ export const CUSTOMER_API_PREFIXES: readonly string[] = [
 ]
 
 /** Shared infrastructure endpoints both services need. */
-export const SHARED_API_PREFIXES: readonly string[] = ['/api/auth/', '/api/ops/']
+// '/api/crm/' is shared for the same reason as '/api/ops/': the CRM agent façade needs the
+// Attio key and the customers DB, which live on the CUSTOMER service, while being operator-
+// facing tooling. It is token-gated in-route (CRM_AGENT_TOKEN), not by surface.
+export const SHARED_API_PREFIXES: readonly string[] = ['/api/auth/', '/api/ops/', '/api/crm/']
 export const SHARED_API_EXACT: readonly string[] = ['/api/health']
 
 /**
