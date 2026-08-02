@@ -487,6 +487,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_waitlist_email_lower ON waitlist_submission
 CREATE INDEX IF NOT EXISTS idx_waitlist_ip_created ON waitlist_submissions(ip_hash, created_at);
 -- Additive on already-created DBs (CREATE TABLE IF NOT EXISTS is a no-op there).
 ALTER TABLE waitlist_submissions ADD COLUMN IF NOT EXISTS campaign JSONB;
+-- Invitation tracking. The spec makes "Invitation sent" a P0 event and Invited a lifecycle
+-- status, but no invitation mechanism existed anywhere in the product — enrollment is closed
+-- (ENROLLMENT_WAITLIST_MODE) and there was no way to let anyone back in. invited_at is both the
+-- CRM signal and the idempotency guard: an already-invited row is never re-invited.
+ALTER TABLE waitlist_submissions ADD COLUMN IF NOT EXISTS invited_at TIMESTAMPTZ;
+ALTER TABLE waitlist_submissions ADD COLUMN IF NOT EXISTS invited_by TEXT;
+CREATE INDEX IF NOT EXISTS idx_waitlist_invited ON waitlist_submissions(invited_at);
 
 -- Stripe webhook replay/dedupe guard + dead-letter (audit C5). The INSERT is the
 -- processing claim; processed_at NULL + error = a failed event Stripe will retry.
