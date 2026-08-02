@@ -1,0 +1,17 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["TEAMID.trade.ironforge.app"],
+        "components": [
+          { "/": "/app/return", "comment": "Stripe + brokerage OAuth return bridge" },
+          { "/": "/app/brokerage/return", "comment": "Brokerage connect callback" },
+          { "/": "/live*", "comment": "Push deep links into the Forge tab" },
+          { "/": "/account*", "comment": "Push deep links into Account" },
+          { "/": "/community*", "comment": "Push deep links into Community" }
+        ]
+      }
+    ]
+  },
+  "webcredentials": { "apps": ["TEAMID.trade.ironforge.app"] }
+}

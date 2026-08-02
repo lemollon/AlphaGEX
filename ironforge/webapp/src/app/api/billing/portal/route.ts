@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { publicOrigin } from '@/lib/public-origin'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
+import { billingReturn, type BillingClient } from '@/lib/mobile/deep-link'
 import { isCustomersDbConfigured, customerQuery } from '@/lib/customers-db'
 import { isStripeConfigured, createBillingPortalSession } from '@/lib/billing/stripe'
 
@@ -15,8 +16,13 @@ export const dynamic = 'force-dynamic'
  * 503 until Stripe + the portal are provisioned, so the Billing page degrades cleanly.
  */
 export async function POST(req: NextRequest) {
-  const session = await getCustomerSession()
-  if (!session.customerId) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
+  // Cookie OR mobile bearer, so "Manage Membership & Billing" works from the app.
+  const identity = await getCustomerIdentity()
+  if (!identity) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
+  const session = { customerId: identity.customerId }
+  // Derived from how the caller authenticated, never from the request body — a spoofed
+  // flag would strand a web customer on a bridge page their browser cannot act on.
+  const client: BillingClient = identity.source === 'bearer' ? 'mobile' : 'web'
 
   if (!isStripeConfigured() || !isCustomersDbConfigured()) {
     return NextResponse.json(
@@ -40,7 +46,7 @@ export async function POST(req: NextRequest) {
 
     const { url } = await createBillingPortalSession({
       customerId: stripeCustomerId,
-      returnUrl: `${publicOrigin(req)}/account/billing`,
+      returnUrl: billingReturn(publicOrigin(req), client, '/account/billing'),
     })
     return NextResponse.json({ ok: true, url })
   } catch (e) {
