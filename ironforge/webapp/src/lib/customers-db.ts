@@ -535,6 +535,42 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_customer_positions_source_user
   ON customer_positions (source_position_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_customer_positions_user ON customer_positions(user_id);
 CREATE INDEX IF NOT EXISTS idx_customer_positions_status ON customer_positions(status);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- CRM outbox (lib/crm). Every lifecycle event destined for Attio lands here first
+-- and is delivered by a background drain, instead of each call site doing an
+-- inline Attio write and hoping. That inversion is what buys the spec's
+-- auditability and retry requirements (AC-CRM-009, AC-CRM-010):
+--   - event_id is the PRIMARY KEY, so a replayed webhook or a double-fired
+--     emitter is a no-op INSERT rather than a duplicate CRM write;
+--   - a customer request never blocks on, or fails because of, Attio;
+--   - attempts >= max flips status to 'failed' — that terminal state IS the
+--     replayable dead-letter queue (POST /api/ops/crm/replay).
+-- Deliberately separate from attio_sync_queue, which only understands the signup
+-- AttioContact shape; Phase 2 migrates those call sites onto this table.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS crm_outbox (
+  event_id TEXT PRIMARY KEY,                       -- caller-supplied, stable per business event
+  event_type TEXT NOT NULL,                        -- crm.waitlist_submitted, crm.subscription_active, …
+  payload JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',          -- pending | delivered | failed
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_error TEXT,
+  correlation_id TEXT,                             -- request id / source event id, for tracing
+  user_id UUID,                                    -- nullable: waitlist events precede the account
+  attio_record_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  delivered_at TIMESTAMPTZ
+);
+-- The drain's hot query: due work, oldest first.
+CREATE INDEX IF NOT EXISTS idx_crm_outbox_due ON crm_outbox(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_crm_outbox_user ON crm_outbox(user_id);
+
+-- audit_events is queried by user_id/event_type all over the app but shipped without
+-- an index; the CRM projection reads it per user, which makes that bite.
+CREATE INDEX IF NOT EXISTS idx_audit_events_user_type ON audit_events(user_id, event_type);
 `
 
 let _ensured: Promise<void> | null = null
