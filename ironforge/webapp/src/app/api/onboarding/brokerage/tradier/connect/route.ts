@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { resolveCustomerUserId } from '@/lib/brokerage/identity'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isTradierOAuthConfigured, buildAuthorizeUrl, tradierPkceEnabled } from '@/lib/tradier-oauth'
 import { createOAuthState } from '@/lib/enrollment/oauth-state'
 import { isCustomersDbConfigured, customerExecute } from '@/lib/customers-db'
@@ -42,6 +43,9 @@ export async function POST(req: NextRequest) {
       brokerCode: 'tradier',
       pkce: tradierPkceEnabled(),
       returnTo,
+      // Derived from how the caller authenticated, never from the body — a spoofed
+      // flag would aim our post-OAuth redirect at a surface the caller chose.
+      client: (await getCustomerIdentity())?.source === 'bearer' ? 'mobile' : 'web',
     })
     const redirectURI = buildAuthorizeUrl(state, codeChallenge)
     await customerExecute(

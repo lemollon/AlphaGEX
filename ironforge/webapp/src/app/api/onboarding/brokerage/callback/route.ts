@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { publicOrigin } from '@/lib/public-origin'
 import { resolveCustomerUserId } from '@/lib/brokerage/identity'
+import { consumeOAuthState, type OAuthClient } from '@/lib/enrollment/oauth-state'
+import { billingReturn } from '@/lib/mobile/deep-link'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { decryptSecret, encryptSecret } from '@/lib/crypto/secret-box'
 import { evaluateAccountEligibility, maskAccountNumber, normalizeInstitutionSlug } from '@/lib/enrollment/eligibility'
@@ -40,10 +42,35 @@ export async function GET(req: NextRequest) {
     ? new URL('/enroll/broker?connected=1', publicOrigin(req))
     : new URL('/onboarding/complete', publicOrigin(req))
 
-  const uid = await resolveCustomerUserId(req)
+  // Identity: STATE FIRST, cookie second.
+  //
+  // The state is a single-use server-side record minted by the connect route, so it
+  // works with no cookie at all — which is the entire reason the mobile flow can
+  // exist. An ASWebAuthenticationSession / Chrome Custom Tab does not share the app's
+  // cookie jar, so the cookie path can never succeed there.
+  //
+  // consumeOAuthState marks the row consumed inside the same UPDATE that checks it, so
+  // a replayed callback finds nothing and fails safely rather than re-running the sync.
+  // The cookie fallback keeps the existing web flow working unchanged.
+  const stateRecord = await consumeOAuthState(req.nextUrl.searchParams.get('state'))
+  const uid = stateRecord?.userId ?? (await resolveCustomerUserId(req))
+  const client: OAuthClient = stateRecord?.client ?? 'web'
+
+  // Where a completed (or failed) connection should land. Mobile goes through the https
+  // bridge, which the installed app claims as a Universal/App Link.
+  const origin = publicOrigin(req)
+  const doneUrl = (status: 'success' | 'incomplete' | 'error') =>
+    client === 'mobile'
+      ? new URL(billingReturn(origin, 'mobile', '/account/brokerage', { status }))
+      : status === 'success'
+        ? complete
+        : (() => {
+            brokerageStep.searchParams.set(status === 'incomplete' ? 'incomplete' : 'error', '1')
+            return brokerageStep
+          })()
+
   if (!uid || !isSnapTradeConfigured() || !isCustomersDbConfigured()) {
-    brokerageStep.searchParams.set('error', '1')
-    return NextResponse.redirect(brokerageStep)
+    return NextResponse.redirect(doneUrl('error'))
   }
 
   try {
@@ -78,8 +105,7 @@ export async function GET(req: NextRequest) {
           },
         })
       }
-      brokerageStep.searchParams.set('error', '1')
-      return NextResponse.redirect(brokerageStep)
+      return NextResponse.redirect(doneUrl('error'))
     }
 
     const snaptrade = getSnapTrade()
@@ -113,8 +139,7 @@ export async function GET(req: NextRequest) {
           reauthorizationRequired: false,
         },
       })
-      brokerageStep.searchParams.set('incomplete', '1')
-      return NextResponse.redirect(brokerageStep)
+      return NextResponse.redirect(doneUrl('incomplete'))
     }
 
     // Buying power per account, fetched BEFORE the transaction (network calls don't
@@ -283,7 +308,7 @@ export async function GET(req: NextRequest) {
       console.error('[brokerage/callback] attio sync threw:', e)
     }
 
-    return NextResponse.redirect(complete)
+    return NextResponse.redirect(doneUrl('success'))
   } catch (e) {
     console.error('[brokerage/callback] failed:', e)
     if (uid && isCustomersDbConfigured()) {
@@ -320,7 +345,6 @@ export async function GET(req: NextRequest) {
         console.error('[brokerage/callback] failure audit/CRM emit threw:', inner)
       }
     }
-    brokerageStep.searchParams.set('error', '1')
-    return NextResponse.redirect(brokerageStep)
+    return NextResponse.redirect(doneUrl('error'))
   }
 }

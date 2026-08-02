@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { publicOrigin } from '@/lib/public-origin'
 import { resolveCustomerUserId } from '@/lib/brokerage/identity'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
+import { isOptionsCapable } from '@/lib/brokerage/providers'
+import { createOAuthState } from '@/lib/enrollment/oauth-state'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { encryptSecret, decryptSecret } from '@/lib/crypto/secret-box'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
@@ -44,6 +47,17 @@ export async function POST(req: NextRequest) {
     // no/invalid body — fine, fall through to the full-list portal
   }
 
+  // APP-041 provider allowlist, ENFORCED at the API boundary. The curated list already
+  // existed but only filtered the dropdown, while this route passed the client-supplied
+  // slug straight through to SnapTrade — so a caller could connect a crypto exchange the
+  // bot can never trade in, and only find out later.
+  if (broker && !isOptionsCapable(broker)) {
+    return NextResponse.json(
+      { ok: false, error: 'That brokerage is not supported for options trading.' },
+      { status: 400 },
+    )
+  }
+
   if (!isSnapTradeConfigured() || !isCustomersDbConfigured()) {
     return NextResponse.json(
       { ok: false, error: 'Brokerage connection is temporarily unavailable. Please try again shortly.' },
@@ -73,11 +87,38 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Single-use server-side state, the same record the Tradier flow already uses.
+    //
+    // THIS IS WHAT MAKES THE MOBILE FLOW POSSIBLE. The callback previously resolved the
+    // member from a COOKIE, and an ASWebAuthenticationSession / Custom Tab has its own
+    // cookie jar — so the callback simply failed for the app. Carrying an opaque state
+    // instead binds the callback to the initiating member with no cookie at all.
+    //
+    // The state rides our own customRedirect as a query param. That is proven to survive
+    // SnapTrade's redirect: the existing production flow already carries `return_to` the
+    // same way.
+    const identity = await getCustomerIdentity()
+    const client = identity?.source === 'bearer' ? 'mobile' : 'web'
+    const { state } = await createOAuthState({
+      userId: user.id,
+      brokerCode: 'snaptrade',
+      // SnapTrade's Connection Portal is not an OAuth2 authorize endpoint, so PKCE does
+      // not apply. The binding here is the single-use state plus the server-held
+      // userSecret. Tradier, which IS a real OAuth2 flow, carries PKCE separately.
+      pkce: false,
+      returnTo,
+      client,
+    })
+
+    const redirectUrl = new URL(`${publicOrigin(req)}/api/onboarding/brokerage/callback`)
+    if (returnTo) redirectUrl.searchParams.set('return_to', returnTo)
+    redirectUrl.searchParams.set('state', state)
+
     const login = await snaptrade.authentication.loginSnapTradeUser({
       userId: user.id,
       userSecret,
       connectionType: 'trade',
-      customRedirect: `${publicOrigin(req)}/api/onboarding/brokerage/callback${returnTo ? `?return_to=${returnTo}` : ''}`,
+      customRedirect: redirectUrl.toString(),
       ...(broker ? { broker } : {}),
     })
     const redirectURI = (login.data as { redirectURI?: string }).redirectURI

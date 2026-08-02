@@ -32,12 +32,28 @@ export function asReturnTo(v: unknown): OAuthReturnTo {
   return v === 'enroll' ? 'enroll' : 'onboarding'
 }
 
+/**
+ * Which CLIENT started the round-trip. Decides whether the callback redirects to a web
+ * page or to the /app/brokerage/return deep-link bridge.
+ *
+ * Stored SERVER-SIDE with the rest of the state, and derived from how the caller
+ * authenticated — never accepted from a request body. A caller that could name its own
+ * return surface could aim our post-OAuth redirect wherever it liked; the state record
+ * IS the authorization.
+ */
+export type OAuthClient = 'web' | 'mobile'
+
+export function asClient(v: unknown): OAuthClient {
+  return v === 'mobile' ? 'mobile' : 'web'
+}
+
 export interface OAuthStateRecord {
   state: string
   userId: string
   brokerCode: string
   codeVerifier: string | null
   returnTo: OAuthReturnTo
+  client: OAuthClient
 }
 
 function b64url(buf: Buffer): string {
@@ -66,14 +82,16 @@ export async function createOAuthState(opts: {
   pkce: boolean
   /** Where the callback should land the customer. Allowlisted literal, never a URL. */
   returnTo?: OAuthReturnTo
+  /** Web page vs mobile deep-link bridge. Derive from the caller's auth, not its body. */
+  client?: OAuthClient
 }): Promise<{ state: string; codeChallenge?: string }> {
   const state = b64url(randomBytes(32))
   const verifier = opts.pkce ? generateCodeVerifier() : null
 
   await customerExecute(
-    `INSERT INTO oauth_states (state, user_id, broker_code, code_verifier, expires_at, return_to)
-     VALUES ($1, $2, $3, $4, now() + interval '10 minutes', $5)`,
-    [state, opts.userId, opts.brokerCode, verifier, asReturnTo(opts.returnTo)],
+    `INSERT INTO oauth_states (state, user_id, broker_code, code_verifier, expires_at, return_to, client)
+     VALUES ($1, $2, $3, $4, now() + interval '10 minutes', $5, $6)`,
+    [state, opts.userId, opts.brokerCode, verifier, asReturnTo(opts.returnTo), asClient(opts.client)],
   )
 
   return verifier ? { state, codeChallenge: codeChallengeS256(verifier) } : { state }
@@ -94,14 +112,15 @@ export async function createOAuthState(opts: {
 export async function consumeOAuthState(state: string | null | undefined): Promise<OAuthStateRecord | null> {
   if (!state) return null
   const rows = await customerQuery<{
-    state: string; user_id: string; broker_code: string; code_verifier: string | null; return_to: string | null
+    state: string; user_id: string; broker_code: string; code_verifier: string | null
+    return_to: string | null; client: string | null
   }>(
     `UPDATE oauth_states
         SET consumed_at = now()
       WHERE state = $1
         AND consumed_at IS NULL
         AND expires_at > now()
-      RETURNING state, user_id, broker_code, code_verifier, return_to`,
+      RETURNING state, user_id, broker_code, code_verifier, return_to, client`,
     [state],
   )
   const r = rows[0]
@@ -112,6 +131,7 @@ export async function consumeOAuthState(state: string | null | undefined): Promi
     brokerCode: r.broker_code,
     codeVerifier: r.code_verifier,
     returnTo: asReturnTo(r.return_to),
+    client: asClient(r.client),
   }
 }
 
