@@ -35,6 +35,7 @@ BOT_DISPLAY_NAMES: dict[str, str] = {
     "ATLAS":                "CORNERSTONE",   # SPX Wheel - Psalm 118:22
     "HERMES":               "SHEPHERD",      # Manual Wheel - Psalm 23:1-2
     "HERACLES":             "VALOR",         # MES Futures Scalping - Joshua 1:9
+    "ZEPHYR":               "ASAHEL",        # Kalshi Live-Sports Scalper - 2 Sam 2:18
     "AGAPE":                "AGAPE",         # ETH Micro Futures - 1 Cor 13:4,7
     "AGAPE_SPOT":           "AGAPE-SPOT",    # 24/7 Crypto Spot - 1 Cor 13:8
     "AGAPE_ETH_PERP":   "AGAPE-ETH-PERP",    # ETH Perpetual Contract
