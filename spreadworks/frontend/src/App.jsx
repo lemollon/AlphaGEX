@@ -168,9 +168,7 @@ function RouteBtn({ icon, label, to, end = false }) {
 // Each row is a react-router `<Link>` so navigation works even if the
 // onClick side-effects throw — clicking always changes the URL, period.
 // The onClick callback only persists localStorage + closes the menu.
-function BotMenu({ activeBotId, onSelect, anchorRef, panelRef }) {
-  const statusMap = useBotStatusMap();
-  const tsunamiPnl = useTsunamiStatus();
+function BotMenu({ activeBotId, onSelect, anchorRef, panelRef, statusMap, tsunamiPnl }) {
   const bots = Object.entries(BOT_REGISTRY).map(([id, meta]) => ({ id, ...meta }));
 
   // Anchored to the chip but PORTALED to <body>. The header sets backdrop-filter,
@@ -255,8 +253,8 @@ function BotMenu({ activeBotId, onSelect, anchorRef, panelRef }) {
             fontFamily: 'JetBrains Mono', fontSize: 11, fontWeight: 600,
             color: tsunamiPnl > 0 ? '#34d399' : tsunamiPnl < 0 ? '#fb7185' : '#64748b',
           }}>
-            {tsunamiPnl == null || tsunamiPnl === 0
-              ? '—'
+            {tsunamiPnl == null ? '—'
+              : tsunamiPnl === 0 ? '$0'
               : (tsunamiPnl > 0 ? '+' : '−') + '$' + Math.abs(tsunamiPnl).toFixed(0)}
           </span>
         </div>
@@ -264,9 +262,18 @@ function BotMenu({ activeBotId, onSelect, anchorRef, panelRef }) {
       {bots.map(b => {
         const t = BOT_THEME[b.id];
         const active = b.id === activeBotId;
-        const status = statusMap[b.id] || {};
-        const enabled = !!status.enabled;
-        const pnl = typeof status.today_pnl === 'number' ? status.today_pnl : 0;
+        const status = statusMap[b.id];
+        const loaded = !!status;
+        const enabled = !!status?.enabled;
+        // Live day P&L = realized closes + mark-to-market on open positions.
+        // This used to read today_pnl alone, which is realized-only and is
+        // therefore $0 for every bot until something actually closes — so the
+        // whole menu rendered "—" all session even with 11 bots holding live
+        // positions. That read as "still loading" when it was just showing a
+        // true zero. Adding unrealized makes the row track the open book.
+        const realized = typeof status?.today_pnl === 'number' ? status.today_pnl : 0;
+        const unreal = typeof status?.unrealized_pnl === 'number' ? status.unrealized_pnl : 0;
+        const pnl = realized + unreal;
         return (
           <Link
             key={b.id}
@@ -305,13 +312,18 @@ function BotMenu({ activeBotId, onSelect, anchorRef, panelRef }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
               <span style={{
                 width: 6, height: 6, borderRadius: 9999,
-                background: enabled ? '#34d399' : '#475569',
+                background: !loaded ? '#334155' : enabled ? '#34d399' : '#475569',
               }} />
               <span style={{
                 fontFamily: 'JetBrains Mono', fontSize: 11, fontWeight: 600,
-                color: pnl > 0 ? '#34d399' : pnl < 0 ? '#fb7185' : '#64748b',
+                color: !loaded ? '#475569'
+                  : pnl > 0 ? '#34d399' : pnl < 0 ? '#fb7185' : '#64748b',
               }}>
-                {pnl === 0 ? '—' : (pnl > 0 ? '+' : '−') + '$' + Math.abs(pnl).toFixed(0)}
+                {/* '—' now means "not loaded yet" only. A bot that is genuinely
+                    flat shows $0, so a dash is never mistaken for a hang. */}
+                {!loaded ? '—'
+                  : pnl === 0 ? '$0'
+                  : (pnl > 0 ? '+' : '−') + '$' + Math.abs(pnl).toFixed(0)}
               </span>
             </div>
           </Link>
@@ -402,6 +414,14 @@ function NavBar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   const menuPanelRef = useRef(null);
+
+  // Polled HERE, not inside BotMenu. BotMenu only mounts while the dropdown is
+  // open, so hooking the polls there meant every open started a cold fetch and
+  // every close threw the result away — the menu showed placeholder rows for
+  // the round-trip each time. NavBar is always mounted, so by the time the user
+  // clicks the chip the map is already populated and the menu paints filled in.
+  const statusMap = useBotStatusMap();
+  const tsunamiPnl = useTsunamiStatus();
   useEffect(() => {
     function onDoc(e) {
       // The menu is portaled to <body>, so it lives outside menuRef (the chip).
@@ -595,6 +615,8 @@ function NavBar() {
             activeBotId={activeBotId}
             anchorRef={menuRef}
             panelRef={menuPanelRef}
+            statusMap={statusMap}
+            tsunamiPnl={tsunamiPnl}
             onSelect={(id) => {
               // The <Link> in BotMenu is supposed to navigate, but Tide/Drift/
               // Flow have been silently failing for the user in spite of the
