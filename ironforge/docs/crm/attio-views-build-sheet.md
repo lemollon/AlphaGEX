@@ -18,7 +18,7 @@ verified against the live workspace.
 | 4 | Active Members | People | P0 | **Built** — add the Account Health sort when there is data |
 | 5 | Brokerage Issues | Brokerage Connections | P0 | **Built** — columns, Or-filter and sort all saved |
 | 6 | Paused & Canceled | Memberships | P1 | **Built** |
-| 7 | Founding Member Outreach | List | P1 | To build |
+| 7 | Founding Member Outreach | List | P1 | **View created** ("Outreach Queue") — needs its 5 columns + sort |
 
 ## How to build one (the mechanics)
 
