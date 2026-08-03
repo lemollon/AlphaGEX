@@ -39,7 +39,6 @@ describe('checkSandboxEnv', () => {
 
   describe('broker credentials', () => {
     it.each([
-      'TRADIER_API_KEY',
       'TRADIER_PROD_API_KEY',
       'TRADIER_PROD_ACCOUNT_ID',
       'TRADIER_SPARK2_API_KEY',
@@ -58,6 +57,40 @@ describe('checkSandboxEnv', () => {
     it('accepts the sandbox Tradier host', () => {
       const res = checkSandboxEnv(safeEnv({ TRADIER_BASE_URL: 'https://sandbox.tradier.com/v1' }))
       expect(res.errors).toEqual([])
+    })
+
+    it('rejects a production host disguised in a query string', () => {
+      // `includes('sandbox.tradier.com')` used to accept this.
+      const res = checkSandboxEnv(
+        safeEnv({ TRADIER_BASE_URL: 'https://api.tradier.com/v1?x=sandbox.tradier.com' }),
+      )
+      expect(res.errors.some((e: string) => e.includes('TRADIER_BASE_URL'))).toBe(true)
+    })
+
+    describe('TRADIER_API_KEY — the quote key, allowed only when pinned to sandbox', () => {
+      it('allows it WITH the sandbox host set', () => {
+        const res = checkSandboxEnv(
+          safeEnv({
+            TRADIER_API_KEY: 'sandboxquotekey',
+            TRADIER_BASE_URL: 'https://sandbox.tradier.com/v1',
+          }),
+        )
+        expect(res.errors).toEqual([])
+      })
+
+      it('REJECTS it when TRADIER_BASE_URL is unset — tradier.ts would default to production', () => {
+        const res = checkSandboxEnv(
+          safeEnv({ TRADIER_API_KEY: 'k', TRADIER_BASE_URL: undefined }),
+        )
+        expect(res.errors.some((e: string) => e.includes('TRADIER_API_KEY'))).toBe(true)
+      })
+
+      it('REJECTS it when the base URL points at production', () => {
+        const res = checkSandboxEnv(
+          safeEnv({ TRADIER_API_KEY: 'k', TRADIER_BASE_URL: 'https://api.tradier.com/v1' }),
+        )
+        expect(res.errors.some((e: string) => e.includes('TRADIER_API_KEY'))).toBe(true)
+      })
     })
   })
 
