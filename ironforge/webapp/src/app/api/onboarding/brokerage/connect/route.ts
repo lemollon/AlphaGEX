@@ -141,6 +141,7 @@ export async function POST(req: NextRequest) {
         eventId: `brokerage_initiated:${auditId}`,
         eventType: 'crm.brokerage_initiated',
         userId: user.id,
+        correlationId: `pending:${user.id}`,
         payload: {
           email: user.email,
           firstName: user.first_name,

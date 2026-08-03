@@ -91,6 +91,7 @@ export async function GET(req: NextRequest) {
           eventId: recurringEventId(`brokerage_failed:${uid}:missing_registration`),
           eventType: 'crm.brokerage_failed',
           userId: uid,
+          correlationId: `pending:${uid}`,
           payload: {
             email: user.email,
             firstName: user.first_name,
@@ -126,6 +127,7 @@ export async function GET(req: NextRequest) {
         eventId: recurringEventId(`brokerage_failed:${user.id}:incomplete`),
         eventType: 'crm.brokerage_failed',
         userId: user.id,
+        correlationId: `pending:${user.id}`,
         payload: {
           email: user.email,
           firstName: user.first_name,
@@ -261,6 +263,7 @@ export async function GET(req: NextRequest) {
         eventId: `brokerage_connected:${conn.id}`,
         eventType: 'crm.brokerage_connected',
         userId: user.id,
+        correlationId: conn.id,
         payload: {
           email: user.email,
           firstName: user.first_name,
@@ -327,6 +330,7 @@ export async function GET(req: NextRequest) {
             eventId: recurringEventId(`brokerage_failed:${uid}:exception`),
             eventType: 'crm.brokerage_failed',
             userId: uid,
+            correlationId: `pending:${uid}`,
             payload: {
               email: basic.email,
               firstName: basic.first_name,

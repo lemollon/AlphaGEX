@@ -335,32 +335,112 @@ export async function upsertWaitlistToAttio(c: WaitlistAttioContact): Promise<Wa
   }
 }
 
-/** Add/update the person in the IronForge Waitlist list with list-level attributes. */
+/**
+ * The person's existing entry id on a list, or null.
+ *
+ * Attio list entries have no "matching attribute" — POST /entries is a plain CREATE, so the
+ * resubmit path (which the waitlist route explicitly supports, and which the local upsert treats
+ * as an UPDATE) would add a SECOND entry for the same person every time. Two entries means the
+ * Waitlist views double-count and an operator sees the same lead twice.
+ *
+ * Returns null on any query failure so the caller falls back to creating: a duplicate entry is
+ * recoverable, a silently dropped lead is not.
+ */
+async function findWaitlistEntryId(listSlug: string, personRecordId: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${ATTIO_BASE}/lists/${encodeURIComponent(listSlug)}/entries/query`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ filter: { parent_record_id: { $eq: personRecordId } }, limit: 1 }),
+    })
+    if (!res.ok) {
+      console.warn(`[attio] list entry lookup ${res.status} — falling back to create`)
+      return null
+    }
+    const json = (await res.json().catch(() => null)) as
+      | { data?: Array<{ id?: { entry_id?: string } }> }
+      | null
+    return json?.data?.[0]?.id?.entry_id ?? null
+  } catch (e) {
+    console.warn('[attio] list entry lookup failed — falling back to create:', e instanceof Error ? e.message : e)
+    return null
+  }
+}
+
+/** Add or UPDATE the person's entry on the IronForge Waitlist list with list-level attributes. */
 async function addToWaitlistList(personRecordId: string, c: WaitlistAttioContact): Promise<void> {
   const listSlug = process.env.ATTIO_WAITLIST_LIST
   if (!listSlug) {
     console.warn('[attio] ATTIO_WAITLIST_LIST unset — waitlist list entry skipped')
     return
   }
-  const res = await fetch(`${ATTIO_BASE}/lists/${encodeURIComponent(listSlug)}/entries`, {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify({
-      data: {
-        parent_record_id: personRecordId,
-        parent_object: 'people',
-        entry_values: {
-          trading_capital_range: c.tradingCapitalRange,
-          communication_consent: true,
-          consent_version: c.consentVersion,
-          submission_id: c.submissionId,
-          confirmation_email_status: 'Pending',
-        },
-      },
-    }),
-  })
+  const entryValues: Record<string, unknown> = {
+    trading_capital_range: c.tradingCapitalRange,
+    communication_consent: true,
+    consent_version: c.consentVersion,
+    submission_id: c.submissionId,
+  }
+
+  const existingId = await findWaitlistEntryId(listSlug, personRecordId)
+  const base = `${ATTIO_BASE}/lists/${encodeURIComponent(listSlug)}/entries`
+  // 'Pending' is only truthful for a NEW entry. On a resubmit the confirmation may already have
+  // been sent, and rewriting 'Pending' over 'Sent' would make the field oscillate — it is set
+  // once here and then owned by setWaitlistConfirmationStatus.
+  const res = existingId
+    ? await fetch(`${base}/${encodeURIComponent(existingId)}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({ data: { entry_values: entryValues } }),
+      })
+    : await fetch(base, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          data: {
+            parent_record_id: personRecordId,
+            parent_object: 'people',
+            entry_values: { ...entryValues, confirmation_email_status: 'Pending' },
+          },
+        }),
+      })
   if (!res.ok) {
     const detail = await res.text().catch(() => '')
     throw new Error(`Attio list entry ${res.status}: ${detail.slice(0, 200)}`)
+  }
+}
+
+/**
+ * Move a waitlist entry's Confirmation Email Status off 'Pending'.
+ *
+ * Without this the field was written once at submission and never again, so every lead in the
+ * workspace read 'Pending' forever — including the ones whose confirmation had demonstrably
+ * sent, and (worse) the ones whose send had FAILED, which is the case an operator actually needs
+ * to see. Best-effort and never throws: this is a status mirror, not the source of truth
+ * (waitlist_submissions.email_status is).
+ */
+export async function setWaitlistConfirmationStatus(
+  personRecordId: string,
+  status: 'Pending' | 'sent' | 'failed',
+): Promise<void> {
+  if (!isAttioConfigured()) return
+  const listSlug = process.env.ATTIO_WAITLIST_LIST
+  if (!listSlug) return
+  try {
+    const entryId = await findWaitlistEntryId(listSlug, personRecordId)
+    if (!entryId) return
+    const res = await fetch(
+      `${ATTIO_BASE}/lists/${encodeURIComponent(listSlug)}/entries/${encodeURIComponent(entryId)}`,
+      {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({ data: { entry_values: { confirmation_email_status: status } } }),
+      },
+    )
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      console.warn(`[attio] confirmation status update ${res.status}: ${detail.slice(0, 200)}`)
+    }
+  } catch (e) {
+    console.warn('[attio] confirmation status update failed:', e instanceof Error ? e.message : e)
   }
 }

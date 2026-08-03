@@ -3,7 +3,9 @@ import { resolveCustomerUserId } from '@/lib/brokerage/identity'
 import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isTradierOAuthConfigured, buildAuthorizeUrl, tradierPkceEnabled } from '@/lib/tradier-oauth'
 import { createOAuthState } from '@/lib/enrollment/oauth-state'
-import { isCustomersDbConfigured, customerExecute } from '@/lib/customers-db'
+import { isCustomersDbConfigured, customerQuery } from '@/lib/customers-db'
+import { enqueueCrmEvent } from '@/lib/crm/outbox'
+import { mapBrokerageStatusToCrm } from '@/lib/crm/brokerage-status'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -48,10 +50,42 @@ export async function POST(req: NextRequest) {
       client: (await getCustomerIdentity())?.source === 'bearer' ? 'mobile' : 'web',
     })
     const redirectURI = buildAuthorizeUrl(state, codeChallenge)
-    await customerExecute(
-      `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'BROKERAGE_CONNECT_STARTED', $2)`,
+    const auditRows = await customerQuery<{ id: string }>(
+      `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'BROKERAGE_CONNECT_STARTED', $2) RETURNING id`,
       [uid, JSON.stringify({ provider: 'tradier' })],
-    ).catch(() => {})
+    ).catch(() => [] as Array<{ id: string }>)
+
+    // Mirror the attempt as a Pending connection, exactly as the SnapTrade start route does.
+    // Only SnapTrade emitted this, so a Tradier customer who started a connection and never
+    // finished left no trace in the CRM at all — the drop-off the Brokerage Issues view is
+    // meant to surface was invisible for the direct-Tradier half of the funnel.
+    const auditId = auditRows[0]?.id
+    if (auditId) {
+      const user = (
+        await customerQuery<{ email: string; first_name: string; last_name: string }>(
+          `SELECT email, first_name, last_name FROM users WHERE id = $1 LIMIT 1`,
+          [uid],
+        ).catch(() => [] as Array<{ email: string; first_name: string; last_name: string }>)
+      )[0]
+      if (user) {
+        await enqueueCrmEvent({
+          eventId: `brokerage_initiated:${auditId}`,
+          eventType: 'crm.brokerage_initiated',
+          userId: uid,
+          correlationId: `pending:${uid}`,
+          payload: {
+            email: user.email,
+            firstName: user.first_name,
+            lastName: user.last_name,
+            ironforgeUserId: uid,
+            connectionId: `pending:${uid}`,
+            connectionStatus: mapBrokerageStatusToCrm('pending').connectionStatus,
+            lastAttemptAt: new Date().toISOString(),
+            reauthorizationRequired: false,
+          },
+        })
+      }
+    }
     return NextResponse.json({ ok: true, redirectURI })
   } catch (e) {
     console.error('[tradier/connect] failed:', e)

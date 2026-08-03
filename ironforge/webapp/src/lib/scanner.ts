@@ -6441,7 +6441,12 @@ function safeTrialDayClose(): void {
 }
 
 /** Fire-and-forget Attio retry-queue drain. Re-entrancy guarded, never throws,
- *  no-ops when Attio isn't configured. Independent of the trade loop. */
+ *  no-ops when Attio isn't configured. Independent of the trade loop.
+ *
+ *  BACKLOG ONLY. Nothing enqueues to `attio_sync_queue` any more — the signup route now emits
+ *  `crm.account_created` to `crm_outbox` instead, so the two queues no longer race to write the
+ *  same Person. This keeps running so rows queued before that change still flush; once the table
+ *  is empty it is a no-op and both it and lib/attio.ts's signup half can be deleted. */
 function safeDrainAttioQueue(): void {
   if (_attioRetryRunning) return
   if (!isAttioConfigured()) return

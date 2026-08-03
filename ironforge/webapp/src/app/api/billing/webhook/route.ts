@@ -97,6 +97,22 @@ async function getUserBasic(userId: string): Promise<UserBasic | null> {
   return rows[0] ?? null
 }
 
+/**
+ * Which of these bots are stored as `canceled` RIGHT NOW.
+ *
+ * Must be read BEFORE upsertSubscription overwrites the row — that write is what makes a
+ * reactivation indistinguishable from a first-time subscribe, which is why `crm.reactivation`
+ * was mapped in events.ts but never actually emitted by anything.
+ */
+async function canceledBotsFor(userId: string, bots: string[]): Promise<Set<string>> {
+  const rows = await customerQuery<{ bot: string }>(
+    `SELECT bot FROM customer_bot_subscriptions
+      WHERE user_id = $1 AND bot = ANY($2::text[]) AND status = 'canceled'`,
+    [userId, bots],
+  ).catch(() => [] as Array<{ bot: string }>)
+  return new Set(rows.map((r) => r.bot))
+}
+
 /** Which bots (spark/flame/community) a given Stripe subscription currently grants. */
 async function botsForSubscription(userId: string, subscriptionId: string): Promise<{ bots: string[]; bundle: boolean }> {
   const rows = await customerQuery<{ bot: string; price_lookup_key: string | null }>(
@@ -160,6 +176,10 @@ async function emitMembershipEvent(input: MembershipEventInput): Promise<void> {
     eventId: input.eventId,
     eventType: input.eventType,
     userId: input.userId,
+    // Correlate on the MEMBERSHIP, not the event: the subscription id is what ties a checkout,
+    // its activations, a past_due blip and an eventual cancellation into one traceable story
+    // (AC-CRM-009). The Stripe event id is already the primary key and correlates nothing.
+    correlationId: membershipId,
     payload: {
       email: user.email,
       firstName: user.first_name,
@@ -254,6 +274,9 @@ export async function POST(req: NextRequest) {
         const { bots, bundle } = botsFor(obj.metadata)
         if (userId && bots.length) {
           const subscriptionId = typeof obj.subscription === 'string' ? obj.subscription : null
+          // Read the prior state before the upsert erases it — a returning customer checking out
+          // again is a reactivation, not a new signup.
+          const returning = (await canceledBotsFor(userId, bots)).size > 0
           for (const bot of bots) {
             await upsertSubscription({
               userId,
@@ -267,7 +290,7 @@ export async function POST(req: NextRequest) {
           if (eventId) {
             await emitMembershipEvent({
               eventId,
-              eventType: 'crm.stripe_customer_created',
+              eventType: returning ? 'crm.reactivation' : 'crm.stripe_customer_created',
               userId,
               bots,
               bundle,
@@ -288,6 +311,9 @@ export async function POST(req: NextRequest) {
         if (userId && bots.length) {
           const status = event.type === 'customer.subscription.deleted' ? 'canceled' : String(obj.status ?? 'active')
           const subscriptionId = typeof obj.id === 'string' ? obj.id : null
+          // Same read-before-write as checkout: canceled → active is the reactivation signal.
+          const returning =
+            (status === 'trialing' || status === 'active') && (await canceledBotsFor(userId, bots)).size > 0
           for (const bot of bots) {
             await upsertSubscription({
               userId,
@@ -303,7 +329,7 @@ export async function POST(req: NextRequest) {
             if (event.type === 'customer.subscription.created') {
               await emitMembershipEvent({
                 eventId,
-                eventType: 'crm.stripe_customer_created',
+                eventType: returning ? 'crm.reactivation' : 'crm.stripe_customer_created',
                 userId,
                 bots,
                 bundle,
@@ -327,7 +353,7 @@ export async function POST(req: NextRequest) {
             } else if (status === 'trialing' || status === 'active') {
               await emitMembershipEvent({
                 eventId,
-                eventType: 'crm.subscription_active',
+                eventType: returning ? 'crm.reactivation' : 'crm.subscription_active',
                 userId,
                 bots,
                 bundle,

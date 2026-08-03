@@ -182,6 +182,7 @@ export async function GET(req: NextRequest) {
         eventId: `brokerage_connected:${conn.id}`,
         eventType: 'crm.brokerage_connected',
         userId: user.id,
+        correlationId: conn.id,
         payload: {
           email: user.email,
           firstName: user.first_name,
