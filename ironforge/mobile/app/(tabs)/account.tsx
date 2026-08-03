@@ -27,7 +27,14 @@ import { Card, SectionLabel, Loading, ErrorState } from '@/components/ui'
  */
 export default function AccountScreen() {
   const router = useRouter()
-  const { data, error, isLoading, mutate } = useSWR<MobileMe>('/api/auth/mobile/me', (p: string) => api(p))
+  // The fetcher's return type must be explicit. With no third (config) argument, SWR's
+  // overloads let TypeScript read `(p: string) => api(p)` — which resolves to
+  // Promise<unknown> — as a config object instead of a fetcher, and the call fails to
+  // typecheck. Naming the generic on `api` resolves it.
+  const { data, error, isLoading, mutate } = useSWR<MobileMe>(
+    '/api/auth/mobile/me',
+    (p: string) => api<MobileMe>(p),
+  )
   const [bioAvailable, setBioAvailable] = useState(false)
   const [bioOn, setBioOn] = useState(false)
 
