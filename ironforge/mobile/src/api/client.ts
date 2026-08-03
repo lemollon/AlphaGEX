@@ -1,9 +1,11 @@
 /**
  * API client with silent access-token refresh.
  *
- * Tokens live in expo-secure-store (iOS Keychain / Android Keystore), never
- * AsyncStorage — APP-046 requires tokens encrypted at rest, and AsyncStorage is plain
- * text readable by anything with filesystem access on a rooted/jailbroken device.
+ * Tokens live in the Keychain / Keystore via api/storage.ts, never AsyncStorage —
+ * APP-046 requires tokens encrypted at rest, and AsyncStorage is plain text readable by
+ * anything with filesystem access on a rooted/jailbroken device. (storage.ts falls back
+ * to localStorage on WEB only, which is a developer-preview target that is never
+ * shipped — see the note there.)
  *
  * The refresh is SINGLE-FLIGHT. Screens poll concurrently (Forge, Ledger, Community all
  * fetch on focus), so an expired access token would otherwise fire N simultaneous
@@ -12,8 +14,8 @@
  * the theft alarm, and log the customer out of every device. One in-flight promise,
  * shared by all callers, is a correctness requirement rather than an optimisation.
  */
-import * as SecureStore from 'expo-secure-store'
 import Constants from 'expo-constants'
+import { setItem, getItem, deleteItem, AFTER_FIRST_UNLOCK } from '@/api/storage'
 
 const API_BASE: string =
   (Constants.expoConfig?.extra as { apiBase?: string } | undefined)?.apiBase ??
@@ -35,32 +37,32 @@ export interface TokenPair {
 }
 
 export async function saveTokens(pair: TokenPair): Promise<void> {
-  await SecureStore.setItemAsync(ACCESS_KEY, pair.accessToken)
-  await SecureStore.setItemAsync(REFRESH_KEY, pair.refreshToken, {
+  await setItem(ACCESS_KEY, pair.accessToken)
+  await setItem(REFRESH_KEY, pair.refreshToken, {
     // Requires the device to have been unlocked at least once since boot. Background
     // refresh still works; the token just isn't readable from a cold locked device.
-    keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+    keychainAccessible: AFTER_FIRST_UNLOCK,
   })
 }
 
 export async function clearTokens(): Promise<void> {
-  await SecureStore.deleteItemAsync(ACCESS_KEY).catch(() => {})
-  await SecureStore.deleteItemAsync(REFRESH_KEY).catch(() => {})
+  await deleteItem(ACCESS_KEY).catch(() => {})
+  await deleteItem(REFRESH_KEY).catch(() => {})
 }
 
 export async function getAccessToken(): Promise<string | null> {
-  return SecureStore.getItemAsync(ACCESS_KEY)
+  return getItem(ACCESS_KEY)
 }
 
 export async function hasSession(): Promise<boolean> {
-  return (await SecureStore.getItemAsync(REFRESH_KEY)) !== null
+  return (await getItem(REFRESH_KEY)) !== null
 }
 
 /** Shared in-flight refresh — see the single-flight note above. */
 let refreshInFlight: Promise<string | null> | null = null
 
 async function doRefresh(): Promise<string | null> {
-  const refreshToken = await SecureStore.getItemAsync(REFRESH_KEY)
+  const refreshToken = await getItem(REFRESH_KEY)
   if (!refreshToken) return null
 
   const res = await fetch(`${API_BASE}/api/auth/mobile/refresh`, {
