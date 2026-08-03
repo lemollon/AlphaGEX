@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isAnthropicConfigured, streamAnthropic, type ChatMessage } from '@/lib/support/anthropic'
 import { buildSparkySystemPrompt } from '@/lib/support/persona'
 
@@ -55,7 +55,9 @@ function sse(obj: unknown): Uint8Array {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getCustomerSession()
+  const identity = await getCustomerIdentity()
+  // Cookie OR mobile bearer. Shape preserved so the checks below read unchanged.
+  const session = { customerId: identity?.customerId ?? null }
   if (!session.customerId) {
     return NextResponse.json({ error: 'Please sign in to chat with Sparky.' }, { status: 401 })
   }

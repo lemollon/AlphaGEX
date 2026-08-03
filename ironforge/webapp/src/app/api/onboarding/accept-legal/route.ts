@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ONBOARDING_COOKIE, verifyOnboardingToken } from '@/lib/auth/onboarding'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isCustomersDbConfigured, customerExecute } from '@/lib/customers-db'
 import { createOrResumeEnrollment, recordAcceptedDocuments } from '@/lib/enrollment/service'
 
@@ -27,7 +27,9 @@ function clientIp(req: NextRequest): string | null {
 
 export async function POST(req: NextRequest) {
   const claims = await verifyOnboardingToken(req.cookies.get(ONBOARDING_COOKIE)?.value)
-  const session = await getCustomerSession()
+  const identity = await getCustomerIdentity()
+  // Cookie OR mobile bearer. Shape preserved so the checks below read unchanged.
+  const session = { customerId: identity?.customerId ?? null }
   // Token first (fresh signup), session second (resuming). Never a body-supplied id.
   const userId = claims?.uid ?? session.customerId
   if (!userId) {

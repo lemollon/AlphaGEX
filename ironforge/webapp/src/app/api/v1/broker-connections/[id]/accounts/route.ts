@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
 import { evaluateAccountEligibility, maskAccountNumber } from '@/lib/enrollment/eligibility'
 import { encryptSecret } from '@/lib/crypto/secret-box'
@@ -25,7 +25,9 @@ export const dynamic = 'force-dynamic'
  * buying power moves.
  */
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  const session = await getCustomerSession()
+  const identity = await getCustomerIdentity()
+  // Cookie OR mobile bearer.
+  const session = { customerId: identity?.customerId ?? null }
   if (!session.customerId) {
     const e = errorEnvelope('UNAUTHORIZED', 'Please sign in to continue.')
     return NextResponse.json(e, { status: statusFor(e.code) })
@@ -82,7 +84,9 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
  * Called by the OAuth callback. Encrypts the reference, stores the mask separately.
  */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const session = await getCustomerSession()
+  const identity = await getCustomerIdentity()
+  // Cookie OR mobile bearer.
+  const session = { customerId: identity?.customerId ?? null }
   if (!session.customerId) {
     const e = errorEnvelope('UNAUTHORIZED', 'Please sign in to continue.')
     return NextResponse.json(e, { status: statusFor(e.code) })

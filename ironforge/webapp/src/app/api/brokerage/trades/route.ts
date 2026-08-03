@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { publicOrigin } from '@/lib/public-origin'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { hasValidServiceToken } from '@/lib/auth/session'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { isCustomersDbConfigured, customerQuery } from '@/lib/customers-db'
@@ -37,7 +37,9 @@ interface ApprovalListRow {
 }
 
 export async function GET() {
-  const session = await getCustomerSession()
+  const identity = await getCustomerIdentity()
+  // Cookie OR mobile bearer. Shape preserved so the checks below read unchanged.
+  const session = { customerId: identity?.customerId ?? null }
   if (!session.customerId) return NextResponse.json({ ok: false }, { status: 401 })
   if (!isCustomersDbConfigured()) return NextResponse.json({ ok: false, error: 'unavailable' }, { status: 503 })
 
