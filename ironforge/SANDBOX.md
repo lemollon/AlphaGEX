@@ -162,8 +162,8 @@ From the Render shell on `ironforge-sandbox`:
 
 ```bash
 cd ironforge/webapp
-npm run seed:sandbox           # reseed in place
-npm run seed:sandbox -- --reset  # remove seeded users first
+npm run seed:sandbox             # clear + reseed
+npm run seed:sandbox -- --reset  # clear ONLY (both DBs), then stop
 ```
 
 The script refuses to run unless `IRONFORGE_ENV=sandbox` and the guard passes.
@@ -210,6 +210,32 @@ their real state, not a gap.
 
 ---
 
+## Billing in the sandbox
+
+Stripe **test mode is a separate object space from live** — products, prices and
+webhooks do not carry over. The sandbox has its own:
+
+- Test webhook **"IronForge sandbox billing"** → `/api/billing/webhook`,
+  subscribed to the six events `webhook/route.ts` actually handles:
+  `checkout.session.completed`, the three `customer.subscription.*`,
+  `invoice.paid`, `invoice.payment_failed`.
+- Test prices under lookup keys `spark_monthly` ($50), `flame_monthly` ($50),
+  `both_monthly` ($75), `community_monthly` ($10).
+
+🚨 **A price can be active while its PRODUCT is archived.** Checkout then fails
+with `Price … is not available to be purchased because its product is not active`
+— which reads like a missing price and is not. Check the product, not the price:
+
+```bash
+curl -u "$SK_TEST:" https://api.stripe.com/v1/products/<prod_id> -d active=true
+```
+
+Verified end to end on 2026-08-02 with card `4242 4242 4242 4242`: checkout →
+trial started → Stripe fired the events → the app verified the signature and
+moved that persona's entitlements from none to `["spark"]`.
+
+---
+
 ## Gotchas
 
 - **Seeding is a shell script, not an API route.** IronForge's rule is that
@@ -229,3 +255,26 @@ their real state, not a gap.
 - The old `ironforge-dashboard-staging` service and `ironforge-staging-db`
   (both suspended since 2026-07-05, pinned to a dead branch) are **not** this.
   Delete them once the sandbox is up.
+
+---
+
+## Hard-won, 2026-08-02
+
+- **A healthy URL is not proof your code is live.** `/api/health` answers from the
+  OLD instance for the whole of a deploy. Check the deploy record, not the URL.
+- **Render can wedge a build.** One sat `build_in_progress` for 29 minutes with a
+  frozen `updatedAt`, and `trigger_deploy` merely queued behind it. Cancel it in
+  the dashboard; nothing else clears the queue.
+- **The Render API cannot read env vars or Postgres connection strings**, and
+  cannot set a service's branch. Those three stay manual.
+- **`/api/health` checks `TRADIER_API_KEY`.** That is the quote key; the guard
+  permits it only with `TRADIER_BASE_URL` pinned to `sandbox.tradier.com`,
+  because `tradier.ts` defaults to PRODUCTION Tradier when the key is set and the
+  base URL is not.
+- **The seed's cleanup is DISCOVERED from `pg_constraint`, not hardcoded.** A
+  fixed list broke twice — first on `agent_configs` ordering, then when
+  `mobile_refresh_tokens` arrived with the mobile-auth work. Do not reintroduce a
+  literal table list; add tables freely and the seed will follow.
+- **Dates in seeded rows must be derived in CT**, not `CURRENT_DATE`. Render's
+  Postgres session is UTC and the /live charts filter by CT date, so a UTC-dated
+  seed run after 00:00 UTC renders an empty chart for ~5 hours a day.
