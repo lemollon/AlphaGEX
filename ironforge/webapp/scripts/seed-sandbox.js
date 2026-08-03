@@ -33,7 +33,7 @@
  *
  * USAGE
  *   IRONFORGE_ENV=sandbox CUSTOMERS_DATABASE_URL=... DATABASE_URL=... node scripts/seed-sandbox.js
- *   ... --reset    drop the seeded users first (default: reseed in place)
+ *   ... --reset    REMOVE the seeded users and their bot data, and stop (no reseed)
  *
  * REFUSES TO RUN unless IRONFORGE_ENV=sandbox and the sandbox guard passes. The
  * script writes fabricated billing and position rows; against production that
@@ -112,6 +112,14 @@ function assertSafe() {
   const url = process.env.CUSTOMERS_DATABASE_URL
   if (!url) throw new Error('CUSTOMERS_DATABASE_URL is unset — nothing to seed.')
   const name = databaseNameOf(url)
+  // Fail closed on null: Set.has(null) is false, so treating "unparseable" as
+  // "not production" would wave through exactly the URLs we cannot vet.
+  if (name === null) {
+    throw new Error(
+      'CUSTOMERS_DATABASE_URL database name could not be parsed, so it cannot be checked ' +
+        'against the production databases. Refusing rather than guessing.',
+    )
+  }
   if (PRODUCTION_DB_NAMES.has(name)) {
     throw new Error(`CUSTOMERS_DATABASE_URL points at production database "${name}". Refusing.`)
   }
@@ -327,6 +335,49 @@ async function seedPositions(client, userId, activationId, configId, agentCode) 
   )
 }
 
+/** Open a client on the trading DB, refusing if it resolves to a production database. */
+async function openTradingClient() {
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  })
+  await client.connect()
+  const dbName = databaseNameOf(process.env.DATABASE_URL)
+  if (dbName === null || PRODUCTION_DB_NAMES.has(dbName)) {
+    await client.end()
+    throw new Error(
+      dbName === null
+        ? 'DATABASE_URL database name could not be parsed. Refusing rather than guessing.'
+        : `DATABASE_URL points at production database "${dbName}". Refusing.`,
+    )
+  }
+  return { client, dbName }
+}
+
+/** Remove every trading-side row this script owns (person = 'Sandbox'). */
+async function clearTradingSide() {
+  const { client } = await openTradingClient()
+  await client.query('BEGIN')
+  try {
+    await tolerantDelete(client, `DELETE FROM ironforge_customer_bots WHERE person = $1`, [
+      SANDBOX_PERSON,
+    ])
+    for (const t of [
+      `${LIVE_BOT}_positions`,
+      `${LIVE_BOT}_equity_snapshots`,
+      `${LIVE_BOT}_paper_account`,
+    ]) {
+      await tolerantDelete(client, `DELETE FROM ${t} WHERE person = $1`, [SANDBOX_PERSON])
+    }
+    await client.query('COMMIT')
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    await client.end()
+  }
+}
+
 /**
  * Seed the TRADING database so the activated customer's /live page renders.
  *
@@ -422,24 +473,38 @@ async function seedTradingSide(customerId) {
           collateral_required, underlying_at_entry, vix_at_entry, gex_regime,
           status, open_time, open_date, close_time, close_price, close_reason,
           realized_pnl, dte_mode, account_type, person)
-       VALUES ('sbx-closed-1', 'SPY', CURRENT_DATE,
+       VALUES ('sbx-closed-1', 'SPY', (now() AT TIME ZONE 'America/Chicago')::date,
           625, 620, 0.62, 650, 655, 0.58,
           2, 5, 1.20, 760, 240,
           1000, 744.10, 13.8, 'positive',
-          'closed', now() - interval '1 day', CURRENT_DATE - 1,
-          now() - interval '3 hours', 0.36, 'profit_target',
+          'closed', now() - interval '1 day',
+          (now() AT TIME ZONE 'America/Chicago')::date - 1,
+          -- Pinned to 13:00 CT today, not now()-3h: summary.ts buckets today's
+          -- realized P&L by CT date, so a relative offset run late in the CT
+          -- evening lands on yesterday and silently zeroes the figure.
+          (((now() AT TIME ZONE 'America/Chicago')::date + time '13:00')
+             AT TIME ZONE 'America/Chicago'),
+          0.36, 'profit_target',
           168, $1, $2, $3)`,
       [LIVE_DTE, LIVE_ACCOUNT_TYPE, SANDBOX_PERSON],
     )
 
     // 4. Intraday equity curve. A single point draws no line (the chart needs at
     //    least two), so lay down a series across today in CT.
+    //
+    // CT date, NOT CURRENT_DATE. summary.ts filters this chart with
+    //   WHERE (snapshot_time AT TIME ZONE 'America/Chicago')::date = <CT today>
+    // and Render's Postgres session is UTC, so CURRENT_DATE is the UTC date. From
+    // 00:00 UTC until CT midnight those are DIFFERENT DAYS: the seed would write
+    // rows dated CT-tomorrow while the chart asks for CT-today, and render empty.
+    // Derive the date in the same zone the reader uses.
     await client.query(
       `INSERT INTO ${snaps}
          (snapshot_time, balance, unrealized_pnl, realized_pnl, open_positions,
           note, dte_mode, account_type, person)
        SELECT
-         ((CURRENT_DATE + time '08:30') AT TIME ZONE 'America/Chicago') + (g * interval '45 minutes'),
+         (((now() AT TIME ZONE 'America/Chicago')::date + time '08:30')
+            AT TIME ZONE 'America/Chicago') + (g * interval '45 minutes'),
          10000 + (g * 42), (g * 12), CASE WHEN g >= 4 THEN 168 ELSE 0 END,
          CASE WHEN g >= 2 THEN 1 ELSE 0 END,
          'sandbox seed', $1, $2, $3
@@ -494,12 +559,17 @@ async function main() {
 
   await client.query('BEGIN')
   try {
+    const cleared = await clearSeeded(client)
+    if (cleared > 0) log(`cleared ${cleared} existing seeded user(s)`)
+
     if (reset) {
-      const n = await clearSeeded(client)
-      log(`--reset: removed ${n} previously seeded user(s)`)
-    } else {
-      const n = await clearSeeded(client)
-      if (n > 0) log(`replaced ${n} existing seeded user(s)`)
+      // --reset means REMOVE ONLY. It previously also reseeded — i.e. it did
+      // exactly what the default does, so the flag was decoration, and worse than
+      // useless because the usage text promised distinct behaviour.
+      await client.query('COMMIT')
+      if (process.env.DATABASE_URL) await clearTradingSide()
+      log(`--reset: removed ${cleared} seeded user(s) and their bot data. Nothing reseeded.`)
+      return
     }
 
     const docIds = await ensureLegalDocs(client)

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { decryptSecret } from '@/lib/crypto/secret-box'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
@@ -20,7 +20,9 @@ interface UserRow {
 }
 
 export async function DELETE(req: NextRequest) {
-  const session = await getCustomerSession()
+  const identity = await getCustomerIdentity()
+  // Cookie OR mobile bearer. Shape preserved so the checks below read unchanged.
+  const session = { customerId: identity?.customerId ?? null }
   if (!session.customerId) return NextResponse.json({ ok: false }, { status: 401 })
 
   if (!isSnapTradeConfigured() || !isCustomersDbConfigured()) {

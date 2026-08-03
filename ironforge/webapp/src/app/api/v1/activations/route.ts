@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isCustomersDbConfigured, customerTransaction } from '@/lib/customers-db'
 import { dbExecute } from '@/lib/db'
 import { evaluateActivation } from '@/lib/enrollment/activation'
@@ -41,7 +41,9 @@ export async function POST(req: NextRequest) {
   // (handoff §4 "Persistence", §11). THE final go-live write.
   if (isEnrollmentClosed()) return enrollmentClosedResponse()
 
-  const session = await getCustomerSession()
+  const identity = await getCustomerIdentity()
+  // Cookie OR mobile bearer. Shape preserved so the checks below read unchanged.
+  const session = { customerId: identity?.customerId ?? null }
   if (!session.customerId) {
     const e = errorEnvelope('UNAUTHORIZED', 'Please sign in to continue.')
     return NextResponse.json(e, { status: statusFor(e.code) })

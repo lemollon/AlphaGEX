@@ -60,15 +60,39 @@ const OUTBOUND_INTEGRATIONS = [
   'DISCORD_WEBHOOK_URL',
 ]
 
-/** Parse the database name out of a Postgres URL. Returns '' when unparseable. */
+/**
+ * Parse the database name out of a Postgres URL.
+ *
+ * Returns null when the name cannot be determined — callers MUST treat that as a
+ * failure, not as "not a production database". `new URL()` alone is not enough:
+ * a password containing '@' or '/' (legal in Postgres and common in generated
+ * credentials) makes it mis-parse. It previously returned
+ * 'w0rd@host.render.com/ironforge' for a URL whose database really was
+ * `ironforge`, which silently skipped the production-database check — the single
+ * most important assertion in this file — and let the guard pass.
+ */
 function databaseNameOf(url) {
-  if (!url) return ''
+  if (!url || typeof url !== 'string' || !url.trim()) return null
+
+  // Authoritative when it works AND yields a plausible single-segment name.
   try {
-    // pathname is '/dbname'; strip the leading slash and any query string.
-    return new URL(url).pathname.replace(/^\//, '').trim()
+    const p = new URL(url).pathname.replace(/^\//, '').trim()
+    if (p && !p.includes('/') && !p.includes('@')) return p
   } catch {
-    return ''
+    /* fall through to the textual parse below */
   }
+
+  // Textual fallback: everything after the LAST '@' is host[:port]/dbname[?params].
+  // Taking the last '@' is what makes an unescaped '@' inside the password safe.
+  const afterAuth = url.slice(url.lastIndexOf('@') + 1)
+  const slash = afterAuth.indexOf('/')
+  if (slash === -1) return null
+  const name = afterAuth
+    .slice(slash + 1)
+    .split(/[?#]/)[0]
+    .trim()
+  if (!name || name.includes('/')) return null
+  return name
 }
 
 function isTruthy(v) {
@@ -132,9 +156,17 @@ function checkSandboxEnv(env) {
   }
 
   // ── 4. Databases: never the production ones ────────────────────────────────
+  // FAILS CLOSED. An unreadable connection string is not evidence of safety, so
+  // "cannot tell" is an error, not a pass.
   for (const key of ['DATABASE_URL', 'CUSTOMERS_DATABASE_URL']) {
+    if (!env[key]) continue
     const name = databaseNameOf(env[key])
-    if (name && PRODUCTION_DB_NAMES.has(name)) {
+    if (name === null) {
+      errors.push(
+        `${key} is set but its database name could not be parsed, so it cannot be ` +
+          `checked against the production databases. Refusing rather than guessing.`,
+      )
+    } else if (PRODUCTION_DB_NAMES.has(name)) {
       errors.push(
         `${key} points at production database "${name}". ` +
           `Point it at a dedicated sandbox database.`,

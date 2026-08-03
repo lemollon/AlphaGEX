@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { customerQuery, customerExecute, isCustomersDbConfigured } from '@/lib/customers-db'
 import { errorEnvelope, statusFor } from '@/lib/enrollment/errors'
 
@@ -32,7 +32,9 @@ async function liveActivations(userId: string): Promise<ActivationRow[]> {
 }
 
 export async function GET() {
-  const session = await getCustomerSession()
+  const identity = await getCustomerIdentity()
+  // Cookie OR mobile bearer.
+  const session = { customerId: identity?.customerId ?? null }
   if (!session.customerId) {
     const e = errorEnvelope('UNAUTHORIZED', 'Please sign in to continue.')
     return NextResponse.json(e, { status: statusFor(e.code) })
@@ -52,7 +54,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getCustomerSession()
+  const identity = await getCustomerIdentity()
+  // Cookie OR mobile bearer.
+  const session = { customerId: identity?.customerId ?? null }
   if (!session.customerId) {
     const e = errorEnvelope('UNAUTHORIZED', 'Please sign in to continue.')
     return NextResponse.json(e, { status: statusFor(e.code) })
