@@ -66,29 +66,6 @@ const HEARTBEAT_NAME = 'SPARK' // heartbeatName('spark') — db.ts HEARTBEAT_MAP
 // credential is reachable from this process.
 const LIVE_ACCOUNT_TYPE = 'production'
 
-/** Tables to clear for seeded users, children before parents (FK order). */
-const CLEANUP_ORDER = [
-  'customer_positions',
-  'trials',
-  'activations',
-  'agent_configs',
-  'trade_approvals',
-  'legal_acceptances',
-  'community_reactions',
-  'community_messages',
-  'community_presence',
-  'community_moderation_events',
-  'community_forge_posts',
-  'customer_bot_subscriptions',
-  'email_verification_tokens',
-  'password_reset_tokens',
-  'risk_assessments',
-  'oauth_states',
-  'attio_sync_queue',
-  'audit_events',
-  'enrollments',
-]
-
 function log(msg) {
   console.log(`[seed-sandbox] ${msg}`)
 }
@@ -145,39 +122,84 @@ async function tolerantDelete(client, sql, params) {
   }
 }
 
+/**
+ * Every table that references `users`, discovered from the live schema.
+ *
+ * Returns direct children (a column FK-ing users.id) and grandchildren (a column
+ * FK-ing one of those children), which is the depth this schema actually uses —
+ * e.g. broker_accounts → brokerage_connections → users.
+ *
+ * DISCOVERED, not hardcoded. A hardcoded list is wrong the moment anyone adds a
+ * table, and it has been: first `agent_configs` ordering, then
+ * `mobile_refresh_tokens` arriving with the mobile-auth work and breaking every
+ * re-seed. The schema already knows its own foreign keys; ask it.
+ */
+async function referencingTables(client) {
+  const { rows } = await client.query(`
+    WITH direct AS (
+      SELECT c.conrelid::regclass::text AS tbl,
+             a.attname                  AS col
+        FROM pg_constraint c
+        JOIN pg_attribute a
+          ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+       WHERE c.contype = 'f' AND c.confrelid = 'users'::regclass
+    ),
+    indirect AS (
+      SELECT c.conrelid::regclass::text AS tbl,
+             a.attname                  AS col,
+             c.confrelid::regclass::text AS parent
+        FROM pg_constraint c
+        JOIN pg_attribute a
+          ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+       WHERE c.contype = 'f'
+         AND c.confrelid::regclass::text IN (SELECT tbl FROM direct)
+    )
+    SELECT tbl, col, NULL::text AS parent, NULL::text AS parent_col FROM direct
+    UNION
+    SELECT i.tbl, i.col, i.parent, d.col FROM indirect i JOIN direct d ON d.tbl = i.parent
+  `)
+  return rows
+}
+
 async function clearSeeded(client) {
   const pattern = `%@${EMAIL_DOMAIN}`
   const { rows } = await client.query('SELECT id FROM users WHERE email LIKE $1', [pattern])
   if (rows.length === 0) return 0
   const ids = rows.map((r) => r.id)
 
-  // ORDER IS LOAD-BEARING. The user-keyed tables go first, because agent_configs
-  // references broker_accounts:
-  //
-  //   customer_positions → (none)
-  //   trials             → activations
-  //   activations        → agent_configs
-  //   agent_configs      → broker_accounts        ← the one that bit us
-  //   broker_accounts    → brokerage_connections
-  //   legal_acceptances  → enrollments
-  //
-  // Deleting broker_accounts before agent_configs raises
-  //   "violates foreign key constraint agent_configs_broker_account_id_fkey".
-  // That only surfaces on a RE-run — the first run has nothing to clear and
-  // returns early above, so this stayed hidden until the second seed.
-  for (const table of CLEANUP_ORDER) {
-    await tolerantDelete(client, `DELETE FROM ${table} WHERE user_id = ANY($1::uuid[])`, [ids])
+  // Delete with retry instead of a fixed order. Ordering between these tables is
+  // a topological problem (agent_configs must go before broker_accounts, etc.);
+  // rather than encode that ordering and get it wrong again, attempt every table
+  // each pass, defer the ones that raise foreign_key_violation (23503), and loop
+  // until a pass makes no progress. Self-correcting as the schema grows.
+  let pending = await referencingTables(client)
+  for (let pass = 0; pass < 12 && pending.length > 0; pass++) {
+    const deferred = []
+    for (const t of pending) {
+      const sql = t.parent
+        ? `DELETE FROM ${t.tbl} WHERE ${t.col} IN
+             (SELECT id FROM ${t.parent} WHERE ${t.parent_col} = ANY($1::uuid[]))`
+        : `DELETE FROM ${t.tbl} WHERE ${t.col} = ANY($1::uuid[])`
+      try {
+        await client.query('SAVEPOINT fk')
+        await client.query(sql, [ids])
+        await client.query('RELEASE SAVEPOINT fk')
+      } catch (err) {
+        await client.query('ROLLBACK TO SAVEPOINT fk')
+        if (err.code === '23503') deferred.push(t) // blocked by a child; retry next pass
+        else if (err.code === '42P01' || err.code === '42703') continue // gone/absent column
+        else throw err
+      }
+    }
+    if (deferred.length === pending.length) {
+      throw new Error(
+        `cleanup stalled — these still block deleting users: ${deferred
+          .map((d) => d.tbl)
+          .join(', ')}. A table references them that this discovery does not reach.`,
+      )
+    }
+    pending = deferred
   }
-
-  // Now the brokerage chain, which hangs off brokerage_connections rather than
-  // users, so it cannot be driven by the user_id loop above.
-  await tolerantDelete(
-    client,
-    `DELETE FROM broker_accounts WHERE connection_id IN
-       (SELECT id FROM brokerage_connections WHERE user_id = ANY($1::uuid[]))`,
-    [ids],
-  )
-  await tolerantDelete(client, 'DELETE FROM brokerage_connections WHERE user_id = ANY($1::uuid[])', [ids])
 
   await client.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [ids])
   return ids.length
