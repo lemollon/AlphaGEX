@@ -444,3 +444,57 @@ def test_watchlist_400_for_non_universe_bot(client):
 def test_watchlist_404_for_unknown_bot(client):
     r = client.get("/api/spreadworks/bots/notabot/watchlist")
     assert r.status_code == 404
+
+
+def test_status_equity_mtm_includes_open_position_marks():
+    """`equity` is realized-only (scanner sizes off it); `equity_mtm` adds the
+    open-position marks so the UI tile agrees with the equity curve, which has
+    always included unrealized. Regression for the frozen "Account Equity"
+    tile: it read `equity` and so never moved while positions were open.
+    """
+    import json
+    from datetime import datetime
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.pool import StaticPool
+    from fastapi.testclient import TestClient
+
+    from backend.db import Base
+    from backend.bots.db import create_bot_tables
+    from backend import app as backend_app, routes_bots
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    Base.metadata.create_all(engine)
+    create_bot_tables(engine)
+
+    prev = routes_bots.ENGINE
+    routes_bots.ENGINE = engine
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO surge_positions ("
+                "position_id, ticker, strategy, legs, entry_price, contracts, "
+                "entry_time, status, mtm_value, mtm_pnl, mtm_updated_at, "
+                "pt_target_pnl, sl_target_pnl, max_profit, max_loss, account_label"
+                ") VALUES ("
+                ":pid, 'XSP', 'IBF', :legs, 1.0, 1, :t, 'OPEN', 1.0, :u, :t, "
+                "10, -10, 100, -100, 'paper')"
+            ), {"pid": "surge-test-1", "legs": json.dumps([]),
+                "t": datetime(2026, 8, 3, 9, 0), "u": -250.0})
+
+        with TestClient(backend_app) as c:
+            d = c.get("/api/spreadworks/bots/surge/status").json()
+
+        assert d["unrealized_pnl"] == -250.0
+        # Realized-only equity ignores the open mark...
+        assert d["equity"] == d["starting_capital"]
+        # ...the marked-to-market figure does not.
+        assert d["equity_mtm"] == pytest.approx(d["equity"] - 250.0)
+    finally:
+        routes_bots.ENGINE = prev
+        engine.dispose()

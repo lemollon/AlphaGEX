@@ -204,7 +204,13 @@ function BotHeader({ meta, theme, status, enabled, toggling, forcing, onToggle, 
 /* ── KPI Grid (4×2) ─────────────────────────────────────────────── */
 
 function KpiGrid({ bot, status, perf, theme }) {
-  const equity = status && typeof status.equity === 'number' ? status.equity : null;
+  // Prefer the mark-to-market equity (realized + open-position marks) so this
+  // tile matches the equity curve drawn above it. Older backends don't send
+  // `equity_mtm`; fall back to the realized-only `equity` there.
+  const equity = status && typeof status.equity_mtm === 'number'
+    ? status.equity_mtm
+    : status && typeof status.equity === 'number' ? status.equity : null;
+  const equityRealized = status && typeof status.equity === 'number' ? status.equity : null;
   const startingCapital = status?.starting_capital ?? null;
 
   const todayPnl = status && typeof status.today_pnl === 'number' ? status.today_pnl : null;
@@ -254,7 +260,11 @@ function KpiGrid({ bot, status, perf, theme }) {
       <KpiTile
         label="Account Equity"
         value={equity != null ? money(equity, { decimals: 2 }) : '…'}
-        sub={`Allocated · ${bot.toUpperCase()}`}
+        sub={
+          equityRealized != null && equity != null && Math.abs(equity - equityRealized) >= 0.005
+            ? `${money(equityRealized, { decimals: 2 })} closed · marked to market`
+            : `Allocated · ${bot.toUpperCase()}`
+        }
       />
       <KpiTile
         label="Today P&L"

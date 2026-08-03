@@ -40,6 +40,17 @@ def get_status(bot: str):
     # Sum of MTM P&L across all OPEN positions (paper-mark from latest scan).
     unrealized = sum(float(p.get("mtm_pnl") or 0) for p in opens)
 
+    # Mark-to-market equity — what the account is worth RIGHT NOW, including
+    # open positions. `equity` above is realized-only (starting_capital +
+    # closed P&L); it deliberately stays that way because scanner.py sizes
+    # positions off it and must not lever up on unrealized marks. But the UI
+    # was reading that realized-only number for its "Account Equity" tile,
+    # so the tile sat frozen all session while the equity CURVE beneath it
+    # (written by _write_equity_snapshot, which DOES add unrealized) moved —
+    # they disagreed by exactly the open-position P&L and it read as lag.
+    # Same formula as the snapshot writer so tile and curve now agree.
+    equity_mtm = float(equity) + unrealized
+
     # Today P&L = realized P&L from trades closed during today's CT session.
     # Computed in Python so the SQL is dialect-portable (SQLite tests +
     # production Postgres both treat TIMESTAMP columns as naive datetimes).
@@ -67,6 +78,7 @@ def get_status(bot: str):
         "enabled": bool(cfg["enabled"]),
         "open_positions": len(opens),
         "equity": float(equity),
+        "equity_mtm": float(equity_mtm),
         "starting_capital": float(cfg["starting_capital"]),
         "today_pnl": float(today["p"] or 0),
         "unrealized_pnl": float(unrealized),
