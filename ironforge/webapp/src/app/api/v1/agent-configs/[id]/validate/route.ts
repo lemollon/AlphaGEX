@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
 import { validateAgentConfig, RULE_VERSION } from '@/lib/enrollment/agent-rules'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
@@ -24,7 +24,9 @@ export const dynamic = 'force-dynamic'
  * re-derive it, which keeps one place responsible for the answer.
  */
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
-  const session = await getCustomerSession()
+  const identity = await getCustomerIdentity()
+  // Cookie OR mobile bearer. Shape preserved so the checks below read unchanged.
+  const session = { customerId: identity?.customerId ?? null }
   if (!session.customerId) {
     const e = errorEnvelope('UNAUTHORIZED', 'Please sign in to continue.')
     return NextResponse.json(e, { status: statusFor(e.code) })

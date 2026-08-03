@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
 import { verifyPassword, hashPassword } from '@/lib/auth/password'
 import { checkPassword } from '@/lib/signup-validation'
@@ -26,7 +26,11 @@ const MIN_LEN = 12
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getCustomerSession()
+    // Cookie OR mobile bearer. verifyEpoch because changing a password is a sensitive
+    // action: it is the one place we must honour a revocation that happened inside the
+    // access token's 15-minute life.
+    const identity = await getCustomerIdentity({ verifyEpoch: true })
+    const session = { customerId: identity?.customerId ?? null }
     if (!session.customerId) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     }

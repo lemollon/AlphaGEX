@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isCustomersDbConfigured, customerQuery } from '@/lib/customers-db'
 
 export const runtime = 'nodejs'
@@ -14,7 +14,9 @@ export const dynamic = 'force-dynamic'
 const LIVE_STATUSES = ['trialing', 'active', 'past_due']
 
 export async function GET() {
-  const session = await getCustomerSession()
+  const identity = await getCustomerIdentity()
+  // Cookie OR mobile bearer. Shape preserved so the checks below read unchanged.
+  const session = { customerId: identity?.customerId ?? null }
   if (!session.customerId || !isCustomersDbConfigured()) {
     return NextResponse.json({ ok: true, bots: [] })
   }

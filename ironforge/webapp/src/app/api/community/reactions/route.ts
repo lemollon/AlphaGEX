@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { CustomersDbNotConfiguredError } from '@/lib/customers-db'
 import { toggleReaction } from '@/lib/community/store'
 
@@ -10,7 +10,9 @@ const ALLOWED_EMOJI = new Set(['👍', '🔥', '💯', '😂', '🎯', '🙌'])
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getCustomerSession()
+    const identity = await getCustomerIdentity()
+  // Cookie OR mobile bearer. Shape preserved so the checks below read unchanged.
+  const session = { customerId: identity?.customerId ?? null }
     if (!session.customerId) {
       return NextResponse.json({ error: 'Log in to react.' }, { status: 401 })
     }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isCustomersDbConfigured } from '@/lib/customers-db'
 import { advanceBillingIfComplete, createOrResumeEnrollment, ensureLegalDocumentsSeeded, nextStepFor } from '@/lib/enrollment/service'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
@@ -22,7 +22,9 @@ export async function POST(req: NextRequest) {
   // Enrollment closed: do not begin a new enrollment intent (handoff §4/§11).
   if (isEnrollmentClosed()) return enrollmentClosedResponse()
 
-  const session = await getCustomerSession()
+  const identity = await getCustomerIdentity()
+  // Cookie OR mobile bearer. Shape preserved so the checks below read unchanged.
+  const session = { customerId: identity?.customerId ?? null }
   if (!session.customerId) {
     const e = errorEnvelope('UNAUTHORIZED', 'Please sign in to continue.')
     return NextResponse.json(e, { status: statusFor(e.code) })
