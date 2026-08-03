@@ -65,7 +65,11 @@ const config: ExpoConfig = {
   plugins: ['expo-router', 'expo-secure-store', 'expo-local-authentication'],
   extra: {
     apiBase: API_BASE,
-    eas: { projectId: process.env.EAS_PROJECT_ID ?? '' },
+    // The EAS project (expo.dev org "IronForge Technologies LLC", project "ironforge").
+    // Hardcoded rather than read from the environment because it is a permanent
+    // identifier for THIS project — an env var that happened to be unset would make
+    // `eas build` silently offer to create a second project instead of failing.
+    eas: { projectId: '06291eb6-55ec-48a3-9e24-80808946023b' },
   },
   experiments: { typedRoutes: true },
 }
