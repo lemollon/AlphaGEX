@@ -186,6 +186,33 @@ async function upsertPerson(payload: Record<string, unknown>): Promise<{ id?: st
   const lifecycle = str(payload, 'lifecycle')
   if (lifecycle) values.customer_lifecycle = lifecycle
 
+  // Location, when the event carries it (signup does; billing and brokerage events don't).
+  // Attio takes the location object whole, including explicit nulls.
+  const city = str(payload, 'city')
+  const state = str(payload, 'state')
+  if (city || state) {
+    values.primary_location = [
+      {
+        line_1: null,
+        line_2: null,
+        line_3: null,
+        line_4: null,
+        locality: city ?? null,
+        region: state ?? null,
+        postcode: null,
+        country_code: 'US',
+        latitude: null,
+        longitude: null,
+      },
+    ]
+  }
+
+  // Attribution is write-when-known, never write-a-default: the waitlist route learned this the
+  // hard way when a recomputed 'Organic' overwrote a real 'LinkedIn'. Emitters must send
+  // leadSource only when they genuinely know it.
+  const leadSource = str(payload, 'leadSource')
+  if (leadSource) values.lead_source = leadSource
+
   const res = await assertSafe('people', values)
   if (!res.ok) return { error: res.error, retryable: res.retryable }
   return { id: res.data?.data?.id?.record_id }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHash, randomUUID } from 'crypto'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
 import { validateWaitlist, CONSENT_VERSION, WAITLIST_SOURCE } from '@/lib/waitlist'
-import { upsertWaitlistToAttio } from '@/lib/attio'
+import { upsertWaitlistToAttio, setWaitlistConfirmationStatus } from '@/lib/attio'
 import { enqueueCrmEvent } from '@/lib/crm/outbox'
 import { CAPITAL_RANGE_TO_VOLUME, toLeadSource } from '@/lib/crm/schema'
 import { sendWaitlistConfirmation } from '@/lib/email'
@@ -204,13 +204,23 @@ export async function POST(req: NextRequest) {
   // 3) Confirmation email — async, best-effort, sent ONCE per confirmed prospect.
   //    A failure never discards the lead; a resubmit after a failed send retries.
   if (!alreadyEmailed) {
+    const personId = attio.recordId
     void sendWaitlistConfirmation({ to: n.email, firstName: n.firstName })
-      .then((r) =>
-        customerExecute(
+      .then(async (r) => {
+        const status = r.sent ? 'sent' : r.skipped ? 'pending' : 'failed'
+        await customerExecute(
           `UPDATE waitlist_submissions SET email_status=$2, updated_at=now() WHERE lower(email)=lower($1)`,
-          [n.email, r.sent ? 'sent' : r.skipped ? 'pending' : 'failed'],
-        ).catch(() => {}),
-      )
+          [n.email, status],
+        ).catch(() => {})
+        // Mirror the outcome onto the Attio list entry. Before this the entry said 'Pending'
+        // permanently, so a FAILED confirmation — the one an operator has to chase — was
+        // indistinguishable in the CRM from one that sent fine. Skipped sends stay 'Pending',
+        // which is what they are. Needs the person id from the inline upsert; when that was
+        // skipped or failed there is no entry to update yet (the outbox creates it later).
+        if (personId && status !== 'pending') {
+          await setWaitlistConfirmationStatus(personId, status).catch(() => {})
+        }
+      })
       .catch(() => {})
   }
 

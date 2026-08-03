@@ -160,6 +160,7 @@ export async function POST(req: NextRequest) {
               eventId: recurringEventId(`brokerage_failed:${row.id}:broken`),
               eventType: 'crm.brokerage_failed',
               userId,
+              correlationId: row.id,
               payload: {
                 email: person.email,
                 firstName: person.first_name,

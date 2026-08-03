@@ -6,7 +6,6 @@ import { hashPassword } from '@/lib/auth/password'
 import { lookupPromo } from '@/lib/promo'
 import { generateToken, TOKEN_TTL_MS } from '@/lib/auth/verification-token'
 import { sendVerificationEmail } from '@/lib/email'
-import { syncContactToAttio, enqueueAttioSync } from '@/lib/attio'
 import { enqueueCrmEvent } from '@/lib/crm/outbox'
 import {
   isCustomersDbConfigured,
@@ -212,44 +211,32 @@ export async function POST(req: NextRequest) {
       console.error('[signup] verification email threw:', e)
     }
 
-    // Sub-project E: mirror the prospect into Attio CRM (best-effort; never blocks
-    // the account). On failure, queue for retry + record an ATTIO_SYNC_FAILED audit.
-    try {
-      const contact = {
-        firstName: n.firstName,
-        lastName: n.lastName,
-        email: n.email,
-        phone: n.phone,
-        state: n.state,
-        referralCode: n.referralCode || undefined,
-      }
-      const attioRes = await syncContactToAttio(contact)
-      if (attioRes.synced) {
-        await writeAudit(userId, 'ATTIO_SYNCED', ip, ua, { record_id: attioRes.recordId ?? null })
-      } else if (!attioRes.skipped) {
-        await enqueueAttioSync(userId, contact, attioRes.error ?? 'unknown')
-        await writeAudit(userId, 'ATTIO_SYNC_FAILED', ip, ua, {
-          error: (attioRes.error ?? '').slice(0, 200),
-        })
-      }
-    } catch (e) {
-      console.error('[signup] attio sync threw:', e)
-    }
-
     // CRM: account created. This is the event that attaches ironforge_user_id to the Person —
     // the durable match key that takes over from email once an account exists (DEC-004) — and
-    // moves the lifecycle to Enrollment Started. Queued, so it survives an Attio outage; the
-    // legacy sync above only ever wrote name/email/phone as a Note.
+    // moves the lifecycle to Enrollment Started. Queued, so it survives an Attio outage.
+    //
+    // This REPLACES the legacy sub-project E path (syncContactToAttio + attio_sync_queue), which
+    // ran here in parallel and wrote the same Person a second time. Two writers on one record is
+    // two sets of retry semantics, two failure modes and two things to reason about when a field
+    // looks wrong; the outbox is the one with durable delivery and a dead-letter queue, so it
+    // wins. `state` moves from the old free-text signup Note into the structured
+    // primary_location attribute — a filterable field instead of prose nobody can query.
     await enqueueCrmEvent({
       eventId: `acct_${userId}`,
       eventType: 'crm.account_created',
       userId,
+      correlationId: userId,
       payload: {
         email: n.email,
         firstName: n.firstName,
         lastName: n.lastName,
         phone: n.phone,
+        state: n.state,
         ironforgeUserId: userId,
+        // Only when we actually know it. A referred signup IS a referral; a plain signup tells us
+        // nothing, and sending a default 'Organic' here would clobber a waitlist lead's real
+        // attribution the moment they created an account.
+        ...(n.referralCode ? { leadSource: 'Referral' } : {}),
       },
     })
 
