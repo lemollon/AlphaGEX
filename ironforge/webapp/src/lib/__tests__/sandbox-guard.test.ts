@@ -117,6 +117,25 @@ describe('checkSandboxEnv', () => {
       expect(res.errors.some((e: string) => e.includes('DATABASE_URL is unset'))).toBe(true)
     })
 
+    it('catches a production database behind a password containing "@"', () => {
+      // Regression: new URL() mis-parsed this and yielded
+      // 'w0rd@host.render.com/ironforge', so the production-database check — the
+      // most important assertion in the guard — silently passed.
+      const res = checkSandboxEnv({
+        IRONFORGE_ENV: 'sandbox',
+        DATABASE_URL: 'postgresql://user:p@ss/w0rd@host.oregon-postgres.render.com/ironforge',
+        STRIPE_SECRET_KEY: 'sk_test_x',
+      })
+      expect(res.errors.some((e: string) => e.includes('production database "ironforge"'))).toBe(
+        true,
+      )
+    })
+
+    it('FAILS CLOSED when a database name cannot be parsed at all', () => {
+      const res = checkSandboxEnv(safeEnv({ DATABASE_URL: 'not-a-connection-string' }))
+      expect(res.errors.some((e: string) => e.includes('could not be parsed'))).toBe(true)
+    })
+
     it('warns when the customer DB is missing', () => {
       const res = checkSandboxEnv(safeEnv({ CUSTOMERS_DATABASE_URL: undefined }))
       expect(res.errors).toEqual([])
@@ -178,9 +197,25 @@ describe('databaseNameOf', () => {
     expect(databaseNameOf('postgresql://u:p@h/ironforge?sslmode=require')).toBe('ironforge')
   })
 
-  it('returns empty for unparseable or missing input', () => {
-    expect(databaseNameOf('')).toBe('')
-    expect(databaseNameOf(undefined)).toBe('')
-    expect(databaseNameOf('not a url')).toBe('')
+  it.each([
+    ['unescaped @ in password', 'postgresql://user:p@ss/w0rd@host.render.com/ironforge', 'ironforge'],
+    [
+      'unescaped / in password',
+      'postgresql://user:pa/ss@host.render.com/ironforge_sandbox',
+      'ironforge_sandbox',
+    ],
+    ['no port, no query', 'postgresql://u:p@h/mydb', 'mydb'],
+    ['port and query', 'postgresql://u:p@h:5432/mydb?sslmode=require', 'mydb'],
+  ])('handles %s', (_label, url, expected) => {
+    expect(databaseNameOf(url)).toBe(expected)
+  })
+
+  it('returns null (NOT a name) when it cannot determine one', () => {
+    // null is the signal that makes callers fail closed. Returning '' previously
+    // read as "no production database found" and waved the guard through.
+    expect(databaseNameOf('')).toBeNull()
+    expect(databaseNameOf(undefined)).toBeNull()
+    expect(databaseNameOf('not a url')).toBeNull()
+    expect(databaseNameOf('postgresql://userhost')).toBeNull()
   })
 })
