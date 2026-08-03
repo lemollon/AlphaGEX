@@ -7,7 +7,7 @@
  * threat for a trading app.
  */
 import * as LocalAuthentication from 'expo-local-authentication'
-import * as SecureStore from 'expo-secure-store'
+import { setItem, getItem } from '@/api/storage'
 import { api, apiPublic, saveTokens, clearTokens, hasSession, AuthExpiredError } from '@/api/client'
 import type { MobileMe } from '@/api/types'
 
@@ -49,7 +49,7 @@ export async function signIn(
 }
 
 export async function signOut(): Promise<void> {
-  const refreshToken = await SecureStore.getItemAsync('ironforge.refreshToken')
+  const refreshToken = await getItem('ironforge.refreshToken')
   // Best-effort server-side revoke, then ALWAYS clear locally. If the network call
   // fails we must still forget the tokens — a "sign out" that leaves credentials on
   // the device because the request timed out is the worst possible outcome.
@@ -76,11 +76,11 @@ export async function biometricsAvailable(): Promise<boolean> {
 }
 
 export async function isBiometricEnabled(): Promise<boolean> {
-  return (await SecureStore.getItemAsync(BIOMETRIC_PREF_KEY)) === 'true'
+  return (await getItem(BIOMETRIC_PREF_KEY)) === 'true'
 }
 
 export async function setBiometricEnabled(on: boolean): Promise<void> {
-  await SecureStore.setItemAsync(BIOMETRIC_PREF_KEY, on ? 'true' : 'false')
+  await setItem(BIOMETRIC_PREF_KEY, on ? 'true' : 'false')
 }
 
 /**
