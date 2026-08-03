@@ -15,7 +15,7 @@ verified against the live workspace.
 | 1 | Waitlist - All | People | P0 | **Built** — missing only the Location column (see §1) |
 | 2 | Waitlist - Priority | People | P0 | **Built** |
 | 3 | Enrollment Pipeline | People (Kanban) | P0 | To build |
-| 4 | Active Members | People | P0 | To build |
+| 4 | Active Members | People | P0 | **Built** — add the Account Health sort when there is data |
 | 5 | Brokerage Issues | Brokerage Connections | P0 | **Built** — columns, Or-filter and sort all saved |
 | 6 | Paused & Canceled | Memberships | P1 | **Built** |
 | 7 | Founding Member Outreach | List | P1 | To build |
@@ -107,7 +107,7 @@ Descending. Saved for everyone.
 > People kanban. Plan and connection status are one click away on each person's record via the
 > linked Membership / Brokerage Connection. Do not try to force them on.
 
-## 4. Active Members
+## 4. Active Members — *BUILT AND SAVED (sort still to add)*
 
 - **Base:** People · **Type:** Table
 - **Columns:** Person · Email addresses · Account Health · Customer Lifecycle
