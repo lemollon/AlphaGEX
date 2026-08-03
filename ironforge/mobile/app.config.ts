@@ -16,6 +16,11 @@ const API_BASE = process.env.EXPO_PUBLIC_API_BASE ?? 'https://ironforge.trade'
 const config: ExpoConfig = {
   name: 'IronForge',
   slug: 'ironforge',
+  // The EAS account that OWNS this project. Required because the project lives under
+  // the organization while builds are run by a personal account that happens to be a
+  // member — without it, EAS refuses the build rather than guessing which account the
+  // credentials and build minutes should belong to.
+  owner: 'ironforge-technologies-llc',
   version: '1.0.0',
   orientation: 'portrait',
   scheme: 'ironforge',
