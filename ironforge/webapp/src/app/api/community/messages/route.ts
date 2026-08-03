@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { CustomersDbNotConfiguredError } from '@/lib/customers-db'
 import { hasActiveMembership } from '@/lib/live/membership'
 import { moderateMessage } from '@/lib/community/forge-ai'
@@ -27,7 +27,9 @@ function dbUnavailable() {
 export async function GET(req: NextRequest) {
   try {
     const channel = req.nextUrl.searchParams.get('channel') || DEFAULT_CHANNEL
-    const session = await getCustomerSession()
+    const identity = await getCustomerIdentity()
+    // Cookie OR mobile bearer.
+    const session = { customerId: identity?.customerId ?? null }
     const viewerId = session.customerId ?? null
 
     await seedWelcomeMessage()
@@ -50,7 +52,9 @@ export async function GET(req: NextRequest) {
 /** Post a message — requires a customer session; moderated before persistence. */
 export async function POST(req: NextRequest) {
   try {
-    const session = await getCustomerSession()
+    const identity = await getCustomerIdentity()
+    // Cookie OR mobile bearer.
+    const session = { customerId: identity?.customerId ?? null }
     if (!session.customerId) {
       return NextResponse.json({ error: 'Log in to join the conversation.' }, { status: 401 })
     }
