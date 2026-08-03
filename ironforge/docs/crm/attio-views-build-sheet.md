@@ -13,11 +13,11 @@ verified against the live workspace.
 | # | View | Base | Priority | State |
 |---|---|---|---|---|
 | 1 | Waitlist - All | People | P0 | **Built** — missing only the Location column (see §1) |
-| 2 | Waitlist - Priority | People | P0 | To build |
+| 2 | Waitlist - Priority | People | P0 | **Built** |
 | 3 | Enrollment Pipeline | People (Kanban) | P0 | To build |
 | 4 | Active Members | People | P0 | To build |
-| 5 | Brokerage Issues | Brokerage Connections | P0 | **View created, empty** — needs columns, filter, sort |
-| 6 | Paused & Canceled | Memberships | P1 | To build |
+| 5 | Brokerage Issues | Brokerage Connections | P0 | **Built** — columns, Or-filter and sort all saved |
+| 6 | Paused & Canceled | Memberships | P1 | **Built** |
 | 7 | Founding Member Outreach | List | P1 | To build |
 
 ## How to build one (the mechanics)
@@ -32,6 +32,28 @@ verified against the live workspace.
   (defaults to Ascending) and set Descending where this sheet says so.
 - **⚠️ Save:** changing filters/sorts shows **Save for everyone** in the top right. Click it, or
   the change stays local to you and nobody else sees the view you just built.
+
+### ⚠️ Multi-value filters need an ADVANCED filter (learned the hard way)
+
+Every "is any of / is in" filter in this spec — Brokerage Issues, Paused & Canceled, Enrollment
+Pipeline — **cannot be built as one condition**. Attio's status filter is single-select: clicking
+a second value silently REPLACES the first. Do this instead:
+
+1. Add the filter normally with the first value (e.g. `Connection Status is Failed`).
+2. Click the **⋮** on that filter → **Convert to advanced filter**.
+3. In the advanced panel, **+ Add filter**, and click the **And** joiner to flip it to **Or**.
+4. Repeat for each remaining value.
+5. **Delete the leftover simple chip.** Converting leaves the original condition sitting in the
+   filter bar *outside* the advanced group, where it ANDs against it — leaving it there makes the
+   view permanently empty. Its **⋮** → **Delete filter**.
+
+Verify the pill reads **Advanced filter N** with nothing beside it.
+
+### ⚠️ Reference fields (Member, Brokerage) drill in rather than attach
+
+Clicking `Member` opens the linked *person's* attributes instead of adding a Member column. Pick
+**Name** from that drilled-in list to get a `Member › Name` column, which is what you want. Same
+for `Brokerage` → `Name`, and for `Primary location` → `City` / `State`.
 
 ### Three gotchas that cost me time
 
@@ -59,7 +81,7 @@ Descending. Saved for everyone.
 > 2026-08-02, so people captured before then have no value for it. New waitlist submissions
 > populate it within ~30 seconds.
 
-## 2. Waitlist - Priority
+## 2. Waitlist - Priority — *BUILT AND SAVED*
 
 - **Base:** People · **Type:** Table
 - **Columns:** Person · Email addresses · Phone numbers · Trading Volume · Lead Source ·
@@ -96,19 +118,20 @@ Descending. Saved for everyone.
 > Status and Start Date columns belong to Memberships / Brokerage Connections. Use view 6 for
 > plan and dates, and view 5 for connection state.
 
-## 5. Brokerage Issues — *view exists, empty*
+## 5. Brokerage Issues — *BUILT AND SAVED*
 
-- **Base:** Brokerage Connections · **Type:** Table (already created)
-- **Columns:** Member · Brokerage · Connection Status · Last Attempt · Last Error Code ·
-  Last Error Summary · Reauthorization Required
-- **Filter:** `Connection Status is any of` → Failed, Disconnected, Reauthorization Required
+- **Base:** Brokerage Connections · **Type:** Table
+- **Columns:** Member › Name · Connection Status · Last Attempt · Last Error Code ·
+  Last Error Summary · Reauthorization Required · Brokerage › Name
+- **Filter:** Advanced — `Connection Status is Failed` **Or** `is Disconnected` **Or**
+  `is Reauthorization Required`
 - **Sort:** `Last Attempt` Descending
 
 > This is the view that most needed the backend work: three failure paths used to write nothing
 > at all, so there was no data to show. They now record a normalized error code and a
 > customer-safe summary — never provider text, tokens or credentials.
 
-## 6. Paused & Canceled
+## 6. Paused & Canceled — *BUILT AND SAVED*
 
 - **Base:** Memberships · **Type:** Table
 - **Columns:** Member · Plan · Bot · Membership Status · Start Date · Cancellation Date ·
