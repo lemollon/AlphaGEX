@@ -139,6 +139,16 @@ export function isPublicPath(pathname: string): boolean {
   // after which Universal Links silently never verify, with no error and no log. This
   // branch is the fix; access.test.ts pins it.
   if (pathname.startsWith('/.well-known/')) return true
+  // /app/* is the mobile HAND-OFF namespace and nothing else: tiny bridge pages that a
+  // third party (Stripe, a brokerage portal) redirects a browser to, which then hand off
+  // to the installed app. They MUST be public — that browser context is a fresh
+  // ASWebAuthenticationSession / Custom Tab with no cookie, so gating them sent the
+  // customer to /ops/login (the OPERATOR door) at the end of every mobile checkout and
+  // brokerage connect. Found by a live smoke test, not by any unit test.
+  //
+  // Safe because these pages carry NO account data: they read an allowlisted `to` route
+  // and redirect. Never put anything that reads customer state under /app/.
+  if (pathname.startsWith('/app/')) return true
   // Mobile auth endpoints are middleware-open and self-guarded in-route: login checks the
   // password, refresh/logout check the presented refresh token, me checks the bearer, and
   // policy returns constants only. Same shape as /api/auth/customer-me.
