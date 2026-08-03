@@ -434,6 +434,11 @@ CREATE TABLE IF NOT EXISTS oauth_states (
 );
 CREATE INDEX IF NOT EXISTS idx_oauth_states_expiry ON oauth_states(expires_at);
 ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS return_to TEXT;
+-- Which CLIENT started the round-trip: 'web' or 'mobile'. Decides whether the callback
+-- redirects to a web page or to the /app/brokerage/return deep-link bridge. Stored
+-- server-side with the rest of the state so a caller cannot choose its own return
+-- surface — the signature/record IS the authorization.
+ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS client TEXT;
 
 -- DASH-FIRST-01: the first-entry confirmation renders ONCE per activation. A server
 -- field, not client storage, because the flow crosses a hard redirect (/enroll → /live)

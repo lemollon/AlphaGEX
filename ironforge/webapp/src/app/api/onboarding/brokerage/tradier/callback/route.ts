@@ -7,6 +7,7 @@ import {
   getAccountOptionBuyingPower,
 } from '@/lib/tradier-oauth'
 import { consumeOAuthState } from '@/lib/enrollment/oauth-state'
+import { billingReturn } from '@/lib/mobile/deep-link'
 import { evaluateAccountEligibility, maskAccountNumber } from '@/lib/enrollment/eligibility'
 import { encryptSecret } from '@/lib/crypto/secret-box'
 import { isCustomersDbConfigured, customerQuery, customerExecute, customerTransaction } from '@/lib/customers-db'
@@ -51,9 +52,24 @@ export async function GET(req: NextRequest) {
     ? new URL('/enroll/broker?connected=1', publicOrigin(req))
     : new URL('/onboarding/complete', publicOrigin(req))
 
+  // Mobile returns through the https bridge, which the installed app claims as a
+  // Universal/App Link. `client` comes from the single-use state record minted at
+  // connect — never from the request — so the return surface cannot be chosen by a
+  // caller. Same treatment as the SnapTrade callback, so both providers behave
+  // identically from the app's point of view.
+  const client = oauth?.client ?? 'web'
+  const doneUrl = (status: 'success' | 'incomplete' | 'error') =>
+    client === 'mobile'
+      ? new URL(billingReturn(publicOrigin(req), 'mobile', '/account/brokerage', { status }))
+      : status === 'success'
+        ? complete
+        : (() => {
+            brokerageStep.searchParams.set(status === 'incomplete' ? 'incomplete' : 'error', '1')
+            return brokerageStep
+          })()
+
   if (!code || !uid || !isTradierOAuthConfigured() || !isCustomersDbConfigured()) {
-    brokerageStep.searchParams.set('error', '1')
-    return NextResponse.redirect(brokerageStep)
+    return NextResponse.redirect(doneUrl('error'))
   }
 
   try {
@@ -63,8 +79,7 @@ export async function GET(req: NextRequest) {
     )
     const user = rows[0]
     if (!user) {
-      brokerageStep.searchParams.set('error', '1')
-      return NextResponse.redirect(brokerageStep)
+      return NextResponse.redirect(doneUrl('error'))
     }
 
     const token = await exchangeCodeForToken(code, oauth?.codeVerifier)
@@ -78,8 +93,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (accounts.length === 0) {
-      brokerageStep.searchParams.set('incomplete', '1')
-      return NextResponse.redirect(brokerageStep)
+      return NextResponse.redirect(doneUrl('incomplete'))
     }
 
     const createdConnections: Array<{ id: string }> = []
@@ -207,7 +221,7 @@ export async function GET(req: NextRequest) {
       console.error('[tradier/callback] attio sync threw:', e)
     }
 
-    return NextResponse.redirect(complete)
+    return NextResponse.redirect(doneUrl('success'))
   } catch (e) {
     console.error('[tradier/callback] failed:', e)
     brokerageStep.searchParams.set('error', '1')

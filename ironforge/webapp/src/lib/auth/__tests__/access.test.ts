@@ -182,4 +182,17 @@ describe('mobile bearer access', () => {
     expect(isPublicPath('/.well-known/apple-app-site-association')).toBe(true)
     expect(isPublicPath('/.well-known/assetlinks.json')).toBe(true)
   })
+
+  // Regression: /app/* was classified in surface.ts (which SERVICE serves it) but not in
+  // access.ts (whether it needs a session), so the bridge 307'd to /ops/login — the
+  // OPERATOR door — at the end of every mobile checkout and brokerage connect. The
+  // browser arriving here is a fresh ASWebAuthenticationSession with no cookie, so it
+  // could never satisfy that. Caught by a live smoke test; pinned here.
+  it('serves the mobile hand-off bridge unauthenticated', () => {
+    expect(isPublicPath('/app/return')).toBe(true)
+    expect(isPublicPath('/app/brokerage/return')).toBe(true)
+    expect(
+      decideAccess({ ...base, isApi: false, pathname: '/app/return', hasBearerCustomer: false }),
+    ).toBe('allow')
+  })
 })
