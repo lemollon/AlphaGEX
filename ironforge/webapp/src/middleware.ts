@@ -6,6 +6,7 @@ import { ONBOARDING_COOKIE, verifyOnboardingToken } from '@/lib/auth/onboarding'
 import { customerSessionOptions, type CustomerSessionData } from '@/lib/auth/customer-session'
 import { bearerFrom, verifyAccessToken } from '@/lib/auth/mobile-token'
 import { resolveSurface, servesPath, OPERATOR_LANDING } from '@/lib/surface'
+import { preflightResponse, resolveAllowedOrigin, corsHeaders } from '@/lib/auth/cors'
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
@@ -46,6 +47,31 @@ export async function middleware(req: NextRequest) {
 
   const isApi = pathname.startsWith('/api/')
   const hasServiceToken = hasValidServiceToken(req.headers.get('x-ironforge-service'))
+
+  // ── CORS for the mobile app's WEB build ──
+  //
+  // Placed AFTER the surface split (so it can never resurrect an operator route that
+  // 404s here) and after public-mode, but BEFORE the auth gate — because a preflight
+  // must be answered without credentials. OPTIONS carries no cookie or token and
+  // returns no data; gating it would 401 the preflight and the real request would
+  // never leave the browser.
+  //
+  // Entirely inert unless CORS_ALLOWED_ORIGINS is set, and it never echoes '*' nor
+  // allows credentials. See lib/auth/cors.ts.
+  const reqOrigin = req.headers.get('origin')
+  const preflight = preflightResponse(req.method, reqOrigin, pathname)
+  if (preflight) return preflight
+  const allowedOrigin = isApi ? resolveAllowedOrigin(reqOrigin) : null
+
+  // Applied to every response this middleware returns. A 401 needs the headers just as
+  // much as a 200: without them the browser surfaces an opaque CORS failure and the app
+  // can never see that the real problem was an expired token.
+  const withCors = <T extends Response>(r: T): T => {
+    if (allowedOrigin) {
+      for (const [k, v] of Object.entries(corsHeaders(allowedOrigin))) r.headers.set(k, v)
+    }
+    return r
+  }
 
   // Read (not write) the session cookie. Edge-safe: iron-session uses Web Crypto.
   const res = NextResponse.next()
@@ -99,15 +125,15 @@ export async function middleware(req: NextRequest) {
     pathname.startsWith('/onboarding/') ||
     pathname.startsWith('/api/onboarding/')
   if (isOnboarding) {
-    if (hasSession || hasServiceToken) return res
+    if (hasSession || hasServiceToken) return withCors(res)
     const claims = await verifyOnboardingToken(req.cookies.get(ONBOARDING_COOKIE)?.value)
-    if (claims) return res
+    if (claims) return withCors(res)
     // A logged-in customer can resume onboarding via their own session cookie.
-    if (await customerSession()) return res
+    if (await customerSession()) return withCors(res)
     // ...or, from the app, via a bearer token. Without this a mobile user who still
     // has onboarding steps left is locked out of finishing them.
-    if (await bearerCustomer()) return res
-    if (isApi) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    if (await bearerCustomer()) return withCors(res)
+    if (isApi) return withCors(NextResponse.json({ error: 'unauthorized' }, { status: 401 }))
     const url = req.nextUrl.clone()
     url.pathname = '/login'
     url.searchParams.set('next', pathname)
@@ -131,16 +157,16 @@ export async function middleware(req: NextRequest) {
     hasBearerCustomer,
     hasServiceToken,
   })
-  if (decision === 'allow') return res
+  if (decision === 'allow') return withCors(res)
   if (decision === 'unauthorized') {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    return withCors(NextResponse.json({ error: 'unauthorized' }, { status: 401 }))
   }
   // A caller that presented an Authorization header is an API client, not a browser.
   // Redirecting it to an HTML login page yields a 200 full of markup that the app has
   // to guess is a failure; 401 says exactly what happened (token missing/expired →
   // refresh, then retry).
   if (req.headers.get('authorization')) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    return withCors(NextResponse.json({ error: 'unauthorized' }, { status: 401 }))
   }
   const url = req.nextUrl.clone()
   // Customer surface → customer door; operator surface → operator door. Sending a
