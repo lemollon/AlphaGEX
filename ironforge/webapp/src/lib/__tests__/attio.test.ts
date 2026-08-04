@@ -4,6 +4,9 @@ import {
   buildPersonAssert,
   buildSignupNote,
   syncContactToAttio,
+  upsertWaitlistToAttio,
+  isPhoneValidationError,
+  withoutPhone,
 } from '@/lib/attio'
 
 const OLD = { ...process.env }
@@ -114,5 +117,96 @@ describe('syncContactToAttio', () => {
     const res = await syncContactToAttio(CONTACT)
     expect(res.synced).toBe(true)
     expect(res.recordId).toBe('rec_x')
+  })
+})
+
+/**
+ * 8/3 production incident: a waitlist submission 400'd on `phone_numbers` ("Invalid phone number,
+ * possibly due to missing country information") and then dead-lettered out of the CRM outbox, so
+ * the lead lived in Postgres and nowhere else. Attio validates against the real numbering plan;
+ * normalizePhone only counts digits. Losing the phone must never cost us the person.
+ */
+const PHONE_400 = JSON.stringify({
+  status_code: 400,
+  type: 'invalid_request_error',
+  code: 'validation_type',
+  message: 'An invalid value was passed to attribute with slug "phone_numbers".',
+  validation_errors: [{ code: 'invalid', path: ['original_phone_number'], message: 'Invalid phone number' }],
+})
+
+const WAITLIST_CONTACT = {
+  firstName: 'Ada',
+  lastName: 'Lovelace',
+  email: 'ada@example.com',
+  phone: '+11234567890',
+  city: 'Austin',
+  state: 'TX',
+  tradingCapitalRange: '$10,000 - $24,999',
+  consentVersion: 'v1',
+  submissionId: 'sub_1',
+}
+
+describe('isPhoneValidationError / withoutPhone', () => {
+  it('recognises the Attio phone rejection and nothing else', () => {
+    expect(isPhoneValidationError(PHONE_400)).toBe(true)
+    expect(isPhoneValidationError('Attio 400: unknown attribute "trading_volume"')).toBe(false)
+    expect(isPhoneValidationError(undefined)).toBe(false)
+  })
+
+  it('drops only phone_numbers', () => {
+    const out = withoutPhone({ email_addresses: [1], phone_numbers: [2], name: [3] })
+    expect(out).toEqual({ email_addresses: [1], name: [3] })
+  })
+})
+
+describe('phone fallback — a bad phone must not cost us the record', () => {
+  it('retries the waitlist person WITHOUT the phone and still captures the lead', async () => {
+    const bodies: any[] = []
+    const fetchMock = vi.fn(async (url: string, init: any) => {
+      if (String(url).includes('/objects/people/records')) {
+        const body = JSON.parse(init.body)
+        bodies.push(body)
+        if (body.data.values.phone_numbers) return new Response(PHONE_400, { status: 400 })
+        return new Response(JSON.stringify({ data: { id: { record_id: 'rec_ok' } } }), { status: 200 })
+      }
+      return new Response('{}', { status: 200 }) // note / list entry
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await upsertWaitlistToAttio(WAITLIST_CONTACT)
+    expect(res.synced).toBe(true)
+    expect(res.recordId).toBe('rec_ok')
+    expect(bodies.length).toBe(2)
+    expect(bodies[1].data.values.phone_numbers).toBeUndefined()
+    // the rest of the record survives the retry
+    expect(bodies[1].data.values.email_addresses).toEqual([{ email_address: 'ada@example.com' }])
+    expect(bodies[1].data.values.primary_location[0].region).toBe('TX')
+    // the rejected number is preserved as a note rather than silently dropped
+    const noteCall = fetchMock.mock.calls.find((c) => String(c[0]).includes('/notes'))
+    expect(noteCall).toBeDefined()
+    expect(JSON.parse((noteCall![1] as any).body).data.content).toContain('+11234567890')
+  })
+
+  it('does NOT retry when the 400 is about something else', async () => {
+    const fetchMock = vi.fn(async () => new Response('{"message":"unknown attribute"}', { status: 400 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await upsertWaitlistToAttio(WAITLIST_CONTACT)
+    expect(res.synced).toBe(false)
+    expect(fetchMock.mock.calls.length).toBe(1)
+  })
+
+  it('applies the same fallback to signup contacts', async () => {
+    const fetchMock = vi.fn(async (url: string, init: any) => {
+      if (String(url).includes('/objects/people/records')) {
+        return JSON.parse(init.body).data.values.phone_numbers
+          ? new Response(PHONE_400, { status: 400 })
+          : new Response(JSON.stringify({ data: { id: { record_id: 'rec_s' } } }), { status: 200 })
+      }
+      return new Response('{}', { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await syncContactToAttio(CONTACT)
+    expect(res.synced).toBe(true)
+    expect(res.recordId).toBe('rec_s')
   })
 })

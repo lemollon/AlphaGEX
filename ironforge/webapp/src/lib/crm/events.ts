@@ -19,6 +19,7 @@ import {
   type AttioResult,
 } from '@/lib/crm/client'
 import { MATCHING_ATTRIBUTE } from '@/lib/crm/schema'
+import { isPhoneValidationError, withoutPhone } from '@/lib/attio'
 
 export type CrmEventType =
   | 'crm.waitlist_submitted'
@@ -127,7 +128,14 @@ async function assertSafe(
     return { ok: false, status: 0, error: message, retryable: false }
   }
   const matching = MATCHING_ATTRIBUTE[objectSlug] ?? 'email_addresses'
-  return assertRecord(objectSlug, matching, values)
+  const res = await assertRecord(objectSlug, matching, values)
+  if (res.ok || !('phone_numbers' in values)) return res
+  // Attio validates phones against the real numbering plan and 400s the ENTIRE write when one
+  // doesn't parse — permanent, so the outbox dead-letters and the record never lands. Losing the
+  // phone is strictly better than losing the person: retry once without it (see isPhoneValidationError).
+  if (res.status !== 400 || !isPhoneValidationError(res.error)) return res
+  console.warn(`[crm] Attio rejected phone_numbers on ${objectSlug} — retrying without the phone`)
+  return assertRecord(objectSlug, matching, withoutPhone(values))
 }
 
 /** Truncate and scrub a provider error string down to something safe to show an operator. */
