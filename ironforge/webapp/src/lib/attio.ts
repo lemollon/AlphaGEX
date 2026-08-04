@@ -41,6 +41,27 @@ export function isAttioConfigured(): boolean {
   return !!process.env.ATTIO_API_KEY
 }
 
+/**
+ * Attio validates phone numbers against the real numbering plan and rejects the WHOLE record
+ * write with a 400 when one doesn't parse. Our own check only counts digits (10/11 → E.164), so
+ * a typo'd or fake-but-well-formed number is accepted here and refused there — and the person
+ * never lands in the CRM at all. Seen live on 8/3: a waitlist submission failed inline with
+ * `"slug \"phone_numbers\"" / "Invalid phone number, possibly due to missing country
+ * information"` and then dead-lettered out of the outbox, so the lead existed in Postgres and
+ * nowhere else. Callers detect this and retry without the phone: a contact minus one field beats
+ * no contact.
+ */
+export function isPhoneValidationError(detail: string | undefined): boolean {
+  if (!detail) return false
+  return /phone_numbers|original_phone_number/.test(detail)
+}
+
+/** The same values with the phone stripped, for the retry above. */
+export function withoutPhone(values: Record<string, unknown>): Record<string, unknown> {
+  const { phone_numbers: _dropped, ...rest } = values
+  return rest
+}
+
 function authHeaders(): Record<string, string> {
   return {
     Authorization: `Bearer ${process.env.ATTIO_API_KEY}`,
@@ -59,6 +80,42 @@ export function buildPersonAssert(c: AttioContact): Record<string, unknown> {
   return { data: { values } }
 }
 
+interface PersonAssertOutcome {
+  ok: boolean
+  status: number
+  detail: string
+  recordId?: string
+  /** True when the record only landed because the phone was dropped — the caller should say so. */
+  phoneDropped: boolean
+}
+
+/**
+ * PUT the People assert, retrying ONCE without `phone_numbers` when that is the only thing Attio
+ * objected to (see isPhoneValidationError). Never throws; the caller decides what a failure means.
+ */
+async function assertPersonWithPhoneFallback(values: Record<string, unknown>): Promise<PersonAssertOutcome> {
+  const put = async (v: Record<string, unknown>) => {
+    const res = await fetch(ATTIO_PEOPLE_ASSERT_URL, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify({ data: { values: v } }),
+    })
+    if (!res.ok) {
+      return { ok: false, status: res.status, detail: (await res.text().catch(() => '')).slice(0, 300) }
+    }
+    const json = (await res.json().catch(() => null)) as { data?: { id?: { record_id?: string } } } | null
+    return { ok: true, status: res.status, detail: '', recordId: json?.data?.id?.record_id }
+  }
+
+  const first = await put(values)
+  if (first.ok || !('phone_numbers' in values)) return { ...first, phoneDropped: false }
+  if (first.status !== 400 || !isPhoneValidationError(first.detail)) return { ...first, phoneDropped: false }
+
+  console.warn('[attio] phone rejected by Attio — retrying person upsert without it')
+  const retry = await put(withoutPhone(values))
+  return { ...retry, phoneDropped: retry.ok }
+}
+
 /** Free-text note carrying the signup fields that aren't standard People attributes. */
 export function buildSignupNote(recordId: string, c: AttioContact): Record<string, unknown> {
   const lines = [
@@ -74,6 +131,32 @@ export function buildSignupNote(recordId: string, c: AttioContact): Record<strin
       format: 'plaintext',
       content: lines.join('\n'),
     },
+  }
+}
+
+/**
+ * Best-effort: record a phone Attio refused to store. Without this the fallback above would
+ * trade one silent loss (the whole person) for a smaller one (their phone number) — the operator
+ * would see a contact with no phone and no reason why. Never throws.
+ */
+async function attachRejectedPhoneNote(recordId: string, phone: string): Promise<void> {
+  if (!phone) return
+  try {
+    await fetch(ATTIO_NOTES_URL, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        data: {
+          parent_object: 'people',
+          parent_record_id: recordId,
+          title: 'Phone number rejected by Attio',
+          format: 'plaintext',
+          content: `Submitted phone: ${phone}\nAttio rejected it as not a valid number, so it is not on the record. Verify with the prospect before calling.`,
+        },
+      }),
+    })
+  } catch (e) {
+    console.error('[attio] rejected-phone note failed (non-fatal):', e)
   }
 }
 
@@ -98,19 +181,14 @@ async function attachSignupNote(recordId: string, c: AttioContact): Promise<void
 export async function syncContactToAttio(c: AttioContact): Promise<AttioSyncResult> {
   if (!isAttioConfigured()) return { synced: false, skipped: true }
   try {
-    const res = await fetch(ATTIO_PEOPLE_ASSERT_URL, {
-      method: 'PUT',
-      headers: authHeaders(),
-      body: JSON.stringify(buildPersonAssert(c)),
-    })
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '')
-      return { synced: false, error: `Attio ${res.status}: ${detail.slice(0, 300)}` }
+    const values = (buildPersonAssert(c) as { data: { values: Record<string, unknown> } }).data.values
+    const out = await assertPersonWithPhoneFallback(values)
+    if (!out.ok) return { synced: false, error: `Attio ${out.status}: ${out.detail}` }
+    if (out.recordId) {
+      if (out.phoneDropped) await attachRejectedPhoneNote(out.recordId, c.phone)
+      await attachSignupNote(out.recordId, c)
     }
-    const json = (await res.json().catch(() => null)) as { data?: { id?: { record_id?: string } } } | null
-    const recordId = json?.data?.id?.record_id
-    if (recordId) await attachSignupNote(recordId, c)
-    return { synced: true, recordId }
+    return { synced: true, recordId: out.recordId }
   } catch (e) {
     return { synced: false, error: e instanceof Error ? e.message : 'attio sync failed' }
   }
@@ -310,21 +388,15 @@ function buildWaitlistPersonAssert(c: WaitlistAttioContact): Record<string, unkn
 export async function upsertWaitlistToAttio(c: WaitlistAttioContact): Promise<WaitlistAttioResult> {
   if (!isAttioConfigured()) return { synced: false, skipped: true }
   try {
-    const res = await fetch(ATTIO_PEOPLE_ASSERT_URL, {
-      method: 'PUT',
-      headers: authHeaders(),
-      body: JSON.stringify(buildWaitlistPersonAssert(c)),
-    })
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '')
-      return { synced: false, error: `Attio people ${res.status}: ${detail.slice(0, 300)}` }
-    }
-    const json = (await res.json().catch(() => null)) as { data?: { id?: { record_id?: string } } } | null
-    const recordId = json?.data?.id?.record_id
+    const values = (buildWaitlistPersonAssert(c) as { data: { values: Record<string, unknown> } }).data.values
+    const out = await assertPersonWithPhoneFallback(values)
+    if (!out.ok) return { synced: false, error: `Attio people ${out.status}: ${out.detail}` }
+    const recordId = out.recordId
     // List add is best-effort — the person is captured either way — but it must be VISIBLE.
     // This used to be `.catch(() => {})`, so a missing list, a bad slug, or an unset
     // ATTIO_WAITLIST_LIST failed in total silence while attio_status still read 'synced'.
     if (recordId) {
+      if (out.phoneDropped) await attachRejectedPhoneNote(recordId, c.phone)
       await addToWaitlistList(recordId, c).catch((e: unknown) => {
         console.warn('[attio] waitlist list entry failed (person captured):', e instanceof Error ? e.message : e)
       })
