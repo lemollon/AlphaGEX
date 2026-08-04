@@ -4013,13 +4013,40 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       console.warn(
         `[scanner] ${bot.name.toUpperCase()}: ${PRODUCTION_PRIMARY_ACCOUNT} sandbox did not fill — got: ${JSON.stringify(primaryFill)}`,
       )
-      // Try emergency cleanup and one retry for sandbox only
+      // Try emergency cleanup and one retry for sandbox only.
+      //
+      // Swing-hold guard (2026-08-04): this was an unconditional nuke-all. It is on
+      // the same newly-reachable path as the pre-order stale gate — before swing
+      // stacking, no order could be placed while a hold was open, so a hold's legs
+      // were never sitting in the account when this ran. With stacking, a sandbox
+      // no-fill on the stacked entry would have flattened the SWING HOLD as
+      // collateral damage, hours before its own EOD rule fires. Close only genuinely
+      // stale legs (expiring today or earlier) that are NOT part of a live hold.
       console.log(`[scanner] ${bot.name.toUpperCase()}: Cleaning up stale sandbox positions before retry...`)
       try {
+        const retryTodayStr = getCentralTime().toISOString().slice(0, 10)
+        const retryExempt = await getSwingHoldExemptSymbols(retryTodayStr)
         const retryAccounts = await getLoadedSandboxAccountsAsync()
         for (const a of retryAccounts) {
           if (a.type === 'production') continue
-          await emergencyCloseSandboxPositions(a.apiKey, a.name, a.baseUrl)
+          if (retryExempt.size === 0) {
+            await emergencyCloseSandboxPositions(a.apiKey, a.name, a.baseUrl)
+            continue
+          }
+          const held = await getSandboxAccountPositions(a.apiKey, undefined, a.baseUrl)
+          const toClose = new Set<string>()
+          for (const p of held) {
+            if (!p.symbol || p.symbol.length < 15 || p.quantity === 0) continue
+            if (retryExempt.has(p.symbol)) continue
+            try {
+              const datePart = p.symbol.slice(3, 9)
+              const expDate = `20${datePart.slice(0, 2)}-${datePart.slice(2, 4)}-${datePart.slice(4, 6)}`
+              if (expDate <= retryTodayStr) toClose.add(p.symbol)
+            } catch { /* ignore */ }
+          }
+          if (toClose.size > 0) {
+            await closeOrphanSandboxPositions(a.apiKey, a.name, toClose, a.baseUrl)
+          }
         }
       } catch { /* ignore cleanup errors */ }
       await new Promise((r) => setTimeout(r, 2000))
