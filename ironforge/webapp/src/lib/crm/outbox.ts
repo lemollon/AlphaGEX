@@ -206,3 +206,37 @@ export async function replayCrmDeadLetters(limit = 100, eventId?: string): Promi
   )
   return { replayed }
 }
+
+/**
+ * Self-heal for the one dead-letter class we KNOW is now deliverable: events that failed only
+ * because Attio rejected the phone number. That write is retried without the phone as of PR
+ * #2752, but a dead-letter can't recover on its own — the drain reads `status='pending'` and
+ * nothing moves a row back except a replay, which used to mean the operator console. That
+ * console is gone, so an otherwise-fixed lead would sit in `failed` forever.
+ *
+ * Runs once per boot, not per drain: if a requeued row somehow fails again it climbs back to
+ * MAX_CRM_ATTEMPTS and dead-letters normally, and won't be touched again until the next restart.
+ * The `phone_numbers` match keeps it from resurrecting unrelated poison records — a firewall
+ * violation or an unmapped event type stays dead-lettered for a human, which is the point of
+ * the DLQ.
+ */
+export async function requeuePhoneRejectedDeadLetters(): Promise<ReplayResult> {
+  if (!isCustomersDbConfigured()) return { replayed: 0, skipped: true }
+  try {
+    // RETURNING, not a bare rowCount: the customers DB isn't reachable from a psql client, so
+    // these log lines are the only window into WHICH leads were stuck. event_id/event_type
+    // identify the submission without putting the prospect's email or phone in the logs.
+    const rows = await customerQuery<{ event_id: string; event_type: string }>(
+      `UPDATE crm_outbox
+          SET status = 'pending', attempts = 0, next_attempt_at = now(), updated_at = now()
+        WHERE status = 'failed'
+          AND (last_error LIKE '%phone_numbers%' OR last_error LIKE '%original_phone_number%')
+      RETURNING event_id, event_type`,
+    )
+    for (const r of rows) console.log(`[crm] requeued phone-rejected ${r.event_type} (${r.event_id})`)
+    return { replayed: rows.length }
+  } catch (e) {
+    console.error('[crm] phone dead-letter requeue failed (non-fatal):', e)
+    return { replayed: 0 }
+  }
+}
