@@ -76,7 +76,7 @@ import { ensureVolAlertsTable, upsertRegimeDaily, recordLadderTransitions, markN
 import { sendVolAlertEmail } from './email'
 import { sendVolAlertSms } from './sms'
 import { drainAttioSyncQueue, isAttioConfigured } from './attio'
-import { drainCrmOutbox } from './crm/outbox'
+import { drainCrmOutbox, requeuePhoneRejectedDeadLetters } from './crm/outbox'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -6635,7 +6635,20 @@ function startScannerLocked(): void {
   // CRM outbox drain — own 30s interval (AC-CRM-001's 60-second budget), isolated from the
   // trade loop. Kicked at 5s so a deploy doesn't add half a minute to the first lead's latency.
   _crmOutboxIntervalId = setInterval(safeDrainCrmOutbox, CRM_OUTBOX_INTERVAL_MS)
-  setTimeout(safeDrainCrmOutbox, 5_000)
+  // Requeue phone-rejected dead-letters BEFORE the first drain, so the leads that PR #2752 made
+  // deliverable go out on that same kick. Once per boot — see requeuePhoneRejectedDeadLetters.
+  setTimeout(() => {
+    requeuePhoneRejectedDeadLetters()
+      .then((r) => {
+        if (r.replayed > 0) {
+          console.log(`[scanner] crm outbox: requeued ${r.replayed} phone-rejected dead-letter(s)`)
+        }
+      })
+      .catch((err: unknown) => {
+        console.warn(`[scanner] phone dead-letter requeue error: ${err instanceof Error ? err.message : String(err)}`)
+      })
+      .finally(safeDrainCrmOutbox)
+  }, 5_000)
 
   // Trial day-close ledger — own 15-min interval, isolated from the trade loop. Self-
   // gates to after 15:05 CT, so ticks during the session are a cheap no-op. Kicked once
