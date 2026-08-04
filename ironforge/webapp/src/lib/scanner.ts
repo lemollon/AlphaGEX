@@ -3686,20 +3686,33 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       }
 
       if (!_sandboxCleanupVerified[bot.name]) {
+      // A swing hold expires TODAY, so `expDate <= todayStr` classifies its legs as
+      // stale. Before swing stacking this gate was unreachable while a hold was open
+      // (the hold blocked entry outright), so it never had to be expiry-aware. Now
+      // that a stacked entry reaches it, an unguarded sweep would nuke-all and flatten
+      // the hold hours before its own EOD rule fires — the exact failure PR #2533
+      // fixed in the other four backstops. Same remedy here: exempt held legs by OCC
+      // symbol and close only the genuinely orphaned ones.
+      const swingExempt = await getSwingHoldExemptSymbols(todayStr)
+
       // Quick check: are there actually stale positions right now?
       let staleCount = 0
+      const staleSymbolsByAcct = new Map<string, Set<string>>()
       try {
         const accounts = await getLoadedSandboxAccountsAsync()
         for (const acct of accounts) {
           const positions = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
+          const acctStale = new Set<string>()
           for (const p of positions) {
             if (!p.symbol || p.symbol.length < 15 || p.quantity === 0) continue
+            if (swingExempt.has(p.symbol)) continue
             try {
               const datePart = p.symbol.slice(3, 9)
               const expDate = `20${datePart.slice(0, 2)}-${datePart.slice(2, 4)}-${datePart.slice(4, 6)}`
-              if (expDate <= todayStr) staleCount++
+              if (expDate <= todayStr) { staleCount++; acctStale.add(p.symbol) }
             } catch { /* ignore */ }
           }
+          staleSymbolsByAcct.set(acct.name, acctStale)
         }
       } catch { /* ignore */ }
 
@@ -3709,7 +3722,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         try {
           const accounts = await getLoadedSandboxAccountsAsync()
           for (const acct of accounts) {
-            const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name, acct.baseUrl)
+            // Targeted close whenever a swing hold is live; nuke-all only when there
+            // is nothing to protect (preserves the pre-existing behaviour).
+            const acctStale = staleSymbolsByAcct.get(acct.name) ?? new Set<string>()
+            const result = swingExempt.size > 0
+              ? await closeOrphanSandboxPositions(acct.apiKey, acct.name, acctStale, acct.baseUrl)
+              : await emergencyCloseSandboxPositions(acct.apiKey, acct.name, acct.baseUrl)
             for (const detail of result.details) {
               console.log(`[scanner] ${bot.name.toUpperCase()} PRE-ORDER: ${detail}`)
             }
@@ -3724,6 +3742,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             const positions = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
             for (const p of positions) {
               if (!p.symbol || p.symbol.length < 15 || p.quantity === 0) continue
+              if (swingExempt.has(p.symbol)) continue
               try {
                 const datePart = p.symbol.slice(3, 9)
                 const expDate = `20${datePart.slice(0, 2)}-${datePart.slice(2, 4)}-${datePart.slice(4, 6)}`
@@ -5708,6 +5727,44 @@ async function scanBot(bot: BotDef): Promise<void> {
     const openCount = openRows.length
     const hasOpenPosition = openCount > 0
 
+    // A SWING HOLD MUST NOT CONSUME THE NEXT DAY'S ENTRY SLOT (2026-08-04, operator).
+    // SPARK-strategy bots hold a red position overnight and close it on its expiry
+    // day at the 14:45 CT cutoff. The entry gate below tested "is ANY position open",
+    // so that holdover occupied the single slot for the entire next session: on
+    // 2026-08-04 SPARK logged 367 consecutive `monitoring` ticks and never once
+    // scanned for an entry. A red hold therefore cost a full trading day ON TOP of
+    // its own P&L — an unintended second cost that was never part of the swing rule.
+    //
+    // Only positions OPENED TODAY may block a new entry. A swing hold stacks with
+    // today's trade instead of cancelling it.
+    //
+    // Concurrency is bounded by construction, not by a new knob: max_trades_per_day
+    // still caps NEW entries at 1/day (counted from today's rows, below) and the hold
+    // closes on its own expiry day, so the peak is 2 concurrent (yesterday's hold +
+    // today's entry) during the 8:30-14:45 CT overlap.
+    //
+    // Sizing needs no change: the sandbox path derives BP as balance minus LIVE open
+    // collateral, and the production path caps at bp_pct x live Tradier option buying
+    // power. Both already net out the held position, so the stacked entry sizes off
+    // what is genuinely left rather than double-committing the same capital.
+    //
+    // Scoped to isSparkStrategy — only those bots swing. For FLAME/INFERNO a
+    // prior-day open row is a stale/stranded position, not a deliberate hold, and
+    // must keep blocking.
+    const swingStackAllowed = isSparkStrategy(bot.name)
+    let blockingOpenCount = openCount
+    if (swingStackAllowed && hasOpenPosition) {
+      const openedTodayRows = await query(
+        `SELECT position_id FROM ${botTable(bot.name, 'positions')}
+         WHERE status = 'open' AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+           AND (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
+        [bot.dte],
+      )
+      blockingOpenCount = openedTodayRows.length
+    }
+    const hasBlockingOpenPosition = blockingOpenCount > 0
+    const swingHoldCount = openCount - blockingOpenCount
+
     // Also check for open PRODUCTION positions — these must be monitored independently
     // of sandbox. Previously, production positions were only monitored as a side-effect
     // of sandbox positions being open. If sandbox closed first and the production close
@@ -5768,9 +5825,11 @@ async function scanBot(bot: BotDef): Promise<void> {
           tradedTodayCount = int(todayPosRows[0]?.cnt)
         } catch { /* non-fatal — tryOpenTrade has its own guard */ }
       }
+      // hasBlockingOpenPosition (not hasOpenPosition) — an overnight swing hold is
+      // excluded so it cannot eat today's entry slot. See its definition above.
       const canOpenMore = (maxTrades === 0) ||
-        (isProductionBot(bot.name) && maxTrades === 1 && !hasOpenPosition) ||
-        (maxTrades > 0 && tradedTodayCount < maxTrades && !hasOpenPosition)
+        (isProductionBot(bot.name) && maxTrades === 1 && !hasBlockingOpenPosition) ||
+        (maxTrades > 0 && tradedTodayCount < maxTrades && !hasBlockingOpenPosition)
 
       if (canOpenMore) {
         if (!(await isConfiguredAsync())) {
@@ -5788,6 +5847,36 @@ async function scanBot(bot: BotDef): Promise<void> {
             const tradeResult = await tryOpenTrade(bot, spot, vix)
             if (tradeResult.startsWith('traded:')) {
               action = 'traded'
+              // Make stacking visible: this entry was only possible because the
+              // overnight hold no longer blocks the slot, and it means two
+              // positions are live at once. Never let that happen silently.
+              if (swingHoldCount > 0) {
+                try {
+                  // Same attribution the equity snapshot below uses — `person` from
+                  // tryOpenTrade is not in scope here.
+                  let stackPerson = 'User'
+                  try {
+                    const stackPersons = await getAccountsForBotAsync(bot.name)
+                    if (stackPersons.length > 0) stackPerson = stackPersons[0]
+                  } catch { /* default */ }
+                  await dbExecute(
+                    `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+                     VALUES ($1, $2, $3, $4, $5)`,
+                    [
+                      'SWING_HOLD',
+                      `SWING_STACK_ENTRY ${tradeResult} — opened alongside ${swingHoldCount} ` +
+                      `swing hold(s) from a prior session; ${openCount + 1} positions now live`,
+                      JSON.stringify({
+                        trigger: 'swing_stack_entry',
+                        swing_holds_open: swingHoldCount,
+                        trade_result: tradeResult,
+                      }),
+                      bot.dte,
+                      stackPerson,
+                    ],
+                  )
+                } catch { /* logging must never block a fill */ }
+              }
             } else {
               action = 'no_trade'
             }
