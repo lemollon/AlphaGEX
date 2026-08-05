@@ -15,6 +15,9 @@
 import {
   assertRecord,
   createNote,
+  addListEntry,
+  queryListEntries,
+  updateListEntry,
   type AttioRecordRef,
   type AttioResult,
 } from '@/lib/crm/client'
@@ -120,7 +123,7 @@ function violatingKey(values: unknown, path = ''): string | null {
 async function assertSafe(
   objectSlug: string,
   values: Record<string, unknown>,
-): Promise<AttioResult<{ data?: AttioRecordRef }>> {
+): Promise<AttioResult<{ data?: AttioRecordRef }> & { phoneDropped?: boolean }> {
   const bad = violatingKey(values)
   if (bad) {
     const message = `[crm] BLOCKED write to ${objectSlug}: payload contains forbidden field "${bad}"`
@@ -135,7 +138,10 @@ async function assertSafe(
   // phone is strictly better than losing the person: retry once without it (see isPhoneValidationError).
   if (res.status !== 400 || !isPhoneValidationError(res.error)) return res
   console.warn(`[crm] Attio rejected phone_numbers on ${objectSlug} — retrying without the phone`)
-  return assertRecord(objectSlug, matching, withoutPhone(values))
+  const retry = await assertRecord(objectSlug, matching, withoutPhone(values))
+  // Tell the caller the record is missing a field it was asked to write, so it can say so in the
+  // CRM instead of leaving an unexplained blank.
+  return { ...retry, phoneDropped: retry.ok }
 }
 
 /** Truncate and scrub a provider error string down to something safe to show an operator. */
@@ -246,7 +252,77 @@ async function waitlistSubmitted(payload: Record<string, unknown>): Promise<Deli
   const waitlistDate = str(payload, 'waitlistDate')
   if (waitlistDate) values.waitlist_date = waitlistDate
 
-  return toResult(await assertSafe('people', values))
+  const res = await assertSafe('people', values)
+  const recordId = res.data?.data?.id?.record_id
+  if (!res.ok || !recordId) return toResult(res)
+
+  // The Person alone is NOT the lead. Everything that qualifies them — capital range, consent
+  // version, submission id, confirmation status — lives on the IronForge Waitlist LIST entry,
+  // and until now only the inline path in lib/attio.ts wrote it. So any lead the inline write
+  // dropped (every phone-rejected one) arrived here as a bare Person and never appeared on the
+  // list an operator actually looks at. Both are best-effort: the lead is captured either way,
+  // but a failure must be VISIBLE, never swallowed.
+  if (res.phoneDropped && phone) await noteRejectedPhone(recordId, phone)
+  await upsertWaitlistEntry(recordId, payload)
+
+  return toResult(res)
+}
+
+/** Record a phone Attio refused, so the blank on the record has a reason attached. */
+async function noteRejectedPhone(recordId: string, phone: string): Promise<void> {
+  const r = await createNote(
+    'people',
+    recordId,
+    'Phone number rejected by Attio',
+    `Submitted phone: ${phone}\nAttio rejected it as not a valid number, so it is not on the record. ` +
+      `Verify with the prospect before calling.`,
+  )
+  if (!r.ok) console.warn(`[crm] rejected-phone note failed (person captured): ${safeErrorSummary(r.error)}`)
+}
+
+/**
+ * Add or update this person's IronForge Waitlist entry.
+ *
+ * Upsert, not create: this handler runs for every submission INCLUDING the ones the inline path
+ * already wrote an entry for, so a blind POST would double every lead on the list. Attio list
+ * entries have no matching attribute, so existence has to be looked up first.
+ *
+ * Fails CLOSED on a failed lookup — if we can't tell whether an entry exists we log and skip
+ * rather than risk a duplicate. A missing entry is recoverable (resubmit, or a later backfill);
+ * duplicate entries are manual cleanup on a list the API can't delete.
+ */
+async function upsertWaitlistEntry(recordId: string, payload: Record<string, unknown>): Promise<void> {
+  const listSlug = process.env.ATTIO_WAITLIST_LIST
+  if (!listSlug) {
+    console.warn('[crm] ATTIO_WAITLIST_LIST unset — waitlist list entry skipped')
+    return
+  }
+
+  const entryValues: Record<string, unknown> = { communication_consent: bool(payload, 'marketingConsent') }
+  const capitalRange = str(payload, 'tradingCapitalRange')
+  if (capitalRange) entryValues.trading_capital_range = capitalRange
+  const consentVersion = str(payload, 'consentVersion')
+  if (consentVersion) entryValues.consent_version = consentVersion
+  const submissionId = str(payload, 'submissionId')
+  if (submissionId) entryValues.submission_id = submissionId
+
+  const existing = await queryListEntries(listSlug, recordId)
+  if (!existing.ok) {
+    console.warn(
+      `[crm] waitlist list entry skipped — could not check for an existing entry: ${safeErrorSummary(existing.error)}`,
+    )
+    return
+  }
+
+  const entryId = existing.data?.data?.[0]?.id?.entry_id
+  const written = entryId
+    ? await updateListEntry(listSlug, entryId, entryValues)
+    : await addListEntry(listSlug, recordId, 'people', { ...entryValues, confirmation_email_status: 'Pending' })
+  if (!written.ok) {
+    console.warn(
+      `[crm] waitlist list entry ${entryId ? 'update' : 'create'} failed (person captured): ${safeErrorSummary(written.error)}`,
+    )
+  }
 }
 
 /** Lifecycle-only People updates: invitation sent, account created, pause/cancel projections. */
