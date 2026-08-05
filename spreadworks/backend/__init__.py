@@ -49,13 +49,20 @@ else:
         print(f"[SpreadWorks]   {p} -> exists={p.exists()}")
 
 
-def _send_webhook_sync(embed_or_embeds) -> bool:
+def _send_webhook_sync(embed_or_embeds, *, username: str | None = None,
+                       avatar_url: str | None = None) -> bool:
     """Send embeds to Discord webhook (sync, for scheduler use).
 
     Accepts either a single embed dict or a list of embeds (max 10 per
     Discord's webhook limit). Multi-embed posts render as a vertical
     color-coded ladder in Discord — used by the EVENING BRIEF for
     visually distinct sections.
+
+    `username`/`avatar_url` override the webhook's identity FOR THAT MESSAGE
+    only, which is how a bot's alerts post under the bot's own name and logo
+    while the scheduled briefings keep the SpreadWorks identity. Both are
+    optional and omitted from the payload when None — sending them as null
+    would NOT fall back to the webhook default.
     """
     import requests as req
 
@@ -69,6 +76,16 @@ def _send_webhook_sync(embed_or_embeds) -> bool:
         logger.warning("[SpreadWorks] DISCORD_WEBHOOK_URL not set — skipping")
         return False
 
+    payload: dict = {"embeds": embeds}
+    if username:
+        # Discord rejects the whole POST (400) on an over-length username, and
+        # silently 400s on names containing "discord". Neither can happen with
+        # our bot names, but the alert is worth more than the identity — clamp
+        # instead of risking a dropped trade post.
+        payload["username"] = str(username)[:80]
+    if avatar_url:
+        payload["avatar_url"] = avatar_url
+
     import time as _time
     # Per-attempt timeout (30s) — Render egress to discord.com can be slow.
     # Read-timeout retries are NOT safe for webhook POSTs: Discord may have
@@ -76,7 +93,7 @@ def _send_webhook_sync(embed_or_embeds) -> bool:
     # So we only retry on connect errors and 5xx, never on read timeout.
     for attempt in range(3):
         try:
-            resp = req.post(url, json={"embeds": embeds},
+            resp = req.post(url, json=payload,
                             headers={"Content-Type": "application/json"}, timeout=30)
             if resp.status_code == 429:
                 retry_after = resp.json().get("retry_after", 5)
