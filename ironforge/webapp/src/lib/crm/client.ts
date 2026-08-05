@@ -366,7 +366,19 @@ export function queryListEntries(listSlug: string, parentRecordId: string) {
   return attioRequest<{ data?: Array<{ id?: { entry_id?: string } }> }>(
     'POST',
     `/lists/${encodeURIComponent(listSlug)}/entries/query`,
-    { filter: { parent_record_id: parentRecordId }, limit: 1 },
+    {
+      // `parent_record` is a special path hop, NOT a filterable attribute. Verified live 8/5:
+      // `{filter:{parent_record_id}}` returns 400 `unknown_filter_attribute_slug`. The parent's
+      // own record_id has to be reached by traversing list → parent_record → people.
+      filter: {
+        path: [
+          [listSlug, 'parent_record'],
+          ['people', 'record_id'],
+        ],
+        constraints: { value: parentRecordId },
+      },
+      limit: 1,
+    },
   )
 }
 

@@ -414,23 +414,56 @@ async function addToWaitlistList(personRecordId: string, c: WaitlistAttioContact
     console.warn('[attio] ATTIO_WAITLIST_LIST unset — waitlist list entry skipped')
     return
   }
-  const res = await fetch(`${ATTIO_BASE}/lists/${encodeURIComponent(listSlug)}/entries`, {
+  const entryValues: Record<string, unknown> = {
+    trading_capital_range: c.tradingCapitalRange,
+    communication_consent: true,
+    consent_version: c.consentVersion,
+    submission_id: c.submissionId,
+  }
+
+  // Attio list entries have NO matching attribute — POST /entries is a plain CREATE — so a
+  // resubmit used to add a SECOND entry for the same person. Look the entry up first and PATCH
+  // it. `parent_record` is a path hop, not a filterable attribute (a flat
+  // `{parent_record_id: …}` filter 400s with unknown_filter_attribute_slug).
+  const found = await fetch(`${ATTIO_BASE}/lists/${encodeURIComponent(listSlug)}/entries/query`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({
-      data: {
-        parent_record_id: personRecordId,
-        parent_object: 'people',
-        entry_values: {
-          trading_capital_range: c.tradingCapitalRange,
-          communication_consent: true,
-          consent_version: c.consentVersion,
-          submission_id: c.submissionId,
-          confirmation_email_status: 'Pending',
-        },
+      filter: {
+        path: [[listSlug, 'parent_record'], ['people', 'record_id']],
+        constraints: { value: personRecordId },
       },
+      limit: 1,
     }),
   })
+  if (!found.ok) {
+    // Fail CLOSED: without knowing whether an entry exists, creating one risks a duplicate on a
+    // list the API cannot delete from. A missing entry is recoverable; a duplicate is manual work.
+    const detail = await found.text().catch(() => '')
+    throw new Error(`Attio list entry lookup ${found.status}: ${detail.slice(0, 200)}`)
+  }
+  const existingId = ((await found.json().catch(() => null)) as
+    { data?: Array<{ id?: { entry_id?: string } }> } | null)?.data?.[0]?.id?.entry_id
+
+  const res = existingId
+    ? await fetch(`${ATTIO_BASE}/lists/${encodeURIComponent(listSlug)}/entries/${encodeURIComponent(existingId)}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({ data: { entry_values: entryValues } }),
+      })
+    : await fetch(`${ATTIO_BASE}/lists/${encodeURIComponent(listSlug)}/entries`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          data: {
+            parent_record_id: personRecordId,
+            parent_object: 'people',
+            // Only stamp 'Pending' on CREATE — overwriting it on every resubmit would erase the
+            // fact that a confirmation already went out.
+            entry_values: { ...entryValues, confirmation_email_status: 'Pending' },
+          },
+        }),
+      })
   if (!res.ok) {
     const detail = await res.text().catch(() => '')
     throw new Error(`Attio list entry ${res.status}: ${detail.slice(0, 200)}`)
