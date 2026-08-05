@@ -2,10 +2,15 @@
 
 Reuses `_send_webhook_sync` + `_dedup_ok` from backend.__init__ so we get
 the existing 3-attempt retry + cross-process dedup for free.
+
+Each post carries the bot's own webhook identity (name + logo) via
+`bot_identity` — see `identity.py`.
 """
 from __future__ import annotations
 
 from typing import Any
+
+from .identity import bot_identity
 
 
 _COLOR = {"open": 0x3498DB, "close_PT": 0x2ECC71, "close_SL": 0xE74C3C,
@@ -36,7 +41,7 @@ def post_open(*, bot: str, display: str, strategy: str,
             {"name": "Legs", "value": f"```\n{legs_text}\n```", "inline": False},
         ],
     }
-    return _send_webhook_sync(embed)
+    return _send_webhook_sync(embed, **bot_identity(bot, display))
 
 
 def post_close(*, bot: str, display: str, strategy: str,
@@ -56,4 +61,4 @@ def post_close(*, bot: str, display: str, strategy: str,
             {"name": "Time in Trade", "value": f"{time_in_trade_min} min", "inline": True},
         ],
     }
-    return _send_webhook_sync(embed)
+    return _send_webhook_sync(embed, **bot_identity(bot, display))

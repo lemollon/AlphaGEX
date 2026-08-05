@@ -89,7 +89,18 @@ def post_embed(
     if footer_text:
         embed["footer"] = {"text": footer_text[:2048]}
 
-    payload = {"embeds": [embed], "username": "TSUNAMI"}
+    payload: dict[str, Any] = {"embeds": [embed], "username": "TSUNAMI"}
+    # Match the rest of the fleet: post under TSUNAMI's own logo, not the
+    # webhook's default icon. Best-effort like everything else in this module
+    # — a missing avatar must never cost us the alert.
+    try:
+        from ...identity import avatar_url as _avatar_url
+
+        _av = _avatar_url("tsunami")
+        if _av:
+            payload["avatar_url"] = _av
+    except Exception:  # noqa: BLE001
+        pass
     headers = {"Content-Type": "application/json", "User-Agent": _USER_AGENT}
 
     try:
