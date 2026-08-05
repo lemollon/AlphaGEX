@@ -210,3 +210,60 @@ describe('phone fallback — a bad phone must not cost us the record', () => {
     expect(res.recordId).toBe('rec_s')
   })
 })
+
+describe('inline waitlist list entry — upsert, never duplicate', () => {
+  const LIST = 'ironforge_waitlist'
+
+  function mock(list: (url: string, init: any) => Response) {
+    const calls: Array<{ url: string; method: string; body: any }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: any) => {
+      calls.push({ url: String(url), method: init.method, body: init.body ? JSON.parse(init.body) : undefined })
+      if (String(url).includes('/objects/people/records')) {
+        return new Response(JSON.stringify({ data: { id: { record_id: 'rec_p' } } }), { status: 200 })
+      }
+      return list(String(url), init)
+    }))
+    return calls
+  }
+
+  it('PATCHes the existing entry instead of adding a second one', async () => {
+    process.env.ATTIO_WAITLIST_LIST = LIST
+    const calls = mock((url) =>
+      url.endsWith('/entries/query')
+        ? new Response(JSON.stringify({ data: [{ id: { entry_id: 'ent_1' } }] }), { status: 200 })
+        : new Response('{}', { status: 200 }))
+
+    const res = await upsertWaitlistToAttio({ ...WAITLIST_CONTACT, phone: '+15551234567' })
+    expect(res.synced).toBe(true)
+
+    const query = calls.find((c) => c.url.endsWith('/entries/query'))
+    expect(query!.body.filter.path).toEqual([[LIST, 'parent_record'], ['people', 'record_id']])
+    expect(calls.some((c) => c.method === 'POST' && c.url.endsWith('/entries'))).toBe(false)
+    const patch = calls.find((c) => c.method === 'PATCH')
+    expect(patch!.url).toContain('/entries/ent_1')
+    // 'Pending' is stamped on CREATE only — a resubmit must not erase a sent confirmation.
+    expect(patch!.body.data.entry_values.confirmation_email_status).toBeUndefined()
+  })
+
+  it('creates the entry when the person has none', async () => {
+    process.env.ATTIO_WAITLIST_LIST = LIST
+    const calls = mock((url) =>
+      url.endsWith('/entries/query')
+        ? new Response(JSON.stringify({ data: [] }), { status: 200 })
+        : new Response('{}', { status: 200 }))
+
+    await upsertWaitlistToAttio({ ...WAITLIST_CONTACT, phone: '+15551234567' })
+    const create = calls.find((c) => c.method === 'POST' && c.url.endsWith('/entries'))
+    expect(create!.body.data.entry_values.confirmation_email_status).toBe('Pending')
+    expect(create!.body.data.entry_values.submission_id).toBe('sub_1')
+  })
+
+  it('keeps the person when the lookup fails, and writes no entry', async () => {
+    process.env.ATTIO_WAITLIST_LIST = LIST
+    const calls = mock(() => new Response('{"code":"unknown_filter_attribute_slug"}', { status: 400 }))
+    const res = await upsertWaitlistToAttio({ ...WAITLIST_CONTACT, phone: '+15551234567' })
+    expect(res.synced).toBe(true) // person captured — the list add is best-effort
+    expect(calls.some((c) => c.method === 'POST' && c.url.endsWith('/entries'))).toBe(false)
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false)
+  })
+})

@@ -170,6 +170,16 @@ describe('crm.waitlist_submitted — list entry', () => {
     expect(create!.body.data.entry_values.trading_capital_range).toBe('$10,000 - $24,999')
     expect(create!.body.data.entry_values.submission_id).toBe('wl_test_1')
     expect(create!.body.data.entry_values.communication_consent).toBe(true)
+
+    // The lookup must traverse parent_record — a flat {parent_record_id: …} filter is rejected
+    // live with 400 unknown_filter_attribute_slug (seen 8/5), which made this fail closed and
+    // skip the entry entirely.
+    const query = calls.find((c) => c.url.endsWith('/entries/query'))
+    expect(query!.body.filter.path).toEqual([
+      ['ironforge_waitlist', 'parent_record'],
+      ['people', 'record_id'],
+    ])
+    expect(query!.body.filter.constraints).toEqual({ value: 'rec_p' })
   })
 
   it('UPDATES instead of creating a second entry — the inline path already made one', async () => {
