@@ -357,6 +357,27 @@ export function createTask(content: string, deadlineAt: string | null, linkedRec
   })
 }
 
+/**
+ * Find this record's existing entry on a list. Attio list entries have NO matching attribute, so
+ * POST /entries is a plain CREATE — without this lookup a second delivery of the same lead (the
+ * inline write plus its outbox event, or a resubmit) silently adds a DUPLICATE entry.
+ */
+export function queryListEntries(listSlug: string, parentRecordId: string) {
+  return attioRequest<{ data?: Array<{ id?: { entry_id?: string } }> }>(
+    'POST',
+    `/lists/${encodeURIComponent(listSlug)}/entries/query`,
+    { filter: { parent_record_id: parentRecordId }, limit: 1 },
+  )
+}
+
+export function updateListEntry(listSlug: string, entryId: string, entryValues: Record<string, unknown>) {
+  return attioRequest<{ data?: { id?: { entry_id?: string } } }>(
+    'PATCH',
+    `/lists/${encodeURIComponent(listSlug)}/entries/${encodeURIComponent(entryId)}`,
+    { data: { entry_values: entryValues } },
+  )
+}
+
 export function addListEntry(listSlug: string, parentRecordId: string, parentObject: string, entryValues: Record<string, unknown>) {
   return attioRequest<{ data?: { id?: { entry_id?: string } } }>(
     'POST',

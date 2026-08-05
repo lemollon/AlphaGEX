@@ -166,6 +166,11 @@ export async function POST(req: NextRequest) {
       city: n.city,
       state: n.state,
       tradingVolume: CAPITAL_RANGE_TO_VOLUME[n.tradingCapitalRange],
+      // List-entry fields. The durable path writes the Waitlist LIST entry too, so the qualifying
+      // data has to travel in the payload — the outbox row is the only copy it gets.
+      tradingCapitalRange: n.tradingCapitalRange,
+      consentVersion: CONSENT_VERSION,
+      submissionId,
       // Derived from the STORED campaign, never the incoming one. Verified live on 8/2: a
       // resubmit with no campaign data recomputed lead_source from the empty request and
       // overwrote the original 'LinkedIn' attribution with 'Organic'. The SQL above already

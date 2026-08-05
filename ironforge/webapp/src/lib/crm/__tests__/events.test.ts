@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { deliverCrmEvent, safeErrorSummary, __testing } from '../events'
 import type { CrmEventType } from '../events'
 
@@ -113,5 +113,90 @@ describe('deliverCrmEvent guards', () => {
     const res = await deliverCrmEvent('crm.subscription_active', { email: 'a@b.com' })
     expect(res.ok).toBe(false)
     expect(res.retryable).toBe(false)
+  })
+})
+
+/**
+ * The Person alone is not the lead: capital range, consent version and submission id live on the
+ * IronForge Waitlist LIST entry. Only the inline path wrote it, so every lead the inline write
+ * dropped (all the phone-rejected ones) arrived as a bare Person and never showed up on the list
+ * an operator opens — verified 8/4 in the live workspace: 1 entry, and it was a test record.
+ */
+describe('crm.waitlist_submitted — list entry', () => {
+  const OLD = { ...process.env }
+  const PAYLOAD = {
+    email: 'ada@example.com',
+    firstName: 'Ada',
+    lastName: 'Lovelace',
+    phone: '+15551234567',
+    marketingConsent: true,
+    tradingCapitalRange: '$10,000 - $24,999',
+    consentVersion: 'v1',
+    submissionId: 'wl_test_1',
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    process.env.ATTIO_API_KEY = 'test-attio-key'
+    process.env.ATTIO_WAITLIST_LIST = 'ironforge_waitlist'
+  })
+  afterEach(() => { process.env = { ...OLD } })
+
+  /** person assert → 200; list calls answered by `list` so each test picks its own shape. */
+  function mockAttio(list: (url: string, init: any) => Response) {
+    const calls: Array<{ url: string; method: string; body: any }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: any) => {
+      calls.push({ url: String(url), method: init.method, body: init.body ? JSON.parse(init.body) : undefined })
+      if (String(url).includes('/objects/people/records')) {
+        return new Response(JSON.stringify({ data: { id: { record_id: 'rec_p' } } }), { status: 200 })
+      }
+      return list(String(url), init)
+    }))
+    return calls
+  }
+
+  it('CREATES the entry when the person has none', async () => {
+    const calls = mockAttio((url) =>
+      url.endsWith('/entries/query')
+        ? new Response(JSON.stringify({ data: [] }), { status: 200 })
+        : new Response(JSON.stringify({ data: { id: { entry_id: 'ent_1' } } }), { status: 200 }))
+
+    const res = await deliverCrmEvent('crm.waitlist_submitted', PAYLOAD)
+    expect(res.ok).toBe(true)
+
+    const create = calls.find((c) => c.method === 'POST' && c.url.endsWith('/entries'))
+    expect(create).toBeDefined()
+    expect(create!.body.data.parent_record_id).toBe('rec_p')
+    expect(create!.body.data.entry_values.trading_capital_range).toBe('$10,000 - $24,999')
+    expect(create!.body.data.entry_values.submission_id).toBe('wl_test_1')
+    expect(create!.body.data.entry_values.communication_consent).toBe(true)
+  })
+
+  it('UPDATES instead of creating a second entry — the inline path already made one', async () => {
+    const calls = mockAttio((url) =>
+      url.endsWith('/entries/query')
+        ? new Response(JSON.stringify({ data: [{ id: { entry_id: 'ent_existing' } }] }), { status: 200 })
+        : new Response(JSON.stringify({ data: { id: { entry_id: 'ent_existing' } } }), { status: 200 }))
+
+    await deliverCrmEvent('crm.waitlist_submitted', PAYLOAD)
+
+    expect(calls.some((c) => c.method === 'POST' && c.url.endsWith('/entries'))).toBe(false)
+    const patch = calls.find((c) => c.method === 'PATCH')
+    expect(patch!.url).toContain('/entries/ent_existing')
+  })
+
+  it('fails CLOSED when the lookup fails — a duplicate entry is worse than a missing one', async () => {
+    const calls = mockAttio(() => new Response('{"message":"nope"}', { status: 400 }))
+    const res = await deliverCrmEvent('crm.waitlist_submitted', PAYLOAD)
+    expect(res.ok).toBe(true) // the person still landed
+    expect(calls.some((c) => c.method === 'POST' && c.url.endsWith('/entries'))).toBe(false)
+  })
+
+  it('still delivers the person when no list slug is configured', async () => {
+    delete process.env.ATTIO_WAITLIST_LIST
+    const calls = mockAttio(() => new Response('{}', { status: 200 }))
+    const res = await deliverCrmEvent('crm.waitlist_submitted', PAYLOAD)
+    expect(res.ok).toBe(true)
+    expect(calls.every((c) => !c.url.includes('/entries'))).toBe(true)
   })
 })
