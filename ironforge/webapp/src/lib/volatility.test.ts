@@ -43,6 +43,7 @@ describe('stanceLabel', () => {
     expect(stanceLabel('buy_the_bounce')).toBe('Buy the bounce')
     expect(stanceLabel('lean_calls')).toBe('Lean calls')
     expect(stanceLabel('lean_puts')).toBe('Lean puts')
+    expect(stanceLabel('reduce_risk')).toBe('Cut risk')
     expect(stanceLabel('neutral')).toBe('Neutral')
   })
 
@@ -312,6 +313,13 @@ describe('actionAccentClass', () => {
     expect(actionAccentClass('lean_calls')).toEqual({
       border: 'border-l-emerald-500',
       text: 'text-emerald-400',
+    })
+  })
+
+  it('maps reduce_risk to amber (a sizing call, not a direction bet)', () => {
+    expect(actionAccentClass('reduce_risk')).toEqual({
+      border: 'border-l-amber-500',
+      text: 'text-amber-400',
     })
   })
 

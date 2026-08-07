@@ -165,9 +165,19 @@ describe('botVolMessage — sellers (spark/flame/inferno)', () => {
   it('seller priority: ts_flattening outranks exhaustion (warn wins)', () => {
     const msg = botVolMessage('flame', [
       mkAlert({ signal_key: 'exhaustion' }),
-      mkAlert({ signal_key: 'ts_flattening', direction: 'bearish' }),
+      mkAlert({ signal_key: 'ts_flattening' }),
     ])
     expect(msg?.tone).toBe('warn')
+  })
+
+  // REGRESSION (2026-08-07): both signals used to share one "~4×" string, which
+  // applied backwardation's tail multiple to flattening. They differ ~2x.
+  it('seller: backwardation and ts_flattening quote their OWN tail multiples', () => {
+    const back = botVolMessage('spark', [mkAlert({ signal_key: 'backwardation' })])
+    const flat = botVolMessage('spark', [mkAlert({ signal_key: 'ts_flattening' })])
+    expect(back?.text).toMatch(/3\.2×/)
+    expect(flat?.text).toMatch(/1\.8×/)
+    expect(flat?.text).not.toMatch(/3\.2×|4×/)
   })
 })
 
@@ -186,10 +196,14 @@ describe('botVolMessage — directional (blaze/flare)', () => {
       expect(msg?.tone).toBe('bull')
     })
 
-    it(`${bot}: ts_flattening → bear`, () => {
-      const msg = botVolMessage(bot, [mkAlert({ signal_key: 'ts_flattening', direction: 'bearish' })])
-      expect(msg?.tone).toBe('bear')
-      expect(msg?.text).toMatch(/lean puts/i)
+    // REGRESSION (2026-08-07): this used to render 'bear / lean puts'. Forward
+    // SPY after ts_flattening fires is +0.36% (t=0.74) and VIX falls 6.1%/5d, so
+    // there is no directional edge to lean on — only a fatter tail.
+    it(`${bot}: ts_flattening → warn, no directional call`, () => {
+      const msg = botVolMessage(bot, [mkAlert({ signal_key: 'ts_flattening' })])
+      expect(msg?.tone).toBe('warn')
+      expect(msg?.text).toMatch(/no directional edge/i)
+      expect(msg?.text).not.toMatch(/lean puts/i)
     })
   }
 

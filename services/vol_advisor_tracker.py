@@ -45,8 +45,11 @@ def score_row(row: dict, fwd: pd.DataFrame) -> dict:
             "in_window": bool(in_window)}
 
 def _dir_from_stance(stance: Optional[str]) -> str:
+    # `reduce_risk` (ts_flattening) is scored on VOL, not direction: the signal
+    # claims a fatter tail while VIX mean-reverts DOWN, so grading it as
+    # "did SPY fall" (the old lean_puts mapping) scored a claim we never made.
     return {"buy_the_bounce": "spy_up", "lean_calls": "spy_up",
-            "lean_puts": "spy_down"}.get(stance or "", "vol_down")
+            "lean_puts": "spy_down", "reduce_risk": "vol_down"}.get(stance or "", "vol_down")
 
 # ---- DB wrappers (thin; depend on database_adapter + core engine) ----
 

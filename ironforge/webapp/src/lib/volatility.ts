@@ -6,7 +6,8 @@
  * unit-tested under vitest's `node` environment without a DOM.
  */
 
-export type Stance = 'lean_puts' | 'lean_calls' | 'neutral' | 'buy_the_bounce'
+/** `reduce_risk` = cut short-premium size; a SIZING call, not a direction bet. */
+export type Stance = 'lean_puts' | 'lean_calls' | 'neutral' | 'buy_the_bounce' | 'reduce_risk'
 
 export interface AdvisorRecommendation {
   stance: Stance
@@ -44,7 +45,8 @@ export interface AdvisorTiming {
   structure_note?: string
 }
 
-export type SignalDirection = 'bullish' | 'bearish' | 'neutral'
+/** `tail_risk` = fatter tail expected, but no directional edge (ts_flattening). */
+export type SignalDirection = 'bullish' | 'bearish' | 'neutral' | 'tail_risk'
 
 export interface AdvisorSignal {
   active: boolean
@@ -150,6 +152,8 @@ export function stanceLabel(stance?: Stance | string | null): string {
       return 'Lean calls'
     case 'lean_puts':
       return 'Lean puts'
+    case 'reduce_risk':
+      return 'Cut risk'
     case 'neutral':
       return 'Neutral'
     default:
@@ -395,6 +399,8 @@ function briefStanceText(stance?: string | null): string {
       return 'lean calls'
     case 'lean_puts':
       return 'lean puts'
+    case 'reduce_risk':
+      return 'cut short-premium size'
     case 'neutral':
       return 'neutral'
     default:
@@ -487,7 +493,7 @@ export function proximityPct(sig?: Pick<AdvisorSignal, 'active' | 'proximity'> |
 
 /**
  * Tailwind text-color class for a signal direction.
- * bullish → emerald, bearish → red, neutral/missing → muted.
+ * bullish → emerald, bearish → red, tail_risk → amber, neutral/missing → muted.
  */
 export function directionClass(direction?: SignalDirection | string | null): string {
   switch (direction) {
@@ -495,13 +501,16 @@ export function directionClass(direction?: SignalDirection | string | null): str
       return 'text-emerald-400'
     case 'bearish':
       return 'text-red-400'
+    case 'tail_risk':
+      return 'text-amber-400'
     default:
       return 'text-forge-muted'
   }
 }
 
 /** Accent classes for the hero ActionCard's left border, derived from stance.
- * buy_the_bounce/lean_calls → emerald, lean_puts → red, neutral/other → violet. */
+ * buy_the_bounce/lean_calls → emerald, lean_puts → red, reduce_risk → amber,
+ * neutral/other → violet. */
 export interface ActionAccent {
   border: string
   text: string
@@ -514,6 +523,8 @@ export function actionAccentClass(stance?: Stance | string | null): ActionAccent
       return { border: 'border-l-emerald-500', text: 'text-emerald-400' }
     case 'lean_puts':
       return { border: 'border-l-red-500', text: 'text-red-400' }
+    case 'reduce_risk':
+      return { border: 'border-l-amber-500', text: 'text-amber-400' }
     default:
       return { border: 'border-l-violet-500', text: 'text-violet-400' }
   }

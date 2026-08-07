@@ -61,9 +61,22 @@ def test_backwardation_takes_precedence_as_bounce():
     rec = build_recommendation(_sigs(["backwardation", "exhaustion"]))
     assert rec["stance"] == "buy_the_bounce"
 
-def test_flattening_leans_puts():
+def test_flattening_cuts_risk_and_never_advises_buying_puts():
+    # REGRESSION (2026-08-07): ts_flattening used to return lean_puts / "buy
+    # downside protection". Its own evidence says forward VIX is -6.1% at 5d and
+    # forward SPY is flat (t=0.74) — the signal is a TAIL/sizing warning, not a
+    # direction bet. On 2026-07-29 the old advice preceded SPY +5.5% in 5 days.
     rec = build_recommendation(_sigs(["ts_flattening"]))
-    assert rec["stance"] == "lean_puts"
+    assert rec["stance"] == "reduce_risk"
+    assert "put" not in rec["rationale"].lower()
+
+def test_flattening_still_labels_contango_flattening_regime():
+    # GUARD: `contango_flattening` is what ironforge's HEDGE_REGIMES keys off to
+    # propose the live SPARK put-spread tail hedge. Re-labelling the signal's
+    # DIRECTION must not silently disarm that risk control.
+    from core.vol_regime_advisor import _regime_label
+    assert _regime_label(_sigs(["ts_flattening"])) == "contango_flattening"
+
 
 def test_neutral_when_nothing_active():
     rec = build_recommendation(_sigs([]))
@@ -87,9 +100,12 @@ def test_action_gives_concrete_advice_per_stance():
     a = _build_action(_sigs([]), {"stance": "neutral"}, {"suggested_dte": None}, curve)
     assert a["headline"] and a["do"] and a["plain"]
     assert "premium" in a["plain"].lower() or "cash" in a["plain"].lower()
-    # lean_puts → buy downside
-    a = _build_action(_sigs(["ts_flattening"]), {"stance": "lean_puts"}, {"suggested_dte": 12}, curve)
-    assert "put" in a["do"].lower() and "~12 DTE" in a["dte_text"]
+    # reduce_risk → cut short premium, and NEVER tell the user to buy puts
+    a = _build_action(_sigs(["ts_flattening"]), {"stance": "reduce_risk"}, {"suggested_dte": 12}, curve)
+    assert "~12 DTE" in a["dte_text"]
+    assert "premium" in a["do"].lower()
+    assert "buy spy puts" not in a["plain"].lower()
+    assert "do not buy puts" in a["plain"].lower()
     # exhaustion → buy calls
     a = _build_action(_sigs(["exhaustion"]), {"stance": "buy_the_bounce"}, {"suggested_dte": 13},
                       {"vix": 30, "vix3m": 26, "vvix": 110})
@@ -195,7 +211,7 @@ def _sig_prox(**prox):
             for k in ("backwardation","ts_flattening","exhaustion","double_floor","divergence")}
     for k, p in prox.items():
         base[k]["proximity"] = p
-    base["ts_flattening"]["direction"] = "bearish"
+    base["ts_flattening"]["direction"] = "tail_risk"
     base["divergence"]["direction"] = "bearish"
     return base
 

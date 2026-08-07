@@ -130,11 +130,12 @@ const DIRECTIONAL_PRIORITY: AlertingSignalKey[] = ['backwardation', 'exhaustion'
  * alerts. Returns null when nothing relevant is active (banner renders nothing).
  *
  * Sellers (spark/flame/inferno):
- *   - backwardation OR ts_flattening → WARN (tail-risk for short premium)
+ *   - backwardation                  → WARN (~3.2× next-day tail)
+ *   - ts_flattening                  → WARN (~1.8× next-day tail — a smaller number)
  *   - exhaustion only                → INFO (bounce likely; ICs OK, mind reversal)
  * Directional (blaze/flare):
  *   - exhaustion OR backwardation    → BULL (buy-the-bounce; lean long)
- *   - ts_flattening                  → BEAR (rising-vol; lean puts/downside)
+ *   - ts_flattening                  → WARN (fatter tails, NO directional edge)
  *
  * When several relevant signals are active, the highest-priority one for that
  * bot kind decides the message. Pure + total; never throws.
@@ -154,12 +155,23 @@ export function botVolMessage(bot: VolBot, alerts: VolAlert[] | null | undefined
   if (SELLER_BOTS.has(bot)) {
     const top = SELLER_PRIORITY.find((k) => activeKeys.has(k))
     if (!top) return null
-    if (top === 'backwardation' || top === 'ts_flattening') {
+    // Tail multiples are per-signal, from evidence.json `tail_lift_abs_15`
+    // (next-day |SPY| >= 1.5% vs base). They are NOT the same size — the old
+    // shared "~4×" copy applied backwardation's number to flattening too.
+    if (top === 'backwardation') {
       return {
         tone: 'warn',
         text:
-          'Backwardation/flattening active — historically ~4× next-day tail risk for short premium. ' +
+          'Backwardation active — historically ~3.2× next-day tail risk for short premium. ' +
           'Consider halting new ICs or widening wings.',
+      }
+    }
+    if (top === 'ts_flattening') {
+      return {
+        tone: 'warn',
+        text:
+          'Term structure flattening — historically ~1.8× next-day tail risk for short premium. ' +
+          'Trim size or widen wings.',
       }
     }
     // exhaustion only
@@ -178,10 +190,11 @@ export function botVolMessage(bot: VolBot, alerts: VolAlert[] | null | undefined
         text: 'Exhaustion/backwardation — buy-the-bounce setup; lean long (calls / call debit spread).',
       }
     }
-    // ts_flattening
+    // ts_flattening — NOT a directional cue. Forward SPY after it fires is
+    // +0.36% (t=0.74) and VIX FALLS 6.1%/5d, so "lean puts" was a losing call.
     return {
-      tone: 'bear',
-      text: 'Flattening — rising-vol warning; lean puts / downside.',
+      tone: 'warn',
+      text: 'Flattening — fatter tails, but no directional edge; size down rather than picking a side.',
     }
   }
 
