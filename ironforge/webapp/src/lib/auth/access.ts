@@ -139,6 +139,14 @@ export function isPublicPath(pathname: string): boolean {
   // after which Universal Links silently never verify, with no error and no log. This
   // branch is the fix; access.test.ts pins it.
   if (pathname.startsWith('/.well-known/')) return true
+  // Google Search Console site-verification file (HTML-file method). Google's crawler
+  // is cookieless and the filename is a token Google generates per verification, so —
+  // same failure mode as apple-app-site-association above — the middleware page
+  // matcher (extension-anchored) matches the `.html` filename and would 307 it to
+  // /login, and Search Console would report verification as failed with no further
+  // detail. Matched by Google's fixed naming convention rather than one hardcoded
+  // filename so a future re-verification (new token) needs no code change.
+  if (/^\/google[0-9a-f]+\.html$/.test(pathname)) return true
   // /app/* is the mobile HAND-OFF namespace and nothing else: tiny bridge pages that a
   // third party (Stripe, a brokerage portal) redirects a browser to, which then hand off
   // to the installed app. They MUST be public — that browser context is a fresh
