@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
+import { scopedStartingCapital } from '@/lib/account-basis'
 import {
   getIcMarkToMarket,
   isConfigured,
@@ -40,13 +41,10 @@ export async function GET(
     const hypoSelect = `, hypothetical_eod_pnl,
            SUM(COALESCE(hypothetical_eod_pnl, 0)) OVER (ORDER BY close_time) as cumulative_hypothetical_pnl`
 
-    const [capitalRows, curveRows, openPositions] = await Promise.all([
-      dbQuery(
-        `SELECT starting_capital
-         FROM ${botTable(bot, 'paper_account')}
-         WHERE is_active = TRUE ${dteFilter} ${accountTypeFilter}
-         LIMIT 1`,
-      ),
+    const [basis, curveRows, openPositions] = await Promise.all([
+      // Basis must cover the same accounts the P&L below is summed over —
+      // see lib/account-basis.ts for the blended-curve bug this fixes.
+      scopedStartingCapital(bot, `${dteFilter} ${accountTypeFilter}`),
       dbQuery(
         `SELECT
           close_time,
@@ -71,7 +69,7 @@ export async function GET(
       ),
     ])
 
-    let startingCapital = num(capitalRows[0]?.starting_capital) || 10000
+    let startingCapital = basis.startingCapital
     let rebaseSource: 'tradier' | 'paper_account' = 'paper_account'
 
     let curve = curveRows.map((row) => {
@@ -268,6 +266,10 @@ export async function GET(
 
     return NextResponse.json({
       starting_capital: startingCapital,
+      // How many active paper accounts the basis was summed over. 1 = a pinned
+      // single-account view; >1 = a blended scope, where the curve is a
+      // combined-portfolio series and not any one account's balance.
+      basis_account_count: basis.accountCount,
       curve,
       period,
       open_position_count: openPositions.length,

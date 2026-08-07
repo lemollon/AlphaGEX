@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT, isProductionBot, getProductionAccountsForBot, getTradierBalanceDetail, getTradierOrders, getSandboxAccountPositions, getLoadedSandboxAccountsAsync, getAccountIdForKey, getVerticalMarkToMarket, calculateVerticalUnrealizedPnl } from '@/lib/tradier'
 
+import { scopedStartingCapital } from '@/lib/account-basis'
+
 export const dynamic = 'force-dynamic'
 
 export async function GET(
@@ -170,7 +172,15 @@ export async function GET(
     }
 
     const acct = accountRows[0]
-    let startingCapital = num(acct?.starting_capital) || 10000
+    // Basis comes from the SAME helper the equity-curve routes use. It was an
+    // `ORDER BY id DESC LIMIT 1` here and an unordered `LIMIT 1` there, so with
+    // several active accounts in one scope the two endpoints reported different
+    // balances off identical P&L (SPARK production: $1,298.75 vs $9,298.75 on
+    // −$701.25). realizedPnl below is summed over EVERY account in scope, so the
+    // basis has to be too. See lib/account-basis.ts.
+    let startingCapital = (
+      await scopedStartingCapital(bot, `${dteFilter} ${accountTypeFilter} ${personFilter}`)
+    ).startingCapital
 
     // Use LIVE stats from actual positions (source of truth), not stale paper_account
     const liveStats = liveStatsRows[0]

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getLoadedSandboxAccountsAsync, getAccountIdForKey, getTradierBalanceDetail, getVerticalMarkToMarket, calculateVerticalUnrealizedPnl, getProductionAccountsForBot } from '@/lib/tradier'
 import { isMarketOpen } from '@/lib/pt-tiers'
+import { scopedStartingCapital } from '@/lib/account-basis'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,13 +24,8 @@ export async function GET(
     : ''
 
   try {
-    const [capitalRows, snapshotRows, openPositions] = await Promise.all([
-      dbQuery(
-        `SELECT starting_capital
-         FROM ${botTable(bot, 'paper_account')}
-         WHERE is_active = TRUE ${dteFilter} ${accountTypeFilter}
-         LIMIT 1`,
-      ),
+    const [basis, snapshotRows, openPositions, ledgerRows] = await Promise.all([
+      scopedStartingCapital(bot, `${dteFilter} ${accountTypeFilter}`),
       // Combine all in-scope account streams into ONE curve. Each
       // (person, account_type) writes its own snapshot row every ~1-min cycle a
       // few ms apart, so a raw ORDER BY snapshot_time interleaves them. Under
@@ -75,9 +71,21 @@ export async function GET(
          FROM ${botTable(bot, 'positions')}
          WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}`,
       ),
+      // Realized P&L recomputed from closed positions — the SAME formula
+      // /status uses for the Balance card. paper_account.current_balance (which
+      // is what the scanner copies into each snapshot) can drift from this, and
+      // for SPARK sandbox it had: snapshots carried balance −$335 on a stale
+      // $10K basis while the card showed $52,972 off a $63,100 basis.
+      dbQuery(
+        `SELECT COALESCE(SUM(realized_pnl), 0) AS realized_pnl
+         FROM ${botTable(bot, 'positions')}
+         WHERE status IN ('closed', 'expired')
+           AND realized_pnl IS NOT NULL
+           ${dteFilter} ${personFilter} ${accountTypeFilter}`,
+      ),
     ])
 
-    let startingCapital = num(capitalRows[0]?.starting_capital) || 10000
+    let startingCapital = basis.startingCapital
 
     // FLAME intraday rebase: scanner writes snapshot.balance against the
     // paper_account $10K basis, but the /flame top card shows the live
@@ -92,7 +100,7 @@ export async function GET(
     //
     // On Tradier failure: keep scanner's paper-basis balance (same as before).
     let rebaseOffset = 0
-    let rebaseSource: 'tradier' | 'paper_account' = 'paper_account'
+    let rebaseSource: 'tradier' | 'paper_account' | 'paper_ledger' = 'paper_account'
     if (bot === 'flame') {
       try {
         const accts = await getLoadedSandboxAccountsAsync()
@@ -141,6 +149,34 @@ export async function GET(
           rebaseSource = 'tradier'
         }
       } catch { /* fall back to paper basis */ }
+    }
+
+    // PAPER-LEDGER REBASE (2026-08-06). For every scope not already rebased to a
+    // live broker balance above, land the curve on the same number the Balance
+    // card shows: startingCapital + realized-from-closed-positions.
+    //
+    // The scanner writes each snapshot as a copy of `paper_account.current_balance`
+    // (scanner.ts, "Equity snapshot" block), but /status deliberately does NOT
+    // trust that column — it recomputes from the positions table because the
+    // ledger column drifts. When `starting_capital` is later changed on the
+    // account, historical snapshots are never rebased, so the two diverge
+    // permanently. Observed 2026-08-06 on SPARK sandbox: every snapshot carried
+    // balance −$335 (a $10K-era basis) while the card read $52,972 on the
+    // $63,100 basis — a $53K gap between the chart and the header above it.
+    //
+    // A single constant offset preserves the intraday SHAPE exactly and only
+    // moves the Y-axis onto the ledger. rebase_source reports which basis won so
+    // an operator can still see that the raw column had drifted.
+    if (rebaseSource === 'paper_account' && snapshotRows.length > 0) {
+      const ledgerBalance = Math.round(
+        (startingCapital + num(ledgerRows[0]?.realized_pnl)) * 100,
+      ) / 100
+      const lastRawBalance = num(snapshotRows[snapshotRows.length - 1]?.balance)
+      const drift = Math.round((ledgerBalance - lastRawBalance) * 100) / 100
+      if (drift !== 0) {
+        rebaseOffset += drift
+        rebaseSource = 'paper_ledger'
+      }
     }
 
     const snapshots = snapshotRows.map((r) => {
@@ -250,11 +286,15 @@ export async function GET(
 
     return NextResponse.json({
       starting_capital: startingCapital,
+      basis_account_count: basis.accountCount,
       snapshots,
       live_unrealized_pnl: liveUnrealizedPnl,
       open_position_count: openPositions.length,
-      // FLAME-only: tells the operator whether the curve is rebased to
-      // Tradier or still on the $10K paper basis (fallback).
+      // Which basis the Y-axis is on: 'tradier' = rebased to a live broker
+      // balance (FLAME / KINDLE production), 'paper_ledger' = rebased onto
+      // starting_capital + realized-from-positions because the raw
+      // paper_account.current_balance in the snapshots had drifted,
+      // 'paper_account' = raw snapshot column, no drift found.
       rebase_source: rebaseSource,
     })
   } catch (err: unknown) {
