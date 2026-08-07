@@ -259,7 +259,11 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // worst day -$295. Penny-credit trades (sub-$0.15: 547 at -$1.55/ct) were the
   // 2024 bleed.
   flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
+  // AFTERNOON ENTRY (2026-08-07). entry_start 830 -> 1300 — see the walk-forward
+  // note on isInEntryWindow below. Every SPARK backtest ever run prices entry at
+  // the PRIOR DAY'S CLOSE, so the 08:30 entry the bot actually placed has never
+  // been validated by anything.
+  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
   inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
   // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
   // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =
@@ -707,12 +711,52 @@ function isInEntryWindow(ct: Date, bot: BotDef): boolean {
   if (dow === 0 || dow === 6) return false
   if (isMarketHoliday(ct)) return false // never open new positions on a closed market
   const hhmm = ctHHMM(ct)
-  // MORNING ENTRY (2026-07-07, user override): SPARK reverted to entry_start=830 (market
-  // open) at the user's explicit request, after being moved to entry_start=1300 (afternoon)
-  // on 2026-07-02. NOTE: the afternoon-entry backtest (2020-25, 1,333 days) found morning-open
-  // entries breach a short strike ~18.0% / full-loss ~2.40% of the time vs ~9.3% / 1.05% in
-  // the afternoon — roughly HALF the risk. This change knowingly reverts that finding; SPARK's
-  // live loss rate is expected to track the higher morning-entry backtest numbers again.
+  // AFTERNOON ENTRY (2026-08-07, operator decision, evidence below).
+  //
+  // History: moved to 1300 on 2026-07-02, reverted to 830 on 2026-07-07 at the
+  // user's request, now moved back to 1300. The revert is what this change undoes.
+  //
+  // WHY, and it is not the breach rate alone:
+  //
+  // 1. NOTHING HAS EVER BACKTESTED THE 08:30 ENTRY. spy_option_minute holds
+  //    79.3M rows and every one is an EXPIRY-DAY bar — there are zero bars for
+  //    any future expiration. So every SPARK study prices entry at the PRIOR
+  //    DAY'S CLOSE and rides to expiry. The 08:30 entry the bot actually placed
+  //    is not a tuned variant of the tested strategy; it is untested, and the
+  //    warehouse cannot test it.
+  //
+  // 2. THE VALIDATED MODEL SURVIVES OUT-OF-SAMPLE. Walk-forward
+  //    (examples/spark_walkforward_oos_2026_08_07.py): sweep 900 parameter
+  //    combinations on 2020-2023 ONLY, freeze the winner, score on 2024..2026-06
+  //    which the sweep never saw -> +$43.94/contract/trade, t=7.88,
+  //    95% CI [$33.92, $55.81], profitable in 2024, 2025 AND 2026, only -15%
+  //    degradation. Rank correlation of the top-40 configs, fit vs out-of-sample,
+  //    rho = +0.967. The tuning was not the problem. The entry time is.
+  //
+  // 3. THE 08:30 ENTRY INVERTS THE EXIT LOGIC. Entering at 08:30 makes the 40%
+  //    MORNING tier live immediately, so winners close same-day for 40% of the
+  //    credit while losers fail to reach PT, sit to 14:45, and get held
+  //    overnight. That cashes 40% of the wins and keeps 100% of the losses.
+  //    The backtest's average win is $22.55/ct against a $12.40 40%-PT on the
+  //    median $0.31 credit — the excess is trades that never hit PT and expire
+  //    worthless for the FULL credit. Live forgoes that. Live win rate 73% over
+  //    63 real trades vs 93-96% backtested.
+  //
+  // KNOCK-ON EFFECTS, ACCEPTED DELIBERATELY:
+  //  - Nearly every position now holds overnight (a position 1h45m old is
+  //    essentially never green on worst-case cost-to-close, so the 14:45
+  //    green-bank branch goes close to inert). That IS the tested exposure.
+  //  - Swing-hold STACKING therefore becomes the daily norm rather than an edge
+  //    case. PR #2750 handles it but has never fired in production — watch for
+  //    SWING_STACK_ENTRY rows and 2 concurrent positions in week one.
+  //  - Credits are thinner at 13:00 than at 08:30, so the $0.25 worst-case floor
+  //    bites more often and the SD walk-in runs deeper (backtest median walked
+  //    SD 1.00, median credit $0.31). Already reflected in the numbers above.
+  //  - Fewer trades: the entry window goes from 5.5h to 1h.
+  //  - PDT pressure drops — next-day closes are not day trades.
+  //
+  // SPARK2 is deliberately left at 830: it is a paper bot, and holding it at the
+  // old setting keeps an unmodified control to compare against.
   const entryStart = cfg(bot).entry_start ?? 830
   // Cap the entry window at the real session close so half-days don't queue
   // orders into a closed market (root cause of the 2026-05-25 phantom positions).
