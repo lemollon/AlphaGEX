@@ -1,10 +1,12 @@
-import { View, Text, ScrollView, RefreshControl, StyleSheet } from 'react-native'
+import { View, Text, ScrollView, RefreshControl, StyleSheet, useWindowDimensions } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import useSWR from 'swr'
 import { api } from '@/api/client'
 import type { LiveSummary, LiveTrade, HomeData } from '@/api/types'
 import { color, space, radius, type, font, agentAccent, pnlColor } from '@/theme/tokens'
 import { Card, Money, Balance, SectionLabel, Loading, Empty, ErrorState } from '@/components/ui'
+import { AppHeader, AgentAvatar } from '@/components/brand'
+import { Sparkline, TradeStepper } from '@/components/viz'
 
 /**
  * Forge — UX-002 (APP-011/012/013/016).
@@ -60,7 +62,7 @@ export default function ForgeScreen() {
   return (
     <Shell>
       <ScrollView
-        contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}
+        contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: space.xxl }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={reload} tintColor={color.accent} />
         }
@@ -75,6 +77,7 @@ export default function ForgeScreen() {
             </Text>
           ) : null}
 
+          <View style={s.periodDivider} />
           <View style={s.periodRow}>
             <Period label="Today" value={data.account.today_pnl} />
             <Period label="This Week" value={home.data?.week_income ?? null} />
@@ -116,12 +119,13 @@ function Period({ label, value }: { label: string; value: number | null }) {
 }
 
 /**
- * One agent tile with its lifecycle stepper.
+ * One agent tile with its intraday chart and lifecycle stepper.
  *
- * UX-002 shows multiple concurrent trades per agent; the current API returns a single
- * LiveTrade, so this renders the one it has rather than faking a second. Expanding to
- * per-trade requires the aggregated endpoint (G5) — deliberately not stubbed with
- * invented rows.
+ * UX-002 shows multiple concurrent trades per agent and a broker line with a masked
+ * account number. The current API returns a single LiveTrade and carries no broker
+ * identity at all, so this renders the one trade it has and omits the broker row
+ * rather than inventing an account number to match a picture. Expanding to per-trade
+ * requires the aggregated endpoint (G5).
  */
 function AgentTile({
   bot,
@@ -136,13 +140,25 @@ function AgentTile({
 }) {
   const accent = agentAccent(bot)
   const name = bot.charAt(0).toUpperCase() + bot.slice(1)
+  const { width } = useWindowDimensions()
+  // Card padding (2x lg) plus the screen gutter (2x lg) — keeps the chart inside the
+  // card on every width instead of hardcoding a phone size.
+  const chartWidth = Math.max(180, width - space.lg * 4)
 
   return (
     <Card style={{ borderColor: accent }}>
       <View style={s.rowBetween}>
-        <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 18 }]}>
-          {name}
-        </Text>
+        <View style={s.rowCenter}>
+          <AgentAvatar tint={accent} />
+          <View style={{ marginLeft: space.md }}>
+            <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 19 }]}>
+              {name}
+            </Text>
+            <Text style={[type.label, { color: color.textDim, marginTop: 1 }]}>
+              {state.check_line ?? (state.paused ? 'Paused' : 'Monitoring')}
+            </Text>
+          </View>
+        </View>
         <View style={[s.pill, { borderColor: state.paused ? color.warn : color.pos }]}>
           <Text style={[type.label, { color: state.paused ? color.warn : color.pos }]}>
             {state.paused ? 'Paused' : 'Active'}
@@ -161,12 +177,28 @@ function AgentTile({
         <>
           <View style={s.divider} />
           <View style={s.rowBetween}>
-            <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
-              Open position
-            </Text>
+            <View>
+              <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+                Open position
+              </Text>
+              {trade.time_in_trade_min != null ? (
+                <Text style={[type.label, { color: color.muted, marginTop: 1 }]}>
+                  {formatDuration(trade.time_in_trade_min)} in trade
+                </Text>
+              ) : null}
+            </View>
             <Money value={trade.unrealized_pnl} size="title" />
           </View>
-          <Stepper step={state.timeline_step} accent={accent} />
+
+          <View style={{ marginTop: space.md }}>
+            <Sparkline
+              data={trade.spark_series}
+              width={chartWidth}
+              stroke={pnlColor(trade.unrealized_pnl)}
+            />
+          </View>
+
+          <TradeStepper step={state.timeline_step} accent={accent} />
         </>
       ) : trade?.today_result ? (
         <>
@@ -185,56 +217,34 @@ function AgentTile({
   )
 }
 
-/** Opened → Monitoring → Target/Stop → Auto Close, driven by CustomerState.timeline_step. */
-function Stepper({ step, accent }: { step: number | null; accent: string }) {
-  const labels = ['Opened', 'Monitoring', 'Target / Stop', 'Auto Close']
-  const current = step ?? 0
-  return (
-    <View style={s.stepper}>
-      {labels.map((l, i) => {
-        const done = i < current
-        const active = i === current
-        const c = done || active ? accent : color.border
-        return (
-          <View key={l} style={{ flex: 1, alignItems: 'center' }}>
-            <View style={[s.stepDot, { borderColor: c, backgroundColor: done ? c : 'transparent' }]} />
-            <Text
-              style={[
-                type.label,
-                { color: active ? color.text : color.muted, marginTop: space.xs, textAlign: 'center' },
-              ]}
-            >
-              {l}
-            </Text>
-          </View>
-        )
-      })}
-    </View>
-  )
+function formatDuration(min: number): string {
+  if (min < 60) return `${Math.round(min)}m`
+  const h = Math.floor(min / 60)
+  const m = Math.round(min % 60)
+  return m === 0 ? `${h}h` : `${h}h ${m}m`
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  return <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>{children}</SafeAreaView>
+  return (
+    <SafeAreaView style={s.shell} edges={['top']}>
+      <AppHeader />
+      {children}
+    </SafeAreaView>
+  )
 }
 
 const s = StyleSheet.create({
-  periodRow: {
-    flexDirection: 'row',
-    marginTop: space.xl,
-    borderTopColor: color.border,
-    borderTopWidth: 1,
-    paddingTop: space.lg,
-  },
+  shell: { flex: 1, backgroundColor: color.bg },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  rowCenter: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  dot: { width: 8, height: 8, borderRadius: 4 },
+  rowCenter: { flexDirection: 'row', alignItems: 'center' },
+  dot: { width: 8, height: 8, borderRadius: 4, marginRight: space.sm },
+  periodDivider: { height: 1, backgroundColor: color.border, marginTop: space.lg },
+  periodRow: { flexDirection: 'row', marginTop: space.lg },
   pill: {
     borderWidth: 1,
     borderRadius: radius.pill,
     paddingHorizontal: space.md,
-    paddingVertical: space.xs,
+    paddingVertical: 3,
   },
   divider: { height: 1, backgroundColor: color.border, marginVertical: space.lg },
-  stepper: { flexDirection: 'row', marginTop: space.lg },
-  stepDot: { width: 16, height: 16, borderRadius: 8, borderWidth: 2 },
 })

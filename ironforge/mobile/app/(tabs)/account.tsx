@@ -10,6 +10,7 @@ import type { MobileMe } from '@/api/types'
 import { signOut, biometricsAvailable, isBiometricEnabled, setBiometricEnabled } from '@/auth/session'
 import { color, space, radius, type, font } from '@/theme/tokens'
 import { Card, SectionLabel, Loading, ErrorState } from '@/components/ui'
+import { AppHeader } from '@/components/brand'
 
 /**
  * Account — UX-006 (APP-037/038/039/040/043/044/058/059/060).
@@ -42,16 +43,6 @@ export default function AccountScreen() {
     biometricsAvailable().then(setBioAvailable)
     isBiometricEnabled().then(setBioOn)
   }, [])
-
-  async function openBilling() {
-    try {
-      const res = await api<{ ok: boolean; url: string }>('/api/billing/portal', { method: 'POST' })
-      if (res.url) await WebBrowser.openBrowserAsync(res.url)
-      mutate()
-    } catch (e) {
-      Alert.alert('Billing unavailable', (e as Error).message)
-    }
-  }
 
   async function doSignOut() {
     await signOut()
@@ -96,19 +87,29 @@ export default function AccountScreen() {
         </Card>
 
         <View style={{ marginTop: space.xl }}>
-          <SectionLabel>Membership and Billing</SectionLabel>
+          <SectionLabel>Membership</SectionLabel>
         </View>
         <Card>
-          <Text style={[type.body, { color: color.textDim }]}>
-            {data?.hasMembership ? 'Active membership' : 'No active membership'}
-          </Text>
-          <Pressable onPress={openBilling} style={s.outlineBtn}>
-            <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
-              Manage Membership and Billing
+          {/*
+            STATUS ONLY — deliberately no price and no billing button.
+            Google Play's consumption-only allowance is what lets IronForge charge on
+            the web without Play billing. A price or an upgrade CTA in the app turns
+            this into a purchase surface, which would pull us into the external
+            content links programme and its service fees. Membership is managed on
+            ironforge.trade. Do not add a "Manage Billing" button back here.
+          */}
+          <View style={s.rowBetween}>
+            <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+              {data?.hasMembership ? 'Active' : 'No active membership'}
             </Text>
-          </Pressable>
+            {data?.hasMembership ? (
+              <View style={[s.statusPill, { borderColor: color.pos }]}>
+                <Text style={[type.label, { color: color.pos }]}>Active</Text>
+              </View>
+            ) : null}
+          </View>
           <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
-            Securely managed through Stripe
+            Manage your membership at ironforge.trade
           </Text>
         </Card>
 
@@ -154,11 +155,30 @@ function memberSince(iso: string): string {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  return <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>{children}</SafeAreaView>
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
+      <AppHeader />
+      {children}
+    </SafeAreaView>
+  )
 }
 
 const s = StyleSheet.create({
-  title: { ...type.title, color: color.text, fontFamily: font.display, marginBottom: space.lg },
+  // Large bold sans page title per UX-006 — the display face is for the wordmark
+  // and numerics, not headings.
+  title: {
+    color: color.text,
+    fontFamily: font.bodyBold,
+    fontSize: 34,
+    letterSpacing: -0.5,
+    marginBottom: space.lg,
+  },
+  statusPill: {
+    borderWidth: 1,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: 3,
+  },
   rowCenter: { flexDirection: 'row', alignItems: 'center', gap: space.lg },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   avatar: {
