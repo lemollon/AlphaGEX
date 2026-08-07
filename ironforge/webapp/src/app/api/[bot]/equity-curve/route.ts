@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
-import { scopedStartingCapital, DEFAULT_STARTING_CAPITAL } from '@/lib/account-basis'
+import { scopedStartingCapital } from '@/lib/account-basis'
 import {
   getIcMarkToMarket,
   isConfigured,
@@ -33,16 +33,36 @@ export async function GET(
   const accountTypeFilter = accountTypeParam
     ? `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountTypeParam)}'`
     : ''
-  // Pre-reset history. Rows parked at status='archived_reset' are real closed
-  // trades from before the account was reset — SPARK sandbox has 86 of them
-  // (2026-02-27 → 07-22, +$20,442.40) that no endpoint could reach, because the
-  // curve query only accepts status IN ('closed','expired').
+  // ARCHIVED HISTORY — folded into ONE continuous curve (operator decision,
+  // 2026-08-07: "it all needs to be combined into one").
   //
-  // Returned as a SEPARATE series, never merged into `curve`. They belong to a
-  // retired ledger with its own starting capital, so splicing them onto the
-  // current book would draw a reset boundary as if it were continuous equity.
+  // Two separate mechanisms hid a bot's older trades from every endpoint:
+  //   1. status = 'archived_reset'      — the curve only accepted 'closed'/'expired'
+  //   2. dte_mode = 'ARCHIVED_1DTE'     — every route pins the live dte_mode
+  // On SPARK that is 86 sandbox trades (2026-02-27 → 07-22, +$20,442.40) and 35
+  // production trades (04-20 → 06-16, −$2,050.57).
+  //
+  // CRITICAL — the baseline must be REBASED, not reused. The live ledger's
+  // starting_capital already reflects post-reset capital, so adding archived P&L
+  // on top of it would double-count the reset and end the curve above the
+  // Balance card. Rebasing by the archived total (see combinedBaseline below)
+  // keeps every delta exact AND still lands the final point on the live balance.
+  // The reset is a CAPITAL event, not a trading result, so it belongs in the
+  // baseline rather than as a step in the equity line.
   // Off by default so no existing caller changes behaviour.
   const includeArchived = req.nextUrl.searchParams.get('include_archived') === '1'
+  // Archived rows live under an ARCHIVED_* dte_mode, so the live-mode pin has to
+  // widen or they stay invisible even with the status opened up.
+  const curveDteFilter =
+    includeArchived && dte
+      ? `AND (dte_mode = '${escapeSql(dte)}' OR dte_mode LIKE 'ARCHIVED%')`
+      : dteFilter
+  const curveStatusFilter = includeArchived
+    ? `status IN ('closed', 'expired', 'archived_reset')`
+    : `status IN ('closed', 'expired')`
+  // Predicate identifying the archived side of the union, used both to total the
+  // rebase amount and to mark where the live book begins.
+  const archivedPredicate = `(status = 'archived_reset'${dte ? ` OR dte_mode LIKE 'ARCHIVED%'` : ''})`
 
   try {
     // Include the counterfactual cumulative P&L so the chart can render a
@@ -51,7 +71,7 @@ export async function GET(
     const hypoSelect = `, hypothetical_eod_pnl,
            SUM(COALESCE(hypothetical_eod_pnl, 0)) OVER (ORDER BY close_time) as cumulative_hypothetical_pnl`
 
-    const [basis, curveRows, openPositions] = await Promise.all([
+    const [basis, curveRows, openPositions, archivedAgg] = await Promise.all([
       // Basis must cover the same accounts the P&L below is summed over —
       // see lib/account-basis.ts for the blended-curve bug this fixes.
       scopedStartingCapital(bot, `${dteFilter} ${accountTypeFilter}`),
@@ -59,12 +79,13 @@ export async function GET(
         `SELECT
           close_time,
           realized_pnl,
+          ${includeArchived ? archivedPredicate : 'FALSE'} AS is_archived,
           SUM(realized_pnl) OVER (ORDER BY close_time) as cumulative_pnl${hypoSelect}
         FROM ${botTable(bot, 'positions')}
-        WHERE status IN ('closed', 'expired')
+        WHERE ${curveStatusFilter}
           AND realized_pnl IS NOT NULL
           AND close_time IS NOT NULL
-          ${dteFilter} ${personFilter} ${accountTypeFilter}
+          ${curveDteFilter} ${personFilter} ${accountTypeFilter}
         ORDER BY close_time`,
       ),
       dbQuery(
@@ -77,10 +98,35 @@ export async function GET(
          FROM ${botTable(bot, 'positions')}
          WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}`,
       ),
+      // Total P&L of the archived side only — the amount the baseline must be
+      // pulled back by so the combined curve still ends on the live balance.
+      includeArchived
+        ? dbQuery(
+            `SELECT COALESCE(SUM(realized_pnl), 0) AS pnl,
+                    COUNT(*)                       AS trades,
+                    MIN(close_time)                AS first_close,
+                    MAX(close_time)                AS last_close
+             FROM ${botTable(bot, 'positions')}
+             WHERE ${archivedPredicate}
+               AND realized_pnl IS NOT NULL
+               AND close_time IS NOT NULL
+               ${curveDteFilter} ${personFilter} ${accountTypeFilter}`,
+          )
+        : Promise.resolve([]),
     ])
 
-    let startingCapital = basis.startingCapital
+    // Rebase: live_balance = basis + live_era_pnl, and the combined curve ends at
+    // basis + (live_era_pnl + archived_pnl). Subtracting archived_pnl from the
+    // baseline cancels that extra term, so the final point still equals the
+    // Balance card while every step in between stays exact.
+    const archivedPnl = Math.round(num(archivedAgg[0]?.pnl) * 100) / 100
+    const archivedTrades = int(archivedAgg[0]?.trades)
+    let startingCapital = Math.round((basis.startingCapital - archivedPnl) * 100) / 100
     let rebaseSource: 'tradier' | 'paper_account' = 'paper_account'
+    // Where the live book takes over — rendered as an informational marker, NOT
+    // a break in the line.
+    const liveEraStart = curveRows.find((r) => r.is_archived === false || r.is_archived === 'f')
+      ?.close_time ?? null
 
     let curve = curveRows.map((row) => {
       const cumPnl = num(row.cumulative_pnl)
@@ -274,77 +320,31 @@ export async function GET(
       curve.push(livePoint)
     }
 
-    // ── Pre-reset segment ────────────────────────────────────────────────
-    // Its baseline is the RETIRED ledger(s) for this scope (is_active = FALSE),
-    // not the live one — that is the account these trades were actually run on.
-    // The ledger's own `total_trades`/`cumulative_pnl` counters are reported
-    // alongside the figures recomputed from the position rows, because on SPARK
-    // they disagree (ledger says 100 trades / +$11,087.40; the rows say 86 /
-    // +$20,442.40). Surfacing both is the honest move — silently picking one
-    // would hide that some counted trades no longer have rows. See
-    // /api/{bot}/fix-missing-history.
-    let archived: {
-      starting_capital: number
-      curve: Array<{ timestamp: string | null; pnl: number; cumulative_pnl: number; equity: number }>
-      trade_count: number
-      realized_total: number
-      ledger_ids: number[]
-      ledger_counter_trades: number
-      ledger_counter_pnl: number
-      basis_note: string
-    } | null = null
-
-    if (includeArchived) {
-      const [archivedRows, retiredLedgers] = await Promise.all([
-        dbQuery(
-          `SELECT close_time, realized_pnl,
-                  SUM(realized_pnl) OVER (ORDER BY close_time) AS cumulative_pnl
-           FROM ${botTable(bot, 'positions')}
-           WHERE status = 'archived_reset'
-             AND realized_pnl IS NOT NULL
-             AND close_time IS NOT NULL
-             ${dteFilter} ${personFilter} ${accountTypeFilter}
-           ORDER BY close_time`,
-        ),
-        dbQuery(
-          `SELECT id, starting_capital, total_trades, cumulative_pnl
-           FROM ${botTable(bot, 'paper_account')}
-           WHERE is_active = FALSE ${dteFilter} ${accountTypeFilter}`,
-        ),
-      ])
-
-      if (archivedRows.length > 0) {
-        const archivedBasis =
-          retiredLedgers.reduce((a, r) => a + num(r.starting_capital), 0) || DEFAULT_STARTING_CAPITAL
-        archived = {
-          starting_capital: archivedBasis,
-          curve: archivedRows.map((row) => {
-            const cum = num(row.cumulative_pnl)
-            return {
-              timestamp: row.close_time || null,
-              pnl: num(row.realized_pnl),
-              cumulative_pnl: Math.round(cum * 100) / 100,
-              equity: Math.round((archivedBasis + cum) * 100) / 100,
-            }
-          }),
-          trade_count: archivedRows.length,
-          realized_total:
-            Math.round(num(archivedRows[archivedRows.length - 1]?.cumulative_pnl) * 100) / 100,
-          ledger_ids: retiredLedgers.map((r) => int(r.id)),
-          ledger_counter_trades: retiredLedgers.reduce((a, r) => a + int(r.total_trades), 0),
-          ledger_counter_pnl:
-            Math.round(retiredLedgers.reduce((a, r) => a + num(r.cumulative_pnl), 0) * 100) / 100,
-          basis_note:
-            'Baseline is the summed starting_capital of the RETIRED ledger(s) for this scope. ' +
-            'This segment ran on a different account than the current curve — the two are ' +
-            'separated by an account reset and must not be read as one continuous balance.',
+    // ── Archived-history summary (metadata only) ─────────────────────────
+    // The archived trades are already IN `curve` above — one continuous series.
+    // This block only describes them so the chart can mark where the live book
+    // begins and footnote the rebase.
+    const archivedSummary = includeArchived && archivedTrades > 0
+      ? {
+          trade_count: archivedTrades,
+          realized_total: archivedPnl,
+          first_close: archivedAgg[0]?.first_close ?? null,
+          last_close: archivedAgg[0]?.last_close ?? null,
+          live_era_starts_at: liveEraStart,
+          ledger_starting_capital: basis.startingCapital,
+          rebase_note:
+            'Archived trades are merged into a single continuous curve. The baseline is ' +
+            'the live ledger starting_capital MINUS the archived P&L, because that ' +
+            'starting_capital already reflects post-reset capital — without the rebase the ' +
+            'account reset would be counted twice and the curve would not end on the ' +
+            'Balance card. Every trade-to-trade delta is exact; the capital reset itself ' +
+            'is absorbed into the baseline rather than drawn as a step.',
         }
-      }
-    }
+      : null
 
     return NextResponse.json({
       starting_capital: startingCapital,
-      archived: archived,
+      archived_summary: archivedSummary,
       // How many active paper accounts the basis was summed over. 1 = a pinned
       // single-account view; >1 = a blended scope, where the curve is a
       // combined-portfolio series and not any one account's balance.
