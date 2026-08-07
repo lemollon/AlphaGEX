@@ -16,6 +16,11 @@ const API_BASE = process.env.EXPO_PUBLIC_API_BASE ?? 'https://ironforge.trade'
 const config: ExpoConfig = {
   name: 'IronForge',
   slug: 'ironforge',
+  // The EAS account that OWNS this project. Required because the project lives under
+  // the organization while builds are run by a personal account that happens to be a
+  // member — without it, EAS refuses the build rather than guessing which account the
+  // credentials and build minutes should belong to.
+  owner: 'ironforge-technologies-llc',
   version: '1.0.0',
   orientation: 'portrait',
   scheme: 'ironforge',
@@ -62,10 +67,29 @@ const config: ExpoConfig = {
     ],
     permissions: ['USE_BIOMETRIC', 'USE_FINGERPRINT'],
   },
-  plugins: ['expo-router', 'expo-secure-store', 'expo-local-authentication'],
+  plugins: [
+    'expo-router',
+    'expo-secure-store',
+    'expo-local-authentication',
+    // Android API level is PINNED, not inherited from whatever the Expo SDK happens to
+    // default to. Google Play requires new apps and updates to target API 36 from
+    // 2026-08-31; a silent default drift below that is not a warning, it is an outright
+    // upload rejection. Stating it here means the requirement is visible in the diff the
+    // day it changes rather than discovered at submission time.
+    [
+      'expo-build-properties',
+      {
+        android: { compileSdkVersion: 36, targetSdkVersion: 36 },
+      },
+    ],
+  ],
   extra: {
     apiBase: API_BASE,
-    eas: { projectId: process.env.EAS_PROJECT_ID ?? '' },
+    // The EAS project (expo.dev org "IronForge Technologies LLC", project "ironforge").
+    // Hardcoded rather than read from the environment because it is a permanent
+    // identifier for THIS project — an env var that happened to be unset would make
+    // `eas build` silently offer to create a second project instead of failing.
+    eas: { projectId: '06291eb6-55ec-48a3-9e24-80808946023b' },
   },
   experiments: { typedRoutes: true },
 }
