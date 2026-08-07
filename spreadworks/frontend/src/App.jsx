@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, Link } from 'react-router-dom';
-import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, ChevronDown, Plus } from 'lucide-react';
+import { BrowserRouter, Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
+import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, ChevronDown, Plus, LayoutGrid } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import BotGlyph from './components/bots/BotGlyph';
 import { BOT_REGISTRY, BOT_THEME, STRATEGY_LABEL } from './lib/botRegistry';
@@ -15,6 +15,7 @@ import PositionsPage from './pages/PositionsPage';
 // Lazy-load heavy chart pages so Plotly + Recharts don't drag the main bundle.
 const GexProfilePage = lazy(() => import('./pages/GexProfilePage'));
 const BotDashboard = lazy(() => import('./pages/BotDashboard'));
+const FleetPage = lazy(() => import('./pages/FleetPage'));
 const TsunamiPage = lazy(() => import('./pages/TsunamiPage'));
 
 import useCandles from './hooks/useCandles';
@@ -168,7 +169,7 @@ function RouteBtn({ icon, label, to, end = false }) {
 // Each row is a react-router `<Link>` so navigation works even if the
 // onClick side-effects throw — clicking always changes the URL, period.
 // The onClick callback only persists localStorage + closes the menu.
-function BotMenu({ activeBotId, onSelect, anchorRef, panelRef, statusMap, tsunamiPnl }) {
+function BotMenu({ activeBotId, onSelect, onClose, anchorRef, panelRef, statusMap, tsunamiPnl }) {
   const bots = Object.entries(BOT_REGISTRY).map(([id, meta]) => ({ id, ...meta }));
 
   // Anchored to the chip but PORTALED to <body>. The header sets backdrop-filter,
@@ -221,6 +222,36 @@ function BotMenu({ activeBotId, onSelect, anchorRef, panelRef, statusMap, tsunam
           'inset 0 0 0 1px rgba(125,211,252,0.12), inset 0 1px 0 rgba(255,255,255,0.05), 0 12px 40px -8px rgba(0,0,0,0.4)',
       }}
     >
+      {/* "All bots" — jumps to the fleet overview (every bot as its own card).
+          Kept at the very top so the whole book is one click from anywhere. */}
+      {/* Deliberately NOT onSelect — that helper force-navigates to
+          /bots/<id> (router push + a window.location.assign fallback), which
+          would yank this click straight back off the fleet page. Just close. */}
+      <Link
+        to="/bots"
+        onClick={onClose}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 12, padding: '8px 10px',
+          marginBottom: 6, borderRadius: 8,
+          textDecoration: 'none', color: 'inherit',
+          background: 'rgba(255,255,255,0.03)',
+        }}
+      >
+        <div style={{
+          width: 28, height: 28, borderRadius: 6,
+          display: 'grid', placeItems: 'center',
+          background: 'rgba(226,232,240,0.08)', color: '#e2e8f0', flexShrink: 0,
+        }}>
+          <LayoutGrid size={14} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>All bots</div>
+          <div style={{ fontFamily: 'JetBrains Mono', fontSize: 10, color: '#64748b', marginTop: 2 }}>
+            Fleet overview · {Object.keys(BOT_REGISTRY).length} bots
+          </div>
+        </div>
+      </Link>
+
       {/* TSUNAMI — pinned row (operator 2026-07-04: keep it in this menu). Not a registry bot
           (own engine + page + $500 sleeve), but users look for it here, so link it at the top. */}
       <Link
@@ -511,7 +542,10 @@ function NavBar() {
           <RouteBtn to="/"            end icon={<Layers size={14} />}    label="Builder" />
           <RouteBtn to="/positions"       icon={<BarChart3 size={14} />} label="Positions" />
           <RouteBtn to="/gex-profile"     icon={<Activity size={14} />}  label="GEX Profile" />
-          <RouteBtn to={`/bots/${activeBotId}`} icon={<Cpu size={14} />}  label="Bots" />
+          {/* Lands on the fleet overview rather than the last-picked bot — the
+              dropdown chip to the right is still the one-click path to a
+              specific bot, and it stays highlighted on /bots/<id> too. */}
+          <RouteBtn to="/bots"            icon={<Cpu size={14} />}  label="Bots" />
         </nav>
       </div>
 
@@ -617,6 +651,7 @@ function NavBar() {
             panelRef={menuPanelRef}
             statusMap={statusMap}
             tsunamiPnl={tsunamiPnl}
+            onClose={() => setMenuOpen(false)}
             onSelect={(id) => {
               // The <Link> in BotMenu is supposed to navigate, but Tide/Drift/
               // Flow have been silently failing for the user in spite of the
@@ -817,7 +852,11 @@ export default function App() {
             <Route path="/" element={<BuilderPage />} />
             <Route path="/positions" element={<PositionsPage />} />
             <Route path="/gex-profile" element={<GexProfilePage />} />
-            <Route path="/bots" element={<Navigate to="/bots/surge" replace />} />
+            {/* /bots is the fleet overview — every bot as its own card. It used
+                to redirect straight to /bots/surge, which meant there was no
+                way to see the whole book at once. Deep links to a single bot
+                are unchanged. */}
+            <Route path="/bots" element={<FleetPage />} />
             <Route path="/bots/:bot" element={<BotDashboard />} />
             <Route path="/tsunami" element={<TsunamiPage />} />
           </Routes>
