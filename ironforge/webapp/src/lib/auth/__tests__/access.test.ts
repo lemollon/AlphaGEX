@@ -183,6 +183,19 @@ describe('mobile bearer access', () => {
     expect(isPublicPath('/.well-known/assetlinks.json')).toBe(true)
   })
 
+  // Google Search Console verification file (HTML-file method). Google's cookieless
+  // crawler would otherwise 307 to /login, same failure mode as the apple-app-
+  // site-association bug above — verification fails silently, with no error and no log.
+  it('serves the Google site-verification file unauthenticated', () => {
+    expect(isPublicPath('/googleeca775e503b449ab.html')).toBe(true)
+    // Convention-matched, not hardcoded to one token — the next re-verification must
+    // not require another code change.
+    expect(isPublicPath('/google1234567890abcdef.html')).toBe(true)
+    expect(
+      decideAccess({ ...base, isApi: false, pathname: '/googleeca775e503b449ab.html' }),
+    ).toBe('allow')
+  })
+
   // Regression: /app/* was classified in surface.ts (which SERVICE serves it) but not in
   // access.ts (whether it needs a session), so the bridge 307'd to /ops/login — the
   // OPERATOR door — at the end of every mobile checkout and brokerage connect. The
