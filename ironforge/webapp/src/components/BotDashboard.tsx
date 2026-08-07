@@ -154,7 +154,12 @@ export default function BotDashboard({
   /* ---- Equity curve (historical, fetched based on period) ---- */
   const historicalPeriod = equityPeriod === 'intraday' ? 'all' : equityPeriod
   const { data: equity } = useSWR(
-    tab === 'Equity Curve' ? withPerson(`/api/${bot}/equity-curve?period=${historicalPeriod}`) : null,
+    // include_archived=1 pulls pre-reset trades (status='archived_reset') as a
+    // SEPARATE series. EquityChart renders them on their own baseline behind an
+    // ACCOUNT RESET divider — they are not spliced into the current curve.
+    tab === 'Equity Curve'
+      ? withPerson(`/api/${bot}/equity-curve?period=${historicalPeriod}&include_archived=1`)
+      : null,
     fetcher,
     { refreshInterval: DATA_REFRESH },
   )
@@ -574,6 +579,7 @@ export default function BotDashboard({
                 data={equity?.curve || []}
                 intradayData={intraday?.snapshots}
                 startingCapital={equity?.starting_capital || status?.account?.starting_capital || 10000}
+                archived={equity?.archived}
                 color={BOT_COLORS[accent === 'amber' ? 'flame' : accent === 'red' ? 'inferno' : accent === 'orange' ? 'blaze' : accent === 'fuchsia' ? 'flare' : 'spark']}
                 title={`${bot.toUpperCase()} Equity Curve`}
                 liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
