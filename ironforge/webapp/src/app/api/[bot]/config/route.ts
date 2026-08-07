@@ -16,9 +16,10 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
   spark: {
     sd_multiplier: 1.2, spread_width: 5.0, min_credit: 0.05,
     profit_target_pct: 30.0, stop_loss_pct: 200.0,
-    // vix_skip: the SCANNER uses 40 for spark/spark2 (isSparkV2Sizing), not this
-    // value. Shown for shape only — see the override note below.
-    vix_skip: 32.0,
+    // 40, not 32 — scanner.ts: `const vixCap = isSparkV2Sizing(bot.name) ? 40 : 32`.
+    // Inert fields are now reported from THIS map (the DB value is skipped), so
+    // this literal is what the dashboard renders. It must equal the code constant.
+    vix_skip: 40.0,
     // SPARK runs the automatic GEX strategy (scanner.ts) and OVERRIDES several of
     // these in code:
     //   · strike width is GEX-adaptive — 1.2 SD positive gamma, 1.5 SD negative
@@ -45,7 +46,8 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
   // profile — for a 1DTE bot that actually runs 1.2 SD and one trade a day.
   spark2: {
     sd_multiplier: 1.2, spread_width: 5.0, min_credit: 0.25,
-    profit_target_pct: 30.0, stop_loss_pct: 200.0, vix_skip: 32.0,
+    // 40 — spark2 is on isSparkV2Sizing too, same code constant as SPARK.
+    profit_target_pct: 30.0, stop_loss_pct: 200.0, vix_skip: 40.0,
     max_contracts: 0, max_trades_per_day: 1, buying_power_usage_pct: 0.85,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
@@ -163,14 +165,38 @@ export async function GET(
     }
 
     const row = rows[0]
+    const inertHere = (k: string) =>
+      k in INERT_FIELDS || (k === 'stop_loss_pct' && SWING_BOTS.indexOf(bot) >= 0)
     const merged: Record<string, number | string> = { ...defaults }
     for (let i = 0; i < ALL_FIELDS.length; i++) {
       const key = ALL_FIELDS[i]
+      // AN INERT FIELD MUST NOT TAKE THE DB VALUE (2026-08-07).
+      //
+      // Naming a field in `inert_fields` was not enough: the row's dead value was
+      // still merged over the default and rendered, so the dashboard printed a
+      // number the scanner provably ignores. That is how the header came to read
+      // "VIX>35 skip" while the code skipped at 40, and how it would have kept
+      // printing "entry 08:30" straight after entry_start moved to 13:00 in
+      // scanner.ts — the DB row still says 08:30 and always will, because nothing
+      // writes it.
+      //
+      // For these fields the CODE default IS the effective value, so it is the only
+      // honest thing to return. The stored value is still available in
+      // `stored_inert_values` for anyone reconciling the row itself.
+      if (inertHere(key)) continue
       if (row[key] != null) {
         if (INT_FIELDS.indexOf(key) >= 0) merged[key] = int(row[key])
         else if (NUMERIC_FIELDS.indexOf(key) >= 0) merged[key] = num(row[key])
         else merged[key] = row[key]
       }
+    }
+    // Keep the row's own values visible, clearly separated from what governs.
+    const stored: Record<string, number | string> = {}
+    for (const key of ALL_FIELDS) {
+      if (inertHere(key) && row[key] != null) stored[key] = row[key] as number | string
+    }
+    if (Object.keys(stored).length > 0) {
+      merged.stored_inert_values = JSON.stringify(stored)
     }
     merged.account_type = accountType
     // Name the stored values that govern nothing, so a reader does not take the whole
