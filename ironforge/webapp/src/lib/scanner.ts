@@ -775,6 +775,35 @@ function isAfterEodCutoff(ct: Date, bot: BotDef): boolean {
 }
 
 /**
+ * Swing EXPIRY-DAY exit cutoff — 14:55 CT (operator, 2026-08-04).
+ *
+ * A swing hold's final exit is a different decision from the general 14:45 EOD
+ * cutoff, so it gets its own clock:
+ *
+ *   - SPY options are PHYSICALLY SETTLED and stop trading at 15:00 CT. An IC
+ *     carried into settlement with a short strike ITM is assigned — real shares
+ *     and assignment fees. The position must be flat before 15:00, always.
+ *   - But 14:45 gave away ten minutes of the best theta in the trade's life for
+ *     no reason: the entry-day cutoff only has to decide hold-vs-bank, while the
+ *     expiry-day cutoff is a forced liquidation that just needs to beat 15:00.
+ *
+ * So the expiry-day exit sits at 14:55 and the close goes out as a MARKET order
+ * (see the isEod close site), which cannot rest unfilled into settlement. The PT
+ * tiers keep working normally through 14:54.
+ *
+ * Deliberately NOT the `eod_cutoff_et` config knob: that column drives the
+ * entry-day bank/hold decision and FLAME/INFERNO's EOD close, none of which
+ * should move. Changing this value changes only the swing's final exit.
+ */
+const SWING_EXPIRY_CUTOFF_HHMM_CT = 1455
+
+function isSwingExpiryCloseDue(ct: Date, botName: string, expiration: string, todayStr: string): boolean {
+  return isSparkStrategy(botName)
+    && expiration === todayStr
+    && ctHHMM(ct) >= SWING_EXPIRY_CUTOFF_HHMM_CT
+}
+
+/**
  * Dedup safeguard: does the broker already hold a WORKING (unfilled) ENTRY order?
  *
  * The DB-based "already traded today" gate only counts FILLED positions. An
@@ -1337,7 +1366,14 @@ async function monitorSinglePosition(
       // SWING HOLD: on a NON-expiry day, SPARK-strategy positions are not
       // EOD-closed (they may ride overnight), so leave the pending close
       // order to its normal reprice/fill management instead of canceling it.
-      if (isAfterEodCutoff(ct, bot) && !(isSparkStrategy(bot.name) && expiration > ct.toISOString().slice(0, 10))) {
+      // Swing bots cancel on the 14:55 expiry-day clock, everything else on the
+      // general cutoff. Without this the 14:45 cutoff would cancel the working PT
+      // order on every cycle from 14:45, so the ten minutes the new cutoff buys
+      // back would be dead time with no live order in the book.
+      const eodCancelDue = isSparkStrategy(bot.name)
+        ? isSwingExpiryCloseDue(ct, bot.name, expiration, ct.toISOString().slice(0, 10))
+        : isAfterEodCutoff(ct, bot)
+      if (eodCancelDue) {
         console.log(
           `[scanner] ${bot.name.toUpperCase()} ${pid}: Past EOD cutoff with pending order ${userPending.order_id} — ` +
           `canceling limit order and falling through to EOD market close`,
@@ -2029,7 +2065,12 @@ async function monitorSinglePosition(
   // physically settled, never hold through expiration.
   const isEodRaw = isAfterEodCutoff(ct, bot)
   const eodSwingDefer = swingHold && isEodRaw && expiration > todayStr
-  const isEod = isEodRaw && !eodSwingDefer
+  // Expiry day for a swing bot runs on the 14:55 clock, not the 14:45 one, so the
+  // PT tiers get those ten minutes before the forced liquidation. Every other
+  // case (non-swing bots, and swing bots on their entry day) is unchanged.
+  const isEod = (swingHold && expiration === todayStr)
+    ? isSwingExpiryCloseDue(ct, bot.name, expiration, todayStr)
+    : (isEodRaw && !eodSwingDefer)
   if (isEod || isStaleHoldover) {
     const reason = isStaleHoldover ? 'stale_holdover' : 'eod_cutoff'
     // Commit R1: DB-level close-trigger log BEFORE we place any orders.
@@ -2058,18 +2099,24 @@ async function monitorSinglePosition(
         ],
       )
     } catch { /* log failure must not block close */ }
+    // MARKET, pinned explicitly. This is a forced liquidation against a hard
+    // 15:00 CT deadline after which SPY options stop trading and anything still
+    // open settles — a resting limit that does not fill means assignment and
+    // fees. tradier.ts already defaults `orderType ?? 'market'`, so this is
+    // behaviour-identical today; it is stated here so the guarantee lives at the
+    // call site and cannot be silently removed by changing a default elsewhere.
     try {
       await closePosition(bot, pid, ticker, expiration,
         num(pos.put_short_strike), num(pos.put_long_strike),
         num(pos.call_short_strike), num(pos.call_long_strike),
-        contracts, entryCredit, collateral, reason)
+        contracts, entryCredit, collateral, reason, undefined, 'market')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(`[scanner] ${bot.name.toUpperCase()}: Force-close failed, retrying at entry credit: ${msg}`)
       await closePosition(bot, pid, ticker, expiration,
         num(pos.put_short_strike), num(pos.put_long_strike),
         num(pos.call_short_strike), num(pos.call_long_strike),
-        contracts, entryCredit, collateral, reason, entryCredit)
+        contracts, entryCredit, collateral, reason, entryCredit, 'market')
     }
     _mtmFailureCounts.delete(pid) // Clear on close
     return { status: `closed:${reason}`, unrealizedPnl: 0 }
@@ -5629,8 +5676,15 @@ async function getSwingHoldExemptSymbols(minExpInclusive: string): Promise<Set<s
 
 async function eodSafetyNetSweep(ct: Date): Promise<void> {
   const hhmm = ctHHMM(ct)
-  // Only run between 2:55-3:05 PM CT
-  if (hhmm < 1455 || hhmm > 1505) return
+  // 2:58-3:05 PM CT. Window start moved 1455 -> 1458 on 2026-08-04 when the swing
+  // expiry-day exit moved to 14:55: at 1455 both this sweep and the primary close
+  // fired in the same minute on the same position. The primary close can still be
+  // in flight (order placed, fill not yet read back) when the sweep queries for
+  // status='open', and a second market close on an already-closing IC does not
+  // net to flat — it opens the inverse position. Three minutes of separation
+  // keeps this a backstop instead of a racer; it still finishes before options
+  // stop trading at 15:00.
+  if (hhmm < 1458 || hhmm > 1505) return
 
   // Only run once per day
   const todayStr = ct.toISOString().slice(0, 10)
