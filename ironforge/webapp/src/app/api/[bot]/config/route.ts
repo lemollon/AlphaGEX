@@ -33,12 +33,11 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
     // carries the authoritative strategy string.
     max_contracts: 0, max_trades_per_day: 1, buying_power_usage_pct: 0.30,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
-    // 13:00 as of 2026-08-07 — must track DEFAULT_CONFIG.spark.entry_start in
-    // scanner.ts, which is the value the bot actually runs. entry_start is an
-    // INERT field (the DB row is never read for it), so this literal is the only
-    // thing the dashboard renders: leaving it at 08:30 would print a start time
-    // the scanner does not use.
-    entry_start: '13:00', entry_end: '14:00', eod_cutoff_et: '14:45',
+    // Must track DEFAULT_CONFIG.spark.entry_start in scanner.ts — the value the
+    // bot actually runs. entry_start is an INERT field (the DB row is never read
+    // for it), so this literal is the only thing the dashboard renders. Back to
+    // 08:30 with the 2026-08-07 revert; see the A/B note in scanner.ts.
+    entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
     pdt_max_day_trades: 4, starting_capital: 10000.0,
   },
   // spark2 — SPARK's paper twin. Same strategy code (isSparkV2Sizing +
