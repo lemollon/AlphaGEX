@@ -247,4 +247,24 @@ describe('mobile bearer access', () => {
       }),
     ).toBe('allow')
   })
+
+  // The purge is the irreversible half. A customer must never reach it: a mobile
+  // bearer is deliberately scoped to be exactly as strong as the customer cookie and
+  // no stronger, so it must NOT open an operator route. This is the property that
+  // keeps the operator surface closed by construction rather than by an allowlist
+  // that rots as routes are added — so it gets asserted, not assumed.
+  it('keeps the deletion purge on the operator surface, closed to customers', () => {
+    const path = '/api/ops/account-deletion/purge'
+    expect(isPublicPath(path)).toBe(false)
+    expect(isCustomerPath(path)).toBe(false)
+    expect(decideAccess({ ...base, isApi: true, pathname: path })).toBe('unauthorized')
+    expect(
+      decideAccess({ ...base, isApi: true, pathname: path, hasCustomerSession: true }),
+    ).toBe('unauthorized')
+    expect(
+      decideAccess({ ...base, isApi: true, pathname: path, hasBearerCustomer: true }),
+    ).toBe('unauthorized')
+    // Only an operator session gets through.
+    expect(decideAccess({ ...base, isApi: true, pathname: path, hasSession: true })).toBe('allow')
+  })
 })
