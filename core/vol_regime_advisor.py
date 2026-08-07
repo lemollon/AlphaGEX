@@ -34,7 +34,10 @@ SIGNAL_CONFIDENCE = {
 }
 SIGNAL_BLURB = {
     "backwardation": "VIX above VIX3M — stress is here. Vol historically mean-reverts down and SPY tends to recover; fade the spike.",
-    "ts_flattening": "Term structure flattening from contango — an early warning that a vol spike may be building.",
+    "ts_flattening": "Term structure flattening from contango. NOTE: this is a TAIL warning, not a "
+                     "direction call — it barely raises the odds of a vol spike (19.2% vs a 15.6% base "
+                     "rate) and VIX actually FALLS after it fires (-6.1% over 5d). What it does predict "
+                     "is a ~1.8x fatter next-day move. Cut short-premium size; do not buy puts to profit.",
     "exhaustion": "VIX made a new high but VVIX won't confirm — vol tends to fade and SPY bounces.",
     "double_floor": "VIX and VVIX both at the floor — complacent; vol drifts up slowly. Owning optionality is cheap.",
     "divergence": "VVIX elevated while VIX calm. NOTE: 20-yr study shows this is statistically noise — low confidence.",
@@ -43,7 +46,7 @@ SIGNAL_BLURB = {
 # What each signal implies for the equity stance.
 SIGNAL_DIRECTION = {
     "backwardation": "bullish", "exhaustion": "bullish",
-    "ts_flattening": "bearish", "double_floor": "neutral", "divergence": "bearish",
+    "ts_flattening": "tail_risk", "double_floor": "neutral", "divergence": "bearish",
 }
 # Plain-English firing condition, shown next to a "how close" gauge.
 SIGNAL_TRIGGER = {
@@ -126,8 +129,15 @@ def build_recommendation(signals: Dict[str, dict]) -> dict:
         return {"stance": "buy_the_bounce", "conviction": "medium",
                 "rationale": "Exhaustion: VIX high but VVIX won't confirm — vol fades, SPY bounces."}
     if on("ts_flattening"):
-        return {"stance": "lean_puts", "conviction": "medium",
-                "rationale": "Term structure flattening — rising-vol warning; favor downside/puts."}
+        # NOT a direction call. Measured 2006-2026 (355 firing days / 132 episodes):
+        # forward VIX is -6.1% at 5d (t=-5.9) and forward SPY is +0.36% (t=+0.74,
+        # indistinguishable from base) — so "buy puts to profit" is refuted twice
+        # over. What DOES hold is a fatter next-day tail (|SPY|>=1.5% on 23.9% of
+        # days vs a 13.4% base = 1.79x), which is a SIZING signal, not a direction.
+        return {"stance": "reduce_risk", "conviction": "medium",
+                "rationale": "Term structure flattening — next-day moves run ~1.8x fatter than base, so "
+                             "short premium is the exposure to cut. This is NOT a directional call: "
+                             "historically VIX falls (-6.1%/5d) and SPY is flat after it fires."}
     if on("double_floor"):
         return {"stance": "neutral", "conviction": "low",
                 "rationale": "Floor/complacent — vol is cheap and drifts up slowly; favor owning optionality."}
@@ -289,7 +299,7 @@ def _nearest_trigger(signals: Dict[str, dict]) -> Optional[tuple]:
     Skips neutral 'double_floor' and low-confidence 'divergence' (they aren't tradeable cues)."""
     cands = [(k, s) for k, s in signals.items()
              if not s.get("active") and k not in ("divergence", "double_floor")
-             and s.get("direction") in ("bullish", "bearish") and s.get("proximity") is not None]
+             and s.get("direction") in ("bullish", "bearish", "tail_risk") and s.get("proximity") is not None]
     if not cands:
         return None
     return max(cands, key=lambda kv: kv[1].get("proximity") or 0.0)
@@ -301,6 +311,9 @@ def _watch_line(signals: Dict[str, dict], dte_txt: str) -> Optional[str]:
     k, s = nt
     pct = round((s.get("proximity") or 0.0) * 100)
     name = k.replace("_", " ")
+    if s.get("direction") == "tail_risk":
+        return (f"Closest setup is a tail warning — {pct}% of the way to {name} ({s.get('current_text')}). "
+                f"If it fires, cut short-premium size or widen wings; it is not a directional cue.")
     if s.get("direction") == "bearish":
         return (f"Closest setup is bearish — {pct}% of the way to {name} ({s.get('current_text')}). "
                 f"If it fires, buy SPY puts or a put debit spread {dte_txt} and cut short-premium risk.")
@@ -321,15 +334,17 @@ def _build_action(signals: Dict[str, dict], recommendation: dict, timing: dict, 
                "long calls — it blunts the IV crush when vol falls."
                if (_num(vix) >= 22) else "Long calls or a call debit spread both work here.")
 
-    if stance == "lean_puts":
+    if stance == "reduce_risk":
         return {
-            "headline": "Buy downside protection now",
-            "do": "Buy SPY puts or a put debit spread",
+            "headline": "Cut short-premium size — no directional trade",
+            "do": "Trim/skip iron condors and credit spreads; hedge the tail if you stay short premium",
             "dte_text": dte_txt,
-            "plain": (f"The VIX curve is flattening out of contango — the earliest warning that volatility is "
-                      f"building. Act on it: buy SPY puts or a put debit spread {dte_txt}, and trim/close any "
-                      f"short-premium positions (iron condors, credit spreads). Do NOT open new premium-selling "
-                      f"trades here — you'd be short vol right as it turns up."),
+            "plain": ("The VIX curve is flattening out of contango. Next-day moves run about 1.8x fatter than "
+                      "normal (|SPY| >= 1.5% on 23.9% of days vs a 13.4% base), so the exposure to cut is "
+                      "SHORT PREMIUM — trim or skip iron condors and credit spreads, or widen wings. "
+                      "Do NOT buy puts as a profit trade on this signal: over 2009-2026 VIX FELL 6.1% in the "
+                      "five days after it fired and SPY was flat, so long downside has been a losing bet here. "
+                      "If you stay short premium, hedge the tail rather than betting on direction."),
             "watch": watch,
         }
     if stance in ("buy_the_bounce", "lean_calls"):
@@ -384,8 +399,9 @@ def _summary(signals: Dict[str, dict], curve: dict) -> str:
         return ("VIX is elevated but VVIX won't confirm the move — a classic exhaustion setup. "
                 "Vol tends to fade and SPY bounce over the next few days; the lean is long / calls.")
     if signals["ts_flattening"]["active"]:
-        return ("The term structure is flattening out of contango — an early warning that vol may be building. "
-                "Favor downside protection / puts and trim short-premium risk.")
+        return ("The term structure is flattening out of contango — next-day moves have historically run about "
+                "1.8x fatter than normal, so trim short-premium risk. This is a tail warning, not a direction "
+                "call: VIX has actually fallen (-6.1% over 5 days) after this fires, so don't buy puts to profit.")
     if signals["double_floor"]["active"]:
         return (f"Both VIX ({_fmt(vix)}) and VVIX ({_fmt(vvix, 0)}) are pinned at the floor — a complacent tape. "
                 "Vol is cheap and tends to drift up slowly; owning optionality is favored, but there's no urgent "
@@ -412,8 +428,9 @@ def build_series(history: pd.DataFrame, n: int = 90) -> list:
 def _structure_note(stance: str, vix: Optional[float]) -> str:
     if stance in ("buy_the_bounce", "lean_calls") and vix and vix >= 22:
         return "VIX is elevated — long single calls face IV crush; a call debit spread or shorter DTE fits better."
-    if stance == "lean_puts" and vix and vix < 16:
-        return "VIX is low — long puts are relatively cheap; single long puts are reasonable."
+    if stance == "reduce_risk":
+        return ("Sizing note, not a structure note: the edge here is carrying LESS short premium, "
+                "not putting on a new position.")
     return "Standard long premium is reasonable in this IV regime; mind theta near the suggested DTE."
 
 

@@ -79,6 +79,11 @@ def build():
     kind = {"backwardation": "spy_up", "ts_flattening": "vix_spike",
             "exhaustion": "vol_down", "double_floor": "vix_up", "divergence": "vix_spike"}
 
+    # Next-day tail events — the SIZING claim (a fat tail is not a direction).
+    # Reported per-signal as a lift vs base so a bare rate can't read as skill.
+    tail_abs = df.spy_fwd1.abs() >= 0.015
+    tail_dn = df.spy_fwd1 <= -0.015
+
     base_spy5_up = (df.spy_fwd5 > 0).mean()
     out = {"as_of": str(df.index.max().date()),
            "sample_start": str(df.index.min().date()),
@@ -97,9 +102,22 @@ def build():
             if len(s_on) < 5: return 0.0
             se = np.sqrt(s_on.var()/len(s_on) + s_all.var()/len(s_all))
             return float((s_on.mean() - s_all.mean())/se) if se else 0.0
+        # A hit_rate is meaningless without the rate you'd get for free. Ship both
+        # plus the lift, so a 19% "hit rate" against a 16% base can never again be
+        # read as skill (that misread put "buy puts" on ts_flattening in prod).
+        hr = float(correct[key][m].mean()) if n else 0.0
+        hr_base = float(correct[key].mean())
+        # episodes = consecutive firing runs. Signal days cluster hard, so `n`
+        # days badly overstates the independent sample size.
+        episodes = int((m != m.shift()).cumsum()[m].nunique()) if n else 0
         out["signals"][key] = {
             "n": n,
-            "hit_rate": float(correct[key][m].mean()) if n else 0.0,
+            "n_episodes": episodes,
+            "hit_rate": hr,
+            "hit_rate_base": hr_base,
+            "hit_rate_lift": float(hr / hr_base) if hr_base else 0.0,
+            "tail_lift_abs_15": float(tail_abs[m].mean() / tail_abs.mean()) if n and tail_abs.mean() else 0.0,
+            "tail_lift_down_15": float(tail_dn[m].mean() / tail_dn.mean()) if n and tail_dn.mean() else 0.0,
             "fwd_vix_1": float(sel.vix_fwd1.mean()), "fwd_vix_3": float(sel.vix_fwd3.mean()),
             "fwd_vix_5": float(sel.vix_fwd5.mean()), "fwd_vix_10": float(sel.vix_fwd10.mean()),
             "fwd_spy_3": float(sel.spy_fwd3.mean()), "fwd_spy_5": float(sel.spy_fwd5.mean()),
