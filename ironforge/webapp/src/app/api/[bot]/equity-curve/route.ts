@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
-import { scopedStartingCapital } from '@/lib/account-basis'
+import { scopedStartingCapital, DEFAULT_STARTING_CAPITAL } from '@/lib/account-basis'
 import {
   getIcMarkToMarket,
   isConfigured,
@@ -33,6 +33,16 @@ export async function GET(
   const accountTypeFilter = accountTypeParam
     ? `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountTypeParam)}'`
     : ''
+  // Pre-reset history. Rows parked at status='archived_reset' are real closed
+  // trades from before the account was reset — SPARK sandbox has 86 of them
+  // (2026-02-27 → 07-22, +$20,442.40) that no endpoint could reach, because the
+  // curve query only accepts status IN ('closed','expired').
+  //
+  // Returned as a SEPARATE series, never merged into `curve`. They belong to a
+  // retired ledger with its own starting capital, so splicing them onto the
+  // current book would draw a reset boundary as if it were continuous equity.
+  // Off by default so no existing caller changes behaviour.
+  const includeArchived = req.nextUrl.searchParams.get('include_archived') === '1'
 
   try {
     // Include the counterfactual cumulative P&L so the chart can render a
@@ -264,8 +274,77 @@ export async function GET(
       curve.push(livePoint)
     }
 
+    // ── Pre-reset segment ────────────────────────────────────────────────
+    // Its baseline is the RETIRED ledger(s) for this scope (is_active = FALSE),
+    // not the live one — that is the account these trades were actually run on.
+    // The ledger's own `total_trades`/`cumulative_pnl` counters are reported
+    // alongside the figures recomputed from the position rows, because on SPARK
+    // they disagree (ledger says 100 trades / +$11,087.40; the rows say 86 /
+    // +$20,442.40). Surfacing both is the honest move — silently picking one
+    // would hide that some counted trades no longer have rows. See
+    // /api/{bot}/fix-missing-history.
+    let archived: {
+      starting_capital: number
+      curve: Array<{ timestamp: string | null; pnl: number; cumulative_pnl: number; equity: number }>
+      trade_count: number
+      realized_total: number
+      ledger_ids: number[]
+      ledger_counter_trades: number
+      ledger_counter_pnl: number
+      basis_note: string
+    } | null = null
+
+    if (includeArchived) {
+      const [archivedRows, retiredLedgers] = await Promise.all([
+        dbQuery(
+          `SELECT close_time, realized_pnl,
+                  SUM(realized_pnl) OVER (ORDER BY close_time) AS cumulative_pnl
+           FROM ${botTable(bot, 'positions')}
+           WHERE status = 'archived_reset'
+             AND realized_pnl IS NOT NULL
+             AND close_time IS NOT NULL
+             ${dteFilter} ${personFilter} ${accountTypeFilter}
+           ORDER BY close_time`,
+        ),
+        dbQuery(
+          `SELECT id, starting_capital, total_trades, cumulative_pnl
+           FROM ${botTable(bot, 'paper_account')}
+           WHERE is_active = FALSE ${dteFilter} ${accountTypeFilter}`,
+        ),
+      ])
+
+      if (archivedRows.length > 0) {
+        const archivedBasis =
+          retiredLedgers.reduce((a, r) => a + num(r.starting_capital), 0) || DEFAULT_STARTING_CAPITAL
+        archived = {
+          starting_capital: archivedBasis,
+          curve: archivedRows.map((row) => {
+            const cum = num(row.cumulative_pnl)
+            return {
+              timestamp: row.close_time || null,
+              pnl: num(row.realized_pnl),
+              cumulative_pnl: Math.round(cum * 100) / 100,
+              equity: Math.round((archivedBasis + cum) * 100) / 100,
+            }
+          }),
+          trade_count: archivedRows.length,
+          realized_total:
+            Math.round(num(archivedRows[archivedRows.length - 1]?.cumulative_pnl) * 100) / 100,
+          ledger_ids: retiredLedgers.map((r) => int(r.id)),
+          ledger_counter_trades: retiredLedgers.reduce((a, r) => a + int(r.total_trades), 0),
+          ledger_counter_pnl:
+            Math.round(retiredLedgers.reduce((a, r) => a + num(r.cumulative_pnl), 0) * 100) / 100,
+          basis_note:
+            'Baseline is the summed starting_capital of the RETIRED ledger(s) for this scope. ' +
+            'This segment ran on a different account than the current curve — the two are ' +
+            'separated by an account reset and must not be read as one continuous balance.',
+        }
+      }
+    }
+
     return NextResponse.json({
       starting_capital: startingCapital,
+      archived: archived,
       // How many active paper accounts the basis was summed over. 1 = a pinned
       // single-account view; >1 = a blended scope, where the curve is a
       // combined-portfolio series and not any one account's balance.

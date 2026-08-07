@@ -48,6 +48,7 @@ export default function EquityChart({
   data,
   intradayData,
   startingCapital,
+  archived,
   color = '#3b82f6',
   title,
   period,
@@ -58,6 +59,16 @@ export default function EquityChart({
   data: CurvePoint[]
   intradayData?: IntradayPoint[]
   startingCapital: number
+  /** Pre-reset history from a RETIRED ledger (status='archived_reset').
+   *  Rendered as its own segment on its own baseline, separated by a reset
+   *  divider — never spliced into `data`, because the two sides of a reset
+   *  are different accounts and joining them would draw a fictional balance. */
+  archived?: {
+    starting_capital: number
+    curve: CurvePoint[]
+    trade_count: number
+    realized_total: number
+  } | null
   color?: string
   title?: string
   period?: Period
@@ -223,7 +234,37 @@ export default function EquityChart({
     cumulative_pnl: 0,
   }
   if (hasHypo) seedPoint.hypothetical_equity = startingCapital
-  const chartData = [seedPoint, ...data]
+
+  // Pre-reset segment. Archived points carry `archived_equity` and leave
+  // `equity` undefined; current points do the reverse. Recharts breaks a series
+  // on a missing value (connectNulls defaults to false), so the two segments
+  // render as separate lines with a visible gap at the reset — exactly what we
+  // want, since nothing continuous happened across that boundary.
+  const archivedPoints = archived?.curve ?? []
+  const hasArchived = archivedPoints.length > 0
+  const archivedSeed = hasArchived
+    ? [{
+        timestamp: archivedPoints[0].timestamp,
+        archived_equity: archived!.starting_capital,
+        pnl: 0,
+        cumulative_pnl: 0,
+      }]
+    : []
+  const chartData = [
+    ...archivedSeed,
+    ...archivedPoints.map((p) => ({
+      timestamp: p.timestamp,
+      archived_equity: p.equity,
+      pnl: p.pnl,
+      cumulative_pnl: p.cumulative_pnl,
+    })),
+    seedPoint,
+    ...data,
+  ]
+  // X position of the reset divider = where the current book begins.
+  const resetAt = hasArchived ? seedPoint.timestamp : null
+  const archivedColor = '#a78bfa'
+  const archivedFill = 'rgba(167, 139, 250, 0.10)'
 
   const lastPoint = data[data.length - 1]
   const lastEquity = lastPoint.equity
@@ -244,6 +285,18 @@ export default function EquityChart({
         <div className="flex items-center gap-3 flex-wrap">
           {title && <h3 className="text-sm font-medium text-gray-400">{title}</h3>}
           <PnlBadge value={lastPoint.cumulative_pnl} label="Cumulative" />
+          {hasArchived && (
+            <span
+              className="text-xs font-mono px-2 py-0.5 rounded bg-violet-500/20 text-violet-300"
+              title={
+                `${archived!.trade_count} closed trades on a retired account, before the reset. ` +
+                'Separate segment — not part of the current balance.'
+              }
+            >
+              Pre-reset: {archived!.realized_total >= 0 ? '+' : ''}${archived!.realized_total.toFixed(2)}
+              {' '}({archived!.trade_count})
+            </span>
+          )}
           {hasHypo && lastHypoCum != null && (
             <span
               className="text-xs font-mono px-2 py-0.5 rounded bg-violet-500/20 text-violet-300"
@@ -296,6 +349,7 @@ export default function EquityChart({
               const label =
                 name === 'equity' ? 'Actual Equity'
                 : name === 'hypothetical_equity' ? 'Hypo @ 2:59'
+                : name === 'archived_equity' ? 'Pre-reset (retired account)'
                 : name
               return [`$${v.toFixed(2)}`, label]
             }}
@@ -322,6 +376,31 @@ export default function EquityChart({
               fontSize: 11,
             }}
           />
+          {hasArchived && (
+            <>
+              <Area
+                type="monotone"
+                dataKey="archived_equity"
+                stroke={archivedColor}
+                strokeWidth={2}
+                fill={archivedFill}
+                isAnimationActive={false}
+              />
+              {resetAt && (
+                <ReferenceLine
+                  x={resetAt}
+                  stroke={archivedColor}
+                  strokeDasharray="3 3"
+                  label={{
+                    value: 'ACCOUNT RESET',
+                    position: 'insideTopRight',
+                    fill: archivedColor,
+                    fontSize: 10,
+                  }}
+                />
+              )}
+            </>
+          )}
           <Area type="monotone" dataKey="equity" stroke={color} strokeWidth={2} fill={fillColor} />
           {hasHypo && showHypo && (
             <Area
@@ -336,8 +415,15 @@ export default function EquityChart({
           )}
         </ComposedChart>
       </ResponsiveContainer>
-      <div className="flex gap-4 mt-2 text-xs text-forge-muted px-2 items-center">
+      <div className="flex gap-4 mt-2 text-xs text-forge-muted px-2 items-center flex-wrap">
         <span>{data.length} trades</span>
+        {hasArchived && (
+          <span className="text-violet-300/80">
+            Purple = {archived!.trade_count} pre-reset trades on a retired account
+            (baseline ${archived!.starting_capital.toLocaleString()}). Separate segment —
+            the gap at ACCOUNT RESET is a real discontinuity, not missing data.
+          </span>
+        )}
         {hasHypo && lastHypoEquity != null && (
           <span className="text-violet-300/80">
             Hypo line = "held to 2:59 PM CT every day"; flat through trades older than Tradier's 40-day window.
