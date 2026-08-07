@@ -208,4 +208,43 @@ describe('mobile bearer access', () => {
       decideAccess({ ...base, isApi: false, pathname: '/app/return', hasBearerCustomer: false }),
     ).toBe('allow')
   })
+
+  // Google Play requires account deletion to be requestable from a URL that works
+  // WITHOUT signing in — a deletion page behind a login wall does not count, because
+  // the people most likely to need it are the ones locked out.
+  it('serves /delete-account unauthenticated', () => {
+    expect(isPublicPath('/delete-account')).toBe(true)
+    expect(decideAccess({ ...base, isApi: false, pathname: '/delete-account' })).toBe('allow')
+  })
+
+  // The PAGE is public but the ACTION must not be: anyone who could POST this
+  // anonymously could cancel a stranger's subscription and disconnect their broker.
+  // It must answer 401 rather than redirect — the client reads res.status === 401 to
+  // decide "show the sign-in prompt", and a 307 to an HTML login page would be read
+  // as success and then fail on JSON.parse. Same gate-vs-guard trap as /api/v1/ and
+  // /api/auth/change-password before it.
+  it('requires a session for the deletion-request API, and 401s rather than redirecting', () => {
+    expect(isPublicPath('/api/account/deletion-request')).toBe(false)
+    expect(isCustomerPath('/api/account/deletion-request')).toBe(true)
+    expect(
+      decideAccess({ ...base, isApi: true, pathname: '/api/account/deletion-request' }),
+    ).toBe('unauthorized')
+    // A signed-in customer — by cookie or by mobile bearer — gets through.
+    expect(
+      decideAccess({
+        ...base,
+        isApi: true,
+        pathname: '/api/account/deletion-request',
+        hasCustomerSession: true,
+      }),
+    ).toBe('allow')
+    expect(
+      decideAccess({
+        ...base,
+        isApi: true,
+        pathname: '/api/account/deletion-request',
+        hasBearerCustomer: true,
+      }),
+    ).toBe('allow')
+  })
 })

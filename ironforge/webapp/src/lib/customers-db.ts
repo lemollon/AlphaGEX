@@ -716,6 +716,32 @@ CREATE TABLE IF NOT EXISTS notification_deliveries (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_notification_deliveries_created ON notification_deliveries(created_at DESC);
+
+-- Account deletion (Google Play requires a publicly reachable way to request it).
+-- A request is recorded here rather than executed inline: this database also holds
+-- LIVE positions against a customer's real brokerage account, so the destructive
+-- purge is a reviewed step, never a side effect of an HTTP request. The row is the
+-- audit trail for what was already done at request time (billing cancelled, broker
+-- disconnected, every session revoked) and what is still owed (the PII purge).
+CREATE TABLE IF NOT EXISTS account_deletion_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  status TEXT NOT NULL DEFAULT 'requested',   -- requested | purged | cancelled
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  purged_at TIMESTAMPTZ,
+  cancelled_at TIMESTAMPTZ,
+  -- What the request handler managed to do at request time. Recorded per-step
+  -- because a partial teardown must be visible to whoever runs the purge: a
+  -- brokerage that failed to disconnect is a live money surface, not a detail.
+  steps_json JSONB,
+  requested_ip TEXT,
+  requested_user_agent TEXT
+);
+-- One OPEN request per user. Partial unique index rather than a plain UNIQUE so a
+-- user who cancels and later re-requests is not blocked by their own history.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_deletion_req_one_open
+  ON account_deletion_requests(user_id) WHERE status = 'requested';
+CREATE INDEX IF NOT EXISTS idx_deletion_req_status ON account_deletion_requests(status, requested_at);
 `
 
 let _ensured: Promise<void> | null = null

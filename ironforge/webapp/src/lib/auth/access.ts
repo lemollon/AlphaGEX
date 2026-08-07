@@ -32,6 +32,11 @@ const PUBLIC_EXACT = new Set<string>([
   '/contact',
   '/privacy',
   '/terms',
+  // Account deletion. Google Play requires this to be reachable WITHOUT signing in
+  // — a deletion page behind a login wall does not count, because the people most
+  // likely to need it are the ones who can no longer get in. The page explains the
+  // policy to anyone; only the button that files a request needs a session.
+  '/delete-account',
   // Operator sign-in page. Password login was retired 2026-07-27 (see the page);
   // it stays public because middleware redirects every gated operator route here,
   // and a gated redirect must not land on a login wall it cannot pass.
