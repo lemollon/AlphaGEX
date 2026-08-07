@@ -6,7 +6,8 @@ export const dynamic = 'force-dynamic'
 /** Default config values (mirrors models.py factory functions). */
 const DEFAULTS: Record<string, Record<string, number | string>> = {
   flame: {
-    sd_multiplier: 1.2, spread_width: 5.0, min_credit: 0.05,
+    // min_credit mirrors the scanner's DEFAULT_CONFIG floor, not the legacy 0.05.
+    sd_multiplier: 1.2, spread_width: 5.0, min_credit: 0.25,
     profit_target_pct: 30.0, stop_loss_pct: 200.0, vix_skip: 32.0,
     max_contracts: 0, max_trades_per_day: 1, buying_power_usage_pct: 0.85,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
@@ -14,7 +15,9 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
     pdt_max_day_trades: 4, starting_capital: 10000.0,
   },
   spark: {
-    sd_multiplier: 1.2, spread_width: 5.0, min_credit: 0.05,
+    // 0.25 = the scanner's code floor (raised from 0.05 on 2026-05-06 to skip
+    // un-fillable thin ICs). The DB row still says 0.05 and is clamped up.
+    sd_multiplier: 1.2, spread_width: 5.0, min_credit: 0.25,
     profit_target_pct: 30.0, stop_loss_pct: 200.0,
     // 40, not 32 — scanner.ts: `const vixCap = isSparkV2Sizing(bot.name) ? 40 : 32`.
     // Inert fields are now reported from THIS map (the DB value is skipped), so
@@ -54,7 +57,7 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
     pdt_max_day_trades: 4, starting_capital: 10000.0,
   },
   inferno: {
-    sd_multiplier: 1.0, spread_width: 5.0, min_credit: 0.05,
+    sd_multiplier: 1.0, spread_width: 5.0, min_credit: 0.15,
     profit_target_pct: 100.0, stop_loss_pct: 1000.0, vix_skip: 32.0,
     max_contracts: 0, max_trades_per_day: 0, buying_power_usage_pct: 0.85,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
@@ -102,6 +105,49 @@ const INERT_FIELDS: Record<string, string> = {
  * together.
  */
 const SWING_BOTS = ['spark', 'spark2', 'kindle']
+
+/**
+ * `min_credit` FLOORS — scanner.ts loadConfigOverrides, line ~366:
+ *
+ *     merged.min_credit = Math.max(merged.min_credit, DEFAULT_CONFIG[bot].min_credit)
+ *
+ * The DB value IS read for this field, then clamped UP. So it is not inert — it
+ * simply cannot go below the code floor. SPARK's row says 0.05 while the bot has
+ * refused anything under 0.25 since 2026-05-06; reporting the raw row understates
+ * the gate by 5x. Values below mirror DEFAULT_CONFIG in scanner.ts and must move
+ * with it.
+ */
+const MIN_CREDIT_FLOOR: Record<string, number> = {
+  flame: 0.25, spark: 0.25, spark2: 0.25, inferno: 0.15, kindle: 0.05,
+}
+
+/**
+ * `profit_target_pct` — what the scanner ACTUALLY exits on, per bot.
+ *
+ * getSlidingProfitTarget (scanner.ts):
+ *   · INFERNO           -> returns 1.0 / HOLD_TO_EOD. The row's PT is never used.
+ *   · SPARK-strategy    -> hardcoded 0.40 / 0.35 / 0.30 by CT time-of-day. The
+ *     (spark/spark2/     comment there is explicit: "the DB profit_target_pct
+ *      kindle)           override does NOT apply to these bots".
+ *   · everything else   -> derived FROM the row (basePt, then basePt-0.10, -0.15).
+ *
+ * So for every bot except FLAME the stored number governs nothing, and a single
+ * scalar cannot describe a sliding ladder anyway. `profit_target_effective`
+ * carries the real schedule; the scalar stays for back-compat.
+ */
+function ptEffective(bot: string, basePt: number): { text: string; inert: boolean } {
+  if (bot === 'inferno') {
+    return { text: 'HOLD_TO_EOD (no intraday PT; EOD cutoff is the exit)', inert: true }
+  }
+  if (SWING_BOTS.indexOf(bot) >= 0) {
+    return { text: '40% before 12:00 CT / 35% until 13:00 / 30% after (code-controlled)', inert: true }
+  }
+  const p = Math.round(basePt)
+  return {
+    text: `${p}% before 10:30 CT / ${Math.max(10, p - 10)}% until 13:00 / ${Math.max(10, p - 15)}% after`,
+    inert: false,
+  }
+}
 
 /**
  * Normalize the account_type query param. Paper/sandbox are aliased to
@@ -165,8 +211,11 @@ export async function GET(
     }
 
     const row = rows[0]
+    const ptIsInert = ptEffective(bot, 0).inert
     const inertHere = (k: string) =>
-      k in INERT_FIELDS || (k === 'stop_loss_pct' && SWING_BOTS.indexOf(bot) >= 0)
+      k in INERT_FIELDS
+      || (k === 'stop_loss_pct' && SWING_BOTS.indexOf(bot) >= 0)
+      || (k === 'profit_target_pct' && ptIsInert)
     const merged: Record<string, number | string> = { ...defaults }
     for (let i = 0; i < ALL_FIELDS.length; i++) {
       const key = ALL_FIELDS[i]
@@ -198,12 +247,31 @@ export async function GET(
     if (Object.keys(stored).length > 0) {
       merged.stored_inert_values = JSON.stringify(stored)
     }
+
+    // min_credit: the row IS read, then clamped UP to the code floor. Report the
+    // clamped value — it is the gate the bot enforces — and surface the raw row
+    // separately when the clamp actually bit.
+    const floor = MIN_CREDIT_FLOOR[bot] ?? MIN_CREDIT_FLOOR.spark
+    const rawMinCredit = row.min_credit != null ? num(row.min_credit) : Number(merged.min_credit)
+    const effMinCredit = Math.max(rawMinCredit, floor)
+    merged.min_credit = effMinCredit
+    if (effMinCredit !== rawMinCredit) {
+      merged.min_credit_stored = rawMinCredit
+      merged.min_credit_note =
+        `row says $${rawMinCredit.toFixed(2)}; the scanner clamps UP to the $${floor.toFixed(2)} code floor`
+    }
+
+    // profit_target_pct: a sliding ladder, and code-controlled on every bot but
+    // FLAME. The scalar alone cannot be right, so ship the schedule.
+    const pt = ptEffective(bot, Number(merged.profit_target_pct))
+    merged.profit_target_effective = pt.text
     merged.account_type = accountType
     // Name the stored values that govern nothing, so a reader does not take the whole
     // row as the strategy. This is the field that would have stopped me reporting
     // SPARK's parameters from this endpoint and getting them wrong.
     merged.inert_fields = Object.keys(INERT_FIELDS)
       .concat(SWING_BOTS.indexOf(bot) >= 0 ? ['stop_loss_pct'] : [])
+      .concat(ptIsInert ? ['profit_target_pct'] : [])
       .join(', ')
     // Mark whether the row we matched was an exact (account_type) hit or a
     // fallback from the sandbox row. Operators debugging bleed-over can use
