@@ -67,7 +67,22 @@ const config: ExpoConfig = {
     ],
     permissions: ['USE_BIOMETRIC', 'USE_FINGERPRINT'],
   },
-  plugins: ['expo-router', 'expo-secure-store', 'expo-local-authentication'],
+  plugins: [
+    'expo-router',
+    'expo-secure-store',
+    'expo-local-authentication',
+    // Android API level is PINNED, not inherited from whatever the Expo SDK happens to
+    // default to. Google Play requires new apps and updates to target API 36 from
+    // 2026-08-31; a silent default drift below that is not a warning, it is an outright
+    // upload rejection. Stating it here means the requirement is visible in the diff the
+    // day it changes rather than discovered at submission time.
+    [
+      'expo-build-properties',
+      {
+        android: { compileSdkVersion: 36, targetSdkVersion: 36 },
+      },
+    ],
+  ],
   extra: {
     apiBase: API_BASE,
     // The EAS project (expo.dev org "IronForge Technologies LLC", project "ironforge").
