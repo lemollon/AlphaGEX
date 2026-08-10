@@ -126,6 +126,27 @@ function isSparkStrategy(name: string): boolean {
 }
 
 /**
+ * Bots that NEVER consult the stop — they ride to the profit target or EOD, with
+ * position size as the only risk control.
+ *
+ * This used to be `isSparkStrategy` itself, conflating two separate behaviors:
+ * holding overnight (which all three do, and SPARK still does at 5 DTE) and
+ * refusing to stop out (which SPARK no longer does).
+ *
+ * SPARK was removed 2026-08-10. Its validated 5 DTE config exits at 1.5x the entry
+ * credit, and the stop is not optional there — the walk-forward selected 1.5x in
+ * 4 of 5 years. Note the stop is NOT where that strategy's edge comes from: tight
+ * stops alone (0.75x / 1.0x) measured WORSE, some outright negative. The edge is
+ * the 3-day stand-down after a stop-out (+64%), and the stand-down needs a
+ * stop-out to trigger on. Removing the stop removes the trigger.
+ *
+ * SPARK2 and KINDLE keep the no-stop behavior — they are still 1DTE swings.
+ */
+function isNoStopBot(name: string): boolean {
+  return name === 'kindle' || name === 'spark2'
+}
+
+/**
  * Bots that route through the real-money PRODUCTION order path (open, fill-check,
  * reconcile, EOD). Allowlist: SPARK (existing live account) + KINDLE ($500 account
  * via TRADIER_KINDLE_* env). For 'spark' this returns true exactly where the old
@@ -204,7 +225,13 @@ const _lastSandboxPlacedAt: Record<string, number> = {}
 
 const BOTS = [
   { name: 'flame', dte: '1DTE', minDte: 1 },
-  { name: 'spark', dte: '1DTE', minDte: 1 },
+  // SPARK moved 1 DTE -> 5 DTE on 2026-08-10. The 1DTE condor had no edge on real
+  // fills (972-cell sweep: best-on-train -$5.13/ct out-of-sample, 37% of cells
+  // positive where coin flips give 50%) and the live account confirmed it: eight
+  // production winners averaging +$20, then -$944 in a single session on 2026-08-03.
+  // dte_mode is the row tag, so changing it deliberately SEPARATES the new
+  // strategy's history from the dead one — the old '1DTE' rows stay where they are.
+  { name: 'spark', dte: '5DTE', minDte: 5 },
   { name: 'inferno', dte: '0DTE', minDte: 0 },
   // SPARK2 (2026-07-13, replaces KINDLE): SPARK's FULL v2 strategy AND sizing
   // (830 entry, $5 wings, $0.25 credit walk-in, tier 40/35/30, VIX cap 40,
@@ -233,6 +260,17 @@ interface BotConfig {
   bp_pct: number
   starting_capital: number
   min_credit: number // minimum credit per contract to open a trade
+  /** FIXED strike placement: shorts go at exactly `sd` x the expected move and stay
+   *  there. Disables BOTH strike-moving overlays — the negative-gamma widen to 1.5 SD
+   *  and the thin-credit SD walk-in — so a thin day SKIPS instead of walking closer to
+   *  the money. Code-controlled (no DB override).
+   *
+   *  SPARK sets this (2026-08-10). Its walk-forward selected one rule — 5 DTE, shorts
+   *  at 1.25x the expected move, $10 wings, 1.5x stop, 3-day stand-down — and both
+   *  overlays were tuned on the 1DTE structure that measured no edge on real fills.
+   *  Leaving them on would mean live SPARK never actually trades the config that was
+   *  validated. Every other bot keeps its existing behavior (false). */
+  fixed_strike_placement: boolean
   eod_cutoff_hhmm_ct: number  // EOD force-close cutoff in CT HHMM. Loaded from the `eod_cutoff_et` config column, which is now interpreted as CENTRAL time (the legacy `_et` suffix is a misnomer — all IronForge times are CT). Default 1445 = 2:45 PM CT.
   trailing_retrace_dollars: number  // Trailing-lockin retracement threshold in dollars. Once PT has fired for a position, if cost-to-close climbs this many ¢ above the lowest seen, fire a marketable close. 0 disables the rule.
   wing_width: number  // IC spread width in $ (long strike = short ± wing_width). Default 5; KINDLE uses 2 to fit a tiny account. Used by calculateStrikes for the IC path.
@@ -259,12 +297,58 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // +$26,742/ct, every year green (2024 +$1,848), 95.7% win, maxDD $670/ct,
   // worst day -$295. Penny-credit trades (sub-$0.15: 547 at -$1.55/ct) were the
   // 2024 bleed.
-  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false },
+  // FLAME v2 (2026-08-10) — the validated 1DTE bull put credit spread.
+  //
+  // These WERE the old 2DTE values (sd 1.2, $5 wings, 30% PT, 2.0x stop,
+  // max_contracts 0 = UNLIMITED at 85% BP) with the real config carried only by the
+  // DB row. That was safe while the row was found. It stopped being safe the moment
+  // PR #2773 retagged the roster 2DTE -> 1DTE: the row is tagged '2DTE', the scanner
+  // asked for '1DTE', got nothing, and silently ran THIS line — reinstating the
+  // unlimited sizing that lost $30,510 over 100 trades.
+  //
+  // A code default is a fail-safe, not a placeholder. It must never be more
+  // aggressive than the validated config, because it is what runs when the
+  // database has nothing to say.
+  //   26.3%/yr on $2,000 - 35% max drawdown - 5 of 5 years - ~117 trades/yr
+  //   sl_mult 10.0 = wing-breach backstop only (same convention as INFERNO); the
+  //   validated config has NO stop, and NUMERIC(5,2) cannot store a true "off".
+  flame:   { sd: 1.5, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.20, starting_capital: 2000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 3, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false, fixed_strike_placement: false },
   // ENTRY TIME: 830, and now MEASURED rather than assumed — see the note on
   // isInEntryWindow below. Moved to 1300 on 2026-08-07 on inference; reverted the
   // same day once real entry-time quotes existed to test it.
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false },
-  inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false },
+  // SPARK v3 (2026-08-10) — THE WALK-FORWARD CONFIG, replacing the 1DTE structure.
+  //
+  // One rule, selected inside a 288-config walk-forward with every axis (dte /
+  // placement / width / stop / pause) chosen from prior years only, then traded
+  // forward blind: 5 DTE, shorts at 1.25x the VIX expected move, $10 wings, exit at
+  // 1.5x credit, STAND DOWN 3 DAYS after any stop-out.
+  //     +$24.14/trade, 65.2% win, 116 trades/yr, 5 of 5 years positive (2022 +$1,015)
+  // Selection was stable: $10 wings and the 3-day pause held in ALL five years.
+  //
+  // THE PAUSE IS THE EDGE, not the stop (+64% over identical entries with no rule).
+  // Losses cluster because volatility is autocorrelated; the entry the day after a
+  // stop-out goes into the same disturbed tape.
+  //
+  // WHY THE KNOBS ARE WHAT THEY ARE
+  //   pt_pct 1.0      no profit target — hold to expiry. Trips the basePt >= 1.0
+  //                   HOLD_TO_EOD guard, so SPARK leaves the 40/35/30 ladder (which
+  //                   was tuned on the dead 1DTE structure). SPARK2/KINDLE keep it.
+  //   wing_width 10   NARROW WINGS DELETE THE EDGE — it is friction, not sizing. The
+  //                   4-leg commission and four spreads cost the same whether the
+  //                   credit is $34 or $166. Identical entries: $1 wings -$1.68/trade,
+  //                   $2 -$0.50, $5 +$2.50, $10 +$10.39. Drawdown-per-margin also gets
+  //                   WORSE as you shrink (10x -> 45x). $10 dominates on every axis.
+  //   max_contracts 1 fail-safe, and it is what the $5,000 seed supports. The old
+  //                   config ran max_contracts 0 = UNLIMITED at 85% BP, which is how
+  //                   the paper side put on 25 contracts and lost $10,500 in a day.
+  //   starting_capital 5000  the honest paper seed: at $5k this returns 11.4%/yr on
+  //                   1 contract at 15% drawdown, 5 of 5 years. NOT $2,000 — at
+  //                   Tradier commissions with realistic fills, $2,000 never works.
+  //
+  // ⚠️ NOT LIVE-VALIDATED. Production is PAUSED (2026-08-10) and this must earn a
+  // paper record before it touches real money again.
+  spark:   { sd: 1.25, pt_pct: 1.0, sl_mult: 1.5, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 5000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 10, min_credit_pct_width: 0, standdown_days: 3, skip_neg_gamma: false, fixed_strike_placement: true },
+  inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: false },
   // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
   // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =
   // exactly one IC per trade (the Kelly-justified size for $500). min_credit 0.05
@@ -278,7 +362,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // never ruins the $490 account at any commission. The gate — not the wing width
   // — is the fix; $2 wings retained for cold-start survivability (one max-loss day
   // is -$179, leaving room to keep trading; $3+ wings can lock up the account).
-  kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 490, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0.09, standdown_days: 0, skip_neg_gamma: true },
+  kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 490, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0.09, standdown_days: 0, skip_neg_gamma: true, fixed_strike_placement: false },
   // SPARK2: byte-identical to SPARK's v2 config (full sizing rules incl. the
   // 30%-BP cap + VIX 40 + 0.7-SD walk-in floor via the isSparkV2Sizing sites).
   // starting_capital is the PAPER seed — it is what syncSandboxCapital() writes
@@ -288,7 +372,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // default as the other paper bots. (The old 500 was inherited from KINDLE and
   // rendered $500 - $208 = $292.) Any manual edit to that row is pointless —
   // change it HERE or the scanner syncs it straight back.
-  spark2:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false },
+  spark2:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: false },
 }
 
 /** Numeric-valued config keys only — the DB override path writes numbers, so it
@@ -889,6 +973,11 @@ function evaluateAdvisor(vix: number, spot: number, expectedMove: number, dteMod
 
   if (dteMode === '2DTE') { const a = 0.03; winProb += a; factors.push(['DTE_2DAY_DECAY', a]) }
   else if (dteMode === '0DTE') { const a = -0.05; winProb += a; factors.push(['DTE_0DAY_AGGRESSIVE', a]) }
+  // 5DTE gets an explicit NEUTRAL factor rather than falling through to the 1-day
+  // penalty below. There is no measured adjustment for it — the walk-forward that
+  // produced SPARK's 5 DTE config had no advisor at all — so inventing one would be
+  // dressing a guess as evidence. Labelled so it is visible in the factor list.
+  else if (dteMode === '5DTE') { factors.push(['DTE_5DAY_NEUTRAL', 0]) }
   else { const a = -0.02; winProb += a; factors.push(['DTE_1DAY_TIGHT', a]) }
 
   winProb = Math.max(0.10, Math.min(0.95, winProb))
@@ -2353,12 +2442,14 @@ async function monitorSinglePosition(
   }
 
   // Stop loss uses BID/ASK (conservative) — better to exit early on losses.
-  // SPARK SWINGS: it never hard-stops — it rides the position to the profit target
-  // or EOD. Backtest: ~82% of would-be-stopped trades recover by close; with the
-  // small %-based sizing (bp_pct ≤ 0.30 cap) this lifts win rate to ~98% and slashes
-  // drawdown. Position SIZE is the risk control with the stop off. Other bots keep
-  // their stop. (Disable SPARK itself to halt — that is the kill switch.)
-  const swingOn = isSparkStrategy(bot.name)
+  // SPARK2 / KINDLE SWING: they never hard-stop — they ride to the profit target or
+  // EOD. Backtest: ~82% of would-be-stopped trades recover by close; with the small
+  // %-based sizing (bp_pct ≤ 0.30 cap) this lifts win rate to ~98% and slashes
+  // drawdown. Position SIZE is the risk control with the stop off.
+  //
+  // SPARK left this set on 2026-08-10 (see isNoStopBot). Its 5 DTE config stops at
+  // 1.5x credit, which is also what arms the 3-day stand-down.
+  const swingOn = isNoStopBot(bot.name)
   if (costToClose >= stopLossPrice && !swingOn) {
     // Commit R1: DB-level trigger log.
     try {
@@ -3285,8 +3376,32 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
      ORDER BY id DESC LIMIT 1`,
     [bot.dte],
   )
-  if (accountRows.length === 0 && !sandboxAlreadyTraded) return 'skip:no_paper_account'
-  const acct = accountRows[0] ?? { id: null, current_balance: 0, buying_power: 0 }
+  // Seed a paper ledger the first time a bot scans under a NEW dte_mode. SPARK moved
+  // 1DTE -> 5DTE on 2026-08-10; its ledger rows are tagged '1DTE', so without this the
+  // bot returns skip:no_paper_account on every scan forever — silent, and it looks
+  // exactly like "no opportunity today". Seeded from the configured starting_capital,
+  // never from a broker balance. The old '1DTE' row is left untouched as history.
+  let seededAccountRows = accountRows
+  if (accountRows.length === 0 && !sandboxAlreadyTraded) {
+    const seed = botCfg.starting_capital
+    await query(
+      `INSERT INTO ${botTable(bot.name, 'paper_account')}
+         (starting_capital, current_balance, cumulative_pnl, collateral_in_use,
+          buying_power, total_trades, high_water_mark, max_drawdown,
+          is_active, dte_mode, account_type, created_at, updated_at)
+       VALUES ($1, $1, 0, 0, $1, 0, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
+      [seed, bot.dte],
+    )
+    console.log(`[scanner] ${bot.name.toUpperCase()}: seeded ${bot.dte} paper ledger at $${seed}`)
+    seededAccountRows = await query(
+      `SELECT id, current_balance, buying_power FROM ${botTable(bot.name, 'paper_account')}
+       WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+       ORDER BY id DESC LIMIT 1`,
+      [bot.dte],
+    )
+    if (seededAccountRows.length === 0) return 'skip:no_paper_account'
+  }
+  const acct = seededAccountRows[0] ?? { id: null, current_balance: 0, buying_power: 0 }
 
   // Fix 10: Derive buying power from LIVE open position collateral (not cached paper_account)
   // Filter by sandbox account_type so production collateral doesn't affect sandbox BP
@@ -3311,10 +3426,24 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // Paper BP check — skip in production-only mode (production uses Tradier account equity, not paper BP)
   if (buyingPower < 200 && !sandboxAlreadyTraded && !productionOnlyBot) return `skip:low_bp($${buyingPower.toFixed(0)})`
 
-  const expectedMove = (vix / 100 / Math.sqrt(252)) * spot
+  // EXPECTED MOVE — now scaled by sqrt(DTE).
+  //
+  // This was the ONE-DAY move for every bot, which was correct while every bot was
+  // 0-2 DTE. SPARK moved to 5 DTE on 2026-08-10, and a 5-day position placed at
+  // 1.25x a ONE-day move sits ~2.24x too close to the money — it would have looked
+  // like the configured strategy and behaved like a near-ATM condor.
+  //
+  // Byte-identical for every other bot: FLAME/SPARK2/KINDLE are minDte 1 (sqrt(1)=1)
+  // and INFERNO is minDte 0, floored to 1 so its 0DTE placement is unchanged.
+  const emDays = Math.max(bot.minDte, 1)
+  const oneDayMove = (vix / 100 / Math.sqrt(252)) * spot
+  const expectedMove = oneDayMove * Math.sqrt(emDays)
 
-  // Advisor
-  const adv = evaluateAdvisor(vix, spot, expectedMove, bot.dte)
+  // Advisor. Fed the ONE-DAY move deliberately: its EM_TIGHT / EM_WIDE thresholds are
+  // calibrated against a single session's move, so handing it a 5-day move would push
+  // SPARK into EM_WIDE nearly every day and silently suppress trading. Passing
+  // oneDayMove keeps the advisor's behavior identical for all bots.
+  const adv = evaluateAdvisor(vix, spot, oneDayMove, bot.dte)
   if (adv.advice === 'SKIP') return `skip:advisor(${adv.reasoning})`
 
   // GEX (gamma-regime) — AUTOMATIC for SPARK, no switch. Net GEX is computed every
@@ -3382,8 +3511,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   if (cfg(bot).skip_neg_gamma && spkNetGex !== null && spkNetGex < 0) {
     return `skip:neg_gamma_env(net_gex=${spkNetGex.toExponential(2)})`
   }
-  // Other swing bots (SPARK) WIDEN to 1.5 SD on negative-gamma instead of skipping.
-  if (isSparkStrategy(bot.name) && spkNetGex !== null && spkNetGex < 0) {
+  // Other swing bots WIDEN to 1.5 SD on negative-gamma instead of skipping.
+  // Suppressed under fixed_strike_placement (SPARK v3): its walk-forward placed
+  // shorts at a FIXED 1.25x the expected move in every regime, so an overlay tuned
+  // on the old 1DTE structure would mean live SPARK never trades the validated rule.
+  if (isSparkStrategy(bot.name) && !botCfg.fixed_strike_placement
+      && spkNetGex !== null && spkNetGex < 0) {
     usedSd = 1.5
   }
   let strikes = calculateStrikes(spot, expectedMove, usedSd, cfg(bot).wing_width)
@@ -3411,7 +3544,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const sdFloor = isSparkV2Sizing(bot.name) ? 0.7 : SD_FLOOR
   // (KINDLE — the one bot that skipped the walk-in — is retired from the
   // roster, so every scanned bot walks in now. SPARK2 uses the 0.7-SD floor.)
-  {
+  //   SPARK v3 — NO walk-in (fixed_strike_placement). Walking strikes toward the money
+  //            to manufacture credit is the opposite of what its walk-forward
+  //            selected; a thin day SKIPS instead. At 5 DTE on $10 wings the $0.25
+  //            floor should almost never bind, so min_credit acts as a sanity filter
+  //            rather than a strike-mover. Watch skip:credit_too_low in paper.
+  if (!botCfg.fixed_strike_placement) {
     while ((!credits || credits.totalCredit < botCfg.min_credit) && usedSd - SD_STEP >= sdFloor) {
       usedSd = Math.round((usedSd - SD_STEP) * 10) / 10
       strikes = calculateStrikes(spot, expectedMove, usedSd, cfg(bot).wing_width)
