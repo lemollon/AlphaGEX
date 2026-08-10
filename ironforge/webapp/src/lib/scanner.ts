@@ -69,6 +69,7 @@ import {
   type SandboxOrderInfo,
   type SandboxCloseInfo,
   type IcMtmResult,
+  getOptionQuote,
 } from './tradier'
 import { getTvMarketStructure, type TvMarketStructure } from './gex/trading-volatility-client'
 import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, classifySignalState, notifyDecision, type SignalStreak } from './volAlerts'
@@ -241,6 +242,20 @@ const BOTS = [
   // removed from this roster (never scans/trades again); its tables, pages and
   // history remain readable.
   { name: 'spark2', dte: '1DTE', minDte: 1 },
+  // FORGE (2026-08-10) -- the three-market condor. SHIPS DISARMED.
+  //
+  // Same 7 DTE condor run on SPY + QQQ + IWM at once, one account split three
+  // ways. The books lose on DIFFERENT days (measured daily P&L correlation
+  // SPY-QQQ 0.25, SPY-IWM 0.35, QQQ-IWM 0.16), which is the entire mechanism:
+  // 42.7%/yr at 11.2% drawdown blind walk-forward, vs 11.4%/15.3% for one
+  // market. Edge $41.12/trade, 95% CI $31.67-$50.04, t=8.74 on day-clustered
+  // errors, and it survives a multiplicity haircut for the 9,132 configs
+  // searched ($21.02/trade left when you assume the true edge is zero).
+  //
+  // NEEDS $25,000. Below that the three-way split cannot hold enough concurrent
+  // positions and the whole advantage disappears -- this does NOT replace SPARK
+  // or FLAME for small accounts.
+  { name: 'forge', dte: '7DTE', minDte: 7 },
 ] as const
 
 type BotDef = (typeof BOTS)[number]
@@ -372,7 +387,59 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // default as the other paper bots. (The old 500 was inherited from KINDLE and
   // rendered $500 - $208 = $292.) Any manual edit to that row is pointless —
   // change it HERE or the scanner syncs it straight back.
+  // FORGE -- see the BOTS entry. bp_pct 0.80 is the TOTAL across all three
+  // books; each book gets one third and may NOT borrow from the others, because
+  // independent margin pools are what keep the drawdowns independent.
+  // min_credit 0.25 is a sanity floor only: median credit at $10 wings is ~$0.95.
+  // standdown_days 1 fires on a LOSING TRADE (there is no stop to fire on).
+  forge:   { sd: 1.75, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 25000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 10, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false, fixed_strike_placement: true },
   spark2:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: false },
+}
+
+/**
+ * FORGE's three books. `k` is the strike placement as a multiple of THAT
+ * ticker's own ATM straddle price -- not VIX, which describes only SPY and would
+ * misplace QQQ and IWM entirely.
+ *
+ * Selected on return/drawdown with a <=35% drawdown ceiling. The walk-forward
+ * re-picked yearly and landed on 4 distinct sets across 5 years, so `k` is the
+ * LEAST trustworthy parameter here; wing width was stable in 14 of 15
+ * ticker-years. If live fills disappoint, widen `k` before touching the width.
+ */
+const FORGE_BOOKS = [
+  { ticker: 'SPY', k: 1.75 },
+  { ticker: 'QQQ', k: 1.25 },
+  { ticker: 'IWM', k: 1.25 },
+] as const
+
+/**
+ * FORGE's wing width is DERIVED FROM LIVE EQUITY, not configured. This is the
+ * single most valuable thing measured on this strategy.
+ *
+ * A $10-wide condor ties up ~$950 of margin; a $1-wide one ~$95. On a $5,000
+ * account the first holds 4 positions at once, the second holds 40. The edge
+ * comes from many small INDEPENDENT bets running concurrently, not from any one
+ * being large -- so the width has to keep concurrency in the 10-15 band as the
+ * balance moves.
+ *
+ * Blind walk-forward (width AND placement chosen from prior years only, then
+ * traded blind, 2021-2025, all five years positive at every tier):
+ *      $2,000  W$1   48.6%/yr  38.0% DD      $10,000 W$5   76.0%/yr  23.7% DD
+ *      $3,000  W$1   38.5%/yr  24.0% DD      $25,000 W$10  60.7%/yr  11.8% DD
+ *      $5,000  W$3   95.6%/yr  29.9% DD
+ * The same $5,000 account returns 11.4%/yr on $10 wings and 95.6% on $3. Same
+ * strategy, same markets, same holding period -- only the width changed.
+ *
+ * 🚨 THE $5 BAND IS DELIBERATELY ABSENT. $10,000/$5 scored well (76%) but was the
+ * ONE tier where the blind selector did NOT pick a stable width -- it flipped
+ * $10 -> $5 mid-sample. A width we cannot commit to in advance is not a width we
+ * can put a customer on, so the $8k-$18k band uses $3, which was stable at the
+ * neighbouring tier. Returns less than $5 would have; it is a width we can defend.
+ */
+function forgeWingWidth(equity: number): number {
+  if (equity < 4000) return 1
+  if (equity < 18000) return 3
+  return 10
 }
 
 /** Numeric-valued config keys only — the DB override path writes numbers, so it
@@ -404,6 +471,7 @@ const _botConfig: Record<string, BotConfig> = {
   flame:   { ...DEFAULT_CONFIG.flame },
   spark:   { ...DEFAULT_CONFIG.spark },
   inferno: { ...DEFAULT_CONFIG.inferno },
+  forge:   { ...DEFAULT_CONFIG.forge },
 }
 
 function cfg(bot: BotDef): BotConfig {
@@ -2927,8 +2995,13 @@ async function closePosition(
  * Calendar days, matching the backtest. Sandbox rows only: production has its
  * own gates and must not be blocked by a paper loss.
  */
-async function isStandDownActive(bot: BotDef, standdownDays: number): Promise<boolean> {
+async function isStandDownActive(
+  bot: BotDef, standdownDays: number, ticker?: string,
+): Promise<boolean> {
   if (!(standdownDays > 0)) return false
+  // FORGE scopes the stand-down PER BOOK: a loss on IWM must not silence SPY.
+  // Sharing one stand-down across three books would couple them on exactly the
+  // axis the strategy depends on being independent.
   const lastLossRows = await query(
     `SELECT (close_time AT TIME ZONE 'America/Chicago')::date AS loss_date
      FROM ${botTable(bot.name, 'positions')}
@@ -2937,9 +3010,10 @@ async function isStandDownActive(bot: BotDef, standdownDays: number): Promise<bo
        AND dte_mode = $1
        AND COALESCE(account_type, 'sandbox') = 'sandbox'
        AND close_time IS NOT NULL
+       ${ticker ? 'AND ticker = $2' : ''}
      ORDER BY close_time DESC
      LIMIT 1`,
-    [bot.dte],
+    ticker ? [bot.dte, ticker] : [bot.dte],
   )
   const lossDate = lastLossRows[0]?.loss_date
   if (!lossDate) return false
@@ -3243,6 +3317,173 @@ async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Pr
 /*  Fix 10: Live buying power from open positions                      */
 /* ------------------------------------------------------------------ */
 
+/**
+ * FORGE -- the three-market condor. SHIPS DISARMED; paper only.
+ *
+ * Opens up to one condor per BOOK per day on SPY, QQQ and IWM, sharing a single
+ * margin pool split three ways.
+ *
+ * THE GATES LIVE IN HERE, DELIBERATELY. FLAME short-circuited out of
+ * tryOpenTrade above the standdown / min_credit / max_contracts gates and so ran
+ * hardcoded values while the config API reported something else entirely
+ * (2026-08-10, PR #2777). Every knob this bot advertises is read below.
+ */
+async function tryOpenForgeCondor(bot: BotDef): Promise<string> {
+  const botCfg = cfg(bot)
+  if (!isConfigured()) return 'skip:tradier_not_configured'
+
+  // --- one shared paper ledger, seeded on first scan ---
+  const acctRows = await query(
+    `SELECT id, current_balance FROM ${botTable(bot.name, 'paper_account')}
+     WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+     ORDER BY id DESC LIMIT 1`,
+    [bot.dte],
+  )
+  let balance: number
+  if (acctRows.length === 0) {
+    const seed = botCfg.starting_capital
+    await query(
+      `INSERT INTO ${botTable(bot.name, 'paper_account')}
+         (starting_capital, current_balance, cumulative_pnl, collateral_in_use,
+          buying_power, total_trades, high_water_mark, max_drawdown,
+          is_active, dte_mode, account_type, created_at, updated_at)
+       VALUES ($1, $1, 0, 0, $1, 0, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
+      [seed, bot.dte],
+    )
+    console.log(`[scanner] FORGE: seeded ${bot.dte} paper ledger at $${seed}`)
+    balance = seed
+  } else {
+    balance = num(acctRows[0].current_balance)
+  }
+  if (!(balance > 0)) return `skip:no_paper_balance($${balance.toFixed(0)})`
+
+  // Each book gets an EQUAL, NON-TRANSFERABLE third of the buying power. Letting
+  // a book borrow from its neighbours would concentrate the account in whichever
+  // market happened to be trading, which is the opposite of the point.
+  const perBookBudget = (balance * botCfg.bp_pct) / FORGE_BOOKS.length
+
+  // Re-derived EVERY scan from live equity, never stored. An account that grows
+  // past a boundary widens; one that draws down narrows. That is what holds
+  // concurrency in the 10-15 band as the balance moves, and the concurrency IS
+  // the strategy.
+  const width = forgeWingWidth(balance)
+
+  const results: string[] = []
+  for (const book of FORGE_BOOKS) {
+    const r = await tryOpenForgeBook(bot, botCfg, book, perBookBudget, width)
+    results.push(`${book.ticker}=${r}`)
+  }
+  return `w${width} ` + results.join(' ')
+}
+
+async function tryOpenForgeBook(
+  bot: BotDef,
+  botCfg: BotConfig,
+  book: (typeof FORGE_BOOKS)[number],
+  perBookBudget: number,
+  width: number,
+): Promise<string> {
+  const { ticker, k } = book
+
+  // one trade per book per day
+  const todayRows = await query(
+    `SELECT COUNT(*) AS cnt FROM ${botTable(bot.name, 'positions')}
+     WHERE (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
+       AND dte_mode = $1 AND ticker = $2`,
+    [bot.dte, ticker],
+  )
+  if (int(todayRows[0]?.cnt) >= botCfg.max_trades) return 'traded_today'
+
+  if (await isStandDownActive(bot, botCfg.standdown_days, ticker)) return 'standdown'
+
+  // margin already committed by THIS book only
+  const collRows = await query(
+    `SELECT COALESCE(SUM(collateral_required), 0) AS c
+     FROM ${botTable(bot.name, 'positions')}
+     WHERE status = 'open' AND dte_mode = $1 AND ticker = $2
+       AND COALESCE(account_type, 'sandbox') = 'sandbox'`,
+    [bot.dte, ticker],
+  )
+  const committed = num(collRows[0]?.c)
+
+  const q = await getQuote(ticker)
+  const spot = q?.last ?? 0
+  if (!(spot > 0)) return 'no_quote'
+
+  // --- expiration: nearest listed to 7 business days out ---
+  const targetExp = getTargetExpiration(bot.minDte)
+  const exps = await getOptionExpirations(ticker)
+  let expiration = targetExp
+  if (exps.length > 0 && !exps.includes(targetExp)) {
+    const t = new Date(targetExp + 'T12:00:00').getTime()
+    let best = exps[0], bestGap = Infinity
+    for (const e of exps) {
+      const gap = Math.abs(new Date(e + 'T12:00:00').getTime() - t)
+      if (gap < bestGap) { best = e; bestGap = gap }
+    }
+    expiration = best
+  }
+
+  // --- EXPECTED MOVE = this ticker's OWN at-the-money straddle price ---
+  // NOT VIX. VIX describes SPY and nothing else; using it for QQQ and IWM would
+  // place their strikes off by the ratio of their vol to the S&P's. The straddle
+  // is quoted at the same instant we trade, so there is no look-ahead.
+  const atm = Math.round(spot)
+  const [atmC, atmP] = await Promise.all([
+    getOptionQuote(buildOccSymbol(ticker, expiration, atm, 'C')),
+    getOptionQuote(buildOccSymbol(ticker, expiration, atm, 'P')),
+  ])
+  if (!atmC || !atmP) return 'no_atm_quote'
+  const em = (atmC.bid + atmC.ask) / 2 + (atmP.bid + atmP.ask) / 2
+  if (!(em > 0)) return 'bad_em'
+
+  const putShort = Math.round(spot - k * em)
+  const callShort = Math.round(spot + k * em)
+  if (putShort >= callShort) return 'strikes_crossed'
+  const putLong = putShort - width
+  const callLong = callShort + width
+
+  const credits = await getIcEntryCredit(ticker, expiration, putShort, putLong, callShort, callLong)
+  if (!credits) return 'no_quotes'
+  if (credits.totalCredit < botCfg.min_credit) {
+    return `credit_low($${credits.totalCredit.toFixed(2)})`
+  }
+
+  const maxLossPer = Math.round((width - credits.totalCredit) * 100 * 100) / 100
+  if (maxLossPer <= 0) return 'invalid_max_loss'
+  const bpContracts = Math.floor((perBookBudget - committed) / maxLossPer)
+  const contracts = botCfg.max_contracts > 0
+    ? Math.min(botCfg.max_contracts, bpContracts)
+    : bpContracts
+  if (contracts < 1) return `no_room($${(perBookBudget - committed).toFixed(0)})`
+
+  const collateral = maxLossPer * contracts
+  const positionId = `FORGE-${ticker}-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+
+  await query(
+    `INSERT INTO ${botTable(bot.name, 'positions')} (
+       position_id, ticker, expiration,
+       put_short_strike, put_long_strike, put_credit,
+       call_short_strike, call_long_strike, call_credit,
+       contracts, spread_width, total_credit, max_loss, max_profit,
+       collateral_required, underlying_at_entry, expected_move,
+       status, open_time, open_date, dte_mode, account_type
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+               'open', NOW(), ${CT_TODAY}, $18, 'sandbox')`,
+    [positionId, ticker, expiration,
+     putShort, putLong, credits.putCredit,
+     callShort, callLong, credits.callCredit,
+     contracts, width, credits.totalCredit, maxLossPer * contracts,
+     Math.round(credits.totalCredit * 100 * contracts * 100) / 100,
+     collateral, spot, em, bot.dte],
+  )
+  console.log(
+    `[scanner] FORGE ${ticker}: ${contracts}x ${putLong}/${putShort}P-${callShort}/${callLong}C ` +
+    `exp ${expiration} @ $${credits.totalCredit.toFixed(2)} (spot ${spot.toFixed(2)}, EM ${em.toFixed(2)}, k=${k})`,
+  )
+  return `traded@${credits.totalCredit.toFixed(2)}`
+}
+
 async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<string> {
   // Vigil: macro-event blackout gate. First check, before any DB heavy work,
   // so a Friday-prior FOMC blackout costs one config read + one indexed range
@@ -3250,6 +3491,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const blackout = await isEventBlackoutActive(bot.name, new Date())
   if (blackout.blocked) {
     return `skip:${blackout.reason}`
+  }
+
+  // FORGE runs three books across three tickers, so the single `spot` this
+  // function receives is meaningless to it — each book quotes its own. Gates
+  // live inside tryOpenForgeCondor, NOT above this branch (see PR #2777).
+  if (bot.name === 'forge') {
+    return tryOpenForgeCondor(bot)
   }
 
   // FLAME is now a bull put credit spread bot. Completely separate entry

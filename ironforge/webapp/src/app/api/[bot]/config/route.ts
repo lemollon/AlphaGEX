@@ -58,6 +58,24 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
     pdt_max_day_trades: 4, starting_capital: 10000.0,
   },
+  // FORGE (2026-08-10) -- the three-market condor, SPY+QQQ+IWM. Mirrors
+  // DEFAULT_CONFIG.forge in scanner.ts; these must move together.
+  //
+  // Without this entry FORGE falls through to `DEFAULTS.spark` and the config
+  // page reports SPARK's 5 DTE single-market settings for a 7 DTE three-market
+  // bot -- the same failure that once had spark2 reporting INFERNO's profile.
+  //
+  // sd_multiplier here is the SPY book's placement; QQQ and IWM run 1.25 and are
+  // code-controlled per book (FORGE_BOOKS in scanner.ts), not settable per-bot.
+  // buying_power_usage_pct is the TOTAL across all three books; each gets a third.
+  forge: {
+    sd_multiplier: 1.75, spread_width: 10.0, min_credit: 0.25,
+    profit_target_pct: 100.0, stop_loss_pct: 1000.0, vix_skip: 32.0,
+    max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
+    risk_per_trade_pct: 0.15, min_win_probability: 0.42,
+    entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
+    pdt_max_day_trades: 4, starting_capital: 25000.0,
+  },
   inferno: {
     sd_multiplier: 1.0, spread_width: 5.0, min_credit: 0.15,
     profit_target_pct: 100.0, stop_loss_pct: 1000.0, vix_skip: 32.0,
@@ -112,6 +130,19 @@ const INERT_FIELDS: Record<string, string> = {
 const SWING_BOTS = ['spark2', 'kindle']
 
 /**
+ * Bots whose wing width is DERIVED FROM LIVE EQUITY every scan, so the stored
+ * `spread_width` governs nothing and must be reported as inert.
+ *
+ * FORGE picks $1 / $3 / $10 by account size (forgeWingWidth in scanner.ts),
+ * because concurrency is the edge: a $10 condor ties up ~$950 and a $1 condor
+ * ~$95, so the same $5,000 account holds 4 positions or 40 depending on width.
+ * Letting an operator pin the width would silently break the mechanism the
+ * strategy is built on -- and a field that takes your edit and changes nothing
+ * is worse than no field, because it reads as authoritative.
+ */
+const DERIVED_WIDTH_BOTS = ['forge']
+
+/**
  * `min_credit` FLOORS — scanner.ts loadConfigOverrides, line ~366:
  *
  *     merged.min_credit = Math.max(merged.min_credit, DEFAULT_CONFIG[bot].min_credit)
@@ -124,6 +155,7 @@ const SWING_BOTS = ['spark2', 'kindle']
  */
 const MIN_CREDIT_FLOOR: Record<string, number> = {
   flame: 0.05, spark: 0.25, spark2: 0.25, inferno: 0.15, kindle: 0.05,
+  forge: 0.25,
 }
 
 /**
@@ -226,6 +258,7 @@ export async function GET(
     const inertHere = (k: string) =>
       k in INERT_FIELDS
       || (k === 'stop_loss_pct' && SWING_BOTS.indexOf(bot) >= 0)
+      || (k === 'spread_width' && DERIVED_WIDTH_BOTS.indexOf(bot) >= 0)
       || (k === 'profit_target_pct' && ptIsInert)
     const merged: Record<string, number | string> = { ...defaults }
     for (let i = 0; i < ALL_FIELDS.length; i++) {
@@ -282,6 +315,7 @@ export async function GET(
     // SPARK's parameters from this endpoint and getting them wrong.
     merged.inert_fields = Object.keys(INERT_FIELDS)
       .concat(SWING_BOTS.indexOf(bot) >= 0 ? ['stop_loss_pct'] : [])
+      .concat(DERIVED_WIDTH_BOTS.indexOf(bot) >= 0 ? ['spread_width'] : [])
       .concat(ptIsInert ? ['profit_target_pct'] : [])
       .join(', ')
     // Mark whether the row we matched was an exact (account_type) hit or a

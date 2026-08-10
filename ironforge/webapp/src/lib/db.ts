@@ -37,6 +37,11 @@ const DB_PREFIX: Record<string, string> = {
   blaze: 'blaze',
   flare: 'flare',
   kindle: 'kindle',
+  // FORGE (2026-08-10): the three-market condor. ONE bot, THREE books
+  // (SPY/QQQ/IWM) sharing ONE margin pool and ONE ledger. Rows are separated by
+  // the existing `ticker` column, not by table -- three separate bots would each
+  // enforce the buying-power cap independently and commit the account 3x over.
+  forge: 'forge',
 }
 
 /** Map display names to heartbeat bot_name values in bot_heartbeats table. */
@@ -91,6 +96,7 @@ export function dteMode(bot: string): string | null {
   if (bot === 'flare') return '0DTE'  // FLARE is 0DTE directional (debit vertical, sibling of BLAZE)
   if (bot === 'kindle') return '1DTE' // KINDLE is 1DTE IC (retired 2026-07-13; history only)
   if (bot === 'spark2') return '1DTE' // SPARK2: SPARK's full v2 config on the second live account
+  if (bot === 'forge') return '7DTE'  // FORGE: 7DTE condor across SPY/QQQ/IWM
   return null
 }
 
@@ -101,7 +107,8 @@ let tablesReady = false
 /** Every bot with per-bot tables. SPARK2 (2026-07-13) = SPARK's full v2 config on
  * the second live account (ex-KINDLE 6YB***95). KINDLE is retired from scanning
  * but keeps tables/history. */
-const ALL_BOTS = ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle', 'spark2'] as const
+const ALL_BOTS = ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle', 'spark2',
+                  'forge'] as const
 
 const INIT_DDL = `
 CREATE TABLE IF NOT EXISTS bot_heartbeats (
@@ -1329,7 +1336,10 @@ export function escapeSql(val: string): string {
 /** Validate bot name parameter — flame, spark, inferno, blaze, flare, or kindle allowed. */
 export function validateBot(bot: string): string | null {
   const b = bot.toLowerCase()
-  if (b !== 'flame' && b !== 'spark' && b !== 'inferno' && b !== 'blaze' && b !== 'flare' && b !== 'kindle' && b !== 'spark2') return null
+  // FORGE added 2026-08-10. Without it EVERY /api/forge/* route answers
+  // "Invalid bot" — status, positions, config, the lot — so the bot would trade
+  // its paper book while being completely invisible to the dashboard.
+  if (b !== 'flame' && b !== 'spark' && b !== 'inferno' && b !== 'blaze' && b !== 'flare' && b !== 'kindle' && b !== 'spark2' && b !== 'forge') return null
   return b
 }
 
