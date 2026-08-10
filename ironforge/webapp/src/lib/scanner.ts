@@ -259,7 +259,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // +$26,742/ct, every year green (2024 +$1,848), 95.7% win, maxDD $670/ct,
   // worst day -$295. Penny-credit trades (sub-$0.15: 547 at -$1.55/ct) were the
   // 2024 bleed.
-  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false },
+  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false },
   // ENTRY TIME: 830, and now MEASURED rather than assumed — see the note on
   // isInEntryWindow below. Moved to 1300 on 2026-08-07 on inference; reverted the
   // same day once real entry-time quotes existed to test it.

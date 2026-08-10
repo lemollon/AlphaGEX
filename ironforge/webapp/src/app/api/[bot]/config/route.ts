@@ -116,7 +116,7 @@ const SWING_BOTS = ['spark', 'spark2', 'kindle']
  * with it.
  */
 const MIN_CREDIT_FLOOR: Record<string, number> = {
-  flame: 0.25, spark: 0.25, spark2: 0.25, inferno: 0.15, kindle: 0.05,
+  flame: 0.05, spark: 0.25, spark2: 0.25, inferno: 0.15, kindle: 0.05,
 }
 
 /**
