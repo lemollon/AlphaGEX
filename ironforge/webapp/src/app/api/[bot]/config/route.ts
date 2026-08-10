@@ -357,9 +357,24 @@ export async function PUT(
     }
 
     // Validate ranges
+    // profit_target_pct: 0 < pt <= 100.
+    //
+    // 100 is the documented OFF SWITCH, not an invalid value. scanner.ts stores it
+    // as ptFraction = pt/100 = 1.0 and gates the trigger on `ptFraction < 1.0`, so
+    // 100 means "never take profit early, hold to expiry". INFERNO's own defaults in
+    // this same file already carry profit_target_pct: 100.0.
+    //
+    // The old bound was `>= 100`, which rejected the one value the scanner treats as
+    // the off switch — a config the app could never express even though the engine
+    // supports it. FLAME needs it: its 30% target capped wins at 28% of credit while
+    // the stop gave back 52%, requiring a 67.5% win rate against an actual 61.9%.
+    // Anything ABOVE 100 stays rejected — that would be a target below zero cost.
     const ptPct = filtered.profit_target_pct as number | undefined
-    if (ptPct != null && (ptPct <= 0 || ptPct >= 100)) {
-      return NextResponse.json({ error: 'profit_target_pct must be 0-100' }, { status: 422 })
+    if (ptPct != null && (ptPct <= 0 || ptPct > 100)) {
+      return NextResponse.json(
+        { error: 'profit_target_pct must be greater than 0 and at most 100 (100 = hold to expiry, no early profit-take)' },
+        { status: 422 },
+      )
     }
     const sw = filtered.spread_width as number | undefined
     if (sw != null && sw <= 0) {
