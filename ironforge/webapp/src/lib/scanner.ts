@@ -307,6 +307,12 @@ const DB_TO_CFG: Record<string, { key: NumericConfigKey; transform?: (v: number)
   starting_capital:     { key: 'starting_capital' },
   min_credit:           { key: 'min_credit' },
   standdown_days:       { key: 'standdown_days' },
+  // spread_width -> wing_width. Previously UNMAPPED: the column existed, accepted
+  // writes, and was silently ignored while the code constant won. That is how an
+  // operator ends up believing they changed the wing width when they did not.
+  // Every bot's stored row already equals its code default (flame/spark/inferno/
+  // spark2 = 5, kindle = 2), so wiring it changes NO current behaviour.
+  spread_width:         { key: 'wing_width' },
 }
 
 /** Runtime config — mutated by loadConfigOverrides() each cycle */
