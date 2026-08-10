@@ -5,40 +5,43 @@ export const dynamic = 'force-dynamic'
 
 /** Default config values (mirrors models.py factory functions). */
 const DEFAULTS: Record<string, Record<string, number | string>> = {
+  // FLAME v2 (2026-08-10) — 1DTE bull put credit spread. Mirrors
+  // DEFAULT_CONFIG.flame in scanner.ts; these must move together.
   flame: {
-    // min_credit mirrors the scanner's DEFAULT_CONFIG floor, not the legacy 0.05.
-    sd_multiplier: 1.2, spread_width: 5.0, min_credit: 0.25,
-    profit_target_pct: 30.0, stop_loss_pct: 200.0, vix_skip: 32.0,
-    max_contracts: 0, max_trades_per_day: 1, buying_power_usage_pct: 0.85,
+    sd_multiplier: 1.5, spread_width: 3.0, min_credit: 0.05,
+    profit_target_pct: 100.0, stop_loss_pct: 999.99, vix_skip: 32.0,
+    max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.20,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
-    pdt_max_day_trades: 4, starting_capital: 10000.0,
+    pdt_max_day_trades: 4, starting_capital: 2000.0,
   },
+  // SPARK v3 (2026-08-10) — the walk-forward 5 DTE condor. Mirrors
+  // DEFAULT_CONFIG.spark in scanner.ts; these must move together.
+  //
+  // SPARK now runs FIXED strike placement (fixed_strike_placement): shorts at
+  // exactly 1.25x the expected move, in every gamma regime. The GEX-adaptive widen
+  // and the thin-credit SD walk-in are both suppressed for it — they were tuned on
+  // the 1DTE structure that measured no edge on real fills.
+  //
+  // It also STOPS now (1.5x credit) — it is no longer in SWING_BOTS — and holds to
+  // expiry with no intraday profit target.
   spark: {
-    // 0.25 = the scanner's code floor (raised from 0.05 on 2026-05-06 to skip
-    // un-fillable thin ICs). The DB row still says 0.05 and is clamped up.
-    sd_multiplier: 1.2, spread_width: 5.0, min_credit: 0.25,
-    profit_target_pct: 30.0, stop_loss_pct: 200.0,
+    sd_multiplier: 1.25, spread_width: 10.0, min_credit: 0.25,
+    profit_target_pct: 100.0, stop_loss_pct: 150.0,
     // 40, not 32 — scanner.ts: `const vixCap = isSparkV2Sizing(bot.name) ? 40 : 32`.
     // Inert fields are now reported from THIS map (the DB value is skipped), so
     // this literal is what the dashboard renders. It must equal the code constant.
     vix_skip: 40.0,
-    // SPARK runs the automatic GEX strategy (scanner.ts) and OVERRIDES several of
-    // these in code:
-    //   · strike width is GEX-adaptive — 1.2 SD positive gamma, 1.5 SD negative
-    //   · it SWINGS: no hard stop, so stop_loss_pct is ignored entirely
-    //   · sizing is regime-conditional, min(bp_pct, 50% positive / 20% negative
-    //     or unknown) — NOT the flat 30% this comment used to claim
-    // These values describe the row's shape, never the strategy. /api/{bot}/status
-    // carries the authoritative strategy string.
-    max_contracts: 0, max_trades_per_day: 1, buying_power_usage_pct: 0.30,
+    // max_contracts 1 is a real risk control, not a formality: the previous value
+    // was 0 = UNLIMITED at 85% BP, which is how the paper ledger put on 25 contracts
+    // and lost $10,500 in one session on 2026-08-03.
+    max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     // Must track DEFAULT_CONFIG.spark.entry_start in scanner.ts — the value the
     // bot actually runs. entry_start is an INERT field (the DB row is never read
-    // for it), so this literal is the only thing the dashboard renders. Back to
-    // 08:30 with the 2026-08-07 revert; see the A/B note in scanner.ts.
+    // for it), so this literal is the only thing the dashboard renders.
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
-    pdt_max_day_trades: 4, starting_capital: 10000.0,
+    pdt_max_day_trades: 4, starting_capital: 5000.0,
   },
   // spark2 — SPARK's paper twin. Same strategy code (isSparkV2Sizing +
   // isSparkStrategy both include it), its own ledger and account.
@@ -98,11 +101,15 @@ const INERT_FIELDS: Record<string, string> = {
 }
 
 /**
- * Bots that SWING — they hold to expiry and never consult a stop, so `stop_loss_pct`
- * is stored but unused. Mirrors isSparkStrategy() in scanner.ts; these must move
- * together.
+ * Bots that never consult a stop, so `stop_loss_pct` is stored but unused. Mirrors
+ * isNoStopBot() in scanner.ts; these must move together.
+ *
+ * SPARK left this list on 2026-08-10. Its 5 DTE config exits at 1.5x the entry
+ * credit, so stop_loss_pct is now genuinely READ for it and must no longer be
+ * reported as inert — the whole point of this list is that the API never tells an
+ * operator a field is dead when it governs real money.
  */
-const SWING_BOTS = ['spark', 'spark2', 'kindle']
+const SWING_BOTS = ['spark2', 'kindle']
 
 /**
  * `min_credit` FLOORS — scanner.ts loadConfigOverrides, line ~366:
@@ -139,6 +146,12 @@ function ptEffective(bot: string, basePt: number): { text: string; inert: boolea
   }
   if (SWING_BOTS.indexOf(bot) >= 0) {
     return { text: '40% before 12:00 CT / 35% until 13:00 / 30% after (code-controlled)', inert: true }
+  }
+  // basePt >= 100 is the engine's OFF switch and it holds ALL DAY — mirrors the
+  // `basePt >= 1.0` guard in getSlidingProfitTarget. Reporting the sliding ladder
+  // here would claim a 90%/85% midday target that the scanner does not apply.
+  if (basePt >= 100) {
+    return { text: 'HOLD_TO_EOD (no intraday PT; EOD cutoff / expiry is the exit)', inert: false }
   }
   const p = Math.round(basePt)
   return {

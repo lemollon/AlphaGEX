@@ -74,8 +74,18 @@ export function heartbeatName(bot: string): string {
  * Both flame and spark tables have a dte_mode column.
  */
 export function dteMode(bot: string): string | null {
-  if (bot === 'flame') return '2DTE'
-  if (bot === 'spark') return '1DTE'
+  // THIS MUST TRACK THE `BOTS` ROSTER IN scanner.ts. It is the SECOND source of
+  // truth for dte_mode: the scanner tags rows with `bot.dte`, every API route tags
+  // its queries with this. When they disagree, the API reads and writes one row
+  // while the bot runs off another — the config page shows values the scanner never
+  // loads, and the scanner silently falls back to its code defaults.
+  //
+  // That is exactly what happened to FLAME between 2026-08-10 PR #2773 (roster
+  // 2DTE -> 1DTE) and this change: its only config row was tagged '2DTE', the
+  // scanner looked for '1DTE', found nothing, and ran DEFAULT_CONFIG — which still
+  // had max_contracts 0 (unlimited) at 85% BP.
+  if (bot === 'flame') return '1DTE'  // 1DTE put credit spread (was 2DTE until 2026-08-10)
+  if (bot === 'spark') return '5DTE'  // 5DTE iron condor (was 1DTE until 2026-08-10)
   if (bot === 'inferno') return '0DTE'
   if (bot === 'blaze') return '1DTE'  // BLAZE is 1DTE directional (debit vertical, not IC)
   if (bot === 'flare') return '0DTE'  // FLARE is 0DTE directional (debit vertical, sibling of BLAZE)
