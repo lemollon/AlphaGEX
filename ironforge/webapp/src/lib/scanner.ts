@@ -809,7 +809,8 @@ function hasWorkingEntryOrder(
  *   (40/35/30 since 2026-07-02 — see the isSparkStrategy branch below.)
  *   Extended MORNING window keeps the close limit aggressive for longer to
  *   avoid stuck unfilled limits when the tier slides down.
- * FLAME   (base=0.30):       MORNING 30% (until 10:30 AM CT) → MIDDAY 20% → AFTERNOON 15%
+ * FLAME   (base from config): MORNING = base (until 10:30 AM CT) → MIDDAY base-10 → AFTERNOON base-15.
+ *   base >= 1.0 means the PT is OFF and stays off — HOLD_TO_EOD, no slide.
  * INFERNO (0DTE):            HOLD_TO_EOD — no intraday PT.
  *   Tier function removed for INFERNO on 2026-05-12 (second iteration).
  *   Historical hypo-vs-actual showed 98.6% of ICs would expire worthless
@@ -821,6 +822,16 @@ function hasWorkingEntryOrder(
  */
 function getSlidingProfitTarget(ct: Date, basePt: number, botName: string): [number, string] {
   if (botName === 'inferno') return [1.0, 'HOLD_TO_EOD']
+
+  // basePt >= 1.0 is the engine's OFF switch for the profit target, and it must
+  // stay off all day. Before 2026-08-10 only the MORNING tier honored it: the
+  // ladder subtracted 0.10 / 0.15 after 10:30 CT, so a bot configured
+  // profit_target_pct = 100 silently acquired a 90% / 85% target at midday. For
+  // FLAME (median 1DTE credit $0.060 at $3 wings) that put a $0.006 debit limit
+  // on the book — a price no penny-quoted chain can fill, and if it did fill it
+  // would spend ~$0.70 of exit commission to capture $0.006 of remaining credit.
+  // The validated config holds to expiry; the EOD cutoff is the backstop.
+  if (basePt >= 1.0) return [1.0, 'HOLD_TO_EOD']
 
   const timeMinutes = ct.getHours() * 60 + ct.getMinutes()
 
@@ -2805,13 +2816,67 @@ async function closePosition(
 /* ------------------------------------------------------------------ */
 
 /**
- * FLAME's 2DTE Put Credit Spread open flow (tasty-adapted).
+ * STAND-DOWN AFTER A LOSS — shared by the IC path (tryOpenTrade) and FLAME's
+ * put-spread path (tryOpenFlamePutSpread).
  *
- * Rules (matches /api/flame/preview-put-spread):
- *   - Short put at 1.0 SD OTM (16-delta proxy), $5 wing
- *   - Size at buying_power_usage_pct of Tradier User sandbox balance at risk
- *     (the editable "% BP" config knob; default 0.85)
- *   - 50% profit target, 200% stop loss (applied later in monitorSinglePosition)
+ * Volatility is autocorrelated, so losses CLUSTER: the entry made right after a
+ * losing close goes into the same disturbed tape that produced the loss. Sitting
+ * out for standdown_days skips those entries.
+ *
+ * This is not a risk brake that costs return — it PAYS. Warehouse backtest
+ * (2022-26, FLAME 1DTE put spread, $2,000 / 1 contract, real ThetaData NBBO,
+ * shorts sold at bid / longs bought at ask):
+ *     no stand-down : 20.1% return, 40.3% max drawdown, 4 of 5 years positive
+ *     1 day         : 23.8% return, 22.0% max drawdown, 5 of 5 years positive
+ * Drawdown roughly HALVES and return RISES, because the skipped trades carry
+ * negative expectancy. 3 days matched it on drawdown but gave up return, so
+ * FLAME uses 1. (SPARK's own +64% stand-down result used 3 days on a 5 DTE
+ * condor — the right value scales with the holding period, so it is per-bot.)
+ *
+ * Calendar days, matching the backtest. Sandbox rows only: production has its
+ * own gates and must not be blocked by a paper loss.
+ */
+async function isStandDownActive(bot: BotDef, standdownDays: number): Promise<boolean> {
+  if (!(standdownDays > 0)) return false
+  const lastLossRows = await query(
+    `SELECT (close_time AT TIME ZONE 'America/Chicago')::date AS loss_date
+     FROM ${botTable(bot.name, 'positions')}
+     WHERE status = 'closed'
+       AND realized_pnl < 0
+       AND dte_mode = $1
+       AND COALESCE(account_type, 'sandbox') = 'sandbox'
+       AND close_time IS NOT NULL
+     ORDER BY close_time DESC
+     LIMIT 1`,
+    [bot.dte],
+  )
+  const lossDate = lastLossRows[0]?.loss_date
+  if (!lossDate) return false
+  const blockedRows = await query(
+    `SELECT ($1::date + ($2 || ' days')::interval)::date >= ${CT_TODAY} AS blocked,
+            ($1::date + ($2 || ' days')::interval)::date AS until`,
+    [lossDate, standdownDays],
+  )
+  if (!blockedRows[0]?.blocked) return false
+  console.log(
+    `[scanner] ${bot.name.toUpperCase()}: stand-down — last loss closed ${lossDate}, ` +
+    `no new entries through ${blockedRows[0]?.until} (standdown_days=${standdownDays})`,
+  )
+  return true
+}
+
+/**
+ * FLAME's 1DTE Put Credit Spread open flow (tasty-adapted).
+ *
+ * Rules — ALL from config as of 2026-08-10 (see the constants block below for
+ * what was hardcoded before, and why it mattered):
+ *   - Short put at `sd_multiplier` SD OTM, `spread_width` wing
+ *   - Expiry `bot.minDte` business days out
+ *   - Entry credit must clear `min_credit`
+ *   - Size at `buying_power_usage_pct` of the paper ledger, capped by
+ *     `max_contracts` (0 = uncapped)
+ *   - `standdown_days` calendar days of no entries after a losing close
+ *   - Profit target / stop from config, applied in monitorSinglePosition
  *   - 1 trade/day max
  *
  * Paper-only execution: uses live Tradier quotes for realistic fill pricing
@@ -2826,9 +2891,16 @@ async function closePosition(
  * shape and route to put-spread MTM/close instead of IC.
  */
 async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Promise<string> {
-  const SD_MULT = 1.0
-  const WIDTH = 5
-  const MIN_DTE = 2
+  // 2026-08-10: these three were hardcoded (1.0 / 5 / 2) and silently overrode
+  // every config knob. FLAME short-circuits into this function at the top of
+  // tryOpenTrade, BEFORE the standdown / min_credit / max_contracts gates the IC
+  // path uses, so `sd_multiplier`, `spread_width`, `min_credit`, `max_contracts`
+  // and `standdown_days` all accepted writes and governed nothing. The bot was
+  // running 1.0 SD / $5 wings / 2 DTE / 4 contracts while the config API
+  // reported 1.5 / $3 / 1 DTE / 1 contract. Read them from config instead.
+  const botCfg = cfg(bot)
+  const SD_MULT = botCfg.sd
+  const WIDTH = botCfg.wing_width
   // Sizing is driven by the editable buying_power_usage_pct config knob
   // (the "% BP" badge on the FLAME card). For a put credit spread, BP used =
   // collateral = max loss, so this is the fraction of the live Tradier balance
@@ -2853,6 +2925,10 @@ async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Pr
     [bot.dte],
   )
   if (int(openRows[0]?.cnt) >= 1) return 'skip:already_open'
+
+  // Stand-down after a loss. Lives here as well as in tryOpenTrade because FLAME
+  // short-circuits into this function before that gate is ever reached.
+  if (await isStandDownActive(bot, botCfg.standdown_days)) return 'skip:standdown_after_loss'
 
   // --- Account balance from FLAME'S OWN paper ledger ---
   // This previously read the shared Tradier "User" sandbox balance. That account
@@ -2890,16 +2966,10 @@ async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Pr
   const putShort = Math.floor(spot - SD_MULT * em)
   const putLong = putShort - WIDTH
 
-  // --- Target expiration (2 business days out) ---
-  const ctNow = getCentralTime()
-  const target = new Date(ctNow)
-  let counted = 0
-  while (counted < MIN_DTE) {
-    target.setDate(target.getDate() + 1)
-    const dow = target.getDay()
-    if (dow !== 0 && dow !== 6) counted++
-  }
-  const expiration = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}`
+  // --- Target expiration (bot.minDte business days out) ---
+  // Was a local 2-day walk that ignored bot.minDte, so rows were tagged
+  // dte_mode='1DTE' while actually holding a 2 DTE spread.
+  const expiration = getTargetExpiration(bot.minDte)
 
   // --- Credit from Tradier ---
   if (!isConfigured()) return 'skip:tradier_not_configured'
@@ -2907,17 +2977,34 @@ async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Pr
   if (!creditRes) return 'skip:no_put_quotes'
   const putCredit = creditRes.putCredit
 
+  // Minimum credit. The IC path gates on this at its own site; FLAME never
+  // reached it. FLAME's floor is $0.05, not SPARK's $0.25 — that $0.25 was set
+  // for a 4-leg IC that could not round-trip the combo spread, and at $3 wings
+  // the median 1DTE put-spread credit is $0.060, so a $0.25 floor would silently
+  // cut FLAME from ~185 trades/yr to ~10.
+  if (putCredit < botCfg.min_credit) {
+    return `skip:credit_too_low($${putCredit.toFixed(4)} < $${botCfg.min_credit})`
+  }
+
   // --- Sizing (RISK_PCT of account balance at risk; see RISK_PCT above) ---
   const maxLossPerContract = Math.round((WIDTH - putCredit) * 100 * 100) / 100
   if (maxLossPerContract <= 0) return 'skip:invalid_max_loss'
-  const contracts = Math.floor((accountBalance * RISK_PCT) / maxLossPerContract)
+  const bpContracts = Math.floor((accountBalance * RISK_PCT) / maxLossPerContract)
+  // max_contracts is a hard ceiling (0 = unlimited), matching the IC path. FLAME
+  // is validated at exactly 1 contract on a $2,000 account; without this cap the
+  // BP% sizing alone put on 4 contracts against the $10,924 paper ledger.
+  const contracts = botCfg.max_contracts > 0
+    ? Math.min(botCfg.max_contracts, bpContracts)
+    : bpContracts
   if (contracts < 1) return `skip:contracts<1(bal=$${accountBalance.toFixed(0)})`
 
   const collateral = maxLossPerContract * contracts
   const maxProfit = Math.round(putCredit * 100 * contracts * 100) / 100
 
   // --- Record position (paper-only) ---
-  const positionId = `FLAME-${target.getFullYear()}${String(target.getMonth() + 1).padStart(2, '0')}${String(target.getDate()).padStart(2, '0')}-PCS-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+  // Same YYYYMMDD stamp as before, now derived from the shared expiration string
+  // rather than the local Date walk that getTargetExpiration replaced.
+  const positionId = `FLAME-${expiration.replace(/-/g, '')}-PCS-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
 
   // Ensure a paper_account row exists (acctId was resolved during sizing above).
   // Seeded from the configured starting_capital, NOT from a broker balance —
@@ -3188,35 +3275,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   //
   // Calendar days, matching the backtest. Sandbox rows only: production has its
   // own gates and must not be blocked by a paper loss.
-  if (botCfg.standdown_days > 0) {
-    const lastLossRows = await query(
-      `SELECT (close_time AT TIME ZONE 'America/Chicago')::date AS loss_date
-       FROM ${botTable(bot.name, 'positions')}
-       WHERE status = 'closed'
-         AND realized_pnl < 0
-         AND dte_mode = $1
-         AND COALESCE(account_type, 'sandbox') = 'sandbox'
-         AND close_time IS NOT NULL
-       ORDER BY close_time DESC
-       LIMIT 1`,
-      [bot.dte],
-    )
-    const lossDate = lastLossRows[0]?.loss_date
-    if (lossDate) {
-      const blockedRows = await query(
-        `SELECT ($1::date + ($2 || ' days')::interval)::date >= ${CT_TODAY} AS blocked,
-                ($1::date + ($2 || ' days')::interval)::date AS until`,
-        [lossDate, botCfg.standdown_days],
-      )
-      if (blockedRows[0]?.blocked) {
-        console.log(
-          `[scanner] ${bot.name.toUpperCase()}: stand-down — last loss closed ${lossDate}, ` +
-          `no new entries through ${blockedRows[0]?.until} (standdown_days=${botCfg.standdown_days})`,
-        )
-        return 'skip:standdown_after_loss'
-      }
-    }
-  }
+  if (await isStandDownActive(bot, botCfg.standdown_days)) return 'skip:standdown_after_loss'
 
   // Get sandbox paper account (production positions use Tradier fill data, not paper BP)
   // When sandboxAlreadyTraded=true (FLAME production-only mode), paper account/BP checks are skipped.
