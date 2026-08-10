@@ -91,7 +91,6 @@ const ALL_FIELDS = NUMERIC_FIELDS.concat(INT_FIELDS, STRING_FIELDS)
  */
 const INERT_FIELDS: Record<string, string> = {
   vix_skip: 'the VIX ceiling is set in code — 40 for spark/spark2, 32 for the others',
-  spread_width: 'wing width is a code constant (wing_width in DEFAULT_CONFIG)',
   risk_per_trade_pct: 'never read; sizing is buying_power_usage_pct against the regime cap',
   min_win_probability: 'never read by the scanner',
   entry_start: 'only entry_end is parsed from the row; the open is a code constant',
