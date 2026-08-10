@@ -69,12 +69,14 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
   // code-controlled per book (FORGE_BOOKS in scanner.ts), not settable per-bot.
   // buying_power_usage_pct is the TOTAL across all three books; each gets a third.
   forge: {
-    sd_multiplier: 1.75, spread_width: 10.0, min_credit: 0.25,
+    // spread_width shown is what forgeWingWidth() DERIVES at the $5,000 seed
+    // ($3). It is reported inert -- see DERIVED_WIDTH_BOTS.
+    sd_multiplier: 1.75, spread_width: 3.0, min_credit: 0.25,
     profit_target_pct: 100.0, stop_loss_pct: 1000.0, vix_skip: 32.0,
     max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
-    pdt_max_day_trades: 4, starting_capital: 25000.0,
+    pdt_max_day_trades: 4, starting_capital: 5000.0,
   },
   inferno: {
     sd_multiplier: 1.0, spread_width: 5.0, min_credit: 0.15,

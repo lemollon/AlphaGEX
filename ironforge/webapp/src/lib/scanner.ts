@@ -390,9 +390,19 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // FORGE -- see the BOTS entry. bp_pct 0.80 is the TOTAL across all three
   // books; each book gets one third and may NOT borrow from the others, because
   // independent margin pools are what keep the drawdowns independent.
+  //
+  // SEEDED AT $5,000, NOT $25,000, DELIBERATELY. $25k/$10-wings is the SAFEST
+  // tier (60.7%/yr at 11.8% DD) and therefore the LEAST informative paper test.
+  // The one thing paper trading exists to settle is whether the modelled credits
+  // are actually reachable, and narrow wings collect less premium, so that is
+  // where a bad fill hurts most. $5,000 puts it on $3 wings -- the highest-return
+  // tier (95.6%/yr blind) AND the one most customers would run. Validating the
+  // easy case and shipping the hard one would be the wrong way round.
+  // At $5,000: $1,333 per book / ~$280 margin per condor = ~4 concurrent each,
+  // 12 across the three books, which is the 10-15 band the edge depends on.
   // min_credit 0.25 is a sanity floor only: median credit at $10 wings is ~$0.95.
   // standdown_days 1 fires on a LOSING TRADE (there is no stop to fire on).
-  forge:   { sd: 1.75, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 25000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 10, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false, fixed_strike_placement: true },
+  forge:   { sd: 1.75, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 5000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 10, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false, fixed_strike_placement: true },
   spark2:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: false },
 }
 
