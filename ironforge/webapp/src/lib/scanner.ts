@@ -203,7 +203,7 @@ const PRODUCTION_PLACE_WINDOW_MS = 5 * 60 * 1000  // 5 min — matches MAX_SCAN_
 const _lastSandboxPlacedAt: Record<string, number> = {}
 
 const BOTS = [
-  { name: 'flame', dte: '2DTE', minDte: 2 },
+  { name: 'flame', dte: '1DTE', minDte: 1 },
   { name: 'spark', dte: '1DTE', minDte: 1 },
   { name: 'inferno', dte: '0DTE', minDte: 0 },
   // SPARK2 (2026-07-13, replaces KINDLE): SPARK's FULL v2 strategy AND sizing
@@ -238,6 +238,7 @@ interface BotConfig {
   wing_width: number  // IC spread width in $ (long strike = short ± wing_width). Default 5; KINDLE uses 2 to fit a tiny account. Used by calculateStrikes for the IC path.
   min_credit_pct_width: number  // Min entry credit as a FRACTION of wing width (0 = OFF). A small account's absolute min_credit floor ($0.05) lets through thin-credit days whose risk/reward (10-19:1) is structurally -EV; this gate skips them. KINDLE uses 0.09. Code-controlled (no DB override), like the min_credit floor.
   skip_neg_gamma: boolean  // When true, DO NOT trade on confirmed negative-gamma days (net GEX < 0) — skip instead of widening the SD. KINDLE uses true: on a tiny survival-focused account, negative-gamma (trending) days are where ICs breach a wing, and the warehouse backtest ($349.86, $2w/9% gate, 1 contract) showed skipping them beats the widen on every survival axis (WR 90% vs 86%, EV +$10.55 vs +$4.49/ct, maxDD 33% vs 45%). Other bots keep the widen behavior. Code-controlled (no DB override).
+  standdown_days: number  // Calendar days to STOP OPENING new trades after any losing close. 0 = off. Losses cluster because volatility is autocorrelated, so the entry made right after a loss goes into the same disturbed tape. Warehouse backtest (2022-26, 1DTE put spread, $2k/1ct, real NBBO): baseline 20.1% return / 40.3% maxDD / 4-of-5 years; with 1 day it becomes 23.8% / 22.0% / 5-of-5. It cuts drawdown roughly in HALF and RAISES return, because the skipped trades have negative expectancy. 3 days performs the same on drawdown but gives up a little return, so FLAME uses 1. Note SPARK's own +64% stand-down result used 3 days on a 5DTE condor — the right value differs by holding period.
 }
 
 /** Hardcoded defaults matching Python BOT_CONFIG */
@@ -258,12 +259,12 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // +$26,742/ct, every year green (2024 +$1,848), 95.7% win, maxDD $670/ct,
   // worst day -$295. Penny-credit trades (sub-$0.15: 547 at -$1.55/ct) were the
   // 2024 bleed.
-  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
+  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false },
   // ENTRY TIME: 830, and now MEASURED rather than assumed — see the note on
   // isInEntryWindow below. Moved to 1300 on 2026-08-07 on inference; reverted the
   // same day once real entry-time quotes existed to test it.
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
-  inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
+  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false },
+  inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false },
   // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
   // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =
   // exactly one IC per trade (the Kelly-justified size for $500). min_credit 0.05
@@ -277,7 +278,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // never ruins the $490 account at any commission. The gate — not the wing width
   // — is the fix; $2 wings retained for cold-start survivability (one max-loss day
   // is -$179, leaving room to keep trading; $3+ wings can lock up the account).
-  kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 490, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0.09, skip_neg_gamma: true },
+  kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 490, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0.09, standdown_days: 0, skip_neg_gamma: true },
   // SPARK2: byte-identical to SPARK's v2 config (full sizing rules incl. the
   // 30%-BP cap + VIX 40 + 0.7-SD walk-in floor via the isSparkV2Sizing sites).
   // starting_capital is the PAPER seed — it is what syncSandboxCapital() writes
@@ -287,7 +288,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // default as the other paper bots. (The old 500 was inherited from KINDLE and
   // rendered $500 - $208 = $292.) Any manual edit to that row is pointless —
   // change it HERE or the scanner syncs it straight back.
-  spark2:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
+  spark2:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false },
 }
 
 /** Numeric-valued config keys only — the DB override path writes numbers, so it
@@ -305,6 +306,7 @@ const DB_TO_CFG: Record<string, { key: NumericConfigKey; transform?: (v: number)
   buying_power_usage_pct: { key: 'bp_pct' },
   starting_capital:     { key: 'starting_capital' },
   min_credit:           { key: 'min_credit' },
+  standdown_days:       { key: 'standdown_days' },
 }
 
 /** Runtime config — mutated by loadConfigOverrides() each cycle */
@@ -3158,6 +3160,54 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         }
       } else {
         return 'skip:already_traded_today'
+      }
+    }
+  }
+
+  // STAND-DOWN AFTER A LOSS.
+  //
+  // Volatility is autocorrelated, so losses CLUSTER: the entry made right after a
+  // losing close goes into the same disturbed tape that produced the loss. Sitting
+  // out for standdown_days skips those entries.
+  //
+  // This is not a risk brake that costs return — it PAYS. Warehouse backtest
+  // (2022-26, FLAME 1DTE put spread, $2,000 / 1 contract, real ThetaData NBBO,
+  // shorts sold at bid / longs bought at ask):
+  //     no stand-down : 20.1% return, 40.3% max drawdown, 4 of 5 years positive
+  //     1 day         : 23.8% return, 22.0% max drawdown, 5 of 5 years positive
+  // Drawdown roughly HALVES and return RISES, because the skipped trades carry
+  // negative expectancy. 3 days matched it on drawdown but gave up return, so
+  // FLAME uses 1. (SPARK's own +64% stand-down result used 3 days on a 5 DTE
+  // condor — the right value scales with the holding period, so it is per-bot.)
+  //
+  // Calendar days, matching the backtest. Sandbox rows only: production has its
+  // own gates and must not be blocked by a paper loss.
+  if (botCfg.standdown_days > 0) {
+    const lastLossRows = await query(
+      `SELECT (close_time AT TIME ZONE 'America/Chicago')::date AS loss_date
+       FROM ${botTable(bot.name, 'positions')}
+       WHERE status = 'closed'
+         AND realized_pnl < 0
+         AND dte_mode = $1
+         AND COALESCE(account_type, 'sandbox') = 'sandbox'
+         AND close_time IS NOT NULL
+       ORDER BY close_time DESC
+       LIMIT 1`,
+      [bot.dte],
+    )
+    const lossDate = lastLossRows[0]?.loss_date
+    if (lossDate) {
+      const blockedRows = await query(
+        `SELECT ($1::date + ($2 || ' days')::interval)::date >= ${CT_TODAY} AS blocked,
+                ($1::date + ($2 || ' days')::interval)::date AS until`,
+        [lossDate, botCfg.standdown_days],
+      )
+      if (blockedRows[0]?.blocked) {
+        console.log(
+          `[scanner] ${bot.name.toUpperCase()}: stand-down — last loss closed ${lossDate}, ` +
+          `no new entries through ${blockedRows[0]?.until} (standdown_days=${botCfg.standdown_days})`,
+        )
+        return 'skip:standdown_after_loss'
       }
     }
   }
