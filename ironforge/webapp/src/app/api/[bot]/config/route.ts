@@ -25,7 +25,7 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
     sd_multiplier: 0.35, spread_width: 1.0, min_credit: 0.05,
     profit_target_pct: 100.0, stop_loss_pct: 1000.0, vix_skip: 32.0,
     // max_contracts is INERT and derived by flameContracts(equity) in scanner.ts:
-    //   <$8k -> 1, <$16k -> 2, else 3.
+    //   <$10k -> 1, <$16k -> 2, else 3.  (first step moved 8k -> 10k, 2026-08-11)
     // It must still MIRROR what that function returns at this bot's starting
     // capital, because an inert field is reported from DEFAULTS -- so a stale
     // mirror makes the API state a number the bot does not use. At $2,000 that
