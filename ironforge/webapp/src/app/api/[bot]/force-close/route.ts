@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, dbExecute, botTable, num, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, closeIcOrderAllAccounts, type SandboxCloseInfo, type SandboxOrderInfo } from '@/lib/tradier'
+import { getIcMarkToMarket, getPutSpreadMarkToMarket, isConfigured, closeIcOrderAllAccounts, type SandboxCloseInfo, type SandboxOrderInfo } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -96,22 +96,61 @@ export async function POST(
     const collateral = num(pos.collateral_required)
 
     // 2. Determine close price
+    //
+    // 🚨 A FAILED MARK MUST NEVER FALL BACK TO ZERO (2026-08-11).
+    //
+    // This used to end in `mtm?.cost_to_close ?? 0`, and `closePrice = 0` on the
+    // unconfigured branch. Zero cost to close means "the spread expired
+    // worthless" -- the single most profitable outcome there is. So every way of
+    // FAILING to get a price silently booked the MAXIMUM possible profit.
+    //
+    // It fired for real: closing FLAME's three 9-contract put spreads returned
+    // +$567/+$540/+$531 = +$1,638 of pure fiction on a $5,000 paper account. The
+    // true marks were -$99/-$117/-$90. A $1,944 error, in the flattering
+    // direction, with `success: true`.
+    //
+    // Cause: this called getIcMarkToMarket, which builds FOUR OCC symbols. FLAME
+    // and SPARK trade TWO-leg put spreads -- their call strikes are NULL, so it
+    // requested a nonsense $0 call, got nothing back, and returned null.
+    //
+    // Now: 2-leg positions are marked with the 2-leg pricer, and a mark that
+    // cannot be obtained is a 503, not a windfall. The operator can still force a
+    // close by passing an explicit close_price.
+    const isPutSpread = num(pos.call_short_strike) <= 0 || pos.call_short_strike == null
+    const expStr = pos.expiration?.toISOString?.()?.slice(0, 10)
+      || String(pos.expiration).slice(0, 10)
+
     let closePrice: number
     if (overridePrice != null && overridePrice >= 0) {
       closePrice = overridePrice
-    } else if (isConfigured()) {
-      const mtm = await getIcMarkToMarket(
-        pos.ticker,
-        pos.expiration?.toISOString?.()?.slice(0, 10) || String(pos.expiration).slice(0, 10),
-        num(pos.put_short_strike),
-        num(pos.put_long_strike),
-        num(pos.call_short_strike),
-        num(pos.call_long_strike),
-        totalCredit,
-      )
-      closePrice = mtm?.cost_to_close ?? 0
     } else {
-      closePrice = 0
+      if (!isConfigured()) {
+        return NextResponse.json({
+          error: 'Cannot mark this position: Tradier is not configured. '
+            + 'Re-send with an explicit "close_price" to close it anyway.',
+          position_id, entry_credit: totalCredit, contracts,
+        }, { status: 503 })
+      }
+      const mtm = isPutSpread
+        ? await getPutSpreadMarkToMarket(
+            pos.ticker, expStr,
+            num(pos.put_short_strike), num(pos.put_long_strike), totalCredit,
+          )
+        : await getIcMarkToMarket(
+            pos.ticker, expStr,
+            num(pos.put_short_strike), num(pos.put_long_strike),
+            num(pos.call_short_strike), num(pos.call_long_strike), totalCredit,
+          )
+      if (mtm?.cost_to_close == null) {
+        return NextResponse.json({
+          error: `Cannot mark ${position_id} (${isPutSpread ? 'put spread' : 'iron condor'}): `
+            + 'no quote available. Refusing to close, because assuming $0 to close '
+            + 'would book the maximum possible profit. Re-send with an explicit '
+            + '"close_price" if you have the real mark.',
+          position_id, entry_credit: totalCredit, contracts,
+        }, { status: 503 })
+      }
+      closePrice = mtm.cost_to_close
     }
 
     // 3. Mirror close to broker accounts (scoped to this position's account type)
