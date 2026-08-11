@@ -53,7 +53,8 @@ export async function POST(
               put_short_strike, put_long_strike, put_credit,
               call_short_strike, call_long_strike, call_credit,
               contracts, spread_width, total_credit, max_loss,
-              collateral_required, sandbox_order_id, person, account_type
+              collateral_required, sandbox_order_id, person, account_type,
+              dte_mode
        FROM ${botTable(bot, 'positions')}
        WHERE position_id = $1 AND status = 'open'
        LIMIT 1`,
@@ -68,6 +69,19 @@ export async function POST(
     }
 
     const pos = rows[0]
+
+    // Book every side-effect against THE POSITION'S OWN dte_mode, not the bot's
+    // current one (2026-08-11).
+    //
+    // #2783 made orphaned rows reachable but left every write below keyed to
+    // dteMode(bot) -- the mode the bot trades TODAY. Closing SPARK's two stranded
+    // 5DTE condors therefore credited their +$9 to the LIVE 7DTE paper account
+    // ($10,000 -> $10,009) while the 5DTE ledger kept their $1,931 of collateral
+    // forever. The money moved to a book that never held the risk.
+    //
+    // Anything that reaches this route across modes is by definition an orphan, so
+    // the position's stored mode is the only correct target for all of it.
+    const posDte = String(pos.dte_mode || dte)
 
     // Person ownership check
     if (personParam && personParam !== 'all' && pos.person && pos.person !== personParam) {
@@ -160,7 +174,7 @@ export async function POST(
          VALUES ('SKIP',
                  '${escapeSql(`FORCE CLOSE SKIP: ${position_id} already closed (would have been $${realizedPnl.toFixed(2)})`)}',
                  '${escapeSql(JSON.stringify({ position_id, skipped_pnl: realizedPnl, source: 'force_close_api', skip_reason: 'already_closed' }))}',
-                 '${escapeSql(dte)}')`,
+                 '${escapeSql(posDte)}')`,
       )
       return NextResponse.json({
         success: false,
@@ -179,7 +193,7 @@ export async function POST(
     const remainingCollateral = await dbQuery(
       `SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
        FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}' ${accountTypeFilter}`,
+       WHERE status = 'open' AND dte_mode = '${escapeSql(posDte)}' ${accountTypeFilter}`,
     )
     const actualCollateral = num(remainingCollateral[0]?.total_collateral)
     await dbExecute(
@@ -193,7 +207,7 @@ export async function POST(
            max_drawdown = GREATEST(max_drawdown,
              GREATEST(high_water_mark, current_balance + ${realizedPnl}) - (current_balance + ${realizedPnl})),
            updated_at = NOW()
-       WHERE is_active IS NOT NULL AND dte_mode = '${escapeSql(dte)}'
+       WHERE is_active IS NOT NULL AND dte_mode = '${escapeSql(posDte)}'
          ${accountTypeFilter}`,
     )
 
@@ -203,25 +217,25 @@ export async function POST(
        SET closed_at = NOW(), exit_cost = ${effectivePrice}, pnl = ${realizedPnl},
            close_reason = 'manual_close',
            is_day_trade = ((opened_at AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY})
-       WHERE position_id = '${escapeSql(position_id)}' AND dte_mode = '${escapeSql(dte)}'`,
+       WHERE position_id = '${escapeSql(position_id)}' AND dte_mode = '${escapeSql(posDte)}'`,
     )
 
     // 9. Equity snapshot
     const acctRows = await dbQuery(
       `SELECT current_balance, cumulative_pnl FROM ${botTable(bot, 'paper_account')}
-       WHERE dte_mode = '${escapeSql(dte)}' ORDER BY id DESC LIMIT 1`,
+       WHERE dte_mode = '${escapeSql(posDte)}' ORDER BY id DESC LIMIT 1`,
     )
     const bal = num(acctRows[0]?.current_balance)
     const cumPnl = num(acctRows[0]?.cumulative_pnl)
     const openCount = await dbQuery(
       `SELECT COUNT(*) as cnt FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}'`,
+       WHERE status = 'open' AND dte_mode = '${escapeSql(posDte)}'`,
     )
     await dbExecute(
       `INSERT INTO ${botTable(bot, 'equity_snapshots')}
        (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode)
        VALUES (${bal}, ${cumPnl}, 0, ${num(openCount[0]?.cnt)},
-               '${escapeSql(`force_close:${position_id}`)}', '${escapeSql(dte)}')`,
+               '${escapeSql(`force_close:${position_id}`)}', '${escapeSql(posDte)}')`,
     )
 
     // 10. Log
@@ -240,7 +254,7 @@ export async function POST(
        VALUES ('TRADE_CLOSE',
                '${escapeSql(`FORCE CLOSE: ${position_id} @ $${effectivePrice.toFixed(4)} P&L=$${realizedPnl.toFixed(2)}`)}',
                '${logDetails}',
-               '${escapeSql(dte)}')`,
+               '${escapeSql(posDte)}')`,
     )
 
     // 11. Daily perf upsert.
