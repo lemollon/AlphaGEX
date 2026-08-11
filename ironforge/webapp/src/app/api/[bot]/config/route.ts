@@ -5,55 +5,30 @@ export const dynamic = 'force-dynamic'
 
 /** Default config values (mirrors models.py factory functions). */
 const DEFAULTS: Record<string, Record<string, number | string>> = {
-  // FLAME v2 (2026-08-10) — 1DTE bull put credit spread. Mirrors
-  // DEFAULT_CONFIG.flame in scanner.ts; these must move together.
-  // FLAME v3 (2026-08-11) -- three-market 7 DTE put credit spread on SPY/QQQ/IWM.
-  //
-  // FLAME IS THE $2,000-$4,999 TIER. Its paper account was moved to $2,000 on
-  // 2026-08-11 so that it actually demonstrates the small-account rule instead of
-  // duplicating SPARK.
-  //
-  // sd_multiplier and spread_width are derived from live equity by flameParams()
-  // in scanner.ts and reported INERT -- which means they are served FROM HERE.
-  // A stale value here is not cosmetic: it publishes a number the bot does not
-  // use. These must equal flameParams(starting_capital):
-  //      below $5,000 -> 0.35x / $1      <-- FLAME
-  //      $5,000 and up -> 0.25x / $2     <-- SPARK
-  // They read 0.25 / $2.0 while the account sat at $2,000 for the length of one
-  // deploy. If the account moves, MOVE THESE TOO.
+  // REPOINTED 2026-08-11 -- SPY only, puts only, 14 DTE, delta 0.10 (k=2.10),
+  // $5 wings, 3x stop, no stand-down, 1 contract. The only configuration that
+  // survived an honest walk-forward once the stand-down look-ahead was removed.
+  // These MUST mirror DEFAULT_CONFIG in scanner.ts -- sd_multiplier and
+  // spread_width are inert and served FROM HERE, so a stale value publishes a
+  // number the bot does not use.
   flame: {
-    sd_multiplier: 0.35, spread_width: 1.0, min_credit: 0.05,
-    profit_target_pct: 100.0, stop_loss_pct: 1000.0, vix_skip: 32.0,
-    // max_contracts is INERT and derived by flameContracts(equity) in scanner.ts:
-    //   <$10k -> 1, <$16k -> 2, else 3.  (first step moved 8k -> 10k, 2026-08-11)
-    // It must still MIRROR what that function returns at this bot's starting
-    // capital, because an inert field is reported from DEFAULTS -- so a stale
-    // mirror makes the API state a number the bot does not use. At $2,000 that
-    // is 1. It read 0 (the old "no cap" sentinel) until 2026-08-11.
+    sd_multiplier: 2.10, spread_width: 5.0, min_credit: 0.05,
+    profit_target_pct: 100.0, stop_loss_pct: 300.0, vix_skip: 32.0,
     max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
     pdt_max_day_trades: 4, starting_capital: 2000.0,
   },
-  // SPARK v3 (2026-08-10) — the walk-forward 5 DTE condor. Mirrors
-  // DEFAULT_CONFIG.spark in scanner.ts; these must move together.
-  //
-  // SPARK now runs FIXED strike placement (fixed_strike_placement): shorts at
-  // exactly 1.25x the expected move, in every gamma regime. The GEX-adaptive widen
-  // and the thin-credit SD walk-in are both suppressed for it — they were tuned on
-  // the 1DTE structure that measured no edge on real fills.
-  //
-  // It also STOPS now (1.5x credit) — it is no longer in SWING_BOTS — and holds to
-  // expiry with no intraday profit target.
-  // SPARK v4 (2026-08-11) -- the SAME strategy as FLAME, at the $10,000+ tier.
-  // A single book cannot deploy past ~$5,000 (one trade per market per day), so
-  // SPARK is how capital above that gets used: identical rules, 2 contracts.
-  // sd_multiplier, spread_width and the contract count are all DERIVED from live
-  // equity and reported inert.
+  // REPOINTED 2026-08-11 -- SPY only, puts only, 14 DTE, delta 0.10 (k=2.10),
+  // $5 wings, 3x stop, no stand-down, 1 contract. The only configuration that
+  // survived an honest walk-forward once the stand-down look-ahead was removed.
+  // These MUST mirror DEFAULT_CONFIG in scanner.ts -- sd_multiplier and
+  // spread_width are inert and served FROM HERE, so a stale value publishes a
+  // number the bot does not use.
   spark: {
-    sd_multiplier: 0.25, spread_width: 2.0, min_credit: 0.05,
-    profit_target_pct: 100.0, stop_loss_pct: 1000.0, vix_skip: 32.0,
-    max_contracts: 2, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
+    sd_multiplier: 2.10, spread_width: 5.0, min_credit: 0.05,
+    profit_target_pct: 100.0, stop_loss_pct: 300.0, vix_skip: 32.0,
+    max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
     pdt_max_day_trades: 4, starting_capital: 10000.0,
@@ -74,21 +49,15 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
     pdt_max_day_trades: 4, starting_capital: 10000.0,
   },
-  // FORGE (2026-08-10) -- the three-market condor, SPY+QQQ+IWM. Mirrors
-  // DEFAULT_CONFIG.forge in scanner.ts; these must move together.
-  //
-  // Without this entry FORGE falls through to `DEFAULTS.spark` and the config
-  // page reports SPARK's 5 DTE single-market settings for a 7 DTE three-market
-  // bot -- the same failure that once had spark2 reporting INFERNO's profile.
-  //
-  // sd_multiplier here is the SPY book's placement; QQQ and IWM run 1.25 and are
-  // code-controlled per book (FORGE_BOOKS in scanner.ts), not settable per-bot.
-  // buying_power_usage_pct is the TOTAL across all three books; each gets a third.
+  // REPOINTED 2026-08-11 -- SPY only, puts only, 14 DTE, delta 0.10 (k=2.10),
+  // $5 wings, 3x stop, no stand-down, 1 contract. The only configuration that
+  // survived an honest walk-forward once the stand-down look-ahead was removed.
+  // These MUST mirror DEFAULT_CONFIG in scanner.ts -- sd_multiplier and
+  // spread_width are inert and served FROM HERE, so a stale value publishes a
+  // number the bot does not use.
   forge: {
-    // spread_width shown is what forgeWingWidth() DERIVES at the $5,000 seed
-    // ($3). It is reported inert -- see DERIVED_WIDTH_BOTS.
-    sd_multiplier: 1.75, spread_width: 3.0, min_credit: 0.25,
-    profit_target_pct: 100.0, stop_loss_pct: 1000.0, vix_skip: 32.0,
+    sd_multiplier: 2.10, spread_width: 5.0, min_credit: 0.05,
+    profit_target_pct: 100.0, stop_loss_pct: 300.0, vix_skip: 32.0,
     max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',

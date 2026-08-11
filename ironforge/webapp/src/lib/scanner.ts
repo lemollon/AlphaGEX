@@ -225,14 +225,14 @@ const PRODUCTION_PLACE_WINDOW_MS = 5 * 60 * 1000  // 5 min — matches MAX_SCAN_
 const _lastSandboxPlacedAt: Record<string, number> = {}
 
 const BOTS = [
-  { name: 'flame', dte: '7DTE', minDte: 7 },
+  { name: 'flame', dte: '14DTE', minDte: 14 },
   // SPARK moved 1 DTE -> 5 DTE on 2026-08-10. The 1DTE condor had no edge on real
   // fills (972-cell sweep: best-on-train -$5.13/ct out-of-sample, 37% of cells
   // positive where coin flips give 50%) and the live account confirmed it: eight
   // production winners averaging +$20, then -$944 in a single session on 2026-08-03.
   // dte_mode is the row tag, so changing it deliberately SEPARATES the new
   // strategy's history from the dead one — the old '1DTE' rows stay where they are.
-  { name: 'spark', dte: '7DTE', minDte: 7 },
+  { name: 'spark', dte: '14DTE', minDte: 14 },
   { name: 'inferno', dte: '0DTE', minDte: 0 },
   // SPARK2 (2026-07-13, replaces KINDLE): SPARK's FULL v2 strategy AND sizing
   // (830 entry, $5 wings, $0.25 credit walk-in, tier 40/35/30, VIX cap 40,
@@ -255,7 +255,7 @@ const BOTS = [
   // NEEDS $25,000. Below that the three-way split cannot hold enough concurrent
   // positions and the whole advantage disappears -- this does NOT replace SPARK
   // or FLAME for small accounts.
-  { name: 'forge', dte: '7DTE', minDte: 7 },
+  { name: 'forge', dte: '14DTE', minDte: 14 },
 ] as const
 
 type BotDef = (typeof BOTS)[number]
@@ -337,7 +337,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // flameParams(balance) is, and at $2,000 it returns 0.35x / $1. They are left at
   // the SPARK-tier values only because other code paths read them; if FLAME ever
   // stops routing through tryOpenFlamePutSpread, fix them here first.
-  flame:   { sd: 0.25, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 2000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false, fixed_strike_placement: true },
+  flame:   { sd: 2.10, pt_pct: 1.0, sl_mult: 3.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 2000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
   // ENTRY TIME: 830, and now MEASURED rather than assumed — see the note on
   // isInEntryWindow below. Moved to 1300 on 2026-08-07 on inference; reverted the
   // same day once real entry-time quotes existed to test it.
@@ -372,7 +372,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   //
   // ⚠️ NOT LIVE-VALIDATED. Production is PAUSED (2026-08-10) and this must earn a
   // paper record before it touches real money again.
-  spark:   { sd: 0.25, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 2, bp_pct: 0.80, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false, fixed_strike_placement: true },
+  spark:   { sd: 2.10, pt_pct: 1.0, sl_mult: 3.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
   inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: false },
   // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
   // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =
@@ -412,7 +412,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // 12 across the three books, which is the 10-15 band the edge depends on.
   // min_credit 0.25 is a sanity floor only: median credit at $10 wings is ~$0.95.
   // standdown_days 1 fires on a LOSING TRADE (there is no stop to fire on).
-  forge:   { sd: 1.75, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 5000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 10, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false, fixed_strike_placement: true },
+  forge:   { sd: 2.10, pt_pct: 1.0, sl_mult: 3.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 5000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
   spark2:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: false },
 }
 
@@ -3080,7 +3080,12 @@ async function isStandDownActive(
  * straddle price -- not VIX, which describes SPY and would misplace QQQ and IWM
  * by the ratio of their volatility to the S&P's.
  */
-const FLAME_BOOKS = ['SPY', 'QQQ', 'IWM'] as const
+// SPY ONLY (2026-08-11). Measured leg by leg, QQQ has NO volatility risk
+// premium at all -- its options price at or BELOW realised movement (IV/RV
+// 0.98-1.00, negative net at every DTE). A third of the book was allocated to
+// negative expectancy and called diversification. IWM is weakly positive
+// (IV/RV 1.06) but only 3 of 6 years; it is out until that is resolved.
+const FLAME_BOOKS = ['SPY'] as const
 
 /**
  * Strike distance and wing width, DERIVED FROM LIVE EQUITY every scan.
@@ -3121,9 +3126,21 @@ const FLAME_BOOKS = ['SPY', 'QQQ', 'IWM'] as const
  * and the drawdown blows out to 82-83% of the account; the fixed rule below draws
  * 31% at the same sizes. The ladder being FIXED is what makes it safe.
  */
-function flameParams(equity: number): { k: number; width: number } {
-  if (equity < 5000) return { k: 0.35, width: 1 }
-  return { k: 0.25, width: 2 }
+function flameParams(_equity: number): { k: number; width: number } {
+  // ONE RULE, NOT A LADDER (2026-08-11). The tiered version came out of a
+  // backtest whose stand-down used future information; every figure it produced
+  // is void. This is the only configuration that survived an honest walk-forward
+  // -- 14 DTE, delta 0.10, $5 wings, 3x stop -- chosen in 4 of 5 blind years.
+  //
+  // k = 2.10 is the MEASURED straddle-multiple equivalent of a 0.10-delta SPY put
+  // at 14 DTE (n=1,251; median 2.097, 10th-90th 1.67-2.59). The code places by
+  // straddle multiple because it must work on tickers with no delta feed, so the
+  // delta target is expressed here rather than looked up.
+  //
+  // Expect ~5%/yr on $10,000 at a 12% average drawdown. That is worse than cash,
+  // and it is NOT deployed as a product -- it runs to measure whether real fills
+  // match the modelled credit, which is the one question a backtest cannot answer.
+  return { k: 2.10, width: 5 }
 }
 
 /**
@@ -3161,10 +3178,11 @@ function flameParams(equity: number): { k: number; width: number } {
  * Cost: $8,000-$9,999 now earns ~$10,090/yr instead of ~$20,179. That is the same
  * income-for-risk trade already taken at the $5,000 product boundary.
  */
-function flameContracts(equity: number): number {
-  if (equity < 10000) return 1
-  if (equity < 16000) return 2
-  return 3
+function flameContracts(_equity: number): number {
+  // 1, flat. The contract ladder was tuned on the void backtest, and the honest
+  // walk-forward only ever validated a single contract. Scaling it is
+  // ratio-neutral anyway -- twice the size is twice the drawdown.
+  return 1
 }
 
 /**
@@ -3506,8 +3524,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // FORGE runs three books across three tickers, so the single `spot` this
   // function receives is meaningless to it — each book quotes its own. Gates
   // live inside tryOpenForgeCondor, NOT above this branch (see PR #2777).
+  // FORGE IS NO LONGER A CONDOR (2026-08-11). Priced leg by leg, short CALLS are
+  // negative at nearly every delta (-$2 to -$50 per contract); the entire premium
+  // sits on the put side. An iron condor is therefore a profitable put sale with a
+  // loss-making call sale attached. It now runs the same put-only structure.
   if (bot.name === 'forge') {
-    return tryOpenForgeCondor(bot)
+    return tryOpenFlamePutSpread(bot)
   }
 
   // FLAME is now a bull put credit spread bot. Completely separate entry

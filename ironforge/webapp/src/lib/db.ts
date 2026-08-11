@@ -89,14 +89,14 @@ export function dteMode(bot: string): string | null {
   // 2DTE -> 1DTE) and this change: its only config row was tagged '2DTE', the
   // scanner looked for '1DTE', found nothing, and ran DEFAULT_CONFIG — which still
   // had max_contracts 0 (unlimited) at 85% BP.
-  if (bot === 'flame') return '7DTE'  // 7DTE 3-market put spread (1DTE until 2026-08-11)
-  if (bot === 'spark') return '7DTE'  // 7DTE 3-market put spread, $10k tier (2026-08-11)
+  if (bot === 'flame') return '14DTE'  // SPY-only put spread, delta 0.10, $5 wings (2026-08-11)
+  if (bot === 'spark') return '14DTE'  // same structure, $10k tier (2026-08-11)
   if (bot === 'inferno') return '0DTE'
   if (bot === 'blaze') return '1DTE'  // BLAZE is 1DTE directional (debit vertical, not IC)
   if (bot === 'flare') return '0DTE'  // FLARE is 0DTE directional (debit vertical, sibling of BLAZE)
   if (bot === 'kindle') return '1DTE' // KINDLE is 1DTE IC (retired 2026-07-13; history only)
   if (bot === 'spark2') return '1DTE' // SPARK2: SPARK's full v2 config on the second live account
-  if (bot === 'forge') return '7DTE'  // FORGE: 7DTE condor across SPY/QQQ/IWM
+  if (bot === 'forge') return '14DTE'  // no longer a condor -- calls measured negative (2026-08-11)
   return null
 }
 
