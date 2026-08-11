@@ -7,6 +7,17 @@ export const dynamic = 'force-dynamic'
 /**
  * POST /api/[bot]/force-close
  *
+ * Force-close an open position BY ID, regardless of its dte_mode.
+ *
+ * The dte_mode filter was removed 2026-08-11. `position_id` is already unique,
+ * so the filter added nothing -- but it made the endpoint USELESS for the exact
+ * case an admin tool exists for. When SPARK moved 5DTE -> 7DTE its two open
+ * condors became unreachable: the scanner no longer monitors them (wrong
+ * dte_mode) and force-close could no longer find them (same reason), so they
+ * would have sat open forever with nothing able to touch them.
+ *
+ * A cleanup tool that cannot reach orphaned rows is not a cleanup tool.
+ *
  * Force-close an open Iron Condor position.
  * Uses Tradier MTM for close price, or accepts an override.
  *
@@ -45,7 +56,6 @@ export async function POST(
               collateral_required, sandbox_order_id, person, account_type
        FROM ${botTable(bot, 'positions')}
        WHERE position_id = $1 AND status = 'open'
-         AND dte_mode = $2
        LIMIT 1`,
       [position_id, dte],
     )
@@ -140,8 +150,7 @@ export async function POST(
            close_price = ${effectivePrice}, realized_pnl = ${realizedPnl},
            close_reason = 'manual_close', updated_at = NOW(),
            sandbox_close_order_id = ${sandboxCloseJson}
-       WHERE position_id = '${escapeSql(position_id)}' AND status = 'open'
-         AND dte_mode = '${escapeSql(dte)}'`,
+       WHERE position_id = '${escapeSql(position_id)}' AND status = 'open'`,
     )
 
     if (rowsAffected === 0) {
