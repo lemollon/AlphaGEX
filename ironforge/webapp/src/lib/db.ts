@@ -90,7 +90,7 @@ export function dteMode(bot: string): string | null {
   // scanner looked for '1DTE', found nothing, and ran DEFAULT_CONFIG — which still
   // had max_contracts 0 (unlimited) at 85% BP.
   if (bot === 'flame') return '14DTE'  // SPY-only put spread, delta 0.10, $5 wings (2026-08-11)
-  if (bot === 'spark') return '14DTE'  // same structure, $10k tier (2026-08-11)
+  if (bot === 'spark') return '7DTE'   // IRON CONDOR, 7 DTE (2026-08-11)
   if (bot === 'inferno') return '0DTE'
   if (bot === 'blaze') return '1DTE'  // BLAZE is 1DTE directional (debit vertical, not IC)
   if (bot === 'flare') return '0DTE'  // FLARE is 0DTE directional (debit vertical, sibling of BLAZE)
