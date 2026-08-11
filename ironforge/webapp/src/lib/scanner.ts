@@ -3142,14 +3142,27 @@ function flameParams(equity: number): { k: number; width: number } {
  * concurrency that the edge actually comes from.
  *
  * So the contract count scales with the ACCOUNT, not with the free margin:
- *      under  $8,000 -> 1 contract   (FLAME's tier)
- *      under $16,000 -> 2 contracts  (SPARK's tier)
+ *      under $10,000 -> 1 contract
+ *      under $16,000 -> 2 contracts
  *      $16,000 and up -> 3 contracts
  * At $10,000 with 2 contracts the book runs the same ~9 concurrent trades as
  * $5,000 does with 1 -- twice the money on twice the capital, same shape.
+ *
+ * THE FIRST STEP MOVED $8,000 -> $10,000 (2026-08-11), measured.
+ *
+ * Sweeping every account size against the deployed rule, exactly two rungs broke
+ * the 35%-of-account drawdown ceiling, and both were the FIRST rung of a step --
+ * a full-size position carried on the smallest balance that step allowed:
+ *      $2,000 with 1 contract  -> 47% (unfixable; no config fits at that size)
+ *      $8,000 with 2 contracts -> 37%
+ * The identical 2-contract rule draws only 30% at $10,000, so the step was simply
+ * too early. Moving it puts EVERY rung in both bands under 35%.
+ *
+ * Cost: $8,000-$9,999 now earns ~$10,090/yr instead of ~$20,179. That is the same
+ * income-for-risk trade already taken at the $5,000 product boundary.
  */
 function flameContracts(equity: number): number {
-  if (equity < 8000) return 1
+  if (equity < 10000) return 1
   if (equity < 16000) return 2
   return 3
 }
