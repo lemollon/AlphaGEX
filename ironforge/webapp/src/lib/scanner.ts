@@ -232,7 +232,7 @@ const BOTS = [
   // production winners averaging +$20, then -$944 in a single session on 2026-08-03.
   // dte_mode is the row tag, so changing it deliberately SEPARATES the new
   // strategy's history from the dead one — the old '1DTE' rows stay where they are.
-  { name: 'spark', dte: '14DTE', minDte: 14 },
+  { name: 'spark', dte: '7DTE', minDte: 7 },
   { name: 'inferno', dte: '0DTE', minDte: 0 },
   // SPARK2 (2026-07-13, replaces KINDLE): SPARK's FULL v2 strategy AND sizing
   // (830 entry, $5 wings, $0.25 credit walk-in, tier 40/35/30, VIX cap 40,
@@ -372,7 +372,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   //
   // ⚠️ NOT LIVE-VALIDATED. Production is PAUSED (2026-08-10) and this must earn a
   // paper record before it touches real money again.
-  spark:   { sd: 2.10, pt_pct: 1.0, sl_mult: 3.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
+  spark:   { sd: 2.01, pt_pct: 1.0, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 10, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
   inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: false },
   // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
   // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =
@@ -3126,6 +3126,35 @@ const FLAME_BOOKS = ['SPY'] as const
  * and the drawdown blows out to 82-83% of the account; the fixed rule below draws
  * 31% at the same sizes. The ladder being FIXED is what makes it safe.
  */
+/**
+ * THE TWO PRODUCTS (2026-08-11).
+ *
+ *   FLAME / FORGE -- put credit spread, 14 DTE, 0.10 delta, $5 wings, 3x stop
+ *   SPARK         -- iron condor,       7 DTE, put 0.10 / call 0.04 delta,
+ *                                       $10 wings, 2x stop
+ *
+ * Strikes are placed as a multiple of the ticker's own ATM straddle, because the
+ * scanner has no delta feed. Both multiples are MEASURED, not estimated:
+ *
+ *   14 DTE  put 0.10 delta -> k 2.10   (n=1,251, median 2.097)
+ *    7 DTE  put 0.10 delta -> k 2.01   (n=1,289, median 2.009)
+ *    7 DTE  call 0.04 delta -> k 1.96  (n=1,289, median 1.964)
+ *
+ * Note the condor is nearly symmetric in DISTANCE (2.01 vs 1.96) while being very
+ * asymmetric in DELTA (0.10 vs 0.04). That is skew: a 0.10-delta put sits about as
+ * far from spot as a 0.04-delta call. The call is pushed that far out because short
+ * calls measured NEGATIVE at every delta above ~0.08 -- the condor only works if the
+ * call side is far enough away to stop bleeding.
+ *
+ * 🚨 SPARK's condor is the WEAKER of the two products: ~4.5%/yr and 2 of 5 years
+ * positive, against the put spread's ~5%/yr and 4 of 5. It exists because a condor
+ * is market-neutral where a put spread is short delta, not because it earns more.
+ */
+function botStructure(name: string): { k: number; callK: number | null; width: number } {
+  if (name === 'spark') return { k: 2.01, callK: 1.96, width: 10 }
+  return { k: 2.10, callK: null, width: 5 }
+}
+
 function flameParams(_equity: number): { k: number; width: number } {
   // ONE RULE, NOT A LADDER (2026-08-11). The tiered version came out of a
   // backtest whose stand-down used future information; every figure it produced
@@ -3227,7 +3256,7 @@ async function tryOpenFlamePutSpread(bot: BotDef): Promise<string> {
   }
   if (!(balance > 0)) return `skip:no_paper_balance($${balance.toFixed(0)})`
 
-  const { k, width } = flameParams(balance)
+  const { k, callK, width } = botStructure(bot.name)
   const perTrade = flameContracts(balance)
   // Each book gets an equal, NON-TRANSFERABLE third. Letting one borrow from the
   // others concentrates the account in whichever market happens to be trading,
@@ -3236,14 +3265,14 @@ async function tryOpenFlamePutSpread(bot: BotDef): Promise<string> {
 
   const out: string[] = []
   for (const ticker of FLAME_BOOKS) {
-    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, k, width, perBook, perTrade)}`)
+    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, k, callK, width, perBook, perTrade)}`)
   }
-  return `k${k} w${width} x${perTrade} ` + out.join(' ')
+  return `k${k}${callK ? `/c${callK}` : ''} w${width} x${perTrade} ` + out.join(' ')
 }
 
 async function tryOpenFlameBook(
   bot: BotDef, botCfg: BotConfig, ticker: string,
-  k: number, width: number, perBook: number, perTrade: number,
+  k: number, callK: number | null, width: number, perBook: number, perTrade: number,
 ): Promise<string> {
   const todayRows = await query(
     `SELECT COUNT(*) AS cnt FROM ${botTable(bot.name, 'positions')}
@@ -3298,13 +3327,37 @@ async function tryOpenFlameBook(
   const putLong = putShort - width
   if (putLong <= 0) return 'bad_strikes'
 
-  const credit = await getPutSpreadEntryCredit(ticker, expiration, putShort, putLong)
-  if (!credit) return 'no_quotes'
-  if (credit.putCredit < botCfg.min_credit) {
-    return `credit_low($${credit.putCredit.toFixed(2)})`
+  // SPARK sells a call side too. Strikes on BOTH sides come off the same straddle
+  // quote taken a moment ago, so the two legs are placed off one snapshot.
+  const callShort = callK === null ? 0 : Math.round(spot + callK * em)
+  const callLong = callK === null ? 0 : callShort + width
+
+  // Branch explicitly rather than union-typing the result: the two helpers return
+  // different shapes and narrowing a union across an await is more trouble than
+  // it is worth.
+  let putCreditVal = 0
+  let callCreditVal = 0
+  let entryCredit = 0
+  if (callK === null) {
+    const c = await getPutSpreadEntryCredit(ticker, expiration, putShort, putLong)
+    if (!c) return 'no_quotes'
+    putCreditVal = c.putCredit
+    entryCredit = c.putCredit
+  } else {
+    const c = await getIcEntryCredit(ticker, expiration, putShort, putLong, callShort, callLong)
+    if (!c) return 'no_quotes'
+    putCreditVal = c.putCredit
+    callCreditVal = c.callCredit
+    entryCredit = c.totalCredit
+  }
+  // For the condor the gate is the TOTAL credit, both sides together.
+  if (entryCredit < botCfg.min_credit) {
+    return `credit_low($${entryCredit.toFixed(2)})`
   }
 
-  const maxLossPer = Math.round((width - credit.putCredit) * 100 * 100) / 100
+  // An iron condor can only lose on ONE side, so the capital at risk is one
+  // wing minus the whole credit -- not both wings.
+  const maxLossPer = Math.round((width - entryCredit) * 100 * 100) / 100
   if (maxLossPer <= 0) return 'invalid_max_loss'
   // FIXED size per trade -- never "fill the remaining budget". The margin check
   // then decides whether THIS trade fits alongside the ones already running.
@@ -3326,18 +3379,23 @@ async function tryOpenFlameBook(
        contracts, spread_width, total_credit, max_loss, max_profit,
        collateral_required, underlying_at_entry, expected_move,
        status, open_time, open_date, dte_mode, account_type
-     ) VALUES ($1,$2,$3,$4,$5,$6,0,0,0,$7,$8,$6,$9,$10,$11,$12,$13,
+     ) VALUES ($1,$2,$3,$4,$5,$6,$15,$16,$17,$7,$8,$18,$9,$10,$11,$12,$13,
                'open', NOW(), ${CT_TODAY}, $14, 'sandbox')`,
-    [positionId, ticker, expiration, putShort, putLong, credit.putCredit,
+    [positionId, ticker, expiration, putShort, putLong, putCreditVal,
      contracts, width, collateral,
-     Math.round(credit.putCredit * 100 * contracts * 100) / 100,
-     collateral, spot, em, bot.dte],
+     Math.round(entryCredit * 100 * contracts * 100) / 100,
+     collateral, spot, em, bot.dte,
+     callShort, callLong,
+     callCreditVal,
+     entryCredit],
   )
   console.log(
-    `[scanner] ${bot.name.toUpperCase()} ${ticker}: ${contracts}x ${putLong}/${putShort}P exp ${expiration} ` +
-    `@ $${credit.putCredit.toFixed(2)} (spot ${spot.toFixed(2)}, EM ${em.toFixed(2)}, k=${k})`,
+    `[scanner] ${bot.name.toUpperCase()} ${ticker}: ${contracts}x ${putLong}/${putShort}P` +
+    `${callK === null ? '' : ` + ${callShort}/${callLong}C`} exp ${expiration} ` +
+    `@ $${entryCredit.toFixed(2)} (spot ${spot.toFixed(2)}, EM ${em.toFixed(2)}, k=${k}` +
+    `${callK === null ? '' : `/c${callK}`})`,
   )
-  return `traded@${credit.putCredit.toFixed(2)}`
+  return `traded@${entryCredit.toFixed(2)}`
 }
 
 /* ------------------------------------------------------------------ */

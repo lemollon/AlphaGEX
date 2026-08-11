@@ -25,9 +25,12 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
   // These MUST mirror DEFAULT_CONFIG in scanner.ts -- sd_multiplier and
   // spread_width are inert and served FROM HERE, so a stale value publishes a
   // number the bot does not use.
+  // SPARK = IRON CONDOR (2026-08-11): 7 DTE, put 0.10 / call 0.04 delta,
+  // $10 wings, 2x stop. sd_multiplier 2.01 is the put side's straddle multiple;
+  // the call side (1.96) is code-controlled in botStructure().
   spark: {
-    sd_multiplier: 2.10, spread_width: 5.0, min_credit: 0.05,
-    profit_target_pct: 100.0, stop_loss_pct: 300.0, vix_skip: 32.0,
+    sd_multiplier: 2.01, spread_width: 10.0, min_credit: 0.05,
+    profit_target_pct: 100.0, stop_loss_pct: 200.0, vix_skip: 32.0,
     max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
