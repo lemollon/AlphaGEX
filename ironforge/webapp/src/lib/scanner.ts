@@ -327,7 +327,17 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   //   26.3%/yr on $2,000 - 35% max drawdown - 5 of 5 years - ~117 trades/yr
   //   sl_mult 10.0 = wing-breach backstop only (same convention as INFERNO); the
   //   validated config has NO stop, and NUMERIC(5,2) cannot store a true "off".
-  flame:   { sd: 0.25, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 5000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false, fixed_strike_placement: true },
+  // FLAME IS THE $2,000-$4,999 TIER (2026-08-11). starting_capital 2000 is what
+  // makes that true: this value is the PAPER SEED and syncSandboxCapital() writes
+  // it back to flame_paper_account every cycle, so resetting the ledger by hand
+  // does nothing -- a reset to $2,000 was synced straight back to $5,000 within a
+  // minute, and FLAME re-entered on SPARK's 0.25x/$2 rule.
+  //
+  // `sd` and `wing_width` below are NOT the authority for the put-spread path --
+  // flameParams(balance) is, and at $2,000 it returns 0.35x / $1. They are left at
+  // the SPARK-tier values only because other code paths read them; if FLAME ever
+  // stops routing through tryOpenFlamePutSpread, fix them here first.
+  flame:   { sd: 0.25, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 2000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false, fixed_strike_placement: true },
   // ENTRY TIME: 830, and now MEASURED rather than assumed — see the note on
   // isInEntryWindow below. Moved to 1300 on 2026-08-07 on inference; reverted the
   // same day once real entry-time quotes existed to test it.
