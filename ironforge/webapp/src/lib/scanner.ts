@@ -3091,8 +3091,28 @@ const FLAME_BOOKS = ['SPY', 'QQQ', 'IWM'] as const
  * width flickered once). Result: $10,551/yr on $5,000 at a 25% drawdown, 5 of 5
  * years positive, worst year +$5,420.
  */
+/**
+ * THE PRODUCT BOUNDARY IS $5,000 (2026-08-11).
+ *
+ * FLAME is the $2,000-$5,000 product; SPARK is $5,000 and up. $5,000 itself
+ * belongs to SPARK, hence `< 5000`.
+ *
+ * The MEASURED crossover is $4,500 -- the first account size at which the closer
+ * 0.25x / $2-wing rule fits inside a 35%-of-account drawdown (33%). At $4,000 the
+ * same rule draws 37%, which is why it cannot simply be pushed down further.
+ *
+ * $5,000 is therefore deliberately CONSERVATIVE by $500. Accounts between $4,500
+ * and $5,000 run the small rule and earn ~$4,279/yr instead of ~$10,090 -- about
+ * $5,800/yr of income traded for a boundary customers can state without a table.
+ * That is an accepted cost, not an oversight.
+ *
+ * 🚨 DO NOT re-optimise these settings per account. When the rule is re-fitted
+ * freely at $2,500-$3,000 the selector lands on the closer strike with a $1 wing
+ * and the drawdown blows out to 82-83% of the account; the fixed rule below draws
+ * 31% at the same sizes. The ladder being FIXED is what makes it safe.
+ */
 function flameParams(equity: number): { k: number; width: number } {
-  if (equity < 4000) return { k: 0.35, width: 1 }
+  if (equity < 5000) return { k: 0.35, width: 1 }
   return { k: 0.25, width: 2 }
 }
 
