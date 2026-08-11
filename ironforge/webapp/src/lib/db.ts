@@ -89,7 +89,7 @@ export function dteMode(bot: string): string | null {
   // 2DTE -> 1DTE) and this change: its only config row was tagged '2DTE', the
   // scanner looked for '1DTE', found nothing, and ran DEFAULT_CONFIG — which still
   // had max_contracts 0 (unlimited) at 85% BP.
-  if (bot === 'flame') return '1DTE'  // 1DTE put credit spread (was 2DTE until 2026-08-10)
+  if (bot === 'flame') return '7DTE'  // 7DTE 3-market put spread (1DTE until 2026-08-11)
   if (bot === 'spark') return '5DTE'  // 5DTE iron condor (was 1DTE until 2026-08-10)
   if (bot === 'inferno') return '0DTE'
   if (bot === 'blaze') return '1DTE'  // BLAZE is 1DTE directional (debit vertical, not IC)

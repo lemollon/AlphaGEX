@@ -7,13 +7,16 @@ export const dynamic = 'force-dynamic'
 const DEFAULTS: Record<string, Record<string, number | string>> = {
   // FLAME v2 (2026-08-10) — 1DTE bull put credit spread. Mirrors
   // DEFAULT_CONFIG.flame in scanner.ts; these must move together.
+  // FLAME v3 (2026-08-11) -- three-market 7 DTE put credit spread on SPY/QQQ/IWM.
+  // sd_multiplier and spread_width shown are the $5,000 tier; BOTH are derived
+  // from live equity by flameParams() in scanner.ts and are reported INERT.
   flame: {
-    sd_multiplier: 1.5, spread_width: 3.0, min_credit: 0.05,
-    profit_target_pct: 100.0, stop_loss_pct: 999.99, vix_skip: 32.0,
-    max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.20,
+    sd_multiplier: 0.25, spread_width: 2.0, min_credit: 0.05,
+    profit_target_pct: 100.0, stop_loss_pct: 1000.0, vix_skip: 32.0,
+    max_contracts: 0, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
-    pdt_max_day_trades: 4, starting_capital: 2000.0,
+    pdt_max_day_trades: 4, starting_capital: 5000.0,
   },
   // SPARK v3 (2026-08-10) — the walk-forward 5 DTE condor. Mirrors
   // DEFAULT_CONFIG.spark in scanner.ts; these must move together.
@@ -142,7 +145,7 @@ const SWING_BOTS = ['spark2', 'kindle']
  * strategy is built on -- and a field that takes your edit and changes nothing
  * is worse than no field, because it reads as authoritative.
  */
-const DERIVED_WIDTH_BOTS = ['forge']
+const DERIVED_WIDTH_BOTS = ['forge', 'flame']
 
 /**
  * `min_credit` FLOORS — scanner.ts loadConfigOverrides, line ~366:
@@ -261,6 +264,7 @@ export async function GET(
       k in INERT_FIELDS
       || (k === 'stop_loss_pct' && SWING_BOTS.indexOf(bot) >= 0)
       || (k === 'spread_width' && DERIVED_WIDTH_BOTS.indexOf(bot) >= 0)
+      || (k === 'sd_multiplier' && bot === 'flame')
       || (k === 'profit_target_pct' && ptIsInert)
     const merged: Record<string, number | string> = { ...defaults }
     for (let i = 0; i < ALL_FIELDS.length; i++) {
@@ -318,6 +322,7 @@ export async function GET(
     merged.inert_fields = Object.keys(INERT_FIELDS)
       .concat(SWING_BOTS.indexOf(bot) >= 0 ? ['stop_loss_pct'] : [])
       .concat(DERIVED_WIDTH_BOTS.indexOf(bot) >= 0 ? ['spread_width'] : [])
+      .concat(bot === 'flame' ? ['sd_multiplier'] : [])
       .concat(ptIsInert ? ['profit_target_pct'] : [])
       .join(', ')
     // Mark whether the row we matched was an exact (account_type) hit or a
