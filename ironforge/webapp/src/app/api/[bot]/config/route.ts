@@ -13,7 +13,13 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
   flame: {
     sd_multiplier: 0.25, spread_width: 2.0, min_credit: 0.05,
     profit_target_pct: 100.0, stop_loss_pct: 1000.0, vix_skip: 32.0,
-    max_contracts: 0, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
+    // max_contracts is INERT and derived by flameContracts(equity) in scanner.ts:
+    //   <$8k -> 1, <$16k -> 2, else 3.
+    // It must still MIRROR what that function returns at this bot's starting
+    // capital, because an inert field is reported from DEFAULTS -- so a stale
+    // mirror makes the API state a number the bot does not use. At $5,000 that
+    // is 1. It read 0 (the old "no cap" sentinel) until 2026-08-11.
+    max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
     pdt_max_day_trades: 4, starting_capital: 5000.0,
