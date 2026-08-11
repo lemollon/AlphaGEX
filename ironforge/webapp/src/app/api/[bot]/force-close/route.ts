@@ -243,12 +243,25 @@ export async function POST(
                '${escapeSql(dte)}')`,
     )
 
-    // 11. Daily perf upsert (unique constraint is on (trade_date, COALESCE(person, '')))
+    // 11. Daily perf upsert.
+    //
+    // The ON CONFLICT target must name the unique index EXACTLY. The real index
+    // is THREE columns:
+    //     (trade_date, COALESCE(person,''), COALESCE(account_type,'sandbox'))
+    // but this named only two, and the comment here asserted the two-column
+    // version -- stale since account_type was added. Postgres cannot match a
+    // partial specification, so it raised
+    //     "no unique or exclusion constraint matching the ON CONFLICT specification"
+    // and the whole close failed AFTER the position had already been marked
+    // closed earlier in the handler.
+    //
+    // This was broken for EVERY bot on this path, not just orphaned rows -- the
+    // dte_mode filter removed in #2783 had been hiding it behind a 404.
     const dailyTable = botTable(bot, 'daily_perf')
     await dbExecute(
-      `INSERT INTO ${dailyTable} (trade_date, trades_executed, positions_closed, realized_pnl)
-       VALUES (${CT_TODAY}, 0, 1, ${realizedPnl})
-       ON CONFLICT (trade_date, COALESCE(person, '')) DO UPDATE SET
+      `INSERT INTO ${dailyTable} (trade_date, trades_executed, positions_closed, realized_pnl, account_type)
+       VALUES (${CT_TODAY}, 0, 1, ${realizedPnl}, '${escapeSql(posAccountType)}')
+       ON CONFLICT (trade_date, COALESCE(person, ''), COALESCE(account_type, 'sandbox')) DO UPDATE SET
          positions_closed = ${dailyTable}.positions_closed + 1,
          realized_pnl = ${dailyTable}.realized_pnl + ${realizedPnl}`,
     )
