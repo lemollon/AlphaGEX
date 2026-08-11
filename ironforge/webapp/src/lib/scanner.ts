@@ -3253,7 +3253,9 @@ async function tryOpenFlameBook(
   }
 
   const collateral = maxLossPer * contracts
-  const positionId = `FLAME-${ticker}-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+  // SPARK shares this code path, so the prefix must come from the BOT, not be
+  // hardcoded -- SPARK's live positions were being written as 'FLAME-SPY-...'.
+  const positionId = `${bot.name.toUpperCase()}-${ticker}-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
 
   await query(
     `INSERT INTO ${botTable(bot.name, 'positions')} (
@@ -3271,7 +3273,7 @@ async function tryOpenFlameBook(
      collateral, spot, em, bot.dte],
   )
   console.log(
-    `[scanner] FLAME ${ticker}: ${contracts}x ${putLong}/${putShort}P exp ${expiration} ` +
+    `[scanner] ${bot.name.toUpperCase()} ${ticker}: ${contracts}x ${putLong}/${putShort}P exp ${expiration} ` +
     `@ $${credit.putCredit.toFixed(2)} (spot ${spot.toFixed(2)}, EM ${em.toFixed(2)}, k=${k})`,
   )
   return `traded@${credit.putCredit.toFixed(2)}`
