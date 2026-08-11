@@ -8,21 +8,32 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
   // FLAME v2 (2026-08-10) — 1DTE bull put credit spread. Mirrors
   // DEFAULT_CONFIG.flame in scanner.ts; these must move together.
   // FLAME v3 (2026-08-11) -- three-market 7 DTE put credit spread on SPY/QQQ/IWM.
-  // sd_multiplier and spread_width shown are the $5,000 tier; BOTH are derived
-  // from live equity by flameParams() in scanner.ts and are reported INERT.
+  //
+  // FLAME IS THE $2,000-$4,999 TIER. Its paper account was moved to $2,000 on
+  // 2026-08-11 so that it actually demonstrates the small-account rule instead of
+  // duplicating SPARK.
+  //
+  // sd_multiplier and spread_width are derived from live equity by flameParams()
+  // in scanner.ts and reported INERT -- which means they are served FROM HERE.
+  // A stale value here is not cosmetic: it publishes a number the bot does not
+  // use. These must equal flameParams(starting_capital):
+  //      below $5,000 -> 0.35x / $1      <-- FLAME
+  //      $5,000 and up -> 0.25x / $2     <-- SPARK
+  // They read 0.25 / $2.0 while the account sat at $2,000 for the length of one
+  // deploy. If the account moves, MOVE THESE TOO.
   flame: {
-    sd_multiplier: 0.25, spread_width: 2.0, min_credit: 0.05,
+    sd_multiplier: 0.35, spread_width: 1.0, min_credit: 0.05,
     profit_target_pct: 100.0, stop_loss_pct: 1000.0, vix_skip: 32.0,
     // max_contracts is INERT and derived by flameContracts(equity) in scanner.ts:
     //   <$8k -> 1, <$16k -> 2, else 3.
     // It must still MIRROR what that function returns at this bot's starting
     // capital, because an inert field is reported from DEFAULTS -- so a stale
-    // mirror makes the API state a number the bot does not use. At $5,000 that
+    // mirror makes the API state a number the bot does not use. At $2,000 that
     // is 1. It read 0 (the old "no cap" sentinel) until 2026-08-11.
     max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
-    pdt_max_day_trades: 4, starting_capital: 5000.0,
+    pdt_max_day_trades: 4, starting_capital: 2000.0,
   },
   // SPARK v3 (2026-08-10) — the walk-forward 5 DTE condor. Mirrors
   // DEFAULT_CONFIG.spark in scanner.ts; these must move together.
