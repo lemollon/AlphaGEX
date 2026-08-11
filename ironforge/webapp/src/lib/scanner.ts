@@ -225,7 +225,7 @@ const PRODUCTION_PLACE_WINDOW_MS = 5 * 60 * 1000  // 5 min — matches MAX_SCAN_
 const _lastSandboxPlacedAt: Record<string, number> = {}
 
 const BOTS = [
-  { name: 'flame', dte: '1DTE', minDte: 1 },
+  { name: 'flame', dte: '7DTE', minDte: 7 },
   // SPARK moved 1 DTE -> 5 DTE on 2026-08-10. The 1DTE condor had no edge on real
   // fills (972-cell sweep: best-on-train -$5.13/ct out-of-sample, 37% of cells
   // positive where coin flips give 50%) and the live account confirmed it: eight
@@ -327,7 +327,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   //   26.3%/yr on $2,000 - 35% max drawdown - 5 of 5 years - ~117 trades/yr
   //   sl_mult 10.0 = wing-breach backstop only (same convention as INFERNO); the
   //   validated config has NO stop, and NUMERIC(5,2) cannot store a true "off".
-  flame:   { sd: 1.5, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.20, starting_capital: 2000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 3, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false, fixed_strike_placement: false },
+  flame:   { sd: 0.25, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.80, starting_capital: 5000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false, fixed_strike_placement: true },
   // ENTRY TIME: 830, and now MEASURED rather than assumed — see the note on
   // isInEntryWindow below. Moved to 1300 on 2026-08-07 on inference; reverted the
   // same day once real entry-time quotes existed to test it.
@@ -3065,261 +3065,186 @@ async function isStandDownActive(
  * call_credit = 0. monitorSinglePosition and closePosition detect this
  * shape and route to put-spread MTM/close instead of IC.
  */
-async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Promise<string> {
-  // 2026-08-10: these three were hardcoded (1.0 / 5 / 2) and silently overrode
-  // every config knob. FLAME short-circuits into this function at the top of
-  // tryOpenTrade, BEFORE the standdown / min_credit / max_contracts gates the IC
-  // path uses, so `sd_multiplier`, `spread_width`, `min_credit`, `max_contracts`
-  // and `standdown_days` all accepted writes and governed nothing. The bot was
-  // running 1.0 SD / $5 wings / 2 DTE / 4 contracts while the config API
-  // reported 1.5 / $3 / 1 DTE / 1 contract. Read them from config instead.
+/**
+ * FLAME's three books. Shorts go at `k` x that ticker's OWN at-the-money
+ * straddle price -- not VIX, which describes SPY and would misplace QQQ and IWM
+ * by the ratio of their volatility to the S&P's.
+ */
+const FLAME_BOOKS = ['SPY', 'QQQ', 'IWM'] as const
+
+/**
+ * Strike distance and wing width, DERIVED FROM LIVE EQUITY every scan.
+ *
+ * THE COUNTER-INTUITIVE RESULT THIS ENCODES. Selling FURTHER out of the money
+ * feels safer and is not. Blind walk-forward, $5,000, 3 markets, 7 DTE, $2 wings:
+ *      sell at 1.50x straddle  $3,945/yr   28% drawdown   94% win rate
+ *      sell at 0.25x straddle  $9,215/yr   30% drawdown   83% win rate
+ * The DRAWDOWN BARELY MOVES and the money more than doubles. A far-OTM spread
+ * collects ~$20 and still loses ~$280 when breached; a near-money spread collects
+ * ~$150 and loses ~$150. The high win rate was being BOUGHT with a terrible
+ * loss:win ratio -- and that ratio is what produces the give-backs.
+ *
+ * Confirmed in the bear year: in 2022 (S&P -19%) the 0.15x book made $7,058
+ * against the 1.50x book's $637.
+ *
+ * The blind walk-forward chose k=0.25 in ALL FIVE test years at $5,000 (only the
+ * width flickered once). Result: $10,551/yr on $5,000 at a 25% drawdown, 5 of 5
+ * years positive, worst year +$5,420.
+ */
+function flameParams(equity: number): { k: number; width: number } {
+  if (equity < 4000) return { k: 0.35, width: 1 }
+  return { k: 0.25, width: 2 }
+}
+
+/**
+ * FLAME -- three-market 7 DTE put credit spread. PAPER ONLY.
+ *
+ * Up to one spread per BOOK per day on SPY, QQQ and IWM, sharing one margin pool
+ * split three ways. Held to expiry: no stop, no profit target.
+ *
+ * WHY NO EARLY PROFIT-TAKING -- measured, not assumed. Closing at 50% of max
+ * profit cut income 42% and made give-backs WORSE (5.0 -> 10.5 months), because
+ * it trims the winners while the losers still run full size. That is exactly the
+ * loss:win asymmetry the strike distance above exists to avoid.
+ *
+ * Gates live IN HERE. The old version short-circuited above tryOpenTrade's gates
+ * and ran hardcoded values while the config API reported something else (#2777).
+ */
+async function tryOpenFlamePutSpread(bot: BotDef): Promise<string> {
   const botCfg = cfg(bot)
-  const SD_MULT = botCfg.sd
-  const WIDTH = botCfg.wing_width
-  // Sizing is driven by the editable buying_power_usage_pct config knob
-  // (the "% BP" badge on the FLAME card). For a put credit spread, BP used =
-  // collateral = max loss, so this is the fraction of the live Tradier balance
-  // put at risk per trade. Defaults to 0.85 (DEFAULT_CONFIG.flame.bp_pct).
-  const RISK_PCT = cfg(bot).bp_pct
+  if (!isConfigured()) return 'skip:tradier_not_configured'
 
-  // --- Gates ---
-  // Already traded today?
-  const todayTrades = await query(
-    `SELECT COUNT(*) as cnt
-     FROM ${botTable(bot.name, 'positions')}
-     WHERE (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
-       AND dte_mode = $1`,
-    [bot.dte],
-  )
-  if (int(todayTrades[0]?.cnt) >= 1) return 'skip:already_traded_today'
-
-  // Open position already?
-  const openRows = await query(
-    `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
-     WHERE status = 'open' AND dte_mode = $1`,
-    [bot.dte],
-  )
-  if (int(openRows[0]?.cnt) >= 1) return 'skip:already_open'
-
-  // Stand-down after a loss. Lives here as well as in tryOpenTrade because FLAME
-  // short-circuits into this function before that gate is ever reached.
-  if (await isStandDownActive(bot, botCfg.standdown_days)) return 'skip:standdown_after_loss'
-
-  // --- Account balance from FLAME'S OWN paper ledger ---
-  // This previously read the shared Tradier "User" sandbox balance. That account
-  // is co-tenanted with other systems, so FLAME's position size tracked THEIR
-  // activity rather than its own P&L: contracts went 20 -> 16 (Apr/May, matching
-  // a $10k account) then jumped to 124-127 (Jun onward, ~$62k collateral) with no
-  // config change, while the ledger still reported $10,000 capital. Return
-  // percentages were consequently ~4x overstated on every dashboard.
-  //
-  // Sizing now compounds off the same balance the ledger and the dashboards
-  // report, so "% of account" means one thing everywhere. Seeded from the
-  // configurable starting_capital knob ($10,000) on the first-ever trade.
-  const seedCapital = cfg(bot).starting_capital
   const acctRows = await query(
-    `SELECT id, current_balance, collateral_in_use
-     FROM ${botTable(bot.name, 'paper_account')}
+    `SELECT id, current_balance FROM ${botTable(bot.name, 'paper_account')}
      WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
      ORDER BY id DESC LIMIT 1`,
     [bot.dte],
   )
-  const acctId = acctRows[0]?.id ?? null
-  // Available buying power, not gross balance: collateral already committed to an
-  // open position must not be sized against a second time.
-  const accountBalance = acctId == null
-    ? seedCapital
-    : num(acctRows[0].current_balance) - num(acctRows[0].collateral_in_use)
-  if (!(accountBalance > 0)) {
-    return `skip:no_paper_balance(bal=$${accountBalance.toFixed(0)})`
-  }
-
-  // --- Strikes (put-only, 1.0 SD OTM) ---
-  const expectedMove = (vix / 100 / Math.sqrt(252)) * spot
-  const minEM = spot * 0.005
-  const em = Math.max(expectedMove, minEM)
-  const putShort = Math.floor(spot - SD_MULT * em)
-  const putLong = putShort - WIDTH
-
-  // --- Target expiration (bot.minDte business days out) ---
-  // Was a local 2-day walk that ignored bot.minDte, so rows were tagged
-  // dte_mode='1DTE' while actually holding a 2 DTE spread.
-  const expiration = getTargetExpiration(bot.minDte)
-
-  // --- Credit from Tradier ---
-  if (!isConfigured()) return 'skip:tradier_not_configured'
-  const creditRes = await getPutSpreadEntryCredit('SPY', expiration, putShort, putLong)
-  if (!creditRes) return 'skip:no_put_quotes'
-  const putCredit = creditRes.putCredit
-
-  // Minimum credit. The IC path gates on this at its own site; FLAME never
-  // reached it. FLAME's floor is $0.05, not SPARK's $0.25 — that $0.25 was set
-  // for a 4-leg IC that could not round-trip the combo spread, and at $3 wings
-  // the median 1DTE put-spread credit is $0.060, so a $0.25 floor would silently
-  // cut FLAME from ~185 trades/yr to ~10.
-  if (putCredit < botCfg.min_credit) {
-    return `skip:credit_too_low($${putCredit.toFixed(4)} < $${botCfg.min_credit})`
-  }
-
-  // --- Sizing (RISK_PCT of account balance at risk; see RISK_PCT above) ---
-  const maxLossPerContract = Math.round((WIDTH - putCredit) * 100 * 100) / 100
-  if (maxLossPerContract <= 0) return 'skip:invalid_max_loss'
-  const bpContracts = Math.floor((accountBalance * RISK_PCT) / maxLossPerContract)
-  // max_contracts is a hard ceiling (0 = unlimited), matching the IC path. FLAME
-  // is validated at exactly 1 contract on a $2,000 account; without this cap the
-  // BP% sizing alone put on 4 contracts against the $10,924 paper ledger.
-  const contracts = botCfg.max_contracts > 0
-    ? Math.min(botCfg.max_contracts, bpContracts)
-    : bpContracts
-  if (contracts < 1) return `skip:contracts<1(bal=$${accountBalance.toFixed(0)})`
-
-  const collateral = maxLossPerContract * contracts
-  const maxProfit = Math.round(putCredit * 100 * contracts * 100) / 100
-
-  // --- Record position (paper-only) ---
-  // Same YYYYMMDD stamp as before, now derived from the shared expiration string
-  // rather than the local Date walk that getTargetExpiration replaced.
-  const positionId = `FLAME-${expiration.replace(/-/g, '')}-PCS-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
-
-  // Ensure a paper_account row exists (acctId was resolved during sizing above).
-  // Seeded from the configured starting_capital, NOT from a broker balance —
-  // seeding from Tradier is how a row with starting_capital = $3,840.20 was
-  // created previously, which then misreports every return percentage derived
-  // from it.
-  if (acctId == null) {
+  let balance: number
+  if (acctRows.length === 0) {
+    const seed = botCfg.starting_capital
     await query(
       `INSERT INTO ${botTable(bot.name, 'paper_account')}
          (starting_capital, current_balance, cumulative_pnl, collateral_in_use,
           buying_power, total_trades, high_water_mark, max_drawdown,
           is_active, dte_mode, account_type, created_at, updated_at)
        VALUES ($1, $1, 0, 0, $1, 0, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
-      [seedCapital, bot.dte],
+      [seed, bot.dte],
     )
+    console.log(`[scanner] FLAME: seeded ${bot.dte} paper ledger at $${seed}`)
+    balance = seed
+  } else {
+    balance = num(acctRows[0].current_balance)
   }
+  if (!(balance > 0)) return `skip:no_paper_balance($${balance.toFixed(0)})`
+
+  const { k, width } = flameParams(balance)
+  // Each book gets an equal, NON-TRANSFERABLE third. Letting one borrow from the
+  // others concentrates the account in whichever market happens to be trading,
+  // which is the opposite of why three books exist.
+  const perBook = (balance * botCfg.bp_pct) / FLAME_BOOKS.length
+
+  const out: string[] = []
+  for (const ticker of FLAME_BOOKS) {
+    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, k, width, perBook)}`)
+  }
+  return `k${k} w${width} ` + out.join(' ')
+}
+
+async function tryOpenFlameBook(
+  bot: BotDef, botCfg: BotConfig, ticker: string,
+  k: number, width: number, perBook: number,
+): Promise<string> {
+  const todayRows = await query(
+    `SELECT COUNT(*) AS cnt FROM ${botTable(bot.name, 'positions')}
+     WHERE (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
+       AND dte_mode = $1 AND ticker = $2`,
+    [bot.dte, ticker],
+  )
+  if (int(todayRows[0]?.cnt) >= botCfg.max_trades) return 'traded_today'
+
+  // per-book: a loss on IWM must not silence SPY
+  if (await isStandDownActive(bot, botCfg.standdown_days, ticker)) return 'standdown'
+
+  const collRows = await query(
+    `SELECT COALESCE(SUM(collateral_required), 0) AS c
+     FROM ${botTable(bot.name, 'positions')}
+     WHERE status = 'open' AND dte_mode = $1 AND ticker = $2
+       AND COALESCE(account_type, 'sandbox') = 'sandbox'`,
+    [bot.dte, ticker],
+  )
+  const committed = num(collRows[0]?.c)
+
+  const q = await getQuote(ticker)
+  const spot = q?.last ?? 0
+  if (!(spot > 0)) return 'no_quote'
+
+  const targetExp = getTargetExpiration(bot.minDte)
+  const exps = await getOptionExpirations(ticker)
+  let expiration = targetExp
+  if (exps.length > 0 && !exps.includes(targetExp)) {
+    const t = new Date(targetExp + 'T12:00:00').getTime()
+    let best = exps[0]
+    let gap = Infinity
+    for (const e of exps) {
+      const g2 = Math.abs(new Date(e + 'T12:00:00').getTime() - t)
+      if (g2 < gap) { best = e; gap = g2 }
+    }
+    expiration = best
+  }
+
+  // expected move = this ticker's OWN ATM straddle, quoted at the instant we
+  // trade, so there is no look-ahead and no VIX dependency
+  const atm = Math.round(spot)
+  const [atmC, atmP] = await Promise.all([
+    getOptionQuote(buildOccSymbol(ticker, expiration, atm, 'C')),
+    getOptionQuote(buildOccSymbol(ticker, expiration, atm, 'P')),
+  ])
+  if (!atmC || !atmP) return 'no_atm_quote'
+  const em = (atmC.bid + atmC.ask) / 2 + (atmP.bid + atmP.ask) / 2
+  if (!(em > 0)) return 'bad_em'
+
+  const putShort = Math.round(spot - k * em)
+  const putLong = putShort - width
+  if (putLong <= 0) return 'bad_strikes'
+
+  const credit = await getPutSpreadEntryCredit(ticker, expiration, putShort, putLong)
+  if (!credit) return 'no_quotes'
+  if (credit.putCredit < botCfg.min_credit) {
+    return `credit_low($${credit.putCredit.toFixed(2)})`
+  }
+
+  const maxLossPer = Math.round((width - credit.putCredit) * 100 * 100) / 100
+  if (maxLossPer <= 0) return 'invalid_max_loss'
+  const bpContracts = Math.floor((perBook - committed) / maxLossPer)
+  const contracts = botCfg.max_contracts > 0
+    ? Math.min(botCfg.max_contracts, bpContracts)
+    : bpContracts
+  if (contracts < 1) return `no_room($${(perBook - committed).toFixed(0)})`
+
+  const collateral = maxLossPer * contracts
+  const positionId = `FLAME-${ticker}-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
 
   await query(
     `INSERT INTO ${botTable(bot.name, 'positions')} (
-      position_id, ticker, expiration,
-      put_short_strike, put_long_strike, put_credit,
-      call_short_strike, call_long_strike, call_credit,
-      contracts, spread_width, total_credit, max_loss, max_profit,
-      collateral_required,
-      underlying_at_entry, vix_at_entry, expected_move,
-      call_wall, put_wall, gex_regime,
-      flip_point, net_gex,
-      oracle_confidence, oracle_win_probability, oracle_advice,
-      oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
-      wings_adjusted, original_put_width, original_call_width,
-      put_order_id, call_order_id,
-      status, open_time, open_date, dte_mode, person, account_type
-    ) VALUES (
-      $1, 'SPY', $2, $3, $4, $5, 0, 0, 0, $6, $7, $5, $8, $9, $10,
-      $11, $12, $13, 0, 0, 'UNKNOWN', 0, 0,
-      0.5, 0.5, 'PUT_CREDIT_SPREAD', 'Tasty-style 2DTE bull put spread',
-      '[]', false, false, $7, $7, 'PAPER', 'PAPER',
-      'open', NOW(), ${CT_TODAY}, $14, 'User', 'sandbox'
-    )`,
-    [
-      positionId, expiration,
-      putShort, putLong, putCredit,
-      contracts, WIDTH, collateral, maxProfit, collateral,
-      spot, vix, expectedMove,
-      bot.dte,
-    ],
+       position_id, ticker, expiration,
+       put_short_strike, put_long_strike, put_credit,
+       call_short_strike, call_long_strike, call_credit,
+       contracts, spread_width, total_credit, max_loss, max_profit,
+       collateral_required, underlying_at_entry, expected_move,
+       status, open_time, open_date, dte_mode, account_type
+     ) VALUES ($1,$2,$3,$4,$5,$6,0,0,0,$7,$8,$6,$9,$10,$11,$12,$13,
+               'open', NOW(), ${CT_TODAY}, $14, 'sandbox')`,
+    [positionId, ticker, expiration, putShort, putLong, credit.putCredit,
+     contracts, width, collateral,
+     Math.round(credit.putCredit * 100 * contracts * 100) / 100,
+     collateral, spot, em, bot.dte],
   )
-
-  // Deduct collateral from paper account
-  if (acctId != null) {
-    await query(
-      `UPDATE ${botTable(bot.name, 'paper_account')}
-       SET collateral_in_use = collateral_in_use + $1,
-           buying_power = buying_power - $1,
-           updated_at = NOW()
-       WHERE id = $2`,
-      [collateral, acctId],
-    )
-  }
-
-  // Log the signal + trade open
-  try {
-    await query(
-      `INSERT INTO ${botTable(bot.name, 'signals')} (
-        spot_price, vix, expected_move, call_wall, put_wall, gex_regime,
-        put_short, put_long, call_short, call_long, total_credit,
-        confidence, was_executed, skip_reason, reasoning, wings_adjusted,
-        dte_mode, person, account_type
-      ) VALUES ($1, $2, $3, 0, 0, 'UNKNOWN', $4, $5, 0, 0, $6, 0.5, true, NULL,
-        'Tasty-style put credit spread entry', false, $7, 'User', 'sandbox')`,
-      [spot, vix, expectedMove, putShort, putLong, putCredit, bot.dte],
-    )
-  } catch { /* log best-effort */ }
-
-  try {
-    await query(
-      `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
-       VALUES ('TRADE_OPEN', $1, $2, $3, 'User')`,
-      [
-        `OPEN PCS: ${positionId} ${putLong}/${putShort}P x${contracts} @ $${putCredit.toFixed(4)} ` +
-        `(risk=$${collateral.toFixed(0)}, 10% of $${accountBalance.toFixed(0)})`,
-        JSON.stringify({
-          position_id: positionId,
-          strategy: 'put_credit_spread',
-          put_short: putShort,
-          put_long: putLong,
-          contracts,
-          credit: putCredit,
-          collateral,
-          account_balance: accountBalance,
-          vix,
-          spot,
-          source: 'flame_pcs_scanner',
-        }),
-        bot.dte,
-      ],
-    )
-  } catch { /* log best-effort */ }
-
-  // PDT log
-  try {
-    await query(
-      `INSERT INTO ${botTable(bot.name, 'pdt_log')}
-         (position_id, trade_date, opened_at, entry_credit, contracts, dte_mode, person, account_type)
-       VALUES ($1, ${CT_TODAY}, NOW(), $2, $3, $4, 'User', 'sandbox')
-       ON CONFLICT DO NOTHING`,
-      [positionId, putCredit, contracts, bot.dte],
-    )
-  } catch { /* pdt_log is audit-only */ }
-
   console.log(
-    `[scanner] FLAME OPENED PCS ${positionId}: ${putLong}/${putShort}P x${contracts} @ $${putCredit.toFixed(4)} ` +
-    `collateral=$${collateral.toFixed(0)} (10% of $${accountBalance.toFixed(0)}) VIX=${vix.toFixed(2)}`,
+    `[scanner] FLAME ${ticker}: ${contracts}x ${putLong}/${putShort}P exp ${expiration} ` +
+    `@ $${credit.putCredit.toFixed(2)} (spot ${spot.toFixed(2)}, EM ${em.toFixed(2)}, k=${k})`,
   )
-
-  void postFlameOpen({
-    positionId,
-    putShort,
-    putLong,
-    contracts,
-    credit: putCredit,
-    collateral,
-    maxProfit,
-    expiration,
-    spot,
-    vix,
-    accountBalance,
-  }).catch((e: unknown) => {
-    console.warn(`[scanner] FLAME discord open post failed: ${e instanceof Error ? e.message : e}`)
-  })
-
-  // Phase B: mirror to activated customers (fire-and-forget, never throws, gated
-  // inside on CUSTOMER_EXECUTOR_ENABLED + kill switch + per-customer state).
-  void mirrorOpenToCustomers({
-    botName: bot.name, positionId, ticker: 'SPY', expiration,
-    putShort, putLong, callShort: 0, callLong: 0,
-    spreadWidth: WIDTH, credit: putCredit,
-  })
-
-  return `traded:${positionId}(put_credit_spread)`
+  return `traded@${credit.putCredit.toFixed(2)}`
 }
 
 /* ------------------------------------------------------------------ */
@@ -3515,7 +3440,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // placement. Delegates to tryOpenFlamePutSpread so this function keeps
   // handling only the IC bots (SPARK/INFERNO) with zero behavior change.
   if (bot.name === 'flame') {
-    return tryOpenFlamePutSpread(bot, spot, vix)
+    return tryOpenFlamePutSpread(bot)
   }
 
   // INFERNO post-first-loss cooldown (operator policy 2026-05-10):
