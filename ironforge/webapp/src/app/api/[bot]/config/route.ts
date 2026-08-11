@@ -28,24 +28,20 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
   //
   // It also STOPS now (1.5x credit) — it is no longer in SWING_BOTS — and holds to
   // expiry with no intraday profit target.
+  // SPARK v4 (2026-08-11) -- the SAME strategy as FLAME, at the $10,000+ tier.
+  // A single book cannot deploy past ~$5,000 (one trade per market per day), so
+  // SPARK is how capital above that gets used: identical rules, 2 contracts.
+  // sd_multiplier, spread_width and the contract count are all DERIVED from live
+  // equity and reported inert.
   spark: {
-    sd_multiplier: 1.25, spread_width: 10.0, min_credit: 0.25,
-    profit_target_pct: 100.0, stop_loss_pct: 150.0,
-    // 40, not 32 — scanner.ts: `const vixCap = isSparkV2Sizing(bot.name) ? 40 : 32`.
-    // Inert fields are now reported from THIS map (the DB value is skipped), so
-    // this literal is what the dashboard renders. It must equal the code constant.
-    vix_skip: 40.0,
-    // max_contracts 1 is a real risk control, not a formality: the previous value
-    // was 0 = UNLIMITED at 85% BP, which is how the paper ledger put on 25 contracts
-    // and lost $10,500 in one session on 2026-08-03.
-    max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
+    sd_multiplier: 0.25, spread_width: 2.0, min_credit: 0.05,
+    profit_target_pct: 100.0, stop_loss_pct: 1000.0, vix_skip: 32.0,
+    max_contracts: 2, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
-    // Must track DEFAULT_CONFIG.spark.entry_start in scanner.ts — the value the
-    // bot actually runs. entry_start is an INERT field (the DB row is never read
-    // for it), so this literal is the only thing the dashboard renders.
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
-    pdt_max_day_trades: 4, starting_capital: 5000.0,
+    pdt_max_day_trades: 4, starting_capital: 10000.0,
   },
+
   // spark2 — SPARK's paper twin. Same strategy code (isSparkV2Sizing +
   // isSparkStrategy both include it), its own ledger and account.
   //
@@ -145,7 +141,7 @@ const SWING_BOTS = ['spark2', 'kindle']
  * strategy is built on -- and a field that takes your edit and changes nothing
  * is worse than no field, because it reads as authoritative.
  */
-const DERIVED_WIDTH_BOTS = ['forge', 'flame']
+const DERIVED_WIDTH_BOTS = ['forge', 'flame', 'spark']
 
 /**
  * `min_credit` FLOORS — scanner.ts loadConfigOverrides, line ~366:
@@ -159,7 +155,7 @@ const DERIVED_WIDTH_BOTS = ['forge', 'flame']
  * with it.
  */
 const MIN_CREDIT_FLOOR: Record<string, number> = {
-  flame: 0.05, spark: 0.25, spark2: 0.25, inferno: 0.15, kindle: 0.05,
+  flame: 0.05, spark: 0.05, spark2: 0.25, inferno: 0.15, kindle: 0.05,
   forge: 0.25,
 }
 
@@ -264,7 +260,8 @@ export async function GET(
       k in INERT_FIELDS
       || (k === 'stop_loss_pct' && SWING_BOTS.indexOf(bot) >= 0)
       || (k === 'spread_width' && DERIVED_WIDTH_BOTS.indexOf(bot) >= 0)
-      || (k === 'sd_multiplier' && bot === 'flame')
+      || (k === 'sd_multiplier' && (bot === 'flame' || bot === 'spark'))
+      || (k === 'max_contracts' && (bot === 'flame' || bot === 'spark'))
       || (k === 'profit_target_pct' && ptIsInert)
     const merged: Record<string, number | string> = { ...defaults }
     for (let i = 0; i < ALL_FIELDS.length; i++) {
@@ -322,7 +319,7 @@ export async function GET(
     merged.inert_fields = Object.keys(INERT_FIELDS)
       .concat(SWING_BOTS.indexOf(bot) >= 0 ? ['stop_loss_pct'] : [])
       .concat(DERIVED_WIDTH_BOTS.indexOf(bot) >= 0 ? ['spread_width'] : [])
-      .concat(bot === 'flame' ? ['sd_multiplier'] : [])
+      .concat(bot === 'flame' || bot === 'spark' ? ['sd_multiplier', 'max_contracts'] : [])
       .concat(ptIsInert ? ['profit_target_pct'] : [])
       .join(', ')
     // Mark whether the row we matched was an exact (account_type) hit or a
