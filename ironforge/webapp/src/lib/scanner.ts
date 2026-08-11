@@ -232,7 +232,7 @@ const BOTS = [
   // production winners averaging +$20, then -$944 in a single session on 2026-08-03.
   // dte_mode is the row tag, so changing it deliberately SEPARATES the new
   // strategy's history from the dead one — the old '1DTE' rows stay where they are.
-  { name: 'spark', dte: '5DTE', minDte: 5 },
+  { name: 'spark', dte: '7DTE', minDte: 7 },
   { name: 'inferno', dte: '0DTE', minDte: 0 },
   // SPARK2 (2026-07-13, replaces KINDLE): SPARK's FULL v2 strategy AND sizing
   // (830 entry, $5 wings, $0.25 credit walk-in, tier 40/35/30, VIX cap 40,
@@ -327,7 +327,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   //   26.3%/yr on $2,000 - 35% max drawdown - 5 of 5 years - ~117 trades/yr
   //   sl_mult 10.0 = wing-breach backstop only (same convention as INFERNO); the
   //   validated config has NO stop, and NUMERIC(5,2) cannot store a true "off".
-  flame:   { sd: 0.25, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.80, starting_capital: 5000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false, fixed_strike_placement: true },
+  flame:   { sd: 0.25, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 5000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false, fixed_strike_placement: true },
   // ENTRY TIME: 830, and now MEASURED rather than assumed — see the note on
   // isInEntryWindow below. Moved to 1300 on 2026-08-07 on inference; reverted the
   // same day once real entry-time quotes existed to test it.
@@ -362,7 +362,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   //
   // ⚠️ NOT LIVE-VALIDATED. Production is PAUSED (2026-08-10) and this must earn a
   // paper record before it touches real money again.
-  spark:   { sd: 1.25, pt_pct: 1.0, sl_mult: 1.5, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 5000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 10, min_credit_pct_width: 0, standdown_days: 3, skip_neg_gamma: false, fixed_strike_placement: true },
+  spark:   { sd: 0.25, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 2, bp_pct: 0.80, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 1, skip_neg_gamma: false, fixed_strike_placement: true },
   inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: false },
   // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
   // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =
@@ -3097,6 +3097,34 @@ function flameParams(equity: number): { k: number; width: number } {
 }
 
 /**
+ * Contracts PER TRADE, derived from equity.
+ *
+ * 🚨 THIS EXISTS BECAUSE max_contracts:0 WAS A BUG. "No cap" means the sizing
+ * takes every contract that fits, so the FIRST trade of the day opened ~9
+ * contracts and consumed the entire book budget, leaving no room for the rest of
+ * the week. The backtest modelled something completely different: ONE contract
+ * per trade, ~9 running CONCURRENTLY, each opened on a DIFFERENT DAY.
+ *
+ * Same exposure at any instant, entirely different risk. Nine positions opened
+ * across nine days are nine independent bets; nine contracts opened on one day
+ * are one bet nine times the size. Concentration in TIME is precisely what made
+ * every "just add contracts" test fail earlier -- bigger positions crowd out the
+ * concurrency that the edge actually comes from.
+ *
+ * So the contract count scales with the ACCOUNT, not with the free margin:
+ *      under  $8,000 -> 1 contract   (FLAME's tier)
+ *      under $16,000 -> 2 contracts  (SPARK's tier)
+ *      $16,000 and up -> 3 contracts
+ * At $10,000 with 2 contracts the book runs the same ~9 concurrent trades as
+ * $5,000 does with 1 -- twice the money on twice the capital, same shape.
+ */
+function flameContracts(equity: number): number {
+  if (equity < 8000) return 1
+  if (equity < 16000) return 2
+  return 3
+}
+
+/**
  * FLAME -- three-market 7 DTE put credit spread. PAPER ONLY.
  *
  * Up to one spread per BOOK per day on SPY, QQQ and IWM, sharing one margin pool
@@ -3139,6 +3167,7 @@ async function tryOpenFlamePutSpread(bot: BotDef): Promise<string> {
   if (!(balance > 0)) return `skip:no_paper_balance($${balance.toFixed(0)})`
 
   const { k, width } = flameParams(balance)
+  const perTrade = flameContracts(balance)
   // Each book gets an equal, NON-TRANSFERABLE third. Letting one borrow from the
   // others concentrates the account in whichever market happens to be trading,
   // which is the opposite of why three books exist.
@@ -3146,14 +3175,14 @@ async function tryOpenFlamePutSpread(bot: BotDef): Promise<string> {
 
   const out: string[] = []
   for (const ticker of FLAME_BOOKS) {
-    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, k, width, perBook)}`)
+    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, k, width, perBook, perTrade)}`)
   }
-  return `k${k} w${width} ` + out.join(' ')
+  return `k${k} w${width} x${perTrade} ` + out.join(' ')
 }
 
 async function tryOpenFlameBook(
   bot: BotDef, botCfg: BotConfig, ticker: string,
-  k: number, width: number, perBook: number,
+  k: number, width: number, perBook: number, perTrade: number,
 ): Promise<string> {
   const todayRows = await query(
     `SELECT COUNT(*) AS cnt FROM ${botTable(bot.name, 'positions')}
@@ -3216,11 +3245,12 @@ async function tryOpenFlameBook(
 
   const maxLossPer = Math.round((width - credit.putCredit) * 100 * 100) / 100
   if (maxLossPer <= 0) return 'invalid_max_loss'
-  const bpContracts = Math.floor((perBook - committed) / maxLossPer)
-  const contracts = botCfg.max_contracts > 0
-    ? Math.min(botCfg.max_contracts, bpContracts)
-    : bpContracts
-  if (contracts < 1) return `no_room($${(perBook - committed).toFixed(0)})`
+  // FIXED size per trade -- never "fill the remaining budget". The margin check
+  // then decides whether THIS trade fits alongside the ones already running.
+  const contracts = perTrade
+  if ((perBook - committed) < maxLossPer * contracts) {
+    return `no_room($${(perBook - committed).toFixed(0)})`
+  }
 
   const collateral = maxLossPer * contracts
   const positionId = `FLAME-${ticker}-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
@@ -3439,7 +3469,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // flow — 2-leg strikes, VIX > 18 gate, 10%-risk sizing, no sandbox order
   // placement. Delegates to tryOpenFlamePutSpread so this function keeps
   // handling only the IC bots (SPARK/INFERNO) with zero behavior change.
-  if (bot.name === 'flame') {
+  // SPARK and FLAME run the SAME strategy at different account tiers -- FLAME
+  // $2-5k at 1 contract, SPARK $10k+ at 2. A single book cannot deploy more than
+  // ~$5,000: with one trade per market per day, extra capital simply sits idle
+  // (measured: the same $9,215/yr whether the book is given $5,000 or $10,000).
+  // Two bots at different tiers is how the capital gets used, not two strategies.
+  if (bot.name === 'flame' || bot.name === 'spark') {
     return tryOpenFlamePutSpread(bot)
   }
 
