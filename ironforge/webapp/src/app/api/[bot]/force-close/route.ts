@@ -57,7 +57,7 @@ export async function POST(
        FROM ${botTable(bot, 'positions')}
        WHERE position_id = $1 AND status = 'open'
        LIMIT 1`,
-      [position_id, dte],
+      [position_id],
     )
 
     if (rows.length === 0) {
