@@ -33,20 +33,36 @@ SIGNAL_CONFIDENCE = {
     "double_floor": "low", "divergence": "low",
 }
 SIGNAL_BLURB = {
-    "backwardation": "VIX above VIX3M — stress is here. Vol historically mean-reverts down and SPY tends to recover; fade the spike.",
-    "ts_flattening": "Term structure flattening from contango. NOTE: this is a TAIL warning, not a "
-                     "direction call — it barely raises the odds of a vol spike (19.2% vs a 15.6% base "
-                     "rate) and VIX actually FALLS after it fires (-6.1% over 5d). What it does predict "
-                     "is a ~1.8x fatter next-day move. Cut short-premium size; do not buy puts to profit.",
+    # 2026-08-12 re-measure, per EPISODE and from the next session's OPEN. The
+    # previous text used per-DAY averages, which count the later days of a
+    # multi-session episode and inverted the ts_flattening sign (+0.36% over 355
+    # days vs -0.93% over 77 episodes).
+    "backwardation": "VIX above VIX3M — stress is here. NOT directional at any horizon "
+                     "once measured against SPY's own drift (best excess -0.26%, t -1.67). "
+                     "Its real content is the TAIL: the next-day move is 2.0x more likely "
+                     "to exceed 1.5%. Cut size; do not pick a side.",
+    "ts_flattening": "Term structure flattening from contango. This IS directional, but only "
+                     "over ~3 sessions: SPY runs -0.93% against its own base (t -3.89, 77 "
+                     "episodes), fading by day 5 and gone by day 10. Worth nothing intraday "
+                     "(t -0.06). Next-day tail is only 1.08x — the ~1.8x figure belongs to "
+                     "2-3 days, not tomorrow.",
     "exhaustion": "VIX made a new high but VVIX won't confirm — vol tends to fade and SPY bounces.",
     "double_floor": "VIX and VVIX both at the floor — complacent; vol drifts up slowly. Owning optionality is cheap.",
     "divergence": "VVIX elevated while VIX calm. NOTE: 20-yr study shows this is statistically noise — low confidence.",
 }
 
 # What each signal implies for the equity stance.
+#
+# 🚨 Corrected 2026-08-12 against per-episode, tradeable-open evidence. The prior
+# assignment had the two main signals the wrong way round: `backwardation` was
+# labelled directional when it is a pure tail signal (2.01x next-day, excess
+# t -1.67), and `ts_flattening` was labelled tail_risk when it is the only signal
+# with a real direction (-0.93% over 3 sessions, t -3.89) and a next-day tail of
+# just 1.08x. `_regime_label` must still return contango_flattening — the live
+# HEDGE_REGIMES keying off it is pinned by a regression test.
 SIGNAL_DIRECTION = {
-    "backwardation": "bullish", "exhaustion": "bullish",
-    "ts_flattening": "tail_risk", "double_floor": "neutral", "divergence": "bearish",
+    "backwardation": "tail_risk", "exhaustion": "tail_risk",
+    "ts_flattening": "bearish", "double_floor": "neutral", "divergence": "bearish",
 }
 # Plain-English firing condition, shown next to a "how close" gauge.
 SIGNAL_TRIGGER = {
@@ -156,6 +172,42 @@ def _primary_signal(signals: Dict[str, dict]) -> Optional[str]:
         if signals[k]["active"]: return k
     return None
 
+def _evidence_note(ev_k: dict) -> str:
+    """One line stating what the signal actually predicts, and over what window.
+
+    An alert with no horizon gets used at the wrong timescale — that is how a
+    3-session signal ended up driving a same-day short-premium trim. Every claim
+    here is per-EPISODE and measured from the next session's OPEN (the first
+    price reachable after a close-based signal), so it is what you could trade.
+    """
+    if not ev_k:
+        return ""
+    n = ev_k.get("n_episodes_gap5") or 0
+    if n < 15:
+        return f"Only {n} independent episodes — too few to draw a conclusion."
+    hz = ev_k.get("best_horizon")
+    t = ev_k.get("best_horizon_t") or 0.0
+    ex = ev_k.get("best_horizon_excess") or 0.0
+    # 🚨 `or 0.0` would be right for a missing key but WRONG for a measured 0.0,
+    # and 0.00 is the single most informative value here (double_floor has zero
+    # >=1.5% next-day moves across 56 episodes). Distinguish absent from zero.
+    tail = ((ev_k.get("horizons") or {}).get("1d") or {}).get("tail_lift")
+    parts = []
+    if ev_k.get("directional") and hz:
+        parts.append(
+            f"Directional over ~{hz}: SPY {ex * 100:+.2f}% vs its own base "
+            f"(t {t:+.2f}, {n} episodes).")
+    else:
+        parts.append(f"NOT directional at any horizon ({n} episodes).")
+    if tail is not None and tail >= 1.5:
+        parts.append(f"Next-day move is {tail:.2f}x more likely to exceed 1.5% - "
+                     f"this is a SIZING signal: cut size, do not pick a side.")
+    elif tail is not None and tail < 0.5:
+        parts.append(f"Next-day tail is {tail:.2f}x base - unusually CALM; "
+                     f"this is the safest state for selling premium.")
+    return " ".join(parts)
+
+
 def compute_report(signals: Dict[str, dict], curve: dict, evidence: dict) -> dict:
     rec = build_recommendation(signals)
     primary = _primary_signal(signals)
@@ -178,7 +230,22 @@ def compute_report(signals: Dict[str, dict], curve: dict, evidence: dict) -> dic
     }
     # attach per-signal hit_rate for the signals panel
     for k, s in signals.items():
-        s["hit_rate"] = (evidence.get("signals", {}) or {}).get(k, {}).get("hit_rate")
+        ev_k = (evidence.get("signals", {}) or {}).get(k, {})
+        s["hit_rate"] = ev_k.get("hit_rate")
+        # Horizon + direction come FROM the measured evidence, never hardcoded.
+        # The hardcoded strings drifted twice: ts_flattening shipped "buy puts"
+        # against its own evidence, and then shipped a "~1.8x fatter next-day
+        # move" that belongs to 2-3 SESSIONS (next-day lift is 1.08). Reading the
+        # numbers means a re-measure updates the UI instead of silently
+        # disagreeing with it.
+        s["horizon"] = ev_k.get("best_horizon")
+        s["horizon_excess"] = ev_k.get("best_horizon_excess")
+        s["horizon_t"] = ev_k.get("best_horizon_t")
+        s["is_directional"] = ev_k.get("directional")
+        h1 = (ev_k.get("horizons") or {}).get("1d") or {}
+        s["tail_lift_1d"] = h1.get("tail_lift")
+        s["n_episodes"] = ev_k.get("n_episodes_gap5")
+        s["evidence_note"] = _evidence_note(ev_k)
     return {
         "regime_label": _regime_label(signals),
         "recommendation": rec,
