@@ -147,7 +147,12 @@ def _z(cur: float, hist: list[float]) -> float | None:
 
 
 def _snap_valid(captured_at: datetime) -> bool:
-    """A snapshot is only the 10:00 figure if captured inside the window."""
+    """A snapshot is only the 10:00 figure if captured inside the window.
+
+    captured_at is stored CT-naive going forward. Rows written before the
+    2026-08-12 fix round-tripped as naive UTC; none of those fall in the CT
+    window (the one legacy row is 23:18), so a plain CT check is also correct
+    for legacy data."""
     t = (captured_at.hour, captured_at.minute)
     return SNAPSHOT_CT <= t <= SNAPSHOT_WINDOW_END_CT
 
@@ -210,7 +215,12 @@ async def _capture_snapshot(request: Request) -> dict | None:
                             otm0 += v
                     else:
                         putv += v
-            row = RiskFlowSnapshot(d=today, captured_at=datetime.now(CT),
+            # Store CT-NAIVE. An aware datetime round-trips through Postgres
+            # as naive UTC (observed: an 18:18 CT capture read back as 23:18),
+            # which would make the CT-window check reject every legitimate
+            # capture too. Naive-CT in, naive-CT out.
+            row = RiskFlowSnapshot(d=today,
+                                   captured_at=datetime.now(CT).replace(tzinfo=None),
                                    callv=callv, putv=putv, totv=callv + putv,
                                    otm_call_0dte=otm0, spot=spot)
             db.add(row)
