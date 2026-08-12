@@ -23,14 +23,77 @@ def _load_spy():
     s = pd.Series(r["indicators"]["adjclose"][0]["adjclose"], index=ts, name="spy").dropna()
     return s[~s.index.duplicated(keep="last")]
 
+
+def _load_spy_open():
+    """SPY OPEN on the ADJUSTED scale.
+
+    The signal is computed FROM a session's close, so the earliest you can act is
+    the next open. Scoring from the close silently credits you with the overnight
+    gap, which for ts_flattening averages +0.24% (t 2.03) against a +0.033% base
+    — 7x normal, and entirely uncapturable.
+
+    `open` is raw while `adjclose` is dividend/split adjusted, so the open must be
+    put on the adjusted scale (factor = adjclose/close) before any ratio is taken.
+    Mixing the two scales produces impossible numbers (a -13% mean intraday move
+    and a 1.4% "SPY up" base rate, observed 2026-08-12).
+    """
+    with open(os.path.join(DATA, "SPY_raw.json")) as f:
+        j = json.load(f)
+    r = j["chart"]["result"][0]
+    ts = pd.to_datetime(r["timestamp"], unit="s").normalize()
+    q = r["indicators"]["quote"][0]
+    adj = pd.Series(r["indicators"]["adjclose"][0]["adjclose"], index=ts)
+    close = pd.Series(q["close"], index=ts)
+    opn = pd.Series(q["open"], index=ts)
+    s = (opn * (adj / close)).rename("spy_open").dropna()
+    return s[~s.index.duplicated(keep="last")]
+
+
+# Quiet sessions required before a re-fire counts as a NEW event. These signals
+# persist for days; a run broken by one quiet session is the same episode, not
+# two. 5 was chosen to match the ~4.6-session mean run length.
+EPISODE_GAP = 5
+
+# Horizon decay profile. A signal with no horizon attached gets used at the wrong
+# timescale: ts_flattening is worth nothing intraday (t 0.10), peaks at 3 sessions
+# and is dead by 10, while backwardation is a 1-day TAIL signal that turns
+# bullish only over 20-60 sessions.
+HORIZON_DAYS = [1, 2, 3, 5, 10, 20, 60]
+BIG_MOVE = 0.015
+
+
+def episode_starts(mask):
+    """Index positions of the FIRST firing day of each independent episode.
+
+    🚨 This is the estimator that matters. Averaging over every firing day counts
+    the LATER days of an episode — days conditioned on the episode having already
+    run, when the market is typically bouncing. For ts_flattening that inverts the
+    sign of the 5d SPY mean: +0.36% over 355 days vs -0.44% over 77 episodes.
+    """
+    idx = np.flatnonzero(np.asarray(mask.fillna(False).values, dtype=bool))
+    if idx.size == 0:
+        return idx
+    starts = [idx[0]]
+    for a, b in zip(idx[:-1], idx[1:]):
+        if b - a > EPISODE_GAP:
+            starts.append(b)
+    return np.array(starts)
+
+
+def _t(series):
+    s = pd.Series(series).dropna()
+    if len(s) < 5 or s.std(ddof=1) == 0:
+        return 0.0
+    return float(s.mean() / (s.std(ddof=1) / np.sqrt(len(s))))
+
 def _z(s, w=60):
     return (s - s.rolling(w).mean()) / s.rolling(w).std()
 
 def build():
     vix = _load_cboe("VIX", "vix"); vvix = _load_cboe("VVIX", "vvix")
     vix3m = _load_cboe("VIX3M", "vix3m"); vix9d = _load_cboe("VIX9D", "vix9d")
-    spy = _load_spy()
-    df = pd.concat([vix, vvix, vix3m, vix9d, spy], axis=1)
+    spy = _load_spy(); spy_open = _load_spy_open()
+    df = pd.concat([vix, vvix, vix3m, vix9d, spy, spy_open], axis=1)
     df = df[df.index >= "2006-03-06"].copy()
     df["spy"] = df["spy"].ffill()
     df = df.dropna(subset=["vix", "vvix"])
@@ -44,6 +107,14 @@ def build():
         df[f"vix_fwd{k}"] = df.vix.shift(-k) / df.vix - 1.0
         df[f"vix_fwdmax{k}"] = df.vix.shift(-1).rolling(k).max().shift(-(k-1)) / df.vix - 1.0
         df[f"spy_fwd{k}"] = df.spy.shift(-k) / df.spy - 1.0
+
+    # TRADEABLE returns: entry at the NEXT session's open (the signal is built
+    # from this session's close, so that open is the first reachable price).
+    df["spy_entry"] = df.spy_open.shift(-1)
+    df["spy_gap"] = df.spy_entry / df.spy - 1.0          # the uncapturable piece
+    df["spy_op_intraday"] = df.spy.shift(-1) / df.spy_entry - 1.0
+    for k in HORIZON_DAYS:
+        df[f"spy_op{k}"] = df.spy.shift(-k) / df.spy_entry - 1.0
 
     signals = {
         "backwardation": df.ts_3m > 1.0,
@@ -126,6 +197,83 @@ def build():
             "timing_p75": p75, "timing_cdf": cdf, "suggested_dte": suggested_dte,
             "event_landed_rate": float(len(landed_days)/total) if total else 0.0,
         }
+
+        # ---------------- corrected, episode-based, tradeable-entry ------------
+        # Everything above this line is kept only for backward compatibility with
+        # consumers already reading those keys. These are the estimates to trust.
+        ep = episode_starts(m)
+        esel = df.iloc[ep] if len(ep) else df.iloc[[]]
+        rec = out["signals"][key]
+        rec["n_episodes_gap5"] = int(len(ep))
+        rec["episode_gap"] = EPISODE_GAP
+        rec["gap_overnight_mean"] = float(esel.spy_gap.mean()) if len(ep) else 0.0
+        rec["gap_overnight_t"] = _t(esel.spy_gap) if len(ep) else 0.0
+
+        horizons = {}
+        cols = [("intraday", "spy_op_intraday")] + [(f"{k}d", f"spy_op{k}") for k in HORIZON_DAYS]
+        for label, col in cols:
+            s_on = esel[col].dropna() if len(ep) else pd.Series(dtype=float)
+            s_all = df[col].dropna()
+            if len(s_on) < 10 or s_all.empty:
+                continue
+            base_up = float((s_all > 0).mean())
+            up = float((s_on > 0).mean())
+            big = float((s_on.abs() >= BIG_MOVE).mean())
+            big_base = float((s_all.abs() >= BIG_MOVE).mean())
+            # 🚨 t must be on the EXCESS over the unconditional mean, not on the
+            # raw mean. SPY drifts up over long horizons no matter what fired, so
+            # a raw-mean t picks 60d for every signal (+3.65%, t 4.81) when its
+            # up_lift is 1.07 — that is beta, not edge. Same failure mode as a
+            # hit rate quoted without its base rate.
+            se = np.sqrt(s_on.var(ddof=1) / len(s_on) + s_all.var(ddof=1) / len(s_all))
+            excess = float(s_on.mean() - s_all.mean())
+            t_excess = float(excess / se) if se else 0.0
+            horizons[label] = {
+                "mean": float(s_on.mean()), "mean_base": float(s_all.mean()),
+                "excess": excess, "t": t_excess, "t_raw": _t(s_on),
+                "n": int(len(s_on)),
+                "up_rate": up, "up_base": base_up,
+                "up_lift": float(up / base_up) if base_up else 0.0,
+                "tail_rate": big, "tail_base": big_base,
+                "tail_lift": float(big / big_base) if big_base else 0.0,
+            }
+        rec["horizons"] = horizons
+        # The horizon with the largest EXCESS t — what the alert should quote.
+        if horizons:
+            best = max(horizons.items(), key=lambda kv: abs(kv[1]["t"]))
+            rec["best_horizon"] = best[0]
+            rec["best_horizon_t"] = best[1]["t"]
+            rec["best_horizon_mean"] = best[1]["mean"]
+            rec["best_horizon_excess"] = best[1]["excess"]
+            rec["directional"] = bool(abs(best[1]["t"]) >= 2.0)
+        else:
+            rec["best_horizon"] = None
+            rec["best_horizon_t"] = 0.0
+            rec["best_horizon_mean"] = 0.0
+            rec["directional"] = False
+
+        # Decay watch: is the edge still there in the most recent third? A signal
+        # that worked 2009-2019 and stopped should be flagged, not silently kept.
+        stab = {}
+        if len(ep) >= 15 and rec["best_horizon"]:
+            bcol = ("spy_op_intraday" if rec["best_horizon"] == "intraday"
+                    else f"spy_op{rec['best_horizon'][:-1]}")
+            # Excess-based, to match how best_horizon is chosen. At 1-3 sessions
+            # the unconditional drift is tiny so this barely moves the number, but
+            # a stability check that disagrees with the selection criterion is
+            # just a second chance to fool yourself.
+            for lo, hi in ((2009, 2015), (2016, 2020), (2021, 2030)):
+                w = esel[(esel.index.year >= lo) & (esel.index.year <= hi)][bcol].dropna()
+                if len(w) < 5:
+                    continue
+                allw = df[(df.index.year >= lo) & (df.index.year <= hi)][bcol].dropna()
+                se = np.sqrt(w.var(ddof=1) / len(w) + allw.var(ddof=1) / len(allw)) \
+                    if len(allw) > 1 else 0.0
+                ex = float(w.mean() - allw.mean()) if len(allw) else float(w.mean())
+                stab[f"{lo}_{hi}"] = {"n": int(len(w)), "mean": float(w.mean()),
+                                      "excess": ex,
+                                      "t": float(ex / se) if se else 0.0}
+        rec["stability"] = stab
     with open(os.path.join(HERE, "evidence.json"), "w") as f:
         json.dump(out, f, indent=2)
     return out

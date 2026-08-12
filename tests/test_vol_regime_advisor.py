@@ -125,7 +125,12 @@ def test_signals_carry_direction_trigger_and_proximity():
     df.iloc[-1, df.columns.get_loc("vix3m")] = 20.0  # backwardation: 25/20 = 1.25
     sigs = compute_signals(df)
     b = sigs["backwardation"]
-    assert b["direction"] == "bullish"
+    # Corrected 2026-08-12: backwardation has NO directional edge at any horizon
+    # once measured per-episode against SPY's own drift (best excess -0.26%,
+    # t -1.67). Its content is the next-day TAIL (2.01x). The old "bullish" label
+    # came from a raw 60d mean of +3.93% — but SPY drifts +2.86% over any 60 days,
+    # so the excess is +1.07% at t 1.31, i.e. beta read as edge.
+    assert b["direction"] == "tail_risk"
     assert "VIX > VIX3M" in b["trigger_text"]
     assert "VIX/VIX3M" in b["current_text"]
     assert b["proximity"] == 1.0            # 1.25 clamped to 1.0 (firing)
@@ -244,3 +249,22 @@ def test_elevation_never_raises_on_empty():
     w = compute_elevation_watch({}, _sig_prox(), {})
     assert w["level"] in ("CALM", "WATCH", "ELEVATED", "HIGH")
     assert isinstance(w["score"], int)
+
+
+def test_direction_never_gates_whether_a_signal_is_watched():
+    """Regression for the 2026-08-07 silent outage.
+
+    PR #2764 relabelled ts_flattening 'bearish' -> 'tail_risk'. scanner.ts then
+    filtered activeKeys on `dir === 'bullish' || dir === 'bearish'`, so the signal
+    silently stopped alerting for five days. Membership must come from
+    ALERTING_SIGNAL_KEYS; `direction` only describes meaning.
+
+    This pins the Python side: every alerting signal may carry ANY direction value
+    without that implying it should be dropped.
+    """
+    from core.vol_regime_advisor import SIGNAL_DIRECTION
+    alerting = {"backwardation", "exhaustion", "ts_flattening"}
+    assert alerting <= set(SIGNAL_DIRECTION), "alerting key missing a direction"
+    # At least one alerting signal is deliberately non-bullish/bearish — if that
+    # is ever untrue the outage mode becomes invisible again.
+    assert any(SIGNAL_DIRECTION[k] not in ("bullish", "bearish") for k in alerting)

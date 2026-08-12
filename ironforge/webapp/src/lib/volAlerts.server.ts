@@ -134,6 +134,14 @@ export async function ensureSignalLadderTables(): Promise<void> {
       updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `)
+  // Episode bookkeeping. These signals persist for DAYS — 355 ts_flattening
+  // firing days are only 77 independent episodes, ~4.6 sessions each. A 60-minute
+  // cooldown therefore re-pings you repeatedly inside ONE event. `last_active_at`
+  // lets us tell "still the same episode" from "genuinely fired again".
+  await dbExecute(
+    `ALTER TABLE vol_signal_state ADD COLUMN IF NOT EXISTS last_active_at TIMESTAMPTZ`)
+  await dbExecute(
+    `ALTER TABLE vol_signal_state ADD COLUMN IF NOT EXISTS episode_started_at TIMESTAMPTZ`)
   await dbExecute(`
     CREATE TABLE IF NOT EXISTS vol_signal_events (
       id           SERIAL PRIMARY KEY,
@@ -241,4 +249,36 @@ export async function markNotifiedIfDue(
     [signalKey, toState, Math.max(0, Math.floor(cooldownMin))],
   )
   return rows.length > 0
+}
+
+/** Calendar days of quiet before a re-fire counts as a NEW episode.
+ *  EPISODE_GAP in build_evidence.py is 5 TRADING sessions; 7 calendar days is the
+ *  same thing allowing for a weekend. Keep the two in step — every per-episode
+ *  statistic the alert quotes is measured with that gap. */
+export const EPISODE_GAP_DAYS = 7
+
+/**
+ * Refresh episode bookkeeping for a signal that is CURRENTLY active, and report
+ * whether this read begins a new episode.
+ *
+ * Why this exists: `markNotifiedIfDue` suppresses by wall-clock minutes, but these
+ * signals last days. Inside one 4.6-session episode the ladder can legitimately
+ * move confirmed → resolved → confirmed, and each state CHANGE bypasses the
+ * minute cooldown entirely (`last_notify_state IS DISTINCT FROM`), so one market
+ * event produces a stream of pings. Gating the high-priority send on "is this a
+ * new episode" collapses that to one alert per actual event.
+ */
+export async function touchEpisode(signalKey: string): Promise<boolean> {
+  const rows = await query<{ is_new: boolean }>(
+    `UPDATE vol_signal_state
+        SET episode_started_at = CASE
+              WHEN last_active_at IS NULL
+                OR last_active_at < NOW() - make_interval(days => $2::int)
+              THEN NOW() ELSE episode_started_at END,
+            last_active_at = NOW()
+      WHERE signal_key = $1
+      RETURNING (episode_started_at = last_active_at) AS is_new`,
+    [signalKey, EPISODE_GAP_DAYS],
+  )
+  return rows.length > 0 ? Boolean(rows[0].is_new) : true
 }

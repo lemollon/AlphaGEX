@@ -73,7 +73,7 @@ import {
 } from './tradier'
 import { getTvMarketStructure, type TvMarketStructure } from './gex/trading-volatility-client'
 import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, classifySignalState, notifyDecision, type SignalStreak } from './volAlerts'
-import { ensureVolAlertsTable, upsertRegimeDaily, recordLadderTransitions, markNotifiedIfDue, type SignalRead } from './volAlerts.server'
+import { ensureVolAlertsTable, upsertRegimeDaily, recordLadderTransitions, markNotifiedIfDue, touchEpisode, type SignalRead } from './volAlerts.server'
 import { sendVolAlertEmail } from './email'
 import { sendVolAlertSms } from './sms'
 import { drainAttioSyncQueue, isAttioConfigured } from './attio'
@@ -6992,13 +6992,20 @@ async function checkVolAlerts(): Promise<void> {
     const report = payload?.report
     const signals: Record<string, any> = report?.signals || {}
 
-    // Currently-active DIRECTIONAL alerting keys (excludes divergence/double_floor).
+    // Currently-active alerting keys (excludes divergence/double_floor).
+    //
+    // 🚨 The membership test is ALERTING_SIGNAL_KEYS, never the `direction` string.
+    // Gating on direction meant a relabel silently disarmed a live alert: PR #2764
+    // (2026-08-07) changed ts_flattening's direction 'bearish' -> 'tail_risk' to
+    // fix a mislabel, and because 'tail_risk' is neither 'bullish' nor 'bearish'
+    // the signal dropped out of activeKeys and stopped alerting entirely for five
+    // days — taking the ts_flattening early-warning branch in notifyDecision with
+    // it. `direction` describes what a signal MEANS; it must never decide whether
+    // the signal is watched. A regression test pins this.
     const activeKeys: string[] = Object.entries(signals)
       .filter(([key, sig]) => {
         if (!sig || !sig.active) return false
-        if (!isAlertingKey(key)) return false
-        const dir = sig.direction
-        return dir === 'bullish' || dir === 'bearish'
+        return isAlertingKey(key)
       })
       .map(([key]) => key)
 
@@ -7089,6 +7096,18 @@ async function checkVolAlerts(): Promise<void> {
         const verdict = notifyDecision(t, { earlyWarnTsFlattening: earlyWarn })
         console.log(`[scanner] vol-ladder ${t.signalKey} ${t.from}->${t.to}${verdict.notify ? ` (notify:${verdict.reason})` : ''}`)
         if (!verdict.notify) continue
+        // Episode gate. These signals persist for DAYS — 355 ts_flattening firing
+        // days are only 77 independent episodes (~4.6 sessions each). Inside ONE
+        // episode the ladder legitimately moves confirmed→resolved→confirmed, and
+        // each state CHANGE bypasses the minute cooldown outright (the cooldown
+        // only suppresses a repeat of the SAME state), so a single market event
+        // produced a stream of pings. Re-alert only when the signal genuinely
+        // went quiet for a full episode gap.
+        const newEpisode = await touchEpisode(t.signalKey)
+        if (!newEpisode && t.to !== 'confirmed') {
+          console.log(`[scanner] vol-ladder ${t.signalKey} ${t.to} suppressed (same episode)`)
+          continue
+        }
         // Cooldown so a tripped↔watch flap can't re-send the same state inside 60m.
         if (!(await markNotifiedIfDue(t.signalKey, t.to, VOL_NOTIFY_COOLDOWN_MIN))) continue
         const sig = signals[t.signalKey] || {}
