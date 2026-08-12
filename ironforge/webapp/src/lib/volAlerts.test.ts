@@ -37,7 +37,11 @@ describe('isAlertingKey', () => {
   })
   it('excludes divergence (low-confidence) and double_floor (neutral)', () => {
     expect(isAlertingKey('divergence')).toBe(false)
-    expect(isAlertingKey('double_floor')).toBe(false)
+    // double_floor IS tracked as of 2026-08-12 — it has the cleanest evidence in
+    // the set (0.00x next-day tail across 56 episodes vs an 8.4% base). It was
+    // excluded for being directionally neutral, which it is and which was never
+    // the point. It is tracked but never pushed; see notifyDecision.
+    expect(isAlertingKey('double_floor')).toBe(true)
     expect(isAlertingKey('nonsense')).toBe(false)
   })
 })

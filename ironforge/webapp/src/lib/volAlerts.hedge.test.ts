@@ -5,6 +5,8 @@ import {
   debouncedTransitions,
   VVIX_STRESS,
   ALERTING_SIGNAL_KEYS,
+  isAlertingKey,
+  notifyDecision,
 } from './volAlerts'
 
 describe('hedgeFlagged (daily hedge trigger)', () => {
@@ -64,5 +66,32 @@ describe('debounce (stepStreaks + debouncedTransitions)', () => {
     let s: Record<string, { active: number; inactive: number }> = {}
     for (let i = 0; i < 3; i++) s = stepStreaks(s, [], keys) // 3 inactive
     expect(debouncedTransitions(s, ['ts_flattening']).toResolve).toContain('ts_flattening')
+  })
+})
+
+
+describe('double_floor: tracked but never pushed', () => {
+  it('is on the ladder', () => {
+    expect(ALERTING_SIGNAL_KEYS).toContain('double_floor')
+    expect(isAlertingKey('double_floor')).toBe(true)
+  })
+
+  it('never notifies, even on confirm', () => {
+    // A CALM reading (0.00x next-day tail across 56 episodes), not an event.
+    // Pushing it would dilute the channel carrying the real tail warnings.
+    for (const to of ['watch', 'tripped', 'confirmed'] as const) {
+      const v = notifyDecision({ signalKey: 'double_floor', from: 'idle', to } as never)
+      expect(v.notify).toBe(false)
+      expect(v.reason).toBe('calm-ui-only')
+    }
+  })
+
+  it('does not suppress the other signals', () => {
+    const v = notifyDecision({ signalKey: 'backwardation', from: 'tripped', to: 'confirmed' } as never)
+    expect(v.notify).toBe(true)
+  })
+
+  it('divergence stays off the ladder (20yr study: noise)', () => {
+    expect(isAlertingKey('divergence')).toBe(false)
   })
 })
