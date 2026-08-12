@@ -6,7 +6,7 @@
 // All spacing inline (Tailwind p-*/m-* are zeroed app-wide).
 import { useEffect, useState } from 'react';
 import {
-  ResponsiveContainer, ComposedChart, Line, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, ComposedChart, Line, XAxis, YAxis, Tooltip, Legend,
   ReferenceLine, ReferenceArea,
 } from 'recharts';
 import { ShieldAlert, ShieldCheck, Activity, Eye, Target, TrendingUp } from 'lucide-react';
@@ -24,6 +24,24 @@ const S = {
   small: { fontSize: 11, color: DIM },
   big: { fontSize: 20, fontWeight: 700 },
 };
+
+function InfoTip({ text }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span style={{ position: 'relative', display: 'inline-block', marginLeft: 6 }}
+          onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <span style={{ cursor: 'help', color: DIM, fontSize: 11, border: `1px solid ${DIM}66`,
+                     borderRadius: '50%', width: 14, height: 14, display: 'inline-flex',
+                     alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle' }}>i</span>
+      {open && (
+        <span style={{ position: 'absolute', zIndex: 30, top: 18, left: -8, width: 290,
+                       background: '#0e1220', border: '1px solid #2a3145', borderRadius: 8,
+                       padding: '10px 12px', fontSize: 12, lineHeight: 1.55, color: '#c6cbd8',
+                       fontWeight: 400, boxShadow: '0 6px 20px rgba(0,0,0,.5)' }}>{text}</span>
+      )}
+    </span>
+  );
+}
 
 function pct(x, d = 1) { return x == null ? '—' : (100 * x).toFixed(d) + '%'; }
 
@@ -47,19 +65,21 @@ export default function RiskAdvisorPage() {
   const [state, setState] = useState(null);
   const [hist, setHist] = useState([]);
   const [score, setScore] = useState(null);
+  const [intra, setIntra] = useState(null);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
     let live = true;
     const load = async () => {
       try {
-        const [s, h, sc] = await Promise.all([
+        const [s, h, sc, ia] = await Promise.all([
           fetch(`${API_URL}/api/spreadworks/risk-advisor/state`).then(r => r.json()),
           fetch(`${API_URL}/api/spreadworks/risk-advisor/history?days=90`).then(r => r.json()),
           fetch(`${API_URL}/api/spreadworks/risk-advisor/scorecard`).then(r => r.json()),
+          fetch(`${API_URL}/api/spreadworks/risk-advisor/intraday`).then(r => r.json()),
         ]);
         if (!live) return;
-        setState(s); setScore(sc);
+        setState(s); setScore(sc); setIntra(ia);
         setHist((h.days || []).map(d => ({
           ...d, label: d.d.slice(5),
           spike: (d.putv_z > 2 || d.totv_z > 2) ? Math.max(d.putv_z, d.totv_z) : null,
@@ -108,16 +128,27 @@ export default function RiskAdvisorPage() {
       <div style={S.wrap}>
         <h1 style={S.h1}>Risk Advisor</h1>
         <p style={S.sub}>
-          Advisory only — no bot reads this. Every signal here was backtested and
-          pre-registered (2026-08-12); the scorecard below grades the tool against
-          its own claims, live. Refreshes every minute.
+          Advisory only — no bot reads this. Every signal was backtested and pre-registered
+          (2026-08-12); the scorecard grades the tool against its own claims, live.
         </p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '0 0 20px' }}>
+          {[['page refresh', 'every 60s'], ['index closes', 'daily, cached 30 min'],
+            ['flow snapshot', 'once/day 10:00–10:35 CT'], ['intraday bars', '5-min, live'],
+            ['Discord alerts', '08:05 & 10:06 CT']].map(([k, v]) => (
+            <span key={k} style={{ fontSize: 11, color: DIM, border: '1px solid #232a3d',
+                                   borderRadius: 6, padding: '3px 8px' }}>
+              <b style={{ color: '#c6cbd8' }}>{k}</b> · {v}
+            </span>
+          ))}
+        </div>
 
         {/* 1 ─ VERDICT */}
         <div style={{ ...S.card, borderColor: headColor + '55', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
           <HeadIcon size={30} color={headColor} style={{ flexShrink: 0, marginTop: 2 }} />
           <div>
-            <div style={{ fontSize: 17, fontWeight: 700, color: headColor }}>{verdict}</div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: headColor }}>{verdict}
+              <InfoTip text="The one-line answer for today, from yesterday's closes. RISK-OFF = a backtested danger signal is active — follow the playbook table. CALM FLOOR = statistically the safest premium-selling state. NORMAL = no signal, trade normal size. Recomputed on every refresh; the underlying index closes update once per day after the close." />
+            </div>
             <div style={{ ...S.small, marginTop: 4 }}>
               As of close {state.asof_close} · VIX {state.indices?.vix?.toFixed(1)} ·
               VIX1D {state.indices?.vix1d?.toFixed(1)} · VIX9D {state.indices?.vix9d?.toFixed(1)} ·
@@ -128,7 +159,9 @@ export default function RiskAdvisorPage() {
 
         {/* 2 ─ PLAYBOOK: what to do right now */}
         <div style={S.card}>
-          <div style={S.cardTitle}><Target size={13} style={{ verticalAlign: -2 }} /> What to do right now</div>
+          <div style={S.cardTitle}><Target size={13} style={{ verticalAlign: -2 }} /> What to do right now
+            <InfoTip text="Each row is one validated signal. ACTIVE rows are lit — do what the action column says. The last column is the backtested evidence for WHY. SHARP/DEGRADED chips are the tool grading itself live: DEGRADED means live results fell below the backtest band and the signal should not be trusted until re-validated." />
+          </div>
           <table style={{ borderCollapse: 'collapse', width: '100%' }}>
             <thead><tr>
               <th style={S.th}>signal</th><th style={S.th}>state</th>
@@ -172,7 +205,9 @@ export default function RiskAdvisorPage() {
         {/* 3 ─ LIVE INTRADAY */}
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
           <div style={{ ...S.card, flex: '1 1 300px' }}>
-            <div style={S.cardTitle}><Activity size={13} style={{ verticalAlign: -2 }} /> Live intraday</div>
+            <div style={S.cardTitle}><Activity size={13} style={{ verticalAlign: -2 }} /> Live intraday
+              <InfoTip text="Live SPY vs what options implied for today. The bar fills as today's |move| consumes the VIX1D-implied expected move — past 100% the day is already bigger than options priced. Quote refreshes every 60s during market hours." />
+            </div>
             {liveQ ? (<>
               <div style={S.big}>
                 SPY {liveQ.last?.toFixed(2)}{' '}
@@ -199,7 +234,9 @@ export default function RiskAdvisorPage() {
 
           {/* 4 ─ FORWARD OUTLOOK */}
           <div style={{ ...S.card, flex: '1 1 300px' }}>
-            <div style={S.cardTitle}><TrendingUp size={13} style={{ verticalAlign: -2 }} /> Next-session outlook</div>
+            <div style={S.cardTitle}><TrendingUp size={13} style={{ verticalAlign: -2 }} /> Next-session outlook
+              <InfoTip text="Tomorrow's plan, recomputed after each close. Probabilities are calibrated (Albers RVRP adjustment): P(±1% day) is the headline. The grade maps probability to action: normal → reduce size → hedge → stand down." />
+            </div>
             {out ? (<>
               <div style={{ fontSize: 14, marginBottom: 8 }}>
                 Grade: <b style={{ color: out.grade === 'normal' ? GREEN : out.grade === 'reduce_size' ? AMBER : RED }}>
@@ -223,9 +260,45 @@ export default function RiskAdvisorPage() {
           </div>
         </div>
 
+        {/* INTRADAY CHART: today's tape vs the expected move */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>Today's tape vs the expected move
+            <InfoTip text="Today's SPY 5-minute path vs the VIX1D expected-move band (grey). Price escaping the band = an outsized day in progress. The dashed vertical line marks the 10:00 CT flow snapshot — the one moment each day the flow-spike signal reads. Updates every minute." />
+          </div>
+          {intra?.bars?.length ? (() => {
+            const b = intra.band_pct || 1;
+            const ext = Math.max(b * 1.3, ...intra.bars.map(x => Math.abs(x.chg_pct ?? 0) * 1.1));
+            const hasSnap = intra.bars.some(x => x.t <= '10:00');
+            return (
+              <div style={{ width: '100%', height: 220 }}>
+                <ResponsiveContainer>
+                  <ComposedChart data={intra.bars} margin={{ top: 6, right: 12, left: -18, bottom: 0 }}>
+                    {intra.band_pct != null && (
+                      <ReferenceArea y1={-b} y2={b} fill={AMBER} fillOpacity={0.05} />
+                    )}
+                    <XAxis dataKey="t" tick={{ fontSize: 10, fill: '#5b6478' }} interval="preserveStartEnd" minTickGap={40} />
+                    <YAxis domain={[-ext, ext]} tick={{ fontSize: 10, fill: '#5b6478' }} />
+                    <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <ReferenceLine y={0} stroke="#232a3d" />
+                    {intra.band_pct != null && (<>
+                      <ReferenceLine y={b} stroke={AMBER} strokeDasharray="4 4" />
+                      <ReferenceLine y={-b} stroke={AMBER} strokeDasharray="4 4" />
+                    </>)}
+                    {hasSnap && <ReferenceLine x="10:00" stroke={DIM} strokeDasharray="3 3" />}
+                    <Line dataKey="chg_pct" name="SPY % vs prev close" stroke={BLUE} dot={false} strokeWidth={1.8} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            );
+          })() : <div style={S.small}>{intra?.status || 'no intraday data yet — bars appear after the 8:30 CT open'}</div>}
+        </div>
+
         {/* 5 ─ SCORECARD: the tool grading itself */}
         <div style={S.card}>
-          <div style={S.cardTitle}>Scorecard — is it performing like the backtest said it would?</div>
+          <div style={S.cardTitle}>Scorecard — is it performing like the backtest said it would?
+            <InfoTip text="The tool grading itself. 'Live' columns are computed from actual sessions since deployment vs the 'backtest said' columns — if live drifts materially below backtest, the health rules mark the signal DEGRADED automatically. The tile strip shows the last 20 sessions day by day." />
+          </div>
           {score ? (<>
             <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 10 }}>
               <thead><tr>
@@ -271,7 +344,9 @@ export default function RiskAdvisorPage() {
 
         {/* 6 ─ FLOW RIBBON */}
         <div style={S.card}>
-          <div style={S.cardTitle}>10:00 CT flow z-scores — trailing 90 sessions</div>
+          <div style={S.cardTitle}>10:00 CT flow z-scores — trailing 90 sessions
+            <InfoTip text="How unusual today's 10:00 CT option volume is vs the trailing 63 sessions, in z-scores (0 = normal, 2+ = spike). Red = put volume, amber = total volume, green = 0DTE OTM call volume (the squeeze tell). Shaded bands = quiet-VIX regimes where daily signals are blind — exactly where the flow signal earns its keep. One point per session; today's point appears after the 10:00 snapshot." />
+          </div>
           <div style={{ ...S.small, marginBottom: 10 }}>
             Shaded = quiet-VIX sessions (the trap regime, where daily signals are blind). Dots = spike days (z&gt;2).
           </div>
@@ -284,12 +359,13 @@ export default function RiskAdvisorPage() {
                 <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#5b6478' }} interval="preserveStartEnd" minTickGap={40} />
                 <YAxis tick={{ fontSize: 10, fill: '#5b6478' }} domain={[-3, 5]} />
                 <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
                 <ReferenceLine y={2} stroke={RED} strokeDasharray="4 4" />
                 <ReferenceLine y={0} stroke="#232a3d" />
                 <Line dataKey="putv_z" name="put vol z" stroke={RED} dot={false} strokeWidth={1.5} />
                 <Line dataKey="totv_z" name="total vol z" stroke={AMBER} dot={false} strokeWidth={1.2} />
                 <Line dataKey="otm_call_0dte_z" name="0DTE OTM call z" stroke={GREEN} dot={false} strokeWidth={1.2} />
-                <Line dataKey="spike" name="spike" stroke="none" dot={{ r: 4, fill: RED }} />
+                <Line dataKey="spike" name="spike" stroke="none" dot={{ r: 4, fill: RED }} legendType="none" />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
@@ -297,13 +373,15 @@ export default function RiskAdvisorPage() {
 
         {/* 7 ─ HOW TO USE / ALERT PLAYBOOK */}
         <div style={S.card}>
-          <div style={S.cardTitle}>How to use this page — and the alerts it will drive</div>
+          <div style={S.cardTitle}>How to use this page — and the alerts it will drive
+            <InfoTip text="Read top to bottom once; after that, the verdict + alerts are all you need day to day." />
+          </div>
           <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.7 }}>
             <li><b>Check the verdict each morning before 8:30 CT.</b> It already includes yesterday's closes. RISK-OFF → apply the actions in the playbook table for whichever signals are active.</li>
             <li><b>At ~10:05 CT the flow signal arrives.</b> A spike (z&gt;2) means same-day danger — it fires on ~6% of days and more than doubles big-move odds. It applies to same-day (0DTE) exposure, NOT to multi-day positions.</li>
             <li><b>The outlook card is tomorrow's plan.</b> After the close it updates; its grade (normal / reduce / hedge / stand down) uses calibrated probabilities.</li>
             <li><b>Trust the scorecard, not the promises.</b> If live precision/recall drifts materially below the backtest column for a sustained window, the signal is decaying and we revisit — that is the deal.</li>
-            <li><b>Alerts to be wired</b> (same channels as the vol ladder — Discord/ntfy): RISK-OFF on morning verdict; flow spike within 5 min of the 10:00 snapshot; CALM FLOOR as a quiet daily note, never a push.</li>
+            <li><b>Alerts are live (Discord):</b> RISK-OFF morning verdict at 08:05 CT (@here), flow spike at ~10:06 CT (@here), calm floor as a quiet note. Silence at 08:05 means NORMAL — no news is the default.</li>
           </ol>
         </div>
 
@@ -311,6 +389,7 @@ export default function RiskAdvisorPage() {
         <div style={S.card}>
           <div style={S.cardTitle}>
             <Eye size={13} style={{ verticalAlign: -2 }} /> Watch — accumulating evidence (NOT trading signals)
+            <InfoTip text="Candidates with promising but underpowered evidence. They are NOT tradeable signals — they graduate to the playbook only by hitting the pre-registered promotion rule, never by eyeballing." />
           </div>
           <table style={{ borderCollapse: 'collapse', width: '100%' }}>
             <thead><tr><th style={S.th}>candidate</th><th style={S.th}>evidence so far</th><th style={S.th}>status</th></tr></thead>

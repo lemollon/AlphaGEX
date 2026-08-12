@@ -236,6 +236,8 @@ async def _capture_snapshot(request: Request) -> dict | None:
 
 _live_cache: dict = {}
 _LIVE_TTL = 60
+_intraday_cache: dict = {}
+_INTRADAY_TTL = 60
 _spyhist_cache: dict = {}
 _SPYHIST_TTL = 1800
 GRADES = [(0.75, "stand_down"), (0.55, "hedge"), (0.35, "reduce_size")]
@@ -417,6 +419,66 @@ async def history(request: Request, days: int = 90):
             "quiet": bool(vp and vp < QUIET_VIX) if vp else None,
         })
     return {"days": out[-days:]}
+
+
+@router.get("/intraday")
+async def intraday(request: Request):
+    """Today's SPY 5-minute bars vs the VIX1D-implied expected move, cached 60s."""
+    now = datetime.now(CT)
+    hit = _intraday_cache.get("v")
+    if hit and (now - hit[0]).total_seconds() < _INTRADAY_TTL:
+        return hit[1]
+    try:
+        from .routes import _tradier_get
+        today_iso = now.date().isoformat()
+        h = await _tradier_get(request, "/markets/timesales",
+                               {"symbol": "SPY", "interval": "5min",
+                                "start": f"{today_iso} 08:30", "end": f"{today_iso} 15:05",
+                                "session_filter": "open"})
+        series = h.get("series")
+        if not series or series == "null":
+            payload = {"bars": [], "prev_close": None, "band_pct": None,
+                       "snapshot_t": "10:00", "status": "no intraday bars yet",
+                       "generated_at": now.isoformat()}
+            _intraday_cache["v"] = (now, payload)
+            return payload
+        data = series.get("data") or []
+        if isinstance(data, dict):
+            data = [data]
+
+        live = await _live_quote(request)
+        prev_close = live.get("prev_close") if live else None
+
+        client: httpx.AsyncClient = request.app.state.http
+        band_pct = None
+        try:
+            v1 = await _cboe(client, "VIX1D")
+            _, v1_c = _latest(v1)
+            band_pct = v1_c / SQRT252
+        except Exception:
+            band_pct = None
+
+        bars = []
+        for b in data:
+            t = b.get("time")
+            close = b.get("close")
+            if not t or close is None:
+                continue
+            dt_ct = datetime.fromisoformat(t).replace(
+                tzinfo=ZoneInfo("America/New_York")).astimezone(CT)
+            chg_pct = ((float(close) / prev_close - 1) * 100.0
+                       if prev_close else None)
+            bars.append({"t": dt_ct.strftime("%H:%M"), "price": float(close),
+                        "chg_pct": chg_pct})
+
+        payload = {"bars": bars, "prev_close": prev_close, "band_pct": band_pct,
+                   "snapshot_t": "10:00", "status": "ok",
+                   "generated_at": now.isoformat()}
+        _intraday_cache["v"] = (now, payload)
+        return payload
+    except Exception:
+        return {"bars": [], "status": "intraday unavailable"}
+
 
 @router.get("/scorecard")
 async def scorecard(request: Request, days: int = 120):
