@@ -45,6 +45,12 @@ TRAIL = 63
 OTM_BAND = 0.005
 QUIET_VIX = 16.0
 SNAPSHOT_CT = (10, 0)          # 10:00 CT — the validated clock
+# Capture must happen NEAR the clock or the stored volumes are not the 10:00
+# figure at all. The first deploy captured at 18:18 CT and stored end-of-day
+# cumulative volume labeled as the 10:00 snapshot — vs a 10:00 baseline that
+# reads as a huge false spike. Window enforced on WRITE and on READ, so any
+# polluted row is neutralized without a migration.
+SNAPSHOT_WINDOW_END_CT = (10, 35)
 CBOE_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{sym}_History.csv"
 BASELINE_CSV = Path(__file__).resolve().parent / "data" / "risk_flow_baseline.csv"
 
@@ -118,9 +124,11 @@ def _flow_history() -> list[dict]:
     if SessionLocal is not None:
         try:
             db = SessionLocal()
-            for s in db.query(RiskFlowSnapshot).all():
-                rows[s.d] = {"d": s.d, "callv": s.callv, "putv": s.putv,
-                             "totv": s.totv, "otm_call_0dte": s.otm_call_0dte}
+            for r in db.query(RiskFlowSnapshot).all():
+                if not _snap_valid(r.captured_at):
+                    continue        # late captures are not 10:00 figures
+                rows[r.d] = {"d": r.d, "callv": r.callv, "putv": r.putv,
+                             "totv": r.totv, "otm_call_0dte": r.otm_call_0dte}
             db.close()
         except Exception:
             pass
@@ -138,8 +146,25 @@ def _z(cur: float, hist: list[float]) -> float | None:
     return (cur - m) / math.sqrt(var)
 
 
-async def _capture_snapshot(request: Request) -> RiskFlowSnapshot | None:
-    """Lazily capture today's 10:00 CT flow snapshot from Tradier (once)."""
+def _snap_valid(captured_at: datetime) -> bool:
+    """A snapshot is only the 10:00 figure if captured inside the window."""
+    t = (captured_at.hour, captured_at.minute)
+    return SNAPSHOT_CT <= t <= SNAPSHOT_WINDOW_END_CT
+
+
+def _snap_dict(row: RiskFlowSnapshot) -> dict:
+    return {"d": row.d, "captured_at": row.captured_at, "callv": row.callv,
+            "putv": row.putv, "totv": row.totv,
+            "otm_call_0dte": row.otm_call_0dte, "spot": row.spot}
+
+
+async def _capture_snapshot(request: Request) -> dict | None:
+    """Lazily capture today's 10:00 CT flow snapshot from Tradier (once).
+
+    Returns a PLAIN DICT — never a live ORM instance. The first deploy
+    returned the instance after closing its session and every attribute read
+    raised DetachedInstanceError.
+    """
     if SessionLocal is None:
         return None
     today = datetime.now(CT).date()
@@ -147,14 +172,15 @@ async def _capture_snapshot(request: Request) -> RiskFlowSnapshot | None:
     try:
         row = db.get(RiskFlowSnapshot, today)
         if row:
-            return row
+            return _snap_dict(row) if _snap_valid(row.captured_at) else None
         now_ct = datetime.now(CT)
-        if (now_ct.hour, now_ct.minute) < SNAPSHOT_CT or now_ct.weekday() >= 5:
+        t = (now_ct.hour, now_ct.minute)
+        if t < SNAPSHOT_CT or t > SNAPSHOT_WINDOW_END_CT or now_ct.weekday() >= 5:
             return None
         async with _snapshot_lock:
             row = db.get(RiskFlowSnapshot, today)
             if row:
-                return row
+                return _snap_dict(row) if _snap_valid(row.captured_at) else None
             from .routes import _tradier_get, _get_quote  # existing helpers
             q = await _get_quote(request, "SPY")
             spot = float(q.get("last") or q.get("close") or 0)
@@ -189,7 +215,9 @@ async def _capture_snapshot(request: Request) -> RiskFlowSnapshot | None:
                                    otm_call_0dte=otm0, spot=spot)
             db.add(row)
             db.commit()
-            return row
+            return {"d": today, "captured_at": row.captured_at,
+                    "callv": callv, "putv": putv, "totv": callv + putv,
+                    "otm_call_0dte": otm0, "spot": spot}
     except Exception:
         return None
     finally:
@@ -307,16 +335,23 @@ async def state(request: Request):
     hist = _flow_history()
     today = datetime.now(CT).date()
     prior = [r for r in hist if r["d"] < today]
-    flow = {"status": "pre-snapshot (captured at first request ≥10:00 CT)"
-            if snap is None else "snapshot",
-            "putv_z": None, "totv_z": None, "otm_call_0dte_z": None,
-            "spike": None}
+    now_ct = datetime.now(CT)
+    if snap is None:
+        if now_ct.weekday() >= 5:
+            st = "weekend — no capture"
+        elif (now_ct.hour, now_ct.minute) < SNAPSHOT_CT:
+            st = "pre-window — captures at first request 10:00–10:35 CT"
+        else:
+            st = "no valid snapshot today (capture window 10:00–10:35 CT missed)"
+    else:
+        st = "snapshot"
+    flow = {"status": st, "putv_z": None, "totv_z": None,
+            "otm_call_0dte_z": None, "spike": None}
     if snap is not None:
-        pz = _z(snap.putv, [r["putv"] for r in prior])
-        tz = _z(snap.totv, [r["totv"] for r in prior])
-        oz = _z(snap.otm_call_0dte, [r["otm_call_0dte"] for r in prior])
-        flow.update({"status": "snapshot",
-                     "captured_at": snap.captured_at.isoformat(),
+        pz = _z(snap["putv"], [r["putv"] for r in prior])
+        tz = _z(snap["totv"], [r["totv"] for r in prior])
+        oz = _z(snap["otm_call_0dte"], [r["otm_call_0dte"] for r in prior])
+        flow.update({"captured_at": snap["captured_at"].isoformat(),
                      "putv_z": pz, "totv_z": tz, "otm_call_0dte_z": oz,
                      "spike": bool((pz or 0) > 2 or (tz or 0) > 2)})
 
