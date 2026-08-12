@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
-import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, ChevronDown, Plus, LayoutGrid } from 'lucide-react';
+import { ShieldAlert, Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, ChevronDown, Plus, LayoutGrid } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import BotGlyph from './components/bots/BotGlyph';
 import { BOT_REGISTRY, BOT_THEME, STRATEGY_LABEL } from './lib/botRegistry';
@@ -16,6 +16,7 @@ import PositionsPage from './pages/PositionsPage';
 const GexProfilePage = lazy(() => import('./pages/GexProfilePage'));
 const BotDashboard = lazy(() => import('./pages/BotDashboard'));
 const FleetPage = lazy(() => import('./pages/FleetPage'));
+const RiskAdvisorPage = lazy(() => import('./pages/RiskAdvisorPage'));
 const TsunamiPage = lazy(() => import('./pages/TsunamiPage'));
 
 import useCandles from './hooks/useCandles';
@@ -546,6 +547,7 @@ function NavBar() {
               dropdown chip to the right is still the one-click path to a
               specific bot, and it stays highlighted on /bots/<id> too. */}
           <RouteBtn to="/bots"            icon={<Cpu size={14} />}  label="Bots" />
+          <RouteBtn to="/risk"            icon={<ShieldAlert size={14} />} label="Risk" />
         </nav>
       </div>
 
@@ -851,6 +853,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<BuilderPage />} />
             <Route path="/positions" element={<PositionsPage />} />
+            <Route path="/risk" element={<RiskAdvisorPage />} />
             <Route path="/gex-profile" element={<GexProfilePage />} />
             {/* /bots is the fleet overview — every bot as its own card. It used
                 to redirect straight to /bots/surge, which meant there was no
