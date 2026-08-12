@@ -8,6 +8,45 @@ import pandas as pd
 HERE = os.path.dirname(__file__)
 DATA = os.path.join(HERE, "data")
 
+CBOE_HISTORY_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{sym}_History.csv"
+YAHOO_CHART_URL = ("https://query1.finance.yahoo.com/v8/finance/chart/SPY"
+                   "?period1=1136073600&period2=9999999999&interval=1d"
+                   "&events=div%2Csplit")
+
+
+def _ensure_inputs():
+    """Fetch any missing input into data/, which is gitignored.
+
+    evidence.json is committed but its inputs are not, so a fresh clone could
+    regenerate an EMPTY file and no one would notice until a signal quietly
+    stopped matching its own evidence. Both sources are public, so fetch rather
+    than commit ~1.6MB of vendor data that goes stale anyway.
+    """
+    import urllib.request
+    os.makedirs(DATA, exist_ok=True)
+    want = {f"{s}.csv": CBOE_HISTORY_URL.format(sym=s)
+            for s in ("VIX", "VVIX", "VIX3M", "VIX9D")}
+    want["SPY_raw.json"] = YAHOO_CHART_URL
+    for fname, url in want.items():
+        path = os.path.join(DATA, fname)
+        if os.path.exists(path) and os.path.getsize(path) > 1024:
+            continue
+        print(f"  fetching {fname} ...")
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=120) as r:
+                body = r.read()
+            if len(body) < 1024:
+                raise RuntimeError(f"suspiciously small response ({len(body)}B)")
+            with open(path, "wb") as f:
+                f.write(body)
+        except Exception as e:
+            raise SystemExit(
+                f"\n[evidence] could not fetch {fname}: {e}\n"
+                f"  url: {url}\n"
+                f"  Place the file at {path} manually and re-run.\n")
+
+
 def _load_cboe(name, col):
     df = pd.read_csv(os.path.join(DATA, f"{name}.csv"))
     df.columns = [c.strip().upper() for c in df.columns]
@@ -90,6 +129,7 @@ def _z(s, w=60):
     return (s - s.rolling(w).mean()) / s.rolling(w).std()
 
 def build():
+    _ensure_inputs()
     vix = _load_cboe("VIX", "vix"); vvix = _load_cboe("VVIX", "vvix")
     vix3m = _load_cboe("VIX3M", "vix3m"); vix9d = _load_cboe("VIX9D", "vix9d")
     spy = _load_spy(); spy_open = _load_spy_open()
