@@ -1644,6 +1644,13 @@ async def lifespan(app: FastAPI):
     # Start scheduler for Discord notifications (inside lifespan, not module-level)
     scheduler = _start_scheduler(app)
 
+    # Risk Advisor playbook alerts (import-guarded; advisory only)
+    try:
+        from .risk_alerts import register_risk_alerts
+        register_risk_alerts(scheduler, app)
+    except Exception as _ra_exc:  # noqa: BLE001
+        logger.warning("[SpreadWorks] risk alerts failed to register: %r", _ra_exc)
+
     yield
 
     # Shutdown
