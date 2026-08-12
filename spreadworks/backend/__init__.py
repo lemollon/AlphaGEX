@@ -1669,6 +1669,15 @@ app.include_router(router)
 from .routes_bots import router as bots_router
 app.include_router(bots_router)
 
+# Risk Advisor (validated 2026-08-12, ironforge-data/risk_advisor). ADVISORY
+# ONLY — read-only endpoints; no bot consumes it. Import-guarded like TSUNAMI.
+try:
+    from .routes_risk import router as risk_router
+    app.include_router(risk_router)
+except Exception as _risk_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] Risk Advisor routes failed to load: %r", _risk_exc)
+
 # TSUNAMI (LETF earnings-week bot, ported from AlphaGEX GOLIATH 2026-07-03)
 # has its own runner + tables and does not participate in the generic
 # BOT_REGISTRY scan loop; import-guarded so a broken port never takes down
