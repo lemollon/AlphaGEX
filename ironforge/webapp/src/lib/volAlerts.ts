@@ -54,13 +54,25 @@ export interface BotVolMessage {
 /* ------------------------------------------------------------------ */
 
 /**
- * Signal keys we alert on (directional + high-confidence). `divergence`
- * (bearish but low-confidence) and `double_floor` (neutral) are excluded.
+ * Signal keys the ladder TRACKS. `divergence` stays out — a 20-year study found
+ * it to be statistically noise.
+ *
+ * Membership here is the ONLY thing that decides whether a signal is watched.
+ * Never gate on the `direction` string: doing so is what silently killed
+ * ts_flattening for five days when it was relabelled 'bearish' -> 'tail_risk'.
+ *
+ * `double_floor` is tracked but deliberately NEVER pushed — see notifyDecision.
+ * It earns its place on evidence, not direction: across 56 independent episodes
+ * it produced ZERO next-day moves >=1.5% (tail lift 0.00 against an 8.4% base,
+ * ~4.7 expected). It is the cleanest "safe to sell premium" reading in the set,
+ * and it was previously excluded for being directionally neutral — which it is,
+ * and which was never the point.
  */
 export const ALERTING_SIGNAL_KEYS = [
-  'backwardation', // bullish
-  'exhaustion',    // bullish
-  'ts_flattening', // bearish
+  'backwardation', // tail: 2.01x next-day
+  'exhaustion',    // tail: 3.57x next-day
+  'ts_flattening', // directional: -0.93% over ~3 sessions
+  'double_floor',  // calm: 0.00x next-day tail. UI only, never pushed.
 ] as const
 
 export type AlertingSignalKey = (typeof ALERTING_SIGNAL_KEYS)[number]
@@ -380,6 +392,15 @@ export function notifyDecision(
   opts: { earlyWarnTsFlattening?: boolean } = {},
 ): NotifyVerdict {
   const earlyWarn = opts.earlyWarnTsFlattening !== false // default ON
+  // double_floor is a CALM reading, not an event. It is worth tracking on the
+  // ladder (it is the only signal with a measured 0.00 next-day tail lift, i.e.
+  // the safest state observed for selling premium) but it is never urgent: there
+  // is nothing to react to at 2am because the market is quiet. Track, show, never
+  // push. Pushing it would train you to ignore the channel that carries the real
+  // tail warnings.
+  if (t.signalKey === 'double_floor') {
+    return { notify: false, priority: 'info', reason: 'calm-ui-only' }
+  }
   if (t.to === 'confirmed') {
     return { notify: true, priority: 'high', reason: 'confirmed' }
   }
