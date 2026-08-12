@@ -7,6 +7,7 @@ from sqlalchemy import text
 from backend.bots.executor import (
     open_position, close_position, compute_mtm, list_open_positions,
     account_equity, configured_slippage_per_leg, DEFAULT_SLIPPAGE_PER_LEG,
+    configured_fill_mode, DEFAULT_FILL_MODE,
 )
 from backend.bots.strategies.iron_butterfly import build_iron_butterfly_signal
 
@@ -195,3 +196,43 @@ def test_configured_slippage_precedence(monkeypatch):
     assert configured_slippage_per_leg(None) == 0.03
     # explicit config still wins over env
     assert configured_slippage_per_leg({"slippage_per_leg": 0.01}) == 0.01
+
+
+def test_slippage_total_overrides_per_leg_on_exit():
+    """slippage_total (measured taker cost) wins over the flat per-leg path."""
+    # measured spreads: 0.005+0.005+0.02+0.03 = 0.06 total, NOT 4*0.02
+    v0, p0 = compute_mtm(strategy="iron_condor", legs=_IC_LEGS,
+                         entry_price=0.71, contracts=10, leg_mids=_IC_MIDS)
+    vt, pt = compute_mtm(strategy="iron_condor", legs=_IC_LEGS,
+                         entry_price=0.71, contracts=10, leg_mids=_IC_MIDS,
+                         slippage_per_leg=0.02, slippage_total=0.06)
+    assert abs(vt - (v0 + 0.06)) < 1e-9              # total used, not 4*0.02=0.08
+    assert abs((p0 - pt) - (0.06 * 10 * 100)) < 1e-6  # -$60, not -$80
+
+
+def test_open_position_slippage_total(db_session, fake_chain_0dte):
+    """A measured taker total reduces the entry credit by exactly that total."""
+    engine = db_session.bind
+    sig = build_iron_butterfly_signal(
+        chain=fake_chain_0dte,
+        config={"max_contracts": 1, "bp_pct": 0.10, "sd_mult": 1.0,
+                "pt_pct": 0.30, "sl_pct": 2.0, "use_gex_walls": False},
+        equity=10000.0,
+    )
+    now = datetime(2026, 5, 20, 9, 30, tzinfo=CT)
+    pid = open_position(engine, "surge", "iron_butterfly", sig, now,
+                        slippage_total=0.055)
+    stored = {p["position_id"]: p for p in list_open_positions(engine, "surge")}[pid]
+    assert abs(float(stored["entry_price"]) - (sig.credit - 0.055)) < 1e-9
+
+
+def test_configured_fill_mode_precedence(monkeypatch):
+    """fill mode: bot config > env SPREADWORKS_FILL_MODE > taker default."""
+    monkeypatch.delenv("SPREADWORKS_FILL_MODE", raising=False)
+    assert configured_fill_mode(None) == DEFAULT_FILL_MODE == "taker"
+    assert configured_fill_mode({"fill_mode": "half"}) == "half"
+    assert configured_fill_mode({"fill_mode": "MID"}) == "mid"      # case-insensitive
+    assert configured_fill_mode({"fill_mode": "bogus"}) == "taker"  # invalid ignored
+    monkeypatch.setenv("SPREADWORKS_FILL_MODE", "mid")
+    assert configured_fill_mode(None) == "mid"
+    assert configured_fill_mode({"fill_mode": "taker"}) == "taker"  # config wins

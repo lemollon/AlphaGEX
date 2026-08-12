@@ -162,6 +162,40 @@ class LiveTradierChainProvider:
             out.append((bid + ask) / 2.0)
         return out
 
+    def get_leg_spreads(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[float | None]:
+        """Per-leg HALF-spread (ask-bid)/2 from live quotes, aligned to `legs`.
+
+        This is the taker cost of crossing to the touch on one leg; the sum
+        over all legs is the executor's `slippage_total`. None for any leg
+        whose quote is missing OR whose book is one-sided/crossed (bid<=0 or
+        ask<=bid) — the caller falls back to the flat per-leg default there
+        rather than trust a junk spread.
+        """
+        symbols = [self._occ(ticker, leg) for leg in legs]
+        resp = self._client.get(
+            f"{TRADIER_BASE}/markets/quotes",
+            params={"symbols": ",".join(symbols), "greeks": "false"},
+            headers=_headers(),
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"quote fetch failed: {resp.status_code}")
+        quotes = resp.json().get("quotes", {}).get("quote", []) or []
+        if isinstance(quotes, dict):
+            quotes = [quotes]
+        by_sym = {q["symbol"]: q for q in quotes}
+        out: list[float | None] = []
+        for sym in symbols:
+            q = by_sym.get(sym)
+            if q is None:
+                out.append(None)
+                continue
+            bid = float(q.get("bid") or 0); ask = float(q.get("ask") or 0)
+            if bid <= 0 or ask <= bid:
+                out.append(None)
+                continue
+            out.append((ask - bid) / 2.0)
+        return out
+
     def get_daily_history(self, *, ticker: str, days: int) -> list[dict[str, Any]]:
         """Daily OHLC bars for the last `days` calendar days (Tradier history).
 

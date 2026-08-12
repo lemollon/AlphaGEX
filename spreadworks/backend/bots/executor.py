@@ -72,6 +72,31 @@ def configured_slippage_per_leg(cfg: dict[str, Any] | None = None) -> float:
     return DEFAULT_SLIPPAGE_PER_LEG
 
 
+# Fill-cost model used to grade paper P&L:
+#   "taker" — cross the FULL real spread on every leg (sum of measured per-leg
+#             half-spreads). The conservative, ~guaranteed-fill bar: a bot
+#             green under this is genuinely fundable. THE DEFAULT.
+#   "half"  — flat per-leg half-spread (DEFAULT_SLIPPAGE_PER_LEG); a
+#             marketable-limit assumption that captures ~half the spread.
+#   "mid"   — no slippage (the old, dishonest midpoint fill).
+DEFAULT_FILL_MODE = "taker"
+_VALID_FILL_MODES = ("taker", "half", "mid")
+
+
+def configured_fill_mode(cfg: dict[str, Any] | None = None) -> str:
+    """Resolve the fill-cost model: bot config > env > DEFAULT_FILL_MODE."""
+    if cfg is not None and cfg.get("fill_mode"):
+        v = str(cfg["fill_mode"]).lower()
+        if v in _VALID_FILL_MODES:
+            return v
+    env = os.environ.get("SPREADWORKS_FILL_MODE")
+    if env is not None:
+        v = env.strip().lower()
+        if v in _VALID_FILL_MODES:
+            return v
+    return DEFAULT_FILL_MODE
+
+
 def account_equity(engine: Engine, bot: str) -> float:
     """starting_capital + cumulative realized P&L (closed trades)."""
     cfg = load_config(engine, bot)
@@ -96,14 +121,18 @@ def open_position(
     notes: str | None = None,
     *,
     slippage_per_leg: float = 0.0,
+    slippage_total: float | None = None,
     mid_fill: bool = True,
 ) -> str:
     """Insert one OPEN row into {bot}_positions, return position_id.
 
-    `slippage_per_leg` crosses the spread on the entry fill (see module
-    docstring). `mid_fill=False` marks a fill that ALREADY crossed the book
-    (e.g. UPDRAFT's patient limit that only triggers when the real ask
-    touches) so it is not double-charged.
+    Entry fill crosses the spread (see module docstring). Pass EITHER
+    `slippage_total` — the measured sum of per-leg half-spreads from real
+    quotes, i.e. the TAKER cost of crossing to the touch on every leg — OR
+    `slippage_per_leg`, a flat fallback multiplied by the leg count. Total
+    wins when both are given. `mid_fill=False` marks a fill that ALREADY
+    crossed the book (e.g. UPDRAFT's patient limit that only triggers when
+    the real ask touches) so it is not double-charged.
     """
     pid = _new_position_id(bot, now)
     t = bot_table(bot, "positions")
@@ -112,13 +141,14 @@ def open_position(
     is_credit = hasattr(signal, "credit")
     entry_price = signal.credit if is_credit else signal.debit
     legs_json = json.dumps(signal.legs())
-    if mid_fill and slippage_per_leg > 0:
-        n_legs = len(signal.legs())
-        adj = n_legs * slippage_per_leg
+    n_legs = len(signal.legs())
+    adj = (slippage_total if slippage_total is not None
+           else n_legs * slippage_per_leg)
+    if mid_fill and adj > 0:
         # Cross the spread: a credit sold fills lower, a debit bought higher.
         mid_entry = entry_price
         entry_price = round(entry_price - adj, 4) if is_credit else round(entry_price + adj, 4)
-        slip_note = f"slip {slippage_per_leg:.3f}/leg x{n_legs} (mid={mid_entry:.4f})"
+        slip_note = f"slip {adj:.4f} total x{n_legs}legs (mid={mid_entry:.4f})"
         notes = f"{notes}; {slip_note}" if notes else slip_note
     with engine.begin() as conn:
         conn.execute(text(
@@ -226,6 +256,7 @@ def compute_mtm(
     leg_mids: Iterable[float] | None = None,
     cost_to_close_override: float | None = None,
     slippage_per_leg: float = 0.0,
+    slippage_total: float | None = None,
 ) -> tuple[float, float]:
     """Return (mtm_value, mtm_pnl).
 
@@ -262,9 +293,15 @@ def compute_mtm(
         mtm_value = signed
 
     # Slippage on the EXIT fill: crossing the spread on every leg makes a
-    # buyback cost MORE (credit) / an unwind fetch LESS (debit). n_legs is
-    # taken from the structure; the override path (tests) still gets it.
-    exit_slip = len(legs) * slippage_per_leg if slippage_per_leg > 0 else 0.0
+    # buyback cost MORE (credit) / an unwind fetch LESS (debit). Prefer the
+    # measured taker total (sum of real per-leg half-spreads); fall back to
+    # the flat per-leg default times the leg count.
+    if slippage_total is not None:
+        exit_slip = slippage_total
+    elif slippage_per_leg > 0:
+        exit_slip = len(legs) * slippage_per_leg
+    else:
+        exit_slip = 0.0
 
     if strategy in CREDIT_STRATEGIES:
         # Credit strategies (IBF, IC, credit double diagonal): mtm_value

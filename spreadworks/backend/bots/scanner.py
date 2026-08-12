@@ -20,7 +20,7 @@ from .db import bot_table, load_config
 from .executor import (
     account_equity, list_open_positions, open_position,
     close_position, compute_mtm, update_mtm, count_positions_opened_on,
-    configured_slippage_per_leg,
+    configured_slippage_per_leg, configured_fill_mode,
 )
 from .monitor import (
     decide_exit, pt_pct_for_time_of_day, pt_pct_for_iron_condor_tod,
@@ -61,6 +61,36 @@ class ChainProvider(Protocol):
     # tripped phantom SLs, 2026-07-06..08).
     def get_leg_mids(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[float | None]: ...
     def get_daily_history(self, *, ticker: str, days: int) -> list[dict[str, Any]]: ...
+    # Optional: per-leg half-spread for taker-cost grading. Providers that
+    # don't implement it fall back to the flat per-leg slippage default.
+    def get_leg_spreads(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[float | None]: ...
+
+
+def _slippage_total(chain_provider: Any, ticker: str,
+                    legs: list[dict[str, Any]], cfg: dict[str, Any]) -> float:
+    """Total spread-crossing cost ($/share) for one structure, per fill mode.
+
+    taker (default): sum of the REAL per-leg half-spreads from live quotes —
+      the cost of crossing to the touch on every leg. Any leg whose quote is
+      missing/junk falls back to the flat per-leg default so a stale book
+      can't zero out the cost.
+    half: flat per-leg default x leg count.  mid: 0.
+    """
+    mode = configured_fill_mode(cfg)
+    if mode == "mid":
+        return 0.0
+    per_leg = configured_slippage_per_leg(cfg)
+    if mode == "half":
+        return len(legs) * per_leg
+    fn = getattr(chain_provider, "get_leg_spreads", None)
+    if fn is None:
+        return len(legs) * per_leg  # provider can't measure — conservative flat
+    try:
+        halves = fn(ticker=ticker, legs=legs)
+    except Exception as e:  # noqa: BLE001 — never fail a scan on a quote hiccup
+        logger.warning(f"get_leg_spreads failed for {ticker}: {e}; flat fallback")
+        return len(legs) * per_leg
+    return sum(per_leg if (h is None or h <= 0) else float(h) for h in halves)
 
 
 def _parse_time(s: str) -> time:
@@ -675,8 +705,10 @@ def _evaluate_universe_entry(
         "width": signal.width, "net": signal.net, "is_credit": signal.is_credit,
         "rationale": rationale,
     })
-    pid = open_position(engine, bot, signal.kind, signal, now_ct, notes=notes,
-                        slippage_per_leg=configured_slippage_per_leg(cfg))
+    pid = open_position(
+        engine, bot, signal.kind, signal, now_ct, notes=notes,
+        slippage_total=_slippage_total(chain_provider, signal.ticker,
+                                       signal.legs(), cfg))
     return {"outcome": "TRADE", "reason": "OPENED", "position_id": pid}
 
 
@@ -869,8 +901,10 @@ def _evaluate_entry(
     # position row as usual).
     store_mode = (getattr(signal, "mode", None)
                   if reg_mode == "tempest" else reg_mode)
-    pid = open_position(engine, bot, store_mode or meta["strategy"], signal,
-                        now_ct, slippage_per_leg=configured_slippage_per_leg(cfg))
+    pid = open_position(
+        engine, bot, store_mode or meta["strategy"], signal, now_ct,
+        slippage_total=_slippage_total(chain_provider, signal.ticker,
+                                       signal.legs(), cfg))
     if bool(cfg.get("discord_alerts")):
         try:
             from . import discord_alerts
@@ -953,7 +987,8 @@ def run_scan_cycle(
                     entry_price=float(pos["entry_price"]),
                     contracts=int(pos["contracts"]),
                     leg_mids=mids,
-                    slippage_per_leg=configured_slippage_per_leg(cfg),
+                    slippage_total=_slippage_total(
+                        chain_provider, pos["ticker"], legs, cfg),
                 )
                 update_mtm(engine, bot, pos["position_id"], mtm_value, mtm_pnl, now_ct)
 
