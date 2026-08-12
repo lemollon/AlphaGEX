@@ -20,6 +20,7 @@ from .db import bot_table, load_config
 from .executor import (
     account_equity, list_open_positions, open_position,
     close_position, compute_mtm, update_mtm, count_positions_opened_on,
+    configured_slippage_per_leg,
 )
 from .monitor import (
     decide_exit, pt_pct_for_time_of_day, pt_pct_for_iron_condor_tod,
@@ -674,7 +675,8 @@ def _evaluate_universe_entry(
         "width": signal.width, "net": signal.net, "is_credit": signal.is_credit,
         "rationale": rationale,
     })
-    pid = open_position(engine, bot, signal.kind, signal, now_ct, notes=notes)
+    pid = open_position(engine, bot, signal.kind, signal, now_ct, notes=notes,
+                        slippage_per_leg=configured_slippage_per_leg(cfg))
     return {"outcome": "TRADE", "reason": "OPENED", "position_id": pid}
 
 
@@ -800,8 +802,10 @@ def _evaluate_entry(
                         pt_target_pnl=pt_pct * per * contracts,
                         sl_target_pnl=sl_pct * per * contracts)
                     flow_store.clear_pending(engine, bot)
+                    # This fill already crossed to the live ask (patient limit
+                    # touched) — do NOT charge entry slippage again.
                     pid = open_position(engine, bot, reg_mode, fill, now_ct,
-                                        notes="limit_fill")
+                                        notes="limit_fill", mid_fill=False)
                     if bool(cfg.get("discord_alerts")):
                         try:
                             from . import discord_alerts
@@ -866,7 +870,7 @@ def _evaluate_entry(
     store_mode = (getattr(signal, "mode", None)
                   if reg_mode == "tempest" else reg_mode)
     pid = open_position(engine, bot, store_mode or meta["strategy"], signal,
-                        now_ct)
+                        now_ct, slippage_per_leg=configured_slippage_per_leg(cfg))
     if bool(cfg.get("discord_alerts")):
         try:
             from . import discord_alerts
@@ -949,6 +953,7 @@ def run_scan_cycle(
                     entry_price=float(pos["entry_price"]),
                     contracts=int(pos["contracts"]),
                     leg_mids=mids,
+                    slippage_per_leg=configured_slippage_per_leg(cfg),
                 )
                 update_mtm(engine, bot, pos["position_id"], mtm_value, mtm_pnl, now_ct)
 

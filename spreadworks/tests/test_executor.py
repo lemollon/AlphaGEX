@@ -6,7 +6,7 @@ from sqlalchemy import text
 
 from backend.bots.executor import (
     open_position, close_position, compute_mtm, list_open_positions,
-    account_equity,
+    account_equity, configured_slippage_per_leg, DEFAULT_SLIPPAGE_PER_LEG,
 )
 from backend.bots.strategies.iron_butterfly import build_iron_butterfly_signal
 
@@ -107,3 +107,91 @@ def test_compute_mtm_clamps_negative_long_fly_mark():
     )
     assert mtm_value == 0.0
     assert mtm_pnl == -75.0  # exactly -debit, never deeper
+
+
+# ---------------------------------------------------------------------------
+# Slippage model: a real multi-leg fill crosses the spread on every leg, on
+# entry AND exit. slip=0 must reproduce the old mid-fill numbers exactly.
+# ---------------------------------------------------------------------------
+
+_IC_LEGS = [
+    {"side": "short", "type": "put",  "strike": 498, "expiration": "2026-05-20"},
+    {"side": "short", "type": "call", "strike": 502, "expiration": "2026-05-20"},
+    {"side": "long",  "type": "put",  "strike": 493, "expiration": "2026-05-20"},
+    {"side": "long",  "type": "call", "strike": 507, "expiration": "2026-05-20"},
+]
+_IC_MIDS = [0.30, 0.25, 0.10, 0.05]  # cost to buy back = 0.55 - 0.15 = 0.40
+
+
+def test_compute_mtm_slippage_zero_is_noop():
+    """slip=0 (the default) must byte-match the pre-slippage mid-fill mark."""
+    base = compute_mtm(strategy="iron_condor", legs=_IC_LEGS,
+                       entry_price=0.71, contracts=10, leg_mids=_IC_MIDS)
+    explicit0 = compute_mtm(strategy="iron_condor", legs=_IC_LEGS,
+                            entry_price=0.71, contracts=10, leg_mids=_IC_MIDS,
+                            slippage_per_leg=0.0)
+    assert base == explicit0
+    assert base[0] == 0.40  # unchanged cost-to-close
+
+
+def test_compute_mtm_exit_slippage_credit():
+    """Buying a 4-leg credit structure back costs n_legs*slip MORE, so the
+    booked pnl drops by exactly n_legs*slip*contracts*100."""
+    v0, p0 = compute_mtm(strategy="iron_condor", legs=_IC_LEGS,
+                         entry_price=0.71, contracts=10, leg_mids=_IC_MIDS)
+    v2, p2 = compute_mtm(strategy="iron_condor", legs=_IC_LEGS,
+                         entry_price=0.71, contracts=10, leg_mids=_IC_MIDS,
+                         slippage_per_leg=0.02)
+    assert abs(v2 - (v0 + 4 * 0.02)) < 1e-9         # 0.40 -> 0.48
+    assert abs((p0 - p2) - (4 * 0.02 * 10 * 100)) < 1e-6  # -$80
+
+
+def test_compute_mtm_exit_slippage_debit_and_floor():
+    """Debit unwind fetches n_legs*slip LESS; the net-long floor still holds."""
+    p0 = compute_mtm(strategy="double_diagonal", legs=_IC_LEGS,
+                     entry_price=0.50, contracts=10, leg_mids=_IC_MIDS)[1]
+    p2 = compute_mtm(strategy="double_diagonal", legs=_IC_LEGS,
+                     entry_price=0.50, contracts=10, leg_mids=_IC_MIDS,
+                     slippage_per_leg=0.02)[1]
+    assert abs((p0 - p2) - (4 * 0.02 * 10 * 100)) < 1e-6
+    # long fly floored at 0 even with slippage pushing further negative
+    fv = compute_mtm(strategy="long_butterfly", legs=_IC_LEGS,
+                     entry_price=1.0, contracts=1, leg_mids=[0, 0, 0, 0],
+                     slippage_per_leg=0.02)[0]
+    assert fv == 0.0
+
+
+def test_open_position_entry_slippage(db_session, fake_chain_0dte):
+    """A mid-fill entry credit is reduced by n_legs*slip; an already-crossed
+    fill (mid_fill=False, e.g. UPDRAFT's limit) is NOT re-charged."""
+    engine = db_session.bind
+    sig = build_iron_butterfly_signal(
+        chain=fake_chain_0dte,
+        config={"max_contracts": 1, "bp_pct": 0.10, "sd_mult": 1.0,
+                "pt_pct": 0.30, "sl_pct": 2.0, "use_gex_walls": False},
+        equity=10000.0,
+    )
+    now = datetime(2026, 5, 20, 9, 30, tzinfo=CT)
+    n_legs = len(sig.legs())
+    pid = open_position(engine, "surge", "iron_butterfly", sig, now,
+                        slippage_per_leg=0.02)
+    stored = {p["position_id"]: p for p in list_open_positions(engine, "surge")}[pid]
+    assert abs(float(stored["entry_price"]) - (sig.credit - n_legs * 0.02)) < 1e-9
+    assert "slip" in (stored["notes"] or "")
+    # mid_fill=False keeps the fill exactly as passed (no double charge)
+    pid2 = open_position(engine, "surge", "iron_butterfly", sig, now,
+                         slippage_per_leg=0.02, mid_fill=False)
+    stored2 = {p["position_id"]: p for p in list_open_positions(engine, "surge")}[pid2]
+    assert abs(float(stored2["entry_price"]) - sig.credit) < 1e-9
+
+
+def test_configured_slippage_precedence(monkeypatch):
+    """bot-config column > env SPREADWORKS_SLIP_PER_LEG > DEFAULT."""
+    monkeypatch.delenv("SPREADWORKS_SLIP_PER_LEG", raising=False)
+    assert configured_slippage_per_leg(None) == DEFAULT_SLIPPAGE_PER_LEG
+    assert configured_slippage_per_leg({"slippage_per_leg": 0}) == 0.0
+    assert configured_slippage_per_leg({"slippage_per_leg": 0.05}) == 0.05
+    monkeypatch.setenv("SPREADWORKS_SLIP_PER_LEG", "0.03")
+    assert configured_slippage_per_leg(None) == 0.03
+    # explicit config still wins over env
+    assert configured_slippage_per_leg({"slippage_per_leg": 0.01}) == 0.01
