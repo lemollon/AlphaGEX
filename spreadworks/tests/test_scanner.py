@@ -1097,3 +1097,48 @@ def test_settlement_value_xsp_falls_back_to_spx_close_over_10():
     # SPX 5030 -> XSP settle 503 -> fly payoff = 5 - |503-501| = 3.00
     val = _settlement_value(provider, "XSP", legs, _date(2026, 5, 20))
     assert val == 3.0
+
+
+# ---------------------------------------------------------------------------
+# EBB PM — afternoon tranche of EBB (registry #41/#42, 2026-08-13). Same
+# fixed-direction dispatch as EBB (`strategy` is the kind directly), just a
+# different registry key — proves the scanner's dispatcher and the
+# registry's own `params` are picked up generically by bot name, not
+# hardcoded to "ebb".
+# ---------------------------------------------------------------------------
+
+def _chain_1wide_tight(spot, ticker="SPY", expiration="2026-08-13"):
+    """$1-strike SPY grid with a tight, uniform bid/ask so short_otm_abs=2 /
+    spread_abs=5 land on exact strikes with quotes well inside max_spread_pct."""
+    opts = []
+    for s in range(int(spot) - 15, int(spot) + 16):
+        call_mid = max(0.30, (spot - s) * 0.4 + 6.0)
+        put_mid = max(0.30, (s - spot) * 0.4 + 6.0)
+        opts.append({"strike": s, "type": "call", "bid": round(call_mid - 0.02, 2), "ask": round(call_mid + 0.02, 2)})
+        opts.append({"strike": s, "type": "put", "bid": round(put_mid - 0.02, 2), "ask": round(put_mid + 0.02, 2)})
+    return {"spot": spot, "expiration": expiration, "ticker": ticker, "options": opts}
+
+
+def test_ebb_pm_dispatcher_builds_bull_put_spread():
+    """The scanner's `_build_signal` dispatches "ebb_pm" the same way as
+    "ebb" — strategy IS the kind (bull_put_spread), and short_otm_abs/
+    spread_abs come from BOT_REGISTRY["ebb_pm"]["params"], not "ebb"'s."""
+    from backend.bots.scanner import _build_signal
+    from backend.bots.registry import BOT_REGISTRY, get_bot
+    from datetime import date as _date
+
+    bot_cfg = get_bot("ebb_pm")
+    provider = FakeChainProvider(chains_by_ticker={"SPY": _chain_1wide_tight(600.0)})
+    sig, chain = _build_signal(
+        bot="ebb_pm", strategy=bot_cfg["strategy"], chain_provider=provider,
+        config=bot_cfg["defaults"], equity=3000.0, today=_date(2026, 8, 13),
+        ticker=bot_cfg["ticker"], front_dte=bot_cfg["front_dte"], back_dte=bot_cfg["back_dte"],
+    )
+    assert sig is not None
+    assert sig.kind == "bull_put_spread"
+    legs = sig.legs()
+    short = [l for l in legs if l["side"] == "short"][0]
+    long_ = [l for l in legs if l["side"] == "long"][0]
+    assert short["strike"] == 598   # spot - $2 (ebb_pm's own short_otm_abs)
+    assert long_["strike"] == 593   # short - $5 (ebb_pm's own spread_abs)
+    assert sig.width == 5

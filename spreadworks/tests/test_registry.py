@@ -3,7 +3,7 @@ from backend.bots.registry import BOT_REGISTRY, get_bot, list_bots
 
 def test_bots_registered():
     assert set(BOT_REGISTRY.keys()) == {"surge", "splash", "ripple", "tide", "drift", "flow", "meadow", "undertow",
-         "delta", "ebb", "updraft", "backdraft", "reversal", "embreach", "embreachq",
+         "delta", "ebb", "ebb_pm", "updraft", "backdraft", "reversal", "embreach", "embreachq",
          "afterburn", "weekender", "flashpoint", "thermal", "wildfire",
          "afterglow", "ember", "squall", "tempest"}
 
@@ -141,7 +141,7 @@ def test_get_bot_unknown_raises():
 
 
 def test_list_bots_returns_keys():
-    assert sorted(list_bots()) == ["afterburn", "afterglow", "backdraft", "delta", "drift", "ebb", "ember",
+    assert sorted(list_bots()) == ["afterburn", "afterglow", "backdraft", "delta", "drift", "ebb", "ebb_pm", "ember",
          "embreach", "embreachq", "flashpoint", "flow", "meadow", "reversal",
          "ripple", "splash", "squall", "surge", "tempest", "thermal", "tide",
          "undertow", "updraft", "weekender", "wildfire"]
@@ -206,7 +206,8 @@ def test_ebb_defaults(db_session):
     assert b["params"]["short_otm_abs"] == 2.0
     assert b["params"]["spread_abs"] == 5.0
     assert b["params"]["min_credit"] == 0.10
-    # Pre-calibrated health bands (2026-08-13) — only EBB carries these.
+    # Pre-calibrated health bands (2026-08-13) — EBB PM carries its own,
+    # separate set (see test_ebb_pm_defaults).
     bands = b["health_bands"]
     assert bands["watch_roll60"] == -524.0
     assert bands["demote_roll60"] == -1216.0
@@ -234,3 +235,44 @@ def test_ebb_discord_routes_to_risk_channel():
     b = get_bot("ebb")
     assert b["defaults"]["discord_alerts"] is True
     assert b["discord_webhook_env"] == "RISK_ADVISOR_DISCORD_WEBHOOK"
+
+
+def test_ebb_pm_defaults(db_session):
+    # EBB PM — validated afternoon tranche of EBB (registry #41/#42,
+    # 2026-08-13). Same structure as EBB (short put at spot-$2, long $5
+    # lower, 0DTE, no stop, settle at close) — only the entry window and
+    # health bands differ.
+    from backend.bots.registry import get_bot
+    from sqlalchemy import text
+    b = get_bot("ebb_pm")
+    assert b["display"] == "Ebb PM"
+    assert b["strategy"] == "bull_put_spread"
+    assert b["ticker"] == "SPY"
+    assert b["front_dte"] == 0
+    assert b["back_dte"] == 0
+    assert b["one_entry_per_day"] is True
+    assert b["settle_at_expiry"] is True
+    assert b["params"]["short_otm_abs"] == 2.0
+    assert b["params"]["spread_abs"] == 5.0
+    assert b["params"]["min_credit"] == 0.10
+    # Pre-calibrated health bands (2026-08-13, registry #42r) — EBB PM's own,
+    # not EBB's.
+    bands = b["health_bands"]
+    assert bands["watch_roll60"] == -187.0
+    assert bands["demote_roll60"] == -576.0
+    assert bands["demote_roll120"] == 0.0
+    assert bands["min_credit20"] == 14.0
+    d = b["defaults"]
+    assert d["starting_capital"] == 3000.0
+    assert d["enabled"] is False        # no bot ships armed
+    assert d["max_contracts"] == 1
+    assert d["max_concurrent_positions"] == 1
+    assert d["entry_start_ct"] == "13:05"
+    assert d["entry_end_ct"] == "13:10"
+    assert d["discord_alerts"] is True
+    assert b["discord_webhook_env"] == "RISK_ADVISOR_DISCORD_WEBHOOK"
+
+    eng = db_session.get_bind()
+    row = eng.connect().execute(text("SELECT enabled FROM ebb_pm_config WHERE id=1")).mappings().first()
+    assert row is not None
+    assert bool(row["enabled"]) is False

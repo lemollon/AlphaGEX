@@ -39,14 +39,14 @@ def post_open(*, bot: str, display: str, strategy: str,
     if not _dedup_ok(f"bot:{bot}:position:{position_id}:open"):
         return False
     webhook_url = _webhook_url(bot)
-    if bot == "ebb":
-        # EBB's validated 0DTE bull put spread — a plain-language line to
-        # the risk-advisor channel instead of the generic legs-table embed
-        # (research registry #23b format, 2026-08-13).
+    if bot in ("ebb", "ebb_pm"):
+        # EBB / EBB PM's validated 0DTE bull put spread — a plain-language
+        # line to the risk-advisor channel instead of the generic legs-table
+        # embed (research registry #23b / #41-#42 format, 2026-08-13).
         long_k = next((l["strike"] for l in legs if l["side"] == "long"), None)
         short_k = next((l["strike"] for l in legs if l["side"] == "short"), None)
         embed = {
-            "description": (f"\U0001f30a EBB opened: SPY {short_k:.0f}/{long_k:.0f} "
+            "description": (f"\U0001f30a {display} opened: SPY {short_k:.0f}/{long_k:.0f} "
                             f"put spread exp today · credit ${entry_price:.2f} "
                             f"· 1 ct"),
             "color": _COLOR["open"],
@@ -95,20 +95,20 @@ def post_settle(*, bot: str, display: str, strategy: str,
                 position_id: str, realized_pnl: float,
                 n_trades: int | None = None,
                 total_pnl: float | None = None) -> bool:
-    """Settle-at-expiry close (RIPPLE, SPLASH, EBB). The scanner's cash-
-    settlement path never calls `post_close` — there is no PT/SL/EOD close
-    reason to report, only intrinsic-vs-official-close — so this is the
+    """Settle-at-expiry close (RIPPLE, SPLASH, EBB, EBB PM). The scanner's
+    cash-settlement path never calls `post_close` — there is no PT/SL/EOD
+    close reason to report, only intrinsic-vs-official-close — so this is the
     dedicated hook for it.
 
-    EBB gets its own plain-language running-total line to the risk-advisor
-    channel; other settle_at_expiry bots fall back to a generic SETTLE embed
-    on their normal (module-wide) webhook.
+    EBB / EBB PM get their own plain-language running-total line to the
+    risk-advisor channel; other settle_at_expiry bots fall back to a generic
+    SETTLE embed on their normal (module-wide) webhook.
     """
     from .. import _send_webhook_sync, _dedup_ok
     if not _dedup_ok(f"bot:{bot}:position:{position_id}:settle"):
         return False
     webhook_url = _webhook_url(bot)
-    if bot == "ebb":
+    if bot in ("ebb", "ebb_pm"):
         sign = "+" if realized_pnl >= 0 else ""
         n_str = str(n_trades) if n_trades is not None else "?"
         if total_pnl is not None:
@@ -116,7 +116,7 @@ def post_settle(*, bot: str, display: str, strategy: str,
         else:
             total_str = "?"
         embed = {
-            "description": (f"\U0001f30a EBB settled: {sign}${realized_pnl:.2f} "
+            "description": (f"\U0001f30a {display} settled: {sign}${realized_pnl:.2f} "
                             f"· {n_str} trades so far · total "
                             f"${total_str}"),
             "color": _COLOR["close_PT"] if realized_pnl >= 0 else _COLOR["close_SL"],
