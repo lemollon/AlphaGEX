@@ -219,6 +219,15 @@ export default function RiskAdvisorPage() {
               <InfoTip text="The one-line answer for today, from yesterday's closes. RISK-OFF = a backtested danger signal is active — follow the playbook table. CALM FLOOR = statistically the safest premium-selling state. NORMAL = no signal, trade normal size. Recomputed on every refresh; the underlying index closes update once per day after the close." />
             </div>
             <div style={{ fontSize: 13.5, marginTop: 6, color: '#c6cbd8' }}>{todayAction}</div>
+            {state.macro && (state.macro.today || state.macro.next) && (
+              <div style={{ ...S.small, marginTop: 6 }}>
+                {state.macro.today
+                  ? <span style={{ color: AMBER, fontWeight: 700 }}>📅 {state.macro.today} TODAY — announcement days run hotter; treat warnings with extra respect. </span>
+                  : null}
+                {state.macro.next && <span>Next macro event: {state.macro.next.label} on {state.macro.next.d}. </span>}
+                <span>Sourced from the Fed &amp; BLS official schedules.</span>
+              </div>
+            )}
             <div style={{ ...S.small, marginTop: 4 }}>
               As of close {state.asof_close} · VIX {state.indices?.vix?.toFixed(1)} ·
               VIX1D {state.indices?.vix1d?.toFixed(1)} · VIX9D {state.indices?.vix9d?.toFixed(1)} ·

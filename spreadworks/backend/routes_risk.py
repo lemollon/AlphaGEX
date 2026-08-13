@@ -506,6 +506,17 @@ def _outlook(vix_c, v9_c, v1_hist: dict, rets: list) -> dict | None:
     }
 
 
+
+def _macro_block() -> dict:
+    """Factual macro-calendar context (sourced; see econ_calendar.py)."""
+    try:
+        from .econ_calendar import macro_today, next_macro
+        today = datetime.now(CT).date()
+        return {"today": macro_today(today), "next": next_macro(today)}
+    except Exception:
+        return {"today": None, "next": None}
+
+
 @router.get("/state")
 async def state(request: Request):
     client: httpx.AsyncClient = request.app.state.http
@@ -613,6 +624,7 @@ async def state(request: Request):
         "live": live,
         "outlook": outlook,
         "action": action,
+        "macro": _macro_block(),
         "headline": ("RISK-OFF: stand down / reduce" if risk_off else
                      ("CALM FLOOR: safest premium-selling state" if double_floor
                       else "NORMAL")),

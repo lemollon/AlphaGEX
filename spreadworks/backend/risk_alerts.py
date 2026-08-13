@@ -113,10 +113,18 @@ def register_risk_alerts(scheduler, app) -> None:
             floor = bool(vv_c and vv_c < 85 and vix_c < 14)
             today = datetime.now(CT).date()
 
+            try:
+                from .econ_calendar import macro_today
+                macro = macro_today(today)
+            except Exception:
+                macro = None
             if backw or flag:
                 if not _claim_post_slot_db("risk_morning_riskoff", today):
                     return
                 actions = []
+                if macro:
+                    actions.append(f"• 📅 **{macro} today** — announcement days "
+                                   "run hotter; context, not a new signal")
                 if backw:
                     actions.append("• **Backwardation (VIX > VIX3M)** — skip new "
                                    "premium-selling entries today (+0.09 ret/DD, 7y backtest)")
