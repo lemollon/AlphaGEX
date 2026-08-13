@@ -265,11 +265,11 @@ export default function RiskAdvisorPage() {
           {/* 4 ─ FORWARD OUTLOOK */}
           <div style={{ ...S.card, flex: '1 1 300px' }}>
             <div style={S.cardTitle}><TrendingUp size={13} style={{ verticalAlign: -2 }} /> Next-session outlook
-              <InfoTip text="Tomorrow's plan, recomputed after each close. Probabilities are calibrated (Albers RVRP adjustment): P(±1% day) is the headline. The grade maps probability to action: normal → reduce size → hedge → stand down." />
+              <InfoTip text="Tomorrow's plan, recomputed after each close. Probabilities are calibrated (Albers RVRP adjustment): P(±1% day) is the headline. The grade maps probability to action: normal → reduce size → widen strikes or skip → stand down." />
             </div>
             {out ? (<>
               <div style={{ fontSize: 14, marginBottom: 8 }}>
-                Grade: <b style={{ color: out.grade === 'normal' ? GREEN : out.grade === 'reduce_size' ? AMBER : RED }}>
+                Grade: <b style={{ color: out.grade === 'normal' ? GREEN : out.grade === 'stand_down' ? RED : AMBER }}>
                   {out.grade.replace('_', ' ').toUpperCase()}</b>
                 {out.flag_vix1d && <span style={{ color: AMBER }}> · FLAG ON</span>}
               </div>
@@ -465,7 +465,7 @@ export default function RiskAdvisorPage() {
           <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.7 }}>
             <li><b>Check the verdict each morning before 8:30 CT.</b> It already includes yesterday's closes. RISK-OFF → apply the actions in the playbook table for whichever signals are active.</li>
             <li><b>At ~10:05 CT the flow signal arrives.</b> A spike (z&gt;2) means same-day danger — it fires on ~6% of days and more than doubles big-move odds. It applies to same-day (0DTE) exposure, NOT to multi-day positions.</li>
-            <li><b>The outlook card is tomorrow's plan.</b> After the close it updates; its grade (normal / reduce / hedge / stand down) uses calibrated probabilities.</li>
+            <li><b>The outlook card is tomorrow's plan.</b> After the close it updates; its grade (normal / reduce / widen-or-skip / stand down) uses calibrated probabilities.</li>
             <li><b>Trust the scorecard, not the promises.</b> If live precision/recall drifts materially below the backtest column for a sustained window, the signal is decaying and we revisit — that is the deal.</li>
             <li><b>Alerts are live (Discord):</b> RISK-OFF morning verdict at 08:05 CT (@here), flow spike at ~10:06 CT (@here), calm floor as a quiet note. Silence at 08:05 means NORMAL — no news is the default.</li>
           </ol>
