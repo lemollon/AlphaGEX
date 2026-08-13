@@ -314,12 +314,15 @@ def register_risk_alerts(scheduler, app) -> None:
             now = datetime.now(CT)
             if now.weekday() >= 5:
                 return
-            if not _claim_post_slot_db("risk_em_note", now.date()):
-                return
             from .routes_risk import _cboe, _latest, _live_quote
             v1 = await _cboe(app.state.http, "VIX1D")
             d, v1_c = _latest(v1)
             em = v1_c / SQRT252
+            # claim the once-per-day slot only AFTER the data fetch succeeded —
+            # claiming first burned the slot on a transient fetch failure and
+            # silently killed that day's note
+            if not _claim_post_slot_db("risk_em_note", now.date()):
+                return
             shim = SimpleNamespace(app=app)
             q = await _live_quote(shim)
             prev = (q or {}).get("prev_close")
