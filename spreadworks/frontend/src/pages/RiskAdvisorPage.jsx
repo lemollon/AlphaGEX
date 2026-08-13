@@ -46,19 +46,41 @@ function InfoTip({ text }) {
 function pct(x, d = 1) { return x == null ? '—' : (100 * x).toFixed(d) + '%'; }
 
 // The action each signal demands when ACTIVE, with its backtested "why".
+// `plain` = what the signal means in everyday speech — the page must never
+// require the reader to decode a z-score or an index name to act correctly.
 const PLAYBOOK = [
   { key: 'backwardation', name: 'Backwardation (VIX > VIX3M)',
-    action: 'SKIP new premium-selling entries today',
+    plain: 'In plain English: short-term fear is higher than long-term fear — the market is in stress RIGHT NOW.',
+    action: 'DO NOT open new premium-selling trades today',
     why: 'Stress is here. Skipping these days improved the condor book from 0.32 to 0.41 return-per-drawdown over 7 years.' },
   { key: 'flag_vix1d', name: 'VIX1D flag (implied 1-day move > 1%)',
-    action: 'Reduce size or skip — a ±1% day is more likely than not to matter',
+    plain: 'In plain English: options are pricing a bigger-than-1% move by tomorrow — a swing day is likely.',
+    action: 'Sell SMALLER than usual, or skip today',
     why: 'When this flag is on, 42.8% of days move ≥1% (vs 26% overall). It catches 68% of all big days.' },
   { key: 'flow_spike', name: '10:00 CT flow spike (put/total vol z > 2)',
-    action: 'Same-day risk: avoid new 0DTE exposure; tighten same-day exits',
+    plain: 'In plain English: unusually heavy option buying this morning vs the last 3 months — someone is bracing for a move TODAY.',
+    action: 'No new SAME-DAY (0DTE) trades; tighten today’s exits. Multi-day trades: ignore this one',
     why: 'Big rest-of-day move odds jump to 28.6% vs 12.1% base (~4.8σ). Matters for SAME-DAY trades; a 5-day condor should ignore it.' },
   { key: 'double_floor', name: 'Double floor (VVIX<85 & VIX<14)',
-    action: 'Safest measured day to SELL premium at normal size',
+    plain: 'In plain English: the market is unusually calm AND calm about staying calm — the best measured day to sell premium.',
+    action: 'GREEN LIGHT: sell premium at your normal size',
     why: 'Across 56 such sessions: ZERO next-day moves ≥1.5%. The calmest state in the data.' },
+];
+
+// Plain-speech glossary — every term the page uses, defined once.
+const GLOSSARY = [
+  ['VIX / VIX3M / VIX9D', 'Fear gauges: the price of insurance on the S&P over the next 30 days / 3 months / 9 days. Higher = more expected movement.'],
+  ['VIX1D', 'Same idea for just the NEXT DAY. VIX1D of 16 ≈ options pricing a ±1% move by tomorrow.'],
+  ['VVIX', 'The fear gauge OF the fear gauge — how nervous the market is about VIX itself jumping. Under 85 = genuinely relaxed.'],
+  ['Backwardation', 'Short-term insurance costing MORE than long-term. Normally it’s the reverse; when it flips, stress is happening now.'],
+  ['z-score (flow z)', 'How unusual today is vs the last 63 sessions. z=0 typical, z=2 ≈ top 2% unusual. Spike = z above 2.'],
+  ['Expected move', 'The size of day the options market has paid for, from VIX1D. The intraday chart’s band; past 100% budget = a bigger day than priced.'],
+  ['0DTE / DTE', 'Days To Expiry. 0DTE = expires today (same-day trades). "Nearest exp 3 DTE" = closest position expiry is 3 trading days out.'],
+  ['Precision / recall', 'Precision 42.8%: when the flag fires, a big move follows 42.8% of the time (vs 26% for any random day). Recall 68%: of all big days, the flag catches 68%.'],
+  ['Brier score', 'Accuracy of probability forecasts — lower is better. 0.168 backtested; the scorecard degrades the signal if live drifts above ~0.22.'],
+  ['ret/DD', 'Yearly profit divided by worst losing streak (drawdown). 0.41 = makes 41% of its worst dip back per year. Our bar for "worth trading" is 0.5+.'],
+  ['Quiet day', 'Previous close had VIX under 16. The regime where daily warning signals are mostly blind — the flow snapshot exists to cover it.'],
+  ['Pre-registered', 'The test’s rule and pass bar were written down BEFORE seeing results — so a "winner" can’t be an after-the-fact cherry-pick.'],
 ];
 
 export default function RiskAdvisorPage() {
@@ -110,6 +132,12 @@ export default function RiskAdvisorPage() {
     : active.double_floor
       ? 'CALM FLOOR — statistically the safest state to sell premium at normal size.'
       : 'NORMAL — no signal active. Bots at normal size; nothing to do.';
+  // the explicit instruction — no decoding required
+  const todayAction = activeRisk
+    ? 'TODAY: DO NOT SELL PREMIUM — reduce or skip. And do NOT buy premium instead: that was backtested and loses even more on days like this. Flat is the trade.'
+    : active.double_floor
+      ? 'TODAY: GREEN LIGHT — the best measured kind of day to sell premium at normal size.'
+      : 'TODAY: trade your normal plan at normal size. Nothing here asks for a change.';
 
   // quiet-day shading for the ribbon
   const bands = []; let start = null;
@@ -149,6 +177,7 @@ export default function RiskAdvisorPage() {
             <div style={{ fontSize: 17, fontWeight: 700, color: headColor }}>{verdict}
               <InfoTip text="The one-line answer for today, from yesterday's closes. RISK-OFF = a backtested danger signal is active — follow the playbook table. CALM FLOOR = statistically the safest premium-selling state. NORMAL = no signal, trade normal size. Recomputed on every refresh; the underlying index closes update once per day after the close." />
             </div>
+            <div style={{ fontSize: 13.5, marginTop: 6, color: '#c6cbd8' }}>{todayAction}</div>
             <div style={{ ...S.small, marginTop: 4 }}>
               As of close {state.asof_close} · VIX {state.indices?.vix?.toFixed(1)} ·
               VIX1D {state.indices?.vix1d?.toFixed(1)} · VIX9D {state.indices?.vix9d?.toFixed(1)} ·
@@ -179,6 +208,7 @@ export default function RiskAdvisorPage() {
                       marginLeft: 6, verticalAlign: 'middle' }}>
                       {h === 'DEGRADED' ? 'DEGRADED' : h === 'sharp' ? 'SHARP' : '…'}
                     </span>}
+                    <div style={{ ...S.small, fontWeight: 400, marginTop: 3 }}>{p.plain}</div>
                   </td>
                   <td style={{ ...S.td, color: active[p.key] ? (p.key === 'double_floor' ? GREEN : RED) : DIM, fontWeight: 700 }}>
                     {active[p.key] ? 'ACTIVE' : 'off'}
@@ -443,8 +473,12 @@ export default function RiskAdvisorPage() {
 
         {/* 7b ─ DIRECTIONAL / LONG-PREMIUM VERDICTS */}
         <div style={S.card}>
-          <div style={S.cardTitle}>Directional &amp; long-premium — what the backtests say
-            <InfoTip text="You might expect 'don't sell premium' days to be 'buy premium' days. They are not — every directional/long-premium idea below was pre-registered and backtested (registry #18–#22, 2026-08-13). This section exists so you never have to wonder whether it was tried." />
+          <div style={S.cardTitle}>Tested and REJECTED — the page will never suggest these
+            <InfoTip text="You might expect 'don't sell premium' days to be 'buy premium' days. They are not — every directional/long-premium idea below was pre-registered and backtested (registry #18–#22, 2026-08-13) FOR THE PURPOSE OF REJECTING OR CONFIRMING IT. Red rows are ideas we tested to kill, so you never have to wonder whether they were tried. Nothing in this table is a trade suggestion." />
+          </div>
+          <div style={{ fontSize: 12.5, color: RED, fontWeight: 600, marginBottom: 10 }}>
+            ⛔ Everything marked NO below was backtested in order to REJECT it. These are anti-recommendations —
+            documented so the same tempting idea never has to be wondered about twice.
           </div>
           <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 10 }}>
             <thead><tr>
@@ -518,6 +552,22 @@ export default function RiskAdvisorPage() {
                 <td style={S.td}>call-heavy premium → P(up) 2.2% vs 6.4% base</td>
                 <td style={S.td}>suggestive only</td>
               </tr>
+            </tbody>
+          </table>
+        </div>
+        {/* 9 ─ GLOSSARY: every term in plain speech */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>What the words mean — plain-speech glossary
+            <InfoTip text="Every term this page uses, defined once in everyday language. If anything on the page still requires decoding after this, that is a bug — report it and the page changes." />
+          </div>
+          <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+            <tbody>
+              {GLOSSARY.map(([term, def]) => (
+                <tr key={term}>
+                  <td style={{ ...S.td, fontWeight: 600, whiteSpace: 'nowrap', verticalAlign: 'top' }}>{term}</td>
+                  <td style={{ ...S.td, ...S.small, fontSize: 13 }}>{def}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
