@@ -37,6 +37,14 @@ def test_non_override_bot_uses_default_webhook():
     assert discord_alerts._webhook_url("flow") is None
 
 
+def test_ebb_pm_webhook_url_resolves_risk_env(monkeypatch):
+    # EBB PM (registry #41/#42) routes to the same risk-advisor channel as
+    # EBB — it's the same paper-trade companion, just the afternoon tranche.
+    monkeypatch.setenv("RISK_ADVISOR_DISCORD_WEBHOOK", "https://example.test/risk")
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://example.test/fleet")
+    assert discord_alerts._webhook_url("ebb_pm") == "https://example.test/risk"
+
+
 def test_risk_alerts_jobs_importable():
     # register_risk_alerts must still parse/import cleanly with the three
     # new jobs added (health_flip_check, friday_digest, promotion_announce).

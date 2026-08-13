@@ -144,6 +144,11 @@ function BotHeader({ bot, meta, theme, status, enabled, toggling, forcing, onTog
                 Validated 0DTE put spread (registry #23b) — no stop by design; health bands demote on decay.
               </div>
             )}
+            {bot === 'ebb_pm' && (
+              <div className="mt-1.5 text-[11.5px] text-text-tertiary">
+                Afternoon tranche of EBB (registry #41/#42) — same structure, entry 13:05 CT; no stop by design; health bands demote on decay.
+              </div>
+            )}
           </div>
         </div>
 

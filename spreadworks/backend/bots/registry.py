@@ -400,6 +400,75 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "max_concurrent_positions": 1,
         },
     },
+    # EBB PM — validated afternoon tranche of EBB (research registry #41/#42,
+    # 2026-08-13): same structure as EBB (short put at strike nearest
+    # spot-$2, long put $5 lower, 0DTE, hold to same-day cash settlement, no
+    # stop), just a second entry window later in the day — 13:05 CT lands
+    # after the 13:36 re-check alert on purpose, so the entry is informed by
+    # that recheck rather than racing it. $9.57/trade, ret/DD 2.67, 5/5 blind
+    # years. The two-tranche book (ebb + ebb_pm together) runs $21.72/day at
+    # ret/DD 2.77 — this entry is additive to EBB's morning tranche, not a
+    # replacement. Single-ticker, fixed direction (bull_put_spread) — same
+    # dispatch path as EBB in scanner._build_signal.
+    #
+    # NO-STOP INVARIANT: same as EBB — do not add one. decide_exit()'s
+    # settle_at_expiry short-circuit covers this bot too (checked generically
+    # on the registry field, not the bot name).
+    #
+    # DEMOTE RULE: health_bands below are pre-registered from this stream's
+    # own block-bootstrap + credit history (registry #42r). A live band
+    # breach means DISABLE the bot; never re-tune the bands to make a breach
+    # go away.
+    "ebb_pm": {
+        "display": "Ebb PM",
+        "strategy": "bull_put_spread",
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": 0,
+        "one_entry_per_day": True,
+        "settle_at_expiry": True,
+        # Same risk-advisor routing as EBB — this bot is the afternoon half
+        # of the same paper-trade companion, so it belongs in the same
+        # channel as EBB's alerts.
+        "discord_webhook_env": "RISK_ADVISOR_DISCORD_WEBHOOK",
+        "params": {
+            "short_otm_abs": 2.0, "spread_abs": 5.0,
+            "min_option_price": 0.10, "max_spread_pct": 0.15,
+            "min_credit": 0.10,
+        },
+        "health_bands": {   # pre-registered 2026-08-13 from this stream's own
+            # block bootstrap + credit history (registry #42r).
+            "watch_roll60": -187.0,     # rolling-60-trade $ per lot
+            "demote_roll60": -576.0,
+            "demote_roll120": 0.0,      # rolling-120 total below this = demote
+            "min_credit20": 14.0,       # 20-trade avg credit $ per lot floor
+        },
+        "defaults": {
+            "starting_capital": 3000.0,
+            "enabled": False,   # ships disabled; enable via API after deploy
+            "max_contracts": 1,
+            # Same sizing headroom as EBB: a $5-wide 0DTE put spread 2 points
+            # OTM runs max_loss ~$350-480/lot; 0.20 x $3000 = $600 comfortably
+            # sizes to 1 (max_contracts caps it there regardless).
+            "bp_pct": 0.20,
+            # schema-required, unused by vertical_spread — see UPDRAFT.
+            "sd_mult": 1.0,
+            # Unreachable by construction, same as EBB — settle_at_expiry
+            # skips both structurally (see decide_exit); kept at the
+            # documented "no stop" values so the config UI never implies a
+            # live stop level.
+            "pt_pct": 1.0,
+            "sl_pct": 9.9999,
+            "entry_start_ct": "13:05",
+            "entry_end_ct": "13:10",
+            # Unused for settle_at_expiry bots (kept for the config UI).
+            "eod_close_ct": "14:45",
+            "discord_alerts": True,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            "max_concurrent_positions": 1,
+        },
+    },
     # MEADOW — SPY Credit Double Diagonal. The credit-side sibling of DRIFT:
     # sell the near-dated (6 DTE) strangle close to the money, buy a slightly-
     # longer-dated (9 DTE) strangle $5 further OTM, for a net credit. Short

@@ -12,6 +12,7 @@ export const BOT_REGISTRY = {
   undertow: { display: 'UNDERTOW', strategy: 'vertical_debit', ticker: 'multi', version: 'v1.0' },
   delta: { display: 'DELTA', strategy: 'vertical_credit', ticker: 'multi', version: 'v1.0' },
   ebb: { display: 'Ebb', strategy: 'bull_put_spread', ticker: 'SPY', version: 'v1.0' },
+  ebb_pm: { display: 'Ebb PM', strategy: 'bull_put_spread', ticker: 'SPY', version: 'v1.0' },
   updraft: { display: 'UPDRAFT', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   backdraft: { display: 'BACKDRAFT', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   reversal: { display: 'REVERSAL', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
@@ -257,5 +258,13 @@ export const BOT_THEME = {
     primaryRing: 'rgba(94,234,212,0.30)',
     glow:        'rgba(94,234,212,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(94,234,212,0.22) 0%, rgba(94,234,212,0.03) 100%)',
+  },
+  ebb_pm: {
+    glyph:       'wave',                       // EBB PM = same tide, afternoon tranche
+    primary:     '#99f6e4',                    // teal-200 (sea-green family, unused elsewhere)
+    primarySoft: 'rgba(153,246,228,0.10)',
+    primaryRing: 'rgba(153,246,228,0.30)',
+    glow:        'rgba(153,246,228,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(153,246,228,0.22) 0%, rgba(153,246,228,0.03) 100%)',
   },
 };

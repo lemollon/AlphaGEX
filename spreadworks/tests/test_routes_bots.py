@@ -530,3 +530,39 @@ def test_ebb_fleet_stats_health_watch_on_rolling_60_drawdown(client):
     assert health["roll60"] == pytest.approx(-600.0)
     assert health["roll120"] is None
     assert health["bands"]["watch_roll60"] == -524.0
+
+
+# ---------------------------------------------------------------------------
+# EBB PM — registry #41/#42: appears in the fleet list disabled, and its own
+# (looser) rolling health bands surface on /fleet-stats — not EBB's.
+# ---------------------------------------------------------------------------
+
+def test_ebb_pm_registered_and_ships_disabled(client):
+    r = client.get("/api/spreadworks/bots")
+    assert r.status_code == 200
+    by_bot = {b["bot"]: b for b in r.json()["bots"]}
+    assert "ebb_pm" in by_bot
+    assert by_bot["ebb_pm"]["enabled"] is False
+    assert by_bot["ebb_pm"]["strategy"] == "bull_put_spread"
+
+
+def test_ebb_pm_fleet_stats_health_watch_on_rolling_60_drawdown(client):
+    """60 closed trades summing below the -187 watch band -> status WATCH."""
+    from backend import routes_bots
+    eng = routes_bots.ENGINE
+    # -5/trade x 60 = -300, below watch_roll60 (-187) but above demote_roll60
+    # (-576) and demote_roll120 (n<120 so that gate can't fire either way).
+    for i in range(60):
+        _seed_closed_trade(eng, "ebb_pm", f"ebb-pm-health-{i:03d}", -5.0)
+
+    # /fleet-stats is cached 60s module-wide (see routes_bots._FLEET_STATS_CACHE)
+    # — bust it so this test doesn't read the prior test's stale payload.
+    routes_bots._FLEET_STATS_CACHE["ts"] = 0.0
+
+    r = client.get("/api/spreadworks/bots/fleet-stats")
+    assert r.status_code == 200, r.text
+    health = r.json()["bots"]["ebb_pm"]["health"]
+    assert health["status"] == "WATCH"
+    assert health["roll60"] == pytest.approx(-300.0)
+    assert health["roll120"] is None
+    assert health["bands"]["watch_roll60"] == -187.0
