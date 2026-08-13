@@ -108,6 +108,21 @@ def account_equity(engine: Engine, bot: str) -> float:
     return float(cfg["starting_capital"]) + float(row["s"] or 0)
 
 
+def closed_trade_totals(engine: Engine, bot: str) -> tuple[int, float]:
+    """(count, sum(realized_pnl)) across ALL of {bot}_closed_trades.
+
+    Cheap read-only query used by the Discord settle post to show a running
+    trade count + total P&L (e.g. EBB). Callers should wrap in try/except —
+    a Discord post must never raise on a query hiccup.
+    """
+    t = bot_table(bot, "closed_trades")
+    with engine.begin() as conn:
+        row = conn.execute(text(
+            f"SELECT COUNT(*) AS n, COALESCE(SUM(realized_pnl), 0) AS s FROM {t}"
+        )).mappings().first()
+    return int(row["n"] or 0), float(row["s"] or 0)
+
+
 def _new_position_id(bot: str, now: datetime) -> str:
     return f"{bot}-{now.date().isoformat()}-{uuid.uuid4().hex[:8]}"
 

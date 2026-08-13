@@ -20,7 +20,7 @@ from .db import bot_table, load_config
 from .executor import (
     account_equity, list_open_positions, open_position,
     close_position, compute_mtm, update_mtm, count_positions_opened_on,
-    configured_slippage_per_leg, configured_fill_mode,
+    configured_slippage_per_leg, configured_fill_mode, closed_trade_totals,
 )
 from .monitor import (
     decide_exit, pt_pct_for_time_of_day, pt_pct_for_iron_condor_tod,
@@ -231,8 +231,19 @@ def run_settlement_pass(*, engine: Engine, bot: str, now_ct: datetime,
                 "not published yet — settlement pass retries next tick"
             )
             continue
-        close_position(engine, bot, pos["position_id"],
-                       close_value=settle, close_reason="SETTLE", now=now_ct)
+        realized = close_position(engine, bot, pos["position_id"],
+                                  close_value=settle, close_reason="SETTLE", now=now_ct)
+        cfg = load_config(engine, bot)
+        if bool(cfg.get("discord_alerts")):
+            try:
+                from . import discord_alerts
+                n_trades, total_pnl = closed_trade_totals(engine, bot)
+                discord_alerts.post_settle(
+                    bot=bot, display=meta["display"], strategy=pos["strategy"],
+                    position_id=pos["position_id"], realized_pnl=realized,
+                    n_trades=n_trades, total_pnl=total_pnl)
+            except Exception as e:              # noqa: BLE001
+                logger.warning(f"[{bot}] discord post_settle failed: {e}")
         _log_scan(engine, bot, now=now_ct, outcome="TRADE",
                   reason="CLOSE_SETTLE", position_id=pos["position_id"])
         booked.append(pos["position_id"])
@@ -979,9 +990,19 @@ def run_scan_cycle(
                             monitor_result = {"outcome": "MONITOR",
                                               "position_id": pos["position_id"]}
                         continue
-                    close_position(engine, bot, pos["position_id"],
-                                   close_value=settle, close_reason="SETTLE",
-                                   now=now_ct)
+                    realized = close_position(engine, bot, pos["position_id"],
+                                              close_value=settle, close_reason="SETTLE",
+                                              now=now_ct)
+                    if bool(cfg.get("discord_alerts")):
+                        try:
+                            from . import discord_alerts
+                            n_trades, total_pnl = closed_trade_totals(engine, bot)
+                            discord_alerts.post_settle(
+                                bot=bot, display=meta["display"], strategy=pos["strategy"],
+                                position_id=pos["position_id"], realized_pnl=realized,
+                                n_trades=n_trades, total_pnl=total_pnl)
+                        except Exception as e:              # noqa: BLE001
+                            logger.warning(f"[{bot}] discord post_settle failed: {e}")
                     monitor_result = {"outcome": "TRADE", "reason": "CLOSE_SETTLE",
                                       "position_id": pos["position_id"]}
                     continue

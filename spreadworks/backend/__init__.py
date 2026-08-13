@@ -49,13 +49,18 @@ else:
         print(f"[SpreadWorks]   {p} -> exists={p.exists()}")
 
 
-def _send_webhook_sync(embed_or_embeds) -> bool:
+def _send_webhook_sync(embed_or_embeds, webhook_url: str | None = None) -> bool:
     """Send embeds to Discord webhook (sync, for scheduler use).
 
     Accepts either a single embed dict or a list of embeds (max 10 per
     Discord's webhook limit). Multi-embed posts render as a vertical
     color-coded ladder in Discord — used by the EVENING BRIEF for
     visually distinct sections.
+
+    `webhook_url` lets a caller route to a DIFFERENT webhook than the
+    module-wide DISCORD_WEBHOOK_URL (e.g. bots/discord_alerts.py routing
+    EBB's posts to the risk-advisor channel via a per-bot registry
+    override). Falls back to DISCORD_WEBHOOK_URL when omitted/empty.
     """
     import requests as req
 
@@ -64,7 +69,7 @@ def _send_webhook_sync(embed_or_embeds) -> bool:
     else:
         embeds = list(embed_or_embeds)[:10]  # Discord caps at 10
 
-    url = os.getenv("DISCORD_WEBHOOK_URL", "")
+    url = webhook_url or os.getenv("DISCORD_WEBHOOK_URL", "")
     if not url:
         logger.warning("[SpreadWorks] DISCORD_WEBHOOK_URL not set — skipping")
         return False

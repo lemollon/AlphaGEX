@@ -352,6 +352,12 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "back_dte": 0,
         "one_entry_per_day": True,
         "settle_at_expiry": True,
+        # EBB posts opens/settles to the RISK ADVISOR channel, not the
+        # generic bot channel — this bot is the risk page's paper-trade
+        # companion, so its trades belong next to the risk alerts, not
+        # buried in the fleet's own webhook. Honored by
+        # discord_alerts._webhook_url() (2026-08-13).
+        "discord_webhook_env": "RISK_ADVISOR_DISCORD_WEBHOOK",
         "params": {
             "short_otm_abs": 2.0, "spread_abs": 5.0,
             "min_option_price": 0.10, "max_spread_pct": 0.15,
@@ -386,7 +392,9 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "entry_end_ct": "10:20",
             # Unused for settle_at_expiry bots (kept for the config UI).
             "eod_close_ct": "14:45",
-            "discord_alerts": False,
+            # Opens/settles post to the risk-advisor channel (see
+            # discord_webhook_env above), not the generic fleet webhook.
+            "discord_alerts": True,
             "delta_skew": 0,
             "use_gex_walls": False,
             "max_concurrent_positions": 1,
