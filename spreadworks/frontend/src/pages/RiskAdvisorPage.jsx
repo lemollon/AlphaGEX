@@ -355,12 +355,14 @@ export default function RiskAdvisorPage() {
           </div>
           <div style={{ width: '100%', height: 240 }}>
             <ResponsiveContainer>
-              <ComposedChart data={hist} margin={{ top: 6, right: 12, left: -18, bottom: 0 }}>
+              <ComposedChart data={hist} margin={{ top: 6, right: 12, left: -8, bottom: 0 }}>
                 {bands.map(([a, b], i) => (
                   <ReferenceArea key={i} x1={a} x2={b} fill={BLUE} fillOpacity={0.07} />
                 ))}
                 <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#5b6478' }} interval="preserveStartEnd" minTickGap={40} />
-                <YAxis tick={{ fontSize: 10, fill: '#5b6478' }} domain={[-3, 5]} />
+                <YAxis tick={{ fontSize: 10, fill: '#5b6478' }}
+                       domain={[d => Math.floor(Math.min(d, -3)), d => Math.ceil(Math.max(d, 5))]}
+                       tickFormatter={v => Number(v).toFixed(0)} allowDecimals={false} />
                 <Tooltip contentStyle={{ background: "#141824", border: "1px solid #232a3d", fontSize: 12 }} formatter={v => (v == null ? "—" : Number(v).toFixed(2))} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 <ReferenceLine y={2} stroke={RED} strokeDasharray="4 4" />
