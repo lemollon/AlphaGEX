@@ -390,6 +390,49 @@ export default function RiskAdvisorPage() {
           </ol>
         </div>
 
+        {/* 7b ─ DIRECTIONAL / LONG-PREMIUM VERDICTS */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>Directional &amp; long-premium — what the backtests say
+            <InfoTip text="You might expect 'don't sell premium' days to be 'buy premium' days. They are not — every directional/long-premium idea below was pre-registered and backtested (registry #18–#22, 2026-08-13). This section exists so you never have to wonder whether it was tried." />
+          </div>
+          <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 10 }}>
+            <thead><tr>
+              <th style={S.th}>idea</th><th style={S.th}>verdict</th><th style={S.th}>evidence</th>
+            </tr></thead>
+            <tbody>
+              <tr>
+                <td style={S.td}>Buy straddles/premium on flagged days</td>
+                <td style={{ ...S.td, color: RED, fontWeight: 700 }}>NO — flat, not long</td>
+                <td style={{ ...S.td, ...S.small }}>1-2DTE ATM straddles at the ask LOSE MORE on flag days (−$19.63/trade vs −$14.42 all days, negative 4/4 blind years). The flag comes from option prices — the market already charges for the move.</td>
+              </tr>
+              <tr>
+                <td style={S.td}>Direction from GEX sign (neg gamma = momentum)</td>
+                <td style={{ ...S.td, color: RED, fontWeight: 700 }}>NO edge</td>
+                <td style={{ ...S.td, ...S.small }}>First-hour moves continue to the close 54.5% under negative gamma vs 54.7% positive vs 54.6% baseline — GEX sign adds nothing intraday.</td>
+              </tr>
+              <tr>
+                <td style={S.td}>Trend/vol regime arrows (grind-up → calls, down-risk → puts)</td>
+                <td style={{ ...S.td, color: RED, fontWeight: 700 }}>NO edge</td>
+                <td style={{ ...S.td, ...S.small }}>"Down-risk" regime days bounce (46% directional hit rate); "grind-up" days return less than an average day. This page will never show direction arrows built on these.</td>
+              </tr>
+              <tr>
+                <td style={S.td}>Quiet-day squeeze tell → speculative calls</td>
+                <td style={{ ...S.td, color: AMBER, fontWeight: 700 }}>WATCH — promotion-gated</td>
+                <td style={{ ...S.td, ...S.small }}>The one live directional candidate (tracked below). Becomes a page recommendation only by hitting its pre-registered promotion rule, never by eyeballing.</td>
+              </tr>
+              <tr>
+                <td style={S.td}>Conditional single-leg buys (UPDRAFT / REVERSAL / EM-BREACH / AFTERBURN)</td>
+                <td style={{ ...S.td, color: AMBER, fontWeight: 700 }}>PAPER — earning evidence</td>
+                <td style={{ ...S.td, ...S.small }}>Four call/put-buying bots run these ideas live on paper in the fleet. A lead graduates on positive paper P&amp;L, and that becomes the buy-side playbook here.</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={S.small}>
+            Bottom line: when this page says stand down, the validated action is <b>reduce or skip</b> — not switch sides.
+            Registry: ironforge-data/risk_advisor/trials_registry.md #18–#22.
+          </div>
+        </div>
+
         {/* 8 ─ WATCH TIER */}
         <div style={S.card}>
           <div style={S.cardTitle}>
