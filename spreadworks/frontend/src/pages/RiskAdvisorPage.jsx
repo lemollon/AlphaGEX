@@ -345,6 +345,57 @@ export default function RiskAdvisorPage() {
           </>) : <div style={S.small}>computing…</div>}
         </div>
 
+        {/* 5b ─ THE EVIDENCE: full backtest results behind every signal */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>The evidence — full backtest results
+            <InfoTip text="Every number that drives this page, with its base rate and sample. A hit rate without its base rate lies. All trials were pre-registered (hypothesis fixed before results were seen) in ironforge-data/risk_advisor/trials_registry.md; signals from close t−1, tradeable next session — no look-ahead." />
+          </div>
+          <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 10 }}>
+            <thead><tr>
+              <th style={S.th}>signal</th><th style={S.th}>backtest result</th>
+              <th style={S.th}>base rate / sample</th>
+            </tr></thead>
+            <tbody>
+              <tr>
+                <td style={{ ...S.td, fontWeight: 600 }}>Backwardation skip</td>
+                <td style={S.td}>Condor book <b>0.32 → 0.41 ret/DD</b> when skipping these days</td>
+                <td style={{ ...S.td, ...S.small }}>economic test on the real SPY condor stream, 7 years</td>
+              </tr>
+              <tr>
+                <td style={{ ...S.td, fontWeight: 600 }}>VIX1D flag</td>
+                <td style={S.td}><b>42.8% precision / 68% recall</b> on ≥1% days</td>
+                <td style={{ ...S.td, ...S.small }}>vs 26% of all days moving ≥1% — flag ≈ doubles the odds</td>
+              </tr>
+              <tr>
+                <td style={{ ...S.td, fontWeight: 600 }}>10:00 CT flow spike</td>
+                <td style={S.td}>Big rest-of-day move <b>28.6% vs 12.1%</b> (~4.8σ), fires 5.6% of days</td>
+                <td style={{ ...S.td, ...S.small }}>904 sessions 2023→. Magnitude only — direction tested, all t &lt; 1. Gating 5-DTE condors on it FAILS (0.24→0.21 ret/DD): same-day signal, same-day use</td>
+              </tr>
+              <tr>
+                <td style={{ ...S.td, fontWeight: 600 }}>Double floor</td>
+                <td style={S.td}><b>0 of 56</b> sessions moved ≥1.5% next day</td>
+                <td style={{ ...S.td, ...S.small }}>strongest state in the data — but a small sample, weight accordingly</td>
+              </tr>
+              <tr>
+                <td style={{ ...S.td, fontWeight: 600 }}>Outlook probabilities</td>
+                <td style={S.td}>Raw VIX1D = best ranker (<b>PR-AUC 0.466</b>); RVRP-adjusted = best calibration (<b>Brier ~0.168</b>)</td>
+                <td style={{ ...S.td, ...S.small }}>beat HAR-RV models (0.37–0.40) and a 12-feature ML model (0.033 — failed its gate, scrapped). Adjusted for printed probabilities, raw for flagging — pattern replicated 3×</td>
+              </tr>
+              <tr>
+                <td style={{ ...S.td, fontWeight: 600 }}>2σ down-tail</td>
+                <td style={S.td}>Near-unpredictable: best signal PR-AUC <b>0.049 vs 0.014</b> base (3.5× lift, weak)</td>
+                <td style={{ ...S.td, ...S.small }}>shown for context; nothing on this page gates on it, deliberately</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={S.small}>
+            Standard: every claim rests on multi-year windows including blind years — a 2-year walk-forward
+            once read +1.28 on a strategy that was −0.05 over 5 blind years. Ideas that failed this bar
+            (direction layers, regime arrows, long premium, ML model) are documented in the directional
+            panel below instead of being quietly dropped.
+          </div>
+        </div>
+
         {/* 6 ─ FLOW RIBBON */}
         <div style={S.card}>
           <div style={S.cardTitle}>10:00 CT flow z-scores — trailing 90 sessions
