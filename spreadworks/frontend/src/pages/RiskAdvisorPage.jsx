@@ -272,13 +272,16 @@ export default function RiskAdvisorPage() {
             return (
               <div style={{ width: '100%', height: 220 }}>
                 <ResponsiveContainer>
-                  <ComposedChart data={intra.bars} margin={{ top: 6, right: 12, left: -18, bottom: 0 }}>
+                  <ComposedChart data={intra.bars} margin={{ top: 6, right: 12, left: -8, bottom: 0 }}>
                     {intra.band_pct != null && (
                       <ReferenceArea y1={-b} y2={b} fill={AMBER} fillOpacity={0.05} />
                     )}
                     <XAxis dataKey="t" tick={{ fontSize: 10, fill: '#5b6478' }} interval="preserveStartEnd" minTickGap={40} />
-                    <YAxis domain={[-ext, ext]} tick={{ fontSize: 10, fill: '#5b6478' }} />
-                    <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }} />
+                    <YAxis domain={[-ext, ext]} ticks={[-b, -b / 2, 0, b / 2, b]}
+                           tickFormatter={v => `${v.toFixed(2)}%`}
+                           tick={{ fontSize: 10, fill: '#5b6478' }} />
+                    <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }}
+                             formatter={v => (v == null ? '—' : `${Number(v).toFixed(2)}%`)} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <ReferenceLine y={0} stroke="#232a3d" />
                     {intra.band_pct != null && (<>
@@ -358,7 +361,7 @@ export default function RiskAdvisorPage() {
                 ))}
                 <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#5b6478' }} interval="preserveStartEnd" minTickGap={40} />
                 <YAxis tick={{ fontSize: 10, fill: '#5b6478' }} domain={[-3, 5]} />
-                <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }} />
+                <Tooltip contentStyle={{ background: "#141824", border: "1px solid #232a3d", fontSize: 12 }} formatter={v => (v == null ? "—" : Number(v).toFixed(2))} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 <ReferenceLine y={2} stroke={RED} strokeDasharray="4 4" />
                 <ReferenceLine y={0} stroke="#232a3d" />
