@@ -325,6 +325,73 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "max_concurrent_positions": 5,
         },
     },
+    # EBB — validated 0DTE SPY put credit spread (research registry #23b,
+    # 2026-08-13): short put at strike nearest spot-$2, long put $5 lower,
+    # entry 10:05 CT, hold to same-day cash settlement — no stop, no profit
+    # target, $12.19/trade, 5/5 blind years at NBBO fills. Single-ticker,
+    # fixed direction (bull_put_spread) — unlike DELTA/UNDERTOW this is not a
+    # universe dip/rip scan, so `strategy` is the KIND directly (dispatched
+    # in scanner._build_signal) rather than the "vertical_credit" universe
+    # marker; DELTA's own registry field name doesn't apply here since EBB
+    # never sets `universe`.
+    #
+    # NO-STOP INVARIANT: a stop was not part of the validated spec — do not
+    # add one. decide_exit() honors this structurally: settle_at_expiry short-
+    # circuits every early exit (PT/SL/EOD) before it is ever evaluated, so
+    # the position always rides to the official close regardless of mark.
+    #
+    # DEMOTE RULE: health_bands below are pre-registered from #23b's own
+    # 930-day distribution. A live band breach (see routes_bots._bot_health)
+    # means DISABLE the bot; the paper record must re-clear the bar before
+    # re-enabling. Never re-tune the bands to make a breach go away.
+    "ebb": {
+        "display": "Ebb",
+        "strategy": "bull_put_spread",
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": 0,
+        "one_entry_per_day": True,
+        "settle_at_expiry": True,
+        "params": {
+            "short_otm_abs": 2.0, "spread_abs": 5.0,
+            "min_option_price": 0.10, "max_spread_pct": 0.15,
+            "min_credit": 0.10,
+        },
+        "health_bands": {   # pre-registered 2026-08-13 from registry #23b's own 930-day
+            # distribution (block bootstrap): false-alarm 5% / 1% on a healthy edge.
+            "watch_roll60": -524.0,     # rolling-60-trade $ per lot
+            "demote_roll60": -1216.0,
+            "demote_roll120": 0.0,      # rolling-120 total below this = demote
+            "min_credit20": 30.0,       # 20-trade avg credit $ per lot floor
+        },
+        "defaults": {
+            "starting_capital": 3000.0,
+            "enabled": False,   # paper-only fleet; no bot ships armed
+            "max_contracts": 1,
+            # Sizing headroom on a $3k account: a $5-wide 0DTE put spread 2
+            # points OTM runs max_loss ~$350-480/lot; 0.20 x $3000 = $600
+            # comfortably sizes to 1 (max_contracts caps it there regardless).
+            "bp_pct": 0.20,
+            # schema-required, unused by vertical_spread — see UPDRAFT.
+            "sd_mult": 1.0,
+            # Unreachable by construction (RIPPLE/TIDE convention): pt_pct=1.0
+            # only fires if the spread decays to literally worthless (same
+            # P&L as settlement); sl_pct at the NUMERIC(5,4) ceiling. Neither
+            # actually matters — settle_at_expiry skips both structurally
+            # (see decide_exit) — kept at the documented "no stop" values so
+            # the config UI never implies a live stop level.
+            "pt_pct": 1.0,
+            "sl_pct": 9.9999,
+            "entry_start_ct": "10:05",
+            "entry_end_ct": "10:20",
+            # Unused for settle_at_expiry bots (kept for the config UI).
+            "eod_close_ct": "14:45",
+            "discord_alerts": False,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            "max_concurrent_positions": 1,
+        },
+    },
     # MEADOW — SPY Credit Double Diagonal. The credit-side sibling of DRIFT:
     # sell the near-dated (6 DTE) strangle close to the money, buy a slightly-
     # longer-dated (9 DTE) strangle $5 further OTM, for a net credit. Short

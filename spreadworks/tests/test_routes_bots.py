@@ -498,3 +498,35 @@ def test_status_equity_mtm_includes_open_position_marks():
     finally:
         routes_bots.ENGINE = prev
         engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# EBB — registry #23b: appears in the fleet list disabled, and its rolling
+# health bands surface on /fleet-stats.
+# ---------------------------------------------------------------------------
+
+def test_ebb_registered_and_ships_disabled(client):
+    r = client.get("/api/spreadworks/bots")
+    assert r.status_code == 200
+    by_bot = {b["bot"]: b for b in r.json()["bots"]}
+    assert "ebb" in by_bot
+    assert by_bot["ebb"]["enabled"] is False
+    assert by_bot["ebb"]["strategy"] == "bull_put_spread"
+
+
+def test_ebb_fleet_stats_health_watch_on_rolling_60_drawdown(client):
+    """60 closed trades summing below the -524 watch band -> status WATCH."""
+    from backend import routes_bots
+    eng = routes_bots.ENGINE
+    # -10/trade x 60 = -600, below watch_roll60 (-524) but above demote_roll60
+    # (-1216) and demote_roll120 (n<120 so that gate can't fire either way).
+    for i in range(60):
+        _seed_closed_trade(eng, "ebb", f"ebb-health-{i:03d}", -10.0)
+
+    r = client.get("/api/spreadworks/bots/fleet-stats")
+    assert r.status_code == 200, r.text
+    health = r.json()["bots"]["ebb"]["health"]
+    assert health["status"] == "WATCH"
+    assert health["roll60"] == pytest.approx(-600.0)
+    assert health["roll120"] is None
+    assert health["bands"]["watch_roll60"] == -524.0

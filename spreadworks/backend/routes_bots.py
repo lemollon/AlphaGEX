@@ -695,6 +695,50 @@ def _date_str(v: Any) -> str:
     return str(v)[:10]
 
 
+def _bot_health(bot: str, bands: dict[str, float]) -> dict[str, Any]:
+    """Rolling-window health check against pre-registered bands (EBB,
+    registry #23b) — a decaying edge should demote itself rather than keep
+    opening. Only called for bots whose registry entry carries `health_bands`.
+    Never raises — a query hiccup reads as "warming_up" rather than sinking
+    the whole fleet card (this bot's slice is otherwise already wrapped by
+    the caller, but health specifically must not turn a working card red).
+    """
+    t_cls = bot_table(bot, "closed_trades")
+    try:
+        with ENGINE.begin() as conn:
+            rows = conn.execute(text(
+                f"SELECT realized_pnl, entry_price FROM {t_cls} "
+                "ORDER BY close_time DESC LIMIT 120"
+            )).mappings().all()
+    except Exception as e:                                     # noqa: BLE001
+        logger.warning(f"[{bot}] health query failed: {e}")
+        return {"status": "warming_up", "roll60": None, "roll120": None,
+                "credit20": None, "bands": bands}
+
+    n = len(rows)
+    roll60 = sum(float(r["realized_pnl"] or 0) for r in rows[:60]) if n >= 60 else None
+    roll120 = sum(float(r["realized_pnl"] or 0) for r in rows[:120]) if n >= 120 else None
+    # entry_price stores the net CREDIT received for a credit vertical
+    # (executor.open_position: entry_price = signal.credit) — $/share, so
+    # x100 for $/lot.
+    credit20 = (sum(float(r["entry_price"] or 0) for r in rows[:20]) / 20.0 * 100.0
+                if n >= 20 else None)
+
+    if ((n >= 60 and roll60 <= bands["demote_roll60"])
+            or (n >= 120 and roll120 <= bands["demote_roll120"])
+            or (n >= 20 and credit20 < bands["min_credit20"])):
+        status = "DEGRADED"
+    elif n >= 60 and roll60 <= bands["watch_roll60"]:
+        status = "WATCH"
+    elif n < 60:
+        status = "warming_up"
+    else:
+        status = "SHARP"
+
+    return {"status": status, "roll60": roll60, "roll120": roll120,
+            "credit20": credit20, "bands": bands}
+
+
 def _bot_fleet_stats(bot: str, now_ct: datetime) -> tuple[dict[str, Any], list[dict]]:
     """One bot's slice of /fleet-stats. Raises on any failure — the caller
     wraps this per-bot so one broken bot can't 500 the whole page. Returns
@@ -792,6 +836,11 @@ def _bot_fleet_stats(bot: str, now_ct: datetime) -> tuple[dict[str, Any], list[d
         "drawdown_pct": drawdown_pct,
         "last_session": last_session,
     }
+
+    health_bands = (BOT_REGISTRY.get(bot) or {}).get("health_bands")
+    if health_bands:
+        stats["health"] = _bot_health(bot, health_bands)
+
     return stats, open_rows
 
 

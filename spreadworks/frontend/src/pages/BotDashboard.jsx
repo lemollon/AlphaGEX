@@ -99,7 +99,7 @@ function KpiTile({ label, value, sub, mono = true, accent }) {
 
 /* ── Bot nameplate header ───────────────────────────────────────── */
 
-function BotHeader({ meta, theme, status, enabled, toggling, forcing, onToggle, onForceTrade }) {
+function BotHeader({ bot, meta, theme, status, enabled, toggling, forcing, onToggle, onForceTrade }) {
   return (
     <div
       className="px-4 md:px-8 pt-7 pb-6"
@@ -139,6 +139,11 @@ function BotHeader({ meta, theme, status, enabled, toggling, forcing, onToggle, 
                 {String(meta.display).toLowerCase()} · {meta.version || 'v1.0'}
               </span>
             </div>
+            {bot === 'ebb' && (
+              <div className="mt-1.5 text-[11.5px] text-text-tertiary">
+                Validated 0DTE put spread (registry #23b) — no stop by design; health bands demote on decay.
+              </div>
+            )}
           </div>
         </div>
 
@@ -851,6 +856,7 @@ export default function BotDashboard() {
   return (
     <div className="flex-1 overflow-y-auto font-[var(--font-ui)] text-text-primary">
       <BotHeader
+        bot={bot}
         meta={meta}
         theme={theme}
         status={status}

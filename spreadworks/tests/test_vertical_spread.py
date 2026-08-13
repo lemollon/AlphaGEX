@@ -88,3 +88,32 @@ def test_credit_vertical_mtm_sign():
     _, pnl = compute_mtm(strategy="bull_put_spread", legs=legs, entry_price=2.0,
                          contracts=1, leg_mids=[0.5, 1.5])
     assert pnl == 100.0
+
+
+def _chain_1wide(spot, ticker="SPY"):
+    """$1-strike chain (mimics a real SPY 0DTE grid) so short_otm_abs/
+    spread_abs dollar offsets land on exact strikes for the assertions."""
+    opts = []
+    for s in range(int(spot) - 15, int(spot) + 16):
+        call_mid = max(0.30, (spot - s) * 0.4 + 6.0)
+        put_mid = max(0.30, (s - spot) * 0.4 + 6.0)
+        opts.append({"strike": s, "type": "call", "bid": round(call_mid - 0.05, 2), "ask": round(call_mid + 0.05, 2)})
+        opts.append({"strike": s, "type": "put", "bid": round(put_mid - 0.05, 2), "ask": round(put_mid + 0.05, 2)})
+    return {"spot": spot, "expiration": "2026-08-13", "ticker": ticker, "options": opts}
+
+
+def test_short_otm_abs_and_spread_abs_override_pct():
+    """EBB (registry #23b): short put nearest spot-$2, long put $5 lower —
+    short_otm_abs/spread_abs override the pct-of-spot strike computation."""
+    sig = build_vertical_signal(
+        kind="bull_put_spread", chain=_chain_1wide(600.0),
+        config=_CFG, equity=25000.0,
+        params=_p(short_otm_abs=2.0, spread_abs=5.0),
+    )
+    assert sig is not None
+    legs = sig.legs()
+    short = [l for l in legs if l["side"] == "short"][0]
+    long_ = [l for l in legs if l["side"] == "long"][0]
+    assert short["strike"] == 598   # spot - $2
+    assert long_["strike"] == 593   # short - $5
+    assert sig.width == 5

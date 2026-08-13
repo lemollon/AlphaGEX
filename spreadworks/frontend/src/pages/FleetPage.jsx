@@ -189,6 +189,38 @@ function DrawdownChip({ pct }) {
   );
 }
 
+// Registry #23b's pre-calibrated health bands (EBB) — a rolling-window
+// verdict on whether the paper record is still tracking the validated edge.
+// See routes_bots._bot_health for the thresholds.
+const HEALTH_COLOR = { SHARP: GREEN, WATCH: AMBER, DEGRADED: RED, warming_up: MUTED };
+const HEALTH_LABEL = { SHARP: 'Sharp', WATCH: 'Watch', DEGRADED: 'Degraded', warming_up: 'Warming up' };
+
+function healthNum(n) {
+  return typeof n === 'number' && Number.isFinite(n) ? Math.round(n) : '—';
+}
+
+function HealthChip({ health }) {
+  if (!health || !health.status) return null;
+  const color = HEALTH_COLOR[health.status] || MUTED;
+  const label = HEALTH_LABEL[health.status] || health.status;
+  return (
+    <span
+      title={
+        `60-trade $${healthNum(health.roll60)} · 120-trade $${healthNum(health.roll120)} `
+        + `· 20-trade credit $${healthNum(health.credit20)}`
+      }
+      style={{
+        flexShrink: 0, fontSize: 9, fontWeight: 700, letterSpacing: '0.08em',
+        textTransform: 'uppercase', padding: '2px 7px', borderRadius: 9999,
+        color, background: 'transparent',
+        boxShadow: `inset 0 0 0 1px ${color}55`,
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
 function AccountChip({ account }) {
   const isPaper = !account || account === 'paper';
   return (
@@ -317,6 +349,7 @@ function BotCard({ row, botStats, isOpen }) {
         </span>
 
         <AccountChip account={account} />
+        {botStats && !botStats.error && <HealthChip health={botStats.health} />}
       </div>
 
       {failed ? (
