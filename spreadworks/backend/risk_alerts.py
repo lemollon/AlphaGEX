@@ -1,6 +1,6 @@
 """Risk Advisor Discord alerts — the playbook's alert plan, wired.
 
-Three alerts, exactly as documented on the /risk page:
+Five alerts, exactly as documented on the /risk page:
 
   1. MORNING VERDICT (08:05 CT, weekdays)
      RISK-OFF (backwardation or VIX1D flag from last close) -> @here push with
@@ -10,7 +10,13 @@ Three alerts, exactly as documented on the /risk page:
      Captures/loads the 10:00 CT snapshot; put/total z > 2 -> @here push.
      The window enforcement in routes_risk guarantees the z is the validated
      10:00 figure, never a late-capture artifact.
-  3. Nothing else. Alert scarcity is the point — the channel must stay
+  3/4. AFTERNOON RE-CHECKS (12:06 & 13:36 CT, weekdays)
+     Same test re-run at 12:00 and 13:30 CT vs each clock's own trailing-63
+     same-clock baseline. A fresh spike -> @here push, saying whether it's a
+     new afternoon spike or the morning spike continuing. If the morning
+     alert already fired and the clock's z has faded below 1 -> a quiet
+     all-clear note, no ping — the anti-stale-signal update.
+  5. Nothing else. Alert scarcity is the point — the channel must stay
      readable or the pushes train you to ignore them.
 
 Safety rails:
@@ -58,6 +64,28 @@ def _send(embed: dict, ping: bool = False) -> bool:
     except Exception as e:  # noqa: BLE001
         logger.warning("[RiskAlerts] send failed: %r", e)
         return False
+
+
+def _already_posted(key: str, fire_date) -> bool:
+    """Read-only check: has `key` already claimed a slot for `fire_date`?
+
+    Unlike _claim_post_slot_db this never inserts — used to look up whether
+    an EARLIER alert already fired today (e.g. did the morning verdict push
+    before this afternoon re-check runs) without stealing that slot."""
+    try:
+        from .db import SessionLocal
+        from .models import DiscordPostLog
+    except Exception:
+        return False
+    if SessionLocal is None:
+        return False
+    db = SessionLocal()
+    try:
+        return db.get(DiscordPostLog, (key, fire_date)) is not None
+    except Exception:
+        return False
+    finally:
+        db.close()
 
 
 def register_risk_alerts(scheduler, app) -> None:
@@ -188,9 +216,96 @@ def register_risk_alerts(scheduler, app) -> None:
         except Exception as e:  # noqa: BLE001
             logger.warning("[RiskAlerts] flow_spike_check failed: %r", e)
 
+    # 12:00 -> 29.3% vs 17.0% base odds of |move to close| >= 0.5%
+    # 13:30 -> 17.0% vs 8.4% base odds
+    PM_BASE_RATES = {"12:00": (0.293, 0.170), "13:30": (0.170, 0.084)}
+
+    async def pm_recheck(clock: str, spike_slot: str, fade_slot: str):
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            from .routes_risk import _capture_pm_snapshot, _pm_flow_history, _z
+            shim = SimpleNamespace(app=app)     # capture helpers expect request.app
+            snap = await _capture_pm_snapshot(shim, clock)
+            if snap is None:
+                logger.info("[RiskAlerts] no valid %s snapshot — no re-check", clock)
+                return
+            today = now.date()
+            hist = _pm_flow_history(clock)
+            prior = [r for r in hist if r["d"] < today]
+            pz = _z(snap["putv"], [r["putv"] for r in prior])
+            tz = _z(snap["totv"], [r["totv"] for r in prior])
+            hi, lo = PM_BASE_RATES[clock]
+
+            if (pz or 0) > 2 or (tz or 0) > 2:
+                if not _claim_post_slot_db(spike_slot, today):
+                    return
+                # continuation vs fresh: did an earlier clock today already
+                # alert on a spike? (morning 10:06 push, or the 12:00
+                # re-check for the 13:30 job)
+                continuation = _already_posted("risk_flow_spike", today) or (
+                    clock == "13:30" and _already_posted("risk_pm_1200", today))
+                lead = ("This looks like the morning spike **continuing** into "
+                        "the afternoon." if continuation else
+                        "This is a **fresh** afternoon spike — no earlier alert "
+                        "fired today.")
+                _send({
+                    "title": f"⚠️ Afternoon re-check — unusual option volume "
+                             f"at {clock} CT",
+                    "description": (
+                        f"{lead}\n\n"
+                        f"In plain English: SPY option volume through {clock} "
+                        f"CT is a top-2% outlier vs the last 3 months at this "
+                        f"same clock (put z {(pz or 0):.1f} · total z "
+                        f"{(tz or 0):.1f}) — historically {hi:.1%} vs {lo:.1%} "
+                        "base odds of a move of at least 0.5% by the close.\n\n"
+                        "**DO:** no new same-day (0DTE) premium selling for the "
+                        "rest of today; tighten exits on anything expiring "
+                        "today. Multi-day positions: ignore this — gating them "
+                        "on it was tested and made them worse.\n"
+                        "**DON'T:** don't switch to buying options for the "
+                        "move — backtested, it loses MORE. And there is NO "
+                        "direction call: every direction test comes back "
+                        "t < 1. Flat beats clever."),
+                    "color": AMBER,
+                    "fields": [
+                        {"name": "move odds", "value": f"{hi:.1%} vs {lo:.1%} base",
+                         "inline": True},
+                        {"name": "re-check clock", "value": f"{clock} CT",
+                         "inline": True},
+                    ],
+                    "footer": {"text": f"validated {clock} CT re-check "
+                                       "snapshot · advisory only · /risk for "
+                                       "the playbook"},
+                }, ping=True)
+            elif _already_posted("risk_flow_spike", today) and \
+                    (pz or 0) < 1 and (tz or 0) < 1:
+                if not _claim_post_slot_db(fade_slot, today):
+                    return
+                z_now = max(pz or 0, tz or 0)
+                _send({
+                    "title": f"🟢 All-clear update — {clock} CT",
+                    "description": (
+                        f"All-clear update: the morning volume spike did not "
+                        f"persist — {clock} CT z is back to {z_now:.1f}. "
+                        "Signal considered faded; normal caution applies."),
+                    "color": GREEN,
+                    "footer": {"text": f"{clock} CT re-check · advisory only "
+                                       "· /risk for the playbook"},
+                }, ping=False)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[RiskAlerts] pm_recheck(%s) failed: %r", clock, e)
+
     scheduler.add_job(morning_verdict, "cron", hour=8, minute=5, second=30,
                       timezone=CT, id="risk_morning_verdict")
     scheduler.add_job(flow_spike_check, "cron", hour=10, minute=6,
                       timezone=CT, id="risk_flow_spike")
+    scheduler.add_job(pm_recheck, "cron", hour=12, minute=6, timezone=CT,
+                      id="pm_recheck_1200",
+                      args=["12:00", "risk_pm_1200", "risk_pm_fade_1200"])
+    scheduler.add_job(pm_recheck, "cron", hour=13, minute=36, timezone=CT,
+                      id="pm_recheck_1330",
+                      args=["13:30", "risk_pm_1330", "risk_pm_fade_1330"])
     logger.info("[RiskAlerts] registered: morning verdict 08:05:30 CT, "
-                "flow spike 10:06 CT")
+                "flow spike 10:06 CT, PM re-checks 12:06 & 13:36 CT")

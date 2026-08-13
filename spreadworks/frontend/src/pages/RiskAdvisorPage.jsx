@@ -45,6 +45,16 @@ function InfoTip({ text }) {
 
 function pct(x, d = 1) { return x == null ? '—' : (100 * x).toFixed(d) + '%'; }
 
+// Null-safe one-line label for a flow_pm[clock] entry — no snapshot yet
+// shows the status string, otherwise the worse of the two z-scores.
+function pmLabel(e) {
+  if (!e) return '—';
+  if (e.status !== 'snapshot') return e.status;
+  const z = Math.max(e.putv_z ?? -Infinity, e.totv_z ?? -Infinity);
+  const zt = Number.isFinite(z) ? z.toFixed(1) : '—';
+  return e.spike ? `SPIKE z${zt}` : `z${zt}`;
+}
+
 // The action each signal demands when ACTIVE, with its backtested "why".
 // `plain` = what the signal means in everyday speech — the page must never
 // require the reader to decode a z-score or an index name to act correctly.
@@ -60,7 +70,8 @@ const PLAYBOOK = [
   { key: 'flow_spike', name: '10:00 CT flow spike (put/total vol z > 2)',
     plain: 'In plain English: unusually heavy option buying this morning vs the last 3 months — someone is bracing for a move TODAY.',
     action: 'No new SAME-DAY (0DTE) trades; tighten today’s exits. Multi-day trades: ignore this one',
-    why: 'Big rest-of-day move odds jump to 28.6% vs 12.1% base (~4.8σ). Matters for SAME-DAY trades; a 5-day condor should ignore it.' },
+    why: 'Big rest-of-day move odds jump to 28.6% vs 12.1% base (~4.8σ). Matters for SAME-DAY trades; a 5-day condor should ignore it.'
+      + ' Re-checked at 12:00 (29.3% vs 17.0%) and 13:30 CT (17.0% vs 8.4%) — a fade note posts if a morning spike does not persist.' },
   { key: 'double_floor', name: 'Double floor (VVIX<85 & VIX<14)',
     plain: 'In plain English: the market is unusually calm AND calm about staying calm — the best measured day to sell premium.',
     action: 'GREEN LIGHT: sell premium at your normal size',
@@ -161,8 +172,8 @@ export default function RiskAdvisorPage() {
         </p>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '0 0 20px' }}>
           {[['page refresh', 'every 60s'], ['index closes', 'daily, cached 30 min'],
-            ['flow snapshot', 'once/day 10:00–10:35 CT'], ['intraday bars', '5-min, live'],
-            ['Discord alerts', '08:05 & 10:06 CT']].map(([k, v]) => (
+            ['flow checks', '10:00 · 12:00 · 13:30 CT'], ['intraday bars', '5-min, live'],
+            ['Discord alerts', '08:05 · 10:06 · 12:06 · 13:36 CT']].map(([k, v]) => (
             <span key={k} style={{ fontSize: 11, color: DIM, border: '1px solid #232a3d',
                                    borderRadius: 6, padding: '3px 8px' }}>
               <b style={{ color: '#c6cbd8' }}>{k}</b> · {v}
@@ -228,6 +239,11 @@ export default function RiskAdvisorPage() {
           {flow.status !== 'snapshot' && (
             <div style={{ ...S.small, marginTop: 8 }}>
               <Activity size={11} style={{ verticalAlign: -1 }} /> flow signal: {flow.status}
+            </div>
+          )}
+          {state.flow_pm && (
+            <div style={{ ...S.small, marginTop: 4 }}>
+              afternoon re-checks: 12:00 {pmLabel(state.flow_pm['12:00'])} · 13:30 {pmLabel(state.flow_pm['13:30'])}
             </div>
           )}
         </div>

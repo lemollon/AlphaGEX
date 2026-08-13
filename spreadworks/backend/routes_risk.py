@@ -9,6 +9,10 @@ pre-registered and backtested; see trials_registry.md there):
     * double_floor calm      : VVIX < 85 and VIX < 14 (0.00x next-day tail)
     * 10:00 CT flow spike    : put-vol z or total z > 2 vs trailing-63 baseline
                                (P(big rest-of-day move) 28.6% vs 12.1%, ~4.8 sigma)
+    * 12:00/13:30 CT re-checks: FRESH put/total z > 2 at each clock vs its own
+                               trailing-63 same-clock baseline (12:00: P(|move
+                               to close| >= 0.5%) 29.3% vs 17.0% base, 1.73x;
+                               13:30: 17.0% vs 8.4% base, 2.03x)
   WATCH (accumulating evidence, NOT trading signals)
     * quiet-day 0DTE OTM call z (squeeze tell)  — right shape, underpowered
     * premium-imbalance contrarian              — suggestive only
@@ -33,7 +37,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, Request
-from sqlalchemy import Column, Date, DateTime, Float, BigInteger
+from sqlalchemy import Column, Date, DateTime, Float, BigInteger, String
 
 from .db import Base, SessionLocal
 
@@ -51,8 +55,17 @@ SNAPSHOT_CT = (10, 0)          # 10:00 CT — the validated clock
 # reads as a huge false spike. Window enforced on WRITE and on READ, so any
 # polluted row is neutralized without a migration.
 SNAPSHOT_WINDOW_END_CT = (10, 35)
+# Afternoon re-check clocks — same capture-window discipline as the 10:00
+# snapshot, one CSV baseline shared by both clocks (filtered by the `clock`
+# column). A late capture at either clock is not that clock's figure, so the
+# window is enforced on write AND read exactly like SNAPSHOT_CT above.
+PM_CLOCKS: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {
+    "12:00": ((12, 0), (12, 35)),
+    "13:30": ((13, 30), (14, 5)),
+}
 CBOE_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{sym}_History.csv"
 BASELINE_CSV = Path(__file__).resolve().parent / "data" / "risk_flow_baseline.csv"
+BASELINE_CSV_PM = Path(__file__).resolve().parent / "data" / "risk_flow_baseline_pm.csv"
 
 _cboe_cache: dict[str, tuple[datetime, dict[date, float]]] = {}
 _CBOE_TTL = 1800
@@ -69,6 +82,18 @@ class RiskFlowSnapshot(Base):
     totv = Column(BigInteger)
     otm_call_0dte = Column(BigInteger)
     spot = Column(Float)
+
+
+class RiskFlowSnapshotPM(Base):
+    """One row per (session, clock): cumulative SPY option volume at the
+    12:00 or 13:30 CT afternoon re-check clock."""
+    __tablename__ = "risk_flow_snapshots_pm"
+    d = Column(Date, primary_key=True)
+    clock = Column(String(5), primary_key=True)
+    captured_at = Column(DateTime)
+    callv = Column(BigInteger)
+    putv = Column(BigInteger)
+    totv = Column(BigInteger)
 
 
 def _norm_cdf(x: float) -> float:
@@ -135,6 +160,41 @@ def _flow_history() -> list[dict]:
     return [rows[k] for k in sorted(rows)]
 
 
+def _pm_baseline_rows(clock: str) -> list[dict]:
+    rows = []
+    if not BASELINE_CSV_PM.exists():
+        # Committed seed missing — PM flow z-scores stay null rather than 500ing.
+        return rows
+    with open(BASELINE_CSV_PM, newline="") as f:
+        for r in csv.DictReader(f):
+            if r["clock"] != clock:
+                continue
+            rows.append({"d": date.fromisoformat(r["d"]),
+                         "callv": int(r["callv"]), "putv": int(r["putv"]),
+                         "totv": int(r["totv"])})
+    rows.sort(key=lambda r: r["d"])
+    return rows
+
+
+def _pm_flow_history(clock: str) -> list[dict]:
+    """Committed PM baseline for this clock + any live snapshots, deduped,
+    sorted — mirrors _flow_history()."""
+    rows = {r["d"]: r for r in _pm_baseline_rows(clock)}
+    if SessionLocal is not None:
+        try:
+            db = SessionLocal()
+            q = db.query(RiskFlowSnapshotPM).filter(RiskFlowSnapshotPM.clock == clock)
+            for r in q.all():
+                if not _pm_snap_valid(clock, r.captured_at):
+                    continue        # late captures are not this clock's figure
+                rows[r.d] = {"d": r.d, "callv": r.callv, "putv": r.putv,
+                             "totv": r.totv}
+            db.close()
+        except Exception:
+            pass
+    return [rows[k] for k in sorted(rows)]
+
+
 def _z(cur: float, hist: list[float]) -> float | None:
     h = hist[-TRAIL:]
     if len(h) < 40:
@@ -161,6 +221,19 @@ def _snap_dict(row: RiskFlowSnapshot) -> dict:
     return {"d": row.d, "captured_at": row.captured_at, "callv": row.callv,
             "putv": row.putv, "totv": row.totv,
             "otm_call_0dte": row.otm_call_0dte, "spot": row.spot}
+
+
+def _pm_snap_valid(clock: str, captured_at: datetime) -> bool:
+    """A PM snapshot is only that clock's figure if captured inside its
+    window — same reasoning as _snap_valid() for the 10:00 clock."""
+    start, end = PM_CLOCKS[clock]
+    t = (captured_at.hour, captured_at.minute)
+    return start <= t <= end
+
+
+def _pm_snap_dict(row: RiskFlowSnapshotPM) -> dict:
+    return {"d": row.d, "clock": row.clock, "captured_at": row.captured_at,
+            "callv": row.callv, "putv": row.putv, "totv": row.totv}
 
 
 async def _capture_snapshot(request: Request) -> dict | None:
@@ -228,6 +301,72 @@ async def _capture_snapshot(request: Request) -> dict | None:
             return {"d": today, "captured_at": row.captured_at,
                     "callv": callv, "putv": putv, "totv": callv + putv,
                     "otm_call_0dte": otm0, "spot": spot}
+    except Exception:
+        return None
+    finally:
+        db.close()
+
+
+async def _capture_pm_snapshot(request: Request, clock: str) -> dict | None:
+    """Lazily capture today's afternoon re-check snapshot (12:00 or 13:30 CT),
+    once per (day, clock). Mirrors _capture_snapshot(): Tradier's `volume`
+    field is already the cumulative day total at fetch time, so pulling it
+    inside the clock's window IS the open->clock cumulative — same semantics
+    the baseline CSV was built with.
+
+    Returns a PLAIN DICT — never a live ORM instance (see _capture_snapshot
+    docstring for why).
+    """
+    if SessionLocal is None or clock not in PM_CLOCKS:
+        return None
+    today = datetime.now(CT).date()
+    db = SessionLocal()
+    try:
+        row = db.get(RiskFlowSnapshotPM, (today, clock))
+        if row:
+            return _pm_snap_dict(row) if _pm_snap_valid(clock, row.captured_at) else None
+        now_ct = datetime.now(CT)
+        t = (now_ct.hour, now_ct.minute)
+        start, end = PM_CLOCKS[clock]
+        if t < start or t > end or now_ct.weekday() >= 5:
+            return None
+        async with _snapshot_lock:
+            row = db.get(RiskFlowSnapshotPM, (today, clock))
+            if row:
+                return _pm_snap_dict(row) if _pm_snap_valid(clock, row.captured_at) else None
+            from .routes import _tradier_get, _get_quote  # existing helpers
+            q = await _get_quote(request, "SPY")
+            spot = float(q.get("last") or q.get("close") or 0)
+            if spot <= 0:
+                return None
+            exps = await _tradier_get(request, "/markets/options/expirations",
+                                      {"symbol": "SPY"})
+            all_exps = (exps.get("expirations") or {}).get("date") or []
+            if isinstance(all_exps, str):
+                all_exps = [all_exps]
+            near = [e for e in all_exps if e <= (today + timedelta(days=7)).isoformat()][:5]
+            callv = putv = 0
+            for exp in near:
+                ch = await _tradier_get(request, "/markets/options/chains",
+                                        {"symbol": "SPY", "expiration": exp})
+                opts = (ch.get("options") or {}).get("option") or []
+                if isinstance(opts, dict):
+                    opts = [opts]
+                for o in opts:
+                    v = int(o.get("volume") or 0)
+                    if not v:
+                        continue
+                    if o.get("option_type") == "call":
+                        callv += v
+                    else:
+                        putv += v
+            row = RiskFlowSnapshotPM(d=today, clock=clock,
+                                     captured_at=datetime.now(CT).replace(tzinfo=None),
+                                     callv=callv, putv=putv, totv=callv + putv)
+            db.add(row)
+            db.commit()
+            return {"d": today, "clock": clock, "captured_at": row.captured_at,
+                    "callv": callv, "putv": putv, "totv": callv + putv}
     except Exception:
         return None
     finally:
@@ -403,6 +542,33 @@ async def state(request: Request):
                      "putv_z": pz, "totv_z": tz, "otm_call_0dte_z": oz,
                      "spike": bool((pz or 0) > 2 or (tz or 0) > 2)})
 
+    # afternoon re-check clocks (12:00 / 13:30 CT) — same lazy-capture,
+    # window-enforced pattern as the 10:00 snapshot, graded against their own
+    # trailing-63 same-clock history.
+    flow_pm: dict = {}
+    for clock, (start, end) in PM_CLOCKS.items():
+        snap_pm = await _capture_pm_snapshot(request, clock)
+        hist_pm = _pm_flow_history(clock)
+        prior_pm = [r for r in hist_pm if r["d"] < today]
+        window = f"{start[0]:02d}:{start[1]:02d}–{end[0]:02d}:{end[1]:02d} CT"
+        if snap_pm is None:
+            if now_ct.weekday() >= 5:
+                st_pm = "weekend — no capture"
+            elif (now_ct.hour, now_ct.minute) < start:
+                st_pm = f"pre-window — captures at first request {window}"
+            else:
+                st_pm = f"no valid snapshot today (capture window {window} missed)"
+        else:
+            st_pm = "snapshot"
+        entry = {"status": st_pm, "putv_z": None, "totv_z": None, "spike": None}
+        if snap_pm is not None:
+            pz_pm = _z(snap_pm["putv"], [r["putv"] for r in prior_pm])
+            tz_pm = _z(snap_pm["totv"], [r["totv"] for r in prior_pm])
+            entry.update({"captured_at": snap_pm["captured_at"].isoformat(),
+                         "putv_z": pz_pm, "totv_z": tz_pm,
+                         "spike": bool((pz_pm or 0) > 2 or (tz_pm or 0) > 2)})
+        flow_pm[clock] = entry
+
     live = await _live_quote(request)
     if live and v1_c:
         implied = v1_c / SQRT252
@@ -432,6 +598,7 @@ async def state(request: Request):
             "p_down2s_ratio": p_down2s,
         },
         "flow": flow,
+        "flow_pm": flow_pm,
         "live": live,
         "outlook": outlook,
         "action": action,
