@@ -16,7 +16,14 @@ Five alerts, exactly as documented on the /risk page:
      new afternoon spike or the morning spike continuing. If the morning
      alert already fired and the clock's z has faded below 1 -> a quiet
      all-clear note, no ping — the anti-stale-signal update.
-  5. Nothing else. Alert scarcity is the point — the channel must stay
+  5. ROLLING FLOW WATCHER (every 10 min, 10:36-14:00 CT, weekdays)
+     Registry #39 (validated 2026-08-13): put/total z > 2 vs a per-minute
+     trailing-63 baseline -> @here push, once per day, the FIRST time it
+     crosses. Exists to catch a spike the fixed 10:00/12:00/13:30 clocks
+     miss between their checks — it posts NOTHING if one of those clocks
+     already alerted a spike today (they own their windows; this is the
+     gap-filler, not a fourth copy of the same alert).
+  6. Nothing else. Alert scarcity is the point — the channel must stay
      readable or the pushes train you to ignore them.
 
 Safety rails:
@@ -304,6 +311,81 @@ def register_risk_alerts(scheduler, app) -> None:
                 }, ping=False)
         except Exception as e:  # noqa: BLE001
             logger.warning("[RiskAlerts] pm_recheck(%s) failed: %r", clock, e)
+
+    async def rolling_flow_check():
+        """Every 10 min, 10:36-14:00 CT weekdays: catch a flow spike the
+        fixed 10:00/12:00/13:30 clocks miss (registry #39, validated
+        2026-08-13: P(|move to close| >= 0.5%) 34.2% on alert days vs 22.4%
+        minute-matched base, 1.53x lift, 4/4 years, ~23 alerts/yr).
+
+        The fixed clocks own their windows — this job posts NOTHING if one
+        of them already fired a spike alert today (suppression below)."""
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            from .routes_risk import (ROLLING_WINDOW_CT, _rolling_flow_now,
+                                      _rolling_baseline_at, _rolling_z,
+                                      _save_rolling_state)
+            start, end = ROLLING_WINDOW_CT
+            t = (now.hour, now.minute)
+            if t < start or t > end:
+                return
+            shim = SimpleNamespace(app=app)     # capture helper expects request.app
+            snap = await _rolling_flow_now(shim)
+            if snap is None:
+                logger.info("[RiskAlerts] rolling flow fetch failed — skip poll")
+                return
+            baseline = _rolling_baseline_at(now)
+            if baseline is None:
+                logger.info("[RiskAlerts] no rolling baseline for this minute — skip poll")
+                return
+            pz = _rolling_z(snap["putv"], baseline["put_mean"], baseline["put_sd"])
+            tz = _rolling_z(snap["totv"], baseline["tot_mean"], baseline["tot_sd"])
+            today = now.date()
+            # refresh the live reading on EVERY successful poll — whether or
+            # not it crosses the alert threshold — so /state's flow_rolling
+            # block always shows the current z, not just the fired moment.
+            _save_rolling_state(today, now.replace(tzinfo=None), pz, tz)
+
+            if (pz or 0) <= 2 and (tz or 0) <= 2:
+                return
+            # the fixed clocks own their windows — a spike they already
+            # alerted on today is not this job's to duplicate
+            if (_already_posted("risk_flow_spike", today)
+                    or _already_posted("risk_pm_1200", today)
+                    or _already_posted("risk_pm_1330", today)):
+                return
+            if not _claim_post_slot_db("risk_flow_rolling", today):
+                return
+            _send({
+                "title": "⚠️ Rolling flow check — unusual option volume "
+                         "just crossed the line",
+                "description": (
+                    f"Rolling flow check: unusually heavy option flow just "
+                    f"crossed the line (put z {(pz or 0):.1f} / total z "
+                    f"{(tz or 0):.1f} at {now.strftime('%H:%M')} CT). On "
+                    "days like this the market moved another ≥ 0.5% by "
+                    "the close 34% of the time vs 22% on normal days "
+                    "(backtest 2023-26, registry #39).\n\n"
+                    "Same playbook: no new same-day (0DTE) trades, tighten "
+                    "exits on anything expiring today. Multi-day positions: "
+                    "ignore this one."),
+                "color": AMBER,
+                "fields": [
+                    {"name": "move odds", "value": "34.2% vs 22.4% base",
+                     "inline": True},
+                    {"name": "lift", "value": "1.53x, 4/4 years",
+                     "inline": True},
+                    {"name": "checked at", "value": f"{now.strftime('%H:%M')} CT",
+                     "inline": True},
+                ],
+                "footer": {"text": "polled every 10 min, 10:36-14:00 CT · "
+                                   "registry #39 · advisory only · /risk "
+                                   "for the playbook"},
+            }, ping=True)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[RiskAlerts] rolling_flow_check failed: %r", e)
 
     async def expected_move_note():
         """Daily 08:06 CT quiet note: today's SPY expected move in % AND price.
@@ -599,6 +681,8 @@ def register_risk_alerts(scheduler, app) -> None:
     scheduler.add_job(pm_recheck, "cron", hour=13, minute=36, timezone=CT,
                       id="pm_recheck_1330",
                       args=["13:30", "risk_pm_1330", "risk_pm_fade_1330"])
+    scheduler.add_job(rolling_flow_check, "cron", minute="*/10", timezone=CT,
+                      id="risk_flow_rolling")
     scheduler.add_job(em_breach_check, "cron", minute="*/10", timezone=CT,
                       id="risk_em_breach")
     scheduler.add_job(health_flip_check, "cron", hour=15, minute=50,
@@ -609,5 +693,6 @@ def register_risk_alerts(scheduler, app) -> None:
                       timezone=CT, id="risk_promotion_announce")
     logger.info("[RiskAlerts] registered: morning verdict 08:05:30, EM note "
                 "08:06:30, flow spike 10:06, PM re-checks 12:06 & 13:36, "
-                "EM-breach watch */10 in-session, health flip 15:50, Friday "
-                "digest 15:55, promotion announce 16:05 (all CT)")
+                "rolling flow watcher */10 10:36-14:00, EM-breach watch "
+                "*/10 in-session, health flip 15:50, Friday digest 15:55, "
+                "promotion announce 16:05 (all CT)")
