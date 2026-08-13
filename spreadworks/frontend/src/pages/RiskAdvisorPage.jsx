@@ -71,7 +71,8 @@ const PLAYBOOK = [
     plain: 'In plain English: unusually heavy option buying this morning vs the last 3 months — someone is bracing for a move TODAY.',
     action: 'No new SAME-DAY (0DTE) trades; tighten today’s exits. Multi-day trades: ignore this one',
     why: 'Big rest-of-day move odds jump to 28.6% vs 12.1% base (~4.8σ). Matters for SAME-DAY trades; a 5-day condor should ignore it.'
-      + ' Re-checked at 12:00 (29.3% vs 17.0%) and 13:30 CT (17.0% vs 8.4%) — a fade note posts if a morning spike does not persist.' },
+      + ' Re-checked at 12:00 (29.3% vs 17.0%) and 13:30 CT (17.0% vs 8.4%) — a fade note posts if a morning spike does not persist.'
+      + ' A rolling watcher also polls every 10 minutes between 10:36 and 14:00 CT (registry #39: 34.2% vs 22.4% base, 1.53x) to catch a spike the three fixed clocks miss — it stays silent if a fixed clock already caught it.' },
   { key: 'double_floor', name: 'Double floor (VVIX<85 & VIX<14)',
     plain: 'In plain English: the market is unusually calm AND calm about staying calm — the best measured day to sell premium.',
     action: 'GREEN LIGHT: sell premium at your normal size',
@@ -202,8 +203,9 @@ export default function RiskAdvisorPage() {
         </p>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '0 0 20px' }}>
           {[['page refresh', 'every 60s'], ['index closes', 'daily, cached 30 min'],
-            ['flow checks', '10:00 · 12:00 · 13:30 CT'], ['intraday bars', '5-min, live'],
-            ['Discord alerts', '08:05 · 08:06 EM · 10:06 · 12:06 · 13:36 · breach watch CT']].map(([k, v]) => (
+            ['flow checks', '10:00 · 12:00 · 13:30 CT + rolling every 10m 10:36-14:00'],
+            ['intraday bars', '5-min, live'],
+            ['Discord alerts', '08:05 · 08:06 EM · 10:06 · 12:06 · 13:36 · rolling */10 · breach watch CT']].map(([k, v]) => (
             <span key={k} style={{ fontSize: 11, color: DIM, border: '1px solid #232a3d',
                                    borderRadius: 6, padding: '3px 8px' }}>
               <b style={{ color: '#c6cbd8' }}>{k}</b> · {v}
@@ -283,6 +285,15 @@ export default function RiskAdvisorPage() {
           {state.flow_pm && (
             <div style={{ ...S.small, marginTop: 4 }}>
               afternoon re-checks: 12:00 {pmLabel(state.flow_pm['12:00'])} · 13:30 {pmLabel(state.flow_pm['13:30'])}
+            </div>
+          )}
+          {state.flow_rolling && (
+            <div style={{ ...S.small, marginTop: 4 }}>
+              rolling watcher (10:36–14:00 CT, every 10m): {pmLabel({
+                status: state.flow_rolling.captured_at ? 'snapshot' : 'no reading yet',
+                putv_z: state.flow_rolling.putv_z, totv_z: state.flow_rolling.totv_z,
+                spike: (state.flow_rolling.putv_z ?? -Infinity) > 2 || (state.flow_rolling.totv_z ?? -Infinity) > 2,
+              })}{state.flow_rolling.fired_today ? ' · alerted today' : ''}
             </div>
           )}
         </div>
@@ -612,9 +623,10 @@ export default function RiskAdvisorPage() {
           <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.7 }}>
             <li><b>Check the verdict each morning before 8:30 CT.</b> It already includes yesterday's closes. RISK-OFF → apply the actions in the playbook table for whichever signals are active.</li>
             <li><b>At ~10:05 CT the flow signal arrives.</b> A spike (z&gt;2) means same-day danger — it fires on ~6% of days and more than doubles big-move odds. It applies to same-day (0DTE) exposure, NOT to multi-day positions.</li>
+            <li><b>A rolling watcher fills the gaps between clocks.</b> Every 10 minutes from 10:36 to 14:00 CT it checks the same z&gt;2 test against a per-minute baseline (registry #39). It only speaks up if the fixed 10:00/12:00/13:30 clocks missed the spike — no duplicate pings.</li>
             <li><b>The outlook card is tomorrow's plan.</b> After the close it updates; its grade (normal / reduce / widen-or-skip / stand down) uses calibrated probabilities.</li>
             <li><b>Trust the scorecard, not the promises.</b> If live precision/recall drifts materially below the backtest column for a sustained window, the signal is decaying and we revisit — that is the deal.</li>
-            <li><b>Alerts are live (Discord):</b> RISK-OFF morning verdict at 08:05 CT (@here), flow spike at ~10:06 CT (@here), calm floor as a quiet note. Silence at 08:05 means NORMAL — no news is the default.</li>
+            <li><b>Alerts are live (Discord):</b> RISK-OFF morning verdict at 08:05 CT (@here), flow spike at ~10:06 CT (@here), the rolling watcher any 10-minute mark 10:36–14:00 CT (@here, once per day, only if the fixed clocks missed it), calm floor as a quiet note. Silence at 08:05 means NORMAL — no news is the default.</li>
           </ol>
         </div>
 

@@ -13,6 +13,13 @@ pre-registered and backtested; see trials_registry.md there):
                                trailing-63 same-clock baseline (12:00: P(|move
                                to close| >= 0.5%) 29.3% vs 17.0% base, 1.73x;
                                13:30: 17.0% vs 8.4% base, 2.03x)
+    * rolling flow watcher   : put/total z > 2 vs a per-minute trailing-63
+                               baseline, polled every 10 min 10:36-14:00 CT
+                               (registry #39: P(|move to close| >= 0.5%)
+                               34.2% vs 22.4% minute-matched base, 1.53x,
+                               4/4 years). Catches spikes the fixed clocks
+                               miss; suppressed when a fixed clock already
+                               alerted a spike that day (see risk_alerts.py).
   WATCH (accumulating evidence, NOT trading signals)
     * quiet-day 0DTE OTM call z (squeeze tell)  — right shape, underpowered
     * premium-imbalance contrarian              — suggestive only
@@ -30,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import json
 import math
 from datetime import datetime, date, timedelta
 from pathlib import Path
@@ -63,6 +71,14 @@ PM_CLOCKS: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {
     "12:00": ((12, 0), (12, 35)),
     "13:30": ((13, 30), (14, 5)),
 }
+# Rolling flow watcher (registry #39, validated 2026-08-13) — polls every 10
+# minutes across the window the fixed 10:00/12:00/13:30 clocks do NOT read
+# minute-by-minute, so it exists to catch spikes those clocks miss, not to
+# duplicate them (suppression lives in risk_alerts.rolling_flow_check). The
+# baseline is keyed by ET minute-of-day (571 = 09:31 ET); this window (696-
+# 900) is 10:36-14:00 CT.
+ROLLING_WINDOW_CT: tuple[tuple[int, int], tuple[int, int]] = ((10, 36), (14, 0))
+ROLLING_BASELINE_JSON = Path(__file__).resolve().parent / "data" / "rolling_flow_baselines.json"
 CBOE_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{sym}_History.csv"
 BASELINE_CSV = Path(__file__).resolve().parent / "data" / "risk_flow_baseline.csv"
 BASELINE_CSV_PM = Path(__file__).resolve().parent / "data" / "risk_flow_baseline_pm.csv"
@@ -94,6 +110,21 @@ class RiskFlowSnapshotPM(Base):
     callv = Column(BigInteger)
     putv = Column(BigInteger)
     totv = Column(BigInteger)
+
+
+class RiskFlowRollingState(Base):
+    """Latest ROLLING flow-watcher reading (registry #39) — OVERWRITTEN on
+    every successful 10-min poll across the 10:36-14:00 CT window, so
+    /state can show the current z without re-hitting Tradier on every page
+    load (the page refreshes every 60s). One row per session; unlike
+    RiskFlowSnapshot/RiskFlowSnapshotPM this isn't a single validated clock
+    — the whole window is the signal, so there's nothing to window-guard on
+    read (risk_alerts only ever writes from inside the window)."""
+    __tablename__ = "risk_flow_rolling_state"
+    d = Column(Date, primary_key=True)
+    captured_at = Column(DateTime)
+    putv_z = Column(Float)
+    totv_z = Column(Float)
 
 
 class RiskHealthState(Base):
@@ -215,6 +246,133 @@ def _z(cur: float, hist: list[float]) -> float | None:
     if var <= 0:
         return None
     return (cur - m) / math.sqrt(var)
+
+
+_rolling_baseline_cache: dict[int, dict] | None = None
+
+
+def _rolling_baseline() -> dict[int, dict]:
+    """Load+cache the per-ET-minute trailing-63 baseline (backend/data/
+    rolling_flow_baselines.json — precomputed mean/sd of CUMULATIVE session
+    put/total volume, one row per minute). Missing file -> empty dict, so
+    the rolling z-scores stay null rather than 500ing (mirrors
+    _baseline_rows())."""
+    global _rolling_baseline_cache
+    if _rolling_baseline_cache is not None:
+        return _rolling_baseline_cache
+    out: dict[int, dict] = {}
+    if ROLLING_BASELINE_JSON.exists():
+        with open(ROLLING_BASELINE_JSON) as f:
+            data = json.load(f)
+        out = {int(k): v for k, v in (data.get("baselines") or {}).items()}
+    _rolling_baseline_cache = out
+    return out
+
+
+def _ct_to_et_minute(hm: tuple[int, int]) -> int:
+    """CT (hour, minute) -> ET minute-of-day. ET is exactly 60 minutes ahead
+    of CT year-round (both shift for DST together) — matches the baseline
+    file's convention (571 = 09:31 ET)."""
+    h, m = hm
+    return h * 60 + m + 60
+
+
+def _rolling_baseline_at(now_ct: datetime) -> dict | None:
+    """The baseline row for the nearest ET minute AT-OR-BEFORE now — grading
+    today's cumulative volume against a LATER minute's (higher) baseline
+    would understate how unusual the current reading actually is."""
+    baseline = _rolling_baseline()
+    if not baseline:
+        return None
+    et_minute = _ct_to_et_minute((now_ct.hour, now_ct.minute))
+    candidates = [k for k in baseline if k <= et_minute]
+    if not candidates:
+        return None
+    return baseline[max(candidates)]
+
+
+def _rolling_z(cur: float, mean: float, sd: float) -> float | None:
+    if not sd or sd <= 0:
+        return None
+    return (cur - mean) / sd
+
+
+async def _rolling_flow_now(request: Request) -> dict | None:
+    """Current cumulative SPY put/total option volume — the SAME Tradier
+    chain-volume source the 10:00/12:00/13:30 clocks read, fetched fresh on
+    every call (no once-per-day capture gate) since the rolling watcher
+    polls every 10 minutes through its whole window."""
+    try:
+        from .routes import _tradier_get, _get_quote  # existing helpers
+        today = datetime.now(CT).date()
+        q = await _get_quote(request, "SPY")
+        spot = float(q.get("last") or q.get("close") or 0)
+        if spot <= 0:
+            return None
+        exps = await _tradier_get(request, "/markets/options/expirations",
+                                  {"symbol": "SPY"})
+        all_exps = (exps.get("expirations") or {}).get("date") or []
+        if isinstance(all_exps, str):
+            all_exps = [all_exps]
+        near = [e for e in all_exps if e <= (today + timedelta(days=7)).isoformat()][:5]
+        callv = putv = 0
+        for exp in near:
+            ch = await _tradier_get(request, "/markets/options/chains",
+                                    {"symbol": "SPY", "expiration": exp})
+            opts = (ch.get("options") or {}).get("option") or []
+            if isinstance(opts, dict):
+                opts = [opts]
+            for o in opts:
+                v = int(o.get("volume") or 0)
+                if not v:
+                    continue
+                if o.get("option_type") == "call":
+                    callv += v
+                else:
+                    putv += v
+        return {"putv": putv, "totv": callv + putv, "spot": spot}
+    except Exception:
+        return None
+
+
+def _save_rolling_state(d: date, captured_at: datetime, pz: float | None,
+                        tz: float | None) -> None:
+    """Overwrite today's rolling-watcher reading. Called on EVERY successful
+    poll (not just ones that cross the alert threshold) so /state always
+    shows the current z without hitting Tradier itself."""
+    if SessionLocal is None:
+        return
+    db = SessionLocal()
+    try:
+        row = db.get(RiskFlowRollingState, d)
+        if row is None:
+            row = RiskFlowRollingState(d=d)
+            db.add(row)
+        row.captured_at = captured_at
+        row.putv_z = pz
+        row.totv_z = tz
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _rolling_fired_today(d: date) -> bool:
+    """Read-only: did the rolling watcher already post its once-per-day
+    alert today? Mirrors risk_alerts._already_posted() without importing
+    that module (risk_alerts imports FROM here)."""
+    if SessionLocal is None:
+        return False
+    try:
+        from .models import DiscordPostLog
+        db = SessionLocal()
+        try:
+            return db.get(DiscordPostLog, ("risk_flow_rolling", d)) is not None
+        finally:
+            db.close()
+    except Exception:
+        return False
 
 
 def _snap_valid(captured_at: datetime) -> bool:
@@ -591,6 +749,25 @@ async def state(request: Request):
                          "spike": bool((pz_pm or 0) > 2 or (tz_pm or 0) > 2)})
         flow_pm[clock] = entry
 
+    # rolling flow watcher (registry #39) — READ-ONLY here; the only writer
+    # is risk_alerts.rolling_flow_check(), polling every 10 min through
+    # 10:36-14:00 CT. This endpoint just surfaces the latest saved reading.
+    flow_rolling: dict = {"putv_z": None, "totv_z": None, "captured_at": None,
+                          "fired_today": False}
+    if SessionLocal is not None:
+        try:
+            db = SessionLocal()
+            row = db.get(RiskFlowRollingState, today)
+            db.close()
+            if row is not None:
+                flow_rolling.update({
+                    "putv_z": row.putv_z, "totv_z": row.totv_z,
+                    "captured_at": row.captured_at.isoformat() if row.captured_at else None,
+                })
+        except Exception:
+            pass
+    flow_rolling["fired_today"] = _rolling_fired_today(today)
+
     live = await _live_quote(request)
     if live and v1_c:
         implied = v1_c / SQRT252
@@ -621,6 +798,7 @@ async def state(request: Request):
         },
         "flow": flow,
         "flow_pm": flow_pm,
+        "flow_rolling": flow_rolling,
         "live": live,
         "outlook": outlook,
         "action": action,
@@ -725,6 +903,7 @@ async def alert_log(limit: int = 30):
         "risk_flow_spike": "10:00 flow spike (@here)",
         "risk_pm_1200": "12:00 re-check spike (@here)",
         "risk_pm_1330": "13:30 re-check spike (@here)",
+        "risk_flow_rolling": "Rolling flow spike (@here)",
         "risk_pm_fade_1200": "12:00 all-clear (spike faded)",
         "risk_pm_fade_1330": "13:30 all-clear (spike faded)",
         "risk_friday_digest": "Friday week-in-review",
