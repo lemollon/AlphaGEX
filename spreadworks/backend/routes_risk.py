@@ -96,6 +96,17 @@ class RiskFlowSnapshotPM(Base):
     totv = Column(BigInteger)
 
 
+class RiskHealthState(Base):
+    """Last known health status per scorecard signal (flag_vix1d,
+    calibration, flow_spike). Lets risk_alerts.health_flip_check() detect a
+    status CHANGE day-to-day (sharp <-> DEGRADED) instead of re-announcing
+    the same status every afternoon."""
+    __tablename__ = "risk_health_state"
+    signal = Column(String(30), primary_key=True)
+    status = Column(String(20))
+    updated_at = Column(DateTime)
+
+
 def _norm_cdf(x: float) -> float:
     return 0.5 * math.erfc(-x / math.sqrt(2.0))
 
@@ -688,6 +699,41 @@ async def intraday(request: Request):
         return payload
     except Exception:
         return {"bars": [], "status": "intraday unavailable"}
+
+
+@router.get("/alert-log")
+async def alert_log(limit: int = 30):
+    """The channel and the page tell one story: last alerts actually posted
+    (from the cross-replica dedupe log), newest first. Read-only."""
+    FRIENDLY = {
+        "risk_morning_riskoff": "RISK-OFF morning verdict (@here)",
+        "risk_morning_calm": "Calm-floor note",
+        "risk_em_note": "Expected-move note",
+        "risk_em_breach": "EXPECTED-MOVE BREACH (@here)",
+        "risk_flow_spike": "10:00 flow spike (@here)",
+        "risk_pm_1200": "12:00 re-check spike (@here)",
+        "risk_pm_1330": "13:30 re-check spike (@here)",
+        "risk_pm_fade_1200": "12:00 all-clear (spike faded)",
+        "risk_pm_fade_1330": "13:30 all-clear (spike faded)",
+        "risk_friday_digest": "Friday week-in-review",
+    }
+    rows = []
+    if SessionLocal is not None:
+        try:
+            from .models import DiscordPostLog
+            db = SessionLocal()
+            q = (db.query(DiscordPostLog)
+                   .filter(DiscordPostLog.message_key.like("risk_%"))
+                   .order_by(DiscordPostLog.fire_date.desc(),
+                             DiscordPostLog.message_key)
+                   .limit(max(1, min(limit, 100))).all())
+            rows = [{"d": r.fire_date.isoformat(),
+                     "what": FRIENDLY.get(r.message_key, r.message_key)}
+                    for r in q]
+            db.close()
+        except Exception:
+            rows = []
+    return _scrub({"alerts": rows})
 
 
 @router.get("/scorecard")

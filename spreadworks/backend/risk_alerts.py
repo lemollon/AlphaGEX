@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -378,6 +378,204 @@ def register_risk_alerts(scheduler, app) -> None:
         except Exception as e:  # noqa: BLE001
             logger.warning("[RiskAlerts] em_breach_check failed: %r", e)
 
+    async def health_flip_check():
+        """15:50 CT weekdays: detect a scorecard signal's health status
+        FLIPPING (sharp <-> DEGRADED) and push. A signal's first sighting
+        only seeds RiskHealthState — there is no prior status to compare
+        against, so nothing is announced that day."""
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            from .db import SessionLocal
+            from .routes_risk import scorecard, RiskHealthState
+            if SessionLocal is None:
+                return
+            try:
+                shim = SimpleNamespace(app=app)
+                result = await scorecard(shim)
+            except Exception as e:
+                logger.warning("[RiskAlerts] health_flip_check scorecard failed: %r", e)
+                return
+            health = (result or {}).get("health") or {}
+            today = now.date()
+            for signal, info in health.items():
+                status = (info or {}).get("status")
+                if status not in ("sharp", "DEGRADED"):
+                    continue          # warming_up / static — nothing to flip
+                if not _claim_post_slot_db(f"risk_health_{signal}", today):
+                    continue
+                db = SessionLocal()
+                try:
+                    row = db.get(RiskHealthState, signal)
+                    prev_status = row.status if row else None
+                    if row is None:
+                        db.add(RiskHealthState(signal=signal, status=status,
+                                               updated_at=now))
+                        db.commit()
+                        continue      # first sighting — seed only, no post
+                    if prev_status == status:
+                        row.updated_at = now
+                        db.commit()
+                        continue      # unchanged — nothing to announce
+                    row.status = status
+                    row.updated_at = now
+                    db.commit()
+                finally:
+                    db.close()
+                if status == "DEGRADED":
+                    why = info.get("why", "no detail available")
+                    _send({
+                        "title": f"⚠️ Signal health: {signal} is now DEGRADED",
+                        "description": (
+                            f"{why}. Treat it as unreliable until re-validated; "
+                            "the page has downgraded it."),
+                        "color": RED,
+                        "footer": {"text": "/risk scorecard · advisory only"},
+                    }, ping=True)
+                else:
+                    _send({
+                        "title": f"Signal health: {signal} recovered to SHARP.",
+                        "color": GREEN,
+                        "footer": {"text": "/risk scorecard · advisory only"},
+                    }, ping=False)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[RiskAlerts] health_flip_check failed: %r", e)
+
+    async def friday_digest():
+        """Friday 15:55 CT: quiet weekly recap — scorecard grades over the
+        last 5 sessions, EBB's week, this week's breach/spike alert counts,
+        and squeeze-tell promotion progress. No ping — a recap, not an
+        alert."""
+        try:
+            now = datetime.now(CT)
+            if now.weekday() != 4:      # belt-and-braces; cron already gates fri
+                return
+            today = now.date()
+            if not _claim_post_slot_db("risk_friday_digest", today):
+                return
+
+            from .routes_risk import scorecard
+            try:
+                shim = SimpleNamespace(app=app)
+                result = await scorecard(shim)
+            except Exception as e:
+                logger.warning("[RiskAlerts] friday_digest scorecard failed: %r", e)
+                result = {}
+            recent = (result or {}).get("recent") or []
+            last5 = recent[-5:]
+            grades = {"hit": 0, "false_alarm": 0, "missed": 0, "clear": 0}
+            for r in last5:
+                g = r.get("grade")
+                if g in grades:
+                    grades[g] += 1
+            scorecard_line = (f"hit {grades['hit']} · false alarm "
+                              f"{grades['false_alarm']} · missed "
+                              f"{grades['missed']} · clear {grades['clear']}")
+
+            # EBB week — read-only, never raise (a query hiccup just falls
+            # back to "no trades yet").
+            ebb_line = "no trades yet"
+            try:
+                from .db import SessionLocal as _SL
+                from sqlalchemy import text as sa_text
+                if _SL is not None:
+                    cutoff = today - timedelta(days=7)
+                    db = _SL()
+                    try:
+                        row = db.execute(sa_text(
+                            "SELECT COUNT(*) AS n, COALESCE(SUM(realized_pnl), 0) AS s "
+                            "FROM ebb_closed_trades WHERE close_time >= :c"
+                        ), {"c": cutoff}).mappings().first()
+                    finally:
+                        db.close()
+                    n = int(row["n"] or 0)
+                    s = float(row["s"] or 0)
+                    if n > 0:
+                        sign = "+" if s >= 0 else ""
+                        ebb_line = f"{n} trades · {sign}${s:,.2f}"
+            except Exception as e:
+                logger.warning("[RiskAlerts] friday_digest EBB query failed: %r", e)
+
+            # Breach/spike counts this week — read-only, skip counts (not
+            # the whole line) on any hiccup.
+            breach_line = "see channel history"
+            try:
+                from .db import SessionLocal as _SL
+                from sqlalchemy import text as sa_text
+                if _SL is not None:
+                    week_start = today - timedelta(days=today.weekday())
+                    db = _SL()
+                    try:
+                        rows = db.execute(sa_text(
+                            "SELECT message_key, COUNT(*) AS n FROM discord_post_log "
+                            "WHERE message_key IN "
+                            "('risk_em_breach','risk_flow_spike','risk_pm_1200',"
+                            "'risk_pm_1330') AND fire_date >= :w "
+                            "GROUP BY message_key"
+                        ), {"w": week_start}).mappings().all()
+                    finally:
+                        db.close()
+                    counts = {r["message_key"]: r["n"] for r in rows}
+                    breach_line = (
+                        f"EM breach {counts.get('risk_em_breach', 0)} · "
+                        f"flow spike {counts.get('risk_flow_spike', 0)} · "
+                        f"12:00 re-check {counts.get('risk_pm_1200', 0)} · "
+                        f"13:30 re-check {counts.get('risk_pm_1330', 0)}")
+            except Exception as e:
+                logger.warning("[RiskAlerts] friday_digest breach count failed: %r", e)
+
+            promo = ((result or {}).get("promotion") or {}).get("squeeze_tell") or {}
+            have = promo.get("quiet_sessions_have", "?")
+            needed = promo.get("quiet_sessions_needed", "?")
+
+            _send({
+                "title": "\U0001f4d2 Week in review — Risk Advisor & EBB",
+                "fields": [
+                    {"name": "Scorecard (last 5 sessions)",
+                     "value": scorecard_line, "inline": False},
+                    {"name": "EBB this week", "value": ebb_line, "inline": False},
+                    {"name": "Breaches / spikes this week",
+                     "value": breach_line, "inline": False},
+                    {"name": "Squeeze-tell promotion progress",
+                     "value": f"{have} / {needed} quiet sessions", "inline": False},
+                ],
+                "color": 0x60A5FA,
+                "footer": {"text": "advisory only · /risk for detail"},
+            }, ping=False)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[RiskAlerts] friday_digest failed: %r", e)
+
+    async def promotion_announce():
+        """16:05 CT weekdays: one-time announcement when the quiet-day
+        squeeze tell clears its pre-registered promotion gate.
+
+        SQUEEZE_TELL_PROMOTED is the promotion switch — flipped only by a
+        deploy/ops action AFTER the research harness confirms the gate
+        (>=100 quiet sessions AND t>=2, see routes_risk.PROMOTION_QUIET_NEEDED
+        and the /risk-advisor/scorecard "promotion" block). This job never
+        flips it itself; it only checks and announces."""
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            if os.getenv("SQUEEZE_TELL_PROMOTED", "").strip().lower() != "true":
+                return
+            sentinel = date(2000, 1, 1)   # claim once, EVER — not per-day
+            if not _claim_post_slot_db("risk_promotion_squeeze", sentinel):
+                return
+            _send({
+                "title": "\U0001f393 New validated signal: the quiet-day squeeze tell",
+                "description": (
+                    "cleared its pre-registered promotion gate (≥100 quiet "
+                    "sessions AND t ≥ 2) and is now on the playbook. "
+                    "Details on /risk."),
+                "color": GREEN,
+                "footer": {"text": "advisory only · one-time announcement"},
+            }, ping=True)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[RiskAlerts] promotion_announce failed: %r", e)
+
     scheduler.add_job(morning_verdict, "cron", hour=8, minute=5, second=30,
                       timezone=CT, id="risk_morning_verdict")
     scheduler.add_job(expected_move_note, "cron", hour=8, minute=6, second=30,
@@ -392,6 +590,13 @@ def register_risk_alerts(scheduler, app) -> None:
                       args=["13:30", "risk_pm_1330", "risk_pm_fade_1330"])
     scheduler.add_job(em_breach_check, "cron", minute="*/10", timezone=CT,
                       id="risk_em_breach")
+    scheduler.add_job(health_flip_check, "cron", hour=15, minute=50,
+                      timezone=CT, id="risk_health_flip")
+    scheduler.add_job(friday_digest, "cron", day_of_week="fri", hour=15,
+                      minute=55, timezone=CT, id="risk_friday_digest")
+    scheduler.add_job(promotion_announce, "cron", hour=16, minute=5,
+                      timezone=CT, id="risk_promotion_announce")
     logger.info("[RiskAlerts] registered: morning verdict 08:05:30, EM note "
                 "08:06:30, flow spike 10:06, PM re-checks 12:06 & 13:36, "
-                "EM-breach watch */10 in-session (all CT)")
+                "EM-breach watch */10 in-session, health flip 15:50, Friday "
+                "digest 15:55, promotion announce 16:05 (all CT)")

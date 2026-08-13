@@ -224,3 +224,13 @@ def test_ebb_defaults(db_session):
     row = eng.connect().execute(text("SELECT enabled FROM ebb_config WHERE id=1")).mappings().first()
     assert row is not None
     assert bool(row["enabled"]) is False
+
+
+def test_ebb_discord_routes_to_risk_channel():
+    # EBB posts opens/settles to the risk-advisor channel, not the generic
+    # fleet webhook (2026-08-13) — discord_alerts must be on and the
+    # webhook-override key must point at the risk env var.
+    from backend.bots.registry import get_bot
+    b = get_bot("ebb")
+    assert b["defaults"]["discord_alerts"] is True
+    assert b["discord_webhook_env"] == "RISK_ADVISOR_DISCORD_WEBHOOK"
