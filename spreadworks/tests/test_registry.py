@@ -3,7 +3,7 @@ from backend.bots.registry import BOT_REGISTRY, get_bot, list_bots
 
 def test_bots_registered():
     assert set(BOT_REGISTRY.keys()) == {"surge", "splash", "ripple", "tide", "drift", "flow", "meadow", "undertow",
-         "delta", "updraft", "backdraft", "reversal", "embreach", "embreachq",
+         "delta", "ebb", "updraft", "backdraft", "reversal", "embreach", "embreachq",
          "afterburn", "weekender", "flashpoint", "thermal", "wildfire",
          "afterglow", "ember", "squall", "tempest"}
 
@@ -141,7 +141,7 @@ def test_get_bot_unknown_raises():
 
 
 def test_list_bots_returns_keys():
-    assert sorted(list_bots()) == ["afterburn", "afterglow", "backdraft", "delta", "drift", "ember",
+    assert sorted(list_bots()) == ["afterburn", "afterglow", "backdraft", "delta", "drift", "ebb", "ember",
          "embreach", "embreachq", "flashpoint", "flow", "meadow", "reversal",
          "ripple", "splash", "squall", "surge", "tempest", "thermal", "tide",
          "undertow", "updraft", "weekender", "wildfire"]
@@ -187,3 +187,40 @@ def test_delta_registered_credit(db_session):
     eng = db_session.get_bind()
     row = eng.connect().execute(text("SELECT enabled FROM delta_config WHERE id=1")).first()
     assert row is not None
+
+
+def test_ebb_defaults(db_session):
+    # EBB — validated 0DTE SPY put credit spread (registry #23b). Single-
+    # ticker fixed direction: strategy IS the kind (bull_put_spread), not the
+    # DELTA/UNDERTOW universe marker.
+    from backend.bots.registry import get_bot
+    from sqlalchemy import text
+    b = get_bot("ebb")
+    assert b["display"] == "Ebb"
+    assert b["strategy"] == "bull_put_spread"
+    assert b["ticker"] == "SPY"
+    assert b["front_dte"] == 0
+    assert b["back_dte"] == 0
+    assert b["one_entry_per_day"] is True
+    assert b["settle_at_expiry"] is True
+    assert b["params"]["short_otm_abs"] == 2.0
+    assert b["params"]["spread_abs"] == 5.0
+    assert b["params"]["min_credit"] == 0.10
+    # Pre-calibrated health bands (2026-08-13) — only EBB carries these.
+    bands = b["health_bands"]
+    assert bands["watch_roll60"] == -524.0
+    assert bands["demote_roll60"] == -1216.0
+    assert bands["demote_roll120"] == 0.0
+    assert bands["min_credit20"] == 30.0
+    d = b["defaults"]
+    assert d["starting_capital"] == 3000.0
+    assert d["enabled"] is False        # no bot ships armed
+    assert d["max_contracts"] == 1
+    assert d["max_concurrent_positions"] == 1
+    assert d["entry_start_ct"] == "10:05"
+    assert d["entry_end_ct"] == "10:20"
+
+    eng = db_session.get_bind()
+    row = eng.connect().execute(text("SELECT enabled FROM ebb_config WHERE id=1")).mappings().first()
+    assert row is not None
+    assert bool(row["enabled"]) is False

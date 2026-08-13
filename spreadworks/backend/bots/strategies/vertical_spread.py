@@ -85,8 +85,14 @@ def build_vertical_signal(*, kind, chain, config, equity, params, diag=None):
     strikes = _avail(chain, opt_type)
     if not strikes:
         return _reject("no_strikes")
-    spread_w = float(params["spread_pct"]) * spot
-    otm = float(params["short_otm_pct"]) * spot
+    # short_otm_abs/spread_abs (dollars) override the %-of-spot computation
+    # when present — EBB's registry #23b strikes (short at spot-$2, wing $5
+    # wide) are fixed dollar offsets, not a fraction of spot. Bots that never
+    # set these keys are unaffected.
+    spread_w = (float(params["spread_abs"]) if "spread_abs" in params
+                else float(params["spread_pct"]) * spot)
+    otm = (float(params["short_otm_abs"]) if "short_otm_abs" in params
+           else float(params["short_otm_pct"]) * spot)
 
     if kind == "bull_call_spread":
         near = _nearest(strikes, round(spot)); far = _nearest(strikes, round(spot + spread_w))

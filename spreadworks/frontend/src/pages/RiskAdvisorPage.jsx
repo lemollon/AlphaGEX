@@ -46,19 +46,41 @@ function InfoTip({ text }) {
 function pct(x, d = 1) { return x == null ? '—' : (100 * x).toFixed(d) + '%'; }
 
 // The action each signal demands when ACTIVE, with its backtested "why".
+// `plain` = what the signal means in everyday speech — the page must never
+// require the reader to decode a z-score or an index name to act correctly.
 const PLAYBOOK = [
   { key: 'backwardation', name: 'Backwardation (VIX > VIX3M)',
-    action: 'SKIP new premium-selling entries today',
+    plain: 'In plain English: short-term fear is higher than long-term fear — the market is in stress RIGHT NOW.',
+    action: 'DO NOT open new premium-selling trades today',
     why: 'Stress is here. Skipping these days improved the condor book from 0.32 to 0.41 return-per-drawdown over 7 years.' },
   { key: 'flag_vix1d', name: 'VIX1D flag (implied 1-day move > 1%)',
-    action: 'Reduce size or skip — a ±1% day is more likely than not to matter',
+    plain: 'In plain English: options are pricing a bigger-than-1% move by tomorrow — a swing day is likely.',
+    action: 'Sell SMALLER than usual, or skip today',
     why: 'When this flag is on, 42.8% of days move ≥1% (vs 26% overall). It catches 68% of all big days.' },
   { key: 'flow_spike', name: '10:00 CT flow spike (put/total vol z > 2)',
-    action: 'Same-day risk: avoid new 0DTE exposure; tighten same-day exits',
+    plain: 'In plain English: unusually heavy option buying this morning vs the last 3 months — someone is bracing for a move TODAY.',
+    action: 'No new SAME-DAY (0DTE) trades; tighten today’s exits. Multi-day trades: ignore this one',
     why: 'Big rest-of-day move odds jump to 28.6% vs 12.1% base (~4.8σ). Matters for SAME-DAY trades; a 5-day condor should ignore it.' },
   { key: 'double_floor', name: 'Double floor (VVIX<85 & VIX<14)',
-    action: 'Safest measured day to SELL premium at normal size',
+    plain: 'In plain English: the market is unusually calm AND calm about staying calm — the best measured day to sell premium.',
+    action: 'GREEN LIGHT: sell premium at your normal size',
     why: 'Across 56 such sessions: ZERO next-day moves ≥1.5%. The calmest state in the data.' },
+];
+
+// Plain-speech glossary — every term the page uses, defined once.
+const GLOSSARY = [
+  ['VIX / VIX3M / VIX9D', 'Fear gauges: the price of insurance on the S&P over the next 30 days / 3 months / 9 days. Higher = more expected movement.'],
+  ['VIX1D', 'Same idea for just the NEXT DAY. VIX1D of 16 ≈ options pricing a ±1% move by tomorrow.'],
+  ['VVIX', 'The fear gauge OF the fear gauge — how nervous the market is about VIX itself jumping. Under 85 = genuinely relaxed.'],
+  ['Backwardation', 'Short-term insurance costing MORE than long-term. Normally it’s the reverse; when it flips, stress is happening now.'],
+  ['z-score (flow z)', 'How unusual today is vs the last 63 sessions. z=0 typical, z=2 ≈ top 2% unusual. Spike = z above 2.'],
+  ['Expected move', 'The size of day the options market has paid for, from VIX1D. The intraday chart’s band; past 100% budget = a bigger day than priced.'],
+  ['0DTE / DTE', 'Days To Expiry. 0DTE = expires today (same-day trades). "Nearest exp 3 DTE" = closest position expiry is 3 trading days out.'],
+  ['Precision / recall', 'Precision 42.8%: when the flag fires, a big move follows 42.8% of the time (vs 26% for any random day). Recall 68%: of all big days, the flag catches 68%.'],
+  ['Brier score', 'Accuracy of probability forecasts — lower is better. 0.168 backtested; the scorecard degrades the signal if live drifts above ~0.22.'],
+  ['ret/DD', 'Yearly profit divided by worst losing streak (drawdown). 0.41 = makes 41% of its worst dip back per year. Our bar for "worth trading" is 0.5+.'],
+  ['Quiet day', 'Previous close had VIX under 16. The regime where daily warning signals are mostly blind — the flow snapshot exists to cover it.'],
+  ['Pre-registered', 'The test’s rule and pass bar were written down BEFORE seeing results — so a "winner" can’t be an after-the-fact cherry-pick.'],
 ];
 
 export default function RiskAdvisorPage() {
@@ -110,6 +132,12 @@ export default function RiskAdvisorPage() {
     : active.double_floor
       ? 'CALM FLOOR — statistically the safest state to sell premium at normal size.'
       : 'NORMAL — no signal active. Bots at normal size; nothing to do.';
+  // the explicit instruction — no decoding required
+  const todayAction = activeRisk
+    ? 'TODAY: DO NOT SELL PREMIUM — reduce or skip. And do NOT buy premium instead: that was backtested and loses even more on days like this. Flat is the trade.'
+    : active.double_floor
+      ? 'TODAY: GREEN LIGHT — the best measured kind of day to sell premium at normal size.'
+      : 'TODAY: trade your normal plan at normal size. Nothing here asks for a change.';
 
   // quiet-day shading for the ribbon
   const bands = []; let start = null;
@@ -149,6 +177,7 @@ export default function RiskAdvisorPage() {
             <div style={{ fontSize: 17, fontWeight: 700, color: headColor }}>{verdict}
               <InfoTip text="The one-line answer for today, from yesterday's closes. RISK-OFF = a backtested danger signal is active — follow the playbook table. CALM FLOOR = statistically the safest premium-selling state. NORMAL = no signal, trade normal size. Recomputed on every refresh; the underlying index closes update once per day after the close." />
             </div>
+            <div style={{ fontSize: 13.5, marginTop: 6, color: '#c6cbd8' }}>{todayAction}</div>
             <div style={{ ...S.small, marginTop: 4 }}>
               As of close {state.asof_close} · VIX {state.indices?.vix?.toFixed(1)} ·
               VIX1D {state.indices?.vix1d?.toFixed(1)} · VIX9D {state.indices?.vix9d?.toFixed(1)} ·
@@ -179,6 +208,7 @@ export default function RiskAdvisorPage() {
                       marginLeft: 6, verticalAlign: 'middle' }}>
                       {h === 'DEGRADED' ? 'DEGRADED' : h === 'sharp' ? 'SHARP' : '…'}
                     </span>}
+                    <div style={{ ...S.small, fontWeight: 400, marginTop: 3 }}>{p.plain}</div>
                   </td>
                   <td style={{ ...S.td, color: active[p.key] ? (p.key === 'double_floor' ? GREEN : RED) : DIM, fontWeight: 700 }}>
                     {active[p.key] ? 'ACTIVE' : 'off'}
@@ -235,11 +265,11 @@ export default function RiskAdvisorPage() {
           {/* 4 ─ FORWARD OUTLOOK */}
           <div style={{ ...S.card, flex: '1 1 300px' }}>
             <div style={S.cardTitle}><TrendingUp size={13} style={{ verticalAlign: -2 }} /> Next-session outlook
-              <InfoTip text="Tomorrow's plan, recomputed after each close. Probabilities are calibrated (Albers RVRP adjustment): P(±1% day) is the headline. The grade maps probability to action: normal → reduce size → hedge → stand down." />
+              <InfoTip text="Tomorrow's plan, recomputed after each close. Probabilities are calibrated (Albers RVRP adjustment): P(±1% day) is the headline. The grade maps probability to action: normal → reduce size → widen strikes or skip → stand down." />
             </div>
             {out ? (<>
               <div style={{ fontSize: 14, marginBottom: 8 }}>
-                Grade: <b style={{ color: out.grade === 'normal' ? GREEN : out.grade === 'reduce_size' ? AMBER : RED }}>
+                Grade: <b style={{ color: out.grade === 'normal' ? GREEN : out.grade === 'stand_down' ? RED : AMBER }}>
                   {out.grade.replace('_', ' ').toUpperCase()}</b>
                 {out.flag_vix1d && <span style={{ color: AMBER }}> · FLAG ON</span>}
               </div>
@@ -345,6 +375,57 @@ export default function RiskAdvisorPage() {
           </>) : <div style={S.small}>computing…</div>}
         </div>
 
+        {/* 5b ─ THE EVIDENCE: full backtest results behind every signal */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>The evidence — full backtest results
+            <InfoTip text="Every number that drives this page, with its base rate and sample. A hit rate without its base rate lies. All trials were pre-registered (hypothesis fixed before results were seen) in ironforge-data/risk_advisor/trials_registry.md; signals from close t−1, tradeable next session — no look-ahead." />
+          </div>
+          <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 10 }}>
+            <thead><tr>
+              <th style={S.th}>signal</th><th style={S.th}>backtest result</th>
+              <th style={S.th}>base rate / sample</th>
+            </tr></thead>
+            <tbody>
+              <tr>
+                <td style={{ ...S.td, fontWeight: 600 }}>Backwardation skip</td>
+                <td style={S.td}>Condor book <b>0.32 → 0.41 ret/DD</b> when skipping these days</td>
+                <td style={{ ...S.td, ...S.small }}>economic test on the real SPY condor stream, 7 years</td>
+              </tr>
+              <tr>
+                <td style={{ ...S.td, fontWeight: 600 }}>VIX1D flag</td>
+                <td style={S.td}><b>42.8% precision / 68% recall</b> on ≥1% days</td>
+                <td style={{ ...S.td, ...S.small }}>vs 26% of all days moving ≥1% — flag ≈ doubles the odds</td>
+              </tr>
+              <tr>
+                <td style={{ ...S.td, fontWeight: 600 }}>10:00 CT flow spike</td>
+                <td style={S.td}>Big rest-of-day move <b>28.6% vs 12.1%</b> (~4.8σ), fires 5.6% of days</td>
+                <td style={{ ...S.td, ...S.small }}>904 sessions 2023→. Magnitude only — direction tested, all t &lt; 1. Gating 5-DTE condors on it FAILS (0.24→0.21 ret/DD): same-day signal, same-day use</td>
+              </tr>
+              <tr>
+                <td style={{ ...S.td, fontWeight: 600 }}>Double floor</td>
+                <td style={S.td}><b>0 of 56</b> sessions moved ≥1.5% next day</td>
+                <td style={{ ...S.td, ...S.small }}>strongest state in the data — but a small sample, weight accordingly</td>
+              </tr>
+              <tr>
+                <td style={{ ...S.td, fontWeight: 600 }}>Outlook probabilities</td>
+                <td style={S.td}>Raw VIX1D = best ranker (<b>PR-AUC 0.466</b>); RVRP-adjusted = best calibration (<b>Brier ~0.168</b>)</td>
+                <td style={{ ...S.td, ...S.small }}>beat HAR-RV models (0.37–0.40) and a 12-feature ML model (0.033 — failed its gate, scrapped). Adjusted for printed probabilities, raw for flagging — pattern replicated 3×</td>
+              </tr>
+              <tr>
+                <td style={{ ...S.td, fontWeight: 600 }}>2σ down-tail</td>
+                <td style={S.td}>Near-unpredictable: best signal PR-AUC <b>0.049 vs 0.014</b> base (3.5× lift, weak)</td>
+                <td style={{ ...S.td, ...S.small }}>shown for context; nothing on this page gates on it, deliberately</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={S.small}>
+            Standard: every claim rests on multi-year windows including blind years — a 2-year walk-forward
+            once read +1.28 on a strategy that was −0.05 over 5 blind years. Ideas that failed this bar
+            (direction layers, regime arrows, long premium, ML model) are documented in the directional
+            panel below instead of being quietly dropped.
+          </div>
+        </div>
+
         {/* 6 ─ FLOW RIBBON */}
         <div style={S.card}>
           <div style={S.cardTitle}>10:00 CT flow z-scores — trailing 90 sessions
@@ -384,10 +465,57 @@ export default function RiskAdvisorPage() {
           <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.7 }}>
             <li><b>Check the verdict each morning before 8:30 CT.</b> It already includes yesterday's closes. RISK-OFF → apply the actions in the playbook table for whichever signals are active.</li>
             <li><b>At ~10:05 CT the flow signal arrives.</b> A spike (z&gt;2) means same-day danger — it fires on ~6% of days and more than doubles big-move odds. It applies to same-day (0DTE) exposure, NOT to multi-day positions.</li>
-            <li><b>The outlook card is tomorrow's plan.</b> After the close it updates; its grade (normal / reduce / hedge / stand down) uses calibrated probabilities.</li>
+            <li><b>The outlook card is tomorrow's plan.</b> After the close it updates; its grade (normal / reduce / widen-or-skip / stand down) uses calibrated probabilities.</li>
             <li><b>Trust the scorecard, not the promises.</b> If live precision/recall drifts materially below the backtest column for a sustained window, the signal is decaying and we revisit — that is the deal.</li>
             <li><b>Alerts are live (Discord):</b> RISK-OFF morning verdict at 08:05 CT (@here), flow spike at ~10:06 CT (@here), calm floor as a quiet note. Silence at 08:05 means NORMAL — no news is the default.</li>
           </ol>
+        </div>
+
+        {/* 7b ─ DIRECTIONAL / LONG-PREMIUM VERDICTS */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>Tested and REJECTED — the page will never suggest these
+            <InfoTip text="You might expect 'don't sell premium' days to be 'buy premium' days. They are not — every directional/long-premium idea below was pre-registered and backtested (registry #18–#22, 2026-08-13) FOR THE PURPOSE OF REJECTING OR CONFIRMING IT. Red rows are ideas we tested to kill, so you never have to wonder whether they were tried. Nothing in this table is a trade suggestion." />
+          </div>
+          <div style={{ fontSize: 12.5, color: RED, fontWeight: 600, marginBottom: 10 }}>
+            ⛔ Everything marked NO below was backtested in order to REJECT it. These are anti-recommendations —
+            documented so the same tempting idea never has to be wondered about twice.
+          </div>
+          <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 10 }}>
+            <thead><tr>
+              <th style={S.th}>idea</th><th style={S.th}>verdict</th><th style={S.th}>evidence</th>
+            </tr></thead>
+            <tbody>
+              <tr>
+                <td style={S.td}>Buy straddles/premium on flagged days</td>
+                <td style={{ ...S.td, color: RED, fontWeight: 700 }}>NO — flat, not long</td>
+                <td style={{ ...S.td, ...S.small }}>1-2DTE ATM straddles at the ask LOSE MORE on flag days (−$19.63/trade vs −$14.42 all days, negative 4/4 blind years). The flag comes from option prices — the market already charges for the move.</td>
+              </tr>
+              <tr>
+                <td style={S.td}>Direction from GEX sign (neg gamma = momentum)</td>
+                <td style={{ ...S.td, color: RED, fontWeight: 700 }}>NO edge</td>
+                <td style={{ ...S.td, ...S.small }}>First-hour moves continue to the close 54.5% under negative gamma vs 54.7% positive vs 54.6% baseline — GEX sign adds nothing intraday.</td>
+              </tr>
+              <tr>
+                <td style={S.td}>Trend/vol regime arrows (grind-up → calls, down-risk → puts)</td>
+                <td style={{ ...S.td, color: RED, fontWeight: 700 }}>NO edge</td>
+                <td style={{ ...S.td, ...S.small }}>"Down-risk" regime days bounce (46% directional hit rate); "grind-up" days return less than an average day. This page will never show direction arrows built on these.</td>
+              </tr>
+              <tr>
+                <td style={S.td}>Quiet-day squeeze tell → speculative calls</td>
+                <td style={{ ...S.td, color: AMBER, fontWeight: 700 }}>WATCH — promotion-gated</td>
+                <td style={{ ...S.td, ...S.small }}>The one live directional candidate (tracked below). Becomes a page recommendation only by hitting its pre-registered promotion rule, never by eyeballing.</td>
+              </tr>
+              <tr>
+                <td style={S.td}>Conditional single-leg buys (UPDRAFT / REVERSAL / EM-BREACH / AFTERBURN)</td>
+                <td style={{ ...S.td, color: AMBER, fontWeight: 700 }}>PAPER — earning evidence</td>
+                <td style={{ ...S.td, ...S.small }}>Four call/put-buying bots run these ideas live on paper in the fleet. A lead graduates on positive paper P&amp;L, and that becomes the buy-side playbook here.</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={S.small}>
+            Bottom line: when this page says stand down, the validated action is <b>reduce or skip</b> — not switch sides.
+            Registry: ironforge-data/risk_advisor/trials_registry.md #18–#22.
+          </div>
         </div>
 
         {/* 8 ─ WATCH TIER */}
@@ -424,6 +552,22 @@ export default function RiskAdvisorPage() {
                 <td style={S.td}>call-heavy premium → P(up) 2.2% vs 6.4% base</td>
                 <td style={S.td}>suggestive only</td>
               </tr>
+            </tbody>
+          </table>
+        </div>
+        {/* 9 ─ GLOSSARY: every term in plain speech */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>What the words mean — plain-speech glossary
+            <InfoTip text="Every term this page uses, defined once in everyday language. If anything on the page still requires decoding after this, that is a bug — report it and the page changes." />
+          </div>
+          <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+            <tbody>
+              {GLOSSARY.map(([term, def]) => (
+                <tr key={term}>
+                  <td style={{ ...S.td, fontWeight: 600, whiteSpace: 'nowrap', verticalAlign: 'top' }}>{term}</td>
+                  <td style={{ ...S.td, ...S.small, fontSize: 13 }}>{def}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

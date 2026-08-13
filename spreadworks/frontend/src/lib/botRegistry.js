@@ -11,6 +11,7 @@ export const BOT_REGISTRY = {
   meadow: { display: 'MEADOW', strategy: 'double_diagonal_credit', ticker: 'SPY', version: 'v1.0' },
   undertow: { display: 'UNDERTOW', strategy: 'vertical_debit', ticker: 'multi', version: 'v1.0' },
   delta: { display: 'DELTA', strategy: 'vertical_credit', ticker: 'multi', version: 'v1.0' },
+  ebb: { display: 'Ebb', strategy: 'bull_put_spread', ticker: 'SPY', version: 'v1.0' },
   updraft: { display: 'UPDRAFT', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   backdraft: { display: 'BACKDRAFT', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   reversal: { display: 'REVERSAL', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
@@ -50,6 +51,7 @@ export const STRATEGY_LABEL = {
   dip_buy:               'Dip-Buy Call',
   vertical_debit:        'Debit Vertical',
   vertical_credit:       'Credit Vertical',
+  bull_put_spread:       'Put Credit Spread (0DTE)',
 };
 
 // Live A/B pairs: each bot's equity chart overlays its peer's curve. SPLASH
@@ -247,5 +249,13 @@ export const BOT_THEME = {
     primaryRing: 'rgba(20,184,166,0.30)',
     glow:        'rgba(20,184,166,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(20,184,166,0.22) 0%, rgba(20,184,166,0.03) 100%)',
+  },
+  ebb: {
+    glyph:       'wave',                       // EBB = the tide receding — SPY 0DTE put credit spread
+    primary:     '#5eead4',                    // teal-300 (sea-green family, unused elsewhere)
+    primarySoft: 'rgba(94,234,212,0.10)',
+    primaryRing: 'rgba(94,234,212,0.30)',
+    glow:        'rgba(94,234,212,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(94,234,212,0.22) 0%, rgba(94,234,212,0.03) 100%)',
   },
 };

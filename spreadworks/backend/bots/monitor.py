@@ -82,6 +82,18 @@ def decide_exit(
     if event_blackout:
         return ExitDecision(True, "EVENT_HALT")
 
+    # settle_at_expiry structures (RIPPLE/SPLASH flies, EBB's 0DTE put credit
+    # spread) are NEVER bought back — the scanner books intrinsic value vs the
+    # official close via the settlement pass. This must be checked BEFORE
+    # PT/SL so a "no stop by design" strategy (EBB, registry #23b) cannot be
+    # closed early no matter what pt_pct/sl_pct happen to be configured — the
+    # % NUMERIC(5,4) ceiling cannot otherwise guarantee an unreachable SL for
+    # a credit vertical whose max loss dwarfs its credit. RIPPLE/SPLASH were
+    # already unaffected in practice (their pt_pct/sl_pct were documented as
+    # unreachable), so this is a no-op for them and a real guarantee for EBB.
+    if settle_at_expiry:
+        return ExitDecision(False, None)
+
     if mtm_pnl >= pt_target_pnl:
         return ExitDecision(True, "PT")
     if mtm_pnl <= -abs(sl_target_pnl):
@@ -109,13 +121,9 @@ def decide_exit(
 
     eod = eod_close_time_for_strategy(strategy, eod_close_ct)
     if strategy in ("iron_butterfly", "long_butterfly"):
-        if settle_at_expiry:
-            # European cash-settled index flies (RIPPLE): never buy back —
-            # the scanner books intrinsic vs the official close on the first
-            # scan after expiry. The fly_bt sweep showed the buyback exit
-            # forfeits the edge (last-hour theta + exit spread).
-            return ExitDecision(False, None)
-        # 0DTE single-expiration strategies: force-close at EOD every day.
+        # settle_at_expiry (RIPPLE) already returned above — this only runs
+        # for the buyback flies (BREEZE-style). 0DTE single-expiration
+        # strategies force-close at EOD every day.
         if now_ct.timetz().replace(tzinfo=None) >= eod:
             return ExitDecision(True, "EOD")
     else:

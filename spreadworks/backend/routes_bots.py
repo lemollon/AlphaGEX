@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
+import time
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -663,3 +664,267 @@ def list_all_bots():
         except Exception as e:
             out.append({"bot": bot, "error": str(e)[:200]})
     return {"bots": out}
+
+
+# ── /fleet-stats — one aggregated call for the Fleet page's risk/trades/
+# equity/concentration widgets. Module-level cache (60s TTL) so 23-bot polls
+# from multiple open tabs don't hammer every {bot}_positions/closed_trades/
+# equity_snapshots table on every request.
+_FLEET_STATS_CACHE: dict[str, Any] = {"ts": 0.0, "payload": None}
+_FLEET_STATS_TTL = 60
+
+
+def _parse_legs(raw: Any) -> list[dict]:
+    """Defensive TEXT-JSON parse — bad/missing legs skip rather than 500."""
+    if isinstance(raw, list):
+        return raw
+    if not isinstance(raw, str):
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _date_str(v: Any) -> str:
+    """Dialect-portable date-of-timestamp -> 'YYYY-MM-DD' (Postgres returns a
+    datetime, SQLite in tests may return a string)."""
+    if hasattr(v, "date"):
+        return v.date().isoformat()
+    return str(v)[:10]
+
+
+def _bot_health(bot: str, bands: dict[str, float]) -> dict[str, Any]:
+    """Rolling-window health check against pre-registered bands (EBB,
+    registry #23b) — a decaying edge should demote itself rather than keep
+    opening. Only called for bots whose registry entry carries `health_bands`.
+    Never raises — a query hiccup reads as "warming_up" rather than sinking
+    the whole fleet card (this bot's slice is otherwise already wrapped by
+    the caller, but health specifically must not turn a working card red).
+    """
+    t_cls = bot_table(bot, "closed_trades")
+    try:
+        with ENGINE.begin() as conn:
+            rows = conn.execute(text(
+                f"SELECT realized_pnl, entry_price FROM {t_cls} "
+                "ORDER BY close_time DESC LIMIT 120"
+            )).mappings().all()
+    except Exception as e:                                     # noqa: BLE001
+        logger.warning(f"[{bot}] health query failed: {e}")
+        return {"status": "warming_up", "roll60": None, "roll120": None,
+                "credit20": None, "bands": bands}
+
+    n = len(rows)
+    roll60 = sum(float(r["realized_pnl"] or 0) for r in rows[:60]) if n >= 60 else None
+    roll120 = sum(float(r["realized_pnl"] or 0) for r in rows[:120]) if n >= 120 else None
+    # entry_price stores the net CREDIT received for a credit vertical
+    # (executor.open_position: entry_price = signal.credit) — $/share, so
+    # x100 for $/lot.
+    credit20 = (sum(float(r["entry_price"] or 0) for r in rows[:20]) / 20.0 * 100.0
+                if n >= 20 else None)
+
+    if ((n >= 60 and roll60 <= bands["demote_roll60"])
+            or (n >= 120 and roll120 <= bands["demote_roll120"])
+            or (n >= 20 and credit20 < bands["min_credit20"])):
+        status = "DEGRADED"
+    elif n >= 60 and roll60 <= bands["watch_roll60"]:
+        status = "WATCH"
+    elif n < 60:
+        status = "warming_up"
+    else:
+        status = "SHARP"
+
+    return {"status": status, "roll60": roll60, "roll120": roll120,
+            "credit20": credit20, "bands": bands}
+
+
+def _bot_fleet_stats(bot: str, now_ct: datetime) -> tuple[dict[str, Any], list[dict]]:
+    """One bot's slice of /fleet-stats. Raises on any failure — the caller
+    wraps this per-bot so one broken bot can't 500 the whole page. Returns
+    (stats, open_rows) — open_rows feeds the fleet-wide concentration/
+    all_paper rollup so a raise here also keeps that bot out of those.
+    """
+    today_ct = now_ct.date()
+    t_pos = bot_table(bot, "positions")
+    t_cls = bot_table(bot, "closed_trades")
+    t_eq = bot_table(bot, "equity_snapshots")
+
+    # Same CT-wall-clock-stripped-to-naive convention as get_status's
+    # today_pnl window (this module, above) — TIMESTAMP columns are naive.
+    c7 = (now_ct - timedelta(days=7)).replace(tzinfo=None)
+    c30 = (now_ct - timedelta(days=30)).replace(tzinfo=None)
+    eq_cutoff = (now_ct - timedelta(days=30)).replace(tzinfo=None)
+
+    with ENGINE.begin() as conn:
+        open_rows = [dict(r) for r in conn.execute(text(
+            f"SELECT account_label, max_loss, legs, ticker, strategy FROM {t_pos} "
+            "WHERE status='OPEN'"
+        )).mappings().all()]
+
+        trades_row = conn.execute(text(
+            f"SELECT COUNT(*) AS n, "
+            "SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) AS wins, "
+            "COALESCE(SUM(CASE WHEN close_time >= :c7 THEN realized_pnl ELSE 0 END), 0) AS pnl_7d, "
+            "COALESCE(SUM(CASE WHEN close_time >= :c30 THEN realized_pnl ELSE 0 END), 0) AS pnl_30d "
+            f"FROM {t_cls}"
+        ), {"c7": c7, "c30": c30}).mappings().first()
+
+        eq_rows = conn.execute(text(
+            f"SELECT snapshot_time, equity FROM {t_eq} "
+            "WHERE snapshot_time >= :c ORDER BY snapshot_time"
+        ), {"c": eq_cutoff}).mappings().all()
+
+    # ── account + risk ──────────────────────────────────────────────
+    account = str(open_rows[0]["account_label"]) if open_rows else "paper"
+    open_max_loss = None
+    if open_rows:
+        open_max_loss = sum(
+            float(r["max_loss"]) for r in open_rows if r["max_loss"] is not None
+        )
+    nearest_dte = None
+    for r in open_rows:
+        for lg in _parse_legs(r.get("legs")):
+            exp_str = lg.get("expiration") if isinstance(lg, dict) else None
+            if not exp_str:
+                continue
+            try:
+                exp_d = date.fromisoformat(str(exp_str)[:10])
+            except ValueError:
+                continue
+            dte = (exp_d - today_ct).days
+            if nearest_dte is None or dte < nearest_dte:
+                nearest_dte = dte
+
+    # ── trades (over ALL closed trades) ─────────────────────────────
+    n = int(trades_row["n"] or 0)
+    wins = int(trades_row["wins"] or 0)
+    win_rate = (wins / n) if n else None
+
+    # ── equity series — last snapshot per day, last 30 calendar days ──
+    # `equity` as written by scanner._write_equity_snapshot is already
+    # starting_capital + cumulative_realized + unrealized — i.e. already
+    # mark-to-market, so no unrealized_pnl add-back is needed here.
+    day_map: dict[str, float] = {}
+    for r in eq_rows:
+        day_map[_date_str(r["snapshot_time"])] = float(r["equity"])
+    equity_series = [{"d": d, "equity": day_map[d]} for d in sorted(day_map)]
+
+    drawdown_pct = None
+    if len(equity_series) >= 2:
+        vals = [p["equity"] for p in equity_series]
+        peak = max(vals)
+        last = vals[-1]
+        drawdown_pct = (peak - last) / peak if peak else 0.0
+
+    last_session = None
+    today_str = today_ct.isoformat()
+    before_today = [p["d"] for p in equity_series if p["d"] < today_str]
+    if len(before_today) >= 2:
+        last_d, prior_d = before_today[-1], before_today[-2]
+        last_session = {"d": last_d, "pnl": day_map[last_d] - day_map[prior_d]}
+
+    stats = {
+        "account": account,
+        "risk": {"open_max_loss": open_max_loss, "nearest_dte": nearest_dte},
+        "trades": {
+            "n": n, "wins": wins, "win_rate": win_rate,
+            "pnl_7d": float(trades_row["pnl_7d"] or 0),
+            "pnl_30d": float(trades_row["pnl_30d"] or 0),
+        },
+        "equity_series": equity_series,
+        "drawdown_pct": drawdown_pct,
+        "last_session": last_session,
+    }
+
+    health_bands = (BOT_REGISTRY.get(bot) or {}).get("health_bands")
+    if health_bands:
+        stats["health"] = _bot_health(bot, health_bands)
+
+    return stats, open_rows
+
+
+def _fleet_equity_curve(bots_out: dict[str, Any]) -> list[dict]:
+    """Per-day sum of each bot's MTM daily equity, forward-filling a bot's
+    last known value on days it lacks a snapshot. Only days where at least
+    one bot has (real or forward-filled) data are included."""
+    per_bot_days: dict[str, dict[str, float]] = {}
+    for bot, s in bots_out.items():
+        if "error" in s:
+            continue
+        per_bot_days[bot] = {p["d"]: p["equity"] for p in s.get("equity_series") or []}
+
+    all_dates = sorted({d for days in per_bot_days.values() for d in days})
+    curve: list[dict] = []
+    last_seen: dict[str, float] = {}
+    for d in all_dates:
+        day_sum = 0.0
+        any_data = False
+        for bot, days in per_bot_days.items():
+            if d in days:
+                last_seen[bot] = days[d]
+            if bot in last_seen:
+                day_sum += last_seen[bot]
+                any_data = True
+        if any_data:
+            curve.append({"d": d, "equity": day_sum})
+    return curve
+
+
+@router.get("/fleet-stats")
+def get_fleet_stats():
+    """GET /api/spreadworks/bots/fleet-stats — aggregated risk, trade history,
+    equity curves, drawdown, and cross-bot concentration for the Fleet page,
+    in one request (mirrors the perf rule that killed 23x/page-load fan-out
+    for the card grid — see useFleet.js). Cached 60s.
+    """
+    now = time.time()
+    cached = _FLEET_STATS_CACHE
+    if cached["payload"] is not None and now - cached["ts"] < _FLEET_STATS_TTL:
+        return cached["payload"]
+
+    now_ct = datetime.now(CT)
+    bots_out: dict[str, Any] = {}
+    all_open_positions: list[dict] = []
+
+    for bot in list_bots():
+        try:
+            stats, open_rows = _bot_fleet_stats(bot, now_ct)
+            bots_out[bot] = stats
+            all_open_positions.extend(open_rows)
+        except Exception as e:
+            bots_out[bot] = {"bot": bot, "error": str(e)}
+
+    conc_map: dict[str, dict[str, Any]] = {}
+    for p in all_open_positions:
+        ticker = p.get("ticker") or "?"
+        entry = conc_map.setdefault(ticker, {
+            "ticker": ticker, "n_positions": 0, "open_max_loss": 0.0, "strategies": set(),
+        })
+        entry["n_positions"] += 1
+        if p.get("max_loss") is not None:
+            entry["open_max_loss"] += float(p["max_loss"])
+        if p.get("strategy"):
+            entry["strategies"].add(p["strategy"])
+    concentration = [
+        {"ticker": v["ticker"], "n_positions": v["n_positions"],
+         "open_max_loss": v["open_max_loss"], "strategies": sorted(v["strategies"])}
+        for v in conc_map.values()
+    ]
+
+    all_paper = not any(
+        (p.get("account_label") or "paper") != "paper" for p in all_open_positions
+    )
+
+    payload = {
+        "bots": bots_out,
+        "fleet": {
+            "equity_curve": _fleet_equity_curve(bots_out),
+            "concentration": concentration,
+            "all_paper": all_paper,
+        },
+        "generated_at": now_ct.isoformat(),
+    }
+    cached["ts"] = now
+    cached["payload"] = payload
+    return payload

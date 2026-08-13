@@ -285,6 +285,24 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
             return None, None
         sig = build_iron_condor_signal(chain=chain, config=config, equity=equity, diag=diag)
         return sig, chain
+    if strategy in ("bull_call_spread", "bear_put_spread",
+                    "bull_put_spread", "bear_call_spread"):
+        # A single-ticker, fixed-direction vertical (EBB) — `strategy` IS the
+        # kind. Unlike DELTA/UNDERTOW's "vertical_credit"/"vertical_debit"
+        # universe scan (dip/rip setup picks the direction across a name
+        # list, handled entirely by _evaluate_universe_entry and never
+        # reaches this function), a bot with no `universe` key builds one
+        # fixed spread off its own chain every scan.
+        chain = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
+        if chain is None:
+            if diag is not None:
+                diag.append(f"chain_unavailable: ticker={ticker} dte={front_dte}")
+            return None, None
+        reg_meta = BOT_REGISTRY.get(bot, {})
+        params = {**DEFAULT_VERTICAL_PARAMS, **(reg_meta.get("params") or {})}
+        sig = build_vertical_signal(kind=strategy, chain=chain, config=config,
+                                    equity=equity, params=params, diag=diag)
+        return sig, chain
     if strategy == "updraft":
         # UPDRAFT / BACKDRAFT. Both need a 30-MINUTE flow imbalance, and
         # Tradier reports option volume CUMULATIVELY, so the signal cannot

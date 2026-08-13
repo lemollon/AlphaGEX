@@ -240,7 +240,43 @@ _intraday_cache: dict = {}
 _INTRADAY_TTL = 60
 _spyhist_cache: dict = {}
 _SPYHIST_TTL = 1800
-GRADES = [(0.75, "stand_down"), (0.55, "hedge"), (0.35, "reduce_size")]
+
+# ── Layer separation (Corrective Brief v2 §7) ────────────────────────────────
+# The risk model outputs probability/magnitude/confidence. The ONLY actions any
+# endpoint may emit are this whitelist. It must never name an instrument or a
+# structure. Enforced at runtime by _scrub() on every response and in CI by
+# tests/test_risk_whitelist.py — not by convention.
+ACTION_WHITELIST = frozenset({
+    "normal", "reduce_size", "widen_or_skip", "skip_entry",
+    "close_early", "stand_down",
+})
+# Structures/terms the payload may never contain (v2 §7.2). Checked
+# case-insensitively as substrings of every string in every response.
+PROHIBITED_TERMS = (
+    "straddle", "strangle", "calendar spread", "diagonal", "ratio spread",
+    "back spread", "backspread", "vix call", "buy premium", "buy volatility",
+    "long call", "long put", "debit spread", "buy calls", "buy puts",
+)
+# v2 §11.3 ladder, frozen. 0.55-0.75 is widen-strikes-or-skip — "hedge" was a
+# whitelist violation and is retired.
+GRADES = [(0.75, "stand_down"), (0.55, "widen_or_skip"), (0.35, "reduce_size")]
+
+
+def _scrub(obj):
+    """Recursively strip prohibited structure terms from a response payload.
+
+    Defense in depth: nothing in this module emits these terms, but if any
+    future edit does, the payload self-redacts instead of shipping a
+    structure recommendation."""
+    if isinstance(obj, dict):
+        return {k: _scrub(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_scrub(v) for v in obj]
+    if isinstance(obj, str):
+        low = obj.lower()
+        if any(t in low for t in PROHIBITED_TERMS):
+            return "[blocked: structure terms are prohibited on this endpoint]"
+    return obj
 
 
 async def _live_quote(request: Request) -> dict | None:
@@ -376,7 +412,13 @@ async def state(request: Request):
     outlook = _outlook(vix_c, v9_c, v1, rets)
 
     risk_off = backwardation or flag_vix1d or bool(flow["spike"])
-    return {
+    # explicit whitelist action (v2 §7.1): the ONLY instruction this endpoint
+    # gives. "normal" on calm/no-signal days — the advisor never says "sell
+    # more"; sizing up is not risk management.
+    action = ("stand_down" if (backwardation and flag_vix1d) else
+              "skip_entry" if risk_off else "normal")
+    assert action in ACTION_WHITELIST
+    return _scrub({
         "asof_close": d_vix.isoformat(),
         "generated_at": datetime.now(CT).isoformat(),
         "indices": {"vix": vix_c, "vix3m": v3_c, "vix9d": v9_c,
@@ -392,11 +434,12 @@ async def state(request: Request):
         "flow": flow,
         "live": live,
         "outlook": outlook,
+        "action": action,
         "headline": ("RISK-OFF: stand down / reduce" if risk_off else
                      ("CALM FLOOR: safest premium-selling state" if double_floor
                       else "NORMAL")),
         "advisory_only": True,
-    }
+    })
 
 
 @router.get("/history")
@@ -418,7 +461,7 @@ async def history(request: Request, days: int = 90):
                                   [p["otm_call_0dte"] for p in prior]),
             "quiet": bool(vp and vp < QUIET_VIX) if vp else None,
         })
-    return {"days": out[-days:]}
+    return _scrub({"days": out[-days:]})
 
 
 @router.get("/intraday")
@@ -471,9 +514,9 @@ async def intraday(request: Request):
             bars.append({"t": dt_ct.strftime("%H:%M"), "price": float(close),
                         "chg_pct": chg_pct})
 
-        payload = {"bars": bars, "prev_close": prev_close, "band_pct": band_pct,
+        payload = _scrub({"bars": bars, "prev_close": prev_close, "band_pct": band_pct,
                    "snapshot_t": "10:00", "status": "ok",
-                   "generated_at": now.isoformat()}
+                   "generated_at": now.isoformat()})
         _intraday_cache["v"] = (now, payload)
         return payload
     except Exception:
@@ -564,7 +607,7 @@ async def scorecard(request: Request, days: int = 120):
 
     prec = tp / (tp + fp) if (tp + fp) else None
     rec = tp / (tp + fn) if (tp + fn) else None
-    return {
+    return _scrub({
         "window_sessions": len(rows),
         "flag_vix1d": {
             "precision": prec, "recall": rec,
@@ -594,7 +637,7 @@ async def scorecard(request: Request, days: int = 120):
                           (big_on_spike / spike_days) if spike_days else None,
                           (big_on_nonspike / nonspike_days) if nonspike_days else None),
         "promotion": _promotion(hist, vix),
-    }
+    })
 
 
 HEALTH_RULES = {
