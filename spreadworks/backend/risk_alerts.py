@@ -137,20 +137,53 @@ def register_risk_alerts(scheduler, app) -> None:
             prior = [r for r in hist if r["d"] < now.date()]
             pz = _z(snap["putv"], [r["putv"] for r in prior])
             tz = _z(snap["totv"], [r["totv"] for r in prior])
+            oz = _z(snap["otm_call_0dte"], [r["otm_call_0dte"] for r in prior])
             if (pz or 0) > 2 or (tz or 0) > 2:
                 if not _claim_post_slot_db("risk_flow_spike", now.date()):
                     return
+                # which side is driving it — plain-speech composition line
+                if (pz or 0) > 2 and (oz or 0) <= 1:
+                    driver = ("Driven by **PUT volume** — someone is paying up "
+                              "for downside protection.")
+                elif (oz or 0) > 1 and (pz or 0) <= 1:
+                    driver = ("Driven by **CALL volume** on the upside — the "
+                              "squeeze-tell shape we track in the watch tier "
+                              "(accumulating evidence, NOT yet a tradeable "
+                              "signal).")
+                else:
+                    driver = "Both sides are heavy — broad bracing, no lean."
                 _send({
-                    "title": "⚠️ 10:00 CT option-flow spike",
+                    "title": "⚠️ Unusual option volume this morning — bigger "
+                             "rest-of-day move than normal is ~2.4× more likely",
                     "description": (
-                        f"put-vol z **{(pz or 0):.1f}** · total z **{(tz or 0):.1f}** "
-                        f"(threshold 2.0)\n"
-                        "Big rest-of-day move odds jump to **28.6% vs 12.1%** base "
-                        "(~4.8σ backtest).\n"
-                        "**Action: avoid new 0DTE exposure; tighten same-day exits.** "
-                        "Multi-day positions: this signal does not apply."),
+                        f"In plain English: this morning's SPY option volume is a "
+                        f"top-2% outlier vs the last 3 months at the same clock "
+                        f"(put z {(pz or 0):.1f} · total z {(tz or 0):.1f} · "
+                        f"0DTE call z {(oz or 0):.1f}).\n"
+                        f"{driver}\n\n"
+                        "**DO:** no new same-day (0DTE) premium selling today; "
+                        "tighten exits on anything expiring today. Multi-day "
+                        "positions: ignore this — gating them on it was tested "
+                        "and made them worse.\n"
+                        "**DON'T:** don't switch to buying options for the move "
+                        "— backtested, it loses MORE on flagged days than "
+                        "normal ones (−$19.63/trade, negative 4/4 years). And "
+                        "there is NO direction call: up and down are ~equally "
+                        "likely on these days (every direction test t < 1). "
+                        "Flat beats clever.\n"
+                        "**EBB note:** its validated spec already includes days "
+                        "like this (skipping them was tested ≈ neutral) — the "
+                        "bot needs no manual action."),
                     "color": AMBER,
-                    "footer": {"text": "validated 10:00–10:35 CT snapshot · advisory only"},
+                    "fields": [
+                        {"name": "big-move odds", "value": "28.6% vs 12.1% base",
+                         "inline": True},
+                        {"name": "confidence", "value": "~4.8σ, 904 sessions",
+                         "inline": True},
+                        {"name": "fires on", "value": "~6% of days", "inline": True},
+                    ],
+                    "footer": {"text": "validated 10:00–10:35 CT snapshot · "
+                                       "advisory only · /risk for the playbook"},
                 }, ping=True)
         except Exception as e:  # noqa: BLE001
             logger.warning("[RiskAlerts] flow_spike_check failed: %r", e)
