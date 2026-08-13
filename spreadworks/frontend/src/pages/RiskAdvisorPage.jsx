@@ -173,7 +173,7 @@ export default function RiskAdvisorPage() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '0 0 20px' }}>
           {[['page refresh', 'every 60s'], ['index closes', 'daily, cached 30 min'],
             ['flow checks', '10:00 · 12:00 · 13:30 CT'], ['intraday bars', '5-min, live'],
-            ['Discord alerts', '08:05 · 10:06 · 12:06 · 13:36 CT']].map(([k, v]) => (
+            ['Discord alerts', '08:05 · 08:06 EM · 10:06 · 12:06 · 13:36 · breach watch CT']].map(([k, v]) => (
             <span key={k} style={{ fontSize: 11, color: DIM, border: '1px solid #232a3d',
                                    borderRadius: 6, padding: '3px 8px' }}>
               <b style={{ color: '#c6cbd8' }}>{k}</b> · {v}

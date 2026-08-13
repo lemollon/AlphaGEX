@@ -297,8 +297,91 @@ def register_risk_alerts(scheduler, app) -> None:
         except Exception as e:  # noqa: BLE001
             logger.warning("[RiskAlerts] pm_recheck(%s) failed: %r", clock, e)
 
+    async def expected_move_note():
+        """Daily 08:06 CT quiet note: today's SPY expected move in % AND price.
+
+        Informational, never pings — the number every same-day decision keys
+        off (the intraday chart's band, EBB's regime, the breach alert)."""
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            if not _claim_post_slot_db("risk_em_note", now.date()):
+                return
+            from .routes_risk import _cboe, _latest, _live_quote
+            v1 = await _cboe(app.state.http, "VIX1D")
+            d, v1_c = _latest(v1)
+            em = v1_c / SQRT252
+            shim = SimpleNamespace(app=app)
+            q = await _live_quote(shim)
+            prev = (q or {}).get("prev_close")
+            band = ""
+            if prev:
+                lo, hi = prev * (1 - em / 100), prev * (1 + em / 100)
+                band = f"\nPrice band: **${lo:,.2f} — ${hi:,.2f}** (prev close ${prev:,.2f})"
+            _send({
+                "title": f"📏 Today's SPY expected move: ±{em:.2f}%",
+                "description": (
+                    f"The options market has priced a ±{em:.2f}% day "
+                    f"(VIX1D {v1_c:.1f} at yesterday's close).{band}\n"
+                    "Inside the band = a normal day for premium selling. "
+                    "A breach alert posts if price trades outside it."),
+                "color": 0x60A5FA,
+                "footer": {"text": f"closes of {d} · quiet daily note · /risk "
+                                   "shows the live budget bar"},
+            }, ping=False)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[RiskAlerts] expected_move_note failed: %r", e)
+
+    async def em_breach_check():
+        """Every 10 min in-session: @here once per day if SPY trades OUTSIDE
+        the day's expected-move band — the day is officially bigger than
+        options priced."""
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            if not ((now.hour, now.minute) >= (8, 35) and now.hour < 15):
+                return
+            from .routes_risk import _cboe, _latest, _live_quote
+            shim = SimpleNamespace(app=app)
+            q = await _live_quote(shim)
+            if not q or not q.get("prev_close"):
+                return
+            v1 = await _cboe(app.state.http, "VIX1D")
+            _, v1_c = _latest(v1)
+            em = v1_c / SQRT252
+            chg = q.get("chg_pct")
+            if chg is None or abs(chg) < em:
+                return
+            if not _claim_post_slot_db("risk_em_breach", now.date()):
+                return
+            side = "ABOVE" if chg > 0 else "BELOW"
+            _send({
+                "title": f"🚨 SPY is outside today's expected move "
+                         f"({chg:+.2f}% vs ±{em:.2f}% priced)",
+                "description": (
+                    f"Price **${q['last']:,.2f}** has broken {side} the band "
+                    f"the options market paid for today — the day is already "
+                    f"bigger than priced.\n\n"
+                    "**DO:** no new same-day premium selling; tighten or close "
+                    "anything expiring today (its breakeven math is broken). "
+                    "Multi-day positions: reassess size, don't panic-exit.\n"
+                    "**DON'T:** don't chase direction — breach days were "
+                    "tested for follow-through direction and none exists "
+                    "(all t < 1). The information is the SIZE of the day, "
+                    "not its sign."),
+                "color": RED,
+                "footer": {"text": "checked every 10 min in-session · fires "
+                                   "once per day · advisory only"},
+            }, ping=True)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[RiskAlerts] em_breach_check failed: %r", e)
+
     scheduler.add_job(morning_verdict, "cron", hour=8, minute=5, second=30,
                       timezone=CT, id="risk_morning_verdict")
+    scheduler.add_job(expected_move_note, "cron", hour=8, minute=6, second=30,
+                      timezone=CT, id="risk_em_note")
     scheduler.add_job(flow_spike_check, "cron", hour=10, minute=6,
                       timezone=CT, id="risk_flow_spike")
     scheduler.add_job(pm_recheck, "cron", hour=12, minute=6, timezone=CT,
@@ -307,5 +390,8 @@ def register_risk_alerts(scheduler, app) -> None:
     scheduler.add_job(pm_recheck, "cron", hour=13, minute=36, timezone=CT,
                       id="pm_recheck_1330",
                       args=["13:30", "risk_pm_1330", "risk_pm_fade_1330"])
-    logger.info("[RiskAlerts] registered: morning verdict 08:05:30 CT, "
-                "flow spike 10:06 CT, PM re-checks 12:06 & 13:36 CT")
+    scheduler.add_job(em_breach_check, "cron", minute="*/10", timezone=CT,
+                      id="risk_em_breach")
+    logger.info("[RiskAlerts] registered: morning verdict 08:05:30, EM note "
+                "08:06:30, flow spike 10:06, PM re-checks 12:06 & 13:36, "
+                "EM-breach watch */10 in-session (all CT)")
