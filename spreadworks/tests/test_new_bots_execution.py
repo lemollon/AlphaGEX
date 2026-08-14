@@ -221,7 +221,16 @@ def test_new_bot_opens_and_closes_with_profit(bot, db_session, monkeypatch):
 
     row = _closed_row(engine, bot, pos["position_id"])
     assert row is not None, f"{bot} opened but never CLOSED"
-    expected = round((close_mid - entry) * contracts * 100.0, 2)
+    # Every one of these bots opens a SINGLE-LEG long debit (n_legs=1). The
+    # entry mark read back from the DB already has the entry-side taker cost
+    # baked in (open_position widened it), so only the EXIT leg still needs
+    # accounting for here: compute_mtm subtracts n_legs*0.02 from the unwind
+    # value of a debit before close_position turns it into realized_pnl.
+    # naive (close_mid - entry)*100*contracts = 10.00; exit taker cost =
+    # 1 leg * 0.02 * 100 * 1 contract = 2.00 -> expected = 10.00 - 2.00 = 8.00.
+    n_legs = len(json.loads(pos["legs"]))
+    exit_slip = n_legs * 0.02 * 100.0 * contracts
+    expected = round((close_mid - entry) * contracts * 100.0 - exit_slip, 2)
     assert float(row["realized_pnl"]) == pytest.approx(expected, abs=0.01)
     assert float(row["realized_pnl"]) > 0, "up-move on a long debit must profit"
 
@@ -247,6 +256,11 @@ def test_new_bot_books_a_loss_when_the_mark_falls(bot, db_session, monkeypatch):
 
     row = _closed_row(engine, bot, pos["position_id"])
     assert row is not None
-    expected = round((close_mid - entry) * contracts * 100.0, 2)
+    # Same single-leg (n_legs=1) accounting as the profit test above: naive
+    # (close_mid - entry)*100*contracts = -5.00; exit taker cost =
+    # 1 leg * 0.02 * 100 * 1 contract = 2.00 -> expected = -5.00 - 2.00 = -7.00.
+    n_legs = len(json.loads(pos["legs"]))
+    exit_slip = n_legs * 0.02 * 100.0 * contracts
+    expected = round((close_mid - entry) * contracts * 100.0 - exit_slip, 2)
     assert float(row["realized_pnl"]) == pytest.approx(expected, abs=0.01)
     assert float(row["realized_pnl"]) < 0, "down-move on a long debit must lose"

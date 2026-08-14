@@ -90,7 +90,27 @@ def _slippage_total(chain_provider: Any, ticker: str,
     except Exception as e:  # noqa: BLE001 — never fail a scan on a quote hiccup
         logger.warning(f"get_leg_spreads failed for {ticker}: {e}; flat fallback")
         return len(legs) * per_leg
-    return sum(per_leg if (h is None or h <= 0) else float(h) for h in halves)
+    # A provider that inherits the ChainProvider Protocol without overriding
+    # this method returns None from its `...` body — not an exception, so the
+    # guard above never sees it, and iterating None raised TypeError right
+    # here. That propagates out of run_scan_cycle and the bot silently stops
+    # scanning. Treat "returned nothing usable" exactly like "can't measure".
+    if not isinstance(halves, (list, tuple)):
+        logger.warning(f"get_leg_spreads returned {type(halves).__name__} for "
+                       f"{ticker}; flat fallback")
+        return len(legs) * per_leg
+    # Align to the legs. A SHORT return would silently sum fewer legs than we
+    # are about to trade — understating cost and so overstating edge, which is
+    # the one direction this must never fail in. Missing entries take the flat
+    # default; extras are ignored.
+    total = 0.0
+    for i in range(len(legs)):
+        h = halves[i] if i < len(halves) else None
+        total += per_leg if (h is None or h <= 0) else float(h)
+    if len(halves) != len(legs):
+        logger.warning(f"get_leg_spreads returned {len(halves)} spreads for "
+                       f"{len(legs)} legs on {ticker}; padded with flat default")
+    return total
 
 
 def _parse_time(s: str) -> time:

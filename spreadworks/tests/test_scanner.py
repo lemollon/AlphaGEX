@@ -190,9 +190,11 @@ def test_surge_pt_rederived_on_decreasing_ladder(db_session, fake_chain_0dte):
     open_position(engine, "surge", "long_butterfly", sig,
                   datetime(2026, 5, 20, 9, 0, tzinfo=CT))
 
-    # Drive the fly's current value to 1.25 -> pnl = (1.25 - 0.75) * 2 * 100 = +$100.
+    # Drive the fly's quoted value to 1.33. This is a 4-leg long_butterfly, so
+    # the exit taker cost is 4 legs * 0.02 = 0.08 off the unwind value:
+    # mtm_value = 1.33 - 0.08 = 1.25 -> pnl = (1.25 - 0.75) * 2 * 100 = +$100.
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
-    provider.leg_mid_overrides = [1.25, 0.0, 0.0, 0.0]
+    provider.leg_mid_overrides = [1.33, 0.0, 0.0, 0.0]
 
     # MORNING: 30% tier ($135) not met -> still just monitoring.
     res_am = run_scan_cycle(engine=engine, bot="surge",
@@ -368,8 +370,9 @@ def test_surge_opens_and_pt_closes_with_positive_pnl(db_session, fake_chain_0dte
     # 2026-07-03 defaults: pin-center resolves body=501 on this fixture; wing
     # = round(1.35 * 4.0 straddle * 0.85) = 5 -> call fly 496/501/506 =
     # 4.70 + 0.45 - 2*1.60 = 1.95; calendars at +/-$2 (499P/503C) cost 0.50
-    # each (back chain = front + 0.50 time value). Debit = 2.95.
-    assert float(row["entry_price"]) == pytest.approx(2.95)
+    # each (back chain = front + 0.50 time value). Debit = 2.95 + 8 legs *
+    # 0.02 taker = 3.11.
+    assert float(row["entry_price"]) == pytest.approx(3.11)
 
     # 2) Drive every long leg rich and every short leg to ~0 so the combo's
     #    debit-aware MTM is strongly positive and trips the profit target.
@@ -535,7 +538,10 @@ def test_undertow_journals_dip_context(db_session):
                    chain_provider=provider, event_blackout=False)
     from backend.bots.executor import list_open_positions
     pos = list_open_positions(eng, "undertow")[0]
-    notes = _json.loads(pos["notes"])
+    # open_position appends "; slip <adj> total x<n>legs (mid=<mid>)" after
+    # the dip-context JSON when the taker cost is > 0 (see executor.py's
+    # open_position docstring) — strip that suffix before parsing.
+    notes = _json.loads(pos["notes"].split("; slip ")[0])
     assert notes["ticker"] == "NVDA"
     assert notes["kind"] == "bull_call_spread"
     assert notes["magnitude_pct"] > 0.03
@@ -598,7 +604,10 @@ def test_undertow_writes_ai_rationale(db_session, monkeypatch):
     run_scan_cycle(engine=eng, bot="undertow",
                    now_ct=datetime(2026, 6, 10, 9, 0, tzinfo=CT),
                    chain_provider=provider, event_blackout=False)
-    notes = _j.loads(list_open_positions(eng, "undertow")[0]["notes"])
+    # Strip the "; slip <adj> total x<n>legs (mid=<mid>)" suffix open_position
+    # appends after the JSON notes when the taker cost is > 0.
+    raw_notes = list_open_positions(eng, "undertow")[0]["notes"]
+    notes = _j.loads(raw_notes.split("; slip ")[0])
     assert notes["rationale"] == "Test rationale."
 
 
@@ -799,11 +808,17 @@ def test_splash_opens_long_butterfly_with_unreachable_targets(db_session, fake_c
     assert W == 5
     entry = float(pos["entry_price"])
     contracts = int(pos["contracts"])
-    # $10k * bp 0.10 = $1000 budget // debit, capped at 5 lots.
-    assert contracts == min(5, int(1000 // (entry * 100)))
-    # pt 1.0 = 100% of max profit; sl 3.0 = 3x debit — both unreachable.
-    assert float(pos["pt_target_pnl"]) == pytest.approx((W - entry) * 100 * contracts)
-    assert float(pos["sl_target_pnl"]) == pytest.approx(3.0 * entry * 100 * contracts)
+    # Contract sizing runs against the RAW (pre-slippage) debit, before
+    # open_position widens it for the 4-leg entry taker cost (4 * 0.02 =
+    # 0.08): raw_debit = entry - 0.08 = 1.95. $10k * bp 0.10 = $1000 budget
+    # // raw_debit, capped at 5 lots -> min(5, int(1000 // 195)) = 5.
+    raw_debit = entry - 4 * 0.02
+    assert contracts == min(5, int(1000 // (raw_debit * 100)))
+    # pt 1.0 = 100% of max profit; sl 3.0 = 3x debit — both unreachable. Both
+    # targets are computed on the signal BEFORE open_position widens
+    # entry_price for slippage, so they use raw_debit too, not entry.
+    assert float(pos["pt_target_pnl"]) == pytest.approx((W - raw_debit) * 100 * contracts)
+    assert float(pos["sl_target_pnl"]) == pytest.approx(3.0 * raw_debit * 100 * contracts)
 
 
 def test_splash_one_entry_per_day_blocks_reentry(db_session, fake_chain_0dte):
