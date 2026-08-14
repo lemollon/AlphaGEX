@@ -548,6 +548,8 @@ _intraday_cache: dict = {}
 _INTRADAY_TTL = 60
 _spyhist_cache: dict = {}
 _SPYHIST_TTL = 1800
+_recipe_cache: dict = {}
+_RECIPE_TTL = 60
 
 # ── Layer separation (Corrective Brief v2 §7) ────────────────────────────────
 # The risk model outputs probability/magnitude/confidence. The ONLY actions any
@@ -673,6 +675,136 @@ def _macro_block() -> dict:
         return {"today": macro_today(today), "next": next_macro(today)}
     except Exception:
         return {"today": None, "next": None}
+
+
+# ── /recipe: the one manual ticket that survived 44 registered trials ───────
+# Registry #23b (AM, 10:05-10:20 CT) + #41 (PM, 13:05-13:10 CT) — a same-day
+# SPY vertical, short strike spot-2, wing 5 wide. EBB/EBB-PM run exactly this
+# spec on paper (see bots/registry.py); this endpoint is the read-only manual
+# companion for a human placing the same ticket by hand — it never trades.
+
+
+def _recipe_strikes(spot: float) -> tuple[int, int]:
+    """Short strike = spot rounded down/up to the nearest $1 minus 2; the
+    other leg sits 5 points further out (SPY $1 grid) — the exact registry
+    #23b/#41 spec, kept as a pure function so the strike math is unit
+    testable without a live quote or a Tradier round-trip."""
+    short_strike = round(spot - 2)
+    other_strike = short_strike - 5
+    return short_strike, other_strike
+
+
+def _recipe_windows() -> tuple[tuple[int, int], tuple[int, int],
+                               tuple[int, int], tuple[int, int]]:
+    """AM/PM entry windows read straight from the ebb/ebb_pm registry
+    defaults — the registry is the single source of truth for these clocks,
+    this endpoint must never hardcode a copy that can drift from it."""
+    from .bots.registry import BOT_REGISTRY
+
+    def _hm(s: str) -> tuple[int, int]:
+        h, m = s.split(":")
+        return int(h), int(m)
+
+    am = BOT_REGISTRY["ebb"]["defaults"]
+    pm = BOT_REGISTRY["ebb_pm"]["defaults"]
+    return (_hm(am["entry_start_ct"]), _hm(am["entry_end_ct"]),
+            _hm(pm["entry_start_ct"]), _hm(pm["entry_end_ct"]))
+
+
+def _recipe_phase(now_ct: datetime, am_start: tuple[int, int],
+                  am_end: tuple[int, int], pm_start: tuple[int, int],
+                  pm_end: tuple[int, int]) -> tuple[str, int | None]:
+    """Phase + minutes-to-next-window from (hour, minute) tuples — mirrors
+    the (hour, minute) comparisons _snap_valid/_pm_snap_valid already use
+    elsewhere in this module rather than inventing a new time convention."""
+    if now_ct.weekday() >= 5:
+        return "weekend", None
+    total = now_ct.hour * 60 + now_ct.minute
+    am_s, am_e = am_start[0] * 60 + am_start[1], am_end[0] * 60 + am_end[1]
+    pm_s, pm_e = pm_start[0] * 60 + pm_start[1], pm_end[0] * 60 + pm_end[1]
+    if total < am_s:
+        return "before_am", am_s - total
+    if am_s <= total <= am_e:
+        return "am_open", None
+    if am_e < total < pm_s:
+        return "between", pm_s - total
+    if pm_s <= total <= pm_e:
+        return "pm_open", None
+    return "done", None
+
+
+@router.get("/recipe")
+async def recipe(request: Request):
+    """Today's manual ticket, cached 60s. Never raises — any failure
+    degrades to {"status": "unavailable"} rather than a 500, same discipline
+    as every other endpoint in this module."""
+    now = datetime.now(CT)
+    hit = _recipe_cache.get("r")
+    if hit and (now - hit[0]).total_seconds() < _RECIPE_TTL:
+        return hit[1]
+    try:
+        am_start, am_end, pm_start, pm_end = _recipe_windows()
+        phase, minutes_to_next = _recipe_phase(now, am_start, am_end, pm_start, pm_end)
+
+        live = await _live_quote(request)
+        spot = (live.get("last") or live.get("prev_close")) if live else None
+        if not spot:
+            payload = _scrub({"status": "no quote", "generated_at": now.isoformat()})
+            _recipe_cache["r"] = (now, payload)
+            return payload
+
+        short_strike, other_strike = _recipe_strikes(spot)
+        today = now.date()
+
+        # Fetch a live estimate only near either clock — everywhere else
+        # this would just be extra Tradier load for a number nobody can act
+        # on yet.
+        total = now.hour * 60 + now.minute
+        am_s, am_e = am_start[0] * 60 + am_start[1], am_end[0] * 60 + am_end[1]
+        pm_s, pm_e = pm_start[0] * 60 + pm_start[1], pm_end[0] * 60 + pm_end[1]
+        near_window = (am_s - 20 <= total <= am_e) or (pm_s - 20 <= total <= pm_e)
+
+        credit_now = None
+        meets_floor = None
+        if near_window and now.weekday() < 5:
+            try:
+                from .routes import _tradier_get
+                ch = await _tradier_get(request, "/markets/options/chains",
+                                        {"symbol": "SPY", "expiration": today.isoformat()})
+                opts = (ch.get("options") or {}).get("option") or []
+                if isinstance(opts, dict):
+                    opts = [opts]
+                puts = {float(o["strike"]): o for o in opts
+                        if o.get("option_type") == "put" and o.get("strike") is not None}
+                near_opt = puts.get(float(short_strike))
+                far_opt = puts.get(float(other_strike))
+                if near_opt and far_opt:
+                    near_bid = float(near_opt.get("bid") or 0)
+                    far_ask = float(far_opt.get("ask") or 0)
+                    if near_bid > 0 and far_ask > 0:
+                        credit_now = round(near_bid - far_ask, 2)
+                        meets_floor = credit_now >= 0.10
+            except Exception:
+                credit_now = None
+                meets_floor = None
+
+        payload = _scrub({
+            "status": "ok",
+            "spot": spot,
+            "expiration": today.isoformat(),
+            "short_strike": short_strike,
+            "long_strike": other_strike,
+            "phase": phase,
+            "minutes_to_next_window": minutes_to_next,
+            "credit_now": credit_now,
+            "meets_floor": meets_floor,
+            "floor": 0.10,
+            "generated_at": now.isoformat(),
+        })
+        _recipe_cache["r"] = (now, payload)
+        return payload
+    except Exception:
+        return {"status": "unavailable"}
 
 
 @router.get("/state")
