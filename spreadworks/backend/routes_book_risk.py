@@ -75,6 +75,14 @@ DD_LIMIT_PCT = 0.25
 # printing a confident-looking r off 6 observations.
 MIN_PAIRED_DAYS = 20
 
+# Config keys that are OPERATOR SWITCHES, not strategy parameters. A bot being
+# armed when the registry default ships it disarmed is not drift from a
+# validated cell — it is someone having turned it on, which is the whole point
+# of the knob. Leaving them in swamped the audit: the first live read flagged
+# 24 of 25 bots, 20 of them for `enabled` alone, burying the handful of real
+# sizing edits. `enabled` already has its own ARMED column on the page.
+OPERATIONAL_KEYS = frozenset({"enabled", "discord_alerts"})
+
 # Underlyings that are the same macro bet in different wrappers. Two bots on
 # SPY and XSP are not diversified just because the tickers differ.
 CLUSTERS: dict[str, str] = {
@@ -138,6 +146,28 @@ def _fmt(dt: datetime | None) -> str | None:
     return dt.strftime("%Y-%m-%d %H:%M:%S") if dt else None
 
 
+def _to_ct(dt: datetime | None) -> datetime | None:
+    """Convert a stored naive timestamp from UTC to naive CT.
+
+    MEASURED, not assumed. The scan loop passes a CT-AWARE
+    `datetime.now(America/Chicago)` into the writers, which reads like the
+    columns should hold CT wall-clock — but the DB session timezone is UTC, so
+    Postgres converts on the way into `timestamp without time zone` and what
+    lands is UTC. First deploy of this page proved it: mtm_updated_at read
+    14:52 while the server's CT clock said 09:53, i.e. exactly -5h, and every
+    block tripped clock_mismatch. This confirms the older note on
+    `last_scan_at` and refutes the CT reading of the writer.
+
+    Consequence worth knowing: a naive value from these tables is UTC, so
+    anything comparing one against a CT-derived boundary is off by the offset.
+    (routes_bots.get_status does exactly that for today's P&L; it survives only
+    because a 15:00 CT close is still 20:00 UTC on the same calendar date.)
+    """
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=ZoneInfo("UTC")).astimezone(CT).replace(tzinfo=None)
+
+
 def _fresh(*, as_of: datetime | None, now_ct: datetime, next_at: datetime | None,
            source: str, cadence: str, stale_after_sec: int | None) -> dict[str, Any]:
     """The freshness contract every block on this page must satisfy.
@@ -182,7 +212,18 @@ def _open_positions(conn, bot: str) -> list[dict[str, Any]]:
         f"       mtm_pnl, mtm_updated_at, entry_time, legs, account_label "
         f"FROM {bot_table(bot, 'positions')} WHERE status = 'OPEN'"
     )).mappings().all()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        m = d.get("mtm_updated_at")
+        if isinstance(m, str):
+            try:
+                m = datetime.fromisoformat(m)
+            except ValueError:
+                m = None
+        d["mtm_updated_at"] = _to_ct(m)   # stored UTC -> CT
+        out.append(d)
+    return out
 
 
 def _daily_realized(conn, bot: str) -> dict[date, float]:
@@ -204,7 +245,10 @@ def _daily_realized(conn, bot: str) -> dict[date, float]:
                 ct = datetime.fromisoformat(ct)
             except ValueError:
                 continue
-        d = ct.date()
+        # Group on the CT session date. For a 15:00 CT close the UTC date
+        # happens to match, but grouping on the raw UTC value would silently
+        # roll any post-19:00 CT booking into the next session.
+        d = _to_ct(ct).date()
         out[d] = out.get(d, 0.0) + float(r["realized_pnl"] or 0)
     return out
 
@@ -216,10 +260,10 @@ def _last_close_time(conn, bot: str) -> datetime | None:
     t = r["t"] if r else None
     if isinstance(t, str):
         try:
-            return datetime.fromisoformat(t)
+            t = datetime.fromisoformat(t)
         except ValueError:
             return None
-    return t
+    return _to_ct(t)
 
 
 def _config_updated_at(conn, bot: str) -> datetime | None:
@@ -229,10 +273,10 @@ def _config_updated_at(conn, bot: str) -> datetime | None:
     t = r["t"] if r else None
     if isinstance(t, str):
         try:
-            return datetime.fromisoformat(t)
+            t = datetime.fromisoformat(t)
         except ValueError:
             return None
-    return t
+    return _to_ct(t)
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +427,7 @@ def get_book_risk() -> dict[str, Any]:
         defaults: dict[str, Any] = meta.get("defaults", {}) or {}
         drift = []
         for k, validated in sorted(defaults.items()):
-            if k not in cfg:
+            if k not in cfg or k in OPERATIONAL_KEYS:
                 continue
             live = cfg[k]
             try:
@@ -493,6 +537,13 @@ def get_book_risk() -> dict[str, Any]:
                 "underpowered": n < MIN_PAIRED_DAYS,
             })
     pairs.sort(key=lambda p: (p["r"] is None, -(p["r"] or 0)))
+    # With 25 bots this list is ~300 entries and, on a young fleet, almost all
+    # of them are "need 20, have 1". Rendering every one buries the pairs that
+    # actually carry a number and pushes the concentration bars off screen, so
+    # ship a summary the page can collapse them into.
+    measured = [p for p in pairs if p["r"] is not None]
+    underpowered = [p for p in pairs if p["r"] is None]
+    max_shared = max((p["n_days"] for p in underpowered), default=0)
 
     # ---- concentration -----------------------------------------------------
     by_cluster: dict[str, float] = {}
@@ -591,6 +642,10 @@ def get_book_risk() -> dict[str, Any]:
         "concentration": {
             "correlation": {
                 "pairs": pairs,
+                "measured_pairs": len(measured),
+                "underpowered_pairs": len(underpowered),
+                "total_pairs": len(pairs),
+                "max_shared_days_among_underpowered": max_shared,
                 "min_paired_days": MIN_PAIRED_DAYS,
                 "note": (
                     "Pearson r on daily REALIZED P&L, paired only on days both "
@@ -624,8 +679,12 @@ def get_book_risk() -> dict[str, Any]:
             "validated_source": (
                 "backend/bots/registry.py BOT_REGISTRY[bot]['defaults'] — the "
                 "same dict the bot seeds from. Drift means the live DB row was "
-                "edited away from the validated cell; the DB wins at runtime."
+                "edited away from the validated cell; the DB wins at runtime. "
+                f"Operator switches ({', '.join(sorted(OPERATIONAL_KEYS))}) are "
+                "excluded — arming a bot is not drift, and it swamped the "
+                "sizing edits that matter."
             ),
+            "ignored_keys": sorted(OPERATIONAL_KEYS),
             "fresh": _fresh(
                 as_of=newest_cfg, now_ct=now_ct, next_at=None,
                 source="{bot}_config.updated_at",

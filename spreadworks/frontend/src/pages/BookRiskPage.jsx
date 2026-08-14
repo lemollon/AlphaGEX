@@ -324,26 +324,49 @@ export default function BookRiskPage() {
             </div>
           )}
 
-          <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 8 }}>
-            <thead><tr>
-              <th style={S.th}>bot A</th><th style={S.th}>bot B</th>
-              <th style={S.th}>shared days</th><th style={S.th}>r</th>
-            </tr></thead>
-            <tbody>
-              {(concentration?.correlation?.pairs || []).map((p, i) => (
-                <tr key={i}>
-                  <td style={S.td}>{p.a}</td>
-                  <td style={S.td}>{p.b}</td>
-                  <td style={S.td}>{p.n_days}</td>
-                  <td style={{ ...S.td, color: p.underpowered ? DIM : corrColor(p.r), fontWeight: 700 }}>
-                    {p.underpowered
-                      ? `— (need ${concentration.correlation.min_paired_days}, have ${p.n_days})`
-                      : (p.r != null ? p.r.toFixed(2) : '—')}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {/* Only pairs that actually carry a number get a row. With 25 bots
+              the full list is ~300 entries and on a young fleet nearly all of
+              them read "need 20, have 1" — rendering them all buried the
+              measured pairs and pushed the concentration bars off screen.
+              The rest collapse into the one line below. */}
+          {(() => {
+            const c = concentration?.correlation || {};
+            const measured = (c.pairs || []).filter(p => !p.underpowered);
+            return (<>
+              {measured.length > 0 ? (
+                <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 8 }}>
+                  <thead><tr>
+                    <th style={S.th}>bot A</th><th style={S.th}>bot B</th>
+                    <th style={S.th}>shared days</th><th style={S.th}>r</th>
+                  </tr></thead>
+                  <tbody>
+                    {measured.map((p, i) => (
+                      <tr key={i}>
+                        <td style={S.td}>{p.a}</td>
+                        <td style={S.td}>{p.b}</td>
+                        <td style={S.td}>{p.n_days}</td>
+                        <td style={{ ...S.td, color: corrColor(p.r), fontWeight: 700 }}>
+                          {p.r != null ? p.r.toFixed(2) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div style={{ fontSize: 13, color: AMBER, fontWeight: 600, marginBottom: 8 }}>
+                  No pair has enough shared history to measure correlation yet —
+                  so this book's diversification is currently UNKNOWN, not proven.
+                </div>
+              )}
+              {c.underpowered_pairs > 0 && (
+                <div style={{ ...S.small, marginBottom: 8 }}>
+                  {c.underpowered_pairs} of {c.total_pairs} pairs skipped —
+                  under {c.min_paired_days} shared trading days. The closest pair has{' '}
+                  {c.max_shared_days_among_underpowered}. They reappear here as they age.
+                </div>
+              )}
+            </>);
+          })()}
           {concentration?.correlation?.note && <div style={{ ...S.small, marginBottom: 16 }}>{concentration.correlation.note}</div>}
 
           {[['By cluster', concentration?.by_cluster], ['By ticker', concentration?.by_ticker], ['By strategy', concentration?.by_strategy]].map(([title, rows]) => {
