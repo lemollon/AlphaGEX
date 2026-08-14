@@ -9,6 +9,7 @@ correlation is withheld when the paired sample is too small.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -33,8 +34,19 @@ def _config(eng, bot, *, capital=10000.0, enabled=True, bp_pct=0.10):
         ), {"s": capital, "e": enabled, "b": bp_pct})
 
 
+def _utc_now_naive() -> datetime:
+    """What the writers actually put in these columns.
+
+    The scan loop passes a CT-aware now, but the DB session timezone is UTC so
+    Postgres stores the UTC wall-clock in `timestamp without time zone`.
+    Confirmed on the first live deploy: mtm_updated_at read 14:52 against a
+    09:53 CT server clock. Tests must write UTC or they test a fiction.
+    """
+    return datetime.now(ZoneInfo("UTC")).replace(tzinfo=None)
+
+
 def _open_position(eng, bot, *, pid, max_loss, mtm_pnl, contracts=1, when=None):
-    when = when or datetime(2026, 8, 14, 10, 6)
+    when = when or datetime(2026, 8, 14, 15, 6)   # 15:06 UTC = 10:06 CT
     with eng.begin() as c:
         c.execute(text(
             f"INSERT INTO {bot_table(bot, 'positions')} "
@@ -186,6 +198,24 @@ def test_config_drift_is_detected_against_the_registry_defaults(engine):
     assert row["clean"] is False
 
 
+def test_arming_a_bot_is_not_config_drift(engine):
+    """Operator switches must not count as drift.
+
+    The first live read flagged 24 of 25 bots, 20 of them purely because
+    `enabled` was True against a registry default of False — i.e. because
+    someone had turned the bot on. That buried the handful of real sizing
+    edits, which is the only thing the audit exists to surface.
+    """
+    bot = br.list_bots()[0]
+    d = br.BOT_REGISTRY[bot]["defaults"]
+    _config(engine, bot, capital=float(d["starting_capital"]),
+            enabled=not bool(d["enabled"]), bp_pct=float(d["bp_pct"]))
+
+    row = _bot_row(br.get_book_risk(), "config_audit", bot)
+    assert [x["key"] for x in row["drift"]] == []
+    assert row["clean"] is True
+
+
 def test_clean_config_reports_no_drift(engine):
     bot = br.list_bots()[0]
     d = br.BOT_REGISTRY[bot]["defaults"]
@@ -214,11 +244,28 @@ def test_mark_age_is_computed_server_side_in_ct(engine):
     bug made a dead bot read 'just now' forever on BotDashboard."""
     bot = br.list_bots()[0]
     _config(engine, bot)
-    stale_mark = datetime.now(br.CT).replace(tzinfo=None) - timedelta(minutes=42)
+    stale_mark = _utc_now_naive() - timedelta(minutes=42)
     _open_position(engine, bot, pid="p1", max_loss=400.0, mtm_pnl=0.0, when=stale_mark)
 
     exp = _bot_row(br.get_book_risk(), "exposure", bot)
     assert 2400 < exp["oldest_mark_age_seconds"] < 2640     # ~42 min
+
+
+def test_stored_timestamps_are_read_as_utc_not_ct(engine):
+    """The regression for what the first live deploy exposed.
+
+    A mark written 1 minute ago lands in the column as UTC. Read as CT it
+    looks ~5h in the FUTURE — which is what tripped clock_mismatch on every
+    block on day one. It must resolve to a ~1 minute age and no mismatch.
+    """
+    bot = br.list_bots()[0]
+    _config(engine, bot)
+    _open_position(engine, bot, pid="p1", max_loss=400.0, mtm_pnl=0.0,
+                   when=_utc_now_naive() - timedelta(minutes=1))
+
+    exp = _bot_row(br.get_book_risk(), "exposure", bot)
+    assert 0 <= exp["oldest_mark_age_seconds"] < 180
+    assert br.get_book_risk()["exposure"]["fresh"]["clock_mismatch"] is False
 
 
 def test_a_timestamp_ahead_of_the_clock_is_flagged_not_shown_as_fresh(engine):
@@ -230,7 +277,7 @@ def test_a_timestamp_ahead_of_the_clock_is_flagged_not_shown_as_fresh(engine):
     """
     bot = br.list_bots()[0]
     _config(engine, bot)
-    future = datetime.now(br.CT).replace(tzinfo=None) + timedelta(hours=5)
+    future = _utc_now_naive() + timedelta(hours=5)
     _open_position(engine, bot, pid="p1", max_loss=400.0, mtm_pnl=0.0, when=future)
 
     f = br.get_book_risk()["exposure"]["fresh"]
@@ -242,7 +289,7 @@ def test_normal_ages_do_not_trip_the_clock_mismatch_flag(engine):
     bot = br.list_bots()[0]
     _config(engine, bot)
     _open_position(engine, bot, pid="p1", max_loss=400.0, mtm_pnl=0.0,
-                   when=datetime.now(br.CT).replace(tzinfo=None) - timedelta(minutes=3))
+                   when=_utc_now_naive() - timedelta(minutes=3))
 
     assert br.get_book_risk()["exposure"]["fresh"]["clock_mismatch"] is False
 
