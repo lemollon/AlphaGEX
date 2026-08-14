@@ -175,6 +175,25 @@ def test_am_and_pm_dedupe_independently(harness, monkeypatch):
     assert sent[1]["embed"]["title"].startswith("\U0001f4c4 PM")
 
 
+def test_both_tickets_ping_here(harness, monkeypatch):
+    """The @here on the ticket is a confirmed decision, not an accident.
+
+    It is a deliberate exception to this module's scarcity rule — Leron was
+    offered the quiet unpinged variant on 2026-08-14 and chose to keep the
+    ping, because the strike and expiration were previously invisible unless
+    you went and opened the page. This test exists so a future tidy-up of
+    "too many pings" fails here and has to be a decision rather than a drive-by.
+    """
+    sched, sent, _ = harness
+    _weekday(monkeypatch)
+    _stub_recipe(monkeypatch, OK)
+
+    _fire(sched, "risk_recipe_am")
+    _fire(sched, "risk_recipe_pm")
+
+    assert [s["ping"] for s in sent] == [True, True]
+
+
 def test_no_ticket_on_a_weekend(harness, monkeypatch):
     sched, sent, _ = harness
     import datetime as _dt

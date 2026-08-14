@@ -36,6 +36,13 @@ Five alerts, exactly as documented on the /risk page:
      readable or the pushes train you to ignore them. The ticket earns its
      two daily pings by being the one actionable, time-boxed thing here.
 
+     The two ticket pings are a DELIBERATE, CONFIRMED exception to the
+     scarcity rule above, not an oversight — Leron was offered the quiet
+     unpinged variant on 2026-08-14 and chose to keep @here. Do not "tidy"
+     them down to a silent note: the whole reason this alert exists is that
+     the strike and expiration were previously invisible unless you went and
+     opened the page. Changing it back needs him to say so.
+
 Safety rails:
   * webhook from env RISK_ADVISOR_DISCORD_WEBHOOK (falls back to
     DISCORD_WEBHOOK_URL). NEVER hardcoded.
@@ -761,7 +768,7 @@ def register_risk_alerts(scheduler, app) -> None:
                 "color": colour,
                 "footer": {"text": "registry #23b/#41 · advisory only · "
                                    "no bot reads this"},
-            }, ping=True)
+            }, ping=True)   # @here confirmed 2026-08-14 — see module docstring §7
         except Exception as e:  # noqa: BLE001
             logger.warning("[RiskAlerts] recipe_ticket(%s) failed: %r", session, e)
 
