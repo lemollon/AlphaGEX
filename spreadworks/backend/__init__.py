@@ -1690,6 +1690,16 @@ except Exception as _risk_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] Risk Advisor routes failed to load: %r", _risk_exc)
 
+# Book Risk — portfolio-level exposure / drawdown / correlation / config drift
+# across the whole fleet. Distinct from the Risk Advisor above, which grades
+# market regime and says nothing about the book. Read-only; import-guarded.
+try:
+    from .routes_book_risk import router as book_risk_router
+    app.include_router(book_risk_router)
+except Exception as _book_risk_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] Book Risk routes failed to load: %r", _book_risk_exc)
+
 # TSUNAMI (LETF earnings-week bot, ported from AlphaGEX GOLIATH 2026-07-03)
 # has its own runner + tables and does not participate in the generic
 # BOT_REGISTRY scan loop; import-guarded so a broken port never takes down

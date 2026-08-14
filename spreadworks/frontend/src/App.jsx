@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { ShieldAlert, Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu } from 'lucide-react';
+import { ShieldAlert, Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, PieChart } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import ChartArea from './components/ChartArea';
 import ControlsBar from './components/ControlsBar';
@@ -14,6 +14,7 @@ const GexProfilePage = lazy(() => import('./pages/GexProfilePage'));
 const BotDashboard = lazy(() => import('./pages/BotDashboard'));
 const FleetPage = lazy(() => import('./pages/FleetPage'));
 const RiskAdvisorPage = lazy(() => import('./pages/RiskAdvisorPage'));
+const BookRiskPage = lazy(() => import('./pages/BookRiskPage'));
 const TsunamiPage = lazy(() => import('./pages/TsunamiPage'));
 
 import useCandles from './hooks/useCandles';
@@ -190,6 +191,7 @@ function NavBar() {
               highlighted too. */}
           <RouteBtn to="/bots"            icon={<Cpu size={14} />}  label="Bots" />
           <RouteBtn to="/risk"            icon={<ShieldAlert size={14} />} label="Risk" />
+          <RouteBtn to="/book-risk"       icon={<PieChart size={14} />} label="Book Risk" />
         </nav>
       </div>
 
@@ -406,6 +408,7 @@ export default function App() {
             <Route path="/" element={<BuilderPage />} />
             <Route path="/positions" element={<PositionsPage />} />
             <Route path="/risk" element={<RiskAdvisorPage />} />
+            <Route path="/book-risk" element={<BookRiskPage />} />
             <Route path="/gex-profile" element={<GexProfilePage />} />
             {/* /bots is the fleet overview — every bot as its own card. It used
                 to redirect straight to /bots/surge, which meant there was no
