@@ -95,6 +95,24 @@ const GLOSSARY = [
   ['Pre-registered', 'The test’s rule and pass bar were written down BEFORE seeing results — so a "winner" can’t be an after-the-fact cherry-pick.'],
 ];
 
+// Phase-aware window-status text for the recipe card — mirrors the phases
+// GET /recipe emits (before_am/am_open/between/pm_open/done/weekend). The
+// clock literals here match the ebb/ebb_pm registry windows the backend
+// reads from (10:05-10:20 and 13:05-13:10 CT).
+function recipeWindowLabel(r) {
+  if (!r) return null;
+  const m = r.minutes_to_next_window;
+  switch (r.phase) {
+    case 'before_am': return `next window 10:05 CT in ${m}m`;
+    case 'am_open': return 'AM window OPEN now (until 10:20 CT)';
+    case 'between': return `PM window 13:05 CT in ${m}m`;
+    case 'pm_open': return 'PM window OPEN now (until 13:10 CT)';
+    case 'done': return 'done for today — next: tomorrow 10:05 CT';
+    case 'weekend': return 'weekend — next window Monday 10:05 CT';
+    default: return null;
+  }
+}
+
 // The three validated flow clocks, CT. Used for the "next check" countdown.
 const FLOW_CLOCKS_CT = [[10, 0], [12, 0], [13, 30]];
 
@@ -127,22 +145,24 @@ export default function RiskAdvisorPage() {
   const [tick, setTick] = useState(0);            // 30s countdown re-render
   const [alog, setAlog] = useState(null);
   const [ebb, setEbb] = useState(null);
+  const [recipe, setRecipe] = useState(null);
 
   useEffect(() => {
     let live = true;
     const load = async () => {
       try {
         const days = range === 0 ? 30 : range;    // Today view still needs recent context
-        const [s, h, sc, ia, al, eb] = await Promise.all([
+        const [s, h, sc, ia, al, eb, rc] = await Promise.all([
           fetch(`${API_URL}/api/spreadworks/risk-advisor/state`).then(r => r.json()),
           fetch(`${API_URL}/api/spreadworks/risk-advisor/history?days=${days}`).then(r => r.json()),
           fetch(`${API_URL}/api/spreadworks/risk-advisor/scorecard`).then(r => r.json()),
           fetch(`${API_URL}/api/spreadworks/risk-advisor/intraday`).then(r => r.json()),
           fetch(`${API_URL}/api/spreadworks/risk-advisor/alert-log`).then(r => r.json()).catch(() => null),
           fetch(`${API_URL}/api/spreadworks/bots/ebb/status`).then(r => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/spreadworks/risk-advisor/recipe`).then(r => r.json()).catch(() => null),
         ]);
         if (!live) return;
-        setState(s); setScore(sc); setIntra(ia); setAlog(al); setEbb(eb);
+        setState(s); setScore(sc); setIntra(ia); setAlog(al); setEbb(eb); setRecipe(rc);
         setHist((h.days || []).map(d => ({
           ...d, label: d.d.slice(5),
           spike: (d.putv_z > 2 || d.totv_z > 2) ? Math.max(d.putv_z, d.totv_z) : null,
@@ -236,6 +256,66 @@ export default function RiskAdvisorPage() {
               VVIX {state.indices?.vvix?.toFixed(0)}
             </div>
           </div>
+        </div>
+
+        {/* 1b ─ THE RECIPE: today's validated manual ticket (registry #23b/#41) */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>Today's validated trade — the recipe
+            <InfoTip text="The one daily edge that survived 44 registered backtests (registry #23b/#41): SPY same-day put spreads at two fixed clocks. $12.19/trade AM + $9.57/trade PM per 1-lot, positive all 5 blind years each, at real NBBO fills. EBB and EBB-PM run exactly this on paper — this card is for your manual ticket." />
+          </div>
+          {recipe && recipe.status === 'ok' ? (() => {
+            const greyed = recipe.phase === 'weekend' || recipe.phase === 'done';
+            const label = recipeWindowLabel(recipe);
+            const windowOpen = recipe.phase === 'am_open' || recipe.phase === 'pm_open';
+            return (<>
+              <div
+                onClick={() => navigator.clipboard?.writeText(
+                  `SELL SPY ${recipe.short_strike}P / BUY ${recipe.long_strike}P — expires TODAY (${recipe.expiration})`)}
+                title="Click to copy the ticket"
+                style={{ fontSize: 18, fontWeight: 700, cursor: 'copy',
+                         color: greyed ? DIM : '#e8ebf3' }}>
+                SELL SPY {recipe.short_strike}P / BUY {recipe.long_strike}P — expires TODAY ({recipe.expiration})
+              </div>
+              <div style={{ ...S.small, marginTop: 4, color: greyed ? DIM : undefined }}>
+                at spot ${recipe.spot?.toFixed?.(2) ?? recipe.spot}
+              </div>
+              {label && (
+                <div style={{ fontSize: 13, marginTop: 6, fontWeight: 600,
+                              color: windowOpen ? GREEN : DIM }}>
+                  {label}
+                </div>
+              )}
+              {recipe.credit_now != null && (
+                <div style={{ fontSize: 13, marginTop: 8,
+                              color: recipe.meets_floor ? GREEN : AMBER }}>
+                  credit right now ≈ ${recipe.credit_now.toFixed(2)} — {recipe.meets_floor ? 'above' : 'BELOW'} the $0.10 validated floor
+                  {!recipe.meets_floor && ' — skip if it stays below at entry time'}
+                </div>
+              )}
+              <div style={{ ...S.small, marginTop: 10 }}>
+                Size: 1 contract per $2,500–3,000 allocated. Worst observed day −$484/lot — the $5 wing is the survival mechanism.
+              </div>
+              <div style={{ marginTop: 10, padding: '10px 12px', background: '#2a1220',
+                            border: `1px solid ${RED}55`, borderRadius: 8 }}>
+                <div style={{ fontSize: 12.5, color: RED, fontWeight: 700 }}>
+                  NO stop-loss and NO profit-target — exits were tested three separate ways and every one collapses the edge to ~$0. Settle at the close IS the trade.
+                </div>
+                <div style={{ fontSize: 12.5, color: RED, fontWeight: 700, marginTop: 6 }}>
+                  Do NOT skip flagged days on this recipe — its backtest INCLUDES them; the calm-day gate was tested and cut the edge from $12.19 to $6.00/trade. The verdict above governs your OTHER trading.
+                </div>
+              </div>
+              <div style={{ ...S.small, marginTop: 8 }}>
+                Rich-credit days (top third vs trailing 63) averaged $14.90/trade vs $8.47 on lean days — registry #44; informational until the sizing step is validated.
+              </div>
+              <div style={{ ...S.small, marginTop: 8 }}>
+                AM results: $12.19/tr, ret/DD 2.06 · PM: $9.57/tr, ret/DD 2.67 · pair ≈ $21.72/day per lot-pair, 5/5 blind years — n=930 sessions at NBBO fills.
+              </div>
+            </>);
+          })() : (
+            <div style={S.small}>
+              {recipe?.status === 'no quote' ? 'quote unavailable' : 'recipe unavailable'}
+            </div>
+          )}
         </div>
 
         {/* 2 ─ PLAYBOOK: what to do right now */}

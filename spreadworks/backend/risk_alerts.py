@@ -23,8 +23,18 @@ Five alerts, exactly as documented on the /risk page:
      miss between their checks — it posts NOTHING if one of those clocks
      already alerted a spike today (they own their windows; this is the
      gap-filler, not a fourth copy of the same alert).
-  6. Nothing else. Alert scarcity is the point — the channel must stay
-     readable or the pushes train you to ignore them.
+  6. THE TICKET (AM and PM entry windows, weekdays)
+     The only alert here that hands over an ORDER rather than reporting
+     market state: the strike pair and the expiration for today's SPY 0DTE
+     put spread, pushed at the moment each validated window opens so it can
+     be placed without opening the page to read it off a card. Clocks come
+     from the ebb/ebb_pm registry, never a hardcoded copy. If the ticket
+     cannot be priced the window still gets a quiet note — silence at an
+     open window would read as "no trade today", which is a different and
+     wrong message.
+  7. Nothing else. Alert scarcity is the point — the channel must stay
+     readable or the pushes train you to ignore them. The ticket earns its
+     two daily pings by being the one actionable, time-boxed thing here.
 
 Safety rails:
   * webhook from env RISK_ADVISOR_DISCORD_WEBHOOK (falls back to
@@ -669,6 +679,110 @@ def register_risk_alerts(scheduler, app) -> None:
         except Exception as e:  # noqa: BLE001
             logger.warning("[RiskAlerts] promotion_announce failed: %r", e)
 
+    async def recipe_ticket(session: str, slot_key: str):
+        """Post today's actual tradeable ticket at the top of an entry window.
+
+        Every other alert here reports market STATE. This one is the only
+        alert that hands over an order: the strike pair and the expiration,
+        at the moment the validated window opens, so the ticket can be placed
+        without going to the page to read it off a card.
+        """
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            try:
+                from . import is_market_holiday          # noqa: F401
+            except Exception:
+                pass
+            try:
+                from .economic_events import is_market_holiday as _hol
+                if _hol(now.date()):
+                    return
+            except Exception:
+                pass                                     # no calendar — still post
+
+            from .routes_risk import recipe as _recipe
+            shim = SimpleNamespace(app=app)              # /recipe expects request.app
+            r = await _recipe(shim)
+
+            today = now.date()
+            if not isinstance(r, dict) or r.get("status") != "ok":
+                # The window is open and we cannot price the ticket. Say so
+                # quietly rather than staying silent — silence here reads as
+                # "no trade today", which is a different and wrong message.
+                if not _claim_post_slot_db(f"{slot_key}_unavailable", today):
+                    return
+                _send({
+                    "title": f"⚠️ {session} window open — ticket unavailable",
+                    "description": (
+                        f"Could not price today's SPY 0DTE put spread "
+                        f"(`{r.get('status') if isinstance(r, dict) else 'error'}`). "
+                        "Check /risk before assuming there is no trade."),
+                    "color": AMBER,
+                    "footer": {"text": "advisory only · no bot reads this"},
+                }, ping=False)
+                return
+
+            if not _claim_post_slot_db(slot_key, today):
+                return
+
+            short_k, long_k = r["short_strike"], r["long_strike"]
+            credit, floor_ok = r.get("credit_now"), r.get("meets_floor")
+            if credit is None:
+                credit_line = ("credit: no live quote right now — check the "
+                               "book before sending")
+                colour = AMBER
+            elif floor_ok:
+                credit_line = (f"credit ≈ **${credit:.2f}** — above the "
+                               f"${r.get('floor', 0.10):.2f} validated floor")
+                colour = GREEN
+            else:
+                credit_line = (f"credit ≈ **${credit:.2f}** — **BELOW** the "
+                               f"${r.get('floor', 0.10):.2f} validated floor. "
+                               "**SKIP** if it is still below when you send it.")
+                colour = RED
+
+            _send({
+                "title": f"\U0001f4c4 {session} ticket — SPY 0DTE put spread",
+                "description": (
+                    f"**SELL SPY {short_k}P / BUY SPY {long_k}P**\n"
+                    f"**expires TODAY ({r['expiration']})**\n\n"
+                    f"spot ${r['spot']:.2f} · {credit_line}\n\n"
+                    "• Size 1 contract per $2,500–3,000 allocated. "
+                    "Worst observed day −$484/lot.\n"
+                    "• **NO stop-loss and NO profit-target** — every exit "
+                    "tested collapses the edge to ~$0. Settling at the close "
+                    "IS the trade.\n"
+                    "• **Do NOT skip flagged days on this ticket** — its "
+                    "backtest includes them; the calm-day gate cut it from "
+                    "$12.19 to $6.00/trade. The morning verdict governs your "
+                    "OTHER trading, not this."),
+                "color": colour,
+                "footer": {"text": "registry #23b/#41 · advisory only · "
+                                   "no bot reads this"},
+            }, ping=True)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[RiskAlerts] recipe_ticket(%s) failed: %r", session, e)
+
+    # Cron the ticket off the REGISTRY windows, not a hardcoded clock — the
+    # same single-source-of-truth rule /recipe itself follows. A registry edit
+    # to ebb/ebb_pm entry_start_ct moves the alert with it instead of leaving
+    # a silently-drifted copy behind.
+    try:
+        from .routes_risk import _recipe_windows
+        (_am_h, _am_m), _, (_pm_h, _pm_m), _ = _recipe_windows()
+    except Exception as _rw_exc:  # noqa: BLE001
+        _am_h, _am_m, _pm_h, _pm_m = 10, 5, 13, 5
+        logger.warning("[RiskAlerts] registry windows unreadable (%r) — "
+                       "ticket alerts fall back to 10:05/13:05 CT", _rw_exc)
+    scheduler.add_job(recipe_ticket, "cron", hour=_am_h, minute=_am_m,
+                      timezone=CT, id="risk_recipe_am",
+                      args=["AM", "risk_recipe_am"])
+    scheduler.add_job(recipe_ticket, "cron", hour=_pm_h, minute=_pm_m,
+                      timezone=CT, id="risk_recipe_pm",
+                      args=["PM", "risk_recipe_pm"])
+
     scheduler.add_job(morning_verdict, "cron", hour=8, minute=5, second=30,
                       timezone=CT, id="risk_morning_verdict")
     scheduler.add_job(expected_move_note, "cron", hour=8, minute=6, second=30,
@@ -692,7 +806,8 @@ def register_risk_alerts(scheduler, app) -> None:
     scheduler.add_job(promotion_announce, "cron", hour=16, minute=5,
                       timezone=CT, id="risk_promotion_announce")
     logger.info("[RiskAlerts] registered: morning verdict 08:05:30, EM note "
-                "08:06:30, flow spike 10:06, PM re-checks 12:06 & 13:36, "
-                "rolling flow watcher */10 10:36-14:00, EM-breach watch "
-                "*/10 in-session, health flip 15:50, Friday digest 15:55, "
-                "promotion announce 16:05 (all CT)")
+                "08:06:30, ticket %02d:%02d & %02d:%02d, flow spike 10:06, "
+                "PM re-checks 12:06 & 13:36, rolling flow watcher */10 "
+                "10:36-14:00, EM-breach watch */10 in-session, health flip "
+                "15:50, Friday digest 15:55, promotion announce 16:05 "
+                "(all CT)", _am_h, _am_m, _pm_h, _pm_m)
