@@ -203,16 +203,22 @@ def test_ebb_defaults(db_session):
     assert b["back_dte"] == 0
     assert b["one_entry_per_day"] is True
     assert b["settle_at_expiry"] is True
-    assert b["params"]["short_otm_abs"] == 2.0
-    assert b["params"]["spread_abs"] == 5.0
+    # RESTRUCTURED 2026-08-15 to match EBB PM. The two tranches are one
+    # strategy at two clocks and must share a spec; before this they did not,
+    # so the two-tranche book that was quoted did not exist in code.
+    assert b["params"]["short_otm_abs"] == 1.0
+    assert b["params"]["spread_abs"] == 2.0
     assert b["params"]["min_credit"] == 0.10
-    # Pre-calibrated health bands (2026-08-13) — EBB PM carries its own,
-    # separate set (see test_ebb_pm_defaults).
+    # Bands MEASURED off this tranche's own gated stream (n=666): watch = p05
+    # of the rolling-60 sum, demote = p01, credit floor = p05 of the 20-trade
+    # average credit. The old -524/-1216/30.0 were the $5-wing distribution.
     bands = b["health_bands"]
-    assert bands["watch_roll60"] == -524.0
-    assert bands["demote_roll60"] == -1216.0
+    assert bands["watch_roll60"] == -146.0
+    assert bands["demote_roll60"] == -401.0
     assert bands["demote_roll120"] == 0.0
-    assert bands["min_credit20"] == 30.0
+    assert bands["min_credit20"] == 29.0
+    # Carries the VIX decay gate too — ungated this tranche is t=+1.25.
+    assert b["defaults"]["vix_decay_max"] == 0.90
     d = b["defaults"]
     assert d["starting_capital"] == 3000.0
     assert d["enabled"] is False        # no bot ships armed
@@ -256,15 +262,14 @@ def test_ebb_pm_defaults(db_session):
     assert b["params"]["short_otm_abs"] == 1.0
     assert b["params"]["spread_abs"] == 2.0
     assert b["params"]["min_credit"] == 0.10
-    # Health bands RE-DERIVED 2026-08-15 for the $2-wing structure. The old
-    # -187/-576/14.0 bands were calibrated on the spot-2/$5 stream and do not
-    # transfer: a $2 wing collects ~40% of the credit on ~40% of the capital,
-    # so both the P&L scale and the credit floor move with it.
+    # Health bands MEASURED 2026-08-15 off this tranche's own gated stream
+    # (n=659) at p05/p01, correcting an earlier same-day guess that scaled the
+    # old $5-wing bands by a hand-picked factor instead of measuring.
     bands = b["health_bands"]
-    assert bands["watch_roll60"] == -75.0
-    assert bands["demote_roll60"] == -230.0
+    assert bands["watch_roll60"] == -87.0
+    assert bands["demote_roll60"] == -196.0
     assert bands["demote_roll120"] == 0.0
-    assert bands["min_credit20"] == 6.0
+    assert bands["min_credit20"] == 15.0
     # VIX decay gate: skip the day when VIX(prior session) / 20d-max > 0.90.
     # Prior session, never today's close — see bots/vix_regime.py.
     assert b["defaults"]["vix_decay_max"] == 0.90

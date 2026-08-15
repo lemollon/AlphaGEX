@@ -117,3 +117,82 @@ def test_short_otm_abs_and_spread_abs_override_pct():
     assert short["strike"] == 598   # spot - $2
     assert long_["strike"] == 593   # short - $5
     assert sig.width == 5
+
+
+# ---------------------------------------------------------------------------
+# REGRESSION: the cheap long wing must not be rejected as a bad quote.
+#
+# EBB and EBB PM were enabled 2026-08-13 and placed ZERO trades. Every scan
+# inside the entry window logged `price_too_low: mid=0.04` (EBB) and
+# `mid=0.03` (EBB PM). Cause: _spread_ok applied min_option_price AND
+# max_spread_pct to BOTH legs, including the long wing that is bought $2-$5
+# further OTM. On a 0DTE put spread that wing is worth 3-4 cents by
+# construction and quotes 0.02/0.04 — a 66% relative spread. Both guards are
+# premium-quality checks and only make sense on the leg being SOLD.
+# ---------------------------------------------------------------------------
+
+# EBB's own sizing: bp_pct 0.20 on a $3k paper account, 1 contract cap.
+_ZCFG = {"bp_pct": 0.20, "pt_pct": 1.0, "sl_pct": 9.9999, "max_contracts": 1}
+
+
+def _zdte_chain(spot=640.0):
+    """0DTE-shaped puts: near the money worth real money, a few points OTM
+    worth pennies with a wide relative market — exactly what broke EBB."""
+    opts = []
+    for s in range(600, 681, 1):
+        d = spot - s                      # points OTM for a put
+        if d <= 0:
+            put_mid = 2.50 + abs(d) * 0.4
+        elif d <= 1:
+            put_mid = 0.55
+        elif d <= 2:
+            put_mid = 0.28
+        elif d <= 3:
+            put_mid = 0.04                # <- the wing EBB PM buys
+        else:
+            put_mid = 0.03                # <- the wing EBB buys
+        half = 0.01 if put_mid < 0.10 else 0.03
+        opts.append({"strike": s, "type": "put",
+                     "bid": round(max(put_mid - half, 0.01), 2),
+                     "ask": round(put_mid + half, 2)})
+        opts.append({"strike": s, "type": "call", "bid": 1.00, "ask": 1.06})
+    return {"spot": spot, "expiration": "2026-08-14", "ticker": "SPY", "options": opts}
+
+
+def test_cheap_long_wing_does_not_block_a_credit_spread():
+    """The exact EBB PM config: short spot-1, $2 wing. Must build."""
+    sig = build_vertical_signal(
+        kind="bull_put_spread", chain=_zdte_chain(640.0), config=_ZCFG, equity=3000.0,
+        params=_p(short_otm_abs=1.0, spread_abs=2.0,
+                  min_option_price=0.10, max_spread_pct=0.15, min_credit=0.10))
+    assert sig is not None, "cheap wing must not be rejected — this is the EBB bug"
+    legs = sig.legs()
+    assert len(legs) == 2 and all(l["type"] == "put" for l in legs)
+    short = [l for l in legs if l["side"] == "short"][0]
+    long_ = [l for l in legs if l["side"] == "long"][0]
+    assert short["strike"] == 639          # spot - 1
+    assert long_["strike"] == 637          # short - 2
+    assert sig.net > 0                     # it is a credit
+
+
+def test_short_leg_price_floor_still_enforced():
+    """The floor must still reject a short leg with no premium in it — the
+    guard was mis-scoped, not wrong."""
+    sig = build_vertical_signal(
+        kind="bull_put_spread", chain=_zdte_chain(640.0), config=_ZCFG, equity=3000.0,
+        params=_p(short_otm_abs=4.0, spread_abs=2.0,     # short lands in the penny zone
+                  min_option_price=0.10, max_spread_pct=0.15, min_credit=0.01))
+    assert sig is None, "a 3-cent SHORT leg has no premium worth selling"
+
+
+def test_unquoted_wing_is_still_rejected():
+    """Cheap is fine; absent is not — an unquoted wing means uncapped risk."""
+    ch = _zdte_chain(640.0)
+    for o in ch["options"]:
+        if o["type"] == "put" and o["strike"] == 637:
+            o["bid"], o["ask"] = 0.0, 0.0
+    sig = build_vertical_signal(
+        kind="bull_put_spread", chain=ch, config=_ZCFG, equity=3000.0,
+        params=_p(short_otm_abs=1.0, spread_abs=2.0,
+                  min_option_price=0.10, max_spread_pct=0.15, min_credit=0.10))
+    assert sig is None, "a wing with no market must be rejected"

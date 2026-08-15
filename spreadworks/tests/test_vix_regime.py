@@ -106,14 +106,19 @@ def test_gate_blocks_when_ratio_elevated_and_passes_when_decayed():
     assert callable(_evaluate_entry)
 
 
-def test_registry_ebb_pm_carries_the_gate():
+def test_both_ebb_tranches_carry_the_gate():
+    """EBB and EBB PM are one strategy at two clocks — they must share the
+    gate. The AM tranche needs it more: ungated it is $+2.87/trade at t=+1.25
+    (no edge), gated $+6.23 at t=+2.44."""
     from backend.bots.registry import get_bot
+    assert get_bot("ebb")["defaults"]["vix_decay_max"] == 0.90
     assert get_bot("ebb_pm")["defaults"]["vix_decay_max"] == 0.90
 
 
-def test_other_bots_have_no_gate():
-    """NULL ceiling = untouched. Only the bot that was measured gets vetoed."""
+def test_only_the_measured_bots_are_gated():
+    """NULL ceiling = untouched. Only the streams the gate was measured on
+    get vetoed — the rest of the fleet is unaffected."""
     from backend.bots.registry import BOT_REGISTRY
-    gated = [b for b, d in BOT_REGISTRY.items()
-             if (d.get("defaults") or {}).get("vix_decay_max") is not None]
-    assert gated == ["ebb_pm"]
+    gated = sorted(b for b, d in BOT_REGISTRY.items()
+                   if (d.get("defaults") or {}).get("vix_decay_max") is not None)
+    assert gated == ["ebb", "ebb_pm"]

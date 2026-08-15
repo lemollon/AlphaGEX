@@ -62,9 +62,34 @@ def _mid(o):
     return (float(o["bid"] or 0) + float(o["ask"] or 0)) / 2.0
 
 
-def _spread_ok(o, params):
+def _spread_ok(o, params, *, is_long_wing=False):
+    """Quote-quality guard.
+
+    🚨 THE PRICE FLOOR AND THE RELATIVE-SPREAD CAP APPLY TO THE SHORT LEG ONLY.
+
+    Applying them to the long wing is what kept EBB / EBB PM from EVER placing a
+    trade: both were enabled from 2026-08-13 and every scan inside the entry
+    window rejected with `price_too_low: mid=0.04` / `mid=0.03`. On a 0DTE put
+    spread the wing you BUY sits $2-$5 further OTM and is worth 3-4 cents by
+    construction — being nearly worthless is the entire point of a cheap wing,
+    not a sign of a bad quote. It would also have failed max_spread_pct, since a
+    $0.02/$0.04 market is a 66% relative spread.
+
+    The validated backtest applied neither check to the wing: its only
+    conditions were that both strikes are quoted and the spread pays a positive
+    credit when crossed. This now matches that.
+
+    The wing still has to be genuinely quoted — a missing or one-sided market is
+    rejected, because an unquoted wing means the risk is not actually capped.
+    """
     bid = float(o["bid"] or 0); ask = float(o["ask"] or 0)
     mid = (bid + ask) / 2.0
+
+    if is_long_wing:
+        if ask <= 0:
+            return False, "wing_not_quoted"
+        return True, ""
+
     if mid < float(params["min_option_price"]):
         return False, f"price_too_low: mid={mid:.2f}"
     if mid <= 0 or (ask - bid) / mid > float(params["max_spread_pct"]):
@@ -112,8 +137,11 @@ def build_vertical_signal(*, kind, chain, config, equity, params, diag=None):
     lo = _find(chain, long_k, opt_type); so = _find(chain, short_k, opt_type)
     if not lo or not so:
         return _reject("strike_missing")
-    for o in (lo, so):
-        ok, why = _spread_ok(o, params)
+    # lo is the leg we BUY (the wing), so is the leg we SELL. The price floor
+    # and spread cap are premium-quality checks and only make sense on the leg
+    # being sold — see _spread_ok.
+    for o, is_wing in ((lo, True), (so, False)):
+        ok, why = _spread_ok(o, params, is_long_wing=is_wing)
         if not ok:
             return _reject(why)
 
