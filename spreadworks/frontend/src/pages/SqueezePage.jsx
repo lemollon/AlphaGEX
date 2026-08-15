@@ -62,6 +62,24 @@ const PROXIMITY_COPY = {
   OVERBOUGHT: 'Safest historical state to sell premium into. Zero squeezes have started here.',
 };
 
+const FUEL_TOP_DECILE = 0.225;
+const PIN_LABEL = { strong: 'STRONG', active: 'ACTIVE', approaching: 'APPROACHING', none: 'NONE' };
+const PIN_COLOR = { strong: GREEN, active: GREEN, approaching: AMBER, none: DIM };
+const PIN_COPY = {
+  strong: 'Top decile of the range — safest measured state to sell premium into.',
+  active: 'In the overbought zone — the SELL_PREMIUM state itself.',
+  approaching: 'Below the trigger and rising — premium-selling conditions are firming.',
+  none: 'Not in pin territory.',
+};
+// month/quarter end + payrolls Friday raise squeeze odds on oversold days
+// (calendar_flags() in gamma_regime.py); opex week suppresses them.
+const CALENDAR_FLAGS = [
+  { key: 'month_end', label: 'Month end', tone: 'supportive' },
+  { key: 'quarter_end', label: 'Quarter end', tone: 'supportive' },
+  { key: 'payrolls_friday', label: 'Payrolls Friday', tone: 'supportive' },
+  { key: 'opex_week', label: 'Opex week', tone: 'suppressive' },
+];
+
 export default function SqueezePage() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
@@ -163,8 +181,11 @@ export default function SqueezePage() {
         {(() => {
           const outlook = data.outlook || {};
           const legs = outlook.legs || {};
+          const cal = outlook.calendar || {};
           const pColor = PROXIMITY_COLOR[outlook.proximity] || GREY;
           const gammaPctNow = data.gamma_pct != null ? Math.min(100, Math.max(0, data.gamma_pct * 100)) : null;
+          const fuelPct = outlook.fuel != null ? Math.abs(outlook.fuel) * 100 : null;
+          const fuelTopDecile = fuelPct != null && Math.abs(outlook.fuel) >= FUEL_TOP_DECILE;
 
           if (outlook.reason) {
             return (
@@ -246,6 +267,61 @@ export default function SqueezePage() {
                   </div>
                 </div>
               ))}
+
+              {/* 4 — fuel: forced dealer hedging vs a normal day's volume */}
+              <div style={{ ...S.small, marginTop: 16, marginBottom: 4 }}>
+                Fuel — forced hedging vs a normal day's volume
+              </div>
+              <div style={{ fontSize: 13, marginBottom: 12 }}>
+                {fuelPct == null ? (
+                  <>
+                    <span>—</span>
+                    {outlook.fuel_reason && <span style={S.small}> ({outlook.fuel_reason})</span>}
+                  </>
+                ) : (
+                  <>
+                    <b style={{ color: fuelTopDecile ? AMBER : '#c6cbd8' }}>{fuelPct.toFixed(1)}%</b>
+                    {' '}— dealers must trade {fuelPct.toFixed(1)}% of a normal day's volume per 1% move,
+                    {outlook.fuel > 0 ? ' an accelerant (short gamma)' : ' a dampener (long gamma)'}
+                    {fuelTopDecile && <span style={{ color: AMBER, fontWeight: 700 }}> · top decile</span>}
+                    {outlook.adv_b != null && <span style={S.small}> · {bn(outlook.adv_b)}/day avg volume</span>}
+                  </>
+                )}
+              </div>
+
+              {/* 5 — pin strength */}
+              <div style={{ ...S.small, marginBottom: 4 }}>Pin strength</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <span style={{ fontWeight: 700, fontSize: 13, color: PIN_COLOR[outlook.pin_strength] || GREY }}>
+                  {PIN_LABEL[outlook.pin_strength] || '—'}
+                </span>
+                <span style={S.small}>{PIN_COPY[outlook.pin_strength] || ''}</span>
+              </div>
+
+              {/* 6 — calendar strip: scheduled flow, color-coded by direction */}
+              <div style={{ ...S.small, marginBottom: 4 }}>Scheduled flow today</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                {CALENDAR_FLAGS.map(({ key, label, tone }) => {
+                  const active = !!cal[key];
+                  const color = tone === 'supportive' ? AMBER : GREEN;
+                  return (
+                    <span key={key} style={{
+                      fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 999,
+                      background: active ? color + '22' : 'transparent',
+                      border: `1px solid ${active ? color + '66' : '#232a3d'}`,
+                      color: active ? color : DIM,
+                    }}>
+                      {label}
+                    </span>
+                  );
+                })}
+              </div>
+              {cal.month_end && (
+                <div style={S.small}>
+                  Month end raises squeeze odds 2.52x on oversold days — but was 0-for-9 in both
+                  2024 and 0-for-9 in 2025. A tilt, never a trigger.
+                </div>
+              )}
             </div>
           );
         })()}

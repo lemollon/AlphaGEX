@@ -60,7 +60,8 @@ def load_from_csv(limit: int = LOOKBACK_SESSIONS) -> list[tuple]:
     with open(BASELINE_CSV, newline="") as f:
         for r in csv.DictReader(f):
             rows.append((date.fromisoformat(r["d"]), float(r["net_gex"]),
-                        float(r["spot"]) if r.get("spot") not in (None, "") else None))
+                        float(r["spot"]) if r.get("spot") not in (None, "") else None,
+                        float(r["dollar_vol"]) if r.get("dollar_vol") not in (None, "") else None))
     rows.sort(key=lambda r: r[0])
     if limit:
         rows = rows[-limit:]
@@ -74,14 +75,15 @@ def merged_with_live(engine, csv_rows: list[tuple]) -> list[tuple]:
     from sqlalchemy import text
     from .gamma_regime import GAMMA_DAILY_TABLE
 
-    merged: dict[date, tuple] = {d: (g, s) for d, g, s in csv_rows}
+    merged: dict[date, tuple] = {d: (g, s, v) for d, g, s, v in csv_rows}
     with engine.begin() as conn:
         live = conn.execute(text(
-            f"SELECT trade_date, net_gex, spot FROM {GAMMA_DAILY_TABLE}"
+            f"SELECT trade_date, net_gex, spot, dollar_vol FROM {GAMMA_DAILY_TABLE}"
         )).fetchall()
-    for d, g, s in live:
-        merged[d] = (float(g), float(s) if s is not None else None)
-    return sorted((d, g, s) for d, (g, s) in merged.items())
+    for d, g, s, v in live:
+        merged[d] = (float(g), float(s) if s is not None else None,
+                    float(v) if v is not None else None)
+    return sorted((d, g, s, v) for d, (g, s, v) in merged.items())
 
 
 def main() -> None:
@@ -96,12 +98,12 @@ def main() -> None:
         sys.exit("no gamma rows found")
 
     print(f"{len(rows)} sessions  {rows[0][0]} .. {rows[-1][0]}")
-    d, g, s = rows[-1]
-    print(f"  latest: {d} net_gex=${g / 1e9:.2f}B spot={s}")
+    d, g, s, v = rows[-1]
+    print(f"  latest: {d} net_gex=${g / 1e9:.2f}B spot={s} dollar_vol={v}")
     if len(rows) >= 60:
-        window = [v for _, v, _ in rows[-60:]]
+        window = [gv for _, gv, _, _ in rows[-60:]]
         latest = window[-1]
-        implied_pct = sum(1 for v in window if latest > v) / len(window)
+        implied_pct = sum(1 for gv in window if latest > gv) / len(window)
         print(f"  implied 60-session percentile for the next reading: "
               f"{implied_pct:.2f}")
     else:
@@ -121,8 +123,8 @@ def main() -> None:
     engine = create_engine(url)
     ensure_gamma_table(engine)
     merged = merged_with_live(engine, rows)
-    for d, g, s in merged:
-        record_gamma(engine, d, g, s, None)
+    for d, g, s, v in merged:
+        record_gamma(engine, d, g, s, None, dollar_vol=v)
     print(f"\nwrote {len(merged)} rows to sw_gamma_daily "
           f"(CSV baseline merged with live — live rows win)")
 

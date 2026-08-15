@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS {GAMMA_DAILY_TABLE} (
     trade_date   DATE PRIMARY KEY,
     net_gex      DOUBLE PRECISION NOT NULL,
     spot         NUMERIC(10,2),
+    dollar_vol   DOUBLE PRECISION,
     n_contracts  INTEGER,
     updated_at   TIMESTAMP NOT NULL
 )
@@ -104,9 +105,17 @@ CREATE TABLE IF NOT EXISTS {GAMMA_DAILY_TABLE} (
 
 
 def ensure_gamma_table(engine: Engine) -> None:
-    """Idempotent create. Safe to call every cycle."""
+    """Idempotent create. Safe to call every cycle.
+
+    dollar_vol was added after the table shipped, so ADD COLUMN IF NOT EXISTS
+    runs too — Postgres only; SQLite tolerates the failure and is dev-only.
+    """
     with engine.begin() as conn:
         conn.execute(text(_GAMMA_DDL))
+        if engine.dialect.name != "sqlite":
+            conn.execute(text(
+                f"ALTER TABLE {GAMMA_DAILY_TABLE} "
+                "ADD COLUMN IF NOT EXISTS dollar_vol DOUBLE PRECISION"))
 
 
 def compute_net_gex(options: list[dict], spot: float) -> dict[str, Any]:
@@ -198,31 +207,33 @@ def fetch_net_gex(client: Any, ticker: str = "SPY", *, today: date | None = None
 
 
 def record_gamma(engine: Engine, trade_date: date, net_gex: float,
-                 spot: float | None = None, n_contracts: int | None = None) -> None:
+                 spot: float | None = None, n_contracts: int | None = None,
+                 dollar_vol: float | None = None) -> None:
     """Upsert one session's reading, keyed on the date whose CLOSE produced it."""
     if net_gex is None:
         return
     params = {"d": trade_date, "g": float(net_gex),
               "s": float(spot) if spot else None,
-              "n": int(n_contracts) if n_contracts else None}
+              "n": int(n_contracts) if n_contracts else None,
+              "v": float(dollar_vol) if dollar_vol else None}
     with engine.begin() as conn:
         if engine.dialect.name == "sqlite":
             conn.execute(text(
                 f"INSERT INTO {GAMMA_DAILY_TABLE} "
-                "(trade_date, net_gex, spot, n_contracts, updated_at) "
-                "VALUES (:d, :g, :s, :n, CURRENT_TIMESTAMP) "
+                "(trade_date, net_gex, spot, dollar_vol, n_contracts, updated_at) "
+                "VALUES (:d, :g, :s, :v, :n, CURRENT_TIMESTAMP) "
                 "ON CONFLICT(trade_date) DO UPDATE SET net_gex = excluded.net_gex, "
-                "spot = excluded.spot, n_contracts = excluded.n_contracts, "
-                "updated_at = CURRENT_TIMESTAMP"
+                "spot = excluded.spot, dollar_vol = excluded.dollar_vol, "
+                "n_contracts = excluded.n_contracts, updated_at = CURRENT_TIMESTAMP"
             ), params)
         else:
             conn.execute(text(
                 f"INSERT INTO {GAMMA_DAILY_TABLE} "
-                "(trade_date, net_gex, spot, n_contracts, updated_at) "
-                "VALUES (:d, :g, :s, :n, NOW()) "
+                "(trade_date, net_gex, spot, dollar_vol, n_contracts, updated_at) "
+                "VALUES (:d, :g, :s, :v, :n, NOW()) "
                 "ON CONFLICT (trade_date) DO UPDATE SET net_gex = EXCLUDED.net_gex, "
-                "spot = EXCLUDED.spot, n_contracts = EXCLUDED.n_contracts, "
-                "updated_at = NOW()"
+                "spot = EXCLUDED.spot, dollar_vol = EXCLUDED.dollar_vol, "
+                "n_contracts = EXCLUDED.n_contracts, updated_at = NOW()"
             ), params)
 
 
@@ -331,6 +342,80 @@ def squeeze_signal(engine: Engine, asof: date) -> dict[str, Any]:
     return out
 
 
+def calendar_flags(asof: date) -> dict[str, Any]:
+    """Scheduled flow, knowable in advance forever. No news feed required.
+
+    The trigger for a squeeze is not forecastable as NEWS, but a large part of
+    it is forecastable as CALENDAR. Measured on oversold days only (base 10.08%
+    squeeze rate over 397 sessions):
+
+        month end (>=26th)   25.35%   2.52x   n=71    <- the standout
+        quarter end          22.22%   2.21x   n=27
+        payrolls Friday      20.00%   1.99x   n=20
+        opex week             6.00%   0.60x   n=100   <- SUPPRESSES
+        monthly opex day      4.35%   0.43x   n=23    <- SUPPRESSES
+
+    Month-end survives Bonferroni across the 14 catalyst tests run
+    (binomial p=0.00018 vs a 0.00357 bar) and beats its own year's oversold
+    base in 5 of 7 years. It is NOT uniform: 2024 was 0 of 9 and 2025 was 0 of
+    9, against 62.5% in 2020 and 50% in 2026. Treat it as a tilt on top of an
+    existing setup, never as a trigger on its own.
+
+    Mechanism, which is why it is plausible rather than mined: month-end forces
+    real rebalancing flow (pension and target-date mandates buying equities
+    back to weight). Into a beaten-down tape with dealers short gamma, that is
+    the match. Opex runs the other way for the same kind of reason — expiry
+    removes the gamma, so the accelerant is switched off.
+    """
+    dom, dow, mon = asof.day, asof.weekday(), asof.month
+    is_opex = dow == 4 and 15 <= dom <= 21
+    # the Mon-Fri run into monthly opex
+    opex_week = dow <= 4 and any(
+        (asof + timedelta(days=k)).day >= 15 and (asof + timedelta(days=k)).day <= 21
+        and (asof + timedelta(days=k)).weekday() == 4 for k in range(0, 5))
+    return {
+        "month_end": dom >= 26,
+        "quarter_end": dom >= 26 and mon in (3, 6, 9, 12),
+        "payrolls_friday": dow == 4 and dom <= 7,
+        "opex_day": is_opex,
+        "opex_week": opex_week,
+    }
+
+
+def fuel_ratio(engine: Engine, asof: date, window: int = 20) -> dict[str, Any]:
+    """Forced dealer hedging per 1% move, as a share of a normal day's volume.
+
+    net_gex IS dollars-per-1%-move, so its MAGNITUDE against SPY's own liquidity
+    says whether dealer flow can actually dominate the tape. $17B of forced
+    hedging means one thing when SPY trades $33B/day and another at $80B.
+
+    Median across the sample: 9.4% of a normal day. Top sextile: 17.5-56.8%.
+    Squeeze rate by fuel sextile runs 0.00 / 0.00 / 0.75 / 2.25 / 7.89 / 9.36%
+    — monotone, and the top-quintile-plus-VIX-high cell reaches 16.49% versus
+    15.13% for the percentile version that shipped first. Better mechanism,
+    slightly better numbers; kept alongside the percentile rather than replacing
+    it until it has been watched forward.
+
+    fuel is SIGNED: positive = short gamma = accelerant.
+    """
+    with engine.begin() as conn:
+        rows = conn.execute(text(
+            f"SELECT net_gex, dollar_vol FROM {GAMMA_DAILY_TABLE} "
+            "WHERE trade_date < :d AND dollar_vol IS NOT NULL "
+            "ORDER BY trade_date DESC LIMIT :n"
+        ), {"d": asof, "n": window}).fetchall()
+    if len(rows) < window:
+        return {"fuel": None, "adv_b": None,
+                "reason": f"insufficient_volume_history: have={len(rows)} need={window}"}
+    advs = [float(r[1]) for r in rows if r[1]]
+    if not advs:
+        return {"fuel": None, "adv_b": None, "reason": "no_volume_data"}
+    adv = sum(advs) / len(advs)
+    if adv <= 0:
+        return {"fuel": None, "adv_b": None, "reason": "bad_adv"}
+    return {"fuel": -float(rows[0][0]) / adv, "adv_b": adv / 1e9, "reason": None}
+
+
 def squeeze_outlook(engine: Engine, asof: date,
                     window: int = PCT_WINDOW) -> dict[str, Any]:
     """Where the triggers actually sit, so you can watch a LEVEL not a verdict.
@@ -402,6 +487,37 @@ def squeeze_outlook(engine: Engine, asof: date,
         "vix_ratio": vr,
         "vix_gap": None if vr is None else VIX_AT_HIGHS - vr,
     }
+
+    # Fuel: can dealer flow actually dominate the tape today?
+    fr = fuel_ratio(engine, asof)
+    out["fuel"] = fr.get("fuel")
+    out["adv_b"] = fr.get("adv_b")
+    out["fuel_reason"] = fr.get("reason")
+
+    # Scheduled flow — the forecastable half of "the match".
+    out["calendar"] = calendar_flags(asof)
+
+    # PIN proximity is the mirror question and shares the same number: the
+    # higher the percentile, the more dealer hedging damps the tape. Zero
+    # squeezes have ever started in the top quartile of the range.
+    #
+    # The bands must not collide with the verdict. An earlier version called
+    # >=0.80 "building", which IS the overbought threshold — so an "approaching
+    # pin" alert could only fire once SELL_PREMIUM had already fired, and it
+    # duplicated the verdict every time. Caught in test. The approach band is
+    # strictly BELOW the trigger:
+    #
+    #   >= 0.90        strong        deep pin, tape heavily damped
+    #   >= 0.80        active        the SELL_PREMIUM zone itself
+    #   0.60 - 0.80    approaching   heading toward it, alert-worthy
+    #   < 0.60         none
+    if pct is not None:
+        out["pin_strength"] = (
+            "strong" if pct >= 0.90 else
+            "active" if pct >= OVERBOUGHT_PCT else
+            "approaching" if pct >= 0.60 else "none")
+    else:
+        out["pin_strength"] = None
     return out
 
 
