@@ -331,6 +331,80 @@ def squeeze_signal(engine: Engine, asof: date) -> dict[str, Any]:
     return out
 
 
+def squeeze_outlook(engine: Engine, asof: date,
+                    window: int = PCT_WINDOW) -> dict[str, Any]:
+    """Where the triggers actually sit, so you can watch a LEVEL not a verdict.
+
+    A verdict alone tells you nothing until the day it flips. What is useful
+    before then is: what would gamma have to print to cross, how far is it, is
+    it travelling toward the trigger or away, and — for SQUEEZE_WATCH, which
+    needs two legs — WHICH leg is missing.
+
+    Returns trigger levels in $bn plus the gap from the current reading, a
+    5-session percentile trend, a proximity label, and a per-leg breakdown.
+    All None-safe: missing history yields Nones, never a misleading zero.
+    """
+    from backend.bots.vix_regime import vix_decay_ratio
+
+    out: dict[str, Any] = {
+        "oversold_trigger_b": None, "overbought_trigger_b": None,
+        "gap_to_oversold_b": None, "gap_to_overbought_b": None,
+        "pct_trend_5d": None, "proximity": None,
+        "legs": {}, "reason": None,
+    }
+
+    with engine.begin() as conn:
+        rows = conn.execute(text(
+            f"SELECT trade_date, net_gex FROM {GAMMA_DAILY_TABLE} "
+            "WHERE trade_date < :d ORDER BY trade_date DESC LIMIT :n"
+        ), {"d": asof, "n": window}).fetchall()
+
+    if len(rows) < window:
+        out["reason"] = f"insufficient_gamma_history: have={len(rows)} need={window}"
+        return out
+
+    cur = float(rows[0][1]) / 1e9
+    hist = sorted(float(r[1]) / 1e9 for r in rows)
+    # the value that WOULD sit at each threshold in the current window
+    lo_i = max(0, int(OVERSOLD_PCT * len(hist)) - 1)
+    hi_i = min(len(hist) - 1, int(OVERBOUGHT_PCT * len(hist)))
+    lo_trig, hi_trig = hist[lo_i], hist[hi_i]
+    out["oversold_trigger_b"] = lo_trig
+    out["overbought_trigger_b"] = hi_trig
+    out["gap_to_oversold_b"] = cur - lo_trig       # negative once through it
+    out["gap_to_overbought_b"] = hi_trig - cur
+
+    gp = gamma_percentile(engine, asof, window)
+    pct = gp.get("pct")
+    if pct is not None and len(rows) > 5:
+        prior5 = [float(r[1]) for r in rows[5:]][:window]
+        if len(prior5) >= 20:
+            p5 = sum(1 for v in prior5 if float(rows[5][1]) > v) / len(prior5)
+            out["pct_trend_5d"] = pct - p5
+
+    if pct is not None:
+        if pct <= OVERSOLD_PCT:
+            out["proximity"] = "OVERSOLD"
+        elif pct <= OVERSOLD_PCT + 0.15:
+            out["proximity"] = "APPROACHING_OVERSOLD"
+        elif pct >= OVERBOUGHT_PCT:
+            out["proximity"] = "OVERBOUGHT"
+        elif pct >= OVERBOUGHT_PCT - 0.15:
+            out["proximity"] = "APPROACHING_OVERBOUGHT"
+        else:
+            out["proximity"] = "MID_RANGE"
+
+    # SQUEEZE_WATCH needs BOTH legs. Say which one is short.
+    vr = vix_decay_ratio(engine, asof).get("ratio")
+    out["legs"] = {
+        "gamma_oversold": None if pct is None else bool(pct <= OVERSOLD_PCT),
+        "vix_at_highs": None if vr is None else bool(vr > VIX_AT_HIGHS),
+        "vix_ratio": vr,
+        "vix_gap": None if vr is None else VIX_AT_HIGHS - vr,
+    }
+    return out
+
+
 # ---- small shims so this module does not hard-depend on TradierClient internals ----
 
 def _base() -> str:

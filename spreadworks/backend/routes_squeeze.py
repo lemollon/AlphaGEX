@@ -18,7 +18,8 @@ from fastapi import APIRouter
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from .bots.gamma_regime import GAMMA_DAILY_TABLE, PCT_WINDOW, squeeze_signal
+from .bots.gamma_regime import (GAMMA_DAILY_TABLE, PCT_WINDOW, squeeze_outlook,
+                                squeeze_signal)
 from .db import engine as _global_engine
 
 logger = logging.getLogger("spreadworks.routes_squeeze")
@@ -90,8 +91,18 @@ async def state():
         logger.warning("[routes_squeeze] history query failed: %r", e)
         history = []
 
+    # Trigger LEVELS, not just the verdict — a verdict says nothing until the
+    # day it flips, so surface what gamma would have to print to cross, which
+    # way it is travelling, and which leg of SQUEEZE_WATCH is still missing.
+    try:
+        outlook = squeeze_outlook(ENGINE, today)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_squeeze] squeeze_outlook failed: %r", e)
+        outlook = {"reason": f"squeeze_outlook error: {e}"}
+
     return {
         "asof": today.isoformat(),
+        "outlook": outlook,
         "verdict": sig.get("verdict"),
         "gamma_pct": sig.get("gamma_pct"),
         "net_gex_b": sig.get("net_gex_b"),

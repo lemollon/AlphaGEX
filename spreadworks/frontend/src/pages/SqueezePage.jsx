@@ -42,6 +42,25 @@ const VERDICT_LABEL = {
 
 function pct(x, d = 1) { return x == null ? '—' : (100 * x).toFixed(d) + '%'; }
 function bn(x, d = 2) { return x == null ? '—' : `$${x.toFixed(d)}B`; }
+// Signed $bn — matches the outlook API's sign convention (negative = oversold
+// side, positive = overbought side). Uses a true minus glyph, not a hyphen.
+function signedBn(x, d = 2) { return x == null ? '—' : `${x < 0 ? '−' : '+'}$${Math.abs(x).toFixed(d)}B`; }
+
+const PROXIMITY_COLOR = {
+  OVERSOLD: AMBER, APPROACHING_OVERSOLD: AMBER, MID_RANGE: GREY,
+  APPROACHING_OVERBOUGHT: GREEN, OVERBOUGHT: GREEN,
+};
+const PROXIMITY_LABEL = {
+  OVERSOLD: 'OVERSOLD', APPROACHING_OVERSOLD: 'APPROACHING OVERSOLD', MID_RANGE: 'MID RANGE',
+  APPROACHING_OVERBOUGHT: 'APPROACHING OVERBOUGHT', OVERBOUGHT: 'OVERBOUGHT',
+};
+const PROXIMITY_COPY = {
+  OVERSOLD: 'In the squeeze zone. Needs VIX at its highs to trigger.',
+  APPROACHING_OVERSOLD: 'Nearing the squeeze zone — watch for VIX to stop decaying.',
+  MID_RANGE: 'Neither zone. Historically the widest downside tail sits here — no edge either way.',
+  APPROACHING_OVERBOUGHT: 'Nearing the safest state for selling premium.',
+  OVERBOUGHT: 'Safest historical state to sell premium into. Zero squeezes have started here.',
+};
 
 export default function SqueezePage() {
   const [data, setData] = useState(null);
@@ -113,6 +132,97 @@ export default function SqueezePage() {
             </div>
           </div>
         </div>
+
+        {/* OUTLOOK — what to watch */}
+        {(() => {
+          const outlook = data.outlook || {};
+          const legs = outlook.legs || {};
+          const pColor = PROXIMITY_COLOR[outlook.proximity] || GREY;
+          const gammaPctNow = data.gamma_pct != null ? Math.min(100, Math.max(0, data.gamma_pct * 100)) : null;
+
+          if (outlook.reason) {
+            return (
+              <div style={{ ...S.card, opacity: 0.6 }}>
+                <div style={S.cardTitle}>What to watch</div>
+                <div style={{ fontSize: 13.5, color: '#c6cbd8' }}>Outlook unavailable</div>
+                <div style={{ ...S.small, marginTop: 6 }}>{outlook.reason}</div>
+              </div>
+            );
+          }
+
+          return (
+            <div style={S.card}>
+              <div style={S.cardTitle}>What to watch</div>
+
+              {outlook.proximity && (
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: pColor, marginBottom: 4 }}>
+                  {PROXIMITY_LABEL[outlook.proximity] || outlook.proximity}
+                </div>
+              )}
+              {outlook.proximity && (
+                <div style={{ fontSize: 13, color: '#c6cbd8', marginBottom: 12 }}>
+                  {PROXIMITY_COPY[outlook.proximity] || ''}
+                </div>
+              )}
+
+              {/* 1 — how close are we */}
+              <div style={{ ...S.small, marginBottom: 4 }}>How close are we — gamma percentile</div>
+              <div style={{ position: 'relative', height: 24, background: '#0e1220', border: '1px solid #232a3d', borderRadius: 6 }}>
+                <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '20%', background: AMBER, opacity: 0.18 }} />
+                <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '20%', background: GREEN, opacity: 0.18 }} />
+                {gammaPctNow != null && (
+                  <div style={{ position: 'absolute', left: `calc(${gammaPctNow.toFixed(1)}% - 1px)`, top: -3, bottom: -3, width: 2, background: '#e6e9f2' }} />
+                )}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, marginBottom: 12 }}>
+                <span style={S.small}>oversold ≤ {signedBn(outlook.oversold_trigger_b)}</span>
+                <span style={{ ...S.small, textAlign: 'center' }}>current {pct(data.gamma_pct)}</span>
+                <span style={S.small}>overbought ≥ {signedBn(outlook.overbought_trigger_b)}</span>
+              </div>
+              {outlook.pct_trend_5d != null && (
+                <div style={{ ...S.small, marginBottom: 12 }}>
+                  percentile {outlook.pct_trend_5d < 0 ? 'falling' : 'rising'} {Math.abs(outlook.pct_trend_5d * 100).toFixed(1)}pts over 5 sessions
+                  {' — '}{outlook.pct_trend_5d < 0 ? 'moving toward the squeeze zone' : 'moving away from the squeeze zone'}
+                </div>
+              )}
+
+              {/* 2 — what would have to happen */}
+              <div style={{ ...S.small, marginBottom: 4 }}>What would have to happen</div>
+              <div style={{ fontSize: 13, marginBottom: 4 }}>
+                {outlook.gap_to_oversold_b == null || outlook.oversold_trigger_b == null ? '—'
+                  : outlook.gap_to_oversold_b > 0
+                    ? <>Squeeze trigger — gamma must fall to <b>{signedBn(outlook.oversold_trigger_b)}</b> ({outlook.gap_to_oversold_b.toFixed(2)}B away)</>
+                    : <>Squeeze trigger — already through {signedBn(outlook.oversold_trigger_b)} (gamma at {bn(data.net_gex_b)})</>}
+              </div>
+              <div style={{ fontSize: 13, marginBottom: 12 }}>
+                {outlook.gap_to_overbought_b == null || outlook.overbought_trigger_b == null ? '—'
+                  : outlook.gap_to_overbought_b > 0
+                    ? <>Overbought trigger — gamma must rise to <b>{signedBn(outlook.overbought_trigger_b)}</b> ({outlook.gap_to_overbought_b.toFixed(2)}B away)</>
+                    : <>Overbought trigger — already through {signedBn(outlook.overbought_trigger_b)} (gamma at {bn(data.net_gex_b)})</>}
+              </div>
+
+              {/* 3 — which leg is missing */}
+              <div style={{ ...S.small, marginBottom: 4 }}>Which leg is missing — SQUEEZE_WATCH needs both</div>
+              {[
+                { ok: legs.gamma_oversold, label: 'Gamma oversold (≤ 20th percentile)' },
+                { ok: legs.vix_at_highs, label: 'VIX at highs (ratio ≥ 0.95)',
+                  sub: legs.vix_at_highs === false && legs.vix_ratio != null && legs.vix_gap != null
+                    ? `VIX ratio ${legs.vix_ratio.toFixed(2)} — needs to rise ${legs.vix_gap.toFixed(2)} to clear 0.95`
+                    : null },
+              ].map((row, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: i === 0 ? 0 : 6 }}>
+                  <span style={{ fontWeight: 700, color: row.ok == null ? GREY : row.ok ? GREEN : RED, width: 14, flexShrink: 0 }}>
+                    {row.ok == null ? '−' : row.ok ? '✓' : '✗'}
+                  </span>
+                  <div>
+                    <div style={{ fontSize: 13 }}>{row.label}</div>
+                    {row.sub && <div style={{ ...S.small, color: AMBER, marginTop: 2 }}>{row.sub}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
 
         {/* STAT TILES */}
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
