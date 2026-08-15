@@ -81,6 +81,60 @@ const CALENDAR_FLAGS = [
   { key: 'opex_week', label: 'Opex week', tone: 'suppressive' },
 ];
 
+// The price series' display name. It is also the tooltip's only way to tell a
+// dollar price from a dollar-billions gamma reading — see the Tooltip
+// formatter — so the Line's `name` and that check must stay the same string.
+const PRICE_SERIES = 'SPY close';
+
+// Track-record strip colours — mirrors VERDICT_COLOR but with its own NEUTRAL
+// shade so a long neutral run doesn't read as "muted/broken" in the strip.
+const SIGNAL_STRIP_COLOR = {
+  SQUEEZE_WATCH: AMBER, NO_SELL: RED, SELL_PREMIUM: GREEN, NEUTRAL: '#334155', UNKNOWN: GREY,
+};
+
+// Fuel evidence — squeeze rate by fuel sextile (outlook.fuel; research metric,
+// not yet the live signal).
+const FUEL_SEXTILE_RATES = [
+  ['1 (least fuel)', '0.00%'],
+  ['2', '0.00%'],
+  ['3', '0.75%'],
+  ['4', '2.25%'],
+  ['5', '7.89%'],
+  ['6 (most fuel)', '9.36%'],
+];
+
+// Calendar evidence — scheduled flow, measured on oversold days only
+// (calendar_flags() in gamma_regime.py).
+const CALENDAR_EVIDENCE = [
+  { event: 'Month end (≥26th)', rate: '25.35%', mult: '2.52x', n: 71, tone: 'supportive' },
+  { event: 'Quarter end', rate: '22.22%', mult: '2.21x', n: 27, tone: 'supportive' },
+  { event: 'Payrolls Friday', rate: '20.00%', mult: '1.99x', n: 20, tone: 'supportive' },
+  { event: 'Opex week', rate: '6.00%', mult: '0.60x', n: 100, tone: 'suppressive' },
+  { event: 'Monthly opex day', rate: '4.35%', mult: '0.43x', n: 23, tone: 'suppressive' },
+];
+
+// Falsification — the last 22 times net gamma broke below −$10B (16 shown,
+// the rest are unremarkable middles). [date, net gamma, vs flip, fwd 5d,
+// 5d max, >+3% rip].
+const FALSIFICATION_EPISODES = [
+  ['2023-03-02', '−10.2B', '−1.84%', '−1.57%', '+1.67%', false],
+  ['2023-08-25', '−11.3B', '−1.50%', '+2.55%', '+2.55%', false],
+  ['2023-09-18', '−10.2B', '−1.60%', '−2.57%', '−0.21%', false],
+  ['2023-10-19', '−10.5B', '−2.62%', '−3.25%', '−0.66%', false],
+  ['2023-10-26', '−11.5B', '−4.11%', '+4.41%', '+4.41%', true],
+  ['2024-04-16', '−11.1B', '−2.44%', '+0.42%', '+0.42%', false],
+  ['2024-08-08', '−10.1B', '−2.58%', '+4.23%', '+4.23%', true],
+  ['2024-09-09', '−10.2B', '−1.57%', '+3.01%', '+3.01%', true],
+  ['2025-01-13', '−12.6B', '−2.04%', '+3.73%', '+3.73%', true],
+  ['2025-02-26', '−11.3B', '−2.00%', '−1.93%', '−0.06%', false],
+  ['2025-03-31', '−12.5B', '−2.87%', '−4.55%', '+0.92%', false],
+  ['2025-04-17', '−10.9B', '−5.03%', '+4.60%', '+4.60%', true],
+  ['2026-02-06', '−15.5B', '−0.51%', '−1.28%', '+0.48%', false],
+  ['2026-03-04', '−11.0B', '−1.02%', '−1.28%', '−0.56%', false],
+  ['2026-06-10', '−11.7B', '−3.01%', '+2.14%', '+4.05%', true],
+  ['2026-07-24', '−12.9B', '−1.84%', '+1.10%', '+1.10%', false],
+];
+
 export default function SqueezePage() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
@@ -174,6 +228,31 @@ export default function SqueezePage() {
           A prerequisite for a squeeze and a strong veto for short premium — never a direction call.
         </p>
 
+        {/* FRESHNESS — the verdict banner used to print today's calendar date
+            regardless of how old the underlying gamma reading was. This bar
+            makes staleness impossible to miss; it renders nothing when the
+            reading is current. */}
+        {data.freshness?.reason ? (
+          <div style={{ ...S.small, marginBottom: 10 }}>{data.freshness.reason}</div>
+        ) : data.freshness?.stale ? (
+          <div style={{
+            background: (data.freshness.legs_mismatch ? RED : AMBER) + '18',
+            border: `1px solid ${(data.freshness.legs_mismatch ? RED : AMBER)}66`,
+            borderRadius: 10, padding: '10px 14px', marginBottom: 10, fontSize: 12.5, lineHeight: 1.6,
+          }}>
+            <div style={{ fontWeight: 700, color: AMBER }}>
+              STALE — the newest gamma reading is {data.freshness.gamma_date || '—'},{' '}
+              {data.freshness.gamma_stale_sessions ?? '—'} session(s) behind {data.freshness.expected_date || '—'}.
+              This verdict is not today's.
+            </div>
+            {data.freshness.legs_mismatch && (
+              <div style={{ marginTop: 4, color: '#c6cbd8' }}>
+                The two legs are dated apart — gamma {data.freshness.gamma_date || '—'}, VIX {data.freshness.vix_date || '—'}.
+              </div>
+            )}
+          </div>
+        ) : null}
+
         {/* VERDICT BANNER */}
         <div style={{ ...S.card, borderColor: color + '55', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
           <Zap size={30} color={color} style={{ flexShrink: 0, marginTop: 2 }} />
@@ -188,8 +267,39 @@ export default function SqueezePage() {
               <div style={{ ...S.small, marginTop: 6 }}>{data.reason}</div>
             )}
             <div style={{ ...S.small, marginTop: 6 }}>
-              As of {data.asof} · prior session {data.prior_date || '—'}
+              Reading from {data.data_date || '—'} · prior session {data.prior_date || '—'}
             </div>
+          </div>
+        </div>
+
+        {/* FRESHNESS / JOB STATUS STRIP */}
+        <div style={{ ...S.card, padding: '10px 14px' }}>
+          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 10, color: DIM }}>gamma data</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>
+                {data.freshness?.gamma_date || '—'}
+                {data.freshness?.gamma_stale_sessions > 0 && (
+                  <span style={{ ...S.small, marginLeft: 6 }}>{data.freshness.gamma_stale_sessions} session(s) behind</span>
+                )}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: DIM }}>VIX data</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{data.freshness?.vix_date || '—'}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: DIM }}>next capture</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>15:05 CT, weekdays</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: DIM }}>next alert</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>08:05 CT, weekdays</div>
+            </div>
+          </div>
+          <div style={{ ...S.small, marginTop: 8 }}>
+            The signal updates once per session at 15:05 CT. Sessions with no captured reading leave
+            a permanent hole in the 60-session percentile window.
           </div>
         </div>
 
@@ -262,8 +372,13 @@ export default function SqueezePage() {
           ];
 
           return (
-            <div style={S.card}>
+            <div style={{ ...S.card, opacity: data.freshness?.stale ? 0.5 : 1 }}>
               <div style={S.cardTitle}>How to trade this</div>
+              {data.freshness?.stale && (
+                <div style={{ fontSize: 12, fontWeight: 700, color: AMBER, marginBottom: 10 }}>
+                  Stale reading — do not act on this today.
+                </div>
+              )}
               {TRADE_BLOCKS.map(b => (
                 <div key={b.key} style={{
                   background: '#0e1220', border: `1px solid ${b.active ? b.accent + '66' : '#232a3d'}`,
@@ -333,30 +448,52 @@ export default function SqueezePage() {
                   <div style={{ position: 'absolute', left: `calc(${gammaPctNow.toFixed(1)}% - 1px)`, top: -3, bottom: -3, width: 2, background: '#e6e9f2' }} />
                 )}
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, marginBottom: 12 }}>
+              {/* The moving "current" label gets its OWN row under the bar, and
+                  the two fixed trigger labels get the row below it. They shared
+                  one row at first, which put "current 86.7%" straight through
+                  "overbought ≥ +$3.66B" — the marker sits near an end exactly
+                  when the reading is interesting, so the collision is the
+                  common case, not the edge case. */}
+              <div style={{ position: 'relative', marginTop: 4, height: 16 }}>
+                {gammaPctNow != null && (
+                  <span style={{
+                    ...S.small, color: '#c6cbd8', position: 'absolute',
+                    left: `${Math.min(92, Math.max(8, gammaPctNow)).toFixed(1)}%`,
+                    transform: 'translateX(-50%)', whiteSpace: 'nowrap',
+                  }}>
+                    current {pct(data.gamma_pct)}
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
                 <span style={S.small}>oversold ≤ {signedBn(outlook.oversold_trigger_b)}</span>
-                <span style={{ ...S.small, textAlign: 'center' }}>current {pct(data.gamma_pct)}</span>
                 <span style={S.small}>overbought ≥ {signedBn(outlook.overbought_trigger_b)}</span>
               </div>
-              {outlook.pct_trend_5d != null && (
-                <div style={{ ...S.small, marginBottom: 12 }}>
-                  percentile {outlook.pct_trend_5d < 0 ? 'falling' : 'rising'} {Math.abs(outlook.pct_trend_5d * 100).toFixed(1)}pts over 5 sessions
-                  {' — '}{outlook.pct_trend_5d < 0 ? 'moving toward the squeeze zone' : 'moving away from the squeeze zone'}
-                </div>
-              )}
+              {outlook.pct_trend_5d != null && (() => {
+                const falling = outlook.pct_trend_5d < 0;
+                const nearOversold = outlook.proximity === 'OVERSOLD' || outlook.proximity === 'APPROACHING_OVERSOLD';
+                const nearOverbought = outlook.proximity === 'OVERBOUGHT' || outlook.proximity === 'APPROACHING_OVERBOUGHT';
+                const showDestination = falling ? nearOversold : nearOverbought;
+                return (
+                  <div style={{ ...S.small, marginBottom: 12 }}>
+                    percentile {falling ? 'falling' : 'rising'} {Math.abs(outlook.pct_trend_5d * 100).toFixed(1)}pts over 5 sessions
+                    {showDestination && (falling ? ' — moving toward the squeeze zone' : ' — moving away from the squeeze zone')}
+                  </div>
+                );
+              })()}
 
               {/* 2 — what would have to happen */}
               <div style={{ ...S.small, marginBottom: 4 }}>What would have to happen</div>
               <div style={{ fontSize: 13, marginBottom: 4 }}>
                 {outlook.gap_to_oversold_b == null || outlook.oversold_trigger_b == null ? '—'
                   : outlook.gap_to_oversold_b > 0
-                    ? <>Squeeze trigger — gamma must fall to <b>{signedBn(outlook.oversold_trigger_b)}</b> ({outlook.gap_to_oversold_b.toFixed(2)}B away)</>
+                    ? <>Squeeze trigger — gamma must fall to <b>{signedBn(outlook.oversold_trigger_b)}</b> ({bn(outlook.gap_to_oversold_b)} away)</>
                     : <>Squeeze trigger — already through {signedBn(outlook.oversold_trigger_b)} (gamma at {bn(data.net_gex_b)})</>}
               </div>
               <div style={{ fontSize: 13, marginBottom: 12 }}>
                 {outlook.gap_to_overbought_b == null || outlook.overbought_trigger_b == null ? '—'
                   : outlook.gap_to_overbought_b > 0
-                    ? <>Overbought trigger — gamma must rise to <b>{signedBn(outlook.overbought_trigger_b)}</b> ({outlook.gap_to_overbought_b.toFixed(2)}B away)</>
+                    ? <>Overbought trigger — gamma must rise to <b>{signedBn(outlook.overbought_trigger_b)}</b> ({bn(outlook.gap_to_overbought_b)} away)</>
                     : <>Overbought trigger — already through {signedBn(outlook.overbought_trigger_b)} (gamma at {bn(data.net_gex_b)})</>}
               </div>
 
@@ -516,64 +653,204 @@ export default function SqueezePage() {
         {/* CHART */}
         <div style={S.card}>
           <div style={S.cardTitle}>Net dealer gamma — last 90 sessions</div>
-          {hist.length ? (
-            <>
-              <div style={{ width: '100%', height: 260 }}>
-                <ResponsiveContainer>
-                  <ComposedChart data={chartData} margin={{ top: 6, right: 12, left: -8, bottom: 0 }}>
-                    {oversoldBands.map(([a, b], i) => (
-                      <ReferenceArea key={`os-${i}`} x1={a} x2={b} fill={AMBER} fillOpacity={0.08} />
-                    ))}
-                    {overboughtBands.map(([a, b], i) => (
-                      <ReferenceArea key={`ob-${i}`} x1={a} x2={b} fill={GREEN} fillOpacity={0.08} />
-                    ))}
-                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#5b6478' }} interval="preserveStartEnd" minTickGap={40} />
-                    <YAxis tick={{ fontSize: 10, fill: '#5b6478' }} tickFormatter={v => `${v.toFixed(0)}B`} />
-                    <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }}
-                             /* Recharts hands the formatter the series' `name` PROP, not its
-                                dataKey — so the old `name === 'net_gex_b'` branch never matched
-                                and tooltips rendered raw unformatted numbers. Both series are
-                                $bn, so format any finite number and pass anything else through. */
-                             formatter={(v, name) => [
-                               Number.isFinite(Number(v)) ? `$${Number(v).toFixed(2)}B` : '—', name]} />
-                    <Legend wrapperStyle={{ fontSize: 11 }} formatter={v => <span style={{ color: '#8b93a7' }}>{v}</span>} />
-                    <ReferenceLine y={0} stroke="#232a3d" />
-                    <Line dataKey="net_gex_b" name="net gamma ($B)" stroke="#60a5fa" dot={false} strokeWidth={1.8} />
+          {hist.length ? (() => {
+            const chartOutlook = data.outlook || {};
+            return (
+              <>
+                <div style={{ width: '100%', height: 260 }}>
+                  <ResponsiveContainer>
+                    <ComposedChart data={chartData} margin={{ top: 6, right: 12, left: -8, bottom: 0 }}>
+                      {oversoldBands.map(([a, b], i) => (
+                        <ReferenceArea key={`os-${i}`} x1={a} x2={b} fill={AMBER} fillOpacity={0.08} />
+                      ))}
+                      {overboughtBands.map(([a, b], i) => (
+                        <ReferenceArea key={`ob-${i}`} x1={a} x2={b} fill={GREEN} fillOpacity={0.08} />
+                      ))}
+                      <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#5b6478' }} interval="preserveStartEnd" minTickGap={40} />
+                      <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#5b6478' }} tickFormatter={v => `${v.toFixed(0)}B`} />
+                      <YAxis yAxisId="price" orientation="right" tick={{ fontSize: 10, fill: '#5b6478' }}
+                             domain={['dataMin - 5', 'dataMax + 5']} tickFormatter={v => `$${v.toFixed(0)}`} />
+                      <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }}
+                               /* Recharts hands the formatter the series' `name` PROP, not its
+                                  dataKey — so the old `name === 'net_gex_b'` branch never matched
+                                  and tooltips rendered raw unformatted numbers. Match on the NAME,
+                                  which does work. Not every series is $bn any more: SPY's close
+                                  shares this tooltip and a blanket $bn suffix rendered it as
+                                  "$770.56B". */
+                               formatter={(v, name) => {
+                                 const num = Number(v);
+                                 if (!Number.isFinite(num)) return ['—', name];
+                                 return [name === PRICE_SERIES ? `$${num.toFixed(2)}`
+                                                               : `$${num.toFixed(2)}B`, name];
+                               }} />
+                      <Legend wrapperStyle={{ fontSize: 11 }} formatter={v => <span style={{ color: '#8b93a7' }}>{v}</span>} />
+                      <ReferenceLine yAxisId="left" y={0} stroke="#232a3d" />
+                      {chartOutlook.oversold_trigger_b != null && (
+                        <ReferenceLine yAxisId="left" y={chartOutlook.oversold_trigger_b} stroke={AMBER} strokeDasharray="3 3"
+                                       /* signedBn, not bn — bn() renders a negative as "$-8.53B"
+                                          with an ASCII hyphen; the rest of the page uses a true
+                                          minus glyph. */
+                                       label={{ value: signedBn(chartOutlook.oversold_trigger_b), position: 'insideBottomRight', fill: AMBER, fontSize: 10 }} />
+                      )}
+                      {chartOutlook.overbought_trigger_b != null && (
+                        <ReferenceLine yAxisId="left" y={chartOutlook.overbought_trigger_b} stroke={GREEN} strokeDasharray="3 3"
+                                       label={{ value: signedBn(chartOutlook.overbought_trigger_b), position: 'insideTopRight', fill: GREEN, fontSize: 10 }} />
+                      )}
+                      <Line yAxisId="left" dataKey="net_gex_b" name="net gamma ($B)" stroke="#60a5fa" dot={false} strokeWidth={1.8} />
+                      <Line yAxisId="price" dataKey="spot" name={PRICE_SERIES} stroke="#94a3b8" dot={false} strokeWidth={1.2} />
+                      {liveOk && (
+                        <Line yAxisId="left" dataKey="live_gex_b" name="live (not the signal)" stroke={LIVE} strokeWidth={1.8}
+                              strokeDasharray="4 4" dot={<LiveDot />} isAnimationActive={false} />
+                      )}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+                <div style={{ ...S.small, marginTop: 8, lineHeight: 1.65 }}>
+                  <b style={{ color: '#8b95ab' }}>How to read this.</b> The blue line is net dealer
+                  gamma in billions of dollars per 1% move in SPY — how much stock dealers must
+                  trade to stay hedged.{' '}
+                  <b style={{ color: '#60a5fa' }}>Below the zero line</b> they hedge <i>with</i> the
+                  move (selling into weakness, buying into strength), so moves get amplified.
+                  <b style={{ color: '#60a5fa' }}> Above it</b> they hedge against the move and the
+                  tape gets pinned.
+                  <br />
+                  <b style={{ color: AMBER }}>Amber shading</b> = gamma in the bottom 20% of its own
+                  trailing 60 sessions. Every SPY squeeze since 2020 started in amber.{' '}
+                  <b style={{ color: GREEN }}>Green shading</b> = top 20%; zero squeezes have ever
+                  started there, and it carries the smallest downside tail.
+                  <br />
+                  <b style={{ color: '#94a3b8' }}>The grey line</b> is SPY's close on the right axis —
+                  gamma is the state of the tape, not a forecast of the price.{' '}
+                  <b style={{ color: AMBER }}>Dashed amber</b> and{' '}
+                  <b style={{ color: GREEN }}>dashed green</b> lines mark the oversold and overbought
+                  gamma triggers.
+                  <br />
+                  <span style={{ color: '#5b6478' }}>
+                    Shading is the <i>percentile</i>, not the level — so it re-bases as the range
+                    moves. A −$4B print can be amber in a calm month and unshaded in a volatile one.
+                    That is deliberate: the level alone is a much weaker signal than the rank.
+                    Updates once per session at 15:05 CT.
                     {liveOk && (
-                      <Line dataKey="live_gex_b" name="live (not the signal)" stroke={LIVE} strokeWidth={1.8}
-                            strokeDasharray="4 4" dot={<LiveDot />} isAnimationActive={false} />
+                      <> <b style={{ color: LIVE }}>The dashed purple point</b> is this minute's live
+                      reading — context only, not part of the 15:05 CT signal.</>
                     )}
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-              <div style={{ ...S.small, marginTop: 8, lineHeight: 1.65 }}>
-                <b style={{ color: '#8b95ab' }}>How to read this.</b> The blue line is net dealer
-                gamma in billions of dollars per 1% move in SPY — how much stock dealers must
-                trade to stay hedged.{' '}
-                <b style={{ color: '#60a5fa' }}>Below the zero line</b> they hedge <i>with</i> the
-                move (selling into weakness, buying into strength), so moves get amplified.
-                <b style={{ color: '#60a5fa' }}> Above it</b> they hedge against the move and the
-                tape gets pinned.
-                <br />
-                <b style={{ color: AMBER }}>Amber shading</b> = gamma in the bottom 20% of its own
-                trailing 60 sessions. Every SPY squeeze since 2020 started in amber.{' '}
-                <b style={{ color: GREEN }}>Green shading</b> = top 20%; zero squeezes have ever
-                started there, and it carries the smallest downside tail.
-                <br />
-                <span style={{ color: '#5b6478' }}>
-                  Shading is the <i>percentile</i>, not the level — so it re-bases as the range
-                  moves. A −$4B print can be amber in a calm month and unshaded in a volatile one.
-                  That is deliberate: the level alone is a much weaker signal than the rank.
-                  Updates once per session at 15:05 CT.
-                  {liveOk && (
-                    <> <b style={{ color: LIVE }}>The dashed purple point</b> is this minute's live
-                    reading — context only, not part of the 15:05 CT signal.</>
-                  )}
-                </span>
-              </div>
-            </>
-          ) : <div style={S.small}>no history yet — needs the 15:05 CT capture job to run and 60 sessions before the percentile is defined</div>}
+                  </span>
+                </div>
+              </>
+            );
+          })() : <div style={S.small}>no history yet — needs the 15:05 CT capture job to run and 60 sessions before the percentile is defined</div>}
         </div>
+
+        {/* VIX LEG CHART */}
+        {(() => {
+          const vh = (data.vix_history || []).map(v => ({ ...v, label: v.trade_date.slice(5) }));
+          const lastVix = vh.length ? vh[vh.length - 1] : null;
+          const gapTo95 = lastVix?.ratio != null ? Math.max(0, 0.95 - lastVix.ratio) : null;
+          return (
+            <div style={S.card}>
+              <div style={S.cardTitle}>The VIX leg — VIX ÷ its own 20-session max</div>
+              <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 10, color: DIM }}>current ratio</div>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{lastVix?.ratio == null ? '—' : lastVix.ratio.toFixed(2)}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, color: DIM }}>gap to 0.95</div>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{gapTo95 == null ? '—' : gapTo95.toFixed(2)}</div>
+                </div>
+              </div>
+              {vh.length ? (
+                <div style={{ width: '100%', height: 200 }}>
+                  <ResponsiveContainer>
+                    <ComposedChart data={vh} margin={{ top: 6, right: 12, left: -8, bottom: 0 }}>
+                      <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#5b6478' }} interval="preserveStartEnd" minTickGap={40} />
+                      {/* The ratio is NOT capped at 1.0 — vix_decay_ratio divides by the
+                          max of the 20 sessions BEFORE the reading, so a session that sets
+                          a new high prints above 1.0. Those are the SQUEEZE_WATCH sessions,
+                          i.e. the only ones worth looking at, and a [0, 1] domain flattened
+                          every one of them against the top of the plot. */}
+                      <YAxis tick={{ fontSize: 10, fill: '#5b6478' }}
+                             domain={[0, (dataMax) => Math.max(1.05, Math.ceil(dataMax * 20) / 20)]}
+                             /* Without this the computed top of the domain renders as a
+                                raw float ("1.0999978297") and the axis prints garbage. */
+                             tickFormatter={v => Number(v).toFixed(2)} />
+                      <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }}
+                               formatter={(v) => [Number.isFinite(Number(v)) ? Number(v).toFixed(2) : '—', 'VIX ratio']} />
+                      <ReferenceLine y={0.95} stroke={AMBER} strokeDasharray="4 4"
+                                     label={{ value: '0.95 — at highs', position: 'insideTopRight', fill: AMBER, fontSize: 10 }} />
+                      <Line dataKey="ratio" name="VIX ratio" stroke="#f0abfc" dot={false} strokeWidth={1.8} connectNulls />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : <div style={S.small}>no VIX history yet</div>}
+              <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6 }}>
+                SQUEEZE_WATCH needs this at or above 0.95 at the same time gamma is oversold. Above 0.95
+                means fear is still building; below it means fear is decaying, and a decaying VIX is what
+                kills the setup. A perfectly flat VIX reads as 1.00 by construction — the ratio measures
+                where VIX sits in its own recent range, not its level.
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* SIGNAL TRACK RECORD */}
+        {(() => {
+          const sh = data.signal_history || [];
+          const summary = data.signal_summary || {};
+          const counts = summary.counts || {};
+          const n = summary.n || sh.length || 0;
+          return (
+            <div style={S.card}>
+              <div style={S.cardTitle}>Track record — what this signal has printed</div>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
+                <div style={S.tile}>
+                  <div style={S.tileLabel}>current state</div>
+                  <div style={{ fontSize: 17, fontWeight: 700, color: VERDICT_COLOR[summary.current] || GREY }}>
+                    {VERDICT_LABEL[summary.current] || summary.current || '—'}
+                  </div>
+                  <div style={S.small}>{summary.sessions_in_state != null ? `${summary.sessions_in_state} sessions` : '—'}</div>
+                </div>
+                <div style={S.tile}>
+                  <div style={S.tileLabel}>last SQUEEZE_WATCH</div>
+                  <div style={{ fontSize: 17, fontWeight: 700 }}>{summary.last_squeeze_watch || 'never in window'}</div>
+                </div>
+                <div style={S.tile}>
+                  <div style={S.tileLabel}>last NO_SELL</div>
+                  <div style={{ fontSize: 17, fontWeight: 700 }}>{summary.last_no_sell || 'never in window'}</div>
+                </div>
+                <div style={S.tile}>
+                  <div style={S.tileLabel}>window</div>
+                  <div style={{ fontSize: 17, fontWeight: 700 }}>
+                    {n} sessions{summary.first_date && summary.last_date ? `, ${summary.first_date} → ${summary.last_date}` : ''}
+                  </div>
+                </div>
+              </div>
+
+              {sh.length ? (
+                <div style={{ display: 'flex', height: 22, borderRadius: 6, overflow: 'hidden', marginBottom: 8 }}>
+                  {sh.map((s, i) => (
+                    <div key={i} title={`${s.trade_date} — ${s.verdict}`}
+                         style={{ flex: '1 1 0', background: SIGNAL_STRIP_COLOR[s.verdict] || GREY }} />
+                  ))}
+                </div>
+              ) : <div style={S.small}>no signal history yet</div>}
+
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 10 }}>
+                {Object.entries(counts).map(([k, v]) => (
+                  <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: DIM }}>
+                    <span style={{ width: 10, height: 10, borderRadius: 3, background: SIGNAL_STRIP_COLOR[k] || GREY, display: 'inline-block' }} />
+                    {k} · {v} ({n ? (100 * v / n).toFixed(1) : '0.0'}%)
+                  </div>
+                ))}
+              </div>
+
+              <div style={S.small}>
+                Each session is labelled with the verdict its own 15:05 CT close produced — the verdict
+                that was actionable the NEXT morning, which is how the alert consumes it.
+              </div>
+            </div>
+          );
+        })()}
 
         {/* EVIDENCE TABLE */}
         <div style={S.card}>
@@ -604,6 +881,104 @@ export default function SqueezePage() {
             Gamma oversold + VIX at its highs → <b style={{ color: '#c6cbd8' }}>15.13% squeeze rate, 0.00% crash rate</b> (n=119).
             Monotone, zero squeezes in the top quartile. Overbought gamma is NOT a crash signal —
             it is the safest measured state to sell premium.
+          </div>
+        </div>
+
+        {/* FUEL EVIDENCE TABLE */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>The evidence — squeeze rate by fuel sextile</div>
+          <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: 480, marginBottom: 10 }}>
+            <thead><tr><th style={S.th}>fuel sextile</th><th style={S.th}>squeeze rate</th></tr></thead>
+            <tbody>
+              {FUEL_SEXTILE_RATES.map(([bucket, rate]) => (
+                <tr key={bucket}>
+                  <td style={S.td}>{bucket}</td>
+                  <td style={{ ...S.td, fontWeight: 700 }}>{rate}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={S.small}>
+            Fuel = forced dealer hedging per 1% move as a share of a normal day's dollar volume. Median
+            9.4%; top sextile 17.5–56.8%. Top quintile combined with VIX at its highs reaches 16.49%,
+            against 15.13% for the percentile version that shipped first — a better mechanism and
+            slightly better numbers, kept alongside the percentile rather than replacing it until it
+            has been watched forward.
+          </div>
+        </div>
+
+        {/* CALENDAR EVIDENCE TABLE — renders always; the old month_end footnote
+            only showed on month-end days, so the tilts were invisible the
+            rest of the time. */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>The evidence — scheduled flow on oversold days</div>
+          <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: 560, marginBottom: 10 }}>
+            <thead>
+              <tr>
+                <th style={S.th}>event</th><th style={S.th}>squeeze rate</th><th style={S.th}>vs base</th><th style={S.th}>n</th>
+              </tr>
+            </thead>
+            <tbody>
+              {CALENDAR_EVIDENCE.map(row => (
+                <tr key={row.event}>
+                  <td style={S.td}>{row.event}</td>
+                  <td style={{ ...S.td, fontWeight: 700 }}>{row.rate}</td>
+                  <td style={{ ...S.td, color: row.tone === 'supportive' ? AMBER : GREEN, fontWeight: 700 }}>{row.mult}</td>
+                  <td style={S.td}>{row.n}</td>
+                </tr>
+              ))}
+              <tr>
+                <td style={{ ...S.td, fontStyle: 'italic' }}>base rate (oversold days)</td>
+                <td style={{ ...S.td, fontStyle: 'italic' }}>10.08%</td>
+                <td style={{ ...S.td, fontStyle: 'italic' }}>—</td>
+                <td style={{ ...S.td, fontStyle: 'italic' }}>397</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={S.small}>
+            Measured on oversold days only. Month end clears Bonferroni across the 14 catalyst tests
+            (p=0.00018 against a 0.00357 bar) and beats its own year's base in 5 of 7 years — but it was
+            0-for-9 in 2024 and 0-for-9 in 2025. A tilt on top of an existing setup, never a trigger on
+            its own. Mechanism: month end forces pension and target-date rebalancing into a beaten-down
+            tape; opex runs the other way because expiry removes the gamma.
+          </div>
+        </div>
+
+        {/* FALSIFICATION TABLE */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>What happened the last 22 times gamma went below −$10B</div>
+          <div style={{ ...S.small, marginBottom: 10 }}>
+            The evidence above is what supports the signal. This is what breaks it — if deep short
+            gamma were a squeeze setup, this table would be mostly green.
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 620, marginBottom: 10 }}>
+              <thead>
+                <tr>
+                  <th style={S.th}>episode start</th><th style={S.th}>net gamma</th><th style={S.th}>vs flip</th>
+                  <th style={S.th}>fwd 5d</th><th style={S.th}>5d max</th><th style={S.th}>&gt;+3% rip</th>
+                </tr>
+              </thead>
+              <tbody>
+                {FALSIFICATION_EPISODES.map(([date, gamma, vsFlip, fwd5d, max5d, rip]) => (
+                  <tr key={date}>
+                    <td style={S.td}>{date}</td>
+                    <td style={S.td}>{gamma}</td>
+                    <td style={S.td}>{vsFlip}</td>
+                    <td style={{ ...S.td, color: fwd5d.startsWith('+') ? GREEN : RED, fontWeight: 700 }}>{fwd5d}</td>
+                    <td style={S.td}>{max5d}</td>
+                    <td style={{ ...S.td, color: rip ? AMBER : DIM, fontWeight: rip ? 700 : 400 }}>{rip ? 'YES' : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={S.small}>
+            16 of 22 episodes shown; the rest are unremarkable middles. Full count: 6 of 22 rip (27%),
+            mean forward 5-day +0.75%, worst −4.55%. Deep short gamma doubles BOTH tails — it lifts the
+            odds of a 5-day rip above +3% from 7.9% to 17.9%, and the odds of a 5-day drop below −3%
+            from 3.7% to 6.4%. Read as "get long" it was wrong 16 times out of 22. That is an amplifier,
+            not a direction call.
           </div>
         </div>
       </div>
