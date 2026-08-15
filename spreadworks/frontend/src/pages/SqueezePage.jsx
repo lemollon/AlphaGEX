@@ -65,6 +65,8 @@ const PROXIMITY_COPY = {
 export default function SqueezePage() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
+  const [intraday, setIntraday] = useState(null);
+  const [intradayErr, setIntradayErr] = useState(null);
 
   useEffect(() => {
     let live = true;
@@ -78,6 +80,30 @@ export default function SqueezePage() {
     load();
     const t = setInterval(load, 60 * 1000);
     return () => { live = false; clearInterval(t); };
+  }, []);
+
+  // Live intraday reading — CONTEXT ONLY, never the signal (see the strip's
+  // own caveat copy). Polls only while the tab is visible so a backgrounded
+  // tab doesn't keep hammering the ~40-chain-request Tradier pull.
+  useEffect(() => {
+    let live = true;
+    const load = async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const r = await fetch(`${API_URL}/api/spreadworks/squeeze/intraday`);
+        const d = await r.json();
+        if (live) { setIntraday(d); setIntradayErr(null); }
+      } catch (e) { if (live) setIntradayErr(String(e)); }
+    };
+    load();
+    const t = setInterval(load, 60 * 1000);
+    const onVis = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      live = false;
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, []);
 
   if (err) return <div className="flex-1 overflow-y-auto"><div style={S.wrap}><div style={S.card}>Squeeze signal unavailable: {err}</div></div></div>;
@@ -220,6 +246,55 @@ export default function SqueezePage() {
                   </div>
                 </div>
               ))}
+            </div>
+          );
+        })()}
+
+        {/* LIVE INTRADAY — context only, never the verdict. Deliberately
+            quieter than the banner above: no colour block, small muted
+            header, plain card border. */}
+        {(() => {
+          const iv = intraday || {};
+          const stale = !!iv.stale;
+          const capturedHm = iv.captured_at ? iv.captured_at.slice(11, 16) : null;
+          return (
+            <div style={{ ...S.card, padding: '10px 14px', opacity: stale ? 0.55 : 1 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: DIM, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+                Live intraday — context only, not the signal
+              </div>
+              {intradayErr ? (
+                <div style={{ fontSize: 12, color: DIM }}>unavailable: {intradayErr}</div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 10, color: DIM }}>net gamma now</div>
+                      <div style={{ fontSize: 14, fontWeight: 600 }}>{bn(iv.net_gex_b)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, color: DIM }}>vs last close ({bn(iv.last_close_b)})</div>
+                      <div style={{ fontSize: 14, fontWeight: 600 }}>{signedBn(iv.delta_b)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, color: DIM }}>percentile if this were the close</div>
+                      <div style={{ fontSize: 14, fontWeight: 600 }}>{pct(iv.pct_if_now)}</div>
+                    </div>
+                  </div>
+                  {stale ? (
+                    <div style={{ fontSize: 11, color: DIM }}>
+                      Market is closed — this is the last available reading
+                      {capturedHm ? ` (as of ${capturedHm} CT)` : ''}.
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 11, color: DIM, lineHeight: 1.5 }}>
+                      Sampled at 10:00 CT this lands in a different percentile zone than the close 22% of
+                      the time. The signal above uses the 15:05 CT reading and is what has seven years of
+                      evidence behind it.
+                    </div>
+                  )}
+                  {iv.reason && <div style={{ fontSize: 11, color: DIM, marginTop: 4 }}>{iv.reason}</div>}
+                </>
+              )}
             </div>
           );
         })()}
