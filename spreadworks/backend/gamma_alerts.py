@@ -261,6 +261,28 @@ def _auto_seed_from_csv(engine) -> None:
     logger.info("[GammaAlerts] auto-seeded sw_gamma_daily from CSV baseline: "
                "%d row(s), %s..%s", len(rows), rows[0]["d"], rows[-1]["d"])
 
+    # BACKFILL GAPS ONLY. ON CONFLICT DO NOTHING protects live rows, which is
+    # right — but it also means a column added AFTER the table was populated
+    # never gets filled on existing rows. Observed in production: dollar_vol
+    # shipped, the re-seed correctly no-oped on all 1,660 existing rows, and
+    # fuel read "insufficient_volume_history: have=0 need=20" forever.
+    #
+    # This UPDATE only ever writes where the value IS NULL, so it can fill a
+    # newly-added column without being able to overwrite anything real.
+    filled = 0
+    with engine.begin() as conn:
+        for r in rows:
+            if r.get("v") is None:
+                continue
+            res = conn.execute(sa_text(
+                f"UPDATE {GAMMA_DAILY_TABLE} SET dollar_vol = :v "
+                "WHERE trade_date = :d AND dollar_vol IS NULL"
+            ), {"d": r["d"], "v": r["v"]})
+            filled += res.rowcount or 0
+    if filled:
+        logger.info("[GammaAlerts] backfilled dollar_vol on %d row(s) that "
+                   "predate the column", filled)
+
 
 def _fetch_spy_dollar_vol(client) -> float | None:
     """SPY's own last-price * cumulative session volume, off the same
