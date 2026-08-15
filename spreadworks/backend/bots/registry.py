@@ -431,17 +431,32 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         # of the same paper-trade companion, so it belongs in the same
         # channel as EBB's alerts.
         "discord_webhook_env": "RISK_ADVISOR_DISCORD_WEBHOOK",
+        # RESTRUCTURED 2026-08-15 (0DTE structure sweep, 342 cells / 941
+        # sessions / real expiry-day NBBO). Was spot-$2 / $5 wing. On one clean
+        # engine the two earn the SAME per contract at this clock — $4.80 for
+        # spot-2/$5 vs $4.60 for spot-1/$2 — but the $2 wing risks $200/lot
+        # instead of $500, so it returns 2.3x as much per dollar at risk and is
+        # the only version that fits a $3-5k account. See
+        # ironforge-data/examples/zdte_structure_sweep_5k.py.
         "params": {
-            "short_otm_abs": 2.0, "spread_abs": 5.0,
+            "short_otm_abs": 1.0, "spread_abs": 2.0,
             "min_option_price": 0.10, "max_spread_pct": 0.15,
             "min_credit": 0.10,
         },
-        "health_bands": {   # pre-registered 2026-08-13 from this stream's own
-            # block bootstrap + credit history (registry #42r).
-            "watch_roll60": -187.0,     # rolling-60-trade $ per lot
-            "demote_roll60": -576.0,
+        # 🚨 BANDS RE-DERIVED 2026-08-15 for the NEW structure. The old bands
+        # (-187 / -576 / min_credit20 14.0) were pre-registered against the
+        # spot-2/$5 stream and do NOT transfer: a $2 wing collects roughly 40%
+        # of the credit and risks 40% of the capital, so both the P&L scale and
+        # the credit floor move. Scaled from this stream's own 930-trade
+        # distribution at the same false-alarm rates. The stream had ZERO live
+        # trades under the old config, so nothing empirical is being discarded.
+        # The DEMOTE RULE itself is unchanged: a band breach DISABLES the bot,
+        # and the bands are never re-tuned to make a breach go away.
+        "health_bands": {
+            "watch_roll60": -75.0,      # rolling-60-trade $ per lot
+            "demote_roll60": -230.0,
             "demote_roll120": 0.0,      # rolling-120 total below this = demote
-            "min_credit20": 14.0,       # 20-trade avg credit $ per lot floor
+            "min_credit20": 6.0,        # 20-trade avg credit $ per lot floor
         },
         "defaults": {
             "starting_capital": 3000.0,
@@ -463,6 +478,20 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "entry_end_ct": "13:10",
             # Unused for settle_at_expiry bots (kept for the config UI).
             "eod_close_ct": "14:45",
+            # VIX DECAY GATE (2026-08-15). Skip the day when
+            #   VIX(prior session) / max(VIX, 20 sessions before that) > 0.90
+            # i.e. when the vol spike is still building rather than decaying.
+            # Numerator is the PRIOR session — using today's close is a
+            # look-ahead worth roughly DOUBLE the honest edge ($9.44 vs $6.51
+            # per trade), which is exactly why vix_regime.py reads history only.
+            #
+            # Measured on this cell, 930 real-NBBO trades:
+            #   always on          $+4.60/tr  ret/DD 6.72   (2026 YTD -$55)
+            #   with this gate     $+6.51/tr  ret/DD 7.38   (2026 YTD +$302)
+            # Untouched last third: $+1.78 -> $+3.04/tr (t=+0.89 — an
+            # improvement, NOT significant on its own). Sits out ~29% of days.
+            # Treat as a modest consistent tilt that also rescues the flat year.
+            "vix_decay_max": 0.90,
             "discord_alerts": True,
             "delta_skew": 0,
             "use_gex_walls": False,

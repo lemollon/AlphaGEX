@@ -239,9 +239,10 @@ def test_ebb_discord_routes_to_risk_channel():
 
 def test_ebb_pm_defaults(db_session):
     # EBB PM — validated afternoon tranche of EBB (registry #41/#42,
-    # 2026-08-13). Same structure as EBB (short put at spot-$2, long $5
-    # lower, 0DTE, no stop, settle at close) — only the entry window and
-    # health bands differ.
+    # 2026-08-13), RESTRUCTURED 2026-08-15 by the 0DTE structure sweep to
+    # short spot-$1 / $2 wing. Same $/contract at this clock on a clean engine
+    # ($4.60 vs $4.80) on 40% of the capital at risk, and it now carries the
+    # vix_decay_max gate.
     from backend.bots.registry import get_bot
     from sqlalchemy import text
     b = get_bot("ebb_pm")
@@ -252,16 +253,21 @@ def test_ebb_pm_defaults(db_session):
     assert b["back_dte"] == 0
     assert b["one_entry_per_day"] is True
     assert b["settle_at_expiry"] is True
-    assert b["params"]["short_otm_abs"] == 2.0
-    assert b["params"]["spread_abs"] == 5.0
+    assert b["params"]["short_otm_abs"] == 1.0
+    assert b["params"]["spread_abs"] == 2.0
     assert b["params"]["min_credit"] == 0.10
-    # Pre-calibrated health bands (2026-08-13, registry #42r) — EBB PM's own,
-    # not EBB's.
+    # Health bands RE-DERIVED 2026-08-15 for the $2-wing structure. The old
+    # -187/-576/14.0 bands were calibrated on the spot-2/$5 stream and do not
+    # transfer: a $2 wing collects ~40% of the credit on ~40% of the capital,
+    # so both the P&L scale and the credit floor move with it.
     bands = b["health_bands"]
-    assert bands["watch_roll60"] == -187.0
-    assert bands["demote_roll60"] == -576.0
+    assert bands["watch_roll60"] == -75.0
+    assert bands["demote_roll60"] == -230.0
     assert bands["demote_roll120"] == 0.0
-    assert bands["min_credit20"] == 14.0
+    assert bands["min_credit20"] == 6.0
+    # VIX decay gate: skip the day when VIX(prior session) / 20d-max > 0.90.
+    # Prior session, never today's close — see bots/vix_regime.py.
+    assert b["defaults"]["vix_decay_max"] == 0.90
     d = b["defaults"]
     assert d["starting_capital"] == 3000.0
     assert d["enabled"] is False        # no bot ships armed

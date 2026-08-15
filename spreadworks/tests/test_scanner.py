@@ -1154,6 +1154,6 @@ def test_ebb_pm_dispatcher_builds_bull_put_spread():
     legs = sig.legs()
     short = [l for l in legs if l["side"] == "short"][0]
     long_ = [l for l in legs if l["side"] == "long"][0]
-    assert short["strike"] == 598   # spot - $2 (ebb_pm's own short_otm_abs)
-    assert long_["strike"] == 593   # short - $5 (ebb_pm's own spread_abs)
-    assert sig.width == 5
+    assert short["strike"] == 599   # spot - $1 (ebb_pm's own short_otm_abs)
+    assert long_["strike"] == 597   # short - $2 (ebb_pm's own spread_abs)
+    assert sig.width == 2

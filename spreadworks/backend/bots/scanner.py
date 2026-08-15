@@ -45,6 +45,7 @@ from .strategies.dip_buy import build_dip_buy_signal, DEFAULT_PARAMS
 from .strategies.updraft import (build_updraft_signal,
                                  DEFAULT_PARAMS as UPDRAFT_PARAMS)
 from . import flow_store
+from .vix_regime import vix_decay_ratio, ensure_vix_table, record_vix
 from .strategies.setups import detect_setup, compute_indicators, DEFAULT_SETUP_PARAMS
 from .strategies.vertical_spread import build_vertical_signal, DEFAULT_VERTICAL_PARAMS
 from . import ai_rationale
@@ -785,6 +786,35 @@ def _evaluate_entry(
         if today_abbr not in allowed:
             return {"outcome": "BLOCKED_ENTRY_DAY",
                     "reason": f"entry_day_blocked: today={today_abbr} allowed={sorted(allowed)}"}
+
+    # VIX DECAY GATE (2026-08-15, EBB PM). vix_decay_max is the ceiling on
+    #     VIX(prior session) / max(VIX over the 20 sessions before that)
+    # — "has the vol spike already passed?", not "is vol high?". Above the
+    # ceiling, fear is still building and the short-premium edge thins; the bot
+    # sits the day out. Unset/None = no gate, so every other bot is unaffected.
+    #
+    # 🚨 UNKNOWN BLOCKS. With <21 prior sessions on file the ratio is undefined
+    # and we do NOT trade. A veto that silently degrades to always-on when its
+    # data is missing is worse than no veto — the data tends to be missing
+    # exactly when things are broken. BLOCKED_VIX_UNKNOWN is logged distinctly
+    # from BLOCKED_VIX_ELEVATED so a dead feed is diagnosable from scan history
+    # rather than looking like a quiet market.
+    vix_max = cfg.get("vix_decay_max")
+    if vix_max is not None and str(vix_max) != "":
+        try:
+            ceiling = float(vix_max)
+        except (TypeError, ValueError):
+            ceiling = 0.0
+        if ceiling > 0:
+            vr = vix_decay_ratio(engine, now_ct.date())
+            if vr["ratio"] is None:
+                return {"outcome": "BLOCKED_VIX_UNKNOWN",
+                        "reason": vr["reason"] or "vix_ratio_unavailable"}
+            if vr["ratio"] > ceiling:
+                return {"outcome": "BLOCKED_VIX_ELEVATED",
+                        "reason": (f"vix_decay_ratio={vr['ratio']:.3f} > {ceiling:.2f} "
+                                   f"(prior {vr['prior_date']} vix={vr['prior_vix']:.2f} "
+                                   f"/ 20d max {vr['window_max']:.2f})")}
 
     # Concurrent-position cap — never hold more than max_concurrent_positions
     # open at once (0 = unlimited, mirrors max_contracts). Bounds stacked

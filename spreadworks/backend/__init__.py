@@ -1462,6 +1462,25 @@ def _start_scheduler(app: FastAPI):
         # TODO: wire is_event_blackout_active once economic_events exposes it.
         blackout = False
 
+        # --- VIX daily history, for the vix_decay_max gate (EBB PM) ---
+        # Written ONCE per cycle here rather than inside run_scan_cycle, so the
+        # row lands every minute of the session regardless of which bots are
+        # flat or holding. The scan loop runs to 14:59 CT, so the last write of
+        # the day settles on roughly the close — which is what the gate's
+        # backtest used. Overwriting today's row all session is harmless:
+        # vix_decay_ratio() only ever reads sessions STRICTLY BEFORE the day it
+        # is judging, so today's row can never influence today's decision.
+        try:
+            from .bots.vix_regime import ensure_vix_table, record_vix
+            ensure_vix_table(engine)
+            vix_now = provider._spot("VIX")
+            if vix_now:
+                record_vix(engine, now_ct.date(), float(vix_now))
+        except Exception as e:
+            # Never let VIX bookkeeping take down the scan loop. A stale table
+            # makes the gate BLOCK (unknown = no trade), which is the safe side.
+            logger.warning(f"[scan_bots] vix history update failed: {e}")
+
         for bot in list_bots():
             try:
                 res = await run_scan_cycle_with_timeout(

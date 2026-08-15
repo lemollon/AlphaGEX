@@ -240,6 +240,36 @@ def _ensure_config_drift_offset(conn, engine: Engine) -> None:
             ))
 
 
+def _ensure_config_vix_decay_max(conn, engine: Engine) -> None:
+    """Idempotent column add for the VIX decay gate (2026-08-15, EBB PM).
+
+    Ceiling on VIX(prior session) / max(VIX over the 20 sessions before that) —
+    "has the vol spike already passed?", not "is vol high?". A bot only skips
+    days when this is set; NULL means no gate, so every existing bot is
+    unchanged. Nullable on purpose: 0 would read as "ratio must be <= 0", which
+    blocks everything, and a NOT NULL default would silently gate the fleet.
+    """
+    for bot in list_bots():
+        t = bot_table(bot, "config")
+        if not _column_exists(conn, t, "vix_decay_max", engine):
+            conn.execute(text(
+                f"ALTER TABLE {t} ADD COLUMN vix_decay_max NUMERIC NULL"
+            ))
+            # Backfill the registry default ONCE, at the moment the column is
+            # created. The config seed below is ON CONFLICT DO NOTHING, so an
+            # existing row would otherwise keep NULL forever and the gate would
+            # never engage — the "DB silently overrides registry" trap. Guarded
+            # by the column-exists check, so this never stomps a later operator
+            # edit: on every subsequent startup the column already exists and
+            # this branch does not run.
+            default = (BOT_REGISTRY[bot].get("defaults") or {}).get("vix_decay_max")
+            if default is not None:
+                conn.execute(
+                    text(f"UPDATE {t} SET vix_decay_max = :v WHERE id = 1"),
+                    {"v": float(default)},
+                )
+
+
 def create_bot_tables(engine: Engine) -> None:
     """Create all per-bot tables and seed a config row per bot.
 
@@ -256,6 +286,7 @@ def create_bot_tables(engine: Engine) -> None:
         _ensure_config_max_concurrent(conn, engine)
         _ensure_config_min_credit(conn, engine)
         _ensure_config_drift_offset(conn, engine)
+        _ensure_config_vix_decay_max(conn, engine)
         # Seed config rows — ON CONFLICT DO NOTHING means restart never
         # overwrites user-edited values.
         for bot in list_bots():
@@ -269,10 +300,10 @@ def create_bot_tables(engine: Engine) -> None:
                     "id, starting_capital, enabled, max_contracts, bp_pct, sd_mult, "
                     "front_dte, back_dte, pt_pct, sl_pct, entry_start_ct, entry_end_ct, "
                     "eod_close_ct, discord_alerts, delta_skew, use_gex_walls, entry_days, "
-                    "allow_stacking, max_concurrent_positions, drift_offset"
+                    "allow_stacking, max_concurrent_positions, drift_offset, vix_decay_max"
                     ") VALUES ("
                     ":id, :sc, :en, :mc, :bp, :sd, :fdte, :bdte, :pt, :sl, "
-                    ":es, :ee, :eod, :dc, :ds, :gw, :ed, :stk, :mcp, :drift"
+                    ":es, :ee, :eod, :dc, :ds, :gw, :ed, :stk, :mcp, :drift, :vixmax"
                     ")"
                 )
             else:
@@ -281,10 +312,10 @@ def create_bot_tables(engine: Engine) -> None:
                     "id, starting_capital, enabled, max_contracts, bp_pct, sd_mult, "
                     "front_dte, back_dte, pt_pct, sl_pct, entry_start_ct, entry_end_ct, "
                     "eod_close_ct, discord_alerts, delta_skew, use_gex_walls, entry_days, "
-                    "allow_stacking, max_concurrent_positions, drift_offset"
+                    "allow_stacking, max_concurrent_positions, drift_offset, vix_decay_max"
                     ") VALUES ("
                     ":id, :sc, :en, :mc, :bp, :sd, :fdte, :bdte, :pt, :sl, "
-                    ":es, :ee, :eod, :dc, :ds, :gw, :ed, :stk, :mcp, :drift"
+                    ":es, :ee, :eod, :dc, :ds, :gw, :ed, :stk, :mcp, :drift, :vixmax"
                     ") ON CONFLICT (id) DO NOTHING"
                 )
             conn.execute(stmt, {
@@ -308,6 +339,7 @@ def create_bot_tables(engine: Engine) -> None:
                 "stk": defs.get("allow_stacking", False),
                 "mcp": defs.get("max_concurrent_positions", 0),
                 "drift": defs.get("drift_offset", 3),
+                "vixmax": defs.get("vix_decay_max"),
             })
 
 
