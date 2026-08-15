@@ -1675,6 +1675,14 @@ async def lifespan(app: FastAPI):
     except Exception as _ra_exc:  # noqa: BLE001
         logger.warning("[SpreadWorks] risk alerts failed to register: %r", _ra_exc)
 
+    # Gamma-regime squeeze signal: daily capture (15:05 CT) + morning alert
+    # (08:05 CT). Import-guarded; advisory only.
+    try:
+        from .gamma_alerts import register_gamma_alerts
+        register_gamma_alerts(scheduler, app)
+    except Exception as _ga_exc:  # noqa: BLE001
+        logger.warning("[SpreadWorks] gamma alerts failed to register: %r", _ga_exc)
+
     yield
 
     # Shutdown
@@ -1729,6 +1737,15 @@ try:
 except Exception as _tsunami_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] TSUNAMI routes failed to load: %r", _tsunami_exc)
+
+# Squeeze signal (net dealer gamma, backend/bots/gamma_regime.py) — read-only
+# current verdict + history for the chart. Import-guarded; advisory only.
+try:
+    from .routes_squeeze import router as squeeze_router
+    app.include_router(squeeze_router)
+except Exception as _squeeze_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] Squeeze routes failed to load: %r", _squeeze_exc)
 
 
 @app.get("/health")
