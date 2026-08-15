@@ -261,8 +261,26 @@ export default function SqueezePage() {
                   <Line dataKey="net_gex_b" name="net gamma ($B)" stroke="#60a5fa" dot={false} strokeWidth={1.8} />
                 </ComposedChart>
               </ResponsiveContainer>
-              <div style={{ ...S.small, marginTop: 8 }}>
-                Amber shading = oversold (≤20th trailing percentile) · green shading = overbought (≥80th).
+              <div style={{ ...S.small, marginTop: 8, lineHeight: 1.65 }}>
+                <b style={{ color: '#8b95ab' }}>How to read this.</b> The blue line is net dealer
+                gamma in billions of dollars per 1% move in SPY — how much stock dealers must
+                trade to stay hedged.{' '}
+                <b style={{ color: '#60a5fa' }}>Below the zero line</b> they hedge <i>with</i> the
+                move (selling into weakness, buying into strength), so moves get amplified.
+                <b style={{ color: '#60a5fa' }}> Above it</b> they hedge against the move and the
+                tape gets pinned.
+                <br />
+                <b style={{ color: AMBER }}>Amber shading</b> = gamma in the bottom 20% of its own
+                trailing 60 sessions. Every SPY squeeze since 2020 started in amber.{' '}
+                <b style={{ color: GREEN }}>Green shading</b> = top 20%; zero squeezes have ever
+                started there, and it carries the smallest downside tail.
+                <br />
+                <span style={{ color: '#5b6478' }}>
+                  Shading is the <i>percentile</i>, not the level — so it re-bases as the range
+                  moves. A −$4B print can be amber in a calm month and unshaded in a volatile one.
+                  That is deliberate: the level alone is a much weaker signal than the rank.
+                  Updates once per session at 15:05 CT.
+                </span>
               </div>
             </div>
           ) : <div style={S.small}>no history yet — needs the 15:05 CT capture job to run and 60 sessions before the percentile is defined</div>}
