@@ -63,6 +63,61 @@ def _webhook_url() -> str:
 
 
 GAMMA_BASELINE_CSV = Path(__file__).resolve().parent / "data" / "gamma_baseline.csv"
+VIX_BASELINE_CSV = Path(__file__).resolve().parent / "data" / "vix_baseline.csv"
+
+
+def _auto_seed_vix_from_csv(engine) -> None:
+    """Bulk-load the committed VIX baseline into sw_vix_daily on startup.
+
+    The squeeze verdict needs BOTH legs, and the VIX leg needs 21 prior
+    sessions before vix_decay_ratio() returns anything. `seed_vix_history.py`
+    reads the research warehouse, which does not exist on Render, so on a
+    fresh database sw_vix_daily is created by the scanner but starts empty —
+    and until it has 21 rows the whole signal reads UNKNOWN.
+
+    Observed in production on first deploy: the table did not exist at all,
+    so squeeze_signal raised UndefinedTable and the endpoint returned a loud
+    UNKNOWN naming the missing relation. This closes that.
+
+    Same contract as the gamma seed: ON CONFLICT DO NOTHING, so a row the
+    scanner already wrote for today always wins, and no emptiness guard —
+    one stray row must not be able to skip the backfill.
+    """
+    from sqlalchemy import text as sa_text
+    from .bots.vix_regime import ensure_vix_table, VIX_DAILY_TABLE
+
+    ensure_vix_table(engine)
+    if not VIX_BASELINE_CSV.exists():
+        logger.warning("[GammaAlerts] vix_baseline.csv not found at %s — "
+                       "squeeze signal will read UNKNOWN until the scanner "
+                       "accumulates 21 sessions", VIX_BASELINE_CSV)
+        return
+
+    rows = []
+    with open(VIX_BASELINE_CSV, newline="") as f:
+        for r in csv.DictReader(f):
+            try:
+                rows.append({"d": date.fromisoformat(r["d"]), "v": float(r["vix"])})
+            except (TypeError, ValueError):
+                continue
+    if not rows:
+        return
+
+    with engine.begin() as conn:
+        if engine.dialect.name == "sqlite":
+            sql = sa_text(
+                f"INSERT INTO {VIX_DAILY_TABLE} (trade_date, vix, updated_at) "
+                "VALUES (:d, :v, CURRENT_TIMESTAMP) "
+                "ON CONFLICT(trade_date) DO NOTHING")
+        else:
+            sql = sa_text(
+                f"INSERT INTO {VIX_DAILY_TABLE} (trade_date, vix, updated_at) "
+                "VALUES (:d, :v, NOW()) "
+                "ON CONFLICT (trade_date) DO NOTHING")
+        for r in rows:
+            conn.execute(sql, r)
+    logger.info("[GammaAlerts] auto-seeded sw_vix_daily from CSV baseline: "
+               "%d row(s), %s..%s", len(rows), rows[0]["d"], rows[-1]["d"])
 
 
 def _auto_seed_from_csv(engine) -> None:
@@ -130,10 +185,11 @@ def register_gamma_alerts(scheduler, app) -> None:
     from .db import engine
     from . import _dedup_ok, _send_webhook_sync
 
-    try:
-        _auto_seed_from_csv(engine)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[GammaAlerts] CSV auto-seed failed: %r", e)
+    for _seed in (_auto_seed_from_csv, _auto_seed_vix_from_csv):
+        try:
+            _seed(engine)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[GammaAlerts] %s failed: %r", _seed.__name__, e)
 
     if scheduler is None:
         logger.warning("[GammaAlerts] no scheduler — gamma jobs disabled")
