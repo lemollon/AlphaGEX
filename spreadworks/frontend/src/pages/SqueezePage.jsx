@@ -4,13 +4,14 @@
 // All spacing inline (Tailwind p-*/m-* are zeroed app-wide).
 import { useEffect, useState } from 'react';
 import {
-  ResponsiveContainer, ComposedChart, Line, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, ComposedChart, Line, XAxis, YAxis, Tooltip, Legend,
   ReferenceLine, ReferenceArea,
 } from 'recharts';
 import { Zap } from 'lucide-react';
 import { API_URL } from '../lib/api';
 
 const GREEN = '#34d399', RED = '#f87171', AMBER = '#fbbf24', GREY = '#9ca3af', DIM = '#8b93a7';
+const LIVE = '#c084fc';
 const S = {
   wrap: { maxWidth: 1100, margin: '0 auto', padding: '24px 16px 96px' },
   h1: { fontSize: 22, fontWeight: 700, margin: '0 0 4px' },
@@ -149,6 +150,21 @@ export default function SqueezePage() {
   const oversoldBands = zoneBands(p => p <= 0.20);
   const overboughtBands = zoneBands(p => p >= 0.80);
 
+  // Live intraday point appended to the right edge of the 90-session line —
+  // a distinct colour, a visible dot, dashed connector from the last close.
+  // Omitted entirely (not drawn stale) when the /intraday poll is stale or
+  // has no reading.
+  const liveOk = !!intraday && !intraday.stale && intraday.net_gex_b != null;
+  const chartData = liveOk
+    ? hist.map((d, i) => (i === hist.length - 1 ? { ...d, live_gex_b: d.net_gex_b } : d))
+        .concat([{ label: 'live', live_gex_b: intraday.net_gex_b, isLive: true }])
+    : hist;
+  const LiveDot = (props) => {
+    const { cx, cy, payload } = props;
+    if (!payload?.isLive) return null;
+    return <circle cx={cx} cy={cy} r={4} fill={LIVE} stroke="#0b0e17" strokeWidth={1.5} />;
+  };
+
   return (
     <div className="flex-1 overflow-y-auto">
       <div style={S.wrap}>
@@ -176,6 +192,102 @@ export default function SqueezePage() {
             </div>
           </div>
         </div>
+
+        {/* HOW TO TRADE THIS — verdict-aware, real-fill backtests. The page
+            explained the state and the evidence but never said what the
+            trade is; this closes that gap. Highlights the block matching
+            the live verdict, mutes the others. Advisory only — this is
+            what the backtest says, not instructions to trade. */}
+        {(() => {
+          const TRADE_BLOCKS = [
+            {
+              key: 'sell', accent: GREEN,
+              active: verdict === 'SELL_PREMIUM' || verdict === 'NEUTRAL',
+              title: 'SELL_PREMIUM / NEUTRAL — the common case',
+              body: (
+                <>
+                  <div style={{ fontSize: 13, marginBottom: 6 }}>
+                    SPY 0DTE put spread. Short strike round(spot) − 2, $2 wide. Enter 11:05 ET,
+                    hold to settlement, no stop.
+                  </div>
+                  <div style={{ fontSize: 13, marginBottom: 6 }}>
+                    Real NBBO fills crossing the spread, 898 trades: <b>+$2.18/trade</b>, 83.3%
+                    win rate.
+                  </div>
+                  <div style={{ fontSize: 13, marginBottom: 6 }}>
+                    $1,000 → $3,728 over 3.7 years with the gamma veto applied. CAGR 44.1%, max
+                    drawdown −35.1%, return/drawdown 1.29.
+                  </div>
+                  <div style={{ fontSize: 12.5, color: AMBER }}>
+                    Worst single day −$198 — 20% of a $1,000 account in one afternoon.
+                  </div>
+                </>
+              ),
+            },
+            {
+              key: 'squeeze', accent: AMBER,
+              active: verdict === 'SQUEEZE_WATCH',
+              title: 'SQUEEZE_WATCH',
+              body: (
+                <>
+                  <div style={{ fontSize: 13, marginBottom: 6 }}>
+                    Stand down from selling. Buy a SPY call at 0.25 delta, 5–9 DTE, hold 5
+                    sessions. About $190/contract.
+                  </div>
+                  <div style={{ fontSize: 13, marginBottom: 6 }}>
+                    167 trades: <b>+$57/trade</b>, +37% return on premium, +$9,536 total, positive
+                    in 6 of 7 years.
+                  </div>
+                  <div style={{ fontSize: 13, marginBottom: 6 }}>
+                    Wins about one time in three and pays +103% when it lands.
+                  </div>
+                  <div style={{ fontSize: 12.5, color: RED, fontWeight: 700 }}>
+                    Must be 0.25 delta, NOT at-the-money — at 0.50 delta the same signal LOSES
+                    $43/trade versus benchmark. The edge is convexity per dollar, not delta.
+                  </div>
+                </>
+              ),
+            },
+            {
+              key: 'no_sell', accent: RED,
+              active: verdict === 'NO_SELL',
+              title: 'NO_SELL',
+              body: (
+                <div style={{ fontSize: 13 }}>
+                  Skip the put spread entirely. Fires on roughly 9% of sessions (net gamma below
+                  −$10B).
+                </div>
+              ),
+            },
+          ];
+
+          return (
+            <div style={S.card}>
+              <div style={S.cardTitle}>How to trade this</div>
+              {TRADE_BLOCKS.map(b => (
+                <div key={b.key} style={{
+                  background: '#0e1220', border: `1px solid ${b.active ? b.accent + '66' : '#232a3d'}`,
+                  borderRadius: 10, padding: '12px 14px', marginBottom: 12, opacity: b.active ? 1 : 0.5,
+                }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: b.active ? b.accent : DIM, marginBottom: 6 }}>
+                    {b.title}
+                    {b.active && <span style={{ marginLeft: 8, fontWeight: 700 }}>← current state</span>}
+                  </div>
+                  {b.body}
+                </div>
+              ))}
+              <div style={{ ...S.small, lineHeight: 1.6 }}>
+                <b style={{ color: '#c6cbd8' }}>Capital.</b> Below $5,000, run one side only — at
+                $1,000 the account can afford just 14 of 61 squeeze signals, which is a different
+                strategy rather than a cheaper one. Both sides together need about $5,000.
+              </div>
+              <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6 }}>
+                Neither trade has been forward-tested. The sell side has a blind out-of-sample
+                decade behind it; the buy side is the best of 48 structures searched.
+              </div>
+            </div>
+          );
+        })()}
 
         {/* OUTLOOK — what to watch */}
         {(() => {
@@ -298,24 +410,34 @@ export default function SqueezePage() {
                 <span style={S.small}>{PIN_COPY[outlook.pin_strength] || ''}</span>
               </div>
 
-              {/* 6 — calendar strip: scheduled flow, color-coded by direction */}
+              {/* 6 — calendar strip: scheduled flow, color-coded by direction.
+                  Only flags that are actually true render — a static list
+                  made every chip look live even on a day with nothing
+                  scheduled. */}
               <div style={{ ...S.small, marginBottom: 4 }}>Scheduled flow today</div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
-                {CALENDAR_FLAGS.map(({ key, label, tone }) => {
-                  const active = !!cal[key];
-                  const color = tone === 'supportive' ? AMBER : GREEN;
-                  return (
-                    <span key={key} style={{
-                      fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 999,
-                      background: active ? color + '22' : 'transparent',
-                      border: `1px solid ${active ? color + '66' : '#232a3d'}`,
-                      color: active ? color : DIM,
-                    }}>
-                      {label}
-                    </span>
-                  );
-                })}
-              </div>
+              {(() => {
+                const activeFlags = CALENDAR_FLAGS.filter(({ key }) => !!cal[key]);
+                if (!activeFlags.length) {
+                  return <div style={{ ...S.small, marginBottom: 4 }}>No scheduled flow today.</div>;
+                }
+                return (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                    {activeFlags.map(({ key, label, tone }) => {
+                      const color = tone === 'supportive' ? AMBER : GREEN;
+                      return (
+                        <span key={key} style={{
+                          fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 999,
+                          background: color + '22',
+                          border: `1px solid ${color}66`,
+                          color,
+                        }}>
+                          {label}
+                        </span>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
               {cal.month_end && (
                 <div style={S.small}>
                   Month end raises squeeze odds 2.52x on oversold days — but was 0-for-9 in both
@@ -395,23 +517,35 @@ export default function SqueezePage() {
         <div style={S.card}>
           <div style={S.cardTitle}>Net dealer gamma — last 90 sessions</div>
           {hist.length ? (
-            <div style={{ width: '100%', height: 260 }}>
-              <ResponsiveContainer>
-                <ComposedChart data={hist} margin={{ top: 6, right: 12, left: -8, bottom: 0 }}>
-                  {oversoldBands.map(([a, b], i) => (
-                    <ReferenceArea key={`os-${i}`} x1={a} x2={b} fill={AMBER} fillOpacity={0.08} />
-                  ))}
-                  {overboughtBands.map(([a, b], i) => (
-                    <ReferenceArea key={`ob-${i}`} x1={a} x2={b} fill={GREEN} fillOpacity={0.08} />
-                  ))}
-                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#5b6478' }} interval="preserveStartEnd" minTickGap={40} />
-                  <YAxis tick={{ fontSize: 10, fill: '#5b6478' }} tickFormatter={v => `${v.toFixed(0)}B`} />
-                  <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }}
-                           formatter={(v, name) => [name === 'net_gex_b' ? `$${Number(v).toFixed(2)}B` : v, name]} />
-                  <ReferenceLine y={0} stroke="#232a3d" />
-                  <Line dataKey="net_gex_b" name="net gamma ($B)" stroke="#60a5fa" dot={false} strokeWidth={1.8} />
-                </ComposedChart>
-              </ResponsiveContainer>
+            <>
+              <div style={{ width: '100%', height: 260 }}>
+                <ResponsiveContainer>
+                  <ComposedChart data={chartData} margin={{ top: 6, right: 12, left: -8, bottom: 0 }}>
+                    {oversoldBands.map(([a, b], i) => (
+                      <ReferenceArea key={`os-${i}`} x1={a} x2={b} fill={AMBER} fillOpacity={0.08} />
+                    ))}
+                    {overboughtBands.map(([a, b], i) => (
+                      <ReferenceArea key={`ob-${i}`} x1={a} x2={b} fill={GREEN} fillOpacity={0.08} />
+                    ))}
+                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#5b6478' }} interval="preserveStartEnd" minTickGap={40} />
+                    <YAxis tick={{ fontSize: 10, fill: '#5b6478' }} tickFormatter={v => `${v.toFixed(0)}B`} />
+                    <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }}
+                             /* Recharts hands the formatter the series' `name` PROP, not its
+                                dataKey — so the old `name === 'net_gex_b'` branch never matched
+                                and tooltips rendered raw unformatted numbers. Both series are
+                                $bn, so format any finite number and pass anything else through. */
+                             formatter={(v, name) => [
+                               Number.isFinite(Number(v)) ? `$${Number(v).toFixed(2)}B` : '—', name]} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} formatter={v => <span style={{ color: '#8b93a7' }}>{v}</span>} />
+                    <ReferenceLine y={0} stroke="#232a3d" />
+                    <Line dataKey="net_gex_b" name="net gamma ($B)" stroke="#60a5fa" dot={false} strokeWidth={1.8} />
+                    {liveOk && (
+                      <Line dataKey="live_gex_b" name="live (not the signal)" stroke={LIVE} strokeWidth={1.8}
+                            strokeDasharray="4 4" dot={<LiveDot />} isAnimationActive={false} />
+                    )}
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
               <div style={{ ...S.small, marginTop: 8, lineHeight: 1.65 }}>
                 <b style={{ color: '#8b95ab' }}>How to read this.</b> The blue line is net dealer
                 gamma in billions of dollars per 1% move in SPY — how much stock dealers must
@@ -431,9 +565,13 @@ export default function SqueezePage() {
                   moves. A −$4B print can be amber in a calm month and unshaded in a volatile one.
                   That is deliberate: the level alone is a much weaker signal than the rank.
                   Updates once per session at 15:05 CT.
+                  {liveOk && (
+                    <> <b style={{ color: LIVE }}>The dashed purple point</b> is this minute's live
+                    reading — context only, not part of the 15:05 CT signal.</>
+                  )}
                 </span>
               </div>
-            </div>
+            </>
           ) : <div style={S.small}>no history yet — needs the 15:05 CT capture job to run and 60 sessions before the percentile is defined</div>}
         </div>
 
