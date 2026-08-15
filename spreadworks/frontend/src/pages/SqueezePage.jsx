@@ -769,16 +769,26 @@ export default function SqueezePage() {
                           a new high prints above 1.0. Those are the SQUEEZE_WATCH sessions,
                           i.e. the only ones worth looking at, and a [0, 1] domain flattened
                           every one of them against the top of the plot. */}
-                      <YAxis tick={{ fontSize: 10, fill: '#5b6478' }}
+                      {/* Both axes carry an explicit id — with two YAxes present, leaving
+                          one implicit makes which series binds to which axis depend on
+                          declaration order. */}
+                      <YAxis yAxisId="ratio" tick={{ fontSize: 10, fill: '#5b6478' }}
                              domain={[0, (dataMax) => Math.max(1.05, Math.ceil(dataMax * 20) / 20)]}
                              /* Without this the computed top of the domain renders as a
                                 raw float ("1.0999978297") and the axis prints garbage. */
                              tickFormatter={v => Number(v).toFixed(2)} />
+                      {/* VIX's LEVEL on its own axis. The ratio alone cannot tell a
+                          firing at VIX 22 from one at VIX 13, and that is the single
+                          thing a reader needs to sanity-check the leg. */}
+                      <YAxis yAxisId="lvl" orientation="right" tick={{ fontSize: 10, fill: '#5b6478' }}
+                             domain={['dataMin - 2', 'dataMax + 2']} tickFormatter={v => Number(v).toFixed(0)} />
                       <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }}
-                               formatter={(v) => [Number.isFinite(Number(v)) ? Number(v).toFixed(2) : '—', 'VIX ratio']} />
-                      <ReferenceLine y={0.95} stroke={AMBER} strokeDasharray="4 4"
+                               formatter={(v, name) => [Number.isFinite(Number(v)) ? Number(v).toFixed(2) : '—', name]} />
+                      <Legend wrapperStyle={{ fontSize: 11 }} formatter={v => <span style={{ color: '#8b93a7' }}>{v}</span>} />
+                      <ReferenceLine yAxisId="ratio" y={0.95} stroke={AMBER} strokeDasharray="4 4"
                                      label={{ value: '0.95 — at highs', position: 'insideTopRight', fill: AMBER, fontSize: 10 }} />
-                      <Line dataKey="ratio" name="VIX ratio" stroke="#f0abfc" dot={false} strokeWidth={1.8} connectNulls />
+                      <Line yAxisId="ratio" dataKey="ratio" name="VIX ratio" stroke="#f0abfc" dot={false} strokeWidth={1.8} connectNulls />
+                      <Line yAxisId="lvl" dataKey="vix" name="VIX level" stroke="#64748b" dot={false} strokeWidth={1.1} />
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
@@ -786,8 +796,15 @@ export default function SqueezePage() {
               <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6 }}>
                 SQUEEZE_WATCH needs this at or above 0.95 at the same time gamma is oversold. Above 0.95
                 means fear is still building; below it means fear is decaying, and a decaying VIX is what
-                kills the setup. A perfectly flat VIX reads as 1.00 by construction — the ratio measures
-                where VIX sits in its own recent range, not its level.
+                kills the setup.
+                <br />
+                The ratio measures where VIX sits in its own recent range, not its level, so a perfectly
+                flat VIX would read 1.00 by construction. Measured over 1,598 sessions that is a
+                theoretical hole rather than a live one: of 161 firings, <b style={{ color: '#c6cbd8' }}>9
+                came on a flat window and only 4 cleared 0.95 without also setting an outright new
+                20-session high</b>. Median VIX at a firing is <b style={{ color: '#c6cbd8' }}>22.3</b>,
+                and just 5 of 161 fired below 15 — the leg is not quietly passing in calm tape. The grey
+                line is there so you can check that yourself.
               </div>
             </div>
           );
