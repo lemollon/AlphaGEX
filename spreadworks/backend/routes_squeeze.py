@@ -27,8 +27,9 @@ from fastapi import APIRouter
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from .bots.gamma_regime import (GAMMA_DAILY_TABLE, PCT_WINDOW, squeeze_outlook,
-                                squeeze_signal)
+from .bots.gamma_regime import (GAMMA_DAILY_TABLE, PCT_WINDOW, data_freshness,
+                                signal_history, signal_summary, squeeze_outlook,
+                                squeeze_signal, vix_history)
 from .db import engine as _global_engine
 
 logger = logging.getLogger("spreadworks.routes_squeeze")
@@ -119,8 +120,47 @@ async def state():
         logger.warning("[routes_squeeze] squeeze_outlook failed: %r", e)
         outlook = {"reason": f"squeeze_outlook error: {e}"}
 
+    # Freshness. `asof` is the date the DECISION is being made, which is always
+    # today — it is NOT a claim about how current the data is, and the page read
+    # it as one for as long as it shipped ("As of 2026-08-15" over an 08-11
+    # reading). `data_date` is the row the verdict actually came from, and
+    # `freshness` is what the page must show when the two disagree.
+    try:
+        fresh = data_freshness(ENGINE, today)
+        for k in ("gamma_date", "vix_date", "expected_date"):
+            if fresh.get(k) is not None:
+                fresh[k] = _isoformat(fresh[k])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_squeeze] data_freshness failed: %r", e)
+        fresh = {"reason": f"data_freshness error: {e}", "stale": None}
+
+    # Track record: the verdict each stored session produced, plus a roll-up.
+    try:
+        sh = signal_history(ENGINE, n=HISTORY_ROWS)
+        summary = signal_summary(sh)
+        for r in sh:
+            r["trade_date"] = _isoformat(r["trade_date"])
+        for k in ("last_squeeze_watch", "last_no_sell", "first_date", "last_date"):
+            if summary.get(k) is not None:
+                summary[k] = _isoformat(summary[k])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_squeeze] signal_history failed: %r", e)
+        sh, summary = [], {"reason": f"signal_history error: {e}"}
+
+    # The VIX leg's own series — it had no history on the page at all.
+    try:
+        vh = vix_history(ENGINE, n=HISTORY_ROWS)
+        for r in vh:
+            r["trade_date"] = _isoformat(r["trade_date"])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_squeeze] vix_history failed: %r", e)
+        vh = []
+
     return {
         "asof": today.isoformat(),
+        "data_date": (_isoformat(sig["prior_date"])
+                      if sig.get("prior_date") is not None else None),
+        "freshness": fresh,
         "outlook": outlook,
         "verdict": sig.get("verdict"),
         "gamma_pct": sig.get("gamma_pct"),
@@ -130,6 +170,9 @@ async def state():
                       if sig.get("prior_date") is not None else None),
         "reason": sig.get("reason"),
         "history": history,
+        "vix_history": vh,
+        "signal_history": sh,
+        "signal_summary": summary,
         "advisory_only": True,
     }
 

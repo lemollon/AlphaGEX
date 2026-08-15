@@ -521,6 +521,228 @@ def squeeze_outlook(engine: Engine, asof: date,
     return out
 
 
+# ---------------------------------------------------------------------------
+# Freshness. A verdict is only as current as the row underneath it.
+# ---------------------------------------------------------------------------
+# gamma_state / gamma_percentile take `ORDER BY trade_date DESC LIMIT 1` and
+# use whatever is there, however old. That is correct for the query and wrong
+# for the caller: a table that stopped updating a month ago still yields a
+# confident SELL_PREMIUM, which contradicts this module's own doctrine that
+# UNKNOWN is a block rather than a pass. Staleness is not "no data", so it does
+# not become UNKNOWN — but it must never be invisible either.
+#
+# The two legs are stored separately (sw_gamma_daily, sw_vix_daily) and are
+# seeded and captured by different code paths, so they can and do drift apart.
+# A two-leg gate reading its legs off different dates is a real defect, not a
+# cosmetic one, and `legs_mismatch` is what surfaces it.
+MAX_STALE_SESSIONS = 1   # the prior session is fresh; anything older is stale
+
+
+def sessions_between(a: date, b: date) -> int:
+    """Weekdays strictly after `a` through `b` inclusive. 0 if b <= a.
+
+    Market holidays are NOT modelled — there is no holiday calendar in this
+    service, so a holiday reads as one session of staleness. That errs toward
+    claiming stale when fresh, which is the safe direction for this use.
+    """
+    if b <= a:
+        return 0
+    n, d = 0, a
+    while d < b:
+        d += timedelta(days=1)
+        if d.weekday() < 5:
+            n += 1
+    return n
+
+
+def data_freshness(engine: Engine, asof: date) -> dict[str, Any]:
+    """How old is the data actually driving the verdict on `asof`?
+
+    Returns the newest stored date for each leg, how many sessions behind the
+    expected prior session each one is, and whether the two legs disagree.
+    Never raises — a missing table reports as unknown, not as fresh.
+    """
+    out: dict[str, Any] = {
+        "gamma_date": None, "vix_date": None,
+        "gamma_stale_sessions": None, "vix_stale_sessions": None,
+        "expected_date": None, "stale": None, "legs_mismatch": None,
+        "reason": None,
+    }
+
+    # The most recent session that SHOULD be stored: the last weekday before
+    # asof. Same holiday caveat as sessions_between.
+    expected = asof - timedelta(days=1)
+    while expected.weekday() >= 5:
+        expected -= timedelta(days=1)
+    out["expected_date"] = expected
+
+    def _latest(table: str) -> date | None:
+        with engine.begin() as conn:
+            row = conn.execute(text(
+                f"SELECT MAX(trade_date) FROM {table}")).fetchone()
+        if row is None or row[0] is None:
+            return None
+        d = row[0]
+        return d if isinstance(d, date) else date.fromisoformat(str(d))
+
+    try:
+        from backend.bots.vix_regime import VIX_DAILY_TABLE
+        g = _latest(GAMMA_DAILY_TABLE)
+        v = _latest(VIX_DAILY_TABLE)
+    except Exception as e:  # noqa: BLE001
+        out["reason"] = f"freshness query error: {e}"
+        return out
+
+    out["gamma_date"], out["vix_date"] = g, v
+    if g is not None:
+        out["gamma_stale_sessions"] = sessions_between(g, expected)
+    if v is not None:
+        out["vix_stale_sessions"] = sessions_between(v, expected)
+    if g is not None and v is not None:
+        out["legs_mismatch"] = g != v
+    staleness = [s for s in (out["gamma_stale_sessions"],
+                             out["vix_stale_sessions"]) if s is not None]
+    out["stale"] = bool(staleness and max(staleness) >= MAX_STALE_SESSIONS)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Signal history — the verdict this signal WOULD have printed, session by
+# session, so the page can show a track record rather than only today's state.
+# ---------------------------------------------------------------------------
+def signal_history(engine: Engine, n: int = 90,
+                   window: int = PCT_WINDOW) -> list[dict[str, Any]]:
+    """Per-session verdict for the last `n` stored sessions.
+
+    Each row is keyed by the gamma session's OWN trade_date and carries the
+    verdict that session's close produced — i.e. the verdict that was
+    actionable the NEXT morning, which is exactly how gamma_alerts.py consumes
+    it (15:05 CT capture, 08:05 CT alert). It is NOT the verdict in force
+    during that session.
+
+    Verdict logic is not re-implemented here; it is the same ladder as
+    squeeze_signal, applied to a stored row instead of the latest one. If that
+    ladder ever changes, change it in both places or this chart starts lying
+    about its own history.
+    """
+    from backend.bots.vix_regime import MIN_HISTORY, VIX_DAILY_TABLE, WINDOW
+
+    with engine.begin() as conn:
+        grows = conn.execute(text(
+            f"SELECT trade_date, net_gex FROM {GAMMA_DAILY_TABLE} "
+            "ORDER BY trade_date DESC LIMIT :n"
+        ), {"n": n + window}).fetchall()
+        vrows = conn.execute(text(
+            f"SELECT trade_date, vix FROM {VIX_DAILY_TABLE} "
+            "ORDER BY trade_date DESC LIMIT :n"
+        ), {"n": n + MIN_HISTORY}).fetchall()
+
+    g = sorted(((r[0] if isinstance(r[0], date) else date.fromisoformat(str(r[0])),
+                 float(r[1])) for r in grows), key=lambda t: t[0])
+    v = sorted(((r[0] if isinstance(r[0], date) else date.fromisoformat(str(r[0])),
+                 float(r[1])) for r in vrows), key=lambda t: t[0])
+    vix_by_date = {d: x for d, x in v}
+    vix_dates = [d for d, _ in v]
+    # position index, so the per-session lookup below is O(1) rather than a
+    # list scan inside the loop
+    vix_pos = {d: i for i, d in enumerate(vix_dates)}
+
+    out: list[dict[str, Any]] = []
+    for i, (d, net_gex) in enumerate(g):
+        if i + 1 < window:
+            continue                                  # percentile undefined
+        hist = [x for _, x in g[i - window + 1:i + 1]]
+        pct = sum(1 for x in hist if net_gex > x) / len(hist)
+        b = net_gex / 1e9
+
+        # VIX ratio for this same session: vix(d) / max(vix over the WINDOW
+        # sessions before d) — the definition vix_decay_ratio uses, one day
+        # shifted because there the "prior session" IS this row.
+        ratio = None
+        if d in vix_by_date:
+            j = vix_pos[d]
+            if j >= WINDOW:
+                wmax = max(vix_by_date[x] for x in vix_dates[j - WINDOW:j])
+                if wmax > 0:
+                    ratio = vix_by_date[d] / wmax
+
+        if ratio is None:
+            verdict = "UNKNOWN"
+        elif pct <= OVERSOLD_PCT and ratio > VIX_AT_HIGHS:
+            verdict = "SQUEEZE_WATCH"
+        elif b <= DEEP_SHORT_B:
+            verdict = "NO_SELL"
+        elif pct >= OVERBOUGHT_PCT:
+            verdict = "SELL_PREMIUM"
+        else:
+            verdict = "NEUTRAL"
+
+        out.append({"trade_date": d, "net_gex_b": b, "pct": pct,
+                    "vix_ratio": ratio, "verdict": verdict})
+    return out[-n:]
+
+
+def signal_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Track-record roll-up over `signal_history` rows.
+
+    `sessions_in_state` counts the CURRENT unbroken run, so a page can say
+    "11 sessions in SELL_PREMIUM" instead of only naming the state.
+    """
+    out: dict[str, Any] = {
+        "counts": {}, "last_squeeze_watch": None, "last_no_sell": None,
+        "sessions_in_state": None, "current": None, "n": len(rows),
+        "first_date": None, "last_date": None,
+    }
+    if not rows:
+        return out
+    for r in rows:
+        out["counts"][r["verdict"]] = out["counts"].get(r["verdict"], 0) + 1
+    for r in reversed(rows):
+        if out["last_squeeze_watch"] is None and r["verdict"] == "SQUEEZE_WATCH":
+            out["last_squeeze_watch"] = r["trade_date"]
+        if out["last_no_sell"] is None and r["verdict"] == "NO_SELL":
+            out["last_no_sell"] = r["trade_date"]
+    cur = rows[-1]["verdict"]
+    run = 0
+    for r in reversed(rows):
+        if r["verdict"] != cur:
+            break
+        run += 1
+    out["current"] = cur
+    out["sessions_in_state"] = run
+    out["first_date"] = rows[0]["trade_date"]
+    out["last_date"] = rows[-1]["trade_date"]
+    return out
+
+
+def vix_history(engine: Engine, n: int = 90) -> list[dict[str, Any]]:
+    """Last `n` sessions of VIX with each session's own decay ratio.
+
+    The VIX leg has been a bare number on the page with no history behind it
+    while the gamma leg got a 90-session chart. Same series, same shape, so
+    the missing leg can be seen rather than asserted.
+    """
+    from backend.bots.vix_regime import VIX_DAILY_TABLE, WINDOW
+
+    with engine.begin() as conn:
+        rows = conn.execute(text(
+            f"SELECT trade_date, vix FROM {VIX_DAILY_TABLE} "
+            "ORDER BY trade_date DESC LIMIT :n"
+        ), {"n": n + WINDOW}).fetchall()
+
+    v = sorted(((r[0] if isinstance(r[0], date) else date.fromisoformat(str(r[0])),
+                 float(r[1])) for r in rows), key=lambda t: t[0])
+    out: list[dict[str, Any]] = []
+    for i, (d, vix) in enumerate(v):
+        ratio = None
+        if i >= WINDOW:
+            wmax = max(x for _, x in v[i - WINDOW:i])
+            if wmax > 0:
+                ratio = vix / wmax
+        out.append({"trade_date": d, "vix": vix, "ratio": ratio})
+    return out[-n:]
+
+
 # ---- small shims so this module does not hard-depend on TradierClient internals ----
 
 def _base() -> str:
