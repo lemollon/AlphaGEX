@@ -470,6 +470,57 @@ def register_gamma_alerts(scheduler, app) -> None:
             verdict = sig.get("verdict", "UNKNOWN")
             webhook = _webhook_url()
 
+            # HEALTH GATE — this must run before the verdict post.
+            #
+            # Every health check built for this signal (staleness, capture
+            # provenance, whether the jobs are even armed) rendered on the PAGE
+            # and nowhere else, and nobody watches a page. That left the worst
+            # case wide open: on 2026-08-15 the reading was four sessions old
+            # and still resolved to SELL_PREMIUM, so this job would have posted
+            # a clean, confident trade recommendation off stale data with
+            # nothing marking it stale.
+            #
+            # So: if the signal is not fit to trade, say THAT instead of the
+            # verdict. Same precedence the page uses, so Discord and the page
+            # can never disagree about whether today is tradeable.
+            from .bots.gamma_regime import (capture_health, data_freshness,
+                                             job_status)
+            try:
+                fresh = data_freshness(engine, now.date())
+                cap = capture_health(fresh, job_status(engine))
+                sched = scheduled_jobs()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[GammaAlerts] health check raised: %r", e)
+                fresh, cap, sched = {}, {"state": "unknown"}, {"registered": None}
+
+            block = None
+            if sched.get("registered") is False:
+                block = ("The capture and alert jobs are not scheduled. Nothing "
+                         "is updating this signal.")
+            elif cap.get("state") == "claimed_but_not_stored":
+                block = cap.get("detail") or "The capture ran and stored nothing."
+            elif fresh.get("stale"):
+                block = (f"The newest gamma reading is {fresh.get('gamma_date')}, "
+                         f"{fresh.get('gamma_stale_sessions')} session(s) behind "
+                         f"{fresh.get('expected_date')}.")
+            elif fresh.get("window_complete") is False:
+                miss = fresh.get("window_missing") or []
+                block = (f"The 60-session percentile window has {len(miss)} "
+                         f"missing session(s): {', '.join(str(m) for m in miss[:5])}.")
+
+            if block and _dedup_ok("gamma_health", fire_date=now.date()):
+                await asyncio.to_thread(_send_webhook_sync, {
+                    "title": "SIGNAL BLOCKED — do not trade this today",
+                    "description": (f"{block}\n\nThe verdict would have read "
+                                    f"**{verdict}**. It is not fit to act on."),
+                    "color": RED,
+                    "footer": {"text": "gamma_regime health · advisory only — "
+                                       "no bot reads this"},
+                }, webhook)
+
+            if block:
+                return          # never post a trade verdict off an unfit signal
+
             if verdict != "NEUTRAL" and _dedup_ok("squeeze_signal", fire_date=now.date()):
                 pct, b, ratio = (sig.get("gamma_pct"), sig.get("net_gex_b"),
                                  sig.get("vix_ratio"))
