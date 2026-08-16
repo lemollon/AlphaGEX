@@ -175,6 +175,15 @@ async def state(sessions: str | None = None):
     except Exception as e:  # noqa: BLE001
         logger.warning("[routes_squeeze] job_status failed: %r", e)
         jobs = {"last": {}, "reason": f"job_status error: {e}"}
+    # ...and whether they are even armed. A dead scheduler and a job that has
+    # not fired yet both read as "never run" from the ledger alone.
+    try:
+        from .gamma_alerts import scheduled_jobs
+        jobs["scheduler"] = scheduled_jobs()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_squeeze] scheduled_jobs failed: %r", e)
+        jobs["scheduler"] = {"registered": None, "jobs": {},
+                             "reason": f"scheduled_jobs error: {e}"}
 
     # Did the capture claim a slot and store nothing? The dedup ledger records
     # the claim, not the success, so the two must be compared.

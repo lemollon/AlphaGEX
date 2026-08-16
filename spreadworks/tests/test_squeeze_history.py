@@ -479,3 +479,60 @@ def test_intraday_does_not_pull_the_chain_when_the_market_is_shut(monkeypatch):
     assert out["stale"] is True
     assert out["net_gex_b"] is None
     assert out["reason"] == "market_closed"
+
+
+# --------------------------------------------------------------------------
+# scheduled_jobs — "never run" is ambiguous without it
+# --------------------------------------------------------------------------
+def test_unarmed_scheduler_is_distinguishable_from_not_yet_fired():
+    """A scheduler that failed to start and a job that simply has not reached
+    its first firing are identical in the ledger. They are not the same
+    problem: one needs a fix, the other needs patience."""
+    import backend.gamma_alerts as ga
+    old = ga._SCHEDULER.get("ref")
+    ga._SCHEDULER["ref"] = None
+    try:
+        s = ga.scheduled_jobs()
+        assert s["registered"] is False
+        assert "not armed" in s["reason"] and s["reason"].endswith(".")
+    finally:
+        ga._SCHEDULER["ref"] = old
+
+
+def test_armed_scheduler_reports_each_job_next_run():
+    import backend.gamma_alerts as ga
+
+    class _Job:
+        def __init__(self, nxt): self.next_run_time = nxt
+
+    class _Sched:
+        def get_job(self, jid):
+            return _Job(datetime(2026, 8, 17, 15, 5, tzinfo=ga.CT)) \
+                if jid == "gamma_capture" else None
+
+    from datetime import datetime
+    old = ga._SCHEDULER.get("ref")
+    ga._SCHEDULER["ref"] = _Sched()
+    try:
+        s = ga.scheduled_jobs()
+        assert s["registered"] is True
+        assert s["jobs"]["gamma_capture"].startswith("2026-08-17T15:05")
+        assert s["jobs"]["gamma_squeeze_alert"] is None      # armed but no job
+    finally:
+        ga._SCHEDULER["ref"] = old
+
+
+def test_scheduled_jobs_never_raises():
+    import backend.gamma_alerts as ga
+
+    class _Bad:
+        def get_job(self, jid): raise RuntimeError("apscheduler internals moved")
+
+    old = ga._SCHEDULER.get("ref")
+    ga._SCHEDULER["ref"] = _Bad()
+    try:
+        s = ga.scheduled_jobs()
+        assert s["registered"] is True
+        assert s["reason"] is not None
+    finally:
+        ga._SCHEDULER["ref"] = old
