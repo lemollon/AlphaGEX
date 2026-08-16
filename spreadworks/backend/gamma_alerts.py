@@ -503,6 +503,16 @@ def register_gamma_alerts(scheduler, app) -> None:
                 block = (f"The newest gamma reading is {fresh.get('gamma_date')}, "
                          f"{fresh.get('gamma_stale_sessions')} session(s) behind "
                          f"{fresh.get('expected_date')}.")
+            elif fresh.get("window_source_mixed"):
+                block = (
+                    f"The 60-session percentile window now mixes two data "
+                    f"sources: {fresh.get('window_captured')} session(s) from the "
+                    f"live Tradier capture and {fresh.get('window_seeded')} from "
+                    f"the ORATS-derived baseline. The arithmetic is identical on "
+                    f"both sides, so any disagreement is in the greeks themselves "
+                    f"— and a percentile is a RANK, so ranking one kind of "
+                    f"measurement inside a window of another is not a percentile. "
+                    f"Reconcile the two before trading this.")
             elif fresh.get("window_complete") is False:
                 miss = fresh.get("window_missing") or []
                 block = (f"The 60-session percentile window has {len(miss)} "

@@ -587,3 +587,40 @@ def test_a_hole_in_the_window_blocks():
 def test_a_healthy_signal_is_not_blocked():
     assert _block_reason({"stale": False, "window_complete": True},
                          {"state": "ok"}, {"registered": True}) is None
+
+
+# --------------------------------------------------------------------------
+# source mixing — a percentile must not rank two different measurements
+# --------------------------------------------------------------------------
+def test_an_all_seeded_window_is_not_mixed(engine):
+    days = _weekdays(date(2026, 8, 14), PCT_WINDOW + 5)
+    _seed(engine, days, lambda d: 1e9, lambda d: 15.0)
+    f = data_freshness(engine, date(2026, 8, 17))
+    assert f["window_captured"] == 0
+    assert f["window_source_mixed"] is False
+
+
+def test_one_captured_row_makes_the_window_mixed(engine):
+    """The moment the 15:05 capture writes its first Tradier-derived reading
+    into an ORATS-derived baseline, the percentile is ranking one kind of
+    measurement inside a window of another."""
+    days = _weekdays(date(2026, 8, 14), PCT_WINDOW + 5)
+    _seed(engine, days, lambda d: 1e9, lambda d: 15.0)
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"UPDATE {GAMMA_DAILY_TABLE} SET n_contracts = 4821 "
+            "WHERE trade_date = :d"), {"d": days[-1].isoformat()})
+    f = data_freshness(engine, date(2026, 8, 17))
+    assert f["window_captured"] == 1
+    assert f["window_source_mixed"] is True
+
+
+def test_a_fully_captured_window_is_homogeneous_again(engine):
+    """Once every row in the window came from the capture, it is internally
+    consistent again — mixing is a transitional state, not a permanent one."""
+    days = _weekdays(date(2026, 8, 14), PCT_WINDOW)
+    _seed(engine, days, lambda d: 1e9, lambda d: 15.0)
+    with engine.begin() as conn:
+        conn.execute(text(f"UPDATE {GAMMA_DAILY_TABLE} SET n_contracts = 4821"))
+    f = data_freshness(engine, date(2026, 8, 17))
+    assert f["window_source_mixed"] is False

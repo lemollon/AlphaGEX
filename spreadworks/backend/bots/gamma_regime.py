@@ -655,10 +655,42 @@ def data_freshness(engine: Engine, asof: date) -> dict[str, Any]:
         out["window_needed"] = PCT_WINDOW
         out["window_missing"] = missing
         out["window_complete"] = bool(len(gdates) >= PCT_WINDOW and not missing)
+
+        # SOURCE MIXING. The 1,663-row baseline is ORATS/ThetaData-derived:
+        # gamma solved locally by Black-Scholes with a parity-implied carry.
+        # The 15:05 capture reads Tradier's OWN vendor greeks. The arithmetic
+        # is identical on both sides (gamma*OI*100*spot^2*0.01), so any
+        # disagreement is in the greeks themselves -- and the one paired
+        # observation available reads 6.30B live against 3.50B stored for
+        # 2026-08-14, with spot matching to the cent.
+        #
+        # A percentile is a rank of a value against its own history. Rank a
+        # Tradier-derived reading inside a window of ORATS-derived ones and the
+        # comparison is between two different measurements of the same thing.
+        # This does not block -- one paired reading on a closed market is weak
+        # evidence and the capture may well agree once it runs live -- but the
+        # moment the window stops being homogeneous, the page and the alert
+        # have to say so rather than quietly serving a percentile built on it.
+        with engine.begin() as conn:
+            srcs = conn.execute(text(
+                f"SELECT COUNT(*) FILTER (WHERE n_contracts IS NOT NULL), COUNT(*) "
+                f"FROM (SELECT n_contracts FROM {GAMMA_DAILY_TABLE} "
+                "ORDER BY trade_date DESC LIMIT :n) t"
+                if engine.dialect.name != "sqlite" else
+                f"SELECT SUM(CASE WHEN n_contracts IS NOT NULL THEN 1 ELSE 0 END), "
+                f"COUNT(*) FROM (SELECT n_contracts FROM {GAMMA_DAILY_TABLE} "
+                "ORDER BY trade_date DESC LIMIT :n)"),
+                {"n": PCT_WINDOW}).fetchone()
+        cap_n = int(srcs[0] or 0)
+        tot_n = int(srcs[1] or 0)
+        out["window_captured"] = cap_n
+        out["window_seeded"] = tot_n - cap_n
+        out["window_source_mixed"] = bool(cap_n > 0 and cap_n < tot_n)
     except Exception as e:  # noqa: BLE001
         out["window_sessions"] = None
         out["window_missing"] = None
         out["window_complete"] = None
+        out["window_source_mixed"] = None
         out["window_reason"] = f"window query error: {e}"
     return out
 

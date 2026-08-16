@@ -333,7 +333,12 @@ export default function SqueezePage() {
   // Blocking takes precedence over the verdict: a stale/unarmed/unknown read
   // is never actionable no matter what the verdict string says.
   const outlookTop = data.outlook || {};
-  const blocked = data.freshness?.stale
+  // Source mixing blocks too: a percentile is a RANK, and ranking a
+  // Tradier-derived reading inside a window of ORATS-derived ones compares two
+  // different measurements of the same quantity. See data_freshness().
+  const sourceMixed = data.freshness?.window_source_mixed === true;
+  const blocked = sourceMixed
+    || data.freshness?.stale
     || data.capture_health?.state === 'claimed_but_not_stored'
     || data.jobs?.scheduler?.registered === false
     || verdict === 'UNKNOWN';
@@ -348,6 +353,12 @@ export default function SqueezePage() {
       blockedReason = `The newest reading is ${data.freshness.gamma_date || '—'}, ${data.freshness.gamma_stale_sessions ?? '—'} session(s) behind ${data.freshness.expected_date || '—'}.`;
     } else {
       blockedReason = 'The signal could not be computed. UNKNOWN is a block, never a pass.';
+    }
+    if (sourceMixed) {
+      blockedReason = `The 60-session window mixes two data sources — `
+        + `${data.freshness.window_captured} session(s) from the live capture and `
+        + `${data.freshness.window_seeded} from the ORATS baseline. A percentile `
+        + `ranks a value against its own history; these are not the same measurement.`;
     }
   }
   // The machine reason behind an UNKNOWN — "insufficient_gamma_history:
