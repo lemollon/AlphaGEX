@@ -385,3 +385,97 @@ def test_committed_vix_baseline_has_no_phantom_sessions():
     missing = sorted(d for d in g if lo <= d <= hi and d not in v)
     assert phantom == [], f"VIX rows on non-trading days: {phantom}"
     assert missing == [], f"trading days with no VIX row: {missing}"
+
+
+# --------------------------------------------------------------------------
+# capture_health — the dedup ledger records a CLAIM, not a SUCCESS
+# --------------------------------------------------------------------------
+def test_never_run_is_its_own_state():
+    from backend.bots.gamma_regime import capture_health
+    h = capture_health({"last_capture_date": None}, {"last": {}, "reason": None})
+    assert h["state"] == "never_run"
+
+
+def test_claimed_but_nothing_stored_is_caught():
+    """capture_gamma calls _dedup_ok BEFORE it pulls the chain, so a capture
+    that claims the slot and then dies leaves a ledger entry and no row. A
+    naive 'last fired' readout would call that healthy."""
+    from backend.bots.gamma_regime import capture_health
+    h = capture_health({"last_capture_date": None},
+                       {"last": {"gamma_capture": date(2026, 8, 17)}, "reason": None})
+    assert h["state"] == "claimed_but_not_stored"
+    assert "wrote nothing." in h["detail"]
+
+    # stored, but older than the claim -> today's run still failed
+    h = capture_health({"last_capture_date": date(2026, 8, 14)},
+                       {"last": {"gamma_capture": date(2026, 8, 17)}, "reason": None})
+    assert h["state"] == "claimed_but_not_stored"
+
+
+def test_claim_matched_by_a_stored_row_is_ok():
+    from backend.bots.gamma_regime import capture_health
+    h = capture_health({"last_capture_date": date(2026, 8, 17)},
+                       {"last": {"gamma_capture": date(2026, 8, 17)}, "reason": None})
+    assert h["state"] == "ok"
+
+
+def test_a_failed_lookup_is_unknown_not_ok():
+    from backend.bots.gamma_regime import capture_health
+    h = capture_health({"last_capture_date": None},
+                       {"last": {}, "reason": "table missing"})
+    assert h["state"] == "unknown"
+
+
+# --------------------------------------------------------------------------
+# /state must always answer
+# --------------------------------------------------------------------------
+def test_state_never_422s_on_a_bad_sessions_param(engine, monkeypatch):
+    """Declared as `int`, FastAPI rejects ?sessions=abc with a 422 before any
+    clamp can run — which blanks the page, the exact failure this endpoint's
+    contract exists to prevent."""
+    import asyncio
+    import backend.routes_squeeze as rs
+    from backend.db import Base
+    from backend import models  # noqa: F401
+    Base.metadata.create_all(engine)
+    days = _weekdays(date(2026, 8, 14), PCT_WINDOW + 30)
+    _seed(engine, days, lambda d: float(days.index(d)) * 1e8, lambda d: 15.0)
+    monkeypatch.setattr(rs, "ENGINE", engine)
+
+    for bad in ("abc", "", "1e9", None, "12.5"):
+        out = asyncio.run(rs.state(sessions=bad))
+        assert out["verdict"] is not None
+        assert len(out["history"]) >= 1, f"blanked on sessions={bad!r}"
+
+    assert len(asyncio.run(rs.state(sessions="30"))["history"]) == 30
+    assert len(asyncio.run(rs.state(sessions="-5"))["history"]) == 1
+    assert len(asyncio.run(rs.state(sessions="99999"))["history"]) <= rs.MAX_HISTORY_ROWS
+
+
+def test_intraday_does_not_pull_the_chain_when_the_market_is_shut(monkeypatch):
+    """~40 chain requests, cached 60s, for a number that cannot change — and
+    out of hours Tradier serves stale quotes that the strip rendered as a
+    live move."""
+    import asyncio
+    import backend.routes_squeeze as rs
+
+    called = {"n": 0}
+
+    def _boom(*a, **k):
+        called["n"] += 1
+        raise AssertionError("fetch_net_gex must not run while the market is shut")
+
+    monkeypatch.setattr(rs, "_INTRADAY_CACHE", {"ts": 0.0, "payload": None})
+    monkeypatch.setattr("backend.bots.gamma_regime.fetch_net_gex", _boom)
+
+    class _Sat(rs.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return rs.datetime(2026, 8, 15, 12, 0, tzinfo=rs.CT)   # Saturday
+    monkeypatch.setattr(rs, "datetime", _Sat)
+
+    out = asyncio.run(rs.intraday())
+    assert called["n"] == 0
+    assert out["stale"] is True
+    assert out["net_gex_b"] is None
+    assert out["reason"] == "market_closed"

@@ -288,6 +288,28 @@ export default function SqueezePage() {
           A prerequisite for a squeeze and a strong veto for short premium — never a direction call.
         </p>
 
+        {/* CAPTURE FAILED SILENTLY — the loudest thing on the page.
+            capture_gamma calls _dedup_ok BEFORE pulling the chain, so a run
+            that claims the slot and then dies leaves a ledger entry and no
+            row. Staleness alone would not catch it on day one: the data is
+            only one session old, so the STALE bar below stays quiet while the
+            job is in fact dead. This is the shape of every silent failure
+            this page has had. */}
+        {data.capture_health?.state === 'claimed_but_not_stored' && (
+          <div style={{
+            background: RED + '20', border: `1px solid ${RED}88`, borderRadius: 10,
+            padding: '10px 14px', marginBottom: 10, fontSize: 12.5, lineHeight: 1.6,
+          }}>
+            <div style={{ fontWeight: 700, color: RED }}>
+              CAPTURE FAILED — the 15:05 job ran and stored nothing.
+            </div>
+            <div style={{ marginTop: 4, color: '#c6cbd8' }}>
+              {data.capture_health.detail || ''} The reading below is the last one that
+              did store, so it will keep ageing until this is fixed.
+            </div>
+          </div>
+        )}
+
         {/* FRESHNESS — the verdict banner used to print today's calendar date
             regardless of how old the underlying gamma reading was. This bar
             makes staleness impossible to miss; it renders nothing when the
@@ -742,7 +764,6 @@ export default function SqueezePage() {
         {(() => {
           const iv = intraday || {};
           const stale = !!iv.stale;
-          const capturedHm = iv.captured_at ? iv.captured_at.slice(11, 16) : null;
           return (
             <div style={{ ...S.card, padding: '10px 14px', opacity: stale ? 0.55 : 1 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: DIM, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
@@ -777,9 +798,13 @@ export default function SqueezePage() {
                     move in gamma, until the 15:05 capture has run against both.
                   </div>
                   {stale ? (
+                    /* Not "the last available reading" — the backend no longer
+                       pulls at all while the market is shut, because out of
+                       hours Tradier serves stale quotes and rendering those as
+                       a live delta showed gamma "moving" on a closed market. */
                     <div style={{ fontSize: 11, color: DIM }}>
-                      Market is closed — this is the last available reading
-                      {capturedHm ? ` (as of ${capturedHm} CT)` : ''}.
+                      Market is closed — no live reading is taken. The figures above resume
+                      during market hours; the last stored close is shown for context.
                     </div>
                   ) : (
                     <div style={{ fontSize: 11, color: DIM, lineHeight: 1.5 }}>
@@ -788,7 +813,9 @@ export default function SqueezePage() {
                       evidence behind it.
                     </div>
                   )}
-                  {iv.reason && <div style={{ fontSize: 11, color: DIM, marginTop: 4 }}>{iv.reason}</div>}
+                  {iv.reason && iv.reason !== 'market_closed' && (
+                    <div style={{ fontSize: 11, color: DIM, marginTop: 4 }}>{iv.reason}</div>
+                  )}
                 </>
               )}
             </div>
