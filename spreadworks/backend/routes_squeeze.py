@@ -41,6 +41,11 @@ ENGINE: Engine = _global_engine
 CT = ZoneInfo("America/Chicago")
 
 HISTORY_ROWS = 90
+# The page's range control slices client-side, so /state serves the widest
+# window it might ask for in one request rather than refetching per range.
+# Capped because _history_with_percentile pulls n + PCT_WINDOW - 1 rows and
+# signal_history is O(n * PCT_WINDOW).
+MAX_HISTORY_ROWS = 400
 
 # /intraday: 40-ish chain requests per pull, so cache it — same convention as
 # routes_bots.py's _FLEET_STATS_CACHE.
@@ -92,12 +97,18 @@ def _history_with_percentile(engine: Engine, n: int = HISTORY_ROWS) -> list[dict
 
 
 @router.get("/state")
-async def state():
-    """Current squeeze verdict + up to 90 sessions of net-gamma history
-    (each with its own trailing 60-session percentile) for the frontend
-    chart. Never raises — degrades to an UNKNOWN-shaped signal + empty
-    history rather than a 500."""
+async def state(sessions: int = HISTORY_ROWS):
+    """Current squeeze verdict + up to `sessions` sessions of net-gamma
+    history (each with its own trailing 60-session percentile) for the
+    frontend chart. Never raises — degrades to an UNKNOWN-shaped signal +
+    empty history rather than a 500.
+
+    `sessions` is clamped rather than rejected: this endpoint's contract is
+    that it always answers, so a nonsense value must degrade to a sane
+    window, not a 422 that blanks the page.
+    """
     today = datetime.now(CT).date()
+    n_rows = max(1, min(MAX_HISTORY_ROWS, sessions))
     try:
         sig = squeeze_signal(ENGINE, today)
     except Exception as e:  # noqa: BLE001
@@ -106,7 +117,7 @@ async def state():
               "vix_ratio": None, "prior_date": None,
               "reason": f"squeeze_signal error: {e}"}
     try:
-        history = _history_with_percentile(ENGINE)
+        history = _history_with_percentile(ENGINE, n=n_rows)
     except Exception as e:  # noqa: BLE001
         logger.warning("[routes_squeeze] history query failed: %r", e)
         history = []
@@ -136,7 +147,7 @@ async def state():
 
     # Track record: the verdict each stored session produced, plus a roll-up.
     try:
-        sh = signal_history(ENGINE, n=HISTORY_ROWS)
+        sh = signal_history(ENGINE, n=n_rows)
         summary = signal_summary(sh)
         for r in sh:
             r["trade_date"] = _isoformat(r["trade_date"])
@@ -149,7 +160,7 @@ async def state():
 
     # The VIX leg's own series — it had no history on the page at all.
     try:
-        vh = vix_history(ENGINE, n=HISTORY_ROWS)
+        vh = vix_history(ENGINE, n=n_rows)
         for r in vh:
             r["trade_date"] = _isoformat(r["trade_date"])
     except Exception as e:  # noqa: BLE001

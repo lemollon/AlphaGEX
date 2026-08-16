@@ -81,6 +81,18 @@ const CALENDAR_FLAGS = [
   { key: 'opex_week', label: 'Opex week', tone: 'suppressive' },
 ];
 
+// Range control. FETCH_SESSIONS is what /state is asked for once; the buttons
+// slice that locally. 250 ≈ one trading year and is under the endpoint's
+// MAX_HISTORY_ROWS=400 clamp.
+const FETCH_SESSIONS = 250;
+const DEFAULT_RANGE = 90;
+const RANGES = [
+  { n: 30, label: '30D' },
+  { n: 60, label: '60D' },
+  { n: 90, label: '90D' },
+  { n: 250, label: '1Y' },
+];
+
 // The price series' display name. It is also the tooltip's only way to tell a
 // dollar price from a dollar-billions gamma reading — see the Tooltip
 // formatter — so the Line's `name` and that check must stay the same string.
@@ -140,12 +152,17 @@ export default function SqueezePage() {
   const [err, setErr] = useState(null);
   const [intraday, setIntraday] = useState(null);
   const [intradayErr, setIntradayErr] = useState(null);
+  const [rangeN, setRangeN] = useState(DEFAULT_RANGE);
 
   useEffect(() => {
     let live = true;
     const load = async () => {
       try {
-        const r = await fetch(`${API_URL}/api/spreadworks/squeeze/state`);
+        // Always fetch the WIDEST range and slice client-side. Refetching per
+        // range would put a percentile recompute and a signal-history walk on
+        // every button press, for data the page already has.
+        const r = await fetch(
+          `${API_URL}/api/spreadworks/squeeze/state?sessions=${FETCH_SESSIONS}`);
         const d = await r.json();
         if (live) setData(d);
       } catch (e) { if (live) setErr(String(e)); }
@@ -184,7 +201,40 @@ export default function SqueezePage() {
 
   const verdict = data.verdict || 'UNKNOWN';
   const color = VERDICT_COLOR[verdict] || GREY;
-  const hist = (data.history || []).map(h => ({ ...h, label: h.trade_date.slice(5) }));
+
+  // The range control governs the gamma chart, the VIX chart and the track
+  // record together — three views of the same sessions, so letting them drift
+  // to different windows would make them impossible to read against each
+  // other. Sliced from the tail: newest sessions are always in view.
+  const inRange = (rows) => (rows || []).slice(-rangeN);
+  const hist = inRange(data.history).map(h => ({ ...h, label: h.trade_date.slice(5) }));
+  const rangeLabel = (RANGES.find(r => r.n === rangeN) || {}).label || `${rangeN}`;
+
+  // Shared range buttons. Rendered in each card's header rather than once at
+  // the top, so the control is always next to the chart it changes.
+  const RangePicker = () => (
+    <div style={{ display: 'flex', gap: 4 }}>
+      {RANGES.map(r => {
+        const on = r.n === rangeN;
+        // A range wider than the data we hold is dead weight — grey it out
+        // rather than silently showing the same chart for two buttons.
+        const avail = (data.history || []).length;
+        const short = r.n > avail;
+        return (
+          <button key={r.n} onClick={() => setRangeN(r.n)} disabled={short}
+            title={short ? `only ${avail} sessions stored` : `last ${r.n} sessions`}
+            style={{
+              fontSize: 11, fontWeight: 700, borderRadius: 6, cursor: short ? 'default' : 'pointer',
+              padding: '3px 9px', background: on ? '#1c2740' : 'transparent',
+              border: `1px solid ${on ? '#3b82f6aa' : '#232a3d'}`,
+              color: short ? '#3f4657' : on ? '#c6cbd8' : DIM,
+            }}>
+            {r.label}
+          </button>
+        );
+      })}
+    </div>
+  );
 
   // Contiguous oversold (<=20th pct) / overbought (>=80th pct) zones, for
   // shading the chart — same construction RiskAdvisorPage uses for its
@@ -652,7 +702,10 @@ export default function SqueezePage() {
 
         {/* CHART */}
         <div style={S.card}>
-          <div style={S.cardTitle}>Net dealer gamma — last 90 sessions</div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ ...S.cardTitle, marginBottom: 0 }}>Net dealer gamma — last {rangeLabel}</div>
+            <RangePicker />
+          </div>
           {hist.length ? (() => {
             const chartOutlook = data.outlook || {};
             return (
@@ -743,12 +796,15 @@ export default function SqueezePage() {
 
         {/* VIX LEG CHART */}
         {(() => {
-          const vh = (data.vix_history || []).map(v => ({ ...v, label: v.trade_date.slice(5) }));
+          const vh = inRange(data.vix_history).map(v => ({ ...v, label: v.trade_date.slice(5) }));
           const lastVix = vh.length ? vh[vh.length - 1] : null;
           const gapTo95 = lastVix?.ratio != null ? Math.max(0, 0.95 - lastVix.ratio) : null;
           return (
             <div style={S.card}>
-              <div style={S.cardTitle}>The VIX leg — VIX ÷ its own 20-session max</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ ...S.cardTitle, marginBottom: 0 }}>The VIX leg — VIX ÷ its own 20-session max</div>
+                <RangePicker />
+              </div>
               <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 10 }}>
                 <div>
                   <div style={{ fontSize: 10, color: DIM }}>current ratio</div>
@@ -812,28 +868,51 @@ export default function SqueezePage() {
 
         {/* SIGNAL TRACK RECORD */}
         {(() => {
-          const sh = data.signal_history || [];
-          const summary = data.signal_summary || {};
-          const counts = summary.counts || {};
-          const n = summary.n || sh.length || 0;
+          const sh = inRange(data.signal_history);
+          // Summarised from the SLICED rows, not from data.signal_summary.
+          // The API computes its summary over everything it returned (250),
+          // so pairing it with a 90-session strip printed "NEUTRAL · 149" under
+          // 90 cells and a "250 sessions" window tile over a 90-session view.
+          // A track record has to describe the window you are looking at.
+          const counts = {};
+          sh.forEach(r => { counts[r.verdict] = (counts[r.verdict] || 0) + 1; });
+          const n = sh.length;
+          const lastWith = (v) => {
+            for (let i = sh.length - 1; i >= 0; i--) if (sh[i].verdict === v) return sh[i].trade_date;
+            return null;
+          };
+          const current = n ? sh[n - 1].verdict : null;
+          let run = 0;
+          for (let i = sh.length - 1; i >= 0 && sh[i].verdict === current; i--) run++;
+          const summary = {
+            counts, n, current,
+            sessions_in_state: n ? run : null,
+            last_squeeze_watch: lastWith('SQUEEZE_WATCH'),
+            last_no_sell: lastWith('NO_SELL'),
+            first_date: n ? sh[0].trade_date : null,
+            last_date: n ? sh[n - 1].trade_date : null,
+          };
           return (
             <div style={S.card}>
-              <div style={S.cardTitle}>Track record — what this signal has printed</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ ...S.cardTitle, marginBottom: 0 }}>Track record — what this signal has printed</div>
+                <RangePicker />
+              </div>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
                 <div style={S.tile}>
                   <div style={S.tileLabel}>current state</div>
                   <div style={{ fontSize: 17, fontWeight: 700, color: VERDICT_COLOR[summary.current] || GREY }}>
                     {VERDICT_LABEL[summary.current] || summary.current || '—'}
                   </div>
-                  <div style={S.small}>{summary.sessions_in_state != null ? `${summary.sessions_in_state} sessions` : '—'}</div>
+                  <div style={S.small}>{summary.sessions_in_state != null ? `${summary.sessions_in_state} session${summary.sessions_in_state === 1 ? '' : 's'}` : '—'}</div>
                 </div>
                 <div style={S.tile}>
                   <div style={S.tileLabel}>last SQUEEZE_WATCH</div>
-                  <div style={{ fontSize: 17, fontWeight: 700 }}>{summary.last_squeeze_watch || 'never in window'}</div>
+                  <div style={{ fontSize: 17, fontWeight: 700 }}>{summary.last_squeeze_watch || `none in ${rangeLabel}`}</div>
                 </div>
                 <div style={S.tile}>
                   <div style={S.tileLabel}>last NO_SELL</div>
-                  <div style={{ fontSize: 17, fontWeight: 700 }}>{summary.last_no_sell || 'never in window'}</div>
+                  <div style={{ fontSize: 17, fontWeight: 700 }}>{summary.last_no_sell || `none in ${rangeLabel}`}</div>
                 </div>
                 <div style={S.tile}>
                   <div style={S.tileLabel}>window</div>
