@@ -380,7 +380,16 @@ export default function SqueezePage() {
   let ticket = null;
   if (!blocked) {
     if (verdict === 'SELL_PREMIUM' || verdict === 'NEUTRAL') {
-      ticket = 'SPY 0DTE put spread · short strike round(spot) − 2 · $2 wide · enter 11:05 ET · hold to settlement · no stop';
+      // Real strikes, not the rule. Falls back to the formula only if spot is
+      // unavailable -- an invented strike is worse than an honest formula.
+      ticket = data.ticket?.sell ? (
+        <>
+          <b style={{ color: GREEN }}>SELL {data.ticket.sell.short_put} PUT</b>
+          {' / '}
+          <b style={{ color: GREEN }}>BUY {data.ticket.sell.long_put} PUT</b>
+          {` · SPY 0DTE · $${data.ticket.sell.width} wide · enter 11:05 ET · hold to settlement · no stop`}
+        </>
+      ) : 'SPY 0DTE put spread · short strike round(spot) − 2 · $2 wide · enter 11:05 ET · hold to settlement · no stop';
     } else if (verdict === 'SQUEEZE_WATCH') {
       ticket = (
         <>
@@ -491,6 +500,17 @@ export default function SqueezePage() {
 
           {blocked && (
             <div style={{ fontSize: 13, color: RED, marginTop: 6, lineHeight: 1.5 }}>{blockedReason}</div>
+          )}
+          {!blocked && data.ticket?.sell && (
+            /* Which spot the strikes came from, and when they stop being
+               true. The entry is 11:05 ET and the real strike derives from
+               spot at that moment; anything computed off the prior close is
+               indicative and has to say so. */
+            <div style={{ ...S.small, marginTop: 6 }}>
+              Strikes from spot {data.ticket.spot} ({data.ticket.spot_source})
+              {data.ticket.spot_source !== 'live' &&
+                ' — indicative. Re-derive from spot at 11:05 ET before sending.'}
+            </div>
           )}
           {blockedDetail && (
             <div style={{ ...S.small, marginTop: 4, fontFamily: 'ui-monospace, monospace',

@@ -30,7 +30,7 @@ from sqlalchemy.engine import Engine
 from .bots.gamma_regime import (GAMMA_DAILY_TABLE, PCT_WINDOW, capture_health,
                                 data_freshness, job_status, signal_history,
                                 signal_summary, squeeze_outlook, squeeze_signal,
-                                vix_history)
+                                trade_ticket, vix_history)
 from .db import engine as _global_engine
 
 logger = logging.getLogger("spreadworks.routes_squeeze")
@@ -196,6 +196,14 @@ async def state(sessions: str | None = None):
         logger.warning("[routes_squeeze] capture_health failed: %r", e)
         capture = {"state": "unknown", "detail": f"capture_health error: {e}"}
 
+    # The actual strikes. "round(spot) - 2" is a rule; the page has to show
+    # numbers or the reader does the arithmetic between here and the order.
+    try:
+        ticket = trade_ticket(ENGINE, today)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_squeeze] trade_ticket failed: %r", e)
+        ticket = {"reason": f"trade_ticket error: {e}"}
+
     # The VIX leg's own series — it had no history on the page at all.
     try:
         vh = vix_history(ENGINE, n=n_rows)
@@ -212,6 +220,7 @@ async def state(sessions: str | None = None):
         "freshness": fresh,
         "jobs": jobs,
         "capture_health": capture,
+        "ticket": ticket,
         "outlook": outlook,
         "verdict": sig.get("verdict"),
         "gamma_pct": sig.get("gamma_pct"),

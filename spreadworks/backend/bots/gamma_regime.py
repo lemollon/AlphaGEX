@@ -734,6 +734,79 @@ def job_status(engine: Engine) -> dict[str, Any]:
     return out
 
 
+SPREAD_WIDTH = 2.0        # $2 wide, the width the sell side was validated at
+SHORT_OFFSET = 2.0        # short strike sits round(spot) - 2
+BUY_DELTA = 0.25          # NOT at-the-money: 0.50 delta LOSES $43/trade
+BUY_DTE_MIN, BUY_DTE_MAX = 5, 9
+
+
+def trade_ticket(engine: Engine, asof: date,
+                 live_spot: float | None = None) -> dict[str, Any]:
+    """The actual strikes, not the formula.
+
+    "short strike round(spot) - 2, $2 wide" is a rule, and a rule is not a
+    ticket -- it still leaves arithmetic between the page and the order. This
+    resolves it to numbers.
+
+    The strike is a function of spot, and spot moves, so the honest version
+    carries WHICH spot it used and when that stops being true: the entry is
+    11:05 ET and the real strike derives from spot at that moment. A ticket
+    computed off the prior close is indicative, and says so.
+
+    Never raises -- a missing spot yields nulls, never a plausible-looking
+    strike computed from nothing.
+    """
+    out: dict[str, Any] = {"spot": None, "spot_source": None, "sell": None,
+                           "buy": None, "reason": None}
+    spot, source = live_spot, "live"
+    if spot is None:
+        try:
+            with engine.begin() as conn:
+                row = conn.execute(text(
+                    f"SELECT trade_date, spot FROM {GAMMA_DAILY_TABLE} "
+                    "WHERE spot IS NOT NULL ORDER BY trade_date DESC LIMIT 1"
+                )).fetchone()
+            if row is not None and row[1] is not None:
+                spot = float(row[1])
+                source = f"{_isodate(row[0])} close"
+        except Exception as e:  # noqa: BLE001
+            out["reason"] = f"spot lookup error: {e}"
+            return out
+    if not spot or spot <= 0:
+        out["reason"] = "no spot available"
+        return out
+
+    short_put = round(spot) - SHORT_OFFSET
+    out["spot"] = round(float(spot), 2)
+    out["spot_source"] = source
+    out["sell"] = {
+        "structure": "SPY 0DTE put spread",
+        "short_put": short_put,
+        "long_put": short_put - SPREAD_WIDTH,
+        "width": SPREAD_WIDTH,
+        "entry_ct": "10:05",          # 11:05 ET
+        "exit": "hold to settlement, no stop",
+    }
+    out["buy"] = {
+        "structure": "SPY call, long",
+        "target_delta": BUY_DELTA,
+        "dte_min": BUY_DTE_MIN,
+        "dte_max": BUY_DTE_MAX,
+        "hold_sessions": 5,
+        # The strike is a DELTA, not an offset, so it cannot be derived from
+        # spot alone -- it needs the chain. Naming the qualifying expiries is
+        # the part that IS knowable in advance.
+        "expiries": [(asof + timedelta(days=d)).isoformat()
+                     for d in range(BUY_DTE_MIN, BUY_DTE_MAX + 1)
+                     if (asof + timedelta(days=d)).weekday() < 5],
+    }
+    return out
+
+
+def _isodate(d) -> str:
+    return d.isoformat() if hasattr(d, "isoformat") else str(d)
+
+
 def capture_health(freshness: dict[str, Any], jobs: dict[str, Any]) -> dict[str, Any]:
     """Did the capture job CLAIM a slot without STORING anything?
 

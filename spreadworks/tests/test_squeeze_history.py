@@ -624,3 +624,58 @@ def test_a_fully_captured_window_is_homogeneous_again(engine):
         conn.execute(text(f"UPDATE {GAMMA_DAILY_TABLE} SET n_contracts = 4821"))
     f = data_freshness(engine, date(2026, 8, 17))
     assert f["window_source_mixed"] is False
+
+
+# --------------------------------------------------------------------------
+# trade_ticket — actual strikes, not a formula
+# --------------------------------------------------------------------------
+def test_strikes_resolve_to_numbers(engine):
+    """round(776.34) = 776, short 774, long 772 at $2 wide."""
+    from backend.bots.gamma_regime import trade_ticket
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"INSERT INTO {GAMMA_DAILY_TABLE} "
+            "(trade_date, net_gex, spot, updated_at) "
+            "VALUES ('2026-08-14', 3.5e9, 776.34, '2026-01-01')"))
+    t = trade_ticket(engine, date(2026, 8, 17))
+    assert t["spot"] == 776.34
+    assert t["spot_source"] == "2026-08-14 close"
+    assert t["sell"]["short_put"] == 774
+    assert t["sell"]["long_put"] == 772
+    assert t["sell"]["width"] == 2
+
+
+def test_a_live_spot_overrides_the_stored_close(engine):
+    from backend.bots.gamma_regime import trade_ticket
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"INSERT INTO {GAMMA_DAILY_TABLE} "
+            "(trade_date, net_gex, spot, updated_at) "
+            "VALUES ('2026-08-14', 3.5e9, 776.34, '2026-01-01')"))
+    t = trade_ticket(engine, date(2026, 8, 17), live_spot=781.90)
+    assert t["spot_source"] == "live"
+    assert t["sell"]["short_put"] == 780      # round(781.90)=782, -2
+    assert t["sell"]["long_put"] == 778
+
+
+def test_buy_side_expiries_skip_weekends(engine):
+    from backend.bots.gamma_regime import trade_ticket
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"INSERT INTO {GAMMA_DAILY_TABLE} "
+            "(trade_date, net_gex, spot, updated_at) "
+            "VALUES ('2026-08-14', 3.5e9, 776.34, '2026-01-01')"))
+    t = trade_ticket(engine, date(2026, 8, 17))     # Monday
+    exp = t["buy"]["expiries"]
+    assert exp, "should offer candidate expiries"
+    for e in exp:
+        assert date.fromisoformat(e).weekday() < 5
+    assert t["buy"]["target_delta"] == 0.25
+
+
+def test_no_spot_yields_nulls_not_a_plausible_strike(engine):
+    """A strike invented from a missing spot is worse than no strike."""
+    from backend.bots.gamma_regime import trade_ticket
+    t = trade_ticket(engine, date(2026, 8, 17))
+    assert t["sell"] is None and t["spot"] is None
+    assert t["reason"]
