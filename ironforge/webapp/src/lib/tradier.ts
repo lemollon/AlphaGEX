@@ -867,6 +867,32 @@ function flameCreds(): { apiKey: string | undefined; accountId: string | undefin
  * Deploying this code changes nothing on its own. Removing any one of these
  * conditions must not silently re-arm the bot.
  */
+/**
+ * Can we READ this bot's live account balance?
+ *
+ * 🚨 READING A BALANCE AND BEING ARMED TO TRADE ARE DIFFERENT QUESTIONS, and
+ * conflating them is a real usability trap: isProductionBot('flame') is false
+ * until isFlameLiveArmed(), so the only way to see FLAME's real Tradier balance
+ * used to be to ARM IT. That forces an operator who just wants to watch the
+ * account into flipping the switch that lets it trade.
+ *
+ * This predicate answers the read question only. For FLAME it is satisfied by
+ * credentials alone — the arm knob is irrelevant to a balance lookup, which
+ * cannot move money. Order placement still goes through isFlameLiveArmed() and
+ * its three independent conditions, unchanged.
+ *
+ * Fail-closed is preserved: no creds ⇒ no read, and the dashboard falls back to
+ * the paper ledger with an explicit source_error rather than inventing a number.
+ */
+export function canReadProductionBalance(name: string): boolean {
+  if (isProductionBot(name)) return true
+  if (name.toLowerCase() === 'flame') {
+    const { apiKey, accountId } = flameCreds()
+    return Boolean(apiKey && accountId)
+  }
+  return false
+}
+
 export function isFlameLiveArmed(): boolean {
   if (process.env.IRONFORGE_FLAME_LIVE !== 'true') return false
   const { apiKey, accountId } = flameCreds()
@@ -3135,8 +3161,11 @@ export async function getProductionPauseState(botName: string): Promise<Producti
  *   2. PER-OWNER (ironforge_owner_pause)  — one owner stops their own account,
  *      which DROPS that owner and leaves every other owner trading.
  */
-export async function getProductionAccountsForBot(botName: string): Promise<ProductionAccount[]> {
-  const accounts = await resolveProductionAccounts(botName)
+export async function getProductionAccountsForBot(
+  botName: string,
+  opts: { forRead?: boolean } = {},
+): Promise<ProductionAccount[]> {
+  const accounts = await resolveProductionAccounts(botName, opts)
   if (accounts.length === 0) return accounts
 
   // Layer 2. Wrapping (rather than filtering at each `return` above) is what
@@ -3159,8 +3188,14 @@ export async function getProductionAccountsForBot(botName: string): Promise<Prod
   return allowed
 }
 
-async function resolveProductionAccounts(botName: string): Promise<ProductionAccount[]> {
-  if (!isProductionBot(botName)) return []
+async function resolveProductionAccounts(
+  botName: string,
+  opts: { forRead?: boolean } = {},
+): Promise<ProductionAccount[]> {
+  // forRead: resolving the account to LOOK AT it (balance, equity, buying
+  // power), not to trade it. FLAME qualifies on credentials alone; every other
+  // bot is unchanged. Never pass forRead from an order path.
+  if (!(opts.forRead ? canReadProductionBalance(botName) : isProductionBot(botName))) return []
   const pauseState = await getProductionPauseState(botName)
   if (pauseState.paused) {
     console.warn(
@@ -3187,7 +3222,8 @@ async function resolveProductionAccounts(botName: string): Promise<ProductionAcc
   if (botName.toLowerCase() === 'flame') {
     // Fail closed twice: the arm knob AND the creds. Without both, FLAME has
     // zero production accounts and physically cannot place a real order.
-    if (!isFlameLiveArmed()) return []
+    // A READ (forRead) needs only the creds — see canReadProductionBalance.
+    if (!opts.forRead && !isFlameLiveArmed()) return []
     const { apiKey, accountId } = flameCreds()
     if (!apiKey || !accountId) return []
     return [{ name: 'Flame', apiKey, baseUrl: PRODUCTION_URL, accountId }]

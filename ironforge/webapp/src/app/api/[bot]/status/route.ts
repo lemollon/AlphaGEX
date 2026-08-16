@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, isSettleAtExpiryBot, CT_TODAY } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT, isProductionBot, getProductionAccountsForBot, getTradierBalanceDetail, getTradierOrders, getSandboxAccountPositions, getLoadedSandboxAccountsAsync, getAccountIdForKey, getVerticalMarkToMarket, calculateVerticalUnrealizedPnl } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT, isProductionBot, canReadProductionBalance, getProductionAccountsForBot, getTradierBalanceDetail, getTradierOrders, getSandboxAccountPositions, getLoadedSandboxAccountsAsync, getAccountIdForKey, getVerticalMarkToMarket, calculateVerticalUnrealizedPnl } from '@/lib/tradier'
 
 import { scopedStartingCapital } from '@/lib/account-basis'
 
@@ -222,9 +222,12 @@ export async function GET(
     // NOT the shared ironforge_accounts list — so the generic sandbox_accounts list
     // would surface SPARK's Iron Viper on the KINDLE page. Populated below.
     let prodAccountCards: Array<Record<string, unknown>> | null = null
-    if (accountTypeParam === 'production' && isProductionBot(bot)) {
+    // canReadProductionBalance, not isProductionBot: showing a balance cannot
+    // move money, so FLAME qualifies on credentials alone. Order placement is
+    // still gated by isFlameLiveArmed() and is untouched by this.
+    if (accountTypeParam === 'production' && canReadProductionBalance(bot)) {
       try {
-        const prodAccts = await getProductionAccountsForBot(bot)
+        const prodAccts = await getProductionAccountsForBot(bot, { forRead: true })
         let tradierEquity = 0
         let tradierBp = 0
         let tradierOpenPl = 0
