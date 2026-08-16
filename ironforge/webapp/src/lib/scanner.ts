@@ -168,6 +168,60 @@ function isSettleAtExpiryBot(name: string): boolean {
 }
 
 /**
+ * VIX DECAY GATE — the one regime filter that survived a blind OOS decade.
+ *
+ *     ratio = VIX(prior session) / max(VIX over the 20 sessions before that)
+ *
+ * Not the LEVEL of fear but whether the spike has ALREADY happened. Above the
+ * ceiling fear is still building and short premium thins out.
+ *
+ * 🚨 THE NUMERATOR IS THE PRIOR SESSION, NEVER TODAY. Today's close is not
+ * knowable at a 10:05 or 13:05 entry, and conditioning on it conditions on the
+ * day's own outcome. Measured on EBB's PM stream: the same-day version paid
+ * $+9.44/trade against the honest $+6.51 — the look-ahead was worth roughly
+ * double. The AM tranche needs this gate MORE than the PM one: ungated it is
+ * $+2.87/trade at t=+1.25 (no edge), gated $+6.23 at t=+2.44.
+ *
+ * 🚨 UNKNOWN BLOCKS. Too little history means the ratio is undefined and we do
+ * NOT trade. A veto that degrades to always-on when its data is missing is worse
+ * than no veto, because feeds die in exactly the conditions the veto exists for.
+ *
+ * Reads `sw_vix_daily`, which the SpreadWorks scanner writes each cycle into this
+ * SAME database. That cross-app dependency is deliberate — one VIX history, not
+ * two that can disagree — but it does mean IronForge blocks if SpreadWorks stops
+ * writing. Blocking is the safe direction.
+ */
+const VIX_DECAY_CEILING = 0.90
+const VIX_DECAY_WINDOW = 20
+const VIX_DECAY_MIN_HISTORY = VIX_DECAY_WINDOW + 1
+
+async function vixDecayBlock(asofDate: string): Promise<string | null> {
+  let rows: Array<Record<string, unknown>>
+  try {
+    rows = await query(
+      `SELECT vix FROM sw_vix_daily WHERE trade_date < $1
+        ORDER BY trade_date DESC LIMIT $2`,
+      [asofDate, VIX_DECAY_MIN_HISTORY],
+    )
+  } catch (e) {
+    // A missing table or an unreachable DB must BLOCK, never wave the trade through.
+    return `vix_unavailable(${e instanceof Error ? e.message.slice(0, 60) : 'error'})`
+  }
+  if (rows.length < VIX_DECAY_MIN_HISTORY) {
+    return `vix_unknown(have=${rows.length} need=${VIX_DECAY_MIN_HISTORY})`
+  }
+  const prior = num(rows[0].vix)
+  let windowMax = 0
+  for (let i = 1; i < rows.length; i++) windowMax = Math.max(windowMax, num(rows[i].vix))
+  if (!(windowMax > 0) || !(prior > 0)) return 'vix_bad_window'
+  const ratio = prior / windowMax
+  if (ratio > VIX_DECAY_CEILING) {
+    return `vix_elevated(${ratio.toFixed(3)}>${VIX_DECAY_CEILING.toFixed(2)})`
+  }
+  return null
+}
+
+/**
  * Bots that route through the real-money PRODUCTION order path (open, fill-check,
  * reconcile, EOD). Allowlist: SPARK (existing live account) + KINDLE ($500 account
  * via TRADIER_KINDLE_* env). For 'spark' this returns true exactly where the old
@@ -353,56 +407,29 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   //   26.3%/yr on $2,000 - 35% max drawdown - 5 of 5 years - ~117 trades/yr
   //   sl_mult 10.0 = wing-breach backstop only (same convention as INFERNO); the
   //   validated config has NO stop, and NUMERIC(5,2) cannot store a true "off".
-  // FLAME IS THE $2,000-$4,999 TIER (2026-08-11). starting_capital 2000 is what
-  // makes that true: this value is the PAPER SEED and syncSandboxCapital() writes
-  // it back to flame_paper_account every cycle, so resetting the ledger by hand
-  // does nothing -- a reset to $2,000 was synced straight back to $5,000 within a
-  // minute, and FLAME re-entered on SPARK's 0.25x/$2 rule.
+  // starting_capital is the PAPER SEED and syncSandboxCapital() writes it back to
+  // flame_paper_account every cycle, so resetting the ledger by hand does nothing
+  // -- change it HERE or the scanner syncs it straight back.
   //
-  // `sd` and `wing_width` below are NOT the authority for the put-spread path --
-  // flameParams(balance) is, and at $2,000 it returns 0.35x / $1. They are left at
-  // the SPARK-tier values only because other code paths read them; if FLAME ever
-  // stops routing through tryOpenFlamePutSpread, fix them here first.
+  // 🚨 `sd` and `wing_width` below are NOT read on the EBB path. Strikes come from
+  // botStructure() (fixed dollar offsets) and the wing from the `width` it returns.
+  // The previous note here named flameParams() as the authority; that function was
+  // already dead then and is dead now. Left in place only because other code paths
+  // read the columns.
   // 🚨 EBB PM TRANCHE (2026-08-16). Entry 13:05-13:10 CT, $2 wing, no stop,
   // SETTLED AT THE CLOSE. pt_pct 1.0 trips HOLD_TO_EOD; sl_mult 9999 is off —
   // registry #43 measured every buyback exit and each one collapses the edge to
   // roughly zero. min_credit 0.10 matches the SpreadWorks registry.
   // starting_capital 3000 is EBB's own registered minimum; $2,000 clears nothing.
   flame:   { sd: 2.10, pt_pct: 1.0, sl_mult: 9999, entry_start: 1305, entry_end: 1310, max_trades: 1, max_contracts: 1, bp_pct: 0.20, starting_capital: 3000, min_credit: 0.10, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
-  // ENTRY TIME: 830, and now MEASURED rather than assumed — see the note on
-  // isInEntryWindow below. Moved to 1300 on 2026-08-07 on inference; reverted the
-  // same day once real entry-time quotes existed to test it.
-  // SPARK v3 (2026-08-10) — THE WALK-FORWARD CONFIG, replacing the 1DTE structure.
-  //
-  // One rule, selected inside a 288-config walk-forward with every axis (dte /
-  // placement / width / stop / pause) chosen from prior years only, then traded
-  // forward blind: 5 DTE, shorts at 1.25x the VIX expected move, $10 wings, exit at
-  // 1.5x credit, STAND DOWN 3 DAYS after any stop-out.
-  //     +$24.14/trade, 65.2% win, 116 trades/yr, 5 of 5 years positive (2022 +$1,015)
-  // Selection was stable: $10 wings and the 3-day pause held in ALL five years.
-  //
-  // THE PAUSE IS THE EDGE, not the stop (+64% over identical entries with no rule).
-  // Losses cluster because volatility is autocorrelated; the entry the day after a
-  // stop-out goes into the same disturbed tape.
-  //
-  // WHY THE KNOBS ARE WHAT THEY ARE
-  //   pt_pct 1.0      no profit target — hold to expiry. Trips the basePt >= 1.0
-  //                   HOLD_TO_EOD guard, so SPARK leaves the 40/35/30 ladder (which
-  //                   was tuned on the dead 1DTE structure). SPARK2/KINDLE keep it.
-  //   wing_width 10   NARROW WINGS DELETE THE EDGE — it is friction, not sizing. The
-  //                   4-leg commission and four spreads cost the same whether the
-  //                   credit is $34 or $166. Identical entries: $1 wings -$1.68/trade,
-  //                   $2 -$0.50, $5 +$2.50, $10 +$10.39. Drawdown-per-margin also gets
-  //                   WORSE as you shrink (10x -> 45x). $10 dominates on every axis.
-  //   max_contracts 1 fail-safe, and it is what the $5,000 seed supports. The old
-  //                   config ran max_contracts 0 = UNLIMITED at 85% BP, which is how
-  //                   the paper side put on 25 contracts and lost $10,500 in a day.
-  //   starting_capital 5000  the honest paper seed: at $5k this returns 11.4%/yr on
-  //                   1 contract at 15% drawdown, 5 of 5 years. NOT $2,000 — at
-  //                   Tradier commissions with realistic fills, $2,000 never works.
-  //
-  // ⚠️ NOT LIVE-VALIDATED. Production is PAUSED (2026-08-10) and this must earn a
-  // paper record before it touches real money again.
+  // 🚨 SUPERSEDED 2026-08-16 — SPARK now runs EBB. The retired 5DTE/7DTE notes
+  // that used to sit here were removed because they contradict this config on the
+  // one axis that matters most: they said "NARROW WINGS DELETE THE EDGE... $2
+  // wings -$0.50/trade, $10 dominates on every axis". That was measured on the
+  // 5 DTE condor and does NOT transfer to a 0DTE put spread, where the $2 wing IS
+  // the risk control and the validated structure (registry #23b, #49r). Anyone
+  // "restoring" a $10 wing here would be applying the old strategy's finding to a
+  // different trade. The old text is in git history if it is ever needed.
   // 🚨 EBB AM TRANCHE (2026-08-16). Same structure as FLAME, entry 10:05-10:20 CT.
   // The AM tranche needs the VIX decay gate MORE than the PM one: ungated it is
   // +$2.87/trade (t=+1.25, no edge), gated +$6.23 (t=+2.44).
@@ -3369,6 +3396,10 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
 async function tryOpenFlamePutSpread(bot: BotDef): Promise<string> {
   const botCfg = cfg(bot)
   if (!isConfigured()) return 'skip:tradier_not_configured'
+
+  // Regime gate before any quote work — a blocked day costs one indexed query.
+  const vixBlock = await vixDecayBlock(getCentralTime().toISOString().slice(0, 10))
+  if (vixBlock) return `skip:${vixBlock}`
 
   const acctRows = await query(
     `SELECT id, current_balance FROM ${botTable(bot.name, 'paper_account')}
