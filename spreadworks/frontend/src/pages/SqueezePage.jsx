@@ -1189,6 +1189,77 @@ export default function SqueezePage() {
           </Collapse>
         </Zone>
 
+        {/* FORWARD RECORD — the only numbers on this page that are not a
+            backtest. Placed at the top of the evidence zone deliberately: a
+            live sample, however small, outranks a 898-trade backtest when the
+            question is "is this working NOW". */}
+        <Zone label="Live record since the signal shipped">
+          {(() => {
+            const L = data.ledger || {};
+            const n = L.n_settled || 0;
+            const wr = L.win_rate;
+            const bt = L.backtest_win_rate;
+            const off = (wr != null && bt != null) ? (wr - bt) : null;
+            return (
+              <div style={S.card}>
+                {L.reason && <div style={{ ...S.small, marginBottom: 8 }}>{L.reason}</div>}
+                {n === 0 ? (
+                  <div style={{ fontSize: 13, color: '#c6cbd8' }}>
+                    No settled sessions yet. The first decision is recorded at the 08:05 CT
+                    alert and settles at that session's close.
+                    <div style={{ ...S.small, marginTop: 6 }}>
+                      Until this fills, every number on this page is a backtest.
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+                      <div style={S.tile}>
+                        <div style={S.tileLabel}>live win rate</div>
+                        <div style={S.tileValue}>{pct(wr)}</div>
+                        <div style={S.small}>{L.wins}/{n} settled</div>
+                      </div>
+                      <div style={S.tile}>
+                        <div style={S.tileLabel}>backtest claim</div>
+                        <div style={S.tileValue}>{pct(bt)}</div>
+                        <div style={S.small}>over {L.backtest_n} trades</div>
+                      </div>
+                      <div style={S.tile}>
+                        <div style={S.tileLabel}>difference</div>
+                        <div style={{ ...S.tileValue,
+                                      color: off == null ? GREY : off < -0.10 ? RED : GREEN }}>
+                          {off == null ? '—' : `${off >= 0 ? '+' : ''}${(off * 100).toFixed(1)}pts`}
+                        </div>
+                        <div style={S.small}>live vs backtest</div>
+                      </div>
+                      <div style={S.tile}>
+                        <div style={S.tileLabel}>worst breach</div>
+                        <div style={S.tileValue}>
+                          {L.worst_breach == null ? '—' : `$${Number(L.worst_breach).toFixed(2)}`}
+                        </div>
+                        <div style={S.small}>of $2 max</div>
+                      </div>
+                    </div>
+                    <div style={S.small}>
+                      {L.n_decisions} decision(s) recorded, {L.n_traded} traded,
+                      {' '}{L.n_decisions - L.n_traded} stood down
+                      {L.first_date ? `, ${L.first_date} → ${L.last_date}` : ''}.
+                      {n < 30 && ' A sample this small cannot confirm or refute the backtest yet.'}
+                    </div>
+                  </>
+                )}
+                <div style={{ ...S.small, marginTop: 8 }}>
+                  <b style={{ color: '#c6cbd8' }}>Dollars are not tracked.</b> Outcome needs only
+                  the close, which is already stored; P&amp;L needs the credit taken at 11:05 and
+                  nothing captures an intraday quote. Recording an invented credit would produce
+                  a tidy P&amp;L line that looked like evidence, so this tracks what it can actually
+                  measure — whether the short strike held, and by how much it failed.
+                </div>
+              </div>
+            );
+          })()}
+        </Zone>
+
         <Zone label="Why believe this">
           {/* WHAT THE VETO IS WORTH — the honest headline of the page. The
               evidence tables above sell the signal; this is what it actually

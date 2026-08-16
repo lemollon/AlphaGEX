@@ -528,6 +528,22 @@ def register_gamma_alerts(scheduler, app) -> None:
                                        "no bot reads this"},
                 }, webhook)
 
+            # FORWARD RECORD. Written before the outcome exists and regardless
+            # of whether today trades -- a signal that stands down on the day
+            # of a large move is doing its job, and a record containing only
+            # the days it traded cannot show that.
+            try:
+                from .bots.squeeze_ledger import record_decision, settle_open
+                from .bots.gamma_regime import trade_ticket
+                settle_open(engine)
+                record_decision(
+                    engine, now.date(), verdict,
+                    trade_ticket(engine, now.date()),
+                    traded=(block is None and verdict in ("SELL_PREMIUM", "NEUTRAL")),
+                    note=(block or None))
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[GammaAlerts] ledger write failed: %r", e)
+
             if block:
                 return          # never post a trade verdict off an unfit signal
 

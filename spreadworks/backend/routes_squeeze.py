@@ -204,6 +204,15 @@ async def state(sessions: str | None = None):
         logger.warning("[routes_squeeze] trade_ticket failed: %r", e)
         ticket = {"reason": f"trade_ticket error: {e}"}
 
+    # The forward record: what the signal has actually said since going live,
+    # and what happened. Every other number on this page is a backtest.
+    try:
+        from .bots.squeeze_ledger import ledger_summary
+        ledger = ledger_summary(ENGINE)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_squeeze] ledger_summary failed: %r", e)
+        ledger = {"reason": f"ledger error: {e}", "rows": []}
+
     # The VIX leg's own series — it had no history on the page at all.
     try:
         vh = vix_history(ENGINE, n=n_rows)
@@ -221,6 +230,7 @@ async def state(sessions: str | None = None):
         "jobs": jobs,
         "capture_health": capture,
         "ticket": ticket,
+        "ledger": ledger,
         "outlook": outlook,
         "verdict": sig.get("verdict"),
         "gamma_pct": sig.get("gamma_pct"),

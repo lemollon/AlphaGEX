@@ -679,3 +679,98 @@ def test_no_spot_yields_nulls_not_a_plausible_strike(engine):
     t = trade_ticket(engine, date(2026, 8, 17))
     assert t["sell"] is None and t["spot"] is None
     assert t["reason"]
+
+
+# --------------------------------------------------------------------------
+# the forward ledger — every other number on the page is a backtest
+# --------------------------------------------------------------------------
+def _ledger_engine():
+    from sqlalchemy import create_engine as ce
+    from backend.bots.squeeze_ledger import ensure_ledger_table
+    e = ce("sqlite:///:memory:", future=True)
+    ensure_gamma_table(e)
+    ensure_ledger_table(e)
+    return e
+
+
+def _tk(spot, short, long_):
+    return {"spot": spot, "sell": {"short_put": short, "long_put": long_, "width": 2}}
+
+
+def test_a_stand_down_day_is_still_recorded():
+    """A signal that stands down on the day of a large move is doing its job;
+    a record containing only the days it traded cannot show that."""
+    from backend.bots.squeeze_ledger import ledger_summary, record_decision
+    e = _ledger_engine()
+    record_decision(e, date(2026, 8, 17), "NO_SELL", _tk(776.34, 774, 772),
+                    traded=False, note="net gamma below -$10B")
+    s = ledger_summary(e)
+    assert s["n_decisions"] == 1 and s["n_traded"] == 0
+
+
+def test_close_above_the_short_strike_is_a_win():
+    from backend.bots.squeeze_ledger import (ledger_summary, record_decision,
+                                             settle_open)
+    e = _ledger_engine()
+    record_decision(e, date(2026, 8, 17), "NEUTRAL", _tk(776.34, 774, 772), traded=True)
+    with e.begin() as c:
+        c.execute(text(f"INSERT INTO {GAMMA_DAILY_TABLE} "
+                       "(trade_date, net_gex, spot, updated_at) "
+                       "VALUES ('2026-08-17', 1e9, 778.10, '2026-01-01')"))
+    assert settle_open(e) == 1
+    s = ledger_summary(e)
+    assert s["wins"] == 1 and s["win_rate"] == 1.0 and s["worst_breach"] == 0.0
+
+
+def test_a_full_breach_is_a_loss_capped_at_the_width():
+    from backend.bots.squeeze_ledger import (ledger_summary, record_decision,
+                                             settle_open)
+    e = _ledger_engine()
+    record_decision(e, date(2026, 8, 17), "NEUTRAL", _tk(776.34, 774, 772), traded=True)
+    with e.begin() as c:                       # closes far below the long strike
+        c.execute(text(f"INSERT INTO {GAMMA_DAILY_TABLE} "
+                       "(trade_date, net_gex, spot, updated_at) "
+                       "VALUES ('2026-08-17', 1e9, 760.00, '2026-01-01')"))
+    settle_open(e)
+    s = ledger_summary(e)
+    assert s["losses"] == 1
+    assert s["worst_breach"] == 2.0            # capped at the width, not 14
+
+
+def test_a_close_between_the_strikes_is_partial():
+    from backend.bots.squeeze_ledger import (ledger_summary, record_decision,
+                                             settle_open)
+    e = _ledger_engine()
+    record_decision(e, date(2026, 8, 17), "NEUTRAL", _tk(776.34, 774, 772), traded=True)
+    with e.begin() as c:
+        c.execute(text(f"INSERT INTO {GAMMA_DAILY_TABLE} "
+                       "(trade_date, net_gex, spot, updated_at) "
+                       "VALUES ('2026-08-17', 1e9, 773.00, '2026-01-01')"))
+    settle_open(e)
+    s = ledger_summary(e)
+    assert s["partials"] == 1 and s["worst_breach"] == 1.0
+
+
+def test_settling_never_rewrites_a_settled_row():
+    from backend.bots.squeeze_ledger import (ledger_summary, record_decision,
+                                             settle_open)
+    e = _ledger_engine()
+    record_decision(e, date(2026, 8, 17), "NEUTRAL", _tk(776.34, 774, 772), traded=True)
+    with e.begin() as c:
+        c.execute(text(f"INSERT INTO {GAMMA_DAILY_TABLE} "
+                       "(trade_date, net_gex, spot, updated_at) "
+                       "VALUES ('2026-08-17', 1e9, 778.10, '2026-01-01')"))
+    settle_open(e)
+    record_decision(e, date(2026, 8, 17), "NO_SELL", _tk(999, 990, 988), traded=False)
+    s = ledger_summary(e)
+    assert s["rows"][0]["verdict"] == "NEUTRAL"     # settled row is immutable
+    assert s["wins"] == 1
+
+
+def test_dollars_are_explicitly_not_tracked():
+    """Inventing an entry credit to produce a tidy P&L line would look like
+    evidence. The summary must say it is not tracking dollars."""
+    from backend.bots.squeeze_ledger import ledger_summary
+    s = ledger_summary(_ledger_engine())
+    assert s["tracks_dollars"] is False
+    assert "pnl" not in s
