@@ -12,6 +12,8 @@ import {
   calculateVerticalUnrealizedPnl,
   getSandboxAccountBalances,
   PRODUCTION_BOT,
+  canReadProductionBalance,
+  getLiveEquityForBot,
 } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -266,13 +268,15 @@ export async function GET(
     // same broker equity (same P&L shape, broker basis on the Y-axis), keeping
     // the chart consistent with the scorecard. Uses getSandboxAccountBalances
     // (NOT pause-gated), so a paused bot still gets the right basis.
-    if (bot === PRODUCTION_BOT && accountTypeParam === 'production') {
+    // Tradier is the point of reference for a live account. getLiveEquityForBot
+    // resolves the bot's OWN production account whichever way it is credentialed
+    // — table (SPARK) or env (FLAME) — where getSandboxAccountBalances() only saw
+    // table-backed ones and would have rebased FLAME onto SPARK's balance.
+    if (canReadProductionBalance(bot) && accountTypeParam === 'production') {
       try {
-        const prodBals = (await getSandboxAccountBalances()).filter(
-          (s) => s.account_type === 'production' && s.total_equity != null,
-        )
-        if (prodBals.length > 0) {
-          const eq = Math.round(prodBals.reduce((a, s) => a + (s.total_equity ?? 0), 0) * 100) / 100
+        const eqLive = await getLiveEquityForBot(bot)
+        if (eqLive != null) {
+          const eq = eqLive
           const lastCumPnl = curve.length > 0 ? curve[curve.length - 1].cumulative_pnl : 0
           const rebaseStart = Math.round((eq - lastCumPnl - liveUnrealizedPnl) * 100) / 100
           const offset = rebaseStart - startingCapital

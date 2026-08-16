@@ -4,6 +4,7 @@ import {
   getProductionAccountsForBot,
   getTradierOrders,
   PRODUCTION_BOT,
+  canReadProductionBalance,
 } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -23,12 +24,15 @@ export async function GET(
 ) {
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
-  if (bot !== PRODUCTION_BOT) {
+  // GET only — reads broker state, places nothing. Tradier is the point of
+  // reference for a live account, so any bot whose live account is readable can
+  // show its own orders/positions.
+  if (!canReadProductionBalance(bot)) {
     return NextResponse.json({ accounts: [], production_bot: PRODUCTION_BOT })
   }
 
   try {
-    const accounts = await getProductionAccountsForBot(bot)
+    const accounts = await getProductionAccountsForBot(bot, { forRead: true })
     const cutoff = Date.now() - HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000
 
     const details = await Promise.all(
