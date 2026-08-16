@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import HomeNav from '@/app/_home/HomeNav'
+import { isPublicMode } from '@/lib/auth/access'
 import HomeFooter from '@/app/_home/HomeFooter'
 import WaitlistClient from './WaitlistClient'
 
@@ -14,7 +15,7 @@ export const metadata: Metadata = {
 export default function WaitlistPage() {
   return (
     <div className="min-h-screen bg-forge-bg">
-      <HomeNav />
+      <HomeNav showAll={isPublicMode()} />
       <WaitlistClient />
       <HomeFooter />
     </div>
