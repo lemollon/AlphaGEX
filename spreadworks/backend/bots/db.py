@@ -255,19 +255,24 @@ def _ensure_config_vix_decay_max(conn, engine: Engine) -> None:
             conn.execute(text(
                 f"ALTER TABLE {t} ADD COLUMN vix_decay_max NUMERIC NULL"
             ))
-            # Backfill the registry default ONCE, at the moment the column is
-            # created. The config seed below is ON CONFLICT DO NOTHING, so an
-            # existing row would otherwise keep NULL forever and the gate would
-            # never engage — the "DB silently overrides registry" trap. Guarded
-            # by the column-exists check, so this never stomps a later operator
-            # edit: on every subsequent startup the column already exists and
-            # this branch does not run.
-            default = (BOT_REGISTRY[bot].get("defaults") or {}).get("vix_decay_max")
-            if default is not None:
-                conn.execute(
-                    text(f"UPDATE {t} SET vix_decay_max = :v WHERE id = 1"),
-                    {"v": float(default)},
-                )
+        # 🚨 Backfill runs on EVERY startup, not only when the column is created.
+        # The create-time-only version shipped 2026-08-15 12:29 with a default on
+        # ebb_pm alone; ebb's default landed at 14:13, by which point the column
+        # already existed, so the branch never ran again and ebb_config sat at
+        # NULL — the AM tranche would have traded Monday with its VIX gate off.
+        # A default added after the column exists must still reach the row.
+        #
+        # WHERE vix_decay_max IS NULL is what makes this safe to repeat: it only
+        # ever fills "never configured", never an operator's value. NULL means
+        # unset, not off — the off switch is 0, which scanner.py skips via
+        # `if ceiling > 0` and which the config API can now set.
+        default = (BOT_REGISTRY[bot].get("defaults") or {}).get("vix_decay_max")
+        if default is not None:
+            conn.execute(
+                text(f"UPDATE {t} SET vix_decay_max = :v "
+                     "WHERE id = 1 AND vix_decay_max IS NULL"),
+                {"v": float(default)},
+            )
 
 
 def create_bot_tables(engine: Engine) -> None:

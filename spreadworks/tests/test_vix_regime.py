@@ -122,3 +122,46 @@ def test_only_the_measured_bots_are_gated():
     gated = sorted(b for b, d in BOT_REGISTRY.items()
                    if (d.get("defaults") or {}).get("vix_decay_max") is not None)
     assert gated == ["ebb", "ebb_pm"]
+
+
+def test_backfill_reaches_a_row_that_predates_the_default():
+    """🚨 THE BUG THIS PINS: a default added AFTER the column exists must still
+    reach the config row.
+
+    ebb_config really did sit at NULL in production because the backfill only
+    ran at column-creation time (12:29) and ebb's default landed at 14:13. The
+    AM tranche would have traded Monday 10:05 with no VIX gate — $+2.87/trade
+    (t=+1.25, no edge) instead of $+6.23.
+    """
+    import sqlalchemy as sa
+    from backend.bots.db import bot_table, create_bot_tables, load_config
+
+    engine = sa.create_engine("sqlite://")
+    create_bot_tables(engine)
+
+    # Simulate the production state: the column exists, the row is NULL.
+    t = bot_table("ebb", "config")
+    with engine.begin() as conn:
+        conn.execute(sa.text(f"UPDATE {t} SET vix_decay_max = NULL WHERE id = 1"))
+    assert load_config(engine, "ebb")["vix_decay_max"] is None
+
+    create_bot_tables(engine)          # next startup must repair it
+    assert float(load_config(engine, "ebb")["vix_decay_max"]) == 0.90
+
+
+def test_backfill_never_overwrites_an_operator_value():
+    """WHERE vix_decay_max IS NULL is the whole safety property — a repeating
+    backfill must only fill 'never configured', never an operator's setting.
+    0 is the off switch and must survive a restart."""
+    import sqlalchemy as sa
+    from backend.bots.db import bot_table, create_bot_tables, load_config
+
+    engine = sa.create_engine("sqlite://")
+    create_bot_tables(engine)
+
+    t = bot_table("ebb", "config")
+    with engine.begin() as conn:
+        conn.execute(sa.text(f"UPDATE {t} SET vix_decay_max = 0 WHERE id = 1"))
+
+    create_bot_tables(engine)
+    assert float(load_config(engine, "ebb")["vix_decay_max"]) == 0.0

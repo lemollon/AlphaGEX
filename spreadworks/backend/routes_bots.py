@@ -239,6 +239,12 @@ class ConfigUpdate(BaseModel):
     max_concurrent_positions: int | None = None
     min_credit: float | None = None
     drift_offset: int | None = None
+    # The VIX decay gate ceiling. Was settable only by raw SQL until 2026-08-15,
+    # which is how ebb sat at NULL with no way to correct it from the operator
+    # surface. 0 disables the gate (scanner.py gates on `ceiling > 0`); there is
+    # deliberately no way to write NULL back, since NULL means "never configured"
+    # and the startup backfill would just refill it.
+    vix_decay_max: float | None = None
 
 
 @router.post("/{bot}/config")
