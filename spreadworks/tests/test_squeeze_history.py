@@ -536,3 +536,54 @@ def test_scheduled_jobs_never_raises():
         assert s["reason"] is not None
     finally:
         ga._SCHEDULER["ref"] = old
+
+
+# --------------------------------------------------------------------------
+# the Discord alert must never post a trade off an unfit signal
+# --------------------------------------------------------------------------
+def _block_reason(fresh, cap, sched):
+    """Mirror of the health gate's precedence in fire_squeeze_alert."""
+    if sched.get("registered") is False:
+        return "not scheduled"
+    if cap.get("state") == "claimed_but_not_stored":
+        return "stored nothing"
+    if fresh.get("stale"):
+        return "sessions behind"
+    if fresh.get("window_complete") is False:
+        return "missing session"
+    return None
+
+
+def test_the_2026_08_15_case_would_now_be_blocked_not_posted():
+    """The real failure: gamma four sessions old still resolved to
+    SELL_PREMIUM, so the 08:05 job would have posted a clean, confident trade
+    recommendation off stale data with nothing marking it stale."""
+    fresh = {"stale": True, "gamma_date": "2026-08-11", "gamma_stale_sessions": 3,
+             "expected_date": "2026-08-14", "window_complete": True}
+    cap = {"state": "never_run"}
+    sched = {"registered": True}
+    assert _block_reason(fresh, cap, sched) == "sessions behind"
+
+
+def test_unarmed_scheduler_outranks_everything():
+    assert _block_reason({"stale": False, "window_complete": True},
+                         {"state": "ok"}, {"registered": False}) == "not scheduled"
+
+
+def test_a_failed_capture_blocks_even_when_data_looks_fresh():
+    """freshness alone cannot catch this on day one — the data is only one
+    session old, so `stale` is False while the job is in fact dead."""
+    assert _block_reason({"stale": False, "window_complete": True},
+                         {"state": "claimed_but_not_stored"},
+                         {"registered": True}) == "stored nothing"
+
+
+def test_a_hole_in_the_window_blocks():
+    assert _block_reason({"stale": False, "window_complete": False,
+                          "window_missing": ["2026-08-13"]},
+                         {"state": "ok"}, {"registered": True}) == "missing session"
+
+
+def test_a_healthy_signal_is_not_blocked():
+    assert _block_reason({"stale": False, "window_complete": True},
+                         {"state": "ok"}, {"registered": True}) is None
