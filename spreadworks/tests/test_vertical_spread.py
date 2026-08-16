@@ -196,3 +196,56 @@ def test_unquoted_wing_is_still_rejected():
         params=_p(short_otm_abs=1.0, spread_abs=2.0,
                   min_option_price=0.10, max_spread_pct=0.15, min_credit=0.10))
     assert sig is None, "a wing with no market must be rejected"
+
+
+def test_missing_wing_strike_does_not_silently_widen_the_spread():
+    """🚨 _nearest() has no distance limit. With the 637 wing delisted it used
+    to snap to 636 and build a $3 wing instead of $2 — max loss $288 against
+    $172, 67% more risk per lot, no diagnostic. A different structure is a
+    different trade, so the correct answer is to skip the session."""
+    ch = _zdte_chain(640.0)
+    ch["options"] = [o for o in ch["options"]
+                     if not (o["type"] == "put" and o["strike"] == 637)]
+    diag = []
+    sig = build_vertical_signal(
+        kind="bull_put_spread", chain=ch, config=_ZCFG, equity=3000.0,
+        params=_p(short_otm_abs=1.0, spread_abs=2.0,
+                  min_option_price=0.10, max_spread_pct=0.15, min_credit=0.10),
+        diag=diag)
+    assert sig is None, "a $3 wing is not the $2 spread that was backtested"
+    assert "wing_width_off_spec" in diag[0], diag
+
+
+def test_missing_short_strike_is_rejected_not_snapped():
+    """Same guard on the leg being sold — moneyness is the specification."""
+    ch = _zdte_chain(640.0)
+    ch["options"] = [o for o in ch["options"]
+                     if not (o["type"] == "put" and o["strike"] == 639)]
+    diag = []
+    sig = build_vertical_signal(
+        kind="bull_put_spread", chain=ch, config=_ZCFG, equity=3000.0,
+        params=_p(short_otm_abs=1.0, spread_abs=2.0,
+                  min_option_price=0.10, max_spread_pct=0.15, min_credit=0.10),
+        diag=diag)
+    assert sig is None
+    assert "short_strike_unlisted" in diag[0], diag
+
+
+def test_percentage_offset_bots_still_snap_freely():
+    """The guard is scoped to the ABSOLUTE-offset form only. %-of-spot bots
+    legitimately land off-grid and must keep snapping, or this fix would break
+    every other vertical in the registry."""
+    sig = build_vertical_signal(
+        kind="bull_put_spread", chain=_zdte_chain(640.0), config=_ZCFG, equity=3000.0,
+        params=_p(short_otm_pct=0.0023, spread_pct=0.0037,   # 1.47 / 2.37 -> off-grid
+                  min_option_price=0.10, max_spread_pct=0.15, min_credit=0.01))
+    assert sig is not None, "pct-form bots must be unaffected by the snap guard"
+
+
+def test_strike_increment_is_robust_to_a_gap():
+    """The increment is the MEDIAN consecutive gap, so one hole in a thin chain
+    cannot inflate it and quietly disable the guard."""
+    from backend.bots.strategies.vertical_spread import _strike_increment
+    assert _strike_increment([630, 631, 632, 633, 640]) == 1.0
+    assert _strike_increment([600, 605, 610, 615, 640]) == 5.0
+    assert _strike_increment([640]) == 1.0
