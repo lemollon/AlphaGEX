@@ -3,6 +3,7 @@ import { validateBot } from '@/lib/db'
 import {
   getProductionAccountsForBot,
   getTradierBalanceDetail,
+  canReadProductionBalance,
   PRODUCTION_BOT,
 } from '@/lib/tradier'
 
@@ -21,12 +22,15 @@ export async function GET(
 ) {
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
-  if (bot !== PRODUCTION_BOT) {
+  // A pure balance read. Gating it on PRODUCTION_BOT meant FLAME could never
+  // show its live account without being armed to trade it — see
+  // canReadProductionBalance. Every other bot still returns empty.
+  if (!canReadProductionBalance(bot)) {
     return NextResponse.json({ accounts: [], production_bot: PRODUCTION_BOT })
   }
 
   try {
-    const accounts = await getProductionAccountsForBot(bot)
+    const accounts = await getProductionAccountsForBot(bot, { forRead: true })
     const details = await Promise.all(
       accounts.map(async (acct) => {
         if (!acct.accountId) {
