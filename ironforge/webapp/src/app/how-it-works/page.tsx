@@ -3,6 +3,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import PerformanceOverviewCard from './PerformanceOverviewCard'
 import HomeNav from '../_home/HomeNav'
+import { isPublicMode } from '@/lib/auth/access'
 import {
   ShieldIcon,
   BarsIcon,
@@ -355,7 +356,7 @@ function LegalFooter() {
 export default function HowItWorksPage() {
   return (
     <div className="min-h-screen bg-[#0B0B0B]">
-      <HomeNav active="how-it-works" />
+      <HomeNav active="how-it-works" showAll={isPublicMode()} />
       <main>
         <HeroSection />
         <PrinciplesStrip />

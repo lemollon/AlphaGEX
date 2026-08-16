@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import HomeNav from './_home/HomeNav'
+import { isPublicMode } from '@/lib/auth/access'
 import HomeFooter from './_home/HomeFooter'
 import { Hero, MembershipSection, EverythingSection, CTABanner } from './_home/sections'
 
@@ -35,7 +36,7 @@ export const metadata: Metadata = {
 export default function HomePage() {
   return (
     <div className="min-h-screen bg-[#050607]">
-      <HomeNav active="home" />
+      <HomeNav active="home" showAll={isPublicMode()} />
       <main>
         <Hero />
         <MembershipSection />

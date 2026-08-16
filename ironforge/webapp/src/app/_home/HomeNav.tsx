@@ -30,13 +30,47 @@ const MEMBER_LINKS: ReadonlyArray<{ href: string; label: string }> = [
 // Links that require actually OWNING the product. Live is the strategy dashboard;
 // there is nothing on it for someone who owns no strategy, so advertising it to a
 // free account is a dead end dressed as a feature.
+/**
+ * EVERY page on the deployment, shown only when the whole service runs open
+ * (IRONFORGE_PUBLIC_MODE). The masthead is normally a strict customer surface —
+ * nothing operator-facing is exposed to visitors — and that rule still holds on
+ * ironforge.trade, which never sets the flag.
+ *
+ * The exception exists because an open sandbox with a customer-only masthead is
+ * unusable: every operator page returns 200 and there is nothing to click, so it
+ * reads as locked when it is wide open. Same failure as the live viewer before
+ * #2817 — open at the door, closed everywhere it matters.
+ */
+const CONSOLE_LINKS: ReadonlyArray<{ href: string; label: string }> = [
+  { href: '/spark', label: 'SPARK' },
+  { href: '/spark2', label: 'SPARK2' },
+  { href: '/flame', label: 'FLAME' },
+  { href: '/inferno', label: 'INFERNO' },
+  { href: '/blaze', label: 'BLAZE' },
+  { href: '/flare', label: 'FLARE' },
+  { href: '/compare', label: 'Compare' },
+  { href: '/accounts', label: 'Accounts' },
+  { href: '/gex', label: 'GEX' },
+  { href: '/volatility', label: 'Volatility' },
+  { href: '/calendar', label: 'Calendar' },
+  { href: '/briefings', label: 'Briefings' },
+  { href: '/ember', label: 'EMBER' },
+  { href: '/agents/spark', label: 'Agent: Spark' },
+  { href: '/agents/flame', label: 'Agent: Flame' },
+  { href: '/performance', label: 'Performance' },
+  { href: '/community', label: 'Community' },
+  { href: '/support', label: 'Support' },
+]
+
 const OWNER_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/live', label: 'My Agents' },
 ]
 
 // `active` is retained for backward compatibility with existing callers
 // (page.tsx passes "home"); the current page is now derived from the pathname.
-export default function HomeNav({ active: _active }: { active?: string } = {}) {
+export default function HomeNav(
+  { active: _active, showAll = false }: { active?: string; showAll?: boolean } = {},
+) {
   const [open, setOpen] = useState(false)
   // SIGNED IN — drives "My Dashboard" vs "Create Account".
   const [isCustomer, setIsCustomer] = useState(false)
@@ -70,17 +104,18 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
     ...NAV_LINKS,
     ...(hasMembership ? MEMBER_LINKS : []),
     ...(ownsStrategy ? OWNER_LINKS : []),
+    ...(showAll ? CONSOLE_LINKS : []),
   ]
 
   return (
     <header className="sticky top-0 z-50 border-b border-white/5 bg-black">
-      <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-5 md:px-8">
+      <div className={`mx-auto flex max-w-[1200px] items-center justify-between px-5 md:px-8 ${showAll ? 'min-h-16 py-2' : 'h-16'}`}>
         <Link href="/" aria-label="IronForge home">
           <Wordmark markClass="h-8 w-auto" textClass="text-lg" />
         </Link>
 
         {/* Desktop links */}
-        <nav className="hidden items-center gap-8 md:flex">
+        <nav className={`hidden items-center md:flex ${showAll ? 'flex-wrap gap-x-4 gap-y-1 justify-end' : 'gap-8'}`}>
           {visibleLinks.map((link) => (
             <Link
               key={link.href}
