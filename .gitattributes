@@ -1,3 +1,20 @@
 # (empty — backtest/data/*.parquet was previously tracked by Git LFS but is
 #  now kept out of the repo entirely. See backtest/data/README.md for how to
 #  obtain the file locally.)
+
+# ── SpreadWorks build output ────────────────────────────────────────────────
+# spreadworks/frontend/dist is a TRACKED deploy artifact: the live Render
+# service's build command is pip-only (it drifted from the blueprint, which
+# does build the frontend), so whatever is committed here IS what ships.
+#
+# Marked -text -merge -diff for three reasons, each one a bug we have hit:
+#   -text   core.autocrlf=true was rewriting LF->CRLF on checkout, so a
+#           freshly-built dist showed as "modified" with byte-identical
+#           content. That phantom churn hides a genuinely stale bundle and
+#           makes any byte-level freshness check unusable.
+#   -merge  git must never line-merge two minified bundles. A hand-merged
+#           chunk is worse than either side; the only correct resolution is
+#           to rebuild.
+#   -diff   nobody reviews a minified diff, and it buries the real changes
+#           in a PR.
+spreadworks/frontend/dist/** -text -merge -diff
