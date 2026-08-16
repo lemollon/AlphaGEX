@@ -515,6 +515,17 @@ export default function SqueezePage() {
           <div style={{ ...S.small, marginTop: 12 }}>
             Reading from {data.data_date || '—'} · {data.freshness?.captured_sessions ?? '—'} of{' '}
             {data.freshness?.window_sessions ?? '—'} sessions from a live capture
+            {/* Next refresh belongs on the face, not a click down: "is this
+                number about to change?" is part of reading the number. */}
+            {(() => {
+              const nxt = data.jobs?.scheduler?.jobs?.gamma_capture;
+              if (!nxt) return null;
+              const d = new Date(nxt);
+              if (isNaN(d)) return null;
+              return <> · next reading {d.toLocaleString('en-US', {
+                weekday: 'short', hour: 'numeric', minute: '2-digit',
+                timeZone: 'America/Chicago' })} CT</>;
+            })()}
             <InfoTip text="This page is ADVISORY ONLY — no bot reads it. Neither trade has been forward-tested: the sell side has a blind out-of-sample decade behind it, the buy side is the best of 48 structures searched." />
           </div>
         </div>
