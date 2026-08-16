@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server'
 import { getSession } from '@/lib/auth/server'
 import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { dbQuery, escapeSql } from '@/lib/db'
+import { isPublicMode } from '@/lib/auth/access'
 
 /**
  * Account-aware Live page: which live-money bots may this viewer see?
@@ -176,6 +177,25 @@ export async function resolveLiveViewer(req: NextRequest): Promise<LiveViewer> {
       // and is the safe direction: the worst case is an operator seeing less
       // than they could, which they undo with ?clear=true.
       if (!customer.customerId && ops.userId) {
+        allowed = [...LIVE_BOTS]
+        isOperator = true
+      } else if (!customer.customerId && isPublicMode()) {
+        // 🚨 PUBLIC MODE MUST REACH THE SCOPING, NOT JUST THE DOOR.
+        //
+        // access.ts states the contract: routes that guard themselves AFTER
+        // middleware consult isPublicMode() too, "so a service running open is
+        // open all the way down instead of serving pages whose APIs still 401".
+        // This function did not, so on an open deployment /agents/{bot} and
+        // /live returned 200 with allowedBots: [] and rendered an empty page —
+        // indistinguishable from a login wall to anyone looking at it, which is
+        // exactly the "reads as broken rather than open" failure that comment
+        // warns about.
+        //
+        // Ordered AFTER the customer check so a real session still wins and
+        // impersonation keeps working. Cannot leak on the customer domain:
+        // IRONFORGE_PUBLIC_MODE is set per-deployment on the operator console
+        // and sandbox, never on ironforge.trade, and it is fail-secure — any
+        // value but the exact string 'true' leaves the gate enforced.
         allowed = [...LIVE_BOTS]
         isOperator = true
       } else {
