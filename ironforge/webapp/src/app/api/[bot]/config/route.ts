@@ -11,13 +11,21 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
   // These MUST mirror DEFAULT_CONFIG in scanner.ts -- sd_multiplier and
   // spread_width are inert and served FROM HERE, so a stale value publishes a
   // number the bot does not use.
+  // 🚨 EBB PM TRANCHE (2026-08-16). These are not cosmetic. entry_end,
+  // min_credit, stop_loss_pct, starting_capital and buying_power_usage_pct are
+  // all READ BY THE SCANNER off the config row, and a PUT from the config UI
+  // writes whatever is served from here. Left stale, one save would have put a
+  // 3x stop on EBB and widened the window to 14:00 — registry #43 measured every
+  // early exit and each collapses the edge to about zero.
+  // stop_loss_pct 999.99 is "off"; the column is NUMERIC(5,2) and cannot hold a
+  // true null-stop, and the scanner divides by 100 to get sl_mult.
   flame: {
-    sd_multiplier: 2.10, spread_width: 5.0, min_credit: 0.05,
-    profit_target_pct: 100.0, stop_loss_pct: 300.0, vix_skip: 32.0,
-    max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
+    sd_multiplier: 2.10, spread_width: 2.0, min_credit: 0.10,
+    profit_target_pct: 100.0, stop_loss_pct: 999.99, vix_skip: 32.0,
+    max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.20,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
-    entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
-    pdt_max_day_trades: 4, starting_capital: 2000.0,
+    entry_start: '13:05', entry_end: '13:10', eod_cutoff_et: '14:45',
+    pdt_max_day_trades: 4, starting_capital: 3000.0,
   },
   // REPOINTED 2026-08-11 -- SPY only, puts only, 14 DTE, delta 0.10 (k=2.10),
   // $5 wings, 3x stop, no stand-down, 1 contract. The only configuration that
@@ -28,13 +36,15 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
   // SPARK = IRON CONDOR (2026-08-11): 7 DTE, put 0.10 / call 0.04 delta,
   // $10 wings, 2x stop. sd_multiplier 2.01 is the put side's straddle multiple;
   // the call side (1.96) is code-controlled in botStructure().
+  // 🚨 EBB AM TRANCHE (2026-08-16) — same strategy as FLAME, one clock earlier.
+  // See the note on flame above for why these values are load-bearing.
   spark: {
-    sd_multiplier: 2.01, spread_width: 10.0, min_credit: 0.05,
-    profit_target_pct: 100.0, stop_loss_pct: 200.0, vix_skip: 32.0,
-    max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.80,
+    sd_multiplier: 2.01, spread_width: 2.0, min_credit: 0.10,
+    profit_target_pct: 100.0, stop_loss_pct: 999.99, vix_skip: 32.0,
+    max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.20,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
-    entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
-    pdt_max_day_trades: 4, starting_capital: 10000.0,
+    entry_start: '10:05', entry_end: '10:20', eod_cutoff_et: '14:45',
+    pdt_max_day_trades: 4, starting_capital: 5000.0,
   },
 
   // spark2 — SPARK's paper twin. Same strategy code (isSparkV2Sizing +
