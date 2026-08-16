@@ -166,9 +166,13 @@ def _auto_seed_vix_from_csv(engine) -> None:
     one stray row must not be able to skip the backfill.
     """
     from sqlalchemy import text as sa_text
+    from .bots.gamma_regime import GAMMA_DAILY_TABLE, ensure_gamma_table
     from .bots.vix_regime import ensure_vix_table, VIX_DAILY_TABLE
 
     ensure_vix_table(engine)
+    # The prune below joins against sw_gamma_daily; make sure it exists first,
+    # since this seed can run before the gamma one on a cold database.
+    ensure_gamma_table(engine)
     if not VIX_BASELINE_CSV.exists():
         logger.warning("[GammaAlerts] vix_baseline.csv not found at %s — "
                        "squeeze signal will read UNKNOWN until the scanner "
@@ -200,6 +204,40 @@ def _auto_seed_vix_from_csv(engine) -> None:
             conn.execute(sql, r)
     logger.info("[GammaAlerts] auto-seeded sw_vix_daily from CSV baseline: "
                "%d row(s), %s..%s", len(rows), rows[0]["d"], rows[-1]["d"])
+
+    # PRUNE PHANTOM SESSIONS. ON CONFLICT DO NOTHING can add a row and can
+    # never remove one, so a bad date already in the table survives every
+    # re-seed. That is not hypothetical: ThetaData's INDEX feed publishes a VIX
+    # close on market holidays, and 2026-05-25 (Memorial Day) reached the
+    # baseline that way — a date on which SPY has no session at all. A phantom
+    # row is not cosmetic here: vix_decay_ratio takes `LIMIT 21` ordered by
+    # date, so one extra row shifts the whole 20-session window by one and
+    # makes the next session's "prior close" a day the market was shut.
+    #
+    # Scope is deliberately narrow. Only dates INSIDE the CSV's own span are
+    # eligible, because within that span the committed baseline is the source
+    # of truth; anything the capture job writes later sits beyond it and is
+    # never touched. And a date is only deleted if sw_gamma_daily has no
+    # session for it either — a real trading day would have gamma, so that
+    # second test makes it structurally impossible to delete a live session on
+    # the strength of a gap in the VIX CSV alone.
+    keep = {r["d"] for r in rows}
+    lo, hi = min(keep), max(keep)
+    with engine.begin() as conn:
+        stale = conn.execute(sa_text(
+            f"SELECT v.trade_date FROM {VIX_DAILY_TABLE} v "
+            f"LEFT JOIN {GAMMA_DAILY_TABLE} g ON g.trade_date = v.trade_date "
+            "WHERE v.trade_date >= :lo AND v.trade_date <= :hi "
+            "AND g.trade_date IS NULL"), {"lo": lo, "hi": hi}).fetchall()
+        drop = [r[0] for r in stale
+                if (r[0] if isinstance(r[0], date) else date.fromisoformat(str(r[0])))
+                not in keep]
+        for d in drop:
+            conn.execute(sa_text(
+                f"DELETE FROM {VIX_DAILY_TABLE} WHERE trade_date = :d"), {"d": d})
+    if drop:
+        logger.warning("[GammaAlerts] pruned %d phantom sw_vix_daily row(s) "
+                       "with no matching trading session: %s", len(drop), drop)
 
 
 def _auto_seed_from_csv(engine) -> None:

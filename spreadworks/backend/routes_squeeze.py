@@ -28,8 +28,8 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from .bots.gamma_regime import (GAMMA_DAILY_TABLE, PCT_WINDOW, data_freshness,
-                                signal_history, signal_summary, squeeze_outlook,
-                                squeeze_signal, vix_history)
+                                job_status, signal_history, signal_summary,
+                                squeeze_outlook, squeeze_signal, vix_history)
 from .db import engine as _global_engine
 
 logger = logging.getLogger("spreadworks.routes_squeeze")
@@ -138,9 +138,11 @@ async def state(sessions: int = HISTORY_ROWS):
     # `freshness` is what the page must show when the two disagree.
     try:
         fresh = data_freshness(ENGINE, today)
-        for k in ("gamma_date", "vix_date", "expected_date"):
+        for k in ("gamma_date", "vix_date", "expected_date", "last_capture_date"):
             if fresh.get(k) is not None:
                 fresh[k] = _isoformat(fresh[k])
+        if fresh.get("window_missing"):
+            fresh["window_missing"] = [_isoformat(d) for d in fresh["window_missing"]]
     except Exception as e:  # noqa: BLE001
         logger.warning("[routes_squeeze] data_freshness failed: %r", e)
         fresh = {"reason": f"data_freshness error: {e}", "stale": None}
@@ -158,6 +160,16 @@ async def state(sessions: int = HISTORY_ROWS):
         logger.warning("[routes_squeeze] signal_history failed: %r", e)
         sh, summary = [], {"reason": f"signal_history error: {e}"}
 
+    # When each scheduled job last actually fired. The page advertised "next
+    # capture 15:05 CT" with no way to see that it has never once run.
+    try:
+        jobs = job_status(ENGINE)
+        jobs["last"] = {k: _isoformat(v) if v is not None else None
+                        for k, v in (jobs.get("last") or {}).items()}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_squeeze] job_status failed: %r", e)
+        jobs = {"last": {}, "reason": f"job_status error: {e}"}
+
     # The VIX leg's own series — it had no history on the page at all.
     try:
         vh = vix_history(ENGINE, n=n_rows)
@@ -172,6 +184,7 @@ async def state(sessions: int = HISTORY_ROWS):
         "data_date": (_isoformat(sig["prior_date"])
                       if sig.get("prior_date") is not None else None),
         "freshness": fresh,
+        "jobs": jobs,
         "outlook": outlook,
         "verdict": sig.get("verdict"),
         "gamma_pct": sig.get("gamma_pct"),

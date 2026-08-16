@@ -205,3 +205,183 @@ def test_vix_ratio_is_one_at_a_new_high(engine):
     rows = vix_history(engine)
     assert rows[-1]["ratio"] == pytest.approx(2.0)     # 40 / 20
     assert rows[0]["ratio"] is None                    # window not yet filled
+
+
+# --------------------------------------------------------------------------
+# provenance + window completeness + job status
+# --------------------------------------------------------------------------
+def test_seeded_rows_do_not_count_as_captures(engine):
+    """The CSV seed leaves n_contracts NULL; only a real 15:05 capture sets
+    it. That column is the ONLY way to answer 'has the capture ever run?',
+    which the page was asserting an answer to without one."""
+    days = _weekdays(date(2026, 8, 14), 5)
+    _seed(engine, days, lambda d: 1e9, lambda d: 15.0)      # seed-shaped rows
+    f = data_freshness(engine, date(2026, 8, 17))
+    assert f["captured_sessions"] == 0
+    assert f["last_capture_date"] is None
+    assert f["latest_is_capture"] is False
+
+
+def test_a_captured_row_is_recognised(engine):
+    days = _weekdays(date(2026, 8, 14), 5)
+    _seed(engine, days, lambda d: 1e9, lambda d: 15.0)
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"UPDATE {GAMMA_DAILY_TABLE} SET n_contracts = 4821 "
+            "WHERE trade_date = :d"), {"d": days[-1].isoformat()})
+    f = data_freshness(engine, date(2026, 8, 17))
+    assert f["captured_sessions"] == 1
+    assert f["last_capture_date"] == date(2026, 8, 14)
+    assert f["latest_is_capture"] is True
+
+
+def test_a_hole_in_the_window_is_found_via_the_vix_calendar(engine):
+    """Gaps are differenced against sw_vix_daily, not counted as weekdays, so
+    a market holiday cannot masquerade as a missing session."""
+    days = _weekdays(date(2026, 8, 14), PCT_WINDOW + 5)
+    _seed(engine, days, lambda d: 1e9, lambda d: 15.0)
+    hole = days[-3]
+    with engine.begin() as conn:                    # gamma loses a day, VIX keeps it
+        conn.execute(text(f"DELETE FROM {GAMMA_DAILY_TABLE} WHERE trade_date = :d"),
+                     {"d": hole.isoformat()})
+    f = data_freshness(engine, date(2026, 8, 17))
+    assert f["window_complete"] is False
+    assert hole in f["window_missing"]
+
+
+def test_a_holiday_is_not_a_hole(engine):
+    """A day absent from BOTH series is a market holiday, not a gap."""
+    days = _weekdays(date(2026, 8, 14), PCT_WINDOW + 5)
+    holiday = days[-4]
+    kept = [d for d in days if d != holiday]
+    _seed(engine, kept, lambda d: 1e9, lambda d: 15.0)
+    f = data_freshness(engine, date(2026, 8, 17))
+    assert f["window_missing"] == []
+    assert f["window_complete"] is True
+
+
+def test_job_status_reports_never_ran_rather_than_ran_fine(engine):
+    from backend.db import Base
+    from backend import models  # noqa: F401
+    from backend.bots.gamma_regime import job_status
+    Base.metadata.create_all(engine)
+    s = job_status(engine)
+    assert s["reason"] is None
+    assert s["last"] == {}                       # empty = never fired, not "ok"
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO discord_post_log (message_key, fire_date, posted_at) "
+            "VALUES ('gamma_capture', :d, CURRENT_TIMESTAMP)"),
+            {"d": date(2026, 8, 17).isoformat()})
+    s = job_status(engine)
+    assert s["last"]["gamma_capture"] == date(2026, 8, 17)
+    assert "squeeze_signal" not in s["last"]
+
+
+def test_job_status_on_a_missing_table_is_unknown_not_healthy():
+    from sqlalchemy import create_engine as ce
+    from backend.bots.gamma_regime import job_status
+    s = job_status(ce("sqlite:///:memory:", future=True))
+    assert s["reason"] is not None
+    assert s["last"] == {}
+
+
+# --------------------------------------------------------------------------
+# phantom-session prune in the VIX seed
+# --------------------------------------------------------------------------
+def _run_vix_seed(engine, tmp_path, csv_rows):
+    """Point the seed at a scratch CSV and run it against `engine`."""
+    import backend.gamma_alerts as ga
+    p = tmp_path / "vix_baseline.csv"
+    p.write_text("d,vix\n" + "\n".join(f"{d},{v}" for d, v in csv_rows) + "\n")
+    old = ga.VIX_BASELINE_CSV
+    ga.VIX_BASELINE_CSV = p
+    try:
+        ga._auto_seed_vix_from_csv(engine)
+    finally:
+        ga.VIX_BASELINE_CSV = old
+
+
+def test_a_holiday_row_with_no_trading_session_is_pruned(engine, tmp_path):
+    """The real case: ThetaData's index feed published VIX on Memorial Day
+    2026-05-25, a date SPY has no session for. ON CONFLICT DO NOTHING can add
+    a row and never remove one, so the bad date survived every re-seed."""
+    from backend.bots.vix_regime import VIX_DAILY_TABLE
+    days = [date(2026, 5, 22), date(2026, 5, 26)]
+    _seed(engine, days, lambda d: 1e9)                    # gamma: no 05-25
+    with engine.begin() as conn:                          # phantom already live
+        conn.execute(text(
+            f"INSERT INTO {VIX_DAILY_TABLE} (trade_date, vix, updated_at) "
+            "VALUES ('2026-05-25', 16.59, CURRENT_TIMESTAMP)"))
+
+    _run_vix_seed(engine, tmp_path, [("2026-05-22", "16.7"), ("2026-05-26", "17.01")])
+
+    with engine.begin() as conn:
+        left = [r[0] for r in conn.execute(text(
+            f"SELECT trade_date FROM {VIX_DAILY_TABLE} ORDER BY trade_date")).fetchall()]
+    assert "2026-05-25" not in [str(x) for x in left]
+    assert len(left) == 2
+
+
+def test_prune_cannot_delete_a_real_session(engine, tmp_path):
+    """A date missing from the VIX CSV but PRESENT in sw_gamma_daily is a real
+    trading day the CSV simply lacks. Deleting it would be the destructive
+    failure this guard exists to prevent."""
+    from backend.bots.vix_regime import VIX_DAILY_TABLE
+    days = [date(2026, 7, 20), date(2026, 7, 21), date(2026, 7, 22)]
+    _seed(engine, days, lambda d: 1e9)                    # gamma HAS all three
+    with engine.begin() as conn:
+        for d, v in (("2026-07-20", 18.65), ("2026-07-21", 17.05), ("2026-07-22", 16.64)):
+            conn.execute(text(
+                f"INSERT INTO {VIX_DAILY_TABLE} (trade_date, vix, updated_at) "
+                "VALUES (:d, :v, CURRENT_TIMESTAMP)"), {"d": d, "v": v})
+
+    # CSV omits 07-21 and 07-22 entirely
+    _run_vix_seed(engine, tmp_path, [("2026-07-20", "18.65")])
+
+    with engine.begin() as conn:
+        left = {str(r[0]) for r in conn.execute(text(
+            f"SELECT trade_date FROM {VIX_DAILY_TABLE}")).fetchall()}
+    assert left == {"2026-07-20", "2026-07-21", "2026-07-22"}
+
+
+def test_prune_never_touches_rows_beyond_the_csv_span(engine, tmp_path):
+    """Captures written after the baseline's last date must survive."""
+    from backend.bots.vix_regime import VIX_DAILY_TABLE
+    _seed(engine, [date(2026, 8, 14)], lambda d: 1e9)
+    with engine.begin() as conn:
+        for d, v in (("2026-08-14", 14.25), ("2026-08-17", 14.10)):
+            conn.execute(text(
+                f"INSERT INTO {VIX_DAILY_TABLE} (trade_date, vix, updated_at) "
+                "VALUES (:d, :v, CURRENT_TIMESTAMP)"), {"d": d, "v": v})
+
+    _run_vix_seed(engine, tmp_path, [("2026-08-14", "14.25")])   # span ends 08-14
+
+    with engine.begin() as conn:
+        left = {str(r[0]) for r in conn.execute(text(
+            f"SELECT trade_date FROM {VIX_DAILY_TABLE}")).fetchall()}
+    assert "2026-08-17" in left       # beyond the span, untouched
+
+
+def test_committed_vix_baseline_has_no_phantom_sessions():
+    """Regression on the shipped data itself: every date in vix_baseline.csv
+    that falls inside gamma_baseline.csv's span must be a real session."""
+    import csv as _csv
+    from pathlib import Path
+    D = Path(__file__).resolve().parent.parent / "backend" / "data"
+
+    def load(name):
+        out = set()
+        with open(D / name, newline="") as f:
+            for r in _csv.reader(f):
+                if r and r[0] != "d":
+                    out.add(date.fromisoformat(r[0]))
+        return out
+
+    g, v = load("gamma_baseline.csv"), load("vix_baseline.csv")
+    lo, hi = max(min(g), min(v)), min(max(g), max(v))
+    phantom = sorted(d for d in v if lo <= d <= hi and d not in g)
+    missing = sorted(d for d in g if lo <= d <= hi and d not in v)
+    assert phantom == [], f"VIX rows on non-trading days: {phantom}"
+    assert missing == [], f"trading days with no VIX row: {missing}"

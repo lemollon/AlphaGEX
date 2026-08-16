@@ -79,6 +79,16 @@ const CALENDAR_FLAGS = [
   { key: 'quarter_end', label: 'Quarter end', tone: 'supportive' },
   { key: 'payrolls_friday', label: 'Payrolls Friday', tone: 'supportive' },
   { key: 'opex_week', label: 'Opex week', tone: 'suppressive' },
+  { key: 'opex_day', label: 'Monthly opex day', tone: 'suppressive' },
+];
+
+// Background jobs that write this page's data. `jobs.last` keys mirror this
+// list — a key absent from the payload means that job has never fired.
+const JOB_STATUS = [
+  { key: 'gamma_capture', label: 'gamma capture', schedule: '15:05 CT, weekdays' },
+  { key: 'squeeze_signal', label: 'squeeze signal', schedule: '15:05 CT, weekdays' },
+  { key: 'squeeze_proximity_watch', label: 'proximity watch', schedule: '08:05 CT, weekdays' },
+  { key: 'squeeze_proximity_pin', label: 'proximity pin', schedule: '08:05 CT, weekdays' },
 ];
 
 // Range control. FETCH_SESSIONS is what /state is asked for once; the buttons
@@ -336,20 +346,64 @@ export default function SqueezePage() {
             </div>
             <div>
               <div style={{ fontSize: 10, color: DIM }}>VIX data</div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{data.freshness?.vix_date || '—'}</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>
+                {data.freshness?.vix_date || '—'}
+                {data.freshness?.vix_stale_sessions > 0 && (
+                  <span style={{ ...S.small, marginLeft: 6 }}>{data.freshness.vix_stale_sessions} session(s) behind</span>
+                )}
+              </div>
+            </div>
+            {/* Per-job last-fire date. These jobs have never run in
+                production — a schedule string alone read as "this is live"
+                when it never has been. */}
+            {JOB_STATUS.map(j => {
+              const last = data.jobs?.last?.[j.key];
+              return (
+                <div key={j.key}>
+                  <div style={{ fontSize: 10, color: DIM }}>{j.label}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: last ? undefined : AMBER }}>
+                    {last || 'never run'}
+                  </div>
+                  <div style={S.small}>{j.schedule}</div>
+                </div>
+              );
+            })}
+            <div>
+              <div style={{ fontSize: 10, color: DIM }}>provenance</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>
+                {data.freshness?.captured_sessions ?? '—'} of {data.freshness?.window_sessions ?? '—'} sessions from a live capture
+              </div>
             </div>
             <div>
-              <div style={{ fontSize: 10, color: DIM }}>next capture</div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>15:05 CT, weekdays</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 10, color: DIM }}>next alert</div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>08:05 CT, weekdays</div>
+              <div style={{ fontSize: 10, color: DIM }}>percentile window</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>
+                {data.freshness?.window_sessions ?? '—'}/{data.freshness?.window_needed ?? '—'} sessions
+                <span style={{ marginLeft: 6, fontSize: 11, color: data.freshness?.window_complete ? GREEN : AMBER }}>
+                  {data.freshness?.window_complete ? 'no gaps' : 'gaps'}
+                </span>
+              </div>
             </div>
           </div>
+          {data.freshness?.captured_sessions === 0 && (
+            <div style={{ ...S.small, color: AMBER, marginTop: 8 }}>
+              Every reading on this page came from the committed CSV baseline, not a live capture.
+            </div>
+          )}
+          {data.freshness?.window_complete === false && data.freshness?.window_missing?.length > 0 && (
+            <div style={{ ...S.small, color: AMBER, marginTop: 8 }}>
+              Missing from the trailing window: {data.freshness.window_missing.slice(0, 6).join(', ')}
+              {data.freshness.window_missing.length > 6 ? ` +${data.freshness.window_missing.length - 6} more` : ''}
+            </div>
+          )}
+          {data.jobs?.reason && (
+            <div style={{ ...S.small, color: GREY, marginTop: 8 }}>{data.jobs.reason}</div>
+          )}
           <div style={{ ...S.small, marginTop: 8 }}>
             The signal updates once per session at 15:05 CT. Sessions with no captured reading leave
             a permanent hole in the 60-session percentile window.
+          </div>
+          <div style={{ ...S.small, marginTop: 4 }}>
+            The morning alert only fires when the verdict is not NEUTRAL — a quiet day is silent by design.
           </div>
         </div>
 
@@ -378,8 +432,20 @@ export default function SqueezePage() {
                     $1,000 → $3,728 over 3.7 years with the gamma veto applied. CAGR 44.1%, max
                     drawdown −35.1%, return/drawdown 1.29.
                   </div>
+                  <div style={{ fontSize: 12, color: '#c6cbd8', lineHeight: 1.7, marginBottom: 6 }}>
+                    <div>daily mean +$3.35 · median +$19.30 · worst −$198</div>
+                    <div>weekly +$15, 116 of 185 up</div>
+                    <div>monthly +$62, 29 of 44 up, worst −$423</div>
+                    <div>yearly +$569 · +$1,217 · +$314 · +$629</div>
+                  </div>
                   <div style={{ fontSize: 12.5, color: AMBER }}>
                     Worst single day −$198 — 20% of a $1,000 account in one afternoon.
+                  </div>
+                  <div style={{ fontSize: 12, color: AMBER, marginTop: 6, lineHeight: 1.5 }}>
+                    The veto predicts loss SIZE, not loss ARRIVAL. Win rate barely moves with it (66% vs
+                    85%) — the losses are bigger, not more frequent. 6 of the 10 worst days were
+                    unflagged, and the single worst (2023-12-20, −$197.70) happened in LONG gamma at
+                    +$10.8B.
                   </div>
                 </>
               ),
@@ -453,6 +519,41 @@ export default function SqueezePage() {
             </div>
           );
         })()}
+
+        {/* WHAT THE VETO IS WORTH — the honest headline of the page. The
+            evidence tables above sell the signal; this is what it actually
+            adds on top of the strategy that was already there. */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>What the veto is actually worth</div>
+          <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: 560, marginBottom: 10 }}>
+            <thead>
+              <tr>
+                <th style={S.th}>strategy</th><th style={S.th}>$1,000 becomes</th>
+                <th style={S.th}>CAGR</th><th style={S.th}>return/drawdown</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={S.td}>Always-on (no signal)</td>
+                <td style={S.td}>$2,931</td>
+                <td style={S.td}>35.0%</td>
+                <td style={S.td}>0.81</td>
+              </tr>
+              <tr>
+                <td style={S.td}>With the gamma veto</td>
+                <td style={{ ...S.td, fontWeight: 700, color: GREEN }}>$3,728</td>
+                <td style={{ ...S.td, fontWeight: 700, color: GREEN }}>44.1%</td>
+                <td style={{ ...S.td, fontWeight: 700, color: GREEN }}>1.29</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={S.small}>
+            The veto adds about $1.27 a trade and roughly 9 points of drawdown. That is the whole
+            contribution — the edge is the short premium itself, not the signal. Of 17 candidate
+            signals scanned against this strategy, none survived; gamma scores t=+0.87 on its own.
+            It earns its place as a rare veto, not as an entry trigger.
+          </div>
+        </div>
 
         {/* OUTLOOK — what to watch */}
         {(() => {
@@ -657,6 +758,10 @@ export default function SqueezePage() {
                       <div style={{ fontSize: 14, fontWeight: 600 }}>{bn(iv.net_gex_b)}</div>
                     </div>
                     <div>
+                      <div style={{ fontSize: 10, color: DIM }}>SPY spot (live)</div>
+                      <div style={{ fontSize: 14, fontWeight: 600 }}>{iv.spot == null ? '—' : `$${Number(iv.spot).toFixed(2)}`}</div>
+                    </div>
+                    <div>
                       <div style={{ fontSize: 10, color: DIM }}>vs last close ({bn(iv.last_close_b)})</div>
                       <div style={{ fontSize: 14, fontWeight: 600 }}>{signedBn(iv.delta_b)}</div>
                     </div>
@@ -664,6 +769,12 @@ export default function SqueezePage() {
                       <div style={{ fontSize: 10, color: DIM }}>percentile if this were the close</div>
                       <div style={{ fontSize: 14, fontWeight: 600 }}>{pct(iv.pct_if_now)}</div>
                     </div>
+                  </div>
+                  <div style={{ fontSize: 11, color: AMBER, lineHeight: 1.5, marginBottom: 8 }}>
+                    "vs last close" subtracts a live Tradier chain from an ORATS-derived baseline. Those two
+                    paths have not been reconciled — on 2026-08-14 they read $6.30B and $3.50B for the same
+                    session while spot matched to the cent. Treat this delta as pipeline difference, not as a
+                    move in gamma, until the 15:05 capture has run against both.
                   </div>
                   {stale ? (
                     <div style={{ fontSize: 11, color: DIM }}>
@@ -708,6 +819,11 @@ export default function SqueezePage() {
           </div>
           {hist.length ? (() => {
             const chartOutlook = data.outlook || {};
+            // Tallest print in the visible window — used to flag a possible
+            // 1DTE-expiry artifact in the caption below.
+            const maxRow = hist.reduce((m, d) => (
+              d.net_gex_b != null && (m == null || d.net_gex_b > m.net_gex_b) ? d : m
+            ), null);
             return (
               <>
                 <div style={{ width: '100%', height: 260 }}>
@@ -789,6 +905,21 @@ export default function SqueezePage() {
                     )}
                   </span>
                 </div>
+                {maxRow && (
+                  <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6 }}>
+                    The tallest print in this window is {bn(maxRow.net_gex_b)} on {maxRow.trade_date}. Near-dated
+                    expiries spike per-contract gamma, so a single session with a 1DTE expiry on the board can
+                    set the window's top and depress every percentile below it until it rolls out of the
+                    trailing 60.
+                  </div>
+                )}
+                <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6 }}>
+                  This is computed from the chain, not read off a vendor flip point. "Spot below the flip"
+                  reproduces net_gex &lt; 0 only 52.4% of the time on the watchtower feed and 45.0% on the
+                  intraday one, so other pages in this app can show a contradictory reading. Note also that
+                  "short gamma" and "below the flip" are the same variable (96.1% agreement) — never stack
+                  them as two conditions.
+                </div>
               </>
             );
           })() : <div style={S.small}>no history yet — needs the 15:05 CT capture job to run and 60 sessions before the percentile is defined</div>}
@@ -843,6 +974,8 @@ export default function SqueezePage() {
                       <Legend wrapperStyle={{ fontSize: 11 }} formatter={v => <span style={{ color: '#8b93a7' }}>{v}</span>} />
                       <ReferenceLine yAxisId="ratio" y={0.95} stroke={AMBER} strokeDasharray="4 4"
                                      label={{ value: '0.95 — at highs', position: 'insideTopRight', fill: AMBER, fontSize: 10 }} />
+                      <ReferenceLine yAxisId="ratio" y={0.90} stroke="#7dd3fc" strokeDasharray="4 4"
+                                     label={{ value: '0.90 — EBB gate', position: 'insideBottomRight', fill: '#7dd3fc', fontSize: 10 }} />
                       <Line yAxisId="ratio" dataKey="ratio" name="VIX ratio" stroke="#f0abfc" dot={false} strokeWidth={1.8} connectNulls />
                       <Line yAxisId="lvl" dataKey="vix" name="VIX level" stroke="#64748b" dot={false} strokeWidth={1.1} />
                     </ComposedChart>
@@ -861,6 +994,10 @@ export default function SqueezePage() {
                 20-session high</b>. Median VIX at a firing is <b style={{ color: '#c6cbd8' }}>22.3</b>,
                 and just 5 of 161 fired below 15 — the leg is not quietly passing in calm tape. The grey
                 line is there so you can check that yourself.
+              </div>
+              <div style={{ ...S.small, marginTop: 8 }}>
+                Two thresholds are live on this same ratio. This page uses 0.95 as an advisory squeeze leg.
+                EBB ships 0.90 as a real-money gate — a different job on the same number.
               </div>
             </div>
           );
@@ -925,7 +1062,8 @@ export default function SqueezePage() {
               {sh.length ? (
                 <div style={{ display: 'flex', height: 22, borderRadius: 6, overflow: 'hidden', marginBottom: 8 }}>
                   {sh.map((s, i) => (
-                    <div key={i} title={`${s.trade_date} — ${s.verdict}`}
+                    <div key={i}
+                         title={`${s.trade_date} — ${s.verdict} · pct ${pct(s.pct)} · gamma ${bn(s.net_gex_b)} · VIX ratio ${s.vix_ratio == null ? '—' : s.vix_ratio.toFixed(2)}`}
                          style={{ flex: '1 1 0', background: SIGNAL_STRIP_COLOR[s.verdict] || GREY }} />
                   ))}
                 </div>
@@ -951,6 +1089,10 @@ export default function SqueezePage() {
         {/* EVIDENCE TABLE */}
         <div style={S.card}>
           <div style={S.cardTitle}>The evidence — squeeze rate by gamma percentile</div>
+          <div style={{ ...S.small, marginBottom: 10 }}>
+            Squeeze = SPY gains 4% or more within 5 sessions, starting within 3% of a 20-day low. 134 in
+            33 years (about 4 a year); 33 fall inside the 2020–2026 gamma window, or 1.99% of sessions.
+          </div>
           <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: 480, marginBottom: 10 }}>
             <thead><tr><th style={S.th}>percentile bucket</th><th style={S.th}>squeeze rate</th></tr></thead>
             <tbody>
@@ -977,6 +1119,13 @@ export default function SqueezePage() {
             Gamma oversold + VIX at its highs → <b style={{ color: '#c6cbd8' }}>15.13% squeeze rate, 0.00% crash rate</b> (n=119).
             Monotone, zero squeezes in the top quartile. Overbought gamma is NOT a crash signal —
             it is the safest measured state to sell premium.
+          </div>
+          <div style={{ ...S.small, marginTop: 8 }}>
+            Neither threshold is the best-fitting one. Bottom-decile squeeze rate is 7.8–11.4% at every
+            lookback from 30 to 252 sessions and monotone at all of them; 60 shipped, but 120 scores
+            better. Every percentile cut from 0.05 to 0.30 gives a 2.5–3.4x lift; 0.20 shipped, but 0.15
+            scores better. Decile rank correlation −0.861. Shipping the non-optimal value is deliberate —
+            the result is not a knife edge.
           </div>
         </div>
 
@@ -1037,6 +1186,54 @@ export default function SqueezePage() {
             0-for-9 in 2024 and 0-for-9 in 2025. A tilt on top of an existing setup, never a trigger on
             its own. Mechanism: month end forces pension and target-date rebalancing into a beaten-down
             tape; opex runs the other way because expiry removes the gamma.
+          </div>
+        </div>
+
+        {/* RECALL TABLE — the page above shows only precision (rate WITHIN a
+            bucket); this is how much of the phenomenon each filter actually
+            catches. */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>Recall — what it catches</div>
+          <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: 560, marginBottom: 10 }}>
+            <thead>
+              <tr>
+                <th style={S.th}>filter</th><th style={S.th}>recall</th><th style={S.th}>precision</th><th style={S.th}>lift</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={S.td}>net_gex &lt; 0</td>
+                <td style={S.td}>100%</td>
+                <td style={S.td}>3.4%</td>
+                <td style={{ ...S.td, fontWeight: 700 }}>1.72x</td>
+              </tr>
+              <tr>
+                <td style={S.td}>net_gex &lt; −$5B</td>
+                <td style={S.td}>57.6%</td>
+                <td style={S.td}>4.6%</td>
+                <td style={S.td}>—</td>
+              </tr>
+              <tr>
+                <td style={S.td}>net_gex &lt; −$10B</td>
+                <td style={S.td}>18.2%</td>
+                <td style={S.td}>7.1%</td>
+                <td style={S.td}>—</td>
+              </tr>
+              <tr>
+                <td style={S.td}>vix_ratio &lt; 0.80</td>
+                <td style={S.td}>—</td>
+                <td style={S.td}>—</td>
+                <td style={{ ...S.td, fontWeight: 700, color: RED }}>0.36x</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={S.small}>
+            Every SPY squeeze since 2020 began with dealers short gamma — 33 of 33, against a 58% base
+            rate. But precision is 3.4%: 929 false alarms. Tightening the threshold trades recall for
+            precision and never buys much of either. The last row is the one to sit with — a decaying
+            VIX has a lift BELOW 1, meaning it is a squeeze AVOIDER. Squeezes start with a median
+            vix_ratio of 0.97, fear at its peak. The same ratio is correctly protective for a premium
+            seller and actively wrong for anyone hunting squeezes. Both are true at once.
           </div>
         </div>
 

@@ -57,7 +57,7 @@ import logging
 from datetime import date, timedelta
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
@@ -603,6 +603,102 @@ def data_freshness(engine: Engine, asof: date) -> dict[str, Any]:
     staleness = [s for s in (out["gamma_stale_sessions"],
                              out["vix_stale_sessions"]) if s is not None]
     out["stale"] = bool(staleness and max(staleness) >= MAX_STALE_SESSIONS)
+
+    # PROVENANCE. Rows arrive by two very different routes: the 15:05 capture
+    # (a live chain pull) and _auto_seed_from_csv (the committed baseline). The
+    # seed leaves n_contracts NULL and the capture sets it, so that column is
+    # the discriminator — and it is the only way to answer "has the capture job
+    # ever actually run?", which as of this writing is still "no". A page that
+    # says "next capture 15:05 CT" while every row it displays came from a CSV
+    # is claiming a liveness it does not have.
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(text(
+                f"SELECT COUNT(*), MAX(trade_date) FROM {GAMMA_DAILY_TABLE} "
+                "WHERE n_contracts IS NOT NULL")).fetchone()
+        out["captured_sessions"] = int(row[0]) if row and row[0] is not None else 0
+        cd = row[1] if row else None
+        if cd is not None and not isinstance(cd, date):
+            cd = date.fromisoformat(str(cd))
+        out["last_capture_date"] = cd
+        out["latest_is_capture"] = bool(cd is not None and g is not None and cd == g)
+    except Exception as e:  # noqa: BLE001
+        out["captured_sessions"] = None
+        out["last_capture_date"] = None
+        out["latest_is_capture"] = None
+        out["provenance_reason"] = f"provenance query error: {e}"
+
+    # WINDOW COMPLETENESS. A hole in the trailing PCT_WINDOW silently distorts
+    # every percentile on the page, and the page could not previously tell you
+    # whether the CURRENT window had one. Missing sessions are found by
+    # differencing against sw_vix_daily rather than by counting weekdays: VIX
+    # is an independent series over the same NYSE calendar, so holidays cancel
+    # out instead of reading as false gaps.
+    try:
+        with engine.begin() as conn:
+            grows = conn.execute(text(
+                f"SELECT trade_date FROM {GAMMA_DAILY_TABLE} "
+                "ORDER BY trade_date DESC LIMIT :n"), {"n": PCT_WINDOW}).fetchall()
+            gdates = {r[0] if isinstance(r[0], date) else date.fromisoformat(str(r[0]))
+                      for r in grows}
+            if gdates:
+                vrows = conn.execute(text(
+                    f"SELECT trade_date FROM {VIX_DAILY_TABLE} "
+                    "WHERE trade_date >= :lo AND trade_date <= :hi"),
+                    {"lo": min(gdates), "hi": max(gdates)}).fetchall()
+                vdates = {r[0] if isinstance(r[0], date) else date.fromisoformat(str(r[0]))
+                          for r in vrows}
+                missing = sorted(vdates - gdates)
+            else:
+                missing = []
+        out["window_sessions"] = len(gdates)
+        out["window_needed"] = PCT_WINDOW
+        out["window_missing"] = missing
+        out["window_complete"] = bool(len(gdates) >= PCT_WINDOW and not missing)
+    except Exception as e:  # noqa: BLE001
+        out["window_sessions"] = None
+        out["window_missing"] = None
+        out["window_complete"] = None
+        out["window_reason"] = f"window query error: {e}"
+    return out
+
+
+# Alert bookkeeping lives in discord_post_log (models.py), keyed by the same
+# strings gamma_alerts.py passes to _dedup_ok.
+ALERT_KEYS = {
+    "gamma_capture": "capture",
+    "squeeze_signal": "verdict alert",
+    "squeeze_proximity_watch": "approaching-squeeze alert",
+    "squeeze_proximity_pin": "approaching-pin alert",
+}
+
+
+def job_status(engine: Engine) -> dict[str, Any]:
+    """When each scheduled job last actually fired.
+
+    The page advertises "next capture 15:05 CT" and "next alert 08:05 CT" with
+    no way to see whether either has ever run — precisely the blind spot the
+    freshness work exists to close. Reads the dedup ledger the jobs already
+    write, so it needs no new bookkeeping.
+
+    Never raises: a missing table reports as unknown, which must not read the
+    same as "ran fine".
+    """
+    out: dict[str, Any] = {"last": {}, "reason": None}
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(text(
+                "SELECT message_key, MAX(fire_date) FROM discord_post_log "
+                "WHERE message_key IN :keys GROUP BY message_key"
+            ).bindparams(bindparam("keys", expanding=True)),
+                {"keys": list(ALERT_KEYS)}).fetchall()
+    except Exception as e:  # noqa: BLE001
+        out["reason"] = f"job_status query error: {e}"
+        return out
+    for k, d in rows:
+        if d is not None and not isinstance(d, date):
+            d = date.fromisoformat(str(d))
+        out["last"][k] = d
     return out
 
 
