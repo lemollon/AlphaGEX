@@ -193,7 +193,65 @@ const VIX_DECAY_CEILING = 0.90
 const VIX_DECAY_WINDOW = 20
 const VIX_DECAY_MIN_HISTORY = VIX_DECAY_WINDOW + 1
 
+/**
+ * Make the VIX history self-sufficient in WHATEVER database this deploy points at.
+ *
+ * The gate originally read `sw_vix_daily` on the assumption that the SpreadWorks
+ * scanner fills it. That holds on production, where both apps share alphagex-db,
+ * and fails completely on ironforge-sandbox, which has its own database that
+ * SpreadWorks never writes to — so the gate returned `vix_unknown` and blocked
+ * every entry, every day. Correct fail-closed behaviour, useless sandbox.
+ *
+ * IronForge already has a Tradier key and 'VIX' is a valid symbol here (see
+ * getRawQuotes(['VIX', ...])), so it can just fill its own history rather than
+ * depend on a sibling app's write. One daily-history call gives ~80 sessions,
+ * well past the 21 the ratio needs, so a fresh database is usable immediately
+ * instead of after a month of accumulating rows.
+ *
+ * ON CONFLICT DO NOTHING is deliberate: on production this table is SpreadWorks'
+ * and already populated, so this only ever fills genuine holes and can never
+ * overwrite a value another app owns.
+ *
+ * Runs at most once per CT day per process — the gate only reads sessions
+ * STRICTLY BEFORE today, so re-fetching intraday would buy nothing.
+ */
+let _vixHistorySyncedDay: string | null = null
+
+async function ensureVixHistory(asofDate: string): Promise<void> {
+  if (_vixHistorySyncedDay === asofDate) return
+  _vixHistorySyncedDay = asofDate          // set first: a failure must not retry every minute
+  try {
+    await dbExecute(
+      `CREATE TABLE IF NOT EXISTS sw_vix_daily (
+         trade_date DATE PRIMARY KEY,
+         vix NUMERIC(8,2) NOT NULL,
+         updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+       )`,
+    )
+    const hist = await getDailyHistory('VIX', 150)
+    if (hist.length === 0) {
+      console.warn('[scanner] VIX history fetch returned nothing — gate stays blocking')
+      return
+    }
+    // One statement rather than ~80 round trips.
+    const params: unknown[] = []
+    const tuples = hist.map((h, i) => {
+      params.push(h.date, h.close)
+      return `($${i * 2 + 1}, $${i * 2 + 2}, NOW())`
+    })
+    const inserted = await dbExecute(
+      `INSERT INTO sw_vix_daily (trade_date, vix, updated_at)
+       VALUES ${tuples.join(', ')} ON CONFLICT (trade_date) DO NOTHING`,
+      params as any[],
+    )
+    console.log(`[scanner] VIX history synced: ${hist.length} sessions fetched, ${inserted} new`)
+  } catch (e) {
+    console.error('[scanner] VIX history sync failed:', e)
+  }
+}
+
 async function vixDecayBlock(asofDate: string): Promise<string | null> {
+  await ensureVixHistory(asofDate)
   let rows: Array<Record<string, unknown>>
   try {
     rows = await query(
