@@ -1291,6 +1291,56 @@ export default function SqueezePage() {
           })()}
         </Zone>
 
+        {/* HOW THIS RELATES TO THE RISK PAGE. Measured, because the two pages
+            quote the SAME trade -- same underlying, same short strike
+            (round(spot)-2 either way), same entry minute (11:05 ET = 10:05 CT)
+            -- differing only in wing width. Presenting them as two independent
+            opinions on one position would be the "short gamma and below flip
+            are the same variable" mistake in a new costume. */}
+        <Zone label="How this overlaps the Risk page">
+          <div style={S.card}>
+            <div style={{ fontSize: 13, marginBottom: 8, color: '#c6cbd8' }}>
+              The Risk page's EBB recipe is the <b>same trade as this one</b> — same
+              underlying, same short strike, same entry minute — with a $5 wing instead
+              of $2. Its VIX decay gate already skips at ratio &gt; 0.90; this page's
+              VIX leg fires at &gt; 0.95.
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: 620 }}>
+                <thead><tr>
+                  <th style={S.th}>this page's sell-side veto</th>
+                  <th style={S.th}>already caught by EBB's gate</th>
+                  <th style={S.th}>unique</th>
+                </tr></thead>
+                <tbody>
+                  <tr>
+                    <td style={S.td}>SQUEEZE_WATCH — stand down</td>
+                    <td style={{ ...S.td, color: RED, fontWeight: 700 }}>100%</td>
+                    <td style={{ ...S.td, color: RED, fontWeight: 700 }}>nothing</td>
+                  </tr>
+                  <tr>
+                    <td style={S.td}>NO_SELL — net gamma ≤ −$10B</td>
+                    <td style={S.td}>72.6%</td>
+                    <td style={{ ...S.td, color: GREEN, fontWeight: 700 }}>23 of 1,604 (+1.4pts)</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div style={{ ...S.small, marginTop: 10, lineHeight: 1.6 }}>
+              Measured over 1,604 sessions. <b style={{ color: '#c6cbd8' }}>Every one of the 161
+              SQUEEZE_WATCH days is a day EBB would already have skipped</b> — a strict subset,
+              not a correlation. So do NOT run both as two sell-side vetoes: that applies one
+              variable twice and quietly halves your trade count for nothing. The gamma veto's
+              only additive contribution is NO_SELL, and it is worth 23 extra skip-days in six
+              and a half years.
+              <br /><br />
+              Where this page is genuinely additive is the <b style={{ color: AMBER }}>buy
+              side</b> — the 0.25 delta call. EBB has no long-convexity trade at all, and the
+              two sides' monthly P&amp;L correlate +0.165.
+            </div>
+          </div>
+        </Zone>
+
         <Zone label="Why believe this">
           {/* WHAT THE VETO IS WORTH — the honest headline of the page. The
               evidence tables above sell the signal; this is what it actually
