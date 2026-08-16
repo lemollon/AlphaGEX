@@ -756,6 +756,18 @@ async def recipe(request: Request):
         short_strike, other_strike = _recipe_strikes(spot)
         today = now.date()
 
+        # The recipe is a SAME-DAY put spread, so its expiration is the
+        # SESSION it would trade in — which is not today when today is a
+        # weekend. Returning today's date there had the card announce
+        # "expires TODAY (2026-08-16)" on a Sunday, an expiry that does not
+        # exist, directly above its own "weekend — next window Monday" line.
+        # (Market holidays are not modelled here; the phase machinery does not
+        # model them either, so this stays consistent with the rest of the
+        # module rather than inventing a half-calendar.)
+        session = today
+        while session.weekday() >= 5:
+            session += timedelta(days=1)
+
         # Fetch a live estimate only near either clock — everywhere else
         # this would just be extra Tradier load for a number nobody can act
         # on yet.
@@ -791,7 +803,8 @@ async def recipe(request: Request):
         payload = _scrub({
             "status": "ok",
             "spot": spot,
-            "expiration": today.isoformat(),
+            "expiration": session.isoformat(),
+            "expires_today": session == today,
             "short_strike": short_strike,
             "long_strike": other_strike,
             "phase": phase,

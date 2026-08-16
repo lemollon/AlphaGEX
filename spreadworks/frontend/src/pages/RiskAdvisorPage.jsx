@@ -265,16 +265,23 @@ export default function RiskAdvisorPage() {
           </div>
           {recipe && recipe.status === 'ok' ? (() => {
             const greyed = recipe.phase === 'weekend' || recipe.phase === 'done';
+            // "expires TODAY" was hardcoded, so on a Sunday the card announced
+            // an expiry that does not exist, one line above its own "weekend —
+            // next window Monday" note. Only say TODAY when it IS today.
+            const expLabel = recipe.expires_today === false
+              ? `${new Date(recipe.expiration + 'T00:00:00').toLocaleDateString('en-US',
+                  { weekday: 'long' })} (${recipe.expiration})`
+              : `TODAY (${recipe.expiration})`;
             const label = recipeWindowLabel(recipe);
             const windowOpen = recipe.phase === 'am_open' || recipe.phase === 'pm_open';
             return (<>
               <div
                 onClick={() => navigator.clipboard?.writeText(
-                  `SELL SPY ${recipe.short_strike}P / BUY ${recipe.long_strike}P — expires TODAY (${recipe.expiration})`)}
+                  `SELL SPY ${recipe.short_strike}P / BUY ${recipe.long_strike}P — expires ${expLabel}`)}
                 title="Click to copy the ticket"
                 style={{ fontSize: 18, fontWeight: 700, cursor: 'copy',
                          color: greyed ? DIM : '#e8ebf3' }}>
-                SELL SPY {recipe.short_strike}P / BUY {recipe.long_strike}P — expires TODAY ({recipe.expiration})
+                SELL SPY {recipe.short_strike}P / BUY {recipe.long_strike}P — expires {expLabel}
               </div>
               <div style={{ ...S.small, marginTop: 4, color: greyed ? DIM : undefined }}>
                 at spot ${recipe.spot?.toFixed?.(2) ?? recipe.spot}
