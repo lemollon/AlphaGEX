@@ -51,6 +51,17 @@ def _nearest(strikes, target):
     return min(strikes, key=lambda s: abs(s - target)) if strikes else None
 
 
+def _strike_increment(strikes):
+    """Modal gap between consecutive listed strikes. Median, so one gap in a
+    thin chain cannot drag it. Falls back to 1.0 on a degenerate chain."""
+    if len(strikes) < 2:
+        return 1.0
+    gaps = sorted(b - a for a, b in zip(strikes, strikes[1:]) if b > a)
+    if not gaps:
+        return 1.0
+    return float(gaps[len(gaps) // 2])
+
+
 def _find(chain, strike, opt_type):
     for o in chain["options"]:
         if int(o["strike"]) == strike and o["type"] == opt_type:
@@ -119,20 +130,49 @@ def build_vertical_signal(*, kind, chain, config, equity, params, diag=None):
     otm = (float(params["short_otm_abs"]) if "short_otm_abs" in params
            else float(params["short_otm_pct"]) * spot)
 
+    # short_target is the strike the SHORT leg was asked for, before snapping —
+    # the snap guard below compares against it.
     if kind == "bull_call_spread":
-        near = _nearest(strikes, round(spot)); far = _nearest(strikes, round(spot + spread_w))
+        short_target = round(spot + spread_w)
+        near = _nearest(strikes, round(spot)); far = _nearest(strikes, short_target)
         long_k, short_k = near, far
     elif kind == "bear_put_spread":
-        near = _nearest(strikes, round(spot)); far = _nearest(strikes, round(spot - spread_w))
+        short_target = round(spot - spread_w)
+        near = _nearest(strikes, round(spot)); far = _nearest(strikes, short_target)
         long_k, short_k = near, far
     elif kind == "bull_put_spread":
-        near = _nearest(strikes, round(spot - otm)); far = _nearest(strikes, round(spot - otm - spread_w))
+        short_target = round(spot - otm)
+        near = _nearest(strikes, short_target); far = _nearest(strikes, round(spot - otm - spread_w))
         short_k, long_k = near, far
     else:
-        near = _nearest(strikes, round(spot + otm)); far = _nearest(strikes, round(spot + otm + spread_w))
+        short_target = round(spot + otm)
+        near = _nearest(strikes, short_target); far = _nearest(strikes, round(spot + otm + spread_w))
         short_k, long_k = near, far
     if long_k is None or short_k is None or long_k == short_k:
         return _reject(f"strike_select_failed: long={long_k} short={short_k}")
+
+    # 🚨 SNAP GUARD. _nearest() has no distance limit — it returns the closest
+    # LISTED strike however far that is. If the strike we wanted is not listed,
+    # the spread silently comes out a different shape than the one that was
+    # backtested. Measured on EBB's chain: drop the 774 wing and it builds
+    # 776/773 instead of 776/774 — a $3 wing, max loss $288 instead of $172,
+    # 67% more risk per lot, with no diagnostic.
+    #
+    # Only enforced for the ABSOLUTE-offset form (short_otm_abs / spread_abs),
+    # where the dollar figures ARE the specification — that is EBB and EBB PM
+    # and nothing else. The %-of-spot bots legitimately land off-grid and snap,
+    # so their behaviour is unchanged.
+    #
+    # Skipping a session is the correct failure: the edge is a specific
+    # structure, and a wider wing is a different trade, not a worse fill.
+    if "spread_abs" in params or "short_otm_abs" in params:
+        inc = _strike_increment(strikes)
+        if "short_otm_abs" in params and abs(short_k - short_target) > inc / 2.0:
+            return _reject(f"short_strike_unlisted: wanted~{short_target:.0f} "
+                           f"got {short_k} (increment {inc:g})")
+        if "spread_abs" in params and abs(abs(short_k - long_k) - spread_w) > 1e-6:
+            return _reject(f"wing_width_off_spec: wanted {spread_w:g} "
+                           f"got {abs(short_k - long_k):g} ({short_k}/{long_k})")
 
     lo = _find(chain, long_k, opt_type); so = _find(chain, short_k, opt_type)
     if not lo or not so:
