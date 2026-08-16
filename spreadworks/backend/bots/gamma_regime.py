@@ -702,6 +702,39 @@ def job_status(engine: Engine) -> dict[str, Any]:
     return out
 
 
+def capture_health(freshness: dict[str, Any], jobs: dict[str, Any]) -> dict[str, Any]:
+    """Did the capture job CLAIM a slot without STORING anything?
+
+    `_dedup_ok` is called at the TOP of capture_gamma, before the chain pull
+    is attempted, because its job is to stop two replicas doing the same work.
+    That makes the ledger a record of "this job claimed today", NOT of "this
+    job succeeded" — so a capture that claims the slot and then dies on a
+    Tradier error leaves a ledger entry and no row, and a naive "last fired"
+    readout would report it as healthy.
+
+    Comparing the claim against sw_gamma_daily's own newest CAPTURED row is
+    what separates the two. This is the exact silent-failure shape that let a
+    four-session-stale reading sit on the page wearing today's date.
+
+    Returns {"state", "claimed", "stored", "detail"} where state is one of
+    never_run | ok | claimed_but_not_stored | unknown.
+    """
+    claimed = (jobs or {}).get("last", {}).get("gamma_capture")
+    stored = (freshness or {}).get("last_capture_date")
+    if (jobs or {}).get("reason") or freshness.get("provenance_reason"):
+        return {"state": "unknown", "claimed": claimed, "stored": stored,
+                "detail": "Job or provenance lookup failed — not a clean bill."}
+    if claimed is None:
+        return {"state": "never_run", "claimed": None, "stored": stored,
+                "detail": "The capture job has never claimed a session."}
+    if stored is not None and str(stored) >= str(claimed):
+        return {"state": "ok", "claimed": claimed, "stored": stored,
+                "detail": None}
+    return {"state": "claimed_but_not_stored", "claimed": claimed, "stored": stored,
+            "detail": (f"Capture claimed {claimed} but the newest stored reading "
+                       f"is {stored or 'none'} — the job ran and wrote nothing.")}
+
+
 # ---------------------------------------------------------------------------
 # Signal history — the verdict this signal WOULD have printed, session by
 # session, so the page can show a track record rather than only today's state.

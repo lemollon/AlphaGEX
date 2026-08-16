@@ -27,9 +27,10 @@ from fastapi import APIRouter
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from .bots.gamma_regime import (GAMMA_DAILY_TABLE, PCT_WINDOW, data_freshness,
-                                job_status, signal_history, signal_summary,
-                                squeeze_outlook, squeeze_signal, vix_history)
+from .bots.gamma_regime import (GAMMA_DAILY_TABLE, PCT_WINDOW, capture_health,
+                                data_freshness, job_status, signal_history,
+                                signal_summary, squeeze_outlook, squeeze_signal,
+                                vix_history)
 from .db import engine as _global_engine
 
 logger = logging.getLogger("spreadworks.routes_squeeze")
@@ -97,18 +98,23 @@ def _history_with_percentile(engine: Engine, n: int = HISTORY_ROWS) -> list[dict
 
 
 @router.get("/state")
-async def state(sessions: int = HISTORY_ROWS):
+async def state(sessions: str | None = None):
     """Current squeeze verdict + up to `sessions` sessions of net-gamma
     history (each with its own trailing 60-session percentile) for the
     frontend chart. Never raises — degrades to an UNKNOWN-shaped signal +
     empty history rather than a 500.
 
-    `sessions` is clamped rather than rejected: this endpoint's contract is
-    that it always answers, so a nonsense value must degrade to a sane
-    window, not a 422 that blanks the page.
+    `sessions` is typed as a STRING and parsed here on purpose. Declared as
+    `int`, FastAPI's own coercion rejects a non-numeric value with a 422
+    before any clamp of ours can run — so `?sessions=abc` blanked the page,
+    which is exactly the failure this endpoint's contract exists to prevent.
+    It always answers: garbage in, default window out.
     """
     today = datetime.now(CT).date()
-    n_rows = max(1, min(MAX_HISTORY_ROWS, sessions))
+    try:
+        n_rows = max(1, min(MAX_HISTORY_ROWS, int(sessions)))
+    except (TypeError, ValueError):
+        n_rows = HISTORY_ROWS
     try:
         sig = squeeze_signal(ENGINE, today)
     except Exception as e:  # noqa: BLE001
@@ -170,6 +176,17 @@ async def state(sessions: int = HISTORY_ROWS):
         logger.warning("[routes_squeeze] job_status failed: %r", e)
         jobs = {"last": {}, "reason": f"job_status error: {e}"}
 
+    # Did the capture claim a slot and store nothing? The dedup ledger records
+    # the claim, not the success, so the two must be compared.
+    try:
+        capture = capture_health(fresh, jobs)
+        for k in ("claimed", "stored"):
+            if capture.get(k) is not None:
+                capture[k] = _isoformat(capture[k])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_squeeze] capture_health failed: %r", e)
+        capture = {"state": "unknown", "detail": f"capture_health error: {e}"}
+
     # The VIX leg's own series — it had no history on the page at all.
     try:
         vh = vix_history(ENGINE, n=n_rows)
@@ -185,6 +202,7 @@ async def state(sessions: int = HISTORY_ROWS):
                       if sig.get("prior_date") is not None else None),
         "freshness": fresh,
         "jobs": jobs,
+        "capture_health": capture,
         "outlook": outlook,
         "verdict": sig.get("verdict"),
         "gamma_pct": sig.get("gamma_pct"),
@@ -249,23 +267,40 @@ async def intraday():
     pct_if_now: float | None = None
     reason: str | None = None
 
-    try:
-        from .bots.gamma_regime import fetch_net_gex
-        from .bots.routes_helpers import build_live_chain_provider
+    # DO NOT PULL WHEN THE MARKET IS SHUT. Two reasons, both real:
+    #
+    #   1. Cost. This is ~40 chain requests. Cached 60s, so an open tab over a
+    #      weekend meant 40 Tradier calls a minute, indefinitely, for a number
+    #      that cannot change.
+    #   2. Honesty. Out of hours Tradier serves the last stale quotes, and the
+    #      strip rendered that as "net gamma now $6.30B · +$2.79B vs last
+    #      close" — presenting a stale chain differenced against an ORATS
+    #      close as though gamma had moved 2.79B. It had not; the market was
+    #      closed. The copy even called it "the last available reading", which
+    #      it was not: it was a fresh pull of stale quotes taken that second.
+    #
+    # Serving nulls with a reason is the honest answer. last_close_b below
+    # still comes from the database, so the strip keeps its context.
+    if stale:
+        reason = "market_closed"
+    else:
+        try:
+            from .bots.gamma_regime import fetch_net_gex
+            from .bots.routes_helpers import build_live_chain_provider
 
-        def _run() -> dict:
-            client = build_live_chain_provider()
-            return fetch_net_gex(client, "SPY")
+            def _run() -> dict:
+                client = build_live_chain_provider()
+                return fetch_net_gex(client, "SPY")
 
-        out = await asyncio.to_thread(_run)
-        spot = out.get("spot")
-        if out.get("net_gex") is not None:
-            net_gex_b = out["net_gex"] / 1e9
-        else:
-            reason = out.get("reason") or "no_reading"
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[routes_squeeze] intraday fetch_net_gex failed: %r", e)
-        reason = f"fetch_net_gex error: {e}"
+            out = await asyncio.to_thread(_run)
+            spot = out.get("spot")
+            if out.get("net_gex") is not None:
+                net_gex_b = out["net_gex"] / 1e9
+            else:
+                reason = out.get("reason") or "no_reading"
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[routes_squeeze] intraday fetch_net_gex failed: %r", e)
+            reason = f"fetch_net_gex error: {e}"
 
     try:
         with ENGINE.begin() as conn:
