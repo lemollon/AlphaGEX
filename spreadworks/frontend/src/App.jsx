@@ -197,25 +197,23 @@ function NavBar() {
         </nav>
       </div>
 
-      {/* ═══════════ CENTER · CLOCK ═══════════ */}
-      {/* Absolute-centered pill. Two safeguards keep it from blocking the nav:
-          1. pointerEvents: 'none' — the clock is display-only, so even if it
-             visually overlaps the "Bots" / nav buttons on a narrower window,
-             clicks pass straight through to the buttons beneath it. (Without
-             this it was painting on top of the left nav card and swallowing
-             clicks on the Bots button.)
-          2. hidden 2xl:flex — only render it once the viewport is wide enough
-             (≥1536px) that a 50%-centered pill clears the left nav card; below
-             that it would slide left over the nav, so we simply hide it (market
-             status is still shown in the Builder's controls bar).
-          Display is class-controlled so the Tailwind `2xl:flex` wins over an
-          inline display value. */}
+      {/* ═══════════ RIGHT · CLOCK ═══════════ */}
+      {/* IN NORMAL FLOW, not absolutely centered. It used to be pinned at
+          left:50% and merely HIDDEN below 1536px, on the reasoning that a
+          centered pill clears the nav card at that width. That reasoning has
+          an expiry date: it was true for the nav as it stood, and every route
+          added since (Squeeze, Book Risk) pushed the card further right until
+          the pill sat on top of "Book Risk" again. A breakpoint cannot hold
+          this invariant because the nav's width is not a constant.
+          As a flex child under the header's `justify-between`, it is pushed to
+          the right edge and CANNOT overlap the nav at any width — the two
+          simply wrap onto separate rows when the viewport is too narrow.
+          pointerEvents stays none: the clock is display-only and must never
+          swallow a nav click even while wrapping. */}
       <div
-        className="hidden 2xl:flex"
+        className="hidden xl:flex"
         style={{
-          position: 'absolute',
-          left: '50%',
-          transform: 'translateX(-50%)',
+          marginLeft: 'auto',
           pointerEvents: 'none',
           alignItems: 'center',
           gap: 12,
