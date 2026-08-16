@@ -1248,12 +1248,43 @@ export default function SqueezePage() {
                     </div>
                   </>
                 )}
+                {L.n_priced > 0 && (
+                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4,
+                                marginBottom: 10 }}>
+                    <div style={S.tile}>
+                      <div style={S.tileLabel}>live $/trade</div>
+                      <div style={{ ...S.tileValue,
+                                    color: (L.pnl_per_trade ?? 0) >= 0 ? GREEN : RED }}>
+                        {L.pnl_per_trade == null ? '—' : `$${L.pnl_per_trade.toFixed(2)}`}
+                      </div>
+                      <div style={S.small}>backtest ${L.backtest_per_trade}</div>
+                    </div>
+                    <div style={S.tile}>
+                      <div style={S.tileLabel}>live total</div>
+                      <div style={{ ...S.tileValue,
+                                    color: (L.pnl_total ?? 0) >= 0 ? GREEN : RED }}>
+                        {L.pnl_total == null ? '—' : `$${L.pnl_total.toFixed(2)}`}
+                      </div>
+                      <div style={S.small}>{L.n_priced} priced entr{L.n_priced === 1 ? 'y' : 'ies'}</div>
+                    </div>
+                    <div style={S.tile}>
+                      <div style={S.tileLabel}>worst day</div>
+                      <div style={{ ...S.tileValue, color: RED }}>
+                        {L.worst_day == null ? '—' : `$${L.worst_day.toFixed(2)}`}
+                      </div>
+                      <div style={S.small}>backtest −$198</div>
+                    </div>
+                  </div>
+                )}
                 <div style={{ ...S.small, marginTop: 8 }}>
-                  <b style={{ color: '#c6cbd8' }}>Dollars are not tracked.</b> Outcome needs only
-                  the close, which is already stored; P&amp;L needs the credit taken at 11:05 and
-                  nothing captures an intraday quote. Recording an invented credit would produce
-                  a tidy P&amp;L line that looked like evidence, so this tracks what it can actually
-                  measure — whether the short strike held, and by how much it failed.
+                  Dollars come from the 10:05 CT entry quote, crossing the spread the way the
+                  backtest measured it — short sold at the bid, long bought at the ask. Mid-to-mid
+                  would flatter every entry by exactly what a real order gives up.
+                  {L.n_settled > L.n_priced && (
+                    <> <b style={{ color: AMBER }}>{L.n_settled - L.n_priced} settled session(s)
+                    could not be priced</b> and are excluded from the dollar figures — an assumed
+                    credit would turn "not measured" into a number you could average.</>
+                  )}
                 </div>
               </div>
             );

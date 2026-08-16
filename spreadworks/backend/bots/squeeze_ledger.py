@@ -15,15 +15,19 @@ settlement, so its OUTCOME is decided by that same session's close against
 the short strike — and the close is already stored daily in sw_gamma_daily.
 So outcome, win rate and breach depth need no new market data at all.
 
-Dollar P&L does NOT follow, because it needs the CREDIT taken at 11:05 and
-nothing captures an intraday quote. Recording a made-up credit to produce a
-tidy P&L line would be worse than having none: it would look like evidence.
-So this tracks what it can measure — did the short strike hold, and by how
-much did it fail — and says plainly that dollars are not being tracked.
+Dollar P&L needs the CREDIT taken at 11:05, which no job used to capture --
+so this originally tracked outcome only and said dollars were untrackable.
+That was a missing job, not a fact. capture_entry_credit() runs at the entry
+clock, quotes the actual spread and stores what it paid, CROSSING the spread
+the way the backtest measured it: short sold at the bid, long bought at the
+ask. Mid-to-mid would flatter every entry by exactly what a real order gives
+up.
 
-Win rate alone is still the sharpest forward test available: the backtest
-claims 83.3% over 898 trades, and that is a number a live sample can
-contradict.
+    pnl = (credit - breach) * 100        per one-lot, settled at the close
+
+A credit that could not be priced stays NULL and so does its P&L. An assumed
+credit would turn "we did not measure this" into a number someone could
+average, which is worse than an empty column.
 
 THE ONE-SESSION LAG, AGAIN
 --------------------------
@@ -57,9 +61,12 @@ CREATE TABLE IF NOT EXISTS {LEDGER_TABLE} (
     long_put      DOUBLE PRECISION,
     width         DOUBLE PRECISION,
     spot_decision DOUBLE PRECISION,
+    spot_entry    DOUBLE PRECISION,
+    credit        DOUBLE PRECISION,
     spot_settle   DOUBLE PRECISION,
     outcome       VARCHAR(12),
     breach        DOUBLE PRECISION,
+    pnl           DOUBLE PRECISION,
     note          VARCHAR(200),
     updated_at    TIMESTAMP NOT NULL
 )
@@ -67,8 +74,77 @@ CREATE TABLE IF NOT EXISTS {LEDGER_TABLE} (
 
 
 def ensure_ledger_table(engine: Engine) -> None:
+    """Idempotent create, plus the columns added after the table shipped.
+
+    spot_entry / credit / pnl arrived with the 10:05 CT entry-quote job; a
+    table created before that has to grow them or every P&L read is NULL.
+    """
     with engine.begin() as conn:
         conn.execute(text(_DDL))
+        if engine.dialect.name != "sqlite":
+            for col, typ in (("spot_entry", "DOUBLE PRECISION"),
+                             ("credit", "DOUBLE PRECISION"),
+                             ("pnl", "DOUBLE PRECISION")):
+                conn.execute(text(
+                    f"ALTER TABLE {LEDGER_TABLE} ADD COLUMN IF NOT EXISTS {col} {typ}"))
+
+
+def capture_entry_credit(engine: Engine, client: Any, trade_date: date,
+                         ticker: str = "SPY") -> dict[str, Any]:
+    """Quote today's spread at the entry clock and store what it paid.
+
+    This is the piece that turns the ledger from win-rate into dollars. The
+    backtest measured "real NBBO fills crossing the spread", so this crosses
+    too: the short leg is sold at the BID and the long leg bought at the ASK,
+    reconstructed from the mid and half-spread helpers the executor already
+    uses. Taking mid-to-mid would flatter every entry by exactly the amount a
+    real order gives up.
+
+    Strikes are re-derived from spot AT THIS MOMENT, not from the overnight
+    decision — that is what the rule actually says, and the decision row's
+    indicative strikes are replaced with the ones a real order would use.
+
+    Never raises. A missing or one-sided book leaves credit NULL, which the
+    summary reports as un-priced rather than as zero.
+    """
+    from .gamma_regime import SHORT_OFFSET, SPREAD_WIDTH
+
+    out: dict[str, Any] = {"credit": None, "spot": None, "reason": None}
+    try:
+        spot = client._spot(ticker)
+        if not spot:
+            out["reason"] = "no spot at entry"
+            return out
+        short_put = round(spot) - SHORT_OFFSET
+        long_put = short_put - SPREAD_WIDTH
+        legs = [{"expiration": trade_date.isoformat(), "type": "put", "strike": short_put},
+                {"expiration": trade_date.isoformat(), "type": "put", "strike": long_put}]
+        mids = client.get_leg_mids(ticker=ticker, legs=legs)
+        halves = client.get_leg_spreads(ticker=ticker, legs=legs)
+        if any(m is None for m in mids) or any(h is None for h in halves):
+            out["reason"] = "one-sided or missing book at entry"
+            out["spot"] = float(spot)
+            return out
+        short_bid = mids[0] - halves[0]      # sell the short at the bid
+        long_ask = mids[1] + halves[1]       # buy the long at the ask
+        credit = short_bid - long_ask
+        if credit <= 0:
+            out["reason"] = f"non-positive credit ({credit:.2f}) — not a sellable spread"
+            out["spot"] = float(spot)
+            return out
+        out.update({"credit": round(credit, 2), "spot": float(spot),
+                    "short_put": short_put, "long_put": long_put})
+        with engine.begin() as conn:
+            conn.execute(text(
+                f"UPDATE {LEDGER_TABLE} SET credit = :c, spot_entry = :s, "
+                "short_put = :sp, long_put = :lp, updated_at = CURRENT_TIMESTAMP "
+                "WHERE trade_date = :d AND outcome IS NULL"),
+                {"c": out["credit"], "s": out["spot"], "sp": short_put,
+                 "lp": long_put, "d": trade_date})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[SqueezeLedger] entry credit failed: %r", e)
+        out["reason"] = f"entry quote error: {e}"
+    return out
 
 
 def record_decision(engine: Engine, trade_date: date, verdict: str,
@@ -120,19 +196,19 @@ def settle_open(engine: Engine, gamma_table: str = "sw_gamma_daily") -> int:
     ensure_ledger_table(engine)
     with engine.begin() as conn:
         rows = conn.execute(text(
-            f"SELECT l.trade_date, l.short_put, l.width, g.spot "
+            f"SELECT l.trade_date, l.short_put, l.width, g.spot, l.credit "
             f"FROM {LEDGER_TABLE} l JOIN {gamma_table} g "
             "ON g.trade_date = l.trade_date "
             "WHERE l.outcome IS NULL AND l.traded = 1 AND g.spot IS NOT NULL"
             if engine.dialect.name == "sqlite" else
-            f"SELECT l.trade_date, l.short_put, l.width, g.spot "
+            f"SELECT l.trade_date, l.short_put, l.width, g.spot, l.credit "
             f"FROM {LEDGER_TABLE} l JOIN {gamma_table} g "
             "ON g.trade_date = l.trade_date "
             "WHERE l.outcome IS NULL AND l.traded = TRUE AND g.spot IS NOT NULL"
         )).fetchall()
 
         n = 0
-        for d, short_put, width, spot in rows:
+        for d, short_put, width, spot, credit in rows:
             if short_put is None or spot is None:
                 continue
             spot, short_put = float(spot), float(short_put)
@@ -142,11 +218,15 @@ def settle_open(engine: Engine, gamma_table: str = "sw_gamma_daily") -> int:
             else:
                 breach = min(short_put - spot, width)
                 outcome = "loss" if breach >= width else "partial"
+            # Dollars only when the entry was actually priced. A NULL credit
+            # stays NULL: an assumed credit would turn "we did not measure
+            # this" into a number someone could average.
+            pnl = None if credit is None else round((float(credit) - breach) * 100.0, 2)
             conn.execute(text(
                 f"UPDATE {LEDGER_TABLE} SET outcome = :o, breach = :b, "
-                "spot_settle = :s, updated_at = CURRENT_TIMESTAMP "
+                "spot_settle = :s, pnl = :p, updated_at = CURRENT_TIMESTAMP "
                 "WHERE trade_date = :d"),
-                {"o": outcome, "b": breach, "s": spot, "d": d})
+                {"o": outcome, "b": breach, "s": spot, "p": pnl, "d": d})
             n += 1
     if n:
         logger.info("[SqueezeLedger] settled %d session(s)", n)
@@ -156,22 +236,24 @@ def settle_open(engine: Engine, gamma_table: str = "sw_gamma_daily") -> int:
 def ledger_summary(engine: Engine, limit: int = 250) -> dict[str, Any]:
     """The forward record, next to the backtest claim it is testing.
 
-    `pnl` is deliberately absent. See the module docstring: the entry credit
-    is not captured, and inventing one would manufacture evidence.
+    Dollar totals cover only the sessions whose entry was actually priced;
+    `n_priced` says how many that is, so a P&L is never read as covering more
+    trades than it does.
     """
     out: dict[str, Any] = {
         "rows": [], "n_decisions": 0, "n_traded": 0, "n_settled": 0,
         "wins": 0, "losses": 0, "partials": 0, "win_rate": None,
         "worst_breach": None, "backtest_win_rate": BACKTEST_WIN_RATE,
         "backtest_n": BACKTEST_N, "first_date": None, "last_date": None,
-        "tracks_dollars": False, "reason": None,
+        "n_priced": 0, "pnl_total": None, "pnl_per_trade": None,
+        "worst_day": None, "backtest_per_trade": 2.18, "reason": None,
     }
     try:
         ensure_ledger_table(engine)
         with engine.begin() as conn:
             rows = conn.execute(text(
                 f"SELECT trade_date, verdict, traded, short_put, long_put, "
-                "spot_decision, spot_settle, outcome, breach, note "
+                "spot_decision, spot_settle, outcome, breach, note, credit, pnl "
                 f"FROM {LEDGER_TABLE} ORDER BY trade_date DESC LIMIT :n"
             ), {"n": limit}).fetchall()
     except Exception as e:  # noqa: BLE001
@@ -186,6 +268,7 @@ def ledger_summary(engine: Engine, limit: int = 250) -> dict[str, Any]:
             "short_put": r[3], "long_put": r[4],
             "spot_decision": r[5], "spot_settle": r[6],
             "outcome": r[7], "breach": r[8], "note": r[9],
+            "credit": r[10], "pnl": r[11],
         })
     recs.reverse()
     out["rows"] = recs
@@ -200,6 +283,13 @@ def ledger_summary(engine: Engine, limit: int = 250) -> dict[str, Any]:
     if settled:
         out["win_rate"] = out["wins"] / len(settled)
         out["worst_breach"] = max((x["breach"] or 0.0) for x in settled)
+    priced = [x for x in settled if x["pnl"] is not None]
+    out["n_priced"] = len(priced)
+    if priced:
+        total = sum(float(x["pnl"]) for x in priced)
+        out["pnl_total"] = round(total, 2)
+        out["pnl_per_trade"] = round(total / len(priced), 2)
+        out["worst_day"] = round(min(float(x["pnl"]) for x in priced), 2)
     if recs:
         out["first_date"], out["last_date"] = recs[0]["trade_date"], recs[-1]["trade_date"]
     return out

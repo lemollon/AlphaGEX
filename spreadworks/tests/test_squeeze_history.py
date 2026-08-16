@@ -767,10 +767,54 @@ def test_settling_never_rewrites_a_settled_row():
     assert s["wins"] == 1
 
 
-def test_dollars_are_explicitly_not_tracked():
-    """Inventing an entry credit to produce a tidy P&L line would look like
-    evidence. The summary must say it is not tracking dollars."""
-    from backend.bots.squeeze_ledger import ledger_summary
-    s = ledger_summary(_ledger_engine())
-    assert s["tracks_dollars"] is False
-    assert "pnl" not in s
+def test_an_unpriced_entry_leaves_pnl_null_not_zero():
+    """An assumed credit would turn "we did not measure this" into a number
+    someone could average. Unpriced stays unpriced."""
+    from backend.bots.squeeze_ledger import (ledger_summary, record_decision,
+                                             settle_open)
+    e = _ledger_engine()
+    record_decision(e, date(2026, 8, 17), "NEUTRAL", _tk(776.34, 774, 772), traded=True)
+    with e.begin() as c:
+        c.execute(text(f"INSERT INTO {GAMMA_DAILY_TABLE} "
+                       "(trade_date, net_gex, spot, updated_at) "
+                       "VALUES ('2026-08-17', 1e9, 778.10, '2026-01-01')"))
+    settle_open(e)                       # settled, but never priced
+    s = ledger_summary(e)
+    assert s["wins"] == 1                # outcome still measured
+    assert s["n_priced"] == 0
+    assert s["pnl_total"] is None        # NOT 0.0
+
+
+def test_a_priced_win_keeps_the_whole_credit():
+    from backend.bots.squeeze_ledger import (ledger_summary, record_decision,
+                                             settle_open, LEDGER_TABLE)
+    e = _ledger_engine()
+    record_decision(e, date(2026, 8, 17), "NEUTRAL", _tk(776.34, 774, 772), traded=True)
+    with e.begin() as c:
+        c.execute(text(f"UPDATE {LEDGER_TABLE} SET credit = 0.42 "
+                       "WHERE trade_date = '2026-08-17'"))
+        c.execute(text(f"INSERT INTO {GAMMA_DAILY_TABLE} "
+                       "(trade_date, net_gex, spot, updated_at) "
+                       "VALUES ('2026-08-17', 1e9, 778.10, '2026-01-01')"))
+    settle_open(e)
+    s = ledger_summary(e)
+    assert s["n_priced"] == 1
+    assert s["pnl_total"] == 42.0        # (0.42 - 0) * 100
+    assert s["pnl_per_trade"] == 42.0
+
+
+def test_a_priced_full_breach_loses_width_minus_credit():
+    from backend.bots.squeeze_ledger import (ledger_summary, record_decision,
+                                             settle_open, LEDGER_TABLE)
+    e = _ledger_engine()
+    record_decision(e, date(2026, 8, 17), "NEUTRAL", _tk(776.34, 774, 772), traded=True)
+    with e.begin() as c:
+        c.execute(text(f"UPDATE {LEDGER_TABLE} SET credit = 0.42 "
+                       "WHERE trade_date = '2026-08-17'"))
+        c.execute(text(f"INSERT INTO {GAMMA_DAILY_TABLE} "
+                       "(trade_date, net_gex, spot, updated_at) "
+                       "VALUES ('2026-08-17', 1e9, 760.00, '2026-01-01')"))
+    settle_open(e)
+    s = ledger_summary(e)
+    assert s["pnl_total"] == -158.0      # (0.42 - 2.00) * 100
+    assert s["worst_day"] == -158.0

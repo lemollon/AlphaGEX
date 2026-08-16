@@ -61,7 +61,7 @@ WHAT_TO_DO = {
 # unset ref means the jobs were never armed — see scheduled_jobs().
 _SCHEDULER: dict = {"ref": None}
 
-GAMMA_JOB_IDS = ("gamma_capture", "gamma_squeeze_alert")
+GAMMA_JOB_IDS = ("gamma_capture", "gamma_squeeze_alert", "gamma_entry_credit")
 
 
 def scheduled_jobs() -> dict:
@@ -598,6 +598,37 @@ def register_gamma_alerts(scheduler, app) -> None:
 
     scheduler.add_job(capture_gamma, "cron", hour=15, minute=5, timezone=CT,
                       id="gamma_capture", coalesce=True, max_instances=1,
+                      replace_existing=True)
+    async def capture_entry():
+        """10:05 CT (11:05 ET) weekdays: price today's spread at the entry
+        clock. Without this the ledger can only say whether a trade won, not
+        what it paid — and the backtest's +$2.18/trade has nothing live to be
+        compared against."""
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            if not _dedup_ok("gamma_entry_credit", fire_date=now.date()):
+                return
+            from .bots.routes_helpers import build_live_chain_provider
+            from .bots.squeeze_ledger import capture_entry_credit
+
+            def _run():
+                return capture_entry_credit(engine, build_live_chain_provider(),
+                                            now.date())
+            out = await asyncio.to_thread(_run)
+            if out.get("credit") is None:
+                logger.warning("[GammaAlerts] entry credit unpriced for %s (%s)",
+                               now.date(), out.get("reason"))
+            else:
+                logger.info("[GammaAlerts] entry %s: %s/%s credit $%.2f",
+                            now.date(), out.get("short_put"), out.get("long_put"),
+                            out["credit"])
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[GammaAlerts] capture_entry failed: %r", e)
+
+    scheduler.add_job(capture_entry, "cron", hour=10, minute=5, timezone=CT,
+                      id="gamma_entry_credit", coalesce=True, max_instances=1,
                       replace_existing=True)
     scheduler.add_job(fire_squeeze_alert, "cron", hour=8, minute=5, timezone=CT,
                       id="gamma_squeeze_alert", coalesce=True, max_instances=1,
