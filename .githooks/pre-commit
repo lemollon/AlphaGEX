@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Auto-rebuild the SpreadWorks bundle whenever its source is committed.
+#
+# WHY THIS EXISTS
+#   The live Render service (srv-d6mv30f5gffc73bog9a0) builds with
+#     pip install --upgrade pip && pip install -r requirements.txt
+#   and nothing else. There is no npm step, so whatever sits in
+#   spreadworks/frontend/dist at commit time is literally what production
+#   serves. Render's API cannot change a service's build command, so this
+#   cannot be fixed from the dashboard-free side -- it has to be made
+#   impossible to get wrong here.
+#
+#   This is a BUILD, not a check. A check tells you afterwards that you
+#   shipped a stale page; this makes shipping a stale page impossible,
+#   with no step for anyone to remember.
+set -euo pipefail
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+echo "$STAGED" | grep -q '^spreadworks/frontend/src/' || exit 0
+
+REPO=$(git rev-parse --show-toplevel)
+cd "$REPO/spreadworks/frontend"
+
+if ! command -v npm > /dev/null 2>&1; then
+  echo "pre-commit: spreadworks/frontend/src is staged but npm is not on PATH." >&2
+  echo "  dist/ is the deploy artifact and cannot be left stale." >&2
+  echo "  Install node, or commit with --no-verify ONLY if you will rebuild." >&2
+  exit 1
+fi
+
+echo "pre-commit: spreadworks src changed -> rebuilding dist..."
+if ! npm run build --silent > /tmp/sw-build.log 2>&1; then
+  echo "pre-commit: the frontend build FAILED. Commit aborted." >&2
+  tail -25 /tmp/sw-build.log >&2
+  exit 1
+fi
+
+cd "$REPO"
+git add spreadworks/frontend/dist
+echo "pre-commit: dist rebuilt and staged."
