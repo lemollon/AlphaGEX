@@ -33,11 +33,11 @@ export const BOT_PLANS: Record<BotSlug, BotPlan> = {
     slug: 'spark',
     name: 'Spark',
     productName: 'IronForge Spark',
-    // 1DTE — dteMode('spark') === '1DTE'. This said "0DTE", which is INFERNO's
-    // expiry, not Spark's. Wording matches the canonical tagline used on /live,
-    // /onboarding/complete and the Bot Ledger, and describes the mechanics rather
-    // than promising an outcome.
-    blurb: 'Set up a dedicated Spark account that trades next-day (1DTE) SPY spreads automatically.',
+    // 0DTE as of 2026-08-16 — dteMode('spark') === '0DTE'. Spark and Flame now
+    // run ONE strategy at two clocks (Spark morning, Flame afternoon), so the
+    // only honest difference in the copy is the time of day. Describes the
+    // mechanics, never an outcome.
+    blurb: 'Set up a dedicated Spark account that trades same-day (0DTE) SPY put credit spreads each morning, automatically.',
     priceMonthly: 50,
     lookupKey: 'spark_monthly',
     accent: '#3B82F6', // Spark blue
@@ -48,9 +48,9 @@ export const BOT_PLANS: Record<BotSlug, BotPlan> = {
     slug: 'flame',
     name: 'Flame',
     productName: 'IronForge Flame',
-    // 2DTE put credit spreads. "near-term upside trading" implied a directional
-    // long — Flame sells premium. Matches the canonical tagline.
-    blurb: 'Set up a dedicated Flame account that trades two-day (2DTE) SPY put credit spreads automatically.',
+    // 0DTE as of 2026-08-16 — see the note on Spark. Flame is the afternoon
+    // tranche of the same strategy.
+    blurb: 'Set up a dedicated Flame account that trades same-day (0DTE) SPY put credit spreads each afternoon, automatically.',
     priceMonthly: 50,
     lookupKey: 'flame_monthly',
     accent: '#EE5A24', // Flame / brand orange

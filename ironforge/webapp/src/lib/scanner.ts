@@ -70,6 +70,7 @@ import {
   type SandboxCloseInfo,
   type IcMtmResult,
   getOptionQuote,
+  getDailyHistory,
 } from './tradier'
 import { getTvMarketStructure, type TvMarketStructure } from './gex/trading-volatility-client'
 import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, classifySignalState, notifyDecision, type SignalStreak } from './volAlerts'
@@ -144,7 +145,26 @@ function isSparkStrategy(name: string): boolean {
  * SPARK2 and KINDLE keep the no-stop behavior — they are still 1DTE swings.
  */
 function isNoStopBot(name: string): boolean {
-  return name === 'kindle' || name === 'spark2'
+  return name === 'kindle' || name === 'spark2' || isSettleAtExpiryBot(name)
+}
+
+/**
+ * 🚨 BOTS THAT HOLD THROUGH EXPIRATION AND SETTLE AT THE CLOSE.
+ *
+ * Every other IronForge bot force-closes at the 14:45 CT cutoff, because SPY
+ * options are physically settled and holding through expiry means assignment.
+ * EBB does the opposite ON PURPOSE: registry #43 measured every buyback exit
+ * (13:00 / 14:00 / 14:30 ET) and each one collapses $12.19/trade to about zero.
+ * The settlement IS the trade — take the exit away and there is no strategy left.
+ *
+ * The cost is real and is the reason this stays on paper: the short finishes
+ * ITM-alone in ~17% of sessions, delivering ~$56-64k of stock per contract
+ * overnight. Registry #57 puts the minimum viable account near $8,400-9,600.
+ * These ledgers are $3,000 and $5,000, so this must NOT be armed for real money
+ * on the current capital regardless of how the paper record looks.
+ */
+function isSettleAtExpiryBot(name: string): boolean {
+  return name === 'flame' || name === 'spark'
 }
 
 /**
@@ -224,15 +244,21 @@ const PRODUCTION_PLACE_WINDOW_MS = 5 * 60 * 1000  // 5 min — matches MAX_SCAN_
 // ticks.
 const _lastSandboxPlacedAt: Record<string, number> = {}
 
+// 🚨 2026-08-16 — FLAME and SPARK BOTH MOVED TO 0DTE (they now run EBB).
+// dte_mode is the row tag, so this deliberately separates EBB's history from the
+// retired 8/11 products; the old '14DTE' / '7DTE' rows stay where they are.
+// MUST be mirrored in dteMode() in lib/db.ts — when the two disagree the API
+// reads one row while the scanner runs off another, which is exactly how FLAME
+// ended up silently running DEFAULT_CONFIG.
 const BOTS = [
-  { name: 'flame', dte: '14DTE', minDte: 14 },
+  { name: 'flame', dte: '0DTE', minDte: 0 },
   // SPARK moved 1 DTE -> 5 DTE on 2026-08-10. The 1DTE condor had no edge on real
   // fills (972-cell sweep: best-on-train -$5.13/ct out-of-sample, 37% of cells
   // positive where coin flips give 50%) and the live account confirmed it: eight
   // production winners averaging +$20, then -$944 in a single session on 2026-08-03.
   // dte_mode is the row tag, so changing it deliberately SEPARATES the new
   // strategy's history from the dead one — the old '1DTE' rows stay where they are.
-  { name: 'spark', dte: '7DTE', minDte: 7 },
+  { name: 'spark', dte: '0DTE', minDte: 0 },
   { name: 'inferno', dte: '0DTE', minDte: 0 },
   // SPARK2 (2026-07-13, replaces KINDLE): SPARK's FULL v2 strategy AND sizing
   // (830 entry, $5 wings, $0.25 credit walk-in, tier 40/35/30, VIX cap 40,
@@ -337,7 +363,12 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // flameParams(balance) is, and at $2,000 it returns 0.35x / $1. They are left at
   // the SPARK-tier values only because other code paths read them; if FLAME ever
   // stops routing through tryOpenFlamePutSpread, fix them here first.
-  flame:   { sd: 2.10, pt_pct: 1.0, sl_mult: 3.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 2000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
+  // 🚨 EBB PM TRANCHE (2026-08-16). Entry 13:05-13:10 CT, $2 wing, no stop,
+  // SETTLED AT THE CLOSE. pt_pct 1.0 trips HOLD_TO_EOD; sl_mult 9999 is off —
+  // registry #43 measured every buyback exit and each one collapses the edge to
+  // roughly zero. min_credit 0.10 matches the SpreadWorks registry.
+  // starting_capital 3000 is EBB's own registered minimum; $2,000 clears nothing.
+  flame:   { sd: 2.10, pt_pct: 1.0, sl_mult: 9999, entry_start: 1305, entry_end: 1310, max_trades: 1, max_contracts: 1, bp_pct: 0.20, starting_capital: 3000, min_credit: 0.10, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
   // ENTRY TIME: 830, and now MEASURED rather than assumed — see the note on
   // isInEntryWindow below. Moved to 1300 on 2026-08-07 on inference; reverted the
   // same day once real entry-time quotes existed to test it.
@@ -372,7 +403,11 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   //
   // ⚠️ NOT LIVE-VALIDATED. Production is PAUSED (2026-08-10) and this must earn a
   // paper record before it touches real money again.
-  spark:   { sd: 2.01, pt_pct: 1.0, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 10, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
+  // 🚨 EBB AM TRANCHE (2026-08-16). Same structure as FLAME, entry 10:05-10:20 CT.
+  // The AM tranche needs the VIX decay gate MORE than the PM one: ungated it is
+  // +$2.87/trade (t=+1.25, no edge), gated +$6.23 (t=+2.44).
+  // starting_capital 5000 is the AM rung of the sizing ladder (29% drawdown).
+  spark:   { sd: 2.01, pt_pct: 1.0, sl_mult: 9999, entry_start: 1005, entry_end: 1020, max_trades: 1, max_contracts: 1, bp_pct: 0.20, starting_capital: 5000, min_credit: 0.10, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
   inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: false },
   // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
   // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =
@@ -2206,8 +2241,13 @@ async function monitorSinglePosition(
   // physically settled, never hold through expiration.
   const isEodRaw = isAfterEodCutoff(ct, bot)
   const eodSwingDefer = swingHold && isEodRaw && expiration > todayStr
-  const isEod = isEodRaw && !eodSwingDefer
-  if (isEod || isStaleHoldover) {
+  // EBB settles at the close — the 14:45 cutoff must not touch it, and neither
+  // must the stale-holdover path if a settlement pass was missed. Both are
+  // handled by settleExpiredPositions(), which books intrinsic against the
+  // official close. See isSettleAtExpiryBot.
+  const settleDefer = isSettleAtExpiryBot(bot.name)
+  const isEod = isEodRaw && !eodSwingDefer && !settleDefer
+  if ((isEod || isStaleHoldover) && !settleDefer) {
     const reason = isStaleHoldover ? 'stale_holdover' : 'eod_cutoff'
     // Commit R1: DB-level close-trigger log BEFORE we place any orders.
     // Wrapped in try/catch so a log failure can never block the close.
@@ -3150,9 +3190,28 @@ const FLAME_BOOKS = ['SPY'] as const
  * positive, against the put spread's ~5%/yr and 4 of 5. It exists because a condor
  * is market-neutral where a put spread is short delta, not because it earns more.
  */
-function botStructure(name: string): { k: number; callK: number | null; width: number } {
-  if (name === 'spark') return { k: 2.01, callK: 1.96, width: 10 }
-  return { k: 2.10, callK: null, width: 5 }
+/**
+ * 🚨 SUPERSEDED 2026-08-16 — FLAME and SPARK now run EBB.
+ *
+ * Everything above describes the 8/11 products, which are retired here. Both bots
+ * now run the ONE structure that cleared a pre-registered bar (registry #23b,
+ * re-validated 8/13): the SPY 0DTE put credit spread, short $1 below spot, $2
+ * wing, no stop, SETTLED AT THE CLOSE. They are one strategy at two clocks:
+ *
+ *   FLAME  13:05 CT  (the PM tranche — its $3k-$5k band is the 13:05-only rung)
+ *   SPARK  10:05 CT  (the AM tranche — the $5k-$7.5k rung)
+ *
+ * WHY DOLLARS AND NOT A STRADDLE MULTIPLE. The offsets ARE the specification.
+ * The straddle-multiple placement above was built for multi-DTE spreads with no
+ * delta feed; applying it to a 0DTE spread produces a different trade. Registry
+ * #40r is the warning — a nominally identical config measured $5.10/trade against
+ * $12.19 purely from placement and quoting differences.
+ *
+ * The two tranches are NOT diversifying: same underlying, same session, they max
+ * together. Worst pair day is roughly twice the single-tranche loss.
+ */
+function botStructure(_name: string): { otmAbs: number; width: number } {
+  return { otmAbs: 1.0, width: 2 }
 }
 
 function flameParams(_equity: number): { k: number; width: number } {
@@ -3228,6 +3287,85 @@ function flameContracts(_equity: number): number {
  * Gates live IN HERE. The old version short-circuited above tryOpenTrade's gates
  * and ran hardcoded values while the config API reported something else (#2777).
  */
+/**
+ * Book a held-to-expiry put spread at INTRINSIC against the official close.
+ *
+ * This is the exit the backtest used, and the only one that preserves the edge.
+ * For a bull put spread short Ks / long Kl, settlement value is
+ *
+ *     value = clamp(Ks - S, 0, width)
+ *
+ * so P&L per contract = (entry credit - value) x 100. Max loss is the full wing
+ * minus the credit, which is what makes the $2 wing the risk control.
+ *
+ * Runs only at or after 15:00 CT on the expiry day (the scan loop lives until
+ * 15:10), and unconditionally for any position whose expiry has already passed —
+ * a missed settlement must still be booked rather than left open forever.
+ *
+ * PRICE SOURCE: the daily bar for the expiration date, which is the official
+ * close. Falls back to the live last only for a same-day settle where the daily
+ * bar has not posted yet. If neither is available we leave the position OPEN and
+ * retry next cycle — booking a settlement against a wrong price is worse than
+ * booking it late.
+ */
+async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
+  if (!isSettleAtExpiryBot(bot.name)) return ''
+  const todayStr = ct.toISOString().slice(0, 10)
+  const rows = await query(
+    `SELECT position_id, ticker, expiration, put_short_strike, put_long_strike,
+            call_short_strike, call_long_strike, contracts, total_credit,
+            collateral_required, spread_width
+       FROM ${botTable(bot.name, 'positions')}
+      WHERE status = 'open' AND dte_mode = $1 AND expiration <= $2`,
+    [bot.dte, todayStr],
+  )
+  if (rows.length === 0) return ''
+
+  const out: string[] = []
+  for (const p of rows) {
+    const exp = String(p.expiration).slice(0, 10)
+    // Same-day: wait for the actual close. Past expiry: settle immediately.
+    if (exp === todayStr && ctHHMM(ct) < 1500) continue
+
+    const ticker = String(p.ticker)
+    let settlePx = 0
+    try {
+      const hist = await getDailyHistory(ticker, 10)
+      settlePx = hist.find(h => h.date === exp)?.close ?? 0
+    } catch { /* fall through to the live quote */ }
+    if (!(settlePx > 0) && exp === todayStr) {
+      const q = await getQuote(ticker)
+      settlePx = q?.last ?? 0
+    }
+    if (!(settlePx > 0)) {
+      out.push(`${p.position_id}=no_settle_price`)
+      continue
+    }
+
+    const ks = num(p.put_short_strike)
+    const kl = num(p.put_long_strike)
+    const width = ks - kl
+    const value = Math.min(Math.max(ks - settlePx, 0), width)
+    const credit = num(p.total_credit)
+    const contracts = int(p.contracts)
+
+    await closePosition(
+      bot, String(p.position_id), ticker, exp,
+      ks, kl, num(p.call_short_strike), num(p.call_long_strike),
+      contracts, credit, num(p.collateral_required),
+      'settled_at_expiry', value,
+    )
+    const pnl = (credit - value) * 100 * contracts
+    console.log(
+      `[scanner] ${bot.name.toUpperCase()} SETTLED ${p.position_id} ` +
+      `close=${settlePx.toFixed(2)} ${kl}/${ks}P value=$${value.toFixed(2)} ` +
+      `credit=$${credit.toFixed(2)} pnl=$${pnl.toFixed(2)}`,
+    )
+    out.push(`${p.position_id}=settled@${value.toFixed(2)}`)
+  }
+  return out.length ? ` settle[${out.join(' ')}]` : ''
+}
+
 async function tryOpenFlamePutSpread(bot: BotDef): Promise<string> {
   const botCfg = cfg(bot)
   if (!isConfigured()) return 'skip:tradier_not_configured'
@@ -3256,7 +3394,7 @@ async function tryOpenFlamePutSpread(bot: BotDef): Promise<string> {
   }
   if (!(balance > 0)) return `skip:no_paper_balance($${balance.toFixed(0)})`
 
-  const { k, callK, width } = botStructure(bot.name)
+  const { otmAbs, width } = botStructure(bot.name)
   const perTrade = flameContracts(balance)
   // Each book gets an equal, NON-TRANSFERABLE third. Letting one borrow from the
   // others concentrates the account in whichever market happens to be trading,
@@ -3265,14 +3403,14 @@ async function tryOpenFlamePutSpread(bot: BotDef): Promise<string> {
 
   const out: string[] = []
   for (const ticker of FLAME_BOOKS) {
-    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, k, callK, width, perBook, perTrade)}`)
+    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, otmAbs, width, perBook, perTrade)}`)
   }
-  return `k${k}${callK ? `/c${callK}` : ''} w${width} x${perTrade} ` + out.join(' ')
+  return `otm$${otmAbs} w${width} x${perTrade} ` + out.join(' ')
 }
 
 async function tryOpenFlameBook(
   bot: BotDef, botCfg: BotConfig, ticker: string,
-  k: number, callK: number | null, width: number, perBook: number, perTrade: number,
+  otmAbs: number, width: number, perBook: number, perTrade: number,
 ): Promise<string> {
   const todayRows = await query(
     `SELECT COUNT(*) AS cnt FROM ${botTable(bot.name, 'positions')}
@@ -3312,45 +3450,35 @@ async function tryOpenFlameBook(
     expiration = best
   }
 
-  // expected move = this ticker's OWN ATM straddle, quoted at the instant we
-  // trade, so there is no look-ahead and no VIX dependency
-  const atm = Math.round(spot)
-  const [atmC, atmP] = await Promise.all([
-    getOptionQuote(buildOccSymbol(ticker, expiration, atm, 'C')),
-    getOptionQuote(buildOccSymbol(ticker, expiration, atm, 'P')),
-  ])
-  if (!atmC || !atmP) return 'no_atm_quote'
-  const em = (atmC.bid + atmC.ask) / 2 + (atmP.bid + atmP.ask) / 2
-  if (!(em > 0)) return 'bad_em'
+  // EBB places by FIXED DOLLAR OFFSET from spot. The ATM straddle is fetched for
+  // the record only — `expected_move` is a display column — and must NEVER block
+  // the trade, which is what `no_atm_quote` / `bad_em` used to do when strikes
+  // were derived from it.
+  let em = 0
+  try {
+    const atm = Math.round(spot)
+    const [atmC, atmP] = await Promise.all([
+      getOptionQuote(buildOccSymbol(ticker, expiration, atm, 'C')),
+      getOptionQuote(buildOccSymbol(ticker, expiration, atm, 'P')),
+    ])
+    if (atmC && atmP) em = (atmC.bid + atmC.ask) / 2 + (atmP.bid + atmP.ask) / 2
+  } catch { /* telemetry only */ }
 
-  const putShort = Math.round(spot - k * em)
+  const putShort = Math.round(spot - otmAbs)
   const putLong = putShort - width
   if (putLong <= 0) return 'bad_strikes'
 
-  // SPARK sells a call side too. Strikes on BOTH sides come off the same straddle
-  // quote taken a moment ago, so the two legs are placed off one snapshot.
-  const callShort = callK === null ? 0 : Math.round(spot + callK * em)
-  const callLong = callK === null ? 0 : callShort + width
+  // EBB is a put spread at both clocks. No call side — short calls measured
+  // NEGATIVE at every delta above ~0.08.
+  const callShort = 0
+  const callLong = 0
 
-  // Branch explicitly rather than union-typing the result: the two helpers return
-  // different shapes and narrowing a union across an await is more trouble than
-  // it is worth.
-  let putCreditVal = 0
-  let callCreditVal = 0
-  let entryCredit = 0
-  if (callK === null) {
-    const c = await getPutSpreadEntryCredit(ticker, expiration, putShort, putLong)
-    if (!c) return 'no_quotes'
-    putCreditVal = c.putCredit
-    entryCredit = c.putCredit
-  } else {
-    const c = await getIcEntryCredit(ticker, expiration, putShort, putLong, callShort, callLong)
-    if (!c) return 'no_quotes'
-    putCreditVal = c.putCredit
-    callCreditVal = c.callCredit
-    entryCredit = c.totalCredit
-  }
-  // For the condor the gate is the TOTAL credit, both sides together.
+  const c = await getPutSpreadEntryCredit(ticker, expiration, putShort, putLong)
+  if (!c) return 'no_quotes'
+  const putCreditVal = c.putCredit
+  const callCreditVal = 0
+  const entryCredit = c.putCredit
+
   if (entryCredit < botCfg.min_credit) {
     return `credit_low($${entryCredit.toFixed(2)})`
   }
@@ -3390,10 +3518,9 @@ async function tryOpenFlameBook(
      entryCredit],
   )
   console.log(
-    `[scanner] ${bot.name.toUpperCase()} ${ticker}: ${contracts}x ${putLong}/${putShort}P` +
-    `${callK === null ? '' : ` + ${callShort}/${callLong}C`} exp ${expiration} ` +
-    `@ $${entryCredit.toFixed(2)} (spot ${spot.toFixed(2)}, EM ${em.toFixed(2)}, k=${k}` +
-    `${callK === null ? '' : `/c${callK}`})`,
+    `[scanner] ${bot.name.toUpperCase()} ${ticker}: ${contracts}x ${putLong}/${putShort}P ` +
+    `exp ${expiration} @ $${entryCredit.toFixed(2)} ` +
+    `(spot ${spot.toFixed(2)}, otm $${otmAbs}, wing $${width}, EM ${em.toFixed(2)})`,
   )
   return `traded@${entryCredit.toFixed(2)}`
 }
@@ -6295,6 +6422,18 @@ async function scanBot(bot: BotDef): Promise<void> {
   let unrealizedPnl = 0
 
   try {
+    // Settle anything that reached expiry BEFORE reconciling collateral, so the
+    // reconcile in the same cycle sees the freed margin. Held-to-expiry bots
+    // only; a no-op for everyone else. Never allowed to take the cycle down —
+    // an unsettled position is retried next minute, and the scan loop runs to
+    // 15:10 CT, which is ten cycles of retry after the 15:00 close.
+    try {
+      const settled = await settleExpiredPositions(bot, ct)
+      if (settled) reason += settled
+    } catch (e) {
+      console.error(`[scanner] ${botName} settlement failed:`, e)
+    }
+
     // Collateral reconciliation every cycle (Fix 4)
     await reconcileCollateral(bot)
 
