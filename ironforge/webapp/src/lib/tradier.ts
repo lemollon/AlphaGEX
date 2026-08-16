@@ -3161,6 +3161,36 @@ export async function getProductionPauseState(botName: string): Promise<Producti
  *   2. PER-OWNER (ironforge_owner_pause)  — one owner stops their own account,
  *      which DROPS that owner and leaves every other owner trading.
  */
+/**
+ * LIVE EQUITY FOR A BOT, STRAIGHT FROM TRADIER.
+ *
+ * 🚨 Tradier is the point of reference for a live account — not the local paper
+ * ledger, not {bot}_paper_account, not a rebased curve. Anything showing a live
+ * balance should come through here so every surface agrees.
+ *
+ * Works for BOTH credential sources, which is the point: SPARK's account comes
+ * from the ironforge_accounts table, FLAME's from TRADIER_FLAME_* env. Callers
+ * that reached for getSandboxAccountBalances() only ever saw the table-backed
+ * ones, so FLAME silently rebased onto SPARK's balance.
+ *
+ * Returns null — never 0 — when it cannot be read. 0 is a real balance and a
+ * caller must be able to tell "broke" from "unknown".
+ */
+export async function getLiveEquityForBot(botName: string): Promise<number | null> {
+  const accts = await getProductionAccountsForBot(botName, { forRead: true })
+  if (accts.length === 0) return null
+  let total = 0
+  let any = false
+  for (const a of accts) {
+    if (!a.accountId) continue
+    try {
+      const d = await getTradierBalanceDetail(a.apiKey, a.accountId, a.baseUrl)
+      if (d?.total_equity != null) { total += d.total_equity; any = true }
+    } catch { /* fall through — a partial read must not fabricate a total */ }
+  }
+  return any ? Math.round(total * 100) / 100 : null
+}
+
 export async function getProductionAccountsForBot(
   botName: string,
   opts: { forRead?: boolean } = {},
