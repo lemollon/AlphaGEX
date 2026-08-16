@@ -528,14 +528,15 @@ export async function GET(
     // Sizing is regime-conditional: min(bp_pct, 50% on positive gamma / 20% on
     // negative or unknown). This said "30% BP", which stopped being true when the
     // regime split landed on 2026-07-21.
+    // SPARK2 still runs the old condor on its own ledger, so it keeps this label.
+    // SPARK does NOT — it moved to the EBB put spread on 2026-08-16 and is no
+    // longer a condor at all, which is why it no longer shares this string.
     const sparkStrategy = 'Iron Condor (GEX-adaptive · swing · 50/20% BP by gamma)'
-    const strategyName = bot === 'flame'
+    const strategyName = bot === 'flame' || bot === 'spark'
       ? 'Put Credit Spread'
       : bot === 'blaze'
         ? 'Directional Spread'
-        // spark2 runs SPARK's strategy on its own paper ledger — same code paths,
-        // so it gets the same description rather than a bare "Iron Condor".
-        : bot === 'spark' || bot === 'spark2'
+        : bot === 'spark2'
           ? sparkStrategy
           : 'Iron Condor'
     const strategy = `${dteNum}DTE ${tradeMode} ${strategyName}`
