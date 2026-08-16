@@ -310,6 +310,25 @@ export default function SqueezePage() {
           </div>
         )}
 
+        {/* JOBS NOT ARMED — worse than "never run", and indistinguishable from
+            it without this. If the scheduler never attached, the capture will
+            not fire tonight, tomorrow, or ever, and every readout on the page
+            quietly freezes at whatever the CSV last held. */}
+        {data.jobs?.scheduler?.registered === false && (
+          <div style={{
+            background: RED + '20', border: `1px solid ${RED}88`, borderRadius: 10,
+            padding: '10px 14px', marginBottom: 10, fontSize: 12.5, lineHeight: 1.6,
+          }}>
+            <div style={{ fontWeight: 700, color: RED }}>
+              JOBS NOT ARMED — the capture and alert are not scheduled.
+            </div>
+            <div style={{ marginTop: 4, color: '#c6cbd8' }}>
+              {data.jobs.scheduler.reason || ''} Nothing will update this page until the
+              scheduler is running.
+            </div>
+          </div>
+        )}
+
         {/* FRESHNESS — the verdict banner used to print today's calendar date
             regardless of how old the underlying gamma reading was. This bar
             makes staleness impossible to miss; it renders nothing when the

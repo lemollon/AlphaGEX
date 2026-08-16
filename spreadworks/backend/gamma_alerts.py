@@ -57,6 +57,39 @@ WHAT_TO_DO = {
 }
 
 
+# Set by register_gamma_alerts once the cron jobs are actually attached. An
+# unset ref means the jobs were never armed — see scheduled_jobs().
+_SCHEDULER: dict = {"ref": None}
+
+GAMMA_JOB_IDS = ("gamma_capture", "gamma_squeeze_alert")
+
+
+def scheduled_jobs() -> dict:
+    """Are the gamma cron jobs armed, and when do they next fire?
+
+    "never run" is ambiguous on its own: a scheduler that failed to start and
+    a job that simply has not reached its first firing look identical from the
+    ledger. This distinguishes them, which matters most on the day before the
+    first ever run.
+
+    Never raises — apscheduler internals are not worth a 500.
+    """
+    sched = _SCHEDULER.get("ref")
+    if sched is None:
+        return {"registered": False, "jobs": {},
+                "reason": "Gamma jobs are not armed — no scheduler was attached."}
+    out: dict = {"registered": True, "jobs": {}, "reason": None}
+    for jid in GAMMA_JOB_IDS:
+        try:
+            job = sched.get_job(jid)
+            nxt = getattr(job, "next_run_time", None) if job else None
+            out["jobs"][jid] = nxt.isoformat() if nxt else None
+        except Exception as e:  # noqa: BLE001
+            out["jobs"][jid] = None
+            out["reason"] = f"job lookup failed: {e}"
+    return out
+
+
 def _webhook_url() -> str:
     return (os.getenv("RISK_ADVISOR_DISCORD_WEBHOOK", "")
             or os.getenv("DISCORD_WEBHOOK_URL", ""))
@@ -492,5 +525,12 @@ def register_gamma_alerts(scheduler, app) -> None:
     scheduler.add_job(fire_squeeze_alert, "cron", hour=8, minute=5, timezone=CT,
                       id="gamma_squeeze_alert", coalesce=True, max_instances=1,
                       replace_existing=True)
+    # Hold the scheduler so the API can PROVE these jobs are armed. Without it
+    # a dead scheduler and a job that simply has not fired yet both surface as
+    # "never run", which are very different things: one needs a fix and the
+    # other needs patience. `_start_scheduler` returns None when apscheduler is
+    # missing or a duplicate start is skipped, and register_gamma_alerts
+    # returns early in that case, so an unset ref is itself the signal.
+    _SCHEDULER["ref"] = scheduler
     logger.info("[GammaAlerts] registered: capture 15:05 CT, "
                "squeeze alert 08:05 CT")
