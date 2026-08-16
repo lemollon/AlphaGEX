@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
+import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, isSettleAtExpiryBot, CT_TODAY } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT, isProductionBot, getProductionAccountsForBot, getTradierBalanceDetail, getTradierOrders, getSandboxAccountPositions, getLoadedSandboxAccountsAsync, getAccountIdForKey, getVerticalMarkToMarket, calculateVerticalUnrealizedPnl } from '@/lib/tradier'
 
 import { scopedStartingCapital } from '@/lib/account-basis'
@@ -524,7 +524,14 @@ export async function GET(
     // kindle, so spark2 — a 1DTE bot — reported "0DTE Paper Iron Condor" on the page
     // a customer reads. dteMode already knew the right answer for all seven bots.
     const dteNum = Number((dteMode(bot) ?? '0DTE').replace('DTE', '')) || 0
-    const tradeMode = bot === PRODUCTION_BOT ? 'Live' : 'Paper'
+    // 🚨 "Live" describes where the ORDERS GO, not which bot is allowlisted for
+    // production. SPARK is PRODUCTION_BOT, but since the EBB cutover it routes
+    // through tryOpenFlamePutSpread, which writes account_type 'sandbox' and
+    // never calls the broker on open — so a live order is unreachable from the
+    // scanner. It read "0DTE Live Put Credit Spread" on a customer-facing page
+    // for a bot that cannot place a live trade. Settle-at-expiry bots are paper
+    // by construction until the assignment/capital question is settled.
+    const tradeMode = bot === PRODUCTION_BOT && !isSettleAtExpiryBot(bot) ? 'Live' : 'Paper'
     // Sizing is regime-conditional: min(bp_pct, 50% on positive gamma / 20% on
     // negative or unknown). This said "30% BP", which stopped being true when the
     // regime split landed on 2026-07-21.

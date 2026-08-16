@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, dbExecute, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
+import { BOT_STARTING_CAPITAL } from '@/lib/bot-capital'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,7 +26,7 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
     max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.20,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '13:05', entry_end: '13:10', eod_cutoff_et: '14:45',
-    pdt_max_day_trades: 4, starting_capital: 3000.0,
+    pdt_max_day_trades: 4, starting_capital: BOT_STARTING_CAPITAL.flame,
   },
   // REPOINTED 2026-08-11 -- SPY only, puts only, 14 DTE, delta 0.10 (k=2.10),
   // $5 wings, 3x stop, no stand-down, 1 contract. The only configuration that
@@ -44,7 +45,7 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
     max_contracts: 1, max_trades_per_day: 1, buying_power_usage_pct: 0.20,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '10:05', entry_end: '10:20', eod_cutoff_et: '14:45',
-    pdt_max_day_trades: 4, starting_capital: 5000.0,
+    pdt_max_day_trades: 4, starting_capital: BOT_STARTING_CAPITAL.spark,
   },
 
   // spark2 — SPARK's paper twin. Same strategy code (isSparkV2Sizing +

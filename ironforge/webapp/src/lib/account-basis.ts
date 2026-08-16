@@ -1,7 +1,16 @@
 import { dbQuery, botTable, num } from '@/lib/db'
+import { startingCapitalFor } from '@/lib/bot-capital'
 
-/** Fallback when a scope matches no active paper_account row at all. */
-export const DEFAULT_STARTING_CAPITAL = 10000
+/**
+ * Fallback when a scope matches no active paper_account row at all.
+ *
+ * 🚨 Was a flat 10000 for every bot. That published a number belonging to no bot
+ * whenever a ledger was empty — which is exactly the state right after a
+ * dte_mode cutover, so FLAME and SPARK both read $10,000 on every dashboard the
+ * moment they moved to EBB. Now resolved per bot from lib/bot-capital.ts, the
+ * single source the scanner and the config route also read.
+ */
+export { DEFAULT_STARTING_CAPITAL } from '@/lib/bot-capital'
 
 /**
  * The starting-capital BASIS for a scoped view of a bot's paper accounts.
@@ -51,7 +60,7 @@ export async function scopedStartingCapital(
   // A zero/absent sum means no active account matched the scope — fall back to
   // the historical default rather than plotting a curve against a $0 base.
   return {
-    startingCapital: accountCount > 0 && total > 0 ? total : DEFAULT_STARTING_CAPITAL,
+    startingCapital: accountCount > 0 && total > 0 ? total : startingCapitalFor(bot),
     accountCount,
   }
 }

@@ -23,7 +23,7 @@
  *   11. Per-bot entry window (INFERNO=1430, others=1400)
  */
 
-import { query, dbExecute, botTable, num, int, CT_TODAY } from './db'
+import { query, dbExecute, botTable, num, int, CT_TODAY, isSettleAtExpiryBot } from './db'
 import { acquireScannerLock } from './scanner-lock'
 import { isMarketHoliday, marketCloseMinuteCT } from './market-calendar'
 import { postFlameOpen, postFlameClose } from './discord'
@@ -72,6 +72,7 @@ import {
   getOptionQuote,
   getDailyHistory,
 } from './tradier'
+import { BOT_STARTING_CAPITAL } from './bot-capital'
 import { getTvMarketStructure, type TvMarketStructure } from './gex/trading-volatility-client'
 import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, classifySignalState, notifyDecision, type SignalStreak } from './volAlerts'
 import { ensureVolAlertsTable, upsertRegimeDaily, recordLadderTransitions, markNotifiedIfDue, touchEpisode, type SignalRead } from './volAlerts.server'
@@ -163,9 +164,6 @@ function isNoStopBot(name: string): boolean {
  * These ledgers are $3,000 and $5,000, so this must NOT be armed for real money
  * on the current capital regardless of how the paper record looks.
  */
-function isSettleAtExpiryBot(name: string): boolean {
-  return name === 'flame' || name === 'spark'
-}
 
 /**
  * VIX DECAY GATE — the one regime filter that survived a blind OOS decade.
@@ -421,7 +419,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // registry #43 measured every buyback exit and each one collapses the edge to
   // roughly zero. min_credit 0.10 matches the SpreadWorks registry.
   // starting_capital 3000 is EBB's own registered minimum; $2,000 clears nothing.
-  flame:   { sd: 2.10, pt_pct: 1.0, sl_mult: 9999, entry_start: 1305, entry_end: 1310, max_trades: 1, max_contracts: 1, bp_pct: 0.20, starting_capital: 3000, min_credit: 0.10, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
+  flame:   { sd: 2.10, pt_pct: 1.0, sl_mult: 9999, entry_start: 1305, entry_end: 1310, max_trades: 1, max_contracts: 1, bp_pct: 0.20, starting_capital: BOT_STARTING_CAPITAL.flame, min_credit: 0.10, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
   // 🚨 SUPERSEDED 2026-08-16 — SPARK now runs EBB. The retired 5DTE/7DTE notes
   // that used to sit here were removed because they contradict this config on the
   // one axis that matters most: they said "NARROW WINGS DELETE THE EDGE... $2
@@ -434,7 +432,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // The AM tranche needs the VIX decay gate MORE than the PM one: ungated it is
   // +$2.87/trade (t=+1.25, no edge), gated +$6.23 (t=+2.44).
   // starting_capital 5000 is the AM rung of the sizing ladder (29% drawdown).
-  spark:   { sd: 2.01, pt_pct: 1.0, sl_mult: 9999, entry_start: 1005, entry_end: 1020, max_trades: 1, max_contracts: 1, bp_pct: 0.20, starting_capital: 5000, min_credit: 0.10, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
+  spark:   { sd: 2.01, pt_pct: 1.0, sl_mult: 9999, entry_start: 1005, entry_end: 1020, max_trades: 1, max_contracts: 1, bp_pct: 0.20, starting_capital: BOT_STARTING_CAPITAL.spark, min_credit: 0.10, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
   inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: false },
   // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
   // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =

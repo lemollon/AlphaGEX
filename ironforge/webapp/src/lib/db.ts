@@ -101,6 +101,22 @@ export function dteMode(bot: string): string | null {
   if (bot === 'forge') return '14DTE'  // no longer a condor -- calls measured negative (2026-08-11)
   return null
 }
+/**
+ * Bots that HOLD THROUGH EXPIRATION and settle at the close instead of being
+ * force-closed at the 14:45 CT cutoff.
+ *
+ * Lives here, not in scanner.ts, because API routes need it too and importing
+ * the scanner into a route would start the scanner. Registry #43 is why they
+ * hold: every early exit collapses the edge to about zero.
+ *
+ * Holding through expiry also means these bots are PAPER by construction —
+ * assignment is ~$56-64k of stock per contract, so "Live" must never be
+ * advertised for them until the capital question is settled.
+ */
+export function isSettleAtExpiryBot(bot: string): boolean {
+  return bot === 'flame' || bot === 'spark'
+}
+
 
 // ---- Auto-create tables on first use ----
 
