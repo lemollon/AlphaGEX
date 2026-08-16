@@ -43,6 +43,44 @@ function InfoTip({ text }) {
   );
 }
 
+// Section header — breaks the page's flat card hierarchy into named zones.
+function Zone({ label, children }) {
+  return (
+    <div>
+      <div style={{
+        textTransform: 'uppercase', fontSize: 11, letterSpacing: 1.2, color: DIM, fontWeight: 700,
+        borderBottom: '1px solid #232a3d', marginTop: 28, marginBottom: 12, paddingBottom: 6,
+      }}>
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// Collapsible card — the evidence lives here so the page reads "verdict
+// first, proof on demand" instead of six screens of justification before
+// the fold.
+function Collapse({ title, subtitle, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={S.card}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+        width: '100%', background: 'transparent', border: 'none', cursor: 'pointer',
+        textAlign: 'left', padding: 0, color: 'inherit', font: 'inherit',
+      }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>
+          <span style={{ display: 'inline-block', width: 14 }}>{open ? '▾' : '▸'}</span>
+          {title}
+        </span>
+        {subtitle && <span style={S.small}>{subtitle}</span>}
+      </button>
+      {open && <div style={{ marginTop: 12 }}>{children}</div>}
+    </div>
+  );
+}
+
 function pct(x, d = 1) { return x == null ? '—' : (100 * x).toFixed(d) + '%'; }
 
 // Null-safe one-line label for a flow_pm[clock] entry — no snapshot yet
@@ -330,6 +368,7 @@ export default function RiskAdvisorPage() {
           <div style={S.cardTitle}><Target size={13} style={{ verticalAlign: -2 }} /> What to do right now
             <InfoTip text="Each row is one validated signal. ACTIVE rows are lit — do what the action column says. The last column is the backtested evidence for WHY. SHARP/DEGRADED chips are the tool grading itself live: DEGRADED means live results fell below the backtest band and the signal should not be trusted until re-validated." />
           </div>
+          <div style={{ overflowX: 'auto' }}>
           <table style={{ borderCollapse: 'collapse', width: '100%' }}>
             <thead><tr>
               <th style={S.th}>signal</th><th style={S.th}>state</th>
@@ -358,6 +397,7 @@ export default function RiskAdvisorPage() {
               ); })}
             </tbody>
           </table>
+          </div>
           {score?.health && Object.values(score.health).some(h => h.status === 'DEGRADED') && (
             <div style={{ fontSize: 12, color: RED, marginTop: 8, fontWeight: 600 }}>
               ⚠ A signal is DEGRADED — its live results have fallen below the backtest band.
@@ -426,6 +466,7 @@ export default function RiskAdvisorPage() {
                   {out.grade.replace('_', ' ').toUpperCase()}</b>
                 {out.flag_vix1d && <span style={{ color: AMBER }}> · FLAG ON</span>}
               </div>
+              <div style={{ overflowX: 'auto' }}>
               <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                 <tbody>
                   <tr><td style={S.td}>P(±1% day)</td><td style={{ ...S.td, fontWeight: 700 }}>{pct(out.p_big_adj)}</td>
@@ -438,6 +479,7 @@ export default function RiskAdvisorPage() {
                       <td style={{ ...S.td, ...S.small }}>from VIX1D {out.vix1d?.toFixed(1)}</td></tr>
                 </tbody>
               </table>
+              </div>
               <div style={{ fontSize: 13, marginTop: 8, padding: '8px 10px',
                             background: '#1a2030', borderRadius: 8 }}>
                 <b>How to trade it:</b>{' '}
@@ -489,369 +531,403 @@ export default function RiskAdvisorPage() {
           })() : <div style={S.small}>{intra?.status || 'no intraday data yet — bars appear after the 8:30 CT open'}</div>}
         </div>
 
-        {/* 5 ─ SCORECARD: the tool grading itself */}
-        <div style={S.card}>
-          <div style={S.cardTitle}>Report card — is the tool keeping its promises?
-            <InfoTip text="Every claim this page makes was a promise from a backtest. This card checks each promise against what ACTUALLY happened in live sessions. Read the verdict line first; the table is the evidence. If live results fall materially below promise, the signal is automatically marked DEGRADED and should not be trusted until re-validated." />
-          </div>
-          {score ? (() => {
-            const H = score.health || {};
-            const graded = Object.entries(H).filter(([, v]) => ['sharp', 'DEGRADED', 'warming_up'].includes(v?.status));
-            const bad = graded.filter(([, v]) => v.status === 'DEGRADED').map(([k]) => k);
-            const warming = graded.filter(([, v]) => v.status === 'warming_up').map(([k]) => k);
-            const rec = score.recent || [];
-            const n = { hit: 0, false_alarm: 0, missed: 0, clear: 0 };
-            rec.forEach(r => { n[r.grade] = (n[r.grade] || 0) + 1; });
-            return (<>
-              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10,
-                            color: bad.length ? RED : GREEN }}>
-                {bad.length
-                  ? `⚠ BELOW PROMISE: ${bad.join(', ')} — treat as unreliable until re-validated.`
-                  : `✅ Verdict right now: every graded signal is performing inside its promised range.`}
-                {warming.length > 0 && <span style={{ color: DIM, fontWeight: 400 }}>
-                  {' '}({warming.join(', ')} still collecting enough live data to judge)</span>}
-              </div>
-              <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 10 }}>
-                <thead><tr>
-                  <th style={S.th}>the promise</th>
-                  <th style={S.th}>what actually happened ({score.window_sessions} live sessions)</th>
-                  <th style={S.th}>promised</th>
-                </tr></thead>
-                <tbody>
-                  <tr><td style={S.td}>When the danger flag fires, a big day follows
-                        <div style={S.small}>VIX1D flag precision — higher is better</div></td>
-                      <td style={{ ...S.td, fontWeight: 700 }}>{pct(fs?.precision)} of flagged days moved ≥1%</td>
-                      <td style={S.td}>{pct(fs?.backtest_precision)}</td></tr>
-                  <tr><td style={S.td}>Most big days get flagged in advance
-                        <div style={S.small}>VIX1D flag recall — higher is better</div></td>
-                      <td style={{ ...S.td, fontWeight: 700 }}>{pct(fs?.recall)} of big days were caught</td>
-                      <td style={S.td}>{pct(fs?.backtest_recall)}</td></tr>
-                  <tr><td style={S.td}>The printed probabilities are honest
-                        <div style={S.small}>Brier score — LOWER is better; 0 = perfect</div></td>
-                      <td style={{ ...S.td, fontWeight: 700 }}>{cal?.brier_p_big_adj?.toFixed(3) ?? '—'}</td>
-                      <td style={S.td}>{cal?.backtest_brier} (degrades above ~0.22)</td></tr>
-                  <tr><td style={S.td}>Morning volume spikes mark dangerous days
-                        <div style={S.small}>big-move rate on spike days vs ordinary days</div></td>
-                      <td style={{ ...S.td, fontWeight: 700 }}>{pct(fsp?.big_move_rate_on_spike)} vs {pct(fsp?.big_move_rate_otherwise)}</td>
-                      <td style={S.td}>28.6% vs 12.1%</td></tr>
-                </tbody>
-              </table>
-              <div style={{ ...S.small, marginBottom: 6 }}>
-                <b style={{ color: '#c6cbd8' }}>Last {rec.length} sessions in words:</b>{' '}
-                <span style={{ color: GREEN }}>{n.hit} correct warning{n.hit === 1 ? '' : 's'}</span> ·{' '}
-                <span style={{ color: AMBER }}>{n.false_alarm} false alarm{n.false_alarm === 1 ? '' : 's'} (cost: premium skipped for nothing)</span> ·{' '}
-                <span style={{ color: RED }}>{n.missed} big day{n.missed === 1 ? '' : 's'} MISSED</span> ·{' '}
-                {n.clear} correctly-quiet day{n.clear === 1 ? '' : 's'}. Missed days are the expensive kind — watch that number.
-              </div>
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                {rec.map(r => {
-                  const c = r.grade === 'hit' ? GREEN : r.grade === 'false_alarm' ? AMBER : r.grade === 'missed' ? RED : '#2a3145';
-                  const t = r.grade === 'hit' ? '✓' : r.grade === 'false_alarm' ? '✗' : r.grade === 'missed' ? '●' : '−';
-                  return (
-                    <div key={r.d} title={`${r.d}: SPY ${r.ret > 0 ? '+' : ''}${r.ret}% — ${r.grade.replace('_', ' ')}`}
-                         style={{ width: 26, height: 26, borderRadius: 5, background: c + '33',
-                                  border: `1px solid ${c}`, color: c, fontSize: 12, fontWeight: 700,
-                                  display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {t}
-                    </div>
-                  );
-                })}
-              </div>
-              {fsp?.note && <div style={{ ...S.small, marginTop: 8 }}>{fsp.note}</div>}
-            </>);
-          })() : <div style={S.small}>computing…</div>}
-        </div>
-
-        {/* 5b ─ THE EVIDENCE: full backtest results behind every signal */}
-        <div style={S.card}>
-          <div style={S.cardTitle}>The evidence — full backtest results
-            <InfoTip text="Every number that drives this page, with its base rate and sample. A hit rate without its base rate lies. All trials were pre-registered (hypothesis fixed before results were seen) in ironforge-data/risk_advisor/trials_registry.md; signals from close t−1, tradeable next session — no look-ahead." />
-          </div>
-          <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 10 }}>
-            <thead><tr>
-              <th style={S.th}>signal</th><th style={S.th}>backtest result</th>
-              <th style={S.th}>base rate / sample</th>
-            </tr></thead>
-            <tbody>
-              <tr>
-                <td style={{ ...S.td, fontWeight: 600 }}>Backwardation skip</td>
-                <td style={S.td}>Condor book <b>0.32 → 0.41 ret/DD</b> when skipping these days</td>
-                <td style={{ ...S.td, ...S.small }}>economic test on the real SPY condor stream, 7 years</td>
-              </tr>
-              <tr>
-                <td style={{ ...S.td, fontWeight: 600 }}>VIX1D flag</td>
-                <td style={S.td}><b>42.8% precision / 68% recall</b> on ≥1% days</td>
-                <td style={{ ...S.td, ...S.small }}>vs 26% of all days moving ≥1% — flag ≈ doubles the odds</td>
-              </tr>
-              <tr>
-                <td style={{ ...S.td, fontWeight: 600 }}>10:00 CT flow spike</td>
-                <td style={S.td}>Big rest-of-day move <b>28.6% vs 12.1%</b> (~4.8σ), fires 5.6% of days</td>
-                <td style={{ ...S.td, ...S.small }}>904 sessions 2023→. Magnitude only — direction tested, all t &lt; 1. Gating 5-DTE condors on it FAILS (0.24→0.21 ret/DD): same-day signal, same-day use</td>
-              </tr>
-              <tr>
-                <td style={{ ...S.td, fontWeight: 600 }}>Double floor</td>
-                <td style={S.td}><b>0 of 56</b> sessions moved ≥1.5% next day</td>
-                <td style={{ ...S.td, ...S.small }}>strongest state in the data — but a small sample, weight accordingly</td>
-              </tr>
-              <tr>
-                <td style={{ ...S.td, fontWeight: 600 }}>Outlook probabilities</td>
-                <td style={S.td}>Raw VIX1D = best ranker (<b>PR-AUC 0.466</b>); RVRP-adjusted = best calibration (<b>Brier ~0.168</b>)</td>
-                <td style={{ ...S.td, ...S.small }}>beat HAR-RV models (0.37–0.40) and a 12-feature ML model (0.033 — failed its gate, scrapped). Adjusted for printed probabilities, raw for flagging — pattern replicated 3×</td>
-              </tr>
-              <tr>
-                <td style={{ ...S.td, fontWeight: 600 }}>2σ down-tail</td>
-                <td style={S.td}>Near-unpredictable: best signal PR-AUC <b>0.049 vs 0.014</b> base (3.5× lift, weak)</td>
-                <td style={{ ...S.td, ...S.small }}>shown for context; nothing on this page gates on it, deliberately</td>
-              </tr>
-            </tbody>
-          </table>
-          <div style={S.small}>
-            Standard: every claim rests on multi-year windows including blind years — a 2-year walk-forward
-            once read +1.28 on a strategy that was −0.05 over 5 blind years. Ideas that failed this bar
-            (direction layers, regime arrows, long premium, ML model) are documented in the directional
-            panel below instead of being quietly dropped.
-          </div>
-        </div>
-
-        {/* 6 ─ FLOW RIBBON */}
-        <div style={S.card}>
-          <div style={S.cardTitle}>Option-flow unusualness — one reading per check
-            <InfoTip text="How unusual SPY option volume is vs the trailing 63 sessions at the same clock, in z-scores (0 = normal, 2+ = spike). Red = put volume, amber = total volume, green = 0DTE OTM call volume (the squeeze tell). Shaded bands = quiet-VIX regimes where daily signals are blind — exactly where the flow signal earns its keep. Checks run at 10:00, 12:00 and 13:30 CT; alerts fire minutes after each." />
-          </div>
-          {(() => {
-            void tick;                                   // 30s re-render for the countdown
-            const nxt = nextFlowCheck();
-            const cap = flow.captured_at
-              ? new Date(flow.captured_at).toLocaleTimeString('en-US',
-                  { hour: '2-digit', minute: '2-digit', hour12: false }) + ' CT'
-              : null;
-            return (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center',
-                            marginBottom: 10 }}>
-                <span style={{ fontSize: 11.5, color: '#c6cbd8', border: '1px solid #232a3d',
-                               borderRadius: 6, padding: '3px 8px' }}>
-                  last reading: <b>{cap || 'none yet today'}</b> · next check: <b>{nxt.label}</b> (in {nxt.in})
-                </span>
-                <span style={{ display: 'flex', gap: 4 }}>
-                  {[[0, 'Today'], [30, '30d'], [90, '90d'], [180, '180d'], [365, 'Max']].map(([v, l]) => (
-                    <button key={v} onClick={() => setRange(v)}
-                      style={{ fontSize: 11, padding: '3px 9px', borderRadius: 6, cursor: 'pointer',
-                               border: `1px solid ${range === v ? BLUE : '#232a3d'}`,
-                               background: range === v ? 'rgba(96,165,250,0.12)' : 'transparent',
-                               color: range === v ? BLUE : DIM, fontWeight: 600 }}>
-                      {l}
-                    </button>
-                  ))}
-                </span>
-              </div>
-            );
-          })()}
-          {range === 0 ? (
-            <div>
-              <div style={{ ...S.small, marginBottom: 10 }}>
-                Today's three validated checks. z above 2 = spike (alerted); dashes = check not reached
-                or its capture window was missed.
-              </div>
-              <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: 560 }}>
-                <thead><tr><th style={S.th}>check (CT)</th><th style={S.th}>put z</th>
-                  <th style={S.th}>total z</th><th style={S.th}>state</th></tr></thead>
-                <tbody>
-                  {[['10:00', flow], ['12:00', state.flow_pm?.['12:00']], ['13:30', state.flow_pm?.['13:30']]].map(([k, f]) => {
-                    const sp = f?.spike;
+        <Zone label="Why believe this">
+          {/* 5 ─ SCORECARD: the tool grading itself */}
+          <Collapse
+            title={<>Report card — is the tool keeping its promises?
+              <InfoTip text="Every claim this page makes was a promise from a backtest. This card checks each promise against what ACTUALLY happened in live sessions. Read the verdict line first; the table is the evidence. If live results fall materially below promise, the signal is automatically marked DEGRADED and should not be trusted until re-validated." />
+            </>}
+            subtitle="the tool graded against its own claims"
+          >
+            {score ? (() => {
+              const H = score.health || {};
+              const graded = Object.entries(H).filter(([, v]) => ['sharp', 'DEGRADED', 'warming_up'].includes(v?.status));
+              const bad = graded.filter(([, v]) => v.status === 'DEGRADED').map(([k]) => k);
+              const warming = graded.filter(([, v]) => v.status === 'warming_up').map(([k]) => k);
+              const rec = score.recent || [];
+              const n = { hit: 0, false_alarm: 0, missed: 0, clear: 0 };
+              rec.forEach(r => { n[r.grade] = (n[r.grade] || 0) + 1; });
+              return (<>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10,
+                              color: bad.length ? RED : GREEN }}>
+                  {bad.length
+                    ? `⚠ BELOW PROMISE: ${bad.join(', ')} — treat as unreliable until re-validated.`
+                    : `✅ Verdict right now: every graded signal is performing inside its promised range.`}
+                  {warming.length > 0 && <span style={{ color: DIM, fontWeight: 400 }}>
+                    {' '}({warming.join(', ')} still collecting enough live data to judge)</span>}
+                </div>
+                <div style={{ overflowX: 'auto' }}>
+                <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 10 }}>
+                  <thead><tr>
+                    <th style={S.th}>the promise</th>
+                    <th style={S.th}>what actually happened ({score.window_sessions} live sessions)</th>
+                    <th style={S.th}>promised</th>
+                  </tr></thead>
+                  <tbody>
+                    <tr><td style={S.td}>When the danger flag fires, a big day follows
+                          <div style={S.small}>VIX1D flag precision — higher is better</div></td>
+                        <td style={{ ...S.td, fontWeight: 700 }}>{pct(fs?.precision)} of flagged days moved ≥1%</td>
+                        <td style={S.td}>{pct(fs?.backtest_precision)}</td></tr>
+                    <tr><td style={S.td}>Most big days get flagged in advance
+                          <div style={S.small}>VIX1D flag recall — higher is better</div></td>
+                        <td style={{ ...S.td, fontWeight: 700 }}>{pct(fs?.recall)} of big days were caught</td>
+                        <td style={S.td}>{pct(fs?.backtest_recall)}</td></tr>
+                    <tr><td style={S.td}>The printed probabilities are honest
+                          <div style={S.small}>Brier score — LOWER is better; 0 = perfect</div></td>
+                        <td style={{ ...S.td, fontWeight: 700 }}>{cal?.brier_p_big_adj?.toFixed(3) ?? '—'}</td>
+                        <td style={S.td}>{cal?.backtest_brier} (degrades above ~0.22)</td></tr>
+                    <tr><td style={S.td}>Morning volume spikes mark dangerous days
+                          <div style={S.small}>big-move rate on spike days vs ordinary days</div></td>
+                        <td style={{ ...S.td, fontWeight: 700 }}>{pct(fsp?.big_move_rate_on_spike)} vs {pct(fsp?.big_move_rate_otherwise)}</td>
+                        <td style={S.td}>28.6% vs 12.1%</td></tr>
+                  </tbody>
+                </table>
+                </div>
+                <div style={{ ...S.small, marginBottom: 6 }}>
+                  <b style={{ color: '#c6cbd8' }}>Last {rec.length} sessions in words:</b>{' '}
+                  <span style={{ color: GREEN }}>{n.hit} correct warning{n.hit === 1 ? '' : 's'}</span> ·{' '}
+                  <span style={{ color: AMBER }}>{n.false_alarm} false alarm{n.false_alarm === 1 ? '' : 's'} (cost: premium skipped for nothing)</span> ·{' '}
+                  <span style={{ color: RED }}>{n.missed} big day{n.missed === 1 ? '' : 's'} MISSED</span> ·{' '}
+                  {n.clear} correctly-quiet day{n.clear === 1 ? '' : 's'}. Missed days are the expensive kind — watch that number.
+                </div>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {rec.map(r => {
+                    const c = r.grade === 'hit' ? GREEN : r.grade === 'false_alarm' ? AMBER : r.grade === 'missed' ? RED : '#2a3145';
+                    const t = r.grade === 'hit' ? '✓' : r.grade === 'false_alarm' ? '✗' : r.grade === 'missed' ? '●' : '−';
                     return (
-                      <tr key={k}>
-                        <td style={{ ...S.td, fontWeight: 600 }}>{k}</td>
-                        <td style={S.td}>{f?.putv_z != null ? f.putv_z.toFixed(1) : '—'}</td>
-                        <td style={S.td}>{f?.totv_z != null ? f.totv_z.toFixed(1) : '—'}</td>
-                        <td style={{ ...S.td, fontWeight: 700,
-                                     color: sp ? RED : f?.putv_z != null ? GREEN : DIM }}>
-                          {sp ? 'SPIKE' : f?.putv_z != null ? 'normal' : (f?.status || 'pending')}
-                        </td>
-                      </tr>
+                      <div key={r.d} title={`${r.d}: SPY ${r.ret > 0 ? '+' : ''}${r.ret}% — ${r.grade.replace('_', ' ')}`}
+                           style={{ width: 26, height: 26, borderRadius: 5, background: c + '33',
+                                    border: `1px solid ${c}`, color: c, fontSize: 12, fontWeight: 700,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {t}
+                      </div>
                     );
                   })}
+                </div>
+                {fsp?.note && <div style={{ ...S.small, marginTop: 8 }}>{fsp.note}</div>}
+              </>);
+            })() : <div style={S.small}>computing…</div>}
+          </Collapse>
+
+          {/* 5b ─ THE EVIDENCE: full backtest results behind every signal */}
+          <Collapse
+            title={<>The evidence — full backtest results
+              <InfoTip text="Every number that drives this page, with its base rate and sample. A hit rate without its base rate lies. All trials were pre-registered (hypothesis fixed before results were seen) in ironforge-data/risk_advisor/trials_registry.md; signals from close t−1, tradeable next session — no look-ahead." />
+            </>}
+            subtitle="every registered backtest"
+          >
+            <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 10 }}>
+              <thead><tr>
+                <th style={S.th}>signal</th><th style={S.th}>backtest result</th>
+                <th style={S.th}>base rate / sample</th>
+              </tr></thead>
+              <tbody>
+                <tr>
+                  <td style={{ ...S.td, fontWeight: 600 }}>Backwardation skip</td>
+                  <td style={S.td}>Condor book <b>0.32 → 0.41 ret/DD</b> when skipping these days</td>
+                  <td style={{ ...S.td, ...S.small }}>economic test on the real SPY condor stream, 7 years</td>
+                </tr>
+                <tr>
+                  <td style={{ ...S.td, fontWeight: 600 }}>VIX1D flag</td>
+                  <td style={S.td}><b>42.8% precision / 68% recall</b> on ≥1% days</td>
+                  <td style={{ ...S.td, ...S.small }}>vs 26% of all days moving ≥1% — flag ≈ doubles the odds</td>
+                </tr>
+                <tr>
+                  <td style={{ ...S.td, fontWeight: 600 }}>10:00 CT flow spike</td>
+                  <td style={S.td}>Big rest-of-day move <b>28.6% vs 12.1%</b> (~4.8σ), fires 5.6% of days</td>
+                  <td style={{ ...S.td, ...S.small }}>904 sessions 2023→. Magnitude only — direction tested, all t &lt; 1. Gating 5-DTE condors on it FAILS (0.24→0.21 ret/DD): same-day signal, same-day use</td>
+                </tr>
+                <tr>
+                  <td style={{ ...S.td, fontWeight: 600 }}>Double floor</td>
+                  <td style={S.td}><b>0 of 56</b> sessions moved ≥1.5% next day</td>
+                  <td style={{ ...S.td, ...S.small }}>strongest state in the data — but a small sample, weight accordingly</td>
+                </tr>
+                <tr>
+                  <td style={{ ...S.td, fontWeight: 600 }}>Outlook probabilities</td>
+                  <td style={S.td}>Raw VIX1D = best ranker (<b>PR-AUC 0.466</b>); RVRP-adjusted = best calibration (<b>Brier ~0.168</b>)</td>
+                  <td style={{ ...S.td, ...S.small }}>beat HAR-RV models (0.37–0.40) and a 12-feature ML model (0.033 — failed its gate, scrapped). Adjusted for printed probabilities, raw for flagging — pattern replicated 3×</td>
+                </tr>
+                <tr>
+                  <td style={{ ...S.td, fontWeight: 600 }}>2σ down-tail</td>
+                  <td style={S.td}>Near-unpredictable: best signal PR-AUC <b>0.049 vs 0.014</b> base (3.5× lift, weak)</td>
+                  <td style={{ ...S.td, ...S.small }}>shown for context; nothing on this page gates on it, deliberately</td>
+                </tr>
+              </tbody>
+            </table>
+            </div>
+            <div style={S.small}>
+              Standard: every claim rests on multi-year windows including blind years — a 2-year walk-forward
+              once read +1.28 on a strategy that was −0.05 over 5 blind years. Ideas that failed this bar
+              (direction layers, regime arrows, long premium, ML model) are documented in the directional
+              panel below instead of being quietly dropped.
+            </div>
+          </Collapse>
+
+          {/* 6 ─ FLOW RIBBON */}
+          <Collapse
+            title={<>Option-flow unusualness — one reading per check
+              <InfoTip text="How unusual SPY option volume is vs the trailing 63 sessions at the same clock, in z-scores (0 = normal, 2+ = spike). Red = put volume, amber = total volume, green = 0DTE OTM call volume (the squeeze tell). Shaded bands = quiet-VIX regimes where daily signals are blind — exactly where the flow signal earns its keep. Checks run at 10:00, 12:00 and 13:30 CT; alerts fire minutes after each." />
+            </>}
+            subtitle="one reading per check"
+          >
+            {(() => {
+              void tick;                                   // 30s re-render for the countdown
+              const nxt = nextFlowCheck();
+              const cap = flow.captured_at
+                ? new Date(flow.captured_at).toLocaleTimeString('en-US',
+                    { hour: '2-digit', minute: '2-digit', hour12: false }) + ' CT'
+                : null;
+              return (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center',
+                              marginBottom: 10 }}>
+                  <span style={{ fontSize: 11.5, color: '#c6cbd8', border: '1px solid #232a3d',
+                                 borderRadius: 6, padding: '3px 8px' }}>
+                    last reading: <b>{cap || 'none yet today'}</b> · next check: <b>{nxt.label}</b> (in {nxt.in})
+                  </span>
+                  <span style={{ display: 'flex', gap: 4 }}>
+                    {[[0, 'Today'], [30, '30d'], [90, '90d'], [180, '180d'], [365, 'Max']].map(([v, l]) => (
+                      <button key={v} onClick={() => setRange(v)}
+                        style={{ fontSize: 11, padding: '3px 9px', borderRadius: 6, cursor: 'pointer',
+                                 border: `1px solid ${range === v ? BLUE : '#232a3d'}`,
+                                 background: range === v ? 'rgba(96,165,250,0.12)' : 'transparent',
+                                 color: range === v ? BLUE : DIM, fontWeight: 600 }}>
+                        {l}
+                      </button>
+                    ))}
+                  </span>
+                </div>
+              );
+            })()}
+            {range === 0 ? (
+              <div>
+                <div style={{ ...S.small, marginBottom: 10 }}>
+                  Today's three validated checks. z above 2 = spike (alerted); dashes = check not reached
+                  or its capture window was missed.
+                </div>
+                <div style={{ overflowX: 'auto' }}>
+                <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: 560 }}>
+                  <thead><tr><th style={S.th}>check (CT)</th><th style={S.th}>put z</th>
+                    <th style={S.th}>total z</th><th style={S.th}>state</th></tr></thead>
+                  <tbody>
+                    {[['10:00', flow], ['12:00', state.flow_pm?.['12:00']], ['13:30', state.flow_pm?.['13:30']]].map(([k, f]) => {
+                      const sp = f?.spike;
+                      return (
+                        <tr key={k}>
+                          <td style={{ ...S.td, fontWeight: 600 }}>{k}</td>
+                          <td style={S.td}>{f?.putv_z != null ? f.putv_z.toFixed(1) : '—'}</td>
+                          <td style={S.td}>{f?.totv_z != null ? f.totv_z.toFixed(1) : '—'}</td>
+                          <td style={{ ...S.td, fontWeight: 700,
+                                       color: sp ? RED : f?.putv_z != null ? GREEN : DIM }}>
+                            {sp ? 'SPIKE' : f?.putv_z != null ? 'normal' : (f?.status || 'pending')}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                </div>
+              </div>
+            ) : (<>
+            <div style={{ ...S.small, marginBottom: 10 }}>
+              10:00 CT reading, one point per session, trailing {range} sessions. Shaded = quiet-VIX
+              regimes (the trap zone). Dots = spike days (z&gt;2).
+            </div>
+            <div style={{ width: '100%', height: 240 }}>
+              <ResponsiveContainer>
+                <ComposedChart data={hist} margin={{ top: 6, right: 12, left: -8, bottom: 0 }}>
+                  {bands.map(([a, b], i) => (
+                    <ReferenceArea key={i} x1={a} x2={b} fill={BLUE} fillOpacity={0.07} />
+                  ))}
+                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#5b6478' }} interval="preserveStartEnd" minTickGap={40} />
+                  <YAxis tick={{ fontSize: 10, fill: '#5b6478' }}
+                         domain={[d => Math.floor(Math.min(d, -3)), d => Math.ceil(Math.max(d, 5))]}
+                         tickFormatter={v => Number(v).toFixed(0)} allowDecimals={false} />
+                  <Tooltip contentStyle={{ background: "#141824", border: "1px solid #232a3d", fontSize: 12 }} formatter={v => (v == null ? "—" : Number(v).toFixed(2))} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <ReferenceLine y={2} stroke={RED} strokeDasharray="4 4" />
+                  <ReferenceLine y={0} stroke="#232a3d" />
+                  <Line dataKey="putv_z" name="put vol z" stroke={RED} dot={false} strokeWidth={1.5} />
+                  <Line dataKey="totv_z" name="total vol z" stroke={AMBER} dot={false} strokeWidth={1.2} />
+                  <Line dataKey="otm_call_0dte_z" name="0DTE OTM call z" stroke={GREEN} dot={false} strokeWidth={1.2} />
+                  <Line dataKey="spike" name="spike" stroke="none" dot={{ r: 4, fill: RED }} legendType="none" />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+            </>)}
+          </Collapse>
+
+          {/* 7b ─ DIRECTIONAL / LONG-PREMIUM VERDICTS */}
+          <Collapse
+            title={<>Tested and REJECTED — the page will never suggest these
+              <InfoTip text="You might expect 'don't sell premium' days to be 'buy premium' days. They are not — every directional/long-premium idea below was pre-registered and backtested (registry #18–#22, 2026-08-13) FOR THE PURPOSE OF REJECTING OR CONFIRMING IT. Red rows are ideas we tested to kill, so you never have to wonder whether they were tried. Nothing in this table is a trade suggestion." />
+            </>}
+            subtitle="what did not survive"
+          >
+            <div style={{ fontSize: 12.5, color: RED, fontWeight: 600, marginBottom: 10 }}>
+              ⛔ Everything marked NO below was backtested in order to REJECT it. These are anti-recommendations —
+              documented so the same tempting idea never has to be wondered about twice.
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 10 }}>
+              <thead><tr>
+                <th style={S.th}>idea</th><th style={S.th}>verdict</th><th style={S.th}>evidence</th>
+              </tr></thead>
+              <tbody>
+                <tr>
+                  <td style={S.td}>Buy straddles/premium on flagged days</td>
+                  <td style={{ ...S.td, color: RED, fontWeight: 700 }}>NO — flat, not long</td>
+                  <td style={{ ...S.td, ...S.small }}>1-2DTE ATM straddles at the ask LOSE MORE on flag days (−$19.63/trade vs −$14.42 all days, negative 4/4 blind years). The flag comes from option prices — the market already charges for the move.</td>
+                </tr>
+                <tr>
+                  <td style={S.td}>Direction from GEX sign (neg gamma = momentum)</td>
+                  <td style={{ ...S.td, color: RED, fontWeight: 700 }}>NO edge</td>
+                  <td style={{ ...S.td, ...S.small }}>First-hour moves continue to the close 54.5% under negative gamma vs 54.7% positive vs 54.6% baseline — GEX sign adds nothing intraday.</td>
+                </tr>
+                <tr>
+                  <td style={S.td}>Trend/vol regime arrows (grind-up → calls, down-risk → puts)</td>
+                  <td style={{ ...S.td, color: RED, fontWeight: 700 }}>NO edge</td>
+                  <td style={{ ...S.td, ...S.small }}>"Down-risk" regime days bounce (46% directional hit rate); "grind-up" days return less than an average day. This page will never show direction arrows built on these.</td>
+                </tr>
+                <tr>
+                  <td style={S.td}>Quiet-day squeeze tell → speculative calls</td>
+                  <td style={{ ...S.td, color: AMBER, fontWeight: 700 }}>WATCH — promotion-gated</td>
+                  <td style={{ ...S.td, ...S.small }}>The one live directional candidate (tracked below). Becomes a page recommendation only by hitting its pre-registered promotion rule, never by eyeballing.</td>
+                </tr>
+                <tr>
+                  <td style={S.td}>Conditional single-leg buys (UPDRAFT / REVERSAL / EM-BREACH / AFTERBURN)</td>
+                  <td style={{ ...S.td, color: AMBER, fontWeight: 700 }}>PAPER — earning evidence</td>
+                  <td style={{ ...S.td, ...S.small }}>Four call/put-buying bots run these ideas live on paper in the fleet. A lead graduates on positive paper P&amp;L, and that becomes the buy-side playbook here.</td>
+                </tr>
+              </tbody>
+            </table>
+            </div>
+            <div style={S.small}>
+              Bottom line: when this page says stand down, the validated action is <b>reduce or skip</b> — not switch sides.
+              Registry: ironforge-data/risk_advisor/trials_registry.md #18–#22.
+            </div>
+          </Collapse>
+
+          {/* 8 ─ WATCH TIER */}
+          <Collapse
+            title={<><Eye size={13} style={{ verticalAlign: -2 }} /> Watch — accumulating evidence (NOT trading signals)
+              <InfoTip text="Candidates with promising but underpowered evidence. They are NOT tradeable signals — they graduate to the playbook only by hitting the pre-registered promotion rule, never by eyeballing." />
+            </>}
+            subtitle="accumulating evidence, not signals"
+          >
+            <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+              <thead><tr><th style={S.th}>candidate</th><th style={S.th}>evidence so far</th><th style={S.th}>status</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td style={S.td}>Quiet-day 0DTE OTM-call squeeze tell</td>
+                  <td style={S.td}>top decile → P(up≥0.75%) 8.1% vs 3.3% base; bottom decile 0.0%</td>
+                  <td style={S.td}>
+                    {(() => {
+                      const pr = score?.promotion?.squeeze_tell;
+                      if (!pr) return 'underpowered — sample grows nightly';
+                      const f = Math.min(100, 100 * pr.quiet_sessions_have / pr.quiet_sessions_needed);
+                      return (<>
+                        <div style={{ fontSize: 12, marginBottom: 4 }}>
+                          {pr.quiet_sessions_have}/{pr.quiet_sessions_needed} quiet sessions toward promotion
+                        </div>
+                        <div style={{ background: '#1a2030', borderRadius: 4, height: 6, maxWidth: 220 }}>
+                          <div style={{ width: f + '%', height: '100%', background: AMBER, borderRadius: 4 }} />
+                        </div>
+                        <div style={{ fontSize: 10, color: DIM, marginTop: 3 }}>{pr.rule}</div>
+                      </>);
+                    })()}
+                  </td>
+                </tr>
+                <tr>
+                  <td style={S.td}>Premium-imbalance contrarian</td>
+                  <td style={S.td}>call-heavy premium → P(up) 2.2% vs 6.4% base</td>
+                  <td style={S.td}>suggestive only</td>
+                </tr>
+              </tbody>
+            </table>
+            </div>
+          </Collapse>
+
+          {/* 8c ─ ALERT HISTORY */}
+          <Collapse
+            title={<>Alert history — what actually fired
+              <InfoTip text="Every alert the system actually posted to Discord, newest first, from the same dedupe log that guarantees one post per signal per day. If a day is missing here, nothing fired — silence means NORMAL. The page and the channel tell one story." />
+            </>}
+            subtitle="what actually fired"
+          >
+            {alog?.alerts?.length ? (
+              <div style={{ overflowX: 'auto' }}>
+              <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: 640 }}>
+                <tbody>
+                  {alog.alerts.map((a, i) => (
+                    <tr key={i}>
+                      <td style={{ ...S.td, whiteSpace: 'nowrap', fontWeight: 600 }}>{a.d}</td>
+                      <td style={{ ...S.td, color: a.what.includes('@here') ? '#fca5a5' : '#c6cbd8' }}>{a.what}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
+              </div>
+            ) : <div style={S.small}>no alerts posted yet — silence means NORMAL</div>}
+          </Collapse>
+
+          {/* 8b ─ EBB: the strategy these signals protect */}
+          {ebb && !ebb.error && (
+            <div style={S.card}>
+              <div style={S.cardTitle}>EBB — the paper strategy these signals protect
+                <InfoTip text="The validated 0DTE put-spread paper bot (registry #23b: $12.19/trade, 5/5 blind years). It trades EVERY day by design — the signals on this page are for YOUR discretionary and multi-day risk; gating EBB on them was tested and made it worse. Its full card lives on the Bots page." />
+              </div>
+              <div style={{ fontSize: 13.5 }}>
+                Status: <b style={{ color: ebb.enabled ? GREEN : AMBER }}>{ebb.enabled ? 'ARMED (paper)' : 'paused'}</b>
+                {' '}· today {ebb.today_pnl != null ? `$${(ebb.today_pnl + (ebb.unrealized_pnl || 0)).toFixed(0)}` : '—'}
+                {' '}· equity ${ebb.equity_mtm?.toLocaleString?.() ?? ebb.equity_mtm}
+                {' '}· open positions {ebb.open_positions ?? 0}
+                {' '}· <span style={S.small}>trades post to Discord at open (~10:06 CT) and settle (after close)</span>
+              </div>
             </div>
-          ) : (<>
-          <div style={{ ...S.small, marginBottom: 10 }}>
-            10:00 CT reading, one point per session, trailing {range} sessions. Shaded = quiet-VIX
-            regimes (the trap zone). Dots = spike days (z&gt;2).
-          </div>
-          <div style={{ width: '100%', height: 240 }}>
-            <ResponsiveContainer>
-              <ComposedChart data={hist} margin={{ top: 6, right: 12, left: -8, bottom: 0 }}>
-                {bands.map(([a, b], i) => (
-                  <ReferenceArea key={i} x1={a} x2={b} fill={BLUE} fillOpacity={0.07} />
-                ))}
-                <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#5b6478' }} interval="preserveStartEnd" minTickGap={40} />
-                <YAxis tick={{ fontSize: 10, fill: '#5b6478' }}
-                       domain={[d => Math.floor(Math.min(d, -3)), d => Math.ceil(Math.max(d, 5))]}
-                       tickFormatter={v => Number(v).toFixed(0)} allowDecimals={false} />
-                <Tooltip contentStyle={{ background: "#141824", border: "1px solid #232a3d", fontSize: 12 }} formatter={v => (v == null ? "—" : Number(v).toFixed(2))} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <ReferenceLine y={2} stroke={RED} strokeDasharray="4 4" />
-                <ReferenceLine y={0} stroke="#232a3d" />
-                <Line dataKey="putv_z" name="put vol z" stroke={RED} dot={false} strokeWidth={1.5} />
-                <Line dataKey="totv_z" name="total vol z" stroke={AMBER} dot={false} strokeWidth={1.2} />
-                <Line dataKey="otm_call_0dte_z" name="0DTE OTM call z" stroke={GREEN} dot={false} strokeWidth={1.2} />
-                <Line dataKey="spike" name="spike" stroke="none" dot={{ r: 4, fill: RED }} legendType="none" />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-          </>)}
-        </div>
+          )}
+        </Zone>
 
-        {/* 7 ─ HOW TO USE / ALERT PLAYBOOK */}
-        <div style={S.card}>
-          <div style={S.cardTitle}>How to use this page — and the alerts it will drive
-            <InfoTip text="Read top to bottom once; after that, the verdict + alerts are all you need day to day." />
-          </div>
-          <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.7 }}>
-            <li><b>Check the verdict each morning before 8:30 CT.</b> It already includes yesterday's closes. RISK-OFF → apply the actions in the playbook table for whichever signals are active.</li>
-            <li><b>At ~10:05 CT the flow signal arrives.</b> A spike (z&gt;2) means same-day danger — it fires on ~6% of days and more than doubles big-move odds. It applies to same-day (0DTE) exposure, NOT to multi-day positions.</li>
-            <li><b>A rolling watcher fills the gaps between clocks.</b> Every 10 minutes from 10:36 to 14:00 CT it checks the same z&gt;2 test against a per-minute baseline (registry #39). It only speaks up if the fixed 10:00/12:00/13:30 clocks missed the spike — no duplicate pings.</li>
-            <li><b>The outlook card is tomorrow's plan.</b> After the close it updates; its grade (normal / reduce / widen-or-skip / stand down) uses calibrated probabilities.</li>
-            <li><b>Trust the scorecard, not the promises.</b> If live precision/recall drifts materially below the backtest column for a sustained window, the signal is decaying and we revisit — that is the deal.</li>
-            <li><b>Alerts are live (Discord):</b> RISK-OFF morning verdict at 08:05 CT (@here), flow spike at ~10:06 CT (@here), the rolling watcher any 10-minute mark 10:36–14:00 CT (@here, once per day, only if the fixed clocks missed it), calm floor as a quiet note. Silence at 08:05 means NORMAL — no news is the default.</li>
-          </ol>
-        </div>
+        <Zone label="Reference">
+          {/* 7 ─ HOW TO USE / ALERT PLAYBOOK */}
+          <Collapse
+            title={<>How to use this page — and the alerts it will drive
+              <InfoTip text="Read top to bottom once; after that, the verdict + alerts are all you need day to day." />
+            </>}
+            subtitle="how to read this page"
+          >
+            <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.7 }}>
+              <li><b>Check the verdict each morning before 8:30 CT.</b> It already includes yesterday's closes. RISK-OFF → apply the actions in the playbook table for whichever signals are active.</li>
+              <li><b>At ~10:05 CT the flow signal arrives.</b> A spike (z&gt;2) means same-day danger — it fires on ~6% of days and more than doubles big-move odds. It applies to same-day (0DTE) exposure, NOT to multi-day positions.</li>
+              <li><b>A rolling watcher fills the gaps between clocks.</b> Every 10 minutes from 10:36 to 14:00 CT it checks the same z&gt;2 test against a per-minute baseline (registry #39). It only speaks up if the fixed 10:00/12:00/13:30 clocks missed the spike — no duplicate pings.</li>
+              <li><b>The outlook card is tomorrow's plan.</b> After the close it updates; its grade (normal / reduce / widen-or-skip / stand down) uses calibrated probabilities.</li>
+              <li><b>Trust the scorecard, not the promises.</b> If live precision/recall drifts materially below the backtest column for a sustained window, the signal is decaying and we revisit — that is the deal.</li>
+              <li><b>Alerts are live (Discord):</b> RISK-OFF morning verdict at 08:05 CT (@here), flow spike at ~10:06 CT (@here), the rolling watcher any 10-minute mark 10:36–14:00 CT (@here, once per day, only if the fixed clocks missed it), calm floor as a quiet note. Silence at 08:05 means NORMAL — no news is the default.</li>
+            </ol>
+          </Collapse>
 
-        {/* 7b ─ DIRECTIONAL / LONG-PREMIUM VERDICTS */}
-        <div style={S.card}>
-          <div style={S.cardTitle}>Tested and REJECTED — the page will never suggest these
-            <InfoTip text="You might expect 'don't sell premium' days to be 'buy premium' days. They are not — every directional/long-premium idea below was pre-registered and backtested (registry #18–#22, 2026-08-13) FOR THE PURPOSE OF REJECTING OR CONFIRMING IT. Red rows are ideas we tested to kill, so you never have to wonder whether they were tried. Nothing in this table is a trade suggestion." />
-          </div>
-          <div style={{ fontSize: 12.5, color: RED, fontWeight: 600, marginBottom: 10 }}>
-            ⛔ Everything marked NO below was backtested in order to REJECT it. These are anti-recommendations —
-            documented so the same tempting idea never has to be wondered about twice.
-          </div>
-          <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 10 }}>
-            <thead><tr>
-              <th style={S.th}>idea</th><th style={S.th}>verdict</th><th style={S.th}>evidence</th>
-            </tr></thead>
-            <tbody>
-              <tr>
-                <td style={S.td}>Buy straddles/premium on flagged days</td>
-                <td style={{ ...S.td, color: RED, fontWeight: 700 }}>NO — flat, not long</td>
-                <td style={{ ...S.td, ...S.small }}>1-2DTE ATM straddles at the ask LOSE MORE on flag days (−$19.63/trade vs −$14.42 all days, negative 4/4 blind years). The flag comes from option prices — the market already charges for the move.</td>
-              </tr>
-              <tr>
-                <td style={S.td}>Direction from GEX sign (neg gamma = momentum)</td>
-                <td style={{ ...S.td, color: RED, fontWeight: 700 }}>NO edge</td>
-                <td style={{ ...S.td, ...S.small }}>First-hour moves continue to the close 54.5% under negative gamma vs 54.7% positive vs 54.6% baseline — GEX sign adds nothing intraday.</td>
-              </tr>
-              <tr>
-                <td style={S.td}>Trend/vol regime arrows (grind-up → calls, down-risk → puts)</td>
-                <td style={{ ...S.td, color: RED, fontWeight: 700 }}>NO edge</td>
-                <td style={{ ...S.td, ...S.small }}>"Down-risk" regime days bounce (46% directional hit rate); "grind-up" days return less than an average day. This page will never show direction arrows built on these.</td>
-              </tr>
-              <tr>
-                <td style={S.td}>Quiet-day squeeze tell → speculative calls</td>
-                <td style={{ ...S.td, color: AMBER, fontWeight: 700 }}>WATCH — promotion-gated</td>
-                <td style={{ ...S.td, ...S.small }}>The one live directional candidate (tracked below). Becomes a page recommendation only by hitting its pre-registered promotion rule, never by eyeballing.</td>
-              </tr>
-              <tr>
-                <td style={S.td}>Conditional single-leg buys (UPDRAFT / REVERSAL / EM-BREACH / AFTERBURN)</td>
-                <td style={{ ...S.td, color: AMBER, fontWeight: 700 }}>PAPER — earning evidence</td>
-                <td style={{ ...S.td, ...S.small }}>Four call/put-buying bots run these ideas live on paper in the fleet. A lead graduates on positive paper P&amp;L, and that becomes the buy-side playbook here.</td>
-              </tr>
-            </tbody>
-          </table>
-          <div style={S.small}>
-            Bottom line: when this page says stand down, the validated action is <b>reduce or skip</b> — not switch sides.
-            Registry: ironforge-data/risk_advisor/trials_registry.md #18–#22.
-          </div>
-        </div>
-
-        {/* 8 ─ WATCH TIER */}
-        <div style={S.card}>
-          <div style={S.cardTitle}>
-            <Eye size={13} style={{ verticalAlign: -2 }} /> Watch — accumulating evidence (NOT trading signals)
-            <InfoTip text="Candidates with promising but underpowered evidence. They are NOT tradeable signals — they graduate to the playbook only by hitting the pre-registered promotion rule, never by eyeballing." />
-          </div>
-          <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-            <thead><tr><th style={S.th}>candidate</th><th style={S.th}>evidence so far</th><th style={S.th}>status</th></tr></thead>
-            <tbody>
-              <tr>
-                <td style={S.td}>Quiet-day 0DTE OTM-call squeeze tell</td>
-                <td style={S.td}>top decile → P(up≥0.75%) 8.1% vs 3.3% base; bottom decile 0.0%</td>
-                <td style={S.td}>
-                  {(() => {
-                    const pr = score?.promotion?.squeeze_tell;
-                    if (!pr) return 'underpowered — sample grows nightly';
-                    const f = Math.min(100, 100 * pr.quiet_sessions_have / pr.quiet_sessions_needed);
-                    return (<>
-                      <div style={{ fontSize: 12, marginBottom: 4 }}>
-                        {pr.quiet_sessions_have}/{pr.quiet_sessions_needed} quiet sessions toward promotion
-                      </div>
-                      <div style={{ background: '#1a2030', borderRadius: 4, height: 6, maxWidth: 220 }}>
-                        <div style={{ width: f + '%', height: '100%', background: AMBER, borderRadius: 4 }} />
-                      </div>
-                      <div style={{ fontSize: 10, color: DIM, marginTop: 3 }}>{pr.rule}</div>
-                    </>);
-                  })()}
-                </td>
-              </tr>
-              <tr>
-                <td style={S.td}>Premium-imbalance contrarian</td>
-                <td style={S.td}>call-heavy premium → P(up) 2.2% vs 6.4% base</td>
-                <td style={S.td}>suggestive only</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        {/* 8b ─ EBB: the strategy these signals protect */}
-        {ebb && !ebb.error && (
-          <div style={S.card}>
-            <div style={S.cardTitle}>EBB — the paper strategy these signals protect
-              <InfoTip text="The validated 0DTE put-spread paper bot (registry #23b: $12.19/trade, 5/5 blind years). It trades EVERY day by design — the signals on this page are for YOUR discretionary and multi-day risk; gating EBB on them was tested and made it worse. Its full card lives on the Bots page." />
-            </div>
-            <div style={{ fontSize: 13.5 }}>
-              Status: <b style={{ color: ebb.enabled ? GREEN : AMBER }}>{ebb.enabled ? 'ARMED (paper)' : 'paused'}</b>
-              {' '}· today {ebb.today_pnl != null ? `$${(ebb.today_pnl + (ebb.unrealized_pnl || 0)).toFixed(0)}` : '—'}
-              {' '}· equity ${ebb.equity_mtm?.toLocaleString?.() ?? ebb.equity_mtm}
-              {' '}· open positions {ebb.open_positions ?? 0}
-              {' '}· <span style={S.small}>trades post to Discord at open (~10:06 CT) and settle (after close)</span>
-            </div>
-          </div>
-        )}
-
-        {/* 8c ─ ALERT HISTORY */}
-        <div style={S.card}>
-          <div style={S.cardTitle}>Alert history — what actually fired
-            <InfoTip text="Every alert the system actually posted to Discord, newest first, from the same dedupe log that guarantees one post per signal per day. If a day is missing here, nothing fired — silence means NORMAL. The page and the channel tell one story." />
-          </div>
-          {alog?.alerts?.length ? (
-            <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: 640 }}>
+          {/* 9 ─ GLOSSARY: every term in plain speech */}
+          <Collapse
+            title={<>What the words mean — plain-speech glossary
+              <InfoTip text="Every term this page uses, defined once in everyday language. If anything on the page still requires decoding after this, that is a bug — report it and the page changes." />
+            </>}
+            subtitle="plain-speech glossary"
+          >
+            <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
               <tbody>
-                {alog.alerts.map((a, i) => (
-                  <tr key={i}>
-                    <td style={{ ...S.td, whiteSpace: 'nowrap', fontWeight: 600 }}>{a.d}</td>
-                    <td style={{ ...S.td, color: a.what.includes('@here') ? '#fca5a5' : '#c6cbd8' }}>{a.what}</td>
+                {GLOSSARY.map(([term, def]) => (
+                  <tr key={term}>
+                    <td style={{ ...S.td, fontWeight: 600, whiteSpace: 'nowrap', verticalAlign: 'top' }}>{term}</td>
+                    <td style={{ ...S.td, ...S.small, fontSize: 13 }}>{def}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          ) : <div style={S.small}>no alerts posted yet — silence means NORMAL</div>}
-        </div>
-
-        {/* 9 ─ GLOSSARY: every term in plain speech */}
-        <div style={S.card}>
-          <div style={S.cardTitle}>What the words mean — plain-speech glossary
-            <InfoTip text="Every term this page uses, defined once in everyday language. If anything on the page still requires decoding after this, that is a bug — report it and the page changes." />
-          </div>
-          <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-            <tbody>
-              {GLOSSARY.map(([term, def]) => (
-                <tr key={term}>
-                  <td style={{ ...S.td, fontWeight: 600, whiteSpace: 'nowrap', verticalAlign: 'top' }}>{term}</td>
-                  <td style={{ ...S.td, ...S.small, fontSize: 13 }}>{def}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            </div>
+          </Collapse>
+        </Zone>
       </div>
     </div>
   );
