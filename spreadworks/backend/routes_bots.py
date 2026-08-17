@@ -833,6 +833,13 @@ def _bot_fleet_stats(bot: str, now_ct: datetime) -> tuple[dict[str, Any], list[d
     stats = {
         "account": account,
         "risk": {"open_max_loss": open_max_loss, "nearest_dte": nearest_dte},
+        # What this bot is ACTUALLY holding right now, from its own open
+        # positions. The Fleet card's ticker came from the static frontend
+        # registry, which says "multi" for UNDERTOW and DELTA -- true, and
+        # useless when the question is "which ticker is this bot trading".
+        # Empty when flat; the card falls back to the registry value then.
+        "tickers": sorted({str(r["ticker"]) for r in open_rows
+                           if r.get("ticker")}),
         "trades": {
             "n": n, "wins": wins, "win_rate": win_rate,
             "pnl_7d": float(trades_row["pnl_7d"] or 0),

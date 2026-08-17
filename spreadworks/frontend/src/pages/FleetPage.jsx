@@ -248,6 +248,14 @@ function BotCard({ row, botStats, isOpen }) {
 
   const display = capitalize(row.display || meta.display || id);
   const strategy = row.strategy || meta.strategy;
+  // WHICH TICKER IS THIS BOT TRADING. The registry answer is static and says
+  // "multi" for UNDERTOW/DELTA, which is true and useless. Prefer the tickers
+  // the bot is actually holding right now; fall back to the registry when flat.
+  const liveTickers = botStats?.tickers || [];
+  const tickerLabel = liveTickers.length
+    ? liveTickers.join(' · ')
+    : (meta.ticker && meta.ticker !== 'multi' ? meta.ticker : (meta.ticker || '—'));
+  const tickerIsLive = liveTickers.length > 0;
   const failed = !!row.error;
 
   // Live day P&L = realized closes + mark-to-market on the open book. Realized
@@ -327,6 +335,24 @@ function BotCard({ row, botStats, isOpen }) {
             style={{ fontFamily: 'JetBrains Mono', fontSize: 10, color: MUTED, marginTop: 2 }}
           >
             {STRATEGY_LABEL[strategy] || strategy || '—'}
+          </div>
+          {/* The ticker used to live in the 9.5px footer next to the version
+              string and the scan timestamp -- the least prominent thing on the
+              card, read as chrome. "What does this bot trade" is a primary
+              question, so it sits under the name. */}
+          <div style={{ marginTop: 4 }}>
+            <span style={{
+              fontFamily: 'JetBrains Mono', fontSize: 10, fontWeight: 700,
+              padding: '2px 6px', borderRadius: 5, letterSpacing: 0.3,
+              background: tickerIsLive ? theme.primarySoft : 'rgba(125,211,252,0.06)',
+              color: tickerIsLive ? theme.primary : MUTED,
+              boxShadow: `inset 0 0 0 1px ${tickerIsLive ? theme.primaryRing : 'rgba(125,211,252,0.10)'}`,
+            }}
+            title={tickerIsLive
+              ? `Currently holding ${tickerLabel}`
+              : 'No open positions — ticker from the bot registry'}>
+              {tickerLabel}
+            </span>
           </div>
         </div>
 
@@ -462,7 +488,7 @@ function BotCard({ row, botStats, isOpen }) {
         }}
       >
         <span className="truncate">
-          {meta.ticker || '—'}{meta.version ? ` · ${meta.version}` : ''}
+          {meta.version || ''}
         </span>
         <span className="truncate" style={{ flexShrink: 0, color: stale ? RED : MUTED }}>
           {stale ? '⚠ STALE · ' : ''}scanned {relativeTime(row.last_scan_at)}
@@ -515,6 +541,7 @@ export default function FleetPage() {
   const { isOpen } = useMarketHours();
   const navigate = useNavigate();
   const [filter, setFilter] = useState('all');
+  const [tickerFilter, setTickerFilter] = useState('all');
   const [sort, setSort] = useState('today');
   const [query, setQuery] = useState('');
 
@@ -560,15 +587,30 @@ export default function FleetPage() {
     };
   }, [rows]);
 
+  // Every ticker any bot is holding, plus the registry's static answer for the
+  // flat ones — the option list for the filter.
+  const tickersOf = (r) => {
+    const live = stats?.bots?.[r.bot]?.tickers || [];
+    if (live.length) return live;
+    const reg = BOT_REGISTRY[r.bot]?.ticker;
+    return reg && reg !== 'multi' ? [reg] : [];
+  };
+  const allTickers = useMemo(() => {
+    const set = new Set();
+    rows.forEach(r => tickersOf(r).forEach(t => set.add(t)));
+    return [...set].sort();
+  }, [rows, stats]);
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     const out = rows.filter(r => {
+      if (tickerFilter !== 'all' && !tickersOf(r).includes(tickerFilter)) return false;
       if (filter === 'live' && !r.enabled) return false;
       if (filter === 'paused' && r.enabled) return false;
       if (filter === 'holding' && !(r.open_positions > 0)) return false;
       if (filter === 'attention' && !(r.error || r._stale)) return false;
       if (q) {
-        const hay = `${r.bot} ${r._name} ${r.strategy || ''} ${BOT_REGISTRY[r.bot]?.ticker || ''}`.toLowerCase();
+        const hay = `${r.bot} ${r._name} ${r.strategy || ''} ${BOT_REGISTRY[r.bot]?.ticker || ''} ${tickersOf(r).join(' ')}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -583,7 +625,7 @@ export default function FleetPage() {
       if (sort === 'dd') return numZero(b._dd) - numZero(a._dd);
       return num(b._today) - num(a._today);
     });
-  }, [rows, filter, sort, query]);
+  }, [rows, filter, tickerFilter, sort, query, stats]);
 
   const riskHeadline = riskState?.headline;
   const riskOff = riskHeadline?.startsWith('RISK-OFF');
@@ -775,6 +817,30 @@ export default function FleetPage() {
             </button>
           ))}
         </div>
+
+        {/* Ticker filter — "which bots trade SPX" was a 25-card read. */}
+        {allTickers.length > 1 && (
+          <div
+            className="flex items-center gap-1 rounded-lg"
+            style={{ padding: 4, background: 'rgba(7,16,28,0.55)' }}
+          >
+            {['all', ...allTickers].map(t => (
+              <button
+                key={t}
+                onClick={() => setTickerFilter(t)}
+                style={{
+                  padding: '5px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                  fontFamily: 'JetBrains Mono', fontSize: 11, fontWeight: 700,
+                  color: tickerFilter === t ? '#fff' : '#94a3b8',
+                  background: tickerFilter === t ? 'rgba(255,255,255,0.08)' : 'transparent',
+                  transition: 'all 150ms',
+                }}
+              >
+                {t === 'all' ? 'All tickers' : t}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="relative">
           <Search
