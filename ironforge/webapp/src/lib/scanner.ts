@@ -45,6 +45,7 @@ import {
   isConfigured,
   isConfiguredAsync,
   placeIcOrderAllAccounts,
+  canPlaceLiveOrders,
   closeIcOrderAllAccounts,
   cancelSandboxOrder,
   getLoadedSandboxAccounts,
@@ -3609,7 +3610,91 @@ async function tryOpenFlameBook(
     `exp ${expiration} @ $${entryCredit.toFixed(2)} ` +
     `(spot ${spot.toFixed(2)}, otm $${otmAbs}, wing $${width}, EM ${em.toFixed(2)})`,
   )
-  return `traded@${entryCredit.toFixed(2)}`
+
+  // ────────────────────────────────────────────────────────────────────────
+  // LIVE ORDER — everything above this line is paper and always runs.
+  //
+  // canPlaceLiveOrders() is the single authority. For FLAME it resolves to
+  // isFlameLiveArmed(), which needs ALL of: IRONFORGE_FLAME_LIVE === 'true',
+  // both TRADIER_FLAME_* creds, and an unpaused production_pause row. For SPARK
+  // it is hard-false — SPARK is paper-only by operator decision, and it shares
+  // the same broker account, so this is what stops two bots sizing off one pot.
+  //
+  // Nothing below runs unless the bot is armed. Deploying this changes nothing.
+  // ────────────────────────────────────────────────────────────────────────
+  let liveNote = ''
+  if (canPlaceLiveOrders(bot.name)) {
+    // Race guard: one production placement per bot per 5 minutes. Claimed
+    // BEFORE the await so two ticks cannot both pass, released if nothing filled.
+    const nowMs = Date.now()
+    const lastAt = _lastProductionPlacedAt[bot.name] ?? 0
+    const claimed = nowMs - lastAt > 5 * 60 * 1000
+    if (!claimed) {
+      liveNote = ' live:skipped_recent_placement'
+    } else {
+      _lastProductionPlacedAt[bot.name] = nowMs
+      try {
+        // callShort/callLong are 0 — placeIcOrderAllAccounts detects the
+        // two-leg spread from the strikes and emits two legs, not four.
+        const live = await placeIcOrderAllAccounts(
+          ticker, expiration,
+          putShort, putLong, callShort, callLong,
+          contracts, entryCredit, positionId, bot.name,
+          { productionOnly: true },
+        )
+        const prodFills = Object.entries(live).filter(([, i]) => i.account_type === 'production')
+        if (prodFills.length === 0) {
+          delete _lastProductionPlacedAt[bot.name]
+          liveNote = ' live:no_fill'
+        } else {
+          for (const [key, info] of prodFills) {
+            const hasFill = info.fill_price != null && info.fill_price > 0
+            if (!hasFill) {
+              console.warn(
+                `[scanner] ${bot.name.toUpperCase()} PRODUCTION: ${key} returned no fill price — ` +
+                `booking at the modelled credit $${entryCredit.toFixed(4)}. Reconcile against the broker.`,
+              )
+            }
+            const pCredit = hasFill ? info.fill_price! : entryCredit
+            const pContracts = info.contracts
+            const pCollateral = Math.max(0, (width - pCredit) * 100) * pContracts
+            const pPerson = key.split(':')[0] || 'PRODUCTION'
+            const pId = `${positionId}-prod-${pPerson.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+            await query(
+              `INSERT INTO ${botTable(bot.name, 'positions')} (
+                 position_id, ticker, expiration,
+                 put_short_strike, put_long_strike, put_credit,
+                 call_short_strike, call_long_strike, call_credit,
+                 contracts, spread_width, total_credit, max_loss, max_profit,
+                 collateral_required, underlying_at_entry, expected_move,
+                 sandbox_order_id, person,
+                 status, open_time, open_date, dte_mode, account_type
+               ) VALUES ($1,$2,$3,$4,$5,$6,$15,$16,$17,$7,$8,$18,$9,$10,$11,$12,$13,$19,$20,
+                         'open', NOW(), ${CT_TODAY}, $14, 'production')`,
+              [pId, ticker, expiration, putShort, putLong, pCredit,
+               pContracts, width, pCollateral,
+               Math.round(pCredit * 100 * pContracts * 100) / 100,
+               pCollateral, spot, em, bot.dte,
+               callShort, callLong, 0, pCredit,
+               JSON.stringify({ [key]: info }), pPerson],
+            )
+            console.log(
+              `[scanner] ${bot.name.toUpperCase()} LIVE FILL: ${pPerson} ${pContracts}x ` +
+              `${putLong}/${putShort}P @ $${pCredit.toFixed(4)} — order ${info.order_id}`,
+            )
+          }
+          liveNote = ` live:${prodFills.length}acct`
+        }
+      } catch (e) {
+        delete _lastProductionPlacedAt[bot.name]
+        const msg = e instanceof Error ? e.message : String(e)
+        console.error(`[scanner] ${bot.name.toUpperCase()} LIVE ORDER FAILED: ${msg}`)
+        liveNote = ` live:failed(${msg.slice(0, 60)})`
+      }
+    }
+  }
+
+  return `traded@${entryCredit.toFixed(2)}${liveNote}`
 }
 
 /* ------------------------------------------------------------------ */
