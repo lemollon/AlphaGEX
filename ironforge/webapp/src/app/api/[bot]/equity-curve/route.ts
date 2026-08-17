@@ -223,45 +223,21 @@ export async function GET(
       liveUnrealizedPnl = mtmResults.reduce((a, b) => a + b, 0)
     }
 
-    // FLAME historical rebase: same idea as the intraday endpoint — scanner
-    // re-seeds paper_account.starting_capital to \$10K every cycle, but the
-    // /flame top card shows the live Tradier User sandbox balance. Rebase
-    // so the LAST point of the curve ends at Tradier. Same P&L shape/deltas,
-    // Tradier basis on the Y-axis.
+    // 🚨 FLAME SANDBOX REBASE REMOVED 2026-08-17.
     //
-    //   lastCumPnl   = cumulative realized at the most recent closed trade
-    //   rebaseStart  = tradier.total_equity − lastCumPnl − liveUnrealized
-    //   curve.equity = rebaseStart + cumulative_pnl   → ends at Tradier balance
+    // It anchored FLAME's PAPER curve to the User SANDBOX Tradier account, on the
+    // premise that "the scanner re-seeds paper_account.starting_capital to $10K
+    // every cycle" so the ledger could not be trusted. Both halves of that are now
+    // false: FLAME seeds its own 0DTE ledger at $2,000 and keeps it, and it has a
+    // real live account of its own (6YB71371) shown through the production view.
     //
-    // On Tradier failure: keep paper-basis starting_capital.
-    if (bot === 'flame') {
-      try {
-        const accts = await getLoadedSandboxAccountsAsync()
-        const userAcct = accts.find((a) => a.name === 'User' && a.type === 'sandbox')
-        if (userAcct) {
-          const accountId = await getAccountIdForKey(userAcct.apiKey, userAcct.baseUrl)
-          if (accountId) {
-            const bal = await getTradierBalanceDetail(userAcct.apiKey, accountId, userAcct.baseUrl)
-            if (bal?.total_equity != null) {
-              const lastCumPnl = curve.length > 0 ? curve[curve.length - 1].cumulative_pnl : 0
-              const rebaseStart = Math.round((bal.total_equity - lastCumPnl - liveUnrealizedPnl) * 100) / 100
-              const offset = rebaseStart - startingCapital
-              if (offset !== 0) {
-                curve = curve.map((pt) => ({
-                  ...pt,
-                  equity: Math.round((pt.equity + offset) * 100) / 100,
-                  ...(pt.hypothetical_equity != null
-                    ? { hypothetical_equity: Math.round((pt.hypothetical_equity + offset) * 100) / 100 }
-                    : {}),
-                }))
-              }
-              startingCapital = rebaseStart
-              rebaseSource = 'tradier'
-            }
-          }
-        }
-      } catch { /* fall back to paper basis */ }
-    }
+    // The User sandbox account is CO-TENANTED — the status route already refuses to
+    // read balance from it for exactly this reason ("total_equity is contaminated by
+    // the same activity"). Anchoring here made /api/flame/equity-curve report
+    // starting_capital $30,646.49: another bot's sandbox money, on FLAME's chart.
+    //
+    // Paper curve now uses FLAME's own paper ledger. The live account has its own
+    // basis via the production rebase below, which reads the bot's OWN account.
 
     // SPARK production rebase: the top card shows the live Tradier (Iron Viper)
     // balance, and it's pause-independent — so rebase the curve to end at that

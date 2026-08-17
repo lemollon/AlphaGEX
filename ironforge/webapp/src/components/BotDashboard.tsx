@@ -124,7 +124,7 @@ export default function BotDashboard({
   // KINDLE is production-only (no paper positions), so default it to the Live
   // view — otherwise the dashboard opens on an empty Paper ledger while the real
   // IC sits in Live. SPARK keeps Paper default (it has both sandbox + production).
-  const [viewMode, setViewMode] = useState<ViewMode>(bot === 'kindle' || bot === 'spark2' ? 'live' : 'paper')
+  const [viewMode, setViewMode] = useState<ViewMode>(bot === 'kindle' || bot === 'spark2' || bot === 'flame' ? 'live' : 'paper')
 
   // Query string fragment for account_type filtering (appended to all API calls)
   // Paper = sandbox combined (all sandbox accounts), Live = production only
