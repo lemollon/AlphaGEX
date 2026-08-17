@@ -6527,6 +6527,30 @@ async function eodSafetyNetSweep(ct: Date): Promise<void> {
         [bot.dte],
       )
 
+      // 🚨 SETTLE-AT-EXPIRY BOTS ARE NEVER SWEPT.
+      //
+      // This net fires 14:55-15:05 CT and buys positions back. For FLAME/SPARK
+      // that is not a safety net, it IS the failure: registry #43 measured every
+      // early exit and each collapses the edge to about zero. It already happened
+      // once — 2026-08-17, FLAME's first trade closed here at 14:55 for
+      // eod_safety_net, booking -$13.00 on a $0.22 credit that would otherwise
+      // have settled.
+      //
+      // Their positions are not stranded, they are WAITING. settleExpiredPositions()
+      // books them at intrinsic against the official close from 15:00, and the scan
+      // loop runs to 15:10 — ten cycles of retry. A position still open past that is
+      // picked up by the same settlement path on the next session, since it sweeps
+      // expiration <= today rather than today only.
+      if (isSettleAtExpiryBot(bot.name)) {
+        if (allOpenRows.length > 0) {
+          console.log(
+            `[scanner] EOD SAFETY NET: ${bot.name.toUpperCase()} skipping ` +
+            `${allOpenRows.length} position(s) — settles at the close, never bought back.`,
+          )
+        }
+        continue
+      }
+
       // SWING HOLD: SPARK-strategy positions expiring AFTER today are
       // deliberate overnight holds, not stranded — the safety net must
       // not flatten them. Expiry-day (or past-expiry) positions are still
