@@ -90,12 +90,14 @@ export default function MarketPulseTab({ bot }: { bot: 'flame' | 'spark' | 'infe
     { refreshInterval: REFRESH_MS },
   )
 
-  const strategyLabel = bot === 'flame'
-    ? '2DTE Put Credit Spread'
+  // FLAME and SPARK both run EBB (0DTE put credit spread) as of 2026-08-16.
+  // This said "2DTE" for FLAME and "1DTE Iron Condor" for SPARK — both retired.
+  const strategyLabel = bot === 'flame' || bot === 'spark'
+    ? '0DTE Put Credit Spread'
     : bot === 'inferno'
       ? '0DTE Iron Condor'
       : '1DTE Iron Condor'
-  const positionWord = bot === 'flame' ? 'spread' : 'IC'
+  const positionWord = bot === 'flame' || bot === 'spark' ? 'spread' : 'IC'
 
   if (isLoading) {
     return (
