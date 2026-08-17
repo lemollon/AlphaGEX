@@ -34,7 +34,7 @@ export {
 export type { LiveBot, LiveAccountMode } from './bots'
 
 import { LIVE_BOTS, LIVE_BOT_MODE, isLiveBot, type LiveBot, type LiveAccountMode } from './bots'
-import { isFlameLiveArmed } from '@/lib/tradier'
+import { canReadProductionBalance } from '@/lib/tradier'
 
 /**
  * Effective account mode, resolved at request time.
@@ -46,7 +46,18 @@ import { isFlameLiveArmed } from '@/lib/tradier'
  * directions instead of drifting out of sync with the arm switch.
  */
 export function resolveAccountMode(bot: LiveBot): LiveAccountMode {
-  if (bot === 'flame') return isFlameLiveArmed() ? 'production' : 'paper'
+  // 🚨 KEYED ON CREDENTIALS, NOT THE ARM SWITCH (2026-08-17).
+  //
+  // This read isFlameLiveArmed(), which meant the customer and sandbox surfaces
+  // showed FLAME's PAPER ledger until the bot was armed to TRADE — the same
+  // read/write conflation fixed in tradier.ts (canReadProductionBalance) and in
+  // the live viewer (#2817). Seeing an account is not permission to trade it.
+  //
+  // canReadProductionBalance('flame') is true when both TRADIER_FLAME_* creds are
+  // present, so wherever FLAME has a live account, its live account is what these
+  // pages report. Placement is still gated by canPlaceLiveOrders/isFlameLiveArmed
+  // and is untouched.
+  if (bot === 'flame') return canReadProductionBalance('flame') ? 'production' : 'paper'
   return LIVE_BOT_MODE[bot]
 }
 
