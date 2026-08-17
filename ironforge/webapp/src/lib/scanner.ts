@@ -2427,6 +2427,29 @@ async function monitorSinglePosition(
     const failCount = (_mtmFailureCounts.get(pid) ?? 0) + 1
     _mtmFailureCounts.set(pid, failCount)
 
+    // 🚨 SETTLE-AT-EXPIRY BOTS ARE NEVER CLOSED ON A DATA FAILURE.
+    //
+    // For a hold-to-expiry position, being unable to MARK it is not a reason to
+    // CLOSE it. The mark is informational; the exit is time-based and happens at
+    // the 15:00 settlement whether or not a quote was available at 14:30.
+    // Closing here converts an informational outage into a realised loss, and
+    // registry #43 measured what any early exit does to this stream: it takes
+    // $12.19/trade to about zero.
+    //
+    // The risk was not hypothetical. Until PR #2822 getIcMarkToMarket REQUIRED
+    // all four legs to quote, so every FLAME/SPARK mark failed by construction —
+    // ten consecutive failures, then a force-close, every single session.
+    if (failCount >= MAX_CONSECUTIVE_MTM_FAILURES && isSettleAtExpiryBot(bot.name)) {
+      if (failCount === MAX_CONSECUTIVE_MTM_FAILURES) {
+        console.warn(
+          `[scanner] ${bot.name.toUpperCase()} ${pid}: ${failCount} consecutive MTM failures — ` +
+          `NOT closing. This position settles at the close; an unmarkable position is ` +
+          `still a valid one. Unrealised P&L is unavailable until quotes recover.`,
+        )
+      }
+      return { status: `monitoring:mtm_failed_settles_at_expiry(${failCount})`, unrealizedPnl: 0 }
+    }
+
     if (failCount >= MAX_CONSECUTIVE_MTM_FAILURES) {
       // Sandbox positions must NOT auto-close on data_feed_failure.
       // getIcMarkToMarket reads the public option-chain quote API (not per-account),
