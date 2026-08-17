@@ -387,9 +387,9 @@ export default function SqueezePage() {
           <b style={{ color: GREEN }}>SELL {data.ticket.sell.short_put} PUT</b>
           {' / '}
           <b style={{ color: GREEN }}>BUY {data.ticket.sell.long_put} PUT</b>
-          {` · SPY 0DTE · $${data.ticket.sell.width} wide · enter 11:05 ET · hold to settlement · no stop`}
+          {` · SPY 0DTE · $${data.ticket.sell.width} wide · enter 10:05 CT · hold to settlement · no stop`}
         </>
-      ) : 'SPY 0DTE put spread · short strike round(spot) − 2 · $2 wide · enter 11:05 ET · hold to settlement · no stop';
+      ) : 'SPY 0DTE put spread · short strike round(spot) − 2 · $2 wide · enter 10:05 CT · hold to settlement · no stop';
     } else if (verdict === 'SQUEEZE_WATCH') {
       ticket = (
         <>
@@ -503,13 +503,13 @@ export default function SqueezePage() {
           )}
           {!blocked && data.ticket?.sell && (
             /* Which spot the strikes came from, and when they stop being
-               true. The entry is 11:05 ET and the real strike derives from
+               true. The entry is 10:05 CT and the real strike derives from
                spot at that moment; anything computed off the prior close is
                indicative and has to say so. */
             <div style={{ ...S.small, marginTop: 6 }}>
               Strikes from spot {data.ticket.spot} ({data.ticket.spot_source})
               {data.ticket.spot_source !== 'live' &&
-                ' — indicative. Re-derive from spot at 11:05 ET before sending.'}
+                ' — indicative. Re-derive from spot at 10:05 CT before sending.'}
             </div>
           )}
           {blockedDetail && (
@@ -544,6 +544,21 @@ export default function SqueezePage() {
           </div>
 
           <div style={{ ...S.small, marginTop: 12 }}>
+            {/* A POSITIVE freshness statement. Staleness was only ever shown by
+                the ABSENCE of a red banner, which means a reader has to already
+                know that no-banner means fresh — and cannot tell "fresh" from
+                "the freshness check is broken". State it either way. */}
+            {(() => {
+              const f = data.freshness || {};
+              const behind = f.gamma_stale_sessions;
+              if (f.reason || behind == null) {
+                return <span style={{ color: GREY, fontWeight: 700 }}>FRESHNESS UNKNOWN · </span>;
+              }
+              return behind === 0
+                ? <span style={{ color: GREEN, fontWeight: 700 }}>CURRENT · </span>
+                : <span style={{ color: AMBER, fontWeight: 700 }}>
+                    {behind} SESSION{behind === 1 ? '' : 'S'} BEHIND · </span>;
+            })()}
             Reading from {data.data_date || '—'} · {data.freshness?.captured_sessions ?? '—'} of{' '}
             {data.freshness?.window_sessions ?? '—'} sessions from a live capture
             {/* Next refresh belongs on the face, not a click down: "is this
@@ -1293,7 +1308,7 @@ export default function SqueezePage() {
 
         {/* HOW THIS RELATES TO THE RISK PAGE. Measured, because the two pages
             quote the SAME trade -- same underlying, same short strike
-            (round(spot)-2 either way), same entry minute (11:05 ET = 10:05 CT)
+            (round(spot)-2 either way), same entry minute (10:05 CT = 10:05 CT)
             -- differing only in wing width. Presenting them as two independent
             opinions on one position would be the "short gamma and below flip
             are the same variable" mistake in a new costume. */}
@@ -1393,7 +1408,7 @@ export default function SqueezePage() {
                   body: (
                     <>
                       <div style={{ fontSize: 13, marginBottom: 6 }}>
-                        SPY 0DTE put spread. Short strike round(spot) − 2, $2 wide. Enter 11:05 ET,
+                        SPY 0DTE put spread. Short strike round(spot) − 2, $2 wide. Enter 10:05 CT (11:05 ET),
                         hold to settlement, no stop.
                       </div>
                       <div style={{ fontSize: 13, marginBottom: 6 }}>
