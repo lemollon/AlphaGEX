@@ -42,11 +42,38 @@ describe('checkSandboxEnv', () => {
       'TRADIER_PROD_API_KEY',
       'TRADIER_PROD_ACCOUNT_ID',
       'TRADIER_SPARK2_API_KEY',
-      'TRADIER_FLAME_API_KEY',
       'TRADIER_KINDLE_API_KEY',
     ])('rejects %s', (key) => {
       const res = checkSandboxEnv(safeEnv({ [key]: 'leaked-real-key' }))
       expect(res.errors.some((e: string) => e.includes(key))).toBe(true)
+    })
+
+    // TRADIER_FLAME_API_KEY moved from "always rejected" to "rejected only when
+    // the bot could actually trade" (2026-08-16, operator request: show FLAME's
+    // real account on the sandbox). A credential cannot move money on its own —
+    // placement runs through canPlaceLiveOrders(), which for FLAME requires
+    // IRONFORGE_FLAME_LIVE. So the guard blocks the arm switch instead.
+    it('ALLOWS the FLAME credential — read-only access to the live account', () => {
+      const res = checkSandboxEnv(safeEnv({
+        TRADIER_FLAME_API_KEY: 'real-key',
+        TRADIER_FLAME_ACCOUNT_ID: '6YB71371',
+      }))
+      expect(res.errors.some((e: string) => e.includes('TRADIER_FLAME_API_KEY'))).toBe(false)
+    })
+
+    it('REJECTS the FLAME arm switch, credential or not', () => {
+      for (const env of [
+        { IRONFORGE_FLAME_LIVE: 'true' },
+        { IRONFORGE_FLAME_LIVE: 'true', TRADIER_FLAME_API_KEY: 'real-key' },
+      ]) {
+        const res = checkSandboxEnv(safeEnv(env))
+        expect(res.errors.some((e: string) => e.includes('IRONFORGE_FLAME_LIVE'))).toBe(true)
+      }
+    })
+
+    it('is not fooled by a non-true arm value', () => {
+      const res = checkSandboxEnv(safeEnv({ IRONFORGE_FLAME_LIVE: 'yes' }))
+      expect(res.errors.some((e: string) => e.includes('IRONFORGE_FLAME_LIVE'))).toBe(false)
     })
 
     it('rejects a production Tradier host', () => {

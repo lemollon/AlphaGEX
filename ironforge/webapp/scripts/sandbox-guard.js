@@ -49,9 +49,27 @@ const PRODUCTION_BROKER_KEYS = [
   'TRADIER_PROD_API_KEY',
   'TRADIER_PROD_ACCOUNT_ID',
   'TRADIER_SPARK2_API_KEY',
-  'TRADIER_FLAME_API_KEY',
   'TRADIER_KINDLE_API_KEY',
 ]
+
+/**
+ * TRADIER_FLAME_API_KEY is allowed CONDITIONALLY, for the same reason
+ * TRADIER_API_KEY is: the danger was never the variable's name.
+ *
+ * The operator wants FLAME's real account visible on the sandbox — balance,
+ * orders, positions, read straight from Tradier. A credential alone cannot move
+ * money: placement runs through canPlaceLiveOrders(), which for FLAME requires
+ * IRONFORGE_FLAME_LIVE === 'true'.
+ *
+ * So the guard blocks the ARM SWITCH instead of the credential. That is the
+ * thing that actually converts "sandbox can see the account" into "sandbox can
+ * trade the account", and it matters more here than anywhere else because this
+ * deployment runs with the login wall lifted — /api/{bot}/force-trade is
+ * reachable by anyone who knows the URL.
+ *
+ * Net effect: sandbox may READ the live account and can never TRADE it.
+ */
+const FORBIDDEN_ARM_SWITCHES = ['IRONFORGE_FLAME_LIVE']
 
 /** The only broker host a sandbox may talk to. Compared by exact hostname. */
 const SANDBOX_TRADIER_HOST = 'sandbox.tradier.com'
@@ -140,6 +158,19 @@ function checkSandboxEnv(env) {
         `${key} is set. Sandbox must carry no production broker credentials. ` +
           `Use TRADIER_SANDBOX_KEY_USER instead — with TRADIER_API_KEY unset, ` +
           `tradier.ts already defaults to sandbox.tradier.com.`,
+      )
+    }
+  }
+
+  // The arm switches. A sandbox that can PLACE a real order is the actual
+  // failure mode — holding a read-only credential is not.
+  for (const key of FORBIDDEN_ARM_SWITCHES) {
+    if (String(env[key] || '').trim().toLowerCase() === 'true') {
+      errors.push(
+        `${key} is 'true'. A sandbox must never be able to place a real order. ` +
+          `The live credential may be present for READ access (balance, orders, ` +
+          `positions); this switch is what would let the bot trade, and on a ` +
+          `deployment with the login wall lifted /api/{bot}/force-trade is public.`,
       )
     }
   }
