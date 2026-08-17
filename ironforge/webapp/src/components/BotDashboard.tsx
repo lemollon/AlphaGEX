@@ -70,7 +70,17 @@ type Tab = (typeof ALL_TABS)[number]
 
 /** Bots with real broker accounts. SPARK (live + sandbox) and KINDLE
  *  (production-only, $500 account 6YB70795). FLAME/INFERNO/BLAZE are paper. */
-const ACCOUNT_BOTS = new Set(['spark', 'kindle', 'spark2'])
+/**
+ * Bots with a real broker account, and therefore a Paper/Live toggle.
+ *
+ * FLAME added 2026-08-17. It has traded a live account since the EBB cutover —
+ * credentials come from TRADIER_FLAME_* env rather than ironforge_accounts — but
+ * this set had not been updated, so hasAccounts was false and the dashboard
+ * NEVER REQUESTED account_type=production. Every live figure was resolving
+ * correctly server-side and the page simply never asked for it: no toggle, no
+ * Tradier balance, no Production or Broker Equity tab.
+ */
+const ACCOUNT_BOTS = new Set(['spark', 'flame', 'kindle', 'spark2'])
 
 /** Tabs that only make sense for bots with broker accounts */
 const ACCOUNT_ONLY_TABS = new Set<Tab>(['Production', 'Broker Equity', 'Reconcile'])
