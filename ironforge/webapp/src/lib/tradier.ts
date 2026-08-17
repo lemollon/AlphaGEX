@@ -1543,7 +1543,7 @@ async function getOrderFillPrice(
  * The strike pair is the discriminator rather than the bot name: a bot's
  * structure can change, but "no call strikes" always means "no call legs".
  */
-function isTwoLegSpread(callShort: number, callLong: number): boolean {
+export function isTwoLegSpread(callShort: number, callLong: number): boolean {
   return !(callShort > 0 && callLong > 0)
 }
 
@@ -1554,7 +1554,7 @@ function isTwoLegSpread(callShort: number, callLong: number): boolean {
  * indices stay contiguous from 0, which Tradier requires — skipping an index
  * silently drops the tail of the order.
  */
-function buildLegs(
+export function buildLegs(
   occPs: string, occPl: string, occCs: string, occCl: string,
   qty: number,
   sides: { shortSide: string; longSide: string },
