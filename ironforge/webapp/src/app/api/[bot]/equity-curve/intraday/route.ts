@@ -101,27 +101,12 @@ export async function GET(
     // On Tradier failure: keep scanner's paper-basis balance (same as before).
     let rebaseOffset = 0
     let rebaseSource: 'tradier' | 'paper_account' | 'paper_ledger' = 'paper_account'
-    if (bot === 'flame') {
-      try {
-        const accts = await getLoadedSandboxAccountsAsync()
-        const userAcct = accts.find((a) => a.name === 'User' && a.type === 'sandbox')
-        if (userAcct) {
-          const accountId = await getAccountIdForKey(userAcct.apiKey, userAcct.baseUrl)
-          if (accountId) {
-            const bal = await getTradierBalanceDetail(userAcct.apiKey, accountId, userAcct.baseUrl)
-            if (bal && bal.total_equity != null) {
-              const tradierEquity = bal.total_equity
-              const tradierClosePl = bal.close_pl ?? 0
-              const tradierOpenPl = bal.open_pl ?? 0
-              const todayStartingBasis = Math.round((tradierEquity - tradierClosePl - tradierOpenPl) * 100) / 100
-              rebaseOffset = Math.round((todayStartingBasis - startingCapital) * 100) / 100
-              startingCapital = todayStartingBasis
-              rebaseSource = 'tradier'
-            }
-          }
-        }
-      } catch { /* fall back to paper basis */ }
-    }
+    // 🚨 FLAME SANDBOX REBASE REMOVED 2026-08-17 — see the note in the historical
+    // equity-curve route. It anchored FLAME's PAPER intraday curve to the
+    // CO-TENANTED User sandbox Tradier account, so another bot's activity moved
+    // FLAME's chart. FLAME now keeps its own $2,000 ledger and has its own live
+    // account (6YB71371), which the KINDLE-style production rebase below handles
+    // by reading the bot's OWN account rather than a shared one.
 
     // KINDLE production rebase: same idea as FLAME, but against KINDLE's OWN live
     // Tradier account (6YB70795 via TRADIER_KINDLE_* env). The scanner writes
