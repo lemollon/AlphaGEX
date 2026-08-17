@@ -61,11 +61,11 @@ export async function getLiveSummary(
    * Operators only. Permits summing multiple production accounts into one
    * balance (the fleet view). See the MULTI-ACCOUNT SAFETY note below.
    */
-  { allowAggregate = false, person = null }: { allowAggregate?: boolean; person?: string | null } = {},
+  { allowAggregate = false, person = null, mode }: { allowAggregate?: boolean; person?: string | null; mode?: 'paper' | 'production' } = {},
 ): Promise<LiveSummary> {
   const dte = dteMode(BOT)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
-  const prodFilter = scopeFilter(BOT, person, allowAggregate)
+  const prodFilter = scopeFilter(BOT, person, allowAggregate, mode)
 
   const [
     heartbeatRows,
@@ -307,7 +307,7 @@ export async function getLiveSummary(
       today_pnl: todayPnl,
       today_pnl_pct: todayPnlPct,
       source,
-      mode: resolveAccountMode(BOT),
+      mode: mode ?? resolveAccountMode(BOT),
       disclosure: paper ? paperDisclosure(BOT) : null,
     },
     intraday,

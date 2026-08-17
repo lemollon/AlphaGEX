@@ -48,7 +48,13 @@ export default function LiveClient({ account }: { account: LiveBot }) {
   // Agent workspace (UAT-008 / IF-NAV-001): the account is FIXED by the route
   // (/agents/spark, /agents/flame) — no in-page switcher. Navigation between
   // agents happens in the left rail, where each agent is a top-level item.
-  const summaryKey = `/api/live/summary?account=${account}`
+  // FLAME has BOTH ledgers: a $2,000 paper book and the live Tradier account
+  // (6YB71371). Default to Live so the real money is what you see first; the
+  // switch below reaches the paper book, where today's paper entries land.
+  const [ledger, setLedger] = useState<'live' | 'paper'>('live')
+  const showLedgerSwitch = account === 'flame'
+  const modeQ = showLedgerSwitch ? `&mode=${ledger}` : ''
+  const summaryKey = `/api/live/summary?account=${account}${modeQ}`
   const tradeKey = `/api/live/trade?account=${account}`
   const { data: summary, error: summaryError } = useSWR<LiveSummary>(
     summaryKey, fetcher, { refreshInterval: 60_000 },
@@ -59,6 +65,26 @@ export default function LiveClient({ account }: { account: LiveBot }) {
   const [pausePending, setPausePending] = useState(false)
   // The whole surface takes the active bot's identity colour (Spark blue / Flame orange).
   const accent = accentFor(account)
+
+  const ledgerSwitch = showLedgerSwitch ? (
+    <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
+      {(['live', 'paper'] as const).map((m) => (
+        <button
+          key={m}
+          type="button"
+          onClick={() => setLedger(m)}
+          aria-pressed={ledger === m}
+          className={
+            ledger === m
+              ? 'rounded-md bg-white/15 px-3 py-1 text-xs font-semibold text-white'
+              : 'rounded-md px-3 py-1 text-xs text-gray-400 transition-colors hover:text-white'
+          }
+        >
+          {m === 'live' ? 'Live account' : 'Paper $2,000'}
+        </button>
+      ))}
+    </div>
+  ) : null
 
   async function handlePauseToggle(nextPaused: boolean) {
     setPausePending(true)
@@ -91,6 +117,16 @@ export default function LiveClient({ account }: { account: LiveBot }) {
               can briefly see a dashboard that says they own nothing. */}
           <CheckoutNotice labels={LIVE_BOT_LABEL} />
           <LiveHeader viewer={summary?.viewer ?? null} />
+          {ledgerSwitch && (
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              {ledgerSwitch}
+              <span className="text-xs text-gray-500">
+                {ledger === 'live'
+                  ? 'Real brokerage account. Balance and positions come from Tradier.'
+                  : 'Simulated $2,000 book. No real orders, no real money.'}
+              </span>
+            </div>
+          )}
           {/* Billing needs attention (audit M11): a failed payment previously produced
               NO customer-facing state anywhere in the workspace. */}
           {summary?.membership?.badge === 'Payment due' && (

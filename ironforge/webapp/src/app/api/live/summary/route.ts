@@ -14,6 +14,10 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(req: NextRequest) {
   try {
+    const raw = req.nextUrl.searchParams.get('mode')
+    const modeParam = raw === 'paper' ? 'paper' as const
+      : (raw === 'live' || raw === 'production') ? 'production' as const
+      : undefined
     const viewer = await resolveLiveViewer(req)
     // DASH-FIRST-01: attached BEFORE the empty-return on purpose — a just-activated
     // customer typically has no ironforge_customer_bots mapping yet, so their first
@@ -29,6 +33,10 @@ export async function GET(req: NextRequest) {
       getLiveSummary(viewer.bot, {
         allowAggregate: viewer.isOperator,
         person: viewer.person,
+        // ?mode=paper|live — FLAME has both a $2,000 paper ledger and a live
+        // account, and the page lets the viewer switch. Anything else is ignored
+        // and the bot's default mode applies.
+        mode: modeParam,
       }),
       // Real entitlement from customer_bot_subscriptions. getLiveSummary() reads
       // the trading DB and has no billing context, so it returns a neutral card;
