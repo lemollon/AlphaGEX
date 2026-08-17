@@ -339,13 +339,17 @@ export async function getIcMarkToMarket(
   callLong: number,
   entryCredit?: number,
 ): Promise<IcMtmResult | null> {
+  // A two-leg put spread has no call legs. Quoting strike-0 calls returns
+  // nothing, and the all-four-legs guard below then rejected the whole mark —
+  // so a FLAME/SPARK position could never be marked to market at all.
+  const twoLegMtm = isTwoLegSpread(callShort, callLong)
   const occPs = buildOccSymbol(ticker, expiration, putShort, 'P')
   const occPl = buildOccSymbol(ticker, expiration, putLong, 'P')
-  const occCs = buildOccSymbol(ticker, expiration, callShort, 'C')
-  const occCl = buildOccSymbol(ticker, expiration, callLong, 'C')
+  const occCs = twoLegMtm ? '' : buildOccSymbol(ticker, expiration, callShort, 'C')
+  const occCl = twoLegMtm ? '' : buildOccSymbol(ticker, expiration, callLong, 'C')
 
-  // Single batch call for all 4 option legs + underlying (synchronized snapshot)
-  const allSymbols = [occPs, occPl, occCs, occCl, ticker].join(',')
+  // Single batch call for the option legs + underlying (synchronized snapshot)
+  const allSymbols = [occPs, occPl, occCs, occCl, ticker].filter(Boolean).join(',')
   await ensureQuoteApiKey()
   if (!_tradierApiKey) return null
 
@@ -368,22 +372,27 @@ export async function getIcMarkToMarket(
   const clRaw = bySymbol[occCl]
   const spotRaw = bySymbol[ticker]
 
-  if (!psRaw || !plRaw || !csRaw || !clRaw) return null
-  if (psRaw.bid == null || plRaw.bid == null || csRaw.bid == null || clRaw.bid == null) return null
+  if (!psRaw || !plRaw) return null
+  if (psRaw.bid == null || plRaw.bid == null) return null
+  if (!twoLegMtm) {
+    if (!csRaw || !clRaw) return null
+    if (csRaw.bid == null || clRaw.bid == null) return null
+  }
 
   // Also reject if any symbol was unmatched by Tradier
   if (data.quotes?.unmatched_symbols) {
     const unmatched = data.quotes.unmatched_symbols
     const unmatchedStr = typeof unmatched === 'string' ? unmatched : JSON.stringify(unmatched)
-    const needed = [occPs, occPl, occCs, occCl]
+    const needed = [occPs, occPl, occCs, occCl].filter(Boolean)
     if (needed.some(s => unmatchedStr.includes(s))) return null
   }
 
   const parse = (v: any) => parseFloat(v || '0')
   const psQ = { bid: parse(psRaw.bid), ask: parse(psRaw.ask), last: parse(psRaw.last), mid: 0 }
   const plQ = { bid: parse(plRaw.bid), ask: parse(plRaw.ask), last: parse(plRaw.last), mid: 0 }
-  const csQ = { bid: parse(csRaw.bid), ask: parse(csRaw.ask), last: parse(csRaw.last), mid: 0 }
-  const clQ = { bid: parse(clRaw.bid), ask: parse(clRaw.ask), last: parse(clRaw.last), mid: 0 }
+  const zeroQ = { bid: 0, ask: 0, last: 0, mid: 0 }
+  const csQ = twoLegMtm ? { ...zeroQ } : { bid: parse(csRaw.bid), ask: parse(csRaw.ask), last: parse(csRaw.last), mid: 0 }
+  const clQ = twoLegMtm ? { ...zeroQ } : { bid: parse(clRaw.bid), ask: parse(clRaw.ask), last: parse(clRaw.last), mid: 0 }
   psQ.mid = Math.round(((psQ.bid + psQ.ask) / 2) * 10000) / 10000
   plQ.mid = Math.round(((plQ.bid + plQ.ask) / 2) * 10000) / 10000
   csQ.mid = Math.round(((csQ.bid + csQ.ask) / 2) * 10000) / 10000
@@ -884,6 +893,29 @@ function flameCreds(): { apiKey: string | undefined; accountId: string | undefin
  * Fail-closed is preserved: no creds ⇒ no read, and the dashboard falls back to
  * the paper ledger with an explicit source_error rather than inventing a number.
  */
+/**
+ * May this bot PLACE a real order? Distinct from isProductionBot, which has come
+ * to mean "has a production account at all" and is used by read paths too.
+ *
+ * 🚨 SPARK IS PAPER-ONLY (operator decision, 2026-08-16). It is allowlisted on
+ * production account 6YB71371 in ironforge_accounts, and FLAME is about to gain
+ * a live order path on that SAME account. Two bots sizing off one pot with
+ * different rules is how you get an unintended double position, so SPARK is
+ * blocked here in code rather than relying on the DB allowlist staying right.
+ *
+ * SPARK keeps full READ access — its live balance, orders, positions and history
+ * all still resolve. This blocks placement only.
+ *
+ * To re-enable SPARK live: remove it here AND confirm the account allowlist, and
+ * decide explicitly how the two bots share buying power.
+ */
+export function canPlaceLiveOrders(name: string): boolean {
+  const n = name.toLowerCase()
+  if (n === 'spark') return false
+  if (n === 'flame') return isFlameLiveArmed()
+  return isProductionBot(n)
+}
+
 export function canReadProductionBalance(name: string): boolean {
   if (isProductionBot(name)) return true
   if (name.toLowerCase() === 'flame') {
@@ -1500,6 +1532,46 @@ async function getOrderFillPrice(
  *
  * Returns Record<accountName, {order_id, contracts}> for successful placements.
  */
+/**
+ * Is this position a two-leg spread rather than a four-leg condor?
+ *
+ * FLAME and SPARK run EBB — a PUT CREDIT SPREAD — and write callShort/callLong
+ * as 0. Every order body in this file hard-coded four legs, so sending one for
+ * them would have built OCC symbols off strike 0 and had the broker reject the
+ * order (or, worse, accept something nobody intended).
+ *
+ * The strike pair is the discriminator rather than the bot name: a bot's
+ * structure can change, but "no call strikes" always means "no call legs".
+ */
+function isTwoLegSpread(callShort: number, callLong: number): boolean {
+  return !(callShort > 0 && callLong > 0)
+}
+
+/**
+ * Build the multileg leg map for an order body.
+ *
+ * Emits the two put legs always, and the call legs only when they exist. Leg
+ * indices stay contiguous from 0, which Tradier requires — skipping an index
+ * silently drops the tail of the order.
+ */
+function buildLegs(
+  occPs: string, occPl: string, occCs: string, occCl: string,
+  qty: number,
+  sides: { shortSide: string; longSide: string },
+  twoLeg: boolean,
+): Record<string, string> {
+  const q = String(qty)
+  const legs: Record<string, string> = {
+    'option_symbol[0]': occPs, 'side[0]': sides.shortSide, 'quantity[0]': q,
+    'option_symbol[1]': occPl, 'side[1]': sides.longSide,  'quantity[1]': q,
+  }
+  if (!twoLeg) {
+    legs['option_symbol[2]'] = occCs; legs['side[2]'] = sides.shortSide; legs['quantity[2]'] = q
+    legs['option_symbol[3]'] = occCl; legs['side[3]'] = sides.longSide;  legs['quantity[3]'] = q
+  }
+  return legs
+}
+
 export async function placeIcOrderAllAccounts(
   ticker: string,
   expiration: string,
@@ -1573,11 +1645,14 @@ export async function placeIcOrderAllAccounts(
     `eligible=[${eligibleAccounts.map(a => `${a.name}:${a.type}`).join(', ')}]`,
   )
 
-  // Shared OCC symbols — same strikes for all accounts
+  // Shared OCC symbols — same strikes for all accounts.
+  // A two-leg spread has no call strikes; building symbols off strike 0 would
+  // produce a contract that does not exist.
+  const twoLeg = isTwoLegSpread(callShort, callLong)
   const occPs = buildOccSymbol(ticker, expiration, putShort, 'P')
   const occPl = buildOccSymbol(ticker, expiration, putLong, 'P')
-  const occCs = buildOccSymbol(ticker, expiration, callShort, 'C')
-  const occCl = buildOccSymbol(ticker, expiration, callLong, 'C')
+  const occCs = twoLeg ? '' : buildOccSymbol(ticker, expiration, callShort, 'C')
+  const occCl = twoLeg ? '' : buildOccSymbol(ticker, expiration, callLong, 'C')
 
   // Collateral per contract
   const spreadWidth = putShort - putLong
@@ -1843,10 +1918,8 @@ export async function placeIcOrderAllAccounts(
         symbol: ticker,
         type: 'market',
         duration: 'day',
-        'option_symbol[0]': occPs, 'side[0]': 'sell_to_open', 'quantity[0]': String(acctContracts),
-        'option_symbol[1]': occPl, 'side[1]': 'buy_to_open',  'quantity[1]': String(acctContracts),
-        'option_symbol[2]': occCs, 'side[2]': 'sell_to_open', 'quantity[2]': String(acctContracts),
-        'option_symbol[3]': occCl, 'side[3]': 'buy_to_open',  'quantity[3]': String(acctContracts),
+        ...buildLegs(occPs, occPl, occCs, occCl, acctContracts,
+                     { shortSide: 'sell_to_open', longSide: 'buy_to_open' }, twoLeg),
       }
       if (tag) orderBody.tag = tag.slice(0, 255)
 
@@ -2544,8 +2617,10 @@ export async function closeIcOrderAllAccounts(
 
   const occPs = buildOccSymbol(ticker, expiration, putShort, 'P')
   const occPl = buildOccSymbol(ticker, expiration, putLong, 'P')
-  const occCs = buildOccSymbol(ticker, expiration, callShort, 'C')
-  const occCl = buildOccSymbol(ticker, expiration, callLong, 'C')
+  // Two-leg spreads (EBB: FLAME/SPARK) have no call side to close.
+  const twoLegClose = isTwoLegSpread(callShort, callLong)
+  const occCs = twoLegClose ? '' : buildOccSymbol(ticker, expiration, callShort, 'C')
+  const occCl = twoLegClose ? '' : buildOccSymbol(ticker, expiration, callLong, 'C')
 
   // Filter accounts by type: sandbox closes only go to sandbox, production only to production.
   // Without this filter, closing a sandbox position cascades to production (and vice versa).
@@ -2618,10 +2693,8 @@ export async function closeIcOrderAllAccounts(
           symbol: ticker,
           type: effectiveOrderType,
           duration: 'day',
-          'option_symbol[0]': occPs, 'side[0]': 'buy_to_close',  'quantity[0]': String(closeQty),
-          'option_symbol[1]': occPl, 'side[1]': 'sell_to_close', 'quantity[1]': String(closeQty),
-          'option_symbol[2]': occCs, 'side[2]': 'buy_to_close',  'quantity[2]': String(closeQty),
-          'option_symbol[3]': occCl, 'side[3]': 'sell_to_close', 'quantity[3]': String(closeQty),
+          ...buildLegs(occPs, occPl, occCs, occCl, closeQty,
+                       { shortSide: 'buy_to_close', longSide: 'sell_to_close' }, twoLegClose),
         }
         // For debit limit orders, set the max debit price (guarantees minimum return)
         if (effectiveOrderType === 'debit' && limitPrice != null) {
@@ -2660,19 +2733,26 @@ export async function closeIcOrderAllAccounts(
           'option_symbol[0]': occPs, 'side[0]': 'buy_to_close',  'quantity[0]': String(closeQty),
           'option_symbol[1]': occPl, 'side[1]': 'sell_to_close', 'quantity[1]': String(closeQty),
         }
-        const callSpreadBody: Record<string, string> = {
+        // A two-leg spread has no call side. Stage 1 IS the whole position for
+        // it, so the "2 x 2-leg" fallback degrades to just the put spread.
+        const callSpreadBody: Record<string, string> | null = twoLegClose ? null : {
           class: 'multileg', symbol: ticker, type: 'market', duration: 'day',
           'option_symbol[0]': occCs, 'side[0]': 'buy_to_close',  'quantity[0]': String(closeQty),
           'option_symbol[1]': occCl, 'side[1]': 'sell_to_close', 'quantity[1]': String(closeQty),
         }
-        if (tagStr) { putSpreadBody.tag = tagStr; callSpreadBody.tag = tagStr }
+        if (tagStr) { putSpreadBody.tag = tagStr; if (callSpreadBody) callSpreadBody.tag = tagStr }
 
         const [putResult, callResult] = await Promise.all([
           sandboxPost(`/accounts/${accountId}/orders`, putSpreadBody, acct.apiKey, acct.baseUrl),
-          sandboxPost(`/accounts/${accountId}/orders`, callSpreadBody, acct.apiKey, acct.baseUrl),
+          callSpreadBody
+            ? sandboxPost(`/accounts/${accountId}/orders`, callSpreadBody, acct.apiKey, acct.baseUrl)
+            : Promise.resolve(null),
         ])
         const putId = putResult?.order?.id
-        const callId = callResult?.order?.id
+        // A two-leg spread has no call order to wait on — the put spread alone
+        // is a complete close, so treat the absent call leg as satisfied rather
+        // than as a failure that drops us into per-leg unwinding.
+        const callId = twoLegClose ? putId : callResult?.order?.id
 
         if (putId && callId) {
           let fillPrice: number | null = null
@@ -3225,7 +3305,7 @@ async function resolveProductionAccounts(
   // forRead: resolving the account to LOOK AT it (balance, equity, buying
   // power), not to trade it. FLAME qualifies on credentials alone; every other
   // bot is unchanged. Never pass forRead from an order path.
-  if (!(opts.forRead ? canReadProductionBalance(botName) : isProductionBot(botName))) return []
+  if (!(opts.forRead ? canReadProductionBalance(botName) : canPlaceLiveOrders(botName))) return []
   const pauseState = await getProductionPauseState(botName)
   if (pauseState.paused) {
     console.warn(
