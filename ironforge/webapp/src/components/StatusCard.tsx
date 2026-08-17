@@ -110,6 +110,12 @@ export default function StatusCard({
   todaysClosedTrades?: { close_reason: string; realized_pnl: number; ic_return_pct?: number }[]
   viewMode?: 'paper' | 'live'
 }) {
+  // FLAME and SPARK both run EBB as of 2026-08-16: SPY 0DTE put credit spread,
+  // fixed dollar strike offsets, no stop, settled at the close. Several config
+  // chips below described the retired 14DTE/7DTE products and were actively
+  // misleading — an SD multiple and a VIX skip threshold that nothing reads.
+  const isEbbBot = bot === 'flame' || bot === 'spark'
+
   const rawAccount = data.account || {}
   // Null-safe account: ensure all numeric fields have defaults to prevent
   // .toLocaleString() / .toFixed() crashes when production data has nulls
@@ -762,8 +768,20 @@ export default function StatusCard({
       {config && (
         <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-forge-border/50">
           <span className="text-[10px] text-forge-muted uppercase tracking-wider">Config</span>
-          <span className="text-xs font-mono text-gray-400">{bot === 'spark' ? '1.2–2.0 SD (GEX-auto)' : `${config.sd_multiplier ?? 1.2}x SD`}</span>
-          <span className="text-xs font-mono text-gray-400">${config.spread_width ?? 5} wings</span>
+          {/* EBB places strikes at FIXED DOLLAR offsets from spot, so an SD
+              multiple describes nothing the bot does. Showing "1.2–2.0 SD
+              (GEX-auto)" here described the retired condor. */}
+          {isEbbBot ? (
+            <>
+              <span className="text-xs font-mono text-gray-400" title="Short put one dollar below spot at entry">spot−$1 short</span>
+              <span className="text-xs font-mono text-gray-400" title="Long put $2 below the short. This is the entire risk control.">${config.spread_width ?? 2} wing</span>
+            </>
+          ) : (
+            <>
+              <span className="text-xs font-mono text-gray-400">{`${config.sd_multiplier ?? 1.2}x SD`}</span>
+              <span className="text-xs font-mono text-gray-400">${config.spread_width ?? 5} wings</span>
+            </>
+          )}
 
           {/* Editable BP% */}
           {editingBP ? (
@@ -884,8 +902,12 @@ export default function StatusCard({
               ? 'PT HOLD_TO_EOD'
               : `PT ${config.profit_target_pct ?? 30}%`}
           </span>
-          <span className="text-xs font-mono text-gray-400" title={bot === 'spark' ? 'SPARK swings — no hard stop. Rides to profit target or EOD.' : undefined}>{bot === 'spark' ? 'Swing (no stop)' : `SL ${config.stop_loss_pct ?? 100}%`}</span>
-          <span className="text-xs font-mono text-gray-400">VIX&gt;{config.vix_skip ?? 32} skip</span>
+          <span className="text-xs font-mono text-gray-400" title={isEbbBot ? 'No stop, by design. Registry #43: every early exit collapses the edge to about zero. Settles at the 15:00 close.' : undefined}>{isEbbBot ? 'No stop · settle at close' : `SL ${config.stop_loss_pct ?? 100}%`}</span>
+          {/* vix_skip is inert on this path — the decay gate is what actually
+              runs (prior session VIX ÷ 20-session max, skip above 0.90). */}
+          <span className="text-xs font-mono text-gray-400" title={isEbbBot ? 'Skips the session when the prior close divided by the trailing 20-session max exceeds 0.90 — i.e. fear is still building. Sits out roughly 28% of days.' : undefined}>
+            {isEbbBot ? 'VIX decay ≤0.90' : `VIX>${config.vix_skip ?? 32} skip`}
+          </span>
           <span className="text-xs font-mono text-gray-400">max {config.max_contracts === 0 ? '∞' : (config.max_contracts ?? 10)}x</span>
         </div>
       )}
