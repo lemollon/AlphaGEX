@@ -1,8 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
 
-// viewer.ts pulls in the Tradier client for isFlameLiveArmed(); stub it so these
+// viewer.ts pulls in the Tradier client for canReadProductionBalance(); stub it so these
 // pure-string helpers can be tested without broker/env wiring.
-vi.mock('@/lib/tradier', () => ({ isFlameLiveArmed: () => false }))
+// canReadProductionBalance drives resolveAccountMode for FLAME as of 2026-08-17
+// (was isFlameLiveArmed — showing an account is not permission to trade it).
+// false here keeps these scope tests on the paper ledger, which is what they assert.
+vi.mock('@/lib/tradier', () => ({
+  canReadProductionBalance: () => false,
+  isFlameLiveArmed: () => false,
+}))
 vi.mock('@/lib/db', () => ({
   dbQuery: async () => [],
   escapeSql: (v: string) => String(v).replace(/'/g, "''"),
