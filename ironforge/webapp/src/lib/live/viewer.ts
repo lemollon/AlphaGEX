@@ -77,8 +77,8 @@ export function resolvePaperBots(bots: LiveBot[]): LiveBot[] {
  * Shared by summary.ts and home.ts — both must scope identically or the Home
  * page and the Live page will disagree about the same bot's money.
  */
-export function ledgerFilter(bot: LiveBot): string {
-  return resolveAccountMode(bot) === 'production'
+export function ledgerFilter(bot: LiveBot, modeOverride?: LiveAccountMode): string {
+  return (modeOverride ?? resolveAccountMode(bot)) === 'production'
     ? `AND COALESCE(account_type, 'sandbox') = 'production'`
     : `AND COALESCE(account_type, 'sandbox') <> 'production'`
 }
@@ -121,11 +121,22 @@ export function scopeFilter(
   bot: LiveBot,
   person: string | null | undefined,
   isOperator = false,
+  /**
+   * Explicit ledger choice, for surfaces that let the viewer switch. FLAME has
+   * BOTH a $2,000 paper ledger and a live account (6YB71371), and the customer
+   * pages must be able to show either — omitted, the bot's default mode wins.
+   */
+  modeOverride?: LiveAccountMode,
 ): string {
   if (!isOperator && !person) {
-    return `${ledgerFilter(bot)} AND FALSE`
+    return `${ledgerFilter(bot, modeOverride)} AND FALSE`
   }
-  return `${ledgerFilter(bot)} ${personFilter(person)}`
+  return `${ledgerFilter(bot, modeOverride)} ${personFilter(person)}`
+}
+
+/** Bots that genuinely have both ledgers, so a Paper/Live switch is meaningful. */
+export function hasBothLedgers(bot: LiveBot): boolean {
+  return bot === 'flame' && canReadProductionBalance('flame')
 }
 
 export interface LiveViewer {
