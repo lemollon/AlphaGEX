@@ -179,6 +179,52 @@ def test_close_is_recorded_so_live_firings_carry_their_outcome(confirm_db):
 
 
 # ---------------------------------------------------------------------------
+# THE SESSION TAPE — append-only intraday history.
+#
+# risk_flow_rolling_state keeps ONE row per session and overwrites it on every
+# poll, so the only surviving trace of what the watcher saw during the
+# 2026-08-17 slide was its 14:00 CT reading — an hour and a half after the move
+# ended. A signal you cannot replay is one you cannot improve or draw.
+# ---------------------------------------------------------------------------
+
+def test_tape_appends_one_row_per_ten_minute_slot(confirm_db):
+    rr = confirm_db
+    d = date(2026, 8, 17)
+    for h, m, spot in ((10, 10, 775.50), (10, 22, 775.30), (10, 37, 775.10)):
+        rr.session_log_write(d, _t(h, m), spot=spot)
+    tape = rr.session_log_read(d)
+    assert [r["minute_ct"] for r in tape] == [610, 620, 630]
+    assert [r["spot"] for r in tape] == [775.50, 775.30, 775.10]
+
+
+def test_two_writers_share_a_slot_without_clobbering(confirm_db):
+    """The confirmation watcher has spot; the rolling watcher has the z-scores.
+    They poll on the same */10 cron and must land in one row."""
+    rr = confirm_db
+    d = date(2026, 8, 17)
+    rr.session_log_write(d, _t(11, 0), spot=775.11)
+    rr.session_log_write(d, _t(11, 3), roll_putv_z=0.57, roll_totv_z=0.06)
+    tape = rr.session_log_read(d)
+    assert len(tape) == 1
+    assert tape[0]["spot"] == 775.11
+    assert tape[0]["roll_putv_z"] == 0.57
+
+
+def test_a_slot_is_never_rewritten(confirm_db):
+    """Within one slot the FIRST reading is the one the alert fired from.
+    Letting a later poll overwrite it desyncs the tape from the push that
+    went to Discord."""
+    rr = confirm_db
+    d = date(2026, 8, 17)
+    rr.session_log_write(d, _t(11, 0), spot=775.11)
+    rr.session_log_write(d, _t(11, 9), spot=999.99)
+    assert rr.session_log_read(d)[0]["spot"] == 775.11
+
+
+def test_tape_is_empty_not_broken_for_a_day_that_never_ran(confirm_db):
+    """A page that cannot draw a chart still has to render its state cards."""
+    assert confirm_db.session_log_read(date(2026, 8, 15)) == []
+
 # THE PIVOT — EBB's one sanctioned early exit.
 #
 # Measured on 892 sessions of real expiry-day NBBO (sell bid / buy ask both

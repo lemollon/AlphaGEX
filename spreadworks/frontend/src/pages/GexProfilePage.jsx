@@ -25,6 +25,92 @@ import { API_URL } from '../lib/api';
 
 const COMMON_SYMBOLS = ['SPY', 'QQQ', 'IWM', 'GLD', 'DIA', 'AAPL', 'TSLA', 'NVDA', 'AMD'];
 
+// ── Freshness ───────────────────────────────────────────────────
+// This page serves TWO different things through one shape and never said
+// which. During RTH the upstream returns a live intraday reading; outside it,
+// last night's "next-day" profile — same fields, same charts, no visible
+// difference. The old LIVE badge did not help: it lived only on the intraday
+// tab and was driven by isMarketOpen(), i.e. the BROWSER CLOCK, which is a
+// guess about whether the data *should* be fresh, not a check of whether it
+// *is*. If the feed stalled mid-session the page would confidently show a
+// frozen structure with a green LIVE dot next to it.
+//
+// Verified 2026-08-18: the feed genuinely does tick — 08:27 CT still read
+// "2026-08-17 19:46:14", 08:32 CT read "2026-08-18T08:32:36-05:00" and the
+// flow-diagnostic cards went 0 -> 6. So the page was never broken; it was
+// unlabelled, which is the same failure that had the squeeze page printing a
+// four-day-old reading under today's date.
+//
+// Reads the payload's OWN timestamp. A bare "YYYY-MM-DD HH:MM:SS" with no
+// zone is the overnight snapshot; an ISO string with an offset is a live tick.
+function readAsOf(ts) {
+  if (!ts) return { kind: 'unknown', at: null };
+  const live = /[T]/.test(ts) && /[+\-]\d{2}:?\d{2}$|Z$/.test(ts);
+  const at = new Date(live ? ts : ts.replace(' ', 'T'));
+  if (Number.isNaN(at.getTime())) return { kind: 'unknown', at: null };
+  return { kind: live ? 'live' : 'snapshot', at };
+}
+
+function FreshnessBar({ data, livePrice }) {
+  const { kind, at } = readAsOf(data.timestamp);
+  const ageMin = at ? Math.max(0, (Date.now() - at.getTime()) / 60000) : null;
+  // Stale only means "a live feed that stopped". An overnight snapshot is old
+  // by design and must read as a different STATE, not as a fault.
+  const stale = kind === 'live' && ageMin != null && ageMin > 5;
+  // 🚨 A FRESH TIMESTAMP DOES NOT MEAN A FRESH PRICE, and a gamma profile is a
+  // function of spot — every wall and the flip move with it. Measured across
+  // the 2026-08-18 open: the payload's timestamp went live at 08:32 CT and
+  // kept ticking honestly, while `header.price` sat at 772.67 — YESTERDAY'S
+  // CLOSE — until 08:47. SPY opened at 768.70 and never traded 772.67 that
+  // day, so for 15 minutes the page would have rendered a structure built on
+  // a spot $4 (0.5%) wrong, under a green LIVE badge. That reading showed
+  // flip 773.75 just above a 772.67 spot ("near the flip") when SPY was
+  // really $5 below it — the opposite picture.
+  //
+  // So the timestamp is necessary and NOT sufficient. Cross-check against the
+  // intraday bars the page already fetches; they come from a different feed,
+  // which is the whole point of using them as the referee.
+  const drift = (livePrice && data?.header?.price)
+    ? Math.abs(livePrice - data.header.price) / livePrice * 100 : null;
+  const priceStale = kind === 'live' && drift != null && drift > 0.15;
+  const [tone, label, detail] =
+    priceStale
+      ? ['var(--color-sw-red)', 'STALE SPOT',
+         `This profile is built on ${data.header.price?.toFixed(2)} but SPY is trading `
+         + `${livePrice.toFixed(2)} — ${drift.toFixed(2)}% away. The timestamp is current; the `
+         + `price behind it is not, so every wall and the flip below are drawn at the wrong level.`]
+    : kind === 'live' && !stale
+      ? ['var(--color-sw-green)', 'LIVE',
+         `Intraday structure, updated ${ageMin < 1 ? 'just now' : `${Math.round(ageMin)} min ago`}.`]
+    : stale
+      ? ['var(--color-sw-red)', 'FEED STALLED',
+         `Last tick ${Math.round(ageMin)} min ago. The market is open but this structure has stopped updating — treat every level below as frozen.`]
+    : kind === 'snapshot'
+      ? ['var(--color-text-muted)', 'OVERNIGHT SNAPSHOT',
+         `This is last night's ${data.expiration ?? 'next-day'} profile, not today's live structure. It updates within a couple of minutes of the open.`]
+      : ['var(--color-text-muted)', 'UNKNOWN', 'No timestamp on this payload.'];
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+      border: `1px solid ${tone}55`, background: `${tone}12`,
+      borderRadius: 10, padding: '9px 13px', marginBottom: 14,
+    }}>
+      <span style={{
+        fontSize: 11, fontWeight: 700, letterSpacing: '.05em', color: tone,
+        border: `1px solid ${tone}66`, borderRadius: 999, padding: '2px 8px',
+        whiteSpace: 'nowrap',
+      }}>{label}</span>
+      <span style={{ fontSize: 12.5, color: 'var(--color-text-muted)' }}>{detail}</span>
+      {data.timestamp && (
+        <span style={{
+          fontSize: 11, color: 'var(--color-text-muted)', marginLeft: 'auto',
+          fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap',
+        }}>{String(data.timestamp).replace('T', ' ').slice(0, 19)}</span>
+      )}
+    </div>
+  );
+}
+
 function isMarketOpen() {
   const now = new Date();
   const day = now.getDay();
@@ -431,6 +517,8 @@ export default function GexProfilePage() {
 
       {data && (
         <>
+          <FreshnessBar data={data} livePrice={intradayBars.length ? intradayBars[intradayBars.length - 1].close : null} />
+
           {/* Header Metrics */}
           <div className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-2.5 mb-4">
             <MetricCard label="Price" value={formatDollar(data.header.price)} color="var(--color-accent)" />

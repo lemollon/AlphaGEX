@@ -45,7 +45,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, Request
-from sqlalchemy import Column, Date, DateTime, Float, BigInteger, String
+from sqlalchemy import Column, Date, DateTime, Float, BigInteger, Integer, String
 
 from .db import Base, SessionLocal
 
@@ -139,6 +139,30 @@ class RiskFlowSnapshotPM(Base):
     callv = Column(BigInteger)
     putv = Column(BigInteger)
     totv = Column(BigInteger)
+
+
+class RiskSessionLog(Base):
+    """APPEND-ONLY intraday tape — one row per 10-minute slot per session.
+
+    🚨 THIS EXISTS BECAUSE THE 2026-08-17 POST-MORTEM ALMOST HAD NOTHING TO
+    READ. `risk_flow_rolling_state` keeps a single row per session and
+    overwrites it on every poll, so the only surviving evidence of what the
+    watcher saw during a 3-point slide was its 14:00 CT reading — long after
+    the move was over. A signal you cannot replay is a signal you cannot
+    improve, and it is also one you cannot draw.
+
+    Keyed on (d, minute_ct) so both writers — the confirmation watcher, which
+    has spot, and the rolling flow watcher, which has the z-scores — can fill
+    their own columns in the same slot without racing or duplicating. Missing
+    columns stay NULL; a gap in the tape is real information (the poll failed)
+    and must not be back-filled with a neighbour's value.
+    """
+    __tablename__ = "risk_session_log"
+    d = Column(Date, primary_key=True)
+    minute_ct = Column(Integer, primary_key=True)   # CT minute-of-day
+    spot = Column(Float)
+    roll_putv_z = Column(Float)
+    roll_totv_z = Column(Float)
 
 
 class RiskConfirmState(Base):
@@ -466,6 +490,59 @@ def _save_rolling_state(d: date, captured_at: datetime, pz: float | None,
         db.commit()
     except Exception:
         db.rollback()
+    finally:
+        db.close()
+
+
+def session_log_write(d: date, now: datetime, *, spot: float | None = None,
+                      roll_putv_z: float | None = None,
+                      roll_totv_z: float | None = None) -> None:
+    """Append (or fill) this session's 10-minute tape slot. Never raises —
+    the tape is a record, and losing a slot must never take down the poll
+    that was trying to write it.
+
+    Only writes the fields it was given, so two callers can share a slot.
+    Deliberately does NOT overwrite a value that is already there: within one
+    slot the first reading is the one that matches the alert that fired from
+    it, and a later re-write would quietly desync the tape from the push.
+    """
+    if SessionLocal is None:
+        return
+    slot = (now.hour * 60 + now.minute) // 10 * 10
+    db = SessionLocal()
+    try:
+        row = db.get(RiskSessionLog, (d, slot))
+        if row is None:
+            row = RiskSessionLog(d=d, minute_ct=slot)
+            db.add(row)
+        if spot is not None and row.spot is None:
+            row.spot = spot
+        if roll_putv_z is not None and row.roll_putv_z is None:
+            row.roll_putv_z = roll_putv_z
+        if roll_totv_z is not None and row.roll_totv_z is None:
+            row.roll_totv_z = roll_totv_z
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def session_log_read(d: date) -> list[dict]:
+    """The session's tape, oldest first. Empty list on any failure — a page
+    that cannot draw a chart still has to render its state cards."""
+    if SessionLocal is None:
+        return []
+    db = SessionLocal()
+    try:
+        rows = (db.query(RiskSessionLog)
+                  .filter(RiskSessionLog.d == d)
+                  .order_by(RiskSessionLog.minute_ct).all())
+        return [{"minute_ct": r.minute_ct, "spot": r.spot,
+                 "roll_putv_z": r.roll_putv_z, "roll_totv_z": r.roll_totv_z}
+                for r in rows]
+    except Exception:
+        return []
     finally:
         db.close()
 
@@ -1465,3 +1542,158 @@ def _promotion(flow_hist: list, vix: dict) -> dict:
         "rule": "promote only at ≥100 quiet sessions AND decile t ≥ 2 "
                 "(pre-registered 2026-08-12)",
     }}
+
+
+# ---------------------------------------------------------------------------
+# SESSION TAPE — the live intraday surface (/session).
+#
+# Everything else on the Risk page answers "what is today's regime", decided
+# once from the prior close. This answers "what is happening right now", and
+# it exists because the 2026-08-17 miss was invisible in real time: the
+# watchers were running, but no single view put price, the flow z, the fixed
+# clocks and the confirmation state on one clock. Reconstructing that session
+# afterwards took four tables and an external price API.
+#
+# Deliberately NOT included:
+#   * any gamma/GEX reading. `gamma_history` writes ~280 rows a day holding 3
+#     distinct values (spot froze at 775.80 on 08-17 while SPY traded to
+#     772.51). Plotting it would look authoritative and be wrong; the page
+#     reports the feed as dead instead.
+#   * a verdict. /risk and /squeeze own that. Two surfaces disagreeing about
+#     the same call is worse than one surface.
+# ---------------------------------------------------------------------------
+
+MARKET_OPEN_CT = (8, 30)
+MARKET_CLOSE_CT = (15, 0)
+
+
+@router.get("/session")
+async def session_tape(request: Request):
+    """Live state of the current session. Cheap: reads only stored rows —
+    no Tradier call — so the page can poll it every 30s without cost."""
+    now_ct = datetime.now(CT)
+    today = now_ct.date()
+    t = (now_ct.hour, now_ct.minute)
+    weekend = now_ct.weekday() >= 5
+    live = (not weekend) and MARKET_OPEN_CT <= t <= MARKET_CLOSE_CT
+
+    # 🚨 Say FROZEN rather than implying live. The pollers only run in-session,
+    # so out of hours every number below is a leftover from the last one — the
+    # failure mode this repo has hit before on bot pages.
+    if weekend:
+        clock = {"live": False, "state": "WEEKEND", "detail": "no session today"}
+    elif t < MARKET_OPEN_CT:
+        clock = {"live": False, "state": "PRE-OPEN",
+                 "detail": "watchers start at 10:10 CT"}
+    elif t > MARKET_CLOSE_CT:
+        clock = {"live": False, "state": "CLOSED",
+                 "detail": "showing the final state of today's session"}
+    else:
+        clock = {"live": True, "state": "LIVE", "detail": None}
+
+    tape = session_log_read(today)
+
+    confirm: dict = {"armed": None, "ref_spot": None, "fired_dir": None,
+                     "fired_at": None, "fired_spot": None, "close_spot": None,
+                     "putcall_z": None, "run_min": None, "run_max": None,
+                     "arm_z": CONFIRM_ARM_Z, "move_pct": CONFIRM_MOVE_PCT}
+    if SessionLocal is not None:
+        try:
+            db = SessionLocal()
+            row = db.get(RiskConfirmState, today)
+            db.close()
+            if row is not None:
+                confirm.update({
+                    "armed": row.armed == "yes", "ref_spot": row.ref_spot,
+                    "run_min": row.run_min, "run_max": row.run_max,
+                    "putcall_z": row.putcall_z, "fired_dir": row.fired_dir,
+                    "fired_at": row.fired_at.isoformat() if row.fired_at else None,
+                    "fired_spot": row.fired_spot, "close_spot": row.close_spot,
+                })
+        except Exception:
+            pass
+
+    # the trigger levels, precomputed so the chart can draw them as lines
+    levels = {"down": None, "up": None}
+    if confirm["ref_spot"]:
+        r = float(confirm["ref_spot"])
+        levels = {"down": round(r * (1 - CONFIRM_MOVE_PCT / 100), 2),
+                  "up": round(r * (1 + CONFIRM_MOVE_PCT / 100), 2)}
+
+    # which fixed clocks have captured today, and did each one flag
+    clocks: list[dict] = []
+    snap = _latest_snapshot(today)
+    prior = [r for r in _flow_history() if r["d"] < today]
+    if snap is not None:
+        pz = _z(snap["putv"], [r["putv"] for r in prior])
+        tz = _z(snap["totv"], [r["totv"] for r in prior])
+        cz = _pc_z(snap, prior)
+        clocks.append({"clock": "10:00", "captured": True, "putv_z": pz,
+                       "totv_z": tz, "putcall_z": cz,
+                       "flagged": bool((pz or 0) > 2 or (tz or 0) > 2
+                                       or (cz or 0) > 2)})
+    else:
+        clocks.append({"clock": "10:00", "captured": False, "putv_z": None,
+                       "totv_z": None, "putcall_z": None, "flagged": None})
+    for ck in PM_CLOCKS:
+        hist_pm = _pm_flow_history(ck)
+        prior_pm = [r for r in hist_pm if r["d"] < today]
+        cur = next((r for r in hist_pm if r["d"] == today), None)
+        if cur is None:
+            clocks.append({"clock": ck, "captured": False, "putv_z": None,
+                           "totv_z": None, "putcall_z": None, "flagged": None})
+            continue
+        pz = _z(cur["putv"], [r["putv"] for r in prior_pm])
+        tz = _z(cur["totv"], [r["totv"] for r in prior_pm])
+        cz = _pc_z(cur, prior_pm)
+        clocks.append({"clock": ck, "captured": True, "putv_z": pz,
+                       "totv_z": tz, "putcall_z": cz,
+                       "flagged": bool((pz or 0) > 2 or (tz or 0) > 2
+                                       or (cz or 0) > 2)})
+
+    # which pushes have already gone out today
+    alerts = []
+    for key, label in (("risk_morning_verdict", "morning verdict"),
+                       ("risk_flow_spike", "10:00 flow"),
+                       ("risk_pm_1200", "12:00 re-check"),
+                       ("risk_pm_1330", "13:30 re-check"),
+                       ("risk_flow_rolling", "rolling flow"),
+                       ("risk_confirm", "DIRECTION CONFIRMED")):
+        alerts.append({"key": key, "label": label,
+                       "fired": _posted_today(key, today)})
+
+    return {
+        "asof": now_ct.isoformat(),
+        "clock": clock,
+        "tape": tape,
+        "confirm": confirm,
+        "levels": levels,
+        "clocks": clocks,
+        "alerts": alerts,
+        "gamma_feed": {
+            "usable": False,
+            "reason": "gamma_history writes ~280 rows/day holding 3 distinct "
+                      "values — on 2026-08-17 spot froze at 775.80 while SPY "
+                      "traded to 772.51. Deliberately not plotted.",
+        },
+        "note": "Advisory. No bot reads this page.",
+    }
+
+
+def _posted_today(key: str, d: date) -> bool:
+    """Has `key` claimed its slot today? Read-only mirror of
+    risk_alerts._already_posted, kept here so this module does not import
+    risk_alerts (which imports FROM here)."""
+    try:
+        from .models import DiscordPostLog
+    except Exception:
+        return False
+    if SessionLocal is None:
+        return False
+    db = SessionLocal()
+    try:
+        return db.get(DiscordPostLog, (key, d)) is not None
+    except Exception:
+        return False
+    finally:
+        db.close()
