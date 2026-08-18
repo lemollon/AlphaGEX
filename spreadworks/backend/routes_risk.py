@@ -1729,3 +1729,12 @@ def _posted_today(key: str, d: date) -> bool:
         return False
     finally:
         db.close()
+
+
+@router.get("/calibration")
+async def calibration(request: Request):
+    """Is the signal still working? Scorecard over a rolling window, graded
+    against thresholds pre-registered on 2026-08-18 before any live firing
+    existed. Read-only — the nightly job is what enforces."""
+    from .signal_calibration import report
+    return report()

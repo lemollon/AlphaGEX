@@ -370,3 +370,98 @@ def test_open_but_before_the_watchers_start(monkeypatch):
     started. That is WAITING, not LIVE and not a fault."""
     c = _clock(monkeypatch, datetime(2026, 8, 18, 9, 30, tzinfo=CT), [])
     assert c["live"] is False and c["state"] == "WAITING"
+
+
+# ---------------------------------------------------------------------------
+# THE DECAY MONITOR.
+#
+# The signal fires on ~8.7% of sessions. Judging it on live alerts alone would
+# take two years to say anything, so the evaluation re-scores the whole rule
+# over an expanding window every night off data production already writes.
+#
+# The thresholds are pre-registered (2026-08-18, before any live firing) and
+# graded against a CONTEMPORANEOUS base rate, not against the backtest's own
+# 63.2% — so the bar moves if the whole market changes.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def calib_db(monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from backend.db import Base
+    import backend.signal_calibration as sc
+    eng = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(eng)
+    monkeypatch.setattr(sc, "SessionLocal", sessionmaker(bind=eng, expire_on_commit=False))
+    monkeypatch.setattr(sc, "engine", eng)
+    return sc
+
+
+def _fill(sc, *, n_armed_cont, n_armed_total, n_base_cont, n_base_total,
+          big_armed=0.9, big_base=0.2, start=date(2026, 1, 5)):
+    """Write a synthetic window with controlled continuation rates."""
+    db = sc.SessionLocal()
+    day = start
+    def add(armed, cont, big):
+        nonlocal day
+        db.add(sc.SignalEval(
+            d=day, pcz=2.0 if armed else 0.1, armed=1 if armed else 0,
+            ref_spot=700.0, close_spot=700.0, fired_dir="DOWN",
+            fired_spot=699.0, continued=cont,
+            move_pct=-0.8 if big else -0.1, source="live"))
+        day = day + timedelta(days=1)
+    for i in range(n_armed_total):
+        add(True, 1 if i < n_armed_cont else 0, i < int(big_armed * n_armed_total))
+    for i in range(n_base_total):
+        add(False, 1 if i < n_base_cont else 0, i < int(big_base * n_base_total))
+    db.commit(); db.close()
+
+
+def test_a_healthy_window_passes_and_leaves_the_pivot_armed(calib_db):
+    sc = calib_db
+    _fill(sc, n_armed_cont=40, n_armed_total=60, n_base_cont=314, n_base_total=630)
+    rep = sc.report(date(2027, 11, 1))
+    assert rep["verdict"] == "PASS"
+    assert sc.enforce(rep) == []          # nothing disarmed
+
+
+def test_a_collapsed_gap_disarms_the_pivot(calib_db):
+    """Continuation drifting down to the unflagged base means the gate no
+    longer separates — the pivot would be acting on nothing."""
+    sc = calib_db
+    _fill(sc, n_armed_cont=31, n_armed_total=60, n_base_cont=314, n_base_total=630)
+    rep = sc.report(date(2027, 11, 1))
+    assert rep["verdict"] == "DISARM"
+    assert "no longer separates" in " ".join(rep["reasons"])
+
+
+def test_a_thin_window_says_underpowered_not_pass(calib_db):
+    """🚨 The dangerous failure would be a small good-looking sample reading as
+    PASS. Under MIN_N it must refuse to conclude in EITHER direction."""
+    sc = calib_db
+    _fill(sc, n_armed_cont=8, n_armed_total=10, n_base_cont=52, n_base_total=105)
+    rep = sc.report(date(2027, 11, 1))
+    assert rep["verdict"] == "UNDERPOWERED"
+    assert sc.enforce(rep) == []
+
+
+def test_enforce_only_ever_disarms(calib_db):
+    """A recovered window must NOT auto-rearm — inside a rolling window that
+    is more likely noise than resurrection, and auto-rearming would invert the
+    fail-safe direction."""
+    sc = calib_db
+    _fill(sc, n_armed_cont=40, n_armed_total=60, n_base_cont=314, n_base_total=630)
+    rep = sc.report(date(2027, 11, 1))
+    assert rep["verdict"] == "PASS"
+    assert not hasattr(sc, "rearm")       # no such affordance exists
+    assert sc.enforce(rep) == []
+
+
+def test_thresholds_are_recorded_in_the_payload(calib_db):
+    """The pre-registered lines ship WITH the number, so a later reader cannot
+    quietly re-interpret what 'passing' meant."""
+    sc = calib_db
+    _fill(sc, n_armed_cont=40, n_armed_total=60, n_base_cont=314, n_base_total=630)
+    pr = sc.report(date(2027, 11, 1))["pre_registered"]
+    assert pr["set_on"] == "2026-08-18"
+    assert "LCB" in pr["disarm_if"]

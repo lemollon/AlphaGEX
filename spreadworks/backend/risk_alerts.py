@@ -499,6 +499,71 @@ def register_risk_alerts(scheduler, app) -> None:
         except Exception as e:      # noqa: BLE001
             logger.warning("[RiskAlerts] confirm_close failed: %r", e)
 
+    async def calibration_score():
+        """15:40 CT — append today's completed session to the evaluation
+        record. Runs after settlement so the close is real. This is what keeps
+        the decay monitor from going stale: the sample grows every session,
+        not only when the signal fires."""
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            from .signal_calibration import score_session
+            score_session(now.date())
+        except Exception as e:      # noqa: BLE001
+            logger.warning("[RiskAlerts] calibration_score failed: %r", e)
+
+    async def calibration_report():
+        """First Monday, 08:15 CT — post the scorecard against the
+        pre-registered lines, and DISARM the pivot if it has breached.
+
+        Posts on every verdict INCLUDING PASS. A monitor that only speaks when
+        something is wrong cannot be distinguished from a monitor that has
+        stopped running — the failure this whole body of work exists to catch.
+        """
+        try:
+            now = datetime.now(CT)
+            from .signal_calibration import report, enforce
+            rep = report(now.date())
+            if not _claim_post_slot_db("risk_calibration", now.date()):
+                return
+            disarmed = enforce(rep)
+            v = rep.get("verdict")
+            colour = {"PASS": GREEN, "WARN": AMBER, "DISARM": RED,
+                      "UNDERPOWERED": AMBER}.get(v, AMBER)
+            cont = rep.get("continuation")
+            base = rep.get("base_continuation")
+            lcb = rep.get("continuation_lcb")
+            body = [
+                f"**{v}** — {rep.get('n_armed_fired', 0)} flagged firings in the "
+                f"trailing {rep.get('window_months')} months "
+                f"({rep.get('live_sessions', 0)} live sessions so far).",
+            ]
+            if cont is not None and base is not None:
+                body.append(
+                    f"\nWhen the flag fires and price then breaks, it keeps going "
+                    f"**{cont:.1%}** of the time (worst-case {lcb:.1%}) against "
+                    f"**{base:.1%}** on unflagged days. The gap is the edge; if it "
+                    f"closes, the pivot stops earning its keep.")
+            for r in rep.get("reasons", []):
+                body.append(f"\n• {r}")
+            if disarmed:
+                body.append(f"\n\n🚨 **PIVOT DISARMED on {', '.join(disarmed)}.** "
+                            "EBB is back to holding every trade to settlement. "
+                            "Re-arming is a manual decision, on purpose.")
+            elif v == "PASS":
+                body.append("\n\nNothing to do — the pivot stays armed.")
+            _send({
+                "title": f"📐 Signal calibration — {v}",
+                "description": "".join(body),
+                "color": colour,
+                "footer": {"text": "thresholds pre-registered 2026-08-18, before "
+                                   "any live firing · /api/spreadworks/"
+                                   "risk-advisor/calibration"},
+            }, ping=(v == "DISARM"))
+        except Exception as e:      # noqa: BLE001
+            logger.warning("[RiskAlerts] calibration_report failed: %r", e)
+
     async def rolling_flow_check():
         """Every 10 min, 10:36-14:00 CT weekdays: catch a flow spike the
         fixed 10:00/12:00/13:30 clocks miss (registry #39, validated
@@ -983,6 +1048,10 @@ def register_risk_alerts(scheduler, app) -> None:
                       id="risk_confirm")
     scheduler.add_job(confirm_close, "cron", hour=15, minute=5, timezone=CT,
                       id="risk_confirm_close")
+    scheduler.add_job(calibration_score, "cron", hour=15, minute=40,
+                      day_of_week="mon-fri", timezone=CT, id="risk_calib_score")
+    scheduler.add_job(calibration_report, "cron", day="1-7", day_of_week="mon",
+                      hour=8, minute=15, timezone=CT, id="risk_calib_report")
     scheduler.add_job(em_breach_check, "cron", minute="*/10", timezone=CT,
                       id="risk_em_breach")
     scheduler.add_job(health_flip_check, "cron", hour=15, minute=50,
