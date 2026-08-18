@@ -414,7 +414,7 @@ def register_risk_alerts(scheduler, app) -> None:
             from .routes_risk import (CONFIRM_WINDOW_CT, CONFIRM_MOVE_PCT,
                                       CONFIRM_ARM_Z, _rolling_flow_now,
                                       _flow_history, _pc_z, _latest_snapshot,
-                                      confirm_step)
+                                      confirm_step, session_log_write)
             start, end = CONFIRM_WINDOW_CT
             t = (now.hour, now.minute)
             if t < start or t > end:
@@ -433,6 +433,10 @@ def register_risk_alerts(scheduler, app) -> None:
             live = await _rolling_flow_now(shim)
             if live is None or not live.get("spot"):
                 return
+            # tape first, so the price point survives even if the step below
+            # throws — a gap in the tape is what made the 08-17 post-mortem
+            # hard, and this poll is the only place spot is sampled.
+            session_log_write(today, now, spot=float(live["spot"]))
             hit = confirm_step(today, now, float(live["spot"]), armed, pcz)
             if hit is None:
                 return
@@ -509,7 +513,7 @@ def register_risk_alerts(scheduler, app) -> None:
                 return
             from .routes_risk import (ROLLING_WINDOW_CT, _rolling_flow_now,
                                       _rolling_baseline_at, _rolling_z,
-                                      _save_rolling_state)
+                                      _save_rolling_state, session_log_write)
             start, end = ROLLING_WINDOW_CT
             t = (now.hour, now.minute)
             if t < start or t > end:
@@ -530,6 +534,11 @@ def register_risk_alerts(scheduler, app) -> None:
             # not it crosses the alert threshold — so /state's flow_rolling
             # block always shows the current z, not just the fired moment.
             _save_rolling_state(today, now.replace(tzinfo=None), pz, tz)
+            # …and APPEND it, because the line above overwrites. That single
+            # overwritten row is the reason the 2026-08-17 slide has no
+            # surviving intraday z history at all.
+            session_log_write(today, now, spot=snap.get("spot"),
+                              roll_putv_z=pz, roll_totv_z=tz)
 
             if (pz or 0) <= 2 and (tz or 0) <= 2:
                 return
