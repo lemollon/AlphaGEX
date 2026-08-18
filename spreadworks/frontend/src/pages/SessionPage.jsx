@@ -114,6 +114,26 @@ function Tape({ tape, levels, confirm }) {
   );
 }
 
+// Supporting detail collapses. The page's job is to answer in the first
+// screen; the clocks and the alert log are proof, and proof does not need to
+// be open by default. (Same restructure that took the squeeze page from 6.3
+// screens to 3.)
+function Fold({ title, meta, children, open: init = false }) {
+  const [open, setOpen] = useState(init);
+  return (
+    <div style={S.card}>
+      <button onClick={() => setOpen(!open)} aria-expanded={open}
+        style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center',
+                 gap: 10, width: '100%', boxSizing: 'border-box' }}>
+        <span style={{ color: DIM, fontSize: 11, width: 10 }}>{open ? '▾' : '▸'}</span>
+        <span style={S.cardTitle}>{title}</span>
+        {meta && <span style={{ ...S.small, marginLeft: 'auto' }}>{meta}</span>}
+      </button>
+      {open && <div style={{ marginTop: 12 }}>{children}</div>}
+    </div>
+  );
+}
+
 export default function SessionPage() {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
@@ -136,6 +156,10 @@ export default function SessionPage() {
   const live = d.clock?.live;
   const fired = !!c.fired_dir;
   const dirColor = c.fired_dir === 'DOWN' ? RED : GREEN;
+  // STALLED/NO DATA are faults and must read red; a closed watch window is
+  // normal and reads neutral. Only a genuinely fresh tape is green.
+  const st = d.clock?.state;
+  const clockTone = live ? GREEN : (st === 'STALLED' || st === 'NO DATA') ? RED : DIM;
 
   // The headline. Priority order matters: a FIRED call outranks everything,
   // then armed-and-waiting, then the quiet state. Never lead with the quiet
@@ -144,7 +168,8 @@ export default function SessionPage() {
   if (fired) {
     head = `${c.fired_dir} CONFIRMED`;
     headColor = dirColor;
-    headBody = `SPY broke ${c.fired_dir.toLowerCase()} through ${num(c.fired_dir === 'DOWN' ? d.levels?.down : d.levels?.up)} at a session ${c.fired_dir === 'DOWN' ? 'low' : 'high'}, from a ${num(c.ref_spot)} reference. On days flagged by the morning flow mix, that break keeps going 63% of the time versus a 50% coin flip otherwise.`;
+    headBody = `Broke through ${num(c.fired_dir === 'DOWN' ? d.levels?.down : d.levels?.up)} at a session ${c.fired_dir === 'DOWN' ? 'low' : 'high'} from a ${num(c.ref_spot)} reference. On flagged days that break keeps going 63% of the time vs a 50% coin flip. `
+      + `**Reduce or close any short ${c.fired_dir === 'DOWN' ? 'put' : 'call'} premium — don't add.**`;
   } else if (c.armed) {
     head = 'ARMED — WAITING FOR A SIDE';
     headColor = AMBER;
@@ -166,13 +191,24 @@ export default function SessionPage() {
         What is happening right now. The regime call lives on Risk and Squeeze — this is the tape.
       </p>
 
-      {/* clock / freshness — says FROZEN rather than implying live */}
-      <div style={{ ...S.card, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <Radio size={15} color={live ? GREEN : DIM} />
-        <Pill text={d.clock?.state} color={live ? GREEN : DIM} solid={live} />
-        <span style={S.small}>
-          {live ? 'Watchers poll every 10 minutes, 10:10–14:00 CT. This page refreshes every 30s.'
-                : d.clock?.detail}
+      {/* Freshness. 🚨 Derived from the newest TAPE ROW, never from market
+          hours — the first version called itself LIVE from 08:30-15:00 while
+          the watchers only run 10:10-14:00, so it sat green over a tape that
+          had stopped half an hour earlier. */}
+      <div style={{
+        ...S.card, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        borderColor: `${clockTone}55`, background: `${clockTone}0d`, marginBottom: 12,
+      }}>
+        <Radio size={15} color={clockTone} />
+        <Pill text={d.clock?.state} color={clockTone} solid={live} />
+        {d.clock?.last_reading_ct && (
+          <span style={{ ...S.mono, fontSize: 12.5, color: clockTone, fontWeight: 700 }}>
+            last reading {d.clock.last_reading_ct} CT
+            {d.clock.age_min != null && ` · ${d.clock.age_min}m ago`}
+          </span>
+        )}
+        <span style={{ ...S.small, marginLeft: 'auto' }}>
+          {d.clock?.detail || `watch window ${d.clock?.window_ct || '10:10–14:00'} CT · page refreshes every 30s`}
         </span>
       </div>
 
@@ -188,24 +224,25 @@ export default function SessionPage() {
             </span>
           )}
         </div>
-        <p style={{ fontSize: 14, lineHeight: 1.6, color: '#c6cbd8', margin: 0, maxWidth: '62ch' }}>
-          {headBody}
+        <p style={{ fontSize: 14.5, lineHeight: 1.6, color: '#c6cbd8', margin: 0, maxWidth: '66ch' }}>
+          {headBody.split('**').map((t, i) => i % 2
+            ? <b key={i} style={{ color: '#e6e9f0' }}>{t}</b> : <span key={i}>{t}</span>)}
         </p>
-        {fired && (
-          <p style={{ fontSize: 14, lineHeight: 1.6, color: '#e6e9f0', margin: '10px 0 0', maxWidth: '62ch' }}>
-            <b>In plain English:</b> the market has picked a side and today it tends to stay picked.
-            If you are short {c.fired_dir === 'DOWN' ? 'put' : 'call'} premium into this you are on the
-            wrong side of it — that is the position to reduce or close. Don’t add.
-          </p>
-        )}
-        <p style={{ ...S.small, margin: '10px 0 0' }}>
-          Advisory. No bot reads this page — nothing here has moved a position.
+        <p style={{ ...S.small, margin: '9px 0 0' }}>
+          Advisory — this page moves nothing. {fired
+            ? `EBB acts on this only if the direction opposes its position (${c.fired_dir === 'DOWN' ? 'it does' : 'it does not today'}).`
+            : ''}
         </p>
       </div>
 
       {/* the tape */}
       <div style={S.card}>
-        <div style={S.cardTitle}>SPY since the 10:00 CT reference</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
+          <span style={{ ...S.cardTitle, marginBottom: 0 }}>SPY since the 10:00 CT reference</span>
+          <span style={{ ...S.small, ...S.mono, marginLeft: 'auto' }}>
+            {d.clock?.last_reading_ct ? `to ${d.clock.last_reading_ct} CT` : 'no readings yet'}
+          </span>
+        </div>
         <Tape tape={d.tape} levels={d.levels} confirm={c} />
         <div style={{ ...S.small, marginTop: 8 }}>
           Session range since the reference: {num(c.run_min)} – {num(c.run_max)}.
@@ -214,8 +251,8 @@ export default function SessionPage() {
       </div>
 
       {/* fixed clocks */}
-      <div style={S.card}>
-        <div style={S.cardTitle}>Flow clocks</div>
+      <Fold title="Flow clocks"
+            meta={`${(d.clocks || []).filter(k => k.captured).length} of ${(d.clocks || []).length} captured${(d.clocks || []).some(k => k.flagged) ? ' · flagged' : ''}`}>
         <div style={{ display: 'grid', gap: 8 }}>
           {(d.clocks || []).map((k) => (
             <div key={k.clock} style={{
@@ -243,15 +280,15 @@ export default function SessionPage() {
           ))}
         </div>
         <div style={{ ...S.small, marginTop: 10, lineHeight: 1.6 }}>
-          <b style={{ color: '#c6cbd8' }}>mix</b> is the put/call volume ratio. It was added after
+          <b style={{ color: '#c6cbd8' }}>mix</b> is the put/call volume ratio. Added after
           2026-08-17, when put and total volume were both correctly quiet and the ratio was at
           +2.7σ — the highest in three months — 90 minutes before the slide.
         </div>
-      </div>
+      </Fold>
 
       {/* pushes already sent */}
-      <div style={S.card}>
-        <div style={S.cardTitle}>Alerts sent today</div>
+      <Fold title="Alerts sent today"
+            meta={`${(d.alerts || []).filter(a => a.fired).length} sent`}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {(d.alerts || []).map((a) => (
             <Pill key={a.key} text={a.label} color={a.fired ? BLUE : DIM} solid={a.fired} />
@@ -260,16 +297,15 @@ export default function SessionPage() {
         <div style={{ ...S.small, marginTop: 10 }}>
           Solid = pushed to Discord and your phone. Dim = hasn’t fired.
         </div>
-      </div>
+      </Fold>
 
       {/* honest exclusion */}
-      <div style={{ ...S.card, marginBottom: 0 }}>
-        <div style={S.cardTitle}>Not shown: dealer gamma</div>
+      <Fold title="Why there's no gamma panel here">
         <p style={{ fontSize: 13, lineHeight: 1.6, color: DIM, margin: 0, maxWidth: '68ch' }}>
           {d.gamma_feed?.reason} Until that feed ticks, a gamma panel here would be a confident
-          picture of a stale number — so there isn’t one.
+          picture of a stale number — so there isn’t one. The GEX Profile page carries the map.
         </p>
-      </div>
+      </Fold>
     </div>
   );
 }
