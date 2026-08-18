@@ -51,14 +51,35 @@ function readAsOf(ts) {
   return { kind: live ? 'live' : 'snapshot', at };
 }
 
-function FreshnessBar({ data }) {
+function FreshnessBar({ data, livePrice }) {
   const { kind, at } = readAsOf(data.timestamp);
   const ageMin = at ? Math.max(0, (Date.now() - at.getTime()) / 60000) : null;
   // Stale only means "a live feed that stopped". An overnight snapshot is old
   // by design and must read as a different STATE, not as a fault.
   const stale = kind === 'live' && ageMin != null && ageMin > 5;
+  // 🚨 A FRESH TIMESTAMP DOES NOT MEAN A FRESH PRICE, and a gamma profile is a
+  // function of spot — every wall and the flip move with it. Measured across
+  // the 2026-08-18 open: the payload's timestamp went live at 08:32 CT and
+  // kept ticking honestly, while `header.price` sat at 772.67 — YESTERDAY'S
+  // CLOSE — until 08:47. SPY opened at 768.70 and never traded 772.67 that
+  // day, so for 15 minutes the page would have rendered a structure built on
+  // a spot $4 (0.5%) wrong, under a green LIVE badge. That reading showed
+  // flip 773.75 just above a 772.67 spot ("near the flip") when SPY was
+  // really $5 below it — the opposite picture.
+  //
+  // So the timestamp is necessary and NOT sufficient. Cross-check against the
+  // intraday bars the page already fetches; they come from a different feed,
+  // which is the whole point of using them as the referee.
+  const drift = (livePrice && data?.header?.price)
+    ? Math.abs(livePrice - data.header.price) / livePrice * 100 : null;
+  const priceStale = kind === 'live' && drift != null && drift > 0.15;
   const [tone, label, detail] =
-    kind === 'live' && !stale
+    priceStale
+      ? ['var(--color-sw-red)', 'STALE SPOT',
+         `This profile is built on ${data.header.price?.toFixed(2)} but SPY is trading `
+         + `${livePrice.toFixed(2)} — ${drift.toFixed(2)}% away. The timestamp is current; the `
+         + `price behind it is not, so every wall and the flip below are drawn at the wrong level.`]
+    : kind === 'live' && !stale
       ? ['var(--color-sw-green)', 'LIVE',
          `Intraday structure, updated ${ageMin < 1 ? 'just now' : `${Math.round(ageMin)} min ago`}.`]
     : stale
@@ -496,7 +517,7 @@ export default function GexProfilePage() {
 
       {data && (
         <>
-          <FreshnessBar data={data} />
+          <FreshnessBar data={data} livePrice={intradayBars.length ? intradayBars[intradayBars.length - 1].close : null} />
 
           {/* Header Metrics */}
           <div className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-2.5 mb-4">
