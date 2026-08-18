@@ -176,3 +176,88 @@ def test_close_is_recorded_so_live_firings_carry_their_outcome(confirm_db):
     # the outcome the row now proves: it kept going, by $2.01
     assert row.close_spot < row.fired_spot
     db.close()
+
+
+# ---------------------------------------------------------------------------
+# THE PIVOT — EBB's one sanctioned early exit.
+#
+# Measured on 892 sessions of real expiry-day NBBO (sell bid / buy ask both
+# ways). The CONTROL is the point: the identical 0.10% down-break exit applied
+# WITHOUT the morning flow gate fires on 45.7% of days and loses $1,050 —
+# which is exactly why "no stop by design" was right. Gated on the flow mix it
+# fires on 3.7% and adds +$952 (t=+1.95), $3.13 -> $4.20/trade, ret/DD
+# 2.98 -> 5.55, worst month -$581 -> -$350. Positive 4/4 years and in every
+# offset/wing variant (+$778 .. +$1,517).
+# ---------------------------------------------------------------------------
+
+from datetime import date as _date, time as _time
+
+
+def _exit(**kw):
+    from backend.bots.monitor import decide_exit
+    base = dict(strategy="bull_put_spread", mtm_pnl=-500.0,
+                pt_target_pnl=14.0, sl_target_pnl=140.0,
+                now_ct=datetime(2026, 8, 17, 12, 0, tzinfo=CT),
+                front_expiration=_date(2026, 8, 17),
+                eod_close_ct=_time(14, 45), event_blackout=False,
+                settle_at_expiry=True)
+    base.update(kw)
+    return decide_exit(**base)
+
+
+def test_settle_at_expiry_still_ignores_a_catastrophic_mark():
+    """The default must be unchanged: no stop, whatever the mark says."""
+    d = _exit(mtm_pnl=-9999.0)
+    assert d.should_close is False and d.reason is None
+
+
+def test_pivot_closes_and_is_labelled_pivot_not_sl():
+    """A confirmed adverse move is the ONE thing that may buy this back — and
+    it must be auditable as a PIVOT, never mixed in with SL."""
+    d = _exit(pivot_confirmed=True)
+    assert d.should_close is True and d.reason == "PIVOT"
+
+
+def test_pivot_does_not_need_a_losing_mark():
+    """It exits on the SIGNAL, not on P&L. A position still green when the
+    watcher confirms against it is exactly the case a price stop misses."""
+    d = _exit(mtm_pnl=+5.0, pivot_confirmed=True)
+    assert d.should_close is True and d.reason == "PIVOT"
+
+
+def test_pivot_direction_must_oppose_the_structure(confirm_db):
+    """An UP confirmation is GOOD for a bull put spread. Treating the fire as
+    bidirectional would close winners — the fastest way to turn this from an
+    edge into a leak."""
+    from backend.bots.scanner import _pivot_against
+    rr = confirm_db
+    d = _date(2026, 8, 17)
+    now = datetime(2026, 8, 17, 12, 0, tzinfo=CT)
+    cfg = {"pivot_on_confirm": 1}
+    rr.confirm_step(d, _t(10, 10), 700.00, armed=True, pcz=2.0)
+    rr.confirm_step(d, _t(11, 0), 701.00, armed=True, pcz=2.0)      # UP
+    assert _pivot_against(cfg, {"strategy": "bull_put_spread"}, now) is False
+    assert _pivot_against(cfg, {"strategy": "bear_call_spread"}, now) is True
+
+
+def test_pivot_is_off_unless_configured(confirm_db):
+    """NULL/0 means off. The fleet must never be silently armed."""
+    from backend.bots.scanner import _pivot_against
+    rr = confirm_db
+    d = _date(2026, 8, 17)
+    now = datetime(2026, 8, 17, 12, 0, tzinfo=CT)
+    rr.confirm_step(d, _t(10, 10), 775.50, armed=True, pcz=2.72)
+    rr.confirm_step(d, _t(11, 55), 774.68, armed=True, pcz=2.72)    # DOWN
+    pos = {"strategy": "bull_put_spread"}
+    assert _pivot_against({"pivot_on_confirm": 0}, pos, now) is False
+    assert _pivot_against({}, pos, now) is False
+    assert _pivot_against({"pivot_on_confirm": 1}, pos, now) is True
+
+
+def test_pivot_holds_when_the_signal_lookup_breaks():
+    """A DB hiccup must leave the position on its validated hold path, not
+    close it on an exception."""
+    from backend.bots.scanner import _pivot_against
+    now = datetime(2026, 8, 17, 12, 0, tzinfo=CT)
+    assert _pivot_against({"pivot_on_confirm": "boom"},
+                          {"strategy": "bull_put_spread"}, now) is False

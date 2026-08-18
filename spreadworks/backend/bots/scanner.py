@@ -184,6 +184,49 @@ def _within_window(now_ct: datetime, start: str, end: str) -> bool:
     return _parse_time(start) <= t < _parse_time(end)
 
 
+def _pivot_against(cfg: dict, pos: dict, now_ct: datetime) -> bool:
+    """Has the two-stage watcher confirmed a move AGAINST this position today?
+
+    Returns False for everything unless ALL of these hold:
+      * the bot's `pivot_on_confirm` config is set,
+      * the watcher fired today (which itself requires the morning put/call
+        mix to have been extreme AND price to have committed to a side),
+      * and the confirmed direction is the one that hurts this structure.
+
+    That last check is what makes it a pivot rather than a stop: an UP
+    confirmation is GOOD for a bull put spread and must not close it. Reading
+    the fire as bidirectional would close winners.
+
+    Never raises — the signal is advisory infrastructure, and a DB hiccup must
+    leave the position on its validated hold-to-settle path rather than
+    closing it on an exception.
+    """
+    try:
+        if not int(cfg.get("pivot_on_confirm") or 0):
+            return False
+        from ..routes_risk import SessionLocal as _SL, RiskConfirmState
+        if _SL is None:
+            return False
+        db = _SL()
+        try:
+            row = db.get(RiskConfirmState, now_ct.date())
+        finally:
+            db.close()
+        if row is None or not row.fired_dir:
+            return False
+        # Only put-side credit structures are studied. A short PUT spread is
+        # hurt by DOWN; a short CALL spread by UP.
+        strat = str(pos.get("strategy") or "")
+        if strat == "bull_put_spread":
+            return row.fired_dir == "DOWN"
+        if strat == "bear_call_spread":
+            return row.fired_dir == "UP"
+        return False
+    except Exception as e:                      # noqa: BLE001
+        logger.warning(f"[pivot] confirm lookup failed, holding: {e!r}")
+        return False
+
+
 def _settlement_value(chain_provider: ChainProvider, ticker: str,
                       legs: list[dict[str, Any]], exp: date,
                       strategy: str) -> float | None:
@@ -1176,6 +1219,7 @@ def run_scan_cycle(
                 entry_time=dip_entry_time, hold_days=dip_hold_days,
                 hold_minutes=hold_minutes,
                 settle_at_expiry=bool(meta.get("settle_at_expiry")),
+                pivot_confirmed=_pivot_against(cfg, pos, now_ct),
             )
             if d.should_close:
                 close_position(engine, bot, pos["position_id"],
