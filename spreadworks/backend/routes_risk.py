@@ -78,6 +78,35 @@ PM_CLOCKS: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {
 # baseline is keyed by ET minute-of-day (571 = 09:31 ET); this window (696-
 # 900) is 10:36-14:00 CT.
 ROLLING_WINDOW_CT: tuple[tuple[int, int], tuple[int, int]] = ((10, 36), (14, 0))
+# --- Two-stage confirmation watcher (validated 2026-08-18) -------------------
+# Stage 1 (10:00 CT): the put/call MIX is extreme -> a bigger-than-normal move
+#   is coming, but the direction is a coin flip (see _pc_z's docstring).
+# Stage 2 (intraday): wait for the market to pick a side, then say so.
+#
+# Measured over 904 sessions (bt_spy minute prices, 2023-01-03 -> 2026-08-11),
+# pooling DOWN breaks and UP breaks. "Continues" = price keeps moving in the
+# confirmed direction from the confirmation minute to the close.
+#
+#   price confirmation alone, no flow flag   n=916   49.8%   <- coin flip
+#   flow flag alone at 10:00                 n= 37   coin flip on direction
+#   FLAG then CONFIRMATION                   n= 95   63.2%   z = +2.61
+#
+# Neither ingredient works alone; the interaction is the signal. Robust across
+# every confirmation threshold tried (0.10-0.30% -> z +2.37..+2.91), positive
+# in all four years, and SYMMETRIC (66.7% on down breaks, 67.6% on up breaks at
+# the 0.25% cut) — symmetry matters because the two sides are disjoint samples.
+#
+# 🚨 This is the leg that answers "why did nobody call the 2026-08-17 slide".
+# Replayed on that session it confirms DOWN at 11:55 CT / 774.68 with $2.00 of
+# the $3.00 move still ahead ($2.17 to the low). The 10:00 snapshot alone never
+# could have — it had no direction to give.
+#
+# 0.10% chosen over the marginally stronger 0.15% cut (z +2.91) deliberately:
+# it fires at a median 10:30 CT vs 10:40, and on a two-stage signal the whole
+# point of stage 2 is how much runway is left when it speaks.
+CONFIRM_ARM_Z = 1.5            # stage-1 put/call z that arms the watcher
+CONFIRM_MOVE_PCT = 0.10        # stage-2 move beyond the 10:00 level, %
+CONFIRM_WINDOW_CT: tuple[tuple[int, int], tuple[int, int]] = ((10, 10), (14, 0))
 ROLLING_BASELINE_JSON = Path(__file__).resolve().parent / "data" / "rolling_flow_baselines.json"
 CBOE_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{sym}_History.csv"
 BASELINE_CSV = Path(__file__).resolve().parent / "data" / "risk_flow_baseline.csv"
@@ -110,6 +139,34 @@ class RiskFlowSnapshotPM(Base):
     callv = Column(BigInteger)
     putv = Column(BigInteger)
     totv = Column(BigInteger)
+
+
+class RiskConfirmState(Base):
+    """Two-stage confirmation watcher — one row per session.
+
+    Holds the 10:00 CT reference price plus the running session extremes, so
+    "is this a NEW session low/high" is answerable from a 10-minute poll
+    without re-pulling intraday history. Additive table: nothing else reads it,
+    so a cold prod database just starts filling it on the next deploy.
+
+    🚨 `fired_*` and `close_spot` exist so every live firing lands in a row
+    with its own outcome attached. The backtest that justifies this signal is
+    n=95 across 4 years; the only way that number improves is if the live
+    firings are recorded with what happened next, rather than being reconstructed
+    later from a log that overwrote itself (which is exactly why the 2026-08-17
+    post-mortem could not see what the rolling z did during the slide).
+    """
+    __tablename__ = "risk_confirm_state"
+    d = Column(Date, primary_key=True)
+    ref_spot = Column(Float)          # 10:00 CT reference
+    run_min = Column(Float)           # session low seen since the reference
+    run_max = Column(Float)           # session high seen since the reference
+    armed = Column(String(8))         # 'yes' / 'no' — stage-1 flow flag
+    putcall_z = Column(Float)         # stage-1 z that armed it
+    fired_dir = Column(String(4))     # 'DOWN' / 'UP' / None
+    fired_at = Column(DateTime)
+    fired_spot = Column(Float)
+    close_spot = Column(Float)        # filled after the close → outcome
 
 
 class RiskFlowRollingState(Base):
@@ -248,6 +305,61 @@ def _z(cur: float, hist: list[float]) -> float | None:
     return (cur - m) / math.sqrt(var)
 
 
+def _pc(r) -> float | None:
+    """Put/call VOLUME RATIO for a snapshot or baseline row.
+
+    Call volume is always `totv - putv`, so this needs NO new capture — both
+    numbers have sat side by side in every snapshot and baseline row since the
+    first one. Accepts a dict (baseline/snapshot) or an ORM row.
+    """
+    putv = r["putv"] if isinstance(r, dict) else r.putv
+    totv = r["totv"] if isinstance(r, dict) else r.totv
+    if putv is None or totv is None:
+        return None
+    callv = totv - putv
+    if callv <= 0:
+        return None
+    return putv / callv
+
+
+def _pc_z(cur: dict, prior: list[dict]) -> float | None:
+    """Trailing-63 z of the put/call ratio.
+
+    🚨 THIS IS THE LEG THAT WAS MISSING ON 2026-08-17. The two shipped legs
+    grade put volume and total volume as LEVELS and both were correctly quiet
+    that morning (putv z +0.58, totv z -0.45, neither near the >2 trigger) —
+    there was no put spike. The information was in the MIX: the ratio printed
+    1.487, **z = +2.72, the highest of the trailing 63 sessions** and the 98th
+    percentile of all 970 baseline sessions, at 10:00 CT — 90 minutes before
+    SPY slid 775.50 -> 772.51 and five minutes before EBB sold a put spread
+    into it. We stored both numbers and never divided them.
+
+    Measured over 896 sessions (2023-01-03 -> 2026-08-11), 10:00 CT clock,
+    outcome = |move from the clock to the close| >= 0.5%:
+
+        base rate (all sessions)      27.2%
+        ratio z > 2   (n=37)          56.8%   2.08x   <- this
+        putv  z > 2   (n=42, shipped) 47.6%   1.75x
+        totv  z > 2   (n=32, shipped) 31.2%   1.15x
+
+    z = 4.03, one-sided binomial p = 1.5e-4 (1.2e-3 after Bonferroni over the
+    eight variants tried), and positive in all four years (2.27 / 1.61 / 1.90
+    / 2.90x). For scale, the rolling watcher (registry #39) shipped on 1.53x.
+
+    🚨🚨 IT IS A BIG-MOVE FLAG, NOT A DOWN-MOVE FLAG. On the 37 firings
+    P(down >= 0.5%) is 24.3% against P(up >= 0.5%) of 32.4% — the UPSIDE tail
+    is the larger one — and P(down at all) is 45.8% vs a 45.4% base, i.e. a
+    coin flip. Simulated against EBB's own structure the spot-2 short strike
+    is breached 24.3% vs 18.9% base: 1.29x on n=37, NOT significant. So this
+    warns and sizes; it must never be read as bearish and must not gate a bot.
+    """
+    cur_pc = _pc(cur)
+    if cur_pc is None:
+        return None
+    hist = [x for x in (_pc(r) for r in prior) if x is not None]
+    return _z(cur_pc, hist)
+
+
 _rolling_baseline_cache: dict[int, dict] | None = None
 
 
@@ -358,6 +470,75 @@ def _save_rolling_state(d: date, captured_at: datetime, pz: float | None,
         db.close()
 
 
+def confirm_step(d: date, now: datetime, spot: float, armed: bool,
+                 pcz: float | None) -> dict | None:
+    """Advance the two-stage watcher one poll. Returns a dict WHEN IT FIRES,
+    else None. Safe to call on unflagged days — it still tracks the extremes so
+    a day that arms late (the 10:00 snapshot can be captured any time in its
+    10:00-10:35 window) has a usable reference.
+
+    Fires at most once per session, in the first direction confirmed.
+    """
+    if SessionLocal is None or not spot:
+        return None
+    db = SessionLocal()
+    try:
+        row = db.get(RiskConfirmState, d)
+        if row is None:
+            row = RiskConfirmState(d=d, ref_spot=spot, run_min=spot,
+                                   run_max=spot)
+            db.add(row)
+        row.armed = "yes" if armed else "no"
+        row.putcall_z = pcz
+        if row.ref_spot is None:
+            row.ref_spot = spot
+        row.run_min = min(row.run_min if row.run_min is not None else spot, spot)
+        row.run_max = max(row.run_max if row.run_max is not None else spot, spot)
+
+        out = None
+        if armed and row.fired_dir is None and row.ref_spot:
+            move = (spot - row.ref_spot) / row.ref_spot * 100.0
+            # "at a session extreme" — the break has to BE the low/high, not
+            # just be below the reference, or a day that gapped down at 10:05
+            # and chopped sideways would fire on every poll.
+            at_low = spot <= (row.run_min or spot) * 1.0005
+            at_high = spot >= (row.run_max or spot) * 0.9995
+            if move <= -CONFIRM_MOVE_PCT and at_low:
+                row.fired_dir = "DOWN"
+            elif move >= CONFIRM_MOVE_PCT and at_high:
+                row.fired_dir = "UP"
+            if row.fired_dir:
+                row.fired_at = now.replace(tzinfo=None)
+                row.fired_spot = spot
+                out = {"dir": row.fired_dir, "spot": spot,
+                       "ref": row.ref_spot, "move_pct": move,
+                       "putcall_z": pcz, "at": now}
+        db.commit()
+        return out
+    except Exception:
+        db.rollback()
+        return None
+    finally:
+        db.close()
+
+
+def confirm_record_close(d: date, close_spot: float) -> None:
+    """Attach the session close to today's watcher row so the firing carries
+    its own outcome. Never raises — a missing row just means no firing."""
+    if SessionLocal is None:
+        return
+    db = SessionLocal()
+    try:
+        row = db.get(RiskConfirmState, d)
+        if row is not None:
+            row.close_spot = close_spot
+            db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _rolling_fired_today(d: date) -> bool:
     """Read-only: did the rolling watcher already post its once-per-day
     alert today? Mirrors risk_alerts._already_posted() without importing
@@ -403,6 +584,32 @@ def _pm_snap_valid(clock: str, captured_at: datetime) -> bool:
 def _pm_snap_dict(row: RiskFlowSnapshotPM) -> dict:
     return {"d": row.d, "clock": row.clock, "captured_at": row.captured_at,
             "callv": row.callv, "putv": row.putv, "totv": row.totv}
+
+
+def _latest_snapshot(d: date) -> dict | None:
+    """READ-ONLY: today's stored 10:00 CT snapshot, or None.
+
+    Deliberately never captures. The confirmation watcher polls every 10
+    minutes right through the afternoon, and `_capture_snapshot` will happily
+    write a row whenever it is called inside the 10:00-10:35 window — so
+    calling that from a repeating job risks the exact failure the window
+    guard exists to prevent (a late pull stored as if it were the 10:00
+    figure, graded against a 10:00 baseline, reading as a huge false spike).
+    Same validity rule as everywhere else: a row outside its window is not
+    that clock's number and is treated as absent.
+    """
+    if SessionLocal is None:
+        return None
+    db = SessionLocal()
+    try:
+        row = db.get(RiskFlowSnapshot, d)
+        if row is None or not _snap_valid(row.captured_at):
+            return None
+        return _snap_dict(row)
+    except Exception:
+        return None
+    finally:
+        db.close()
 
 
 async def _capture_snapshot(request: Request) -> dict | None:
@@ -858,14 +1065,22 @@ async def state(request: Request):
     else:
         st = "snapshot"
     flow = {"status": st, "putv_z": None, "totv_z": None,
-            "otm_call_0dte_z": None, "spike": None}
+            "otm_call_0dte_z": None, "putcall_z": None, "spike": None,
+            "flagged": None}
     if snap is not None:
         pz = _z(snap["putv"], [r["putv"] for r in prior])
         tz = _z(snap["totv"], [r["totv"] for r in prior])
         oz = _z(snap["otm_call_0dte"], [r["otm_call_0dte"] for r in prior])
+        cz = _pc_z(snap, prior)
         flow.update({"captured_at": snap["captured_at"].isoformat(),
                      "putv_z": pz, "totv_z": tz, "otm_call_0dte_z": oz,
-                     "spike": bool((pz or 0) > 2 or (tz or 0) > 2)})
+                     "putcall_z": cz,
+                     "spike": bool((pz or 0) > 2 or (tz or 0) > 2
+                                   or (cz or 0) > 2),
+                     # `flagged` arms the intraday CONFIRMATION watcher; it
+                     # uses the looser 1.5 cut the two-stage test was measured
+                     # at, while `spike` keeps the shipped >2 alert semantics.
+                     "flagged": bool((cz or 0) > CONFIRM_ARM_Z)})
 
     # afternoon re-check clocks (12:00 / 13:30 CT) — same lazy-capture,
     # window-enforced pattern as the 10:00 snapshot, graded against their own

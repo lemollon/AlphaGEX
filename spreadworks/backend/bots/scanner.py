@@ -34,6 +34,7 @@ from .monitor import (
 UPDRAFT_FAMILY = {"updraft", "backdraft", "reversal", "em_breach", "afterburn",
                   "weekender", "flashpoint", "afterglow", "ember", "tempest"}
 from .registry import BOT_REGISTRY, get_bot
+from .strategies import CREDIT_STRATEGIES
 from .strategies.iron_butterfly import build_iron_butterfly_signal
 from .strategies.long_butterfly import build_long_butterfly_signal
 from .strategies.iron_condor import build_iron_condor_signal
@@ -184,12 +185,31 @@ def _within_window(now_ct: datetime, start: str, end: str) -> bool:
 
 
 def _settlement_value(chain_provider: ChainProvider, ticker: str,
-                      legs: list[dict[str, Any]], exp: date) -> float | None:
-    """Cash-settlement value of an expired structure: signed intrinsic of each
-    leg against the official close of the expiry day. None until that close
-    appears in daily history (then the caller retries next scan). Mirrors
-    SPX/XSP European cash settlement — including half-days, where the close
-    is simply the early official close."""
+                      legs: list[dict[str, Any]], exp: date,
+                      strategy: str) -> float | None:
+    """Cash-settlement value of an expired structure, in the same units
+    `close_position` expects for this strategy's credit/debit branch. None
+    until the official close appears in daily history (then the caller retries
+    next scan). Mirrors SPX/XSP European cash settlement — including half-days,
+    where the close is simply the early official close.
+
+    🚨 The returned number means different things either side of
+    `CREDIT_STRATEGIES`, exactly as `close_position` reads it:
+
+      * DEBIT (long_butterfly — RIPPLE/SPLASH): value RECEIVED at settlement.
+        `realized = (close_value - entry_price) * ...`
+      * CREDIT (bull_put_spread — EBB/EBB_PM): COST TO BUY BACK.
+        `realized = (entry_price - close_value) * ...`
+
+    Both are >= 0, but they are opposite signs of the same signed intrinsic,
+    so the sum below is negated for credit structures before the floor. This
+    bit is load-bearing: from 2026-08-14 to 2026-08-18 the floor was applied
+    to the un-negated sum for every strategy, which mapped a credit spread
+    that finished IN the money onto a settlement of exactly 0.00 — i.e. MAX
+    PROFIT. EBB's first live trade (short 774P/long 772P, credit 0.13, SPY
+    closed 772.67) settled at a true cost-to-close of 1.33 and booked +$13.00
+    instead of -$120.00. The losing expiries were the only ones affected,
+    which is precisely the set that decides whether the bot has an edge."""
     def _close_for(sym: str) -> float | None:
         bars = chain_provider.get_daily_history(ticker=sym, days=10)
         for b in bars or []:
@@ -211,7 +231,13 @@ def _settlement_value(chain_provider: ChainProvider, ticker: str,
         k = float(leg["strike"])
         intr = max(0.0, close - k) if leg["type"] == "call" else max(0.0, k - close)
         val += intr if leg["side"] == "long" else -intr
-    # A net-long defined-risk structure settles >= 0 by construction.
+    if strategy in CREDIT_STRATEGIES:
+        # Flip "value received" into "cost to buy back" — see the docstring.
+        val = -val
+    # Defined-risk structures settle >= 0 on BOTH branches: a net-long debit
+    # structure can't be worth less than nothing, and buying back a credit
+    # spread can't pay you. The floor only ever absorbs float noise now that
+    # the sign is right for each branch.
     return round(max(0.0, val), 4)
 
 
@@ -245,7 +271,8 @@ def run_settlement_pass(*, engine: Engine, bot: str, now_ct: datetime,
         if (now_ct.date() == pos_exp
                 and now_ct.timetz().replace(tzinfo=None) < SETTLE_EARLIEST_CT):
             continue
-        settle = _settlement_value(chain_provider, pos["ticker"], legs, pos_exp)
+        settle = _settlement_value(chain_provider, pos["ticker"], legs, pos_exp,
+                                   pos["strategy"])
         if settle is None:
             logger.info(
                 f"[{bot}] {pos['position_id']}: official close for {pos_exp} "
@@ -1030,7 +1057,8 @@ def run_scan_cycle(
             if bool(meta.get("settle_at_expiry")):
                 pos_exp = date.fromisoformat(legs[0]["expiration"])
                 if now_ct.date() > pos_exp:
-                    settle = _settlement_value(chain_provider, pos["ticker"], legs, pos_exp)
+                    settle = _settlement_value(chain_provider, pos["ticker"], legs,
+                                               pos_exp, pos["strategy"])
                     if settle is None:
                         logger.warning(
                             f"[{bot}] {pos['position_id']}: no official close "
