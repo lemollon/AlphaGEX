@@ -133,10 +133,12 @@ export async function GET(
   for (const acct of eligibleProd) {
     const acctLabel = `${acct.name}[production]`
 
-    // 5a: Get account ID (validates API key)
+    // 5a: Resolve the account ID (see the note below — this is NOT auth proof)
     let accountId: string | null = null
+    let profileWasCalled = false
     try {
-      const { getAccountIdForKey } = await import('@/lib/tradier')
+      const { getAccountIdForKey, hasCachedAccountId } = await import('@/lib/tradier')
+      profileWasCalled = !(hasCachedAccountId as any)(acct.apiKey)
       accountId = await (getAccountIdForKey as any)(acct.apiKey, acct.baseUrl)
     } catch (err: unknown) {
       checks.push({
@@ -146,10 +148,27 @@ export async function GET(
       })
       continue
     }
+    // 🚨 Resolving the account id is NOT proof the key works.
+    //
+    // Since the account-id cache is seeded from ironforge_accounts.account_id,
+    // getAccountIdForKey can return a perfectly good id for a key Tradier
+    // rejects — it never has to make a call. Reporting that as "API key
+    // validation PASS" is exactly the kind of green-over-broken this console
+    // exists to prevent: on 2026-08-18 it read PASS while every request was
+    // coming back 401 Invalid Access Token.
+    //
+    // So the step now says which of the two it actually did. The key is only
+    // called VALIDATED when a live call came back; a cached id is reported as
+    // RESOLVED and explicitly defers proof to 5b, which does make the call.
+    const cameFromCache = accountId != null && !profileWasCalled
     checks.push({
       step: `5a. API key validation (${acctLabel})`,
       pass: accountId != null,
-      detail: accountId ? `accountId=${accountId}` : 'RETURNED NULL — API key invalid or Tradier unreachable',
+      detail: accountId
+        ? (cameFromCache
+            ? `accountId=${accountId} (from ironforge_accounts — NOT a live auth check; 5b proves the key)`
+            : `accountId=${accountId} (validated live against Tradier)`)
+        : 'RETURNED NULL — API key invalid or Tradier unreachable',
     })
     if (!accountId) continue
 

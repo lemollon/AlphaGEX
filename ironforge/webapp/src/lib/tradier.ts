@@ -1164,6 +1164,16 @@ async function sandboxGet(
 /** Auto-discover sandbox account ID from profile. */
 const _accountIdCache: Record<string, string> = {}
 
+/** Was this key's account id already known WITHOUT calling Tradier?
+ *
+ * Exists so diagnostics can tell "we resolved an id" apart from "the key
+ * authenticated". Since the cache is seeded from the accounts table, those are
+ * no longer the same thing, and conflating them reports a 401'ing key as
+ * healthy. */
+export function hasCachedAccountId(apiKey: string): boolean {
+  return Boolean(_accountIdCache[apiKey])
+}
+
 async function getAccountIdForKey(apiKey: string, baseUrl: string = SANDBOX_URL): Promise<string | null> {
   if (_accountIdCache[apiKey]) return _accountIdCache[apiKey]
 
