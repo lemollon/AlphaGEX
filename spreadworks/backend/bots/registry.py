@@ -407,6 +407,10 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             # only $+2.87/trade at t=+1.25 (no edge), gated it is $+6.23 at
             # t=+2.44. See bots/vix_regime.py for why the lag is not optional.
             "vix_decay_max": 0.90,
+            # Confirmed-direction pivot (2026-08-18). 1 = armed. Closes the
+            # spread when the two-stage watcher confirms a move AGAINST it.
+            # See monitor.decide_exit for the study and the control.
+            "pivot_on_confirm": 1,
             # Unused for settle_at_expiry bots (kept for the config UI).
             "eod_close_ct": "14:45",
             # Opens/settles post to the risk-advisor channel (see
@@ -510,6 +514,10 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             # improvement, NOT significant on its own). Sits out ~29% of days.
             # Treat as a modest consistent tilt that also rescues the flat year.
             "vix_decay_max": 0.90,
+            # Confirmed-direction pivot (2026-08-18). 1 = armed. Closes the
+            # spread when the two-stage watcher confirms a move AGAINST it.
+            # See monitor.decide_exit for the study and the control.
+            "pivot_on_confirm": 1,
             "discord_alerts": True,
             "delta_skew": 0,
             "use_gex_walls": False,
