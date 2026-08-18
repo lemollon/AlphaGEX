@@ -1577,21 +1577,53 @@ async def session_tape(request: Request):
     weekend = now_ct.weekday() >= 5
     live = (not weekend) and MARKET_OPEN_CT <= t <= MARKET_CLOSE_CT
 
-    # 🚨 Say FROZEN rather than implying live. The pollers only run in-session,
-    # so out of hours every number below is a leftover from the last one — the
-    # failure mode this repo has hit before on bot pages.
+    tape = session_log_read(today)
+
+    # 🚨 FRESHNESS COMES FROM THE DATA, NOT THE MARKET CLOCK.
+    #
+    # The first version derived "LIVE" from market hours (08:30-15:00 CT). But
+    # the watchers only run 10:10-14:00, so between 14:00 and the close the
+    # page sat there with a green LIVE badge over a tape that had stopped 30+
+    # minutes earlier. That is the same defect this page exists to catch, and
+    # it shipped inside the fix for it.
+    #
+    # Age is measured off the newest tape row. A stall INSIDE the watcher
+    # window is a genuine fault and must read differently from the window
+    # simply being over, which is normal.
+    now_min = now_ct.hour * 60 + now_ct.minute
+    last_min = tape[-1]["minute_ct"] if tape else None
+    age_min = (now_min - last_min) if last_min is not None else None
+    win_open = CONFIRM_WINDOW_CT[0][0] * 60 + CONFIRM_WINDOW_CT[0][1]
+    win_close = CONFIRM_WINDOW_CT[1][0] * 60 + CONFIRM_WINDOW_CT[1][1]
+    in_window = (not weekend) and win_open <= now_min <= win_close
+
     if weekend:
         clock = {"live": False, "state": "WEEKEND", "detail": "no session today"}
     elif t < MARKET_OPEN_CT:
         clock = {"live": False, "state": "PRE-OPEN",
                  "detail": "watchers start at 10:10 CT"}
-    elif t > MARKET_CLOSE_CT:
-        clock = {"live": False, "state": "CLOSED",
-                 "detail": "showing the final state of today's session"}
-    else:
+    elif now_min < win_open:
+        clock = {"live": False, "state": "WAITING",
+                 "detail": "market open; the watchers start at 10:10 CT"}
+    elif in_window and age_min is not None and age_min > 15:
+        # polls are every 10 min, so >15 means at least one was missed
+        clock = {"live": False, "state": "STALLED",
+                 "detail": f"no reading for {age_min} min while the watchers "
+                           "should be running — treat everything below as frozen"}
+    elif in_window and last_min is None:
+        clock = {"live": False, "state": "NO DATA",
+                 "detail": "the watchers are in their window but nothing has "
+                           "been recorded yet"}
+    elif in_window:
         clock = {"live": True, "state": "LIVE", "detail": None}
-
-    tape = session_log_read(today)
+    else:
+        clock = {"live": False, "state": "WATCHERS CLOSED",
+                 "detail": "the watch window ended at 14:00 CT — this is the "
+                           "final state of today's session, not a live reading"}
+    clock["age_min"] = age_min
+    clock["last_reading_ct"] = (f"{last_min // 60:02d}:{last_min % 60:02d}"
+                                if last_min is not None else None)
+    clock["window_ct"] = "10:10–14:00"
 
     confirm: dict = {"armed": None, "ref_spot": None, "fired_dir": None,
                      "fired_at": None, "fired_spot": None, "close_spot": None,

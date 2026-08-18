@@ -307,3 +307,66 @@ def test_pivot_holds_when_the_signal_lookup_breaks():
     now = datetime(2026, 8, 17, 12, 0, tzinfo=CT)
     assert _pivot_against({"pivot_on_confirm": "boom"},
                           {"strategy": "bull_put_spread"}, now) is False
+
+
+# ---------------------------------------------------------------------------
+# SESSION CLOCK — freshness must come from the DATA, not from market hours.
+#
+# The first version of /session derived "LIVE" from 08:30-15:00 CT while the
+# watchers only run 10:10-14:00. Between 14:00 and the close it therefore sat
+# with a green LIVE badge over a tape that had stopped half an hour earlier —
+# the exact defect the page was built to catch, shipped inside the fix for it.
+# ---------------------------------------------------------------------------
+
+def _clock(monkeypatch, now_ct, tape_minutes):
+    """Drive session_tape()'s clock branch with a controlled now + tape."""
+    import backend.routes_risk as rr
+    monkeypatch.setattr(rr, "session_log_read",
+                        lambda d: [{"minute_ct": m, "spot": 700.0,
+                                    "roll_putv_z": None, "roll_totv_z": None}
+                                   for m in tape_minutes])
+    monkeypatch.setattr(rr, "_latest_snapshot", lambda d: None)
+    monkeypatch.setattr(rr, "_flow_history", lambda: [])
+    monkeypatch.setattr(rr, "_pm_flow_history", lambda ck: [])
+    monkeypatch.setattr(rr, "_posted_today", lambda k, d: False)
+
+    class _FakeDT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now_ct
+    monkeypatch.setattr(rr, "datetime", _FakeDT)
+    import asyncio
+    return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+        rr.session_tape(None))["clock"]
+
+
+def test_watch_window_over_is_not_live(monkeypatch):
+    """14:32 CT with a tape ending 14:00. The market is open, the watchers are
+    done. This must NOT say LIVE."""
+    c = _clock(monkeypatch, datetime(2026, 8, 18, 14, 32, tzinfo=CT), [610, 780, 840])
+    assert c["live"] is False
+    assert c["state"] == "WATCHERS CLOSED"
+    assert c["last_reading_ct"] == "14:00"
+    assert c["age_min"] == 32
+
+
+def test_a_stall_inside_the_window_is_a_fault(monkeypatch):
+    """Polls are every 10 min. Nothing for 25 min while the watchers should be
+    running is broken, and must read differently from the window being over."""
+    c = _clock(monkeypatch, datetime(2026, 8, 18, 12, 30, tzinfo=CT), [610, 700, 725])
+    assert c["live"] is False
+    assert c["state"] == "STALLED"
+    assert c["age_min"] == 25
+
+
+def test_fresh_tape_inside_the_window_is_live(monkeypatch):
+    c = _clock(monkeypatch, datetime(2026, 8, 18, 12, 30, tzinfo=CT), [610, 740, 750])
+    assert c["live"] is True and c["state"] == "LIVE"
+    assert c["age_min"] == 0
+
+
+def test_open_but_before_the_watchers_start(monkeypatch):
+    """08:30-10:10 the market is open and the watchers legitimately have not
+    started. That is WAITING, not LIVE and not a fault."""
+    c = _clock(monkeypatch, datetime(2026, 8, 18, 9, 30, tzinfo=CT), [])
+    assert c["live"] is False and c["state"] == "WAITING"
