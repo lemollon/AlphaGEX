@@ -1660,6 +1660,16 @@ async def lifespan(app: FastAPI):
             print("[SpreadWorks] Bot tables created/verified")
         except Exception as e:
             print(f"[SpreadWorks] Bot table creation failed (non-fatal): {e}")
+        try:
+            # Seed the decay monitor's evaluation window from the committed
+            # backtest. Unconditional + ON CONFLICT DO NOTHING, so it reaches a
+            # cold prod on the first boot and no-ops thereafter; without it the
+            # rolling window starts empty and reports UNDERPOWERED for ~2 years.
+            from .signal_calibration import seed_from_csv
+            n = seed_from_csv()
+            print(f"[SpreadWorks] Signal evaluation seeded ({n} new rows)")
+        except Exception as e:
+            print(f"[SpreadWorks] Signal eval seed failed (non-fatal): {e}")
     else:
         print("[SpreadWorks] DATABASE_URL not set — running without database")
 
