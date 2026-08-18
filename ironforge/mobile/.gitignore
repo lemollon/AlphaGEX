@@ -3,3 +3,7 @@ node_modules/
 dist/
 dist-web/
 *.log
+dist-shots/
+dist-shots2/
+dist-ui/
+dist-android/

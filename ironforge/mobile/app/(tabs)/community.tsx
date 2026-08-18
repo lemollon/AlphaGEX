@@ -6,6 +6,7 @@ import { api } from '@/api/client'
 import type { CommunityFeed } from '@/api/types'
 import { color, space, radius, type, font } from '@/theme/tokens'
 import { Card, Loading, Empty, ErrorState } from '@/components/ui'
+import { AppHeader } from '@/components/brand'
 
 /**
  * Community — UX-005 (APP-030/031/054/055).
@@ -144,11 +145,18 @@ function time(iso: string): string {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  return <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>{children}</SafeAreaView>
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
+      <AppHeader />
+      {children}
+    </SafeAreaView>
+  )
 }
 
 const s = StyleSheet.create({
-  title: { ...type.title, color: color.text, fontFamily: font.display },
+  // Large bold sans page title per UX-005 — the display face is for the wordmark
+  // and numerics, not headings.
+  title: { color: color.text, fontFamily: font.bodyBold, fontSize: 34, letterSpacing: -0.5 },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   rowCenter: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginVertical: space.lg },

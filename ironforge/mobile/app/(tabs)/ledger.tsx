@@ -6,6 +6,7 @@ import { api } from '@/api/client'
 import type { HistoryTrade } from '@/api/types'
 import { color, space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { Card, Money, OutcomeBadge, AgentBadge, Loading, Empty, ErrorState } from '@/components/ui'
+import { AppHeader } from '@/components/brand'
 
 /**
  * Ledger — UX-004 (APP-017/018/020/021/052/053).
@@ -176,7 +177,12 @@ function Chip({ label, active, onPress }: { label: string; active: boolean; onPr
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  return <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>{children}</SafeAreaView>
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
+      <AppHeader />
+      {children}
+    </SafeAreaView>
+  )
 }
 
 /** close_date is a plain CT date string from the server — parse as local, not UTC. */
@@ -191,7 +197,15 @@ function formatDate(d: string): string {
 }
 
 const s = StyleSheet.create({
-  title: { ...type.title, color: color.text, fontFamily: font.display, marginBottom: space.lg },
+  // Large bold sans page title per UX-004 — the display face is reserved for the
+  // wordmark and numerics, not headings.
+  title: {
+    color: color.text,
+    fontFamily: font.bodyBold,
+    fontSize: 34,
+    letterSpacing: -0.5,
+    marginBottom: space.lg,
+  },
   search: {
     marginTop: space.md,
     backgroundColor: color.bg,
