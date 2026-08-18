@@ -1385,3 +1385,65 @@ describe('Production Account Safety', () => {
     expect(body).toMatch(/acct\.baseUrl/)
   })
 })
+
+/* ────────────────────────────────────────────────────────────────
+ * ACCOUNT-ID CACHE SEEDING (2026-08-18)
+ *
+ * `ironforge_accounts.account_id` was always SELECTed by the DB loader and
+ * then discarded. getAccountIdForKey() therefore had to DISCOVER the account
+ * number by calling /user/profile — for a key whose account number was already
+ * sitting in the row it just read.
+ *
+ * That turned an unnecessary call into a hard gate. When /user/profile does not
+ * answer for a production key, getAccountIdForKey returns null and every caller
+ * reads that as "API key invalid" — including diagnose-production step 5a. The
+ * console reported a dead production key while the SAME key returned correct
+ * balances through /accounts/{id}/balances, which never needs the discovery
+ * call. Diagnosing a VALID key as invalid is the expensive direction: it
+ * silently stops a live bot from ever placing an order.
+ * ──────────────────────────────────────────────────────────────── */
+
+describe('production account id is taken from the DB, not rediscovered', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    mockFetch.mockReset()
+    mockDbQuery.mockReset()
+  })
+
+  it('never calls /user/profile once account_id is available on the row', async () => {
+    mockDbQuery.mockResolvedValue([
+      { person: 'Logan', api_key: 'prod-key-abc', account_id: '6YA12345', type: 'production' },
+    ])
+    const tradier: any = await import('../tradier')
+    await tradier.getLoadedSandboxAccountsAsync()
+
+    // The behaviour that matters: the discovery call is what fails for a
+    // production key and gets misread as "API key invalid". It must not happen.
+    const profileCalls = mockFetch.mock.calls.filter(
+      (c: any[]) => String(c[0]).includes('/user/profile'),
+    )
+    expect(profileCalls).toHaveLength(0)
+  })
+
+  it('reads account_id out of the accounts table', async () => {
+    mockDbQuery.mockResolvedValue([
+      { person: 'Logan', api_key: 'prod-key-abc', account_id: '6YA12345', type: 'production' },
+    ])
+    const tradier: any = await import('../tradier')
+    await tradier.getLoadedSandboxAccountsAsync()
+    // The column was always SELECTed and then thrown away — this pins that the
+    // query still asks for it, so a future tidy-up cannot silently drop it.
+    const sql = mockDbQuery.mock.calls.map((c: any[]) => String(c[0])).join(' ')
+    expect(sql).toContain('account_id')
+    expect(sql).toContain('ironforge_accounts')
+  })
+
+  it('a row with no account_id still loads — discovery remains the fallback', async () => {
+    mockDbQuery.mockResolvedValue([
+      { person: 'Logan', api_key: 'prod-key-none', account_id: null, type: 'production' },
+    ])
+    const tradier: any = await import('../tradier')
+    const accts = await tradier.getLoadedSandboxAccountsAsync()
+    expect(Array.isArray(accts)).toBe(true)
+  })
+})

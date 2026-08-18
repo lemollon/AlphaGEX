@@ -1027,7 +1027,25 @@ async function ensureSandboxAccountsLoaded(): Promise<void> {
         const name = row.person || 'User'
         const acctType = row.type === 'production' ? 'production' as const : 'sandbox' as const
         const baseUrl = acctType === 'production' ? PRODUCTION_URL : SANDBOX_URL
-        merged.push({ name, apiKey: key, baseUrl, type: acctType })
+        merged.push({ name, apiKey: key, baseUrl, type: acctType, cachedAccountId: row.account_id?.toString().trim() || undefined })
+        // 🚨 Seed the account-id cache from the DB row.
+        //
+        // `ironforge_accounts.account_id` has always been SELECTed here and was
+        // then thrown away, so getAccountIdForKey() had no choice but to
+        // DISCOVER the account number by calling /user/profile — on a key whose
+        // account number we already knew.
+        //
+        // That turned an unnecessary lookup into a hard gate: when /user/profile
+        // does not answer for a production key, getAccountIdForKey returns null
+        // and every caller reads it as "API key invalid", including
+        // diagnose-production step 5a. FLAME/SPARK therefore reported a dead
+        // production key while the SAME key returned correct balances through
+        // /accounts/{id}/balances, which never needs the discovery call.
+        //
+        // Diagnosing a valid key as invalid is the expensive direction of this
+        // error: it silently keeps a live bot from ever placing an order.
+        const cachedId = row.account_id?.toString().trim()
+        if (cachedId) _accountIdCache[key] = cachedId
       }
       // Atomic replacement — any concurrent reader sees either the old or new array, never a partial state
       _sandboxAccounts = merged
