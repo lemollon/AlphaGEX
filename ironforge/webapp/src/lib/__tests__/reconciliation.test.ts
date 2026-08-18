@@ -567,3 +567,52 @@ describe('9. Production Isolation', () => {
     expect(equitySource).toMatch(/account_type/)
   })
 })
+
+/* ────────────────────────────────────────────────────────────────
+ * EQUITY CURVE: include_archived must mean every prior era (2026-08-18)
+ *
+ * The ARCHIVED_* prefix is applied BY HAND when a strategy is retired, and it
+ * has only ever been applied partially. FLAME's closed trades on 2026-08-18:
+ *
+ *     0DTE (live)      2     2DTE            70   <- was invisible
+ *     ARCHIVED_2DTE   30     7DTE             3   <- was invisible
+ *     ARCHIVED_7DTE    9     14DTE            3   <- was invisible
+ *     ARCHIVED_14DTE   1     1DTE             1   <- was invisible
+ *     ARCHIVED_1DTE    1
+ *
+ * 119 closed trades; the curve drew 43. The dashboard already passes
+ * include_archived=1, so the operator saw a chart missing most of the bot's
+ * life and read it as gaps and desync.
+ *
+ * A rename is bookkeeping. It must never decide whether a real trade appears.
+ * ──────────────────────────────────────────────────────────────── */
+
+import { readFileSync as _rfs } from 'fs'
+import { join as _join } from 'path'
+
+describe('equity curve — include_archived covers unrenamed prior modes', () => {
+  const src = _rfs(
+    _join(process.cwd(), 'src/app/api/[bot]/equity-curve/route.ts'),
+    'utf-8',
+  )
+
+  it('pins no dte_mode at all once include_archived is set', () => {
+    expect(src).toContain("const curveDteFilter = includeArchived ? '' : dteFilter")
+  })
+
+  it('no longer relies on the ARCHIVED_ prefix to find history', () => {
+    // The old filter matched only renamed rows and hid the other 77 trades.
+    expect(src).not.toContain("dte_mode LIKE 'ARCHIVED%'`\n      : dteFilter")
+  })
+
+  it('rebases against every non-live mode, not just renamed ones', () => {
+    // The baseline must cover exactly the rows the widened filter admits, or
+    // the curve and the balance card disagree.
+    expect(src).toContain("status = 'archived_reset' OR dte_mode <> ")
+  })
+
+  it('still pins the live mode when archived history was NOT requested', () => {
+    expect(src).toContain("includeArchived ? '' : dteFilter")
+    expect(src).toContain("const dteFilter = dte ? `AND dte_mode = ")
+  })
+})
