@@ -46,6 +46,7 @@ import {
   isConfiguredAsync,
   placeIcOrderAllAccounts,
   canPlaceLiveOrders,
+  describeLiveGate,
   closeIcOrderAllAccounts,
   cancelSandboxOrder,
   getLoadedSandboxAccounts,
@@ -3645,8 +3646,18 @@ async function tryOpenFlameBook(
   //
   // Nothing below runs unless the bot is armed. Deploying this changes nothing.
   // ────────────────────────────────────────────────────────────────────────
+  //
+  // 🚨 SILENCE IS NOT AN ANSWER. This branch used to leave `liveNote` empty when
+  // the bot was disarmed, so a paper-only fill logged exactly like a live one
+  // that filled on both. On 2026-08-19 FLAME's arm env was set on
+  // ironforge-legacy — which logs "[scanner] not started" — while the process
+  // that actually trades is ironforge-customer, which had no FLAME creds. The
+  // console read `live_orders_allowed: true` and the scanner traded paper only,
+  // and nothing anywhere said so. Every path now leaves a note.
   let liveNote = ''
-  if (canPlaceLiveOrders(bot.name)) {
+  if (!canPlaceLiveOrders(bot.name)) {
+    liveNote = ` live:disarmed(${describeLiveGate(bot.name)})`
+  } else {
     // Race guard: one production placement per bot per 5 minutes. Claimed
     // BEFORE the await so two ticks cannot both pass, released if nothing filled.
     const nowMs = Date.now()
