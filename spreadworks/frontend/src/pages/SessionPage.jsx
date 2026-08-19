@@ -38,6 +38,9 @@ const S = {
 };
 
 const ctLabel = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+// Mirrors routes_risk.CONFIRM_ARM_Z. Kept as one constant so the wording, the
+// dot colour and the chart's ARMS gridline can never drift apart.
+const CONFIRM_ARM_Z = 1.5;
 const num = (x, d = 2) => (x == null || Number.isNaN(x) ? '—' : Number(x).toFixed(d));
 
 // z-score -> colour. Only ±2 is a threshold anywhere in this system; 1.5 arms
@@ -46,7 +49,7 @@ const num = (x, d = 2) => (x == null || Number.isNaN(x) ? '—' : Number(x).toFi
 function zColor(z) {
   if (z == null) return DIM;
   if (z > 2) return RED;
-  if (z > 1.5) return AMBER;
+  if (z > CONFIRM_ARM_Z) return AMBER;
   return DIM;
 }
 
@@ -58,6 +61,41 @@ function Pill({ text, color, solid }) {
       color: solid ? '#0b0e17' : color, background: solid ? color : `${color}22`,
       border: `1px solid ${color}${solid ? '' : '55'}`,
     }}>{text}</span>
+  );
+}
+
+// A chart header that states the CURRENT READING, its age, and what the
+// reading means — not just the window the chart covers.
+//
+// 🚨 Both charts previously headed themselves with a RANGE ("to 11:50 CT",
+// "08:31–14:59 CT · rolling z vs the trailing 63"). That is the span the
+// chart draws, which is a different question from "what does it say right
+// now, and is that number still current". You could read the shape and still
+// not know the level.
+//
+// 🚨 The two charts carry DIFFERENT ages on purpose. Spot is written by the
+// confirmation watcher and the z-scores by the rolling watcher; they poll on
+// the same */10 cron but either can miss a slot. One shared "last reading"
+// caption would quietly attribute one watcher's freshness to the other.
+function Readout({ value, unit, meaning, meaningColor, at, ageMin, valueColor }) {
+  const stale = ageMin != null && ageMin > 15;
+  return (
+    <div style={{ marginLeft: 'auto', textAlign: 'right', lineHeight: 1.25 }}>
+      <div>
+        <span style={{ ...S.mono, fontSize: 19, fontWeight: 700, color: valueColor || '#e6e9f0' }}>
+          {value}
+        </span>
+        {unit && <span style={{ ...S.small, marginLeft: 3 }}>{unit}</span>}
+        {meaning && (
+          <span style={{ fontSize: 11.5, fontWeight: 700, color: meaningColor || DIM,
+                         marginLeft: 8, letterSpacing: '.03em' }}>{meaning}</span>
+        )}
+      </div>
+      <div style={{ ...S.small, ...S.mono, color: stale ? AMBER : DIM }}>
+        {at ? `${at} CT${ageMin != null ? ` · ${ageMin}m ago` : ''}` : 'no reading yet'}
+        {stale ? ' · STALLED' : ''}
+      </div>
+    </div>
   );
 }
 
@@ -106,7 +144,15 @@ function Tape({ tape, levels, confirm }) {
                     Math.abs(p.spot - confirm.fired_spot) < Math.abs(b.spot - confirm.fired_spot) ? p : b).minute_ct)}
                   cy={Y(confirm.fired_spot)} r="5" fill={confirm.fired_dir === 'DOWN' ? RED : GREEN} />
         )}
-        <circle cx={X(last.minute_ct)} cy={Y(last.spot)} r="3.5" fill="#e6e9f0" />
+        {/* 🚨 THE CHART DREW A SHAPE AND NEVER SAID WHAT IT READS. The axis
+            labelled the triggers and the reference, but the one number you
+            actually want — where SPY IS — existed only as an unlabelled dot.
+            Label it on the line, and again in the header. */}
+        <circle cx={X(last.minute_ct)} cy={Y(last.spot)} r="4" fill="#e6e9f0" />
+        <text x={Math.min(X(last.minute_ct) + 8, W - mr - 44)} y={Y(last.spot) + 4}
+              fill="#e6e9f0" style={{ fontSize: 12, fontWeight: 700, ...S.mono }}>
+          {num(last.spot)}
+        </text>
         <text x={ml} y={H - 8} fill={DIM} style={{ fontSize: 10, ...S.mono }}>{ctLabel(m0)}</text>
         <text x={W - mr} y={H - 8} textAnchor="end" fill={DIM}
               style={{ fontSize: 10, ...S.mono }}>{ctLabel(m1)} CT</text>
@@ -159,6 +205,7 @@ function FlowTrack({ tape }) {
     </g>
   );
   const last = [...rows].reverse().find((r) => r.roll_pc_z != null);
+  const lastAny = [...rows].reverse().find((r) => r.roll_putv_z != null);
   return (
     <div style={{ overflowX: 'auto', minWidth: 0 }}>
       <svg width={W} height={H} role="img"
@@ -169,16 +216,31 @@ function FlowTrack({ tape }) {
         {paths('roll_totv_z').map((d, i) => <path key={`t${i}`} d={d} fill="none" stroke={DIM} strokeWidth="1" opacity=".45" />)}
         {paths('roll_putv_z').map((d, i) => <path key={`p${i}`} d={d} fill="none" stroke={BLUE} strokeWidth="1" opacity=".5" />)}
         {paths('roll_pc_z').map((d, i) => <path key={`c${i}`} d={d} fill="none" stroke="#e6e9f0" strokeWidth="1.9" strokeLinejoin="round" />)}
-        {last && <circle cx={X(last.minute_ct)} cy={Y(last.roll_pc_z)} r="3.5"
-                         fill={zColor(last.roll_pc_z) === DIM ? '#e6e9f0' : zColor(last.roll_pc_z)} />}
+        {last && (<>
+          <circle cx={X(last.minute_ct)} cy={Y(last.roll_pc_z)} r="4"
+                  fill={zColor(last.roll_pc_z) === DIM ? '#e6e9f0' : zColor(last.roll_pc_z)} />
+          <text x={Math.min(X(last.minute_ct) + 8, W - mr - 40)} y={Y(last.roll_pc_z) + 4}
+                fill={zColor(last.roll_pc_z) === DIM ? '#e6e9f0' : zColor(last.roll_pc_z)}
+                style={{ fontSize: 12, fontWeight: 700, ...S.mono }}>
+            {num(last.roll_pc_z, 2)}σ
+          </text>
+        </>)}
         <text x={ml} y={H - 6} fill={DIM} style={{ fontSize: 10, ...S.mono }}>{ctLabel(m0)}</text>
         <text x={W - mr} y={H - 6} textAnchor="end" fill={DIM}
               style={{ fontSize: 10, ...S.mono }}>{ctLabel(m1)} CT</text>
       </svg>
-      <div style={{ ...S.small, display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 6 }}>
-        <span><b style={{ color: '#e6e9f0' }}>——</b> mix (put/call ratio)</span>
-        <span style={{ color: BLUE }}>—— put volume</span>
-        <span>—— total volume</span>
+      {/* The legend named the lines and never gave their values. A reader
+          could see three wiggles and still not know what the flow is. */}
+      <div style={{ ...S.small, display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 6 }}>
+        <span><b style={{ color: '#e6e9f0' }}>——</b> mix (put/call ratio){' '}
+          <b style={{ ...S.mono, color: zColor(last?.roll_pc_z) === DIM ? '#e6e9f0' : zColor(last?.roll_pc_z) }}>
+            {num(last?.roll_pc_z, 2)}σ
+          </b>
+        </span>
+        <span style={{ color: BLUE }}>—— put volume{' '}
+          <b style={S.mono}>{num(lastAny?.roll_putv_z, 2)}σ</b>
+        </span>
+        <span>—— total volume <b style={S.mono}>{num(lastAny?.roll_totv_z, 2)}σ</b></span>
       </div>
     </div>
   );
@@ -223,6 +285,40 @@ export default function SessionPage() {
   if (!d) return <div className="flex-1 overflow-y-auto"><div style={S.wrap}><div style={S.card}>Loading…</div></div></div>;
 
   const c = d.confirm || {};
+
+  // ── CURRENT READINGS, per chart, each on its own clock.
+  // 🚨 Spot and the z-scores are written by two different watchers into the
+  // same 10-minute slot. Either can miss one, so the newest row WITH A SPOT is
+  // not necessarily the newest row with a mix — reading both off d.clock would
+  // report one watcher's freshness under the other's chart.
+  const tapeRows = d.tape || [];
+  // 🚨 PARSE THE SERVER'S OWN CT CLOCK OUT OF THE STRING — never new Date().
+  // `asof` is "...T12:03:21-05:00". new Date(asof).getHours() converts to the
+  // BROWSER's timezone, so this page viewed from anywhere but Central would
+  // have reported ages hours off and shown a fresh tape as STALLED (or worse,
+  // a stalled one as fresh). Reading the browser clock instead of the payload
+  // is the same defect as the old LIVE badge, and the same trap that made
+  // Git Bash print 13:57 for an 08:57 CT session.
+  const nowMin = (() => {
+    const m = /T(\d{2}):(\d{2})/.exec(d.asof || '');
+    return m ? (+m[1]) * 60 + (+m[2]) : null;
+  })();
+  const spotRow = [...tapeRows].reverse().find((r) => r.spot != null) || null;
+  const mixRow = [...tapeRows].reverse().find((r) => r.roll_pc_z != null) || null;
+  const spotNow = spotRow?.spot ?? null;
+  const mixNow = mixRow?.roll_pc_z ?? null;
+  const ageOf = (row) => (row && nowMin != null ? Math.max(0, nowMin - row.minute_ct) : null);
+  const spotAge = ageOf(spotRow), mixAge = ageOf(mixRow);
+
+  // What the mix number MEANS. A bare sigma is only readable if you already
+  // hold the thresholds in your head; these are the same cuts the watcher and
+  // the chart's gridlines use, so the word can never disagree with the line.
+  const mixMeaning = mixNow == null ? null
+    : mixNow > 2 ? 'SPIKE'
+    : mixNow > CONFIRM_ARM_Z ? 'ELEVATED — would arm'
+    : mixNow > 1 ? 'slightly heavy'
+    : mixNow < -1 ? 'call-heavy'
+    : 'ordinary';
   const live = d.clock?.live;
   const fired = !!c.fired_dir;
   const dirColor = c.fired_dir === 'DOWN' ? RED : GREEN;
@@ -342,9 +438,16 @@ export default function SessionPage() {
       <div style={S.card}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
           <span style={{ ...S.cardTitle, marginBottom: 0 }}>SPY since the 10:00 CT reference</span>
-          <span style={{ ...S.small, ...S.mono, marginLeft: 'auto' }}>
-            {d.clock?.last_reading_ct ? `to ${d.clock.last_reading_ct} CT` : 'no readings yet'}
-          </span>
+          <Readout
+            value={spotNow != null ? num(spotNow) : '—'}
+            meaning={spotNow != null && c.ref_spot
+              ? `${spotNow - c.ref_spot >= 0 ? '+' : ''}${num(spotNow - c.ref_spot)} vs 10:00`
+              : null}
+            meaningColor={spotNow != null && c.ref_spot
+              ? (spotNow >= c.ref_spot ? GREEN : RED) : DIM}
+            at={spotRow ? ctLabel(spotRow.minute_ct) : null}
+            ageMin={spotAge}
+          />
         </div>
         <Tape tape={d.tape} levels={d.levels} confirm={c} />
 
@@ -391,12 +494,18 @@ export default function SessionPage() {
       <div style={S.card}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
           <span style={{ ...S.cardTitle, marginBottom: 0 }}>Option flow through the session</span>
-          <span style={{ ...S.small, marginLeft: 'auto' }}>
-            {d.clock?.tape_window_ct || '08:31–14:59'} CT · rolling z vs the trailing 63 at the same minute
-          </span>
+          <Readout
+            value={mixNow != null ? num(mixNow, 2) : '—'} unit="σ mix"
+            valueColor={zColor(mixNow) === DIM ? '#e6e9f0' : zColor(mixNow)}
+            meaning={mixMeaning} meaningColor={zColor(mixNow)}
+            at={mixRow ? ctLabel(mixRow.minute_ct) : null}
+            ageMin={mixAge}
+          />
         </div>
         <FlowTrack tape={d.tape} />
         <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6, maxWidth: '72ch' }}>
+          Covers {d.clock?.tape_window_ct || '08:31–14:59'} CT · each point is graded against the
+          trailing 63 sessions <i>at that same minute</i>, so 09:00 is compared with 63 other 09:00s.{' '}
           The <b style={{ color: '#e6e9f0' }}>mix</b> line is the put/call ratio — the leg the arming
           decision is made on, and the one that read +2.7σ on 2026-08-17 while put and total volume
           were both quiet. It was only graded at the three fixed clocks until 2026-08-19; every 10
