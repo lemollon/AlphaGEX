@@ -62,10 +62,24 @@ def test_rolling_baseline_at_picks_nearest_minute_at_or_before():
     assert row == routes_risk._rolling_baseline()[nearest_key]
 
 
-def test_rolling_baseline_at_before_window_returns_none():
-    # 09:00 CT -> ET minute 600, below the baseline's lowest key (696)
-    row = routes_risk._rolling_baseline_at(datetime(2026, 8, 13, 9, 0))
-    assert row is None
+def test_rolling_baseline_now_reaches_the_open_and_the_close():
+    """CHANGED 2026-08-19. The baseline used to start at ET 696 (10:36 CT) and
+    stop at 900 (14:00), so this returned None at 09:00 and the tape simply
+    recorded nothing for 41% of the session — including the last hour, when
+    0DTE gamma peaks and EBB settles at the close. That was never a data
+    limit: bt_spy carries ~900 sessions at every minute 571-959.
+
+    The poll returns early on a missing baseline row, so a short baseline is
+    indistinguishable from a working one — it just quietly logs nothing."""
+    for h, m in ((9, 0), (8, 40), (14, 30), (14, 55)):
+        row = routes_risk._rolling_baseline_at(datetime(2026, 8, 13, h, m))
+        assert row is not None, f"no baseline at {h:02d}:{m:02d} CT"
+        assert row["pc_sd"], f"no MIX baseline at {h:02d}:{m:02d} CT"
+
+
+def test_rolling_baseline_at_before_the_open_still_returns_none():
+    """Pre-open there is genuinely nothing to grade against."""
+    assert routes_risk._rolling_baseline_at(datetime(2026, 8, 13, 7, 0)) is None
 
 
 def test_rolling_z_matches_manual_calc():
@@ -197,12 +211,22 @@ async def test_slot_claimed_only_after_successful_fetch(monkeypatch):
     assert claimed == set()
 
 
-@freeze_time("2026-08-13 15:00:00")   # 10:00 CT — before the 10:36 window
-async def test_outside_window_does_nothing(monkeypatch):
+@freeze_time("2026-08-13 15:00:00")   # 10:00 CT — inside the tape window,
+                                      # outside the 10:36 ALERT window
+async def test_outside_the_alert_window_records_but_never_pushes(monkeypatch):
+    """🚨 THE SPLIT, pinned. Registry #39's 1.53x lift was measured on
+    10:36-14:00, so a spike at 10:00 must NOT push — nobody has measured what
+    an early crossing is worth. But it must still be RECORDED, because a
+    session you cannot replay is one you cannot improve, and that is the whole
+    reason risk_session_log exists.
+
+    Before 2026-08-19 this asserted `saved == []` — the tape was as blind as
+    the alert."""
     func, args, claimed, saved, sent = _wire(monkeypatch, SPIKE_SNAP)
     await func(*args)
-    assert sent == []
-    assert saved == []
+    assert sent == [], "a spike outside the measured window must not push"
+    assert saved != [], "…but it must still land on the tape"
+    assert claimed == set(), "and must not burn the day's alert slot"
 
 
 @freeze_time("2026-08-15 16:00:00")   # a Saturday

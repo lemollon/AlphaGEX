@@ -382,7 +382,9 @@ export default function SessionPage() {
       <div style={S.card}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
           <span style={{ ...S.cardTitle, marginBottom: 0 }}>Option flow through the session</span>
-          <span style={{ ...S.small, marginLeft: 'auto' }}>rolling z vs the trailing 63 at the same minute</span>
+          <span style={{ ...S.small, marginLeft: 'auto' }}>
+            {d.clock?.tape_window_ct || '08:31–14:59'} CT · rolling z vs the trailing 63 at the same minute
+          </span>
         </div>
         <FlowTrack tape={d.tape} />
         <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6, maxWidth: '72ch' }}>
@@ -390,6 +392,9 @@ export default function SessionPage() {
           decision is made on, and the one that read +2.7σ on 2026-08-17 while put and total volume
           were both quiet. It was only graded at the three fixed clocks until 2026-08-19; every 10
           minutes is new here. A break in a line is a poll that failed, not a flat reading.
+          {' '}The tape records the <b style={{ color: '#c6cbd8' }}>whole session</b>; the flow
+          alert still only fires 10:36–14:00 CT, where it was measured. A morning or
+          late-afternoon crossing shows up here and deliberately does not push.
         </div>
       </div>
 
