@@ -60,6 +60,16 @@ Thumbs.db
 *.xlsx
 *.db
 *.sqlite
+
+# ...except the committed baseline seeds. These are SHIPPED DATA, not scratch
+# output: the flow/gamma/VIX z-scores compute against them and _z() returns
+# None with fewer than 40 rows, so a missing file does not error — it silently
+# turns the signal off. risk_flow_baseline_pm.csv was caught by the blanket
+# rule above and never committed at all, which left the 12:00 and 13:30
+# re-check clocks blind in production from the day they shipped and kept CI
+# red on main. The other four were force-added one at a time; this negation is
+# so the next one does not have to be.
+!spreadworks/backend/data/*.csv
 *.zip
 
 # ORAT Historical Data (large files - process locally)
