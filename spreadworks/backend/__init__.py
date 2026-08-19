@@ -13,6 +13,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import re
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -1847,6 +1848,31 @@ try:
 except Exception as _squeeze_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] Squeeze routes failed to load: %r", _squeeze_exc)
+
+
+@app.get("/api/spreadworks/version", include_in_schema=False)
+async def frontend_version():
+    """Which frontend build is CURRENTLY on disk.
+
+    🚨 WHY THIS EXISTS. Every page here polls its DATA on a timer but never
+    re-fetches its own CODE. A tab left open across a deploy therefore runs the
+    OLD UI against FRESH numbers, indefinitely — the timestamps keep ticking, so
+    it looks alive and correct. That is not a theoretical failure: it cost real
+    time twice on 2026-08-19, when a shipped-and-verified change was reported as
+    missing because the tab predated the deploy. Cache headers do not help; the
+    tab simply never asks again.
+
+    Reads the bundle filename out of the served index.html, which changes on
+    every build because Vite content-hashes it. Cheap, and it never raises — a
+    version check that 500s would be worse than no version check.
+    """
+    try:
+        index = FRONTEND_DIST / "index.html"
+        html = index.read_text(encoding="utf-8", errors="ignore")
+        m = re.search(r'assets/(index-[A-Za-z0-9_-]+\.js)', html)
+        return {"build": m.group(1) if m else None}
+    except Exception:                                        # noqa: BLE001
+        return {"build": None}
 
 
 @app.get("/health")

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { ShieldAlert, Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, PieChart, Zap, Radio } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
+import UpdateBanner from './components/UpdateBanner';
 import ChartArea from './components/ChartArea';
 import ControlsBar from './components/ControlsBar';
 import PnLTable from './components/PnLTable';
@@ -401,6 +402,9 @@ export default function App() {
     <BrowserRouter>
       <div className="flex flex-col h-dvh w-full overflow-hidden">
         <NavBar />
+        {/* Mounted once at the shell so every page inherits it — a stale tab
+            is an app-wide condition, not a per-page one. */}
+        <UpdateBanner />
         <Suspense fallback={
           <div className="flex-1 flex items-center justify-center text-text-tertiary text-sm">
             Loading…
