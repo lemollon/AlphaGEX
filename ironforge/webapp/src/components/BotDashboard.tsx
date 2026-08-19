@@ -328,6 +328,15 @@ export default function BotDashboard({
     // FLARE's positions the same afternoon they open and book a phantom $0 P&L
     // (its single-leg verticals have NULL IC strike columns). Never fire it here.
     if (bot === 'flare') return
+    // 🚨 EBB SETTLES AT THE CLOSE — do not even ask.
+    // FLAME and SPARK hold to expiry and book at intrinsic against the official
+    // close; buying them back at 14:45 is the failure, not the safety net. The
+    // route refuses this too (isSettleAtExpiryBot), but the call originates HERE,
+    // in whichever browser happens to have a bot page open — which is why it hit
+    // FLAME at 14:45:04 and SPARK at 14:49:19 on 2026-08-19, four minutes apart,
+    // with no scanner involvement at all. Mirrors lib/db.ts isSettleAtExpiryBot;
+    // that server-side function is the source of truth.
+    if (bot === 'flame' || bot === 'spark') return
     const positions = positionMonitor?.positions
     if (!positions || positions.length === 0) return
 
