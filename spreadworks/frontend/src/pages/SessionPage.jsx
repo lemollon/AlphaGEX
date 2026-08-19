@@ -99,6 +99,63 @@ function Readout({ value, unit, meaning, meaningColor, at, ageMin, valueColor })
   );
 }
 
+// ── What the FLOW chart is worth. This is the leg that carries the edge, and
+// its card was the worst offender on the page: a plot of three lines hugging
+// zero, a bare "0.38σ ordinary", and then six lines of methodology. Nowhere
+// did it answer the only question that closes the day out — CAN IT STILL ARM?
+//
+// ⛔ It cannot arm outside 10:36-14:00 CT (registry #39 measured it there), so
+// after 14:00 the answer is final and the card must say so instead of leaving
+// a live-looking chart on screen. A reader watching 0.38σ tick along at 14:50
+// has no way to know the decision was settled fifty minutes ago.
+function FlowVerdict({ d, c }) {
+  const open = d?.window?.open_ct, close = d?.window?.close_ct;
+  const toMin = (t) => { const m = /^(\d{1,2}):(\d{2})/.exec(t || ''); return m ? +m[1]*60 + +m[2] : null; };
+  const o = toMin(open), k = toMin(close);
+  // The peak the mix reached INSIDE the alert window — a morning spike outside
+  // it is real on the chart and deliberately cannot arm, so it must not be
+  // reported as a near miss.
+  let peak = null, peakAt = null;
+  for (const r of (d?.tape || [])) {
+    if (r.roll_pc_z == null) continue;
+    if (o != null && k != null && (r.minute_ct < o || r.minute_ct > k)) continue;
+    if (peak == null || r.roll_pc_z > peak) { peak = r.roll_pc_z; peakAt = r.minute_ct; }
+  }
+  const armed = c?.armed === true;
+  const shut = d?.window?.closes_in_min != null && d.window.closes_in_min <= 0;
+  const hhmm = (m) => (m == null ? '' : `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`);
+
+  let tone, call, why;
+  if (armed) {
+    tone = AMBER;
+    call = `ARMED at ${num(c.putcall_z, 2)}σ`;
+    why = 'Stage 1 is in. The trade now depends on price breaking at a session extreme.';
+  } else if (shut) {
+    tone = DIM;
+    call = 'IT CANNOT ARM TODAY — WINDOW CLOSED';
+    why = `The mix never reached ${num(CONFIRM_ARM_Z, 2)}σ inside ${open}–${close} CT`
+        + (peak != null ? `; the closest it came was ${num(peak, 2)}σ at ${hhmm(peakAt)}.` : '.')
+        + ' Whatever the line does now is after the fact.';
+  } else {
+    tone = DIM;
+    call = `NOT ARMED — needs ${num(CONFIRM_ARM_Z, 2)}σ`;
+    why = (peak != null ? `Best so far ${num(peak, 2)}σ. ` : '')
+        + `Still live until ${close} CT`
+        + (d?.window?.closes_in_min != null ? ` (${d.window.closes_in_min} min).` : '.');
+  }
+  return (
+    <div style={{
+      marginTop: 4, padding: '10px 12px', borderRadius: 8, background: '#0e1220',
+      border: `1px solid ${tone}33`,
+    }}>
+      <div style={{ fontSize: 13.5, fontWeight: 700, color: tone === DIM ? '#e6e9f0' : tone }}>
+        {call}
+      </div>
+      <div style={{ fontSize: 12, color: '#c6cbd8', marginTop: 3, lineHeight: 1.5 }}>{why}</div>
+    </div>
+  );
+}
+
 // ── THE REST OF THE BOARD. /risk, /squeeze and /session are three readings of
 // ONE market, and showing them apart invites the reader to resolve an apparent
 // contradiction themselves ("squeeze says oversold, session says no edge —
@@ -215,31 +272,35 @@ function TapeVerdict({ d, c, fired }) {
   const hit = (b) => (b?.continued != null ? `${(100 * b.continued).toFixed(1)}%` : '—');
   const closed = d?.window?.closes_in_min != null && d.window.closes_in_min <= 0;
 
-  let tone, call, why;
+  // ⛔ THE VERDICT IS AN INSTRUCTION, NOT A FINDING. The first version of this
+  // block explained the statistics ("46.8% keep going vs a 49.2% base, and the
+  // tilt is toward the bounce") and left the reader to convert that into a
+  // decision. That is the same failure as the chart it replaced, one layer up:
+  // information where an answer belongs. The evidence still has to be
+  // auditable, so it moves behind a fold instead of leading.
+  let tone, call, why, evidence;
   if (fired && armed) {
     tone = GREEN;
-    call = `ARMED ${c.fired_dir} BREAK — this is the trade`;
-    why = `Both legs are in. Historically ${hit(r.armed)} continue to the close and the `
-        + `payoff is ${pay(r.armed)} (n=${r.armed?.n ?? '—'}). Roughly one in three still fails.`;
-  } else if (fired && !armed) {
-    tone = DIM;
-    call = `${c.fired_dir} break, but UNARMED — no edge`;
-    why = `Flow never armed, so this is the base case: ${hit(r.base)} continue, `
-        + `payoff ${pay(r.base)} (n=${r.base?.n ?? '—'}). A coin flip you pay spread to take.`;
+    call = `TAKE IT — ${c.fired_dir} confirmed`;
+    why = `Reduce or close short ${c.fired_dir === 'DOWN' ? 'put' : 'call'} premium. Don't add.`;
+    evidence = `Both legs in. ${hit(r.armed)} continue to the close, payoff ${pay(r.armed)} `
+             + `(n=${r.armed?.n ?? '—'}). Roughly one in three still fails.`;
   } else if (armed) {
     tone = AMBER;
-    call = 'ARMED — waiting on the price break';
-    why = 'Stage 1 is in. Nothing to do until price commits at a session extreme.';
-  } else if (through) {
-    tone = DIM;
-    call = 'NO EDGE — distance past the trigger means nothing';
-    why = 'Flow never armed. Measured over 896 sessions, how FAR price sits past the '
-        + 'trigger does not predict the close (46.8% keep going vs a 49.2% base, and the '
-        + 'tilt is toward the bounce). The edge is the flow leg, not the distance.';
+    call = 'STAND BY — armed, no side yet';
+    why = 'Do nothing until price commits at a session extreme.';
+    evidence = 'Stage 1 is in. The direction is a coin flip until the break.';
   } else {
+    // Everything below is the same answer. The tape can be doing anything at
+    // all; without the flow leg there is no trade, so it gets ONE line.
     tone = DIM;
-    call = 'NOTHING TO DO — neither leg is in';
-    why = 'Flow is ordinary and price has not committed.';
+    call = 'NO TRADE TODAY';
+    why = 'The flow flag never fired — it is the only thing on this page with an edge.';
+    evidence = through
+      ? 'Price is through a trigger, which is not a signal on its own: over 896 sessions '
+        + 'how far price sits past the trigger does not predict the close (46.8% keep going '
+        + `vs a 49.2% base). Unarmed breaks run ${hit(r.base)} at ${pay(r.base)}.`
+      : `Flow is ordinary and price has not committed. Unarmed breaks run ${hit(r.base)} at ${pay(r.base)}.`;
   }
 
   return (
@@ -248,13 +309,16 @@ function TapeVerdict({ d, c, fired }) {
       background: tone === GREEN ? `${GREEN}0f` : '#0e1220',
       border: `1px solid ${tone}${tone === GREEN ? '66' : '33'}`,
     }}>
-      <div style={{ fontSize: 12.5, fontWeight: 700, color: tone, letterSpacing: '.02em' }}>
+      <div style={{ fontSize: 13.5, fontWeight: 700, color: tone, letterSpacing: '.02em' }}>
         {call}
       </div>
-      <div style={{ ...S.small, marginTop: 3, lineHeight: 1.5 }}>
-        {why}
-        {closed && ' The confirmation window is closed for today.'}
+      <div style={{ fontSize: 12, color: '#c6cbd8', marginTop: 3, lineHeight: 1.5 }}>
+        {why}{closed ? ' The confirmation window is closed for today.' : ''}
       </div>
+      <details style={{ marginTop: 6 }}>
+        <summary style={{ ...S.small, cursor: 'pointer' }}>why</summary>
+        <div style={{ ...S.small, marginTop: 4, lineHeight: 1.5 }}>{evidence}</div>
+      </details>
     </div>
   );
 }
@@ -518,18 +582,20 @@ export default function SessionPage() {
           : 'On flagged days that break keeps going 63% of the time vs a 50% coin flip. ')
       + `**Reduce or close any short ${c.fired_dir === 'DOWN' ? 'put' : 'call'} premium — don't add.**`;
   } else if (c.armed) {
-    head = 'ARMED — WAITING FOR A SIDE';
+    head = 'STAND BY — ARMED, NO SIDE YET';
     headColor = AMBER;
-    headBody = `This morning's put/call mix was ${num(c.putcall_z, 1)}σ — unusual enough that a bigger-than-normal move is likely, but the direction is a coin flip until price commits. Watching for a break through ${num(d.levels?.down)} or ${num(d.levels?.up)}. `
-      + (rw ? `If one comes, the median run from the break to the close on days like this is ${num(rw.median, 2)}%${dollars(rw.median) ? ` ≈ $${num(dollars(rw.median))} of SPY` : ''}, against ${num(rwBase?.median ?? 0, 2)}% on an unflagged break.` : '');
+    headBody = `**Do nothing until price breaks ${num(d.levels?.down)} or ${num(d.levels?.up)} at a session extreme.** `
+      + `Morning mix was ${num(c.putcall_z, 1)}σ, so a bigger-than-normal move is likely — but the direction is a coin flip until price commits.`
+      + (rw ? ` If it comes, the median run to the close is ${num(rw.median, 2)}%${dollars(rw.median) ? ` ≈ $${num(dollars(rw.median))}` : ''}.` : '');
   } else if (c.armed === false) {
-    head = 'NOT ARMED';
+    head = 'NO TRADE TODAY';
     headColor = DIM;
-    headBody = `Morning flow mix was ordinary (${num(c.putcall_z, 1)}σ). A price break today carries no more information than a coin flip, so this page will stay quiet whatever SPY does.`;
+    headBody = `**Nothing on this page is actionable, whatever SPY does for the rest of the session.** `
+      + `The flow flag is the only thing here with an edge and it never fired — the morning mix was ordinary at ${num(c.putcall_z, 1)}σ against the ${num(CONFIRM_ARM_Z, 2)}σ it needs.`;
   } else {
-    head = 'WAITING FOR THE 10:00 SNAPSHOT';
+    head = 'NOTHING YET — FLOW READS AT 10:00';
     headColor = DIM;
-    headBody = 'The morning flow reading is captured between 10:00 and 10:35 CT. Nothing here can arm before then.';
+    headBody = '**No decision is possible before the snapshot.** The morning flow reading is captured between 10:00 and 10:35 CT, and nothing here can arm until it lands.';
   }
 
   // 🚨 THE SCROLL CONTAINER IS NOT OPTIONAL. App.jsx's shell is
@@ -619,8 +685,14 @@ export default function SessionPage() {
         </div>
         <Tape tape={d.tape} levels={d.levels} confirm={c} />
 
-        {/* How far from committing — arithmetic, not pixels. */}
-        {!fired && d.to_trigger?.down != null && (
+        {/* How far from committing — arithmetic, not pixels.
+            ⛔ ONLY WHILE ARMED. These two boxes give the price break top
+            billing ("THROUGH THE DOWN TRIGGER", "3.53 TO THE UP TRIGGER"),
+            and on an unarmed day that is advertising the one number on the
+            page that carries no edge. They are what made a reader ask why
+            being way below the trigger did not mean something. Hidden unless
+            stage 1 has actually fired, when the distance is the live question. */}
+        {!fired && c.armed === true && d.to_trigger?.down != null && (
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 10 }}>
             {[['DOWN', d.to_trigger.down, d.to_trigger.down_pct, RED],
               ['UP', d.to_trigger.up, d.to_trigger.up_pct, GREEN]].map(([lbl, dist, pct, col]) => (
@@ -675,17 +747,21 @@ export default function SessionPage() {
           />
         </div>
         <FlowTrack tape={d.tape} />
+        <FlowVerdict d={d} c={c} />
+        <details style={{ marginTop: 8 }}>
+          <summary style={{ ...S.small, cursor: 'pointer' }}>how this is measured</summary>
         <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6, maxWidth: '72ch' }}>
-          Covers {d.clock?.tape_window_ct || '08:31–14:59'} CT · each point is graded against the
-          trailing 63 sessions <i>at that same minute</i>, so 09:00 is compared with 63 other 09:00s.{' '}
-          The <b style={{ color: '#e6e9f0' }}>mix</b> line is the put/call ratio — the leg the arming
-          decision is made on, and the one that read +2.7σ on 2026-08-17 while put and total volume
-          were both quiet. It was only graded at the three fixed clocks until 2026-08-19; every 10
-          minutes is new here. A break in a line is a poll that failed, not a flat reading.
-          {' '}The tape records the <b style={{ color: '#c6cbd8' }}>whole session</b>; the flow
-          alert still only fires 10:36–14:00 CT, where it was measured. A morning or
-          late-afternoon crossing shows up here and deliberately does not push.
-        </div>
+            Covers {d.clock?.tape_window_ct || '08:31–14:59'} CT · each point is graded against the
+            trailing 63 sessions <i>at that same minute</i>, so 09:00 is compared with 63 other 09:00s.{' '}
+            The <b style={{ color: '#e6e9f0' }}>mix</b> line is the put/call ratio — the leg the arming
+            decision is made on, and the one that read +2.7σ on 2026-08-17 while put and total volume
+            were both quiet. It was only graded at the three fixed clocks until 2026-08-19; every 10
+            minutes is new here. A break in a line is a poll that failed, not a flat reading.
+            {' '}The tape records the <b style={{ color: '#c6cbd8' }}>whole session</b>; the flow
+            alert still only fires 10:36–14:00 CT, where it was measured. A morning or
+            late-afternoon crossing shows up here and deliberately does not push.
+          </div>
+        </details>
       </div>
 
       {/* fixed clocks */}
