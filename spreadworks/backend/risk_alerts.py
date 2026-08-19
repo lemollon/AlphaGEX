@@ -565,8 +565,10 @@ def register_risk_alerts(scheduler, app) -> None:
             logger.warning("[RiskAlerts] calibration_report failed: %r", e)
 
     async def rolling_flow_check():
-        """Every 10 min, 10:36-14:00 CT weekdays: catch a flow spike the
-        fixed 10:00/12:00/13:30 clocks miss (registry #39, validated
+        """Every 10 min: records the flow tape across the whole session
+        (08:31-14:59 CT) and alerts only inside 10:36-14:00 CT weekdays —
+        catching a flow spike the fixed 10:00/12:00/13:30 clocks miss
+        (registry #39, validated
         2026-08-13: P(|move to close| >= 0.5%) 34.2% on alert days vs 22.4%
         minute-matched base, 1.53x lift, 4/4 years, ~23 alerts/yr).
 
@@ -576,14 +578,19 @@ def register_risk_alerts(scheduler, app) -> None:
             now = datetime.now(CT)
             if now.weekday() >= 5:
                 return
-            from .routes_risk import (ROLLING_WINDOW_CT, _rolling_flow_now,
+            from .routes_risk import (ROLLING_WINDOW_CT, ROLLING_LOG_WINDOW_CT,
+                                      _rolling_flow_now,
                                       _rolling_baseline_at, _rolling_z,
                                       _save_rolling_state, session_log_write,
                                       _pc)
-            start, end = ROLLING_WINDOW_CT
+            # Poll across the WHOLE session so the tape is complete…
+            log_start, log_end = ROLLING_LOG_WINDOW_CT
             t = (now.hour, now.minute)
-            if t < start or t > end:
+            if t < log_start or t > log_end:
                 return
+            # …but only ALERT inside the window registry #39 was measured on.
+            start, end = ROLLING_WINDOW_CT
+            can_alert = start <= t <= end
             shim = SimpleNamespace(app=app)     # capture helper expects request.app
             snap = await _rolling_flow_now(shim)
             if snap is None:
@@ -620,6 +627,13 @@ def register_risk_alerts(scheduler, app) -> None:
             session_log_write(today, now, spot=snap.get("spot"),
                               roll_putv_z=pz, roll_totv_z=tz, roll_pc_z=czr)
 
+            # 🚨 Everything above is RECORDING and runs all session. Everything
+            # below is the alert, and it fires only where it was validated —
+            # a morning or late-afternoon spike is now visible on /session but
+            # deliberately does not push, because nobody has measured what a
+            # 09:10 CT crossing is worth.
+            if not can_alert:
+                return
             if (pz or 0) <= 2 and (tz or 0) <= 2:
                 return
             # the fixed clocks own their windows — a spike they already
@@ -652,7 +666,8 @@ def register_risk_alerts(scheduler, app) -> None:
                     {"name": "checked at", "value": f"{now.strftime('%H:%M')} CT",
                      "inline": True},
                 ],
-                "footer": {"text": "polled every 10 min, 10:36-14:00 CT · "
+                "footer": {"text": "alerts 10:36-14:00 CT (tape records all "
+                                   "session) · "
                                    "registry #39 · advisory only · /risk "
                                    "for the playbook"},
             }, ping=True)

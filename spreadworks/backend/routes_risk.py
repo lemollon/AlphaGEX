@@ -78,6 +78,23 @@ PM_CLOCKS: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {
 # baseline is keyed by ET minute-of-day (571 = 09:31 ET); this window (696-
 # 900) is 10:36-14:00 CT.
 ROLLING_WINDOW_CT: tuple[tuple[int, int], tuple[int, int]] = ((10, 36), (14, 0))
+
+# 🚨 TWO WINDOWS ON PURPOSE — they are not the same question.
+#
+# ROLLING_WINDOW_CT above is the ALERT window: registry #39 was validated on
+# 10:36-14:00 and its 1.53x lift is measured there. Widening it would change a
+# rule that was measured, so it does not move.
+#
+# ROLLING_LOG_WINDOW_CT is the OBSERVABILITY window: which minutes get written
+# to the tape. Until 2026-08-19 these were the same value, so 41% of every
+# session (08:30-10:36 and 14:00-15:00) had no flow reading recorded at all —
+# including the last hour, when 0DTE gamma peaks and EBB settles at the close.
+# That was never a data limit; the baseline file simply stopped at 900.
+#
+# A session you cannot replay is one you cannot improve — the whole reason
+# risk_session_log exists. Recording is cheap and changes no behaviour;
+# alerting is a rule and stays where it was measured.
+ROLLING_LOG_WINDOW_CT: tuple[tuple[int, int], tuple[int, int]] = ((8, 31), (14, 59))
 # --- Two-stage confirmation watcher (validated 2026-08-18) -------------------
 # Stage 1 (10:00 CT): the put/call MIX is extreme -> a bigger-than-normal move
 #   is coming, but the direction is a coin flip (see _pc_z's docstring).
@@ -1634,6 +1651,10 @@ async def session_tape(request: Request):
     clock["last_reading_ct"] = (f"{last_min // 60:02d}:{last_min % 60:02d}"
                                 if last_min is not None else None)
     clock["window_ct"] = "10:10–14:00"
+    # The tape and the confirmation watcher no longer share a window, so the
+    # page has to say which is which — a single "watch window" label over two
+    # different spans is how the LIVE badge lied about freshness on 08-18.
+    clock["tape_window_ct"] = "08:31–14:59"
 
     confirm: dict = {"armed": None, "ref_spot": None, "fired_dir": None,
                      "fired_at": None, "fired_spot": None, "close_spot": None,

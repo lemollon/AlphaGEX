@@ -29,7 +29,13 @@ DB = r"C:\Users\lemol\dev\ironforge-data\warehouse\ironforge.duckdb"
 OUT = Path(__file__).resolve().parents[1] / "backend" / "data" / "rolling_flow_baselines.json"
 LAST_SESSION = "2026-08-11"   # keep the window pinned to the shipped file
 SESSIONS = 63
-MIN_LO, MIN_HI = 696, 900     # 10:36-14:00 CT
+# 2026-08-19: was 696-900 (10:36-14:00 CT), which left 41% of the session with
+# no flow reading at all — including 14:00-15:00, when 0DTE gamma peaks and
+# EBB settles at the close. That range was never a data limit: bt_spy carries
+# ~900 sessions at EVERY minute from 571 to 959. The tape could not see the
+# last hour because a file stopped early, and the 08-17 lesson was that a
+# session you cannot replay is one you cannot improve.
+MIN_LO, MIN_HI = 571, 959     # 08:31-14:59 CT — the whole session
 
 QUERY = f"""
 with s as (

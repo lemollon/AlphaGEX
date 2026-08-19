@@ -553,3 +553,49 @@ def test_runway_stays_quiet_rather_than_quoting_a_number_from_nothing(calib_db):
     sc = calib_db
     sc._runway_cache = None
     assert sc.runway(date(2026, 6, 1))["armed"] is None
+
+
+# ---------------------------------------------------------------------------
+# THE TAPE RUNS ALL SESSION; THE ALERT DOES NOT (2026-08-19)
+#
+# Until now both were the same window, so 41% of every session — 08:30-10:36
+# and 14:00-15:00 — had no flow reading recorded at all. The last hour is the
+# worst place to be blind: 0DTE gamma peaks and EBB settles at the close.
+# Recording is free and changes nothing; alerting is a measured rule and stays
+# where registry #39 validated it.
+# ---------------------------------------------------------------------------
+
+def test_the_log_window_covers_the_whole_session():
+    from backend.routes_risk import (ROLLING_LOG_WINDOW_CT, MARKET_OPEN_CT,
+                                     MARKET_CLOSE_CT)
+    (lh, lm), (eh, em) = ROLLING_LOG_WINDOW_CT
+    assert (lh, lm) <= (MARKET_OPEN_CT[0], MARKET_OPEN_CT[1] + 1)
+    assert (eh, em) >= (MARKET_CLOSE_CT[0] - 1, 59)
+
+
+def test_the_alert_window_did_not_move():
+    """🚨 Registry #39's 1.53x lift was measured on 10:36-14:00. Widening the
+    tape must not widen the rule — nobody has measured what a 09:10 CT
+    crossing is worth."""
+    from backend.routes_risk import ROLLING_WINDOW_CT
+    assert ROLLING_WINDOW_CT == ((10, 36), (14, 0))
+
+
+def test_the_alert_window_is_strictly_inside_the_log_window():
+    from backend.routes_risk import ROLLING_WINDOW_CT, ROLLING_LOG_WINDOW_CT
+    (ls, le), (as_, ae) = ROLLING_LOG_WINDOW_CT, ROLLING_WINDOW_CT
+    assert ls < as_ and ae < le, "a minute that alerts must also be recorded"
+
+
+def test_the_baseline_covers_every_minute_the_tape_now_polls():
+    """The poll returns early when _rolling_baseline_at() finds nothing, so a
+    widened window with a short baseline records nothing and looks fine."""
+    from backend.routes_risk import _rolling_baseline, ROLLING_LOG_WINDOW_CT
+    b = _rolling_baseline()
+    (sh, sm), (eh, em) = ROLLING_LOG_WINDOW_CT
+    first_et = sh * 60 + sm + 60          # CT -> ET
+    last_et = eh * 60 + em + 60
+    have = {int(k) for k in b}
+    assert min(have) <= first_et and max(have) >= last_et, (
+        f"baseline covers ET {min(have)}-{max(have)}, window needs "
+        f"{first_et}-{last_et}")
