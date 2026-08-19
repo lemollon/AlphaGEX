@@ -2,23 +2,17 @@
 #
 # 🚨 WHY THIS EXISTS. The committed dist IS the deploy - Render serves it and
 # does not build it - and `spreadworks-dist` in ci.yml enforces that it matches
-# a fresh `npm ci && npm run build`. That guard is correct and must stay.
+# a fresh `npm ci && npm run build`.
 #
-# But it can only ever be satisfied from Linux. Tailwind v4 scans through a
-# PLATFORM-NATIVE binary (@tailwindcss/oxide-win32-x64-msvc on Windows,
-# oxide-linux-x64-gnu on the runner) and the two disagree about which theme
-# variables are reachable. Measured 2026-08-19: building PRISTINE main on a
-# Windows box emits index-CSlFfUDf.css where the committed and CI-reproduced
-# bundle is index-BbNaCTQG.css - 2,512 bytes smaller, missing --ease-in - and
-# every downstream chunk hash moves with it.
+# It was written when the build was NON-DETERMINISTIC: Tailwind v4 was scanning
+# the committed dist as if it were source, so building over an existing bundle
+# and building from nothing gave different CSS, and the guard could not be
+# satisfied from a machine that cleaned dist first. That is fixed at the root
+# now - index.css carries `@source not "../dist"` - so a normal local
+# `npm run build` matches CI on any platform.
 #
-# So on a Windows-only machine EVERY SpreadWorks frontend change was
-# unmergeable, with no local fix available. This job is the way out: it builds
-# on the same Linux toolchain CI verifies against and pushes the result to the
-# branch, so the guard passes for the right reason rather than being weakened.
-#
-# The real fix is still the outstanding one - restore Render's build command
-# and untrack dist entirely. Until that happens, this unblocks the work.
+# Kept as a convenience: it still lets someone without a Node toolchain get a
+# correct bundle onto a branch. It is no longer load-bearing.
 
 name: Rebuild SpreadWorks dist
 
