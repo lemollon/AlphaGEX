@@ -38,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import json
+import logging
 import math
 from datetime import datetime, date, time, timedelta
 from pathlib import Path
@@ -50,6 +51,8 @@ from sqlalchemy import Column, Date, DateTime, Float, BigInteger, Integer, Strin
 from .db import Base, SessionLocal
 
 router = APIRouter(prefix="/api/spreadworks/risk-advisor", tags=["Risk Advisor"])
+
+logger = logging.getLogger(__name__)
 
 CT = ZoneInfo("America/Chicago")
 SQRT252 = 15.874507866387544
@@ -978,6 +981,23 @@ def _outlook(vix_c, v9_c, v1_hist: dict, rets: list) -> dict | None:
 
 
 
+def _scheduler_block() -> dict:
+    """Which risk jobs are armed and when they next fire.
+
+    Never raises: a chart losing its next-update cell is a cosmetic loss, a 500
+    on /risk/state is not. An import or lookup failure reports registered=None
+    (unknown), which the UI renders amber — never green, and never a guess at
+    the cron time.
+    """
+    try:
+        from .risk_alerts import scheduled_jobs
+        return {"scheduler": scheduled_jobs()}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_risk] scheduled_jobs failed: %r", e)
+        return {"scheduler": {"registered": None, "jobs": {},
+                              "reason": f"scheduled_jobs error: {e}"}}
+
+
 def _macro_block() -> dict:
     """Factual macro-calendar context (sourced; see econ_calendar.py)."""
     try:
@@ -1386,6 +1406,11 @@ async def state(request: Request):
         "outlook": outlook,
         "action": action,
         "macro": _macro_block(),
+        # When the charts' inputs next move. Read from the live scheduler, not
+        # from the cadence prose in the captions — that prose stays confidently
+        # correct after a job dies, which is precisely the failure the charts'
+        # "next update" cell exists to expose.
+        "jobs": _scheduler_block(),
         "headline": ("RISK-OFF: stand down / reduce" if risk_off else
                      ("CALM FLOOR: safest premium-selling state" if double_floor
                       else "NORMAL")),

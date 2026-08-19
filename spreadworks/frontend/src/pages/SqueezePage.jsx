@@ -11,6 +11,7 @@ import { Zap } from 'lucide-react';
 import { API_URL } from '../lib/api';
 import CallHistory from '../components/CallHistory';
 import FreshnessBar, { squeezeLegs } from '../components/FreshnessBar';
+import ChartMeta, { gammaChartMeta, vixChartMeta } from '../components/ChartMeta';
 
 const GREEN = '#34d399', RED = '#f87171', AMBER = '#fbbf24', GREY = '#9ca3af', DIM = '#8b93a7';
 const LIVE = '#c084fc';
@@ -853,6 +854,9 @@ export default function SqueezePage() {
           {/* CHART */}
           <div style={S.card}>
             <div style={S.cardTitle}>Net dealer gamma — last {rangeLabel}</div>
+            {/* Fed the SIGNAL series' own last row — see ChartMeta's note on
+                why the top-level state fields are the wrong source. */}
+            <ChartMeta {...gammaChartMeta(data, hist.length ? hist[hist.length - 1] : null)} />
             {hist.length ? (() => {
               const chartOutlook = data.outlook || {};
               // Tallest print in the visible window — used to flag a possible
@@ -973,23 +977,16 @@ export default function SqueezePage() {
           {(() => {
             const vh = inRange(data.vix_history).map(v => ({ ...v, label: v.trade_date.slice(5) }));
             const lastVix = vh.length ? vh[vh.length - 1] : null;
-            const gapTo95 = lastVix?.ratio != null ? Math.max(0, 0.95 - lastVix.ratio) : null;
             return (
               <div style={S.card}>
                 <div style={S.cardTitle}>
                   The VIX leg — VIX ÷ its own 20-session max
                   <InfoTip text="VIX divided by its own maximum over the previous 20 sessions. It measures where VIX sits in its recent range, not its level, so a flat VIX reads 1.00 by construction." />
                 </div>
-                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 10, color: DIM }}>current ratio</div>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>{lastVix?.ratio == null ? '—' : lastVix.ratio.toFixed(2)}</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 10, color: DIM }}>gap to 0.95</div>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>{gapTo95 == null ? '—' : gapTo95.toFixed(2)}</div>
-                  </div>
-                </div>
+                {/* Replaced the bare "current ratio / gap to 0.95" pair: both
+                    numbers survive inside ChartMeta's reading cell, and they
+                    now arrive dated, with the next update beside them. */}
+                <ChartMeta {...vixChartMeta(data, lastVix)} />
                 {vh.length ? (
                   <div style={{ width: '100%', height: 200, overflowX: 'auto', minWidth: 0 }}>
                     <ResponsiveContainer>
