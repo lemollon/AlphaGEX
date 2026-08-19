@@ -39,7 +39,7 @@ import asyncio
 import csv
 import json
 import math
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -1247,7 +1247,7 @@ async def state(request: Request):
     action = ("stand_down" if (backwardation and flag_vix1d) else
               "skip_entry" if risk_off else "normal")
     assert action in ACTION_WHITELIST
-    return _scrub({
+    _payload = _scrub({
         "asof_close": d_vix.isoformat(),
         "generated_at": datetime.now(CT).isoformat(),
         "indices": {"vix": vix_c, "vix3m": v3_c, "vix9d": v9_c,
@@ -1272,6 +1272,22 @@ async def state(request: Request):
                       else "NORMAL")),
         "advisory_only": True,
     })
+    try:
+        from .call_log import record_call
+        # 🚨 The ACTION is the call. `headline` is prose wrapped around it and
+        # can change wording without the decision changing - logging that
+        # instead would manufacture flips that never happened.
+        record_call("risk", action,
+                    detail={"headline": _payload.get("headline"),
+                            "backwardation": backwardation,
+                            "flag_vix1d": flag_vix1d,
+                            "double_floor": double_floor,
+                            "vix": vix_c, "vix1d": v1_c},
+                    # The VIX close this rests on, not the moment we asked.
+                    data_ts=datetime.combine(d_vix, time(15, 15)))
+    except Exception:
+        pass
+    return _payload
 
 
 @router.get("/history")
@@ -1804,6 +1820,7 @@ async def session_tape(request: Request):
         "clock": clock,
         "tape": tape,
         "confirm": confirm,
+        "headline": _session_headline(confirm),
         "levels": levels,
         "to_trigger": to_trigger,
         "run_since_fire": run_since_fire,
@@ -1826,6 +1843,30 @@ async def session_tape(request: Request):
         },
         "note": "Advisory. No bot reads this page.",
     }
+
+
+def _session_headline(confirm: dict) -> str:
+    """The Session page's call, as one string.
+
+    🚨 THIS USED TO EXIST ONLY IN THE FRONTEND (SessionPage.jsx lines 168-185),
+    so the call being shown lived nowhere the server could record. Logging it
+    from a copy of that logic would have created a second source of truth that
+    drifts apart; computing it here and letting the page render it keeps one.
+
+    Priority order is preserved from the page: a FIRED call outranks
+    everything, then armed-and-waiting, then the quiet state. Never lead with
+    the quiet state while a call is live on the same page.
+    """
+    c = confirm or {}
+    fired = c.get("fired_dir")
+    if fired:
+        return f"{fired} CONFIRMED"
+    armed = c.get("armed")
+    if armed in (True, "yes"):
+        return "ARMED \u2014 WAITING FOR A SIDE"
+    if armed in (False, "no"):
+        return "NOT ARMED"
+    return "WAITING FOR THE 10:00 SNAPSHOT"
 
 
 def _posted_today(key: str, d: date) -> bool:
@@ -1853,4 +1894,17 @@ async def calibration(request: Request):
     against thresholds pre-registered on 2026-08-18 before any live firing
     existed. Read-only — the nightly job is what enforces."""
     from .signal_calibration import report
-    return report()
+    out = report()
+    try:
+        from .call_log import record_call
+        _c = out.get("confirm") or {}
+        record_call("session", out.get("headline"),
+                    detail={"armed": _c.get("armed"),
+                            "putcall_z": _c.get("putcall_z"),
+                            "fired_dir": _c.get("fired_dir"),
+                            "ref_spot": _c.get("ref_spot"),
+                            "last_reading_ct": (out.get("clock") or {})
+                            .get("last_reading_ct")})
+    except Exception:
+        pass                      # instrumentation must never break the page
+    return out

@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 import { ShieldAlert, ShieldCheck, Activity, Eye, Target, TrendingUp } from 'lucide-react';
 import { API_URL } from '../lib/api';
+import CallHistory from '../components/CallHistory';
 
 const GREEN = '#34d399', RED = '#f87171', AMBER = '#fbbf24', BLUE = '#60a5fa', DIM = '#8b93a7';
 const S = {
@@ -929,6 +930,8 @@ export default function RiskAdvisorPage() {
           </Collapse>
         </Zone>
       </div>
+
+      <CallHistory surface="risk" title="Risk call history" />
     </div>
   );
 }
