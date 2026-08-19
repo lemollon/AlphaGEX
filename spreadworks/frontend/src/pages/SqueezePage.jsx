@@ -10,6 +10,7 @@ import {
 import { Zap } from 'lucide-react';
 import { API_URL } from '../lib/api';
 import CallHistory from '../components/CallHistory';
+import FreshnessBar, { squeezeLegs } from '../components/FreshnessBar';
 
 const GREEN = '#34d399', RED = '#f87171', AMBER = '#fbbf24', GREY = '#9ca3af', DIM = '#8b93a7';
 const LIVE = '#c084fc';
@@ -212,6 +213,7 @@ function Collapse({ title, subtitle, children, defaultOpen = false }) {
 export default function SqueezePage() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
+  const [loadedAt, setLoadedAt] = useState(null);
   const [intraday, setIntraday] = useState(null);
   const [intradayErr, setIntradayErr] = useState(null);
   const [rangeN, setRangeN] = useState(DEFAULT_RANGE);
@@ -226,7 +228,10 @@ export default function SqueezePage() {
         const r = await fetch(
           `${API_URL}/api/spreadworks/squeeze/state?sessions=${FETCH_SESSIONS}`);
         const d = await r.json();
-        if (live) setData(d);
+        // 🚨 Stamped on a SUCCESSFUL fetch only. Stamping every tick would show
+        // a moving "loaded" time over a payload that stopped updating — the
+        // exact lie /session's LIVE badge told before 08-18.
+        if (live) { setData(d); setLoadedAt(new Date()); }
       } catch (e) { if (live) setErr(String(e)); }
     };
     load();
@@ -464,10 +469,15 @@ export default function SqueezePage() {
           </div>
         )}
 
-        {/* FRESHNESS — the verdict banner used to print today's calendar date
-            regardless of how old the underlying gamma reading was. This bar
-            makes staleness impossible to miss; it renders nothing when the
-            reading is current. */}
+        {/* FRESHNESS — ALWAYS RENDERED, INCLUDING WHEN EVERYTHING IS FINE.
+            🚨 This bar used to draw nothing when the reading was current,
+            which reads identically to "this page never checked". Silence is
+            not an answer to "am I looking at stale data?" — you cannot tell a
+            quiet check from a missing one, so the only safe reading was to
+            distrust the page. It now states the age of every leg either way,
+            and the loud stale detail below is kept on top of it. */}
+        <FreshnessBar {...squeezeLegs(data.freshness)} loadedAt={loadedAt} />
+
         {data.freshness?.reason ? (
           <div style={{ ...S.small, marginBottom: 10 }}>{data.freshness.reason}</div>
         ) : data.freshness?.stale ? (
