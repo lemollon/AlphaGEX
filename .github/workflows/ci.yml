@@ -135,20 +135,8 @@ jobs:
         run: python -m pytest tests/ -q
 
   # ============================================================================
-  # SpreadWorks dist freshness
-  # ----------------------------------------------------------------------------
-  # spreadworks/frontend/dist is a TRACKED deploy artifact. The live Render
-  # service builds pip-only (its build command drifted from the blueprint, which
-  # DOES build the frontend), so whatever is committed under dist/ is literally
-  # what ships. Two ways that has silently broken the site:
-  #
-  #   1. Edit src/, forget to rebuild -> the page never changes in production
-  #      and nothing anywhere says so.
-  #   2. Merge a branch created before someone else's rebuild -> that branch
-  #      carries an older dist and REVERTS the live bundle.
-  #
-  # Neither shows up in tests, in review, or in the deploy log. This job is the
-  # only thing that can catch them.
+  # E2E Tests (Playwright)
+  # ============================================================================
   e2e-tests:
     name: E2E Tests
     runs-on: ubuntu-latest

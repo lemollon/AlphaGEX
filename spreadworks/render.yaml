@@ -20,6 +20,12 @@
 # emitting the same index-CSlFfUDf.css that CI and a local build produce.
 # So the npm steps below are safe to run on this runtime; the fear that
 # they were not is what kept the committed-dist workaround alive.
+#
+# The LIVE dashboard Build Command (rootDir is already spreadworks) is now:
+#   pip install --upgrade pip && pip install -r requirements.txt
+#     && cd frontend && npm ci && npm run build
+# npm ci, not npm install - the lockfile pins vite/rollup/esbuild exactly,
+# and an unpinned toolchain is how the bundle drifts between machines.
 
 services:
   # SERVICE 1: React Frontend (Vite static build)
@@ -28,7 +34,7 @@ services:
     runtime: static
     branch: main
     autoDeploy: true
-    buildCommand: cd spreadworks/frontend && npm install && npm run build
+    buildCommand: cd spreadworks/frontend && npm ci && npm run build
     staticPublishPath: spreadworks/frontend/dist
     headers:
       - path: /*
@@ -55,7 +61,7 @@ services:
     region: oregon
     branch: main
     autoDeploy: true
-    buildCommand: cd spreadworks && pip install --upgrade pip && pip install -r requirements.txt && cd frontend && npm install && npm run build && cd ..
+    buildCommand: cd spreadworks && pip install --upgrade pip && pip install -r requirements.txt && cd frontend && npm ci && npm run build && cd ..
     startCommand: cd spreadworks && uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
