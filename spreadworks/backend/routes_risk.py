@@ -1131,6 +1131,108 @@ async def recipe(request: Request):
         return {"status": "unavailable"}
 
 
+def _state_freshness(now_ct: datetime, asof_close: date, flow: dict,
+                     flow_rolling: dict | None) -> dict:
+    """Is what this page is showing actually current?
+
+    Three legs, graded independently — they fail in different ways:
+
+      close   the VIX/term-structure close the verdict is built from. Correct
+              when it equals the last weekday before today; a regime call from
+              the prior close is BY DESIGN, not staleness.
+      flow    the 10:00 CT snapshot. Either it captured today or it did not.
+      rolling the */10 watcher. Only meaningful inside its window — a gap at
+              11:00 is a fault, a gap at 16:00 is just the window being over.
+
+    Never raises: a page that cannot compute its own freshness must still
+    render, and must say "unknown" rather than imply fresh.
+    """
+    out: dict = {"state": "UNKNOWN", "detail": None, "legs": []}
+    try:
+        today = now_ct.date()
+        expected = today - timedelta(days=1)
+        while expected.weekday() >= 5:
+            expected -= timedelta(days=1)
+        # Before the close the prior session is still the right basis; after
+        # it, today's own close is what should be there.
+        behind = _sessions_behind(asof_close, expected)
+        close_ok = behind is not None and behind <= 0
+        out["expected_close"] = expected.isoformat()
+        out["asof_close"] = asof_close.isoformat()
+        out["close_sessions_behind"] = behind
+        out["legs"].append({
+            "key": "close", "label": "VIX / term structure",
+            "value": asof_close.isoformat(),
+            "ok": close_ok,
+            "note": ("prior close, as designed" if close_ok else
+                     f"{behind} session(s) behind {expected.isoformat()}"
+                     if behind is not None else "unknown"),
+        })
+
+        cap = (flow or {}).get("captured_at")
+        cap_today = bool(cap and str(cap)[:10] == today.isoformat())
+        weekend = now_ct.weekday() >= 5
+        due = (now_ct.hour, now_ct.minute) >= SNAPSHOT_CT and not weekend
+        out["legs"].append({
+            "key": "flow", "label": "10:00 flow snapshot",
+            "value": (str(cap)[11:16] + " CT") if cap_today else None,
+            "ok": cap_today or not due,
+            "note": ("captured today" if cap_today else
+                     "not due until 10:00 CT" if not due else
+                     "DUE BUT NOT CAPTURED"),
+        })
+
+        roll_cap = (flow_rolling or {}).get("captured_at")
+        age = None
+        if roll_cap:
+            try:
+                rc = datetime.fromisoformat(str(roll_cap))
+                if str(roll_cap)[:10] == today.isoformat():
+                    age = int((now_ct.replace(tzinfo=None) - rc).total_seconds() // 60)
+            except Exception:                                # noqa: BLE001
+                age = None
+        t = (now_ct.hour, now_ct.minute)
+        in_roll = (not weekend) and ROLLING_WINDOW_CT[0] <= t <= ROLLING_WINDOW_CT[1]
+        # >15 min inside a */10 window means at least one poll was missed.
+        roll_ok = (not in_roll) or (age is not None and age <= 15)
+        out["legs"].append({
+            "key": "rolling", "label": "rolling flow watcher",
+            "value": (str(roll_cap)[11:16] + " CT") if age is not None else None,
+            "ok": roll_ok,
+            "note": (f"{age}m ago" if age is not None and roll_ok else
+                     f"NO READING FOR {age}m" if age is not None else
+                     "outside its window" if not in_roll else "NO READING TODAY"),
+        })
+
+        bad = [l for l in out["legs"] if l["ok"] is False]
+        if not bad:
+            out["state"] = "CURRENT"
+            out["detail"] = "every input is as current as it should be right now"
+        else:
+            out["state"] = "STALE"
+            out["detail"] = "; ".join(f"{l['label']}: {l['note']}" for l in bad)
+    except Exception as e:                                   # noqa: BLE001
+        out["detail"] = f"freshness unavailable: {e!r}"
+    return out
+
+
+def _sessions_behind(actual: date, expected: date) -> int | None:
+    """Weekday sessions `actual` sits behind `expected`. Negative means ahead
+    (today's close already stored, which is fine, not stale)."""
+    try:
+        if actual == expected:
+            return 0
+        step = 1 if actual < expected else -1
+        n, d = 0, actual
+        while d != expected and abs(n) < 40:
+            d += timedelta(days=step)
+            if d.weekday() < 5:
+                n += step
+        return n
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
 @router.get("/state")
 async def state(request: Request):
     client: httpx.AsyncClient = request.app.state.http
@@ -1247,9 +1349,26 @@ async def state(request: Request):
     action = ("stand_down" if (backwardation and flag_vix1d) else
               "skip_entry" if risk_off else "normal")
     assert action in ACTION_WHITELIST
+    # ── FRESHNESS. 🚨 The page could not previously tell you whether it was
+    # showing today's read or a leftover, which is the same defect /session
+    # shipped and then fixed on 08-18.
+    #
+    # 🚨 THE TRAP: this verdict is SUPPOSED to be built from the PRIOR close.
+    # A naive "the data is a day old" badge would scream STALE every single
+    # morning, and a warning that cries wolf daily is one nobody reads. So
+    # staleness is measured against the EXPECTED session — the last weekday
+    # before today — not against today. Same rule data_freshness() already
+    # uses for the squeeze page.
+    #
+    # The intraday legs are graded separately and on their OWN clocks, because
+    # "the VIX close is current" and "the 10:00 flow snapshot ran" are
+    # different questions with different failure modes.
+    _fresh = _state_freshness(datetime.now(CT), d_vix, flow, flow_rolling)
+
     _payload = _scrub({
         "asof_close": d_vix.isoformat(),
         "generated_at": datetime.now(CT).isoformat(),
+        "freshness": _fresh,
         "indices": {"vix": vix_c, "vix3m": v3_c, "vix9d": v9_c,
                     "vix1d": v1_c, "vvix": vv_c},
         "signals": {

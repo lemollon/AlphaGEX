@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 import { ShieldAlert, ShieldCheck, Activity, Eye, Target, TrendingUp } from 'lucide-react';
 import { API_URL } from '../lib/api';
+import FreshnessBar from '../components/FreshnessBar';
 import CallHistory from '../components/CallHistory';
 
 const GREEN = '#34d399', RED = '#f87171', AMBER = '#fbbf24', BLUE = '#60a5fa', DIM = '#8b93a7';
@@ -185,6 +186,7 @@ export default function RiskAdvisorPage() {
   const [alog, setAlog] = useState(null);
   const [ebb, setEbb] = useState(null);
   const [recipe, setRecipe] = useState(null);
+  const [loadedAt, setLoadedAt] = useState(null);
 
   useEffect(() => {
     let live = true;
@@ -202,6 +204,9 @@ export default function RiskAdvisorPage() {
         ]);
         if (!live) return;
         setState(s); setScore(sc); setIntra(ia); setAlog(al); setEbb(eb); setRecipe(rc);
+        // 🚨 Only on a SUCCESSFUL load. A "loaded" clock that ticks while the
+        // fetch is failing is worse than no clock — see /session, 08-18.
+        setLoadedAt(new Date());
         setHist((h.days || []).map(d => ({
           ...d, label: d.d.slice(5),
           spike: (d.putv_z > 2 || d.totv_z > 2) ? Math.max(d.putv_z, d.totv_z) : null,
@@ -260,6 +265,20 @@ export default function RiskAdvisorPage() {
           Advisory only — no bot reads this. Every signal was backtested and pre-registered
           (2026-08-12); the scorecard grades the tool against its own claims, live.
         </p>
+        {/* 🚨 FRESHNESS FIRST. The chips below describe the SCHEDULE — how
+            often each input is *supposed* to update. That is not the same
+            question as whether it actually did, and the page previously only
+            answered the first one, which is how a stale read looks exactly
+            like a fresh one. Computed server-side from stored rows and graded
+            against the EXPECTED session, so a verdict correctly built from the
+            prior close does not cry STALE every morning. */}
+        <FreshnessBar
+          state={state?.freshness?.state}
+          detail={state?.freshness?.detail}
+          legs={state?.freshness?.legs || []}
+          loadedAt={loadedAt}
+        />
+
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '0 0 20px' }}>
           {[['page refresh', 'every 60s'], ['index closes', 'daily, cached 30 min'],
             ['flow checks', '10:00 · 12:00 · 13:30 CT + rolling every 10m 10:36-14:00'],
