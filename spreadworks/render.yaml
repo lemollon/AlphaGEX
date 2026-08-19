@@ -4,9 +4,22 @@
 #
 # NOTE: spreadworks-backend (srv-d6mv30f5gffc73bog9a0) was created
 # from this blueprint then its live Build Command drifted in the
-# dashboard. As of 2026-05-18 the live command is pip-only and does
-# NOT match the SERVICE 2 buildCommand below. Source of truth for
-# the LIVE service is the dashboard, not this file.
+# dashboard to pip-only. Source of truth for the LIVE service is the
+# dashboard, not this file - so SERVICE 2's buildCommand below must be
+# kept in step with it by hand.
+#
+# 2026-08-19: the drift was never harmless. With a pip-only command the
+# frontend is not built at deploy time, so spreadworks/frontend/dist had
+# to be COMMITTED and served from the repo - which made a stale bundle a
+# silent way to revert the live page, and needed a CI hash guard to
+# police it.
+#
+# Verified on a throwaway service (spreadworks-nodeprobe) that Render's
+# python runtime DOES ship node - /home/render/envwrappers/node, Node
+# 24.14.1 - and that `npm ci && npm run build` completes there in 32s,
+# emitting the same index-CSlFfUDf.css that CI and a local build produce.
+# So the npm steps below are safe to run on this runtime; the fear that
+# they were not is what kept the committed-dist workaround alive.
 
 services:
   # SERVICE 1: React Frontend (Vite static build)
