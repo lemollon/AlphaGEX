@@ -13,6 +13,7 @@ import { ShieldAlert, ShieldCheck, Activity, Eye, Target, TrendingUp } from 'luc
 import { API_URL } from '../lib/api';
 import FreshnessBar from '../components/FreshnessBar';
 import CallHistory from '../components/CallHistory';
+import ChartMeta, { tapeChartMeta, flowChartMeta } from '../components/ChartMeta';
 
 const GREEN = '#34d399', RED = '#f87171', AMBER = '#fbbf24', BLUE = '#60a5fa', DIM = '#8b93a7';
 const S = {
@@ -519,6 +520,7 @@ export default function RiskAdvisorPage() {
           <div style={S.cardTitle}>Today's tape vs the expected move
             <InfoTip text="Today's SPY 5-minute path vs the VIX1D expected-move band (grey). Price escaping the band = an outsized day in progress. The dashed vertical line marks the 10:00 CT flow snapshot — the one moment each day the flow-spike signal reads. Updates every minute." />
           </div>
+          <ChartMeta {...tapeChartMeta(intra, state)} />
           {intra?.bars?.length ? (() => {
             const b = intra.band_pct || 1;
             const ext = Math.max(b * 1.3, ...intra.bars.map(x => Math.abs(x.chg_pct ?? 0) * 1.1));
@@ -753,6 +755,7 @@ export default function RiskAdvisorPage() {
               10:00 CT reading, one point per session, trailing {range} sessions. Shaded = quiet-VIX
               regimes (the trap zone). Dots = spike days (z&gt;2).
             </div>
+            <ChartMeta {...flowChartMeta(state, hist.length ? hist[hist.length - 1] : null)} />
             <div style={{ width: '100%', height: 240 }}>
               <ResponsiveContainer>
                 <ComposedChart data={hist} margin={{ top: 6, right: 12, left: -8, bottom: 0 }}>

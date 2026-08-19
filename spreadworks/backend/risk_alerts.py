@@ -63,6 +63,43 @@ logger = logging.getLogger(__name__)
 CT = ZoneInfo("America/Chicago")
 SQRT252 = 15.874507866387544
 
+# Hold the scheduler so the API can PROVE these jobs are armed and say when
+# they next fire. Same pattern gamma_alerts already uses; /risk needed it once
+# its charts started publishing a "next update" — a chart that guesses its own
+# cadence from a hardcoded string stays confidently wrong after the job dies.
+_SCHEDULER: dict = {"ref": None}
+
+# Only the jobs a chart or a card on /risk actually waits for. Deliberately
+# not every job in this module: a next-update cell listing fifteen crons tells
+# the reader nothing about the number in front of them.
+RISK_JOB_IDS = (
+    "risk_flow_spike",        # 10:06 CT — the snapshot the flow-z chart plots
+    "risk_morning_verdict",   # 08:05:30 CT — the headline
+    "risk_flow_rolling",      # */10 in-session — the intraday watcher
+    "risk_confirm_close",     # 15:05 CT — closes the session
+)
+
+
+def scheduled_jobs() -> dict:
+    """Are the risk cron jobs armed, and when do they next fire?
+
+    Never raises — apscheduler internals are not worth a 500.
+    """
+    sched = _SCHEDULER.get("ref")
+    if sched is None:
+        return {"registered": False, "jobs": {},
+                "reason": "Risk jobs are not armed — no scheduler was attached."}
+    out: dict = {"registered": True, "jobs": {}, "reason": None}
+    for jid in RISK_JOB_IDS:
+        try:
+            job = sched.get_job(jid)
+            nxt = getattr(job, "next_run_time", None) if job else None
+            out["jobs"][jid] = nxt.isoformat() if nxt else None
+        except Exception as e:  # noqa: BLE001
+            out["jobs"][jid] = None
+            out["reason"] = f"job lookup failed: {e}"
+    return out
+
 RED = 0xF87171
 GREEN = 0x34D399
 AMBER = 0xFBBF24
@@ -1090,6 +1127,10 @@ def register_risk_alerts(scheduler, app) -> None:
                       minute=55, timezone=CT, id="risk_friday_digest")
     scheduler.add_job(promotion_announce, "cron", hour=16, minute=5,
                       timezone=CT, id="risk_promotion_announce")
+    # See _SCHEDULER at the top of this module: an unset ref is itself the
+    # signal that registration never completed, so this is the last statement
+    # before the log line.
+    _SCHEDULER["ref"] = scheduler
     logger.info("[RiskAlerts] registered: morning verdict 08:05:30, EM note "
                 "08:06:30, ticket %02d:%02d & %02d:%02d, flow spike 10:06, "
                 "PM re-checks 12:06 & 13:36, rolling flow watcher */10 "

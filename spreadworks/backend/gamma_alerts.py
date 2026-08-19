@@ -596,7 +596,15 @@ def register_gamma_alerts(scheduler, app) -> None:
         except Exception as e:  # noqa: BLE001
             logger.warning("[GammaAlerts] fire_squeeze_alert failed: %r", e)
 
-    scheduler.add_job(capture_gamma, "cron", hour=15, minute=5, timezone=CT,
+    # 🚨 day_of_week IS NOT REDUNDANT WITH THE weekday() GUARD INSIDE THE JOB.
+    # The guard stops the work; it does not stop the SCHEDULE. Without
+    # mon-fri, next_run_time on a Friday evening reports Saturday 15:05 — a
+    # firing that wakes up and immediately returns. scheduled_jobs() publishes
+    # that time, and the charts now show it to the user as "next update", so
+    # an advertised firing that does nothing is a lie about when the data
+    # actually moves next. On a Friday the honest answer is Monday.
+    scheduler.add_job(capture_gamma, "cron", day_of_week="mon-fri",
+                      hour=15, minute=5, timezone=CT,
                       id="gamma_capture", coalesce=True, max_instances=1,
                       replace_existing=True)
     async def capture_entry():
@@ -627,10 +635,12 @@ def register_gamma_alerts(scheduler, app) -> None:
         except Exception as e:  # noqa: BLE001
             logger.warning("[GammaAlerts] capture_entry failed: %r", e)
 
-    scheduler.add_job(capture_entry, "cron", hour=10, minute=5, timezone=CT,
+    scheduler.add_job(capture_entry, "cron", day_of_week="mon-fri",
+                      hour=10, minute=5, timezone=CT,
                       id="gamma_entry_credit", coalesce=True, max_instances=1,
                       replace_existing=True)
-    scheduler.add_job(fire_squeeze_alert, "cron", hour=8, minute=5, timezone=CT,
+    scheduler.add_job(fire_squeeze_alert, "cron", day_of_week="mon-fri",
+                      hour=8, minute=5, timezone=CT,
                       id="gamma_squeeze_alert", coalesce=True, max_instances=1,
                       replace_existing=True)
     # Hold the scheduler so the API can PROVE these jobs are armed. Without it
