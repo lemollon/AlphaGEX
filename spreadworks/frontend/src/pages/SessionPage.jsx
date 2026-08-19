@@ -219,8 +219,8 @@ export default function SessionPage() {
     return () => clearInterval(t);
   }, [load]);
 
-  if (err) return <div style={S.wrap}><div style={S.card}>Couldn’t load the session: {err}</div></div>;
-  if (!d) return <div style={S.wrap}><div style={S.card}>Loading…</div></div>;
+  if (err) return <div className="flex-1 overflow-y-auto"><div style={S.wrap}><div style={S.card}>Couldn’t load the session: {err}</div></div></div>;
+  if (!d) return <div className="flex-1 overflow-y-auto"><div style={S.wrap}><div style={S.card}>Loading…</div></div></div>;
 
   const c = d.confirm || {};
   const live = d.clock?.live;
@@ -268,7 +268,15 @@ export default function SessionPage() {
     headBody = 'The morning flow reading is captured between 10:00 and 10:35 CT. Nothing here can arm before then.';
   }
 
+  // 🚨 THE SCROLL CONTAINER IS NOT OPTIONAL. App.jsx's shell is
+  // `h-dvh ... overflow-hidden`, so a route that does not bring its own
+  // scroller is CLIPPED AT THE VIEWPORT — content below the fold cannot be
+  // reached and there is no scrollbar to hint that it exists. Every other
+  // routed page carries this. /session shipped without it and happened to fit
+  // on one screen, so nothing showed; the flow track, the calibration
+  // scorecard and the history fold then pushed the bottom off the page.
   return (
+    <div className="flex-1 overflow-y-auto">
     <div style={S.wrap}>
       <h1 style={S.h1}>Session</h1>
       <p style={S.sub}>
@@ -558,6 +566,7 @@ export default function SessionPage() {
       </Fold>
 
       <CallHistory surface="session" title="Session call history" />
+    </div>
     </div>
   );
 }
