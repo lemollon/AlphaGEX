@@ -99,6 +99,88 @@ function Readout({ value, unit, meaning, meaningColor, at, ageMin, valueColor })
   );
 }
 
+// ── THE REST OF THE BOARD. /risk, /squeeze and /session are three readings of
+// ONE market, and showing them apart invites the reader to resolve an apparent
+// contradiction themselves ("squeeze says oversold, session says no edge —
+// which is it?"). Both can be true: they answer different questions over
+// different horizons. Squeeze is a multi-day regime read off the PRIOR close
+// and is explicitly a prerequisite, not a direction call. This page is today's
+// last few hours.
+//
+// ⛔ THIS STRIP DELIBERATELY DOES NOT COMBINE THEM INTO A SCORE. Two measured
+// reasons, both of which say a combined verdict would be wrong:
+//
+//  1. THE TAPE DOES NOT CONFIRM THE SQUEEZE — IT DILUTES IT. On 837 warehouse
+//     sessions, squeeze-like days (gamma <=20th pct AND VIX >=0.95 of its
+//     20-session max) closed in the same direction 61.2% of the time against a
+//     49.7% base (n=85, z=+2.12). Split those by whether price had ALSO broken
+//     the down trigger by 13:40:
+//
+//         squeeze, NO break at 13:40   n=55   63.6%   z=+2.07
+//         squeeze, WITH a break        n=30   56.7%   z=+0.76
+//
+//     The break SUBTRACTS 7 points. By 13:40 the move it would confirm has
+//     already been spent. "Oversold AND already way down" is weaker than
+//     "oversold", not stronger — the exact opposite of stacking.
+//
+//  2. THEY ARE PARTLY THE SAME BET ALREADY. SQUEEZE_WATCH is a 100% subset of
+//     EBB's VIX gate across all 161 days it has fired, and /risk and /squeeze
+//     resolve to the same underlying, the same short strike and the same entry
+//     minute. Adding them is double-counting one position, not diversifying.
+//
+// And the size never justified a trade anyway: the best cell's median
+// rest-of-day move is -0.066%, about $0.51 on SPY at 770, before costs. 2026
+// alone: squeeze-like days ran 47.4% against a 53.3% base — under water.
+function BoardStrip({ board }) {
+  const sq = board?.sq, rk = board?.rk;
+  if (!sq && !rk) return null;
+  const cells = [];
+  if (rk?.headline) {
+    cells.push({ k: 'risk', label: '/risk', value: String(rk.headline).split(':')[0],
+      note: rk.action ? `action: ${rk.action}` : null,
+      tone: rk.action === 'normal' ? DIM : AMBER });
+  }
+  if (sq?.verdict) {
+    const prox = sq.outlook?.proximity;
+    cells.push({ k: 'sq', label: '/squeeze', value: VERDICT_TEXT[sq.verdict] || sq.verdict,
+      note: prox ? prox.replace(/_/g, ' ').toLowerCase() : null,
+      tone: sq.verdict === 'SQUEEZE_WATCH' ? AMBER : sq.verdict === 'NO_SELL' ? RED : DIM });
+  }
+  if (!cells.length) return null;
+  return (
+    <div style={{ ...S.card }}>
+      <div style={{ ...S.cardTitle }}>The rest of the board right now</div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        {cells.map((c) => (
+          <div key={c.k} style={{ flex: '1 1 190px', padding: '9px 11px', borderRadius: 8,
+                                  background: '#0e1220', border: `1px solid ${c.tone}33` }}>
+            <div style={S.small}>{c.label}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: c.tone === DIM ? '#e6e9f0' : c.tone }}>
+              {c.value}
+            </div>
+            {c.note && <div style={{ ...S.small, marginTop: 2 }}>{c.note}</div>}
+          </div>
+        ))}
+      </div>
+      <div style={{ ...S.small, marginTop: 8, lineHeight: 1.5 }}>
+        Three readings of one market, shown together on purpose — but{' '}
+        <b style={{ color: '#c6cbd8' }}>not added up</b>. A squeeze-style regime and a
+        price break are not two confirmations: measured over 837 sessions, squeeze-like
+        days continued 61.2% vs a 49.7% base, and requiring a 13:40 break as well{' '}
+        <b style={{ color: '#c6cbd8' }}>lowered that to 56.7%</b> — by mid-afternoon the
+        move it would confirm is already spent. /risk and /squeeze also resolve to the
+        same short strike at the same minute, so treating them as independent votes
+        double-counts one position.
+      </div>
+    </div>
+  );
+}
+
+const VERDICT_TEXT = {
+  SQUEEZE_WATCH: 'SQUEEZE WATCH', NO_SELL: 'NO SELL',
+  SELL_PREMIUM: 'SELL PREMIUM', NEUTRAL: 'NEUTRAL', UNKNOWN: 'UNKNOWN',
+};
+
 // ── What the tape is WORTH. A chart that draws a shape and leaves the reader
 // to infer the trade is not finished — "the line is way below the red trigger,
 // what does that mean?" is a question the panel should never have made anyone
@@ -346,11 +428,19 @@ function Fold({ title, meta, children, open: init = false }) {
 
 export default function SessionPage() {
   const [d, setD] = useState(null);
+  const [board, setBoard] = useState({});
   const [err, setErr] = useState(null);
 
   const load = useCallback(() => {
     fetch(`${API_URL}/api/spreadworks/risk-advisor/session`)
       .then((r) => r.json()).then(setD).catch((e) => setErr(String(e)));
+    // The rest of the board. Failures are swallowed on purpose: the strip is
+    // context, and /session must not go dark because /squeeze is having a bad
+    // day.
+    Promise.all([
+      fetch(`${API_URL}/api/spreadworks/squeeze/state?sessions=5`).then((r) => r.json()).catch(() => null),
+      fetch(`${API_URL}/api/spreadworks/risk-advisor/state`).then((r) => r.json()).catch(() => null),
+    ]).then(([sq, rk]) => setBoard({ sq, rk }));
   }, []);
 
   useEffect(() => {
@@ -567,6 +657,8 @@ export default function SessionPage() {
           A break only counts at a session extreme, so a dip that recovers doesn’t arm the rest of the day.
         </div>
       </div>
+
+      <BoardStrip board={board} />
 
       {/* the flow track — the second half of the tape, and the half that was
           missing. Price says what happened; this says what the option flow was
