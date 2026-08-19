@@ -54,7 +54,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.branch || github.ref_name }}
-          # A token that can push back to the branch.
+          # 🚨 A push made with GITHUB_TOKEN does NOT trigger further workflow
+          # runs - GitHub blocks that deliberately to stop loops. So the commit
+          # this job makes will not re-run the PR checks by itself, and the
+          # `spreadworks-dist` guard keeps showing its previous result until
+          # something else pushes. That is a stale RESULT, not a stale bundle.
+          #
+          # Living with it on purpose: the alternative is a personal access
+          # token in a secret, which buys a green tick at the cost of a
+          # long-lived credential that can push to any branch. Nudging the PR
+          # is cheaper than that.
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@v4
