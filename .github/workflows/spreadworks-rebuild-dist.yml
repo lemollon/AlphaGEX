@@ -1,0 +1,95 @@
+# Rebuild spreadworks/frontend/dist on Linux and commit it back.
+#
+# 🚨 WHY THIS EXISTS. The committed dist IS the deploy - Render serves it and
+# does not build it - and `spreadworks-dist` in ci.yml enforces that it matches
+# a fresh `npm ci && npm run build`. That guard is correct and must stay.
+#
+# But it can only ever be satisfied from Linux. Tailwind v4 scans through a
+# PLATFORM-NATIVE binary (@tailwindcss/oxide-win32-x64-msvc on Windows,
+# oxide-linux-x64-gnu on the runner) and the two disagree about which theme
+# variables are reachable. Measured 2026-08-19: building PRISTINE main on a
+# Windows box emits index-CSlFfUDf.css where the committed and CI-reproduced
+# bundle is index-BbNaCTQG.css - 2,512 bytes smaller, missing --ease-in - and
+# every downstream chunk hash moves with it.
+#
+# So on a Windows-only machine EVERY SpreadWorks frontend change was
+# unmergeable, with no local fix available. This job is the way out: it builds
+# on the same Linux toolchain CI verifies against and pushes the result to the
+# branch, so the guard passes for the right reason rather than being weakened.
+#
+# The real fix is still the outstanding one - restore Render's build command
+# and untrack dist entirely. Until that happens, this unblocks the work.
+
+name: Rebuild SpreadWorks dist
+
+on:
+  # 🚨 A workflow_dispatch entry is only dispatchable once it sits on the
+  # DEFAULT branch, which is no use to the very PR that needs it. A `push`
+  # trigger runs the definition from the pushed branch itself, so this works
+  # immediately - and is scoped to feature branches so it can never commit to
+  # main behind someone's back.
+  push:
+    branches: ['claude/**']
+    paths:
+      - 'spreadworks/frontend/src/**'
+      - 'spreadworks/frontend/package-lock.json'
+      # Itself, so adding or changing this file forces one rebuild -
+      # otherwise the very commit that introduces it cannot use it.
+      - '.github/workflows/spreadworks-rebuild-dist.yml'
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to rebuild dist on
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    name: Rebuild dist on linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || github.ref_name }}
+          # A token that can push back to the branch.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: spreadworks/frontend/package-lock.json
+
+      # npm ci, not npm install - the guard compares against a lockfile-exact
+      # build, so anything else here would just move the mismatch around.
+      - name: Install
+        working-directory: spreadworks/frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: spreadworks/frontend
+        run: |
+          rm -rf dist
+          npm run build
+
+      - name: Commit if it changed
+        run: |
+          git config user.name  "Autobot"
+          git config user.email "shairan2016@gmail.com"
+          git add spreadworks/frontend/dist
+          # This push re-triggers the workflow once. That run finds dist
+          # already correct and stops here, so it terminates after exactly one
+          # extra no-op rather than looping.
+          if git diff --cached --quiet; then
+            echo "dist already matches a linux build - nothing to do."
+            exit 0
+          fi
+          git commit -m "Rebuild spreadworks dist on linux
+
+          Tailwind v4 scans via a platform-native binary, so a Windows build
+          emits different CSS and every chunk hash moves with it. Rebuilt here
+          on the same toolchain the spreadworks-dist guard verifies against."
+          git push origin HEAD:${{ inputs.branch || github.ref_name }}
