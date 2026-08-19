@@ -135,12 +135,26 @@ export function squeezeLegs(f) {
     note: behind(f.vix_stale_sessions),
   });
   if (f.legs_mismatch != null) {
+    // 🚨 VIX RUNNING AHEAD OF GAMMA IS THE NORMAL INTRADAY STATE, NOT A FAULT.
+    // The VIX row for today lands early; the gamma capture runs at 15:05. So
+    // legs_mismatch is true every single day between those two moments. The
+    // first version of this bar graded any mismatch as a failure, which would
+    // have painted the page STALE mid-session every day — the exact cry-wolf
+    // failure this component was written to avoid, shipped inside the fix for
+    // it. Caught on the live payload within minutes of deploying.
+    //
+    // The mismatch only matters when GAMMA — the leg the verdict is built
+    // from — is actually behind where it should be. That is already what
+    // gamma_stale_sessions says, so this leg reports and never overrules it.
+    const vixAhead = f.vix_date && f.gamma_date && f.vix_date > f.gamma_date;
+    const gammaBehind = f.gamma_stale_sessions != null && f.gamma_stale_sessions > 0;
     legs.push({
-      key: 'agree', label: 'the two legs agree', value: null,
-      ok: !f.legs_mismatch,
-      // A verdict blending two different sessions is not the verdict either
-      // session would have produced.
-      note: f.legs_mismatch ? 'DIFFERENT SESSIONS — verdict blends two days' : 'same session',
+      key: 'agree', label: 'gamma vs VIX dating', value: null,
+      ok: !f.legs_mismatch ? true : gammaBehind ? false : null,
+      note: !f.legs_mismatch ? 'same session'
+        : gammaBehind ? 'DIFFERENT SESSIONS — verdict blends two days'
+        : vixAhead ? "VIX already has today's row; gamma captures at 15:05 CT — normal"
+        : 'dated apart, but gamma is current for this verdict',
     });
   }
   if (f.captured_sessions != null) {
@@ -170,6 +184,8 @@ export function squeezeLegs(f) {
   const bad = legs.filter((l) => l.ok === false);
   const unknown = legs.filter((l) => l.ok == null);
   return {
+    // Only a genuinely failing leg turns the bar red. An informational leg
+    // (ok == null) must never be able to do it on its own.
     state: bad.length ? 'STALE' : unknown.length === legs.length ? 'UNKNOWN' : 'CURRENT',
     detail: bad.length
       ? bad.map((l) => `${l.label}: ${l.note}`).join('; ')
