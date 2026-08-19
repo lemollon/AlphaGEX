@@ -3431,7 +3431,17 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
 
   const out: string[] = []
   for (const p of rows) {
-    const exp = String(p.expiration).slice(0, 10)
+    // 🚨 node-postgres returns a DATE column as a JS Date, and String(Date) is
+    // the LOCALE rendering — String(new Date('2026-08-17')) sliced to 10 chars
+    // is "Sun Aug 16", not "2026-08-17". It never equals a daily bar's `date`,
+    // so `hist.find(...)` missed every time and every position fell through to
+    // no_settle_price and stayed open. This function has therefore NEVER settled
+    // anything since it shipped on 8/16: FLAME only ever closed because the
+    // dashboard's 14:45 EOD poll flattened it, and SPARK's 8/17 and 8/18
+    // positions — days nobody had that page open — were still `open` on 8/19.
+    // Eight other sites in this file already use this exact defensive idiom;
+    // this was the one that did not.
+    const exp = p.expiration?.toISOString?.()?.slice(0, 10) || String(p.expiration).slice(0, 10)
     // Same-day: wait for the actual close. Past expiry: settle immediately.
     if (exp === todayStr && ctHHMM(ct) < 1500) continue
 
@@ -3446,6 +3456,13 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
       settlePx = q?.last ?? 0
     }
     if (!(settlePx > 0)) {
+      // Loud, because the scan `reason` this returns into is overwritten further
+      // down the cycle — which is why a settlement that failed every minute for
+      // three days left no trace anywhere in the bot logs.
+      console.warn(
+        `[scanner] ${bot.name.toUpperCase()} SETTLE BLOCKED ${p.position_id}: ` +
+        `no close for ${ticker} ${exp} — position stays OPEN and will retry.`,
+      )
       out.push(`${p.position_id}=no_settle_price`)
       continue
     }
