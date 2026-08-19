@@ -95,6 +95,9 @@ function Cell({ label, value, note, color }) {
 /**
  * @param {string} asOf     the last point's own date/time, straight from the payload
  * @param {string} asOfNote what that session is (e.g. "prior close — the signal")
+ * @param {string} asOfTone 'ok' | 'warn' | 'bad' | 'none' — grade the as-of cell
+ *                 EXPLICITLY, for series where sessions-behind is not the right
+ *                 measure (a live tape, a once-a-day snapshot). Wins over `behind`.
  * @param {number} behind   sessions behind the EXPECTED session (0 = current). null = unknown
  * @param {string} reading  the current value, preformatted by the caller
  * @param {string} zone     what that value means right now (e.g. "APPROACHING OVERSOLD")
@@ -108,18 +111,27 @@ function Cell({ label, value, note, color }) {
  *                 the feed is provably closed. Never a place to restate a cron time.
  */
 export default function ChartMeta({
-  asOf, asOfNote, behind, reading, zone, zoneColor, nextAt, cadence, armed,
-  nextOverride,
+  asOf, asOfNote, asOfTone, behind, reading, zone, zoneColor, nextAt, cadence,
+  armed, nextOverride,
 }) {
   const nextMs = nextAt ? Date.parse(nextAt) : NaN;
   const valid = Number.isFinite(nextMs);
   const now = useNow(valid);
 
   // ── AS OF ────────────────────────────────────────────────────────────────
+  // 🚨 AMBER IS A WARNING AND MUST BE EARNED. The first deploy of this
+  // component derived the colour from `behind` alone, so the two /risk charts
+  // — which have no sessions-behind concept at all — rendered a permanent
+  // amber "as of 12:30" over a tape that was perfectly current. A warning that
+  // is on when nothing is wrong is the cry-wolf failure this whole component
+  // exists to prevent, shipped inside it. Series that are not graded by
+  // session now pass an explicit asOfTone instead.
+  const TONE = { ok: null, warn: AMBER, bad: RED, none: null };
   const stale = behind != null && behind > 0;
-  const asOfColor = stale ? RED : behind === 0 ? null : AMBER;
-  const asOfText = stale
-    ? `${behind} session${behind === 1 ? '' : 's'} behind`
+  const asOfColor = asOfTone ? TONE[asOfTone]
+    : stale ? RED : behind === 0 ? null : AMBER;
+  const asOfText = asOfTone ? asOfNote
+    : stale ? `${behind} session${behind === 1 ? '' : 's'} behind`
     : behind === 0 ? (asOfNote || 'current for this session')
     : (asOfNote || 'freshness unknown');
 
@@ -288,15 +300,35 @@ export function tapeChartMeta(intra, state) {
   const used = band && chg != null ? Math.abs(chg) / band : null;
   const open = intra?.status === 'ok' && bars.length > 0;
 
+  // 🚨 GRADED BY LAG, NOT BY SESSION — and measured server-clock against
+  // server-clock. `generated_at` is when the backend built this payload and
+  // `t` is the last bar it had; the gap between them is the tape's real lag,
+  // computed without ever consulting the browser. That matters: /session's
+  // first version derived liveness from the browser clock and sat green over
+  // a feed that had stopped 30 minutes earlier.
+  //
+  // Sessions-behind is the WRONG measure here and passing it produced a
+  // permanent amber over a perfectly current tape on the first deploy.
+  let lagMin = null;
+  if (last?.t && intra?.generated_at) {
+    const gen = new Date(intra.generated_at);
+    const [bh, bm] = last.t.split(':').map(Number);
+    if (Number.isFinite(bh) && Number.isFinite(bm) && !isNaN(gen)) {
+      // Same-day comparison in the server's own reported wall time.
+      lagMin = (gen.getHours() * 60 + gen.getMinutes()) - (bh * 60 + bm);
+    }
+  }
+  // Bars are 5-minute; anything past ~12 minutes means the feed has stopped.
+  const lagBad = lagMin != null && lagMin > 12;
+
   return {
     asOf: last?.t || null,
-    asOfNote: last
-      ? `last 5-minute bar${intra?.snapshot_t ? ` · flow snapshot read at ${intra.snapshot_t}` : ''}`
-      : 'no bars yet — the tape starts at the 08:30 CT open',
-    // ⛔ Not graded stale. This is an intraday tape, not a prior-close series;
-    // sessions-behind is meaningless for it and passing 0 would paint a
-    // green "current" over a feed that may have stopped. Unknown is correct.
-    behind: null,
+    asOfNote: !last
+      ? 'no bars yet — the tape starts at the 08:30 CT open'
+      : lagBad
+        ? `no new bar for ${lagMin} minutes — the tape has stopped`
+        : `last 5-minute bar${intra?.snapshot_t ? ` · flow snapshot read at ${intra.snapshot_t}` : ''}`,
+    asOfTone: !last ? 'warn' : lagBad ? 'bad' : 'ok',
     reading: chg == null ? '—' : `${chg >= 0 ? '+' : '−'}${Math.abs(chg).toFixed(2)}%`,
     zone: used == null
       ? 'expected move unavailable'
@@ -333,14 +365,20 @@ export function flowChartMeta(state, last) {
   const peak = z.length ? Math.max(...z) : null;
   const cap = flow.captured_at ? String(flow.captured_at).slice(0, 16).replace('T', ' ') : null;
 
+  // 🚨 "10:00" IS NOT STALE AT 14:00. This series is one reading per session,
+  // taken once at 10:00 CT — its age in hours is meaningless and grading it
+  // that way would paint the chart amber every afternoon. The only question
+  // that matters is whether TODAY's snapshot landed at all.
+  const landed = flow.status === 'snapshot';
+
   return {
     asOf: cap || last?.d || null,
-    asOfNote: flow.status === 'snapshot'
+    asOfNote: landed
       ? "today's 10:00 CT snapshot is in"
       : flow.status
-        ? `snapshot status: ${flow.status}`
+        ? `snapshot status: ${flow.status} — today's reading has not landed`
         : 'no snapshot recorded for today',
-    behind: null,
+    asOfTone: landed ? 'ok' : 'warn',
     reading: peak == null ? '—' : `z ${peak >= 0 ? '+' : '−'}${Math.abs(peak).toFixed(2)}`,
     zone: peak == null ? 'no flow reading'
       : flow.spike ? 'SPIKE — above the z>2 threshold the signal fires on'
