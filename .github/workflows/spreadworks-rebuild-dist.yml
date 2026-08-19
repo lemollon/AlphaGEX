@@ -81,7 +81,20 @@ jobs:
       - name: Build
         working-directory: spreadworks/frontend
         run: |
-          rm -rf dist
+          # 🚨 DO NOT rm -rf dist FIRST. Tailwind v4 auto-detects its sources
+          # from the project directory and honours .gitignore - and dist is NOT
+          # ignored here, because it is committed as the deploy artifact. So
+          # Tailwind SCANS THE PREVIOUS BUNDLE and emits theme variables for
+          # classes it finds there. The build is self-referential.
+          #
+          # Consequence: building over the existing dist and building from
+          # nothing give DIFFERENT CSS from identical source. Measured
+          # 2026-08-19 - a clean build emitted index-CSlFfUDf.css, 2,512 bytes
+          # smaller, against index-BbNaCTQG.css from a build over the existing
+          # dist, and every page chunk hash moved with it.
+          #
+          # The `spreadworks-dist` guard does NOT wipe dist before rebuilding,
+          # so this must not either, or the two can never agree.
           npm run build
 
       - name: Commit if it changed
