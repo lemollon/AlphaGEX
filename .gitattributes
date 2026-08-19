@@ -17,4 +17,3 @@
 #           to rebuild.
 #   -diff   nobody reviews a minified diff, and it buries the real changes
 #           in a PR.
-spreadworks/frontend/dist/** -text -merge -diff

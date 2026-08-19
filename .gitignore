@@ -113,3 +113,4 @@ backtest/touch_pin/output/*.log
 backtest/skew_signal/output/*.csv
 backtest/skew_signal/output/*.log
 !backtest/skew_signal/output/.gitkeep
+spreadworks/frontend/dist/
