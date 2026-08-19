@@ -190,6 +190,36 @@ def _dedup_ok(key: str, cooldown_seconds: int = 300, fire_date=None) -> bool:
     return True
 
 
+async def _sample_calls() -> None:
+    """Hit the three surfaces so their verdicts get recorded.
+
+    🚨 CALLS THE REAL ENDPOINTS rather than recomputing the verdicts here. A
+    sampler with its own copy of the logic is a second source of truth and
+    drifts the moment either side changes - the recorded history would then
+    describe a signal that was never actually shown to anyone.
+
+    Uses an in-process ASGI transport, so it runs exactly the code path a
+    browser does without going over the network or needing to know the port.
+    """
+    import httpx
+    from . import app as _app
+    paths = ("/api/spreadworks/risk-advisor/state",
+             "/api/spreadworks/risk-advisor/session",
+             "/api/spreadworks/squeeze/state")
+    try:
+        transport = httpx.ASGITransport(app=_app)
+        async with httpx.AsyncClient(transport=transport,
+                                     base_url="http://sampler") as c:
+            for p in paths:
+                try:
+                    await c.get(p, timeout=45.0)
+                except Exception as e:  # noqa: BLE001
+                    logging.getLogger(__name__).warning(
+                        "[calls] sample %s failed: %r", p, e)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning("[calls] sampler failed: %r", e)
+
+
 def _start_scheduler(app: FastAPI):
     """Start APScheduler for market open/close Discord posts (Central Time)."""
     global _active_scheduler
@@ -1397,6 +1427,21 @@ def _start_scheduler(app: FastAPI):
     scheduler.add_job(_fire_gex_shift_check, "cron", minute="*/5",
                       hour="8-14", day_of_week="mon-fri", id="discord_gex_shift", replace_existing=True)
 
+    # Every 15 min 8:30-15:00 CT — sample all three call surfaces.
+    # 🚨 WITHOUT THIS THE HISTORY ONLY EXISTS WHEN SOMEONE IS LOOKING. The
+    # verdicts are recorded from inside the endpoints, so a day nobody opened
+    # the page would have no record of what the signal said - and the days you
+    # are not watching are exactly the ones worth auditing later.
+    scheduler.add_job(_sample_calls, "cron", minute="*/15",
+                      hour="8-14", day_of_week="mon-fri",
+                      id="sw_sample_calls", replace_existing=True)
+    # 15:05 CT — one more after the bell, to capture the CLOSING call. That is
+    # the one that carries overnight, and it is the only one the close-to-next
+    # -open gap can honestly be attributed to.
+    scheduler.add_job(_sample_calls, "cron", hour=15, minute=5,
+                      day_of_week="mon-fri", id="sw_sample_calls_close",
+                      replace_existing=True)
+
     # --- Close block ---
     # 15:00 CT — Market close reflection
     scheduler.add_job(_fire_market_close_message, "cron", hour=15, minute=0,
@@ -1784,6 +1829,15 @@ try:
 except Exception as _tsunami_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] TSUNAMI routes failed to load: %r", _tsunami_exc)
+
+# Call history — the append-only record of what Session / Squeeze / Risk
+# actually said, with SPY outcomes attached. Read-only; import-guarded.
+try:
+    from .routes_calls import router as calls_router
+    app.include_router(calls_router)
+except Exception as _calls_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] Call-history routes failed to load: %r", _calls_exc)
 
 # Squeeze signal (net dealer gamma, backend/bots/gamma_regime.py) — read-only
 # current verdict + history for the chart. Import-guarded; advisory only.

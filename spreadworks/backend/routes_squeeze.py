@@ -222,6 +222,23 @@ async def state(sessions: str | None = None):
         logger.warning("[routes_squeeze] vix_history failed: %r", e)
         vh = []
 
+    try:
+        from .call_log import record_call
+        # 🚨 data_ts is the row the verdict CAME FROM, not the moment we asked.
+        # The gamma warehouse is ingested by hand, and a stale reading dated as
+        # today has already cost a real signal flip - without recording the
+        # input's age a bad call and a stale one look identical afterwards.
+        _pd = sig.get("prior_date")
+        record_call("squeeze", sig.get("verdict"),
+                    detail={"gamma_pct": sig.get("gamma_pct"),
+                            "net_gex_b": sig.get("net_gex_b"),
+                            "vix_ratio": sig.get("vix_ratio"),
+                            "stale": (fresh or {}).get("stale")},
+                    data_ts=(datetime.combine(_pd, dtime(15, 5))
+                             if hasattr(_pd, "year") else None))
+    except Exception:
+        pass                       # instrumentation never breaks the page
+
     return {
         "asof": today.isoformat(),
         "data_date": (_isoformat(sig["prior_date"])

@@ -9,6 +9,7 @@ import {
 } from 'recharts';
 import { Zap } from 'lucide-react';
 import { API_URL } from '../lib/api';
+import CallHistory from '../components/CallHistory';
 
 const GREEN = '#34d399', RED = '#f87171', AMBER = '#fbbf24', GREY = '#9ca3af', DIM = '#8b93a7';
 const LIVE = '#c084fc';
@@ -1700,6 +1701,8 @@ export default function SqueezePage() {
           </Collapse>
         </Zone>
       </div>
+
+      <CallHistory surface="squeeze" title="Squeeze call history" />
     </div>
   );
 }

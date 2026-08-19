@@ -24,6 +24,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Radio, ArrowDown, ArrowUp } from 'lucide-react';
 import { API_URL } from '../lib/api';
+import CallHistory from '../components/CallHistory';
 
 const GREEN = '#34d399', RED = '#f87171', AMBER = '#fbbf24', BLUE = '#60a5fa', DIM = '#8b93a7';
 const S = {
@@ -555,6 +556,8 @@ export default function SessionPage() {
           picture of a stale number — so there isn’t one. The GEX Profile page carries the map.
         </p>
       </Fold>
+
+      <CallHistory surface="session" title="Session call history" />
     </div>
   );
 }
