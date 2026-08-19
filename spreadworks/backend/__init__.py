@@ -1568,6 +1568,42 @@ def _start_scheduler(app: FastAPI):
     return scheduler
 
 
+def _ensure_additive_columns(eng):
+    """ALTER TABLE ... ADD COLUMN IF NOT EXISTS for tables outside `positions`.
+
+    `Base.metadata.create_all()` creates missing TABLES but never adds a column
+    to one that already exists, so a new field on a young table silently reads
+    NULL forever in production while working fine on a fresh local database.
+    Additive only — nothing here drops or retypes.
+    """
+    from sqlalchemy import text as sa_text
+
+    additive = {
+        # 2026-08-19: the intraday tape only carried volume LEVELS; the mix is
+        # the leg that actually signals. See routes_risk.RiskSessionLog.
+        "risk_session_log": {"roll_pc_z": "DOUBLE PRECISION"},
+    }
+    try:
+        with eng.connect() as conn:
+            for table, cols in additive.items():
+                res = conn.execute(sa_text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = :t AND table_schema = 'public'"),
+                    {"t": table})
+                existing = {r[0] for r in res}
+                if not existing:
+                    continue          # create_all() will build it complete
+                for col, ddl in cols.items():
+                    if col in existing:
+                        continue
+                    with eng.begin() as w:
+                        w.execute(sa_text(
+                            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {ddl}"))
+                    print(f"[SpreadWorks] Schema: added {table}.{col}")
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[SpreadWorks] Additive schema migration error: {e}")
+
+
 def _ensure_schema(eng):
     """Ensure positions/daily_marks tables match the current SQLAlchemy model.
 
@@ -1650,6 +1686,7 @@ async def lifespan(app: FastAPI):
         try:
             # Ensure existing tables have all expected columns (non-destructive)
             _ensure_schema(engine)
+            _ensure_additive_columns(engine)
             Base.metadata.create_all(bind=engine)
             print("[SpreadWorks] Database tables created/verified")
         except Exception as e:
