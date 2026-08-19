@@ -99,9 +99,87 @@ function Readout({ value, unit, meaning, meaningColor, at, ageMin, valueColor })
   );
 }
 
-// ── The price tape. Draws the 10:00 reference and BOTH confirmation
-// thresholds, so the distance still to travel is readable at a glance rather
-// than inferred from numbers.
+// ── What the tape is WORTH. A chart that draws a shape and leaves the reader
+// to infer the trade is not finished — "the line is way below the red trigger,
+// what does that mean?" is a question the panel should never have made anyone
+// ask.
+//
+// 🚨 THE ANSWER IS USUALLY "NOTHING", AND IT HAS TO SAY SO. Distance past the
+// trigger carries no directional information. Measured on 896 sessions in the
+// warehouse, taking the 10:10 CT anchor and asking what the 13:40 CT position
+// does into the close:
+//
+//     at 13:40 vs anchor        n     kept going    median rest-of-day
+//     below the down trigger   312       46.8%            +0.020%
+//       ...  -0.10 to -0.25%   126       50.0%            -0.001%
+//       ...  -0.25 to -0.50%    97       39.2%            +0.049%
+//       ...  worse than -0.50%  89       50.6%            -0.006%
+//     EVERY session            896       49.2%            +0.002%
+//
+// No monotonic relationship, every bucket inside a standard error of the base
+// rate, and the mild tilt is toward the BOUNCE, not the continuation. Being
+// "way below" is not a bearish tell — it is the base rate wearing a costume.
+//
+// The edge lives entirely in stage 1: an ARMED break continues 65.8% (n=79)
+// and pays 3.07:1, against 49.8% and 1.06:1 unarmed. So the verdict keys on
+// `armed`, never on how far price has travelled.
+function TapeVerdict({ d, c, fired }) {
+  const armed = c?.armed === true;
+  const through = d?.to_trigger?.down != null
+    && (d.to_trigger.down <= 0 || d.to_trigger.up <= 0);
+  const r = d?.runway || {};
+  const pay = (b) => (b?.median_win && b?.median_loss
+    ? `${Math.abs(b.median_win / b.median_loss).toFixed(2)}:1` : '—');
+  const hit = (b) => (b?.continued != null ? `${(100 * b.continued).toFixed(1)}%` : '—');
+  const closed = d?.window?.closes_in_min != null && d.window.closes_in_min <= 0;
+
+  let tone, call, why;
+  if (fired && armed) {
+    tone = GREEN;
+    call = `ARMED ${c.fired_dir} BREAK — this is the trade`;
+    why = `Both legs are in. Historically ${hit(r.armed)} continue to the close and the `
+        + `payoff is ${pay(r.armed)} (n=${r.armed?.n ?? '—'}). Roughly one in three still fails.`;
+  } else if (fired && !armed) {
+    tone = DIM;
+    call = `${c.fired_dir} break, but UNARMED — no edge`;
+    why = `Flow never armed, so this is the base case: ${hit(r.base)} continue, `
+        + `payoff ${pay(r.base)} (n=${r.base?.n ?? '—'}). A coin flip you pay spread to take.`;
+  } else if (armed) {
+    tone = AMBER;
+    call = 'ARMED — waiting on the price break';
+    why = 'Stage 1 is in. Nothing to do until price commits at a session extreme.';
+  } else if (through) {
+    tone = DIM;
+    call = 'NO EDGE — distance past the trigger means nothing';
+    why = 'Flow never armed. Measured over 896 sessions, how FAR price sits past the '
+        + 'trigger does not predict the close (46.8% keep going vs a 49.2% base, and the '
+        + 'tilt is toward the bounce). The edge is the flow leg, not the distance.';
+  } else {
+    tone = DIM;
+    call = 'NOTHING TO DO — neither leg is in';
+    why = 'Flow is ordinary and price has not committed.';
+  }
+
+  return (
+    <div style={{
+      marginTop: 10, padding: '10px 12px', borderRadius: 8,
+      background: tone === GREEN ? `${GREEN}0f` : '#0e1220',
+      border: `1px solid ${tone}${tone === GREEN ? '66' : '33'}`,
+    }}>
+      <div style={{ fontSize: 12.5, fontWeight: 700, color: tone, letterSpacing: '.02em' }}>
+        {call}
+      </div>
+      <div style={{ ...S.small, marginTop: 3, lineHeight: 1.5 }}>
+        {why}
+        {closed && ' The confirmation window is closed for today.'}
+      </div>
+    </div>
+  );
+}
+
+// ── The price tape. Draws the 10:10 anchor and BOTH confirmation thresholds,
+// so the distance still to travel is readable at a glance rather than inferred
+// from numbers.
 function Tape({ tape, levels, confirm }) {
   const pts = (tape || []).filter((r) => r.spot != null);
   if (pts.length < 2) {
@@ -134,9 +212,9 @@ function Tape({ tape, levels, confirm }) {
   return (
     <div style={{ overflowX: 'auto', minWidth: 0 }}>
       <svg width={W} height={H} role="img"
-           aria-label="SPY price since the 10:00 CT reference, with the confirmation thresholds marked">
+           aria-label="SPY price since the 10:10 CT anchor, with the confirmation thresholds marked">
         {line(levels?.up, GREEN, 'UP TRIGGER', '4 3')}
-        {line(confirm?.ref_spot, DIM, '10:00 REF', '2 3')}
+        {line(confirm?.ref_spot, DIM, '10:10 ANCHOR', '2 3')}
         {line(levels?.down, RED, 'DOWN TRIGGER', '4 3')}
         <path d={d} fill="none" stroke="#e6e9f0" strokeWidth="1.7" strokeLinejoin="round" />
         {confirm?.fired_spot != null && (
@@ -437,11 +515,11 @@ export default function SessionPage() {
       {/* the tape */}
       <div style={S.card}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
-          <span style={{ ...S.cardTitle, marginBottom: 0 }}>SPY since the 10:00 CT reference</span>
+          <span style={{ ...S.cardTitle, marginBottom: 0 }}>SPY since the 10:10 CT anchor</span>
           <Readout
             value={spotNow != null ? num(spotNow) : '—'}
             meaning={spotNow != null && c.ref_spot
-              ? `${spotNow - c.ref_spot >= 0 ? '+' : ''}${num(spotNow - c.ref_spot)} vs 10:00`
+              ? `${spotNow - c.ref_spot >= 0 ? '+' : ''}${num(spotNow - c.ref_spot)} vs the anchor`
               : null}
             meaningColor={spotNow != null && c.ref_spot
               ? (spotNow >= c.ref_spot ? GREEN : RED) : DIM}
@@ -482,8 +560,10 @@ export default function SessionPage() {
           </div>
         )}
 
+        <TapeVerdict d={d} c={c} fired={fired} />
+
         <div style={{ ...S.small, marginTop: 8 }}>
-          Session range since the reference: {num(c.run_min)} – {num(c.run_max)}.
+          Session range since the anchor: {num(c.run_min)} – {num(c.run_max)}.
           A break only counts at a session extreme, so a dip that recovers doesn’t arm the rest of the day.
         </div>
       </div>

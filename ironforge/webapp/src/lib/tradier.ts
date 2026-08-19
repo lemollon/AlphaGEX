@@ -925,6 +925,28 @@ export function canReadProductionBalance(name: string): boolean {
   return false
 }
 
+/**
+ * WHY a bot may not place a real order, as a short non-secret string.
+ *
+ * Exists because "disarmed" and "armed but the order failed" used to look
+ * identical in the scan log — an empty string. It never returns a credential,
+ * only which named condition is unmet, so it is safe to log and safe to show
+ * on the operator console.
+ */
+export function describeLiveGate(name: string): string {
+  const n = name.toLowerCase()
+  if (n === 'spark') return 'spark_is_paper_only'
+  if (n === 'flame') {
+    const missing: string[] = []
+    if (process.env.IRONFORGE_FLAME_LIVE !== 'true') missing.push('IRONFORGE_FLAME_LIVE')
+    const { apiKey, accountId } = flameCreds()
+    if (!apiKey) missing.push('TRADIER_FLAME_API_KEY')
+    if (!accountId) missing.push('TRADIER_FLAME_ACCOUNT_ID')
+    return missing.length ? `missing:${missing.join(',')}` : 'armed'
+  }
+  return isProductionBot(n) ? 'armed' : 'not_a_production_bot'
+}
+
 export function isFlameLiveArmed(): boolean {
   if (process.env.IRONFORGE_FLAME_LIVE !== 'true') return false
   const { apiKey, accountId } = flameCreds()

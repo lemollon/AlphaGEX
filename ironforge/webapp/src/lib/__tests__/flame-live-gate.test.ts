@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { isFlameLiveArmed, isProductionBot, getProductionAccountsForBot } from '../tradier'
+import { isFlameLiveArmed, isProductionBot, getProductionAccountsForBot, describeLiveGate, canPlaceLiveOrders } from '../tradier'
 
 /**
  * FLAME must not be able to place real-money orders unless deliberately armed.
@@ -109,5 +109,55 @@ describe('FLAME production accounts', () => {
   it('is still blocked when armed but the owner-pause table is unreadable', async () => {
     setEnv(ARMED)
     await expect(getProductionAccountsForBot('flame')).resolves.toEqual([])
+  })
+})
+
+/**
+ * WHY it is disarmed has to be sayable out loud.
+ *
+ * 2026-08-19: FLAME's arm env was set on the operator console, which never runs
+ * the scanner, while the scanning service had no FLAME creds. The scan log wrote
+ * `traded@0.24` — byte-identical to a day that also filled live — because the
+ * disarmed branch appended nothing. A whole trading day was lost to a blank
+ * string. These pin the reason string that replaced it.
+ */
+describe('describeLiveGate — a disarmed bot must say which condition is unmet', () => {
+  it('names every missing FLAME condition when nothing is set', () => {
+    setEnv({})
+    const why = describeLiveGate('flame')
+    expect(why).toContain('IRONFORGE_FLAME_LIVE')
+    expect(why).toContain('TRADIER_FLAME_API_KEY')
+    expect(why).toContain('TRADIER_FLAME_ACCOUNT_ID')
+  })
+
+  it('names only the knob when the creds are present — the 8/19 failure exactly', () => {
+    setEnv({ TRADIER_FLAME_API_KEY: 'k', TRADIER_FLAME_ACCOUNT_ID: 'a' })
+    expect(describeLiveGate('flame')).toBe('missing:IRONFORGE_FLAME_LIVE')
+  })
+
+  it('names only the creds when the knob is on but the service lacks them', () => {
+    setEnv({ IRONFORGE_FLAME_LIVE: 'true' })
+    expect(describeLiveGate('flame')).toBe(
+      'missing:TRADIER_FLAME_API_KEY,TRADIER_FLAME_ACCOUNT_ID',
+    )
+  })
+
+  it('reports armed once all three are set', () => {
+    setEnv(ARMED)
+    expect(describeLiveGate('flame')).toBe('armed')
+    expect(canPlaceLiveOrders('flame')).toBe(true)
+  })
+
+  it('never leaks a credential value', () => {
+    setEnv({ TRADIER_FLAME_API_KEY: 'super-secret-key', TRADIER_FLAME_ACCOUNT_ID: 'acct-123' })
+    const why = describeLiveGate('flame')
+    expect(why).not.toContain('super-secret-key')
+    expect(why).not.toContain('acct-123')
+  })
+
+  it('explains SPARK as a policy decision, not a missing variable', () => {
+    setEnv(ARMED)
+    expect(canPlaceLiveOrders('spark')).toBe(false)
+    expect(describeLiveGate('spark')).toBe('spark_is_paper_only')
   })
 })
