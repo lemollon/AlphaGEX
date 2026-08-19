@@ -578,7 +578,8 @@ def register_risk_alerts(scheduler, app) -> None:
                 return
             from .routes_risk import (ROLLING_WINDOW_CT, _rolling_flow_now,
                                       _rolling_baseline_at, _rolling_z,
-                                      _save_rolling_state, session_log_write)
+                                      _save_rolling_state, session_log_write,
+                                      _pc)
             start, end = ROLLING_WINDOW_CT
             t = (now.hour, now.minute)
             if t < start or t > end:
@@ -594,6 +595,20 @@ def register_risk_alerts(scheduler, app) -> None:
                 return
             pz = _rolling_z(snap["putv"], baseline["put_mean"], baseline["put_sd"])
             tz = _rolling_z(snap["totv"], baseline["tot_mean"], baseline["tot_sd"])
+            # 🚨 THE MIX, every 10 minutes — not just at the three fixed clocks.
+            # pz/tz are LEVELS, and levels are the pair that were both quiet on
+            # 2026-08-17 while the ratio was the outlier of the trailing 63.
+            # Grading the ratio here costs nothing (both numbers are already in
+            # `snap`) and is the only way the tape can show the signal moving
+            # between 10:00 and 12:00 instead of jumping between snapshots.
+            # ADVISORY ONLY — this does not fire an alert of its own; the arming
+            # decision stays with the 10:00 clock so the rule that was measured
+            # is the rule that runs.
+            czr = None
+            if baseline.get("pc_sd"):
+                cur_pc = _pc(snap)
+                if cur_pc is not None:
+                    czr = _rolling_z(cur_pc, baseline["pc_mean"], baseline["pc_sd"])
             today = now.date()
             # refresh the live reading on EVERY successful poll — whether or
             # not it crosses the alert threshold — so /state's flow_rolling
@@ -603,7 +618,7 @@ def register_risk_alerts(scheduler, app) -> None:
             # overwritten row is the reason the 2026-08-17 slide has no
             # surviving intraday z history at all.
             session_log_write(today, now, spot=snap.get("spot"),
-                              roll_putv_z=pz, roll_totv_z=tz)
+                              roll_putv_z=pz, roll_totv_z=tz, roll_pc_z=czr)
 
             if (pz or 0) <= 2 and (tz or 0) <= 2:
                 return

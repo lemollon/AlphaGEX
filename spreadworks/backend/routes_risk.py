@@ -163,6 +163,12 @@ class RiskSessionLog(Base):
     spot = Column(Float)
     roll_putv_z = Column(Float)
     roll_totv_z = Column(Float)
+    # 🚨 Added 2026-08-19. The first two grade LEVEL, which is exactly the
+    # pair that was correctly quiet at 10:00 CT on 08-17 (+0.58 / -0.45) while
+    # the MIX printed +2.72. The fixed clocks were taught to divide them the
+    # next day; this 10-minute tape was not, so it carried the pre-08/18
+    # metric all session. See _pc_z.
+    roll_pc_z = Column(Float)
 
 
 class RiskConfirmState(Base):
@@ -496,7 +502,8 @@ def _save_rolling_state(d: date, captured_at: datetime, pz: float | None,
 
 def session_log_write(d: date, now: datetime, *, spot: float | None = None,
                       roll_putv_z: float | None = None,
-                      roll_totv_z: float | None = None) -> None:
+                      roll_totv_z: float | None = None,
+                      roll_pc_z: float | None = None) -> None:
     """Append (or fill) this session's 10-minute tape slot. Never raises —
     the tape is a record, and losing a slot must never take down the poll
     that was trying to write it.
@@ -521,6 +528,8 @@ def session_log_write(d: date, now: datetime, *, spot: float | None = None,
             row.roll_putv_z = roll_putv_z
         if roll_totv_z is not None and row.roll_totv_z is None:
             row.roll_totv_z = roll_totv_z
+        if roll_pc_z is not None and row.roll_pc_z is None:
+            row.roll_pc_z = roll_pc_z
         db.commit()
     except Exception:
         db.rollback()
@@ -539,7 +548,8 @@ def session_log_read(d: date) -> list[dict]:
                   .filter(RiskSessionLog.d == d)
                   .order_by(RiskSessionLog.minute_ct).all())
         return [{"minute_ct": r.minute_ct, "spot": r.spot,
-                 "roll_putv_z": r.roll_putv_z, "roll_totv_z": r.roll_totv_z}
+                 "roll_putv_z": r.roll_putv_z, "roll_totv_z": r.roll_totv_z,
+                 "roll_pc_z": r.roll_pc_z}
                 for r in rows]
     except Exception:
         return []
@@ -1694,12 +1704,97 @@ async def session_tape(request: Request):
         alerts.append({"key": key, "label": label,
                        "fired": _posted_today(key, today)})
 
+    # ── HOW FAR IS IT FROM COMMITTING, AND HOW FAR DOES IT GO AFTER
+    #
+    # The 08-18 page drew the two trigger lines and left the distance to be
+    # eyeballed off a chart. At 11:20 CT the question is arithmetic — "is this
+    # 4 cents away or 40" — and it should not require reading pixels.
+    last_spot = next((r["spot"] for r in reversed(tape) if r["spot"] is not None), None)
+    to_trigger: dict = {"spot": last_spot, "down": None, "up": None,
+                        "down_pct": None, "up_pct": None}
+    if last_spot and levels["down"] and levels["up"]:
+        to_trigger.update({
+            "down": round(last_spot - levels["down"], 2),
+            "up": round(levels["up"] - last_spot, 2),
+            "down_pct": round((last_spot - levels["down"]) / last_spot * 100, 3),
+            "up_pct": round((levels["up"] - last_spot) / last_spot * 100, 3),
+        })
+
+    # Run since the confirmation, signed in the fired direction — the live
+    # counterpart to the historical runway below. On 08-17 the replayed signal
+    # confirmed with $2.00 of a $3.00 slide still ahead; that is the number
+    # this makes visible while it is still happening.
+    run_since_fire = None
+    if confirm["fired_spot"] and last_spot:
+        sign = 1.0 if confirm["fired_dir"] == "UP" else -1.0
+        run_since_fire = {
+            "pct": round(sign * (last_spot - confirm["fired_spot"])
+                         / confirm["fired_spot"] * 100, 3),
+            "dollars": round(sign * (last_spot - confirm["fired_spot"]), 2),
+        }
+
+    # 🚨 MAGNITUDE, not just hit rate. A 63% hit rate on a move that dies
+    # instantly is not tradeable; what makes stage 2 worth acting on is that a
+    # flagged break wins ~2.8x what it gives back while an unflagged one is
+    # 1.05x. Computed from the same rows the decay monitor grades, so it keeps
+    # updating with live sessions. See signal_calibration.runway.
+    try:
+        from .signal_calibration import runway as _runway, report as _report
+        runway_stats = _runway(today)
+    except Exception:                                        # noqa: BLE001
+        runway_stats, _report = {}, None
+
+    # The decay monitor had no UI anywhere. An advisory page that cannot say
+    # whether its own rule is still passing is asking to be trusted on faith.
+    calib = {}
+    try:
+        if _report is not None:
+            r = _report(today)
+            calib = {k: r.get(k) for k in
+                     ("verdict", "sessions", "live_sessions", "n_armed_fired",
+                      "continuation", "continuation_lcb", "base_continuation",
+                      "armed_share", "stage1_lift", "window_months")}
+            calib["reasons"] = (r.get("reasons") or [])[:2]
+    except Exception:                                        # noqa: BLE001
+        pass
+
+    # Recent sessions — the track record, which the page could not show at all.
+    history: list[dict] = []
+    try:
+        from .signal_calibration import SignalEval
+        if SessionLocal is not None:
+            db = SessionLocal()
+            try:
+                rows = (db.query(SignalEval)
+                          .filter(SignalEval.d < today)
+                          .order_by(SignalEval.d.desc()).limit(15).all())
+                history = [{"d": r.d.isoformat(), "armed": bool(r.armed),
+                            "pcz": r.pcz, "fired_dir": r.fired_dir or None,
+                            "continued": (None if r.continued is None
+                                          else bool(r.continued)),
+                            "move_pct": r.move_pct} for r in rows][::-1]
+            finally:
+                db.close()
+    except Exception:                                        # noqa: BLE001
+        pass
+
     return {
         "asof": now_ct.isoformat(),
         "clock": clock,
         "tape": tape,
         "confirm": confirm,
         "levels": levels,
+        "to_trigger": to_trigger,
+        "run_since_fire": run_since_fire,
+        "runway": runway_stats,
+        "calibration": calib,
+        "history": history,
+        "window": {
+            "opens_in_min": max(0, win_open - now_min) if now_min < win_open else 0,
+            "closes_in_min": max(0, win_close - now_min) if now_min <= win_close else 0,
+            "open_ct": f"{win_open // 60:02d}:{win_open % 60:02d}",
+            "close_ct": f"{win_close // 60:02d}:{win_close % 60:02d}",
+        },
         "clocks": clocks,
         "alerts": alerts,
         "gamma_feed": {

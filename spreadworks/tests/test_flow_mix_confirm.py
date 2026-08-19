@@ -465,3 +465,91 @@ def test_thresholds_are_recorded_in_the_payload(calib_db):
     pr = sc.report(date(2027, 11, 1))["pre_registered"]
     assert pr["set_on"] == "2026-08-18"
     assert "LCB" in pr["disarm_if"]
+
+
+# ---------------------------------------------------------------------------
+# WHAT THE 08-18 PAGE LEFT OUT (added 2026-08-19)
+#
+# It shipped with the hit rate and nothing else: 63% continuation, two trigger
+# lines on a chart, and no answer to "how much is left". A hit rate with no
+# magnitude is not a tradeable statement, and the intraday tape carried only
+# the two LEVEL z-scores — the pair that were both correctly quiet on 08-17
+# while the MIX was the outlier of the trailing 63.
+# ---------------------------------------------------------------------------
+
+def test_the_tape_carries_the_mix_not_just_the_levels(confirm_db):
+    """🚨 The regression this pins: an intraday tape that grades put and total
+    volume but never their ratio is the pre-08/18 metric wearing a new chart."""
+    rr = confirm_db
+    d = date(2026, 8, 17)
+    rr.session_log_write(d, _t(11, 0), spot=774.68,
+                         roll_putv_z=0.58, roll_totv_z=-0.45, roll_pc_z=2.72)
+    row = rr.session_log_read(d)[0]
+    assert row["roll_pc_z"] == 2.72
+    # and the levels alone would still have said "quiet"
+    assert row["roll_putv_z"] < 2 and row["roll_totv_z"] < 2
+
+
+def test_the_mix_shares_the_no_rewrite_rule(confirm_db):
+    rr = confirm_db
+    d = date(2026, 8, 17)
+    rr.session_log_write(d, _t(11, 0), roll_pc_z=2.72)
+    rr.session_log_write(d, _t(11, 8), roll_pc_z=0.10)
+    assert rr.session_log_read(d)[0]["roll_pc_z"] == 2.72
+
+
+def test_the_rolling_baseline_can_grade_the_mix():
+    """The baseline file needs pc_mean/pc_sd at every minute it covers, or the
+    watcher silently writes NULL mix all session and the chart stays empty."""
+    from backend.routes_risk import _rolling_baseline
+    b = _rolling_baseline()
+    assert b, "baseline file missing"
+    missing = [m for m, row in b.items() if not row.get("pc_sd")]
+    assert not missing, f"{len(missing)} minutes have no mix baseline"
+    # sanity: SPY's cumulative put/call ratio sits near 1, not near zero
+    any_row = b[min(b)]
+    assert 0.5 < any_row["pc_mean"] < 2.0
+
+
+def test_runway_reports_magnitude_and_the_payoff_asymmetry(calib_db):
+    """The finding is not the 63% — an unflagged break also wins sometimes.
+    It is that a flagged break wins far more than it gives back."""
+    sc = calib_db
+    db = sc.SessionLocal()
+    day = date(2026, 1, 5)
+    for i in range(40):                       # armed: big wins, small losses
+        won = i < 27
+        db.add(sc.SignalEval(d=day, pcz=2.0, armed=1, ref_spot=700.0,
+                             close_spot=700.0, fired_dir="UP", fired_spot=700.0,
+                             continued=1 if won else 0, move_pct=0.5,
+                             source="seed"))
+        # close_spot carries the run; set it after so the sign is explicit
+        db.query(sc.SignalEval).filter(sc.SignalEval.d == day).update(
+            {"close_spot": 700.0 * (1 + (0.005 if won else -0.002))})
+        day = day + timedelta(days=1)
+    for i in range(40):                       # unflagged: symmetric coin flip
+        won = i < 20
+        db.add(sc.SignalEval(d=day, pcz=0.1, armed=0, ref_spot=700.0,
+                             close_spot=700.0, fired_dir="UP", fired_spot=700.0,
+                             continued=1 if won else 0, move_pct=0.1,
+                             source="seed"))
+        db.query(sc.SignalEval).filter(sc.SignalEval.d == day).update(
+            {"close_spot": 700.0 * (1 + (0.003 if won else -0.003))})
+        day = day + timedelta(days=1)
+    db.commit(); db.close()
+
+    sc._runway_cache = None
+    rw = sc.runway(date(2026, 6, 1))
+    assert rw["armed"]["n"] == 40 and rw["base"]["n"] == 40
+    assert rw["armed"]["median_win"] > 0 > rw["armed"]["median_loss"]
+    # the whole point: armed pays multiples of what it risks, base does not
+    assert rw["payoff_ratio"] > 2
+    assert rw["base_payoff_ratio"] == pytest.approx(1.0, abs=0.1)
+
+
+def test_runway_stays_quiet_rather_than_quoting_a_number_from_nothing(calib_db):
+    """Under ten firings there is no distribution to report. A page that
+    invents one reads as authoritative and is wrong."""
+    sc = calib_db
+    sc._runway_cache = None
+    assert sc.runway(date(2026, 6, 1))["armed"] is None

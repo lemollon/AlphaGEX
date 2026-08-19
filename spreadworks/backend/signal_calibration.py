@@ -323,3 +323,91 @@ def enforce(rep: dict) -> list[str]:
     if done:
         logger.warning("[calib] DISARMED pivot on %s", ", ".join(done))
     return done
+
+
+# ---------------------------------------------------------------------------
+# RUNWAY — how far the move travels AFTER the confirmation, not just how often
+#
+# The page shipped on 2026-08-18 told Leron the break continues 63% of the
+# time and stopped there. A hit rate with no magnitude is not a tradeable
+# statement: 63% of a move that dies immediately is worth nothing, and the
+# thing he actually has to decide at 11:20 CT is how much room is left.
+#
+# Measured fire -> close, signed in the fired direction, over the same rows the
+# calibration monitor already grades (seed + live, so it keeps updating):
+#
+#     armed + fired (n=78)    median +0.217%  |  continues 66.7%
+#         median run when it continues   +0.528%
+#         median give-back when it fails -0.184%   -> 2.86:1
+#     unflagged + fired (n=797) median -0.003%  |  continues 49.8%
+#         +0.270% / -0.256%                        -> 1.06:1
+#
+# Welch t = 3.03 on the mean run, positive in all four years
+# (+0.345 / +0.115 / +0.216 / +0.291), and symmetric by side
+# (UP median +0.239, DOWN +0.217) — the same symmetry that is the strongest
+# evidence stage 2 is real rather than a bear-market artefact.
+#
+# 🚨 The asymmetry is the finding, not the hit rate. An unflagged break wins
+# and loses the same amount; a flagged one wins nearly three times what it
+# gives back. That is what makes it worth acting on at 66.7%.
+# ---------------------------------------------------------------------------
+
+_runway_cache: tuple[date, dict] | None = None
+
+
+def _pctl(xs: list[float], q: float) -> float | None:
+    if not xs:
+        return None
+    s = sorted(xs)
+    i = min(len(s) - 1, max(0, int(round(q * (len(s) - 1)))))
+    return s[i]
+
+
+def runway(today: date | None = None) -> dict:
+    """Fire→close magnitude stats, cached for the day (the inputs only change
+    once a session, at the 15:05 close job)."""
+    global _runway_cache
+    today = today or datetime.now(CT).date()
+    if _runway_cache is not None and _runway_cache[0] == today:
+        return _runway_cache[1]
+
+    out: dict = {"armed": None, "base": None}
+    if SessionLocal is not None:
+        db = SessionLocal()
+        try:
+            rows = db.query(SignalEval).all()
+        except Exception:                                    # noqa: BLE001
+            rows = []
+        finally:
+            db.close()
+
+        def block(rs: list) -> dict | None:
+            runs = []
+            for r in rs:
+                if not (r.fired_dir and r.fired_spot and r.close_spot):
+                    continue
+                sign = 1.0 if r.fired_dir == "UP" else -1.0
+                runs.append(sign * (r.close_spot - r.fired_spot) / r.fired_spot * 100)
+            if len(runs) < 10:
+                return None
+            wins = [x for x in runs if x > 0]
+            losses = [x for x in runs if x <= 0]
+            return {
+                "n": len(runs),
+                "continued": len(wins) / len(runs),
+                "median": _pctl(runs, 0.50),
+                "median_win": _pctl(wins, 0.50),
+                "median_loss": _pctl(losses, 0.50),
+                "p25": _pctl(runs, 0.25),
+                "p75": _pctl(runs, 0.75),
+            }
+
+        out["armed"] = block([r for r in rows if r.armed])
+        out["base"] = block([r for r in rows if not r.armed])
+
+    a, b = out.get("armed"), out.get("base")
+    if a and b and a.get("median_loss"):
+        out["payoff_ratio"] = abs(a["median_win"] / a["median_loss"])
+        out["base_payoff_ratio"] = abs(b["median_win"] / b["median_loss"]) if b.get("median_loss") else None
+    _runway_cache = (today, out)
+    return out
