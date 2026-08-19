@@ -10,6 +10,23 @@
 
 @import "tailwindcss";
 
+/* 🚨 DO NOT LET TAILWIND SCAN THE BUILD OUTPUT.
+   Tailwind v4 auto-detects sources from the project directory and honours
+   .gitignore - and dist/ is NOT ignored here, because it is committed as the
+   deploy artifact. Without this line the build READS ITS OWN PREVIOUS OUTPUT
+   and emits theme variables for class-like strings found in the last bundle.
+
+   The build is then self-referential: building over an existing dist and
+   building from nothing produce DIFFERENT CSS from identical source
+   (index-BbNaCTQG.css vs index-CSlFfUDf.css, 2,512 bytes apart, and every
+   page chunk hash moves with it). That cost most of 2026-08-19 - two honest
+   Linux builds of the same commit disagreed, and the CI hash guard could
+   never be satisfied from a machine that cleaned dist first.
+
+   With dist excluded the output depends only on src/, so a clean build and an
+   incremental one agree, on any machine. */
+@source not "../dist";
+
 @theme {
   /* ── Surfaces ─────────────────────────────────────────────────────── */
   /* Page itself is transparent so the body aurora shows through. Cards
