@@ -1362,13 +1362,46 @@ async def state(request: Request):
     rets = await _spy_daily_rets(request)
     outlook = _outlook(vix_c, v9_c, v1, rets)
 
-    risk_off = backwardation or flag_vix1d or bool(flow["spike"])
+    # ── INTRADAY ESCALATION ──────────────────────────────────────────────────
+    # 🚨 THREE VALIDATED SIGNALS USED TO ALERT YOUR PHONE AND NEVER MOVE THIS
+    # PAGE. `action` was computed once from prior closes plus the single 10:00
+    # snapshot and then frozen for the session, so a 13:30 spike could push a
+    # Discord alert while /risk still read NORMAL. Each of these is already
+    # pre-registered and backtested:
+    #
+    #   12:00 CT re-check   P(|move to close| >= 0.5%) 29.3% vs 17.0% base
+    #   13:30 CT re-check                              17.0% vs  8.4% base
+    #   rolling watcher     (registry #39, */10 CT)    34.2% vs 22.4% base
+    #
+    # ⛔ NOT DOUBLE-COUNTED. rolling_flow_check() already suppresses itself when
+    # a fixed clock has alerted a spike the same day, so these are disjoint by
+    # construction upstream — the page must not re-add what the watcher has
+    # already withheld. It reads `fired_today`, which is that dedup'd flag.
+    pm_spike = [c for c, e in (flow_pm or {}).items() if e.get("spike")]
+    rolling_fired = bool((flow_rolling or {}).get("fired_today"))
+    intraday_flags = list(pm_spike) + (["rolling"] if rolling_fired else [])
+
+    risk_off = (backwardation or flag_vix1d or bool(flow["spike"])
+                or bool(intraday_flags))
     # explicit whitelist action (v2 §7.1): the ONLY instruction this endpoint
     # gives. "normal" on calm/no-signal days — the advisor never says "sell
     # more"; sizing up is not risk management.
     action = ("stand_down" if (backwardation and flag_vix1d) else
               "skip_entry" if risk_off else "normal")
     assert action in ACTION_WHITELIST
+
+    # ⛔ RATCHET, NEVER OSCILLATE. A verdict that reads RISK-OFF at 12:06 and
+    # NORMAL again at 12:16 is worse than one that never moved — the alert has
+    # already gone out and the reader cannot unsee it. Escalation within a
+    # session is one-way: once an intraday clock has fired, it stays fired for
+    # the rest of the day (the underlying flags are day-scoped and only ever
+    # turn on), and this records WHICH clock did it so the page can say so.
+    escalated_by = None
+    if intraday_flags and not (backwardation or flag_vix1d or flow["spike"]):
+        # The prior-close legs were all quiet; this verdict exists only because
+        # of an intraday firing, which is exactly the case the page could not
+        # previously express.
+        escalated_by = intraday_flags
     # ── FRESHNESS. 🚨 The page could not previously tell you whether it was
     # showing today's read or a leftover, which is the same defect /session
     # shipped and then fixed on 08-18.
@@ -1405,15 +1438,24 @@ async def state(request: Request):
         "live": live,
         "outlook": outlook,
         "action": action,
+        "escalated_by": escalated_by,
+        "intraday_flags": intraday_flags,
         "macro": _macro_block(),
         # When the charts' inputs next move. Read from the live scheduler, not
         # from the cadence prose in the captions — that prose stays confidently
         # correct after a job dies, which is precisely the failure the charts'
         # "next update" cell exists to expose.
         "jobs": _scheduler_block(),
-        "headline": ("RISK-OFF: stand down / reduce" if risk_off else
-                     ("CALM FLOOR: safest premium-selling state" if double_floor
-                      else "NORMAL")),
+        # 🚨 NAME THE INTRADAY ESCALATION IN THE HEADLINE. If the page was
+        # NORMAL this morning and is RISK-OFF now, the reader has to be able to
+        # see that it MOVED and what moved it - otherwise a mid-session change
+        # is indistinguishable from a page that always said this.
+        "headline": (
+            (f"RISK-OFF (escalated intraday by the {', '.join(escalated_by)} "
+             f"flow check): stand down / reduce") if escalated_by else
+            "RISK-OFF: stand down / reduce" if risk_off else
+            ("CALM FLOOR: safest premium-selling state" if double_floor
+             else "NORMAL")),
         "advisory_only": True,
     })
     try:
