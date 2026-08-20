@@ -1,15 +1,19 @@
 import { useEffect, useState } from 'react'
-import { View, Text, ScrollView, Pressable, Switch, StyleSheet, Alert } from 'react-native'
+import { View, Text, ScrollView, Pressable, Switch, StyleSheet, Alert, Linking } from 'react-native'
+import * as Clipboard from 'expo-clipboard'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import * as WebBrowser from 'expo-web-browser'
 import { useRouter } from 'expo-router'
 import useSWR from 'swr'
 import Constants from 'expo-constants'
 import { api } from '@/api/client'
-import type { MobileMe } from '@/api/types'
+import type { MobileMe, LiveSummary } from '@/api/types'
 import { signOut, biometricsAvailable, isBiometricEnabled, setBiometricEnabled } from '@/auth/session'
 import { color, space, radius, type, font } from '@/theme/tokens'
-import { Card, SectionLabel, Loading, ErrorState } from '@/components/ui'
+import { Card, SectionLabel, Row, Loading, ErrorState } from '@/components/ui'
+import { AppHeader, SPARKY_AVATAR } from '@/components/Brand'
+import { SUPPORT_EMAIL, supportMailto } from '@/support/contact'
+import { BrokerageSection } from '@/components/BrokerageSection'
 
 /**
  * Account — UX-006 (APP-037/038/039/040/043/044/058/059/060).
@@ -35,6 +39,11 @@ export default function AccountScreen() {
     '/api/auth/mobile/me',
     (p: string) => api<MobileMe>(p),
   )
+  // The plan NAME is server-derived (LiveSummary.membership.plan) — see the note above
+  // about never hardcoding one here. Fails soft: no summary just means no plan line.
+  const { data: summary } = useSWR<LiveSummary>('/api/live/summary', (p: string) =>
+    api<LiveSummary>(p),
+  )
   const [bioAvailable, setBioAvailable] = useState(false)
   const [bioOn, setBioOn] = useState(false)
 
@@ -51,6 +60,28 @@ export default function AccountScreen() {
     } catch (e) {
       Alert.alert('Billing unavailable', (e as Error).message)
     }
+  }
+
+  /**
+   * APP-043: open a native draft; if no mail client can handle it, fall back to a
+   * copyable address rather than a silent no-op.
+   */
+  async function emailSupport() {
+    const url = supportMailto()
+    const canOpen = await Linking.canOpenURL(url).catch(() => false)
+    if (canOpen) {
+      await Linking.openURL(url).catch(() => void copyAddress())
+      return
+    }
+    await copyAddress()
+  }
+
+  async function copyAddress() {
+    await Clipboard.setStringAsync(SUPPORT_EMAIL).catch(() => {})
+    Alert.alert(
+      'No email app found',
+      `${SUPPORT_EMAIL} has been copied to your clipboard.`,
+    )
   }
 
   async function doSignOut() {
@@ -93,15 +124,41 @@ export default function AccountScreen() {
               ) : null}
             </View>
           </View>
+
+          {/* APP-058 "Edit Profile" is deliberately absent: there is no endpoint that
+              updates a customer's name or email, so the row would be a dead chevron.
+              It needs a server route before it can exist. */}
+          <View style={{ marginTop: space.md }}>
+            <Row
+              icon="lock-closed-outline"
+              label="Change Password"
+              detail="Signs you out on every device"
+              onPress={() => router.push('/change-password')}
+              first
+            />
+          </View>
         </Card>
 
         <View style={{ marginTop: space.xl }}>
           <SectionLabel>Membership and Billing</SectionLabel>
         </View>
         <Card>
-          <Text style={[type.body, { color: color.textDim }]}>
-            {data?.hasMembership ? 'Active membership' : 'No active membership'}
-          </Text>
+          <View style={s.rowBetween}>
+            <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 17 }]}>
+              {summary?.membership?.plan ?? (data?.hasMembership ? 'Membership' : 'No membership')}
+            </Text>
+            {data?.hasMembership ? (
+              <View style={[s.pill, { borderColor: color.pos }]}>
+                <Text style={[type.label, { color: color.pos }]}>
+                  {summary?.membership?.badge ?? 'Active'}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+          {/* Price and next billing date are NOT in any payload yet (APP-038). Stripe
+              subscription fields have to be added server-side before this card can show
+              "$50 / month · Next billing August 31" as UX-006 does. Inventing them here
+              would put a wrong number next to a real charge. */}
           <Pressable onPress={openBilling} style={s.outlineBtn}>
             <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
               Manage Membership and Billing
@@ -111,6 +168,8 @@ export default function AccountScreen() {
             Securely managed through Stripe
           </Text>
         </Card>
+
+        <BrokerageSection />
 
         <View style={{ marginTop: space.xl }}>
           <SectionLabel>Security</SectionLabel>
@@ -137,6 +196,32 @@ export default function AccountScreen() {
           </View>
         </Card>
 
+        <View style={{ marginTop: space.xl }}>
+          <SectionLabel>Help and Support</SectionLabel>
+        </View>
+        <Card>
+          <Row
+            image={SPARKY_AVATAR}
+            label="Ask Sparky"
+            detail="Get instant help from the IronForge AI agent"
+            onPress={() => router.push('/sparky')}
+            first
+            badge={
+              <View style={s.aiTag}>
+                <Text style={[type.label, { color: color.spark, fontFamily: font.bodyMedium }]}>
+                  AI
+                </Text>
+              </View>
+            }
+          />
+          <Row
+            icon="mail-outline"
+            label="Email Support"
+            detail={SUPPORT_EMAIL}
+            onPress={emailSupport}
+          />
+        </Card>
+
         <Pressable onPress={doSignOut} style={s.signOut}>
           <Text style={[type.body, { color: color.neg, fontFamily: font.bodyMedium }]}>Log Out</Text>
         </Pressable>
@@ -154,7 +239,12 @@ function memberSince(iso: string): string {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  return <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>{children}</SafeAreaView>
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
+      <AppHeader />
+      {children}
+    </SafeAreaView>
+  )
 }
 
 const s = StyleSheet.create({
@@ -178,6 +268,18 @@ const s = StyleSheet.create({
     borderRadius: radius.md,
     paddingVertical: space.md,
     alignItems: 'center',
+  },
+  aiTag: {
+    borderWidth: 1,
+    borderColor: color.spark,
+    borderRadius: radius.sm,
+    paddingHorizontal: space.sm,
+  },
+  pill: {
+    borderWidth: 1,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
   },
   signOut: { marginTop: space.xxl, alignItems: 'center', paddingVertical: space.md },
 })

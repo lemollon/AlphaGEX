@@ -91,7 +91,12 @@ async function doRefresh(): Promise<string | null> {
   return json.accessToken
 }
 
-async function refreshAccessToken(): Promise<string | null> {
+/**
+ * Exported for the ONE caller that cannot go through api(): the Sparky chat stream,
+ * which needs a raw streaming fetch and therefore has to drive its own 401 retry.
+ * Still single-flight — that is the whole point of sharing this promise.
+ */
+export async function refreshAccessToken(): Promise<string | null> {
   if (!refreshInFlight) {
     refreshInFlight = doRefresh().finally(() => {
       refreshInFlight = null

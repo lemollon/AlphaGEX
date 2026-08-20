@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react'
-import { View, Text, ScrollView, TextInput, Pressable, RefreshControl, StyleSheet } from 'react-native'
+import { View, Text, ScrollView, TextInput, Pressable, RefreshControl, Alert, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import useSWR from 'swr'
 import { api } from '@/api/client'
 import type { HistoryTrade } from '@/api/types'
 import { color, space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { Card, Money, OutcomeBadge, AgentBadge, Loading, Empty, ErrorState } from '@/components/ui'
+import { AppHeader } from '@/components/Brand'
+// Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
+import Ionicons from '@expo/vector-icons/Ionicons'
 
 /**
  * Ledger — UX-004 (APP-017/018/020/021/052/053).
@@ -25,6 +28,20 @@ const RANGES = [
   { key: 'all', label: 'All Time', days: null },
 ] as const
 
+/**
+ * APP-021 names the set: All Agents, Spark, Flame. It is FIXED, not derived from
+ * whatever happens to be in the returned rows — a customer whose history holds only
+ * Spark trades should still see that Flame exists, and the control must not change
+ * shape as the date range changes.
+ *
+ * Matched on `bot` (the canonical id) rather than `strategy` (a display string).
+ */
+const AGENTS = [
+  { key: 'all', label: 'All Agents' },
+  { key: 'spark', label: 'Spark' },
+  { key: 'flame', label: 'Flame' },
+] as const
+
 export default function LedgerScreen() {
   const { data, error, isLoading, mutate, isValidating } = useSWR<{ trades: HistoryTrade[] }>(
     '/api/live/trades',
@@ -33,22 +50,18 @@ export default function LedgerScreen() {
   )
 
   const [query, setQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const [agent, setAgent] = useState<string>('all')
   const [range, setRange] = useState<string>('30')
 
   const trades = data?.trades ?? []
-
-  const agents = useMemo(() => {
-    const set = new Set(trades.map((t) => t.strategy))
-    return ['all', ...Array.from(set)]
-  }, [trades])
 
   const filtered = useMemo(() => {
     const days = RANGES.find((r) => r.key === range)?.days ?? null
     const cutoff = days ? Date.now() - days * 86400_000 : null
     const q = query.trim().toLowerCase()
     return trades.filter((t) => {
-      if (agent !== 'all' && t.strategy !== agent) return false
+      if (agent !== 'all' && t.bot !== agent) return false
       if (cutoff && new Date(t.close_date).getTime() < cutoff) return false
       if (q) {
         const hay = `${t.strategy} ${t.outcome} ${t.close_date} ${t.underlying}`.toLowerCase()
@@ -85,30 +98,53 @@ export default function LedgerScreen() {
             {filtered.length} completed {filtered.length === 1 ? 'trade' : 'trades'}
           </Text>
 
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search"
-            placeholderTextColor={color.muted}
-            style={s.search}
-            autoCorrect={false}
-          />
-
-          <View style={s.chipRow}>
-            {agents.map((a) => (
-              <Chip
-                key={a}
-                label={a === 'all' ? 'All Agents' : a}
-                active={agent === a}
-                onPress={() => setAgent(a)}
+          <View style={s.controls}>
+            <Pressable
+              onPress={() =>
+                // Closing search must also clear it, or an invisible query keeps
+                // filtering the list and the empty state reads as data loss.
+                setSearchOpen((v) => {
+                  if (v) setQuery('')
+                  return !v
+                })
+              }
+              accessibilityRole="button"
+              accessibilityLabel={searchOpen ? 'Close search' : 'Search trades'}
+              style={[s.iconBtn, searchOpen ? { borderColor: color.accent } : null]}
+            >
+              <Ionicons
+                name={searchOpen ? 'close' : 'search'}
+                size={17}
+                color={searchOpen ? color.accent : color.textDim}
               />
-            ))}
+            </Pressable>
+
+            <Dropdown
+              label={AGENTS.find((a) => a.key === agent)?.label ?? 'All Agents'}
+              title="Filter by agent"
+              options={AGENTS.map((a) => ({ key: a.key, label: a.label }))}
+              onSelect={setAgent}
+            />
+            <Dropdown
+              icon="calendar-outline"
+              label={RANGES.find((r) => r.key === range)?.label ?? 'Last 30 Days'}
+              title="Date range"
+              options={RANGES.map((r) => ({ key: r.key, label: r.label }))}
+              onSelect={setRange}
+            />
           </View>
-          <View style={s.chipRow}>
-            {RANGES.map((r) => (
-              <Chip key={r.key} label={r.label} active={range === r.key} onPress={() => setRange(r.key)} />
-            ))}
-          </View>
+
+          {searchOpen ? (
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Search trades"
+              placeholderTextColor={color.muted}
+              style={s.search}
+              autoCorrect={false}
+              autoFocus
+            />
+          ) : null}
         </Card>
 
         {filtered.length === 0 ? (
@@ -162,21 +198,53 @@ function Field({ label, value }: { label: string; value: string }) {
   )
 }
 
-function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+/**
+ * A dropdown control. UX-004 shows two labelled pickers with chevrons, not two wrapping
+ * rows of chips.
+ *
+ * The picker itself is an Alert: it is the one presentation that is native, modal and
+ * accessible on both platforms with no extra dependency, and these lists are three
+ * items long.
+ */
+function Dropdown({
+  label,
+  title,
+  options,
+  onSelect,
+  icon,
+}: {
+  label: string
+  title: string
+  options: Array<{ key: string; label: string }>
+  onSelect: (key: string) => void
+  icon?: React.ComponentProps<typeof Ionicons>['name']
+}) {
   return (
     <Pressable
-      onPress={onPress}
-      style={[s.chip, active && { backgroundColor: color.accent, borderColor: color.accent }]}
+      onPress={() =>
+        Alert.alert(title, undefined, [
+          ...options.map((o) => ({ text: o.label, onPress: () => onSelect(o.key) })),
+          { text: 'Cancel', style: 'cancel' as const },
+        ])
+      }
+      accessibilityRole="button"
+      accessibilityLabel={title + ', currently ' + label}
+      style={s.dropdown}
     >
-      <Text style={[type.label, { color: active ? color.text : color.textDim, fontFamily: font.bodyMedium }]}>
-        {label}
-      </Text>
+      {icon ? <Ionicons name={icon} size={15} color={color.textDim} /> : null}
+      <Text style={[type.label, { color: color.text, fontFamily: font.bodyMedium }]}>{label}</Text>
+      <Ionicons name="chevron-down" size={14} color={color.muted} />
     </Pressable>
   )
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  return <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>{children}</SafeAreaView>
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
+      <AppHeader />
+      {children}
+    </SafeAreaView>
+  )
 }
 
 /** close_date is a plain CT date string from the server — parse as local, not UTC. */
@@ -203,13 +271,25 @@ const s = StyleSheet.create({
     color: color.text,
     fontSize: 15,
   },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.md },
-  chip: {
+  controls: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.md },
+  iconBtn: {
     borderWidth: 1,
     borderColor: color.border,
-    borderRadius: radius.pill,
+    borderRadius: radius.md,
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dropdown: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    borderWidth: 1,
+    borderColor: color.border,
+    borderRadius: radius.md,
     paddingHorizontal: space.md,
-    paddingVertical: space.sm,
+    height: 38,
   },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   divider: { height: 1, backgroundColor: color.border, marginVertical: space.md },

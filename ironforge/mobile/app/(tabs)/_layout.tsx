@@ -1,17 +1,15 @@
 import { Tabs } from 'expo-router'
-import { Text } from 'react-native'
 import { color, font } from '@/theme/tokens'
+import { ForgeIcon, LedgerIcon, CommunityIcon, AccountIcon } from '@/components/icons'
 
 /**
  * The four approved bottom tabs (APP-003): Forge, Ledger, Community, Account.
  * Order and labels come from the Screen Map and are not ours to change.
+ *
+ * The icons used to be emoji rendered as <Text> (🛡 ▤ 👥 👤). The OS paints those in
+ * its own colour, so they ignored the active tint entirely and never matched UX-002.
+ * They are vector now — see components/icons.tsx.
  */
-function TabIcon({ glyph, focused }: { glyph: string; focused: boolean }) {
-  return (
-    <Text style={{ fontSize: 20, color: focused ? color.accent : color.muted }}>{glyph}</Text>
-  )
-}
-
 export default function TabsLayout() {
   return (
     <Tabs
@@ -30,31 +28,19 @@ export default function TabsLayout() {
     >
       <Tabs.Screen
         name="index"
-        options={{
-          title: 'Forge',
-          tabBarIcon: ({ focused }) => <TabIcon glyph="🛡" focused={focused} />,
-        }}
+        options={{ title: 'Forge', tabBarIcon: ForgeIcon }}
       />
       <Tabs.Screen
         name="ledger"
-        options={{
-          title: 'Ledger',
-          tabBarIcon: ({ focused }) => <TabIcon glyph="▤" focused={focused} />,
-        }}
+        options={{ title: 'Ledger', tabBarIcon: LedgerIcon }}
       />
       <Tabs.Screen
         name="community"
-        options={{
-          title: 'Community',
-          tabBarIcon: ({ focused }) => <TabIcon glyph="👥" focused={focused} />,
-        }}
+        options={{ title: 'Community', tabBarIcon: CommunityIcon }}
       />
       <Tabs.Screen
         name="account"
-        options={{
-          title: 'Account',
-          tabBarIcon: ({ focused }) => <TabIcon glyph="👤" focused={focused} />,
-        }}
+        options={{ title: 'Account', tabBarIcon: AccountIcon }}
       />
     </Tabs>
   )

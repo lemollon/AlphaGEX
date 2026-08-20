@@ -71,6 +71,11 @@ const config: ExpoConfig = {
     'expo-router',
     'expo-secure-store',
     'expo-local-authentication',
+    // Oswald (display) + Inter (body) are declared in theme/tokens.ts and were never
+    // actually loaded, so every fontFamily silently fell back to the system face and
+    // no screen matched the approved type. The plugin is required for the native build;
+    // useFonts() in app/_layout.tsx covers the JS side.
+    'expo-font',
     // Android API level is PINNED, not inherited from whatever the Expo SDK happens to
     // default to. Google Play requires new apps and updates to target API 36 from
     // 2026-08-31; a silent default drift below that is not a warning, it is an outright

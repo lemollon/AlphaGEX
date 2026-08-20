@@ -112,6 +112,38 @@ export interface CommunityFeed {
   members: Array<{ name: string; you: boolean }>
 }
 
+/**
+ * GET /api/brokerage/connections (APP-040/041).
+ *
+ * `broker` is the real institution; `provider` is the aggregator. Label with `broker`
+ * and fall back — see brokerLabel(). `mask` is the ONLY account identifier the server
+ * ever returns; the full number stays in an encrypted column.
+ */
+export interface BrokerageAccount {
+  id: string
+  mask: string | null
+  eligibility: string | null
+  ineligible_reason: string | null
+  buying_power_cents: number | null
+}
+
+export interface BrokerageConnection {
+  id: string
+  provider: string
+  broker: string | null
+  status: string
+  connected_on: string
+  last_synced_at: string | null
+  accounts: BrokerageAccount[]
+}
+
+export interface BrokerageConnections {
+  ok: boolean
+  /** false when the customers DB isn't wired — an honest "can't tell", not "none". */
+  configured?: boolean
+  connections: BrokerageConnection[]
+}
+
 export interface MobileMe {
   ok: boolean
   ownsStrategy?: boolean
