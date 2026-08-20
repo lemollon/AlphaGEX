@@ -923,7 +923,12 @@ export default function SqueezePage() {
                                          label={{ value: signedBn(chartOutlook.overbought_trigger_b), position: 'insideTopRight', fill: GREEN, fontSize: 10 }} />
                         )}
                         <Line yAxisId="left" dataKey="net_gex_b" name="net gamma ($B)" stroke="#60a5fa" dot={false} strokeWidth={1.8} />
-                        <Line yAxisId="price" dataKey="spot" name={PRICE_SERIES} stroke="#94a3b8" dot={false} strokeWidth={1.2} />
+                        {/* Warm grey, NOT #94a3b8. Slate-400 is a blue-grey: next to the
+                            #60a5fa gamma line it reads as a second blue line, and the caption
+                            below distinguishes them with the words "blue" and "grey" — a label
+                            you cannot act on if both look blue. Stone-300 is unmistakably not
+                            blue at a glance. */}
+                        <Line yAxisId="price" dataKey="spot" name={PRICE_SERIES} stroke="#d6d3d1" dot={false} strokeWidth={1.2} />
                         {liveOk && (
                           <Line yAxisId="left" dataKey="live_gex_b" name="live (not the signal)" stroke={LIVE} strokeWidth={1.8}
                                 strokeDasharray="4 4" dot={<LiveDot />} isAnimationActive={false} />
@@ -932,30 +937,32 @@ export default function SqueezePage() {
                     </ResponsiveContainer>
                   </div>
                   <div style={{ ...S.small, marginTop: 8, lineHeight: 1.65 }}>
-                    <b style={{ color: '#8b95ab' }}>How to read this.</b> The blue line is net dealer
-                    gamma in billions of dollars per 1% move in SPY — how much stock dealers must
-                    trade to stay hedged.{' '}
-                    <b style={{ color: '#60a5fa' }}>Below the zero line</b> they hedge <i>with</i> the
-                    move (selling into weakness, buying into strength), so moves get amplified.
-                    <b style={{ color: '#60a5fa' }}> Above it</b> they hedge against the move and the
-                    tape gets pinned.
+                    <b style={{ color: '#8b95ab' }}>How to read this.</b>{' '}
+                    <b style={{ color: '#60a5fa' }}>The blue line — "net gamma ($B)" in the key —</b>{' '}
+                    is how many billions of dollars of SPY the dealers have to buy or sell to stay
+                    hedged each time SPY moves 1%.
                     <br />
-                    <b style={{ color: AMBER }}>Amber shading</b> = gamma in the bottom 20% of its own
-                    trailing 60 sessions. Every SPY squeeze since 2020 started in amber.{' '}
-                    <b style={{ color: GREEN }}>Green shading</b> = top 20%; zero squeezes have ever
-                    started there, and it carries the smallest downside tail.
+                    <b style={{ color: '#60a5fa' }}>Below zero</b>, they trade <i>with</i> the move:
+                    selling as it falls, buying as it rises. That makes moves bigger.{' '}
+                    <b style={{ color: '#60a5fa' }}>Above zero</b>, they trade against the move and
+                    the price gets stuck in a range.
                     <br />
-                    <b style={{ color: '#94a3b8' }}>The grey line</b> is SPY's close on the right axis —
-                    gamma is the state of the tape, not a forecast of the price.{' '}
-                    <b style={{ color: AMBER }}>Dashed amber</b> and{' '}
-                    <b style={{ color: GREEN }}>dashed green</b> lines mark the oversold and overbought
-                    gamma triggers.
+                    <b style={{ color: '#d6d3d1' }}>The pale line — "SPY close" in the key —</b> is
+                    just SPY's price, read off the right-hand side. It is there for context: gamma
+                    tells you what condition the market is in, not which way it is going.
+                    <br />
+                    <b style={{ color: AMBER }}>Amber background</b> = gamma is in the lowest 20% of
+                    the last 60 sessions. Every SPY squeeze since 2020 began in amber.{' '}
+                    <b style={{ color: GREEN }}>Green background</b> = the highest 20%. No squeeze has
+                    ever begun there, and it has the smallest downside.{' '}
+                    <b style={{ color: AMBER }}>The dashed amber</b> and{' '}
+                    <b style={{ color: GREEN }}>dashed green</b> lines are where those two zones start.
                     <br />
                     <span style={{ color: '#5b6478' }}>
-                      Shading is the <i>percentile</i>, not the level — so it re-bases as the range
-                      moves. A −$4B print can be amber in a calm month and unshaded in a volatile one.
-                      That is deliberate: the level alone is a much weaker signal than the rank.
-                      Updates once per session at 15:05 CT.
+                      The shading follows the <i>ranking</i>, not the number. −$4B can be amber in a
+                      quiet month and unshaded in a wild one. That is on purpose — where a reading
+                      sits against recent history has proven a far better signal than the raw number.
+                      Updates once a session, at 15:05 CT.
                       {liveOk && (
                         <> <b style={{ color: LIVE }}>The dashed purple point</b> is this minute's live
                         reading — context only, not part of the 15:05 CT signal.</>
@@ -964,18 +971,21 @@ export default function SqueezePage() {
                   </div>
                   {maxRow && (
                     <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6 }}>
-                      The tallest print in this window is {bn(maxRow.net_gex_b)} on {maxRow.trade_date}. Near-dated
-                      expiries spike per-contract gamma, so a single session with a 1DTE expiry on the board can
-                      set the window's top and depress every percentile below it until it rolls out of the
-                      trailing 60.
+                      The highest reading on this chart is {bn(maxRow.net_gex_b)} on {maxRow.trade_date}. Options
+                      that expire within a day carry enormous gamma per contract, so one session with a 1-day
+                      expiry on the board can set the top of the range — and push every reading below it down
+                      the rankings until that day drops out of the trailing 60.
                     </div>
                   )}
                   <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6 }}>
-                    This is computed from the chain, not read off a vendor flip point. "Spot below the flip"
-                    reproduces net_gex &lt; 0 only 52.4% of the time on the watchtower feed and 45.0% on the
-                    intraday one, so other pages in this app can show a contradictory reading. Note also that
-                    "short gamma" and "below the flip" are the same variable (96.1% agreement) — never stack
-                    them as two conditions.
+                    This number is worked out from the full option chain, not copied from a data vendor's
+                    "flip point". Those two disagree often — saying SPY is below the flip point matches
+                    "net gamma below zero" only 52.4% of the time on the watchtower feed and 45.0% on the
+                    intraday one, so other pages in this app can tell you the opposite of this one.
+                    <br />
+                    Also: <b style={{ color: '#c6cbd8' }}>"short gamma" and "below the flip" are the same
+                    thing</b> here — they agree 96.1% of the time. Treating them as two separate reasons to
+                    take a trade is counting one thing twice.
                   </div>
                 </>
               );
@@ -1041,21 +1051,31 @@ export default function SqueezePage() {
                   </div>
                 ) : <div style={S.small}>no VIX history yet</div>}
                 <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6 }}>
-                  SQUEEZE_WATCH needs this at or above 0.95 at the same time gamma is oversold. Above 0.95
-                  means fear is still building; below it means fear is decaying, and a decaying VIX is what
-                  kills the setup.
+                  <b style={{ color: '#8b95ab' }}>How to read this.</b>{' '}
+                  <b style={{ color: '#f0abfc' }}>The pink line — "VIX ratio" in the key —</b> is today's
+                  VIX divided by the highest VIX of the last 20 sessions. 1.00 means today is the most
+                  fearful day of those 20; 0.50 means VIX is half its recent peak.{' '}
+                  <b style={{ color: '#64748b' }}>The grey line — "VIX level" —</b> is the plain VIX
+                  number, on the right-hand side, so you can sanity-check the ratio against it.
                   <br />
-                  The ratio measures where VIX sits in its own recent range, not its level, so a perfectly
-                  flat VIX would read 1.00 by construction. Measured over 1,598 sessions that is a
-                  theoretical hole rather than a live one: of 161 firings, <b style={{ color: '#c6cbd8' }}>9
-                  came on a flat window and only 4 cleared 0.95 without also setting an outright new
-                  20-session high</b>. Median VIX at a firing is <b style={{ color: '#c6cbd8' }}>22.3</b>,
-                  and just 5 of 161 fired below 15 — the leg is not quietly passing in calm tape. The grey
-                  line is there so you can check that yourself.
+                  SQUEEZE_WATCH needs the pink line at or above 0.95 at the same time gamma is oversold.
+                  Above 0.95 means fear is still building. Below it means fear is fading — and fading fear
+                  is what kills this setup.
+                  <br />
+                  <span style={{ color: '#5b6478' }}>
+                    Because it measures position in a range and not the level, a perfectly flat VIX would
+                    read 1.00 by construction. Over 1,598 sessions that turns out to be a theoretical hole,
+                    not a real one: of 161 firings, <b style={{ color: '#c6cbd8' }}>9 came on a flat window
+                    and only 4 cleared 0.95 without also setting an outright new 20-session high</b>. The
+                    median VIX at a firing is <b style={{ color: '#c6cbd8' }}>22.3</b>, and only 5 of 161
+                    fired below 15 — so this leg is not quietly passing in calm markets.
+                  </span>
                 </div>
                 <div style={{ ...S.small, marginTop: 8 }}>
-                  Two thresholds are live on this same ratio. This page uses 0.95 as an advisory squeeze leg.
-                  EBB ships 0.90 as a real-money gate — a different job on the same number.
+                  There are two lines drawn on this same ratio, and they are not the same rule.{' '}
+                  <b style={{ color: AMBER }}>0.95 (dashed amber)</b> is this page's advisory squeeze leg.{' '}
+                  <b style={{ color: '#7dd3fc' }}>0.90 (dashed light blue)</b> is the gate EBB uses with real
+                  money. Same number, two different jobs — don't read one as confirming the other.
                 </div>
               </div>
             );
