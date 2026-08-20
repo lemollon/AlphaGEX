@@ -103,6 +103,23 @@ export interface CommunityMessage {
   message: string
   created_at: string
   reactions: Array<{ emoji: string; count: number; mine: boolean }>
+  /**
+   * The viewer wrote this — report/block are hidden on your own posts.
+   *
+   * Optional because an installed app can be OLDER than the API it talks to and
+   * vice versa: a field the server may not send yet must not make the payload
+   * fail to type. Absent is treated as "not mine", so the controls still render.
+   */
+  mine?: boolean
+  /** Author is a real member who can be blocked (false for Forge/system posts). */
+  blockable?: boolean
+}
+
+/** GET /api/community/blocks — the viewer's own block list. */
+export interface BlockedMember {
+  user_id: string
+  display_name: string
+  created_at: string
 }
 
 export interface CommunityFeed {

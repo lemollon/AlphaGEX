@@ -24,6 +24,10 @@ export interface CommunityMessage {
   message: string
   created_at: string
   reactions: Array<{ emoji: string; count: number; mine: boolean }>
+  /** The viewer wrote this. Report/block controls hide on your own posts. */
+  mine: boolean
+  /** Author is a real user who can be blocked (false for FORGE/SYSTEM posts). */
+  blockable: boolean
 }
 
 export interface CommunityFeed {
@@ -48,7 +52,7 @@ export async function getFeed(channelSlug: string, viewerUserId: string | null):
   const [messageRows, presenceRows] = await Promise.all([
     channel
       ? customerQuery<any>(
-          `SELECT m.id, m.sender_name, m.sender_type, m.message, m.created_at,
+          `SELECT m.id, m.user_id, m.sender_name, m.sender_type, m.message, m.created_at,
                   COALESCE(
                     (SELECT json_agg(json_build_object('emoji', r.emoji, 'count', r.cnt, 'mine', r.mine))
                      FROM (
@@ -63,6 +67,13 @@ export async function getFeed(channelSlug: string, viewerUserId: string | null):
                   ) AS reactions
            FROM community_messages m
            WHERE m.channel_id = $1
+             -- Blocked authors disappear from THIS viewer's feed only. Written as
+             -- NOT EXISTS rather than a join so a NULL viewer (logged-out preview)
+             -- still sees everything instead of matching nothing.
+             AND NOT EXISTS (
+               SELECT 1 FROM community_blocks b
+               WHERE b.blocker_id = $2::uuid AND b.blocked_id = m.user_id
+             )
            ORDER BY m.created_at DESC
            LIMIT 100`,
           [channel.id, viewerUserId],
@@ -84,6 +95,8 @@ export async function getFeed(channelSlug: string, viewerUserId: string | null):
       message: String(m.message),
       created_at: new Date(m.created_at).toISOString(),
       reactions: Array.isArray(m.reactions) ? m.reactions : [],
+      mine: viewerUserId != null && m.user_id != null && String(m.user_id) === viewerUserId,
+      blockable: m.user_id != null && String(m.user_id) !== viewerUserId,
     })),
     online_count: presenceRows.length,
     members: presenceRows.map((p) => ({
@@ -242,4 +255,115 @@ export async function maybeForgeReply(opts: {
   } catch (e) {
     console.error('[community] forge reply failed:', e)
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UGC safety controls (Google Play User Generated Content policy).
+//
+// Two obligations: a user must be able to REPORT objectionable content and to
+// BLOCK another user. Moderation-before-persistence already exists, but it is an
+// automated pre-filter — neither of these is a substitute for the other.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const REPORT_REASONS = ['SPAM', 'HARASSMENT', 'HATE', 'ADVICE', 'OTHER'] as const
+export type ReportReason = (typeof REPORT_REASONS)[number]
+
+export interface MessageAuthor {
+  messageId: string
+  userId: string | null
+  senderName: string
+  message: string
+}
+
+/** Author lookup used by both report and block; null when the message is gone. */
+export async function getMessageAuthor(messageId: string): Promise<MessageAuthor | null> {
+  const rows = await customerQuery<{
+    id: string
+    user_id: string | null
+    sender_name: string
+    message: string
+  }>(
+    `SELECT id, user_id, sender_name, message FROM community_messages WHERE id = $1::uuid`,
+    [messageId],
+  )
+  const r = rows[0]
+  if (!r) return null
+  return {
+    messageId: String(r.id),
+    userId: r.user_id ? String(r.user_id) : null,
+    senderName: String(r.sender_name),
+    message: String(r.message),
+  }
+}
+
+/**
+ * File a report. Idempotent per (message, reporter) so a double-tap cannot inflate
+ * the queue, and the excerpt is frozen at report time because the post it refers to
+ * may be deleted before anyone reviews it.
+ */
+export async function reportMessage(opts: {
+  messageId: string
+  reporterId: string
+  reason: ReportReason
+  author: MessageAuthor
+}): Promise<'filed' | 'already_reported'> {
+  const rows = await customerQuery<{ id: string }>(
+    `INSERT INTO community_message_reports
+       (message_id, reporter_id, reported_user_id, reason, message_excerpt)
+     VALUES ($1::uuid, $2::uuid, $3, $4, $5)
+     ON CONFLICT (message_id, reporter_id) DO NOTHING
+     RETURNING id`,
+    [
+      opts.messageId,
+      opts.reporterId,
+      opts.author.userId,
+      opts.reason,
+      opts.author.message.slice(0, 500),
+    ],
+  )
+  return rows.length > 0 ? 'filed' : 'already_reported'
+}
+
+/** Block a user for this viewer. Idempotent; self-blocks are rejected by the CHECK. */
+export async function blockUser(blockerId: string, blockedId: string): Promise<void> {
+  await customerExecute(
+    `INSERT INTO community_blocks (blocker_id, blocked_id)
+     VALUES ($1::uuid, $2::uuid) ON CONFLICT DO NOTHING`,
+    [blockerId, blockedId],
+  )
+}
+
+export async function unblockUser(blockerId: string, blockedId: string): Promise<void> {
+  await customerExecute(
+    `DELETE FROM community_blocks WHERE blocker_id = $1::uuid AND blocked_id = $2::uuid`,
+    [blockerId, blockedId],
+  )
+}
+
+/**
+ * Who this viewer has blocked, newest first.
+ *
+ * The name comes from the most recent message they posted rather than from `users`,
+ * because that is the only name the blocker ever saw — the feed never shows a legal
+ * name. Falls back to a placeholder if every message of theirs has since gone.
+ */
+export async function listBlocked(
+  blockerId: string,
+): Promise<Array<{ user_id: string; display_name: string; created_at: string }>> {
+  const rows = await customerQuery<{ blocked_id: string; display_name: string | null; created_at: string }>(
+    `SELECT b.blocked_id,
+            (SELECT m.sender_name FROM community_messages m
+              WHERE m.user_id = b.blocked_id
+              ORDER BY m.created_at DESC LIMIT 1) AS display_name,
+            b.created_at
+       FROM community_blocks b
+      WHERE b.blocker_id = $1::uuid
+      ORDER BY b.created_at DESC`,
+    [blockerId],
+  )
+  return rows.map((r) => ({
+    user_id: String(r.blocked_id),
+    display_name: r.display_name ?? 'Blocked member',
+    created_at: new Date(r.created_at).toISOString(),
+  }))
 }

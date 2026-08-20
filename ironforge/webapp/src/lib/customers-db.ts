@@ -248,6 +248,35 @@ CREATE TABLE IF NOT EXISTS community_forge_posts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- User-generated-content safety controls. Google Play's UGC policy requires an
+-- in-app way to REPORT objectionable content and to BLOCK another user; without
+-- both, a community feature is a review/takedown risk regardless of moderation.
+-- Reporting is open to anyone with a session (reading the feed does not need a
+-- membership, so neither does flagging something in it).
+CREATE TABLE IF NOT EXISTS community_message_reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  message_id UUID NOT NULL REFERENCES community_messages(id) ON DELETE CASCADE,
+  reporter_id UUID NOT NULL REFERENCES users(id),
+  reported_user_id UUID REFERENCES users(id),        -- author at report time; NULL for FORGE/SYSTEM
+  reason TEXT NOT NULL,                              -- SPAM | HARASSMENT | HATE | ADVICE | OTHER
+  message_excerpt TEXT,                              -- frozen copy: the post may be deleted
+  status TEXT NOT NULL DEFAULT 'OPEN',               -- OPEN | REVIEWED | ACTIONED | DISMISSED
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (message_id, reporter_id)                   -- one report per person per post
+);
+CREATE INDEX IF NOT EXISTS idx_community_reports_open
+  ON community_message_reports(status, created_at);
+
+-- A block is one-directional and viewer-scoped: it hides the blocked author from
+-- the blocker's feed only. Nothing is deleted, so the blocked user sees no change.
+CREATE TABLE IF NOT EXISTS community_blocks (
+  blocker_id UUID NOT NULL REFERENCES users(id),
+  blocked_id UUID NOT NULL REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (blocker_id, blocked_id),
+  CHECK (blocker_id <> blocked_id)
+);
+
 -- Billing (Stripe subscriptions; see lib/billing/*). A customer subscribes to a
 -- bot ("spark"/"flame") or the "both" bundle via Stripe Checkout. stripe_customer_id
 -- is the one Stripe Customer per user; one subscription row per bot they run.
