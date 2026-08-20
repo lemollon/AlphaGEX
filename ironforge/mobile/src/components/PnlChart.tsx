@@ -17,12 +17,15 @@
 import { useMemo, useState } from 'react'
 import { View, Text, StyleSheet, type LayoutChangeEvent } from 'react-native'
 import Svg, { Polyline, Line, Circle } from 'react-native-svg'
+import {
+  chartGeometry,
+  nearestIndex,
+  clamp,
+  type Point as SparkPointType,
+} from '@/components/chart-geometry'
 import { color, space, radius, type, font, pnlColor } from '@/theme/tokens'
 
-export interface SparkPoint {
-  timestamp: string
-  pnl: number
-}
+export type SparkPoint = SparkPointType
 
 const HEIGHT = 88
 const PAD_Y = 10
@@ -44,23 +47,9 @@ export function PnlChart({
 
   const onLayout = (e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)
 
-  const geom = useMemo(() => {
-    if (!series.length || width <= 0) return null
-    const values = series.map((p) => p.pnl)
-    // Breakeven is always in frame — see the note above.
-    const lo = Math.min(0, ...values)
-    const hi = Math.max(0, ...values)
-    const span = hi - lo || 1
-    const x = (i: number) =>
-      series.length === 1 ? width / 2 : (i / (series.length - 1)) * width
-    const y = (v: number) => PAD_Y + (1 - (v - lo) / span) * (HEIGHT - PAD_Y * 2)
-    return {
-      x,
-      y,
-      zeroY: y(0),
-      points: series.map((p, i) => `${x(i).toFixed(2)},${y(p.pnl).toFixed(2)}`).join(' '),
-    }
-  }, [series, width])
+  // The maths lives in components/chart-geometry.ts so the one rule that matters — the
+  // y-domain always contains zero — is covered by tests rather than by a comment.
+  const geom = useMemo(() => chartGeometry(series, width, HEIGHT, PAD_Y), [series, width])
 
   const active = touch != null ? series[touch] : null
 
@@ -87,8 +76,8 @@ export function PnlChart({
         onLayout={onLayout}
         onStartShouldSetResponder={() => true}
         onMoveShouldSetResponder={() => true}
-        onResponderGrant={(e) => setTouch(nearest(e.nativeEvent.locationX, width, series.length))}
-        onResponderMove={(e) => setTouch(nearest(e.nativeEvent.locationX, width, series.length))}
+        onResponderGrant={(e) => setTouch(nearestIndex(e.nativeEvent.locationX, width, series.length))}
+        onResponderMove={(e) => setTouch(nearestIndex(e.nativeEvent.locationX, width, series.length))}
         onResponderRelease={() => setTouch(null)}
         onResponderTerminate={() => setTouch(null)}
       >
@@ -191,15 +180,6 @@ function Header({
       </Text>
     </View>
   )
-}
-
-function nearest(x: number, width: number, n: number): number {
-  if (width <= 0 || n < 2) return 0
-  return clamp(Math.round((x / width) * (n - 1)), 0, n - 1)
-}
-
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v))
 }
 
 function money(v: number): string {
