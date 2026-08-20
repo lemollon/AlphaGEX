@@ -1622,21 +1622,52 @@ export function buildLegs(
   return legs
 }
 
-export async function placeIcOrderAllAccounts(
-  ticker: string,
-  expiration: string,
-  putShort: number,
-  putLong: number,
-  callShort: number,
-  callLong: number,
-  paperContracts: number,
-  totalCredit: number,
-  tag?: string,
-  botName?: string,
-  opts?: { sandboxOnly?: boolean; productionOnly?: boolean; gexPosGamma?: boolean },
-): Promise<Record<string, SandboxOrderInfo>> {
+/**
+ * FLAME's live Tradier account, credentialed by TRADIER_FLAME_* env rather than
+ * by the ironforge_accounts table. Returns null when it must not be used.
+ *
+ * `requireArmed` is the whole point of the parameter:
+ *   ENTRIES pass true  — a disarmed FLAME must compose zero production accounts.
+ *   EXITS   pass false — disarming stops new trades; it must never strand an
+ *                        open real position with no route out. An orphan left to
+ *                        expire is an assignment, which is the expensive way to
+ *                        be careful.
+ *
+ * Seeds the account-id cache from env so getAccountIdForKey() never has to
+ * DISCOVER an account number already known: a /user/profile call that does not
+ * answer reads as "invalid key" everywhere downstream, which silently keeps a
+ * live bot from ever placing.
+ */
+export function flameProductionAccount(opts: { requireArmed: boolean }): SandboxAccount | null {
+  if (opts.requireArmed && !isFlameLiveArmed()) return null
+  const { apiKey, accountId } = flameCreds()
+  if (!apiKey || !accountId) return null
+  if (!_accountIdCache[apiKey]) _accountIdCache[apiKey] = accountId
+  return { name: 'Flame', apiKey, baseUrl: PRODUCTION_URL, type: 'production', cachedAccountId: accountId }
+}
+
+/**
+ * WHICH ACCOUNTS WOULD AN ORDER FOR THIS BOT ACTUALLY REACH?
+ *
+ * Extracted from placeIcOrderAllAccounts so the answer can be asked WITHOUT
+ * placing an order. /api/health calls this to report `live_accounts` per bot.
+ *
+ * 🚨 THAT IS THE POINT OF THE EXTRACTION. On 2026-08-20 FLAME was correctly
+ * armed on the scanning service, reached the live branch, and still filled
+ * nothing: this composition had no FLAME production account to hand it, so the
+ * scan logged `live:no_fill` and looked like a broker rejection. The only way to
+ * discover that was to wait for the 13:05 CT entry minute and read the log —
+ * a 24-hour feedback loop on a question that is answerable at any moment.
+ * Anything reporting whether a bot can trade must call THIS function, so a
+ * health check and a real order can never disagree again.
+ *
+ * Returns accounts, so callers must expose names/counts only — never a key.
+ */
+export async function resolveEligibleAccounts(
+  botName: string | undefined,
+  opts?: { sandboxOnly?: boolean },
+): Promise<SandboxAccount[]> {
   await ensureSandboxAccountsLoaded()
-  const results: Record<string, SandboxOrderInfo> = {}
 
   // Filter accounts by bot — reads from ironforge_accounts DB.
   // Must check BOTH person AND account type (sandbox/production) to prevent
@@ -1683,12 +1714,51 @@ export async function placeIcOrderAllAccounts(
       ]
     }
   }
+  // FLAME's production account is credentialed the same way — TRADIER_FLAME_*
+  // env, NOT ironforge_accounts — and it never got the equivalent block.
+  //
+  // 🚨 THIS IS THE 2026-08-20 BUG. FLAME was armed on the scanning service, the
+  // scanner reached the live branch and called placeIcOrderAllAccounts, and the
+  // eligible list came back `[User:sandbox, Matt:sandbox, Logan:sandbox]` — the
+  // single production row in ironforge_accounts is Logan's, carrying
+  // bot="SPARK,INFERNO". Zero production accounts, so `live:no_fill` on a fully
+  // armed bot, every day since 2026-04-17. Identical in shape to KINDLE's
+  // 2026-06-24 "0 production entries" miss, one bot later.
+  //
+  // Gated on isFlameLiveArmed() — the same test canPlaceLiveOrders() and
+  // resolveProductionAccounts() apply — so a disarmed FLAME still composes zero
+  // production accounts and CANNOT place, exactly as before. Downstream, the
+  // fleet pause, the per-owner pause and the isProductionBot gate all still run.
+  if (botName?.toLowerCase() === 'flame' && !opts?.sandboxOnly) {
+    const flameAcct = flameProductionAccount({ requireArmed: true })
+    if (flameAcct && !eligibleAccounts.some((a) => a.type === 'production' && a.name === 'Flame')) {
+      eligibleAccounts = [...eligibleAccounts, flameAcct]
+    }
+  }
   // SPARK2 production-account injection REMOVED 2026-07-21 (operator): spark2 is
   // a genuine paper bot now, so no real Tradier account may be attached to its
   // orders. spark2Creds() is still used by the balance/close paths to read and
   // reconcile the historical real position opened 2026-07-16, but nothing new
   // is ever placed on it. Re-enabling live routing requires restoring BOTH this
   // block and spark2 in isProductionBot (here and in scanner.ts).
+  return eligibleAccounts
+}
+
+export async function placeIcOrderAllAccounts(
+  ticker: string,
+  expiration: string,
+  putShort: number,
+  putLong: number,
+  callShort: number,
+  callLong: number,
+  paperContracts: number,
+  totalCredit: number,
+  tag?: string,
+  botName?: string,
+  opts?: { sandboxOnly?: boolean; productionOnly?: boolean; gexPosGamma?: boolean },
+): Promise<Record<string, SandboxOrderInfo>> {
+  const results: Record<string, SandboxOrderInfo> = {}
+  const eligibleAccounts = await resolveEligibleAccounts(botName, { sandboxOnly: opts?.sandboxOnly })
 
   console.log(
     `[tradier] placeIcOrderAllAccounts: bot=${botName ?? 'ALL'}, ` +
@@ -1757,10 +1827,12 @@ export async function placeIcOrderAllAccounts(
     }
   }
 
-  // SAFETY: Only production-allowlisted bots (SPARK, KINDLE) may place real-money
-  // orders. FLAME and INFERNO are paper-only — they must NEVER place real orders.
+  // SAFETY: Only production-allowlisted bots may place real-money orders —
+  // isProductionBot() is SPARK, KINDLE, and FLAME *only while armed*. INFERNO is
+  // paper-only and must NEVER place real orders.
   // (KINDLE is additionally gated by its paused kill-switch above, which zeroes
-  // productionAccts when paused — so this gate widening cannot make it trade.)
+  // productionAccts when paused — so this gate widening cannot make it trade.
+  // FLAME resolves through isFlameLiveArmed(), so disarming it also empties this.)
   const botUc = (botName || '').toUpperCase()
   if (productionAccts.length > 0 && !isProductionBot((botName || '').toLowerCase())) {
     console.warn(
@@ -2696,6 +2768,23 @@ export async function closeIcOrderAllAccounts(
     const { apiKey: s2Key, accountId: s2Acct } = spark2Creds()
     if (s2Key && s2Acct && !accounts.some(a => a.type === 'production' && a.name === 'Spark2')) {
       accounts = [...accounts, { name: 'Spark2', apiKey: s2Key, baseUrl: PRODUCTION_URL, type: 'production' }]
+    }
+  }
+  // FLAME closes: same inject, keyed on the FLAME- position-id tag.
+  //
+  // 🚨 SHIPPED IN THE SAME COMMIT AS THE OPEN-SIDE INJECT, DELIBERATELY. Fixing
+  // only the open path would let FLAME acquire a real position it has no route
+  // to exit — the orphan-at-expiry → assignment case the KINDLE comment above
+  // was written for. An exit path must never be narrower than its entry.
+  //
+  // NOT gated on isFlameLiveArmed(): disarming must stop new entries, never
+  // strand an open one. If a real position exists and the creds resolve, the
+  // close goes out. (`accountType === 'production'` still keeps this off every
+  // sandbox close, and SPARK/INFERNO tags do not contain "FLAME".)
+  if (accountType === 'production' && (tag ?? '').toUpperCase().includes('FLAME')) {
+    const flameAcct = flameProductionAccount({ requireArmed: false })
+    if (flameAcct && !accounts.some(a => a.type === 'production' && a.name === 'Flame')) {
+      accounts = [...accounts, flameAcct]
     }
   }
 

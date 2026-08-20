@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { dbQuery } from '@/lib/db'
-import { isConfigured, getQuote, canPlaceLiveOrders, describeLiveGate } from '@/lib/tradier'
+import { isConfigured, getQuote, canPlaceLiveOrders, describeLiveGate, resolveEligibleAccounts } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -60,6 +60,29 @@ export async function GET() {
     places_orders: scannerEnabled,
     live_gates: Object.fromEntries(
       bots.map((b) => [b, canPlaceLiveOrders(b) ? 'armed' : describeLiveGate(b)]),
+    ),
+    // HOW MANY PRODUCTION ACCOUNTS WOULD AN ORDER ACTUALLY REACH?
+    //
+    // 🚨 "armed" was never the whole answer. On 2026-08-20 FLAME reported
+    // `armed` here, reached the live branch, and filled nothing: the order path
+    // composes its accounts from ironforge_accounts, and FLAME's live account is
+    // credentialed by env, so the eligible list held three sandbox accounts and
+    // no production one. `live:no_fill` — indistinguishable from a broker
+    // rejection, and only discoverable by waiting for the 13:05 CT entry minute.
+    //
+    // So this asks the ORDER PATH'S OWN function (resolveEligibleAccounts) the
+    // same question it will answer at the entry minute. armed + 0 is the bug
+    // that took a day to see; armed + 1 means an order has somewhere to go.
+    // A COUNT, never names or keys — this endpoint is unauthenticated.
+    live_accounts: Object.fromEntries(
+      await Promise.all(bots.map(async (b) => {
+        try {
+          const accts = await resolveEligibleAccounts(b)
+          return [b, accts.filter((a) => a.type === 'production').length] as const
+        } catch {
+          return [b, null] as const
+        }
+      })),
     ),
   }
 
