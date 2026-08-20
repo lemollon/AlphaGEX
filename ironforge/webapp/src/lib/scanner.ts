@@ -3491,7 +3491,30 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
   return out.length ? ` settle[${out.join(' ')}]` : ''
 }
 
-async function tryOpenFlamePutSpread(bot: BotDef): Promise<string> {
+/**
+ * PLACE THIS BOT'S REAL STRUCTURE, ON DEMAND.
+ *
+ * 🚨 /api/[bot]/force-trade built its own strikes — a 4-leg IRON CONDOR at
+ * SD 1.2 with $5 wings, hardcoded in the route and ignoring bot config. That
+ * route predates the 2026-08-11 pivot. FLAME/SPARK/FORGE have been a 2-leg PUT
+ * CREDIT SPREAD (SD 2.10, $2 wing, 1ct) ever since, and every position they have
+ * opened carries call_short_strike = call_long_strike = 0.
+ *
+ * Forcing through that path would have put a structure on a LIVE account that
+ * the bot has never traded, short strikes almost a full SD closer to spot. So
+ * the route delegates here instead: one definition of the strategy, the same one
+ * the 13:05 CT tick uses. Copying it into the route is what let it drift.
+ */
+export async function forceOpenPutSpread(botName: string): Promise<string> {
+  const bot = BOTS.find((b) => b.name === botName)
+  if (!bot) return `skip:unknown_bot(${botName})`
+  // Same config load a scan cycle does, so a forced entry sizes off exactly the
+  // knobs the scheduled one would have used.
+  await loadConfigOverrides()
+  return tryOpenFlamePutSpread(bot, { force: true })
+}
+
+async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}): Promise<string> {
   const botCfg = cfg(bot)
   if (!isConfigured()) return 'skip:tradier_not_configured'
 
@@ -3532,7 +3555,7 @@ async function tryOpenFlamePutSpread(bot: BotDef): Promise<string> {
 
   const out: string[] = []
   for (const ticker of FLAME_BOOKS) {
-    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, otmAbs, width, perBook, perTrade)}`)
+    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, otmAbs, width, perBook, perTrade, opts)}`)
   }
   return `otm$${otmAbs} w${width} x${perTrade} ` + out.join(' ')
 }
@@ -3540,6 +3563,7 @@ async function tryOpenFlamePutSpread(bot: BotDef): Promise<string> {
 async function tryOpenFlameBook(
   bot: BotDef, botCfg: BotConfig, ticker: string,
   otmAbs: number, width: number, perBook: number, perTrade: number,
+  opts: { force?: boolean } = {},
 ): Promise<string> {
   const todayRows = await query(
     `SELECT COUNT(*) AS cnt FROM ${botTable(bot.name, 'positions')}
@@ -3547,7 +3571,11 @@ async function tryOpenFlameBook(
        AND dte_mode = $1 AND ticker = $2`,
     [bot.dte, ticker],
   )
-  if (int(todayRows[0]?.cnt) >= botCfg.max_trades) return 'traded_today'
+  // `force` lifts the once-a-day cap and NOTHING else — an operator asking for a
+  // deliberate extra entry. Every other gate still runs exactly as it does on a
+  // scheduled tick: stand-down, collateral, credit floor, VIX, event blackout,
+  // the arm switch, and both pause layers.
+  if (!opts.force && int(todayRows[0]?.cnt) >= botCfg.max_trades) return 'traded_today'
 
   // per-book: a loss on IWM must not silence SPY
   if (await isStandDownActive(bot, botCfg.standdown_days, ticker)) return 'standdown'
