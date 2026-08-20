@@ -523,14 +523,18 @@ export default function RiskAdvisorPage() {
         {/* INTRADAY CHART: today's tape vs the expected move */}
         <div style={S.card}>
           <div style={S.cardTitle}>Today's tape vs the expected move
-            <InfoTip text="Today's SPY 5-minute path vs the VIX1D expected-move band (grey). Price escaping the band = an outsized day in progress. The dashed vertical line marks the 10:00 CT flow snapshot — the one moment each day the flow-spike signal reads. Updates every minute." />
+            {/* Was: "expected-move band (grey)" — the band is AMBER (fill={AMBER} plus the
+                two dashed amber edges). And "the one moment each day the flow-spike signal
+                reads" went stale when the PM clocks shipped: there are three checks now,
+                10:00 / 12:00 / 13:30, as the table further down this same page shows. */}
+            <InfoTip text="Today's SPY 5-minute path against the VIX1D expected-move band (amber). Price leaving the band means an outsized day is already under way. The dashed vertical line marks the 10:00 CT flow snapshot — the first of three flow checks (10:00, 12:00, 13:30). Updates every minute." />
           </div>
           <ChartMeta {...tapeChartMeta(intra, state)} />
           {intra?.bars?.length ? (() => {
             const b = intra.band_pct || 1;
             const ext = Math.max(b * 1.3, ...intra.bars.map(x => Math.abs(x.chg_pct ?? 0) * 1.1));
             const hasSnap = intra.bars.some(x => x.t <= '10:00');
-            return (
+            return (<>
               <div style={{ width: '100%', height: 220 }}>
                 <ResponsiveContainer>
                   <ComposedChart data={intra.bars} margin={{ top: 6, right: 12, left: -8, bottom: 0 }}>
@@ -554,7 +558,24 @@ export default function RiskAdvisorPage() {
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
-            );
+              <div style={{ ...S.small, marginTop: 8, lineHeight: 1.65 }}>
+                <b style={{ color: '#8b95ab' }}>How to read this.</b>{' '}
+                <b style={{ color: BLUE }}>The blue line — "SPY % vs prev close" in the key —</b> is
+                how far SPY is from where it closed yesterday, in percent, through today's session.
+                <br />
+                <b style={{ color: AMBER }}>The amber band, and the dashed amber lines at its edges,</b>{' '}
+                are how far the options market expected SPY to move today — taken from VIX1D
+                {intra.band_pct != null && <> , currently ±{Number(intra.band_pct).toFixed(2)}%</>}.
+                Inside the band is an ordinary day. <b style={{ color: '#c6cbd8' }}>Price leaving the
+                band means today is already bigger than what was priced in</b> — which is the part
+                that matters if you are short premium.
+                {hasSnap && <>
+                  <br />
+                  <b style={{ color: DIM }}>The dashed vertical line at 10:00</b> is the first flow
+                  check of the day. Two more follow at 12:00 and 13:30 CT.
+                </>}
+              </div>
+            </>);
           })() : <div style={S.small}>{intra?.status || 'no intraday data yet — bars appear after the 8:30 CT open'}</div>}
         </div>
 
@@ -757,8 +778,7 @@ export default function RiskAdvisorPage() {
               </div>
             ) : (<>
             <div style={{ ...S.small, marginBottom: 10 }}>
-              10:00 CT reading, one point per session, trailing {range} sessions. Shaded = quiet-VIX
-              regimes (the trap zone). Dots = spike days (z&gt;2).
+              10:00 CT reading, one point per session, trailing {range} sessions.
             </div>
             <ChartMeta {...flowChartMeta(state, hist.length ? hist[hist.length - 1] : null)} />
             <div style={{ width: '100%', height: 240 }}>
@@ -781,6 +801,39 @@ export default function RiskAdvisorPage() {
                   <Line dataKey="spike" name="spike" stroke="none" dot={{ r: 4, fill: RED }} legendType="none" />
                 </ComposedChart>
               </ResponsiveContainer>
+            </div>
+            {/* The three lines were previously explained ONLY inside the section's
+                hover InfoTip. A chart whose legend reads "put vol z" needs its key
+                in the open, not behind a tooltip — same rule applied to /squeeze in
+                PR #2874: name each series the way the legend names it, never by
+                colour alone. */}
+            <div style={{ ...S.small, marginTop: 8, lineHeight: 1.65 }}>
+              <b style={{ color: '#8b95ab' }}>How to read this.</b> Every line is a{' '}
+              <b style={{ color: '#c6cbd8' }}>z-score</b> — how unusual today's SPY option volume is
+              against the last 63 sessions <i>at this same time of day</i>.{' '}
+              <b style={{ color: '#c6cbd8' }}>0 means a completely normal day. 2 means busier than
+              all but a handful of the last 63.</b> Comparing like-for-like on the clock matters:
+              volume at 10:00 is nothing like volume at 13:30.
+              <br />
+              <b style={{ color: RED }}>Red — "put vol z"</b> is how heavy put buying is.{' '}
+              <b style={{ color: AMBER }}>Amber — "total vol z"</b> is all SPY option volume together.{' '}
+              <b style={{ color: GREEN }}>Green — "0DTE OTM call z"</b> is same-day out-of-the-money
+              calls, the lottery-ticket end of the market and the usual tell for a squeeze.
+              <br />
+              <b style={{ color: RED }}>The dashed red line at 2</b> is the spike threshold, and a{' '}
+              <b style={{ color: RED }}>red dot</b> marks a session that crossed it — put volume or
+              total volume above 2. <b style={{ color: BLUE }}>Blue shading</b> marks the calm-VIX
+              stretches where the daily signals go blind, which is exactly where this one is supposed
+              to earn its keep.
+              <br />
+              <span style={{ color: DIM }}>
+                Readings are taken at 10:00, 12:00 and 13:30 CT; alerts go out a few minutes after each.
+                <br />
+                ⛔ <b style={{ color: '#c6cbd8' }}>A tall line here is not a trade.</b> These are volume
+                levels. What actually tested well is the put/call <i>mix</i> reaching an extreme AND
+                price then breaking 0.10% — neither half works on its own. Read this chart as "how
+                unusual is today", not as a direction.
+              </span>
             </div>
             </>)}
           </Collapse>
