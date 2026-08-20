@@ -76,18 +76,60 @@ export default function TapeShape({ data }) {
   const leftFatter = tail != null && tail >= 1.10;
   const symmetric = tail != null && tail > 0.90 && tail < 1.10;
 
+  // ⛔ THE CARD LEADS WITH THE CALL. It used to open with "55.0% of sessions
+  // close green" and leave the reader to work out what to do about it. Two
+  // standing verdicts come out of these numbers and neither changes day to
+  // day, so they are stated as instructions and the statistics sit underneath
+  // as their evidence.
+  const v = data.vrp;
+  const verdicts = [];
+  if (data.p_up_day > 0.52 && data.drift_ratio > 1.15) {
+    verdicts.push({
+      call: 'SELL PUTS, NOT CONDORS',
+      why: `The tape drifts up — ${pct(data.p_up_day)} of sessions close green and an ordinary `
+         + `up move is ${data.drift_ratio.toFixed(2)}× likelier than the same move down. `
+         + `A symmetric structure hands that back on the call side.`,
+    });
+  }
+  if (v && v.pct_inside_1sd > 0.75) {
+    verdicts.push({
+      call: 'SELL EVERY SESSION — DO NOT TIME IT',
+      why: `${pct(v.pct_inside_1sd)} of days finish inside the move options priced, against `
+         + `${pct(v.fair_inside)} for a fairly priced market — ${v.edge_pts.toFixed(0)} points of `
+         + `overpricing. Realised comes in at ${v.mean_ratio.toFixed(2)}× implied. `
+         + `Every filter tested against this has failed out of sample.`,
+    });
+  }
+
   return (
     <div style={S.card}>
+      {verdicts.length > 0 && (
+        <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+          {verdicts.map((x) => (
+            <div key={x.call} style={{
+              padding: '10px 12px', borderRadius: 8,
+              background: `${GREEN}0f`, border: `1px solid ${GREEN}55`,
+            }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: GREEN, letterSpacing: '.02em' }}>
+                {x.call}
+              </div>
+              <div style={{ fontSize: 12, color: '#c6cbd8', marginTop: 3, lineHeight: 1.5 }}>
+                {x.why}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
         <TrendingUp size={14} color={GREEN} />
-        <span style={S.title}>The shape of the tape</span>
+        <span style={S.title}>The evidence</span>
         <span style={{ ...S.small, marginLeft: 'auto' }}>
           {data.n} sessions · {data.first} → {data.last}
         </span>
       </div>
       <div style={{ ...S.small, margin: '2px 0 10px' }}>
-        The base case underneath every verdict on this app. Nothing here is a signal —
-        it is what SPY does when nothing is flagged.
+        Standing calls, not daily ones — these come from the base behaviour of the tape and
+        do not change session to session. The numbers below are what they rest on.
       </div>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -103,6 +145,14 @@ export default function TapeShape({ data }) {
           note={`a +0.5% day (${pct(data.p_up_50)}) vs a −0.5% day (${pct(data.p_dn_50)})`}
           color={GREEN}
         />
+        {v && (
+          <Cell
+            label="options overprice by"
+            value={`${v.mean_ratio.toFixed(2)}×`}
+            note={`${pct(v.pct_inside_1sd)} of days finish inside the implied move (fair = ${pct(v.fair_inside)}) · n=${v.n}`}
+            color={GREEN}
+          />
+        )}
         <Cell
           label="big moves"
           value={tail == null ? '—' : `${tail.toFixed(2)}×`}

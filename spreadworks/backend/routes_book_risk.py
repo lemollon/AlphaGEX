@@ -694,3 +694,125 @@ def get_book_risk() -> dict[str, Any]:
         },
         "unavailable": unavailable,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE BOOK'S MONEY. There was no page that answered "am I up or down".
+#
+# 🚨 THE GAP THIS CLOSES IS NOT COSMETIC. Per-bot views existed and the fleet
+# page existed; nothing summed them. On 2026-08-20 the honest 30-day answer was
+# +$4,635 across 12 bots - which becomes -$4,049 with one bot removed and
+# -$684 with ONE TRADE removed. Eleven of twelve bots were losing and no
+# surface in the app said so.
+#
+# ⛔ CONCENTRATION IS REPORTED, NOT BURIED. A book whose P&L rests on a single
+# fill is a different object from one earning it across trades, and the number
+# that tells you which is the largest trade's share. This book has already
+# produced two phantom-profit bugs (the force-close $0 mark and the credit
+# settlement clamp), so an outsized single fill is a reconciliation prompt.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _window_start(now_ct: datetime, window: str) -> date | None:
+    d = now_ct.date()
+    if window == "day":
+        return d
+    if window == "week":
+        return d - timedelta(days=d.weekday())      # Monday of this CT week
+    if window == "month":
+        return d.replace(day=1)
+    return None                                      # "all"
+
+
+@router.get("/money")
+def book_money(window: str = "month"):
+    """Realized P&L for the whole book, per bot, over a CT window.
+
+    Windows: day | week | month | all. Dollars first - percent is secondary and
+    only meaningful against each bot's own starting capital.
+    """
+    if window not in ("day", "week", "month", "all"):
+        window = "month"
+    now_ct = datetime.now(CT)
+    start = _window_start(now_ct, window)
+
+    bots, book_total, book_n, biggest = [], 0.0, 0, None
+    with ENGINE.begin() as conn:
+        for bot in list_bots():
+            try:
+                rows = conn.execute(text(
+                    f"SELECT close_time, realized_pnl "
+                    f"FROM {bot_table(bot, 'closed_trades')}"
+                )).mappings().all()
+            except Exception:                        # table absent = never traded
+                continue
+            tot, n, wins = 0.0, 0, 0
+            worst = best = None
+            last = None
+            for r in rows:
+                ct = r["close_time"]
+                if ct is None:
+                    continue
+                if isinstance(ct, str):
+                    try:
+                        ct = datetime.fromisoformat(ct)
+                    except ValueError:
+                        continue
+                ct = _to_ct(ct)
+                if last is None or ct > last:
+                    last = ct
+                if start is not None and ct.date() < start:
+                    continue
+                p = float(r["realized_pnl"] or 0)
+                tot += p; n += 1
+                if p > 0:
+                    wins += 1
+                worst = p if worst is None or p < worst else worst
+                best = p if best is None or p > best else best
+                # 🚨 Tracked ACROSS bots, not within one - the concentration
+                # question is about the book, not about any single strategy.
+                if biggest is None or p > biggest["pnl"]:
+                    biggest = {"bot": bot, "pnl": round(p, 2), "date": str(ct.date())}
+            if n == 0:
+                continue
+            cap = None
+            try:
+                cap = float((load_config(bot) or {}).get("starting_capital") or 0) or None
+            except Exception:
+                cap = None
+            bots.append({
+                "bot": bot, "n": n, "total": round(tot, 2),
+                "per_trade": round(tot / n, 2),
+                "win_pct": round(100.0 * wins / n, 1),
+                "best": round(best, 2) if best is not None else None,
+                "worst": round(worst, 2) if worst is not None else None,
+                "starting_capital": cap,
+                "pct_of_capital": round(100.0 * tot / cap, 2) if cap else None,
+                "last_trade": last.isoformat() if last else None,
+            })
+            book_total += tot; book_n += n
+
+    bots.sort(key=lambda b: b["total"], reverse=True)
+    losers = [b for b in bots if b["total"] < 0]
+
+    # What the book looks like WITHOUT its single best trade and without its
+    # best bot. If either flips the sign, the headline is carried by one thing.
+    top = bots[0] if bots else None
+    return {
+        "window": window,
+        "asof": now_ct.isoformat(),
+        "start": str(start) if start else None,
+        "book_total": round(book_total, 2),
+        "book_trades": book_n,
+        "bots_total": len(bots),
+        "bots_losing": len(losers),
+        "top_bot": top["bot"] if top else None,
+        "without_top_bot": round(book_total - top["total"], 2) if top else None,
+        "biggest_trade": biggest,
+        "without_biggest_trade": (round(book_total - biggest["pnl"], 2)
+                                  if biggest else None),
+        # A book resting on one fill reads differently from one earning it
+        # across many. >40% of a positive book in a single trade is the flag.
+        "concentrated": bool(biggest and book_total > 0
+                             and biggest["pnl"] > 0.40 * book_total),
+        "bots": bots,
+    }
