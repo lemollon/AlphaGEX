@@ -6,10 +6,12 @@ import { useRouter } from 'expo-router'
 import useSWR from 'swr'
 import Constants from 'expo-constants'
 import { api } from '@/api/client'
-import type { MobileMe } from '@/api/types'
+import type { MobileMe, LiveSummary } from '@/api/types'
 import { signOut, biometricsAvailable, isBiometricEnabled, setBiometricEnabled } from '@/auth/session'
 import { color, space, radius, type, font } from '@/theme/tokens'
 import { Card, SectionLabel, Loading, ErrorState } from '@/components/ui'
+import { AppHeader } from '@/components/Brand'
+import { BrokerageSection } from '@/components/BrokerageSection'
 
 /**
  * Account — UX-006 (APP-037/038/039/040/043/044/058/059/060).
@@ -34,6 +36,11 @@ export default function AccountScreen() {
   const { data, error, isLoading, mutate } = useSWR<MobileMe>(
     '/api/auth/mobile/me',
     (p: string) => api<MobileMe>(p),
+  )
+  // The plan NAME is server-derived (LiveSummary.membership.plan) — see the note above
+  // about never hardcoding one here. Fails soft: no summary just means no plan line.
+  const { data: summary } = useSWR<LiveSummary>('/api/live/summary', (p: string) =>
+    api<LiveSummary>(p),
   )
   const [bioAvailable, setBioAvailable] = useState(false)
   const [bioOn, setBioOn] = useState(false)
@@ -99,9 +106,22 @@ export default function AccountScreen() {
           <SectionLabel>Membership and Billing</SectionLabel>
         </View>
         <Card>
-          <Text style={[type.body, { color: color.textDim }]}>
-            {data?.hasMembership ? 'Active membership' : 'No active membership'}
-          </Text>
+          <View style={s.rowBetween}>
+            <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 17 }]}>
+              {summary?.membership?.plan ?? (data?.hasMembership ? 'Membership' : 'No membership')}
+            </Text>
+            {data?.hasMembership ? (
+              <View style={[s.pill, { borderColor: color.pos }]}>
+                <Text style={[type.label, { color: color.pos }]}>
+                  {summary?.membership?.badge ?? 'Active'}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+          {/* Price and next billing date are NOT in any payload yet (APP-038). Stripe
+              subscription fields have to be added server-side before this card can show
+              "$50 / month · Next billing August 31" as UX-006 does. Inventing them here
+              would put a wrong number next to a real charge. */}
           <Pressable onPress={openBilling} style={s.outlineBtn}>
             <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
               Manage Membership and Billing
@@ -111,6 +131,8 @@ export default function AccountScreen() {
             Securely managed through Stripe
           </Text>
         </Card>
+
+        <BrokerageSection />
 
         <View style={{ marginTop: space.xl }}>
           <SectionLabel>Security</SectionLabel>
@@ -154,7 +176,12 @@ function memberSince(iso: string): string {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  return <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>{children}</SafeAreaView>
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
+      <AppHeader />
+      {children}
+    </SafeAreaView>
+  )
 }
 
 const s = StyleSheet.create({
@@ -178,6 +205,12 @@ const s = StyleSheet.create({
     borderRadius: radius.md,
     paddingVertical: space.md,
     alignItems: 'center',
+  },
+  pill: {
+    borderWidth: 1,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
   },
   signOut: { marginTop: space.xxl, alignItems: 'center', paddingVertical: space.md },
 })

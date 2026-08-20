@@ -6,6 +6,7 @@ import { api } from '@/api/client'
 import type { CommunityFeed } from '@/api/types'
 import { color, space, radius, type, font } from '@/theme/tokens'
 import { Card, Loading, Empty, ErrorState } from '@/components/ui'
+import { AppHeader } from '@/components/Brand'
 
 /**
  * Community — UX-005 (APP-030/031/054/055).
@@ -144,7 +145,12 @@ function time(iso: string): string {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  return <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>{children}</SafeAreaView>
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
+      <AppHeader />
+      {children}
+    </SafeAreaView>
+  )
 }
 
 const s = StyleSheet.create({
