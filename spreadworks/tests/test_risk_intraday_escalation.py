@@ -1,69 +1,124 @@
-"""/risk must be able to change its mind during the session.
+"""/risk must be able to change its mind during the session — and must not
+change it for the wrong reasons.
 
 🚨 THE BUG THIS PINS. `action` was computed once from prior closes plus the
-single 10:00 CT snapshot and then frozen. Three validated signals - the 12:00
-and 13:30 re-checks and the */10 rolling watcher - fired Discord alerts all
-afternoon and could never move the page. A 13:30 spike pushed a phone alert
-while /risk still read NORMAL.
+single 10:00 CT snapshot and then frozen. The 12:00 and 13:30 re-checks and the
+*/10 rolling watcher fired Discord alerts all afternoon and could never move the
+page: a 13:30 spike pushed a phone alert while /risk still read NORMAL.
+
+⛔ THE FIRST VERSION OF THIS FILE WAS NOT A TEST SUITE. It parsed the source and
+asserted the code *mentioned* `intraday_flags`. That passes on wrong behaviour
+and fails on a rename — the worst of both. The logic is now a pure function and
+these call it with real inputs.
 """
-import ast
-import inspect
-from pathlib import Path
+import pytest
 
-SRC = Path(__file__).resolve().parents[1] / "backend" / "routes_risk.py"
-TEXT = SRC.read_text(encoding="utf-8")
+from backend.routes_risk import intraday_escalation
 
-
-def _state_src() -> str:
-    """The body of the /state endpoint, so assertions cannot drift to another
-    function that merely mentions the same names."""
-    tree = ast.parse(TEXT)
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "state":
-            return ast.get_source_segment(TEXT, node) or ""
-    raise AssertionError("/state endpoint not found")
+QUIET = {"backwardation": False, "flag_vix1d": False}
+SPIKE = {"spike": True}
+NOSPIKE = {"spike": False}
+UNCAPTURED = {"spike": None}          # before the clock's window lands
 
 
-def test_risk_off_consumes_the_pm_clocks_and_the_rolling_watcher():
-    src = _state_src()
-    i = src.index("risk_off =")
-    expr = src[i:src.index("\n", src.index("action =", i))]
-    assert "intraday_flags" in expr, (
-        "risk_off ignores the intraday clocks again - a 13:30 spike will alert "
-        "the phone while the page reads NORMAL")
+def esc(flow=None, pm=None, roll=None, **kw):
+    return intraday_escalation(flow, pm, roll, **{**QUIET, **kw})
 
 
-def test_intraday_flags_are_built_from_both_sources():
-    src = _state_src()
-    assert "flow_pm" in src and "spike" in src
-    assert "fired_today" in src, (
-        "the rolling watcher must be read via its dedup'd fired_today flag")
+# ── nothing fired ────────────────────────────────────────────────────────────
+
+def test_a_quiet_day_escalates_nothing():
+    assert esc(NOSPIKE, {"12:00": NOSPIKE, "13:30": NOSPIKE}, {"fired_today": False}) == ([], None)
 
 
-def test_escalation_is_named_in_the_headline():
-    """A mid-session change the reader cannot see is the same as no change."""
-    src = _state_src()
-    assert "escalated_by" in src
-    assert "escalated intraday" in src
+@pytest.mark.parametrize("flow,pm,roll", [
+    (None, None, None),
+    ({}, {}, {}),
+    (NOSPIKE, None, None),
+    (None, {"12:00": None}, None),          # entry present but null
+    (None, {}, {"fired_today": None}),
+])
+def test_missing_or_null_inputs_never_crash_and_never_escalate(flow, pm, roll):
+    """⛔ Every one of these is a real state: pre-market, a failed capture, a
+    weekend, a DB read that returned nothing. None may escalate, and none may
+    raise — this function decides whether the page says stand down."""
+    assert esc(flow, pm, roll) == ([], None)
 
 
-def test_escalated_by_is_only_set_when_the_close_legs_were_quiet():
-    """⛔ Must not claim an intraday escalation on a day that was already
-    RISK-OFF from the prior close - that would relabel a standing verdict as a
-    new event."""
-    src = _state_src()
-    i = src.index("escalated_by = None")
-    guard = src[i:i + 400]
-    for leg in ("backwardation", "flag_vix1d"):
-        assert leg in guard, f"{leg} must gate escalated_by"
+def test_an_uncaptured_clock_has_not_fired():
+    """`spike` is None until the clock's window lands. Falsy is correct: an
+    uncaptured clock is not a quiet clock, but it is certainly not a firing."""
+    assert esc(NOSPIKE, {"12:00": UNCAPTURED, "13:30": UNCAPTURED},
+               {"fired_today": False}) == ([], None)
 
 
-def test_the_payload_exposes_both_fields():
-    src = _state_src()
-    assert '"escalated_by": escalated_by' in src
-    assert '"intraday_flags": intraday_flags' in src
+# ── something fired ──────────────────────────────────────────────────────────
+
+def test_a_pm_clock_alone_escalates_and_is_named():
+    flags, by = esc(NOSPIKE, {"12:00": SPIKE, "13:30": NOSPIKE}, {"fired_today": False})
+    assert flags == ["12:00"]
+    assert by == ["12:00"], "a quiet-open day escalated by 12:00 must say so"
 
 
-def test_action_stays_inside_the_whitelist():
-    """The escalation must not invent a new instruction."""
-    assert "assert action in ACTION_WHITELIST" in _state_src()
+def test_the_rolling_watcher_alone_escalates():
+    flags, by = esc(NOSPIKE, {"12:00": NOSPIKE}, {"fired_today": True})
+    assert flags == ["rolling"] and by == ["rolling"]
+
+
+def test_both_clocks_and_the_watcher_are_all_listed():
+    flags, by = esc(NOSPIKE, {"12:00": SPIKE, "13:30": SPIKE}, {"fired_today": True})
+    assert flags == ["12:00", "13:30", "rolling"] and by == flags
+
+
+def test_flag_order_is_stable_regardless_of_dict_order():
+    """A headline that reads '13:30, 12:00' on one request and '12:00, 13:30'
+    on the next looks like the verdict moved when nothing did."""
+    a, _ = esc(NOSPIKE, {"13:30": SPIKE, "12:00": SPIKE}, {"fired_today": False})
+    b, _ = esc(NOSPIKE, {"12:00": SPIKE, "13:30": SPIKE}, {"fired_today": False})
+    assert a == b == ["12:00", "13:30"]
+
+
+# ── the guard: don't relabel a day that already opened risk-off ──────────────
+
+@pytest.mark.parametrize("kw", [
+    {"backwardation": True},
+    {"flag_vix1d": True},
+    {"backwardation": True, "flag_vix1d": True},
+])
+def test_a_day_already_riskoff_from_the_close_is_not_relabelled(kw):
+    """⛔ The flags still show — the reader should see the clock fired — but
+    `escalated_by` stays None, because the verdict did not change today. Saying
+    'escalated intraday' about a standing call is a lie about what happened."""
+    flags, by = esc(NOSPIKE, {"12:00": SPIKE}, {"fired_today": True}, **kw)
+    assert flags == ["12:00", "rolling"]
+    assert by is None
+
+
+def test_a_1000_spike_also_suppresses_the_escalation_label():
+    """The 10:00 snapshot is itself a prior leg of the same verdict. If it
+    already fired, an afternoon clock is confirmation, not escalation."""
+    flags, by = esc(SPIKE, {"13:30": SPIKE}, {"fired_today": False})
+    assert flags == ["13:30"] and by is None
+
+
+# ── the invariant that matters most ──────────────────────────────────────────
+
+@pytest.mark.parametrize("pm,roll", [
+    ({"12:00": SPIKE}, {"fired_today": False}),
+    ({}, {"fired_today": True}),
+    ({"12:00": SPIKE, "13:30": SPIKE}, {"fired_today": True}),
+])
+def test_escalation_can_only_add_risk_never_remove_it(pm, roll):
+    """RATCHET. risk_off is an OR, so firing a clock can only push the verdict
+    toward caution. A page that reads RISK-OFF at 12:06 and NORMAL at 12:16 is
+    worse than one that never moved — the alert has already gone out."""
+    quiet_flags, _ = esc(NOSPIKE, {}, {"fired_today": False})
+    fired_flags, _ = esc(NOSPIKE, pm, roll)
+    assert quiet_flags == []
+    assert len(fired_flags) > 0, "firing a clock must never produce fewer flags"
+
+
+def test_adding_a_clock_never_shrinks_the_flag_list():
+    one, _ = esc(NOSPIKE, {"12:00": SPIKE, "13:30": NOSPIKE}, {"fired_today": False})
+    two, _ = esc(NOSPIKE, {"12:00": SPIKE, "13:30": SPIKE}, {"fired_today": False})
+    assert set(one).issubset(set(two)) and len(two) > len(one)

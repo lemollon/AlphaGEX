@@ -1253,6 +1253,39 @@ def _sessions_behind(actual: date, expected: date) -> int | None:
         return None
 
 
+def intraday_escalation(flow: dict | None, flow_pm: dict | None,
+                        flow_rolling: dict | None, *, backwardation: bool,
+                        flag_vix1d: bool) -> tuple[list[str], list[str] | None]:
+    """Which intraday clocks have fired, and did they alone cause the verdict?
+
+    Extracted as a PURE FUNCTION on purpose. This logic decides whether /risk
+    tells you to stand down, and it lived inline in an async endpoint that
+    needs an httpx client and a database to call - so the only tests possible
+    were source-text assertions that pass on wrong behaviour. Real inputs, real
+    branches, no I/O.
+
+    Returns (intraday_flags, escalated_by).
+      intraday_flags : every clock that fired today, for display
+      escalated_by   : the same list ONLY when the prior-close legs were quiet,
+                       i.e. the verdict exists because of an intraday firing.
+                       None otherwise, so a day that opened RISK-OFF is never
+                       relabelled as a new intraday event.
+    """
+    pm = [c for c, e in (flow_pm or {}).items() if (e or {}).get("spike")]
+    # ⛔ Sorted: dict order is insertion order, and a headline that reads
+    # "13:30, 12:00" on one request and "12:00, 13:30" on the next looks like
+    # the verdict moved when nothing did.
+    flags = sorted(pm)
+    if (flow_rolling or {}).get("fired_today"):
+        flags.append("rolling")
+    if not flags:
+        return [], None
+    # `spike` is None before the 10:00 capture lands - falsy, and that is
+    # correct: an uncaptured clock has not fired.
+    close_legs_quiet = not (backwardation or flag_vix1d or (flow or {}).get("spike"))
+    return flags, (flags if close_legs_quiet else None)
+
+
 @router.get("/state")
 async def state(request: Request):
     client: httpx.AsyncClient = request.app.state.http
@@ -1377,9 +1410,9 @@ async def state(request: Request):
     # a fixed clock has alerted a spike the same day, so these are disjoint by
     # construction upstream — the page must not re-add what the watcher has
     # already withheld. It reads `fired_today`, which is that dedup'd flag.
-    pm_spike = [c for c, e in (flow_pm or {}).items() if e.get("spike")]
-    rolling_fired = bool((flow_rolling or {}).get("fired_today"))
-    intraday_flags = list(pm_spike) + (["rolling"] if rolling_fired else [])
+    intraday_flags, escalated_by = intraday_escalation(
+        flow, flow_pm, flow_rolling,
+        backwardation=backwardation, flag_vix1d=flag_vix1d)
 
     risk_off = (backwardation or flag_vix1d or bool(flow["spike"])
                 or bool(intraday_flags))
@@ -1396,12 +1429,7 @@ async def state(request: Request):
     # session is one-way: once an intraday clock has fired, it stays fired for
     # the rest of the day (the underlying flags are day-scoped and only ever
     # turn on), and this records WHICH clock did it so the page can say so.
-    escalated_by = None
-    if intraday_flags and not (backwardation or flag_vix1d or flow["spike"]):
-        # The prior-close legs were all quiet; this verdict exists only because
-        # of an intraday firing, which is exactly the case the page could not
-        # previously express.
-        escalated_by = intraday_flags
+    # (escalated_by comes from intraday_escalation above.)
     # ── FRESHNESS. 🚨 The page could not previously tell you whether it was
     # showing today's read or a leftover, which is the same defect /session
     # shipped and then fixed on 08-18.
