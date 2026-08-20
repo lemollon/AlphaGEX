@@ -121,6 +121,33 @@ def _record_delivery(key: str, ok: bool, detail: str) -> None:
                            "ok": ok, "detail": detail})
 
 
+# Grace after the window opens: the first poll has to land before its absence
+# means anything. Two missed polls (>25 min on a */10 cron) is a fault; one is
+# a blip and must not page anyone.
+WATCHDOG_GRACE_MIN = 25
+WATCHDOG_STALE_MIN = 25
+
+
+def _watchdog_verdict(now_min: int, last_min: int | None,
+                      win_open: int, win_close: int) -> str | None:
+    """Should the watchdog fire? Returns a reason, or None to stay silent.
+
+    Pure and module-level ON PURPOSE — the job itself is a closure inside
+    register(), which is untestable, and a test that cannot reach the logic is
+    not coverage. Every branch below is a decision someone could get wrong.
+    """
+    if now_min < win_open + WATCHDOG_GRACE_MIN:
+        return None                      # too early to conclude anything
+    if now_min > win_close:
+        return None                      # window over; a quiet tape is correct
+    if last_min is None:
+        return "no reading at all today"
+    age = now_min - last_min
+    if age <= WATCHDOG_STALE_MIN:
+        return None                      # one skipped poll is a blip
+    return f"{age} min since the last reading"
+
+
 def _post(key: str, fire_date, embed: dict, ping: bool = False) -> bool:
     """Claim the day's slot, post, and HAND THE SLOT BACK IF THE POST FAILED.
 
@@ -138,6 +165,14 @@ def _post(key: str, fire_date, embed: dict, ping: bool = False) -> bool:
     outcome is recorded so /risk-advisor/delivery can say what actually
     happened rather than what was attempted.
     """
+    # 🚨 IMPORTED HERE, NOT AT MODULE SCOPE — and this line is load-bearing.
+    # These helpers live in backend/__init__, which imports THIS module, so a
+    # top-level import is a cycle. Without this line `_post` raises NameError
+    # on every single call, each job swallows it into a log warning, and every
+    # alert dies silently — which is exactly what shipped in #2863 and what
+    # this fix restores. Verified by test_post_does_not_NameError.
+    from . import _claim_post_slot_db, _release_post_slot_db
+
     if not _claim_post_slot_db(key, fire_date):
         return False                      # someone else owns it today
     ok = _send(embed, ping=ping)
@@ -546,6 +581,63 @@ def register_risk_alerts(scheduler, app) -> None:
                 f"{'put' if d == 'DOWN' else 'call'} premium; don't add.")
         except Exception as e:      # noqa: BLE001
             logger.warning("[RiskAlerts] confirm_check failed: %r", e)
+
+    async def watchdog_check():
+        """THE ALERT THAT WAS MISSING: nobody is told when the watchers STOP.
+
+        Every alert here fires on something HAPPENING. Not one fires on the
+        machinery going quiet, and a dead watcher is indistinguishable from a
+        calm day — silence means both. That is precisely the 2026-08-17 shape:
+        the watchers were running and nothing surfaced, so the slide was
+        invisible in real time. A watcher that has DIED is strictly worse,
+        because the page keeps rendering its last reading and the freshness bar
+        is the only thing that would say so, and only if someone looks.
+
+        ⛔ Deliberately does NOT alert on "no signal today". Quiet days are the
+        normal case (~91% of sessions) and an alert that fires on the normal
+        case is one you learn to ignore.
+        """
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            from .routes_risk import CONFIRM_WINDOW_CT, session_log_read
+            now_min = now.hour * 60 + now.minute
+            win_open = CONFIRM_WINDOW_CT[0][0] * 60 + CONFIRM_WINDOW_CT[0][1]
+            win_close = CONFIRM_WINDOW_CT[1][0] * 60 + CONFIRM_WINDOW_CT[1][1]
+
+            tape = session_log_read(now.date())
+            last = tape[-1]["minute_ct"] if tape else None
+            if _watchdog_verdict(now_min, last, win_open, win_close) is None:
+                return
+            age = (now_min - last) if last is not None else None
+            when = f"{last // 60:02d}:{last % 60:02d} CT" if last is not None else "never today"
+
+            _post("risk_watchdog", now.date(), {
+                "title": "🔇 The intraday watchers have gone quiet",
+                "description": (
+                    f"No tape reading since **{when}**"
+                    f"{f' ({age} min ago)' if age is not None else ''}, inside the "
+                    f"{win_open // 60:02d}:{win_open % 60:02d}-"
+                    f"{win_close // 60:02d}:{win_close % 60:02d} CT watch window "
+                    "where a poll runs every 10 minutes. "
+                    "**This is not a quiet market, it is a quiet SYSTEM.** The "
+                    "flow mix and the confirmation trigger are not being "
+                    "evaluated, so an armed day could break either way and "
+                    "nothing would say so. /session shows the last reading."),
+                "color": RED,
+                "fields": [
+                    {"name": "last reading", "value": when, "inline": True},
+                    {"name": "age", "value": f"{age} min" if age is not None
+                     else "no reading today", "inline": True},
+                ],
+                "footer": {"text": "watchdog - once a day - advisory"},
+            }, ping=True)
+            _push_phone("Intraday watchers have gone quiet",
+                        f"No tape reading since {when}. The flow signal is not "
+                        "being evaluated.")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[RiskAlerts] watchdog_check failed: %r", e)
 
     async def confirm_close():
         """15:05 CT — staple the session close onto today's watcher row so
@@ -1127,6 +1219,10 @@ def register_risk_alerts(scheduler, app) -> None:
                       id="risk_confirm")
     scheduler.add_job(confirm_close, "cron", hour=15, minute=5, timezone=CT,
                       id="risk_confirm_close")
+    # Offset from the */10 pollers so it never grades a row being written in
+    # the same minute.
+    scheduler.add_job(watchdog_check, "cron", minute="5,25,45", timezone=CT,
+                      id="risk_watchdog")
     scheduler.add_job(calibration_score, "cron", hour=15, minute=40,
                       day_of_week="mon-fri", timezone=CT, id="risk_calib_score")
     scheduler.add_job(calibration_report, "cron", day="1-7", day_of_week="mon",
