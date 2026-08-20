@@ -2510,8 +2510,20 @@ export interface SandboxAccountDetail {
  * Get the loaded sandbox accounts (name + apiKey pairs).
  * Used by position-detail route to query each account.
  */
-export function getLoadedSandboxAccounts(): Array<{ name: string; apiKey: string }> {
-  return _sandboxAccounts.map((a) => ({ name: a.name, apiKey: a.apiKey }))
+export function getLoadedSandboxAccounts(): Array<{ name: string; apiKey: string; baseUrl: string; type: 'sandbox' | 'production' }> {
+  // 🚨 baseUrl AND type MUST BE RETURNED, despite the "sandbox" name.
+  //
+  // _sandboxAccounts holds production rows too. This projection used to drop both
+  // fields, so every caller was left holding a production key with no way to say
+  // which host it belongs to — and the helpers it feeds (getSandboxAccountPositions,
+  // getSandboxTotalEquity) default their baseUrl to SANDBOX_URL. A production key
+  // sent to the sandbox host answers "Invalid Access Token".
+  //
+  // That is what produced a 401 on /accounts/6YB71371/{balances,positions} roughly
+  // twice a minute, on BOTH services, for a token that was perfectly valid — it
+  // reads exactly like a dead credential, and on 2026-08-20 it was nearly "fixed"
+  // by rotating a key that was never broken. Mirrors getLoadedSandboxAccountsAsync.
+  return _sandboxAccounts.map((a) => ({ name: a.name, apiKey: a.apiKey, baseUrl: a.baseUrl, type: a.type }))
 }
 
 /** Async version that ensures DB accounts are loaded first. */
