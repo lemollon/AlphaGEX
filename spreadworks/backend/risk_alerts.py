@@ -110,6 +110,46 @@ def _webhook_url() -> str:
             or os.getenv("DISCORD_WEBHOOK_URL", ""))
 
 
+# Last delivery outcome, in memory, for the diagnostics endpoint. Deliberately
+# NOT persisted: the question it answers is "is the webhook working right now",
+# and a value that survives a restart would answer a staler question.
+_LAST_DELIVERY: dict = {"at": None, "key": None, "ok": None, "detail": None}
+
+
+def _record_delivery(key: str, ok: bool, detail: str) -> None:
+    _LAST_DELIVERY.update({"at": datetime.now(CT).isoformat(), "key": key,
+                           "ok": ok, "detail": detail})
+
+
+def _post(key: str, fire_date, embed: dict, ping: bool = False) -> bool:
+    """Claim the day's slot, post, and HAND THE SLOT BACK IF THE POST FAILED.
+
+    🚨 THIS IS THE FIX FOR SILENT NON-DELIVERY. Every job used to do:
+
+        if not _claim_post_slot_db(key, today): return
+        _send({...})                     # <- return value discarded
+
+    so an unset, revoked, rate-limited or unreachable webhook was
+    indistinguishable from a successful post. The slot was already taken, the
+    page reported `fired: true`, and the alert could never fire again that day.
+    A dropped packet cost the whole day's alert, silently.
+
+    Now: a failed send releases the slot so the next poll retries, and the
+    outcome is recorded so /risk-advisor/delivery can say what actually
+    happened rather than what was attempted.
+    """
+    if not _claim_post_slot_db(key, fire_date):
+        return False                      # someone else owns it today
+    ok = _send(embed, ping=ping)
+    if ok:
+        _record_delivery(key, True, "delivered")
+    else:
+        _release_post_slot_db(key, fire_date)
+        _record_delivery(key, False, "send failed — slot released for retry")
+        logger.warning("[RiskAlerts] %s NOT delivered; slot released", key)
+    return ok
+
+
 def _send(embed: dict, ping: bool = False) -> bool:
     import requests as req
     url = _webhook_url()
@@ -189,7 +229,7 @@ def register_risk_alerts(scheduler, app) -> None:
     if scheduler is None:
         logger.warning("[RiskAlerts] no scheduler — alerts disabled")
         return
-    from . import _claim_post_slot_db          # existing dedupe
+    from . import _claim_post_slot_db, _release_post_slot_db
 
     async def morning_verdict():
         try:
@@ -215,8 +255,6 @@ def register_risk_alerts(scheduler, app) -> None:
             except Exception:
                 macro = None
             if backw or flag:
-                if not _claim_post_slot_db("risk_morning_riskoff", today):
-                    return
                 actions = []
                 if macro:
                     actions.append(f"• 📅 **{macro} today** — announcement days "
@@ -228,7 +266,7 @@ def register_risk_alerts(scheduler, app) -> None:
                     actions.append(f"• **VIX1D flag** — implied 1-day move "
                                    f"{v1_c / SQRT252:.2f}% > 1%: reduce size or skip "
                                    f"(42.8% of flagged days move ≥1%)")
-                _send({
+                _post("risk_morning_riskoff", today, {
                     "title": "🛑 RISK-OFF — morning verdict",
                     "description": "\n".join(actions),
                     "color": RED,
@@ -240,9 +278,7 @@ def register_risk_alerts(scheduler, app) -> None:
                     "footer": {"text": f"closes of {d} · advisory only · /risk for detail"},
                 }, ping=True)
             elif floor:
-                if not _claim_post_slot_db("risk_morning_calm", today):
-                    return
-                _send({
+                _post("risk_morning_calm", today, {
                     "title": "🟢 Calm floor",
                     "description": "VVIX < 85 and VIX < 14 — statistically the safest "
                                    "measured state to sell premium at normal size "
@@ -279,8 +315,6 @@ def register_risk_alerts(scheduler, app) -> None:
             # flow is the outlier. See routes_risk._pc_z for the evidence.
             cz = _pc_z(snap, prior)
             if (pz or 0) > 2 or (tz or 0) > 2 or (cz or 0) > 2:
-                if not _claim_post_slot_db("risk_flow_spike", now.date()):
-                    return
                 # which side is driving it — plain-speech composition line
                 if (cz or 0) > 2 and (pz or 0) <= 2 and (tz or 0) <= 2:
                     driver = (
@@ -301,7 +335,7 @@ def register_risk_alerts(scheduler, app) -> None:
                               "signal).")
                 else:
                     driver = "Both sides are heavy — broad bracing, no lean."
-                _send({
+                _post("risk_flow_spike", now.date(), {
                     "title": "⚠️ Unusual option volume this morning — bigger "
                              "rest-of-day move than normal is ~2.4× more likely",
                     "description": (
@@ -361,8 +395,6 @@ def register_risk_alerts(scheduler, app) -> None:
             hi, lo = PM_BASE_RATES[clock]
 
             if (pz or 0) > 2 or (tz or 0) > 2:
-                if not _claim_post_slot_db(spike_slot, today):
-                    return
                 # continuation vs fresh: did an earlier clock today already
                 # alert on a spike? (morning 10:06 push, or the 12:00
                 # re-check for the 13:30 job)
@@ -372,7 +404,7 @@ def register_risk_alerts(scheduler, app) -> None:
                         "the afternoon." if continuation else
                         "This is a **fresh** afternoon spike — no earlier alert "
                         "fired today.")
-                _send({
+                _post(spike_slot, today, {
                     "title": f"⚠️ Afternoon re-check — unusual option volume "
                              f"at {clock} CT",
                     "description": (
@@ -403,10 +435,8 @@ def register_risk_alerts(scheduler, app) -> None:
                 }, ping=True)
             elif _already_posted("risk_flow_spike", today) and \
                     (pz or 0) < 1 and (tz or 0) < 1:
-                if not _claim_post_slot_db(fade_slot, today):
-                    return
                 z_now = max(pz or 0, tz or 0)
-                _send({
+                _post(fade_slot, today, {
                     "title": f"🟢 All-clear update — {clock} CT",
                     "description": (
                         f"All-clear update: the morning volume spike did not "
@@ -477,8 +507,6 @@ def register_risk_alerts(scheduler, app) -> None:
             hit = confirm_step(today, now, float(live["spot"]), armed, pcz)
             if hit is None:
                 return
-            if not _claim_post_slot_db("risk_confirm", today):
-                return
 
             d = hit["dir"]
             arrow = "🔻" if d == "DOWN" else "🔺"
@@ -497,7 +525,7 @@ def register_risk_alerts(scheduler, app) -> None:
                 f"to stay picked today. If you are short {'put' if d == 'DOWN' else 'call'} "
                 f"premium into this, you are on the wrong side of it — that is the "
                 f"position to reduce or close. Do not add.")
-            _send({
+            _post("risk_confirm", today, {
                 "title": title,
                 "description": plain,
                 "color": RED if d == "DOWN" else GREEN,
@@ -562,8 +590,6 @@ def register_risk_alerts(scheduler, app) -> None:
             now = datetime.now(CT)
             from .signal_calibration import report, enforce
             rep = report(now.date())
-            if not _claim_post_slot_db("risk_calibration", now.date()):
-                return
             disarmed = enforce(rep)
             v = rep.get("verdict")
             colour = {"PASS": GREEN, "WARN": AMBER, "DISARM": RED,
@@ -590,7 +616,7 @@ def register_risk_alerts(scheduler, app) -> None:
                             "Re-arming is a manual decision, on purpose.")
             elif v == "PASS":
                 body.append("\n\nNothing to do — the pivot stays armed.")
-            _send({
+            _post("risk_calibration", now.date(), {
                 "title": f"📐 Signal calibration — {v}",
                 "description": "".join(body),
                 "color": colour,
@@ -679,9 +705,7 @@ def register_risk_alerts(scheduler, app) -> None:
                     or _already_posted("risk_pm_1200", today)
                     or _already_posted("risk_pm_1330", today)):
                 return
-            if not _claim_post_slot_db("risk_flow_rolling", today):
-                return
-            _send({
+            _post("risk_flow_rolling", today, {
                 "title": "⚠️ Rolling flow check — unusual option volume "
                          "just crossed the line",
                 "description": (
@@ -727,8 +751,6 @@ def register_risk_alerts(scheduler, app) -> None:
             # claim the once-per-day slot only AFTER the data fetch succeeded —
             # claiming first burned the slot on a transient fetch failure and
             # silently killed that day's note
-            if not _claim_post_slot_db("risk_em_note", now.date()):
-                return
             shim = SimpleNamespace(app=app)
             q = await _live_quote(shim)
             prev = (q or {}).get("prev_close")
@@ -736,7 +758,7 @@ def register_risk_alerts(scheduler, app) -> None:
             if prev:
                 lo, hi = prev * (1 - em / 100), prev * (1 + em / 100)
                 band = f"\nPrice band: **${lo:,.2f} — ${hi:,.2f}** (prev close ${prev:,.2f})"
-            _send({
+            _post("risk_em_note", now.date(), {
                 "title": f"📏 Today's SPY expected move: ±{em:.2f}%",
                 "description": (
                     f"The options market has priced a ±{em:.2f}% day "
@@ -771,10 +793,8 @@ def register_risk_alerts(scheduler, app) -> None:
             chg = q.get("chg_pct")
             if chg is None or abs(chg) < em:
                 return
-            if not _claim_post_slot_db("risk_em_breach", now.date()):
-                return
             side = "ABOVE" if chg > 0 else "BELOW"
-            _send({
+            _post("risk_em_breach", now.date(), {
                 "title": f"🚨 SPY is outside today's expected move "
                          f"({chg:+.2f}% vs ±{em:.2f}% priced)",
                 "description": (
@@ -869,8 +889,6 @@ def register_risk_alerts(scheduler, app) -> None:
             if now.weekday() != 4:      # belt-and-braces; cron already gates fri
                 return
             today = now.date()
-            if not _claim_post_slot_db("risk_friday_digest", today):
-                return
 
             from .routes_risk import scorecard
             try:
@@ -946,7 +964,7 @@ def register_risk_alerts(scheduler, app) -> None:
             have = promo.get("quiet_sessions_have", "?")
             needed = promo.get("quiet_sessions_needed", "?")
 
-            _send({
+            _post("risk_friday_digest", today, {
                 "title": "\U0001f4d2 Week in review — Risk Advisor & EBB",
                 "fields": [
                     {"name": "Scorecard (last 5 sessions)",
@@ -979,9 +997,7 @@ def register_risk_alerts(scheduler, app) -> None:
             if os.getenv("SQUEEZE_TELL_PROMOTED", "").strip().lower() != "true":
                 return
             sentinel = date(2000, 1, 1)   # claim once, EVER — not per-day
-            if not _claim_post_slot_db("risk_promotion_squeeze", sentinel):
-                return
-            _send({
+            _post("risk_promotion_squeeze", sentinel, {
                 "title": "\U0001f393 New validated signal: the quiet-day squeeze tell",
                 "description": (
                     "cleared its pre-registered promotion gate (≥100 quiet "
@@ -1025,9 +1041,7 @@ def register_risk_alerts(scheduler, app) -> None:
                 # The window is open and we cannot price the ticket. Say so
                 # quietly rather than staying silent — silence here reads as
                 # "no trade today", which is a different and wrong message.
-                if not _claim_post_slot_db(f"{slot_key}_unavailable", today):
-                    return
-                _send({
+                _post(f"{slot_key}_unavailable", today, {
                     "title": f"⚠️ {session} window open — ticket unavailable",
                     "description": (
                         f"Could not price today's SPY 0DTE put spread "
@@ -1038,8 +1052,6 @@ def register_risk_alerts(scheduler, app) -> None:
                 }, ping=False)
                 return
 
-            if not _claim_post_slot_db(slot_key, today):
-                return
 
             short_k, long_k = r["short_strike"], r["long_strike"]
             credit, floor_ok = r.get("credit_now"), r.get("meets_floor")
@@ -1057,7 +1069,7 @@ def register_risk_alerts(scheduler, app) -> None:
                                "**SKIP** if it is still below when you send it.")
                 colour = RED
 
-            _send({
+            _post(slot_key, today, {
                 "title": f"\U0001f4c4 {session} ticket — SPY 0DTE put spread",
                 "description": (
                     f"**SELL SPY {short_k}P / BUY SPY {long_k}P**\n"
