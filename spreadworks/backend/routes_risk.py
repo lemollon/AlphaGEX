@@ -2116,6 +2116,48 @@ def tape_shape():
     p_up50, p_dn50 = share(lambda r: r >= 0.5), share(lambda r: r <= -0.5)
     p95, p05 = pctl(0.95), pctl(0.05)
 
+    # ── HOW MUCH OPTIONS OVERPRICE THE MOVE ──────────────────────────────────
+    # 🚨 STATED WITHOUT A SCALING FUDGE. Comparing realised RANGE to an implied
+    # move needs a ~1.6x range-to-sd convention, which is an assumption a reader
+    # cannot check. |close-to-close| against the implied 1-sigma is
+    # apples-to-apples: no constant, and it has a free null - a fairly priced
+    # market finishes inside 1 sigma about 68% of the time. Anything well above
+    # that is the seller's edge, measured rather than asserted.
+    vrp = None
+    try:
+        from sqlalchemy import text as _sql_text
+        db2 = SessionLocal()
+        try:
+            rows2 = db2.execute(_sql_text(
+                "SELECT s.trade_date, s.close, v.vix "
+                "FROM sw_spy_daily s JOIN sw_vix_daily v ON v.trade_date = s.trade_date "
+                "WHERE s.close IS NOT NULL AND v.vix IS NOT NULL "
+                "ORDER BY s.trade_date")).fetchall()
+        finally:
+            db2.close()
+        pairs = []
+        for a, b in zip(rows2, rows2[1:]):
+            if a[1] and b[1] and b[2]:
+                mv = abs(100.0 * (float(b[1]) - float(a[1])) / float(a[1]))
+                sd1 = float(b[2]) / (252 ** 0.5)
+                if sd1 > 0:
+                    pairs.append((mv, sd1))
+        if len(pairs) >= 120:
+            ratios = sorted(m / s_ for m, s_ in pairs)
+            k = len(ratios)
+            inside = sum(1 for m, s_ in pairs if m < s_) / k
+            vrp = {
+                "n": k,
+                "mean_ratio": sum(ratios) / k,
+                "median_ratio": ratios[k // 2],
+                "pct_inside_1sd": inside,
+                "fair_inside": 0.683,
+                "edge_pts": 100.0 * (inside - 0.683),
+            }
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_risk] vrp block failed: %r", e)
+        vrp = None
+
     return {
         "status": "ok",
         "n": n,
@@ -2135,6 +2177,7 @@ def tape_shape():
         # what this era actually shows, contradicting the textbook.
         "tail_ratio": (abs(p05) / p95) if p95 else None,
         "skew": skew,
+        "vrp": vrp,
         "best_day": max(rets),
         "worst_day": min(rets),
     }
