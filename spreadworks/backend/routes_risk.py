@@ -2052,3 +2052,89 @@ async def calibration(request: Request):
     except Exception:
         pass                      # instrumentation must never break the page
     return out
+
+
+@router.get("/tape-shape")
+def tape_shape():
+    """The base case every verdict on this app sits on top of.
+
+    🚨 THE PAGES NEVER SAID WHICH WAY THE TAPE LEANS. Risk, Session and Squeeze
+    all report deviations from a baseline and none of them ever stated the
+    baseline. Without it "no edge today" reads as "nothing is knowable", when in
+    fact the unconditional tape has a real and free directional tilt.
+
+    ⛔ AND IT KILLS A STYLIZED FACT I ASSERTED FROM MEMORY. Equity indices are
+    supposed to drift up and CRASH down. Measured here, the crash half is not
+    true for this era: daily skew is POSITIVE, the largest single move in the
+    sample is an up day, and the 5th/95th percentiles are symmetric to within
+    2%. Selling puts is aligned with the DRIFT, not compensated for a fat left
+    tail - and a page that claimed otherwise would have someone sizing for a
+    crash premium that this sample does not pay.
+
+    Computed live from sw_spy_daily so it cannot go stale, and it reports n so
+    a thin window is visible rather than implied.
+    """
+    if SessionLocal is None:
+        return {"status": "unavailable", "reason": "no database"}
+    # ORM, not raw SQL: this module has no `text` import and adding one just
+    # for this would be the only raw query in the file.
+    from .call_log import SpyDaily
+    db = SessionLocal()
+    try:
+        rows = [(r.trade_date, r.close) for r in
+                db.query(SpyDaily).filter(SpyDaily.close.isnot(None))
+                  .order_by(SpyDaily.trade_date).all()]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_risk] tape_shape query failed: %r", e)
+        return {"status": "unavailable", "reason": str(e)}
+    finally:
+        db.close()
+
+    rets = []
+    for a, b in zip(rows, rows[1:]):
+        if a[1] and b[1]:
+            rets.append(100.0 * (b[1] - a[1]) / a[1])
+    n = len(rets)
+    # ⛔ Below ~120 sessions the tail cells are single digits and the whole
+    # panel would be quoting noise. Say so rather than render it.
+    if n < 120:
+        return {"status": "thin", "n": n,
+                "reason": f"only {n} sessions stored; needs 120+ to be worth quoting"}
+
+    srt = sorted(rets)
+    def pctl(p):
+        return srt[min(n - 1, max(0, int(round(p * (n - 1)))))]
+    up = [r for r in rets if r > 0]
+    dn = [r for r in rets if r < 0]
+    share = lambda f: sum(1 for r in rets if f(r)) / n
+    mean = sum(rets) / n
+    var = sum((r - mean) ** 2 for r in rets) / (n - 1)
+    sd = var ** 0.5
+    skew = (sum(((r - mean) / sd) ** 3 for r in rets) * n / ((n - 1) * (n - 2))) if sd else None
+
+    p_up = len(up) / n
+    p_up50, p_dn50 = share(lambda r: r >= 0.5), share(lambda r: r <= -0.5)
+    p95, p05 = pctl(0.95), pctl(0.05)
+
+    return {
+        "status": "ok",
+        "n": n,
+        "first": str(rows[0][0]),
+        "last": str(rows[-1][0]),
+        "p_up_day": p_up,
+        "mean_ret": mean,
+        "mean_up_day": (sum(up) / len(up)) if up else None,
+        "mean_dn_day": (sum(dn) / len(dn)) if dn else None,
+        "p_up_50": p_up50,
+        "p_dn_50": p_dn50,
+        # The headline asymmetry: how much likelier an ordinary up move is.
+        "drift_ratio": (p_up50 / p_dn50) if p_dn50 else None,
+        "p95": p95,
+        "p05": p05,
+        # >1 means the LEFT tail is fatter. Around 1 means symmetric - which is
+        # what this era actually shows, contradicting the textbook.
+        "tail_ratio": (abs(p05) / p95) if p95 else None,
+        "skew": skew,
+        "best_day": max(rets),
+        "worst_day": min(rets),
+    }

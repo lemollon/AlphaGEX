@@ -14,6 +14,7 @@ import { API_URL } from '../lib/api';
 import FreshnessBar from '../components/FreshnessBar';
 import CallHistory from '../components/CallHistory';
 import ChartMeta, { tapeChartMeta, flowChartMeta } from '../components/ChartMeta';
+import TapeShape from '../components/TapeShape';
 
 const GREEN = '#34d399', RED = '#f87171', AMBER = '#fbbf24', BLUE = '#60a5fa', DIM = '#8b93a7';
 const S = {
@@ -182,6 +183,7 @@ export default function RiskAdvisorPage() {
   const [score, setScore] = useState(null);
   const [intra, setIntra] = useState(null);
   const [err, setErr] = useState(null);
+  const [tape, setTape] = useState(null);
   const [range, setRange] = useState(90);         // 0 = "Today" clock view
   const [tick, setTick] = useState(0);            // 30s countdown re-render
   const [alog, setAlog] = useState(null);
@@ -194,7 +196,7 @@ export default function RiskAdvisorPage() {
     const load = async () => {
       try {
         const days = range === 0 ? 30 : range;    // Today view still needs recent context
-        const [s, h, sc, ia, al, eb, rc] = await Promise.all([
+        const [s, h, sc, ia, al, eb, rc, tp] = await Promise.all([
           fetch(`${API_URL}/api/spreadworks/risk-advisor/state`).then(r => r.json()),
           fetch(`${API_URL}/api/spreadworks/risk-advisor/history?days=${days}`).then(r => r.json()),
           fetch(`${API_URL}/api/spreadworks/risk-advisor/scorecard`).then(r => r.json()),
@@ -202,9 +204,10 @@ export default function RiskAdvisorPage() {
           fetch(`${API_URL}/api/spreadworks/risk-advisor/alert-log`).then(r => r.json()).catch(() => null),
           fetch(`${API_URL}/api/spreadworks/bots/ebb/status`).then(r => r.json()).catch(() => null),
           fetch(`${API_URL}/api/spreadworks/risk-advisor/recipe`).then(r => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/spreadworks/risk-advisor/tape-shape`).then(r => r.json()).catch(() => null),
         ]);
         if (!live) return;
-        setState(s); setScore(sc); setIntra(ia); setAlog(al); setEbb(eb); setRecipe(rc);
+        setState(s); setScore(sc); setIntra(ia); setAlog(al); setEbb(eb); setRecipe(rc); setTape(tp);
         // 🚨 Only on a SUCCESSFUL load. A "loaded" clock that ticks while the
         // fetch is failing is worse than no clock — see /session, 08-18.
         setLoadedAt(new Date());
@@ -514,6 +517,8 @@ export default function RiskAdvisorPage() {
             </>) : <div style={S.small}>outlook needs VIX1D + return history — retrying</div>}
           </div>
         </div>
+
+        <TapeShape data={tape} />
 
         {/* INTRADAY CHART: today's tape vs the expected move */}
         <div style={S.card}>

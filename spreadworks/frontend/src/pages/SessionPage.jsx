@@ -24,6 +24,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Radio, ArrowDown, ArrowUp } from 'lucide-react';
 import { API_URL } from '../lib/api';
+import TapeShape from '../components/TapeShape';
 import CallHistory from '../components/CallHistory';
 
 const GREEN = '#34d399', RED = '#f87171', AMBER = '#fbbf24', BLUE = '#60a5fa', DIM = '#8b93a7';
@@ -504,7 +505,8 @@ export default function SessionPage() {
     Promise.all([
       fetch(`${API_URL}/api/spreadworks/squeeze/state?sessions=5`).then((r) => r.json()).catch(() => null),
       fetch(`${API_URL}/api/spreadworks/risk-advisor/state`).then((r) => r.json()).catch(() => null),
-    ]).then(([sq, rk]) => setBoard({ sq, rk }));
+      fetch(`${API_URL}/api/spreadworks/risk-advisor/tape-shape`).then((r) => r.json()).catch(() => null),
+    ]).then(([sq, rk, tape]) => setBoard({ sq, rk, tape }));
   }, []);
 
   useEffect(() => {
@@ -729,6 +731,8 @@ export default function SessionPage() {
           A break only counts at a session extreme, so a dip that recovers doesn’t arm the rest of the day.
         </div>
       </div>
+
+      <TapeShape data={board.tape} />
 
       <BoardStrip board={board} />
 

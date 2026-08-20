@@ -12,6 +12,7 @@ import { API_URL } from '../lib/api';
 import CallHistory from '../components/CallHistory';
 import FreshnessBar, { squeezeLegs } from '../components/FreshnessBar';
 import ChartMeta, { gammaChartMeta, vixChartMeta } from '../components/ChartMeta';
+import TapeShape from '../components/TapeShape';
 
 const GREEN = '#34d399', RED = '#f87171', AMBER = '#fbbf24', GREY = '#9ca3af', DIM = '#8b93a7';
 const LIVE = '#c084fc';
@@ -215,6 +216,7 @@ export default function SqueezePage() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [loadedAt, setLoadedAt] = useState(null);
+  const [tape, setTape] = useState(null);
   const [intraday, setIntraday] = useState(null);
   const [intradayErr, setIntradayErr] = useState(null);
   const [rangeN, setRangeN] = useState(DEFAULT_RANGE);
@@ -229,6 +231,11 @@ export default function SqueezePage() {
         const r = await fetch(
           `${API_URL}/api/spreadworks/squeeze/state?sessions=${FETCH_SESSIONS}`);
         const d = await r.json();
+        // The base case this verdict is a deviation FROM. Failure is swallowed:
+        // context must never take the page down.
+        fetch(`${API_URL}/api/spreadworks/risk-advisor/tape-shape`)
+          .then((x) => x.json()).then((t) => { if (live) setTape(t); })
+          .catch(() => {});
         // 🚨 Stamped on a SUCCESSFUL fetch only. Stamping every tick would show
         // a moving "loaded" time over a payload that stopped updating — the
         // exact lie /session's LIVE badge told before 08-18.
@@ -478,6 +485,8 @@ export default function SqueezePage() {
             distrust the page. It now states the age of every leg either way,
             and the loud stale detail below is kept on top of it. */}
         <FreshnessBar {...squeezeLegs(data.freshness)} loadedAt={loadedAt} />
+
+        <TapeShape data={tape} />
 
         {data.freshness?.reason ? (
           <div style={{ ...S.small, marginBottom: 10 }}>{data.freshness.reason}</div>
