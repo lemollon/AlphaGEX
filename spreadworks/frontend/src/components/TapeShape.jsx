@@ -121,13 +121,26 @@ export default function TapeShape({ data }) {
         symmetric condor gives that drift away on the call side.{' '}
         {symmetric && (
           <>
-            <b style={{ color: '#c6cbd8' }}>It is not a crash premium.</b> Daily skew here is{' '}
-            <span style={S.mono}>{data.skew == null ? '—' : (data.skew >= 0 ? '+' : '−') + Math.abs(data.skew).toFixed(2)}</span>
-            {data.skew > 0 && ' — positive, the opposite of the textbook crash-down shape'} and
-            the biggest single move in the window was{' '}
-            <span style={S.mono}>{sgn(data.best_day)}</span> against a worst of{' '}
+            <b style={{ color: '#c6cbd8' }}>It is not a crash premium.</b> The 5th and 95th
+            percentiles sit within {Math.abs(100 * (tail - 1)).toFixed(0)}% of each other
+            ({sgn(data.p05)} against {sgn(data.p95)}), and the biggest single move in the
+            window was <span style={S.mono}>{sgn(data.best_day)}</span> versus a worst of{' '}
             <span style={S.mono}>{sgn(data.worst_day)}</span>. Size for the drift, not for a
-            left tail this era has not produced.
+            left tail this window does not show.
+            {/* 🚨 SKEW IS SHOWN BUT NEVER LOAD-BEARING. The third moment is
+                unstable at these sample sizes - it reads +0.42 over 895
+                warehouse sessions and −0.23 over the 289 stored here, on
+                overlapping data. The 5th/95th ratio agrees across both windows
+                (1.02 vs 1.03), so the copy keys on THAT and skew is reported as
+                context only. Keying the sentence on skew's sign would have made
+                the panel flip its story with the window length. */}
+            {data.skew != null && (
+              <> Daily skew is{' '}
+                <span style={S.mono}>{(data.skew >= 0 ? '+' : '−') + Math.abs(data.skew).toFixed(2)}</span>,
+                which is unstable at this sample size — the percentile spread above is the
+                measure to trust.
+              </>
+            )}
           </>
         )}
       </div>
