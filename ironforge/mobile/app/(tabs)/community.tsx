@@ -7,6 +7,7 @@ import type { CommunityFeed, CommunityMessage } from '@/api/types'
 import { color, space, radius, type, font } from '@/theme/tokens'
 import { Card, Loading, Empty, ErrorState } from '@/components/ui'
 import { AppHeader, Mascot } from '@/components/Brand'
+import { applyFlame, FLAME } from '@/community/reactions'
 
 /**
  * Community — UX-005 (APP-030/031/054/055).
@@ -178,8 +179,6 @@ export default function CommunityScreen() {
   )
 }
 
-const FLAME = '🔥'
-
 /**
  * The flame count for one post. It renders at zero too — hiding the control until
  * somebody else reacted first means nobody can ever be the first to react.
@@ -209,25 +208,6 @@ function FlameRow({ message, onPress }: { message: CommunityMessage; onPress: ()
       </Pressable>
     </View>
   )
-}
-
-/** Optimistic local toggle, mirroring what the server's toggleReaction() does. */
-function applyFlame(cur: CommunityFeed | undefined, id: string): CommunityFeed | undefined {
-  if (!cur) return cur
-  return {
-    ...cur,
-    messages: cur.messages.map((m) => {
-      if (m.id !== id) return m
-      const rest = (m.reactions ?? []).filter((r) => r.emoji !== FLAME)
-      const flame = (m.reactions ?? []).find((r) => r.emoji === FLAME)
-      const mine = !(flame?.mine ?? false)
-      const count = Math.max(0, (flame?.count ?? 0) + (mine ? 1 : -1))
-      return {
-        ...m,
-        reactions: count > 0 || mine ? [...rest, { emoji: FLAME, count, mine }] : rest,
-      }
-    }),
-  }
 }
 
 function showGuidelines() {
