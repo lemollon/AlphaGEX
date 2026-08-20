@@ -217,6 +217,15 @@ class RiskConfirmState(Base):
     fired_at = Column(DateTime)
     fired_spot = Column(Float)
     close_spot = Column(Float)        # filled after the close → outcome
+    # 🚨 FIRING AND ALERTING ARE DIFFERENT EVENTS AND USED TO SHARE ONE FLAG.
+    # confirm_step() sets fired_dir and every later poll skips on
+    # `fired_dir is None`, so a firing whose alert never went out was
+    # indistinguishable from one that was delivered. On 2026-08-20 the DOWN
+    # confirmation fired at 10:40 CT into a dead webhook and was lost for good
+    # — the state machine had already recorded the fire and would never look
+    # at it again. This column is the difference: NULL means nobody has been
+    # told yet, and the job may try again.
+    alerted_at = Column(DateTime)
 
 
 class RiskFlowRollingState(Base):
@@ -573,6 +582,96 @@ def session_log_read(d: date) -> list[dict]:
                 for r in rows]
     except Exception:
         return []
+    finally:
+        db.close()
+
+
+def _ensure_alerted_at_column() -> None:
+    """Idempotent column add for risk_confirm_state.alerted_at (2026-08-20).
+
+    🚨 create_all() DOES NOT ALTER AN EXISTING TABLE. risk_confirm_state is
+    already live in production, so declaring the column on the model is not
+    enough — without this the first query naming it raises UndefinedColumn and
+    the confirmation watcher dies exactly where it is meant to recover.
+
+    Dialect-portable and safe to run on every boot. Never raises: a failed
+    migration must not take the app down, it must leave the retry path off.
+    """
+    if SessionLocal is None:
+        return
+    try:
+        from sqlalchemy import text as _t
+        db = SessionLocal()
+        try:
+            bind = db.get_bind()
+            is_sqlite = bind.dialect.name == "sqlite"
+            if is_sqlite:
+                rows = db.execute(_t("PRAGMA table_info(risk_confirm_state)")).fetchall()
+                have = any(r[1] == "alerted_at" for r in rows)
+            else:
+                have = db.execute(_t(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name='risk_confirm_state' "
+                    "AND column_name='alerted_at'")).first() is not None
+            if not have:
+                db.execute(_t("ALTER TABLE risk_confirm_state "
+                              "ADD COLUMN alerted_at TIMESTAMP"))
+                db.commit()
+                logger.info("[routes_risk] added risk_confirm_state.alerted_at")
+        finally:
+            db.close()
+    except Exception as e:                                   # noqa: BLE001
+        logger.warning("[routes_risk] alerted_at migration skipped: %r", e)
+
+
+def undelivered_firing(d, now, *, max_age_min: int = 90) -> dict | None:
+    """A firing that has not been alerted yet, if it is still worth telling.
+
+    ⛔ TIME-BOUNDED ON PURPOSE. A DIRECTION CONFIRMED alert is a claim about
+    the REST of the day; delivering one for a firing that happened hours ago
+    is worse than silence, because the runway it promises is already spent.
+    Outside `max_age_min`, or once the confirmation window has closed, the
+    firing is abandoned rather than sent late.
+
+    Returns the payload the alert job needs, or None. Never raises.
+    """
+    if SessionLocal is None:
+        return None
+    db = SessionLocal()
+    try:
+        row = db.get(RiskConfirmState, d)
+        if row is None or not row.fired_dir or row.alerted_at is not None:
+            return None
+        if not row.fired_at or not row.ref_spot or not row.fired_spot:
+            return None
+        age = (now.replace(tzinfo=None) - row.fired_at).total_seconds() / 60.0
+        if age < 0 or age > max_age_min:
+            return None
+        end = CONFIRM_WINDOW_CT[1]
+        if (now.hour, now.minute) > end:
+            return None
+        return {"dir": row.fired_dir, "spot": row.fired_spot,
+                "ref": row.ref_spot, "putcall_z": row.putcall_z,
+                "move_pct": (row.fired_spot - row.ref_spot) / row.ref_spot * 100.0,
+                "at": row.fired_at, "age_min": int(age), "delayed": True}
+    except Exception:                                        # noqa: BLE001
+        return None
+    finally:
+        db.close()
+
+
+def mark_alerted(d, now) -> None:
+    """Stamp a firing as delivered. Only called after a SUCCESSFUL send."""
+    if SessionLocal is None:
+        return
+    db = SessionLocal()
+    try:
+        row = db.get(RiskConfirmState, d)
+        if row is not None and row.alerted_at is None:
+            row.alerted_at = now.replace(tzinfo=None)
+            db.commit()
+    except Exception:                                        # noqa: BLE001
+        pass
     finally:
         db.close()
 
@@ -2292,3 +2391,9 @@ def tape_shape():
         "best_day": max(rets),
         "worst_day": min(rets),
     }
+
+
+# Run the additive migration at import, mirroring call_log.ensure_tables():
+# the app lifespan's create_all() cannot add a column to a table that already
+# exists, and the confirmation watcher needs this one to recover a lost alert.
+_ensure_alerted_at_column()

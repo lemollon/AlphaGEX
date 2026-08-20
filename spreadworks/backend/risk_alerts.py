@@ -516,7 +516,8 @@ def register_risk_alerts(scheduler, app) -> None:
             from .routes_risk import (CONFIRM_WINDOW_CT, CONFIRM_MOVE_PCT,
                                       CONFIRM_ARM_Z, _rolling_flow_now,
                                       _flow_history, _pc_z, _latest_snapshot,
-                                      confirm_step, session_log_write)
+                                      confirm_step, session_log_write,
+                                      undelivered_firing, mark_alerted)
             start, end = CONFIRM_WINDOW_CT
             t = (now.hour, now.minute)
             if t < start or t > end:
@@ -541,12 +542,28 @@ def register_risk_alerts(scheduler, app) -> None:
             session_log_write(today, now, spot=float(live["spot"]))
             hit = confirm_step(today, now, float(live["spot"]), armed, pcz)
             if hit is None:
-                return
+                # 🚨 RECOVER A FIRING WHOSE ALERT NEVER WENT OUT. confirm_step
+                # fires once and every later poll skips on `fired_dir is None`,
+                # so before 2026-08-20 an alert lost to a dead webhook was lost
+                # permanently — the fire was recorded, nobody was told, and
+                # nothing ever looked again. That is exactly what happened to
+                # the 10:40 CT DOWN confirmation. `alerted_at` separates the
+                # two events; this retries only while the call is still worth
+                # making, and undelivered_firing() enforces that.
+                hit = undelivered_firing(today, now)
+                if hit is None:
+                    return
 
             d = hit["dir"]
             arrow = "🔻" if d == "DOWN" else "🔺"
+            # ⛔ A RECOVERED ALERT MUST SAY IT IS LATE. Presenting a 40-minute-old
+            # firing as if it just happened would have the reader sizing off a
+            # price that has already moved.
+            late = hit.get("delayed")
             title = (f"{arrow} {d} CONFIRMED — SPY {hit['spot']:.2f} · "
-                     "this one has legs more often than not")
+                     + (f"DELAYED {hit.get('age_min', 0)} MIN — alert failed earlier"
+                        if late else
+                        "this one has legs more often than not"))
             plain = (
                 f"This morning's option MIX was a {hit['putcall_z']:.1f}σ outlier "
                 f"(put/call ratio, top of the last 63 sessions). That said a big "
@@ -560,7 +577,7 @@ def register_risk_alerts(scheduler, app) -> None:
                 f"to stay picked today. If you are short {'put' if d == 'DOWN' else 'call'} "
                 f"premium into this, you are on the wrong side of it — that is the "
                 f"position to reduce or close. Do not add.")
-            _post("risk_confirm", today, {
+            delivered = _post("risk_confirm", today, {
                 "title": title,
                 "description": plain,
                 "color": RED if d == "DOWN" else GREEN,
@@ -574,6 +591,13 @@ def register_risk_alerts(scheduler, app) -> None:
                 "footer": {"text": "two-stage flow+confirmation · advisory only, "
                                    "no bot acts on this · /risk"},
             }, ping=True)
+            # ⛔ ONLY ON A SUCCESSFUL SEND. Stamping unconditionally would
+            # recreate the exact bug this path exists to fix - a firing marked
+            # as told when nobody was told. _post already releases the dedup
+            # slot on failure, so leaving alerted_at NULL lets the next poll
+            # try again.
+            if delivered:
+                mark_alerted(today, now)
             _push_phone(
                 f"{arrow} SPY {d} confirmed {hit['spot']:.2f}",
                 f"{hit['move_pct']:+.2f}% off the 10:00 level on a flagged day. "
