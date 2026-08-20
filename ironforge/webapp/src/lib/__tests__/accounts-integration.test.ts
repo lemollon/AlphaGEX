@@ -608,13 +608,25 @@ describe('Consistent Balance Basis (total_equity)', () => {
     expect(fnBody).toMatch(/total_equity/)
   })
 
-  it('placeIcOrderAllAccounts uses getAccountsForBotAsync (DB-backed)', () => {
+  // Account selection moved out of placeIcOrderAllAccounts into
+  // resolveEligibleAccounts on 2026-08-20, so that /api/health can ask which
+  // accounts an order would reach WITHOUT placing one. The invariant is
+  // unchanged and still asserted here — it just lives in the extracted function
+  // now, and the order path must be the caller rather than a second copy.
+  it('account selection is DB-backed (resolveEligibleAccounts), not hardcoded', () => {
+    const fnMatch = tradierSource.match(
+      /export async function resolveEligibleAccounts[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    expect(fnMatch![0]).toMatch(/getAccountsForBotAsync/)
+  })
+
+  it('placeIcOrderAllAccounts composes its accounts through that one function', () => {
     const fnMatch = tradierSource.match(
       /export async function placeIcOrderAllAccounts[\s\S]*?^}/m,
     )
     expect(fnMatch).toBeTruthy()
-    const fnBody = fnMatch![0]
-    expect(fnBody).toMatch(/getAccountsForBotAsync/)
+    expect(fnMatch![0]).toMatch(/resolveEligibleAccounts/)
   })
 })
 
