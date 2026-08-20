@@ -107,6 +107,39 @@ _last_posted = {}  # in-process fast-path: {message_key: timestamp}
 _evening_brief_fn = None  # set by _start_scheduler so routes can manual-trigger
 
 
+def _release_post_slot_db(key: str, fire_date) -> None:
+    """Give a claimed slot back.
+
+    🚨 THE CLAIM IS NOT THE DELIVERY. Every alert here claims its slot BEFORE
+    it posts, and `_send()`'s return value was discarded at all eight call
+    sites. So a webhook that is unset, revoked, rate-limited or simply down
+    produced exactly the same result as a successful post: the row is written,
+    the page reports `fired: true`, and the alert is permanently suppressed for
+    the rest of the day because the slot is taken.
+
+    A failed send therefore has to hand the slot back, or one dropped packet
+    silently costs the whole day's alert. Never raises — a failure to release
+    must not take down the job that was already failing.
+    """
+    try:
+        from .db import SessionLocal
+        from sqlalchemy import text as sa_text
+    except Exception:                                        # noqa: BLE001
+        return
+    if SessionLocal is None:
+        return
+    db = SessionLocal()
+    try:
+        db.execute(sa_text("DELETE FROM discord_post_log "
+                           "WHERE message_key = :k AND fire_date = :d"),
+                   {"k": key, "d": fire_date})
+        db.commit()
+    except Exception:                                        # noqa: BLE001
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _claim_post_slot_db(key: str, fire_date) -> bool:
     """Atomically claim a (key, fire_date) slot in the DB.
 

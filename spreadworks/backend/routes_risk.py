@@ -1959,6 +1959,22 @@ async def session_tape(request: Request):
     except Exception:                                        # noqa: BLE001
         pass
 
+    # 🚨 LOG THE CALL FROM THE ENDPOINT THE PAGE ACTUALLY LOADS. This was
+    # attached to /calibration, which the page never calls, and it read
+    # out["headline"] from a report() that has no such key - so it recorded
+    # `None` from a route nobody hit. Result: zero session rows in sw_call_log
+    # since it shipped, and a history feature that silently covered two
+    # surfaces instead of three.
+    try:
+        from .call_log import record_call
+        record_call("session", _session_headline(confirm),
+                    detail={"armed": confirm.get("armed"),
+                            "putcall_z": confirm.get("putcall_z"),
+                            "fired_dir": confirm.get("fired_dir"),
+                            "ref_spot": confirm.get("ref_spot")})
+    except Exception:                                        # noqa: BLE001
+        pass                     # instrumentation must never break the page
+
     return {
         "asof": now_ct.isoformat(),
         "clock": clock,
@@ -2039,18 +2055,6 @@ async def calibration(request: Request):
     existed. Read-only — the nightly job is what enforces."""
     from .signal_calibration import report
     out = report()
-    try:
-        from .call_log import record_call
-        _c = out.get("confirm") or {}
-        record_call("session", out.get("headline"),
-                    detail={"armed": _c.get("armed"),
-                            "putcall_z": _c.get("putcall_z"),
-                            "fired_dir": _c.get("fired_dir"),
-                            "ref_spot": _c.get("ref_spot"),
-                            "last_reading_ct": (out.get("clock") or {})
-                            .get("last_reading_ct")})
-    except Exception:
-        pass                      # instrumentation must never break the page
     return out
 
 
