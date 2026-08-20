@@ -7,7 +7,7 @@ import { useRouter } from 'expo-router'
 import useSWR from 'swr'
 import Constants from 'expo-constants'
 import { api } from '@/api/client'
-import type { MobileMe, LiveSummary } from '@/api/types'
+import type { MobileMe, MembershipResponse } from '@/api/types'
 import { signOut, biometricsAvailable, isBiometricEnabled, setBiometricEnabled } from '@/auth/session'
 import { color, space, radius, type, font } from '@/theme/tokens'
 import { Card, SectionLabel, Row, Loading, ErrorState } from '@/components/ui'
@@ -39,10 +39,12 @@ export default function AccountScreen() {
     '/api/auth/mobile/me',
     (p: string) => api<MobileMe>(p),
   )
-  // The plan NAME is server-derived (LiveSummary.membership.plan) — see the note above
-  // about never hardcoding one here. Fails soft: no summary just means no plan line.
-  const { data: summary } = useSWR<LiveSummary>('/api/live/summary', (p: string) =>
-    api<LiveSummary>(p),
+  // Real billing state (APP-038): plan, status, price and next renewal, all derived
+  // server-side from the Stripe-written customer_bot_subscriptions rows. This used to
+  // read LiveSummary.membership, which was a hardcoded "IronForge Membership /
+  // Early Access" placeholder with no price and no date.
+  const { data: billing } = useSWR<MembershipResponse>('/api/billing/membership', (p: string) =>
+    api<MembershipResponse>(p),
   )
   const [bioAvailable, setBioAvailable] = useState(false)
   const [bioOn, setBioOn] = useState(false)
@@ -125,16 +127,19 @@ export default function AccountScreen() {
             </View>
           </View>
 
-          {/* APP-058 "Edit Profile" is deliberately absent: there is no endpoint that
-              updates a customer's name or email, so the row would be a dead chevron.
-              It needs a server route before it can exist. */}
           <View style={{ marginTop: space.md }}>
+            <Row
+              icon="person-outline"
+              label="Edit Profile"
+              detail="Your name as it appears in IronForge"
+              onPress={() => router.push('/edit-profile')}
+              first
+            />
             <Row
               icon="lock-closed-outline"
               label="Change Password"
               detail="Signs you out on every device"
               onPress={() => router.push('/change-password')}
-              first
             />
           </View>
         </Card>
@@ -145,20 +150,39 @@ export default function AccountScreen() {
         <Card>
           <View style={s.rowBetween}>
             <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 17 }]}>
-              {summary?.membership?.plan ?? (data?.hasMembership ? 'Membership' : 'No membership')}
+              {billing?.membership?.plan ?? (data?.hasMembership ? 'Membership' : 'No membership')}
             </Text>
-            {data?.hasMembership ? (
-              <View style={[s.pill, { borderColor: color.pos }]}>
-                <Text style={[type.label, { color: color.pos }]}>
-                  {summary?.membership?.badge ?? 'Active'}
+            {billing?.membership ? (
+              <View style={[s.pill, { borderColor: statusColor(billing.membership.status) }]}>
+                <Text style={[type.label, { color: statusColor(billing.membership.status) }]}>
+                  {billing.membership.badge}
                 </Text>
               </View>
             ) : null}
           </View>
-          {/* Price and next billing date are NOT in any payload yet (APP-038). Stripe
-              subscription fields have to be added server-side before this card can show
-              "$50 / month · Next billing August 31" as UX-006 does. Inventing them here
-              would put a wrong number next to a real charge. */}
+
+          {billing?.membership ? (
+            <>
+              <Text
+                style={[type.title, { color: color.text, fontFamily: font.display, marginTop: space.sm }]}
+              >
+                ${billing.membership.price_monthly}
+                <Text style={[type.body, { color: color.textDim, fontFamily: font.body }]}>
+                  {' '}/ month
+                </Text>
+              </Text>
+              {billing.membership.next_billing_date ? (
+                <Text style={[type.label, { color: color.textDim, marginTop: space.xs }]}>
+                  {billing.membership.status === 'canceled' ? 'Access ends' : 'Next billing date'}:{' '}
+                  {formatBillingDate(billing.membership.next_billing_date)}
+                </Text>
+              ) : null}
+            </>
+          ) : (
+            <Text style={[type.body, { color: color.textDim, marginTop: space.sm }]}>
+              You do not have an active membership.
+            </Text>
+          )}
           <Pressable onPress={openBilling} style={s.outlineBtn}>
             <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
               Manage Membership and Billing
@@ -232,6 +256,28 @@ export default function AccountScreen() {
       </ScrollView>
     </Shell>
   )
+}
+
+/** past_due is the one status that needs the customer to act, so it reads as a warning. */
+function statusColor(status: string): string {
+  if (status === 'past_due') return color.warn
+  if (status === 'canceled') return color.neg
+  return color.pos
+}
+
+/**
+ * next_billing_date is a plain YYYY-MM-DD from the server, deliberately unformatted.
+ * Parsed as LOCAL, not UTC — `new Date('2026-08-31')` is midnight UTC, which renders as
+ * the 30th anywhere west of Greenwich and would show the wrong billing day.
+ */
+function formatBillingDate(d: string): string {
+  const [y, m, day] = d.split('-').map(Number)
+  if (!y || !m || !day) return d
+  return new Date(y, m - 1, day).toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
 }
 
 function memberSince(iso: string): string {
