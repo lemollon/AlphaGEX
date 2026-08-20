@@ -6,6 +6,8 @@
  * Swappable: only this module talks to the provider's HTTP API.
  */
 
+import { supportEmail } from '@/lib/support-address'
+
 const RESEND_ENDPOINT = 'https://api.resend.com/emails'
 
 export function isEmailConfigured(): boolean {
@@ -69,7 +71,9 @@ export async function sendVerificationEmail(params: {
 /**
  * Waitlist confirmation (8/26 handoff). Transactional — sent immediately after the
  * Attio record persists. Copy is the approved draft; no launch date is promised.
- * reply_to → support@ironforge.trade per the spec.
+ * reply_to → the support address per the spec. Resolved through supportEmail() rather
+ * than written inline: the mailbox does not exist yet, so which address replies land
+ * on has to be changeable without a deploy.
  */
 export async function sendWaitlistConfirmation(params: {
   to: string
@@ -86,7 +90,7 @@ export async function sendWaitlistConfirmation(params: {
       body: JSON.stringify({
         from: process.env.EMAIL_FROM,
         to: params.to,
-        reply_to: 'support@ironforge.trade',
+        reply_to: supportEmail(),
         subject: 'You’re on the IronForge waitlist',
         html: waitlistHtml(params.firstName),
       }),
@@ -122,7 +126,7 @@ export async function sendWaitlistInvitation(params: {
       body: JSON.stringify({
         from: process.env.EMAIL_FROM,
         to: params.to,
-        reply_to: 'support@ironforge.trade',
+        reply_to: supportEmail(),
         subject: 'Your IronForge invitation',
         html: invitationHtml(params.firstName, params.enrollUrl),
       }),

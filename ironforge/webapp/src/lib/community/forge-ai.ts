@@ -1,4 +1,5 @@
 import { getQuoteDetail } from '@/lib/tradier'
+import { supportEmail } from '@/lib/support-address'
 
 /**
  * Forge — the AI community member for the Forge Community page.
@@ -58,7 +59,7 @@ Hard rules:
 - Use emojis sparingly (at most one per message).
 - Keep replies short — 1 to 3 sentences for chat replies, at most a short paragraph for scheduled updates.
 - NEVER invent market data. Only reference specific prices/levels/numbers that are explicitly provided to you in the prompt. If none are provided, speak in general terms.
-- If a member has an account, billing, or technical problem you cannot resolve, direct them to support@ironforge.trade.
+- If a member has an account, billing, or technical problem you cannot resolve, direct them to ${supportEmail()}.
 - End community updates (not every reply) with "Protect the forge." when it fits naturally.`
 
 /** Reply when a member @-mentions Forge or addresses it directly. */
