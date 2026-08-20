@@ -2048,6 +2048,43 @@ def _posted_today(key: str, d: date) -> bool:
         db.close()
 
 
+@router.get("/delivery")
+async def delivery_status():
+    """Is Discord actually RECEIVING these alerts?
+
+    🚨 The alert log answers a different question than people think: it records
+    that a slot was CLAIMED. _post() now releases the slot when a send fails,
+    but nothing surfaced WHETHER sends are succeeding — and on 2026-08-20 every
+    alert was in fact failing (a NameError inside _post, swallowed by each
+    job's except-and-log). Nothing on any page would have shown that.
+
+    Reports what is CONFIGURED and what actually HAPPENED on the last send.
+    Never reveals a webhook URL, only whether one is present.
+    """
+    import os
+    from .risk_alerts import _LAST_DELIVERY
+
+    def configured(name: str) -> bool:
+        return bool((os.getenv(name) or "").strip())
+
+    sinks = {
+        "risk_advisor_webhook": configured("RISK_ADVISOR_DISCORD_WEBHOOK"),
+        "fleet_webhook_fallback": configured("DISCORD_WEBHOOK_URL"),
+        "phone_webhook": configured("RISK_PHONE_WEBHOOK"),
+        "ntfy_topic": configured("RISK_NTFY_TOPIC"),
+    }
+    return {
+        # the alert channel falls back to the fleet webhook, so either works
+        "can_alert": sinks["risk_advisor_webhook"] or sinks["fleet_webhook_fallback"],
+        "can_reach_phone": sinks["phone_webhook"],
+        "sinks": sinks,
+        "last_delivery": dict(_LAST_DELIVERY),
+        "note": ("A claimed slot is NOT proof of delivery. A failed send "
+                 "releases its slot so the next poll retries; the outcome of "
+                 "the most recent attempt is above."),
+    }
+
+
 @router.get("/calibration")
 async def calibration(request: Request):
     """Is the signal still working? Scorecard over a rolling window, graded
