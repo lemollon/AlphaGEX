@@ -20,6 +20,7 @@ import { Activity, Search, RefreshCw, ArrowUpRight, AlertTriangle, Info, Anchor,
 const Plot = createPlotlyComponent(Plotly);
 
 import { API_URL } from '../lib/api';
+import VacuumMap from '../components/VacuumMap';
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -929,11 +930,11 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
 
   return (
     <>
-      <div className="h-[360px] md:h-[550px]">
+      <div className="h-[340px] md:h-[430px]">
         <Plot
           data={plotData.traces}
           layout={{
-            height: 550,
+            height: 430,
             paper_bgcolor: '#0a0a14',
             plot_bgcolor: '#0f0f1e',
             font: { color: '#9ca3af', family: 'Inter, Arial, sans-serif', size: 11 },
@@ -964,6 +965,7 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
           style={{ width: '100%', height: '100%' }}
         />
       </div>
+      <VacuumMap strikes={data?.gex_chart?.strikes} spot={data?.header?.price} />
       <div className="flex flex-wrap gap-3.5 mt-2.5 text-[11px] items-center">
         {plotData.hasCandleData ? (
           <>
