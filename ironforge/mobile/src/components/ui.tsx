@@ -5,8 +5,10 @@
  * string constants (cardStyles.ts). So the mobile design system is built from the
  * tokens rather than lifted, and these are the pieces every screen composes.
  */
-import { View, Text, ActivityIndicator, Pressable, StyleSheet } from 'react-native'
+import { View, Text, ActivityIndicator, Pressable, Image, StyleSheet } from 'react-native'
 import type { ReactNode } from 'react'
+// Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
+import Ionicons from '@expo/vector-icons/Ionicons'
 import { color, space, radius, type, font, outcomeColor, pnlColor } from '@/theme/tokens'
 
 export function Card({ children, style }: { children: ReactNode; style?: object }) {
@@ -59,6 +61,59 @@ export function AgentBadge({ name, accent }: { name: string; accent: string }) {
     <View style={[s.badge, { borderColor: accent }]}>
       <Text style={[type.label, { color: accent, fontFamily: font.bodyMedium }]}>{name}</Text>
     </View>
+  )
+}
+
+/**
+ * A tappable settings row: icon, label, optional detail, chevron (UX-006).
+ *
+ * `icon` takes either an Ionicons name or an image source, because Help & Support puts
+ * the Sparky avatar in the same column as a glyph.
+ */
+export function Row({
+  icon,
+  image,
+  label,
+  detail,
+  onPress,
+  first = false,
+  tint,
+  badge,
+}: {
+  icon?: React.ComponentProps<typeof Ionicons>['name']
+  image?: number
+  label: string
+  detail?: string
+  onPress: () => void
+  first?: boolean
+  tint?: string
+  badge?: ReactNode
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={detail ? `${label}. ${detail}` : label}
+      style={[s.row, !first && s.rowDivider]}
+    >
+      {image ? (
+        <Image source={image} style={{ width: 30, height: 30 }} resizeMode="contain" />
+      ) : icon ? (
+        <Ionicons name={icon} size={22} color={tint ?? color.textDim} />
+      ) : null}
+      <View style={{ flex: 1 }}>
+        <View style={s.rowHead}>
+          <Text style={[type.body, { color: tint ?? color.text, fontFamily: font.bodyMedium }]}>
+            {label}
+          </Text>
+          {badge}
+        </View>
+        {detail ? (
+          <Text style={[type.label, { color: color.muted, marginTop: 2 }]}>{detail}</Text>
+        ) : null}
+      </View>
+      <Ionicons name="chevron-forward" size={17} color={color.muted} />
+    </Pressable>
   )
 }
 
@@ -120,6 +175,9 @@ const s = StyleSheet.create({
     paddingVertical: space.xs,
     alignSelf: 'flex-start',
   },
+  row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md },
+  rowDivider: { borderTopWidth: 1, borderTopColor: color.border },
+  rowHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   dim: { color: color.textDim },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl },
   retry: {

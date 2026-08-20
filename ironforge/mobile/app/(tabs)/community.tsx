@@ -1,12 +1,12 @@
 import { useState } from 'react'
-import { View, Text, ScrollView, TextInput, Pressable, RefreshControl, StyleSheet } from 'react-native'
+import { View, Text, ScrollView, TextInput, Pressable, RefreshControl, Alert, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import useSWR from 'swr'
 import { api } from '@/api/client'
-import type { CommunityFeed } from '@/api/types'
+import type { CommunityFeed, CommunityMessage } from '@/api/types'
 import { color, space, radius, type, font } from '@/theme/tokens'
 import { Card, Loading, Empty, ErrorState } from '@/components/ui'
-import { AppHeader } from '@/components/Brand'
+import { AppHeader, Mascot } from '@/components/Brand'
 
 /**
  * Community — UX-005 (APP-030/031/054/055).
@@ -52,6 +52,28 @@ export default function CommunityScreen() {
     }
   }
 
+  /**
+   * Toggle the flame (APP-055). Optimistic, then reconciled against the server.
+   *
+   * 🔥 not ❤️ on purpose: APP-055 says "one flame reaction per post", and the server's
+   * ALLOWED_EMOJI is 👍🔥💯😂🎯🙌 — it has no heart to send. The mockup's red heart is
+   * the outlier, and the client cannot invent an emoji the endpoint rejects.
+   */
+  async function toggleFlame(id: string) {
+    await mutate((cur) => applyFlame(cur, id), { revalidate: false })
+    try {
+      await api('/api/community/reactions', {
+        method: 'POST',
+        body: { message_id: id, emoji: FLAME },
+      })
+    } catch (e) {
+      Alert.alert('Could not react', (e as Error).message)
+    } finally {
+      // The server is the truth either way — a failed toggle rolls back on revalidate.
+      mutate()
+    }
+  }
+
   if (isLoading) return <Shell><Loading label="Loading the community…" /></Shell>
   if (error) {
     return (
@@ -76,6 +98,21 @@ export default function CommunityScreen() {
           <Text style={s.title}>Community</Text>
           <Text style={[type.label, { color: color.pos }]}>{data?.online_count ?? 0} online</Text>
         </View>
+
+        <Pressable onPress={showGuidelines} style={s.welcome} accessibilityRole="button">
+          <Mascot bot="flame" size={54} />
+          <View style={{ flex: 1 }}>
+            <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 17 }]}>
+              Welcome to Forge Community
+            </Text>
+            <Text style={[type.body, { color: color.textDim, marginTop: space.xs }]}>
+              Learn, share ideas, and grow together. Respect every member and protect the forge.
+            </Text>
+            <Text style={[type.label, { color: color.accent, marginTop: space.sm }]}>
+              Community Guidelines
+            </Text>
+          </View>
+        </Pressable>
 
         <View style={s.chipRow}>
           {channels.map((c) => (
@@ -110,6 +147,7 @@ export default function CommunityScreen() {
                 <Text style={[type.label, { color: color.muted }]}>{time(m.created_at)}</Text>
               </View>
               <Text style={[type.body, { color: color.textDim, marginTop: space.sm }]}>{m.message}</Text>
+              <FlameRow message={m} onPress={() => void toggleFlame(m.id)} />
             </Card>
           ))
         )}
@@ -140,6 +178,71 @@ export default function CommunityScreen() {
   )
 }
 
+const FLAME = '🔥'
+
+/**
+ * The flame count for one post. It renders at zero too — hiding the control until
+ * somebody else reacted first means nobody can ever be the first to react.
+ */
+function FlameRow({ message, onPress }: { message: CommunityMessage; onPress: () => void }) {
+  const flame = (message.reactions ?? []).find((r) => r.emoji === FLAME)
+  const count = flame?.count ?? 0
+  const mine = flame?.mine ?? false
+  return (
+    <View style={s.reactRow}>
+      <Pressable
+        onPress={onPress}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={mine ? 'Remove your flame' : 'Add a flame'}
+        style={s.reactBtn}
+      >
+        <Text style={{ fontSize: 15, opacity: mine ? 1 : 0.45 }}>{FLAME}</Text>
+        <Text
+          style={[
+            type.label,
+            { color: mine ? color.accent : color.muted, fontFamily: font.bodyMedium },
+          ]}
+        >
+          {count}
+        </Text>
+      </Pressable>
+    </View>
+  )
+}
+
+/** Optimistic local toggle, mirroring what the server's toggleReaction() does. */
+function applyFlame(cur: CommunityFeed | undefined, id: string): CommunityFeed | undefined {
+  if (!cur) return cur
+  return {
+    ...cur,
+    messages: cur.messages.map((m) => {
+      if (m.id !== id) return m
+      const rest = (m.reactions ?? []).filter((r) => r.emoji !== FLAME)
+      const flame = (m.reactions ?? []).find((r) => r.emoji === FLAME)
+      const mine = !(flame?.mine ?? false)
+      const count = Math.max(0, (flame?.count ?? 0) + (mine ? 1 : -1))
+      return {
+        ...m,
+        reactions: count > 0 || mine ? [...rest, { emoji: FLAME, count, mine }] : rest,
+      }
+    }),
+  }
+}
+
+function showGuidelines() {
+  Alert.alert(
+    'Community Guidelines',
+    [
+      'Respect every member. Disagree with the idea, never the person.',
+      'No investment advice, tips or solicitation. Share what you did and why, not what somebody else should do.',
+      'Never post account numbers, balances, or screenshots containing personal details — yours or anyone else’s.',
+      'AI-authored posts and replies are always labelled AI.',
+      'Posts are checked against these standards before they publish.',
+    ].join('\n\n'),
+  )
+}
+
 function time(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 }
@@ -157,6 +260,18 @@ const s = StyleSheet.create({
   title: { ...type.title, color: color.text, fontFamily: font.display },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   rowCenter: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  welcome: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.md,
+    marginTop: space.lg,
+    borderWidth: 1,
+    borderColor: color.accent,
+    borderRadius: radius.lg,
+    padding: space.lg,
+  },
+  reactRow: { flexDirection: 'row', alignItems: 'center', marginTop: space.md },
+  reactBtn: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginVertical: space.lg },
   chip: {
     borderWidth: 1,
