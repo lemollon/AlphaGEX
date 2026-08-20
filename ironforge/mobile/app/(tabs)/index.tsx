@@ -1,12 +1,11 @@
 import { useState } from 'react'
 import { View, Text, ScrollView, RefreshControl, Pressable, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-// Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts (~3 MB,
-// MaterialCommunityIcons alone is 1.3 MB). Ionicons is the only set used.
+// Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR from 'swr'
 import { api } from '@/api/client'
-import type { LiveSummary, LiveTrade, HomeData, BrokerageConnections } from '@/api/types'
+import type { LiveSummary, LiveAgent, LiveAgents, HomeData, BrokerageConnections } from '@/api/types'
 import { color, space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { Card, Money, Balance, SectionLabel, Loading, Empty, ErrorState } from '@/components/ui'
 import { AppHeader, Mascot } from '@/components/Brand'
@@ -16,35 +15,35 @@ import { brokerLabel, soleConnection } from '@/api/brokerage'
 /**
  * Forge — UX-002 (APP-011/012/013/016) and UX-003 (APP-051).
  *
- * Three endpoints because the approved layout spans three payloads: summary (capital,
- * today, market), home (week/month/lifetime), trade (active position + intraday P&L).
- * A single aggregated endpoint is the right eventual shape — noted as G5 in the plan —
- * but composing here keeps the app shippable against what the server serves today.
+ * Agents come from /api/live/agents, which fans out over every bot the viewer owns and
+ * returns each one's own state, account and trade. Before that endpoint existed this
+ * screen composed /api/live/summary + /api/live/trade, which between them could only ever
+ * describe ONE agent — so the mockup's two side-by-side tiles were unbuildable and this
+ * file said so.
  *
- * Polling is conservative: 60s for summary, 30s for the live trade. The web polls
- * community every 4s, which on a phone is a battery and data problem; nothing here
- * goes below 30s. Connections barely change, so they are fetched once and not polled.
+ * /api/live/summary is still fetched, for the period row and the market clock; those are
+ * viewer-level, not per-agent. Polling stays conservative: 60s for summary and agents,
+ * never the 4s the web uses, which on a phone is a battery and cellular-data problem.
  */
 export default function ForgeScreen() {
-  const summary = useSWR<LiveSummary>('/api/live/summary', (p: string) => api(p), {
+  const summary = useSWR<LiveSummary>('/api/live/summary', (p: string) => api<LiveSummary>(p), {
     refreshInterval: 60_000,
   })
-  const home = useSWR<HomeData>('/api/live/home', (p: string) => api(p), { refreshInterval: 60_000 })
-  const trade = useSWR<LiveTrade>('/api/live/trade', (p: string) => api(p), {
-    refreshInterval: 30_000,
+  const home = useSWR<HomeData>('/api/live/home', (p: string) => api<HomeData>(p), {
+    refreshInterval: 60_000,
   })
-  // Generic named on api() deliberately: with a fetcher returning Promise<unknown> and
-  // no config argument, SWR's overloads read the fetcher AS the config. Same trap the
-  // Account screen hit on first run.
+  const agents = useSWR<LiveAgents>('/api/live/agents', (p: string) => api<LiveAgents>(p), {
+    refreshInterval: 60_000,
+  })
   const conns = useSWR<BrokerageConnections>('/api/brokerage/connections', (p: string) =>
     api<BrokerageConnections>(p),
   )
 
-  const refreshing = summary.isValidating || trade.isValidating
+  const refreshing = summary.isValidating || agents.isValidating
   const reload = () => {
     summary.mutate()
     home.mutate()
-    trade.mutate()
+    agents.mutate()
   }
 
   if (summary.isLoading) return <Shell><Loading label="Loading your account…" /></Shell>
@@ -70,6 +69,9 @@ export default function ForgeScreen() {
     )
   }
 
+  const list = agents.data?.agents ?? []
+  const capital = totalCapital(list, data)
+
   return (
     <Shell>
       <ScrollView
@@ -80,7 +82,12 @@ export default function ForgeScreen() {
       >
         <Card>
           <SectionLabel>Total Account Capital</SectionLabel>
-          <Balance value={data.account.value} />
+          <Balance value={capital.value} />
+          {capital.note ? (
+            <Text style={[type.label, { color: color.muted, marginTop: space.xs }]}>
+              {capital.note}
+            </Text>
+          ) : null}
           {/* Paper accounts must say so, every time — never let paper read as real money. */}
           {data.account.mode === 'paper' && data.account.disclosure ? (
             <Text style={[type.label, { color: color.warn, marginTop: space.sm }]}>
@@ -106,16 +113,56 @@ export default function ForgeScreen() {
           </View>
         </View>
 
-        <AgentTile
-          bot={data.viewer?.bot ?? 'spark'}
-          state={data.state}
-          trade={trade.data}
-          loading={trade.isLoading}
-          connection={soleConnection(conns.data)}
-        />
+        {agents.isLoading ? (
+          <Text style={[type.label, { color: color.muted }]}>Loading your agents…</Text>
+        ) : list.length === 0 ? (
+          <Empty
+            title="No agents running"
+            detail="Activate an agent and connect a brokerage account to see positions here."
+          />
+        ) : (
+          list.map((a) => (
+            <AgentTile
+              key={a.bot}
+              agent={a}
+              // Only attributable when there is exactly one connection — see soleConnection().
+              connection={list.length === 1 ? soleConnection(conns.data) : null}
+            />
+          ))
+        )}
       </ScrollView>
     </Shell>
   )
+}
+
+/**
+ * The headline number across every agent.
+ *
+ * Summing is only honest when every agent reported an account AND they are all the same
+ * mode: adding a paper balance to a production balance produces a number that is part
+ * pretend, which on a trading dashboard is the worst kind of wrong. Anything else falls
+ * back to the viewer's own account from /api/live/summary and says what it is showing.
+ */
+function totalCapital(
+  list: LiveAgent[],
+  summary: LiveSummary,
+): { value: number | null; note: string | null } {
+  const accounts = list.map((a) => a.account).filter((x): x is NonNullable<typeof x> => !!x)
+  if (list.length > 1 && accounts.length === list.length) {
+    const modes = new Set(accounts.map((a) => a.mode))
+    const values = accounts.map((a) => a.value).filter((v): v is number => v != null)
+    if (modes.size === 1 && values.length === accounts.length) {
+      return {
+        value: values.reduce((t, v) => t + v, 0),
+        note: `Across ${accounts.length} accounts`,
+      }
+    }
+    return {
+      value: summary.account.value,
+      note: 'One account shown — your agents run on different account types.',
+    }
+  }
+  return { value: summary.account.value, note: null }
 }
 
 function Period({ label, value }: { label: string; value: number | null }) {
@@ -132,50 +179,46 @@ function Period({ label, value }: { label: string; value: number | null }) {
 /**
  * One agent tile with its lifecycle stepper, or — when the chart control is on — the
  * intraday P&L chart for the same trade (APP-051).
- *
- * UX-002 shows multiple concurrent trades per agent; the current API returns a single
- * LiveTrade, so this renders the one it has rather than faking a second. Expanding to
- * per-trade requires the aggregated endpoint (G5) — deliberately not stubbed with
- * invented rows.
  */
 function AgentTile({
-  bot,
-  state,
-  trade,
-  loading,
+  agent,
   connection,
 }: {
-  bot: string
-  state: LiveSummary['state']
-  trade: LiveTrade | undefined
-  loading: boolean
+  agent: LiveAgent
   connection: ReturnType<typeof soleConnection>
 }) {
-  const accent = agentAccent(bot)
-  const name = bot.charAt(0).toUpperCase() + bot.slice(1)
+  const accent = agentAccent(agent.bot)
   const [showChart, setShowChart] = useState(false)
 
+  const state = agent.state
+  const trade = agent.trade
   const hasSeries = (trade?.spark_series?.length ?? 0) > 0
 
   return (
-    <Card style={{ borderColor: accent }}>
+    <Card style={{ borderColor: accent, marginBottom: space.lg }}>
       <View style={s.rowBetween}>
         <View style={s.rowCenter}>
-          <Mascot bot={bot} size={38} />
+          <Mascot bot={agent.bot} size={38} />
           <View>
             <View style={s.rowCenter}>
               <Text
                 style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 18 }]}
               >
-                {name}
+                {agent.label}
               </Text>
-              <View style={[s.pill, { borderColor: state.paused ? color.warn : color.pos }]}>
-                <Text style={[type.label, { color: state.paused ? color.warn : color.pos }]}>
-                  {state.paused ? 'Paused' : 'Active'}
-                </Text>
-              </View>
+              {state ? (
+                <View style={[s.pill, { borderColor: state.paused ? color.warn : color.pos }]}>
+                  <Text style={[type.label, { color: state.paused ? color.warn : color.pos }]}>
+                    {state.paused ? 'Paused' : 'Active'}
+                  </Text>
+                </View>
+              ) : null}
+              {agent.paper ? (
+                <View style={[s.pill, { borderColor: color.warn }]}>
+                  <Text style={[type.label, { color: color.warn }]}>Paper</Text>
+                </View>
+              ) : null}
             </View>
-            {/* Only shown when attribution is unambiguous — see soleConnection(). */}
             {connection ? (
               <Text style={[type.label, { color: color.textDim, marginTop: 2 }]}>
                 {brokerLabel(connection.broker ?? connection.provider)}
@@ -185,8 +228,8 @@ function AgentTile({
           </View>
         </View>
 
-        {/* Chart toggle (APP-051). Hidden when there is no series to show, rather than
-            offering a control that opens an empty panel. */}
+        {/* Chart toggle (APP-051). Hidden when there is no series, rather than offering a
+            control that opens an empty panel. */}
         {hasSeries ? (
           <Pressable
             onPress={() => setShowChart((v) => !v)}
@@ -203,13 +246,29 @@ function AgentTile({
         ) : null}
       </View>
 
-      <Text style={[type.body, { color: color.text, marginTop: space.md, fontFamily: font.bodyMedium }]}>
-        {state.headline}
-      </Text>
-      <Text style={[type.label, { color: color.textDim, marginTop: space.xs }]}>{state.subtitle}</Text>
+      {/* One agent failing must not blank the other — the server settles them separately,
+          so a broken half says so instead of rendering as "nothing happening". */}
+      {agent.error === 'state' || !state ? (
+        <Text style={[type.label, { color: color.warn, marginTop: space.md }]}>
+          Status is unavailable for {agent.label} right now.
+        </Text>
+      ) : (
+        <>
+          <Text
+            style={[type.body, { color: color.text, marginTop: space.md, fontFamily: font.bodyMedium }]}
+          >
+            {state.headline}
+          </Text>
+          <Text style={[type.label, { color: color.textDim, marginTop: space.xs }]}>
+            {state.subtitle}
+          </Text>
+        </>
+      )}
 
-      {loading ? (
-        <Text style={[type.label, { color: color.muted, marginTop: space.lg }]}>Loading position…</Text>
+      {agent.error === 'trade' ? (
+        <Text style={[type.label, { color: color.warn, marginTop: space.lg }]}>
+          Position details are unavailable right now.
+        </Text>
       ) : trade?.active ? (
         <>
           <View style={s.divider} />
@@ -217,7 +276,7 @@ function AgentTile({
             <PnlChart
               series={trade.spark_series}
               accent={accent}
-              status={stepLabel(state.timeline_step)}
+              status={stepLabel(state?.timeline_step ?? null)}
               current={trade.unrealized_pnl}
             />
           ) : (
@@ -228,7 +287,7 @@ function AgentTile({
                 </Text>
                 <Money value={trade.unrealized_pnl} size="title" />
               </View>
-              <Stepper step={state.timeline_step} accent={accent} />
+              <Stepper step={state?.timeline_step ?? null} accent={accent} />
             </>
           )}
         </>

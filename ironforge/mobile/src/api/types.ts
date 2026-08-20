@@ -130,6 +130,11 @@ export interface BrokerageAccount {
 export interface BrokerageConnection {
   id: string
   provider: string
+  /**
+   * The handle DELETE /api/brokerage/connection requires. Absent from the payload until
+   * the server started returning it, which is why disconnect could not be offered.
+   */
+  authorization_id: string | null
   broker: string | null
   status: string
   connected_on: string
@@ -142,6 +147,56 @@ export interface BrokerageConnections {
   /** false when the customers DB isn't wired — an honest "can't tell", not "none". */
   configured?: boolean
   connections: BrokerageConnection[]
+}
+
+/**
+ * GET /api/live/agents — every agent this viewer owns (UX-002 shows two side by side).
+ *
+ * Replaces composing /api/live/summary + /api/live/trade, which between them could only
+ * ever describe ONE agent. `state` or `trade` may be null for a single agent without the
+ * others failing — the server settles each independently — so every field is optional and
+ * `error` says which half did not load.
+ */
+export interface LiveAgent {
+  bot: string
+  label: string
+  paper: boolean
+  state: CustomerState | null
+  account: LiveSummary['account'] | null
+  trade: LiveTrade | null
+  error: 'state' | 'trade' | null
+}
+
+export interface LiveAgents {
+  empty?: boolean
+  viewer?: LiveSummary['viewer']
+  agents: LiveAgent[]
+  as_of?: string
+}
+
+/** GET /api/billing/membership — APP-038. `membership` is null when there is none. */
+export interface MembershipResponse {
+  ok: boolean
+  configured?: boolean
+  membership: {
+    plan: string
+    status: string
+    badge: string
+    price_monthly: number
+    /** YYYY-MM-DD, or null when Stripe has not written a period end yet. */
+    next_billing_date: string | null
+    bots: string[]
+  } | null
+}
+
+export interface ProfileResponse {
+  ok: boolean
+  profile: {
+    firstName: string
+    lastName: string
+    displayName: string
+    initials: string
+  }
 }
 
 export interface MobileMe {

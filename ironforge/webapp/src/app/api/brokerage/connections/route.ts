@@ -18,11 +18,14 @@ export const dynamic = 'force-dynamic'
  * speed of a query and cannot fail because a broker's API is slow.
  *
  * Account numbers never leave the encrypted column; only `display_mask` is returned.
+ * `authorization_id` IS returned: it is the handle DELETE needs, it identifies a link
+ * rather than an account, and disconnect is unreachable without it.
  */
 
 interface ConnectionRow {
   id: string
   provider: string
+  authorization_id: string | null
   brokerage_slug: string | null
   account_name: string | null
   status: string
@@ -50,7 +53,7 @@ export async function GET() {
 
   try {
     const conns = await customerQuery<ConnectionRow>(
-      `SELECT id, provider, brokerage_slug, account_name, status,
+      `SELECT id, provider, authorization_id, brokerage_slug, account_name, status,
               to_char(created_at, 'YYYY-MM-DD') AS created_at,
               to_char(last_synced_at, 'YYYY-MM-DD"T"HH24:MI:SSZ') AS last_synced_at
          FROM brokerage_connections
@@ -78,6 +81,12 @@ export async function GET() {
       connections: conns.map((c) => ({
         id: c.id,
         provider: c.provider,
+        // The handle DELETE /api/brokerage/connection requires. Without it there was no
+        // way to disconnect from any client that had not separately been handed one —
+        // the mobile Brokerage Connections screen could list a connection and then had
+        // nothing to act on. It is an opaque SnapTrade authorization id, not a secret,
+        // and every delete still re-checks ownership through the user_id filter.
+        authorization_id: c.authorization_id,
         // The real institution (e.g. "tastytrade"), not the aggregator. The client was
         // labeling every SnapTrade connection "Robinhood" because only `provider` came
         // back (UAT-012).

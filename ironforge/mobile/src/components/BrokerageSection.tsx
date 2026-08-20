@@ -10,6 +10,10 @@
  * SnapTrade portal in a system auth session, and the customer returns through the
  * verified `ironforge://` deep link. That is APP-041's hard requirement and it is also
  * the only version Apple and Google will accept.
+ *
+ * Disconnect is now offered because the connections payload returns `authorization_id` —
+ * the handle DELETE requires. It previously did not, so the screen could list a
+ * connection and then had nothing to act on.
  */
 import { useState } from 'react'
 import { View, Text, Pressable, Alert, ActivityIndicator, StyleSheet } from 'react-native'
@@ -61,16 +65,61 @@ export function BrokerageSection() {
     }
   }
 
+  /**
+   * Disconnect, behind a second confirmation.
+   *
+   * This stops an agent trading that account, which is not something to do on one tap.
+   * The wording says what actually happens rather than a generic "are you sure": it
+   * removes the authorization at the broker, and it does NOT close anything already open.
+   */
+  function confirmDisconnect(c: BrokerageConnection) {
+    const name = brokerLabel(c.broker ?? c.provider)
+    if (!c.authorization_id) {
+      Alert.alert(
+        'Cannot disconnect yet',
+        `This ${name} connection has not finished linking. Reconnect it first, or contact support.`,
+      )
+      return
+    }
+    Alert.alert(
+      `Disconnect ${name}?`,
+      'Your agent will stop placing new trades on this account. Any position that is already open stays open and is not closed by disconnecting.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: () => void disconnect(c),
+        },
+      ],
+    )
+  }
+
+  async function disconnect(c: BrokerageConnection) {
+    if (busy) return
+    setBusy(true)
+    try {
+      await api('/api/brokerage/connection', {
+        method: 'DELETE',
+        body: { authorizationId: c.authorization_id },
+      })
+    } catch (e) {
+      Alert.alert('Could not disconnect', (e as Error).message)
+    } finally {
+      setBusy(false)
+      // Re-read either way — the server is the truth about what is still linked.
+      mutate()
+    }
+  }
+
   function manage(c: BrokerageConnection) {
     const name = brokerLabel(c.broker ?? c.provider)
     Alert.alert(
       name,
-      // Disconnect is deliberately absent: DELETE /api/brokerage/connection needs an
-      // authorizationId, and the connections payload does not return one. Offering a
-      // button that cannot complete would be worse than not offering it.
       `Connected on ${c.connected_on}. Reconnecting opens ${name} in a secure browser — IronForge never sees your brokerage password.`,
       [
         { text: 'Close', style: 'cancel' },
+        { text: 'Disconnect', style: 'destructive', onPress: () => confirmDisconnect(c) },
         { text: 'Reconnect', onPress: () => void openPortal(c.broker ?? undefined) },
       ],
     )
