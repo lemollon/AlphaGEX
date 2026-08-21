@@ -810,9 +810,22 @@ def book_money(window: str = "month"):
         "biggest_trade": biggest,
         "without_biggest_trade": (round(book_total - biggest["pnl"], 2)
                                   if biggest else None),
-        # A book resting on one fill reads differently from one earning it
-        # across many. >40% of a positive book in a single trade is the flag.
-        "concentrated": bool(biggest and book_total > 0
-                             and biggest["pnl"] > 0.40 * book_total),
+        # 🚨 SIGN-AGNOSTIC. The first version required book_total > 0, so a
+        # book of -$2,940 carrying a single +$5,319 fill reported
+        # concentrated=false - the most concentrated state possible, flagged as
+        # fine, because the test only understood profitable books. What matters
+        # is whether ONE trade moves the answer, not which side it lands on.
+        "concentrated": bool(
+            biggest and abs(biggest["pnl"]) > 0.40 * max(abs(book_total), 1e-9)),
+        # How much removing that single trade moves the book, as a share of the
+        # book itself. Above 1.0 means the trade is larger than the result.
+        "concentration_ratio": (
+            round(abs(biggest["pnl"]) / max(abs(book_total), 1e-9), 2)
+            if biggest else None),
+        # ⛔ The sharpest form of the question: does one fill decide whether you
+        # are up or down at all?
+        "sign_flips_without_biggest": bool(
+            biggest and book_total != 0
+            and (book_total > 0) != ((book_total - biggest["pnl"]) > 0)),
         "bots": bots,
     }
