@@ -774,10 +774,23 @@ def book_money(window: str = "month"):
                     biggest = {"bot": bot, "pnl": round(p, 2), "date": str(ct.date())}
             if n == 0:
                 continue
+            # 🚨 load_config(engine, bot) TAKES THE ENGINE FIRST. Calling it
+            # load_config(bot) raised TypeError straight into the except below,
+            # so every bot reported starting_capital=None and the page rendered
+            # a "% of capital" column of dashes. A bare `except Exception` that
+            # swallows a signature error is how a dead column looks like
+            # missing data instead of a bug.
+            #
+            # Read it on the connection already open here rather than letting
+            # load_config open a second one inside this transaction.
             cap = None
             try:
-                cap = float((load_config(bot) or {}).get("starting_capital") or 0) or None
-            except Exception:
+                r = conn.execute(text(
+                    f"SELECT starting_capital FROM {bot_table(bot, 'config')} "
+                    "WHERE id = 1")).mappings().first()
+                if r and r["starting_capital"]:
+                    cap = float(r["starting_capital"]) or None
+            except Exception:                                # noqa: BLE001
                 cap = None
             bots.append({
                 "bot": bot, "n": n, "total": round(tot, 2),
