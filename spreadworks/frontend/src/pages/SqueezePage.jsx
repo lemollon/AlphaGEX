@@ -625,7 +625,17 @@ export default function SqueezePage() {
             if (outlook.reason) {
               return (
                 <div style={{ ...S.card, opacity: 0.6 }}>
-                  <div style={S.cardTitle}>What to watch</div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={S.cardTitle}>What to watch</span>
+                  {/* ⛔ EVERY PANEL MUST STATE ITS OWN CLOCK. This one is built
+                      from the same 15:05 capture as the verdict, so it does not
+                      move during the session — and a card full of live-looking
+                      numbers that silently does not update is worse than a
+                      stale one that says so. */}
+                  <span style={{ ...S.small, marginLeft: 'auto' }}>
+                    from the 15:05 CT capture · does not change during the session
+                  </span>
+                </div>
                   <div style={{ fontSize: 13.5, color: '#c6cbd8' }}>Outlook unavailable</div>
                   <div style={{ ...S.small, marginTop: 6 }}>{outlook.reason}</div>
                 </div>
@@ -1161,6 +1171,68 @@ export default function SqueezePage() {
                   <b style={{ color: '#7dd3fc' }}>0.90 (dashed light blue)</b> is the gate EBB uses with real
                   money. Same number, two different jobs — don't read one as confirming the other.
                 </div>
+                {/* ── VIX RATIO THROUGH TODAY ─────────────────────────────
+                    🚨 THE MISSING LEG IS THE ONE WORTH WATCHING LIVE. The
+                    verdict's VIX reading is a prior close; SQUEEZE_WATCH needs
+                    this at 0.95 and it is usually the leg that is short. On a
+                    daily chart you find out after the close. Here you can see
+                    it approach — or fail to — during the session. */}
+                {(() => {
+                  const rows = (ipath?.rows || []).filter((r) => r.vix_ratio != null);
+                  const day = rows.length ? rows[rows.length - 1].trade_date : null;
+                  const pts = rows.filter((r) => r.trade_date === day).map((r) => ({
+                    ...r,
+                    label: `${String(Math.floor(r.minute_ct / 60)).padStart(2, '0')}:`
+                         + `${String(r.minute_ct % 60).padStart(2, '0')}`,
+                  }));
+                  if (pts.length < 2) return null;
+                  const last = pts[pts.length - 1];
+                  return (
+                    <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #1c2233' }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 12.5, fontWeight: 700 }}>
+                          The VIX leg through today — every 10 minutes
+                        </span>
+                        <span style={{
+                          fontSize: 9.5, fontWeight: 700, letterSpacing: '.08em',
+                          padding: '2px 7px', borderRadius: 999, color: DIM,
+                          border: `1px solid ${DIM}55`,
+                        }}>CONTEXT — NOT THE SIGNAL</span>
+                        <span style={{ ...S.small, marginLeft: 'auto' }}>
+                          {last.label} CT · ratio {last.vix_ratio.toFixed(2)}
+                          {last.vix ? ` · VIX ${last.vix.toFixed(2)}` : ''}
+                        </span>
+                      </div>
+                      <div style={{ width: '100%', height: 150, overflowX: 'auto', minWidth: 0, marginTop: 6 }}>
+                        <ResponsiveContainer>
+                          <ComposedChart data={pts} margin={{ top: 8, right: 12, left: -8, bottom: 0 }}>
+                            <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#5b6478' }}
+                                   interval="preserveStartEnd" minTickGap={40} />
+                            <YAxis tick={{ fontSize: 10, fill: '#5b6478' }}
+                                   domain={[(d) => Math.min(0.6, d), (d) => Math.max(1.0, d)]}
+                                   tickFormatter={(v) => v.toFixed(2)} />
+                            <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }}
+                                     formatter={(v) => [Number(v).toFixed(3), 'VIX ratio']} />
+                            <ReferenceLine y={0.95} stroke={AMBER} strokeDasharray="4 4"
+                                           label={{ value: '0.95 — squeeze leg', position: 'insideTopRight',
+                                                    fill: AMBER, fontSize: 9 }} />
+                            <ReferenceLine y={0.90} stroke="#7dd3fc" strokeDasharray="2 4" />
+                            <Line dataKey="vix_ratio" name="VIX ratio" stroke="#e879f9"
+                                  strokeWidth={1.8} dot={false} isAnimationActive={false} />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div style={{ ...S.caption, marginTop: 8 }}>
+                        Live VIX divided by its own trailing 20-session max.{' '}
+                        <b style={{ color: '#c6cbd8' }}>The denominator excludes today</b> — if it
+                        included the live tick, a new high would divide itself and pin the ratio at
+                        1.00 exactly when it mattered. The verdict still uses the prior close; this
+                        is so you can watch the missing leg approach 0.95 during the session rather
+                        than finding out afterwards.
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}

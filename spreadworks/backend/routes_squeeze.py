@@ -314,12 +314,52 @@ def ensure_gamma_intraday_table() -> None:
                 " spot FLOAT,"
                 " net_gex_b FLOAT,"
                 " pct_if_now FLOAT,"
+                " vix FLOAT,"
+                " vix_ratio FLOAT,"
                 " PRIMARY KEY (trade_date, minute_ct))"))
+            # Additive columns for tables created before VIX was stored here.
+            # create_all/CREATE TABLE IF NOT EXISTS cannot widen an existing
+            # table, and this one is already live.
+            for col in ("vix", "vix_ratio"):
+                try:
+                    conn.execute(text(
+                        f"ALTER TABLE {GAMMA_INTRADAY_TABLE} ADD COLUMN IF NOT EXISTS "
+                        f"{col} FLOAT"))
+                except Exception:                            # noqa: BLE001
+                    pass
     except Exception as e:  # noqa: BLE001
         logger.warning("[routes_squeeze] ensure_gamma_intraday_table: %r", e)
 
 
-def record_gamma_intraday(now, spot, net_gex_b, pct_if_now) -> None:
+def live_vix_ratio(vix_now):
+    """Live VIX over its own trailing 20-session max.
+
+    🚨 THE DENOMINATOR EXCLUDES TODAY. The 20-session max is taken from
+    sessions STRICTLY BEFORE today, exactly as vix_decay_ratio does for the
+    verdict. Including today's live tick would let a new high divide itself and
+    pin the ratio at 1.00 the moment VIX made one — the reading would go blind
+    precisely when it mattered.
+    """
+    if not vix_now:
+        return None
+    try:
+        from .bots.vix_regime import VIX_DAILY_TABLE
+        with ENGINE.begin() as conn:
+            rows = conn.execute(text(
+                f"SELECT vix FROM {VIX_DAILY_TABLE} WHERE trade_date < CURRENT_DATE "
+                "ORDER BY trade_date DESC LIMIT 20")).fetchall()
+        vals = [float(r[0]) for r in rows if r[0]]
+        if len(vals) < 5:
+            return None
+        mx = max(vals)
+        return (float(vix_now) / mx) if mx else None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_squeeze] live_vix_ratio: %r", e)
+        return None
+
+
+def record_gamma_intraday(now, spot, net_gex_b, pct_if_now,
+                          vix=None, vix_ratio=None) -> None:
     """Store one intraday point, bucketed to the 10-minute slot.
 
     Bucketing makes the write idempotent: a retry inside the same slot updates
@@ -360,11 +400,13 @@ def intraday_path(sessions: int = 1):
             if not days:
                 return {"rows": [], "reason": "no intraday gamma recorded yet"}
             rows = conn.execute(text(
-                f"SELECT trade_date, minute_ct, spot, net_gex_b, pct_if_now "
+                f"SELECT trade_date, minute_ct, spot, net_gex_b, pct_if_now, "
+                "vix, vix_ratio "
                 f"FROM {GAMMA_INTRADAY_TABLE} WHERE trade_date = ANY(:ds) "
                 "ORDER BY trade_date, minute_ct"), {"ds": days}).fetchall()
         return {"rows": [{"trade_date": str(r[0]), "minute_ct": r[1],
-                          "spot": r[2], "net_gex_b": r[3], "pct_if_now": r[4]}
+                          "spot": r[2], "net_gex_b": r[3], "pct_if_now": r[4],
+                          "vix": r[5], "vix_ratio": r[6]}
                          for r in rows], "reason": None}
     except Exception as e:  # noqa: BLE001
         logger.warning("[routes_squeeze] intraday_path: %r", e)
