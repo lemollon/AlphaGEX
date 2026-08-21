@@ -3,3 +3,16 @@ node_modules/
 dist/
 dist-web/
 *.log
+
+# Google Play service account key. eas.json's submit.production.android
+# serviceAccountKeyPath points at this filename, so the moment anyone creates the key
+# it lands in a tracked path. It grants RELEASE-TO-PRODUCTION on the Play account, and
+# this repo is worked in by several sessions at once, one of which has already swept
+# unrelated files into a PR. Never let it become committable.
+google-play-service-account.json
+
+# Android signing material, if it is ever pulled down locally. EAS holds the keystore
+# remotely today; a leaked upload key cannot be rotated for an app already on Play.
+*.jks
+*.keystore
+*.p12
