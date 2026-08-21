@@ -393,6 +393,33 @@ CREATE TABLE IF NOT EXISTS ${bot}_equity_snapshots (
   dte_mode TEXT DEFAULT '2DTE',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+/*
+ * Per-POSITION intraday mark-to-market, for the per-trade P&L chart in UX-002/003.
+ *
+ * 🚨 A separate table on purpose. The obvious move is a position_id column on
+ * ${bot}_equity_snapshots — but that table is read in more than ten places, several of
+ * them doing SUM(unrealized_pnl) grouped by minute, including the query that feeds the
+ * chart itself. Extra per-position rows would silently double-count in every one of
+ * them until each was found and fixed, and equity-curve arithmetic is already the most
+ * bug-prone corner of this codebase. Nothing that exists reads this table, so nothing
+ * that exists can be broken by it.
+ *
+ * No backfill is possible: unrealized P&L per position was never recorded, so a
+ * position's series begins when the scanner first writes it.
+ */
+CREATE TABLE IF NOT EXISTS ${bot}_position_snapshots (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  position_id TEXT NOT NULL,
+  snapshot_time TIMESTAMPTZ DEFAULT NOW(),
+  unrealized_pnl NUMERIC(12,2),
+  dte_mode TEXT,
+  person TEXT,
+  account_type TEXT DEFAULT 'sandbox',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+-- The chart reads one position over one day; this is the index that serves it.
+CREATE INDEX IF NOT EXISTS ${bot}_position_snapshots_pos_time
+  ON ${bot}_position_snapshots (position_id, snapshot_time);
 CREATE TABLE IF NOT EXISTS ${bot}_logs (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   log_time TIMESTAMPTZ DEFAULT NOW(),

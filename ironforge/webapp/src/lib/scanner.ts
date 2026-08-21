@@ -1401,6 +1401,53 @@ async function monitorPosition(bot: BotDef, ct: Date): Promise<{ status: string;
       console.error(`[scanner] ${bot.name.toUpperCase()}: position monitor error:`, r.reason)
     }
   }
+
+  // ── Per-position mark, for the per-trade chart (UX-002/003) ────────────────
+  //
+  // The aggregate equity snapshot written later in the scan sums every open
+  // position, so a chart per trade cannot be recovered from it. This records each
+  // position's own mark in its own table — nothing existing reads it, so nothing
+  // existing can be double-counted by it.
+  //
+  // 🚨 ONLY for a position that is still open AND whose mark actually succeeded.
+  // monitorSinglePosition returns unrealizedPnl: 0 both when a position closes and
+  // when the mark-to-market FAILS. Writing that 0 would draw a trade diving to
+  // breakeven on a minute when the quote feed simply blinked — the same phantom the
+  // "null means quotes unavailable, never $0.00" rule exists to prevent. A gap in
+  // the line is honest; an invented zero is not.
+  //
+  // Best-effort throughout: this is a chart, and it must never be able to disturb
+  // the trading loop it rides along with.
+  await Promise.allSettled(
+    results.map(async (r, i) => {
+      if (r.status !== 'fulfilled') return
+      const st = r.value.status
+      if (!st.startsWith('monitoring') || st.includes('mtm_failed')) return
+      const pos = positions[i]
+      if (!pos?.position_id) return
+      try {
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'position_snapshots')}
+           (position_id, unrealized_pnl, dte_mode, person, account_type)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            String(pos.position_id),
+            r.value.unrealizedPnl,
+            bot.dte,
+            pos.person ?? null,
+            pos.account_type ?? 'sandbox',
+          ],
+        )
+      } catch (e) {
+        console.warn(
+          `[scanner] ${bot.name.toUpperCase()}: position snapshot write failed for ` +
+            `${pos.position_id}:`,
+          e,
+        )
+      }
+    }),
+  )
+
   return { status: anyAction, unrealizedPnl: totalUnrealized }
 }
 

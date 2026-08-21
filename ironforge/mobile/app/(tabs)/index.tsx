@@ -5,7 +5,14 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR from 'swr'
 import { api } from '@/api/client'
-import type { LiveSummary, LiveAgent, LiveAgents, HomeData, BrokerageConnections } from '@/api/types'
+import type {
+  LiveSummary,
+  LiveAgent,
+  LiveAgents,
+  LiveOpenPosition,
+  HomeData,
+  BrokerageConnections,
+} from '@/api/types'
 import { color, space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { Card, Money, Balance, SectionLabel, Loading, Empty, ErrorState } from '@/components/ui'
 import { AppHeader, Mascot } from '@/components/Brand'
@@ -243,24 +250,54 @@ function AgentTile({
       ) : trade?.active ? (
         <>
           <View style={s.divider} />
-          {showChart ? (
-            <PnlChart
-              series={trade.spark_series}
-              accent={accent}
-              status={stepLabel(state?.timeline_step ?? null)}
-              current={trade.unrealized_pnl}
-            />
-          ) : (
-            <>
-              <View style={s.rowBetween}>
-                <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
-                  Open position
-                </Text>
-                <Money value={trade.unrealized_pnl} size="title" />
-              </View>
-              <Stepper step={state?.timeline_step ?? null} accent={accent} />
-            </>
-          )}
+          {/*
+                UX-002 draws a rail PER TRADE, and there can be more than one: SPARK
+                swings, so a leg opened yesterday is still open beside today's. The
+                scalar fields only ever describe positions[0], which is exactly how the
+                web page once hid a live position holding real money.
+
+                Falls back to the single-trade shape when `positions` is absent, so an
+                app newer than its API still renders.
+              */}
+              {(trade.positions?.length ?? 0) > 0 ? (
+                trade.positions!.map((p, i) => (
+                  <TradeRow
+                    key={p.position_id || String(i)}
+                    index={i}
+                    position={p}
+                    accent={accent}
+                    // Only the newest trade can be at Target/Stop or Auto Close — the
+                    // agent state describes it. Every other open leg is, by definition
+                    // of still being open, being monitored.
+                    step={i === 0 ? (state?.timeline_step ?? 1) : 1}
+                    showChart={showChart}
+                  />
+                ))
+              ) : showChart ? (
+                // Legacy path: no per-position payload, so the only series available is
+                // the agent's whole day. Correct when one trade is open, which is the
+                // only case that can reach here.
+                <PnlChart
+                  series={trade.spark_series}
+                  accent={accent}
+                  status={stepLabel(state?.timeline_step ?? null)}
+                  current={trade.unrealized_pnl}
+                />
+              ) : (
+                <>
+                  <View style={s.rowBetween}>
+                    <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+                      Open position
+                    </Text>
+                    <Money value={trade.unrealized_pnl} size="title" />
+                  </View>
+                  <Stepper
+                    step={state?.timeline_step ?? null}
+                    accent={accent}
+                    caption={state?.timeline_step === 1 ? 'Live' : null}
+                  />
+                </>
+              )}
         </>
       ) : trade?.today_result ? (
         <>
@@ -279,6 +316,62 @@ function AgentTile({
   )
 }
 
+/**
+ * One open trade: title, its own P&L, its own rail — UX-002.
+ *
+ * Titled "Trade 1 / Trade 2" as the approved layout does, but a leg held overnight
+ * also says which day it is on. The mockup's invented data had no swung legs; the real
+ * product does, and a customer looking at two identical-looking rows needs to know one
+ * of them is yesterday's.
+ */
+function TradeRow({
+  index,
+  position,
+  accent,
+  step,
+  showChart,
+}: {
+  index: number
+  position: LiveOpenPosition
+  accent: string
+  step: number | null
+  showChart: boolean
+}) {
+  // Each trade draws its OWN series. Falls back to the rail when this position has no
+  // marks yet — a position opened before the scanner started recording them has
+  // nothing to plot, and an empty chart frame says less than the rail does.
+  const series = position.series ?? []
+  const chart = showChart && series.length > 1
+  return (
+    <View style={index > 0 ? { marginTop: space.lg } : undefined}>
+      <View style={s.rowBetween}>
+        <View>
+          <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+            {`Trade ${index + 1}`}
+          </Text>
+          {position.held_overnight ? (
+            <Text style={[type.label, { color: color.textDim, marginTop: 1 }]}>
+              {`Opened ${position.opened_date_label} · Day ${position.day_number}`}
+            </Text>
+          ) : null}
+        </View>
+        {/* null P&L renders as "—", never $0.00 — quotes were unavailable, not flat. */}
+        <Money value={position.unrealized_pnl} size="title" />
+      </View>
+      {chart ? (
+        <PnlChart
+          series={series}
+          accent={accent}
+          status={stepLabel(step)}
+          current={position.unrealized_pnl}
+        />
+      ) : (
+        <Stepper step={step} accent={accent} caption={step === 1 ? 'Live' : null} />
+      )}
+    </View>
+  )
+}
+
 /** timeline_step is 0..4; there are four labels, so a step of 4 rests on the last. */
 const STEP_LABELS: readonly string[] = ['Opened', 'Monitoring', 'Target / Stop', 'Auto Close']
 
@@ -287,8 +380,23 @@ function stepLabel(step: number | null): string {
   return STEP_LABELS[i]
 }
 
-/** Opened → Monitoring → Target/Stop → Auto Close, driven by CustomerState.timeline_step. */
-function Stepper({ step, accent }: { step: number | null; accent: string }) {
+/**
+ * Opened → Monitoring → Target/Stop → Auto Close, driven by CustomerState.timeline_step.
+ *
+ * UX-002 puts a small caption under the step the trade is actually sitting on — "Live"
+ * while it is being watched. Without it the active ring and a completed dot look nearly
+ * identical at a glance, which is the one thing a customer opens this screen to tell
+ * apart: is it working right now, or is it done?
+ */
+function Stepper({
+  step,
+  accent,
+  caption,
+}: {
+  step: number | null
+  accent: string
+  caption?: string | null
+}) {
   const current = step ?? 0
   return (
     <View style={s.stepper}>
@@ -307,6 +415,11 @@ function Stepper({ step, accent }: { step: number | null; accent: string }) {
             >
               {l}
             </Text>
+            {active && caption ? (
+              <Text style={[type.label, { color: accent, marginTop: 1, textAlign: 'center' }]}>
+                {caption}
+              </Text>
+            ) : null}
           </View>
         )
       })}
