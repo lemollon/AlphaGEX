@@ -60,7 +60,12 @@ const config: ExpoConfig = {
     supportsTablet: false,
     // Universal Links. The paths must match the association file served from
     // webapp/public/.well-known/apple-app-site-association.
-    associatedDomains: ['applinks:ironforge.trade'],
+    //
+    // webcredentials is listed because that association file declares a
+    // `webcredentials` section. Without the matching entitlement here the app claims
+    // nothing, iOS never associates the domain for saved passwords, and the section
+    // in the file is dead weight that a reviewer can see is inconsistent.
+    associatedDomains: ['applinks:ironforge.trade', 'webcredentials:ironforge.trade'],
     infoPlist: {
       // Shown in the Face ID prompt (APP-008). Apple rejects builds that use
       // biometrics without an explanation string.

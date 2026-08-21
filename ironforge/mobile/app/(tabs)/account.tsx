@@ -1,5 +1,15 @@
 import { useEffect, useState } from 'react'
-import { View, Text, ScrollView, Pressable, Switch, StyleSheet, Alert, Linking } from 'react-native'
+import {
+  View,
+  Text,
+  ScrollView,
+  Pressable,
+  Switch,
+  StyleSheet,
+  Alert,
+  Linking,
+  Platform,
+} from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import * as WebBrowser from 'expo-web-browser'
@@ -13,15 +23,21 @@ import { color, space, radius, type, font } from '@/theme/tokens'
 import { Card, SectionLabel, Row, Loading, ErrorState } from '@/components/ui'
 import { AppHeader, SPARKY_AVATAR } from '@/components/Brand'
 import { SUPPORT_EMAIL, supportMailto } from '@/support/contact'
+import { canManageBillingInApp } from '@/billing/store-policy'
 import { BrokerageSection } from '@/components/BrokerageSection'
 
 /**
  * Account — UX-006 (APP-037/038/039/040/043/044/058/059/060).
  *
  * "Manage Membership & Billing" opens a SERVER-CREATED Stripe portal session in the
- * system browser, never a WebView. Two reasons: Apple treats an in-app WebView payment
- * surface as IAP circumvention, and the customer can see the real URL and padlock —
+ * system browser, never a WebView, so the customer can see the real URL and padlock —
  * which is the whole trust argument for handing over card details.
+ *
+ * 🚨 The control is HIDDEN ENTIRELY ON iOS (canManageBillingInApp). Keeping it out of
+ * a WebView is not sufficient there: the portal session uses Stripe's default
+ * configuration, which allows changing plan, so any route to it from inside the iOS
+ * app is a purchasing mechanism under App Review Guideline 3.1.1. See
+ * src/billing/store-policy.ts for the full reasoning before re-enabling it.
  *
  * NOTE for whoever wires the membership card: the plan name comes from
  * LiveSummary.membership, which the server derives from real subscription rows and
@@ -183,14 +199,25 @@ export default function AccountScreen() {
               You do not have an active membership.
             </Text>
           )}
-          <Pressable onPress={openBilling} style={s.outlineBtn}>
-            <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
-              Manage Membership and Billing
+          {canManageBillingInApp(Platform.OS) ? (
+            <>
+              <Pressable onPress={openBilling} style={s.outlineBtn}>
+                <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+                  Manage Membership and Billing
+                </Text>
+              </Pressable>
+              <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
+                Securely managed through Stripe
+              </Text>
+            </>
+          ) : (
+            // No button, and deliberately no URL either. A line telling an iOS customer
+            // where to go and pay is itself a call to action under 3.1.1; the status
+            // above is account information, which is not.
+            <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
+              Membership is managed from your IronForge account on the web.
             </Text>
-          </Pressable>
-          <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
-            Securely managed through Stripe
-          </Text>
+          )}
         </Card>
 
         <BrokerageSection />
@@ -243,6 +270,29 @@ export default function AccountScreen() {
             label="Email Support"
             detail={SUPPORT_EMAIL}
             onPress={emailSupport}
+          />
+        </Card>
+
+        <View style={{ marginTop: space.xl }}>
+          <SectionLabel>Danger Zone</SectionLabel>
+        </View>
+        <Card>
+          {/*
+            App Store Review Guideline 5.1.1(v) requires account deletion to be initiable
+            from INSIDE the app. Google Play accepts the public /delete-account URL and
+            that is what shipped, so until now the app had no deletion path at all — one
+            of the most common first-submission rejections on iOS.
+
+            It lives under its own heading rather than in Security so it is findable, and
+            it routes to a screen that explains the consequences rather than firing an
+            Alert straight from a tap.
+          */}
+          <Row
+            icon="trash-outline"
+            label="Delete Account"
+            detail="Cancel your membership and permanently erase your data"
+            onPress={() => router.push('/delete-account')}
+            first
           />
         </Card>
 
