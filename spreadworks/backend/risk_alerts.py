@@ -185,6 +185,24 @@ def _post(key: str, fire_date, embed: dict, ping: bool = False) -> bool:
     return ok
 
 
+def _mention() -> str:
+    """What to put in `content` when an alert is time-critical.
+
+    🚨 `@here` IS NOT A PHONE ALERT. Discord suppresses @here in a muted
+    channel and only notifies members currently online — so the one alert you
+    most need on your phone is the one most likely to be swallowed. A DIRECT
+    user mention (`<@id>`) pushes to iOS even when the channel is muted, which
+    is the whole point.
+
+    RISK_DISCORD_USER_ID is a Discord snowflake, not a secret — enabling it
+    costs one env var and needs no new webhook. Falls back to the old @here
+    behaviour when unset so nothing regresses.
+    """
+    import os
+    uid = os.getenv("RISK_DISCORD_USER_ID", "").strip()
+    return f"<@{uid}>" if uid.isdigit() else "@here"
+
+
 def _send(embed: dict, ping: bool = False) -> bool:
     import requests as req
     url = _webhook_url()
@@ -193,7 +211,7 @@ def _send(embed: dict, ping: bool = False) -> bool:
         return False
     payload: dict = {"embeds": [embed]}
     if ping:
-        payload["content"] = "@here"
+        payload["content"] = _mention()
     try:
         r = req.post(url, json=payload, timeout=15)
         return r.status_code in (200, 204)

@@ -1777,6 +1777,15 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"[SpreadWorks] Bot table creation failed (non-fatal): {e}")
         try:
+            # Correct three FLOW trades booked off garbage opening-bell quotes.
+            # Idempotent — guarded by the flow_restatements audit table, so it
+            # no-ops on every boot after the first — and non-fatal.
+            from .flow_restatement import apply_flow_restatements
+            fr = apply_flow_restatements(engine)
+            print(f"[SpreadWorks] FLOW restatement: {fr}")
+        except Exception as e:
+            print(f"[SpreadWorks] FLOW restatement failed (non-fatal): {e}")
+        try:
             # Seed the decay monitor's evaluation window from the committed
             # backtest. Unconditional + ON CONFLICT DO NOTHING, so it reaches a
             # cold prod on the first boot and no-ops thereafter; without it the
