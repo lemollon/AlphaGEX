@@ -52,6 +52,40 @@ function bn(x, d = 2) { return x == null ? '—' : `$${x.toFixed(d)}B`; }
 // side, positive = overbought side). Uses a true minus glyph, not a hyphen.
 function signedBn(x, d = 2) { return x == null ? '—' : `${x < 0 ? '−' : '+'}$${Math.abs(x).toFixed(d)}B`; }
 
+// 🚨 EVERY CHART STATES ITS OWN CADENCE, IN WORDS, ON THE CHART. The two
+// intraday panels do not use ChartMeta (they are sub-panels of cards that
+// already carry one), so they carry the same three facts inline: how often the
+// series loads, when it last did, and when the next point lands.
+//
+// ⛔ THE NEXT-POINT TIME IS DERIVED FROM THE DATA'S OWN GRID, NOT THE BROWSER
+// CLOCK. The recorder writes fixed 10-minute buckets between 08:30 and 15:00
+// CT, so last-bucket + 10 is a fact about the schedule rather than a guess
+// about now — and when the last bucket IS 15:00 the honest answer is that the
+// grid is done for the day, not a time ten minutes into the close.
+const GRID_STEP_MIN = 10;
+const GRID_CLOSE_MIN = 15 * 60;          // 15:00 CT, the last bucket
+const GRID_OPEN_LABEL = '08:30 CT';
+
+function hhmm(mins) {
+  return `${String(Math.floor(mins / 60)).padStart(2, '0')}:`
+       + `${String(mins % 60).padStart(2, '0')}`;
+}
+
+function IntradayCadence({ lastMinute, count }) {
+  const done = lastMinute >= GRID_CLOSE_MIN;
+  const next = Math.min(lastMinute + GRID_STEP_MIN, GRID_CLOSE_MIN);
+  return (
+    <span style={{ ...S.small, marginLeft: 'auto', textAlign: 'right' }}>
+      <b style={{ color: '#c6cbd8' }}>EVERY 10 MIN</b>
+      {count != null && ` · ${count} today`}
+      {' · last '}<b style={{ color: '#c6cbd8' }}>{hhmm(lastMinute)} CT</b>
+      {done
+        ? ' · done for today, resumes ' + GRID_OPEN_LABEL
+        : <> · next ~<b style={{ color: '#c6cbd8' }}>{hhmm(next)} CT</b></>}
+    </span>
+  );
+}
+
 const PROXIMITY_COLOR = {
   OVERSOLD: AMBER, APPROACHING_OVERSOLD: AMBER, MID_RANGE: GREY,
   APPROACHING_OVERBOUGHT: GREEN, OVERBOUGHT: GREEN,
@@ -1095,9 +1129,8 @@ export default function SqueezePage() {
                     border: `1px solid ${DIM}55`,
                   }}>CONTEXT — NOT THE SIGNAL</span>
                   {pts.length > 0 && (
-                    <span style={{ ...S.small, marginLeft: 'auto' }}>
-                      {today} · {pts.length} readings · last {pts[pts.length - 1].label} CT
-                    </span>
+                    <IntradayCadence count={pts.length}
+                                     lastMinute={pts[pts.length - 1].minute_ct} />
                   )}
                 </div>
                 {pts.length >= 2 ? (
@@ -1362,10 +1395,12 @@ export default function SqueezePage() {
                           padding: '2px 7px', borderRadius: 999, color: DIM,
                           border: `1px solid ${DIM}55`,
                         }}>CONTEXT — NOT THE SIGNAL</span>
-                        <span style={{ ...S.small, marginLeft: 'auto' }}>
-                          {last.label} CT · ratio {last.vix_ratio.toFixed(2)}
+                        <span style={S.small}>
+                          ratio <b style={{ color: '#c6cbd8' }}>{last.vix_ratio.toFixed(2)}</b>
                           {last.vix ? ` · VIX ${last.vix.toFixed(2)}` : ''}
                         </span>
+                        <IntradayCadence count={pts.length}
+                                         lastMinute={last.minute_ct} />
                       </div>
                       <div style={{ width: '100%', height: 150, overflowX: 'auto', minWidth: 0, marginTop: 6 }}>
                         <ResponsiveContainer>

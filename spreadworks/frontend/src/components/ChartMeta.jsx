@@ -93,6 +93,12 @@ function Cell({ label, value, note, color }) {
 }
 
 /**
+ * @param {string} rhythm   HOW OFTEN this series loads, in plain words —
+ *                 "ONCE A DAY", "EVERY 10 MIN", "EVERY 60 SEC". Required. The
+ *                 other three cells are all "when", and "when" cannot be read
+ *                 without it.
+ * @param {string} rhythmNote  the detail: which job, at what time, and why the
+ *                 data is not available more often than that.
  * @param {string} asOf     the last point's own date/time, straight from the payload
  * @param {string} asOfNote what that session is (e.g. "prior close — the signal")
  * @param {string} asOfTone 'ok' | 'warn' | 'bad' | 'none' — grade the as-of cell
@@ -111,6 +117,7 @@ function Cell({ label, value, note, color }) {
  *                 the feed is provably closed. Never a place to restate a cron time.
  */
 export default function ChartMeta({
+  rhythm, rhythmNote,
   asOf, asOfNote, asOfTone, behind, reading, zone, zoneColor, nextAt, cadence,
   armed, nextOverride, footnote,
 }) {
@@ -172,7 +179,15 @@ export default function ChartMeta({
 
   return (
     <div style={S.row}>
-      <Cell label="as of" value={asOf || '—'} note={asOfText} color={asOfColor} />
+      {/* 🚨 THE RHYTHM CELL IS FIRST AND IT IS NOT OPTIONAL. Everything else
+          here answers "when", and "when" is unreadable without "how often":
+          a reader who does not know a series only loads once a day cannot tell
+          a 6-hour-old point from a broken feed. This used to be buried as a
+          suffix inside the next-update note, where it was routinely missed —
+          which is exactly the complaint that produced this cell. */}
+      <Cell label="how often" value={rhythm || 'unknown'}
+            note={rhythmNote} color={rhythm ? null : AMBER} />
+      <Cell label="last refreshed" value={asOf || '—'} note={asOfText} color={asOfColor} />
       <Cell label="reading now" value={reading || '—'} note={zone} color={zoneColor} />
       <Cell label="next update" value={nextValue} note={nextNote} color={nextColor} />
     </div>
@@ -234,6 +249,10 @@ export function gammaChartMeta(data, last) {
     // 10-minute intraday path sits directly below this chart. A reader seeing
     // one clock and no mention of the others reasonably concludes the reports
     // are stale.
+    rhythm: 'ONCE A DAY',
+    rhythmNote: 'one point per session, written by the 15:05 CT capture. The '
+              + 'full option chain is only re-solved once a day, so this series '
+              + 'cannot move between captures.',
     cadence: 'the 15:05 CT capture — this daily series only',
     footnote: 'Today moves faster: the intraday gamma path below records every '
             + '10 minutes, and the live strip above refreshes every 60 seconds.',
@@ -273,6 +292,13 @@ export function vixChartMeta(data, last) {
       : r >= 0.95 ? 'at its own 20-session high — the squeeze leg is LIVE'
       : `${gap.toFixed(2)} below the 0.95 trigger — still decaying`,
     zoneColor: r != null && r >= 0.95 ? AMBER : null,
+    rhythm: 'ONCE A DAY',
+    // ⛔ Not "every scan". Today's point IS rewritten on each scan cycle, but
+    // the series only gains a point once a day and the 20-session max it is
+    // divided by only rolls at the close — so the honest rhythm is daily, with
+    // the intraday nuance stated rather than promoted into the headline.
+    rhythmNote: "one point per session; today's point is rewritten on each "
+              + 'scan but the chart only advances at the close.',
     cadence: 'next session closes at the 15:05 CT capture',
     footnote: "VIX itself is rewritten on every scan cycle, so today's point "
             + 'moves through the session; the 20-session max it is divided by '
@@ -333,6 +359,14 @@ export function tapeChartMeta(intra, state) {
   const lagBad = lagMin != null && lagMin > 12;
 
   return {
+    // 🚨 THE RHYTHM MUST GO QUIET WHEN THE FEED DOES. Promising "EVERY 60 SEC"
+    // over a tape that closed at 15:00 is the same lie as a green LIVE badge
+    // over a stopped feed — the exact failure this component was built after.
+    rhythm: open ? 'EVERY 60 SEC' : 'NOT UPDATING',
+    rhythmNote: open
+      ? 'a live feed — 5-minute bars append as the session runs and this page '
+        + 'refetches every 60 seconds'
+      : 'the session tape is closed; it resumes at the 08:30 CT open',
     asOf: last?.t || null,
     asOfNote: !last
       ? 'no bars yet — the tape starts at the 08:30 CT open'
@@ -395,6 +429,10 @@ export function flowChartMeta(state, last) {
       : flow.spike ? 'SPIKE — above the z>2 threshold the signal fires on'
       : `largest of put-vol and total-vol z · fires above 2.00`,
     zoneColor: flow.spike ? RED : peak != null && peak >= 1.5 ? AMBER : null,
+    rhythm: 'ONCE A DAY',
+    rhythmNote: 'a single snapshot taken at 10:00 CT. It is a point-in-time '
+              + 'reading by design, not a running average, so it does not move '
+              + 'again for the rest of the session.',
     // The 10:06 job is what writes tomorrow's point.
     nextAt: jobs.risk_flow_spike || null,
     cadence: 'the 10:06 CT snapshot',
