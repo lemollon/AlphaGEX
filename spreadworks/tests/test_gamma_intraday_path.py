@@ -42,6 +42,18 @@ def test_the_writer_refuses_outside_the_session():
     assert "dtime(8, 30)" in seg and "dtime(15, 0)" in seg
 
 
+def test_the_window_includes_the_1500_close():
+    """⛔ `< 15:00` makes 14:50 the last */10 tick, leaving the closing ten
+    minutes unrecorded — the most informative reading of the day and the one
+    nearest the 15:05 capture. Same blind spot the /session tape had at
+    14:00-15:00."""
+    src = inspect.getsource(gamma_alerts.register_gamma_alerts)
+    i = src.index("async def record_intraday_gamma")
+    seg = src[i:i + 2200]
+    assert "<= dtime(15, 0)" in seg, "the 15:00 close must be inside the window"
+    assert "now.time() < dtime(15, 0)" not in seg
+
+
 def test_points_are_bucketed_so_a_retry_updates_rather_than_duplicates():
     src = inspect.getsource(R.record_gamma_intraday)
     assert "// 10) * 10" in src, "must bucket to a 10-minute slot"

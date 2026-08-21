@@ -625,7 +625,13 @@ def register_gamma_alerts(scheduler, app) -> None:
             now = datetime.now(CT)
             if now.weekday() >= 5:
                 return
-            if not (dtime(8, 30) <= now.time() < dtime(15, 0)):
+            # 🚨 INCLUSIVE OF THE 15:00 CLOSE. With `< 15:00` the last */10
+            # tick inside the window is 14:50, so the closing ten minutes went
+            # unrecorded — and the close is both the most informative reading
+            # of the day and the one nearest the 15:05 capture the signal is
+            # built from. Same shape of blind spot as the /session tape, which
+            # was missing 14:00-15:00 including the 0DTE settle hour.
+            if not (dtime(8, 30) <= now.time() <= dtime(15, 0)):
                 return
             from .routes_squeeze import (ensure_gamma_intraday_table,
                                          record_gamma_intraday)
