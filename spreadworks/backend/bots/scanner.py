@@ -385,7 +385,8 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
             if diag is not None:
                 diag.append(f"chain_unavailable: ticker={ticker} dte={front_dte}")
             return None, None
-        sig = build_iron_condor_signal(chain=chain, config=config, equity=equity, diag=diag)
+        sig = build_iron_condor_signal(chain=chain, config=config, equity=equity,
+                                       diag=diag, now_ct=datetime.now(CT))
         return sig, chain
     if strategy in ("bull_call_spread", "bear_put_spread",
                     "bull_put_spread", "bear_call_spread"):
