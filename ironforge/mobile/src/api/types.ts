@@ -232,3 +232,26 @@ export interface MobileMe {
     memberSince: string
   }
 }
+
+/**
+ * Account deletion (GET /api/account/deletion-request).
+ *
+ * `pending` is the authority, not the presence of `requestedAt` — a cancelled request
+ * still has a timestamp, and treating "has a date" as "is deleting" would show a
+ * permanent scare banner to someone who already called it off.
+ */
+export interface DeletionStatusResponse {
+  ok: boolean
+  pending: boolean
+  requestedAt: string | null
+  gracePeriodDays: number
+}
+
+/** POST /api/account/deletion-request. */
+export interface DeletionRequestResponse {
+  ok: boolean
+  alreadyRequested?: boolean
+  requestedAt: string
+  gracePeriodDays: number
+  steps?: Record<string, string>
+}

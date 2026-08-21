@@ -6,7 +6,7 @@ import * as WebBrowser from 'expo-web-browser'
 import { useRouter } from 'expo-router'
 import useSWR from 'swr'
 import Constants from 'expo-constants'
-import { api } from '@/api/client'
+import { api, API_BASE, ApiError } from '@/api/client'
 import type { MobileMe, MembershipResponse } from '@/api/types'
 import { signOut, biometricsAvailable, isBiometricEnabled, setBiometricEnabled } from '@/auth/session'
 import { color, space, radius, type, font } from '@/theme/tokens'
@@ -19,9 +19,14 @@ import { BrokerageSection } from '@/components/BrokerageSection'
  * Account — UX-006 (APP-037/038/039/040/043/044/058/059/060).
  *
  * "Manage Membership & Billing" opens a SERVER-CREATED Stripe portal session in the
- * system browser, never a WebView. Two reasons: Apple treats an in-app WebView payment
- * surface as IAP circumvention, and the customer can see the real URL and padlock —
+ * system browser, never a WebView, so the customer can see the real URL and padlock —
  * which is the whole trust argument for handing over card details.
+ *
+ * 🚨 The control is HIDDEN ENTIRELY ON iOS (canManageBillingInApp). Keeping it out of
+ * a WebView is not sufficient there: the portal session uses Stripe's default
+ * configuration, which allows changing plan, so any route to it from inside the iOS
+ * app is a purchasing mechanism under App Review Guideline 3.1.1. See
+ * src/billing/store-policy.ts for the full reasoning before re-enabling it.
  *
  * NOTE for whoever wires the membership card: the plan name comes from
  * LiveSummary.membership, which the server derives from real subscription rows and
@@ -60,7 +65,10 @@ export default function AccountScreen() {
       if (res.url) await WebBrowser.openBrowserAsync(res.url)
       mutate()
     } catch (e) {
-      Alert.alert('Billing unavailable', (e as Error).message)
+      // `portal_unconfigured` is the server refusing to open the plan-changing default
+      // portal for a mobile client. Deliberately does NOT point anyone at the web to go
+      // and pay — that would be the call to action the refusal exists to avoid.
+      Alert.alert('Billing unavailable', e instanceof ApiError ? e.humanMessage : (e as Error).message)
     }
   }
 
@@ -68,6 +76,16 @@ export default function AccountScreen() {
    * APP-043: open a native draft; if no mail client can handle it, fall back to a
    * copyable address rather than a silent no-op.
    */
+  /**
+   * Legal pages live on the marketing site, not in the app, so there is ONE copy of the
+   * terms rather than a bundled snapshot that silently goes stale the moment they are
+   * revised — which for an agreement someone is being held to is the difference between
+   * a document and a screenshot.
+   */
+  async function openLegal(path: string) {
+    await WebBrowser.openBrowserAsync(`${API_BASE}${path}`)
+  }
+
   async function emailSupport() {
     const url = supportMailto()
     const canOpen = await Linking.canOpenURL(url).catch(() => false)
@@ -183,6 +201,13 @@ export default function AccountScreen() {
               You do not have an active membership.
             </Text>
           )}
+          {/*
+            APP-039, Must Have, MVP. Present on every platform — the 3.1.1 problem was
+            never this button, it was WHICH portal the server opened: Stripe's default
+            configuration permits changing plan. The route now serves mobile a
+            configuration with subscription updates disabled, and refuses rather than
+            falling back to the default one. See api/billing/portal/route.ts.
+          */}
           <Pressable onPress={openBilling} style={s.outlineBtn}>
             <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
               Manage Membership and Billing
@@ -243,6 +268,55 @@ export default function AccountScreen() {
             label="Email Support"
             detail={SUPPORT_EMAIL}
             onPress={emailSupport}
+          />
+        </Card>
+
+        <View style={{ marginTop: space.xl }}>
+          <SectionLabel>Legal</SectionLabel>
+        </View>
+        <Card>
+          {/*
+            The app had no route to the Terms or the Privacy Policy anywhere. For an app
+            carrying a member feed that is a Guideline 1.2 gap as much as a courtesy one:
+            the terms are where the no-tolerance-for-objectionable-content agreement
+            lives, and a reviewer looks for it.
+
+            System browser, not a WebView — same reason as everywhere else in this file,
+            the customer gets to see the real URL.
+          */}
+          <Row
+            icon="document-text-outline"
+            label="Terms of Service"
+            onPress={() => openLegal('/terms')}
+            first
+          />
+          <Row
+            icon="lock-closed-outline"
+            label="Privacy Policy"
+            onPress={() => openLegal('/privacy')}
+          />
+        </Card>
+
+        <View style={{ marginTop: space.xl }}>
+          <SectionLabel>Danger Zone</SectionLabel>
+        </View>
+        <Card>
+          {/*
+            App Store Review Guideline 5.1.1(v) requires account deletion to be initiable
+            from INSIDE the app. Google Play accepts the public /delete-account URL and
+            that is what shipped, so until now the app had no deletion path at all — one
+            of the most common first-submission rejections on iOS.
+
+            It lives under its own heading rather than in Security so it is findable, and
+            it routes to a screen that explains the consequences rather than firing an
+            Alert straight from a tap.
+          */}
+          <Row
+            icon="trash-outline"
+            label="Delete Account"
+            detail="Cancel your membership and permanently erase your data"
+            onPress={() => router.push('/delete-account')}
+            first
           />
         </Card>
 

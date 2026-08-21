@@ -16,6 +16,9 @@
  */
 import Constants from 'expo-constants'
 import { setItem, getItem, deleteItem, AFTER_FIRST_UNLOCK } from '@/api/storage'
+import { ApiError } from '@/api/errors'
+
+export { ApiError }
 
 const API_BASE: string =
   (Constants.expoConfig?.extra as { apiBase?: string } | undefined)?.apiBase ??
@@ -141,10 +144,9 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Pro
   }
 
   if (!res.ok) {
-    const detail = await res.json().catch(() => null)
-    const msg =
-      (detail as { error?: string } | null)?.error ?? `Request failed (${res.status})`
-    throw new Error(msg)
+    const detail = (await res.json().catch(() => null)) as Record<string, unknown> | null
+    const msg = (detail?.error as string | undefined) ?? `Request failed (${res.status})`
+    throw new ApiError(msg, res.status, detail)
   }
 
   return (await res.json()) as T
