@@ -9,11 +9,16 @@ import { BOT_COLORS } from '@/lib/botColors'
 
 const REFRESH = 60_000
 
+// 🚨 NO `accent` CLASS HERE. It used to carry a hand-written Tailwind colour
+// alongside `color`, which meant every bot's label colour was maintained twice —
+// and FLAME had already drifted: the chip was text-amber-400 (#fbbf24, gold)
+// while its line is BOT_COLORS.flame (#FF5500, orange). Labels are now driven
+// from `color` directly, so a legend can never disagree with the line it names.
 const BOTS = [
-  { key: 'flame', label: 'FLAME (2DTE)', short: 'FLAME', color: BOT_COLORS.flame, accent: 'text-amber-400' },
-  { key: 'spark', label: 'SPARK (1DTE)', short: 'SPARK', color: BOT_COLORS.spark, accent: 'text-blue-400' },
-  { key: 'inferno', label: 'INFERNO (0DTE)', short: 'INFERNO', color: BOT_COLORS.inferno, accent: 'text-red-400' },
-  { key: 'blaze', label: 'BLAZE (1DTE dir.)', short: 'BLAZE', color: BOT_COLORS.blaze, accent: 'text-cyan-400' },
+  { key: 'flame', label: 'FLAME (2DTE)', short: 'FLAME', color: BOT_COLORS.flame },
+  { key: 'spark', label: 'SPARK (1DTE)', short: 'SPARK', color: BOT_COLORS.spark },
+  { key: 'inferno', label: 'INFERNO (0DTE)', short: 'INFERNO', color: BOT_COLORS.inferno },
+  { key: 'blaze', label: 'BLAZE (1DTE dir.)', short: 'BLAZE', color: BOT_COLORS.blaze },
   // FLARE intentionally omitted from the comparison — it will be surfaced
   // separately later. Its /flare dashboard and nav link remain unaffected.
 ] as const
@@ -139,7 +144,7 @@ export default function CompareContent() {
           const d = byKey[b.key]
           return (
             <div key={b.key}>
-              <h3 className={`text-sm font-medium ${b.accent} mb-2`}>{b.label}</h3>
+              <h3 className="text-sm font-medium mb-2" style={{ color: b.color }}>{b.label}</h3>
               {d.status && <MiniStatus account={d.status.account} />}
               {d.perf && <PerformanceCard data={d.perf} label={b.short} compact />}
             </div>
@@ -156,7 +161,7 @@ export default function CompareContent() {
               <tr className="border-b border-forge-border text-forge-muted text-xs">
                 <th className="text-left p-3">Metric</th>
                 {BOTS.map((b) => (
-                  <th key={b.key} className={`text-right p-3 ${b.accent}`}>{b.label}</th>
+                  <th key={b.key} className="text-right p-3" style={{ color: b.color }}>{b.label}</th>
                 ))}
               </tr>
             </thead>
