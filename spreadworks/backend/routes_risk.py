@@ -2241,11 +2241,19 @@ async def delivery_status():
         "fleet_webhook_fallback": configured("DISCORD_WEBHOOK_URL"),
         "phone_webhook": configured("RISK_PHONE_WEBHOOK"),
         "ntfy_topic": configured("RISK_NTFY_TOPIC"),
+        "discord_user_id": configured("RISK_DISCORD_USER_ID"),
     }
+    can_alert = sinks["risk_advisor_webhook"] or sinks["fleet_webhook_fallback"]
     return {
         # the alert channel falls back to the fleet webhook, so either works
-        "can_alert": sinks["risk_advisor_webhook"] or sinks["fleet_webhook_fallback"],
-        "can_reach_phone": sinks["phone_webhook"],
+        "can_alert": can_alert,
+        # 🚨 A DEDICATED PHONE WEBHOOK IS NOT THE ONLY ROUTE. A direct user
+        # mention in the existing risk channel pushes to iOS even when that
+        # channel is muted, so RISK_DISCORD_USER_ID + any channel webhook
+        # reaches the phone without creating a second webhook at all. The old
+        # flag reported false in exactly that (working) configuration.
+        "can_reach_phone": sinks["phone_webhook"]
+        or (can_alert and sinks["discord_user_id"]),
         "sinks": sinks,
         "last_delivery": dict(_LAST_DELIVERY),
         "note": ("A claimed slot is NOT proof of delivery. A failed send "
