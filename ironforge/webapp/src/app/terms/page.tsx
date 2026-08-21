@@ -8,7 +8,7 @@ export const metadata = {
 
 export default function TermsPage() {
   return (
-    <LegalPage title="Terms of Service" updated="June 21, 2026">
+    <LegalPage title="Terms of Service" updated="August 21, 2026">
       <p>
         These Terms of Service (&ldquo;Terms&rdquo;) govern your access to and use of the website and
         services provided by <strong>IronForge Technologies LLC</strong> (&ldquo;IronForge,&rdquo;
@@ -82,6 +82,42 @@ export default function TermsPage() {
           You agree not to misuse the Service, including by attempting to gain unauthorized access,
           interfering with its operation, reverse-engineering it, or using it in violation of applicable
           laws or the rules of any brokerage or exchange.
+        </p>
+      </LegalSection>
+
+      {/*
+        App Store Review Guideline 1.2 (User-Generated Content). An app with a member
+        feed must agree to terms that state there is NO TOLERANCE for objectionable
+        content or abusive users, and must ship filtering, reporting, blocking and
+        published contact details. The report/block controls exist in the app; this
+        section is the half a reviewer reads, and its absence is a documented rejection
+        reason on its own.
+
+        The 24-hour commitment is deliberate and is what Apple expects to see in
+        writing. It is a real operational obligation, not boilerplate.
+      */}
+      <LegalSection heading="Community content">
+        <p>
+          IronForge includes a members&rsquo; community feed. Anything you post there is your own
+          content, and you are responsible for it. We have{' '}
+          <strong>no tolerance for objectionable content or abusive behaviour</strong>.
+        </p>
+        <p>
+          You agree not to post content that is unlawful, hateful, harassing, threatening,
+          defamatory, obscene, or that impersonates another person. You also agree not to post
+          personalised investment advice, solicitations, or offers to manage anyone else&rsquo;s
+          money &mdash; IronForge is not an investment adviser and the community is not a place to
+          act like one.
+        </p>
+        <p>
+          Every post can be reported from inside the app, and you can block any other member so
+          their posts stop reaching you. We review reports and aim to act on objectionable content{' '}
+          <strong>within 24 hours</strong>, by removing the content and, where warranted, removing
+          the member who posted it. Report anything you should not be seeing to{' '}
+          <a href="mailto:support@ironforge.trade" className="text-amber-500 hover:underline">
+            support@ironforge.trade
+          </a>
+          .
         </p>
       </LegalSection>
 

@@ -16,7 +16,7 @@ import * as WebBrowser from 'expo-web-browser'
 import { useRouter } from 'expo-router'
 import useSWR from 'swr'
 import Constants from 'expo-constants'
-import { api } from '@/api/client'
+import { api, API_BASE } from '@/api/client'
 import type { MobileMe, MembershipResponse } from '@/api/types'
 import { signOut, biometricsAvailable, isBiometricEnabled, setBiometricEnabled } from '@/auth/session'
 import { color, space, radius, type, font } from '@/theme/tokens'
@@ -84,6 +84,16 @@ export default function AccountScreen() {
    * APP-043: open a native draft; if no mail client can handle it, fall back to a
    * copyable address rather than a silent no-op.
    */
+  /**
+   * Legal pages live on the marketing site, not in the app, so there is ONE copy of the
+   * terms rather than a bundled snapshot that silently goes stale the moment they are
+   * revised — which for an agreement someone is being held to is the difference between
+   * a document and a screenshot.
+   */
+  async function openLegal(path: string) {
+    await WebBrowser.openBrowserAsync(`${API_BASE}${path}`)
+  }
+
   async function emailSupport() {
     const url = supportMailto()
     const canOpen = await Linking.canOpenURL(url).catch(() => false)
@@ -270,6 +280,32 @@ export default function AccountScreen() {
             label="Email Support"
             detail={SUPPORT_EMAIL}
             onPress={emailSupport}
+          />
+        </Card>
+
+        <View style={{ marginTop: space.xl }}>
+          <SectionLabel>Legal</SectionLabel>
+        </View>
+        <Card>
+          {/*
+            The app had no route to the Terms or the Privacy Policy anywhere. For an app
+            carrying a member feed that is a Guideline 1.2 gap as much as a courtesy one:
+            the terms are where the no-tolerance-for-objectionable-content agreement
+            lives, and a reviewer looks for it.
+
+            System browser, not a WebView — same reason as everywhere else in this file,
+            the customer gets to see the real URL.
+          */}
+          <Row
+            icon="document-text-outline"
+            label="Terms of Service"
+            onPress={() => openLegal('/terms')}
+            first
+          />
+          <Row
+            icon="lock-closed-outline"
+            label="Privacy Policy"
+            onPress={() => openLegal('/privacy')}
           />
         </Card>
 
