@@ -28,6 +28,13 @@ export interface CommunityMessage {
   mine: boolean
   /** Author is a real user who can be blocked (false for FORGE/SYSTEM posts). */
   blockable: boolean
+  /**
+   * The channel the post was written in. Carried on every message because the
+   * aggregate view shows posts from every channel at once, and UX-005 tags each one
+   * with where it came from — without this the chips would have nothing to read.
+   */
+  channel_slug: string
+  channel_name: string
 }
 
 export interface CommunityFeed {
@@ -44,15 +51,28 @@ export async function getChannelId(slug: string): Promise<string | null> {
   return rows[0]?.id ?? null
 }
 
+/**
+ * The channel whose tab shows EVERY channel's posts rather than its own.
+ *
+ * UX-005 shows "All" as an aggregate with a category chip on each post, not as a
+ * fifth room. Treating it as an ordinary channel made the chips meaningless (every
+ * post would read "All Chat") and quietly split the conversation: anything written
+ * from the default tab landed somewhere the other tabs never showed.
+ */
+export const AGGREGATE_CHANNEL = 'all-chat'
+
 export async function getFeed(channelSlug: string, viewerUserId: string | null): Promise<CommunityFeed> {
   const channels = await customerQuery<{ slug: string; name: string; id: string }>(
     `SELECT id, slug, name FROM community_channels ORDER BY sort_order ASC`,
   )
   const channel = channels.find((c) => c.slug === channelSlug) ?? channels[0]
+  // null = aggregate: every channel, each post tagged with its own.
+  const filterChannelId = channel && channel.slug !== AGGREGATE_CHANNEL ? channel.id : null
   const [messageRows, presenceRows] = await Promise.all([
     channel
       ? customerQuery<any>(
           `SELECT m.id, m.user_id, m.sender_name, m.sender_type, m.message, m.created_at,
+                  c.slug AS channel_slug, c.name AS channel_name,
                   COALESCE(
                     (SELECT json_agg(json_build_object('emoji', r.emoji, 'count', r.cnt, 'mine', r.mine))
                      FROM (
@@ -66,7 +86,10 @@ export async function getFeed(channelSlug: string, viewerUserId: string | null):
                     '[]'::json
                   ) AS reactions
            FROM community_messages m
-           WHERE m.channel_id = $1
+           JOIN community_channels c ON c.id = m.channel_id
+           -- $1 NULL means "every channel" (the aggregate tab). Written as a guard
+           -- rather than two queries so the block filter below cannot drift apart.
+           WHERE ($1::uuid IS NULL OR m.channel_id = $1::uuid)
              -- Blocked authors disappear from THIS viewer's feed only. Written as
              -- NOT EXISTS rather than a join so a NULL viewer (logged-out preview)
              -- still sees everything instead of matching nothing.
@@ -76,7 +99,7 @@ export async function getFeed(channelSlug: string, viewerUserId: string | null):
              )
            ORDER BY m.created_at DESC
            LIMIT 100`,
-          [channel.id, viewerUserId],
+          [filterChannelId, viewerUserId],
         )
       : Promise.resolve([]),
     customerQuery<{ user_id: string; display_name: string }>(
@@ -97,6 +120,8 @@ export async function getFeed(channelSlug: string, viewerUserId: string | null):
       reactions: Array.isArray(m.reactions) ? m.reactions : [],
       mine: viewerUserId != null && m.user_id != null && String(m.user_id) === viewerUserId,
       blockable: m.user_id != null && String(m.user_id) !== viewerUserId,
+      channel_slug: String(m.channel_slug),
+      channel_name: String(m.channel_name),
     })),
     online_count: presenceRows.length,
     members: presenceRows.map((p) => ({
