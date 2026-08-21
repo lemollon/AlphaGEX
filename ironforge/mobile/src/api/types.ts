@@ -104,6 +104,14 @@ export interface CommunityMessage {
   created_at: string
   reactions: Array<{ emoji: string; count: number; mine: boolean }>
   /**
+   * The channel the post was written in. UX-005 tags every post in the aggregate
+   * "All" view with where it came from. Optional for the same forward/backward
+   * compatibility reason as `mine` below — an installed app may be older or newer
+   * than the API it is talking to, and a missing field must not fail the payload.
+   */
+  channel_slug?: string
+  channel_name?: string
+  /**
    * The viewer wrote this — report/block are hidden on your own posts.
    *
    * Optional because an installed app can be OLDER than the API it talks to and

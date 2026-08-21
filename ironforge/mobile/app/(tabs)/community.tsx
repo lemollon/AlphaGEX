@@ -2,6 +2,7 @@ import { useState } from 'react'
 import {
   View,
   Text,
+  Image,
   ScrollView,
   TextInput,
   Pressable,
@@ -16,8 +17,9 @@ import { api } from '@/api/client'
 import type { BlockedMember, CommunityFeed, CommunityMessage } from '@/api/types'
 import { color, space, radius, type, font } from '@/theme/tokens'
 import { Card, Loading, Empty, ErrorState } from '@/components/ui'
-import { AppHeader, Mascot } from '@/components/Brand'
+import { AppHeader, Mascot, SPARKY_AVATAR } from '@/components/Brand'
 import { applyFlame, FLAME } from '@/community/reactions'
+import { initials, channelAccent, bubbleTint } from '@/community/identity'
 
 /**
  * Community — UX-005 (APP-030/031/054/055).
@@ -231,35 +233,44 @@ export default function CommunityScreen() {
         ) : (
           messages.map((m) => (
             <Card key={m.id} style={{ marginBottom: space.md }}>
-              <View style={s.rowBetween}>
-                <View style={s.rowCenter}>
-                  <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]}>
-                    {m.sender_name}
-                  </Text>
-                  {m.sender_type !== 'USER' ? (
-                    <View style={s.aiTag}>
-                      <Text style={[type.label, { color: color.spark }]}>AI</Text>
+              {/* UX-005: avatar rail on the left, everything else indented beside it. */}
+              <View style={s.postRow}>
+                <Avatar message={m} />
+                <View style={{ flex: 1 }}>
+                  <View style={s.rowBetween}>
+                    <View style={s.rowCenter}>
+                      <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]}>
+                        {m.sender_name}
+                      </Text>
+                      {m.sender_type !== 'USER' ? (
+                        <View style={s.aiTag}>
+                          <Text style={[type.label, { color: color.spark }]}>AI</Text>
+                        </View>
+                      ) : null}
+                      <Text style={[type.label, { color: color.muted }]}>{time(m.created_at)}</Text>
                     </View>
-                  ) : null}
-                </View>
-                <View style={s.rowCenter}>
-                  <Text style={[type.label, { color: color.muted }]}>{time(m.created_at)}</Text>
-                  {/* Your own posts, and Forge's, have nothing to report or block. */}
-                  {m.mine !== true && m.sender_type === 'USER' ? (
-                    <Pressable
-                      onPress={() => setMenuFor(m)}
-                      hitSlop={10}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Options for the post by ${m.sender_name}`}
-                      style={s.moreBtn}
-                    >
-                      <Text style={{ color: color.muted, fontSize: 18, lineHeight: 18 }}>⋯</Text>
-                    </Pressable>
-                  ) : null}
+                    <View style={s.rowCenter}>
+                      <CategoryChip message={m} />
+                      {/* Your own posts, and Forge's, have nothing to report or block. */}
+                      {m.mine !== true && m.sender_type === 'USER' ? (
+                        <Pressable
+                          onPress={() => setMenuFor(m)}
+                          hitSlop={10}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Options for the post by ${m.sender_name}`}
+                          style={s.moreBtn}
+                        >
+                          <Text style={{ color: color.muted, fontSize: 18, lineHeight: 18 }}>⋯</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  </View>
+                  <Text style={[type.body, { color: color.textDim, marginTop: space.sm }]}>
+                    {m.message}
+                  </Text>
+                  <FlameRow message={m} onPress={() => void toggleFlame(m.id)} />
                 </View>
               </View>
-              <Text style={[type.body, { color: color.textDim, marginTop: space.sm }]}>{m.message}</Text>
-              <FlameRow message={m} onPress={() => void toggleFlame(m.id)} />
             </Card>
           ))
         )}
@@ -430,6 +441,44 @@ function BlockedSheet({
  * The flame count for one post. It renders at zero too — hiding the control until
  * somebody else reacted first means nobody can ever be the first to react.
  */
+/**
+ * UX-005 avatar. Forge and Sparky wear their mascots; members get initials on a tint
+ * derived from the NAME, so the same person keeps the same colour as the feed reorders.
+ */
+function Avatar({ message }: { message: CommunityMessage }) {
+  if (message.sender_type !== 'USER') {
+    // Sparky answers in threads, Forge posts market updates — different faces.
+    const isSparky = message.sender_name.toLowerCase().includes('sparky')
+    return isSparky ? (
+      <Image source={SPARKY_AVATAR} style={s.avatarImg} resizeMode="contain" />
+    ) : (
+      <Mascot bot="flame" size={40} />
+    )
+  }
+  return (
+    <View style={[s.avatarBubble, { backgroundColor: bubbleTint(message.sender_name) }]}>
+      <Text style={[type.label, { color: color.text, fontFamily: font.bodyBold }]}>
+        {initials(message.sender_name)}
+      </Text>
+    </View>
+  )
+}
+
+/**
+ * The category chip. Renders only when the server actually told us which channel the
+ * post came from — an older API predates that field, and a chip reading "undefined" is
+ * worse than no chip.
+ */
+function CategoryChip({ message }: { message: CommunityMessage }) {
+  if (!message.channel_name) return null
+  const accent = channelAccent(message.channel_slug)
+  return (
+    <View style={[s.categoryChip, { borderColor: accent }]}>
+      <Text style={[type.label, { color: accent }]}>{message.channel_name}</Text>
+    </View>
+  )
+}
+
 function FlameRow({ message, onPress }: { message: CommunityMessage; onPress: () => void }) {
   const flame = (message.reactions ?? []).find((r) => r.emoji === FLAME)
   const count = flame?.count ?? 0
@@ -487,6 +536,21 @@ function Shell({ children }: { children: React.ReactNode }) {
 const s = StyleSheet.create({
   title: { ...type.title, color: color.text, fontFamily: font.display },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  postRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
+  avatarImg: { width: 40, height: 40, borderRadius: 20 },
+  avatarBubble: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  categoryChip: {
+    borderWidth: 1,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.sm,
+    paddingVertical: 2,
+  },
   rowCenter: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   welcome: {
     flexDirection: 'row',
