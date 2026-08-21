@@ -281,6 +281,96 @@ def _pct_if_now(engine: Engine, live_net_gex_b: float) -> float | None:
     return sum(1 for v in hist if live_net_gex_b > v) / len(hist)
 
 
+# ── TODAY'S INTRADAY GAMMA PATH ──────────────────────────────────────────────
+# 🚨 THE LIVE READING WAS EPHEMERAL. /intraday computes net gamma from the live
+# chain and the page polls it every 60s, but nothing was ever stored — so the
+# chart could show a single dot for "now" and no path, and the moment the market
+# shut even that vanished. You could not see what gamma did during the session
+# you had just traded.
+#
+# ⛔ THIS IS CONTEXT, NEVER THE SIGNAL. The shipped verdict is one reading a
+# session at 15:05 CT and it is backtested on that close. An intraday sample
+# lands in the WRONG percentile zone 21.6% of the time against its own session's
+# close, and ~5% of sessions would flash a false "oversold" the close then
+# retracts. Plotting the path is useful; promoting it to a verdict would throw
+# away the only thing here with seven years behind it.
+#
+# ⛔ WRITTEN BY A SCHEDULED JOB, NOT ON PAGE LOAD. An on-demand store only fills
+# while somebody is looking, which makes the record a function of who was
+# watching — the same defect that left risk_flow_rolling_state unable to explain
+# the 08-17 slide.
+GAMMA_INTRADAY_TABLE = "sw_gamma_intraday"
+
+
+def ensure_gamma_intraday_table() -> None:
+    """Create the intraday path table if absent. Never raises."""
+    try:
+        with ENGINE.begin() as conn:
+            conn.execute(text(
+                f"CREATE TABLE IF NOT EXISTS {GAMMA_INTRADAY_TABLE} ("
+                " trade_date DATE NOT NULL,"
+                " minute_ct  INTEGER NOT NULL,"
+                " captured_at TIMESTAMP,"
+                " spot FLOAT,"
+                " net_gex_b FLOAT,"
+                " pct_if_now FLOAT,"
+                " PRIMARY KEY (trade_date, minute_ct))"))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_squeeze] ensure_gamma_intraday_table: %r", e)
+
+
+def record_gamma_intraday(now, spot, net_gex_b, pct_if_now) -> None:
+    """Store one intraday point, bucketed to the 10-minute slot.
+
+    Bucketing makes the write idempotent: a retry inside the same slot updates
+    rather than duplicating, and the series has a predictable shape regardless
+    of when the poll actually landed.
+    """
+    if net_gex_b is None:
+        return
+    minute = now.hour * 60 + (now.minute // 10) * 10
+    try:
+        with ENGINE.begin() as conn:
+            conn.execute(text(
+                f"INSERT INTO {GAMMA_INTRADAY_TABLE} "
+                " (trade_date, minute_ct, captured_at, spot, net_gex_b, pct_if_now)"
+                " VALUES (:d, :m, :t, :s, :g, :p)"
+                " ON CONFLICT (trade_date, minute_ct) DO UPDATE SET"
+                "  captured_at = EXCLUDED.captured_at, spot = EXCLUDED.spot,"
+                "  net_gex_b = EXCLUDED.net_gex_b, pct_if_now = EXCLUDED.pct_if_now"),
+                {"d": now.date(), "m": minute, "t": now.replace(tzinfo=None),
+                 "s": spot, "g": net_gex_b, "p": pct_if_now})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_squeeze] record_gamma_intraday: %r", e)
+
+
+@router.get("/intraday-path")
+def intraday_path(sessions: int = 1):
+    """Today's stored intraday gamma path (and prior sessions if asked).
+
+    Read-only and cheap — it never pulls a chain. The writer is the scheduled
+    job; this just serves what was recorded.
+    """
+    ensure_gamma_intraday_table()
+    try:
+        with ENGINE.begin() as conn:
+            days = [r[0] for r in conn.execute(text(
+                f"SELECT DISTINCT trade_date FROM {GAMMA_INTRADAY_TABLE} "
+                "ORDER BY trade_date DESC LIMIT :n"), {"n": max(1, sessions)})]
+            if not days:
+                return {"rows": [], "reason": "no intraday gamma recorded yet"}
+            rows = conn.execute(text(
+                f"SELECT trade_date, minute_ct, spot, net_gex_b, pct_if_now "
+                f"FROM {GAMMA_INTRADAY_TABLE} WHERE trade_date = ANY(:ds) "
+                "ORDER BY trade_date, minute_ct"), {"ds": days}).fetchall()
+        return {"rows": [{"trade_date": str(r[0]), "minute_ct": r[1],
+                          "spot": r[2], "net_gex_b": r[3], "pct_if_now": r[4]}
+                         for r in rows], "reason": None}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_squeeze] intraday_path: %r", e)
+        return {"rows": [], "reason": f"query error: {e}"}
+
+
 @router.get("/intraday")
 async def intraday():
     """Live SPY net-gamma reading right now — CONTEXT ONLY, NOT THE SIGNAL.

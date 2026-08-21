@@ -29,7 +29,7 @@ import asyncio
 import csv
 import logging
 import os
-from datetime import date, datetime
+from datetime import date, datetime, time as dtime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -61,7 +61,8 @@ WHAT_TO_DO = {
 # unset ref means the jobs were never armed — see scheduled_jobs().
 _SCHEDULER: dict = {"ref": None}
 
-GAMMA_JOB_IDS = ("gamma_capture", "gamma_squeeze_alert", "gamma_entry_credit")
+GAMMA_JOB_IDS = ("gamma_capture", "gamma_squeeze_alert", "gamma_entry_credit",
+                 "gamma_intraday")
 
 
 def scheduled_jobs() -> dict:
@@ -603,6 +604,58 @@ def register_gamma_alerts(scheduler, app) -> None:
     # that time, and the charts now show it to the user as "next update", so
     # an advertised firing that does nothing is a lie about when the data
     # actually moves next. On a Friday the honest answer is Monday.
+    async def record_intraday_gamma():
+        """Every 10 min, 08:30-15:00 CT weekdays: store one net-gamma point.
+
+        🚨 THE LIVE READING WAS NEVER KEPT. /squeeze/intraday computes gamma
+        from the live chain and the page polls it every 60s, but nothing was
+        stored — so the chart had a single dot for "now", no path through the
+        session, and nothing at all once the market shut. You could not see
+        what gamma did during the session you had just traded.
+
+        ⛔ CONTEXT, NOT THE SIGNAL. The verdict stays on the 15:05 capture,
+        which is what seven years of evidence is attached to. An intraday
+        sample lands in the wrong percentile zone 21.6% of the time against its
+        own close.
+
+        ⛔ A JOB, NOT A PAGE HOOK. Storing on page load would make the record a
+        function of who happened to be watching.
+        """
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            if not (dtime(8, 30) <= now.time() < dtime(15, 0)):
+                return
+            from .routes_squeeze import (ensure_gamma_intraday_table,
+                                         record_gamma_intraday)
+            from .bots.gamma_regime import fetch_net_gex
+            from .bots.routes_helpers import build_live_chain_provider
+
+            def _run() -> dict:
+                return fetch_net_gex(build_live_chain_provider(), "SPY")
+
+            out = await asyncio.to_thread(_run)
+            if out.get("net_gex") is None:
+                logger.info("[GammaAlerts] intraday gamma: no reading (%s)",
+                            out.get("reason"))
+                return
+            ensure_gamma_intraday_table()
+            pct = None
+            try:
+                from .routes_squeeze import _pct_if_now, ENGINE as _E
+                pct = _pct_if_now(_E, out["net_gex"] / 1e9)
+            except Exception:                                # noqa: BLE001
+                pct = None
+            record_gamma_intraday(now, out.get("spot"),
+                                  out["net_gex"] / 1e9, pct)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[GammaAlerts] record_intraday_gamma failed: %r", e)
+
+    scheduler.add_job(record_intraday_gamma, "cron", day_of_week="mon-fri",
+                      minute="*/10", timezone=CT, id="gamma_intraday",
+                      coalesce=True, max_instances=1, replace_existing=True)
+
     scheduler.add_job(capture_gamma, "cron", day_of_week="mon-fri",
                       hour=15, minute=5, timezone=CT,
                       id="gamma_capture", coalesce=True, max_instances=1,
