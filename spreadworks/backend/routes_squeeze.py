@@ -331,6 +331,16 @@ def ensure_gamma_intraday_table() -> None:
         logger.warning("[routes_squeeze] ensure_gamma_intraday_table: %r", e)
 
 
+def _live_vix():
+    """Current VIX spot, or None. Never raises — a missing quote must degrade
+    the live outlook's VIX leg to unknown, not take the endpoint down."""
+    try:
+        from .bots.routes_helpers import build_live_chain_provider
+        return build_live_chain_provider()._spot("VIX")
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
 def live_vix_ratio(vix_now):
     """Live VIX over its own trailing 20-session max.
 
@@ -501,9 +511,28 @@ async def intraday():
         except Exception as e:  # noqa: BLE001
             logger.warning("[routes_squeeze] intraday pct_if_now failed: %r", e)
 
+    # 🚨 THE WHOLE "WHAT TO WATCH" CARD, RECOMPUTED FROM THIS MINUTE. Every
+    # figure on it except the calendar is a function of the current gamma
+    # reading, so there was no reason for it to sit frozen between 15:05
+    # captures. The trigger LEVELS stay historical (they are percentiles of a
+    # window of closes); only the current reading is swapped.
+    #
+    # ⛔ Advisory. The verdict is still the 15:05 capture — this says where the
+    # levels sit right now, not that the call has changed.
+    live_outlook = None
+    if net_gex_b is not None:
+        try:
+            from .bots.gamma_regime import squeeze_outlook
+            live_outlook = squeeze_outlook(
+                ENGINE, now.date(), live_gex_b=net_gex_b,
+                live_vix_ratio=live_vix_ratio(_live_vix()))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[routes_squeeze] live outlook failed: %r", e)
+
     payload = {
         "net_gex_b": net_gex_b,
         "spot": float(spot) if spot else None,
+        "live_outlook": live_outlook,
         "captured_at": now.isoformat(),
         "last_close_b": last_close_b,
         "delta_b": delta_b,

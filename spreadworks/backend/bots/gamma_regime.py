@@ -417,7 +417,9 @@ def fuel_ratio(engine: Engine, asof: date, window: int = 20) -> dict[str, Any]:
 
 
 def squeeze_outlook(engine: Engine, asof: date,
-                    window: int = PCT_WINDOW) -> dict[str, Any]:
+                    window: int = PCT_WINDOW,
+                    live_gex_b: float | None = None,
+                    live_vix_ratio: float | None = None) -> dict[str, Any]:
     """Where the triggers actually sit, so you can watch a LEVEL not a verdict.
 
     A verdict alone tells you nothing until the day it flips. What is useful
@@ -428,7 +430,21 @@ def squeeze_outlook(engine: Engine, asof: date,
     Returns trigger levels in $bn plus the gap from the current reading, a
     5-session percentile trend, a proximity label, and a per-leg breakdown.
     All None-safe: missing history yields Nones, never a misleading zero.
+
+    🚨 LIVE MODE. Pass live_gex_b / live_vix_ratio to recompute the whole card
+    from THIS MINUTE instead of the last stored close. Everything here except
+    the calendar is a function of the current gamma reading, so there was no
+    reason for the panel to sit frozen from 15:05 to 15:05 — the gaps to the
+    triggers, which leg is short, the pin band, all of it moves during the
+    session and the reader could not see it.
+
+    ⛔ THE TRIGGER LEVELS THEMSELVES STAY HISTORICAL. They are the 20th and 80th
+    percentiles of the trailing window, which is by definition made of closes.
+    Only the CURRENT reading is swapped. And live mode never writes anything:
+    the verdict is still the 15:05 capture, because that is what the backtest
+    measured.
     """
+    live = live_gex_b is not None
     from backend.bots.vix_regime import vix_decay_ratio
 
     out: dict[str, Any] = {
@@ -448,7 +464,7 @@ def squeeze_outlook(engine: Engine, asof: date,
         out["reason"] = f"insufficient_gamma_history: have={len(rows)} need={window}"
         return out
 
-    cur = float(rows[0][1]) / 1e9
+    cur = float(live_gex_b) if live else float(rows[0][1]) / 1e9
     hist = sorted(float(r[1]) / 1e9 for r in rows)
     # the value that WOULD sit at each threshold in the current window
     lo_i = max(0, int(OVERSOLD_PCT * len(hist)) - 1)
@@ -459,8 +475,12 @@ def squeeze_outlook(engine: Engine, asof: date,
     out["gap_to_oversold_b"] = cur - lo_trig       # negative once through it
     out["gap_to_overbought_b"] = hi_trig - cur
 
-    gp = gamma_percentile(engine, asof, window)
-    pct = gp.get("pct")
+    if live:
+        # Rank the live reading against the same window the stored one uses.
+        pct = sum(1 for v in hist if cur > v) / len(hist)
+    else:
+        gp = gamma_percentile(engine, asof, window)
+        pct = gp.get("pct")
     if pct is not None and len(rows) > 5:
         prior5 = [float(r[1]) for r in rows[5:]][:window]
         if len(prior5) >= 20:
@@ -480,7 +500,8 @@ def squeeze_outlook(engine: Engine, asof: date,
             out["proximity"] = "MID_RANGE"
 
     # SQUEEZE_WATCH needs BOTH legs. Say which one is short.
-    vr = vix_decay_ratio(engine, asof).get("ratio")
+    vr = (live_vix_ratio if live_vix_ratio is not None
+          else vix_decay_ratio(engine, asof).get("ratio"))
     out["legs"] = {
         "gamma_oversold": None if pct is None else bool(pct <= OVERSOLD_PCT),
         "vix_at_highs": None if vr is None else bool(vr > VIX_AT_HIGHS),
@@ -496,6 +517,7 @@ def squeeze_outlook(engine: Engine, asof: date,
 
     # Scheduled flow — the forecastable half of "the match".
     out["calendar"] = calendar_flags(asof)
+    out["live"] = live
 
     # PIN proximity is the mirror question and shares the same number: the
     # higher the percentile, the more dealer hedging damps the tape. Zero

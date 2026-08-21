@@ -632,8 +632,14 @@ export default function SqueezePage() {
                       move during the session — and a card full of live-looking
                       numbers that silently does not update is worse than a
                       stale one that says so. */}
+                  {/* 🚨 BOTH CLOCKS, SIDE BY SIDE. The card is built from the
+                      15:05 capture because that is what the verdict uses — but
+                      every figure on it is a function of the current gamma
+                      reading, so it was sitting frozen all session while the
+                      levels underneath it moved. The live recompute is shown
+                      next to the official one, never instead of it. */}
                   <span style={{ ...S.small, marginLeft: 'auto' }}>
-                    from the 15:05 CT capture · does not change during the session
+                    official reading: 15:05 CT capture
                   </span>
                 </div>
                   <div style={{ fontSize: 13.5, color: '#c6cbd8' }}>Outlook unavailable</div>
@@ -657,6 +663,56 @@ export default function SqueezePage() {
                     {PROXIMITY_COPY[outlook.proximity] || ''}
                   </div>
                 )}
+
+                {/* Live recompute — same maths, this minute's gamma. */}
+                {(() => {
+                  const lo = intraday?.live_outlook;
+                  if (!lo || !lo.proximity) return null;
+                  const same = lo.proximity === outlook.proximity;
+                  const c = PROXIMITY_COLOR[lo.proximity] || GREY;
+                  return (
+                    <div style={{
+                      padding: '9px 11px', borderRadius: 8, marginBottom: 12,
+                      background: '#0e1220',
+                      border: `1px solid ${same ? '#1c2233' : `${AMBER}55`}`,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ ...S.small, letterSpacing: '.05em', textTransform: 'uppercase' }}>
+                          right now
+                        </span>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: c }}>
+                          {PROXIMITY_LABEL[lo.proximity] || lo.proximity}
+                        </span>
+                        {!same && (
+                          <span style={{ fontSize: 11, fontWeight: 700, color: AMBER }}>
+                            ≠ the 15:05 reading
+                          </span>
+                        )}
+                        <span style={{ ...S.small, marginLeft: 'auto' }}>
+                          recomputed every 60s from the live chain
+                        </span>
+                      </div>
+                      <div style={{ ...S.small, marginTop: 3, lineHeight: 1.5 }}>
+                        {lo.gap_to_oversold_b != null && (
+                          <>gamma {signedBn(intraday.net_gex_b)} ·{' '}
+                          {lo.gap_to_oversold_b <= 0
+                            ? <b style={{ color: AMBER }}>already through the oversold trigger</b>
+                            : <>{bn(lo.gap_to_oversold_b)} from oversold</>}</>
+                        )}
+                        {lo.legs?.vix_ratio != null && (
+                          <> · VIX ratio {lo.legs.vix_ratio.toFixed(2)}
+                          {lo.legs.vix_at_highs
+                            ? <b style={{ color: AMBER }}> — at its highs</b>
+                            : <> ({(0.95 - lo.legs.vix_ratio).toFixed(2)} short of 0.95)</>}</>
+                        )}
+                      </div>
+                      <div style={{ ...S.small, marginTop: 3 }}>
+                        Advisory. The verdict above is still the 15:05 capture — this is
+                        where the levels sit this minute, not a new call.
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* 1 — how close are we */}
                 <div style={{ ...S.small, marginBottom: 4 }}>
