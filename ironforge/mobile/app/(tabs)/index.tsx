@@ -5,7 +5,14 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR from 'swr'
 import { api } from '@/api/client'
-import type { LiveSummary, LiveAgent, LiveAgents, HomeData, BrokerageConnections } from '@/api/types'
+import type {
+  LiveSummary,
+  LiveAgent,
+  LiveAgents,
+  LiveOpenPosition,
+  HomeData,
+  BrokerageConnections,
+} from '@/api/types'
 import { color, space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { Card, Money, Balance, SectionLabel, Loading, Empty, ErrorState } from '@/components/ui'
 import { AppHeader, Mascot } from '@/components/Brand'
@@ -252,22 +259,43 @@ function AgentTile({
             />
           ) : (
             <>
-              <View style={s.rowBetween}>
-                <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
-                  Open position
-                </Text>
-                <Money value={trade.unrealized_pnl} size="title" />
-              </View>
               {/*
-                "Live" only while the position is genuinely being monitored. Showing it
-                on Target/Stop or Auto Close would claim the trade is still running
-                after it has resolved.
+                UX-002 draws a rail PER TRADE, and there can be more than one: SPARK
+                swings, so a leg opened yesterday is still open beside today's. The
+                scalar fields only ever describe positions[0], which is exactly how the
+                web page once hid a live position holding real money.
+
+                Falls back to the single-trade shape when `positions` is absent, so an
+                app newer than its API still renders.
               */}
-              <Stepper
-                step={state?.timeline_step ?? null}
-                accent={accent}
-                caption={state?.timeline_step === 1 ? 'Live' : null}
-              />
+              {(trade.positions?.length ?? 0) > 0 ? (
+                trade.positions!.map((p, i) => (
+                  <TradeRow
+                    key={p.position_id || String(i)}
+                    index={i}
+                    position={p}
+                    accent={accent}
+                    // Only the newest trade can be at Target/Stop or Auto Close — the
+                    // agent state describes it. Every other open leg is, by definition
+                    // of still being open, being monitored.
+                    step={i === 0 ? (state?.timeline_step ?? 1) : 1}
+                  />
+                ))
+              ) : (
+                <>
+                  <View style={s.rowBetween}>
+                    <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+                      Open position
+                    </Text>
+                    <Money value={trade.unrealized_pnl} size="title" />
+                  </View>
+                  <Stepper
+                    step={state?.timeline_step ?? null}
+                    accent={accent}
+                    caption={state?.timeline_step === 1 ? 'Live' : null}
+                  />
+                </>
+              )}
             </>
           )}
         </>
@@ -285,6 +313,46 @@ function AgentTile({
         </Text>
       )}
     </Card>
+  )
+}
+
+/**
+ * One open trade: title, its own P&L, its own rail — UX-002.
+ *
+ * Titled "Trade 1 / Trade 2" as the approved layout does, but a leg held overnight
+ * also says which day it is on. The mockup's invented data had no swung legs; the real
+ * product does, and a customer looking at two identical-looking rows needs to know one
+ * of them is yesterday's.
+ */
+function TradeRow({
+  index,
+  position,
+  accent,
+  step,
+}: {
+  index: number
+  position: LiveOpenPosition
+  accent: string
+  step: number | null
+}) {
+  return (
+    <View style={index > 0 ? { marginTop: space.lg } : undefined}>
+      <View style={s.rowBetween}>
+        <View>
+          <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+            {`Trade ${index + 1}`}
+          </Text>
+          {position.held_overnight ? (
+            <Text style={[type.label, { color: color.textDim, marginTop: 1 }]}>
+              {`Opened ${position.opened_date_label} · Day ${position.day_number}`}
+            </Text>
+          ) : null}
+        </View>
+        {/* null P&L renders as "—", never $0.00 — quotes were unavailable, not flat. */}
+        <Money value={position.unrealized_pnl} size="title" />
+      </View>
+      <Stepper step={step} accent={accent} caption={step === 1 ? 'Live' : null} />
+    </View>
   )
 }
 

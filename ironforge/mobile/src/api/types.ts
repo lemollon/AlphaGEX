@@ -57,6 +57,30 @@ export interface LiveSummary {
   as_of: string
 }
 
+/**
+ * ONE open position. Mirrors LiveOpenPosition in webapp/src/lib/live/types.ts.
+ *
+ * 🚨 There can be more than one. SPARK swings — yesterday's condor is held to expiry
+ * rather than stopped out, so on any day it opens a new trade there are TWO open at
+ * once. The web page had a bug where it described only the newest, so the older leg
+ * with the customer's money in it appeared nowhere; the mobile app inherited that
+ * shape by only ever reading the scalar fields.
+ */
+export interface LiveOpenPosition {
+  position_id: string
+  opened_at: string | null
+  /** "Jul 28", already in CT — do not re-format from opened_at. */
+  opened_date_label: string
+  expires_label: string | null
+  unrealized_pnl: number | null
+  unrealized_pnl_pct: number | null
+  pnl_source: 'live' | 'scanner_snapshot' | 'none'
+  /** Opened on an earlier CT date — this is the swung leg. */
+  held_overnight: boolean
+  /** 1 on the day it opened, 2 the next session, and so on. */
+  day_number: number
+}
+
 export interface LiveTrade {
   active: boolean
   opened_at: string | null
@@ -68,6 +92,14 @@ export interface LiveTrade {
   /** Today's intraday P&L series — the source for the UX-003 chart. */
   spark_series: Array<{ timestamp: string; pnl: number }>
   today_result: { pnl: number; pct: number | null } | null
+  /**
+   * EVERY open position, newest first — the source for UX-002's per-trade rails.
+   *
+   * The scalar fields above describe `positions[0]`. Optional because an installed app
+   * can be older than the API and vice versa; when it is absent the tile falls back to
+   * the single-trade rendering rather than showing nothing.
+   */
+  positions?: LiveOpenPosition[]
 }
 
 export interface HomeData {
