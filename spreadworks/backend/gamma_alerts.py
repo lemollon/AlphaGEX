@@ -653,8 +653,21 @@ def register_gamma_alerts(scheduler, app) -> None:
                 pct = _pct_if_now(_E, out["net_gex"] / 1e9)
             except Exception:                                # noqa: BLE001
                 pct = None
+            # VIX on the same 10-minute grid. The verdict's VIX leg is a
+            # prior-close reading; this is the live one, so you can watch the
+            # missing leg approach 0.95 during the session instead of finding
+            # out after the close.
+            vix_now = vix_ratio = None
+            try:
+                from .routes_squeeze import live_vix_ratio
+                from .bots.routes_helpers import build_live_chain_provider as _p
+                vix_now = await asyncio.to_thread(lambda: _p()._spot("VIX"))
+                vix_ratio = live_vix_ratio(vix_now)
+            except Exception:                                # noqa: BLE001
+                vix_now = vix_ratio = None
             record_gamma_intraday(now, out.get("spot"),
-                                  out["net_gex"] / 1e9, pct)
+                                  out["net_gex"] / 1e9, pct,
+                                  vix=vix_now, vix_ratio=vix_ratio)
         except Exception as e:  # noqa: BLE001
             logger.warning("[GammaAlerts] record_intraday_gamma failed: %r", e)
 
