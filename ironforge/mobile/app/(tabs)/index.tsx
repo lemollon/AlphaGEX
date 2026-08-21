@@ -258,7 +258,16 @@ function AgentTile({
                 </Text>
                 <Money value={trade.unrealized_pnl} size="title" />
               </View>
-              <Stepper step={state?.timeline_step ?? null} accent={accent} />
+              {/*
+                "Live" only while the position is genuinely being monitored. Showing it
+                on Target/Stop or Auto Close would claim the trade is still running
+                after it has resolved.
+              */}
+              <Stepper
+                step={state?.timeline_step ?? null}
+                accent={accent}
+                caption={state?.timeline_step === 1 ? 'Live' : null}
+              />
             </>
           )}
         </>
@@ -287,8 +296,23 @@ function stepLabel(step: number | null): string {
   return STEP_LABELS[i]
 }
 
-/** Opened → Monitoring → Target/Stop → Auto Close, driven by CustomerState.timeline_step. */
-function Stepper({ step, accent }: { step: number | null; accent: string }) {
+/**
+ * Opened → Monitoring → Target/Stop → Auto Close, driven by CustomerState.timeline_step.
+ *
+ * UX-002 puts a small caption under the step the trade is actually sitting on — "Live"
+ * while it is being watched. Without it the active ring and a completed dot look nearly
+ * identical at a glance, which is the one thing a customer opens this screen to tell
+ * apart: is it working right now, or is it done?
+ */
+function Stepper({
+  step,
+  accent,
+  caption,
+}: {
+  step: number | null
+  accent: string
+  caption?: string | null
+}) {
   const current = step ?? 0
   return (
     <View style={s.stepper}>
@@ -307,6 +331,11 @@ function Stepper({ step, accent }: { step: number | null; accent: string }) {
             >
               {l}
             </Text>
+            {active && caption ? (
+              <Text style={[type.label, { color: accent, marginTop: 1, textAlign: 'center' }]}>
+                {caption}
+              </Text>
+            ) : null}
           </View>
         )
       })}
