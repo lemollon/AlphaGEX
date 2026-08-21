@@ -250,16 +250,7 @@ function AgentTile({
       ) : trade?.active ? (
         <>
           <View style={s.divider} />
-          {showChart ? (
-            <PnlChart
-              series={trade.spark_series}
-              accent={accent}
-              status={stepLabel(state?.timeline_step ?? null)}
-              current={trade.unrealized_pnl}
-            />
-          ) : (
-            <>
-              {/*
+          {/*
                 UX-002 draws a rail PER TRADE, and there can be more than one: SPARK
                 swings, so a leg opened yesterday is still open beside today's. The
                 scalar fields only ever describe positions[0], which is exactly how the
@@ -279,8 +270,19 @@ function AgentTile({
                     // agent state describes it. Every other open leg is, by definition
                     // of still being open, being monitored.
                     step={i === 0 ? (state?.timeline_step ?? 1) : 1}
+                    showChart={showChart}
                   />
                 ))
+              ) : showChart ? (
+                // Legacy path: no per-position payload, so the only series available is
+                // the agent's whole day. Correct when one trade is open, which is the
+                // only case that can reach here.
+                <PnlChart
+                  series={trade.spark_series}
+                  accent={accent}
+                  status={stepLabel(state?.timeline_step ?? null)}
+                  current={trade.unrealized_pnl}
+                />
               ) : (
                 <>
                   <View style={s.rowBetween}>
@@ -296,8 +298,6 @@ function AgentTile({
                   />
                 </>
               )}
-            </>
-          )}
         </>
       ) : trade?.today_result ? (
         <>
@@ -329,12 +329,19 @@ function TradeRow({
   position,
   accent,
   step,
+  showChart,
 }: {
   index: number
   position: LiveOpenPosition
   accent: string
   step: number | null
+  showChart: boolean
 }) {
+  // Each trade draws its OWN series. Falls back to the rail when this position has no
+  // marks yet — a position opened before the scanner started recording them has
+  // nothing to plot, and an empty chart frame says less than the rail does.
+  const series = position.series ?? []
+  const chart = showChart && series.length > 1
   return (
     <View style={index > 0 ? { marginTop: space.lg } : undefined}>
       <View style={s.rowBetween}>
@@ -351,7 +358,16 @@ function TradeRow({
         {/* null P&L renders as "—", never $0.00 — quotes were unavailable, not flat. */}
         <Money value={position.unrealized_pnl} size="title" />
       </View>
-      <Stepper step={step} accent={accent} caption={step === 1 ? 'Live' : null} />
+      {chart ? (
+        <PnlChart
+          series={series}
+          accent={accent}
+          status={stepLabel(step)}
+          current={position.unrealized_pnl}
+        />
+      ) : (
+        <Stepper step={step} accent={accent} caption={step === 1 ? 'Live' : null} />
+      )}
     </View>
   )
 }

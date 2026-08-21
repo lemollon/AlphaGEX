@@ -442,6 +442,44 @@ export async function getLiveTrade(
   // Priced in parallel: each position needs its own mark-to-market, and they are
   // independent.
   const ctTodayDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+
+  // Per-position marks for today, minute-bucketed — the per-trade chart.
+  //
+  // One query for every open position rather than one per position: this runs on a
+  // page poll, and the positions are already being priced against Tradier in parallel
+  // just below. Rows only exist from the moment the scanner started recording them,
+  // so an older position legitimately comes back empty.
+  const openIds = positionRows.map((p) => String(p.position_id ?? '')).filter(Boolean)
+  const seriesByPosition = new Map<string, Array<{ timestamp: string; pnl: number }>>()
+  if (openIds.length > 0) {
+    try {
+      const idList = openIds.map((id) => `'${escapeSql(id)}'`).join(',')
+      const rows = await dbQuery(
+        `SELECT position_id,
+                date_trunc('minute', snapshot_time) AS bucket,
+                AVG(unrealized_pnl) AS pnl
+           FROM ${botTable(BOT, 'position_snapshots')}
+          WHERE position_id IN (${idList})
+            AND (snapshot_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
+            AND unrealized_pnl IS NOT NULL
+          GROUP BY position_id, bucket
+          ORDER BY bucket ASC`,
+      )
+      for (const r of rows) {
+        const id = String(r.position_id)
+        if (!seriesByPosition.has(id)) seriesByPosition.set(id, [])
+        seriesByPosition.get(id)!.push({
+          timestamp: String(r.bucket),
+          pnl: Math.round(num(r.pnl) * 100) / 100,
+        })
+      }
+    } catch {
+      // The table is created on first use; a bot that has not scanned since the
+      // change simply has no chart yet. An empty series is the correct answer, and
+      // it must never take the whole Live page down with it.
+    }
+  }
+
   const positions: LiveOpenPosition[] = await Promise.all(
     positionRows.map(async (p): Promise<LiveOpenPosition> => {
       const pContracts = int(p.contracts)
@@ -493,6 +531,7 @@ export async function getLiveTrade(
       const collateral = num(p.collateral_required)
 
       return {
+        series: seriesByPosition.get(String(p.position_id ?? '')) ?? [],
         position_id: String(p.position_id ?? ''),
         opened_at: pOpened ? pOpened.toISOString() : null,
         opened_date_label: pOpened
