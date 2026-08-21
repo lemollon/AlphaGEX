@@ -1,29 +1,18 @@
 import { useEffect, useState } from 'react'
-import {
-  View,
-  Text,
-  ScrollView,
-  Pressable,
-  Switch,
-  StyleSheet,
-  Alert,
-  Linking,
-  Platform,
-} from 'react-native'
+import { View, Text, ScrollView, Pressable, Switch, StyleSheet, Alert, Linking } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import * as WebBrowser from 'expo-web-browser'
 import { useRouter } from 'expo-router'
 import useSWR from 'swr'
 import Constants from 'expo-constants'
-import { api, API_BASE } from '@/api/client'
+import { api, API_BASE, ApiError } from '@/api/client'
 import type { MobileMe, MembershipResponse } from '@/api/types'
 import { signOut, biometricsAvailable, isBiometricEnabled, setBiometricEnabled } from '@/auth/session'
 import { color, space, radius, type, font } from '@/theme/tokens'
 import { Card, SectionLabel, Row, Loading, ErrorState } from '@/components/ui'
 import { AppHeader, SPARKY_AVATAR } from '@/components/Brand'
 import { SUPPORT_EMAIL, supportMailto } from '@/support/contact'
-import { canManageBillingInApp } from '@/billing/store-policy'
 import { BrokerageSection } from '@/components/BrokerageSection'
 
 /**
@@ -76,7 +65,10 @@ export default function AccountScreen() {
       if (res.url) await WebBrowser.openBrowserAsync(res.url)
       mutate()
     } catch (e) {
-      Alert.alert('Billing unavailable', (e as Error).message)
+      // `portal_unconfigured` is the server refusing to open the plan-changing default
+      // portal for a mobile client. Deliberately does NOT point anyone at the web to go
+      // and pay — that would be the call to action the refusal exists to avoid.
+      Alert.alert('Billing unavailable', e instanceof ApiError ? e.humanMessage : (e as Error).message)
     }
   }
 
@@ -209,25 +201,21 @@ export default function AccountScreen() {
               You do not have an active membership.
             </Text>
           )}
-          {canManageBillingInApp(Platform.OS) ? (
-            <>
-              <Pressable onPress={openBilling} style={s.outlineBtn}>
-                <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
-                  Manage Membership and Billing
-                </Text>
-              </Pressable>
-              <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
-                Securely managed through Stripe
-              </Text>
-            </>
-          ) : (
-            // No button, and deliberately no URL either. A line telling an iOS customer
-            // where to go and pay is itself a call to action under 3.1.1; the status
-            // above is account information, which is not.
-            <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
-              Membership is managed from your IronForge account on the web.
+          {/*
+            APP-039, Must Have, MVP. Present on every platform — the 3.1.1 problem was
+            never this button, it was WHICH portal the server opened: Stripe's default
+            configuration permits changing plan. The route now serves mobile a
+            configuration with subscription updates disabled, and refuses rather than
+            falling back to the default one. See api/billing/portal/route.ts.
+          */}
+          <Pressable onPress={openBilling} style={s.outlineBtn}>
+            <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+              Manage Membership and Billing
             </Text>
-          )}
+          </Pressable>
+          <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
+            Securely managed through Stripe
+          </Text>
         </Card>
 
         <BrokerageSection />

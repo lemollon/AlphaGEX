@@ -478,10 +478,20 @@ export async function retrieveCheckoutSession(id: string): Promise<any> {
 export async function createBillingPortalSession(opts: {
   customerId: string
   returnUrl: string
+  /**
+   * A Stripe portal configuration id (`bpc_...`). Omitted, Stripe serves the account's
+   * DEFAULT portal, which permits CHANGING PLAN — and a plan change reachable from
+   * inside the iOS app is a purchasing mechanism under App Review Guideline 3.1.1.
+   *
+   * Mobile callers must therefore pass a configuration with subscription updates
+   * disabled. The route enforces that; this signature only carries it.
+   */
+  configuration?: string
 }): Promise<{ url: string }> {
   const session = await stripeRequest<{ url: string }>('POST', '/billing_portal/sessions', {
     customer: opts.customerId,
     return_url: opts.returnUrl,
+    ...(opts.configuration ? { configuration: opts.configuration } : {}),
   })
   return { url: session.url }
 }
