@@ -22,6 +22,21 @@ from typing import Any
 
 # Match SPARK's hardcoded scanner defaults (ironforge/webapp/src/lib/scanner.ts).
 MIN_CREDIT = 0.25
+# 🚨 A CEILING, NOT JUST A FLOOR. The only upper bound used to be
+# `credit < wing_width` (otherwise max loss goes negative), which on a $5 wing
+# admits anything up to $4.99. That is nowhere near tight enough to catch a bad
+# quote: on 2026-08-18 FLOW booked a 2.81 credit on a $5 wing - 56% of the width
+# - because the 763 put came back at 2.75 when the 764 put two minutes later was
+# 0.695. A lower-strike put cannot cost 4x a higher-strike one; the quote was
+# garbage, and the phantom credit made the position look instantly profitable,
+# so the profit-target logic closed it ONE MINUTE after entry and booked +$5,319
+# on a trade that was really about -$500.
+#
+# Real 1DTE condors at sd_mult 1.2 collect 13-18% of the width (measured across
+# every other FLOW fill). 40% is far above anything legitimate and far below the
+# 56% that got through, so it rejects the data error without touching a real
+# signal. A rejection is logged and surfaced, never silent.
+MAX_CREDIT_FRAC_OF_WIDTH = 0.40
 MAX_VIX = 32.0
 MIN_FLIP_DIST = 1.0
 SPREAD_WIDTH = 5  # $5 wings — symmetric IC
@@ -158,6 +173,17 @@ def build_iron_condor_signal(
         return _reject(f"credit_too_low: credit={credit:.2f} min={MIN_CREDIT}")
 
     wing_width = spread_width
+    # ⛔ CHECKED BEFORE SIZING. An inflated credit does not just misprice the
+    # trade, it inflates max_profit and shrinks max_loss, which feeds straight
+    # into the contract count - so a bad quote buys MORE of the bad trade.
+    if credit > MAX_CREDIT_FRAC_OF_WIDTH * wing_width:
+        return _reject(
+            f"credit_implausible: credit={credit:.2f} is "
+            f"{100 * credit / wing_width:.0f}% of the {wing_width:.0f}-wide wing "
+            f"(max {100 * MAX_CREDIT_FRAC_OF_WIDTH:.0f}%). Legs: "
+            f"sp={sp_mid:.2f} sc={sc_mid:.2f} lp={lp_mid:.2f} lc={lc_mid:.2f} "
+            f"— almost certainly a bad quote, not an opportunity."
+        )
     max_profit_per = credit * 100.0
     max_loss_per = (wing_width - credit) * 100.0
     if max_loss_per <= 0:
