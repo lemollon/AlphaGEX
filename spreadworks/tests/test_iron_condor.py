@@ -26,7 +26,13 @@ def _chain(
         d = abs(s - spot)
         intrinsic_put = max(0, s - spot)
         intrinsic_call = max(0, spot - s)
-        extrinsic = max(0.2, 3.0 - 0.25 * d)
+        # 🚨 DECAY LIKE A REAL 1DTE. The old curve (3.0 − 0.25·d) fell so
+        # slowly it manufactured a 2.50 credit on a $5 wing — 50% of the width.
+        # Every real FLOW fill collects 13–18%, and the 2026-08-18 bad-quote
+        # incident that prompted the credit ceiling collected 56%. A fixture
+        # sitting between the two makes a genuinely implausible price look
+        # normal, which is exactly the class of bug these tests should catch.
+        extrinsic = max(0.05, 1.2 - 0.075 * d)
         put_mid = intrinsic_put + extrinsic
         call_mid = intrinsic_call + extrinsic
         options.append({"strike": s, "type": "put", "bid": put_mid - 0.05, "ask": put_mid + 0.05})
