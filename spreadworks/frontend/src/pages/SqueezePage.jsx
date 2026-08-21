@@ -25,6 +25,14 @@ const S = {
   th: { textAlign: 'left', color: DIM, fontSize: 12, padding: '6px 10px' },
   td: { padding: '6px 10px', fontSize: 13, borderTop: '1px solid #1c2233' },
   small: { fontSize: 11, color: DIM },
+  // ⛔ CAPTIONS ARE NOT LABELS AND MUST NOT SHARE A SIZE WITH THEM. S.small is
+  // 11px, which is right for a tile label you glance at and wrong for four
+  // sentences you actually have to read. Every "how to read this" block was
+  // rendering explanatory prose at label size, so the text carrying all the
+  // meaning was the hardest text on the page to read. Bigger, roomier, and a
+  // lighter ink than DIM so it reads as body copy rather than a footnote.
+  caption: { fontSize: 13, color: '#a8afc0', lineHeight: 1.75 },
+
   tile: { flex: '1 1 160px', background: '#0e1220', border: '1px solid #232a3d', borderRadius: 10, padding: '12px 14px' },
   tileLabel: { fontSize: 11, color: DIM, marginBottom: 4 },
   tileValue: { fontSize: 22, fontWeight: 700 },
@@ -527,7 +535,7 @@ export default function SqueezePage() {
                true. The entry is 10:05 CT and the real strike derives from
                spot at that moment; anything computed off the prior close is
                indicative and has to say so. */
-            <div style={{ ...S.small, marginTop: 6 }}>
+            <div style={{ ...S.caption, marginTop: 6 }}>
               Strikes from spot {data.ticket.spot} ({data.ticket.spot_source})
               {data.ticket.spot_source !== 'live' &&
                 ' — indicative. Re-derive from spot at 10:05 CT before sending.'}
@@ -936,7 +944,7 @@ export default function SqueezePage() {
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
-                  <div style={{ ...S.small, marginTop: 8, lineHeight: 1.65 }}>
+                  <div style={{ ...S.caption, marginTop: 8 }}>
                     <b style={{ color: '#8b95ab' }}>How to read this.</b>{' '}
                     <b style={{ color: '#60a5fa' }}>The blue line — "net gamma ($B)" in the key —</b>{' '}
                     is how many billions of dollars of SPY the dealers have to buy or sell to stay
@@ -970,14 +978,14 @@ export default function SqueezePage() {
                     </span>
                   </div>
                   {maxRow && (
-                    <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6 }}>
+                    <div style={{ ...S.caption, marginTop: 8 }}>
                       The highest reading on this chart is {bn(maxRow.net_gex_b)} on {maxRow.trade_date}. Options
                       that expire within a day carry enormous gamma per contract, so one session with a 1-day
                       expiry on the board can set the top of the range — and push every reading below it down
                       the rankings until that day drops out of the trailing 60.
                     </div>
                   )}
-                  <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6 }}>
+                  <div style={{ ...S.caption, marginTop: 8 }}>
                     This number is worked out from the full option chain, not copied from a data vendor's
                     "flip point". Those two disagree often — saying SPY is below the flip point matches
                     "net gamma below zero" only 52.4% of the time on the watchtower feed and 45.0% on the
@@ -1050,7 +1058,7 @@ export default function SqueezePage() {
                     </ResponsiveContainer>
                   </div>
                 ) : <div style={S.small}>no VIX history yet</div>}
-                <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6 }}>
+                <div style={{ ...S.caption, marginTop: 8 }}>
                   <b style={{ color: '#8b95ab' }}>How to read this.</b>{' '}
                   <b style={{ color: '#f0abfc' }}>The pink line — "VIX ratio" in the key —</b> is today's
                   VIX divided by the highest VIX of the last 20 sessions. 1.00 means today is the most
@@ -1071,7 +1079,7 @@ export default function SqueezePage() {
                     fired below 15 — so this leg is not quietly passing in calm markets.
                   </span>
                 </div>
-                <div style={{ ...S.small, marginTop: 8 }}>
+                <div style={{ ...S.caption, marginTop: 8 }}>
                   There are two lines drawn on this same ratio, and they are not the same rule.{' '}
                   <b style={{ color: AMBER }}>0.95 (dashed amber)</b> is this page's advisory squeeze leg.{' '}
                   <b style={{ color: '#7dd3fc' }}>0.90 (dashed light blue)</b> is the gate EBB uses with real
@@ -1231,11 +1239,11 @@ export default function SqueezePage() {
             {data.jobs?.reason && (
               <div style={{ ...S.small, color: GREY, marginTop: 8 }}>{data.jobs.reason}</div>
             )}
-            <div style={{ ...S.small, marginTop: 8 }}>
+            <div style={{ ...S.caption, marginTop: 8 }}>
               The signal updates once per session at 15:05 CT. Sessions with no captured reading leave
               a permanent hole in the 60-session percentile window.
             </div>
-            <div style={{ ...S.small, marginTop: 4 }}>
+            <div style={{ ...S.caption, marginTop: 4 }}>
               The morning alert only fires when the verdict is not NEUTRAL — a quiet day is silent by design.
             </div>
           </Collapse>
@@ -1259,7 +1267,7 @@ export default function SqueezePage() {
                   <div style={{ fontSize: 13, color: '#c6cbd8' }}>
                     No settled sessions yet. The first decision is recorded at the 08:05 CT
                     alert and settles at that session's close.
-                    <div style={{ ...S.small, marginTop: 6 }}>
+                    <div style={{ ...S.caption, marginTop: 6 }}>
                       Until this fills, every number on this page is a backtest.
                     </div>
                   </div>
@@ -1328,7 +1336,7 @@ export default function SqueezePage() {
                     </div>
                   </div>
                 )}
-                <div style={{ ...S.small, marginTop: 8 }}>
+                <div style={{ ...S.caption, marginTop: 8 }}>
                   Dollars come from the 10:05 CT entry quote, crossing the spread the way the
                   backtest measured it — short sold at the bid, long bought at the ask. Mid-to-mid
                   would flatter every entry by exactly what a real order gives up.
@@ -1378,7 +1386,7 @@ export default function SqueezePage() {
                 </tbody>
               </table>
             </div>
-            <div style={{ ...S.small, marginTop: 10, lineHeight: 1.6 }}>
+            <div style={{ ...S.caption, marginTop: 10 }}>
               Measured over 1,604 sessions. <b style={{ color: '#c6cbd8' }}>Every one of the 161
               SQUEEZE_WATCH days is a day EBB would already have skipped</b> — a strict subset,
               not a correlation. So do NOT run both as two sell-side vetoes: that applies one
@@ -1535,7 +1543,7 @@ export default function SqueezePage() {
                     $1,000 the account can afford just 14 of 61 squeeze signals, which is a different
                     strategy rather than a cheaper one. Both sides together need about $5,000.
                   </div>
-                  <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6 }}>
+                  <div style={{ ...S.caption, marginTop: 8 }}>
                     Neither trade has been forward-tested. The sell side has a blind out-of-sample
                     decade behind it; the buy side is the best of 48 structures searched.
                   </div>
@@ -1579,7 +1587,7 @@ export default function SqueezePage() {
               Monotone, zero squeezes in the top quartile. Overbought gamma is NOT a crash signal —
               it is the safest measured state to sell premium.
             </div>
-            <div style={{ ...S.small, marginTop: 8 }}>
+            <div style={{ ...S.caption, marginTop: 8 }}>
               Neither threshold is the best-fitting one. Bottom-decile squeeze rate is 7.8–11.4% at every
               lookback from 30 to 252 sessions and monotone at all of them; 60 shipped, but 120 scores
               better. Every percentile cut from 0.05 to 0.30 gives a 2.5–3.4x lift; 0.20 shipped, but 0.15
