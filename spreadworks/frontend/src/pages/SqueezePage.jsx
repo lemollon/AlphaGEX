@@ -1101,25 +1101,124 @@ export default function SqueezePage() {
                   )}
                 </div>
                 {pts.length >= 2 ? (
-                  <div style={{ width: '100%', height: 190, overflowX: 'auto', minWidth: 0 }}>
-                    <ResponsiveContainer>
-                      <ComposedChart data={pts} margin={{ top: 8, right: 12, left: -8, bottom: 0 }}>
-                        <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#5b6478' }}
-                               interval="preserveStartEnd" minTickGap={40} />
-                        <YAxis tick={{ fontSize: 10, fill: '#5b6478' }}
-                               tickFormatter={(v) => `${v.toFixed(0)}B`} />
-                        <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }}
-                                 formatter={(v) => [`$${Number(v).toFixed(2)}B`, 'net gamma']} />
-                        <ReferenceLine y={0} stroke="#232a3d" />
-                        {data.outlook?.oversold_trigger_b != null && (
-                          <ReferenceLine y={data.outlook.oversold_trigger_b} stroke={AMBER}
-                                         strokeDasharray="3 3" />
+                  (() => {
+                    // THE Y-DOMAIN MUST CONTAIN THE TRIGGERS. A bare autoscale
+                    // fits the day's wiggle and pushes the oversold line clean
+                    // off the chart, so the one number that decides the zone is
+                    // invisible exactly when gamma is nowhere near it - and a
+                    // 0.4B drift then looks identical to a real move toward the
+                    // trigger. Triggers stay in frame; the wiggle scales around
+                    // them, which is what makes the chart answer "how close am
+                    // I" instead of "what shape was today".
+                    const os = data.outlook?.oversold_trigger_b;
+                    const ob = data.outlook?.overbought_trigger_b;
+                    const gs = pts.map((r) => r.net_gex_b).filter((v) => v != null);
+                    const cand = [...gs, os, ob, 0].filter((v) => v != null);
+                    const lo = Math.min(...cand), hi = Math.max(...cand);
+                    const pad = Math.max(0.4, (hi - lo) * 0.12);
+                    const last = pts[pts.length - 1];
+                    const first = pts[0];
+                    const prior = data.net_gex_b;   // the 15:05 reading in force
+                    const dayMove = last?.net_gex_b != null && first?.net_gex_b != null
+                      ? last.net_gex_b - first.net_gex_b : null;
+                    const spotMove = last?.spot != null && first?.spot != null
+                      ? last.spot - first.spot : null;
+                    return (
+                      <>
+                      <div style={{ width: '100%', height: 250, overflowX: 'auto', minWidth: 0 }}>
+                        <ResponsiveContainer>
+                          <ComposedChart data={pts} margin={{ top: 12, right: 58, left: -8, bottom: 0 }}>
+                            {/* Zones drawn the way the daily chart draws them,
+                                so both charts read in one visual language. */}
+                            {os != null && (
+                              <ReferenceArea y1={lo - pad} y2={os} yAxisId="g"
+                                             fill={AMBER} fillOpacity={0.09} />
+                            )}
+                            {ob != null && (
+                              <ReferenceArea y1={ob} y2={hi + pad} yAxisId="g"
+                                             fill={GREEN} fillOpacity={0.09} />
+                            )}
+                            <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#5b6478' }}
+                                   interval="preserveStartEnd" minTickGap={40} />
+                            <YAxis yAxisId="g" domain={[lo - pad, hi + pad]}
+                                   tick={{ fontSize: 10, fill: '#5b6478' }}
+                                   tickFormatter={(v) => `${v.toFixed(0)}B`} />
+                            {/* Spot on the right, because net gamma measured AT
+                                SPOT is partly a price proxy - seeing the two
+                                together is what stops a slide down a fixed
+                                curve from reading as dealers repositioning. */}
+                            <YAxis yAxisId="px" orientation="right" hide
+                                   domain={['dataMin - 0.6', 'dataMax + 0.6']} />
+                            <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }}
+                                     labelFormatter={(l) => `${l} CT`}
+                                     formatter={(v, n) => [n === 'SPY'
+                                       ? `$${Number(v).toFixed(2)}`
+                                       : `$${Number(v).toFixed(2)}B`, n]} />
+                            <ReferenceLine yAxisId="g" y={0} stroke="#232a3d" />
+                            {prior != null && (
+                              <ReferenceLine yAxisId="g" y={prior} stroke="#8b93a7"
+                                             strokeDasharray="2 4"
+                                             label={{ value: `15:05 ${signedBn(prior)}`,
+                                                      position: 'insideTopLeft',
+                                                      fill: '#8b93a7', fontSize: 9.5 }} />
+                            )}
+                            {os != null && (
+                              <ReferenceLine yAxisId="g" y={os} stroke={AMBER} strokeDasharray="3 3"
+                                             label={{ value: `oversold ${signedBn(os)}`,
+                                                      position: 'insideBottomLeft',
+                                                      fill: AMBER, fontSize: 9.5 }} />
+                            )}
+                            {ob != null && ob <= hi + pad && (
+                              <ReferenceLine yAxisId="g" y={ob} stroke={GREEN} strokeDasharray="3 3"
+                                             label={{ value: `overbought ${signedBn(ob)}`,
+                                                      position: 'insideTopLeft',
+                                                      fill: GREEN, fontSize: 9.5 }} />
+                            )}
+                            <Line yAxisId="px" dataKey="spot" name="SPY" stroke="#d6d3d1"
+                                  strokeWidth={1} dot={false} isAnimationActive={false}
+                                  connectNulls />
+                            <Line yAxisId="g" dataKey="net_gex_b" name="net gamma ($B)"
+                                  stroke={LIVE} strokeWidth={2} dot={false}
+                                  isAnimationActive={false} connectNulls
+                                  label={({ index, x, y }) => (index === pts.length - 1 ? (
+                                    <text x={Number(x) + 6} y={Number(y) + 4} fill={LIVE}
+                                          fontSize={11} fontWeight={700}>
+                                      {signedBn(last.net_gex_b)}
+                                    </text>
+                                  ) : null)} />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </div>
+                      {/* The one line the chart exists to produce. Distance to
+                          the trigger is the decision; the shape is context. */}
+                      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap',
+                                    marginTop: 8, fontSize: 12 }}>
+                        <span style={{ color: DIM }}>
+                          since 08:30 gamma{' '}
+                          <b style={{ color: dayMove == null ? DIM
+                                             : dayMove < 0 ? AMBER : GREEN }}>
+                            {dayMove == null ? '—'
+                              : `${dayMove < 0 ? '−' : '+'}$${Math.abs(dayMove).toFixed(2)}B`}
+                          </b>
+                          {spotMove != null && (
+                            <> · SPY <b style={{ color: '#c6cbd8' }}>
+                              {spotMove < 0 ? '−' : '+'}${Math.abs(spotMove).toFixed(2)}
+                            </b></>
+                          )}
+                        </span>
+                        {os != null && last?.net_gex_b != null && (
+                          <span style={{ color: DIM }}>
+                            {last.net_gex_b <= os
+                              ? <b style={{ color: AMBER }}>through the oversold trigger right now</b>
+                              : <>still <b style={{ color: '#c6cbd8' }}>
+                                  ${(last.net_gex_b - os).toFixed(2)}B
+                                </b> above the oversold trigger</>}
+                          </span>
                         )}
-                        <Line dataKey="net_gex_b" name="net gamma ($B)" stroke={LIVE}
-                              strokeWidth={1.8} dot={false} isAnimationActive={false} />
-                      </ComposedChart>
-                    </ResponsiveContainer>
-                  </div>
+                      </div>
+                      </>
+                    );
+                  })()
                 ) : (
                   <div style={{ ...S.caption, marginTop: 6 }}>
                     {ipath?.reason || 'Nothing recorded yet today — points land every 10 minutes '
@@ -1127,9 +1226,18 @@ export default function SqueezePage() {
                   </div>
                 )}
                 <div style={{ ...S.caption, marginTop: 10 }}>
-                  <b style={{ color: '#8b95ab' }}>What this is.</b> Net dealer gamma recomputed
-                  from the live option chain every 10 minutes through the session, so you can see
-                  what it did today rather than only where it closed.
+                  <b style={{ color: '#8b95ab' }}>How to read it.</b> The{' '}
+                  <b style={{ color: LIVE }}>purple line</b> is net dealer gamma, recomputed from
+                  the live chain every 10 minutes. The <b style={{ color: '#d6d3d1' }}>pale
+                  line</b> is SPY on a hidden right axis — it is there because net gamma measured
+                  AT SPOT moves when spot moves, so the two together tell you whether dealers
+                  repositioned or price just slid down a fixed curve.
+                  <br />
+                  The <b style={{ color: AMBER }}>amber band</b> is the oversold zone, the{' '}
+                  <b style={{ color: GREEN }}>green band</b> overbought — same thresholds as the
+                  daily chart. The <b style={{ color: '#8b93a7' }}>grey dashed line</b> is the
+                  15:05 reading the verdict is currently using, so the gap between it and the
+                  purple line is how far today has travelled from the number in force.
                   <br />
                   <b style={{ color: '#c6cbd8' }}>What it is not.</b> The signal above is the 15:05
                   CT reading and that is the one with seven years behind it. Sampled intraday,
