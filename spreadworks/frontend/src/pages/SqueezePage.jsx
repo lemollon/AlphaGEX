@@ -226,6 +226,7 @@ export default function SqueezePage() {
   const [loadedAt, setLoadedAt] = useState(null);
   const [tape, setTape] = useState(null);
   const [intraday, setIntraday] = useState(null);
+  const [ipath, setIpath] = useState(null);
   const [intradayErr, setIntradayErr] = useState(null);
   const [rangeN, setRangeN] = useState(DEFAULT_RANGE);
 
@@ -263,6 +264,11 @@ export default function SqueezePage() {
     const load = async () => {
       if (document.visibilityState !== 'visible') return;
       try {
+        // Today's stored 10-minute gamma path. Cheap — served from the table
+        // the scheduled job writes, never a live chain pull.
+        fetch(`${API_URL}/api/spreadworks/squeeze/intraday-path`)
+          .then((x) => x.json()).then((t) => { if (live) setIpath(t); })
+          .catch(() => {});
         const r = await fetch(`${API_URL}/api/spreadworks/squeeze/intraday`);
         const d = await r.json();
         if (live) { setIntraday(d); setIntradayErr(null); }
@@ -999,6 +1005,76 @@ export default function SqueezePage() {
               );
             })() : <div style={S.small}>no history yet — needs the 15:05 CT capture job to run and 60 sessions before the percentile is defined</div>}
           </div>
+
+          {/* ── TODAY'S INTRADAY GAMMA PATH ───────────────────────────────
+              🚨 A SEPARATE CHART ON PURPOSE. The daily chart above is one
+              point per session and IS the signal. This is a 10-minute path
+              through today and is NOT — an intraday sample lands in the wrong
+              percentile zone 21.6% of the time against its own close. Drawing
+              them on one axis would invite reading the wiggle as a verdict. */}
+          {(() => {
+            const rows = (ipath?.rows || []).filter((r) => r.net_gex_b != null);
+            const today = rows.length ? rows[rows.length - 1].trade_date : null;
+            const pts = rows.filter((r) => r.trade_date === today)
+              .map((r) => ({ ...r,
+                label: `${String(Math.floor(r.minute_ct / 60)).padStart(2, '0')}:`
+                     + `${String(r.minute_ct % 60).padStart(2, '0')}` }));
+            return (
+              <div style={S.card}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={S.cardTitle}>Gamma through today — every 10 minutes</span>
+                  <span style={{
+                    fontSize: 9.5, fontWeight: 700, letterSpacing: '.08em',
+                    padding: '2px 7px', borderRadius: 999, color: DIM,
+                    border: `1px solid ${DIM}55`,
+                  }}>CONTEXT — NOT THE SIGNAL</span>
+                  {pts.length > 0 && (
+                    <span style={{ ...S.small, marginLeft: 'auto' }}>
+                      {today} · {pts.length} readings · last {pts[pts.length - 1].label} CT
+                    </span>
+                  )}
+                </div>
+                {pts.length >= 2 ? (
+                  <div style={{ width: '100%', height: 190, overflowX: 'auto', minWidth: 0 }}>
+                    <ResponsiveContainer>
+                      <ComposedChart data={pts} margin={{ top: 8, right: 12, left: -8, bottom: 0 }}>
+                        <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#5b6478' }}
+                               interval="preserveStartEnd" minTickGap={40} />
+                        <YAxis tick={{ fontSize: 10, fill: '#5b6478' }}
+                               tickFormatter={(v) => `${v.toFixed(0)}B`} />
+                        <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }}
+                                 formatter={(v) => [`$${Number(v).toFixed(2)}B`, 'net gamma']} />
+                        <ReferenceLine y={0} stroke="#232a3d" />
+                        {data.outlook?.oversold_trigger_b != null && (
+                          <ReferenceLine y={data.outlook.oversold_trigger_b} stroke={AMBER}
+                                         strokeDasharray="3 3" />
+                        )}
+                        <Line dataKey="net_gex_b" name="net gamma ($B)" stroke={LIVE}
+                              strokeWidth={1.8} dot={false} isAnimationActive={false} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div style={{ ...S.caption, marginTop: 6 }}>
+                    {ipath?.reason || 'Nothing recorded yet today — points land every 10 minutes '
+                      + 'between 08:30 and 15:00 CT.'}
+                  </div>
+                )}
+                <div style={{ ...S.caption, marginTop: 10 }}>
+                  <b style={{ color: '#8b95ab' }}>What this is.</b> Net dealer gamma recomputed
+                  from the live option chain every 10 minutes through the session, so you can see
+                  what it did today rather than only where it closed.
+                  <br />
+                  <b style={{ color: '#c6cbd8' }}>What it is not.</b> The signal above is the 15:05
+                  CT reading and that is the one with seven years behind it. Sampled intraday,
+                  gamma lands in a different percentile zone than its own close{' '}
+                  <b style={{ color: '#c6cbd8' }}>21.6% of the time</b>, and about 5% of sessions
+                  would flash an “oversold” here that the close then takes back. Watch it; do not
+                  trade off it.
+                </div>
+              </div>
+            );
+          })()}
 
           {/* VIX LEG CHART */}
           {(() => {
