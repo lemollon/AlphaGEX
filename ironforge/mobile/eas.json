@@ -34,13 +34,17 @@
       "android": {
         "buildType": "app-bundle"
       }
+    },
+    "production-local": {
+      "extends": "production",
+      "credentialsSource": "local"
     }
   },
   "submit": {
     "production": {
       "ios": {
         "appleId": "lemollon@icloud.com",
-        "ascAppId": "REPLACE_AFTER_CREATING_APP_IN_APP_STORE_CONNECT",
+        "ascAppId": "6804037937",
         "appleTeamId": "NDQD9S95ZK"
       },
       "android": {

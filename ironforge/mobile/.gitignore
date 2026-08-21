@@ -16,3 +16,10 @@ google-play-service-account.json
 *.jks
 *.keystore
 *.p12
+
+# eas-cli local credentials. Holds the .p12 passphrase in plain text and points at the
+# distribution private key. `*.p12` below is already ignored, but this file is the one
+# that makes the key USABLE, and it is created at the repo root where a `git add -A` in
+# a shared worktree would happily take it.
+credentials.json
+*.mobileprovision
