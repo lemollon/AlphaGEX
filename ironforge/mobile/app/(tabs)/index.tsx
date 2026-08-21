@@ -11,6 +11,7 @@ import { Card, Money, Balance, SectionLabel, Loading, Empty, ErrorState } from '
 import { AppHeader, Mascot } from '@/components/Brand'
 import { PnlChart } from '@/components/PnlChart'
 import { brokerLabel, soleConnection } from '@/api/brokerage'
+import { totalCapital } from '@/live/capital'
 
 /**
  * Forge — UX-002 (APP-011/012/013/016) and UX-003 (APP-051).
@@ -133,36 +134,6 @@ export default function ForgeScreen() {
       </ScrollView>
     </Shell>
   )
-}
-
-/**
- * The headline number across every agent.
- *
- * Summing is only honest when every agent reported an account AND they are all the same
- * mode: adding a paper balance to a production balance produces a number that is part
- * pretend, which on a trading dashboard is the worst kind of wrong. Anything else falls
- * back to the viewer's own account from /api/live/summary and says what it is showing.
- */
-function totalCapital(
-  list: LiveAgent[],
-  summary: LiveSummary,
-): { value: number | null; note: string | null } {
-  const accounts = list.map((a) => a.account).filter((x): x is NonNullable<typeof x> => !!x)
-  if (list.length > 1 && accounts.length === list.length) {
-    const modes = new Set(accounts.map((a) => a.mode))
-    const values = accounts.map((a) => a.value).filter((v): v is number => v != null)
-    if (modes.size === 1 && values.length === accounts.length) {
-      return {
-        value: values.reduce((t, v) => t + v, 0),
-        note: `Across ${accounts.length} accounts`,
-      }
-    }
-    return {
-      value: summary.account.value,
-      note: 'One account shown — your agents run on different account types.',
-    }
-  }
-  return { value: summary.account.value, note: null }
 }
 
 function Period({ label, value }: { label: string; value: number | null }) {

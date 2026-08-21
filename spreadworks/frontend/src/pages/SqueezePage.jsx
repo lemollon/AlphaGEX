@@ -944,7 +944,7 @@ export default function SqueezePage() {
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
-                  <div style={{ ...S.caption, marginTop: 10 }}>
+                  <div style={{ ...S.caption, marginTop: 8 }}>
                     <b style={{ color: '#8b95ab' }}>How to read this.</b>{' '}
                     <b style={{ color: '#60a5fa' }}>The blue line — "net gamma ($B)" in the key —</b>{' '}
                     is how many billions of dollars of SPY the dealers have to buy or sell to stay
@@ -978,14 +978,14 @@ export default function SqueezePage() {
                     </span>
                   </div>
                   {maxRow && (
-                    <div style={{ ...S.caption, marginTop: 10 }}>
+                    <div style={{ ...S.caption, marginTop: 8 }}>
                       The highest reading on this chart is {bn(maxRow.net_gex_b)} on {maxRow.trade_date}. Options
                       that expire within a day carry enormous gamma per contract, so one session with a 1-day
                       expiry on the board can set the top of the range — and push every reading below it down
                       the rankings until that day drops out of the trailing 60.
                     </div>
                   )}
-                  <div style={{ ...S.caption, marginTop: 10 }}>
+                  <div style={{ ...S.caption, marginTop: 8 }}>
                     This number is worked out from the full option chain, not copied from a data vendor's
                     "flip point". Those two disagree often — saying SPY is below the flip point matches
                     "net gamma below zero" only 52.4% of the time on the watchtower feed and 45.0% on the
@@ -1058,7 +1058,7 @@ export default function SqueezePage() {
                     </ResponsiveContainer>
                   </div>
                 ) : <div style={S.small}>no VIX history yet</div>}
-                <div style={{ ...S.caption, marginTop: 10 }}>
+                <div style={{ ...S.caption, marginTop: 8 }}>
                   <b style={{ color: '#8b95ab' }}>How to read this.</b>{' '}
                   <b style={{ color: '#f0abfc' }}>The pink line — "VIX ratio" in the key —</b> is today's
                   VIX divided by the highest VIX of the last 20 sessions. 1.00 means today is the most
@@ -1543,7 +1543,7 @@ export default function SqueezePage() {
                     $1,000 the account can afford just 14 of 61 squeeze signals, which is a different
                     strategy rather than a cheaper one. Both sides together need about $5,000.
                   </div>
-                  <div style={{ ...S.caption, marginTop: 10 }}>
+                  <div style={{ ...S.caption, marginTop: 8 }}>
                     Neither trade has been forward-tested. The sell side has a blind out-of-sample
                     decade behind it; the buy side is the best of 48 structures searched.
                   </div>

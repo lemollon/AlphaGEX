@@ -135,6 +135,37 @@ export async function POST(
   const botName = bot.toUpperCase()
   const accountType = _req.nextUrl.searchParams.get('account_type') || 'sandbox'
 
+  // 🚨 PUT-SPREAD BOTS DO NOT GO THROUGH THE CODE BELOW.
+  //
+  // Everything after this block builds a 4-leg IRON CONDOR at SD 1.2 with $5
+  // wings (see calculateStrikes), hardcoded here and ignoring bot config. That
+  // predates the 2026-08-11 pivot: FLAME, SPARK and FORGE have been a 2-leg PUT
+  // CREDIT SPREAD (SD 2.10, $2 wing, 1ct) ever since, and every position they
+  // have opened carries call_short_strike = call_long_strike = 0.
+  //
+  // Forcing one of them through the condor path would place a structure on a
+  // LIVE account that the bot has never traded, with short strikes almost a full
+  // SD closer to spot. So delegate to the scanner's own entry — the same
+  // function the 13:05 CT tick calls — instead of keeping a second, stale copy
+  // of the strategy in this route.
+  if (bot === 'flame' || bot === 'spark' || bot === 'forge') {
+    const { forceOpenPutSpread } = await import('@/lib/scanner')
+    const result = await forceOpenPutSpread(bot)
+    const placed = result.includes('traded@')
+    return NextResponse.json(
+      {
+        success: placed,
+        bot: botName,
+        structure: 'put_credit_spread',
+        result,
+        note: placed
+          ? 'Placed via the scanner entry path — same strikes, sizing and live routing as a scheduled tick.'
+          : 'No trade. The string above is the gate that stopped it.',
+      },
+      { status: placed ? 200 : 422 },
+    )
+  }
+
   try {
     // 1. Check for existing open position (scoped to the requested account_type so
     //    a sandbox open doesn't block a production force-trade)

@@ -566,7 +566,7 @@ export default function RiskAdvisorPage() {
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
-              <div style={{ ...S.caption, marginTop: 10 }}>
+              <div style={{ ...S.caption, marginTop: 8 }}>
                 <b style={{ color: '#8b95ab' }}>How to read this.</b>{' '}
                 <b style={{ color: BLUE }}>The blue line — "SPY % vs prev close" in the key —</b> is
                 how far SPY is from where it closed yesterday, in percent, through today's session.
@@ -815,7 +815,7 @@ export default function RiskAdvisorPage() {
                 in the open, not behind a tooltip — same rule applied to /squeeze in
                 PR #2874: name each series the way the legend names it, never by
                 colour alone. */}
-            <div style={{ ...S.caption, marginTop: 10 }}>
+            <div style={{ ...S.caption, marginTop: 8 }}>
               <b style={{ color: '#8b95ab' }}>How to read this.</b> Every line is a{' '}
               <b style={{ color: '#c6cbd8' }}>z-score</b> — how unusual today's SPY option volume is
               against the last 63 sessions <i>at this same time of day</i>.{' '}

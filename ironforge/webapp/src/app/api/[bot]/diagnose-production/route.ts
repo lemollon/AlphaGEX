@@ -233,7 +233,9 @@ export async function GET(
   try {
     const { getSandboxAccountPositions } = await import('@/lib/tradier')
     for (const acct of sandboxAccounts) {
-      const positions = await getSandboxAccountPositions(acct.apiKey)
+      // Account's own host — the default is SANDBOX_URL, and a production key sent
+      // there 401s. See the note in position-detail/route.ts.
+      const positions = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
       const todayStr = new Date().toISOString().slice(0, 10)
       for (const p of positions) {
         if (!p.symbol || p.symbol.length < 15 || p.quantity === 0) continue
