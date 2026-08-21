@@ -112,7 +112,7 @@ function Cell({ label, value, note, color }) {
  */
 export default function ChartMeta({
   asOf, asOfNote, asOfTone, behind, reading, zone, zoneColor, nextAt, cadence,
-  armed, nextOverride,
+  armed, nextOverride, footnote,
 }) {
   const nextMs = nextAt ? Date.parse(nextAt) : NaN;
   const valid = Number.isFinite(nextMs);
@@ -228,7 +228,15 @@ export function gammaChartMeta(data, last) {
     zoneColor: prox === 'OVERSOLD' || prox === 'APPROACHING_OVERSOLD' ? AMBER
       : prox === 'OVERBOUGHT' || prox === 'APPROACHING_OVERBOUGHT' ? GREEN
       : null,
-    cadence: 'the 15:05 CT capture',
+    // 🚨 SAY WHICH CLOCK THIS IS. "next update in 2h 15m" is true of the DAILY
+    // series and reads as though the whole page is frozen for two hours — when
+    // the live strip refreshes every 60s, VIX is rewritten every scan, and the
+    // 10-minute intraday path sits directly below this chart. A reader seeing
+    // one clock and no mention of the others reasonably concludes the reports
+    // are stale.
+    cadence: 'the 15:05 CT capture — this daily series only',
+    footnote: 'Today moves faster: the intraday gamma path below records every '
+            + '10 minutes, and the live strip above refreshes every 60 seconds.',
     ...schedOf(data),
   };
 }
@@ -266,6 +274,9 @@ export function vixChartMeta(data, last) {
       : `${gap.toFixed(2)} below the 0.95 trigger — still decaying`,
     zoneColor: r != null && r >= 0.95 ? AMBER : null,
     cadence: 'next session closes at the 15:05 CT capture',
+    footnote: "VIX itself is rewritten on every scan cycle, so today's point "
+            + 'moves through the session; the 20-session max it is divided by '
+            + 'only rolls at the close.',
     ...schedOf(data),
   };
 }
