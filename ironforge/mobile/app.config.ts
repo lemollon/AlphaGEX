@@ -35,6 +35,26 @@ const config: ExpoConfig = {
     backgroundColor: '#0B0B0D',
   },
   assetBundlePatterns: ['**/*'],
+  // EAS Update. Until expo-updates was installed the `channel` keys in eas.json were
+  // inert, so a one-line JS fix still meant a full store release and a review wait.
+  updates: {
+    url: 'https://u.expo.dev/06291eb6-55ec-48a3-9e24-80808946023b',
+  },
+  /**
+   * fingerprint, NOT the appVersion policy `eas update:configure` suggests.
+   *
+   * `version` above is a hardcoded '1.0.0' and the store build numbers auto-increment
+   * remotely (eas.json appVersionSource: remote), so under an appVersion policy every
+   * build ever made would share the runtime version "1.0.0". An update published after
+   * a native dependency changed would then be handed to installed binaries that do not
+   * contain that native code — which fails at runtime, on a screen showing somebody's
+   * open positions, with no way to roll back from the user's side.
+   *
+   * The fingerprint policy derives the runtime version from the actual native graph, so
+   * an update can only ever reach a binary it genuinely matches. Native changes simply
+   * stop being OTA-able, which is the correct answer rather than a silent crash.
+   */
+  runtimeVersion: { policy: 'fingerprint' },
   ios: {
     bundleIdentifier: BUNDLE_ID,
     supportsTablet: false,
