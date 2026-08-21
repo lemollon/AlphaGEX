@@ -166,6 +166,20 @@ export interface LiveOpenPosition {
    * Shown beside capital_pct so "17% of 20%" is legible as a rule, not a coincidence.
    */
   regime_cap_pct: number | null
+  /**
+   * THIS position's intraday mark-to-market, minute-bucketed — the per-trade chart in
+   * UX-002/003.
+   *
+   * Distinct from LiveTrade.spark_series, which is the agent's whole day summed across
+   * every open position. With a swung leg open beside today's trade those two are
+   * different curves, and drawing the aggregate on a single trade's card would
+   * attribute one position's move to another.
+   *
+   * Empty until the scanner has written marks for it: unrealized P&L per position was
+   * never recorded before, so there is nothing to backfill. Gaps are real minutes where
+   * the mark failed — the writer deliberately skips those rather than recording a zero.
+   */
+  series: Array<{ timestamp: string; pnl: number }>
 }
 
 export interface LiveTrade {

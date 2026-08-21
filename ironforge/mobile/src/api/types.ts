@@ -79,6 +79,15 @@ export interface LiveOpenPosition {
   held_overnight: boolean
   /** 1 on the day it opened, 2 the next session, and so on. */
   day_number: number
+  /**
+   * THIS trade's intraday P&L, minute-bucketed — the per-trade chart in UX-002/003.
+   *
+   * Not the same as LiveTrade.spark_series, which sums the agent's whole day across
+   * every open position; with a swung leg open beside today's trade those are two
+   * different curves. Empty until the scanner has recorded marks for the position —
+   * there is nothing to backfill — and gaps are real minutes where the mark failed.
+   */
+  series?: Array<{ timestamp: string; pnl: number }>
 }
 
 export interface LiveTrade {
