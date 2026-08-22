@@ -6,6 +6,7 @@ import { normalizeEmail } from '@/lib/signup-validation'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
 import { dbQuery, dbExecute } from '@/lib/db'
 import { LIVE_BOTS, LIVE_BOT_LABEL, type LiveBot } from '@/lib/live/bots'
+import { COMMUNITY_KEY } from '@/lib/billing/plans'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -16,10 +17,23 @@ export const dynamic = 'force-dynamic'
  * account visible: a profile with NO bot mapping lands on the empty state, so
  * the operator adds the profile here first, then maps it to spark / spark2.
  *
- *   GET  /api/ops/customers                      → list profiles + their bot mappings
- *   POST /api/ops/customers {action:'create',…}  → create a customer profile
- *   POST /api/ops/customers {action:'map',…}     → grant a bot to a customer
- *   POST /api/ops/customers {action:'unmap',…}   → revoke a bot from a customer
+ *   GET  /api/ops/customers                       → list profiles, bot mappings, memberships
+ *   POST /api/ops/customers {action:'create',…}   → create a customer profile
+ *   POST /api/ops/customers {action:'map',…}      → point a customer at a bot's ledger
+ *   POST /api/ops/customers {action:'unmap',…}    → stop pointing them at it
+ *   POST /api/ops/customers {action:'grant',…}    → comp a membership (no Stripe)
+ *   POST /api/ops/customers {action:'revoke',…}   → cancel a comped membership
+ *
+ * 🚨 `map` and `grant` are NOT the same thing, and doing one without the other is
+ * the trap this route now exists to make visible:
+ *
+ *   map   → ironforge_customer_bots (BOT db)       → WHOSE numbers they see
+ *   grant → customer_bot_subscriptions (CUSTOMERS db) → WHETHER the app unlocks
+ *
+ * The mobile app reads entitlement — and only entitlement — from
+ * customer_bot_subscriptions (see lib/live/membership.ts). A customer who is mapped
+ * but not granted signs in fine and is then shown a locked Forge, which reads as a
+ * broken app rather than as a missing subscription.
  *
  * Operator session required (ops login / magic link). Customers can never reach
  * this. Writes an audit_events row for every create/map/unmap.
@@ -38,6 +52,34 @@ interface UserRow {
 
 function isLiveBot(v: unknown): v is LiveBot {
   return typeof v === 'string' && (LIVE_BOTS as readonly string[]).includes(v)
+}
+
+/**
+ * What an operator may comp, which is NOT the same list as LIVE_BOTS.
+ *
+ * customer_bot_subscriptions.bot is free-text. LIVE_BOTS is the ledger registry and
+ * has no 'community' in it, so validating a grant against LIVE_BOTS would reject the
+ * one tier that exists only as a subscription. Hence a separate list.
+ *
+ * 'spark2' is here deliberately even though it is not for sale. It is the PAPER bot,
+ * and it is the only strategy that can be comped to a demo or App-Review account
+ * without showing a stranger a real account's money. ownsStrategy() counts anything
+ * that is not Community, so a spark2 grant unlocks Forge and Ledger exactly like a
+ * bought one; resolvePlan() doesn't recognise it and falls through to "IronForge
+ * Membership · $0", which is the honest description of a comp.
+ */
+const GRANTABLE = ['spark', 'spark2', 'flame', COMMUNITY_KEY] as const
+type Grantable = (typeof GRANTABLE)[number]
+
+function isGrantable(v: unknown): v is Grantable {
+  return typeof v === 'string' && (GRANTABLE as readonly string[]).includes(v)
+}
+
+interface SubRow {
+  user_id: string
+  bot: string
+  status: string
+  stripe_subscription_id: string | null
 }
 
 async function requireOperator(): Promise<{ ok: true; who: string } | { ok: false; res: NextResponse }> {
@@ -75,9 +117,24 @@ export async function GET() {
     byCustomer.set(m.customer_id, list)
   }
 
+  // Entitlements live in the CUSTOMERS db, separately from the mappings above.
+  // `comped` is carried through so the operator can see at a glance which rows
+  // Stripe owns — revoking a billed subscription here would cancel access while
+  // the card keeps being charged, so the UI has to be able to tell them apart.
+  const subs = await customerQuery<SubRow>(
+    `SELECT user_id, bot, status, stripe_subscription_id FROM customer_bot_subscriptions`,
+  )
+  const subsByCustomer = new Map<string, { bot: string; status: string; comped: boolean }[]>()
+  for (const s of subs) {
+    const list = subsByCustomer.get(s.user_id) ?? []
+    list.push({ bot: s.bot, status: s.status, comped: s.stripe_subscription_id === null })
+    subsByCustomer.set(s.user_id, list)
+  }
+
   return NextResponse.json({
     ok: true,
     bots: LIVE_BOTS.map((b) => ({ id: b, label: LIVE_BOT_LABEL[b] })),
+    grantable: GRANTABLE.map((b) => String(b)),
     customers: users.map((u) => ({
       id: u.id,
       email: u.email,
@@ -87,6 +144,7 @@ export async function GET() {
       createdAt: u.created_at,
       promoCode: u.promo_code ?? null,
       bots: (byCustomer.get(u.id) ?? []).sort(),
+      memberships: (subsByCustomer.get(u.id) ?? []).sort((a, b) => a.bot.localeCompare(b.bot)),
     })),
   })
 }
@@ -139,6 +197,56 @@ export async function POST(req: NextRequest) {
       await dbExecute(`DELETE FROM ironforge_customer_bots WHERE customer_id = $1 AND bot = $2`, [customerId, bot])
     }
     await audit(customerId, action === 'map' ? 'OPS_BOT_MAPPED' : 'OPS_BOT_UNMAPPED', gate.who, { bot, person: body.person ?? null })
+    return NextResponse.json({ ok: true })
+  }
+
+  // ---- comp / cancel a membership ----------------------------------------
+  if (action === 'grant' || action === 'revoke') {
+    const customerId = String(body.customerId ?? '').trim()
+    const bot = body.bot
+    if (!customerId) return NextResponse.json({ ok: false, error: 'customerId is required.' }, { status: 400 })
+    if (!isGrantable(bot)) {
+      return NextResponse.json({ ok: false, error: `bot must be one of ${GRANTABLE.join(', ')}.` }, { status: 400 })
+    }
+
+    const exists = await customerQuery<{ id: string }>(`SELECT id FROM users WHERE id = $1 LIMIT 1`, [customerId])
+    if (exists.length === 0) return NextResponse.json({ ok: false, error: 'No such customer.' }, { status: 404 })
+
+    // A row Stripe owns is off limits in BOTH directions. Revoking one would cut
+    // access while the subscription keeps billing; re-granting one would paper over
+    // a real past_due. Either way the operator has to go to Stripe, not to this page.
+    const current = await customerQuery<{ stripe_subscription_id: string | null }>(
+      `SELECT stripe_subscription_id FROM customer_bot_subscriptions
+        WHERE user_id = $1 AND bot = $2 LIMIT 1`,
+      [customerId, bot],
+    )
+    if (current.length > 0 && current[0].stripe_subscription_id !== null) {
+      return NextResponse.json(
+        { ok: false, code: 'stripe_owned', error: 'That membership is billed through Stripe. Change it in Stripe.' },
+        { status: 409 },
+      )
+    }
+
+    if (action === 'grant') {
+      // stripe_subscription_id and price_lookup_key stay NULL: this is comped, not
+      // sold, and nothing downstream should be able to mistake it for revenue. The
+      // webhook's COALESCE upsert fills them in later if the customer ever does buy.
+      await customerExecute(
+        `INSERT INTO customer_bot_subscriptions (user_id, bot, status)
+         VALUES ($1, $2, 'active')
+         ON CONFLICT (user_id, bot) DO UPDATE SET status = 'active', updated_at = now()`,
+        [customerId, bot],
+      )
+    } else {
+      // Cancelled, not deleted — 'canceled' is outside LIVE_STATUSES so access ends,
+      // and the row survives as the record that the comp existed.
+      await customerExecute(
+        `UPDATE customer_bot_subscriptions SET status = 'canceled', updated_at = now()
+          WHERE user_id = $1 AND bot = $2`,
+        [customerId, bot],
+      )
+    }
+    await audit(customerId, action === 'grant' ? 'OPS_MEMBERSHIP_GRANTED' : 'OPS_MEMBERSHIP_REVOKED', gate.who, { bot })
     return NextResponse.json({ ok: true })
   }
 

@@ -5,15 +5,30 @@ import useSWR, { mutate } from 'swr'
 import { fetcher } from '@/lib/fetcher'
 
 /**
- * Operator-only customer admin. Create customer profiles, then map each to the
- * live bot(s) they own. A profile with no bot mapping lands on the Live empty
- * state — mapping it to spark / spark2 is what surfaces that customer's own
- * account. Gated by the operator session server-side (/api/ops/customers).
+ * Operator-only customer admin. Gated by the operator session server-side
+ * (/api/ops/customers).
+ *
+ * A profile needs TWO separate things, and the page shows them as two separate
+ * rows of chips because they fail in different ways:
+ *
+ *   Mapped   — which bot's ledger they see. Missing → the Live empty state.
+ *   Member   — whether the apps unlock at all. Missing → a signed-in customer
+ *              staring at a locked Forge, which looks like a broken build.
+ *
+ * Memberships bought through Stripe are shown but not editable here; the server
+ * refuses to touch them, since cancelling one would end access while the card
+ * keeps being charged.
  */
 
 const KEY = '/api/ops/customers'
 
 interface BotOpt { id: string; label: string }
+interface Membership {
+  bot: string
+  status: string
+  /** No Stripe subscription behind it — comped by an operator, editable here. */
+  comped: boolean
+}
 interface Customer {
   id: string
   email: string
@@ -22,14 +37,19 @@ interface Customer {
   emailVerified: boolean
   createdAt: string
   bots: string[]
+  memberships: Membership[]
   promoCode: string | null
 }
 interface ListResp {
   ok: boolean
   error?: string
   bots: BotOpt[]
+  grantable: string[]
   customers: Customer[]
 }
+
+/** Statuses that actually unlock the app — mirrors LIVE_STATUSES server-side. */
+const LIVE_STATUSES = new Set(['trialing', 'active', 'past_due'])
 
 const input =
   'w-full rounded-md border border-forge-border bg-forge-bg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-amber-500 focus:outline-none'
@@ -61,7 +81,10 @@ export default function OpsCustomersPage() {
         const detail = j.fields ? Object.values(j.fields).join(' ') : ''
         throw new Error(`${j.error ?? 'Failed to create profile.'} ${detail}`.trim())
       }
-      setMsg({ kind: 'ok', text: `Created ${form.email}. Map a bot below to activate their account.` })
+      setMsg({
+        kind: 'ok',
+        text: `Created ${form.email}. Now grant a membership AND map a bot — they are separate.`,
+      })
       setForm({ email: '', firstName: '', lastName: '', phone: '', state: '', password: '' })
       mutate(KEY)
     } catch (err) {
@@ -71,12 +94,16 @@ export default function OpsCustomersPage() {
     }
   }
 
-  async function changeMap(customerId: string, bot: string, action: 'map' | 'unmap') {
-    await fetch(KEY, {
+  async function post(action: string, customerId: string, bot: string) {
+    const res = await fetch(KEY, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, customerId, bot }),
     })
+    // Surface the refusal instead of swallowing it — a silently ignored click on a
+    // Stripe-owned membership would read as "the button is broken".
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok || !j.ok) setMsg({ kind: 'err', text: j.error ?? 'That change did not apply.' })
     mutate(KEY)
   }
 
@@ -87,8 +114,8 @@ export default function OpsCustomersPage() {
       <div className="mx-auto max-w-[1000px] px-4 py-8">
         <h1 className="text-2xl font-bold">Customer Profiles</h1>
         <p className="mt-1 text-sm text-gray-400">
-          Operator console — create a customer profile, then map them to the bot(s) they own. No mapping = empty
-          dashboard.
+          Operator console — create a profile, grant the membership that unlocks the apps, and map the bot whose
+          ledger they see. Those are two different switches; a customer needs both.
         </p>
 
         {unauthorized ? (
@@ -145,22 +172,55 @@ export default function OpsCustomersPage() {
                           </div>
                         )}
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        {c.bots.length === 0 && <span className="text-xs text-gray-500">no bot mapped</span>}
-                        {c.bots.map((b) => (
-                          <button
-                            key={b}
-                            onClick={() => changeMap(c.id, b, 'unmap')}
-                            title="Click to remove"
-                            className="rounded-full border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-300 hover:border-red-500/60 hover:bg-red-500/15 hover:text-red-300"
-                          >
-                            {b} ✕
-                          </button>
-                        ))}
-                        <BotAdder
-                          options={(data.bots ?? []).filter((o) => !c.bots.includes(o.id))}
-                          onAdd={(bot) => changeMap(c.id, bot, 'map')}
-                        />
+                      <div className="flex flex-col gap-2 sm:items-end">
+                        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                          <span className="text-[11px] uppercase tracking-wide text-gray-500">Member</span>
+                          {live(c).length === 0 && <span className="text-xs text-red-400">apps locked</span>}
+                          {c.memberships
+                            .filter((m) => LIVE_STATUSES.has(m.status))
+                            .map((m) => (
+                              <button
+                                key={m.bot}
+                                onClick={() => m.comped && post('revoke', c.id, m.bot)}
+                                disabled={!m.comped}
+                                title={m.comped ? 'Comped — click to cancel' : 'Billed through Stripe — change it in Stripe'}
+                                className={
+                                  m.comped
+                                    ? 'rounded-full border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:border-red-500/60 hover:bg-red-500/15 hover:text-red-300'
+                                    : 'cursor-default rounded-full border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-xs font-medium text-sky-300'
+                                }
+                              >
+                                {m.bot}
+                                {m.comped ? ' ✕' : ' · stripe'}
+                              </button>
+                            ))}
+                          <BotAdder
+                            label="+ grant…"
+                            options={(data.grantable ?? [])
+                              .filter((id) => !live(c).includes(id))
+                              .map((id) => ({ id, label: id }))}
+                            onAdd={(bot) => post('grant', c.id, bot)}
+                          />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                          <span className="text-[11px] uppercase tracking-wide text-gray-500">Mapped</span>
+                          {c.bots.length === 0 && <span className="text-xs text-gray-500">no bot mapped</span>}
+                          {c.bots.map((b) => (
+                            <button
+                              key={b}
+                              onClick={() => post('unmap', c.id, b)}
+                              title="Click to remove"
+                              className="rounded-full border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-300 hover:border-red-500/60 hover:bg-red-500/15 hover:text-red-300"
+                            >
+                              {b} ✕
+                            </button>
+                          ))}
+                          <BotAdder
+                            label="+ map bot…"
+                            options={(data.bots ?? []).filter((o) => !c.bots.includes(o.id))}
+                            onAdd={(bot) => post('map', c.id, bot)}
+                          />
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -174,7 +234,20 @@ export default function OpsCustomersPage() {
   )
 }
 
-function BotAdder({ options, onAdd }: { options: BotOpt[]; onAdd: (bot: string) => void }) {
+/** The memberships currently unlocking the app for this customer. */
+function live(c: Customer): string[] {
+  return c.memberships.filter((m) => LIVE_STATUSES.has(m.status)).map((m) => m.bot)
+}
+
+function BotAdder({
+  options,
+  onAdd,
+  label,
+}: {
+  options: BotOpt[]
+  onAdd: (bot: string) => void
+  label: string
+}) {
   const [val, setVal] = useState('')
   if (options.length === 0) return null
   return (
@@ -189,7 +262,7 @@ function BotAdder({ options, onAdd }: { options: BotOpt[]; onAdd: (bot: string) 
       }}
       className="rounded-md border border-forge-border bg-forge-bg px-2 py-1 text-xs text-gray-300 focus:border-amber-500 focus:outline-none"
     >
-      <option value="">+ map bot…</option>
+      <option value="">{label}</option>
       {options.map((o) => (
         <option key={o.id} value={o.id}>
           {o.id}
