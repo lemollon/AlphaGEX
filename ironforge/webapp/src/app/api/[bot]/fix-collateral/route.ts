@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, dbExecute, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
-import { closeIcOrderAllAccounts, PRODUCTION_BOT } from '@/lib/tradier'
+import { closeIcOrderAllAccounts, PRODUCTION_BOT, getDailyHistory } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -180,6 +180,7 @@ export async function POST(
     const staleRows = await dbQuery(
       `SELECT position_id, dte_mode, total_credit, contracts,
               collateral_required, account_type,
+              ticker, put_short_strike, put_long_strike,
               CAST(expiration AS DATE) AS exp_date,
               CAST(open_time AS DATE) AS open_date,
               CURRENT_DATE AS today
@@ -194,6 +195,10 @@ export async function POST(
          ${acctTypeFilter}
        ORDER BY open_time`,
     )
+
+    // Expired positions whose settle price could not be read. Reported, never
+    // guessed — settleExpiredPositions() books them on a later cycle.
+    const skippedUnpriced: string[] = []
 
     for (const pos of staleRows) {
       const pid = pos.position_id
@@ -214,9 +219,44 @@ export async function POST(
         closePrice = entryCredit
         realizedPnl = 0
       } else if (isExpired) {
-        reason = 'expired_force_close'
-        closePrice = 0
-        realizedPnl = Math.round(entryCredit * 100 * contracts * 100) / 100
+        // 🚨 THIS USED TO BOOK MAX PROFIT, UNCONDITIONALLY.
+        //
+        // It set closePrice = 0 and realizedPnl = full credit for ANY expired
+        // position, no matter where the underlying actually settled. On a spread
+        // that finished in the money that is a fabricated win: SPARK's stranded
+        // 765/763P would have booked +$34 whether SPY closed at 765.72 (really
+        // +$34) or at 764 (really -$166). Same shape as the force-close $0 mark
+        // that printed a fake +$1,638 on FLAME.
+        //
+        // A short put spread settles on intrinsic, exactly as
+        // settleExpiredPositions() computes it:
+        //     value = min(max(K_short - close, 0), width)
+        //     pnl   = (credit - value) * 100 * contracts
+        //
+        // If the settle price cannot be read we do NOT guess — the position is
+        // left open for settleExpiredPositions() to book on a later cycle. An
+        // unsettled position is visible and recoverable; an invented win is not.
+        const ks = num(pos.put_short_strike)
+        const kl = num(pos.put_long_strike)
+        const posTicker = String(pos.ticker || 'SPY')
+        let settlePx = 0
+        try {
+          const hist = await getDailyHistory(posTicker, 10)
+          settlePx = hist.find(h => h.date === expDate)?.close ?? 0
+        } catch { /* leave settlePx 0 -> skip below */ }
+
+        if (!(settlePx > 0) || !(ks > 0) || !(kl > 0) || ks <= kl) {
+          skippedUnpriced.push(
+            `${pid} (no ${posTicker} close for ${expDate} — left open for settlement)`,
+          )
+          continue
+        }
+
+        const width = ks - kl
+        const value = Math.min(Math.max(ks - settlePx, 0), width)
+        reason = 'expired_settled_intrinsic'
+        closePrice = Math.round(value * 10000) / 10000
+        realizedPnl = Math.round((entryCredit - value) * 100 * contracts * 100) / 100
       } else {
         reason = 'stale_holdover_force_close'
         closePrice = entryCredit
@@ -345,7 +385,10 @@ export async function POST(
     return NextResponse.json({
       bot: bot.toUpperCase(),
       dte,
-      stale_closed: staleRows.length,
+      stale_closed: staleRows.length - skippedUnpriced.length,
+      // Expired positions deliberately LEFT OPEN because their settle price was
+      // unreadable. Reported so "0 closed" is never mistaken for "nothing to do".
+      skipped_unpriced: skippedUnpriced,
       reconciled: {
         balance: expectedBalance,
         cumulative_pnl: actualPnl,
