@@ -1454,6 +1454,32 @@ async function monitorPosition(bot: BotDef, ct: Date): Promise<{ status: string;
 async function monitorSinglePosition(
   bot: BotDef, ct: Date, pos: Record<string, any>,
 ): Promise<{ status: string; unrealizedPnl: number }> {
+  // ── AN EXPIRED CONTRACT IS SETTLED, NOT TRADED ────────────────────────────
+  //
+  // 🚨 2026-08-22: SPARK-SPY-20260821-R4K55H opened Fri 10:05 CT, expired that
+  // afternoon, and was STILL `open` on Saturday — spraying one fresh close order
+  // per minute (37455483 … 37456466, a different id every cycle). With max 1
+  // concurrent position that stranded SPARK completely: 1 trade all week against
+  // FLAME's 9, which reads like a losing strategy and is actually a stuck bot.
+  //
+  // The loop is two branches fighting:
+  //   1. close placed -> Tradier returns no fill -> DEFER, store pending state
+  //   2. next cycle, past EOD -> CANCEL the pending order, clear the state,
+  //      fall through to the EOD market close -> which re-places -> (1)
+  // Neither can win, because a 0DTE that already expired cannot be filled at any
+  // price. The runbook says so outright: "0DTE options can't be closed after
+  // ~2:45 PM CT. They auto-expire at settlement."
+  //
+  // settleExpiredPositions() already owns exactly this row (`status='open' AND
+  // expiration <= today`) and books it on intrinsic. So once the contract is at
+  // or past expiry and the session is done, monitoring must get out of the way
+  // rather than keep trading a contract that no longer exists.
+  const monExp = pos.expiration?.toISOString?.()?.slice(0, 10)
+    || String(pos.expiration).slice(0, 10)
+  const monToday = ct.toISOString().slice(0, 10) // same derivation settleExpiredPositions uses
+  if (monExp && (monExp < monToday || (monExp === monToday && ctHHMM(ct) >= 1500))) {
+    return { status: 'awaiting_settlement', unrealizedPnl: 0 }
+  }
   // Exit thresholds (stop loss, profit target, EOD cutoff, trailing) MUST come
   // from the position's OWN account config. cfg(bot) only ever holds the
   // SANDBOX/paper row — loadConfigOverrides() filters account_type='sandbox',
@@ -3510,6 +3536,24 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
         `[scanner] ${bot.name.toUpperCase()} SETTLE BLOCKED ${p.position_id}: ` +
         `no close for ${ticker} ${exp} — position stays OPEN and will retry.`,
       )
+      // ...and write it where a human will actually see it. A console.warn goes
+      // to Render only, and the `reason` this returns into is overwritten later
+      // in the cycle — which is how SPARK sat unsettled from Friday afternoon to
+      // Monday morning with nothing in its own log but "monitoring". An unsettled
+      // position blocks every future entry (max 1 concurrent), so silence here
+      // costs whole trading days.
+      try {
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+           VALUES ($1, $2, $3, $4)`,
+          [
+            'SETTLE_BLOCKED',
+            `SETTLE BLOCKED: ${p.position_id} — no ${ticker} close for ${exp}; position stays OPEN and blocks new entries`,
+            JSON.stringify({ position_id: p.position_id, ticker, expiration: exp, reason: 'no_settle_price' }),
+            bot.dte,
+          ],
+        )
+      } catch { /* logging must never take the settle loop down */ }
       out.push(`${p.position_id}=no_settle_price`)
       continue
     }
