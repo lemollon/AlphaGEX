@@ -43,10 +43,37 @@ describe('scopeFilter', () => {
     expect(scoped).toContain("AND person = 'User'")
   })
 
-  it('keeps paper bots on the non-production ledger', () => {
+  it('keeps paper bots on the non-production ledger, and does NOT scope them by owner', () => {
+    // This previously asserted `AND person = 'User'`, which reads as safe and is a
+    // query that can never match: EVERY sandbox paper_account row, on every bot, has
+    // person = NULL — the scanner keeps one house ledger per (bot, dte_mode) and its
+    // sandbox writes never mention person. So the "scoped" paper query returned zero
+    // rows, accountLinked came back false, and the Live page told a customer their
+    // bot "isn't connected to your account yet" while it was trading normally.
     const scoped = scopeFilter('flame', 'User')
     expect(scoped).toContain("COALESCE(account_type, 'sandbox') <> 'production'")
-    expect(scoped).toContain("AND person = 'User'")
+    expect(scoped).not.toContain('person')
+  })
+
+  it('shows a paper bot to a customer with no owner mapped, instead of AND FALSE', () => {
+    // The demo / App-Review account is exactly this case. Simulated house money that
+    // nobody owns is not the 2026-07-27 leak, which was a real Tradier account.
+    const f = scopeFilter('flame', null)
+    expect(f).not.toContain('AND FALSE')
+    expect(f).toContain("COALESCE(account_type, 'sandbox') <> 'production'")
+  })
+
+  it('honours an explicit paper override on a production bot', () => {
+    // FLAME's Paper/Live switch, and SPARK2. Choosing the paper ledger must not drag
+    // the production owner filter along with it.
+    const f = scopeFilter('spark', 'Logan', false, 'paper')
+    expect(f).toContain("COALESCE(account_type, 'sandbox') <> 'production'")
+    expect(f).not.toContain('person')
+  })
+
+  it('an explicit production override still fails closed', () => {
+    // The override must never become a way around the guard.
+    expect(scopeFilter('flame', null, false, 'production')).toContain('AND FALSE')
   })
 
   it('FAILS CLOSED for a customer with no owner mapped', () => {
