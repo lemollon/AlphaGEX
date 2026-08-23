@@ -3518,6 +3518,27 @@ export async function getSpark2ProductionBalance(): Promise<TradierBalanceDetail
   return getTradierBalanceDetail(apiKey, accountId, PRODUCTION_URL)
 }
 
+/** FLAME's live account balance straight from its env creds (TRADIER_FLAME_*).
+ *
+ * 🚨 WHY THIS EXISTS (2026-08-23). FLAME has been filling REAL orders on
+ * 6YB71371 since 2026-08-20, and the customer Live page showed nothing:
+ * `live/summary.ts` only ever read a broker balance for SPARK (via
+ * ironforge_accounts) and SPARK2 (via env creds). FLAME's account is
+ * credentialed exactly like SPARK2's — env, not the table — but had no branch,
+ * so the operator console read Tradier while the customer page fell back to a
+ * DB ledger that (see the seed-production-ledger route) had no row to read.
+ *
+ * Keyed on credentials, NOT on isFlameLiveArmed() — the same read/write split
+ * canReadProductionBalance() enforces. Seeing the account is not permission to
+ * trade it; disarming FLAME must not blank a real balance the customer owns.
+ * Null when creds are missing/invalid; never fabricated.
+ */
+export async function getFlameProductionBalance(): Promise<TradierBalanceDetail | null> {
+  const { apiKey, accountId } = flameCreds()
+  if (!apiKey || !accountId) return null
+  return getTradierBalanceDetail(apiKey, accountId, PRODUCTION_URL)
+}
+
 export interface TradierBalanceDetail {
   account_id: string | null
   account_number: string | null

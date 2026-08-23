@@ -66,7 +66,11 @@ export const LIVE_BOT_ACCENT: Record<LiveBot, 'flame' | 'spark'> = {
 export const LIVE_BOT_TAGLINE: Record<LiveBot, string> = {
   spark: 'Next-day SPY spreads',
   spark2: 'Same-day SPY iron condors',
-  flame: 'Two-day SPY put credit spreads',
+  // EBB (2026-08-16): FLAME runs the SAME-DAY put credit spread at 13:05 CT,
+  // not the retired 2DTE product. dteMode('flame') has said '0DTE' since then;
+  // this line still said "Two-day", so the customer page made a false statement
+  // about what their money is doing.
+  flame: 'Same-day SPY put credit spreads',
 }
 
 /** Simulated-results disclosure, named for the bot it is shown against.

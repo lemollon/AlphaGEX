@@ -24,6 +24,41 @@
  */
 
 import { query, dbExecute, botTable, num, int, CT_TODAY, isSettleAtExpiryBot } from './db'
+
+/**
+ * Shout when a PRODUCTION ledger write matched no row.
+ *
+ * 🚨 THE 2026-08-23 BUG, AND WHY IT HID FOR THREE DAYS. Every production
+ * paper_account write is keyed `(account_type='production', person, is_active,
+ * dte_mode)`. FLAME began filling REAL orders on 2026-08-20 as person 'Flame'
+ * at dte_mode '0DTE' — and no such row had ever been created, because every
+ * auto-seed in this file hardcodes 'sandbox'. So the entry deduction and the
+ * close credit both updated ZERO rows and returned success. A +$21 settlement
+ * was never booked anywhere, production equity snapshots (which loop over these
+ * same rows) were never written, and the customer Live page read an empty
+ * ledger and said the account "isn't connected".
+ *
+ * An UPDATE that matches nothing is not an error in Postgres. On the real-money
+ * ledger it has to be treated as one, so it can never again be silent.
+ * Repaired with POST /api/{bot}/seed-production-ledger?confirm=true.
+ */
+function warnIfNoProductionLedger(
+  botName: string,
+  phase: 'entry' | 'close',
+  rowsAffected: number,
+  person: string,
+  dte: string | null,
+  amount: number,
+): void {
+  if (rowsAffected > 0) return
+  console.error(
+    `[scanner] 🚨 ${botName.toUpperCase()} PRODUCTION LEDGER MISS (${phase}): ` +
+    `UPDATE ${botName}_paper_account matched 0 rows for person='${person}', ` +
+    `dte_mode='${dte}', account_type='production', is_active=TRUE — $${amount.toFixed(2)} ` +
+    `was NOT booked. Real money moved and the ledger did not. ` +
+    `Fix: POST /api/${botName}/seed-production-ledger?confirm=true`,
+  )
+}
 import { acquireScannerLock } from './scanner-lock'
 import { isMarketHoliday, marketCloseMinuteCT } from './market-calendar'
 import { postFlameOpen, postFlameClose } from './discord'
@@ -2086,7 +2121,7 @@ async function monitorSinglePosition(
                 if (rowsAffected > 0) {
                   // Route paper_account update based on position's account_type
                   if (posAccountType === 'production') {
-                    await query(
+                    const creditedPending = await dbExecute(
                       `UPDATE ${botTable(bot.name, 'paper_account')}
                        SET current_balance = current_balance + $1,
                            cumulative_pnl = cumulative_pnl + $1,
@@ -2097,6 +2132,7 @@ async function monitorSinglePosition(
                        WHERE account_type = 'production' AND person = $3 AND is_active = TRUE AND dte_mode = $4`,
                       [realizedPnl, collateral, posPerson, bot.dte],
                     )
+                    warnIfNoProductionLedger(bot.name, 'close', creditedPending, posPerson, bot.dte, realizedPnl)
                   } else {
                     await query(
                       `UPDATE ${botTable(bot.name, 'paper_account')}
@@ -2286,7 +2322,7 @@ async function monitorSinglePosition(
                   )
                   if (rowsAffected > 0) {
                     if (posAccountType === 'production') {
-                      await query(
+                      const creditedPending = await dbExecute(
                         `UPDATE ${botTable(bot.name, 'paper_account')}
                          SET current_balance = current_balance + $1,
                              cumulative_pnl = cumulative_pnl + $1,
@@ -2297,6 +2333,7 @@ async function monitorSinglePosition(
                          WHERE account_type = 'production' AND person = $3 AND is_active = TRUE AND dte_mode = $4`,
                         [realizedPnl, collateral, posPerson, bot.dte],
                       )
+                      warnIfNoProductionLedger(bot.name, 'close', creditedPending, posPerson, bot.dte, realizedPnl)
                     } else {
                       await query(
                         `UPDATE ${botTable(bot.name, 'paper_account')}
@@ -3049,7 +3086,7 @@ async function closePosition(
   // Update paper account — route to correct row based on account_type
   if (posAccountType === 'production') {
     // Production positions update the production paper_account (filtered by person + account_type)
-    await query(
+    const credited = await dbExecute(
       `UPDATE ${botTable(bot.name, 'paper_account')}
        SET current_balance = current_balance + $1,
            cumulative_pnl = cumulative_pnl + $1,
@@ -3063,6 +3100,7 @@ async function closePosition(
        WHERE account_type = 'production' AND person = $3 AND is_active = TRUE AND dte_mode = $4`,
       [realizedPnl, collateral, posPerson, bot.dte],
     )
+    warnIfNoProductionLedger(bot.name, 'close', credited, posPerson, bot.dte, realizedPnl)
   } else {
     // Sandbox positions update the shared sandbox paper_account
     await query(
@@ -4699,7 +4737,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             ],
           )
 
-          await query(
+          const deductedProdOnly = await dbExecute(
             `UPDATE ${botTable(bot.name, 'paper_account')}
              SET collateral_in_use = collateral_in_use + $1,
                  buying_power = buying_power - $1,
@@ -4707,6 +4745,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
              WHERE account_type = 'production' AND person = $2 AND is_active = TRUE AND dte_mode = $3`,
             [prodCollateral, prodPerson, bot.dte],
           )
+          warnIfNoProductionLedger(bot.name, 'entry', deductedProdOnly, prodPerson, bot.dte, prodCollateral)
 
           await query(
             `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
@@ -5024,7 +5063,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         )
 
         // Deduct collateral from the PRODUCTION paper_account
-        await query(
+        const deducted = await dbExecute(
           `UPDATE ${botTable(bot.name, 'paper_account')}
            SET collateral_in_use = collateral_in_use + $1,
                buying_power = buying_power - $1,
@@ -5032,6 +5071,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
            WHERE account_type = 'production' AND person = $2 AND is_active = TRUE AND dte_mode = $3`,
           [prodCollateral, prodPerson, bot.dte],
         )
+        warnIfNoProductionLedger(bot.name, 'entry', deducted, prodPerson, bot.dte, prodCollateral)
 
         // Log the production order
         await query(
@@ -5366,7 +5406,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         )
 
         // Deduct collateral from the PRODUCTION paper_account
-        await query(
+        const deducted = await dbExecute(
           `UPDATE ${botTable(bot.name, 'paper_account')}
            SET collateral_in_use = collateral_in_use + $1,
                buying_power = buying_power - $1,
@@ -5374,6 +5414,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
            WHERE account_type = 'production' AND person = $2 AND is_active = TRUE AND dte_mode = $3`,
           [prodCollateral, prodPerson, bot.dte],
         )
+        warnIfNoProductionLedger(bot.name, 'entry', deducted, prodPerson, bot.dte, prodCollateral)
 
         await query(
           `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
@@ -5976,7 +6017,7 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
           // Reconcile paper_account — add recovered P&L to balance +
           // cumulative_pnl (previously this block credited 0, which is
           // why the ledger drifted from Tradier).
-          await query(
+          const creditedRecovery = await dbExecute(
             `UPDATE ${acctTable}
              SET current_balance = current_balance + $1,
                  cumulative_pnl = cumulative_pnl + $1,
@@ -5987,6 +6028,7 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
              WHERE account_type = 'production' AND person = $3 AND is_active = TRUE AND dte_mode = $4`,
             [realizedPnl, collateral, person, bot.dte],
           )
+          warnIfNoProductionLedger(bot.name, 'close', creditedRecovery, person, bot.dte, realizedPnl)
 
           // Daily perf — production reconcile path. Composite key with
           // account_type='production' prevents this from merging into the
