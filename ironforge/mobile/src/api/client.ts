@@ -39,6 +39,39 @@ export interface TokenPair {
   refreshToken: string
 }
 
+/**
+ * Session-change subscribers.
+ *
+ * The root auth gate reads hasSession() ONCE at mount, so without this it never learns
+ * that the session changed while the app was running. That is not a cosmetic lag, it
+ * is a lockout in both directions:
+ *
+ *   sign IN  — tokens saved, the screen calls router.replace('/'), the gate still
+ *              believes signedIn === false and immediately replaces back to /sign-in.
+ *              The customer sees "Signing in…", then a blank login form, forever.
+ *   sign OUT — tokens cleared, the screen calls router.replace('/sign-in'), the gate
+ *              still believes signedIn === true and bounces them back INTO the app.
+ *
+ * Notifying from the two functions that own the tokens, rather than from each screen,
+ * is deliberate: a future caller cannot forget to announce the change, and the silent
+ * clearTokens() inside doRefresh() (reuse detection / idle expiry) now routes to
+ * sign-in on its own instead of leaving a signed-out app rendering empty states.
+ */
+type SessionListener = (signedIn: boolean) => void
+const sessionListeners = new Set<SessionListener>()
+
+/** Subscribe to sign-in / sign-out. Returns an unsubscribe suitable for useEffect. */
+export function onSessionChange(fn: SessionListener): () => void {
+  sessionListeners.add(fn)
+  return () => {
+    sessionListeners.delete(fn)
+  }
+}
+
+function notifySession(signedIn: boolean): void {
+  for (const fn of [...sessionListeners]) fn(signedIn)
+}
+
 export async function saveTokens(pair: TokenPair): Promise<void> {
   await setItem(ACCESS_KEY, pair.accessToken)
   await setItem(REFRESH_KEY, pair.refreshToken, {
@@ -46,11 +79,13 @@ export async function saveTokens(pair: TokenPair): Promise<void> {
     // refresh still works; the token just isn't readable from a cold locked device.
     keychainAccessible: AFTER_FIRST_UNLOCK,
   })
+  notifySession(true)
 }
 
 export async function clearTokens(): Promise<void> {
   await deleteItem(ACCESS_KEY).catch(() => {})
   await deleteItem(REFRESH_KEY).catch(() => {})
+  notifySession(false)
 }
 
 export async function getAccessToken(): Promise<string | null> {

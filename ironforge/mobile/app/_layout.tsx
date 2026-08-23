@@ -12,7 +12,7 @@ import { Oswald_600SemiBold } from '@expo-google-fonts/oswald/600SemiBold'
 import { Inter_400Regular } from '@expo-google-fonts/inter/400Regular'
 import { Inter_500Medium } from '@expo-google-fonts/inter/500Medium'
 import { Inter_700Bold } from '@expo-google-fonts/inter/700Bold'
-import { hasSession } from '@/api/client'
+import { hasSession, onSessionChange } from '@/api/client'
 import { color } from '@/theme/tokens'
 import { Loading } from '@/components/ui'
 
@@ -48,10 +48,17 @@ export default function RootLayout() {
 
   const ready = sessionChecked && (fontsLoaded || !!fontError)
 
+  /**
+   * Read the stored session once at cold start, then STAY SUBSCRIBED. The subscription
+   * is the fix for the sign-in loop: without it this state is frozen at its cold-start
+   * value, and a successful login was bounced straight back to /sign-in by the gate
+   * below (and a sign-out bounced back into the app). See onSessionChange in api/client.
+   */
   useEffect(() => {
     hasSession()
       .then(setSignedIn)
       .finally(() => setSessionChecked(true))
+    return onSessionChange(setSignedIn)
   }, [])
 
   useEffect(() => {
