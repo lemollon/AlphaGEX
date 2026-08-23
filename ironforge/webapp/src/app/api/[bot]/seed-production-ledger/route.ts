@@ -66,6 +66,8 @@ interface SeedPreview {
     total_equity: number | null
     option_buying_power: number | null
     reachable: boolean
+    /** Where total_equity came from — an override must never read as a broker read. */
+    source: 'tradier' | 'override' | 'unavailable'
     note?: string
   }
   existing_rows: Array<{
@@ -110,7 +112,23 @@ function productionPerson(bot: string): { person: string | null; accountId: stri
   return { person: null, accountId: null }
 }
 
-async function gather(bot: string, dte: string): Promise<SeedPreview> {
+async function gather(
+  bot: string,
+  dte: string,
+  /**
+   * Explicit operator override for the live equity — the same escape hatch
+   * reset-paper-account already has. 🚨 Only reachable by typing a number into
+   * the URL: the default path still refuses to seed a real-money ledger from a
+   * guess, and the response labels the number `source: 'override'` so it can
+   * never be mistaken for a broker read.
+   *
+   * Needed on 2026-08-23. Tradier's ACCOUNT endpoints for 6YB71371 began timing
+   * out at 5000ms — quotes on the same host were fine, so it was neither the key
+   * nor the network — which left the repair for a live customer-visibility bug
+   * waiting on a third party with no way to proceed.
+   */
+  overrideEquity: number | null = null,
+): Promise<SeedPreview> {
   const { person, accountId } = productionPerson(bot)
 
   const existing = await dbQuery(
@@ -137,7 +155,12 @@ async function gather(bot: string, dte: string): Promise<SeedPreview> {
   let equity: number | null = null
   let obp: number | null = null
   let note: string | undefined
-  if (!canReadProductionBalance(bot)) {
+  let equitySource: SeedPreview['tradier']['source'] = 'unavailable'
+  if (overrideEquity != null) {
+    equity = overrideEquity
+    equitySource = 'override'
+    note = 'Live equity was supplied by the operator — Tradier was NOT consulted for this number.'
+  } else if (!canReadProductionBalance(bot)) {
     note =
       `${bot.toUpperCase()} has no live credentials on this service — ` +
       `TRADIER_${bot.toUpperCase()}_API_KEY / _ACCOUNT_ID are unset here. ` +
@@ -147,7 +170,14 @@ async function gather(bot: string, dte: string): Promise<SeedPreview> {
       const det = bot === 'flame' ? await getFlameProductionBalance() : null
       equity = det?.total_equity ?? null
       obp = det?.option_buying_power ?? null
-      if (equity == null) note = 'Tradier returned no total_equity for the live account.'
+      if (equity == null) {
+        note =
+          'Tradier returned no total_equity for the live account — the balances endpoint is ' +
+          'timing out or the key was rejected. Pass ?starting_capital=N (the account TOTAL ' +
+          'EQUITY) to seed from a number you have verified yourself.'
+      } else {
+        equitySource = 'tradier'
+      }
     } catch (err: unknown) {
       note = `Tradier balance read failed: ${err instanceof Error ? err.message : String(err)}`
     }
@@ -172,7 +202,7 @@ async function gather(bot: string, dte: string): Promise<SeedPreview> {
       `An ACTIVE production row already exists for person='${person}', dte_mode='${dte}'. ` +
       `This route only fills a hole; use reset-paper-account to rebase an existing ledger.`
   } else if (equity == null) {
-    blocked = note ?? 'Live balance unavailable — refusing to seed a ledger from a guess.'
+    blocked = note ?? 'Live balance unavailable — refusing to seed a ledger from a guess. Pass ?starting_capital=N to override.'
   }
 
   // starting_capital is the BASIS: what the account was worth before the trades
@@ -190,6 +220,7 @@ async function gather(bot: string, dte: string): Promise<SeedPreview> {
       total_equity: equity,
       option_buying_power: obp,
       reachable: equity != null,
+      source: equitySource,
       note,
     },
     existing_rows: existing.map((r) => ({
@@ -226,6 +257,33 @@ async function gather(bot: string, dte: string): Promise<SeedPreview> {
   }
 }
 
+/**
+ * Read `?starting_capital=N`, the operator override for the live equity.
+ *
+ * The number is the account's TOTAL EQUITY, not the basis — realized P&L is
+ * subtracted downstream, exactly as it would be from a Tradier read. Naming it
+ * `starting_capital` matches reset-paper-account's existing parameter, so the
+ * two repair routes take the same argument spelled the same way.
+ */
+function parseOverride(req: NextRequest): { value: number | null } | { error: NextResponse } {
+  const raw = req.nextUrl.searchParams.get('starting_capital')
+  if (raw == null) return { value: null }
+  const n = parseFloat(raw)
+  if (!Number.isFinite(n) || n <= 0) {
+    return {
+      error: NextResponse.json(
+        {
+          error:
+            'starting_capital must be a positive number — the account TOTAL EQUITY, not the ' +
+            'basis. Realized P&L is subtracted for you.',
+        },
+        { status: 400 },
+      ),
+    }
+  }
+  return { value: n }
+}
+
 export async function GET(req: NextRequest, { params }: { params: { bot: string } }) {
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
@@ -238,12 +296,19 @@ export async function GET(req: NextRequest, { params }: { params: { bot: string 
   const dte = dteMode(bot)
   if (!dte) return NextResponse.json({ error: 'Unknown dte_mode' }, { status: 400 })
 
+  const override = parseOverride(req)
+  if ('error' in override) return override.error
+
   try {
-    const preview = await gather(bot, dte)
+    const preview = await gather(bot, dte, override.value)
     return NextResponse.json({
       dry_run: true,
       ...preview,
-      instructions: `POST /api/${bot}/seed-production-ledger?confirm=true to apply.`,
+      instructions:
+        `POST /api/${bot}/seed-production-ledger?confirm=true to apply.` +
+        (preview.tradier.reachable
+          ? ''
+          : ' Tradier is not answering — add &starting_capital=N (total equity) to override.'),
     })
   } catch (err: unknown) {
     return NextResponse.json(
@@ -272,8 +337,11 @@ export async function POST(req: NextRequest, { params }: { params: { bot: string
     )
   }
 
+  const override = parseOverride(req)
+  if ('error' in override) return override.error
+
   try {
-    const preview = await gather(bot, dte)
+    const preview = await gather(bot, dte, override.value)
     if (preview.blocked_reason || !preview.proposed) {
       return NextResponse.json(
         { error: preview.blocked_reason ?? 'Cannot seed', preview },
@@ -314,8 +382,13 @@ export async function POST(req: NextRequest, { params }: { params: { bot: string
           `Seeded production paper_account for ${preview.person} (${dte}): ` +
             `basis $${p.starting_capital.toFixed(2)}, balance $${p.current_balance.toFixed(2)}, ` +
             `reconciled to ${preview.history.closed_positions} closed production trade(s) ` +
-            `worth $${p.cumulative_pnl.toFixed(2)}.`,
-          JSON.stringify({ event: 'production_ledger_seed', account_id: preview.account_id, ...p }),
+            `worth $${p.cumulative_pnl.toFixed(2)}. Equity source: ${preview.tradier.source}.`,
+          JSON.stringify({
+            event: 'production_ledger_seed',
+            account_id: preview.account_id,
+            equity_source: preview.tradier.source,
+            ...p,
+          }),
           dte,
           preview.person,
         ],
@@ -330,6 +403,7 @@ export async function POST(req: NextRequest, { params }: { params: { bot: string
       account_id: preview.account_id,
       seeded: p,
       live_equity: preview.tradier.total_equity,
+      equity_source: preview.tradier.source,
       note:
         `Production ledger created. Collateral deductions and close credits now land, and the ` +
         `scanner will start writing production equity snapshots on its next cycle (the curve ` +
