@@ -4,6 +4,7 @@ import {
   getOwnerPauseState,
   getSandboxAccountBalances,
   getSpark2ProductionBalance,
+  getFlameProductionBalance,
   getQuoteDetail,
   getIcMarkToMarket,
   calculateIcUnrealizedPnl,
@@ -226,6 +227,19 @@ export async function getLiveSummary(
   let source: 'tradier' | 'paper_account' = 'paper_account'
   if (BOT === 'spark2' && !paper) {
     const det = await getSpark2ProductionBalance().catch(() => null)
+    if (det?.total_equity != null) {
+      accountValue = Math.round(num(det.total_equity) * 100) / 100
+      todayPnl = Math.round((num(det.close_pl) + num(det.open_pl)) * 100) / 100
+      source = 'tradier'
+    }
+  }
+  // FLAME's live account is credentialed from env exactly like SPARK2's, so it
+  // needs the same branch. 🚨 Without it the customer page derived FLAME's value
+  // from the DB ledger while the operator console read Tradier — the same number
+  // rendered two different ways, which is the divergence this whole change fixes.
+  // The DB fallback below still applies when creds are absent (paper FLAME).
+  if (BOT === 'flame' && !paper) {
+    const det = await getFlameProductionBalance().catch(() => null)
     if (det?.total_equity != null) {
       accountValue = Math.round(num(det.total_equity) * 100) / 100
       todayPnl = Math.round((num(det.close_pl) + num(det.open_pl)) * 100) / 100
