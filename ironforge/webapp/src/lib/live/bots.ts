@@ -4,7 +4,11 @@
  * This module is imported by BOTH client components and server code, so it must
  * stay free of `next/server`, the DB client, and auth. `viewer.ts` re-exports
  * everything here so existing server-side imports keep working.
+ *
+ * `billing/plans` is safe to import from here: it has no imports of its own and
+ * touches neither the DB nor `next/server`.
  */
+import { botTagline } from '@/lib/billing/plans'
 
 export const LIVE_BOTS = ['spark', 'spark2', 'flame'] as const
 export type LiveBot = (typeof LIVE_BOTS)[number]
@@ -63,14 +67,31 @@ export const LIVE_BOT_ACCENT: Record<LiveBot, 'flame' | 'spark'> = {
  *  "0DTE Paper Iron Condor" (dte 0) from /api/spark2/status, but this said
  *  "Next-day SPY spreads" — SPARK's 1DTE line — so the customer page made a
  *  false statement about what Spark paper trades. */
+/**
+ * DERIVED for the two sellable bots, never typed here.
+ *
+ * These were literals, and they drifted. On 2026-08-16 Flame's was corrected
+ * from "Two-day" to "Same-day" because `dteMode('flame')` had become '0DTE' —
+ * but Spark's said "Next-day SPY spreads" and was left untouched, even though
+ * `dteMode('spark')` changed to '0DTE' in the very same commit. That false line
+ * was served on `/api/public/track-record` (unauthenticated) via
+ * `track-record.ts`, telling anyone who asked that a customer's money was doing
+ * something it was not.
+ *
+ * `botTagline()` reads `BOT_PLANS[...].structure`, the same field the checkout
+ * blurb is composed from, so the sales page and the customer page cannot
+ * disagree about the product again.
+ *
+ * SPARK2 stays a literal on purpose: it is an operator-side bot with no
+ * BOT_PLANS entry, and it genuinely does run a different structure (1DTE iron
+ * condors) — see `dteMode('spark2')`.
+ */
 export const LIVE_BOT_TAGLINE: Record<LiveBot, string> = {
-  spark: 'Next-day SPY spreads',
-  spark2: 'Same-day SPY iron condors',
-  // EBB (2026-08-16): FLAME runs the SAME-DAY put credit spread at 13:05 CT,
-  // not the retired 2DTE product. dteMode('flame') has said '0DTE' since then;
-  // this line still said "Two-day", so the customer page made a false statement
-  // about what their money is doing.
-  flame: 'Same-day SPY put credit spreads',
+  spark: botTagline('spark'),
+  // dteMode('spark2') is '1DTE' — next-day expiry. This said "Same-day",
+  // the same class of false statement as Spark's, on the same map.
+  spark2: 'Next-day SPY iron condors',
+  flame: botTagline('flame'),
 }
 
 /** Simulated-results disclosure, named for the bot it is shown against.
