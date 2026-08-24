@@ -17,14 +17,16 @@ import { MarketingSections, LegalFooter, MARKETING_BG } from './_home/marketing'
  */
 
 /**
- * Client-side rendered performance figures.
+ * Fully static. Keep it that way.
  *
- * The hero's Performance Overview card is a client component that fetches
- * /api/public/track-record after hydration, so unlike the previous homepage this
- * page reads nothing from the database while rendering and can be served
- * statically. `force-dynamic` was required by the old server-rendered ledger
- * preview and is deliberately NOT carried over — leaving it would cost a
- * pointless per-request render on the busiest page on the site.
+ * Nothing in this page reads the database, and since the hero card stopped being
+ * a performance widget nothing fetches after hydration either — so the busiest
+ * page on the site is served from the build output.
+ *
+ * `force-dynamic` was required by an older hero that server-rendered the ledger
+ * on every request, and is deliberately NOT carried over. If a future change
+ * makes this page dynamic again, that should be a decision someone made on
+ * purpose, not a side effect of adding a data-backed component to the hero.
  */
 
 export const metadata: Metadata = {

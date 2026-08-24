@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import Image from 'next/image'
-import PerformanceOverviewCard from './PerformanceOverviewCard'
+import DefinedRiskCard from './DefinedRiskCard'
 import { MARKETING_TIERS } from '@/lib/billing/plans'
 import {
   ShieldIcon,
@@ -164,15 +164,21 @@ export function HeroSection({ source }: { source: MarketingSource }) {
         </ul>
       </div>
       {/*
-       * The approved mock draws this card with "+18.74% / 128 trades / 74% win
-       * rate" over a hand-drawn rising sparkline. Those figures are not real and
-       * were never real — they are the placeholder numbers the original template
-       * shipped with. They are NOT reproduced. This component reads the same
-       * closed-trade ledger the customer pages read, labels paper as paper, and
-       * degrades to "temporarily unavailable" rather than to a plausible number.
-       * Never replace it with the mock's literals.
+       * NOT A PERFORMANCE CARD, deliberately.
+       *
+       * The approved mock draws a "+18.74% / 128 trades / 74% win rate" panel over
+       * a rising sparkline. Those figures were never real — they are the original
+       * template's placeholders. The card that replaced them read the live ledger
+       * honestly, and it is gone too: see DefinedRiskCard's own header for why
+       * (the curve summed sandbox and production under a hardcoded "Paper account"
+       * badge, and Spark's structure changed underneath it).
+       *
+       * The hero now answers "how much can this lose me?" instead of "what did it
+       * return?" — a question we can answer truthfully today, with no database
+       * read and no failure state. Do not put a return, a win rate or an equity
+       * curve back in this slot.
        */}
-      <PerformanceOverviewCard />
+      <DefinedRiskCard />
     </section>
   )
 }
