@@ -60,7 +60,7 @@ export default function BillingClient() {
       const res = await fetch('/api/billing/portal', { method: 'POST' })
       const data = await res.json().catch(() => ({}))
       if (res.ok && data.url) { window.location.href = data.url; return }
-      if (res.status === 409) { window.location.href = '/#memberships'; return }
+      if (res.status === 409) { window.location.href = '/pricing'; return }
       setError(data.error && data.error !== 'no_subscription'
         ? data.error
         : 'Billing management isn’t available just yet — please try again shortly.')
@@ -103,10 +103,11 @@ export default function BillingClient() {
               {busy ? 'Opening…' : 'Manage billing'}
             </button>
           ) : (
-            /* Straight to the membership section. This pointed at /pricing, which has
-               308'd to /#memberships since the pricing page was retired — an extra hop
-               that bounced a signed-in customer out to the marketing homepage. */
-            <Link href="/#memberships" className="rounded-lg border border-amber-500 px-4 py-2.5 text-sm font-semibold text-amber-500 transition hover:bg-amber-500/10">See plans</Link>
+            /* Straight to the tiers. This has pointed at /pricing, then at
+               /#memberships while that page was a 308, and now at /pricing again —
+               the homepage no longer carries a membership section, so the anchor
+               would scroll to nothing. /pricing renders the tiers itself. */
+            <Link href="/pricing" className="rounded-lg border border-amber-500 px-4 py-2.5 text-sm font-semibold text-amber-500 transition hover:bg-amber-500/10">See plans</Link>
           )}
         </div>
         {hasPlan && (

@@ -26,10 +26,9 @@ export const SUPPORT_KB: KbEntry[] = [
     q: 'What plans and prices does IronForge offer?',
     // Prices and names interpolated from MARKETING_TIERS. This answer hardcoded
     // "Community ($15/mo)" — the price was $10, the same discrepancy caught in Stripe —
-    // and "Forge Starter", and pointed at /pricing, which has 308'd to /#memberships
-    // since that page was retired. A support bot quoting a price we do not charge is
-    // the worst place for this to be wrong.
-    a: `Three tiers: ${MARKETING_TIERS.community.name} ($${MARKETING_TIERS.community.priceMonthly}/mo — chat + education, no trading bot), ${MARKETING_TIERS.starter.name} ($${MARKETING_TIERS.starter.priceMonthly}/mo — one automated strategy), and ${MARKETING_TIERS.pro.name} ($${MARKETING_TIERS.pro.priceMonthly}/mo — both strategies). Every bot plan includes Community. See the memberships section on the homepage.`,
+    // and "Forge Starter". A support bot quoting a price we do not charge is the worst
+    // place for this to be wrong.
+    a: `Three tiers: ${MARKETING_TIERS.community.name} ($${MARKETING_TIERS.community.priceMonthly}/mo — chat + education, no trading bot), ${MARKETING_TIERS.starter.name} ($${MARKETING_TIERS.starter.priceMonthly}/mo — one automated strategy), and ${MARKETING_TIERS.pro.name} ($${MARKETING_TIERS.pro.priceMonthly}/mo — both strategies). Every bot plan includes Community. See ironforge.trade/pricing.`,
   },
   {
     topic: 'plans',

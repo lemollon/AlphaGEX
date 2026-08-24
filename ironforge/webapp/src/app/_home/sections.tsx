@@ -1,180 +1,22 @@
 import Link from 'next/link'
-import Image from 'next/image'
 import { IFMark } from '@/components/Brand'
 import { MARKETING_TIERS } from '@/lib/billing/plans'
-import DashboardPreview, { DailyBriefList } from './DashboardPreview'
-import {
-  ShieldIcon,
-  BarsIcon,
-  PeopleIcon,
-  CheckIcon,
-  ChevronRightIcon,
-  HashUsersIcon,
-  ClipboardCheckIcon,
-  GaugeIcon,
-} from './icons'
+import { ShieldIcon, PeopleIcon, CheckIcon } from './icons'
 
-/* ── Hero ──────────────────────────────────────────────────────────────────── */
-
-export function Hero() {
-  return (
-    <section className="mx-auto grid max-w-[1200px] grid-cols-1 items-start gap-10 px-5 pb-14 pt-10 md:px-8 lg:grid-cols-[5fr_6fr] lg:gap-12 lg:pt-14">
-      <div>
-        <h1 className="text-[40px] font-extrabold leading-[1.05] tracking-tight text-white md:text-[56px]">
-          Built on <span className="text-amber-500">Discipline.</span><br />
-          Driven by <span className="text-amber-500">Data.</span>
-        </h1>
-        <p className="mt-5 max-w-md text-[17px] leading-relaxed text-gray-300">
-          Automated trading powered by real-time analysis and disciplined execution.
-        </p>
-        {/* Two doors: bright orange = create the account, bright green = the Automate
-            trial. Full-width stacked on mobile (matches the approved mock), inline on
-            wider screens. White label on the vivid fills per the approved direction. */}
-        <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-          <Link
-            href="/signup"
-            className="rounded-lg bg-amber-500 px-6 py-3.5 text-center text-[15px] font-bold text-white shadow-lg shadow-amber-500/20 transition-colors hover:bg-amber-400"
-          >
-            Create Account
-          </Link>
-          <Link
-            href="/signup?plan=automate"
-            className="rounded-lg bg-green-500 px-6 py-3.5 text-center text-[15px] font-bold text-white shadow-lg shadow-green-500/20 transition-colors hover:bg-green-400"
-          >
-            Start 5-Day Free Trial
-          </Link>
-        </div>
-        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-gray-400">
-          <span className="inline-flex items-center gap-1.5">
-            <CheckIcon className="h-4 w-4 text-amber-500" /> No long-term commitment
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <CheckIcon className="h-4 w-4 text-amber-500" /> Cancel anytime
-          </span>
-        </div>
-
-        {/* No pricing card here. The hero states the promise and asks for the account;
-            the two tiers are compared side by side in "Choose Your Membership" below,
-            which is the only place a price appears. Putting the paid tier here made the
-            left column tower over the dashboard preview and buried Community entirely. */}
-        <div className="mt-12">
-          <ValuePillars />
-        </div>
-      </div>
-
-      {/* Illustrative dashboard preview — desktop only per spec */}
-      <div className="hidden lg:block">
-        <DashboardPreview />
-      </div>
-    </section>
-  )
-}
-
-/* ── Value pillars ─────────────────────────────────────────────────────────── */
-
-const PILLARS = [
-  {
-    icon: ShieldIcon,
-    title: 'Discipline First',
-    body: 'Risk-managed strategies and disciplined execution.',
-  },
-  {
-    icon: BarsIcon,
-    title: 'Real-Time Insights',
-    body: 'AI-powered market intelligence and daily briefings.',
-  },
-  {
-    icon: PeopleIcon,
-    title: 'Stronger Together',
-    body: 'Join a community of traders focused on growth.',
-  },
-]
-
-function ValuePillars() {
-  return (
-    <div className="grid grid-cols-3 gap-4 lg:gap-5">
-      {PILLARS.map(({ icon: Icon, title, body }) => (
-        <div key={title} className="text-center lg:text-left">
-          <div className="flex flex-col items-center gap-2 lg:flex-row lg:items-center">
-            <Icon className="h-7 w-7 text-amber-500 lg:h-5 lg:w-5" />
-            <h3 className="whitespace-nowrap text-[12.5px] font-bold tracking-tight text-white lg:tracking-normal">
-              {title}
-            </h3>
-          </div>
-          <p className="mt-2 text-[13px] leading-snug text-gray-400 lg:text-[11px]">{body}</p>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-/**
- * The paid tier card.
+/* ─────────────────────────────────────────────────────────────────────────────
+ * MEMBERSHIP TIERS.
  *
- * Rendered ONCE, in the membership section beside Forge Community, so the two tiers can
- * actually be compared — which is the whole job of that section. It previously sat in
- * the hero instead, which left "Choose Your Membership" showing a single lonely $10 card
- * and no way to see what the paid tier included without scrolling back up.
+ * This file used to hold the whole previous homepage — a hero with a live
+ * dashboard preview, a three-card feature section, and a closing CTA banner.
+ * The homepage now renders the approved marketing design from `marketing.tsx`,
+ * which has no membership section, so everything except the two tier cards was
+ * deleted rather than left sitting here: a second, unreachable homepage in the
+ * tree is how a change lands on the design nobody is looking at.
+ * `DashboardPreview.tsx` went with it (it had no other caller). Both are in git
+ * history if the old layout is ever wanted back.
  *
- * Still defined once and used once: a price stated in two places is how /pricing and the
- * homepage drifted apart, and that rule is unchanged.
- *
- * The tier NAME is read from MARKETING_TIERS, not written here. plans.ts is the single
- * source; the Terms of Service billing paragraph reads the same field.
- */
-export function ForgeStarterCard() {
-  return (
-    /* Green border, matching the trial badge and the trial CTA — the design uses green
-       for "start free" throughout and reserves brand orange for paid actions like Join
-       Community. h-full so it matches the Community card's height in the grid. */
-    <div className="relative flex h-full flex-col rounded-2xl border border-emerald-500/50 bg-[#0A0B0C] p-6 md:p-7">
-      <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border border-emerald-500/50 bg-emerald-950 px-4 py-1 text-[11px] font-bold tracking-wide text-emerald-400">
-        5 TRADING DAY FREE TRIAL
-      </div>
-
-      <div className="flex items-center gap-4">
-        <div className="relative flex h-12 w-12 shrink-0 items-center justify-center">
-          <ShieldIcon className="h-12 w-12 text-amber-500" />
-          <IFMark className="absolute h-5 w-auto" />
-        </div>
-        <div>
-          <h3 className="text-[22px] font-bold text-white">
-            {/* Derived, never typed literally — the tier name lives in plans.ts and is
-                also rendered by the Terms of Service, so a hardcoded copy here is how
-                the two would come to disagree. */}
-            {MARKETING_TIERS.starter.name.split(' ')[0]}{' '}
-            <span className="text-amber-500">
-              {MARKETING_TIERS.starter.name.split(' ').slice(1).join(' ')}
-            </span>
-          </h3>
-          <p className="mt-0.5 text-sm text-gray-400">Everything in Forge Community, plus:</p>
-        </div>
-      </div>
-
-      <div className="mt-6">
-        <FeatureChecklist items={AUTOMATE_FEATURES} />
-      </div>
-
-      <div className="mt-auto border-t border-white/10 pt-5">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="text-white">
-            <span className="text-[30px] font-extrabold">${MARKETING_TIERS.starter.priceMonthly}</span>
-            <span className="ml-1 text-sm text-gray-400">/month</span>
-          </div>
-          <Link
-            href="/signup?plan=automate"
-            className="whitespace-nowrap rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-400 md:px-7 md:text-[15px]"
-          >
-            Start 5-Day Free Trial
-          </Link>
-        </div>
-        <p className="mt-3 text-xs text-gray-500">No long-term commitment. Cancel anytime.</p>
-      </div>
-    </div>
-  )
-}
-
-/* ── Membership ────────────────────────────────────────────────────────────── */
+ * What remains is rendered by exactly one route, /pricing.
+ * ──────────────────────────────────────────────────────────────────────────── */
 
 /* Row-major order so the rendered 2-col grid reads column-wise like the mock:
  * col 1 = AI briefings / commentary / discussions, col 2 = education / reviews / access. */
@@ -209,8 +51,68 @@ function FeatureChecklist({ items }: { items: string[] }) {
   )
 }
 
+/**
+ * The paid tier card.
+ *
+ * The tier NAME and PRICE are read from MARKETING_TIERS, never written here.
+ * plans.ts is the single source; the Terms of Service billing paragraph and the
+ * support knowledge base read the same fields. A price typed into a component is
+ * how the retired /pricing page and the homepage came to disagree.
+ */
+export function ForgeStarterCard() {
+  return (
+    /* Green border, matching the trial badge and the trial CTA — the design uses green
+       for "start free" throughout and reserves brand orange for paid actions like Join
+       Community. h-full so it matches the Community card's height in the grid. */
+    <div className="relative flex h-full flex-col rounded-2xl border border-emerald-500/50 bg-[#0A0B0C] p-6 md:p-7">
+      <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border border-emerald-500/50 bg-emerald-950 px-4 py-1 text-[11px] font-bold tracking-wide text-emerald-400">
+        5 TRADING DAY FREE TRIAL
+      </div>
+
+      <div className="flex items-center gap-4">
+        <div className="relative flex h-12 w-12 shrink-0 items-center justify-center">
+          <ShieldIcon className="h-12 w-12 text-amber-500" />
+          <IFMark className="absolute h-5 w-auto" />
+        </div>
+        <div>
+          <h3 className="text-[22px] font-bold text-white">
+            {MARKETING_TIERS.starter.name.split(' ')[0]}{' '}
+            <span className="text-amber-500">
+              {MARKETING_TIERS.starter.name.split(' ').slice(1).join(' ')}
+            </span>
+          </h3>
+          <p className="mt-0.5 text-sm text-gray-400">Everything in Forge Community, plus:</p>
+        </div>
+      </div>
+
+      <div className="mt-6">
+        <FeatureChecklist items={AUTOMATE_FEATURES} />
+      </div>
+
+      <div className="mt-auto border-t border-white/10 pt-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="text-white">
+            <span className="text-[30px] font-extrabold">${MARKETING_TIERS.starter.priceMonthly}</span>
+            <span className="ml-1 text-sm text-gray-400">/month</span>
+          </div>
+          <Link
+            href="/signup?plan=automate&source=pricing&placement=tier_card"
+            className="whitespace-nowrap rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-400 md:px-7 md:text-[15px]"
+          >
+            Start 5-Day Free Trial
+          </Link>
+        </div>
+        <p className="mt-3 text-xs text-gray-500">No long-term commitment. Cancel anytime.</p>
+      </div>
+    </div>
+  )
+}
+
 export function MembershipSection() {
   return (
+    /* The `memberships` id is kept even though /pricing owns this section again:
+       external links and old bookmarks to `#memberships` still exist, and an
+       anchor that resolves costs nothing. */
     <section id="memberships" className="mx-auto max-w-[1200px] px-5 pb-16 md:px-8">
       <h2 className="text-center text-[26px] font-bold tracking-tight text-white md:text-[28px]">
         Choose Your Membership
@@ -232,7 +134,10 @@ export function MembershipSection() {
             </div>
             <div>
               <h3 className="text-[22px] font-bold text-white">
-                Forge <span className="text-amber-500">Community</span>
+                {MARKETING_TIERS.community.name.split(' ')[0]}{' '}
+                <span className="text-amber-500">
+                  {MARKETING_TIERS.community.name.split(' ').slice(1).join(' ')}
+                </span>
               </h3>
               <p className="mt-0.5 text-sm text-gray-400">The foundation.</p>
             </div>
@@ -252,7 +157,7 @@ export function MembershipSection() {
                 <span className="ml-1 text-sm text-gray-400">/month</span>
               </div>
               <Link
-                href="/signup?plan=community"
+                href="/signup?plan=community&source=pricing&placement=tier_card"
                 className="whitespace-nowrap rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-amber-400 md:px-7 md:text-[15px]"
               >
                 Join Community
@@ -265,235 +170,6 @@ export function MembershipSection() {
         {/* The paid tier, promoted: green border + trial badge, as in the design. */}
         <div className="mt-4 md:mt-0">
           <ForgeStarterCard />
-        </div>
-      </div>
-    </section>
-  )
-}
-
-/* ── Everything You Need ───────────────────────────────────────────────────── */
-
-/* Static lifetime-return sparkline for the Performance Dashboard preview card. */
-function PerformanceChart() {
-  const points =
-    '0,88 10,84 18,86 26,79 34,81 42,74 50,77 58,70 66,72 74,64 82,68 90,60 98,63 106,55 114,58 122,50 130,54 138,46 146,49 154,41 162,45 170,36 178,40 186,31 194,35 202,26 210,30 218,22 226,25 234,17 242,21 250,13 258,16 266,9 274,13 280,6'
-  return (
-    <svg viewBox="0 0 280 100" className="h-28 w-full" preserveAspectRatio="none" aria-hidden>
-      <defs>
-        <linearGradient id="perf-fill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#16A34A" stopOpacity="0.35" />
-          <stop offset="100%" stopColor="#16A34A" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polygon points={`0,100 ${points} 280,100`} fill="url(#perf-fill)" />
-      <polyline points={points} fill="none" stroke="#22C55E" strokeWidth="1.6" />
-    </svg>
-  )
-}
-
-function DesktopFeatureCards() {
-  return (
-    <div className="hidden grid-cols-3 gap-5 md:grid">
-      {/* Daily Brief */}
-      <div className="flex flex-col rounded-2xl border border-white/10 bg-[#0A0B0C] p-5">
-        <div className="flex-1 rounded-xl border border-white/10 bg-[#0C0D0E] p-4">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-300">Daily Brief</div>
-          <div className="mt-2.5">
-            <DailyBriefList compact />
-          </div>
-          <div className="mt-3 text-[11px] font-semibold text-amber-500">View Full Brief &rsaquo;</div>
-        </div>
-        <h3 className="mt-5 text-lg font-bold text-white">Daily Brief</h3>
-        <p className="mt-1.5 text-sm leading-relaxed text-gray-400">
-          Start every day with AI-powered insights that cut through the noise.
-        </p>
-      </div>
-
-      {/* Community Intelligence */}
-      <div className="flex flex-col rounded-2xl border border-white/10 bg-[#0A0B0C] p-5">
-        <div className="flex-1 rounded-xl border border-white/10 bg-[#0C0D0E] p-4">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-300">Forge Community</div>
-          <div className="mt-2 flex items-center gap-1.5 border-b border-white/10 pb-2 text-[11px] text-gray-400">
-            <HashUsersIcon className="h-3.5 w-3.5" />
-            <span># market-talk</span>
-          </div>
-          <div className="mt-3 space-y-3">
-            <div className="flex items-start gap-2">
-              <Image
-                src="/home/avatar-spark-agent.png"
-                alt="Spark Agent avatar"
-                width={28}
-                height={28}
-                className="mt-0.5 shrink-0 rounded-full"
-              />
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-bold text-white">Spark Agent</span>
-                  <span className="rounded border border-white/20 px-1 text-[8px] font-semibold text-gray-400">AI</span>
-                </div>
-                <div className="mt-1 rounded-lg border border-white/10 bg-[#101112] px-2.5 py-1.5 text-[11px] leading-snug text-gray-300">
-                  SPX volatility is heating up. Here&apos;s what I&apos;m watching...
-                </div>
-              </div>
-            </div>
-            <div className="flex items-start gap-2">
-              <Image
-                src="/home/avatar-tradertom.png"
-                alt="TraderTom avatar"
-                width={28}
-                height={28}
-                className="mt-0.5 shrink-0 rounded-full"
-              />
-              <div>
-                <span className="text-[11px] font-bold text-white">TraderTom</span>
-                <div className="mt-1 rounded-lg border border-white/10 bg-[#101112] px-2.5 py-1.5 text-[11px] leading-snug text-gray-300">
-                  Agree. Watching key levels into tomorrow.
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <h3 className="mt-5 text-lg font-bold text-white">Community Intelligence</h3>
-        <p className="mt-1.5 text-sm leading-relaxed text-gray-400">
-          Connect with traders, share ideas, and get real-time market discussion.
-        </p>
-      </div>
-
-      {/* Performance Dashboard */}
-      <div className="flex flex-col rounded-2xl border border-white/10 bg-[#0A0B0C] p-5">
-        <div className="flex-1 rounded-xl border border-white/10 bg-[#0C0D0E] p-4">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-300">Lifetime Return</div>
-          {/* Was a hardcoded "+18.74%" — an invented return, and the first number a
-              prospect saw. The card only illustrates the dashboard; no number, no
-              pointer (the Bot Ledger was retired under UAT-003). */}
-          <div className="mt-2 text-xl font-bold text-white">&mdash;</div>
-          <div className="text-[10px] text-gray-500">Illustrative dashboard</div>
-          <div className="mt-2 flex gap-2">
-            <div className="flex flex-col justify-between py-1 text-right text-[8px] text-gray-500">
-              <span>20%</span>
-              <span>10%</span>
-              <span>-10%</span>
-            </div>
-            <div className="min-w-0 flex-1">
-              <PerformanceChart />
-              <div className="mt-1 flex justify-between text-[8px] text-gray-500">
-                <span>JAN</span>
-                <span>FEB</span>
-                <span>MAR</span>
-                <span>APR</span>
-                <span>MAY</span>
-              </div>
-            </div>
-          </div>
-        </div>
-        <h3 className="mt-5 text-lg font-bold text-white">Performance Dashboard</h3>
-        <p className="mt-1.5 text-sm leading-relaxed text-gray-400">
-          Track your accounts, trades, and performance in real time.
-        </p>
-      </div>
-    </div>
-  )
-}
-
-const MOBILE_FEATURE_ROWS = [
-  { icon: ClipboardCheckIcon, title: 'Daily Brief', body: 'AI-powered insights that cut through the noise.' },
-  {
-    icon: PeopleIcon,
-    title: 'Community Intelligence',
-    body: 'Real-time market discussion and trader insights.',
-  },
-  {
-    icon: GaugeIcon,
-    title: 'Performance Dashboard',
-    body: 'Track your accounts, trades, and performance in real time.',
-  },
-]
-
-function MobileFeatureRows() {
-  return (
-    <div className="space-y-3 md:hidden">
-      {MOBILE_FEATURE_ROWS.map(({ icon: Icon, title, body }) => (
-        <div key={title} className="flex items-center gap-3 rounded-xl border border-white/10 bg-[#0A0B0C] px-4 py-3.5">
-          <Icon className="h-5 w-5 shrink-0 text-white" />
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-bold text-white">{title}</div>
-            <div className="truncate text-[11px] text-gray-400">{body}</div>
-          </div>
-          <ChevronRightIcon className="h-4 w-4 shrink-0 text-gray-400" />
-        </div>
-      ))}
-    </div>
-  )
-}
-
-export function EverythingSection() {
-  return (
-    <section className="mx-auto max-w-[1200px] px-5 pb-16 md:px-8">
-      <h2 className="text-center text-[22px] font-bold tracking-tight text-white md:text-[28px]">
-        Everything You Need. All in One Place.
-      </h2>
-      <div className="mt-8">
-        <DesktopFeatureCards />
-        <MobileFeatureRows />
-      </div>
-    </section>
-  )
-}
-
-/* ── Final CTA banner ──────────────────────────────────────────────────────── */
-
-/**
- * Closing CTA sub-line.
- *
- * Was "Join thousands of disciplined traders building consistency every day." IronForge
- * has single digits of customers, so that was simply untrue — and it sat on the public
- * homepage of a real-money trading product, next to the signup button.
- *
- * The replacement describes what the product IS rather than how many people use it, so
- * it cannot go stale or become a claim we would have to defend. It mirrors the hero
- * sub-copy and the three value pillars, all of which are already true.
- *
- * Declared once because the banner renders twice — desktop and mobile — and the two
- * copies previously had to be edited together by hand.
- */
-const CTA_SUBLINE = 'Disciplined execution, daily market intelligence, and a community of serious traders.'
-
-export function CTABanner() {
-  return (
-    <section className="mx-auto max-w-[1200px] px-5 pb-16 md:px-8">
-      {/* Desktop: single row (logo / copy / button) */}
-      <div className="hidden items-center gap-5 rounded-2xl border border-white/10 bg-[#0A0B0C] p-8 md:flex">
-        <IFMark className="h-14 w-auto shrink-0" />
-        <div className="min-w-0 flex-1">
-          <h2 className="text-2xl font-bold text-white">Ready to Build Your Edge?</h2>
-          <p className="mt-1 text-sm text-gray-400">
-            {CTA_SUBLINE}
-          </p>
-        </div>
-        <Link
-          href="/signup"
-          className="shrink-0 rounded-lg bg-amber-500 px-6 py-3 text-[15px] font-semibold text-white transition-colors hover:bg-amber-400"
-        >
-          Create Account
-        </Link>
-      </div>
-
-      {/* Mobile: title beside logo, then copy with the button at its right */}
-      <div className="rounded-2xl border border-white/10 bg-[#0A0B0C] p-4 md:hidden">
-        <div className="flex items-center gap-3">
-          <IFMark className="h-10 w-auto shrink-0" />
-          <h2 className="text-[17px] font-bold text-white">Ready to Build Your Edge?</h2>
-        </div>
-        <div className="mt-2 flex items-center gap-3">
-          <p className="min-w-0 flex-1 text-[12px] leading-snug text-gray-400">
-            {CTA_SUBLINE}
-          </p>
-          <Link
-            href="/signup"
-            className="shrink-0 whitespace-nowrap rounded-lg bg-amber-500 px-4 py-2.5 text-[13px] font-semibold text-white"
-          >
-            Create Account
-          </Link>
         </div>
       </div>
     </section>

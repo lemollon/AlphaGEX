@@ -201,10 +201,9 @@ export async function POST(req: NextRequest) {
           returnTo === 'enroll'
             ? billingReturn(origin, client, '/enroll/broker', { welcome: 'community', session_id: '{CHECKOUT_SESSION_ID}' })
             : billingReturn(origin, client, '/community', { welcome: 'community', session_id: '{CHECKOUT_SESSION_ID}' }),
-        // Back to where the join button is. The legacy path pointed at /pricing once,
-        // which has 308'd to /#memberships since the pricing page was retired — so
-        // abandoning checkout threw a signed-in customer out to the marketing homepage
-        // AND dropped the ?canceled flag on the redirect.
+        // Back to where the join button is — NOT to wherever the tiers happen to be
+        // listed. Abandoning checkout used to throw a signed-in customer out to the
+        // marketing homepage and drop the ?canceled flag on the way.
         cancelUrl:
           returnTo === 'enroll'
             ? billingReturn(origin, client, '/enroll/broker', { checkout: 'canceled' })
