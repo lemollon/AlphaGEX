@@ -1,49 +1,46 @@
 import type { Metadata } from 'next'
 import HomeNav from './_home/HomeNav'
 import { isPublicMode } from '@/lib/auth/access'
-import HomeFooter from './_home/HomeFooter'
-import { Hero, MembershipSection, EverythingSection, CTABanner } from './_home/sections'
+import { MarketingSections, LegalFooter, MARKETING_BG } from './_home/marketing'
 
-/* IronForge public homepage — implements the approved design in
- * IronForge_Public_Homepage_Developer_Handoff_v1 (LOCKED FOR IMPLEMENTATION).
- * Copy, pricing, and section order are locked; no proprietary execution
- * details appear here. Primary conversion: Create Account. */
+/* IronForge public homepage.
+ *
+ * Renders the approved marketing design, which is defined ONCE in
+ * `_home/marketing.tsx` and shared with /how-it-works. Nothing about the layout
+ * or the copy lives in this file — see that module before changing anything a
+ * visitor can see.
+ *
+ * This replaced an older homepage (hero + two pricing cards + three feature
+ * preview cards). The membership tiers it carried were not deleted: /pricing is
+ * a real page again and owns them, because the customer billing screen and the
+ * checkout 409 path both need somewhere to send a customer to see plans.
+ */
 
 /**
- * Rendered per request.
+ * Client-side rendered performance figures.
  *
- * The hero preview reads the live closed-trade ledger, so this page must NOT be a
- * build-time static render. The database is not reachable during the build, the preview
- * falls back to em-dashes, and Next would bake that empty render into the output — the
- * build above emitted a static `○ /` until this was set.
- *
- * `revalidate` was the first attempt and is the wrong tool for the same reason: it still
- * prerenders at build, so the first visitors after every deploy would be served the
- * dashes until a window expired.
- *
- * Cost is one ledger read per visit — the same query /bot-ledger already runs per
- * request, over ~160 closed trades. If homepage traffic ever makes that matter, cache
- * the loader rather than going back to prerendering the page.
+ * The hero's Performance Overview card is a client component that fetches
+ * /api/public/track-record after hydration, so unlike the previous homepage this
+ * page reads nothing from the database while rendering and can be served
+ * statically. `force-dynamic` was required by the old server-rendered ledger
+ * preview and is deliberately NOT carried over — leaving it would cost a
+ * pointless per-request render on the busiest page on the site.
  */
-export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
-  title: 'IronForge — Build Your Edge',
+  title: 'IronForge — Built on Discipline. Driven by Data.',
   description:
-    'A disciplined trading ecosystem designed to help you stay informed, execute with confidence, and grow alongside a community of serious traders.',
+    'Automated trading powered by real-time analysis and disciplined execution. Every trade follows predefined rules, with transparent monitoring and a community of serious traders.',
 }
 
 export default function HomePage() {
   return (
-    <div className="min-h-screen bg-[#050607]">
+    <div className={`min-h-screen ${MARKETING_BG}`}>
       <HomeNav active="home" showAll={isPublicMode()} />
       <main>
-        <Hero />
-        <MembershipSection />
-        <EverythingSection />
-        <CTABanner />
+        <MarketingSections source="home" />
       </main>
-      <HomeFooter />
+      <LegalFooter />
     </div>
   )
 }
