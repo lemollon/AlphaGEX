@@ -14,6 +14,14 @@ export interface BotPlan {
   name: string
   /** Stripe product-ish label, e.g. "IronForge Flame". */
   productName: string
+  /**
+   * WHAT it trades, in customer words. Identical for both bots BY DESIGN — they
+   * run one strategy at two clocks — so if these two strings ever differ, either
+   * the products genuinely diverged or someone edited one and not the other.
+   */
+  structure: string
+  /** WHEN it trades, qualitatively. The only honest difference between the bots. */
+  cadence: string
   /** One-line description of what the bot does (mirrors the mockup subtitle). */
   blurb: string
   /** Monthly price in whole dollars. */
@@ -28,6 +36,14 @@ export interface BotPlan {
   liveHref: string
 }
 
+/**
+ * Checkout blurb, composed rather than typed, so the sentence and the structured
+ * fields beside it cannot drift into disagreeing about the same product.
+ */
+function botBlurb(name: string, structure: string, cadence: string): string {
+  return `Set up a dedicated ${name} account that trades ${structure} ${cadence}, automatically.`
+}
+
 export const BOT_PLANS: Record<BotSlug, BotPlan> = {
   spark: {
     slug: 'spark',
@@ -37,7 +53,9 @@ export const BOT_PLANS: Record<BotSlug, BotPlan> = {
     // run ONE strategy at two clocks (Spark morning, Flame afternoon), so the
     // only honest difference in the copy is the time of day. Describes the
     // mechanics, never an outcome.
-    blurb: 'Set up a dedicated Spark account that trades same-day (0DTE) SPY put credit spreads each morning, automatically.',
+    structure: 'same-day (0DTE) SPY put credit spreads',
+    cadence: 'each morning',
+    blurb: botBlurb('Spark', 'same-day (0DTE) SPY put credit spreads', 'each morning'),
     priceMonthly: 50,
     lookupKey: 'spark_monthly',
     accent: '#3B82F6', // Spark blue
@@ -50,13 +68,33 @@ export const BOT_PLANS: Record<BotSlug, BotPlan> = {
     productName: 'IronForge Flame',
     // 0DTE as of 2026-08-16 — see the note on Spark. Flame is the afternoon
     // tranche of the same strategy.
-    blurb: 'Set up a dedicated Flame account that trades same-day (0DTE) SPY put credit spreads each afternoon, automatically.',
+    structure: 'same-day (0DTE) SPY put credit spreads',
+    cadence: 'each afternoon',
+    blurb: botBlurb('Flame', 'same-day (0DTE) SPY put credit spreads', 'each afternoon'),
     priceMonthly: 50,
     lookupKey: 'flame_monthly',
     accent: '#EE5A24', // Flame / brand orange
     mascot: '/home/flame-mascot-glow.png',
     liveHref: '/agents/flame',
   },
+}
+
+/**
+ * Short tagline for compact surfaces (customer bot pages, the public track
+ * record, the bot ledger). Composed from the same two fields as the blurb.
+ *
+ * THIS EXISTS BECAUSE THE TAGLINES DRIFTED AND SHIPPED A FALSE STATEMENT. On
+ * 2026-08-16 Flame's hardcoded tagline was corrected from "Two-day" to
+ * "Same-day" — and Spark's, which said "Next-day SPY spreads", was left alone
+ * even though `dteMode('spark')` had returned '0DTE' since the same change. It
+ * went out on `/api/public/track-record`, unauthenticated, telling anyone who
+ * asked that a customer's money was doing something it was not. Derive it.
+ */
+export function botTagline(slug: BotSlug): string {
+  const p = BOT_PLANS[slug]
+  // "same-day (0DTE) SPY put credit spreads" -> "Same-day SPY put credit spreads"
+  const structure = p.structure.replace(/\s*\(0DTE\)/, '')
+  return structure.charAt(0).toUpperCase() + structure.slice(1)
 }
 
 /** The two-bot bundle — offered as an upsell, priced below 2× a single bot. */

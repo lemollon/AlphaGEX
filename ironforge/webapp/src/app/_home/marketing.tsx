@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import DefinedRiskCard from './DefinedRiskCard'
-import { MARKETING_TIERS } from '@/lib/billing/plans'
+import { MARKETING_TIERS, BOT_PLANS, botTagline } from '@/lib/billing/plans'
 import {
   ShieldIcon,
   BarsIcon,
@@ -85,28 +85,54 @@ const CONFIG = {
     { step: 4, icon: TrendIcon, title: 'Monitor Positions', copy: 'We monitor trades and manage risk throughout the day.' },
     { step: 5, icon: FlagIcon, title: 'End-of-Day Review', copy: 'We review performance and refine for tomorrow.' },
   ],
+  /*
+   * ONE STRATEGY AT TWO CLOCKS — and the copy has to say so.
+   *
+   * This block used to sell a risk ladder: Spark "Lower risk / Long-term growth"
+   * against Flame "Greater opportunity / Higher risk tolerance", with a table
+   * grading them Conservative vs Moderate. None of that is true. Since the EBB
+   * change on 2026-08-16 both bots run the SAME structure — `dteMode` returns
+   * '0DTE' for both, and lib/billing/plans.ts states in as many words that "the
+   * only honest difference in the copy is the time of day."
+   *
+   * Their scanner configs agree: identical wing width, one position, one
+   * contract, same profit target, same end-of-day handling. The single
+   * meaningful difference is when the entry window opens.
+   *
+   * A made-up risk grade is the worst kind of wrong thing to publish about a
+   * financial product — a customer choosing "Conservative" was choosing a label,
+   * not a safer product. Structure and cadence are now read from BOT_PLANS so
+   * this page cannot drift from checkout again.
+   */
   strategies: [
     {
       key: 'spark',
       title: 'SPARK',
-      bullets: ['Lower risk', 'Long-term growth', 'Automated discipline'],
-      mascotSrc: '/home/spark-mascot-glow.png',
+      bullets: [botTagline('spark'), `Trades ${BOT_PLANS.spark.cadence}`, 'Defined risk on every trade'],
+      mascotSrc: BOT_PLANS.spark.mascot,
       mascotAlt: 'Spark strategy mascot',
     },
     {
       key: 'flame',
       title: 'FLAME',
-      bullets: ['Greater opportunity', 'Higher risk tolerance', 'Automated discipline'],
-      mascotSrc: '/home/flame-mascot-glow.png',
+      bullets: [botTagline('flame'), `Trades ${BOT_PLANS.flame.cadence}`, 'Defined risk on every trade'],
+      mascotSrc: BOT_PLANS.flame.mascot,
       mascotAlt: 'Flame strategy mascot',
     },
   ],
+  /*
+   * Four of these five rows are identical, and that IS the comparison. The table
+   * previously manufactured differences to fill itself; what it should tell a
+   * visitor is that the discipline does not change with the badge — only the
+   * clock does. That also makes the honest case for the bundle: running both
+   * spreads entries across the session rather than buying a riskier product.
+   */
   comparison: [
-    { label: 'Primary Objective', spark: 'Long-term growth', flame: 'Accelerated growth' },
-    { label: 'Risk Profile', spark: 'Conservative', flame: 'Moderate' },
-    { label: 'Portfolio Focus', spark: 'Consistency', flame: 'Higher upside' },
-    { label: 'Trading Discipline', spark: 'Automated', flame: 'Automated' },
-    { label: 'Risk Management', spark: 'Built In', flame: 'Built In' },
+    { label: 'Strategy', spark: botTagline('spark'), flame: botTagline('flame') },
+    { label: 'When it trades', spark: 'Each morning', flame: 'Each afternoon' },
+    { label: 'Risk per trade', spark: 'Defined before entry', flame: 'Defined before entry' },
+    { label: 'Positions at a time', spark: 'One', flame: 'One' },
+    { label: 'Execution', spark: 'Fully automated', flame: 'Fully automated' },
   ],
   benefits: [
     { icon: ChartLineIcon, label: 'Daily Market Intelligence', accent: 'blue', boxed: true },

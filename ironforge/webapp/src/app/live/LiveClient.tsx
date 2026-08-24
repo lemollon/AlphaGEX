@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { fetcher } from '@/lib/fetcher'
 import type { LiveSummary, LiveTrade } from '@/lib/live/types'
 import { LIVE_BOT_LABEL, type LiveBot } from '@/lib/live/bots'
+import { botTagline } from '@/lib/billing/plans'
 import { accentFor } from './components/accent'
 import { isSwingActive } from '@/lib/live/swing'
 import LiveHeader from './components/LiveHeader'
@@ -25,7 +26,7 @@ const SIGNUP_CTAS = [
   {
     slug: 'spark',
     name: 'Spark',
-    tagline: 'Next-day SPY spreads',
+    tagline: botTagline('spark'),
     pill: 'Live',
     mascot: '/home/spark-mascot-glow.png',
     cardClass: 'border-spark/40 bg-spark/5 hover:bg-spark/10',
@@ -35,7 +36,7 @@ const SIGNUP_CTAS = [
   {
     slug: 'flame',
     name: 'Flame',
-    tagline: 'Two-day SPY put credit spreads',
+    tagline: botTagline('flame'),
     pill: 'Paper',
     mascot: '/home/flame-mascot-glow.png',
     cardClass: 'border-flame/40 bg-flame/5 hover:bg-flame/10',

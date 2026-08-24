@@ -5,6 +5,7 @@ import Link from 'next/link'
 import EnrollShell from '../EnrollShell'
 import { useEnrollment } from '../useEnrollment'
 import { SELECTED_ACCOUNT_KEY } from '../broker/BrokerClient'
+import { BOT_PLANS, botTagline } from '@/lib/billing/plans'
 
 /**
  * AGENT-01 — Choose Spark or Flame (July 29 handoff).
@@ -123,21 +124,44 @@ export default function AgentClient() {
 
         {account ? (
           <div className="mt-6 grid gap-5 md:grid-cols-2">
+          {/*
+            ONE STRATEGY AT TWO CLOCKS — this is the screen where a customer picks
+            which bot trades their money, so the copy has to be true.
+
+            It used to sell a risk ladder: Spark badged "Lower risk" and described
+            as "a more conservative IRON CONDOR strategy", Flame badged "Higher
+            risk" as "TWO-DAY SPY put credit spreads with heavier capital
+            deployment". Every one of those claims was wrong after the 2026-08-16
+            EBB change:
+              - `dteMode` returns '0DTE' for BOTH — neither is an iron condor or
+                a two-day spread any more.
+              - Their scanner configs are identical on wing width, positions at a
+                time, contracts, profit target and end-of-day handling.
+              - `bp_pct` is 0.20 for both, so "heavier capital deployment" was
+                false in the direction that matters most.
+
+            A fabricated risk grade on an enrolment screen means someone picking
+            "Lower risk" believed they were buying a safer product. They were
+            buying the same product at a different time of day. Structure and
+            cadence are read from BOT_PLANS so this cannot drift from checkout.
+          */}
             {/* Spark */}
             <div className="flex flex-col rounded-xl border border-spark/60 bg-black/20 p-6">
+              {/* Badge states WHEN, not a risk grade — see the block comment above. */}
               <span className="self-start rounded-md bg-spark px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white">
-                Lower risk
+                Morning entry
               </span>
               <h3 className="mt-3 text-2xl font-bold text-spark">Spark</h3>
               <p className="mt-2 text-sm leading-relaxed text-gray-300">
-                A more conservative iron condor strategy designed for steadier, long-term account growth.
+                {botTagline('spark')}, entered {BOT_PLANS.spark.cadence}. The most a trade can lose
+                is fixed before it opens.
               </p>
               <p className="mt-4 text-[10px] font-bold uppercase tracking-wider text-gray-500">Best for</p>
               <p className="mt-1 text-sm text-gray-400">
-                Traders who prioritize consistency, controlled capital exposure, and smaller drawdowns.
+                Traders who want the day&rsquo;s position established early in the session.
               </p>
               <ul className="mt-4 space-y-2 border-t border-forge-border pt-4">
-                {['Lower-risk profile', 'Conservative capital deployment', 'Long-term growth focus'].map((f) => (
+                {[botTagline('spark'), `Trades ${BOT_PLANS.spark.cadence}`, 'Defined risk on every trade'].map((f) => (
                   <li key={f} className="flex items-start gap-2 text-sm text-gray-300">
                     <span aria-hidden className="mt-0.5 font-bold text-spark">✓</span>
                     {f}
@@ -157,12 +181,12 @@ export default function AgentClient() {
             {/* Flame */}
             <div className="flex flex-col rounded-xl border border-amber-500/60 bg-black/20 p-6">
               <span className="self-start rounded-md bg-amber-500 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-black">
-                Higher risk
+                Afternoon entry
               </span>
               <h3 className="mt-3 text-2xl font-bold text-amber-500">Flame</h3>
               <p className="mt-2 text-sm leading-relaxed text-gray-300">
-                A more aggressive premium-selling strategy — two-day SPY put credit spreads with
-                heavier capital deployment.
+                The same strategy as Spark, entered {BOT_PLANS.flame.cadence} instead — a shorter
+                run to expiry. The most a trade can lose is fixed before it opens.
               </p>
               {/* Honesty (audit M6): Flame currently executes in simulation. Selling it
                   as live automation while delivering paper was a trust problem. */}
@@ -173,10 +197,11 @@ export default function AgentClient() {
               </p>
               <p className="mt-4 text-[10px] font-bold uppercase tracking-wider text-gray-500">Best for</p>
               <p className="mt-1 text-sm text-gray-400">
-                Traders comfortable with greater volatility and larger drawdowns in exchange for more potential upside.
+                Traders who prefer a later entry &mdash; or who already run Spark and want entries
+                spread across the day rather than concentrated in one window.
               </p>
               <ul className="mt-4 space-y-2 border-t border-forge-border pt-4">
-                {['Higher-risk profile', 'More aggressive capital deployment', 'Premium-selling focus'].map((f) => (
+                {[botTagline('flame'), `Trades ${BOT_PLANS.flame.cadence}`, 'Defined risk on every trade'].map((f) => (
                   <li key={f} className="flex items-start gap-2 text-sm text-gray-300">
                     <span aria-hidden className="mt-0.5 font-bold text-amber-500">✓</span>
                     {f}
