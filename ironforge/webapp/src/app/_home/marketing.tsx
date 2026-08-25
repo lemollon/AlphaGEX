@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import DefinedRiskCard from './DefinedRiskCard'
-import PerformanceOverviewCard from './PerformanceOverviewCard'
+import HeroChartIllustration from './HeroChartIllustration'
 import { MARKETING_TIERS, BOT_PLANS, botTagline } from '@/lib/billing/plans'
 import {
   ShieldIcon,
@@ -191,19 +191,19 @@ export function HeroSection({ source }: { source: MarketingSource }) {
         </ul>
       </div>
       {/*
-       * The approved mock's top-right card. Layout is the mock's; the numbers are
-       * NOT — it draws "+18.74% / 128 trades / 74% win rate", which are the
-       * original template's placeholders and have never been true of any
-       * IronForge account. See PerformanceOverviewCard's header before touching
-       * anything here.
+       * A STATIC ILLUSTRATION, not a data view — Leron's call, 2026-08-25.
        *
-       * The card is back after a spell as a payoff diagram, and it is not the
-       * card that was removed: the query behind it now scopes to sandbox rows
-       * only. It previously summed sandbox and production into one line beneath
-       * a hardcoded "Paper account" badge, which made the headline figure one
-       * nobody could describe correctly.
+       * This slot has now held three things: a live ledger preview, a payoff
+       * diagram, and a live performance card. The live versions kept running into
+       * the same wall — the record under the current strategy is about a week
+       * long, so an honest chart of it is six points and reads as noise.
+       *
+       * A drawing has no failure state and never looks thin. What it must NEVER
+       * have is invented figures: the mock fills this card with
+       * "+18.74% / 128 trades / 74% win rate", which no IronForge account has
+       * produced. See HeroChartIllustration's header before changing anything.
        */}
-      <PerformanceOverviewCard />
+      <HeroChartIllustration />
     </section>
   )
 }
