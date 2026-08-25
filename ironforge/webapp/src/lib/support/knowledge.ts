@@ -91,7 +91,10 @@ export const SUPPORT_KB: KbEntry[] = [
   {
     topic: 'strategies',
     q: 'What is the difference between paper and live?',
-    a: 'A "Paper" badge means simulated results — no real orders are placed and no real money is at risk. A live strategy trades in your connected brokerage account. The Live and Performance pages label which is which.',
+    // The badge describes the STRATEGY's own ledger, not the reader's account.
+    // Saying "no real money is at risk" flatly is a promise this bot cannot
+    // keep — see lib/live/bots.ts paperDisclosure for why the two differ.
+    a: 'A "Paper" badge means the strategy record you are looking at is simulated — those results come from an IronForge simulated account, not from yours. It describes that record, not your brokerage: whether trades are placed in your connected account depends on your own activation, and the Live page states that directly.',
   },
   {
     topic: 'pages',
