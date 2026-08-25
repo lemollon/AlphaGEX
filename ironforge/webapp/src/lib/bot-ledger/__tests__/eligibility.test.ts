@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest'
 
 import { eligibilitySql, reconcileSql } from '../query'
+import { dteMode } from '@/lib/db'
+
+/*
+ * DERIVED, NOT TYPED — this suite failed on main for nine days.
+ *
+ * It asserted `dte_mode = '1DTE'` for SPARK and `'2DTE'` for FLAME. The
+ * 2026-08-16 EBB change moved BOTH bots to '0DTE', so both assertions became
+ * false the moment it landed, and the red stayed on main where it masked
+ * anything else that might break here.
+ *
+ * Hardcoding '0DTE' would only reset the clock to the next roster move. The
+ * point of these two lines is that `query.ts` filters by the SAME dte_mode the
+ * roster reports — so ask the roster. The bug this catches is a query that
+ * drifts from `dteMode`, which is exactly what it should catch.
+ */
+const SPARK_DTE = dteMode('spark')
+const FLAME_DTE = dteMode('flame')
 
 describe('eligibilitySql', () => {
   const spark = eligibilitySql('spark')
@@ -8,9 +25,9 @@ describe('eligibilitySql', () => {
 
   it('targets the right table and dte_mode per bot', () => {
     expect(spark).toContain('FROM spark_positions')
-    expect(spark).toContain("AND dte_mode = '1DTE'")
+    expect(spark).toContain(`AND dte_mode = '${SPARK_DTE}'`)
     expect(flame).toContain('FROM flame_positions')
-    expect(flame).toContain("AND dte_mode = '2DTE'")
+    expect(flame).toContain(`AND dte_mode = '${FLAME_DTE}'`)
   })
 
   it('reproduces the operator console predicate', () => {
@@ -78,7 +95,7 @@ describe('reconcileSql', () => {
   it('uses the same predicate as the row query', () => {
     const sql = reconcileSql('spark')
     expect(sql).toContain("status IN ('closed', 'expired')")
-    expect(sql).toContain("AND dte_mode = '1DTE'")
+    expect(sql).toContain(`AND dte_mode = '${SPARK_DTE}'`)
     expect(sql).toContain('AND close_time < $1')
     expect(sql).not.toContain('account_type')
   })

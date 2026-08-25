@@ -132,9 +132,12 @@ const MAX_CLOSE_ATTEMPTS = 3
 /** $50/contract, matching customer_protection_sim.py's MARGIN constant — see contracts.ts evaluateFlintCushion. */
 const FLINT_CUSHION_MARGIN_CENTS = 5000
 
-export function isExecutorArmed(): boolean {
-  return process.env.CUSTOMER_EXECUTOR_ENABLED === 'true'
-}
+// Defined in ./armed so read paths (the Live summary, the customer disclosure)
+// can ask without importing SnapTrade and the customers DB. Imported AND
+// re-exported: this module gates on it itself (canOpenForCustomer below), and a
+// bare `export ... from` would re-export it without creating a local binding.
+import { isExecutorArmed } from './armed'
+export { isExecutorArmed }
 
 /**
  * A Flame-only customer arm. The legacy customer switch controls both Spark
