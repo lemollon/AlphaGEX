@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import DefinedRiskCard from './DefinedRiskCard'
-import HeroChartIllustration from './HeroChartIllustration'
+import PerformanceOverviewCard from './PerformanceOverviewCard'
 import { MARKETING_TIERS, BOT_PLANS, botTagline } from '@/lib/billing/plans'
 import {
   ShieldIcon,
@@ -191,19 +191,24 @@ export function HeroSection({ source }: { source: MarketingSource }) {
         </ul>
       </div>
       {/*
-       * A STATIC ILLUSTRATION, not a data view — Leron's call, 2026-08-25.
+       * The approved mock's top-right card, carrying REAL figures — Leron's call,
+       * 2026-08-25 ("it does need real numbers"), reversing the static-drawing
+       * version that briefly sat here.
        *
-       * This slot has now held three things: a live ledger preview, a payoff
-       * diagram, and a live performance card. The live versions kept running into
-       * the same wall — the record under the current strategy is about a week
-       * long, so an honest chart of it is six points and reads as noise.
+       * Layout is the mock's: title row, three stat tiles, area chart with month
+       * ticks. The numbers are NOT the mock's — it draws
+       * "+18.74% / 128 trades / 74% win rate", the original template's
+       * placeholders, which no IronForge account has ever produced and which have
+       * been stripped from this codebase four times now. Every figure below comes
+       * from a closed trade in the sandbox ledger, and the card degrades to a
+       * quiet unavailable state rather than to a plausible number.
        *
-       * A drawing has no failure state and never looks thin. What it must NEVER
-       * have is invented figures: the mock fills this card with
-       * "+18.74% / 128 trades / 74% win rate", which no IronForge account has
-       * produced. See HeroChartIllustration's header before changing anything.
+       * The record is short (FLAME opened 2026-08-17), so expect single-digit
+       * trade counts and a handful of curve points until it lengthens. That is
+       * the honest reading; do not pad it. Read PerformanceOverviewCard's header
+       * before touching anything here.
        */}
-      <HeroChartIllustration />
+      <PerformanceOverviewCard />
     </section>
   )
 }
