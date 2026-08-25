@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import DefinedRiskCard from './DefinedRiskCard'
+import PerformanceOverviewCard from './PerformanceOverviewCard'
 import { MARKETING_TIERS, BOT_PLANS, botTagline } from '@/lib/billing/plans'
 import {
   ShieldIcon,
@@ -190,21 +191,19 @@ export function HeroSection({ source }: { source: MarketingSource }) {
         </ul>
       </div>
       {/*
-       * NOT A PERFORMANCE CARD, deliberately.
+       * The approved mock's top-right card. Layout is the mock's; the numbers are
+       * NOT — it draws "+18.74% / 128 trades / 74% win rate", which are the
+       * original template's placeholders and have never been true of any
+       * IronForge account. See PerformanceOverviewCard's header before touching
+       * anything here.
        *
-       * The approved mock draws a "+18.74% / 128 trades / 74% win rate" panel over
-       * a rising sparkline. Those figures were never real — they are the original
-       * template's placeholders. The card that replaced them read the live ledger
-       * honestly, and it is gone too: see DefinedRiskCard's own header for why
-       * (the curve summed sandbox and production under a hardcoded "Paper account"
-       * badge, and Spark's structure changed underneath it).
-       *
-       * The hero now answers "how much can this lose me?" instead of "what did it
-       * return?" — a question we can answer truthfully today, with no database
-       * read and no failure state. Do not put a return, a win rate or an equity
-       * curve back in this slot.
+       * The card is back after a spell as a payoff diagram, and it is not the
+       * card that was removed: the query behind it now scopes to sandbox rows
+       * only. It previously summed sandbox and production into one line beneath
+       * a hardcoded "Paper account" badge, which made the headline figure one
+       * nobody could describe correctly.
        */}
-      <DefinedRiskCard />
+      <PerformanceOverviewCard />
     </section>
   )
 }
@@ -299,6 +298,16 @@ export function StrategySection() {
         {CONFIG.strategies.map((s) => (
           <StrategyCard key={s.key} strategy={s} />
         ))}
+      </div>
+
+      {/* The payoff diagram sits here rather than in the hero because the row it
+          illustrates — "Risk per trade: Defined before entry" — is directly below
+          it. That claim previously had no picture anywhere on the site. */}
+      {/* Width-capped: the card's SVG scales to its container and this slot is
+          ~930px, nearly twice the hero column it was drawn for. Unconstrained it
+          rendered at roughly double size with 20px axis labels. */}
+      <div className="mx-auto mt-8 max-w-[560px]">
+        <DefinedRiskCard />
       </div>
 
       {/* Comparison table — semantic markup per spec §6.6; horizontal scroll with

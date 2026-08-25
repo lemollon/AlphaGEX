@@ -170,8 +170,25 @@ function streakOf(ordered: Row[]): string | null {
 async function loadBot(bot: LiveBot): Promise<SalesBot> {
   const dte = dteMode(bot)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
+  /*
+   * SANDBOX ONLY — and this filter is the whole reason the public number can be
+   * trusted.
+   *
+   * This query used to have no `account_type` predicate at all, so it summed the
+   * house sandbox ledger and any production rows into ONE cumulative line, and
+   * the card above it printed a hardcoded "Paper account" badge over the total.
+   * On a public marketing page for a financial product, that is a number nobody
+   * can describe correctly: not the paper record, not the real one.
+   *
+   * Scoping to sandbox is the conservative direction and it matches the position
+   * lib/bot-ledger/constants.ts already documents — presenting a record as
+   * simulated can only ever understate it, which is the safe way to be wrong in
+   * public. It also makes the paper badge true by construction rather than by
+   * assertion, so `MODE` no longer has to be taken on faith.
+   */
   const closed =
-    `status IN ('closed', 'expired') AND realized_pnl IS NOT NULL ${dteFilter}`
+    `status IN ('closed', 'expired') AND realized_pnl IS NOT NULL ` +
+    `AND COALESCE(account_type, 'sandbox') = 'sandbox' ${dteFilter}`
 
   // One fetch of every closed trade (spark ~106, flame ~57 — small). All-time and
   // both windows are derived from it, so the lifetime strip matches the legacy
