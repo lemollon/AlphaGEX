@@ -64,25 +64,36 @@ describe('expired contracts are settled on the books, never at the broker', () =
 })
 
 describe('SETTLED is logged only after the row actually moves', () => {
-  it('closePosition reports whether it closed', () => {
-    expect(SRC).toMatch(/limitPrice\?: number,\s*\): Promise<boolean> \{/)
+  it('closePosition reports WHAT HAPPENED, not a boolean', () => {
+    // Upgraded 2026-08-26. A boolean collapsed two different things: a genuine
+    // failure and a legitimate DEFERRAL (limit order live, fill pending — the normal
+    // path for FLAME's debit-limit profit-target exit). Callers could not tell them
+    // apart, so they ignored the result and announced `closed:` regardless.
+    expect(SRC).toMatch(/limitPrice\?: number,\s*\): Promise<CloseOutcome> \{/)
   })
 
-  it('every early return out of closePosition reports failure', () => {
-    // A bare `return` here is the bug: the caller reads it as success.
+  it('every early return out of closePosition names an outcome', () => {
+    // A bare `return` here is the original bug: the caller reads it as success.
     const body = SRC.slice(
       SRC.indexOf('async function closePosition('),
       SRC.indexOf('/*  FLAME — Bull Put Credit Spread entry'),
     )
     expect(body.length).toBeGreaterThan(1000)
     expect(body).not.toMatch(/\n\s*return\s*(\/\/[^\n]*)?\n/)
-    expect(body).toMatch(/return false \/\/ Exit without closing paper/)
-    expect(body).toMatch(/return false \/\/ do NOT book the paper close/)
-    expect(body).toMatch(/\n  return true\n\}/)
+    expect(body).not.toMatch(/return (true|false)\b/)
+    // The order is live and the fill is coming — NOT a failure.
+    expect(body).toMatch(/return 'deferred' \/\/ Exit without closing paper/)
+    // The broker refused outright.
+    expect(body).toMatch(/return 'failed' \/\/ do NOT book the paper close/)
+    // A 0-row UPDATE is a failure, never a quiet success.
+    expect(body).toMatch(/return 'failed'\n  \}/)
+    expect(body).toMatch(/\n  return 'closed'\n\}/)
   })
 
   it('the settle path branches on that result instead of assuming it', () => {
-    expect(SRC).toMatch(/const settled = await closePosition\(/)
+    expect(SRC).toMatch(/const settleOutcome = await closePosition\(/)
+    // Only 'closed' is a settlement. 'deferred' is not success by omission.
+    expect(SRC).toMatch(/const settled = settleOutcome === 'closed'/)
     expect(SRC).toMatch(/if \(!settled\) \{/)
     expect(SRC).toMatch(/SETTLE DID NOT CLOSE/)
     expect(SRC).toMatch(/=settle_declined/)

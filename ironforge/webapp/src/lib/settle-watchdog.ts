@@ -77,6 +77,47 @@ export function isBookOnlyCloseReason(reason: string): boolean {
 }
 
 /**
+ * WHAT ACTUALLY HAPPENED TO THE ROW. `closePosition` returns this, never a boolean.
+ *
+ * 🚨 A BOOLEAN CANNOT EXPRESS THIS, AND THAT IS THE WHOLE POINT. `false` used to mean
+ * two completely different things:
+ *   - a genuine failure (the broker refused, or the UPDATE matched 0 rows), and
+ *   - a **legitimate deferral** — a debit-limit close order placed and waiting for its
+ *     fill, which is the NORMAL path for FLAME's profit-target exit.
+ *
+ * Collapsing those is how a mechanical "if (!ok) report failure" sweep would relabel
+ * every healthy FLAME limit close as broken, and it is also why callers used to just
+ * ignore the result and announce `closed:` unconditionally — the boolean told them
+ * nothing they could act on. Three states, three honest reports.
+ */
+export type CloseOutcome =
+  /** The row moved to `status = 'closed'` and the ledger was booked. */
+  | 'closed'
+  /** Order is live at the broker, fill pending. Position is DELIBERATELY still open. */
+  | 'deferred'
+  /** Could not close. Position is still open and something is wrong. */
+  | 'failed'
+
+/**
+ * The status prefix a caller should report for an outcome.
+ *
+ * `closed:` is consumed downstream by
+ * `action = status.startsWith('closed:') ? 'closed' : 'monitoring'`, so only a real
+ * close may carry it. A deferral and a failure are both still-open positions and must
+ * read as such in the bot's own log.
+ */
+export function closeStatusPrefix(outcome: CloseOutcome): string {
+  if (outcome === 'closed') return 'closed:'
+  if (outcome === 'deferred') return 'pending_close:'
+  return 'close_failed:'
+}
+
+/** True when the position is still open after the attempt — deferral included. */
+export function stillOpen(outcome: CloseOutcome): boolean {
+  return outcome !== 'closed'
+}
+
+/**
  * Read a `DATE` column as YYYY-MM-DD.
  *
  * node-postgres hands back a JS Date, and `String(new Date('2026-08-17')).slice(0,10)`
