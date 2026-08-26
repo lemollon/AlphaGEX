@@ -289,8 +289,27 @@ describe('the watchdog is wired into the scan cycle as a backstop, not a UI poll
   })
 
   it('trips the breaker when the force-settle does not move the row', () => {
-    expect(SRC).toMatch(/if \(!closed\) \{[\s\S]{0,400}?ledger\.trip\(positionId\)/)
+    expect(SRC).toMatch(/if \(outcome === 'failed'\) \{[\s\S]{0,400}?ledger\.trip\(positionId\)/)
     expect(SRC).toMatch(/WATCHDOG FORCE-SETTLE DID NOT CLOSE/)
+  })
+
+  it('🚨 a DEFERRAL must not trip the breaker — that would burn the one attempt', () => {
+    // Deferred means the order is live and the fill is coming: a healthy in-flight
+    // close, not a broken fixer. Tripping on it would spend the position's single
+    // force-settle on a close that was about to succeed.
+    const fn = SRC.slice(
+      SRC.indexOf('async function watchdogForceSettleExpired('),
+      SRC.indexOf('/** Per-bot guard so the heartbeat runs'),
+    )
+    const deferAt = fn.indexOf("if (outcome === 'deferred') {")
+    const failAt = fn.indexOf("if (outcome === 'failed') {")
+    expect(deferAt).toBeGreaterThan(-1)
+    expect(deferAt).toBeLessThan(failAt)
+    // The deferred branch must leave without tripping or recording a repair.
+    const deferBranch = fn.slice(deferAt, failAt)
+    expect(deferBranch).not.toMatch(/ledger\.trip\(/)
+    expect(deferBranch).not.toMatch(/repaired\.push\(/)
+    expect(deferBranch).toMatch(/continue/)
   })
 
   it('only claims a repair after closePosition reports the row actually moved', () => {

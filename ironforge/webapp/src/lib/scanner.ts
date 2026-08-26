@@ -69,10 +69,12 @@ import {
   WATCHDOG_ESCALATION_LEVEL,
   WATCHDOG_MAX_ATTEMPTS,
   decideWatchdog,
+  closeStatusPrefix,
   isBookOnlyCloseReason,
   normalizeExpiration,
   settlementPnl,
   summarizeWatchdogRun,
+  type CloseOutcome,
   type WatchdogFailure,
   type WatchdogRepair,
 } from './settle-watchdog'
@@ -1715,13 +1717,14 @@ async function monitorSinglePosition(
                 ],
               )
             } catch { /* log failure must not block close */ }
-            await closePosition(bot, pid, ticker, expiration,
+            const tlOutcome = await closePosition(bot, pid, ticker, expiration,
               num(pos.put_short_strike), num(pos.put_long_strike),
               num(pos.call_short_strike), num(pos.call_long_strike),
               contracts, entryCredit, collateral, 'trailing_lockin', cclLast,
               'debit', marketablePrice)
             _mtmFailureCounts.delete(pid)
-            return { status: `closed:trailing_lockin@${cclLast.toFixed(4)}`, unrealizedPnl: 0 }
+            return reportClose(bot, pid, tlOutcome, 'trailing_lockin',
+              `trailing_lockin@${cclLast.toFixed(4)}`)
           }
           } // end of tier-floor-guard else branch
         }
@@ -2049,7 +2052,10 @@ async function monitorSinglePosition(
             // Use closePosition with orderType='debit' — same path the initial
             // PT trigger uses.
             try {
-              await closePosition(
+              // Expected outcome here is 'deferred' — a fresh debit limit that has not
+              // filled yet. 'failed' means the reprice never reached the broker, and the
+              // stamping below would then be decorating a pending JSON that did not move.
+              const repriceOutcome = await closePosition(
                 bot, pid, ticker, expiration,
                 num(pos.put_short_strike), num(pos.put_long_strike),
                 num(pos.call_short_strike), num(pos.call_long_strike),
@@ -2057,6 +2063,13 @@ async function monitorSinglePosition(
                 `${pendingInfo._pending_reason ?? 'profit_target'}_slippage_reprice`,
                 aggressivePrice, 'debit', aggressivePrice,
               )
+              if (repriceOutcome === 'failed') {
+                console.warn(
+                  `[scanner] ${bot.name.toUpperCase()} ${pid}: slippage reprice to ` +
+                  `$${aggressivePrice.toFixed(4)} DID NOT reach the broker — the pending ` +
+                  `close is unchanged and the old limit still stands.`,
+                )
+              }
               // Stamp the running reprice counter onto the freshly-written
               // pending JSON. closePosition writes its own _slippage_reprice_count=0
               // implicitly via spread {...sandboxCloseInfo}; we merge the carried
@@ -2178,6 +2191,16 @@ async function monitorSinglePosition(
                   console.log(`[scanner] ${bot.name.toUpperCase()} DEFERRED CLOSE COMPLETE ${pid}: $${realizedPnl.toFixed(2)} [${closeReason}] (fill=$${fill.toFixed(4)})`)
                 }
                 _mtmFailureCounts.delete(pid)
+                // The guard above wraps the BOOKING, but this return used to sit
+                // outside it — so a 0-row UPDATE (already closed by another path)
+                // still reported `closed:deferred_fill`. Report what the row did.
+                if (rowsAffected === 0) {
+                  console.warn(
+                    `[scanner] ${bot.name.toUpperCase()} DEFERRED CLOSE ${pid}: fill arrived ` +
+                    `($${fill.toFixed(4)}) but the UPDATE matched 0 rows — nothing was booked.`,
+                  )
+                  return { status: `close_failed:deferred_fill@${fill.toFixed(4)}`, unrealizedPnl: 0 }
+                }
                 return { status: `closed:deferred_fill@${fill.toFixed(4)}`, unrealizedPnl: 0 }
               } else {
                 // Re-poll returned no fill — check if broker position even exists anymore.
@@ -2491,21 +2514,25 @@ async function monitorSinglePosition(
         ],
       )
     } catch { /* log failure must not block close */ }
+    // A THROW is not the only way this fails. The retry below covers the exception
+    // path; `fcOutcome` covers the quieter one where closePosition returns normally
+    // without having moved the row.
+    let fcOutcome: CloseOutcome = 'failed'
     try {
-      await closePosition(bot, pid, ticker, expiration,
+      fcOutcome = await closePosition(bot, pid, ticker, expiration,
         num(pos.put_short_strike), num(pos.put_long_strike),
         num(pos.call_short_strike), num(pos.call_long_strike),
         contracts, entryCredit, collateral, reason)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(`[scanner] ${bot.name.toUpperCase()}: Force-close failed, retrying at entry credit: ${msg}`)
-      await closePosition(bot, pid, ticker, expiration,
+      fcOutcome = await closePosition(bot, pid, ticker, expiration,
         num(pos.put_short_strike), num(pos.put_long_strike),
         num(pos.call_short_strike), num(pos.call_long_strike),
         contracts, entryCredit, collateral, reason, entryCredit)
     }
     _mtmFailureCounts.delete(pid) // Clear on close
-    return { status: `closed:${reason}`, unrealizedPnl: 0 }
+    return reportClose(bot, pid, fcOutcome, reason, reason)
   }
 
   // Get MTM
@@ -2630,12 +2657,13 @@ async function monitorSinglePosition(
           ],
         )
       } catch { /* log failure must not block close */ }
-      await closePosition(bot, pid, ticker, expiration,
+      const dfOutcome = await closePosition(bot, pid, ticker, expiration,
         num(pos.put_short_strike), num(pos.put_long_strike),
         num(pos.call_short_strike), num(pos.call_long_strike),
         contracts, entryCredit, collateral, 'data_feed_failure', entryCredit)
       _mtmFailureCounts.delete(pid)
-      return { status: `closed:data_feed_failure(${failCount})`, unrealizedPnl: 0 }
+      return reportClose(bot, pid, dfOutcome, 'data_feed_failure',
+        `data_feed_failure(${failCount})`)
     }
 
     return { status: `monitoring:mtm_failed(${failCount}/${MAX_CONSECUTIVE_MTM_FAILURES})`, unrealizedPnl: 0 }
@@ -2715,12 +2743,16 @@ async function monitorSinglePosition(
     const CROSS_ASK_OFFSET = 0.01
     const askCrossPrice = Math.max(0, Math.round((costToClose + CROSS_ASK_OFFSET) * 10000) / 10000)
     const initialLimitPrice = Math.min(profitTargetPrice, askCrossPrice)
-    await closePosition(bot, pid, ticker, expiration,
+    // A DEBIT LIMIT usually DEFERS on the first pass — the order is live and the fill
+    // is pending. That is `pending_close:`, not `closed:` and not a failure; the
+    // pending-close branch above re-polls it next cycle.
+    const ptOutcome = await closePosition(bot, pid, ticker, expiration,
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
       contracts, entryCredit, collateral, `profit_target_${ptTier}`, costToCloseLast,
       'debit', initialLimitPrice)
-    return { status: `closed:profit_target@${costToCloseLast.toFixed(4)}(${ptTier})`, unrealizedPnl: 0 }
+    return reportClose(bot, pid, ptOutcome, `profit_target_${ptTier}`,
+      `profit_target@${costToCloseLast.toFixed(4)}(${ptTier})`)
   }
 
   // SWING HOLD (2026-07-14): past the 14:45 CT cutoff on a NON-expiry day.
@@ -2754,21 +2786,23 @@ async function monitorSinglePosition(
           ],
         )
       } catch { /* log failure must not block close */ }
+      let sgOutcome: CloseOutcome = 'failed'
       try {
-        await closePosition(bot, pid, ticker, expiration,
+        sgOutcome = await closePosition(bot, pid, ticker, expiration,
           num(pos.put_short_strike), num(pos.put_long_strike),
           num(pos.call_short_strike), num(pos.call_long_strike),
           contracts, entryCredit, collateral, 'eod_cutoff', costToClose)
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
         console.warn(`[scanner] ${bot.name.toUpperCase()}: Swing green-bank close failed, retrying at entry credit: ${msg}`)
-        await closePosition(bot, pid, ticker, expiration,
+        sgOutcome = await closePosition(bot, pid, ticker, expiration,
           num(pos.put_short_strike), num(pos.put_long_strike),
           num(pos.call_short_strike), num(pos.call_long_strike),
           contracts, entryCredit, collateral, 'eod_cutoff', entryCredit)
       }
       _mtmFailureCounts.delete(pid)
-      return { status: `closed:eod_cutoff@${costToClose.toFixed(4)}(swing_green_bank)`, unrealizedPnl: 0 }
+      return reportClose(bot, pid, sgOutcome, 'eod_cutoff',
+        `eod_cutoff@${costToClose.toFixed(4)}(swing_green_bank)`)
     }
 
     // Red (or break-even) at the cutoff → hold overnight. DB-log once per day.
@@ -2842,11 +2876,12 @@ async function monitorSinglePosition(
         ],
       )
     } catch { /* log failure must not block close */ }
-    await closePosition(bot, pid, ticker, expiration,
+    const slOutcome = await closePosition(bot, pid, ticker, expiration,
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
       contracts, entryCredit, collateral, 'stop_loss', costToClose)
-    return { status: `closed:stop_loss@${costToClose.toFixed(4)}`, unrealizedPnl: 0 }
+    return reportClose(bot, pid, slOutcome, 'stop_loss',
+      `stop_loss@${costToClose.toFixed(4)}`)
   }
 
   // Unrealized P&L uses last trade prices to match Tradier's portfolio Gain/Loss
@@ -2862,6 +2897,35 @@ async function monitorSinglePosition(
 /*  Fix 5: Double-close guard using dbExecute rowCount                 */
 /* ------------------------------------------------------------------ */
 
+/**
+ * REPORT WHAT ACTUALLY HAPPENED, not what we asked for.
+ *
+ * Every exit path used to `await closePosition(...)` and then return
+ * `closed:<reason>` unconditionally. That string drives
+ * `action = status.startsWith('closed:') ? 'closed' : 'monitoring'` and is written
+ * into the bot's own log — so a profit-target or stop-loss close that never landed
+ * was recorded as a completed close, at full confidence. That is the identical lie
+ * that left SPARK's positions open for three trading days while the log said SETTLED.
+ *
+ * `deferred` is NOT a failure: the order is live and the fill is pending, which is the
+ * normal path for a debit-limit exit. It reads as `pending_close:` and stays quiet.
+ */
+function reportClose(
+  bot: BotDef,
+  positionId: string,
+  outcome: CloseOutcome,
+  reason: string,
+  detail: string,
+): { status: string; unrealizedPnl: number } {
+  if (outcome === 'failed') {
+    console.warn(
+      `[scanner] ${bot.name.toUpperCase()} CLOSE DID NOT COMPLETE ${positionId} ` +
+      `[${reason}] — position stays OPEN and will retry next cycle.`,
+    )
+  }
+  return { status: `${closeStatusPrefix(outcome)}${detail}`, unrealizedPnl: 0 }
+}
+
 async function closePosition(
   bot: BotDef,
   positionId: string,
@@ -2876,7 +2940,7 @@ async function closePosition(
   closePrice?: number,
   orderType?: 'market' | 'debit',
   limitPrice?: number,
-): Promise<boolean> {
+): Promise<CloseOutcome> {
   // Read person and account_type from position for daily_perf attribution and close routing
   let posPerson = 'User'
   let posAccountType = 'sandbox'
@@ -3062,7 +3126,10 @@ async function closePosition(
         bot.dte,
       ],
     )
-    return false // Exit without closing paper — next cycle will re-poll
+    // DEFERRED, not failed: the order is live at the broker and the fill is coming.
+    // The position is deliberately still open. Reporting this as a failure would flag
+    // every healthy FLAME debit-limit profit-target close as broken.
+    return 'deferred' // Exit without closing paper — next cycle will re-poll
   } else if (isProductionBotClose && !isExpiredContract) {
     // Broker close failed ENTIRELY (no order_id). PREVIOUSLY this fell through and
     // booked the paper close at an estimated price — but the REAL Tradier IC stayed
@@ -3087,7 +3154,7 @@ async function closePosition(
         bot.dte,
       ],
     )
-    return false // do NOT book the paper close — keep position open, retry broker close next cycle
+    return 'failed' // do NOT book the paper close — keep position open, retry broker close next cycle
   }
 
   const pnlPerContract = (entryCredit - effectivePrice) * 100
@@ -3113,7 +3180,7 @@ async function closePosition(
       `(already closed by another scan). Skipping paper_account update to prevent ` +
       `double-counting. realized_pnl would have been $${realizedPnl.toFixed(2)}`,
     )
-    return false
+    return 'failed'
   }
 
   // Phase B: close customer mirrors of this master position (fire-and-forget, never
@@ -3285,7 +3352,7 @@ async function closePosition(
     console.warn(`[scanner] PDT counter update failed: ${msg}`)
   }
 
-  return true
+  return 'closed'
 }
 
 /* ------------------------------------------------------------------ */
@@ -3647,12 +3714,16 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
     // settlement that had not happened — every 60s, for three days, at full confidence.
     // The log is now downstream of the write, not parallel to it: SETTLED means the row
     // moved. Never announce an outcome you have not read back.
-    const settled = await closePosition(
+    const settleOutcome = await closePosition(
       bot, String(p.position_id), ticker, exp,
       ks, kl, num(p.call_short_strike), num(p.call_long_strike),
       contracts, credit, num(p.collateral_required),
       'settled_at_expiry', value,
     )
+    // Only 'closed' means the row moved. 'deferred' cannot happen here — an expired
+    // contract skips the broker entirely — but it is still not a settlement, so it
+    // takes the same honest path rather than being read as success by omission.
+    const settled = settleOutcome === 'closed'
     const pnl = (credit - value) * 100 * contracts
     if (!settled) {
       console.warn(
@@ -3870,23 +3941,37 @@ async function watchdogForceSettleExpired(bot: BotDef, ct: Date): Promise<string
       { position_id: positionId, ticker, expiration: exp, settle_close: decision.settleClose, value: decision.value },
     )
 
-    let closed = false
+    let outcome: CloseOutcome = 'failed'
     try {
-      closed = await closePosition(
+      outcome = await closePosition(
         bot, positionId, ticker, exp,
         legs.putShort, legs.putLong, legs.callShort, legs.callLong,
         contracts, credit, num(p.collateral_required),
         WATCHDOG_SETTLE_REASON, decision.value,
       )
     } catch (e: unknown) {
-      closed = false
+      outcome = 'failed'
       console.error(
         `[scanner] ${bot.name.toUpperCase()} WATCHDOG close threw for ${positionId}:`,
         e instanceof Error ? e.message : e,
       )
     }
 
-    if (!closed) {
+    // 🚨 A DEFERRAL MUST NOT TRIP THE BREAKER. Deferred means the order is live and
+    // the fill is coming, which is a healthy in-flight close, not a broken fixer.
+    // Tripping on it would burn the position's single force-settle attempt on a
+    // close that was about to succeed. (It cannot actually happen here — a
+    // book-only settle never touches the broker — but the breaker must be right by
+    // construction, not by luck.)
+    if (outcome === 'deferred') {
+      console.log(
+        `[scanner] ${bot.name.toUpperCase()} WATCHDOG: ${positionId} force-settle is PENDING ` +
+        `a broker fill — leaving the breaker armed but untripped; re-checked next cycle.`,
+      )
+      continue
+    }
+
+    if (outcome === 'failed') {
       // The fixer ran and the row did not move. Escalate now; the breaker stops any
       // repeat on the next cycle without a second write.
       ledger.trip(positionId)
@@ -7216,7 +7301,7 @@ async function eodSafetyNetSweep(ct: Date): Promise<void> {
       for (const pos of openRows) {
         const expiration = pos.expiration?.toISOString?.()?.slice(0, 10) || String(pos.expiration).slice(0, 10)
         try {
-          await closePosition(
+          const netOutcome = await closePosition(
             bot,
             pos.position_id,
             pos.ticker || 'SPY',
@@ -7228,7 +7313,21 @@ async function eodSafetyNetSweep(ct: Date): Promise<void> {
             num(pos.collateral_required),
             'eod_safety_net',
           )
-          console.log(`[scanner] EOD SAFETY NET: Closed ${pos.position_id} [${bot.name}]`)
+          // This used to log "Closed" no matter what came back. A safety NET that
+          // reports a catch it did not make is worse than no net at all.
+          if (netOutcome === 'closed') {
+            console.log(`[scanner] EOD SAFETY NET: Closed ${pos.position_id} [${bot.name}]`)
+          } else if (netOutcome === 'deferred') {
+            console.log(
+              `[scanner] EOD SAFETY NET: ${pos.position_id} [${bot.name}] close order placed, ` +
+              `fill pending — still open, re-polled next cycle.`,
+            )
+          } else {
+            console.error(
+              `[scanner] *** EOD SAFETY NET DID NOT CLOSE ${pos.position_id} [${bot.name}] *** ` +
+              `position stays OPEN overnight.`,
+            )
+          }
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err)
           console.error(`[scanner] EOD SAFETY NET: Failed to close ${pos.position_id}: ${msg}`)
