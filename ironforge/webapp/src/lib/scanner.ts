@@ -61,7 +61,28 @@ function warnIfNoProductionLedger(
 }
 import { acquireScannerLock } from './scanner-lock'
 import { isMarketHoliday, marketCloseMinuteCT } from './market-calendar'
-import { postFlameOpen, postFlameClose } from './discord'
+import { postFlameOpen, postFlameClose, postOpsAlert } from './discord'
+import {
+  WatchdogLedger,
+  WATCHDOG_SETTLE_REASON,
+  WATCHDOG_LOG_LEVEL,
+  WATCHDOG_ESCALATION_LEVEL,
+  WATCHDOG_MAX_ATTEMPTS,
+  decideWatchdog,
+  isBookOnlyCloseReason,
+  normalizeExpiration,
+  settlementPnl,
+  summarizeWatchdogRun,
+  type WatchdogFailure,
+  type WatchdogRepair,
+} from './settle-watchdog'
+import {
+  HEARTBEAT_CHECK_HHMM,
+  HEARTBEAT_LOOKBACK_DAYS,
+  HEARTBEAT_SILENT_DAYS,
+  evaluateTradeHeartbeat,
+  type HeartbeatDay,
+} from './trade-heartbeat'
 import { eventCalendarRefresh } from './eventCalendar/refresh'
 import { isEventBlackoutActive } from './eventCalendar/gate'
 import { forgeBriefingsTick } from './forgeBriefings/tick'
@@ -2901,7 +2922,7 @@ async function closePosition(
     (expiration as unknown as { toISOString?: () => string })?.toISOString?.()?.slice(0, 10)
     || String(expiration).slice(0, 10)
   const isExpiredContract =
-    reason === 'settled_at_expiry' ||
+    isBookOnlyCloseReason(reason) ||
     expDateStr < getCentralTime().toISOString().slice(0, 10)
 
   // Only FLAME has real Tradier positions (sandbox OR production). SPARK/INFERNO are paper-only.
@@ -3662,6 +3683,367 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
     out.push(`${p.position_id}=settled@${value.toFixed(2)}`)
   }
   return out.length ? ` settle[${out.join(' ')}]` : ''
+}
+
+/* ------------------------------------------------------------------ */
+/*  THE EXPIRED-POSITION WATCHDOG — a backstop that FIXES, not an alarm */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Per-bot consecutive-cycle and attempt state. Process memory is the fast path; the
+ * durable attempt count that actually arms the circuit breaker is read back out of
+ * the bot's own log table, so a redeploy cannot silently re-arm an infinite retry.
+ */
+const _watchdogLedgers: Record<string, WatchdogLedger> = {}
+function watchdogLedger(botName: string): WatchdogLedger {
+  const existing = _watchdogLedgers[botName]
+  if (existing) return existing
+  const fresh = new WatchdogLedger()
+  _watchdogLedgers[botName] = fresh
+  return fresh
+}
+
+/** Prefix of the durable attempt marker. The circuit breaker counts these rows. */
+const WATCHDOG_ATTEMPT_PREFIX = 'WATCHDOG FORCE-SETTLE ATTEMPT'
+
+/** Write to the bot's own log table. Logging must never take the watchdog down. */
+async function watchdogLog(
+  bot: BotDef,
+  level: string,
+  message: string,
+  details: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+       VALUES ($1, $2, $3, $4)`,
+      [level, message, JSON.stringify(details), bot.dte],
+    )
+  } catch { /* console already has it */ }
+}
+
+/**
+ * BACKSTOP PASS — runs immediately after the normal settle pass, every scan cycle.
+ *
+ * An expired contract that is still `status = 'open'` is always wrong, whatever the
+ * cause, and with max 1 concurrent position it blocks every entry until someone
+ * notices. SPARK lost three trading days to exactly that while its log printed
+ * confident SETTLED lines. An ALARM would not have helped — it converts a silent
+ * failure into a notification somebody still has to act on. So this one repairs the
+ * book at the deterministic value and reports what it did.
+ *
+ * Auto-remediation is safe HERE and rarely elsewhere: the value of an expired option
+ * is not a judgment call. It is intrinsic at the official close, clamped to the wing.
+ * No market read, no fill, no timing.
+ *
+ * 🚨 Both guards live in ./settle-watchdog and are load-bearing:
+ *   1. Settle off the daily bar's close for the expiration date or DO NOTHING and
+ *      escalate. Never a $0 mark, never a live quote on a dead contract.
+ *   2. One force-settle per position, ever. A second means the fixer is broken.
+ *
+ * Never allowed to throw — the caller wraps it, and a watchdog that can take the scan
+ * cycle down is worse than the bug it watches for.
+ */
+async function watchdogForceSettleExpired(bot: BotDef, ct: Date): Promise<string> {
+  const todayStr = ct.toISOString().slice(0, 10)
+  const ledger = watchdogLedger(bot.name)
+
+  // STRICTLY past expiry (`<`, not `<=`). Expiry day itself belongs to the normal
+  // settle path, which waits for the 15:00 close; a swing hold expiring later is
+  // excluded by the same comparison.
+  const rows = await query(
+    `SELECT position_id, ticker, expiration, put_short_strike, put_long_strike,
+            call_short_strike, call_long_strike, contracts, total_credit,
+            collateral_required
+       FROM ${botTable(bot.name, 'positions')}
+      WHERE status = 'open' AND dte_mode = $1 AND expiration < $2::date`,
+    [bot.dte, todayStr],
+  )
+
+  // Observe the FULL offender set every cycle, including the empty set. A position the
+  // normal path settled must not carry a stale count into a future incident — a
+  // counter that only ever grows is not a CONSECUTIVE counter.
+  const offenders = rows.map((r) => String(r.position_id))
+  ledger.observe(offenders)
+  if (rows.length === 0) return ''
+
+  const repaired: WatchdogRepair[] = []
+  const failed: WatchdogFailure[] = []
+  const closeCache = new Map<string, number | null>()
+
+  for (const p of rows) {
+    const positionId = String(p.position_id)
+    const ticker = String(p.ticker || 'SPY')
+    const exp = normalizeExpiration(p.expiration)
+    const legs = {
+      putShort: num(p.put_short_strike),
+      putLong: num(p.put_long_strike),
+      callShort: num(p.call_short_strike),
+      callLong: num(p.call_long_strike),
+    }
+
+    // 🚨 GUARD 2, durable half. Memory resets on every deploy; the log table does not.
+    // Counting the ATTEMPT rows means a redeploy in the middle of a broken repair
+    // cannot re-arm the loop that cost three days the first time.
+    let attempts = ledger.attemptsFor(positionId)
+    try {
+      const priorRows = await query(
+        `SELECT COUNT(*)::int AS n FROM ${botTable(bot.name, 'logs')}
+          WHERE level = $1 AND dte_mode = $2 AND message LIKE $3`,
+        [WATCHDOG_LOG_LEVEL, bot.dte, `${WATCHDOG_ATTEMPT_PREFIX}: ${positionId}%`],
+      )
+      attempts = Math.max(attempts, int(priorRows[0]?.n))
+    } catch {
+      // A log-table read failure must not be read as "no prior attempts" — that is
+      // the permissive direction, and the permissive direction is the loop. Assume
+      // the breaker is armed and let the escalation path say so.
+      attempts = Math.max(attempts, WATCHDOG_MAX_ATTEMPTS)
+    }
+
+    // 🚨 GUARD 1. The ONLY price source is the daily bar for the expiration date. The
+    // lookback is sized from how long the position has been stuck — the normal path's
+    // fixed 10-day window would silently miss anything stranded for two weeks.
+    const cacheKey = `${ticker}:${exp}`
+    let settleClose: number | null
+    if (closeCache.has(cacheKey)) {
+      settleClose = closeCache.get(cacheKey) ?? null
+    } else {
+      const staleDays = Math.ceil(
+        (Date.parse(`${todayStr}T00:00:00Z`) - Date.parse(`${exp}T00:00:00Z`)) / 86_400_000,
+      )
+      const lookback = Math.min(400, Math.max(10, (Number.isFinite(staleDays) ? staleDays : 10) + 7))
+      try {
+        const hist = await getDailyHistory(ticker, lookback)
+        const c = hist.find((h) => h.date === exp)?.close
+        settleClose = typeof c === 'number' && c > 0 ? c : null
+      } catch {
+        settleClose = null // no close means no settle. It never means zero.
+      }
+      closeCache.set(cacheKey, settleClose)
+    }
+
+    const decision = decideWatchdog({
+      cyclesSeen: ledger.cyclesSeen(positionId),
+      attempts,
+      tripped: ledger.isTripped(positionId),
+      settleClose,
+      legs,
+    })
+
+    if (decision.action === 'silent') continue
+
+    if (decision.action === 'wait') {
+      console.log(
+        `[scanner] ${bot.name.toUpperCase()} WATCHDOG: ${positionId} expired ${exp} and still ` +
+        `open (cycle ${decision.cyclesSeen}) — leaving it to the normal settle path this cycle.`,
+      )
+      continue
+    }
+
+    if (decision.action === 'escalate') {
+      ledger.trip(positionId)
+      failed.push({ positionId, cause: decision.cause, detail: decision.detail })
+      console.error(
+        `[scanner] *** ${bot.name.toUpperCase()} WATCHDOG CANNOT SETTLE ${positionId} *** ` +
+        `${decision.cause}: ${decision.detail}`,
+      )
+      await watchdogLog(
+        bot, WATCHDOG_ESCALATION_LEVEL,
+        `WATCHDOG CANNOT SETTLE: ${positionId} — ${decision.cause}: ${decision.detail}`,
+        { position_id: positionId, ticker, expiration: exp, cause: decision.cause, settle_close: settleClose },
+      )
+      continue
+    }
+
+    // ---- decision.action === 'settle' -------------------------------------------
+    const credit = num(p.total_credit)
+    const contracts = int(p.contracts)
+    const pnl = settlementPnl(credit, decision.value, contracts)
+
+    // Record the ATTEMPT before making it. If the process dies mid-close the attempt
+    // still counts, which is the conservative direction for a circuit breaker.
+    ledger.recordAttempt(positionId)
+    await watchdogLog(
+      bot, WATCHDOG_LOG_LEVEL,
+      `${WATCHDOG_ATTEMPT_PREFIX}: ${positionId} — expired ${exp}, still open after ` +
+      `${ledger.cyclesSeen(positionId)} cycles; settling at close=${decision.settleClose.toFixed(2)}`,
+      { position_id: positionId, ticker, expiration: exp, settle_close: decision.settleClose, value: decision.value },
+    )
+
+    let closed = false
+    try {
+      closed = await closePosition(
+        bot, positionId, ticker, exp,
+        legs.putShort, legs.putLong, legs.callShort, legs.callLong,
+        contracts, credit, num(p.collateral_required),
+        WATCHDOG_SETTLE_REASON, decision.value,
+      )
+    } catch (e: unknown) {
+      closed = false
+      console.error(
+        `[scanner] ${bot.name.toUpperCase()} WATCHDOG close threw for ${positionId}:`,
+        e instanceof Error ? e.message : e,
+      )
+    }
+
+    if (!closed) {
+      // The fixer ran and the row did not move. Escalate now; the breaker stops any
+      // repeat on the next cycle without a second write.
+      ledger.trip(positionId)
+      failed.push({
+        positionId,
+        cause: 'close_declined',
+        detail:
+          `force-settle at $${decision.value.toFixed(2)} did not move the row ` +
+          `(close=${decision.settleClose.toFixed(2)}). Not retrying.`,
+      })
+      console.error(
+        `[scanner] *** ${bot.name.toUpperCase()} WATCHDOG FORCE-SETTLE DID NOT CLOSE ${positionId} *** ` +
+        `value=$${decision.value.toFixed(2)} — position stays OPEN and blocks new entries.`,
+      )
+      await watchdogLog(
+        bot, WATCHDOG_ESCALATION_LEVEL,
+        `WATCHDOG FORCE-SETTLE DID NOT CLOSE: ${positionId} — closePosition declined; ` +
+        `position stays OPEN and blocks new entries`,
+        { position_id: positionId, ticker, expiration: exp, value: decision.value, settle_close: decision.settleClose },
+      )
+      continue
+    }
+
+    repaired.push({ positionId, value: decision.value, pnl })
+    console.log(
+      `[scanner] ${bot.name.toUpperCase()} WATCHDOG FORCE-SETTLED ${positionId} ` +
+      `close=${decision.settleClose.toFixed(2)} value=$${decision.value.toFixed(2)} ` +
+      `pnl=$${pnl.toFixed(2)} — entries unblocked.`,
+    )
+    await watchdogLog(
+      bot, WATCHDOG_LOG_LEVEL,
+      `WATCHDOG FORCE-SETTLED: ${positionId} @ $${decision.value.toFixed(2)} ` +
+      `P&L=$${pnl.toFixed(2)} [${WATCHDOG_SETTLE_REASON}]`,
+      { position_id: positionId, ticker, expiration: exp, value: decision.value, settle_close: decision.settleClose, realized_pnl: pnl },
+    )
+  }
+
+  const summary = summarizeWatchdogRun(bot.name, repaired, failed)
+  if (summary) {
+    void postOpsAlert({
+      botName: bot.name,
+      title: summary.severity === 'critical'
+        ? 'Expired positions could NOT be settled'
+        : 'Expired positions force-settled',
+      body: summary.text,
+      severity: summary.severity,
+    }).catch(() => { /* a Discord outage must never take a scan cycle down */ })
+  }
+
+  const parts = [
+    ...repaired.map((r) => `${r.positionId}=watchdog@${r.value.toFixed(2)}`),
+    ...failed.map((f) => `${f.positionId}=watchdog_${f.cause}`),
+  ]
+  return parts.length ? ` watchdog[${parts.join(' ')}]` : ''
+}
+
+/* ------------------------------------------------------------------ */
+/*  "THIS BOT HAS NOT TRADED" — the symptom net                        */
+/* ------------------------------------------------------------------ */
+
+/** Per-bot guard so the heartbeat runs at most once per CT trading day. */
+const _lastHeartbeatDate: Record<string, string | null> = {}
+
+/**
+ * Fires when a bot that expects ~1 entry per trading day has gone N trading days with
+ * zero opens AND no strategy reason for it.
+ *
+ * The watchdog above fixes ONE cause. This catches the symptom — blocked entries —
+ * independent of cause, and would have fired on 8/22, four days before a human
+ * noticed the page looked stuck.
+ *
+ * Runs once per CT date, after every entry window has closed so "today produced no
+ * entry" is a settled fact rather than a guess.
+ */
+async function tradeHeartbeatCheck(bot: BotDef, ct: Date): Promise<void> {
+  // FLAME and SPARK are the ~1-entry-per-day bots. INFERNO/FORGE/SPARK2 have their own
+  // cadences (and FORGE ships disarmed), so a quiet day there means nothing.
+  if (!isSettleAtExpiryBot(bot.name)) return
+  const todayStr = ct.toISOString().slice(0, 10)
+  if (_lastHeartbeatDate[bot.name] === todayStr) return
+  if (!isMarketOpen(ct)) return
+  if (ctHHMM(ct) < HEARTBEAT_CHECK_HHMM) return
+  // Claim the day BEFORE the work, so a thrown query cannot turn this into a
+  // once-a-minute check for the rest of the session.
+  _lastHeartbeatDate[bot.name] = todayStr
+
+  const openRows = await query(
+    `SELECT (open_time AT TIME ZONE 'America/Chicago')::date AS d, COUNT(*)::int AS n
+       FROM ${botTable(bot.name, 'positions')}
+      WHERE dte_mode = $1 AND open_time >= NOW() - ($2 || ' days')::interval
+      GROUP BY 1`,
+    [bot.dte, String(HEARTBEAT_LOOKBACK_DAYS)],
+  )
+  const opensByDate = new Map<string, number>()
+  for (const r of openRows) opensByDate.set(normalizeExpiration(r.d), int(r.n))
+
+  // DISTINCT collapses ~390 SCAN rows a day to a handful. The scan message is
+  // `SCAN: <action> ... | <reason>`, so split_part on ' | ' recovers the reason.
+  const reasonRows = await query(
+    `SELECT DISTINCT (log_time AT TIME ZONE 'America/Chicago')::date AS d,
+            split_part(message, ' | ', 2) AS reason
+       FROM ${botTable(bot.name, 'logs')}
+      WHERE dte_mode = $1 AND level = 'SCAN'
+        AND log_time >= NOW() - ($2 || ' days')::interval`,
+    [bot.dte, String(HEARTBEAT_LOOKBACK_DAYS)],
+  )
+  const reasonsByDate = new Map<string, string[]>()
+  for (const r of reasonRows) {
+    const d = normalizeExpiration(r.d)
+    const list = reasonsByDate.get(d) ?? []
+    if (r.reason) list.push(String(r.reason))
+    reasonsByDate.set(d, list)
+  }
+
+  // Never invent history: a bot whose tables are days old must not read as N silent
+  // days. Start the window at the first date we actually have a scan log for.
+  const knownDates = Array.from(reasonsByDate.keys()).sort()
+  if (knownDates.length === 0) return
+  const firstKnown = knownDates[0]
+
+  const days: HeartbeatDay[] = []
+  for (let back = HEARTBEAT_LOOKBACK_DAYS; back >= 0; back--) {
+    const ms = Date.parse(`${todayStr}T00:00:00Z`) - back * 86_400_000
+    const iso = new Date(ms).toISOString().slice(0, 10)
+    if (iso < firstKnown) continue
+    // Local-field constructor, so getDay() and isMarketHoliday() (which reads local
+    // fields) both see this exact calendar date in any server timezone.
+    const [y, m, d] = iso.split('-').map(Number)
+    const probe = new Date(y, m - 1, d)
+    const dow = probe.getDay()
+    if (dow === 0 || dow === 6) continue
+    if (isMarketHoliday(probe)) continue
+    days.push({ date: iso, opens: opensByDate.get(iso) ?? 0, reasons: reasonsByDate.get(iso) ?? [] })
+  }
+
+  const verdict = evaluateTradeHeartbeat(bot.name, days, HEARTBEAT_SILENT_DAYS)
+  if (!verdict.silent || !verdict.message) {
+    console.log(
+      `[scanner] ${bot.name.toUpperCase()} HEARTBEAT: ok — ${verdict.silentDays} ` +
+      `unexplained quiet day(s), threshold ${HEARTBEAT_SILENT_DAYS}.`,
+    )
+    return
+  }
+
+  console.error(`[scanner] *** ${bot.name.toUpperCase()} HAS NOT TRADED *** ${verdict.message}`)
+  await watchdogLog(bot, 'CRITICAL', `HAS NOT TRADED: ${verdict.message}`, {
+    silent_days: verdict.silentDays,
+    dates: verdict.dates,
+    threshold: HEARTBEAT_SILENT_DAYS,
+  })
+  void postOpsAlert({
+    botName: bot.name,
+    title: `No entries in ${verdict.silentDays} trading days`,
+    body: verdict.message,
+    severity: 'critical',
+    fields: [{ name: 'Quiet days', value: verdict.dates.join(', ') || '—' }],
+  }).catch(() => { /* never take a scan cycle down */ })
 }
 
 /**
@@ -6884,6 +7266,32 @@ async function scanBot(bot: BotDef): Promise<void> {
       if (settled) reason += settled
     } catch (e) {
       console.error(`[scanner] ${botName} settlement failed:`, e)
+    }
+
+    // BACKSTOP. The pass above owns the normal case; this one owns everything else.
+    // An expired contract that is still `status = 'open'` is ALWAYS wrong, whatever
+    // the cause, and it blocks every entry until a human notices — SPARK lost three
+    // trading days to exactly that. This repairs the book at the deterministic value
+    // (intrinsic at the official close, clamped to the wing) and reports what it did,
+    // rather than raising an alarm somebody still has to act on.
+    //
+    // Runs AFTER the normal pass and only on the SECOND consecutive sighting, so it
+    // never races the thing it is backstopping. Wrapped, like the settle above: a
+    // watchdog that can take the scan cycle down is worse than the bug it watches for.
+    try {
+      const repaired = await watchdogForceSettleExpired(bot, ct)
+      if (repaired) reason += repaired
+    } catch (e) {
+      console.error(`[scanner] ${botName} expired-position watchdog failed:`, e)
+    }
+
+    // Symptom net, once per trading day: this bot expects ~1 entry a day, so a run of
+    // days with zero opens and no STRATEGY reason for it means something is broken —
+    // cause unknown, which is the point. Would have fired on 8/22.
+    try {
+      await tradeHeartbeatCheck(bot, ct)
+    } catch (e) {
+      console.error(`[scanner] ${botName} trade heartbeat failed:`, e)
     }
 
     // Collateral reconciliation every cycle (Fix 4)
