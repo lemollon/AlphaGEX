@@ -2855,7 +2855,7 @@ async function closePosition(
   closePrice?: number,
   orderType?: 'market' | 'debit',
   limitPrice?: number,
-): Promise<void> {
+): Promise<boolean> {
   // Read person and account_type from position for daily_perf attribution and close routing
   let posPerson = 'User'
   let posAccountType = 'sandbox'
@@ -2888,8 +2888,24 @@ async function closePosition(
   let sandboxCloseInfo: Record<string, SandboxCloseInfo> = {}
   const isProductionBotClose = isProductionBot(bot.name)
 
+  // 🚨 AN EXPIRED CONTRACT HAS NO MARKET, SO IT CAN NEVER PRODUCE A FILL PRICE.
+  // Tradier rejects every close order against one — "There is no price. Security
+  // symbol: SPY260824P00762000" — which means `fill_price` never arrives and the
+  // DEFER branch below re-fires forever. SPARK's 8/21, 8/24 and 8/25 positions each
+  // fired 3 rejected multileg orders EVERY 60s scan cycle from their expiry through
+  // 8/26, logged "SETTLED" every single time, and stayed `status = open`. With max 1
+  // concurrent position that blocked every new entry for three trading days while the
+  // log said the trades had settled. The broker has already expired the contract;
+  // there is nothing left to close there. Settle it on the books and only on the books.
+  const expDateStr =
+    (expiration as unknown as { toISOString?: () => string })?.toISOString?.()?.slice(0, 10)
+    || String(expiration).slice(0, 10)
+  const isExpiredContract =
+    reason === 'settled_at_expiry' ||
+    expDateStr < getCentralTime().toISOString().slice(0, 10)
+
   // Only FLAME has real Tradier positions (sandbox OR production). SPARK/INFERNO are paper-only.
-  const shouldCloseSandbox = isProductionBotClose
+  const shouldCloseSandbox = isProductionBotClose && !isExpiredContract
 
   if (shouldCloseSandbox) {
     const sbRows = await query(
@@ -2986,7 +3002,7 @@ async function closePosition(
       `(estimated=$${estimatedPrice.toFixed(4)}, diff=${(userClose.fill_price - estimatedPrice).toFixed(4)})`,
     )
     effectivePrice = userClose.fill_price
-  } else if (isProductionBotClose && userClose?.order_id && userClose.order_id > 0) {
+  } else if (isProductionBotClose && !isExpiredContract && userClose?.order_id && userClose.order_id > 0) {
     // Sandbox close order exists but fill price is missing (should be rare with unlimited polling).
     // DEFER: store the close info on the position so next cycle can re-poll.
     // Do NOT close paper with estimated price — that causes drift.
@@ -3025,8 +3041,8 @@ async function closePosition(
         bot.dte,
       ],
     )
-    return // Exit without closing paper — next cycle will re-poll
-  } else if (isProductionBotClose) {
+    return false // Exit without closing paper — next cycle will re-poll
+  } else if (isProductionBotClose && !isExpiredContract) {
     // Broker close failed ENTIRELY (no order_id). PREVIOUSLY this fell through and
     // booked the paper close at an estimated price — but the REAL Tradier IC stayed
     // OPEN, creating an ORPHAN with a wrong P&L (KINDLE 2026-06-25: "paper closed but
@@ -3050,7 +3066,7 @@ async function closePosition(
         bot.dte,
       ],
     )
-    return // do NOT book the paper close — keep position open, retry broker close next cycle
+    return false // do NOT book the paper close — keep position open, retry broker close next cycle
   }
 
   const pnlPerContract = (entryCredit - effectivePrice) * 100
@@ -3076,7 +3092,7 @@ async function closePosition(
       `(already closed by another scan). Skipping paper_account update to prevent ` +
       `double-counting. realized_pnl would have been $${realizedPnl.toFixed(2)}`,
     )
-    return
+    return false
   }
 
   // Phase B: close customer mirrors of this master position (fire-and-forget, never
@@ -3247,6 +3263,8 @@ async function closePosition(
     const msg = pdtErr instanceof Error ? pdtErr.message : String(pdtErr)
     console.warn(`[scanner] PDT counter update failed: ${msg}`)
   }
+
+  return true
 }
 
 /* ------------------------------------------------------------------ */
@@ -3603,13 +3621,39 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
     const credit = num(p.total_credit)
     const contracts = int(p.contracts)
 
-    await closePosition(
+    // 🚨 closePosition CAN DECLINE TO CLOSE. It defers on a missing broker fill and
+    // returns without flipping `status`, so logging SETTLED unconditionally printed a
+    // settlement that had not happened — every 60s, for three days, at full confidence.
+    // The log is now downstream of the write, not parallel to it: SETTLED means the row
+    // moved. Never announce an outcome you have not read back.
+    const settled = await closePosition(
       bot, String(p.position_id), ticker, exp,
       ks, kl, num(p.call_short_strike), num(p.call_long_strike),
       contracts, credit, num(p.collateral_required),
       'settled_at_expiry', value,
     )
     const pnl = (credit - value) * 100 * contracts
+    if (!settled) {
+      console.warn(
+        `[scanner] ${bot.name.toUpperCase()} SETTLE DID NOT CLOSE ${p.position_id} ` +
+        `close=${settlePx.toFixed(2)} ${kl}/${ks}P value=$${value.toFixed(2)} — ` +
+        `position stays OPEN and blocks new entries.`,
+      )
+      try {
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+           VALUES ($1, $2, $3, $4)`,
+          [
+            'SETTLE_BLOCKED',
+            `SETTLE DID NOT CLOSE: ${p.position_id} — closePosition declined; position stays OPEN and blocks new entries`,
+            JSON.stringify({ position_id: p.position_id, ticker, expiration: exp, settle_price: settlePx, value, reason: 'close_declined' }),
+            bot.dte,
+          ],
+        )
+      } catch { /* logging must never take the settle loop down */ }
+      out.push(`${p.position_id}=settle_declined`)
+      continue
+    }
     console.log(
       `[scanner] ${bot.name.toUpperCase()} SETTLED ${p.position_id} ` +
       `close=${settlePx.toFixed(2)} ${kl}/${ks}P value=$${value.toFixed(2)} ` +
