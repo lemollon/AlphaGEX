@@ -67,9 +67,12 @@ interface EligibleRow {
 const CUSTOMER_AGENTS = new Set(['spark', 'flame'])
 const MAX_CLOSE_ATTEMPTS = 3
 
-export function isExecutorArmed(): boolean {
-  return process.env.CUSTOMER_EXECUTOR_ENABLED === 'true'
-}
+// Defined in ./armed so read paths (the Live summary, the customer disclosure)
+// can ask without importing SnapTrade and the customers DB. Imported AND
+// re-exported: this module gates on it itself (canOpenForCustomer below), and a
+// bare `export ... from` would re-export it without creating a local binding.
+import { isExecutorArmed } from './armed'
+export { isExecutorArmed }
 
 /** Ops push for fills and (urgently) failures. Best-effort; the DB row is the record. */
 async function notifyOps(title: string, body: string, urgent = false): Promise<void> {

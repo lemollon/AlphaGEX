@@ -98,8 +98,35 @@ export const LIVE_BOT_TAGLINE: Record<LiveBot, string> = {
  *  More than one bot is on paper now, so this must never hardcode a name —
  *  a disclosure that says "Flame" on Spark paper's page is a false statement
  *  about which account is simulated. */
-export function paperDisclosure(bot: LiveBot): string {
-  return `Simulated results. ${LIVE_BOT_LABEL[bot]} is in paper trading — no real orders are placed and no real money is at risk.`
+/**
+ * What a customer is told when the strategy ledger they are looking at is paper.
+ *
+ * 🚨 THE SECOND HALF OF THIS SENTENCE IS A PROMISE ABOUT SOMEONE'S MONEY, AND
+ * THE BADGE ABOVE IT CANNOT KEEP IT ON ITS OWN.
+ *
+ * `paper` is resolved from the HOUSE ledger — whether IronForge's own account
+ * for this bot is simulated. It says nothing about the reader's account. Those
+ * are independent: `customer-executor/executor.ts` mirrors every opened position
+ * to each activated customer and calls SnapTrade's `placeMlegOrder`, a real
+ * market order in their own brokerage — and it fires from the SANDBOX open path,
+ * so the house trade being paper does not stop it. The only global thing holding
+ * it back is `CUSTOMER_EXECUTOR_ENABLED`.
+ *
+ * So with the executor armed and no Tradier creds present, this used to render
+ * "no real orders are placed and no real money is at risk" to someone whose
+ * brokerage account was being filled. `customerOrdersLive` closes that: pass
+ * `isExecutorArmed()` and the promise is replaced with the truth. It fails safe —
+ * if the flag is off nothing changes, and over-warning costs a sentence while
+ * under-warning costs someone's money.
+ */
+export function paperDisclosure(
+  bot: LiveBot,
+  opts: { customerOrdersLive?: boolean } = {},
+): string {
+  const lead = `Simulated results. ${LIVE_BOT_LABEL[bot]} is in paper trading`
+  return opts.customerOrdersLive
+    ? `${lead} — the strategy record shown here is simulated. Trades placed in your own connected brokerage account are real.`
+    : `${lead} — no real orders are placed and no real money is at risk.`
 }
 
 export function accountMode(bot: LiveBot): LiveAccountMode {

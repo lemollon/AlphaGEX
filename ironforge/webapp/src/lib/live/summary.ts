@@ -24,6 +24,7 @@ import type { LiveSummary, LiveTrade, LiveOpenPosition } from './types'
  */
 
 import { resolveAccountMode, scopeFilter, LIVE_BOT_LABEL, paperDisclosure, type LiveBot } from './viewer'
+import { isExecutorArmed } from '@/lib/customer-executor/armed'
 import { deriveSwingMeta } from './swing'
 import { sparkRegimeBpCap, isSparkV2SizingBot } from '@/lib/spark-sizing'
 
@@ -322,7 +323,9 @@ export async function getLiveSummary(
       today_pnl_pct: todayPnlPct,
       source,
       mode: mode ?? resolveAccountMode(BOT),
-      disclosure: paper ? paperDisclosure(BOT) : null,
+      // The house ledger being paper does NOT mean the reader's account is
+      // untouched — see paperDisclosure. Never drop this argument.
+      disclosure: paper ? paperDisclosure(BOT, { customerOrdersLive: isExecutorArmed() }) : null,
     },
     intraday,
     membership: {
