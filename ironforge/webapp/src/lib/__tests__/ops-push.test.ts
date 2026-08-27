@@ -45,6 +45,25 @@ describe('the ops push uses the channels that actually reach a phone', () => {
     expect(fn).not.toMatch(/sendViaDiscord/)
   })
 
+  it('🚨 names the channel it ACTUALLY reached, so "where did it go" is answerable', () => {
+    // It used to be silent on success — the same shape as the bug this alerting path
+    // exists to catch: an outcome nobody read back.
+    const fn = SMS.slice(SMS.indexOf('export async function sendOpsPush('))
+    expect(fn).toMatch(/reached\.push\('ntfy'\)/)
+    expect(fn).toMatch(/reached\.push\('sms_gateway'\)/)
+    expect(fn).toMatch(/reached\.push\('twilio'\)/)
+    expect(fn).toMatch(/delivered via /)
+    // ...and each push sits on the SUCCESS branch, so it reports delivery not intent.
+    expect(fn).toMatch(/if \(res\.ok\) \{ delivered\+\+; reached\.push\('ntfy'\) \}/)
+    expect(fn).toMatch(/if \(errs\.length === 0\) \{ delivered\+\+; reached\.push\('sms_gateway'\) \}/)
+  })
+
+  it('is loud when nothing was delivered at all', () => {
+    const fn = SMS.slice(SMS.indexOf('export async function sendOpsPush('))
+    expect(fn).toMatch(/OPS PUSH NOT DELIVERED/)
+    expect(fn).toMatch(/console\.error\(/)
+  })
+
   it('says so out loud when no phone channel is configured', () => {
     const fn = SMS.slice(SMS.indexOf('export async function sendOpsPush('))
     expect(fn).toMatch(/NO phone push/)

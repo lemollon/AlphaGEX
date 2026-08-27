@@ -301,6 +301,7 @@ export async function sendOpsPush(args: {
 
   const body = `IronForge: ${args.title}\n${args.body}`.slice(0, 320)
   const errors: string[] = []
+  const reached: string[] = []
   let delivered = 0
 
   if (isNtfyConfigured()) {
@@ -315,7 +316,7 @@ export async function sendOpsPush(args: {
         },
         body,
       })
-      if (res.ok) delivered++
+      if (res.ok) { delivered++; reached.push('ntfy') }
       else errors.push(`ntfy: ${res.status} ${(await res.text().catch(() => '')).slice(0, 140)}`)
     } catch (e) {
       errors.push(`ntfy: ${e instanceof Error ? e.message : 'send failed'}`)
@@ -332,16 +333,33 @@ export async function sendOpsPush(args: {
     }
     if (isSmsGatewayConfigured()) {
       const errs = await sendViaSmsGateway(params, body)
-      if (errs.length === 0) delivered++
+      if (errs.length === 0) { delivered++; reached.push('sms_gateway') }
       errors.push(...errs)
     }
     if (isTwilioConfigured()) {
       const errs = await sendViaTwilio(body)
-      if (errs.length === 0) delivered++
+      if (errs.length === 0) { delivered++; reached.push('twilio') }
       errors.push(...errs)
     }
   }
 
-  if (delivered > 0) return errors.length ? { sent: true, error: errors.join('; ') } : { sent: true }
+  // 🚨 SAY WHERE IT WENT, AND SAY IT AFTER THE SEND — not before.
+  //
+  // This used to be silent on success, so after the fact there was NO way to answer
+  // "what channel did that alert go to". Same shape as the bug this whole alerting
+  // path exists to catch: an outcome nobody read back. `reached` is built from the
+  // RESPONSES, not from which channels were configured, so it reports delivery
+  // rather than intent.
+  if (delivered > 0) {
+    console.log(
+      `[sms] ops push [${args.severity}] "${args.title}" delivered via ` +
+      `${reached.join(', ')}${errors.length ? ` (also failed: ${errors.join('; ')})` : ''}`,
+    )
+    return errors.length ? { sent: true, error: errors.join('; ') } : { sent: true }
+  }
+  console.error(
+    `[sms] *** OPS PUSH NOT DELIVERED *** [${args.severity}] "${args.title}" — ` +
+    `${errors.join('; ') || 'no channel delivered'}`,
+  )
   return { sent: false, error: errors.join('; ') || 'no channel delivered' }
 }
