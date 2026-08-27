@@ -191,22 +191,16 @@ export function HeroSection({ source }: { source: MarketingSource }) {
         </ul>
       </div>
       {/*
-       * The approved mock's top-right card, carrying REAL figures — Leron's call,
-       * 2026-08-25 ("it does need real numbers"), reversing the static-drawing
-       * version that briefly sat here.
+       * The approved mock's top-right card. It is a DRAWING — a labelled
+       * illustration with the mock's layout and the mock's placeholder figures,
+       * fetching nothing (Leron's call, 2026-08-27). That keeps this page fully
+       * static and stops a two-week-old ledger from setting the tone of the hero.
        *
-       * Layout is the mock's: title row, three stat tiles, area chart with month
-       * ticks. The numbers are NOT the mock's — it draws
-       * "+18.74% / 128 trades / 74% win rate", the original template's
-       * placeholders, which no IronForge account has ever produced and which have
-       * been stripped from this codebase four times now. Every figure below comes
-       * from a closed trade in the sandbox ledger, and the card degrades to a
-       * quiet unavailable state rather than to a plausible number.
-       *
-       * The record is short (FLAME opened 2026-08-17), so expect single-digit
-       * trade counts and a handful of curve points until it lengthens. That is
-       * the honest reading; do not pad it. Read PerformanceOverviewCard's header
-       * before touching anything here.
+       * The card carries an "Illustrative" badge and a "not actual trading
+       * results" footnote, and those are load-bearing: without them the mock's
+       * "+18.74% / 128 trades / 74% win rate" reads as an advertised return on a
+       * real-money product. Read PerformanceOverviewCard's header before removing
+       * either one. Sourced numbers live on /performance.
        */}
       <PerformanceOverviewCard />
     </section>
