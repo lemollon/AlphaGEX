@@ -3757,6 +3757,183 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
 }
 
 /* ------------------------------------------------------------------ */
+/*  ASSIGNMENT GUARD — the one exit that does not kill the edge        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 🚨 CLOSE AT 14:59 CT, BUT ONLY WHEN THE SHORT IS ACTUALLY AT RISK.
+ *
+ * EBB holds to expiry ON PURPOSE and that is not up for renegotiation: registry
+ * #43 measured buyback exits at 13:00 / 14:00 / 14:30 ET and every one collapses
+ * $12.19/trade to about zero, because every one hands back real remaining time
+ * value. This exit is a DIFFERENT TRADE and was never in that test. At 14:59 CT
+ * (15:59 ET) a 0DTE spread has essentially no time value left, so its price IS
+ * the settlement intrinsic the strategy would have booked sixty seconds later.
+ * That is the whole reason this is allowed to exist where the others are not.
+ *
+ * WHAT IT BUYS. SPY settlement is PHYSICAL. A short put that finishes even $0.01
+ * in the money is auto-exercised by OCC under exercise-by-exception and delivers
+ * ~$76k of stock per contract into a $5,000 account overnight, which Tradier then
+ * sells out: Assignment/Exercise $5 + Margin/Position Sell-Out $10, plus whatever
+ * the gap costs on shares nobody chose to hold. The doc block above puts the short
+ * ITM-alone in ~17% of sessions. Nothing had ever fired on that path — the settle
+ * loop books intrinsic on our own ledger and, in its own words, "an expired
+ * contract skips the broker entirely." The broker leg was simply unmanaged.
+ *
+ * 🚨 CONDITIONAL, NOT UNCONDITIONAL — THIS IS THE LOAD-BEARING PART. On the ~83%
+ * of days the short is clear of the money this does NOTHING: no order, no spread
+ * paid, the settlement books exactly as it does today. Closing every day would
+ * reintroduce the exact cost registry #43 measured, just one minute later, and
+ * would quietly turn EBB back into a strategy with no edge.
+ *
+ * 🚨 THE BUFFER EXISTS BECAUSE THE LAST MINUTE STILL MOVES. Closing only on an
+ * already-ITM short would miss the position sitting $0.05 above its strike at
+ * 14:59 that prints through it at the bell — and being late here is not "a worse
+ * fill", it is assignment. $0.50 on SPY at ~766 is 0.065%. Widen it and you pay a
+ * spread on days that would have expired worthless; narrow it and assignments leak
+ * through. Tune with IRONFORGE_ASSIGNMENT_GUARD_BUFFER, never by editing this.
+ *
+ * 🚨 FAILS TO THE STATUS QUO, NOT TO A FLATTENED BOOK. No quote means no verdict,
+ * and the position holds to settlement exactly as it would have without this
+ * function. A guard that closes positions on missing data is worse than no guard,
+ * because feeds die in precisely the conditions the guard exists for.
+ *
+ * Runs BEFORE settleExpiredPositions in the same cycle and cannot collide with it:
+ * this one only touches `expiration = today` in the 14:59-15:00 CT window, and
+ * settleExpiredPositions skips same-day rows until ctHHMM >= 1500 exactly.
+ *
+ * The close reason is deliberately NOT in isBookOnlyCloseReason — this is a live
+ * contract with a real market, so it must route to the broker like any other close.
+ */
+/**
+ * 🚨 THE WINDOW OPENS AT 14:57, NOT 14:59, AND THAT IS NOT A COMPROMISE.
+ *
+ * The scan is a ~60s Databricks-style cycle, not a cron tick: a slow cycle that
+ * lands at 14:58:50 and again at 15:00:05 would step straight over a one-minute
+ * 14:59 window and the guard would never fire on the one day it mattered. Three
+ * cycles is the margin. The cost of firing at 14:57 instead of 14:59 on a 0DTE
+ * contract is a rounding error of time value; the cost of missing the window is
+ * an assignment. Those are not symmetric, so the window is not symmetric either.
+ */
+const ASSIGNMENT_GUARD_HHMM = 1457        // 2:57 PM CT = 3:57 PM ET
+const ASSIGNMENT_GUARD_END_HHMM = 1500    // hand off to settleExpiredPositions
+const ASSIGNMENT_GUARD_REASON = 'assignment_guard'
+const ASSIGNMENT_GUARD_DEFAULT_BUFFER = 0.50
+
+function assignmentGuardBuffer(): number {
+  const raw = Number(process.env.IRONFORGE_ASSIGNMENT_GUARD_BUFFER)
+  return Number.isFinite(raw) && raw >= 0 ? raw : ASSIGNMENT_GUARD_DEFAULT_BUFFER
+}
+
+/** Write where a human will actually see it. A console line goes to Render only, and
+ *  the `reason` this returns into is overwritten later in the cycle. */
+async function logGuard(bot: BotDef, level: string, message: string, details: object): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+       VALUES ($1, $2, $3, $4)`,
+      [level, message, JSON.stringify(details), bot.dte],
+    )
+  } catch { /* logging must never take the guard down */ }
+}
+
+async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
+  if (!isSettleAtExpiryBot(bot.name)) return ''
+  const hhmm = ctHHMM(ct)
+  if (hhmm < ASSIGNMENT_GUARD_HHMM || hhmm >= ASSIGNMENT_GUARD_END_HHMM) return ''
+
+  const todayStr = ct.toISOString().slice(0, 10)
+  const rows = await query(
+    `SELECT position_id, ticker, expiration, put_short_strike, put_long_strike,
+            call_short_strike, call_long_strike, contracts, total_credit,
+            collateral_required
+       FROM ${botTable(bot.name, 'positions')}
+      WHERE status = 'open' AND dte_mode = $1 AND expiration = $2`,
+    [bot.dte, todayStr],
+  )
+  if (rows.length === 0) return ''
+
+  const buffer = assignmentGuardBuffer()
+  const out: string[] = []
+
+  for (const p of rows) {
+    // 🚨 The same Date-vs-string trap settleExpiredPositions documents: node-postgres
+    // returns a DATE as a JS Date and String(Date) is the LOCALE rendering, which never
+    // equals a YYYY-MM-DD literal. The SQL already filtered, but a row that slipped
+    // through a type coercion must not be closed on a day that is not its expiry.
+    const exp = p.expiration?.toISOString?.()?.slice(0, 10) || String(p.expiration).slice(0, 10)
+    if (exp !== todayStr) continue
+
+    const positionId = String(p.position_id)
+    const ticker = String(p.ticker || 'SPY')
+
+    const q = await getQuote(ticker)
+    const spot = q?.last ?? 0
+    if (!(spot > 0)) {
+      console.warn(
+        `[scanner] ${bot.name.toUpperCase()} ASSIGNMENT GUARD NO QUOTE ${positionId}: ` +
+        `no ${ticker} price at ${hhmm} CT — position holds to settlement, unguarded.`,
+      )
+      await logGuard(bot, 'ASSIGNMENT_GUARD',
+        `ASSIGNMENT GUARD NO QUOTE: ${positionId} — no ${ticker} price; holds to settlement unguarded`,
+        { position_id: positionId, ticker, expiration: exp, reason: 'no_quote' })
+      out.push(`${positionId}=no_quote`)
+      continue
+    }
+
+    // Put side is the live one under EBB (callShort === 0 on a two-leg spread), but
+    // an IC can be assigned from either end, so both are tested. A strike of 0 means
+    // that side does not exist and must never register as "at risk".
+    const putShort = num(p.put_short_strike)
+    const callShort = num(p.call_short_strike)
+    const putAtRisk = putShort > 0 && spot <= putShort + buffer
+    const callAtRisk = callShort > 0 && spot >= callShort - buffer
+
+    if (!putAtRisk && !callAtRisk) {
+      out.push(`${positionId}=clear@${spot.toFixed(2)}`)
+      continue
+    }
+
+    const side = putAtRisk ? `put ${putShort}` : `call ${callShort}`
+    const outcome = await closePosition(
+      bot, positionId, ticker, exp,
+      putShort, num(p.put_long_strike), callShort, num(p.call_long_strike),
+      int(p.contracts), num(p.total_credit), num(p.collateral_required),
+      ASSIGNMENT_GUARD_REASON, undefined, 'market',
+    )
+
+    // 🚨 Only 'closed' means the row moved. closePosition CAN decline, and announcing
+    // a close that did not happen is how a settle loop printed SETTLED for three days
+    // while nothing settled. Never announce an outcome you have not read back.
+    if (outcome !== 'closed') {
+      console.warn(
+        `[scanner] *** ${bot.name.toUpperCase()} ASSIGNMENT GUARD DID NOT CLOSE ${positionId} *** ` +
+        `spot=${spot.toFixed(2)} short ${side} buffer=$${buffer.toFixed(2)} outcome=${outcome} — ` +
+        `POSITION IS GOING INTO SETTLEMENT AT RISK OF ASSIGNMENT.`,
+      )
+      await logGuard(bot, 'CRITICAL',
+        `ASSIGNMENT GUARD DID NOT CLOSE: ${positionId} — short ${side} at risk (spot ${spot.toFixed(2)}), ` +
+        `closePosition returned '${outcome}'; position settles with assignment exposure`,
+        { position_id: positionId, ticker, expiration: exp, spot, side, buffer, outcome })
+      out.push(`${positionId}=guard_${outcome}`)
+      continue
+    }
+
+    console.log(
+      `[scanner] ${bot.name.toUpperCase()} ASSIGNMENT GUARD CLOSED ${positionId} ` +
+      `spot=${spot.toFixed(2)} short ${side} buffer=$${buffer.toFixed(2)}`,
+    )
+    await logGuard(bot, 'ASSIGNMENT_GUARD',
+      `ASSIGNMENT GUARD CLOSED: ${positionId} — short ${side} at risk (spot ${spot.toFixed(2)}, ` +
+      `buffer $${buffer.toFixed(2)}); closed at 14:59 CT to avoid physical assignment`,
+      { position_id: positionId, ticker, expiration: exp, spot, side, buffer })
+    out.push(`${positionId}=guarded@${spot.toFixed(2)}`)
+  }
+
+  return out.length ? ` guard[${out.join(' ')}]` : ''
+}
+
+/* ------------------------------------------------------------------ */
 /*  THE EXPIRED-POSITION WATCHDOG — a backstop that FIXES, not an alarm */
 /* ------------------------------------------------------------------ */
 
@@ -7355,6 +7532,20 @@ async function scanBot(bot: BotDef): Promise<void> {
   let unrealizedPnl = 0
 
   try {
+    // ASSIGNMENT GUARD, BEFORE THE SETTLE PASS. Ordering is the whole point: at
+    // 14:59 CT a same-day contract still has a market, and sixty seconds later it
+    // does not. Held-to-expiry bots only, and only when the short is inside the
+    // buffer — a no-op on every other bot, every other minute, and on the ~83% of
+    // expiry days the short finishes clear. Wrapped like the settle below, and for
+    // the same reason inverted: a guard that throws must NOT take the cycle down,
+    // because failing to close is exactly today's behaviour rather than a new risk.
+    try {
+      const guarded = await closeAtRiskBeforeBell(bot, ct)
+      if (guarded) reason += guarded
+    } catch (e) {
+      console.error(`[scanner] ${botName} assignment guard failed:`, e)
+    }
+
     // Settle anything that reached expiry BEFORE reconciling collateral, so the
     // reconcile in the same cycle sees the freed margin. Held-to-expiry bots
     // only; a no-op for everyone else. Never allowed to take the cycle down —
