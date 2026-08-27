@@ -3535,7 +3535,32 @@ const FLAME_BOOKS = ['SPY'] as const
  * The two tranches are NOT diversifying: same underlying, same session, they max
  * together. Worst pair day is roughly twice the single-tranche loss.
  */
-function botStructure(_name: string): { otmAbs: number; width: number } {
+/**
+ * 🚨 TWO EBB VARIANTS, ONE PER CLOCK (2026-08-27). This function took the bot
+ * name and THREW IT AWAY — `_name` was unused and both bots got FLAME's cell.
+ *
+ * FLAME's cell (spot−$1 / $2 wing) is what registry #49r's walk-forward selected
+ * FOR THE PM CLOCK. The 8/16 cutover applied that PM selection to the AM clock
+ * too, which was never tested and is the WORST of the nine AM cells:
+ *
+ *   AM 10:05, 1 lot, net $0.70/lot, 2022-11-02 → 2026-08-26 (n=941)
+ *     spot−$1 / $2 wing  (what SPARK ran)  $5.78/tr  $1,427/yr  ret/DD 1.18  4/5 yrs
+ *     spot−$2 / $5 wing  (EBB as registered) $11.14/tr $2,750/yr ret/DD 1.87  5/5 yrs
+ *
+ *   And the difference is not historical — it is 2026: the wrong cell made
+ *   +$74 on the year and −$155 over its last 126 trades; the registered cell
+ *   made +$1,603 and +$967. SPARK was not decaying. SPARK was misconfigured.
+ *
+ * PM keeps spot−$1 / $2: that cell IS the walk-forward winner at 13:05 and it is
+ * what the live account trades. Do not "unify" these again — the offsets ARE the
+ * specification, and the two clocks do not share one.
+ */
+function botStructure(name: string): { otmAbs: number; width: number } {
+  // AM 10:05 — EBB as pre-registered (#23b). NOT a grid pick: this is the
+  // structure the original registration measured, and it ties for the best
+  // ret/DD in the AM block.
+  if (name === 'spark') return { otmAbs: 2.0, width: 5 }
+  // PM 13:05 — registry #49r walk-forward, selected in all four blind years.
   return { otmAbs: 1.0, width: 2 }
 }
 

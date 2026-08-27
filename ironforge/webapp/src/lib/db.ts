@@ -1230,9 +1230,22 @@ async function ensureTablesOnce(): Promise<void> {
       )
     } catch { /* ignore if table doesn't exist yet */ }
 
-    // FLAME/SPARK: fix max_contracts from legacy DB default of 10 → 0 (unlimited, sized by BP)
+    // FLAME/SPARK: rewrite the legacy DB default of 10 → 0 (unlimited, sized by BP).
     // The DB schema previously had DEFAULT 10 which gatekept sizing below 85% BP usage.
-    // max_contracts=0 means "no ceiling — size by buying power only" (matches scanner DEFAULT_CONFIG).
+    //
+    // 🚨 2026-08-27: the last line of this comment used to claim 0 "matches scanner
+    // DEFAULT_CONFIG". It has been FALSE since the 2026-08-16 EBB cutover —
+    // DEFAULT_CONFIG.flame / .spark both carry `max_contracts: 1`, and 1 lot is the
+    // whole risk story the product is sold on (1 lot on $2,000 draws 24%; two lots
+    // draw 69%). bp_pct is NOT the binding cap at these account sizes.
+    //
+    // This UPDATE is currently inert — the live FLAME row is not 10, evidenced by the
+    // real Tradier fills settling at exactly 1 × credit × 100. But it is a live trapdoor:
+    // production sizing (tradier.ts ~2019) reads max_contracts from THIS row and treats
+    // 0 as Infinity, so anything that puts a 10 back in this column silently promotes the
+    // real account from 1 contract to floor(OBP × bp_pct / $200) — 4 lots on a $4.2k
+    // account. Decide deliberately whether this should clamp to 1 instead of 0; do not
+    // let the stale comment be the reason someone leaves it at 0.
     for (const bot of ['flame', 'spark']) {
       try {
         await client.query(
