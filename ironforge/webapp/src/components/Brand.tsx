@@ -11,11 +11,19 @@ export function IFMark({ className = 'h-8 w-auto' }: { className?: string }) {
  * of truth: every nav renders THIS so the logo can't drift between pages. Matches the
  * approved logo lockup exactly — do not reintroduce the amber-yellow FORGE or a second
  * mark image.
+ *
+ * `showMark={false}` renders the wordmark alone. The public marketing masthead
+ * uses it because the approved homepage mock draws "IRONFORGE" with no mark;
+ * every signed-in surface keeps the full lockup.
  */
-export function Wordmark({ markClass = 'h-7 w-auto', textClass = 'text-xl' }: { markClass?: string; textClass?: string }) {
+export function Wordmark({
+  markClass = 'h-7 w-auto',
+  textClass = 'text-xl',
+  showMark = true,
+}: { markClass?: string; textClass?: string; showMark?: boolean }) {
   return (
     <div className="flex items-center gap-2.5">
-      <IFMark className={markClass} />
+      {showMark ? <IFMark className={markClass} /> : null}
       <span className={`${textClass} font-bold uppercase tracking-tight`}>
         <span className="text-white">IRON</span>
         <span className="text-amber-500">FORGE</span>

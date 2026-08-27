@@ -12,20 +12,26 @@
  * flipping it a third time, read the paragraph below — the reason the real-data
  * version kept coming back is the reason this one carries a label.
  *
- * ── WHY THE "ILLUSTRATIVE" LABEL IS NOT OPTIONAL ─────────────────────────────
+ * ── THE FIGURES ARE THE TEMPLATE'S, AND THEY ARE NOT LABELLED ────────────────
  *
- * The figures drawn here (+18.74% / 128 trades / 74% win rate) are the original
- * template's placeholders. No IronForge account has produced them. Published
- * bare on the homepage of a real-money trading product they are a fabricated
- * performance claim — the exact thing the SPARK/FLAME risk-ladder copy and the
- * comparison table were both rewritten to stop doing (see marketing.tsx).
+ * READ THIS BEFORE REUSING ANYTHING ON THIS CARD.
  *
- * The badge and the footnote are what make this a labelled hypothetical instead.
- * Keep the drawing, keep the label. If a future change deletes the label to
- * "match the mock exactly", it is not a styling tweak — it is turning a design
- * illustration into an advertised return.
+ * The figures drawn here — +18.74% total return, 128 trades, 74% win rate — and
+ * the curve beneath them are the original template's placeholders. NO IRONFORGE
+ * ACCOUNT HAS EVER PRODUCED THEM. Nothing on this card traces to a trade.
  *
- * Real, sourced numbers live on /performance and in the public track record.
+ * They shipped with an "Illustrative" badge and a "not actual trading results"
+ * footnote earlier on 2026-08-27. Both were removed the same day, on Leron's
+ * instruction, so the page matches the approved mock exactly — his call, made
+ * after the risk was put to him in writing. What remains is an unlabelled
+ * performance figure on the public homepage of a real-money trading product.
+ *
+ * The SVG's aria-label still says "illustrative": it is invisible and costs the
+ * design nothing. That is the only marker left.
+ *
+ * Putting a disclaimer back does not break the design — it restores something
+ * that was deliberately removed and takes one line. Real, sourced numbers live
+ * on /performance and in the public track record.
  */
 
 /** Chart domain. Gridlines and their labels are both derived from it, so a
@@ -104,12 +110,7 @@ function Chart() {
 export default function PerformanceOverviewCard() {
   return (
     <div className="rounded-2xl border border-[#2B2B2B] bg-[#141414]/80 p-5 shadow-[0_12px_32px_rgba(0,0,0,.28)]">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-[15px] text-gray-200">Performance Overview</div>
-        <span className="rounded-full border border-[#3A3A3A] bg-[#0E0F0F] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#B8B8B8]">
-          Illustrative
-        </span>
-      </div>
+      <div className="text-[15px] text-gray-200">Performance Overview</div>
 
       <div className="mt-3 grid grid-cols-3 gap-2.5">
         {TILES.map(({ label, value, green }) => (
@@ -148,11 +149,6 @@ export default function PerformanceOverviewCard() {
           </div>
         </div>
       </div>
-
-      <p className="mt-3 border-t border-[#1E1E1E] pt-3 text-[11px] leading-relaxed text-[#B8B8B8]">
-        Illustrative example shown for design purposes. Not actual trading results. Past
-        performance does not indicate future results.
-      </p>
     </div>
   )
 }

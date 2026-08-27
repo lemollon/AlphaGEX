@@ -13,10 +13,13 @@ import { MenuIcon, CloseIcon } from './icons'
  * nothing else; the ops console is a separate deployment with its own nav. */
 
 // Public marketing links — shown to everyone, signed in or not.
+// "Join the Waitlist" was removed from this list on 2026-08-27: the approved
+// homepage mock draws Home / How It Works / Login / Create Account and nothing
+// else. /waitlist is still a live page and still linked from the places that
+// send people to it — only the masthead entry is gone.
 const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/', label: 'Home' },
   { href: '/how-it-works', label: 'How It Works' },
-  { href: '/waitlist', label: 'Join the Waitlist' },
 ]
 
 // Links that require a MEMBERSHIP — any live subscription, a strategy or Community
@@ -111,7 +114,7 @@ export default function HomeNav(
     <header className="sticky top-0 z-50 border-b border-white/5 bg-black">
       <div className={`mx-auto flex max-w-[1200px] items-center justify-between px-5 md:px-8 ${showAll ? 'min-h-16 py-2' : 'h-16'}`}>
         <Link href="/" aria-label="IronForge home">
-          <Wordmark markClass="h-8 w-auto" textClass="text-lg" />
+          <Wordmark markClass="h-8 w-auto" textClass="text-lg" showMark={false} />
         </Link>
 
         {/* Desktop links */}

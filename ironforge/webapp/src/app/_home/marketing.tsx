@@ -1,8 +1,7 @@
 import Link from 'next/link'
 import Image from 'next/image'
-import DefinedRiskCard from './DefinedRiskCard'
 import PerformanceOverviewCard from './PerformanceOverviewCard'
-import { MARKETING_TIERS, BOT_PLANS, botTagline } from '@/lib/billing/plans'
+import { MARKETING_TIERS, BOT_PLANS } from '@/lib/billing/plans'
 import {
   ShieldIcon,
   BarsIcon,
@@ -89,51 +88,51 @@ const CONFIG = {
   /*
    * ONE STRATEGY AT TWO CLOCKS — and the copy has to say so.
    *
-   * This block used to sell a risk ladder: Spark "Lower risk / Long-term growth"
-   * against Flame "Greater opportunity / Higher risk tolerance", with a table
-   * grading them Conservative vs Moderate. None of that is true. Since the EBB
-   * change on 2026-08-16 both bots run the SAME structure — `dteMode` returns
-   * '0DTE' for both, and lib/billing/plans.ts states in as many words that "the
-   * only honest difference in the copy is the time of day."
+   * ⚠️ THIS BLOCK AND THE TABLE BELOW ASSERT A RISK DIFFERENCE THE PRODUCTS DO
+   * NOT HAVE. Restored to the approved mock's wording on 2026-08-27 on Leron's
+   * explicit instruction ("the entire page"), after the following was put to him
+   * in writing. Do not treat it as reviewed-and-blessed copy — it is a design
+   * match, and the note below is the standing objection to it.
    *
+   * Since the EBB change on 2026-08-16 both bots run the SAME structure —
+   * `dteMode` returns '0DTE' for both, and lib/billing/plans.ts states in as many
+   * words that "the only honest difference in the copy is the time of day."
    * Their scanner configs agree: identical wing width, one position, one
    * contract, same profit target, same end-of-day handling. The single
    * meaningful difference is when the entry window opens.
    *
-   * A made-up risk grade is the worst kind of wrong thing to publish about a
-   * financial product — a customer choosing "Conservative" was choosing a label,
-   * not a safer product. Structure and cadence are now read from BOT_PLANS so
-   * this page cannot drift from checkout again.
+   * So a customer reading "Conservative" and picking SPARK over FLAME is picking
+   * a label, not a safer product. The honest version of this block is in git —
+   * `git log -S "Defined before entry" -- ironforge/webapp/src/app/_home` — and
+   * it is a two-minute revert if that call is ever revisited.
+   *
+   * `botTagline`/`BOT_PLANS` are no longer read here, so this page CAN now drift
+   * from checkout. That is the cost of hardcoding the mock's copy.
    */
   strategies: [
     {
       key: 'spark',
       title: 'SPARK',
-      bullets: [botTagline('spark'), `Trades ${BOT_PLANS.spark.cadence}`, 'Defined risk on every trade'],
+      bullets: ['Lower risk', 'Long-term growth', 'Automated discipline'],
       mascotSrc: BOT_PLANS.spark.mascot,
       mascotAlt: 'Spark strategy mascot',
     },
     {
       key: 'flame',
       title: 'FLAME',
-      bullets: [botTagline('flame'), `Trades ${BOT_PLANS.flame.cadence}`, 'Defined risk on every trade'],
+      bullets: ['Greater opportunity', 'Higher risk tolerance', 'Automated discipline'],
       mascotSrc: BOT_PLANS.flame.mascot,
       mascotAlt: 'Flame strategy mascot',
     },
   ],
-  /*
-   * Four of these five rows are identical, and that IS the comparison. The table
-   * previously manufactured differences to fill itself; what it should tell a
-   * visitor is that the discipline does not change with the badge — only the
-   * clock does. That also makes the honest case for the bundle: running both
-   * spreads entries across the session rather than buying a riskier product.
-   */
+  /* The mock's five rows, verbatim. See the warning above the `strategies` block
+   * — "Conservative" vs "Moderate" is not a property either bot has. */
   comparison: [
-    { label: 'Strategy', spark: botTagline('spark'), flame: botTagline('flame') },
-    { label: 'When it trades', spark: 'Each morning', flame: 'Each afternoon' },
-    { label: 'Risk per trade', spark: 'Defined before entry', flame: 'Defined before entry' },
-    { label: 'Positions at a time', spark: 'One', flame: 'One' },
-    { label: 'Execution', spark: 'Fully automated', flame: 'Fully automated' },
+    { label: 'Primary Objective', spark: 'Long-term growth', flame: 'Accelerated growth' },
+    { label: 'Risk Profile', spark: 'Conservative', flame: 'Moderate' },
+    { label: 'Portfolio Focus', spark: 'Consistency', flame: 'Higher upside' },
+    { label: 'Trading Discipline', spark: 'Automated', flame: 'Automated' },
+    { label: 'Risk Management', spark: 'Built In', flame: 'Built In' },
   ],
   benefits: [
     { icon: ChartLineIcon, label: 'Daily Market Intelligence', accent: 'blue', boxed: true },
@@ -299,15 +298,10 @@ export function StrategySection() {
         ))}
       </div>
 
-      {/* The payoff diagram sits here rather than in the hero because the row it
-          illustrates — "Risk per trade: Defined before entry" — is directly below
-          it. That claim previously had no picture anywhere on the site. */}
-      {/* Width-capped: the card's SVG scales to its container and this slot is
-          ~930px, nearly twice the hero column it was drawn for. Unconstrained it
-          rendered at roughly double size with 20px axis labels. */}
-      <div className="mx-auto mt-8 max-w-[560px]">
-        <DefinedRiskCard />
-      </div>
+      {/* The "Every trade has a floor" payoff diagram (DefinedRiskCard) used to
+          sit here. Removed 2026-08-27: it is not in the approved mock, and the
+          mock is the spec for this page. The component still exists and still
+          renders — drop `<DefinedRiskCard />` back in this slot to restore it. */}
 
       {/* Comparison table — semantic markup per spec §6.6; horizontal scroll with
           sticky row labels on mobile. */}
