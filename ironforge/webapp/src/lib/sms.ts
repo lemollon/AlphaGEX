@@ -261,3 +261,87 @@ export async function sendVolAlertSms(p: VolAlertSmsParams): Promise<SmsResult> 
   if (delivered > 0) return errors.length ? { sent: true, error: errors.join('; ') } : { sent: true }
   return { sent: false, error: errors.join('; ') || 'no channel delivered' }
 }
+
+/* ------------------------------------------------------------------ */
+/*  Generic operational push — the watchdog and the trade heartbeat     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * PUSH AN OPS ALERT TO THE OPERATOR'S PHONE.
+ *
+ * 🚨 THIS EXISTS BECAUSE `@here` DOES NOT PUSH TO A PHONE. A whole family of
+ * IronForge alerts landed in a Discord channel nobody was looking at, and the
+ * standing fix — "get the Discord user ID so `<@id>` can ping" — was never done.
+ *
+ * It also was not necessary: `ALERT_NTFY_TOPIC` has been configured on this service
+ * the whole time, and ntfy is an actual phone push. The Discord embed stays (it is
+ * the readable record); this is the part that wakes someone up.
+ *
+ * Deliberately NOT routed through the Discord channel here — `postOpsAlert` in
+ * ./discord already posts the embed, and duplicating it would double every alert.
+ *
+ * Best-effort and never throws: an alert path that can take down the thing it is
+ * alerting about is worse than no alert.
+ */
+export async function sendOpsPush(args: {
+  title: string
+  body: string
+  /** 'critical' pushes at high priority so it breaks through a quiet phone. */
+  severity: 'info' | 'critical'
+}): Promise<SmsResult> {
+  const anyPhoneChannel =
+    isNtfyConfigured() || isSmsGatewayConfigured() || isTwilioConfigured()
+  if (!anyPhoneChannel) {
+    console.warn(
+      '[sms] no phone channel configured (ALERT_NTFY_TOPIC / ALERT_SMS_GATEWAY_TO / ' +
+      'TWILIO_*) — an ops alert is going out with NO phone push.',
+    )
+    return { sent: false, skipped: true }
+  }
+
+  const body = `IronForge: ${args.title}\n${args.body}`.slice(0, 320)
+  const errors: string[] = []
+  let delivered = 0
+
+  if (isNtfyConfigured()) {
+    const topic = process.env.ALERT_NTFY_TOPIC as string
+    try {
+      const res = await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, {
+        method: 'POST',
+        headers: {
+          Title: `IronForge: ${args.title}`.slice(0, 200),
+          Priority: args.severity === 'critical' ? 'high' : 'default',
+          Tags: args.severity === 'critical' ? 'rotating_light' : 'wrench',
+        },
+        body,
+      })
+      if (res.ok) delivered++
+      else errors.push(`ntfy: ${res.status} ${(await res.text().catch(() => '')).slice(0, 140)}`)
+    } catch (e) {
+      errors.push(`ntfy: ${e instanceof Error ? e.message : 'send failed'}`)
+    }
+  }
+
+  // Only a CRITICAL alert is worth an SMS segment or a Twilio charge. An FYI that
+  // the watchdog healed something belongs on the push channel and in Discord.
+  if (args.severity === 'critical') {
+    const params: VolAlertSmsParams = {
+      signalKey: args.title,
+      reason: 'confirmed',
+      headline: args.body.slice(0, 200),
+    }
+    if (isSmsGatewayConfigured()) {
+      const errs = await sendViaSmsGateway(params, body)
+      if (errs.length === 0) delivered++
+      errors.push(...errs)
+    }
+    if (isTwilioConfigured()) {
+      const errs = await sendViaTwilio(body)
+      if (errs.length === 0) delivered++
+      errors.push(...errs)
+    }
+  }
+
+  if (delivered > 0) return errors.length ? { sent: true, error: errors.join('; ') } : { sent: true }
+  return { sent: false, error: errors.join('; ') || 'no channel delivered' }
+}

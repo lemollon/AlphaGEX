@@ -137,7 +137,7 @@ import { getTvMarketStructure, type TvMarketStructure } from './gex/trading-vola
 import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, classifySignalState, notifyDecision, type SignalStreak } from './volAlerts'
 import { ensureVolAlertsTable, upsertRegimeDaily, recordLadderTransitions, markNotifiedIfDue, touchEpisode, type SignalRead } from './volAlerts.server'
 import { sendVolAlertEmail } from './email'
-import { sendVolAlertSms } from './sms'
+import { sendVolAlertSms, sendOpsPush } from './sms'
 import { drainAttioSyncQueue, isAttioConfigured } from './attio'
 import { drainCrmOutbox, requeuePhoneRejectedDeadLetters } from './crm/outbox'
 
@@ -4188,6 +4188,15 @@ async function watchdogForceSettleExpired(bot: BotDef, ct: Date): Promise<string
 
   const summary = summarizeWatchdogRun(bot.name, repaired, failed)
   if (summary) {
+    // Discord carries the readable record; ntfy is what actually reaches a phone.
+    // `@here` never did — see the note on sendOpsPush.
+    void sendOpsPush({
+      title: summary.severity === 'critical'
+        ? `${bot.name.toUpperCase()} could not settle an expired position`
+        : `${bot.name.toUpperCase()} force-settled expired positions`,
+      body: summary.text,
+      severity: summary.severity,
+    }).catch(() => { /* an alert must never take a scan cycle down */ })
     void postOpsAlert({
       botName: bot.name,
       title: summary.severity === 'critical'
@@ -4299,6 +4308,11 @@ async function tradeHeartbeatCheck(bot: BotDef, ct: Date): Promise<void> {
     dates: verdict.dates,
     threshold: HEARTBEAT_SILENT_DAYS,
   })
+  void sendOpsPush({
+    title: `${bot.name.toUpperCase()} has not traded in ${verdict.silentDays} trading days`,
+    body: verdict.message,
+    severity: 'critical',
+  }).catch(() => { /* never take a scan cycle down */ })
   void postOpsAlert({
     botName: bot.name,
     title: `No entries in ${verdict.silentDays} trading days`,
