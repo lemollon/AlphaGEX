@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { dbQuery } from '@/lib/db'
 import { isConfigured, getQuote, canPlaceLiveOrders, describeLiveGate, resolveEligibleAccounts } from '@/lib/tradier'
+import { isNtfyConfigured, isSmsGatewayConfigured, isTwilioConfigured, isDiscordConfigured } from '@/lib/sms'
 
 export const dynamic = 'force-dynamic'
 
@@ -74,6 +75,33 @@ export async function GET() {
     // same question it will answer at the entry minute. armed + 0 is the bug
     // that took a day to see; armed + 1 means an order has somewhere to go.
     // A COUNT, never names or keys — this endpoint is unauthenticated.
+    // CAN THIS PROCESS ACTUALLY WAKE SOMEBODY UP?
+    //
+    // 🚨 Same per-service trap as the arming block above, one floor down. The
+    // alert env vars (ALERT_NTFY_TOPIC, ALERT_SMS_GATEWAY_TO, ALERT_DISCORD_WEBHOOK)
+    // are set on ironforge-customer, which is where the scanner runs — but
+    // /api/sms-test is classified operator-only, so the only test anyone could run
+    // answered from ironforge-legacy, which has NONE of them. It reported
+    // `sms_configured: false` about a service that never raises an alert, while the
+    // service that does was fully wired. Nobody could tell those two apart.
+    //
+    // 🚨 `reaches_a_phone` deliberately EXCLUDES the Discord webhook. A webhook posts
+    // to a channel; it is a RECORD, not an alert. `@here` does not push to a phone —
+    // only `<@USER_ID>` does — which is how a whole family of IronForge alerts sat
+    // unread. Counting Discord here would restate exactly that mistake in a field
+    // whose entire job is to say whether anyone will be woken.
+    //
+    // Booleans only, same rule as the rest of this endpoint: never a topic, number
+    // or key. A topic name is a credential — anyone holding it can push to the
+    // subscriber — so it must never appear here.
+    alerting: {
+      ntfy: isNtfyConfigured(),
+      sms_gateway: isSmsGatewayConfigured(),
+      twilio: isTwilioConfigured(),
+      discord_webhook: isDiscordConfigured(),
+      discord_user_id: !!process.env.DISCORD_ALERT_USER_ID?.trim(),
+      reaches_a_phone: isNtfyConfigured() || isSmsGatewayConfigured() || isTwilioConfigured(),
+    },
     live_accounts: Object.fromEntries(
       await Promise.all(bots.map(async (b) => {
         try {
