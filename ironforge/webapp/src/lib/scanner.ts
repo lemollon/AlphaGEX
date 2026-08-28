@@ -166,8 +166,8 @@ const PRODUCTION_BOT_DTE = '1DTE' // Matches BOTS[] entry for PRODUCTION_BOT
  * KINDLE's max_contracts:1 is its risk control.
  */
 /** SPARK's v2 sizing/gates (VIX cap 40, 0.7-SD credit walk-in floor, 30%-BP cap).
- * SPARK2 runs the identical ruleset on the second live account. KINDLE (retired)
- * intentionally never had these — its 1-contract ceiling was the risk control. */
+ * KINDLE (retired) intentionally never had these — its 1-contract ceiling was
+ * the risk control. */
 /** Regime-conditional BP caps for the SPARK v2 bots (2026-07-21).
  *  Percent-of-buying-power, NOT a contract count — size must scale with the
  *  account as it grows. Determinism comes from sizing off the full-width
@@ -181,11 +181,11 @@ const PRODUCTION_BOT_DTE = '1DTE' // Matches BOTS[] entry for PRODUCTION_BOT
 import { SPARK_BP_CAP_POS, SPARK_BP_CAP_NEG } from './spark-sizing'
 
 function isSparkV2Sizing(name: string): boolean {
-  return name === 'spark' || name === 'spark2'
+  return name === 'spark'
 }
 
 function isSparkStrategy(name: string): boolean {
-  return name === 'spark' || name === 'kindle' || name === 'spark2'
+  return name === 'spark' || name === 'kindle'
 }
 
 /**
@@ -203,10 +203,10 @@ function isSparkStrategy(name: string): boolean {
  * the 3-day stand-down after a stop-out (+64%), and the stand-down needs a
  * stop-out to trigger on. Removing the stop removes the trigger.
  *
- * SPARK2 and KINDLE keep the no-stop behavior — they are still 1DTE swings.
+ * KINDLE keeps the no-stop behavior — it is still a 1DTE swing.
  */
 function isNoStopBot(name: string): boolean {
-  return name === 'kindle' || name === 'spark2' || isSettleAtExpiryBot(name)
+  return name === 'kindle' || isSettleAtExpiryBot(name)
 }
 
 /**
@@ -348,13 +348,10 @@ async function vixDecayBlock(asofDate: string): Promise<string | null> {
  * constant as a VALUE (spark_* tables) — those are intentionally NOT changed.
  */
 function isProductionBot(name: string): boolean {
-  // spark2 REMOVED 2026-07-21 (operator): it is now a genuine paper bot.
-  // It had been routing real orders while the customer Live page labelled it
-  // PAPER with a $10,000 simulated balance -- and the real account could not
-  // fund even one contract, so it skipped `production_only_no_fills` on every
-  // scan from 2026-07-17 (301/370, then 319/388, then 73/73) while the page
-  // told the customer it was "looking for an opportunity". It now trades its
-  // own paper ledger and the page tells the truth.
+  // 🚨 Everything listed here routes REAL orders. A bot on this allowlist whose
+  // customer Live page says PAPER is a live-money lie -- that exact mismatch
+  // shipped once and ran for days behind a simulated balance the page kept
+  // showing. Adding a name here without flipping its page is not a cosmetic bug.
   //
   // KINDLE stays listed even though it is RETIRED, and that is deliberate. Being here
   // does NOT mean it trades: it was removed from the BOTS roster, so no scan ever
@@ -430,14 +427,8 @@ const BOTS = [
   // strategy's history from the dead one — the old '1DTE' rows stay where they are.
   { name: 'spark', dte: '0DTE', minDte: 0 },
   { name: 'inferno', dte: '0DTE', minDte: 0 },
-  // SPARK2 (2026-07-13, replaces KINDLE): SPARK's FULL v2 strategy AND sizing
-  // (830 entry, $5 wings, $0.25 credit walk-in, tier 40/35/30, VIX cap 40,
-  // 30%-BP cap) on the SECOND live account (ex-KINDLE 6YB***95) — own tables/
-  // config/creds (TRADIER_SPARK2_* env, fallback TRADIER_KINDLE_*), physically
-  // isolated from SPARK's Iron Viper account. Born paused. KINDLE is RETIRED:
-  // removed from this roster (never scans/trades again); its tables, pages and
-  // history remain readable.
-  { name: 'spark2', dte: '1DTE', minDte: 1 },
+  // KINDLE is RETIRED: removed from this roster (never scans/trades again);
+  // its tables, pages and history remain readable.
   // FORGE (2026-08-10) -- the three-market condor. SHIPS DISARMED.
   //
   // Same 7 DTE condor run on SPY + QQQ + IWM at once, one account split three
@@ -566,15 +557,6 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // — is the fix; $2 wings retained for cold-start survivability (one max-loss day
   // is -$179, leaving room to keep trading; $3+ wings can lock up the account).
   kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 490, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0.09, standdown_days: 0, skip_neg_gamma: true, fixed_strike_placement: false },
-  // SPARK2: byte-identical to SPARK's v2 config (full sizing rules incl. the
-  // 30%-BP cap + VIX 40 + 0.7-SD walk-in floor via the isSparkV2Sizing sites).
-  // starting_capital is the PAPER seed — it is what syncSandboxCapital() writes
-  // to spark2_paper_account every cycle, so it is the number the customer Live
-  // page shows. Raised 500 -> 10000 on 2026-07-21 per the operator: spark2 is a
-  // paper account and paper capital is arbitrary, so it uses the same $10k house
-  // default as the other paper bots. (The old 500 was inherited from KINDLE and
-  // rendered $500 - $208 = $292.) Any manual edit to that row is pointless —
-  // change it HERE or the scanner syncs it straight back.
   // FORGE -- see the BOTS entry. bp_pct 0.80 is the TOTAL across all three
   // books; each book gets one third and may NOT borrow from the others, because
   // independent margin pools are what keep the drawdowns independent.
@@ -591,7 +573,6 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // min_credit 0.25 is a sanity floor only: median credit at $10 wings is ~$0.95.
   // standdown_days 1 fires on a LOSING TRADE (there is no stop to fire on).
   forge:   { sd: 2.10, pt_pct: 1.0, sl_mult: 3.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 5000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
-  spark2:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: false },
 }
 
 /**
@@ -659,8 +640,8 @@ const DB_TO_CFG: Record<string, { key: NumericConfigKey; transform?: (v: number)
   // spread_width -> wing_width. Previously UNMAPPED: the column existed, accepted
   // writes, and was silently ignored while the code constant won. That is how an
   // operator ends up believing they changed the wing width when they did not.
-  // Every bot's stored row already equals its code default (flame/spark/inferno/
-  // spark2 = 5, kindle = 2), so wiring it changes NO current behaviour.
+  // Every bot's stored row already equals its code default (flame/spark/inferno
+  // = 5, kindle = 2), so wiring it changes NO current behaviour.
   spread_width:         { key: 'wing_width' },
 }
 
@@ -2843,7 +2824,7 @@ async function monitorSinglePosition(
   }
 
   // Stop loss uses BID/ASK (conservative) — better to exit early on losses.
-  // SPARK2 / KINDLE SWING: they never hard-stop — they ride to the profit target or
+  // KINDLE SWING: it never hard-stops — it rides to the profit target or
   // EOD. Backtest: ~82% of would-be-stopped trades recover by close; with the small
   // %-based sizing (bp_pct ≤ 0.30 cap) this lifts win rate to ~98% and slashes
   // drawdown. Position SIZE is the risk control with the stop off.
@@ -4258,7 +4239,7 @@ const _lastHeartbeatDate: Record<string, string | null> = {}
  * entry" is a settled fact rather than a guess.
  */
 async function tradeHeartbeatCheck(bot: BotDef, ct: Date): Promise<void> {
-  // FLAME and SPARK are the ~1-entry-per-day bots. INFERNO/FORGE/SPARK2 have their own
+  // FLAME and SPARK are the ~1-entry-per-day bots. INFERNO/FORGE have their own
   // cadences (and FORGE ships disarmed), so a quiet day there means nothing.
   if (!isSettleAtExpiryBot(bot.name)) return
   const todayStr = ct.toISOString().slice(0, 10)
@@ -4992,12 +4973,11 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const liveCollateral = num(liveCollRows[0]?.total_collateral)
   const buyingPower = balance - liveCollateral
 
-  // PRODUCTION-ONLY mode. spark2 was here until 2026-07-21, when it became a
-  // genuine paper bot (see isProductionBot). The paper-BP exemption existed
-  // because its paper shadow was seeded at $500 and could never cover a $5-wing
-  // IC; that seed is now $10,000, so the normal paper-BP gates apply and are
-  // correct. No bot currently needs the exemption -- kept as an explicit
-  // constant rather than deleted so re-enabling it is a one-line change.
+  // PRODUCTION-ONLY mode. The paper-BP exemption existed for a retired bot whose
+  // paper shadow was seeded at $500 and could never cover a $5-wing IC; seeds are
+  // $10,000 now, so the normal paper-BP gates apply and are correct. No bot
+  // currently needs the exemption -- kept as an explicit constant rather than
+  // deleted so re-enabling it is a one-line change.
   const productionOnlyBot = false
 
   // Paper BP check — skip in production-only mode (production uses Tradier account equity, not paper BP)
@@ -5010,7 +4990,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // 1.25x a ONE-day move sits ~2.24x too close to the money — it would have looked
   // like the configured strategy and behaved like a near-ATM condor.
   //
-  // Byte-identical for every other bot: FLAME/SPARK2/KINDLE are minDte 1 (sqrt(1)=1)
+  // Byte-identical for every other bot: FLAME/KINDLE are minDte 1 (sqrt(1)=1)
   // and INFERNO is minDte 0, floored to 1 so its 0DTE placement is unchanged.
   const emDays = Math.max(bot.minDte, 1)
   const oneDayMove = (vix / 100 / Math.sqrt(252)) * spot
@@ -5120,7 +5100,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   //   INFERNO/paper bots — keep legacy walk-in to 0.5 SD.
   const sdFloor = isSparkV2Sizing(bot.name) ? 0.7 : SD_FLOOR
   // (KINDLE — the one bot that skipped the walk-in — is retired from the
-  // roster, so every scanned bot walks in now. SPARK2 uses the 0.7-SD floor.)
+  // roster, so every scanned bot walks in now.)
   //   SPARK v3 — NO walk-in (fixed_strike_placement). Walking strikes toward the money
   //            to manufacture credit is the opposite of what its walk-forward
   //            selected; a thin day SKIPS instead. At 5 DTE on $10 wings the $0.25
@@ -5352,11 +5332,9 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     }
 
     // ── Production-only mode: sandbox already traded, just need production ──
-    // SPARK2 used to force this branch unconditionally (inherited from retired
-    // KINDLE), placing only on its real ex-KINDLE account. That was removed on
-    // 2026-07-21 when spark2 became a genuine paper bot -- see isProductionBot.
-    // Only SPARK reaches this branch now, and only when its sandbox mirror has
-    // already filled for the day.
+    // Only SPARK reaches this branch, and only when its sandbox mirror has
+    // already filled for the day. A now-retired bot used to force it
+    // unconditionally, placing on a real account with no sandbox mirror at all.
     if (sandboxAlreadyTraded) {
       if (prodAlreadyTradedToday) {
         return 'skip:already_traded_today'

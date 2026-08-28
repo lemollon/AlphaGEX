@@ -55,9 +55,9 @@ export default function LiveHeader({ viewer, onSwitch }: LiveHeaderProps = {}) {
       <h1 className="font-display text-2xl tracking-wide text-white">Live</h1>
       <div className="flex items-center gap-4">
         {(() => {
-          // Customer surface shows ONLY the two real products (Spark, Flame) — never the
-          // operator-only paper account (spark2) — and never a "paper" badge. The account's
-          // paper/live state is disclosed in the page banner, not the switcher pills.
+          // Customer surface shows ONLY the two real products (Spark, Flame) — never a
+          // "paper" badge. The account's paper/live state is disclosed in the page
+          // banner, not the switcher pills.
           const switchable = (viewer?.allowedBots ?? []).filter(
             (b): b is LiveBot => isLiveBot(b) && (b === 'spark' || b === 'flame'),
           )

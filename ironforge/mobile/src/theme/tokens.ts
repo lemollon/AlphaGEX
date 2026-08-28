@@ -42,7 +42,6 @@ export const color = {
 /** Per-agent theming, mirroring live/components/accent.ts. */
 export const agentColor: Record<string, string> = {
   spark: color.spark,
-  spark2: '#60A5FA',
   flame: color.flame,
 }
 

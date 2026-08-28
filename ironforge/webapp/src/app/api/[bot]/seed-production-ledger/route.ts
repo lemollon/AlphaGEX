@@ -42,8 +42,8 @@
  * route only fills a hole.
  *
  * Scoped to FLAME. SPARK's production rows come from ironforge_accounts and
- * already exist; SPARK2 is paper. Widening this to a bot whose production
- * identity is not env-credentialed would invent an owner name.
+ * already exist. Widening this to a bot whose production identity is not
+ * env-credentialed would invent an owner name.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, dbExecute, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'

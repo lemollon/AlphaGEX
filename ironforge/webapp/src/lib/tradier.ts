@@ -811,22 +811,11 @@ interface BotAccountConfig {
   bpShare: Record<string, number>
 }
 
-/** SPARK2's live-account creds: TRADIER_SPARK2_* env, falling back to the old
- * TRADIER_KINDLE_* names (same physical account 6YB***95 — KINDLE is retired,
- * so whichever env name the rotated key lands under, SPARK2 finds it). Fail
- * CLOSED: missing creds ⇒ zero production accounts ⇒ no order can be placed. */
-function spark2Creds(): { apiKey: string | undefined; accountId: string | undefined } {
-  return {
-    apiKey: process.env.TRADIER_SPARK2_API_KEY || process.env.TRADIER_KINDLE_API_KEY,
-    accountId: process.env.TRADIER_SPARK2_ACCOUNT_ID || process.env.TRADIER_KINDLE_ACCOUNT_ID,
-  }
-}
-
 const BOT_ACCOUNTS: Record<string, BotAccountConfig> = {
   flame: {
     // No SANDBOX accounts. FLAME's live account (when armed) is injected from
-    // TRADIER_FLAME_* env in getProductionAccountsForBot, the same way SPARK2's
-    // and KINDLE's are — it is not in ironforge_accounts.
+    // TRADIER_FLAME_* env in getProductionAccountsForBot, the same way
+    // KINDLE's is — it is not in ironforge_accounts.
     accounts: [],
     bpShare:  {},
   },
@@ -850,7 +839,7 @@ const BOT_ACCOUNTS: Record<string, BotAccountConfig> = {
  */
 export const PRODUCTION_BOT = 'spark'
 
-/** FLAME's live-account creds. Separate env names from SPARK/SPARK2 so FLAME can
+/** FLAME's live-account creds. Separate env names from SPARK so FLAME can
  *  never route an order into another bot's account. Fail CLOSED: missing creds ⇒
  *  zero production accounts ⇒ no order can be placed. */
 function flameCreds(): { apiKey: string | undefined; accountId: string | undefined } {
@@ -963,8 +952,6 @@ export function isFlameLiveArmed(): boolean {
  * they trade. FLAME is further gated by isFlameLiveArmed() and is OFF by default.
  */
 export function isProductionBot(name: string): boolean {
-  // spark2 REMOVED 2026-07-21 (operator): now a genuine paper bot. Must stay in
-  // sync with scanner.ts isProductionBot -- see the note there.
   return name === 'spark' || name === 'kindle'
     || (name === 'flame' && isFlameLiveArmed())
 }
@@ -1735,12 +1722,6 @@ export async function resolveEligibleAccounts(
       eligibleAccounts = [...eligibleAccounts, flameAcct]
     }
   }
-  // SPARK2 production-account injection REMOVED 2026-07-21 (operator): spark2 is
-  // a genuine paper bot now, so no real Tradier account may be attached to its
-  // orders. spark2Creds() is still used by the balance/close paths to read and
-  // reconcile the historical real position opened 2026-07-16, but nothing new
-  // is ever placed on it. Re-enabling live routing requires restoring BOTH this
-  // block and spark2 in isProductionBot (here and in scanner.ts).
   return eligibleAccounts
 }
 
@@ -1868,10 +1849,8 @@ export async function placeIcOrderAllAccounts(
         // 2026-07-07 compounding sim quantified 30%/3ct at 3x return with a
         // 38.6% worst account slide (Part-2 report recommended 20%/2ct; operator
         // explicitly chose 30% knowing the drawdown).
-        // Applies to both SPARK v2 bots (spark + spark2), matching the paper
-        // path's isSparkV2Sizing 0.30 clamp — spark2's production config row
-        // carries bp_pct 0.85 (a copy of spark's DB row) and without this clamp
-        // it would deploy 85% of real OBP. KINDLE's risk control is max_contracts:1.
+        // Applies to SPARK's v2 sizing, matching the paper path's isSparkV2Sizing
+        // 0.30 clamp. KINDLE's risk control is max_contracts:1.
         // Cap lowered 0.30 → 0.20 on 2026-07-21 per operator decision, reverting
         // to the level the compounding sim originally recommended. The 7/08 raise
         // to 30% was made while the 2026-07-14 swing hold was (unknowingly) never
@@ -1901,7 +1880,7 @@ export async function placeIcOrderAllAccounts(
         // 0.50/0.20 were repeated here with a comment asking the next reader to keep
         // them matching scanner.ts by hand.
         const regimeCap = sparkRegimeBpCap(posGamma)
-        const isV2 = botName === 'spark' || botName === 'spark2'
+        const isV2 = botName === 'spark'
         prodBpPct = isV2 ? Math.min(prodCfg.bp_pct, regimeCap) : prodCfg.bp_pct
         prodMaxContracts = Math.max(0, prodCfg.max_contracts)
         if (isV2) {
@@ -2774,14 +2753,6 @@ export async function closeIcOrderAllAccounts(
       accounts = [...accounts, { name: 'Kindle', apiKey: kKey, baseUrl: PRODUCTION_URL, type: 'production' }]
     }
   }
-  // SPARK2 closes: same inject, keyed on the SPARK2- position-id tag so OPEN and
-  // CLOSE both reach the live account (mirrors the KINDLE inject above).
-  if (accountType === 'production' && (tag ?? '').toUpperCase().includes('SPARK2')) {
-    const { apiKey: s2Key, accountId: s2Acct } = spark2Creds()
-    if (s2Key && s2Acct && !accounts.some(a => a.type === 'production' && a.name === 'Spark2')) {
-      accounts = [...accounts, { name: 'Spark2', apiKey: s2Key, baseUrl: PRODUCTION_URL, type: 'production' }]
-    }
-  }
   // FLAME closes: same inject, keyed on the FLAME- position-id tag.
   //
   // 🚨 SHIPPED IN THE SAME COMMIT AS THE OPEN-SIDE INJECT, DELIBERATELY. Fixing
@@ -3430,9 +3401,9 @@ export async function getProductionAccountsForBot(
   if (accounts.length === 0) return accounts
 
   // Layer 2. Wrapping (rather than filtering at each `return` above) is what
-  // guarantees EVERY path — spark2/flame/kindle env creds and the
-  // ironforge_accounts rows alike — goes through the owner pause. A new bot
-  // branch added later cannot forget it.
+  // guarantees EVERY path — flame/kindle env creds and the ironforge_accounts
+  // rows alike — goes through the owner pause. A new bot branch added later
+  // cannot forget it.
   const owners = await getOwnerPauseState(botName)
   if (!owners.ok) return []
   if (owners.paused.size === 0) return accounts
@@ -3470,16 +3441,6 @@ async function resolveProductionAccounts(
   // ironforge_accounts DB — so it is physically isolated from SPARK's accounts and
   // can never resolve SPARK's (Logan) production row. Fail CLOSED: if either env var
   // is missing, return zero accounts (no order can be placed).
-  // SPARK2: env-based creds (never the ironforge_accounts DB) — physically
-  // isolated from SPARK's production rows, same isolation contract as KINDLE.
-  if (botName.toLowerCase() === 'spark2') {
-    const { apiKey, accountId } = spark2Creds()
-    if (!apiKey || !accountId) {
-      console.warn('[tradier] SPARK2 production creds (TRADIER_SPARK2_* / TRADIER_KINDLE_*) not set — zero production accounts.')
-      return []
-    }
-    return [{ name: 'Spark2', apiKey, baseUrl: PRODUCTION_URL, accountId }]
-  }
   if (botName.toLowerCase() === 'flame') {
     // Fail closed twice: the arm knob AND the creds. Without both, FLAME has
     // zero production accounts and physically cannot place a real order.
@@ -3509,24 +3470,15 @@ async function resolveProductionAccounts(
   return result
 }
 
-/** SPARK2's live account balance straight from its env creds — pause-independent
- * (mirrors the "pausing never blanks the balance" rule the Live page uses for
- * SPARK). Null when creds are missing/invalid; never fabricated. */
-export async function getSpark2ProductionBalance(): Promise<TradierBalanceDetail | null> {
-  const { apiKey, accountId } = spark2Creds()
-  if (!apiKey || !accountId) return null
-  return getTradierBalanceDetail(apiKey, accountId, PRODUCTION_URL)
-}
-
 /** FLAME's live account balance straight from its env creds (TRADIER_FLAME_*).
  *
  * 🚨 WHY THIS EXISTS (2026-08-23). FLAME has been filling REAL orders on
  * 6YB71371 since 2026-08-20, and the customer Live page showed nothing:
  * `live/summary.ts` only ever read a broker balance for SPARK (via
- * ironforge_accounts) and SPARK2 (via env creds). FLAME's account is
- * credentialed exactly like SPARK2's — env, not the table — but had no branch,
- * so the operator console read Tradier while the customer page fell back to a
- * DB ledger that (see the seed-production-ledger route) had no row to read.
+ * ironforge_accounts). FLAME's account is credentialed the same way — env,
+ * not the table — but had no branch, so the operator console read Tradier
+ * while the customer page fell back to a DB ledger that (see the
+ * seed-production-ledger route) had no row to read.
  *
  * Keyed on credentials, NOT on isFlameLiveArmed() — the same read/write split
  * canReadProductionBalance() enforces. Seeing the account is not permission to

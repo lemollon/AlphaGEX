@@ -13,9 +13,11 @@ import {
 } from '../bots'
 
 /**
- * FLAME was invisible on the customer Live page because LIVE_BOTS was
- * ['spark','spark2'] and isLiveBot() re-checked that with hand-written literals
- * that drifted from the array. These tests pin both.
+ * FLAME was invisible on the customer Live page because LIVE_BOTS was a
+ * hand-written array that omitted it, and isLiveBot() re-checked membership
+ * with a SECOND set of hand-written literals that drifted from the first.
+ * These tests pin both: the roster contains flame, and the predicate is
+ * derived from the roster rather than restated.
  */
 
 describe('live bot registry', () => {
@@ -44,13 +46,20 @@ describe('account mode', () => {
   it('declares spark as the only production account', () => {
     expect(accountMode('flame')).toBe('paper')
     expect(accountMode('spark')).toBe('production')
-    expect(accountMode('spark2')).toBe('paper')
+    // Exactly one production bot. A second name appearing here without a
+    // deliberate change means a paper ledger just started claiming real money.
+    expect(LIVE_BOTS.filter((b: LiveBot) => accountMode(b) === 'production')).toEqual(['spark'])
   })
 
-  it('flags flame and spark2 as paper', () => {
+  it('flags flame as paper', () => {
     expect(isPaperBot('flame')).toBe(true)
     expect(isPaperBot('spark')).toBe(false)
-    expect(isPaperBot('spark2')).toBe(true)
+  })
+
+  it('keeps isPaperBot the exact complement of accountMode', () => {
+    for (const b of LIVE_BOTS) {
+      expect(isPaperBot(b)).toBe(accountMode(b) === 'paper')
+    }
   })
 })
 
@@ -58,12 +67,14 @@ describe('strategy accent', () => {
   it('is identity, not account mode — flame stays orange regardless', () => {
     expect(LIVE_BOT_ACCENT.flame).toBe('flame')
     expect(LIVE_BOT_ACCENT.spark).toBe('spark')
-    expect(LIVE_BOT_ACCENT.spark2).toBe('spark')
+    // flame is on paper and spark on production; the accents must not track that.
+    expect(accountMode('flame')).toBe('paper')
+    expect(LIVE_BOT_ACCENT.flame).not.toBe(LIVE_BOT_ACCENT.spark)
   })
 
-  it('both spark accounts share one accent but keep distinct pills', () => {
-    expect(LIVE_BOT_ACCENT.spark).toBe(LIVE_BOT_ACCENT.spark2)
-    expect(LIVE_BOT_PILL.spark).not.toBe(LIVE_BOT_PILL.spark2)
+  it('gives every bot a distinct pill so two rows can never read alike', () => {
+    const pills = LIVE_BOTS.map((b: LiveBot) => LIVE_BOT_PILL[b])
+    expect(new Set(pills).size).toBe(LIVE_BOTS.length)
   })
 })
 
@@ -93,13 +104,12 @@ describe('ledger partition', () => {
 })
 
 describe('db registry for live bots', () => {
-  // spark2/flame were resolved by the `DB_PREFIX[bot] || bot` fallthrough before
-  // being listed explicitly. These pin the resolved values so making the registry
+  // flame was resolved by the `DB_PREFIX[bot] || bot` fallthrough before being
+  // listed explicitly. These pin the resolved values so making the registry
   // explicit stays a no-op — a wrong prefix here would silently repoint a
   // live-money bot at another bot's tables.
   it('maps each live bot to its own table prefix', () => {
     expect(botTable('spark', 'positions')).toBe('spark_positions')
-    expect(botTable('spark2', 'positions')).toBe('spark2_positions')
     expect(botTable('flame', 'positions')).toBe('flame_positions')
   })
 
@@ -110,7 +120,6 @@ describe('db registry for live bots', () => {
 
   it('maps each live bot to its own heartbeat name', () => {
     expect(heartbeatName('spark')).toBe('SPARK')
-    expect(heartbeatName('spark2')).toBe('SPARK2')
     expect(heartbeatName('flame')).toBe('FLAME')
   })
 })

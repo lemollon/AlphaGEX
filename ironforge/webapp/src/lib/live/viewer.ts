@@ -9,9 +9,9 @@ import { isPublicMode } from '@/lib/auth/access'
  *
  * - Operators (ops session / magic link): every live bot, with the top-right
  *   account toggle.
- * - Customers: exactly the bots mapped to them in ironforge_customer_bots
- *   (e.g. the SPARK2 account owner sees ONLY spark2). No mapping → NO account
- *   (empty state) — a fresh signup must never see the operator's real money.
+ * - Customers: exactly the bots mapped to them in ironforge_customer_bots.
+ *   No mapping → NO account (empty state) — a fresh signup must never see
+ *   the operator's real money.
  * - Anonymous: NO account (empty state) for the same reason.
  *
  * The API routes enforce this server-side; the client toggle merely renders
@@ -68,7 +68,7 @@ export function resolvePaperBots(bots: LiveBot[]): LiveBot[] {
 /**
  * Ledger filter for a bot's customer-facing queries.
  *
- * Production bots (SPARK/SPARK2) read only account_type='production' rows.
+ * Production bots (SPARK) read only account_type='production' rows.
  * Paper bots (FLAME) have no production rows by construction — they read the
  * complement, so their pages show the paper ledger instead of rendering empty.
  * NULL account_type is treated as sandbox/paper by the same COALESCE the

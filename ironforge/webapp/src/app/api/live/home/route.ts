@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 /**
  * Customer Home dashboard payload (wealth snapshot, daily brief, recent
  * trades). Polled at ~60s by the client.
- * Account-aware: ?account=spark|spark2, authorized server-side per viewer
+ * Account-aware: ?account=spark|flame, authorized server-side per viewer
  * (operators see all; customers only their mapped bots; anonymous = spark).
  */
 export async function GET(req: NextRequest) {

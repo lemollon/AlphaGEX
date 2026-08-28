@@ -74,7 +74,7 @@ export async function POST(
     return NextResponse.json({ error: 'Not past EOD cutoff (2:45 PM CT)', ct_minutes: ctMins }, { status: 400 })
   }
 
-  // SWING HOLD (2026-07-21). SPARK-strategy bots (SPARK/SPARK2/KINDLE) are 1DTE
+  // SWING HOLD (2026-07-21). SPARK-strategy bots (SPARK/KINDLE) are 1DTE
   // swings: at the 14:45 CT cutoff on a NON-expiry day the scanner deliberately
   // holds a red position overnight to its expiry day (scanner.ts eodSwingDefer).
   // This route is a SECOND, older implementation of the EOD close, fired by the

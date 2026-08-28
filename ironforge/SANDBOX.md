@@ -55,7 +55,7 @@ Render deploy, serving zero traffic — if any of these are true:
 
 | Check | Why |
 |---|---|
-| Any of `TRADIER_PROD_*`, `TRADIER_SPARK2/FLAME/KINDLE_API_KEY` is set | Real broker credentials |
+| Any of `TRADIER_PROD_*`, `TRADIER_FLAME/KINDLE_API_KEY` is set | Real broker credentials |
 | `TRADIER_BASE_URL`'s **hostname** is not exactly `sandbox.tradier.com` | Real broker host (exact match — a substring test accepted `api.tradier.com/v1?x=sandbox.tradier.com`) |
 | `TRADIER_API_KEY` is set **without** that sandbox host | It is the quote key, so it is allowed — but `tradier.ts` defaults to PRODUCTION Tradier when the key is set and the base URL is not, so the host must be pinned explicitly |
 | `STRIPE_SECRET_KEY` is not `sk_test_`/`rk_test_` | Would charge real cards |

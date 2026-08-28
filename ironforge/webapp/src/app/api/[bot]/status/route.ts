@@ -523,9 +523,9 @@ export async function GET(
       : 'unknown'
 
     // DERIVED from dteMode(), the canonical map in db.ts, rather than a second
-    // ternary listing bots by hand. The hand-written version omitted spark2 and
-    // kindle, so spark2 — a 1DTE bot — reported "0DTE Paper Iron Condor" on the page
-    // a customer reads. dteMode already knew the right answer for all seven bots.
+    // ternary listing bots by hand. The hand-written version omitted kindle,
+    // which reported the wrong DTE on the page a customer reads. dteMode
+    // already knew the right answer for every bot.
     const dteNum = Number((dteMode(bot) ?? '0DTE').replace('DTE', '')) || 0
     // 🚨 "Live" describes where the ORDERS GO, not which bot is allowlisted for
     // production. SPARK is PRODUCTION_BOT, but since the EBB cutover it routes
@@ -535,20 +535,11 @@ export async function GET(
     // for a bot that cannot place a live trade. Settle-at-expiry bots are paper
     // by construction until the assignment/capital question is settled.
     const tradeMode = bot === PRODUCTION_BOT && !isSettleAtExpiryBot(bot) ? 'Live' : 'Paper'
-    // Sizing is regime-conditional: min(bp_pct, 50% on positive gamma / 20% on
-    // negative or unknown). This said "30% BP", which stopped being true when the
-    // regime split landed on 2026-07-21.
-    // SPARK2 still runs the old condor on its own ledger, so it keeps this label.
-    // SPARK does NOT — it moved to the EBB put spread on 2026-08-16 and is no
-    // longer a condor at all, which is why it no longer shares this string.
-    const sparkStrategy = 'Iron Condor (GEX-adaptive · swing · 50/20% BP by gamma)'
     const strategyName = bot === 'flame' || bot === 'spark'
       ? 'Put Credit Spread'
       : bot === 'blaze'
         ? 'Directional Spread'
-        : bot === 'spark2'
-          ? sparkStrategy
-          : 'Iron Condor'
+        : 'Iron Condor'
     const strategy = `${dteNum}DTE ${tradeMode} ${strategyName}`
 
     return NextResponse.json({

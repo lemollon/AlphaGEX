@@ -46,7 +46,6 @@ const MEMBER_LINKS: ReadonlyArray<{ href: string; label: string }> = [
  */
 const CONSOLE_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/spark', label: 'SPARK' },
-  { href: '/spark2', label: 'SPARK2' },
   { href: '/flame', label: 'FLAME' },
   { href: '/inferno', label: 'INFERNO' },
   { href: '/blaze', label: 'BLAZE' },
