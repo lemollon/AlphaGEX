@@ -2921,6 +2921,25 @@ async function closePosition(
   closePrice?: number,
   orderType?: 'market' | 'debit',
   limitPrice?: number,
+  /**
+   * 🚨 THERE IS NO NEXT CYCLE. Set by the assignment guard only.
+   *
+   * The DEFER branch below returns 'deferred' when the broker has the order but the
+   * fill has not landed, on the explicit promise that "next cycle will re-poll".
+   * That promise is true at 10:00 and FALSE at 14:57 on a 0DTE: the market closes in
+   * three minutes, ASSIGNMENT_GUARD_END_HHMM shuts the window, and the contract
+   * expires. A deferred close at the bell is not deferred, it is ABANDONED, and the
+   * caller reads a soft status for a position that is about to be assigned.
+   *
+   * SPARK-SPY-20260828-K9JKRK proved it: guard fired correctly on a short put 773
+   * with SPY at 769.6, closePosition returned 'deferred' twice, SPY settled 769.39
+   * and the position went into settlement $3.61 ITM. Sandbox, 1 lot — but SPARK is
+   * isProductionBot(), so this is the same code path a live account runs.
+   *
+   * When true: never place a SECOND close order on top of a live one, and never
+   * report a resting order as anything but a failure to close.
+   */
+  mustCloseNow?: boolean,
 ): Promise<CloseOutcome> {
   // Read person and account_type from position for daily_perf attribution and close routing
   let posPerson = 'User'
@@ -3110,6 +3129,35 @@ async function closePosition(
     // DEFERRED, not failed: the order is live at the broker and the fill is coming.
     // The position is deliberately still open. Reporting this as a failure would flag
     // every healthy FLAME debit-limit profit-target close as broken.
+    //
+    // 🚨 …UNLESS there is no next cycle. The whole justification above is "the fill is
+    // coming" — that is a statement about FUTURE cycles, and the assignment guard has
+    // none: the window shuts at ASSIGNMENT_GUARD_END_HHMM and the contract expires at
+    // the bell. On that path a resting order is not a pending success, it is a close
+    // that did not happen, and it MUST read as 'failed' so the caller escalates.
+    if (mustCloseNow) {
+      console.error(
+        `[scanner] *** ${bot.name.toUpperCase()} MUST-CLOSE DEFERRED ${positionId} *** ` +
+        `order ${userClose.order_id} is live at the broker with no fill price and there is ` +
+        `NO next cycle before expiry — reporting as FAILED, not deferred.`,
+      )
+      await query(
+        `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+         VALUES ($1, $2, $3, $4)`,
+        [
+          'CRITICAL',
+          `MUST-CLOSE DEFERRED: ${positionId} — close order ${userClose.order_id} placed but ` +
+          `unfilled at the bell; no cycle remains before expiry`,
+          JSON.stringify({
+            position_id: positionId, reason,
+            close_order_id: userClose.order_id,
+            sandbox_close_info: sandboxCloseInfo,
+          }),
+          bot.dte,
+        ],
+      )
+      return 'failed'
+    }
     return 'deferred' // Exit without closing paper — next cycle will re-poll
   } else if (isProductionBotClose && !isExpiredContract) {
     // Broker close failed ENTIRELY (no order_id). PREVIOUSLY this fell through and
@@ -3852,7 +3900,7 @@ async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
   const rows = await query(
     `SELECT position_id, ticker, expiration, put_short_strike, put_long_strike,
             call_short_strike, call_long_strike, contracts, total_credit,
-            collateral_required
+            collateral_required, sandbox_close_order_id
        FROM ${botTable(bot.name, 'positions')}
       WHERE status = 'open' AND dte_mode = $1 AND expiration = $2`,
     [bot.dte, todayStr],
@@ -3861,6 +3909,8 @@ async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
 
   const buffer = assignmentGuardBuffer()
   const out: string[] = []
+  /** Positions that end the window still exposed. Alerted once, after the loop. */
+  const exposed: string[] = []
 
   for (const p of rows) {
     // 🚨 The same Date-vs-string trap settleExpiredPositions documents: node-postgres
@@ -3883,6 +3933,9 @@ async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
       await logGuard(bot, 'ASSIGNMENT_GUARD',
         `ASSIGNMENT GUARD NO QUOTE: ${positionId} — no ${ticker} price; holds to settlement unguarded`,
         { position_id: positionId, ticker, expiration: exp, reason: 'no_quote' })
+      // Unguarded is exposed. A guard that cannot see the price has not cleared the
+      // position, it has merely failed silently — say so on the same channel.
+      exposed.push(`${positionId} — no ${ticker} quote at ${hhmm} CT; holds to settlement unguarded`)
       out.push(`${positionId}=no_quote`)
       continue
     }
@@ -3901,11 +3954,40 @@ async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
     }
 
     const side = putAtRisk ? `put ${putShort}` : `call ${callShort}`
+
+    // 🚨 NEVER STACK A SECOND CLOSE ORDER ON A LIVE ONE.
+    // The guard re-selects on `status = 'open'`, and a deferred close leaves the row
+    // open with its pending order recorded in `sandbox_close_order_id`. Without this
+    // check every guard cycle in the window fires ANOTHER closing order at the broker.
+    // On 2026-08-28 that ran twice on one sandbox lot; on a live multi-lot position
+    // duplicate closing orders can sell through the position and open a short.
+    // The order is already working — re-placing cannot make it fill faster.
+    let pendingClose: Record<string, any> | null = null
+    if (p.sandbox_close_order_id) {
+      try { pendingClose = JSON.parse(p.sandbox_close_order_id) } catch { /* treat as none */ }
+    }
+    if (pendingClose) {
+      console.error(
+        `[scanner] *** ${bot.name.toUpperCase()} ASSIGNMENT GUARD ALREADY PENDING ${positionId} *** ` +
+        `spot=${spot.toFixed(2)} short ${side} — a close order is already live and unfilled. ` +
+        `NOT placing another. POSITION IS GOING INTO SETTLEMENT AT RISK OF ASSIGNMENT.`,
+      )
+      await logGuard(bot, 'CRITICAL',
+        `ASSIGNMENT GUARD CLOSE STILL PENDING: ${positionId} — short ${side} at risk ` +
+        `(spot ${spot.toFixed(2)}); close order already live and unfilled, not re-placed`,
+        { position_id: positionId, ticker, expiration: exp, spot, side, buffer,
+          pending_close: pendingClose })
+      exposed.push(`${positionId} (short ${side}, spot ${spot.toFixed(2)}) — close order live but unfilled`)
+      out.push(`${positionId}=guard_pending`)
+      continue
+    }
+
     const outcome = await closePosition(
       bot, positionId, ticker, exp,
       putShort, num(p.put_long_strike), callShort, num(p.call_long_strike),
       int(p.contracts), num(p.total_credit), num(p.collateral_required),
-      ASSIGNMENT_GUARD_REASON, undefined, 'market',
+      ASSIGNMENT_GUARD_REASON, undefined, 'market', undefined,
+      true, // mustCloseNow — there is no cycle after the bell
     )
 
     // 🚨 Only 'closed' means the row moved. closePosition CAN decline, and announcing
@@ -3921,6 +4003,8 @@ async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
         `ASSIGNMENT GUARD DID NOT CLOSE: ${positionId} — short ${side} at risk (spot ${spot.toFixed(2)}), ` +
         `closePosition returned '${outcome}'; position settles with assignment exposure`,
         { position_id: positionId, ticker, expiration: exp, spot, side, buffer, outcome })
+      exposed.push(
+        `${positionId} (short ${side}, spot ${spot.toFixed(2)}) — closePosition returned '${outcome}'`)
       out.push(`${positionId}=guard_${outcome}`)
       continue
     }
@@ -3934,6 +4018,31 @@ async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
       `buffer $${buffer.toFixed(2)}); closed at 14:59 CT to avoid physical assignment`,
       { position_id: positionId, ticker, expiration: exp, spot, side, buffer })
     out.push(`${positionId}=guarded@${spot.toFixed(2)}`)
+  }
+
+  // 🚨 A CRITICAL ROW IN A LOGS TABLE IS NOT AN ALERT.
+  // Every failure above already wrote CRITICAL to `${bot}_logs` — and on 2026-08-28
+  // that is exactly where it stopped. Nobody was told, the position was assigned, and
+  // the first anyone knew of it was a manual query the next session. The expired-
+  // position watchdog already solved this: ntfy is what actually reaches a phone,
+  // Discord carries the readable record. Reuse it rather than inventing a channel.
+  if (exposed.length) {
+    const text =
+      `${bot.name.toUpperCase()} could not close ${exposed.length} position` +
+      `${exposed.length === 1 ? '' : 's'} before the bell. ` +
+      `Assignment is physical — these settle exposed:\n` +
+      exposed.map((e) => `• ${e}`).join('\n')
+    void sendOpsPush({
+      title: `${bot.name.toUpperCase()} assignment guard FAILED to close`,
+      body: text,
+      severity: 'critical',
+    }).catch(() => { /* an alert must never take a scan cycle down */ })
+    void postOpsAlert({
+      botName: bot.name,
+      title: 'Assignment guard could NOT close at-risk positions',
+      body: text,
+      severity: 'critical',
+    }).catch(() => { /* a Discord outage must never take a scan cycle down */ })
   }
 
   return out.length ? ` guard[${out.join(' ')}]` : ''
