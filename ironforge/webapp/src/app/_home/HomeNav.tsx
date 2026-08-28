@@ -13,13 +13,18 @@ import { MenuIcon, CloseIcon } from './icons'
  * nothing else; the ops console is a separate deployment with its own nav. */
 
 // Public marketing links — shown to everyone, signed in or not.
-// "Join the Waitlist" was removed from this list on 2026-08-27: the approved
-// homepage mock draws Home / How It Works / Login / Create Account and nothing
-// else. /waitlist is still a live page and still linked from the places that
-// send people to it — only the masthead entry is gone.
+//
+// "Join the Waitlist" was removed here on 2026-08-27 to match the approved mock,
+// on the stated basis that /waitlist was "still linked from the places that send
+// people to it". That was wrong: the ONLY other link is EnrollmentGate, which
+// renders exclusively when ENROLLMENT_WAITLIST_MODE === 'true'. Enrollment is
+// open in production, so the gate never renders and the masthead entry was the
+// last route in — /waitlist answered 200 with nothing on the site pointing at
+// it. Restored 2026-08-28 on Leron's report that the waitlist was gone.
 const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/', label: 'Home' },
   { href: '/how-it-works', label: 'How It Works' },
+  { href: '/waitlist', label: 'Join the Waitlist' },
 ]
 
 // Links that require a MEMBERSHIP — any live subscription, a strategy or Community

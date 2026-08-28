@@ -17,6 +17,7 @@ const NEWSLETTER_EMAIL = 'support@ironforge.trade'
  * walls logged-out visitors behind /login. */
 const COMPANY_LINKS = [
   { label: 'How It Works', href: '/how-it-works' },
+  { label: 'Join the Waitlist', href: '/waitlist' },
   { label: 'Contact', href: '/contact' },
 ]
 
