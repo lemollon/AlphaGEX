@@ -21,6 +21,14 @@ import { MenuIcon, CloseIcon } from './icons'
 // open in production, so the gate never renders and the masthead entry was the
 // last route in — /waitlist answered 200 with nothing on the site pointing at
 // it. Restored 2026-08-28 on Leron's report that the waitlist was gone.
+//
+// This masthead entry is now the ONLY link to /waitlist on the public site.
+// #2923 also added one to HomeFooter.COMPANY_LINKS as a second route in, and
+// that was wrong: HomeFooter is imported by exactly one page — /waitlist — so
+// it produced a self-link and protected nothing. The homepage's actual footer
+// is `LegalFooter` in _home/marketing.tsx, a two-item nav labelled "Legal",
+// which is not the place for a marketing CTA. So: delete this line and the
+// waitlist is orphaned again.
 const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/', label: 'Home' },
   { href: '/how-it-works', label: 'How It Works' },
