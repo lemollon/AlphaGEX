@@ -3,7 +3,6 @@ import {
   getProductionPauseState,
   getOwnerPauseState,
   getSandboxAccountBalances,
-  getSpark2ProductionBalance,
   getFlameProductionBalance,
   getQuoteDetail,
   getIcMarkToMarket,
@@ -188,9 +187,7 @@ export async function getLiveSummary(
   // path the status route uses so pausing never blanks the balance).
   // Fallback: DB ledger (starting_capital + Σ realized) with source flagged.
   // Bot-aware balance source: SPARK's production account rows come from
-  // ironforge_accounts; SPARK2's single live account lives in env creds and is
-  // read directly (never SPARK's rows — accounts must not cross-leak).
-  // Paper bots (FLAME) have no broker account at all: never consult Tradier for
+  // ironforge_accounts. Paper bots (FLAME) have no broker account at all: never consult Tradier for
   // them, always derive from the paper ledger below. Guarding explicitly rather
   // than relying on the per-bot branches falling through to the same place.
   const paper = resolveAccountMode(BOT) === 'paper'
@@ -225,19 +222,11 @@ export async function getLiveSummary(
   let accountValue: number | null = null
   let todayPnl: number | null = null
   let source: 'tradier' | 'paper_account' = 'paper_account'
-  if (BOT === 'spark2' && !paper) {
-    const det = await getSpark2ProductionBalance().catch(() => null)
-    if (det?.total_equity != null) {
-      accountValue = Math.round(num(det.total_equity) * 100) / 100
-      todayPnl = Math.round((num(det.close_pl) + num(det.open_pl)) * 100) / 100
-      source = 'tradier'
-    }
-  }
-  // FLAME's live account is credentialed from env exactly like SPARK2's, so it
-  // needs the same branch. 🚨 Without it the customer page derived FLAME's value
-  // from the DB ledger while the operator console read Tradier — the same number
-  // rendered two different ways, which is the divergence this whole change fixes.
-  // The DB fallback below still applies when creds are absent (paper FLAME).
+  // FLAME's live account is credentialed from env. 🚨 Without this branch the
+  // customer page derived FLAME's value from the DB ledger while the operator
+  // console read Tradier — the same number rendered two different ways, which
+  // is the divergence this whole change fixes. The DB fallback below still
+  // applies when creds are absent (paper FLAME).
   if (BOT === 'flame' && !paper) {
     const det = await getFlameProductionBalance().catch(() => null)
     if (det?.total_equity != null) {
@@ -291,7 +280,7 @@ export async function getLiveSummary(
   // Day P&L per point = equity − day-open BALANCE (not day-open equity). Balance only
   // moves on closes, so an overnight swing-hold's unrealized carry shows from the first
   // tick and the curve TERMINATES at the same number the "Today's Result" headline shows.
-  // (2026-07-17 bug: anchoring at day-open EQUITY baked SPARK2's −$259 overnight carry
+  // (2026-07-17 bug: anchoring at day-open EQUITY baked a −$259 overnight carry
   // into the baseline — a −$208 day rendered as a +$220 green mountain.)
   const dayOpenBalance = intradayRows.length ? num(intradayRows[0].balance) : null
   const intraday = intradayRows.map((r) => ({

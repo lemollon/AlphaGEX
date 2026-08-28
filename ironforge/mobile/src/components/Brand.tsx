@@ -23,7 +23,6 @@ const MARK = require('../../assets/brand/ironforge-mark.png')
 
 const MASCOTS: Record<string, number> = {
   spark: require('../../assets/brand/mascot-spark.png'),
-  spark2: require('../../assets/brand/mascot-spark.png'),
   flame: require('../../assets/brand/mascot-flame.png'),
 }
 

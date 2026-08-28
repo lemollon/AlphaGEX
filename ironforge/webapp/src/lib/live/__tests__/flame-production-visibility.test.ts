@@ -5,10 +5,10 @@
  * 8/20 and the customer Live page showed nothing. Four separate holes, pinned
  * here so none of them can quietly reopen:
  *
- *   1. `summary.ts` read a broker balance for SPARK and SPARK2 only. FLAME's
- *      account is env-credentialed exactly like SPARK2's and had no branch, so
- *      the operator console read Tradier while the customer page derived a
- *      number from the DB ledger.
+ *   1. `summary.ts` read a broker balance for SPARK only. FLAME's account is
+ *      env-credentialed rather than listed in `ironforge_accounts`, and had no
+ *      branch of its own, so the operator console read Tradier while the
+ *      customer page derived a number from the DB ledger.
  *   2. Every production `paper_account` write is keyed (person, dte_mode,
  *      account_type, is_active). No such row existed, so the writes updated
  *      ZERO rows and returned success — real money moved, the ledger did not.
@@ -33,7 +33,7 @@ describe('FLAME live-account visibility', () => {
     expect(LIVE_BOT_TAGLINE.flame.toLowerCase()).toContain('same-day')
   })
 
-  it('reads FLAME account value from the broker, the same way SPARK2 does', () => {
+  it('reads FLAME account value from the broker, not from the DB ledger', () => {
     const summary = read('live/summary.ts')
     // The branch must exist AND must be fed by the env-cred balance helper —
     // asserting only that the string "flame" appears would pass on a comment.

@@ -3,7 +3,7 @@ import { dbQuery, botTable, num, int, escapeSql, dteMode, CT_TODAY } from '@/lib
 /**
  * Customer Home dashboard payload — wealth snapshot aggregates and a
  * customer-clean recent-trades list. Scoped per bot via the same ledgerFilter
- * summary.ts uses (production rows for SPARK/SPARK2, paper rows for FLAME), with
+ * summary.ts uses (production rows for SPARK, paper rows for FLAME), with
  * the same honest-data rules (null when unavailable, never fabricated).
  */
 

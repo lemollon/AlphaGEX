@@ -80,7 +80,7 @@ type Tab = (typeof ALL_TABS)[number]
  * correctly server-side and the page simply never asked for it: no toggle, no
  * Tradier balance, no Production or Broker Equity tab.
  */
-const ACCOUNT_BOTS = new Set(['spark', 'flame', 'kindle', 'spark2'])
+const ACCOUNT_BOTS = new Set(['spark', 'flame', 'kindle'])
 
 /** Tabs that only make sense for bots with broker accounts */
 const ACCOUNT_ONLY_TABS = new Set<Tab>(['Production', 'Broker Equity', 'Reconcile'])
@@ -115,7 +115,7 @@ export default function BotDashboard({
   bot,
   accent,
 }: {
-  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle' | 'spark2'
+  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle'
   accent: 'amber' | 'blue' | 'red' | 'orange' | 'fuchsia'
 }) {
   const hasAccounts = ACCOUNT_BOTS.has(bot)
@@ -124,7 +124,7 @@ export default function BotDashboard({
   // KINDLE is production-only (no paper positions), so default it to the Live
   // view — otherwise the dashboard opens on an empty Paper ledger while the real
   // IC sits in Live. SPARK keeps Paper default (it has both sandbox + production).
-  const [viewMode, setViewMode] = useState<ViewMode>(bot === 'kindle' || bot === 'spark2' || bot === 'flame' ? 'live' : 'paper')
+  const [viewMode, setViewMode] = useState<ViewMode>(bot === 'kindle' || bot === 'flame' ? 'live' : 'paper')
 
   // Query string fragment for account_type filtering (appended to all API calls)
   // Paper = sandbox combined (all sandbox accounts), Live = production only

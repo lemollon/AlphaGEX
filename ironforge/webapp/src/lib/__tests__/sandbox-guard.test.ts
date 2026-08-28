@@ -41,7 +41,6 @@ describe('checkSandboxEnv', () => {
     it.each([
       'TRADIER_PROD_API_KEY',
       'TRADIER_PROD_ACCOUNT_ID',
-      'TRADIER_SPARK2_API_KEY',
       'TRADIER_KINDLE_API_KEY',
     ])('rejects %s', (key) => {
       const res = checkSandboxEnv(safeEnv({ [key]: 'leaked-real-key' }))

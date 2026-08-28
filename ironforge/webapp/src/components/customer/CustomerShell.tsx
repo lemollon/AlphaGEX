@@ -152,8 +152,7 @@ function PlanCard({ membership, variant }: { membership: PlanCardData | null; va
 }
 
 /** The two customer-purchasable strategies — the ONLY bots ever shown on the customer
- *  surface. spark2 ("Spark paper") is an operator-only paper account and is never rendered
- *  here (operators view it on the operator console, not the customer site). */
+ *  surface. */
 const PURCHASABLE_BOTS: LiveBot[] = ['spark', 'flame']
 
 const strategyGlyph = (accent: string) => (

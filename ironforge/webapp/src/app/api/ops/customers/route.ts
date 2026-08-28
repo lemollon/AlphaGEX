@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic'
  * Operator customer admin — create customer profiles and (later) map each to
  * the live bot(s) they own. This is the tool that makes a customer's own
  * account visible: a profile with NO bot mapping lands on the empty state, so
- * the operator adds the profile here first, then maps it to spark / spark2.
+ * the operator adds the profile here first, then maps it to spark / flame.
  *
  *   GET  /api/ops/customers                       → list profiles, bot mappings, memberships
  *   POST /api/ops/customers {action:'create',…}   → create a customer profile
@@ -61,14 +61,14 @@ function isLiveBot(v: unknown): v is LiveBot {
  * has no 'community' in it, so validating a grant against LIVE_BOTS would reject the
  * one tier that exists only as a subscription. Hence a separate list.
  *
- * 'spark2' is here deliberately even though it is not for sale. It is the PAPER bot,
- * and it is the only strategy that can be comped to a demo or App-Review account
- * without showing a stranger a real account's money. ownsStrategy() counts anything
- * that is not Community, so a spark2 grant unlocks Forge and Ledger exactly like a
- * bought one; resolvePlan() doesn't recognise it and falls through to "IronForge
- * Membership · $0", which is the honest description of a comp.
+ * FLAME is paper (see lib/live/bots.ts LIVE_BOT_MODE), so it is the strategy that
+ * can be comped to a demo or App-Review account without showing a stranger a real
+ * account's money. ownsStrategy() counts anything that is not Community, so a
+ * FLAME grant unlocks Forge and Ledger exactly like a bought one; resolvePlan()
+ * doesn't recognise it and falls through to "IronForge Membership · $0", which is
+ * the honest description of a comp.
  */
-const GRANTABLE = ['spark', 'spark2', 'flame', COMMUNITY_KEY] as const
+const GRANTABLE = ['spark', 'flame', COMMUNITY_KEY] as const
 type Grantable = (typeof GRANTABLE)[number]
 
 function isGrantable(v: unknown): v is Grantable {

@@ -64,7 +64,7 @@ describe('scopeFilter', () => {
   })
 
   it('honours an explicit paper override on a production bot', () => {
-    // FLAME's Paper/Live switch, and SPARK2. Choosing the paper ledger must not drag
+    // FLAME's Paper/Live switch. Choosing the paper ledger must not drag
     // the production owner filter along with it.
     const f = scopeFilter('spark', 'Logan', false, 'paper')
     expect(f).toContain("COALESCE(account_type, 'sandbox') <> 'production'")

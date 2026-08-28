@@ -122,7 +122,7 @@ export default function PositionTable({
   spotPrice?: number | null
   tradierConnected?: boolean
   detailData?: { positions: DetailData[] } | null
-  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle' | 'spark2'
+  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle'
   todaysClosedTrades?: ClosedTrade[]
 }) {
   const hasOpenPositions = positions.length > 0
@@ -208,7 +208,7 @@ function PositionCard({
   pos: Position
   hasLiveData: boolean
   detail: DetailData | null
-  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle' | 'spark2'
+  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle'
 }) {
   const [expanded, setExpanded] = useState(true)
   const [closing, setClosing] = useState(false)

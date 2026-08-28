@@ -79,7 +79,6 @@ export const CUSTOMER_PAGE_PREFIXES: readonly string[] = ['/onboarding', '/legal
 /** Pages served by the operator console. */
 export const OPERATOR_PAGES: readonly string[] = [
   '/spark',
-  '/spark2',
   '/flame',
   '/inferno',
   '/blaze',
@@ -113,7 +112,6 @@ export const OPERATOR_API_PREFIXES: readonly string[] = [
   '/api/kindle-close',
   '/api/kindle-reopen',
   '/api/kindle-sync',
-  '/api/spark2-check',
   '/api/sms-test',
   '/api/sandbox/',
   '/api/diagnose/',
@@ -136,7 +134,6 @@ export const OPERATOR_API_PREFIXES: readonly string[] = [
  */
 export const CUSTOMER_API_EXCEPTIONS: readonly string[] = [
   '/api/spark/production-pause',
-  '/api/spark2/production-pause',
   '/api/flame/production-pause',
 ]
 
@@ -231,7 +228,7 @@ export function servesPath(surface: Surface, pathname: string): boolean {
  * had to be kept in sync with CUSTOMER_PAGES by memory. It drifted three times:
  * /track-record and /change-password (both fixed in place, both re-adding an entry
  * rather than the rule), and then /support and /account/billing — which shipped the
- * operator nav, SPARK/SPARK2/INFERNO/BLAZE/FLARE/Compare and all, onto a signed-in
+ * operator nav, SPARK/INFERNO/BLAZE/FLARE/Compare and all, onto a signed-in
  * customer's billing page. Every one of those links 404s on the customer deployment,
  * and naming the internal-only bots customer-side is exactly what the product-surface
  * work removed.
@@ -277,7 +274,7 @@ export function filterNavBySurface<T extends { href: string | null }>(
   return items.filter((item) => item.href == null || servesPath(surface, item.href))
 }
 
-const BOT_SLUGS = ['spark', 'spark2', 'flame', 'inferno', 'blaze', 'flare', 'kindle']
+const BOT_SLUGS = ['spark', 'flame', 'inferno', 'blaze', 'flare', 'kindle']
 
 /** True for `/api/{bot}/...` where {bot} is a known bot console slug. */
 function isBotConsoleApi(pathname: string): boolean {

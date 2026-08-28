@@ -14,8 +14,8 @@ import { dteMode } from '@/lib/db'
  *    place. Nothing caught it, because the test that would have was written
  *    about one bot rather than about the rule.
  *
- * SPARK2 was wrong too, in the other direction: "Same-day" while `dteMode` says
- * 1DTE.
+ * A third bot was wrong in the other direction: "Same-day" while `dteMode` said
+ * 1DTE. Both directions are the same defect.
  *
  * So this suite asserts the RULE over every bot on the roster, not one name.
  * Adding a bot to LIVE_BOTS without a truthful tagline fails here.

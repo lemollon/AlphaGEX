@@ -29,7 +29,7 @@ describe('ops/customers membership grants', () => {
   })
 
   it('offers the paper strategy, so a demo account need not expose real money', () => {
-    expect(SRC).toMatch(/const GRANTABLE = \[[^\]]*'spark2'/)
+    expect(SRC).toMatch(/const GRANTABLE = \[[^\]]*'flame'/)
   })
 
   it('offers community, which is not in LIVE_BOTS', () => {

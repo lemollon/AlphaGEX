@@ -79,9 +79,6 @@ type NavLink = { href: string; label: string; className?: string; external?: boo
 const primaryLinks: NavLink[] = [
   { href: '/', label: 'Home' },
   { href: '/spark', label: 'SPARK', className: 'text-gray-300 hover:text-white' },
-  // '/live' was listed here as "SPARK V2" — a CUSTOMER route that 404s on the
-  // operator deployment, under a label for a bot that is really SPARK2 below it.
-  { href: '/spark2', label: 'SPARK2', className: 'text-gray-300 hover:text-white' },
   { href: '/flame', label: 'FLAME', className: 'text-gray-300 hover:text-white' },
   { href: '/inferno', label: 'INFERNO', className: 'text-gray-300 hover:text-white' },
   { href: '/blaze', label: 'BLAZE', className: 'text-gray-300 hover:text-white' },

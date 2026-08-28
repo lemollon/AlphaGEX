@@ -15,7 +15,7 @@ export const TENANT_A = {
 export const TENANT_B = {
   customerId: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb',
   person: 'Bravo',
-  bot: 'spark2' as const,
+  bot: 'flame' as const,
 }
 
 export interface SqlCall {
@@ -42,7 +42,7 @@ export function makeSqlSpy() {
 }
 
 /** Tables that hold per-owner trading state. A query touching one MUST be scoped. */
-const LEDGER_TABLE = /\b(spark|spark2|flame|inferno|blaze|flare|kindle)_(positions|equity_snapshots|paper_account|daily_perf|logs|signals)\b/i
+const LEDGER_TABLE = /\b(spark|flame|inferno|blaze|flare|kindle)_(positions|equity_snapshots|paper_account|daily_perf|logs|signals)\b/i
 
 export function touchesLedger(sql: string): boolean {
   return LEDGER_TABLE.test(sql)

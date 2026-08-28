@@ -103,7 +103,6 @@ const CUSTOMER_EXACT = new Set<string>([
   // The Live page's Pause control. Self-guards ownership in-route; this only
   // establishes that an anonymous caller can never reach it at all.
   '/api/spark/production-pause',
-  '/api/spark2/production-pause',
   '/api/flame/production-pause',
 ])
 
