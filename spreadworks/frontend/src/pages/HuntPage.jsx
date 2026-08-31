@@ -149,9 +149,9 @@ const PIPELINE = [
   { n: 2, label: 'Proving the signal', rated: 'prediction quality, no dollars',
     note: 'Does it predict anything better than chance? hedge-dump, cascade and squeeze live here. The flow-confirm signal itself is here too — 63% continuation, tested, no money attached.' },
   { n: 3, label: 'Trade designed', rated: 'dollars/trade vs frozen bars',
-    note: 'A specific ticket (strikes, size, entry/exit) is backtested against historical prices. The flow-confirm TRADE is the next pre-registered test — this stage has not run yet.' },
+    note: 'A specific ticket (strikes, size, entry/exit) is backtested against historical prices.' },
   { n: 4, label: 'Paper book', rated: 'starting + running balance',
-    note: 'The designed trade runs live on paper money with a real ledger. EBB and EBB-PM are the only signals here today.' },
+    note: 'The designed trade runs live on paper money with a real ledger. EBB and EBB-PM run here — and now the flow-confirm trade too: passed 8/31; paper accrual being built.' },
   { n: 5, label: 'Live', rated: 'real P&L vs paper shadow',
     note: 'Real capital, checked continuously against its own paper shadow to catch drift.' },
 ];
@@ -173,16 +173,53 @@ function Playbook() {
         <li>Positive in all 4 years tested</li>
       </ul>
 
+      <div style={{ marginTop: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: GREEN }}>
+          The tested recipe — passed its registered test 8/31, now earning
+          paper status
+        </div>
+        <div style={{ ...S.caption, marginTop: 6 }}>
+          When the confirm fires: buy a $2-wide same-day (0DTE) SPY debit
+          vertical in the fired direction — long strike nearest{' '}
+          <span style={S.mono}>round(spot at fire)</span>, short strike $2
+          further out. Entered crossing the spread (~$79 average cost, risk
+          capped at the debit paid). Held to the close. No exit.
+        </div>
+        <ul style={{ ...S.caption, marginTop: 8, paddingLeft: 18 }}>
+          <li>78 historical firings, total <b style={{ color: '#e6e9f0' }}>+$2,283</b></li>
+          <li>
+            Median <b style={{ color: '#e6e9f0' }}>+$39</b> per firing — median
+            above mean, so this isn't one lucky tail carrying the book
+          </li>
+          <li>58% win rate, worst single firing −$102</li>
+          <li>
+            Still +$1,867 after removing the 3 best firings (top-3 share 18%
+            of the total)
+          </li>
+          <li>
+            Positive every year — 2023 $583 / 2024 $628 / 2025 $267 / 2026
+            $805 — and in both directions
+          </li>
+          <li>Roughly $570/yr per contract at ~20 fires/yr</li>
+        </ul>
+      </div>
+
       <div style={{
         marginTop: 12, padding: '10px 12px', borderRadius: 8,
         background: `${AMBER}12`, border: `1px solid ${AMBER}55`,
       }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: AMBER }}>
-          No sized SPY trade is sanctioned on this signal yet — the standalone
-          money expression has never been tested. It is the next
-          pre-registered test. Until it passes, this alert is context and
-          direction, not an entry ticket.
+          Stage 4 of 5: paper only. The signal was discovered on this same
+          history, so the final gate is a paper book scored on firings the
+          search never saw. No real dollars until that passes and Leron
+          signs off.
         </div>
+      </div>
+
+      <div style={{ ...S.small, marginTop: 8 }}>
+        Proof days: full firing list at{' '}
+        <span style={S.mono}>dev\meltup\confirm_trade_fires_2026_08_31.csv</span>,
+        chart overlay at <span style={S.mono}>Desktop\tv_confirm_fires.pine</span>.
       </div>
 
       <div style={{ ...S.caption, marginTop: 10 }}>
@@ -200,7 +237,8 @@ function Playbook() {
         <div style={{ ...S.small, marginBottom: 8 }}>
           Success is rated differently at every stage, and the balance only
           exists from stage 4 on. This is where the flow-confirm signal sits
-          today: stage 2, proven; stage 3, not yet built.
+          today: stage 2, proven; stage 4, paper accrual running on the trade
+          design that passed 8/31.
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 560 }}>
