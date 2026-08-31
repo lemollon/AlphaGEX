@@ -1720,6 +1720,58 @@ async def alert_log(limit: int = 30):
     return _scrub({"alerts": rows})
 
 
+@router.get("/confirm-history")
+async def confirm_history(limit: int = 120):
+    """Every recorded day of the two-stage confirmation watcher
+    (risk_confirm_state), newest first — the reviewable day list for /hunt.
+
+    READ-ONLY: this endpoint never writes a row and never triggers a Tradier
+    capture, it only reads what confirm_step()/confirm_record_close() already
+    wrote elsewhere. A missing table or a DB outage degrades to
+    {"status": "unavailable"} rather than a 500, same discipline as every
+    other endpoint in this module.
+
+    `outcome_pct` is the move from the fired price to the close, SIGNED so a
+    positive number means the market kept moving in the fired direction after
+    the confirmation — the historical twin of what /session reports live as
+    `run_since_fire`. Days with no firing (fired_dir is null) carry a null
+    outcome; they still appear so the list is every session the watcher ran,
+    not just the ones that fired.
+    """
+    if SessionLocal is None:
+        return {"status": "unavailable", "rows": []}
+    try:
+        db = SessionLocal()
+        try:
+            rows = (db.query(RiskConfirmState)
+                      .order_by(RiskConfirmState.d.desc())
+                      .limit(max(1, min(limit, 500))).all())
+        finally:
+            db.close()
+        out = []
+        for r in rows:
+            sign = (1.0 if r.fired_dir == "UP" else
+                    -1.0 if r.fired_dir == "DOWN" else None)
+            outcome_pct = (
+                round(sign * (r.close_spot - r.fired_spot) / r.fired_spot * 100, 3)
+                if sign is not None and r.close_spot and r.fired_spot else None)
+            out.append({
+                "d": r.d.isoformat(),
+                "armed": r.armed == "yes",
+                "putcall_z": r.putcall_z,
+                "fired_dir": r.fired_dir,
+                "fired_at": r.fired_at.isoformat() if r.fired_at else None,
+                "ref_spot": r.ref_spot,
+                "fired_spot": r.fired_spot,
+                "close_spot": r.close_spot,
+                "outcome_pct": outcome_pct,
+            })
+        return {"status": "ok", "rows": out}
+    except Exception as e:                                     # noqa: BLE001
+        logger.warning("[routes_risk] confirm_history failed: %r", e)
+        return {"status": "unavailable", "rows": []}
+
+
 @router.get("/scorecard")
 async def scorecard(request: Request, days: int = 120):
     """Self-grading: what the advisory SAID each session vs what HAPPENED,
