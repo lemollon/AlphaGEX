@@ -195,11 +195,12 @@ export function HeroSection({ source }: { source: MarketingSource }) {
        * fetching nothing (Leron's call, 2026-08-27). That keeps this page fully
        * static and stops a two-week-old ledger from setting the tone of the hero.
        *
-       * The card carries an "Illustrative" badge and a "not actual trading
-       * results" footnote, and those are load-bearing: without them the mock's
-       * "+18.74% / 128 trades / 74% win rate" reads as an advertised return on a
-       * real-money product. Read PerformanceOverviewCard's header before removing
-       * either one. Sourced numbers live on /performance.
+       * The card carries a footer disclaimer — "Illustrative data only. Not
+       * actual trading results." (Leron's call, 2026-08-31) — and it is
+       * load-bearing: without it the mock's "+18.74% / 128 trades / 74% win
+       * rate" reads as an advertised return on a real-money product. Read
+       * PerformanceOverviewCard's header before removing it. Sourced numbers
+       * live on /performance.
        */}
       <PerformanceOverviewCard />
     </section>

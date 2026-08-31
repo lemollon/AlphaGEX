@@ -22,16 +22,14 @@
  *
  * They shipped with an "Illustrative" badge and a "not actual trading results"
  * footnote earlier on 2026-08-27. Both were removed the same day, on Leron's
- * instruction, so the page matches the approved mock exactly — his call, made
- * after the risk was put to him in writing. What remains is an unlabelled
- * performance figure on the public homepage of a real-money trading product.
+ * instruction, so the page matched the approved mock exactly.
  *
- * The SVG's aria-label still says "illustrative": it is invisible and costs the
- * design nothing. That is the only marker left.
+ * 2026-08-31, Leron's call: the disclaimer is BACK, as a footer line under the
+ * chart — "Illustrative data only. Not actual trading results." Do not remove
+ * it to match the mock; the mock predates the compliance decision. The SVG's
+ * aria-label carries the same wording for screen readers.
  *
- * Putting a disclaimer back does not break the design — it restores something
- * that was deliberately removed and takes one line. Real, sourced numbers live
- * on /performance and in the public track record.
+ * Real, sourced numbers live on /performance and in the public track record.
  */
 
 /** Chart domain. Gridlines and their labels are both derived from it, so a
@@ -148,6 +146,14 @@ export default function PerformanceOverviewCard() {
             ))}
           </div>
         </div>
+      </div>
+
+      {/* Compliance disclaimer. The figures and the curve above are the
+          template's placeholders, not trades — see the file header. Leron's
+          call, 2026-08-31: this line is required and must not be removed to
+          match the mock. */}
+      <div className="mt-3 border-t border-[#242424] pt-2.5 text-[10px] leading-snug text-[#8A8580]">
+        Illustrative data only. Not actual trading results.
       </div>
     </div>
   )
