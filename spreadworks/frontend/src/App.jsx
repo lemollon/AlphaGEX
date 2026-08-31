@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { ShieldAlert, Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, PieChart, Zap, Radio, Wallet } from 'lucide-react';
+import { ShieldAlert, Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, PieChart, Zap, Radio, Wallet, Crosshair } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import UpdateBanner from './components/UpdateBanner';
 import ChartArea from './components/ChartArea';
@@ -20,6 +20,7 @@ const SqueezePage = lazy(() => import('./pages/SqueezePage'));
 const BookRiskPage = lazy(() => import('./pages/BookRiskPage'));
 const MoneyPage = lazy(() => import('./pages/MoneyPage'));
 const TsunamiPage = lazy(() => import('./pages/TsunamiPage'));
+const HuntPage = lazy(() => import('./pages/HuntPage'));
 
 import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
@@ -199,6 +200,7 @@ function NavBar() {
           <RouteBtn to="/squeeze"         icon={<Zap size={14} />} label="Squeeze" />
           <RouteBtn to="/book-risk"       icon={<PieChart size={14} />} label="Book Risk" />
           <RouteBtn to="/money"           icon={<Wallet size={14} />} label="Money" />
+          <RouteBtn to="/hunt"            icon={<Crosshair size={14} />} label="Hunt" />
         </nav>
       </div>
 
@@ -420,6 +422,7 @@ export default function App() {
             <Route path="/squeeze" element={<SqueezePage />} />
             <Route path="/book-risk" element={<BookRiskPage />} />
             <Route path="/money" element={<MoneyPage />} />
+            <Route path="/hunt" element={<HuntPage />} />
             <Route path="/gex-profile" element={<GexProfilePage />} />
             {/* /bots is the fleet overview — every bot as its own card. It used
                 to redirect straight to /bots/surge, which meant there was no
