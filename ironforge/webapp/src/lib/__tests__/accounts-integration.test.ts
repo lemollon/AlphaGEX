@@ -220,7 +220,7 @@ describe('Allocated Capital Calculation', () => {
     setupTradierMocks(50000, apiKey)
 
     const allocated = await getAllocatedCapitalForAccount('User', 'production')
-    expect(allocated).toBe(25000)
+    expect(allocated?.allocated).toBe(25000)
   })
 
   it('should calculate 100% of $50,000 = $50,000', async () => {
@@ -231,7 +231,9 @@ describe('Allocated Capital Calculation', () => {
     setupTradierMocks(50000, apiKey)
 
     const allocated = await getAllocatedCapitalForAccount('User100', 'production')
-    expect(allocated).toBe(50000)
+    expect(allocated?.allocated).toBe(50000)
+    expect(allocated?.equity).toBe(50000)
+    expect(allocated?.source).toBe('db')
   })
 
   it('should calculate 1% of $100,000 = $1,000', async () => {
@@ -242,7 +244,7 @@ describe('Allocated Capital Calculation', () => {
     setupTradierMocks(100000, apiKey)
 
     const allocated = await getAllocatedCapitalForAccount('User1', 'production')
-    expect(allocated).toBe(1000)
+    expect(allocated?.allocated).toBe(1000)
   })
 
   it('should round to 2 decimal places', async () => {
@@ -253,36 +255,39 @@ describe('Allocated Capital Calculation', () => {
     setupTradierMocks(10000, apiKey)
 
     const allocated = await getAllocatedCapitalForAccount('User33', 'production')
-    expect(allocated).toBe(3300)
+    expect(allocated?.allocated).toBe(3300)
   })
 
-  it('should fallback to $10,000 × pct when Tradier is unreachable', async () => {
+  it('returns NULL (never a fabricated $10,000) when Tradier is unreachable', async () => {
     mockDbQuery
       .mockResolvedValueOnce([{ capital_pct: 50 }])
       .mockResolvedValueOnce([{ api_key: 'unreachable-key' }])
     mockFetch.mockRejectedValue(new Error('network error'))
 
+    // 🚨 A guess here reached a customer: FLAME's live ledger read $10,178 on a
+    // ~$4.2k Tradier account because this used to return 10000 × pct. Null means
+    // the caller must skip the write, not invent a balance.
     const allocated = await getAllocatedCapitalForAccount('UserDown', 'production')
-    expect(allocated).toBe(5000)
+    expect(allocated).toBeNull()
   })
 
-  it('should fallback when no account found in DB', async () => {
+  it('returns NULL when no account row and no env creds exist for the person', async () => {
     mockDbQuery
       .mockResolvedValueOnce([{ capital_pct: 25 }])
       .mockResolvedValueOnce([]) // no api_key row
 
     const allocated = await getAllocatedCapitalForAccount('Ghost', 'production')
-    expect(allocated).toBe(2500)
+    expect(allocated).toBeNull()
   })
 
-  it('should fallback when API key is empty string (falsy)', async () => {
+  it('returns NULL when the API key is an empty string (falsy)', async () => {
     mockDbQuery
       .mockResolvedValueOnce([{ capital_pct: 50 }])
       .mockResolvedValueOnce([{ api_key: '' }]) // empty string, not NULL
 
     const allocated = await getAllocatedCapitalForAccount('EmptyKey', 'production')
-    // "" is falsy in JS, so `if (rows[0].api_key)` skips → fallback
-    expect(allocated).toBe(5000) // $10,000 × 50%
+    // "" is falsy in JS, so `if (rows[0].api_key)` skips → unreadable → null
+    expect(allocated).toBeNull()
   })
 
   it('should round allocated capital to 2 decimal places', async () => {
@@ -304,9 +309,9 @@ describe('Allocated Capital Calculation', () => {
 
     const allocated = await getAllocatedCapitalForAccount('RoundUser', 'production')
     // Math.round(10003 * 33 / 100 * 100) / 100 = Math.round(330099) / 100 = 3300.99
-    expect(allocated).toBe(3300.99)
+    expect(allocated?.allocated).toBe(3300.99)
     // Verify it's exactly 2 decimal places (no floating point artifacts)
-    expect(String(allocated).split('.')[1]?.length ?? 0).toBeLessThanOrEqual(2)
+    expect(String(allocated?.allocated).split('.')[1]?.length ?? 0).toBeLessThanOrEqual(2)
   })
 })
 
@@ -389,7 +394,9 @@ describe('Edge Cases', () => {
     })
 
     const allocated = await getAllocatedCapitalForAccount('UserZero', 'production')
-    expect(allocated).toBe(0)
+    // A REAL zero-equity read is a number, not an absence — it must not be null.
+    expect(allocated?.allocated).toBe(0)
+    expect(allocated?.equity).toBe(0)
   })
 
   it('should handle SQL injection in person name', async () => {
@@ -469,6 +476,38 @@ describe('Scanner Capital Flow (Code Structure)', () => {
     )
     expect(fnMatch).toBeTruthy()
     expect(fnMatch![0]).toMatch(/getAllocatedCapitalForAccount\(\s*pa\.person,\s*'production'\s*\)/)
+  })
+
+  it('🚨 the PRODUCTION sync SKIPS when the broker capital is unreadable', () => {
+    // 2026-08-31: getAllocatedCapitalForAccount fabricated $10,000 when it could
+    // not reach the broker, and this sync wrote it over FLAME's real ledger —
+    // a ~$4.2k live Tradier account displayed $10,178 to the customer.
+    // A null must short-circuit BEFORE any UPDATE.
+    const fnMatch = scannerSource.match(
+      /async function syncPaperAccountCapital[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const body = fnMatch![0]
+    const prodBranch = body.slice(body.indexOf('for (const pa of prodRows)'))
+    const guardAt = prodBranch.indexOf('if (!alloc)')
+    const updateAt = prodBranch.indexOf('UPDATE')
+    expect(guardAt).toBeGreaterThan(-1)
+    expect(updateAt).toBeGreaterThan(-1)
+    expect(guardAt).toBeLessThan(updateAt)
+    expect(prodBranch.slice(guardAt, updateAt)).toMatch(/continue/)
+  })
+
+  it('🚨 the PRODUCTION basis subtracts realized P&L instead of double-counting it', () => {
+    // A production row mirrors a broker account: current_balance must equal the
+    // broker equity, so the basis is equity − realized. The old code set
+    // starting_capital = equity and balance = equity + pnl, adding the P&L twice.
+    const fnMatch = scannerSource.match(
+      /async function syncPaperAccountCapital[\s\S]*?^}/m,
+    )
+    const body = fnMatch![0]
+    const prodBranch = body.slice(body.indexOf('for (const pa of prodRows)'))
+    expect(prodBranch).toMatch(/alloc\.allocated - pnl/)
+    expect(prodBranch).not.toMatch(/const target = await getAllocatedCapitalForAccount/)
   })
 
   it('SANDBOX paper_account syncs from the config knob, not a broker call', () => {
@@ -597,6 +636,15 @@ describe('Consistent Balance Basis (total_equity)', () => {
     expect(fnBody).toBeTruthy()
     expect(fnBody).toMatch(/getSandboxTotalEquity/)
     expect(fnBody).not.toMatch(/getSandboxBuyingPower/)
+  })
+
+  it('🚨 getAllocatedCapitalForAccount NEVER fabricates a $10,000 fallback', () => {
+    const fnBody = tradierSource.match(
+      /export async function getAllocatedCapitalForAccount[\s\S]*?^}/m,
+    )?.[0] ?? ''
+    expect(fnBody).toBeTruthy()
+    expect(fnBody).not.toMatch(/10000/)
+    expect(fnBody).toMatch(/return null/)
   })
 
   it('getSandboxTotalEquity reads total_equity from balances', () => {

@@ -879,14 +879,36 @@ async function syncPaperAccountCapital(): Promise<void> {
       )
       for (const pa of prodRows) {
         try {
-          const target = await getAllocatedCapitalForAccount(pa.person, 'production')
+          const alloc = await getAllocatedCapitalForAccount(pa.person, 'production')
+
+          // 🚨 null = the broker did not answer, or this person has no credential
+          // anywhere. SKIP — do NOT write. Until 2026-08-31 this call could not
+          // return null: it fabricated $10,000 and the sync wrote it straight over
+          // FLAME's production ledger, which had been seeded from the real Tradier
+          // equity of ~$4.2k. The customer's equity curve then read $10,178.
+          // A ledger seeded from a verified number must outrank a guess.
+          if (!alloc) {
+            console.warn(
+              `[scanner] ${bot.name.toUpperCase()} PRODUCTION CAPITAL SYNC SKIPPED (${pa.person}): ` +
+              `broker capital unreadable — keeping starting_capital=$${num(pa.starting_capital).toLocaleString()} as seeded. ` +
+              `Re-seed with POST /api/${bot.name}/seed-production-ledger if it is genuinely wrong.`,
+            )
+            continue
+          }
+
+          // A production row MIRRORS a real account, so current_balance must equal
+          // broker equity and the basis is equity MINUS the P&L already realized in
+          // it — the same reconciliation seed-production-ledger uses. The old code
+          // set starting_capital = equity and then balance = equity + pnl, which
+          // double-counted every closed trade on each successful read.
+          const pnl = num(pa.cumulative_pnl)
+          const collateral = num(pa.collateral_in_use)
+          const target = Math.round((alloc.allocated - pnl) * 100) / 100
           const current = num(pa.starting_capital)
           if (Math.abs(current - target) < 1) continue
 
-          const pnl = num(pa.cumulative_pnl)
-          const collateral = num(pa.collateral_in_use)
-          const newBalance = target + pnl
-          const newBp = newBalance - collateral
+          const newBalance = Math.round((target + pnl) * 100) / 100
+          const newBp = Math.round((newBalance - collateral) * 100) / 100
 
           await query(
             `UPDATE ${botTable(bot.name, 'paper_account')}
@@ -901,7 +923,8 @@ async function syncPaperAccountCapital(): Promise<void> {
           console.log(
             `[scanner] ${bot.name.toUpperCase()} PRODUCTION CAPITAL SYNCED (${pa.person}): ` +
             `$${current.toLocaleString()} → $${target.toLocaleString()} ` +
-            `(balance=$${newBalance.toLocaleString()}, BP=$${newBp.toLocaleString()})`,
+            `(broker equity=$${alloc.equity.toLocaleString()} via ${alloc.source} creds, pct=${alloc.pct}%, ` +
+            `realized=$${pnl.toLocaleString()}, balance=$${newBalance.toLocaleString()}, BP=$${newBp.toLocaleString()})`,
           )
         } catch { /* non-critical — sandbox is the primary account */ }
       }
