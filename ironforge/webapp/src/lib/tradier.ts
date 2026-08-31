@@ -1085,6 +1085,9 @@ async function sandboxPost(
   if (!apiKey) return null
 
   const url = `${baseUrl}${endpoint}`
+  // Same mislabel as sandboxGet had: this is the ORDER PLACEMENT path, so a
+  // production order that fails here must not be logged as a sandbox problem.
+  const host = baseUrl === PRODUCTION_URL ? 'Tradier PRODUCTION' : 'Tradier sandbox'
 
   let res: Response
   try {
@@ -1101,10 +1104,10 @@ async function sandboxPost(
     })
   } catch (err: unknown) {
     if (err instanceof Error && err.name === 'AbortError') {
-      console.error(`Tradier sandbox: ${endpoint} timed out after ${API_TIMEOUT_MS}ms`)
+      console.error(`${host}: ${endpoint} timed out after ${API_TIMEOUT_MS}ms`)
     } else {
       const msg = err instanceof Error ? err.message : String(err)
-      console.error(`Tradier sandbox: ${endpoint} fetch failed: ${msg}`)
+      console.error(`${host}: ${endpoint} fetch failed: ${msg}`)
     }
     return null
   }
@@ -1114,9 +1117,9 @@ async function sandboxPost(
     let errorBody = ''
     try { errorBody = await res.text() } catch { /* ignore */ }
     if (status === 401 || status === 403) {
-      console.error(`Tradier sandbox POST: AUTH FAILURE ${status} on ${endpoint} — check API key. Body: ${errorBody}`)
+      console.error(`${host} POST: AUTH FAILURE ${status} on ${endpoint} — check API key. Body: ${errorBody}`)
     } else {
-      console.error(`Tradier sandbox POST: ${endpoint} returned HTTP ${status} (${res.statusText}) — Body: ${errorBody}`)
+      console.error(`${host} POST: ${endpoint} returned HTTP ${status} (${res.statusText}) — Body: ${errorBody}`)
     }
     return null
   }
@@ -1136,6 +1139,12 @@ async function sandboxGet(
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v))
   }
 
+  // 2026-08-31: this used to log a hardcoded "Tradier sandbox:" prefix on EVERY
+  // call, including production ones. A live-money balance timeout therefore read
+  // as a sandbox problem in the logs and hid a dropped real order for hours.
+  // Name the host we actually called.
+  const host = baseUrl === PRODUCTION_URL ? 'Tradier PRODUCTION' : 'Tradier sandbox'
+
   let res: Response
   try {
     res = await fetch(url.toString(), {
@@ -1148,10 +1157,10 @@ async function sandboxGet(
     })
   } catch (err: unknown) {
     if (err instanceof Error && err.name === 'AbortError') {
-      console.error(`Tradier sandbox: ${endpoint} timed out after ${API_TIMEOUT_MS}ms`)
+      console.error(`${host}: ${endpoint} timed out after ${API_TIMEOUT_MS}ms`)
     } else {
       const msg = err instanceof Error ? err.message : String(err)
-      console.error(`Tradier sandbox: ${endpoint} fetch failed: ${msg}`)
+      console.error(`${host}: ${endpoint} fetch failed: ${msg}`)
     }
     return null
   }
@@ -1161,9 +1170,9 @@ async function sandboxGet(
     let errorBody = ''
     try { errorBody = await res.text() } catch { /* ignore */ }
     if (status === 401 || status === 403) {
-      console.error(`Tradier sandbox GET: AUTH FAILURE ${status} on ${endpoint} — check API key. Body: ${errorBody}`)
+      console.error(`${host} GET: AUTH FAILURE ${status} on ${endpoint} — check API key. Body: ${errorBody}`)
     } else {
-      console.error(`Tradier sandbox GET: ${endpoint} returned HTTP ${status} (${res.statusText}) — Body: ${errorBody}`)
+      console.error(`${host} GET: ${endpoint} returned HTTP ${status} (${res.statusText}) — Body: ${errorBody}`)
     }
     return null
   }
@@ -1263,6 +1272,84 @@ export async function getSandboxBuyingPower(
     `Keys: ${JSON.stringify(Object.keys(balances))}`,
   )
   return null
+}
+
+/**
+ * Read option buying power, retrying transient broker failures.
+ *
+ * getSandboxBuyingPower() returns null for BOTH a transport failure (timeout,
+ * network error, HTTP 5xx, auth failure) and a balances payload with no
+ * recognisable field. Neither of those means "$0" — they mean UNKNOWN. Tradier's
+ * /balances is intermittent rather than dead (on 2026-08-31 it timed out for one
+ * scan and answered normally minutes later), so retry before giving up.
+ *
+ * Callers MUST treat a null return as "I could not find out", never as zero.
+ */
+async function readOptionBuyingPowerWithRetry(
+  apiKey: string,
+  accountId: string,
+  baseUrl: string,
+  label: string,
+  attempts = 3,
+): Promise<number | null> {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const bp = await getSandboxBuyingPower(apiKey, accountId, baseUrl)
+    if (bp != null) {
+      if (attempt > 1) {
+        console.log(`${label}: optionBP read recovered on attempt ${attempt}/${attempts}`)
+      }
+      return bp
+    }
+    if (attempt < attempts) {
+      const backoffMs = 500 * attempt
+      console.warn(
+        `${label}: optionBP unreadable (attempt ${attempt}/${attempts}) — retrying in ${backoffMs}ms`,
+      )
+      await new Promise((resolve) => setTimeout(resolve, backoffMs))
+    }
+  }
+  return null
+}
+
+/**
+ * A production order was skipped because the broker would not tell us the
+ * account's buying power. That is an operational failure, not a trading
+ * decision, so it must reach a human and leave a durable trace — a
+ * console.warn is what let the 2026-08-31 FLAME drop go unnoticed.
+ */
+async function reportProductionBpUnreadable(botName: string | undefined, accountName: string): Promise<void> {
+  const summary =
+    `${accountName}: option buying power was unreadable after retries, so the live order was NOT placed. ` +
+    `The broker did not answer — this is not an insufficient-funds decision. ` +
+    `The paper book may still show this trade.`
+
+  try {
+    const { postOpsAlert } = await import('./discord')
+    await postOpsAlert({
+      botName: botName ?? 'ironforge',
+      title: 'LIVE ORDER SKIPPED — broker buying power unreadable',
+      body: summary,
+      severity: 'critical',
+      fields: [{ name: 'Account', value: accountName, inline: true }],
+    })
+  } catch (err: unknown) {
+    console.error(`[tradier] reportProductionBpUnreadable: Discord alert failed: ${String(err)}`)
+  }
+
+  if (!botName) return
+  try {
+    const { dbExecute, botTable } = await import('./db')
+    await dbExecute(
+      `INSERT INTO ${botTable(botName, 'logs')} (level, message, details, dte_mode)
+       VALUES ($1, $2, $3, $4)`,
+      [
+        'ERROR',
+        `PRODUCTION_BP_UNREADABLE: ${summary}`,
+        JSON.stringify({ event: 'production_bp_unreadable', bot: botName, account: accountName }),
+        '1DTE',
+      ],
+    )
+  } catch { /* audit write is best-effort; console is the canonical trace */ }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1928,12 +2015,32 @@ export async function placeIcOrderAllAccounts(
         return
       }
 
+      const bpLabel = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
+
       // Query this account's OPTION buying power (not stock/day-trade BP)
-      const bp = await getSandboxBuyingPower(acct.apiKey, accountId, acct.baseUrl)
+      const bp = await readOptionBuyingPowerWithRetry(acct.apiKey, accountId, acct.baseUrl, bpLabel)
       const brokerMarginCheck = spreadWidth * 100  // $500 for $5 spread
-      if (bp == null || bp < brokerMarginCheck) {
+
+      // 2026-08-31 INCIDENT: the null test and the margin test used to share one
+      // branch, logged with a hardcoded `Sandbox [...]` prefix. A 5s /balances timeout
+      // on FLAME's PRODUCTION account therefore returned null, was reported as
+      // "insufficient funds", and the live order was silently abandoned while
+      // the paper book recorded the trade and booked a win. An unreadable
+      // balance is UNKNOWN, never $0 — keep the two cases apart, and make the
+      // unknown one loud enough that it cannot hide again.
+      if (bp == null) {
+        console.error(
+          `${bpLabel}: optionBP UNREADABLE after retries — the broker did not answer. ` +
+          `SKIPPING order. This is NOT an insufficient-funds decision.`,
+        )
+        if (acct.type === 'production') {
+          await reportProductionBpUnreadable(botName, acct.name)
+        }
+        return
+      }
+      if (bp < brokerMarginCheck) {
         console.warn(
-          `Sandbox [${acct.name}]: optionBP=$${bp} insufficient (need $${brokerMarginCheck.toFixed(0)}/contract)`,
+          `${bpLabel}: optionBP=$${bp.toFixed(0)} insufficient (need $${brokerMarginCheck.toFixed(0)}/contract)`,
         )
         return
       }

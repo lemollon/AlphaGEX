@@ -81,8 +81,16 @@ describe('sizeContracts', () => {
     expect(sizeContracts({ ...base, buyingPowerCents: 40_000, maxDeploymentCents: 10_000_00 }).contracts).toBe(1)
   })
 
-  it('fails to zero on unknown buying power', () => {
+  it('fails to zero on unknown buying power, and says it was UNREADABLE', () => {
     const r = sizeContracts({ ...base, buyingPowerCents: null, maxDeploymentCents: 1_000_00 })
+    expect(r.contracts).toBe(0)
+    // A null BP means the broker never answered. It must NOT be reported as
+    // "no buying power", which is a real, different account state.
+    expect(r.reason).toBe('buying_power_unreadable')
+  })
+
+  it('reports a genuinely empty account separately from an unreadable one', () => {
+    const r = sizeContracts({ ...base, buyingPowerCents: 0, maxDeploymentCents: 1_000_00 })
     expect(r.contracts).toBe(0)
     expect(r.reason).toBe('no_buying_power')
   })

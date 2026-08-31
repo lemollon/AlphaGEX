@@ -89,7 +89,7 @@ export interface SizingInput {
 export interface SizingResult {
   contracts: number
   collateralPerSpreadCents: number
-  reason?: 'no_buying_power' | 'below_one_contract' | 'bad_inputs'
+  reason?: 'buying_power_unreadable' | 'no_buying_power' | 'below_one_contract' | 'bad_inputs'
 }
 
 /**
@@ -107,7 +107,14 @@ export function sizeContracts(s: SizingInput): SizingResult {
     return { contracts: 0, collateralPerSpreadCents: 0, reason: 'bad_inputs' }
   }
   const collateral = Math.round((width - credit) * 100) * 100 // dollars → cents, per contract (×100 shares)
-  if (s.buyingPowerCents == null || s.buyingPowerCents <= 0) {
+  // Both cases size to zero, but they are NOT the same event and must not share
+  // a reason: null means the broker never told us (retry/alert), <= 0 means the
+  // broker answered and the account is genuinely out of room (a real state).
+  // Conflating them is what hid the 2026-08-31 FLAME live-order drop.
+  if (s.buyingPowerCents == null) {
+    return { contracts: 0, collateralPerSpreadCents: collateral, reason: 'buying_power_unreadable' }
+  }
+  if (s.buyingPowerCents <= 0) {
     return { contracts: 0, collateralPerSpreadCents: collateral, reason: 'no_buying_power' }
   }
   const deployable = Math.min(s.buyingPowerCents, Math.max(0, s.maxDeploymentCents))
