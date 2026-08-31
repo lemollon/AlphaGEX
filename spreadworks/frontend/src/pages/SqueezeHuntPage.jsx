@@ -87,6 +87,10 @@ function stateStyle(s) {
   return STATE_STYLE[s] || { label: s && s !== '—' ? s : 'NO READ', color: THEME.dim };
 }
 
+function isBounce(dayKind) {
+  return !!dayKind && dayKind.toUpperCase().includes('BOUNCE');
+}
+
 const SWEEP_COLOR = { feeding: THEME.green, drying: THEME.amber, halted: THEME.red };
 
 /* ── Intraday pace sparkline — dollars per sweep, one bar per sweep ── */
@@ -133,7 +137,7 @@ function SparkLegend() {
 
 /* ── THE CALL — what to do today, above everything else ───────────── */
 
-function VerdictBar({ loading, error, cutNames, totalNames, asOf }) {
+function VerdictBar({ loading, error, cutNames, totalNames, asOf, noSiCount, signalDate, isToday }) {
   let headline;
   let color = THEME.primary;
   if (loading) {
@@ -168,12 +172,41 @@ function VerdictBar({ loading, error, cutNames, totalNames, asOf }) {
             {s}
           </span>
         ))}
-        {asOf && (
-          <span className="ml-auto flex items-center gap-1.5 text-[11px] text-text-tertiary sw-mono">
-            <Clock size={11} /> last sweep {asOf}
+        {(signalDate || asOf) && (
+          <span
+            className="ml-auto flex items-center gap-1.5 text-[11px] sw-mono"
+            style={{ color: isToday === false ? THEME.amber : 'var(--color-text-tertiary)' }}
+          >
+            <Clock size={11} />
+            {signalDate ? `${signalDate}${asOf ? ` · last sweep ${asOf}` : ''}` : `last sweep ${asOf}`}
           </span>
         )}
       </div>
+
+      {/* A scan that stopped running still renders a full, confident table.
+          Say the date is not today rather than letting stale rows read live. */}
+      {isToday === false && signalDate && (
+        <div
+          className="mt-2 px-3 py-2 rounded-md text-[12.5px] leading-relaxed"
+          style={{ background: 'rgba(250,204,21,0.10)', boxShadow: 'inset 0 0 0 1px rgba(250,204,21,0.30)', color: '#fde68a' }}
+        >
+          <strong>This is not today.</strong> The newest scan on record is{' '}
+          <strong className="sw-mono">{signalDate}</strong>. Everything below is that day, not the current
+          session — check that the 14:45 sweep and the 20:00 screen actually ran before reading anything into it.
+        </div>
+      )}
+
+      {/* The cut REQUIRES short interest of 10-20%. A name with no trusted SI
+          figure cannot qualify, so a "0 hit the cut" headline is partly a
+          coverage fact, not a market fact. Say which it is. */}
+      {noSiCount > 0 && totalNames > 0 && (
+        <div className="mt-2 text-[12.5px] leading-relaxed" style={{ color: '#fde68a' }}>
+          <strong>{noSiCount} of {totalNames}</strong> {noSiCount === 1 ? 'name has' : 'names have'} no trusted
+          short-interest figure, so {noSiCount === 1 ? 'it' : 'they'} <strong>cannot qualify for the cut</strong>{' '}
+          whatever the price does. Read the count above as coverage, not as a market verdict.
+        </div>
+      )}
+
       <div className="mt-2 text-[12.5px] leading-relaxed text-text-secondary">
         <strong style={{ color: THEME.red }}>Record only.</strong>{' '}
         The cut is <strong>unproven</strong> — it was found by slicing spent history and is being written to a
@@ -265,6 +298,33 @@ function BaseRates() {
 
 const COL_HEAD = 'px-3 py-2 text-[10px] uppercase tracking-[0.1em] font-semibold text-text-tertiary';
 
+// Plain English, on hover. Every one of these says what the number MEANS,
+// not what it is called — "float turnover" is not self-explanatory to
+// anyone who hasn't just read the research.
+const COL_TIP = {
+  symbol:
+    'The ticker. A green rail and "hits the cut" group mean it is under $5 with short interest between 10% and 20% — the pre-registered PREREG #2 cut. A STALE chip means this row has not been swept since the time shown.',
+  price:
+    'Last price, and how far the stock has moved today. Under $5 at entry is the single biggest divider in the research: sub-$5 names averaged +63%, over-$5 names averaged −49%.',
+  dollars:
+    'Actual dollars that changed hands today, and how many times a normal day that is. This is the money showing up — a 4,000x day means something happened, not that the stock drifted.',
+  float:
+    'How many times the entire freely-tradable share count turned over today. Above 1x means every available share changed hands at least once — that is the velocity this whole screen is built to find.',
+  si:
+    'Percent of shares sold short as of the last FINRA settlement. This is the FUEL that was already sitting there before the run — it is not a live short position, and it predates any move that started after the settlement date. A dash means no trusted figure, which also means the name CANNOT qualify for the cut.',
+  pace:
+    'Dollars arriving in each sweep through the day, left to right, and where the money stands right now. Green means money is still arriving, amber means it is drying up, grey means a quiet sweep.',
+  spread:
+    'How wide the bid/ask is, as a percent of price. This is what it costs you to get in and out. Above 10% the modelled fill is fiction — you will not get anything near the price the research assumes.',
+};
+
+// A header you can hover has to look like one, or nobody hovers it.
+const TIP_STYLE = {
+  cursor: 'help',
+  textDecoration: 'underline dotted rgba(148,163,184,0.45)',
+  textUnderlineOffset: '3px',
+};
+
 function GroupHeader({ label, count, color, note }) {
   return (
     <tr>
@@ -302,6 +362,19 @@ function SignalRow({ s, points, stale }) {
               title="Confirmed in the lottery ledger today"
             >
               <Flame size={9} /> Ledger
+            </span>
+          )}
+          {/* BOUNCE is the ONLY day-type that carried forward information in
+              the research (+26% vs +64%). It used to be visible only when the
+              tape had no state at all, so a FEEDING bounce hid the one thing
+              worth knowing. It gets its own chip now. */}
+          {isBounce(s.day_kind) && (
+            <span
+              className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider"
+              style={{ background: 'rgba(148,163,184,0.18)', color: '#cbd5e1' }}
+              title="A bounce off a prior decline, not a fresh break. These averaged +26% against +64% for the rest — the only day-type that carried any forward information."
+            >
+              Bounce
             </span>
           )}
           {stale && (
@@ -352,16 +425,24 @@ function SignalRow({ s, points, stale }) {
         </div>
       </td>
 
-      {/* Short interest — the sub-line only appears when it means something */}
+      {/* Short interest — the sub-line only appears when it means something.
+          No SI is not a cosmetic blank: the cut needs 10-20%, so the row is
+          disqualified outright and must not read as a quiet zero. */}
       <td className="px-3 py-3 text-right">
         <div
           className="text-[14px] font-semibold sw-mono"
           style={{ color: siInBand ? THEME.green : 'var(--color-text-secondary)' }}
+          title={
+            s.short_interest_pct == null
+              ? 'No trusted short-interest figure for this name — it cannot qualify for the cut'
+              : undefined
+          }
         >
           {pctPlain(s.short_interest_pct)}
         </div>
-        {siInBand && (
-          <div className="text-[11px]" style={{ color: THEME.green }}>in the band</div>
+        {siInBand && <div className="text-[11px]" style={{ color: THEME.green }}>in the band</div>}
+        {s.short_interest_pct == null && (
+          <div className="text-[11px]" style={{ color: THEME.amber }}>no data — can’t qualify</div>
         )}
       </td>
 
@@ -416,13 +497,27 @@ function SignalsTable({ signals, tape, latestSweep }) {
       </colgroup>
       <thead>
         <tr className="border-b border-white/5">
-          <th className={`${COL_HEAD} text-left`}>Symbol</th>
-          <th className={`${COL_HEAD} text-right`}>Price</th>
-          <th className={`${COL_HEAD} text-right`}>Dollars traded</th>
-          <th className={`${COL_HEAD} text-right`}>Float turns</th>
-          <th className={`${COL_HEAD} text-right`}>Short int.</th>
-          <th className={`${COL_HEAD} text-left`}>Money through the day</th>
-          <th className={`${COL_HEAD} text-right`}>Spread</th>
+          <th className={`${COL_HEAD} text-left`}>
+            <span style={TIP_STYLE} title={COL_TIP.symbol}>Symbol</span>
+          </th>
+          <th className={`${COL_HEAD} text-right`}>
+            <span style={TIP_STYLE} title={COL_TIP.price}>Price</span>
+          </th>
+          <th className={`${COL_HEAD} text-right`}>
+            <span style={TIP_STYLE} title={COL_TIP.dollars}>Dollars traded</span>
+          </th>
+          <th className={`${COL_HEAD} text-right`}>
+            <span style={TIP_STYLE} title={COL_TIP.float}>Float turns</span>
+          </th>
+          <th className={`${COL_HEAD} text-right`}>
+            <span style={TIP_STYLE} title={COL_TIP.si}>Short int.</span>
+          </th>
+          <th className={`${COL_HEAD} text-left`}>
+            <span style={TIP_STYLE} title={COL_TIP.pace}>Money through the day</span>
+          </th>
+          <th className={`${COL_HEAD} text-right`}>
+            <span style={TIP_STYLE} title={COL_TIP.spread}>Spread</span>
+          </th>
         </tr>
       </thead>
       <tbody>
@@ -550,6 +645,26 @@ export default function SqueezeHuntPage() {
     return best;
   }, [tape]);
 
+  // How many of today's names have no trusted short-interest figure. The cut
+  // needs 10-20%, so each one is disqualified before price is even considered
+  // — without this the "0 hit the cut" headline reads as a market fact.
+  const noSiCount = useMemo(
+    () => signals.filter((s) => s.short_interest_pct == null).length,
+    [signals],
+  );
+
+  // The date the newest scan covers, taken from the signals themselves. A
+  // scheduled task that quietly stopped still renders a full, confident
+  // table; this is what catches that.
+  const { signalDate, isToday } = useMemo(() => {
+    const ts = signals.find((s) => s.signal_ts)?.signal_ts;
+    if (!ts) return { signalDate: null, isToday: null };
+    const day = String(ts).slice(0, 10);
+    const now = new Date();
+    const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    return { signalDate: day, isToday: day === localToday };
+  }, [signals]);
+
   const quietEntries = useMemo(() => {
     const signalled = new Set(signals.map((s) => s.symbol));
     return Object.entries(tape)
@@ -596,6 +711,9 @@ export default function SqueezeHuntPage() {
             cutNames={cutNames}
             totalNames={signals.length}
             asOf={latestSweep}
+            noSiCount={noSiCount}
+            signalDate={signalDate}
+            isToday={isToday}
           />
 
           <BaseRates />
