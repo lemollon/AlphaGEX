@@ -2560,12 +2560,46 @@ export async function getCapitalPctForAccount(person: string, accountType?: 'san
 }
 
 /**
- * Get the allocated capital for a specific account.
- * = real Tradier total_equity × capital_pct / 100
- * Falls back to $10,000 × pct if Tradier is unreachable.
+ * What a broker account is ACTUALLY worth right now, for capital sizing.
+ *
+ * 🚨 THIS FUNCTION USED TO FABRICATE $10,000 AND THAT NUMBER REACHED A CUSTOMER.
+ * 2026-08-31: FLAME's production ledger read `starting_capital = 10000` on a
+ * ~$4.2k real Tradier account. Nobody typed it. `syncPaperAccountCapital()` asks
+ * this function for the capital of `person='Flame'`, FLAME's live credentials
+ * live in TRADIER_FLAME_* ENV and have never had an `ironforge_accounts` row, so
+ * the lookup missed, and the old `return Math.round(10000 * pct / 100)` handed
+ * back a guess that the caller could not tell apart from a broker read. The
+ * scanner then overwrote a ledger seeded from the real broker equity with it.
+ *
+ * So: **null, never a guess.** A caller that cannot get a number must skip, not
+ * write. `equity` is the raw broker total_equity so a caller can reconcile a
+ * ledger against it (basis = equity − realized P&L) instead of double-counting.
  */
-export async function getAllocatedCapitalForAccount(person: string, accountType: 'sandbox' | 'production' = 'sandbox'): Promise<number> {
+export interface AllocatedCapital {
+  /** Raw Tradier total_equity for the account. */
+  equity: number
+  /** capital_pct for this person/type (100 when unset). */
+  pct: number
+  /** equity × pct / 100 — the share of the account this bot may size against. */
+  allocated: number
+  /** 'db' = credential came from ironforge_accounts; 'env' = TRADIER_FLAME_* creds. */
+  source: 'db' | 'env'
+}
+
+export async function getAllocatedCapitalForAccount(
+  person: string,
+  accountType: 'sandbox' | 'production' = 'sandbox',
+): Promise<AllocatedCapital | null> {
   const pct = await getCapitalPctForAccount(person, accountType)
+
+  const finish = (equity: number, source: 'db' | 'env'): AllocatedCapital => {
+    const allocated = Math.round(equity * pct / 100 * 100) / 100
+    console.log(
+      `[tradier] getAllocatedCapital: ${person}[${accountType}] → equity=$${equity.toLocaleString()}, ` +
+      `pct=${pct}%, allocated=$${allocated.toLocaleString()} (creds=${source})`,
+    )
+    return { equity, pct, allocated, source }
+  }
 
   // Find the account's API key from DB and fetch total_equity (not OBP)
   // CRITICAL: Filter by BOTH person AND type to avoid returning the wrong account.
@@ -2585,17 +2619,34 @@ export async function getAllocatedCapitalForAccount(person: string, accountType:
       const accountId = await getAccountIdForKey(apiKey, baseUrl)
       if (accountId) {
         const equity = await getSandboxTotalEquity(apiKey, accountId, baseUrl)
-        if (equity != null) {
-          const allocated = Math.round(equity * pct / 100 * 100) / 100
-          console.log(`[tradier] getAllocatedCapital: ${person}[${accountType}] → equity=$${equity.toLocaleString()}, pct=${pct}%, allocated=$${allocated.toLocaleString()}`)
-          return allocated
-        }
+        if (equity != null) return finish(equity, 'db')
       }
     }
-  } catch { /* fallback */ }
+  } catch { /* fall through to the env branch, then to null */ }
 
-  // Fallback: return a default
-  return Math.round(10000 * pct / 100)
+  // FLAME's live account is env-credentialed and is NOT in ironforge_accounts —
+  // the same gap that makes flame's rows invisible to every table-driven path.
+  // requireArmed:false because reading a balance is not permission to trade it.
+  if (accountType === 'production' && person === 'Flame') {
+    try {
+      const acct = flameProductionAccount({ requireArmed: false })
+      if (acct) {
+        const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
+        if (accountId) {
+          const equity = await getSandboxTotalEquity(acct.apiKey, accountId, acct.baseUrl)
+          if (equity != null) return finish(equity, 'env')
+        }
+      }
+    } catch { /* fall through to null */ }
+  }
+
+  // 🚨 NO FALLBACK. An unreadable broker is not a $10,000 account.
+  console.warn(
+    `[tradier] getAllocatedCapital: ${person}[${accountType}] → UNREADABLE ` +
+    `(no active ironforge_accounts row and no env creds, or Tradier did not answer). ` +
+    `Returning null so callers skip instead of writing a fabricated capital.`,
+  )
+  return null
 }
 
 /**
