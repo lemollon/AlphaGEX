@@ -5013,8 +5013,19 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     const todayTradesParams: any[] = person && person !== 'all' ? [bot.dte, person] : [bot.dte]
     const todayTrades = await query(todayTradesSql, todayTradesParams)
     if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) {
-      // FLAME: check if production still needs to trade before returning
-      if (isProductionBot(bot.name)) {
+      // FLAME: check if production still needs to trade before returning.
+      //
+      // canPlaceLiveOrders is the second predicate on purpose (2026-08-31). The
+      // local isProductionBot() is SPARK + KINDLE only, so FLAME never reached
+      // production-only mode despite the comment above claiming it did — the paper
+      // fill consumed the day's slot and the live account got exactly one attempt.
+      // On 2026-08-31 that single attempt died on an unreadable broker balance and
+      // FLAME sat flat all day while the paper book booked a win.
+      //
+      // canPlaceLiveOrders('spark') is false (paper-only since 2026-08-16), so
+      // SPARK's routing is unchanged; for FLAME it is isFlameLiveArmed(). This
+      // widens the catch-up path to exactly the bot that places live orders today.
+      if (isProductionBot(bot.name) || canPlaceLiveOrders(bot.name)) {
         let prodNeedsToTrade = false
         try {
           const prodDayCheck = await query(
@@ -7911,9 +7922,46 @@ async function scanBot(bot: BotDef): Promise<void> {
           tradedTodayCount = int(todayPosRows[0]?.cnt)
         } catch { /* non-fatal — tryOpenTrade has its own guard */ }
       }
+      // A PAPER FILL MUST NOT CONSUME THE LIVE ACCOUNT'S ENTRY ATTEMPT (2026-08-31).
+      //
+      // Both `tradedTodayCount` and `hasBlockingOpenPosition` count SANDBOX rows
+      // only (see their definitions above), yet they gate the entry for a bot whose
+      // live order rides along in the same call. So the moment the paper book filled
+      // at 13:05, canOpenMore went false and FLAME's live account was locked out for
+      // the rest of its 13:05-13:10 CT window — four scan cycles it should have had.
+      //
+      // That is what turned an unreadable broker balance into a lost day rather than
+      // a retried one: Tradier's /balances was failing roughly two calls in three
+      // that afternoon, so a single attempt is a coin flip, not a plan.
+      //
+      // Only opens the gate when the LIVE side genuinely has nothing today —
+      // liveStillNeedsEntry is false the moment production holds or has held a
+      // position, and defaults false if the check itself fails, so this can never
+      // add a second live order. tryOpenTrade's production-only mode then places
+      // with { productionOnly: true }, so paper is not re-opened either.
+      let liveStillNeedsEntry = false
+      if (canPlaceLiveOrders(bot.name) && prodOpenRows.length === 0) {
+        try {
+          const prodTodayRows = await query(
+            `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
+             WHERE account_type = 'production' AND dte_mode = $1
+               AND (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
+            [bot.dte],
+          )
+          liveStillNeedsEntry = int(prodTodayRows[0]?.cnt) === 0
+        } catch { /* fail closed — no retry rather than an unguarded live order */ }
+      }
+      if (liveStillNeedsEntry && (hasBlockingOpenPosition || tradedTodayCount >= maxTrades)) {
+        console.log(
+          `[scanner] ${bot.name.toUpperCase()}: LIVE CATCH-UP — paper has traded today but the ` +
+          `production account has no position; re-attempting the live order inside the entry window.`,
+        )
+      }
+
       // hasBlockingOpenPosition (not hasOpenPosition) — an overnight swing hold is
       // excluded so it cannot eat today's entry slot. See its definition above.
       const canOpenMore = (maxTrades === 0) ||
+        liveStillNeedsEntry ||
         (isProductionBot(bot.name) && maxTrades === 1 && !hasBlockingOpenPosition) ||
         (maxTrades > 0 && tradedTodayCount < maxTrades && !hasBlockingOpenPosition)
 
