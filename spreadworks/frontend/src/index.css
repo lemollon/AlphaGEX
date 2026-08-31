@@ -616,3 +616,56 @@ button:disabled { cursor: not-allowed; }
   background: transparent;
   font-family: var(--font-ui);
 }
+
+/* ── Squeeze Hunt — local spacing, deliberately not a global fix ──────
+   The universal reset near the top of this file (`*, *::before, *::after
+   { margin: 0; padding: 0 }`) is UNLAYERED. Tailwind v4 emits its
+   utilities inside `@layer utilities`, and unlayered rules beat layered
+   ones in the cascade — so every `p-*` and `m-*` class in this app is
+   silently dead. (`gap-*` still works, which is why the breakage was
+   never obvious: flex gaps held layouts together while cell padding went
+   to zero, and table headers collided.)
+
+   Moving that reset into `@layer base` is the one-line real fix, but it
+   would switch on hundreds of dormant padding classes across all twelve
+   pages simultaneously. So this restores only the spacing the Squeeze
+   Hunt page asks for, scoped to `.sqh`.
+
+   If the reset ever moves into @layer base, DELETE this whole block —
+   the utilities will apply on their own and these rules become a
+   duplicate that will drift. */
+.sqh .px-1\.5 { padding-left: 0.375rem; padding-right: 0.375rem; }
+.sqh .px-2    { padding-left: 0.5rem;   padding-right: 0.5rem; }
+.sqh .px-3    { padding-left: 0.75rem;  padding-right: 0.75rem; }
+.sqh .px-4    { padding-left: 1rem;     padding-right: 1rem; }
+.sqh .px-5    { padding-left: 1.25rem;  padding-right: 1.25rem; }
+
+.sqh .py-0\.5 { padding-top: 0.125rem;  padding-bottom: 0.125rem; }
+.sqh .py-1\.5 { padding-top: 0.375rem;  padding-bottom: 0.375rem; }
+.sqh .py-2    { padding-top: 0.5rem;    padding-bottom: 0.5rem; }
+.sqh .py-3    { padding-top: 0.75rem;   padding-bottom: 0.75rem; }
+.sqh .py-4    { padding-top: 1rem;      padding-bottom: 1rem; }
+.sqh .py-6    { padding-top: 1.5rem;    padding-bottom: 1.5rem; }
+.sqh .py-12   { padding-top: 3rem;      padding-bottom: 3rem; }
+
+.sqh .pt-4    { padding-top: 1rem; }
+.sqh .pt-6    { padding-top: 1.5rem; }
+.sqh .pb-1\.5 { padding-bottom: 0.375rem; }
+.sqh .pb-4    { padding-bottom: 1rem; }
+.sqh .pb-5    { padding-bottom: 1.25rem; }
+
+.sqh .mt-1    { margin-top: 0.25rem; }
+.sqh .mt-1\.5 { margin-top: 0.375rem; }
+.sqh .mt-2    { margin-top: 0.5rem; }
+.sqh .mt-2\.5 { margin-top: 0.625rem; }
+.sqh .mb-1\.5 { margin-bottom: 0.375rem; }
+.sqh .mb-2\.5 { margin-bottom: 0.625rem; }
+.sqh .mb-3    { margin-bottom: 0.75rem; }
+.sqh .mb-5    { margin-bottom: 1.25rem; }
+.sqh .mb-6    { margin-bottom: 1.5rem; }
+.sqh .ml-auto { margin-left: auto; }
+.sqh .mx-auto { margin-left: auto; margin-right: auto; }
+
+@media (min-width: 768px) {
+  .sqh .md\:px-8 { padding-left: 2rem; padding-right: 2rem; }
+}
