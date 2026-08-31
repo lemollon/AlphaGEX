@@ -1873,6 +1873,16 @@ except Exception as _tsunami_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] TSUNAMI routes failed to load: %r", _tsunami_exc)
 
+# SQUEEZE HUNT (small-cap float-velocity research surface) reads a standalone
+# DuckDB warehouse rather than Postgres. Import-guarded like TSUNAMI so a
+# missing duckdb dep or an unreachable warehouse file cannot take down the API.
+try:
+    from .routes_squeeze_hunt import router as squeeze_hunt_router
+    app.include_router(squeeze_hunt_router)
+except Exception as _squeeze_hunt_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] SQUEEZE HUNT routes failed to load: %r", _squeeze_hunt_exc)
+
 # Call history — the append-only record of what Session / Squeeze / Risk
 # actually said, with SPY outcomes attached. Read-only; import-guarded.
 try:

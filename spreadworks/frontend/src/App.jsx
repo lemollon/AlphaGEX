@@ -21,6 +21,7 @@ const BookRiskPage = lazy(() => import('./pages/BookRiskPage'));
 const MoneyPage = lazy(() => import('./pages/MoneyPage'));
 const TsunamiPage = lazy(() => import('./pages/TsunamiPage'));
 const HuntPage = lazy(() => import('./pages/HuntPage'));
+const SqueezeHuntPage = lazy(() => import('./pages/SqueezeHuntPage'));
 
 import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
@@ -201,6 +202,7 @@ function NavBar() {
           <RouteBtn to="/book-risk"       icon={<PieChart size={14} />} label="Book Risk" />
           <RouteBtn to="/money"           icon={<Wallet size={14} />} label="Money" />
           <RouteBtn to="/hunt"            icon={<Crosshair size={14} />} label="Hunt" />
+          <RouteBtn to="/squeeze-hunt"            icon={<Crosshair size={14} />} label="Squeeze Hunt" />
         </nav>
       </div>
 
@@ -423,6 +425,7 @@ export default function App() {
             <Route path="/book-risk" element={<BookRiskPage />} />
             <Route path="/money" element={<MoneyPage />} />
             <Route path="/hunt" element={<HuntPage />} />
+            <Route path="/squeeze-hunt" element={<SqueezeHuntPage />} />
             <Route path="/gex-profile" element={<GexProfilePage />} />
             {/* /bots is the fleet overview — every bot as its own card. It used
                 to redirect straight to /bots/surge, which meant there was no

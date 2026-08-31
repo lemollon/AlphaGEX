@@ -10,6 +10,7 @@ yfinance>=0.2.50  # TSUNAMI: underlying spot/MA/realized-vol/earnings-date
 numpy>=1.26  # TSUNAMI: realized-vol calc (also a yfinance dependency)
 matplotlib>=3.8.0
 apscheduler>=3.10.0
+duckdb>=1.0.0  # SQUEEZE HUNT: read-only warehouse queries
 pytest>=8.0
 pytest-asyncio>=0.23
 freezegun>=1.4
