@@ -252,27 +252,34 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                   <SparkHeroCard state={summary?.state ?? null} market={summary?.market ?? null} bot={account} />
                 )}
               </div>
+              {/* Equity chart moved to the top of the content, right under the hero card —
+                  the customer's own money is the first thing below the headline state,
+                  ahead of every engagement/transparency card. Same position on mobile and
+                  desktop now, so it no longer needs the old lg: swap with Market Conditions. */}
+              <div className="order-2">
+                <TodayPerformanceChart account={summary?.account ?? null} intraday={summary?.intraday ?? null} marketOpen={summary?.market.open ?? false} accent={accent} />
+              </div>
               {/* Reframes a no-trade day as the strategy's protection rules working,
                   not the bot doing nothing. Renders nothing when the count could not
                   be honestly computed — see RiskProtectionCard. */}
-              <div className="order-2">
+              <div className="order-3">
                 <RiskProtectionCard riskProtection={summary?.risk_protection ?? null} accent={accent} botLabel={LIVE_BOT_LABEL[account]} />
               </div>
               {/* Live gate/health activity feed — reuses the same {bot}_logs SCAN rows as
                   RiskProtectionCard above, just scoped to today. Renders nothing when the
                   query failed; an empty entries array (no scans yet today) still renders. */}
-              <div className="order-3">
+              <div className="order-4">
                 <ActivityFeedCard activityFeed={summary?.activity_feed ?? null} accent={accent} />
               </div>
               {/* Non-P&L tenure/system-health badges — renders nothing when the
                   viewer has no anchor for any of the three pills. */}
-              <div className="order-4">
+              <div className="order-5">
                 <MilestonesCard milestones={summary?.milestones ?? null} accent={accent} />
               </div>
               {/* Last 10 closed trades as win/loss chips + the current streak, win
                   OR losing — see WinLossStreakCard for the both-sides-always-shown
                   requirement. */}
-              <div className="order-5">
+              <div className="order-6">
                 <WinLossStreakCard streak={summary?.win_loss_streak ?? null} accent={accent} />
               </div>
               {/* A SWING is live when two positions are open at once — yesterday's held
@@ -280,21 +287,17 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                   branch; the single-position day is untouched below. Each card carries
                   its own timeline, so NowTimelineCard is not repeated here. */}
               {isSwingActive(trade?.positions) ? (
-                <div className="order-6">
+                <div className="order-7">
                   <SwingTradeCards positions={trade!.positions} accountValue={summary?.account?.value ?? null} />
                 </div>
               ) : (
-                <div className="order-6 grid gap-4 lg:grid-cols-[11fr_9fr]">
+                <div className="order-7 grid gap-4 lg:grid-cols-[11fr_9fr]">
                   <LiveTradeCard trade={trade ?? null} error={Boolean(tradeError)} state={summary?.state ?? null} accent={accent} accountValue={summary?.account?.value ?? null} />
                   <NowTimelineCard state={summary?.state ?? null} openedAt={trade?.opened_at ?? null} accent={accent} />
                 </div>
               )}
-              {/* Mobile stacks Today Performance before Market Conditions; desktop reads Conditions first. */}
-              <div className="order-8 lg:order-7">
+              <div className="order-8">
                 <MarketConditionsCard market={summary?.market ?? null} accent={accent} />
-              </div>
-              <div className="order-7 lg:order-8">
-                <TodayPerformanceChart account={summary?.account ?? null} intraday={summary?.intraday ?? null} marketOpen={summary?.market.open ?? false} accent={accent} />
               </div>
               {/* Pause is a PRODUCTION control. /api/{bot}/production-pause answers
                   400 for any paper bot, so rendering this on Flame or Spark paper
