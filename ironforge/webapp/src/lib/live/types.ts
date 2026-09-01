@@ -118,6 +118,15 @@ export interface LiveSummary {
     trial_day: number
     trial_total: number
   } | null
+  /**
+   * "Risky setups skipped this month" — a count of distinct CT calendar days
+   * where a genuine protective/risk gate fired and the bot did NOT end up
+   * trading that day (see lib/live/riskProtection.ts). NEVER fabricated: null
+   * means the underlying queries could not be computed, and the card must
+   * render nothing rather than guess. A count of exactly 0 is a real value
+   * and must still render.
+   */
+  risk_protection: { skipped_count: number; period_label: string } | null
   as_of: string
 }
 

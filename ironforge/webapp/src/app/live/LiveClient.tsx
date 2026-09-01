@@ -19,6 +19,7 @@ import NowTimelineCard from './components/NowTimelineCard'
 import MarketConditionsCard from './components/MarketConditionsCard'
 import TodayPerformanceChart from './components/TodayPerformanceChart'
 import PauseTradingPanel from './components/PauseTradingPanel'
+import RiskProtectionCard from './components/RiskProtectionCard'
 
 /** Non-customer /live conversion CTAs — one per strategy, Spark then Flame.
  *  Both link into the existing signup flow with the bot preselected. */
@@ -248,25 +249,31 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                   <SparkHeroCard state={summary?.state ?? null} market={summary?.market ?? null} bot={account} />
                 )}
               </div>
+              {/* Reframes a no-trade day as the strategy's protection rules working,
+                  not the bot doing nothing. Renders nothing when the count could not
+                  be honestly computed — see RiskProtectionCard. */}
+              <div className="order-2">
+                <RiskProtectionCard riskProtection={summary?.risk_protection ?? null} accent={accent} botLabel={LIVE_BOT_LABEL[account]} />
+              </div>
               {/* A SWING is live when two positions are open at once — yesterday's held
                   leg plus today's new one. Only SPARK swings, so only SPARK reaches this
                   branch; the single-position day is untouched below. Each card carries
                   its own timeline, so NowTimelineCard is not repeated here. */}
               {isSwingActive(trade?.positions) ? (
-                <div className="order-2">
+                <div className="order-3">
                   <SwingTradeCards positions={trade!.positions} accountValue={summary?.account?.value ?? null} />
                 </div>
               ) : (
-                <div className="order-2 grid gap-4 lg:grid-cols-[11fr_9fr]">
+                <div className="order-3 grid gap-4 lg:grid-cols-[11fr_9fr]">
                   <LiveTradeCard trade={trade ?? null} error={Boolean(tradeError)} state={summary?.state ?? null} accent={accent} accountValue={summary?.account?.value ?? null} />
                   <NowTimelineCard state={summary?.state ?? null} openedAt={trade?.opened_at ?? null} accent={accent} />
                 </div>
               )}
               {/* Mobile stacks Today Performance before Market Conditions; desktop reads Conditions first. */}
-              <div className="order-4 lg:order-3">
+              <div className="order-5 lg:order-4">
                 <MarketConditionsCard market={summary?.market ?? null} accent={accent} />
               </div>
-              <div className="order-3 lg:order-4">
+              <div className="order-4 lg:order-5">
                 <TodayPerformanceChart account={summary?.account ?? null} intraday={summary?.intraday ?? null} marketOpen={summary?.market.open ?? false} accent={accent} />
               </div>
               {/* Pause is a PRODUCTION control. /api/{bot}/production-pause answers
@@ -274,7 +281,7 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                   gave the owner a button whose only outcome was a generic failure.
                   There is nothing to pause on a simulated account. */}
               {summary?.account.mode === 'paper' ? null : (
-                <div className="order-5">
+                <div className="order-6">
                   <PauseTradingPanel
                     state={summary?.state ?? null}
                     pending={pausePending}

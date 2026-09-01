@@ -11,6 +11,7 @@ import {
 } from '@/lib/tradier'
 import { isMarketOpen, DEFAULT_EOD_CUTOFF_MIN, formatCTClock } from '@/lib/pt-tiers'
 import { deriveCustomerState, getMarketSession } from './state'
+import { countProtectiveSkipDays } from './riskProtection'
 import type { LiveSummary, LiveTrade, LiveOpenPosition } from './types'
 
 /**
@@ -80,6 +81,8 @@ export async function getLiveSummary(
     ownerPause,
     balances,
     spyQuote,
+    protectiveScanRows,
+    tradedCtDateRows,
   ] = await Promise.all([
     dbQuery(
       `SELECT scan_count, last_heartbeat, status, details
@@ -149,6 +152,26 @@ export async function getLiveSummary(
     getOwnerPauseState(BOT),
     getSandboxAccountBalances().catch(() => []),
     getQuoteDetail('SPY').catch(() => null),
+    // Risky-setups-skipped counter: this month's SCAN log rows, CT-month
+    // boundary computed in SQL so there is no app/DB timezone mismatch.
+    // null (not []) on failure — distinguishes "no scans this month" from
+    // "the query errored", which risk_protection below must tell apart.
+    dbQuery<{ log_time: string | Date; details: string | null }>(
+      `SELECT log_time, details
+       FROM ${botTable(BOT, 'logs')}
+       WHERE level = 'SCAN'
+         AND (log_time AT TIME ZONE 'America/Chicago') >= date_trunc('month', (NOW() AT TIME ZONE 'America/Chicago'))
+         ${dteFilter}`,
+    ).catch(() => null),
+    // Same scope (dte_mode + account) as the rest of this page's queries —
+    // reuses prodFilter so "traded" means the same account this summary
+    // otherwise describes.
+    dbQuery<{ d: string | Date }>(
+      `SELECT DISTINCT (open_time AT TIME ZONE 'America/Chicago')::date AS d
+       FROM ${botTable(BOT, 'positions')}
+       WHERE (open_time AT TIME ZONE 'America/Chicago') >= date_trunc('month', (NOW() AT TIME ZONE 'America/Chicago'))
+         ${dteFilter} ${prodFilter}`,
+    ).catch(() => null),
   ])
 
   const hb = heartbeatRows[0]
@@ -292,6 +315,38 @@ export async function getLiveSummary(
       : null,
   }))
 
+  // --- Risky setups skipped this month --------------------------------
+  // Honest-data rule: null (never a fabricated number) when either query
+  // above failed. A count of exactly 0 is real and must still render.
+  let riskProtection: LiveSummary['risk_protection'] = null
+  if (protectiveScanRows !== null && tradedCtDateRows !== null) {
+    try {
+      const logs = protectiveScanRows.map((r) => {
+        let reason: string | null = null
+        try {
+          // details is a JSON STRING, not JSONB — one malformed row must not
+          // break the others, so this parse is per-row.
+          const parsed = typeof r.details === 'string' ? JSON.parse(r.details) : r.details
+          reason = parsed && typeof parsed.reason === 'string' ? parsed.reason : null
+        } catch {
+          reason = null
+        }
+        return { logTime: r.log_time, reason }
+      })
+      const tradedCtDates = new Set(
+        tradedCtDateRows
+          .map((r) => (r.d instanceof Date ? r.d.toISOString().slice(0, 10) : String(r.d).slice(0, 10)))
+          .filter(Boolean),
+      )
+      riskProtection = {
+        skipped_count: countProtectiveSkipDays({ logs, tradedCtDates }),
+        period_label: 'this month',
+      }
+    } catch {
+      riskProtection = null
+    }
+  }
+
   return {
     state,
     market: {
@@ -322,6 +377,7 @@ export async function getLiveSummary(
       // fabricated countdown — consumers null-guard and fall back to the badge.
       trial: null,
     },
+    risk_protection: riskProtection,
     as_of: new Date().toISOString(),
   }
 }
