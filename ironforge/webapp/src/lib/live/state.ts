@@ -13,7 +13,7 @@ export interface StateInput {
   /** bot_state as derived by /api/[bot]/status: scanning | monitoring |
    *  awaiting_fill | pending_fill | traded | market_closed | error | idle | unknown */
   botState: string
-  /** heartbeat details.reason, e.g. "skip:vix_too_high(34.2>32)" */
+  /** heartbeat details.reason, e.g. "skip:vix_elevated(0.904>0.90)" */
   lastScanReason: string | null
   /** paused by EITHER layer: the fleet switch (ironforge_production_pause) or
    *  this viewer's own account (ironforge_owner_pause). */
@@ -51,8 +51,21 @@ export interface StateInput {
 const STALE_HEARTBEAT_MIN = 15
 
 /** Scan-skip reasons that mean "conditions failed the strategy's protection
- *  rules today" — the calm BLOCKED state, not an error. */
-const BLOCKED_REASON_PREFIXES = ['skip:vix_too_high', 'skip:event_blackout']
+ *  rules today" — the calm BLOCKED state, not an error.
+ *
+ *  🚨 `vix_too_high`/`event_blackout` are the legacy IC-scanner's reason
+ *  strings (tryOpenTrade). Since the 8/16 EBB cutover, SPARK/FLAME's entry
+ *  gate (tryOpenFlamePutSpread → vixDecayBlock) emits `vix_elevated` /
+ *  `vix_bad_window` instead — the old prefixes alone never matched, so every
+ *  EBB VIX-gate day fell through to the generic "Looking for an Opportunity"
+ *  state instead of "No Trading Today". Keep both eras' strings until the
+ *  legacy path is retired. */
+const BLOCKED_REASON_PREFIXES = [
+  'skip:vix_too_high',
+  'skip:vix_elevated',
+  'skip:vix_bad_window',
+  'skip:event_blackout',
+]
 
 export function deriveCustomerState(input: StateInput): CustomerState {
   const {
