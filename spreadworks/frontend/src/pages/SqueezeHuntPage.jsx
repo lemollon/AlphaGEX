@@ -93,6 +93,28 @@ function isBounce(dayKind) {
 
 const SWEEP_COLOR = { feeding: THEME.green, drying: THEME.amber, halted: THEME.red };
 
+// Wall-clock HH:MM from the scan's own timestamp.
+//
+// Use `ts`, NEVER `sweep`. `sweep` is a SLOT LABEL, not a time: the scanner
+// rounds each run to the nearest scheduled slot (10:00 / 12:30 / 14:45) so a
+// minute of scheduler drift does not create a new bucket. A tape run at 14:00
+// is therefore labelled "14:45".
+//
+// On 2026-08-31 the real 14:45 sweep — the PRIMARY one the forward test reads
+// — died on a DNS failure and never ran, yet this page displayed
+// "last sweep 14:45" because a 14:00 run wore that label. The page asserted
+// that the decisive sweep had happened at the exact moment it had not.
+//
+// These timestamps are already CT wall-clock, so slice the string; passing
+// them through Date() would re-interpret them as UTC and shift the hour.
+function clock(ts) {
+  return typeof ts === 'string' && ts.length >= 16 ? ts.slice(11, 16) : null;
+}
+
+function lastPoint(points) {
+  return points && points.length ? points[points.length - 1] : null;
+}
+
 /* ── Intraday pace sparkline — dollars per sweep, one bar per sweep ── */
 
 function PaceSpark({ points, width = 118, height = 22 }) {
@@ -105,7 +127,7 @@ function PaceSpark({ points, width = 118, height = 22 }) {
       {points.map((p, i) => (
         <div
           key={i}
-          title={`${p.sweep} · ${moneyFull(p.dollar_vol)} · ${p.state || 'no read'}`}
+          title={`${clock(p.ts) || p.sweep} · ${moneyFull(p.dollar_vol)} · ${p.state || 'no read'}`}
           className="flex-1 rounded-[1px]"
           style={{
             height: `${Math.max(8, ((p.dollar_vol || 0) / max) * 100)}%`,
@@ -178,7 +200,15 @@ function VerdictBar({ loading, error, cutNames, totalNames, asOf, noSiCount, sig
             style={{ color: isToday === false ? THEME.amber : 'var(--color-text-tertiary)' }}
           >
             <Clock size={11} />
-            {signalDate ? `${signalDate}${asOf ? ` · last sweep ${asOf}` : ''}` : `last sweep ${asOf}`}
+            {/* Only pair a sweep clock with the date when they are the SAME
+                day. The signals endpoint returns the newest signal date and
+                the tape endpoint the newest tape date, and before the first
+                signal of a session those disagree — showing
+                "2026-08-31 · last sweep 09:00" reads as one moment when it is
+                two different days. */}
+            {signalDate
+              ? `${signalDate}${isToday && asOf ? ` · last sweep ${asOf}` : ''}`
+              : `last sweep ${asOf}`}
           </span>
         )}
       </div>
@@ -479,7 +509,7 @@ function SignalsTable({ signals, tape, latestSweep }) {
   const renderRows = (rows) =>
     rows.map((s) => {
       const points = tape[s.symbol] || [];
-      const last = points.length ? points[points.length - 1].sweep : null;
+      const last = clock(lastPoint(points)?.ts);
       const stale = last && latestSweep && last !== latestSweep ? last : null;
       return <SignalRow key={s.symbol} s={s} points={points} stale={stale} />;
     });
@@ -577,7 +607,7 @@ function QuietSymbols({ entries }) {
               <span className="w-14 shrink-0 font-bold sw-mono text-[12px] text-text-secondary">{symbol}</span>
               <PaceSpark points={points} width={90} height={16} />
               <span className="ml-auto text-[11px] text-text-tertiary sw-mono">
-                {points.length ? points[points.length - 1].sweep : '—'}
+                {clock(lastPoint(points)?.ts) || '—'}
               </span>
             </div>
           ))}
@@ -639,7 +669,7 @@ export default function SqueezeHuntPage() {
   const latestSweep = useMemo(() => {
     let best = null;
     for (const points of Object.values(tape)) {
-      const last = points.length ? points[points.length - 1].sweep : null;
+      const last = clock(lastPoint(points)?.ts);
       if (last && (best == null || last > best)) best = last;
     }
     return best;
