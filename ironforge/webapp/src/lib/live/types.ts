@@ -6,6 +6,8 @@
  * this boundary.
  */
 
+import type { BacktestAnchor, compareToBacktestAnchor } from './backtestAnchor'
+
 export type CustomerStateKey =
   | 'WORKING_WAITING'
   | 'TRADE_ACTIVE'
@@ -196,6 +198,22 @@ export interface LiveTrade {
   spark_series: Array<{ timestamp: string; pnl: number }>
   /** Populated when today's trading is complete (realized result). */
   today_result: { pnl: number; pct: number | null } | null
+  /**
+   * OPT-IN, technical-trader-only. Populated only alongside a non-null
+   * `today_result` whose underlying position(s) have `contracts > 0` — never
+   * fabricated when there was no trade today. Strictly descriptive: compares
+   * today's PER-LOT realized result against the strategy's validated
+   * backtested range (see `lib/live/backtestAnchor.ts`). Must never be read as
+   * a forward projection — the UI's "Advanced" disclosure is the only place
+   * this belongs, and it must carry the "not a guarantee of future results"
+   * line every time it renders.
+   */
+  today_result_technical?: {
+    perLot: number
+    contracts: number
+    anchor: BacktestAnchor
+    comparison: ReturnType<typeof compareToBacktestAnchor>
+  } | null
   /**
    * EVERY open position, newest first. The scalar fields above describe positions[0]
    * and are kept so existing readers are unaffected; anything that must not hide a

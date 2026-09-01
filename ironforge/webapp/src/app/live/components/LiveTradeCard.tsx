@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { Area, ComposedChart, ReferenceDot, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from 'recharts'
 import type { CustomerState, LiveTrade } from '@/lib/live/types'
 import { formatDollarPnl } from '@/lib/format'
@@ -49,6 +50,7 @@ export default function LiveTradeCard({
   /** Account equity, for the "% of account at risk" figure. null renders "—". */
   accountValue?: number | null
 }) {
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const label = statusLabel(trade, state)
   const pnl = trade?.active ? trade.unrealized_pnl : trade?.today_result?.pnl ?? null
   const pct = trade?.active ? trade.unrealized_pnl_pct : trade?.today_result?.pct ?? null
@@ -174,6 +176,61 @@ export default function LiveTradeCard({
           {trade?.active && trade.positions?.[0] ? (
             <RegimeRow p={trade.positions[0]} accountValue={accountValue} />
           ) : null}
+
+          {/* OPT-IN, technical-trader only. Collapsed by default — this never
+              changes what a default customer sees, and it only renders once
+              there is an actual trade today (today_result_technical is never
+              fabricated on a 0-trade day). Purely descriptive: whether today's
+              PER-LOT result fell inside or outside the strategy's validated
+              backtested range, never a projection of tomorrow. */}
+          {trade?.today_result_technical && (
+            <div className="mt-4 border-t border-forge-border pt-3">
+              <button
+                type="button"
+                onClick={() => setAdvancedOpen((o) => !o)}
+                aria-expanded={advancedOpen}
+                className="flex w-full items-center justify-between text-xs font-semibold uppercase tracking-widest text-gray-500 hover:text-gray-300"
+              >
+                Advanced
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round"
+                  className={`h-4 w-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`}>
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+              {advancedOpen && (
+                <div className="mt-3 rounded-lg border border-forge-border/70 bg-forge-bg/60 p-3 text-sm">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-xs text-gray-500">Today, per lot</div>
+                      <div className="mt-0.5 font-mono text-gray-200">
+                        {formatDollarPnl(trade.today_result_technical.perLot)}
+                        <span className="ml-1 text-xs font-normal text-gray-500">
+                          / {trade.today_result_technical.contracts} lot{trade.today_result_technical.contracts === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500">Typical range / lot</div>
+                      <div className="mt-0.5 font-mono text-gray-200">
+                        {formatDollarPnl(trade.today_result_technical.anchor.worstDayAvg)} to {formatDollarPnl(trade.today_result_technical.anchor.bestDayAvg)}
+                      </div>
+                    </div>
+                  </div>
+                  {trade.today_result_technical.comparison && (
+                    <p className="mt-3 text-gray-300">
+                      {trade.today_result_technical.comparison.label}
+                    </p>
+                  )}
+                  {/* Same visual weight as the numbers above it, per the compliance
+                      requirement — never a footnote. */}
+                  <p className="mt-3 font-semibold text-amber-400">
+                    Backtested historical range — not a guarantee of future results.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
 
           {!trade?.active && !trade?.today_result && trade && (
             <p className="mt-4 text-sm text-gray-400">
