@@ -25,6 +25,7 @@ import type { LiveSummary, LiveTrade, LiveOpenPosition } from './types'
 import { resolveAccountMode, scopeFilter, LIVE_BOT_LABEL, paperDisclosure, type LiveBot } from './viewer'
 import { deriveSwingMeta } from './swing'
 import { sparkRegimeBpCap, isSparkV2SizingBot } from '@/lib/spark-sizing'
+import { BACKTEST_ANCHORS, compareToBacktestAnchor } from './backtestAnchor'
 
 interface HeartbeatDetails {
   action?: string
@@ -403,6 +404,7 @@ export async function getLiveTrade(
       `SELECT COALESCE(SUM(realized_pnl), 0) as pnl,
               COALESCE(SUM(collateral_required), 0) as risk_dollars,
               COALESCE(SUM(contracts * total_credit * 100), 0) as max_profit_dollars,
+              COALESCE(SUM(contracts), 0) as contracts,
               COUNT(*) as cnt
        FROM ${botTable(BOT, 'positions')}
        WHERE status IN ('closed', 'expired')
@@ -416,6 +418,23 @@ export async function getLiveTrade(
     // LOSS (collateral). collateral_required is the stored max loss per position.
     const riskDollars = num(todaysClosed[0]?.risk_dollars)
     const maxProfitDollars = num(todaysClosed[0]?.max_profit_dollars)
+    const todaysContracts = int(todaysClosed[0]?.contracts)
+    const todayResult = closedCount > 0
+      ? { pnl, pct: profitBasisPct(pnl, maxProfitDollars, riskDollars) }
+      : null
+    // Advanced/technical-trader only — see backtestAnchor.ts. Never fabricated
+    // when there was no trade today, and never computed off a total that has
+    // no per-lot denominator. LiveBot is exactly 'spark' | 'flame', so every
+    // bot this function can be called with has a validated anchor.
+    const anchor = BACKTEST_ANCHORS[BOT]
+    const todayResultTechnical = todayResult && todaysContracts > 0
+      ? {
+          perLot: Math.round((pnl / todaysContracts) * 100) / 100,
+          contracts: todaysContracts,
+          anchor,
+          comparison: compareToBacktestAnchor(pnl, todaysContracts, anchor),
+        }
+      : null
     return {
       active: false,
       opened_at: null,
@@ -426,12 +445,8 @@ export async function getLiveTrade(
       pnl_source: 'none',
       spark_series: sparkSeries,
       positions: [],
-      today_result: closedCount > 0
-        ? {
-            pnl,
-            pct: profitBasisPct(pnl, maxProfitDollars, riskDollars),
-          }
-        : null,
+      today_result: todayResult,
+      today_result_technical: todayResultTechnical,
     }
   }
 
