@@ -12,6 +12,7 @@ import {
 import { isMarketOpen, DEFAULT_EOD_CUTOFF_MIN, formatCTClock } from '@/lib/pt-tiers'
 import { deriveCustomerState, getMarketSession } from './state'
 import { countProtectiveSkipDays } from './riskProtection'
+import { buildActivityFeed } from './activityFeed'
 import type { LiveSummary, LiveTrade, LiveOpenPosition } from './types'
 
 /**
@@ -83,6 +84,7 @@ export async function getLiveSummary(
     spyQuote,
     protectiveScanRows,
     tradedCtDateRows,
+    scanRowsToday,
   ] = await Promise.all([
     dbQuery(
       `SELECT scan_count, last_heartbeat, status, details
@@ -171,6 +173,18 @@ export async function getLiveSummary(
        FROM ${botTable(BOT, 'positions')}
        WHERE (open_time AT TIME ZONE 'America/Chicago') >= date_trunc('month', (NOW() AT TIME ZONE 'America/Chicago'))
          ${dteFilter} ${prodFilter}`,
+    ).catch(() => null),
+    // Live gate/health activity feed: today's SCAN log rows, same table as the
+    // risky-setups-skipped counter above, just scoped to today instead of the
+    // month. null (not []) on failure — distinguishes "no scans yet today"
+    // from "the query errored", which activity_feed below must tell apart.
+    dbQuery<{ log_time: string | Date; details: string | null }>(
+      `SELECT log_time, details
+       FROM ${botTable(BOT, 'logs')}
+       WHERE level = 'SCAN'
+         AND (log_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
+         ${dteFilter}
+       ORDER BY log_time ASC`,
     ).catch(() => null),
   ])
 
@@ -347,6 +361,41 @@ export async function getLiveSummary(
     }
   }
 
+  // --- Today's gate/health activity feed --------------------------------
+  // Honest-data rule: null (never a fabricated feed) when the query above
+  // failed. An empty entries array (no scans logged yet today) is a real,
+  // renderable state and must still return an object, not null.
+  let activityFeed: LiveSummary['activity_feed'] = null
+  if (scanRowsToday !== null) {
+    try {
+      const parsedRows = scanRowsToday.map((r) => {
+        let action = 'scan'
+        let reason: string | null = null
+        try {
+          // details is a JSON STRING, not JSONB — one malformed row must not
+          // break the others, so this parse is per-row (same pattern as the
+          // risk-protection integration above).
+          const parsed = typeof r.details === 'string' ? JSON.parse(r.details) : r.details
+          if (parsed && typeof parsed.action === 'string') action = parsed.action
+          if (parsed && typeof parsed.reason === 'string') reason = parsed.reason
+        } catch {
+          // action stays 'scan', reason stays null
+        }
+        return { logTime: r.log_time, action, reason }
+      })
+      // Uncapped so gates_held_today counts every distinct gate segment
+      // today, not just the ones inside the display cap.
+      const fullFeed = buildActivityFeed(parsedRows, { max: Number.MAX_SAFE_INTEGER })
+      activityFeed = {
+        scans_today: scanRowsToday.length,
+        gates_held_today: fullFeed.filter((e) => e.kind === 'gate').length,
+        entries: fullFeed.slice(0, 8),
+      }
+    } catch {
+      activityFeed = null
+    }
+  }
+
   return {
     state,
     market: {
@@ -378,6 +427,7 @@ export async function getLiveSummary(
       trial: null,
     },
     risk_protection: riskProtection,
+    activity_feed: activityFeed,
     as_of: new Date().toISOString(),
   }
 }

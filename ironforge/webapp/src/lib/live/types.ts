@@ -7,6 +7,7 @@
  */
 
 import type { BacktestAnchor, compareToBacktestAnchor } from './backtestAnchor'
+import type { FeedEntry } from './activityFeed'
 
 export type CustomerStateKey =
   | 'WORKING_WAITING'
@@ -127,6 +128,16 @@ export interface LiveSummary {
    * and must still render.
    */
   risk_protection: { skipped_count: number; period_label: string } | null
+  /**
+   * "Live gate/health activity feed" — today's scan activity as a short,
+   * plain-English list, so the page feels alive even on a 0-trade day. Every
+   * `FeedEntry.label` is ALREADY a curated string (see lib/live/activityFeed.ts)
+   * — the raw internal `reason` (e.g. "skip:vix_elevated(0.904>0.90)") never
+   * reaches this type. NEVER fabricated: null means the underlying query
+   * could not be computed. An empty `entries` array (no scans logged yet
+   * today) is a real, renderable state and must still render the card.
+   */
+  activity_feed: { scans_today: number; gates_held_today: number; entries: FeedEntry[] } | null
   as_of: string
 }
 
