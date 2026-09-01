@@ -13,6 +13,7 @@ import { isMarketOpen, DEFAULT_EOD_CUTOFF_MIN, formatCTClock } from '@/lib/pt-ti
 import { deriveCustomerState, getMarketSession } from './state'
 import { countProtectiveSkipDays } from './riskProtection'
 import { buildActivityFeed } from './activityFeed'
+import { RECENT_TRADES_LIMIT, buildStreakSummary } from './winLossStreak'
 import type { LiveSummary, LiveTrade, LiveOpenPosition } from './types'
 
 /**
@@ -85,6 +86,7 @@ export async function getLiveSummary(
     protectiveScanRows,
     tradedCtDateRows,
     scanRowsToday,
+    recentClosedPnlRows,
   ] = await Promise.all([
     dbQuery(
       `SELECT scan_count, last_heartbeat, status, details
@@ -185,6 +187,18 @@ export async function getLiveSummary(
          AND (log_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
          ${dteFilter}
        ORDER BY log_time ASC`,
+    ).catch(() => null),
+    // Win/loss streak: the last RECENT_TRADES_LIMIT closed trades, newest
+    // first — same scope (dte_mode + account) as the rest of this page. null
+    // (not []) on failure so a real "no trades yet" empty state is never
+    // confused with a query error.
+    dbQuery<{ realized_pnl: string | number }>(
+      `SELECT realized_pnl
+       FROM ${botTable(BOT, 'positions')}
+       WHERE status IN ('closed', 'expired')
+         AND realized_pnl IS NOT NULL
+         ${dteFilter} ${prodFilter}
+       ORDER BY close_time DESC LIMIT ${RECENT_TRADES_LIMIT}`,
     ).catch(() => null),
   ])
 
@@ -396,6 +410,19 @@ export async function getLiveSummary(
     }
   }
 
+  // --- Win/loss streak (last RECENT_TRADES_LIMIT closed trades) ----------
+  // Honest-data rule: null (never a fabricated streak) when the query above
+  // failed. An empty streak (no trades closed yet) is a real, renderable
+  // state and must still return an object, not null.
+  let winLossStreak: LiveSummary['win_loss_streak'] = null
+  if (recentClosedPnlRows !== null) {
+    try {
+      winLossStreak = buildStreakSummary(recentClosedPnlRows.map((r) => num(r.realized_pnl)))
+    } catch {
+      winLossStreak = null
+    }
+  }
+
   return {
     state,
     market: {
@@ -428,6 +455,11 @@ export async function getLiveSummary(
     },
     risk_protection: riskProtection,
     activity_feed: activityFeed,
+    win_loss_streak: winLossStreak,
+    // Route-populated (app/api/live/summary/route.ts), same pattern as
+    // membership/activation_confirmation: this needs customerId, which this
+    // function does not receive. Inert placeholder here only.
+    milestones: null,
     as_of: new Date().toISOString(),
   }
 }

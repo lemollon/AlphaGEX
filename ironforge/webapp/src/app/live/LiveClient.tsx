@@ -21,6 +21,8 @@ import TodayPerformanceChart from './components/TodayPerformanceChart'
 import PauseTradingPanel from './components/PauseTradingPanel'
 import RiskProtectionCard from './components/RiskProtectionCard'
 import ActivityFeedCard from './components/ActivityFeedCard'
+import MilestonesCard from './components/MilestonesCard'
+import WinLossStreakCard from './components/WinLossStreakCard'
 
 /** Non-customer /live conversion CTAs — one per strategy, Spark then Flame.
  *  Both link into the existing signup flow with the bot preselected. */
@@ -262,25 +264,36 @@ export default function LiveClient({ account }: { account: LiveBot }) {
               <div className="order-3">
                 <ActivityFeedCard activityFeed={summary?.activity_feed ?? null} accent={accent} />
               </div>
+              {/* Non-P&L tenure/system-health badges — renders nothing when the
+                  viewer has no anchor for any of the three pills. */}
+              <div className="order-4">
+                <MilestonesCard milestones={summary?.milestones ?? null} accent={accent} />
+              </div>
+              {/* Last 10 closed trades as win/loss chips + the current streak, win
+                  OR losing — see WinLossStreakCard for the both-sides-always-shown
+                  requirement. */}
+              <div className="order-5">
+                <WinLossStreakCard streak={summary?.win_loss_streak ?? null} accent={accent} />
+              </div>
               {/* A SWING is live when two positions are open at once — yesterday's held
                   leg plus today's new one. Only SPARK swings, so only SPARK reaches this
                   branch; the single-position day is untouched below. Each card carries
                   its own timeline, so NowTimelineCard is not repeated here. */}
               {isSwingActive(trade?.positions) ? (
-                <div className="order-4">
+                <div className="order-6">
                   <SwingTradeCards positions={trade!.positions} accountValue={summary?.account?.value ?? null} />
                 </div>
               ) : (
-                <div className="order-4 grid gap-4 lg:grid-cols-[11fr_9fr]">
+                <div className="order-6 grid gap-4 lg:grid-cols-[11fr_9fr]">
                   <LiveTradeCard trade={trade ?? null} error={Boolean(tradeError)} state={summary?.state ?? null} accent={accent} accountValue={summary?.account?.value ?? null} />
                   <NowTimelineCard state={summary?.state ?? null} openedAt={trade?.opened_at ?? null} accent={accent} />
                 </div>
               )}
               {/* Mobile stacks Today Performance before Market Conditions; desktop reads Conditions first. */}
-              <div className="order-6 lg:order-5">
+              <div className="order-8 lg:order-7">
                 <MarketConditionsCard market={summary?.market ?? null} accent={accent} />
               </div>
-              <div className="order-5 lg:order-6">
+              <div className="order-7 lg:order-8">
                 <TodayPerformanceChart account={summary?.account ?? null} intraday={summary?.intraday ?? null} marketOpen={summary?.market.open ?? false} accent={accent} />
               </div>
               {/* Pause is a PRODUCTION control. /api/{bot}/production-pause answers
@@ -288,7 +301,7 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                   gave the owner a button whose only outcome was a generic failure.
                   There is nothing to pause on a simulated account. */}
               {summary?.account.mode === 'paper' ? null : (
-                <div className="order-7">
+                <div className="order-9">
                   <PauseTradingPanel
                     state={summary?.state ?? null}
                     pending={pausePending}

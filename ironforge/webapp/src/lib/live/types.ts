@@ -138,6 +138,29 @@ export interface LiveSummary {
    * today) is a real, renderable state and must still render the card.
    */
   activity_feed: { scans_today: number; gates_held_today: number; entries: FeedEntry[] } | null
+  /**
+   * Last RECENT_TRADES_LIMIT closed trades as win/loss chips, oldest-first,
+   * plus the CURRENT streak (win OR losing — never suppressed). See
+   * lib/live/winLossStreak.ts. NEVER fabricated: null means the underlying
+   * query could not be computed. An empty `trades` array (no trades closed
+   * yet) is a real, renderable state.
+   */
+  win_loss_streak: {
+    trades: ('win' | 'loss')[]
+    winsCount: number
+    lossesCount: number
+    currentStreak: { count: number; type: 'win' | 'loss' } | null
+  } | null
+  /**
+   * Non-P&L tenure/system-health badges — days connected, cumulative scans,
+   * month number. See lib/live/milestones.ts. Route-populated (needs
+   * customerId, which getLiveSummary does not receive) — same pattern as
+   * `membership`/`activation_confirmation`: getLiveSummary returns null here
+   * as an inert placeholder, and the route merges the real value in. Each
+   * inner field is independently nullable (e.g. an operator view may only
+   * ever have `scanNumber`).
+   */
+  milestones: { daysConnected: number | null; scanNumber: number | null; monthNumber: number | null } | null
   as_of: string
 }
 

@@ -3,6 +3,7 @@ import { getLiveSummary } from '@/lib/live/summary'
 import { resolveLiveViewer } from '@/lib/live/viewer'
 import { getMembership } from '@/lib/live/membership'
 import { getActivationConfirmation } from '@/lib/live/activation-confirmation'
+import { getMilestones } from '@/lib/live/milestones'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest) {
       // never another account's data.
       return NextResponse.json({ empty: true, viewer, activation_confirmation: activationConfirmation })
     }
-    const [summary, membership] = await Promise.all([
+    const [summary, membership, milestones] = await Promise.all([
       getLiveSummary(viewer.bot, {
         allowAggregate: viewer.isOperator,
         person: viewer.person,
@@ -42,8 +43,12 @@ export async function GET(req: NextRequest) {
       // the trading DB and has no billing context, so it returns a neutral card;
       // this replaces it with the viewer's actual plan/trial where one exists.
       getMembership(viewer.customerId),
+      // Same pattern as membership above: getLiveSummary has no customerId, so
+      // it returns milestones: null; this resolves the real tenure/scan-count
+      // badges and the spread below replaces the placeholder.
+      getMilestones(viewer.customerId, viewer.bot),
     ])
-    return NextResponse.json({ ...summary, membership, viewer, activation_confirmation: activationConfirmation })
+    return NextResponse.json({ ...summary, membership, viewer, activation_confirmation: activationConfirmation, milestones })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })
