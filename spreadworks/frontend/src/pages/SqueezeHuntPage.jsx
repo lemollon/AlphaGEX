@@ -673,10 +673,7 @@ export default function SqueezeHuntPage() {
   }, [tape, signals]);
 
   return (
-    // `sqh` is required for spacing: the app's universal reset is unlayered
-    // and outranks Tailwind's p-*/m-* utilities, so this page's padding and
-    // margins are re-declared under `.sqh` in index.css. See the note there.
-    <div className="sqh flex-1 overflow-y-auto font-[var(--font-ui)] text-text-primary">
+    <div className="flex-1 overflow-y-auto font-[var(--font-ui)] text-text-primary">
       <div className="px-4 md:px-8 pt-6 pb-5" style={{ borderBottom: '1px solid rgba(251,146,60,0.18)' }}>
         <div className="max-w-[1400px] mx-auto flex items-center gap-4">
           <div
