@@ -552,10 +552,13 @@ def register_risk_alerts(scheduler, app) -> None:
             if now.weekday() >= 5:
                 return
             from .routes_risk import (CONFIRM_WINDOW_CT, CONFIRM_MOVE_PCT,
-                                      CONFIRM_ARM_Z, _rolling_flow_now,
+                                      CONFIRM_ARM_Z, PAPER_BOOK_START,
+                                      _rolling_flow_now,
                                       _flow_history, _pc_z, _latest_snapshot,
                                       confirm_step, session_log_write,
-                                      undelivered_firing, mark_alerted)
+                                      undelivered_firing, mark_alerted,
+                                      capture_flow_intraday, paper_record_fire,
+                                      flow_record_at_fire)
             start, end = CONFIRM_WINDOW_CT
             t = (now.hour, now.minute)
             if t < start or t > end:
@@ -578,7 +581,18 @@ def register_risk_alerts(scheduler, app) -> None:
             # throws — a gap in the tape is what made the 08-17 post-mortem
             # hard, and this poll is the only place spot is sampled.
             session_log_write(today, now, spot=float(live["spot"]))
+            # Paper-book stage 4: every-10-min chain snapshot by tenor,
+            # forward-only (nothing before PAPER_BOOK_START is written).
+            # Never blocks the confirm alert below — capture_flow_intraday
+            # catches and logs its own failures.
+            await capture_flow_intraday(shim, now)
             hit = confirm_step(today, now, float(live["spot"]), armed, pcz)
+            if hit is not None and today >= PAPER_BOOK_START:
+                # A brand-new fire (not a recovered/undelivered one below) —
+                # price the paper trade and snapshot the flow-at-fire ledger
+                # once, at the moment it happened. Both helpers never raise.
+                await paper_record_fire(shim, today, hit)
+                flow_record_at_fire(today, hit)
             if hit is None:
                 # 🚨 RECOVER A FIRING WHOSE ALERT NEVER WENT OUT. confirm_step
                 # fires once and every later poll skips on `fired_dir is None`,

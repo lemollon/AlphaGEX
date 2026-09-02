@@ -134,6 +134,26 @@ BASELINE_CSV = Path(__file__).resolve().parent / "data" / "risk_flow_baseline.cs
 BASELINE_CSV_PM = Path(__file__).resolve().parent / "data" / "risk_flow_baseline_pm.csv"
 GROWTH_JSON = Path(__file__).resolve().parent / "data" / "risk_advisor_growth.json"
 
+# --- Paper book (stage 4, PREREG_confirm_trade_2026_08_31.md, passed 8/31) --
+# Forward-only. `PAPER_BOOK_START` is the date this shipped — nothing before
+# it is ever recorded, so the book only ever grades fires the search never
+# saw. Nothing here places a real order; see paper_record_fire()/
+# paper_settle_pending().
+PAPER_START_BALANCE = 1000.0
+PAPER_CONTRACTS = 1
+PAPER_BOOK_START = date(2026, 9, 2)
+PAPER_WING_WIDTH = 2.0          # $2-wide vertical, matches the registered recipe
+PAPER_MAX_DEBIT = 2.00          # skip if the crossed debit >= the wing width
+PAPER_GATE_TEXT = (
+    "One look at 40 settled fires or 2027-12-31, whichever first: total P&L "
+    "> 0, per-fire t >= 2.0, still > 0 after removing the 3 largest winners, "
+    "and every calendar year with >= 10 fires positive. Marginal = fail. No "
+    "real dollars before that and Leron signs off."
+)
+
+# --- Flow-at-fire ledger (Part 2) — honest proxy, no signed tape exists live
+FLOW_TENORS = ("0dte", "1_5d", "6_20d", "far")
+
 _cboe_cache: dict[str, tuple[datetime, dict[date, float]]] = {}
 _CBOE_TTL = 1800
 _snapshot_lock = asyncio.Lock()
@@ -259,6 +279,80 @@ class RiskHealthState(Base):
     signal = Column(String(30), primary_key=True)
     status = Column(String(20))
     updated_at = Column(DateTime)
+
+
+class RiskConfirmPaper(Base):
+    """Forward-only paper book for the flow-confirm 0DTE vertical (stage 4,
+    PREREG_confirm_trade_2026_08_31.md, passed 8/31). One row per fire from
+    PAPER_BOOK_START on — nothing is backfilled and nothing here places a
+    real order. Written by paper_record_fire() at fire time (skipped_reason
+    set instead of pricing on any failure, so every fire gets exactly one
+    row); settled by paper_settle_pending() once that day's close lands."""
+    __tablename__ = "risk_confirm_paper"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    d = Column(Date, index=True)
+    fired_dir = Column(String(4))
+    fired_at = Column(DateTime)
+    fired_spot = Column(Float)
+    expiry = Column(String(10))
+    long_strike = Column(Float)
+    short_strike = Column(Float)
+    long_ask = Column(Float)
+    short_bid = Column(Float)
+    quote_at = Column(DateTime)
+    debit = Column(Float)
+    contracts = Column(Integer)
+    skipped_reason = Column(String(30))
+    settle_spot = Column(Float)
+    settle_value = Column(Float)
+    pnl = Column(Float)
+    settled_at = Column(DateTime)
+    created_at = Column(DateTime)
+
+
+class RiskFlowIntraday(Base):
+    """Chain snapshot by tenor, written on EVERY confirm_check poll (10-min
+    cadence, 10:10-14:00 CT) — not just on a fire. An honest proxy: no
+    signed tape exists live, so buy/sell is inferred from the last print vs
+    the quote (last >= mid => buy). See _chain_flow_stats/_bucket_expirations."""
+    __tablename__ = "risk_flow_intraday"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ts = Column(DateTime, index=True)
+    d = Column(Date, index=True)
+    tenor = Column(String(10))
+    n_expiries = Column(Integer)
+    call_vol = Column(BigInteger)
+    put_vol = Column(BigInteger)
+    call_notional = Column(Float)
+    put_notional = Column(Float)
+    call_buy_share = Column(Float)
+    put_buy_share = Column(Float)
+    spot = Column(Float)
+
+
+class RiskConfirmFlowAtFire(Base):
+    """One row per (fire, tenor): the flow delta since the PREVIOUS
+    risk_flow_intraday reading for that tenor, plus that tenor's cumulative
+    totals and the day's 10:00 flow-mix z (same figure /session reports).
+    Written by flow_record_at_fire() at fire time; NULL deltas mean no prior
+    reading existed for that tenor yet."""
+    __tablename__ = "risk_confirm_flow_at_fire"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    d = Column(Date, index=True)
+    fired_dir = Column(String(4))
+    fired_at = Column(DateTime)
+    tenor = Column(String(10))
+    call_vol_d = Column(BigInteger)
+    put_vol_d = Column(BigInteger)
+    call_notional_d = Column(Float)
+    put_notional_d = Column(Float)
+    call_buy_share = Column(Float)
+    put_buy_share = Column(Float)
+    call_vol = Column(BigInteger)
+    put_vol = Column(BigInteger)
+    call_notional = Column(Float)
+    put_notional = Column(Float)
+    flow_mix_z = Column(Float)
 
 
 def _norm_cdf(x: float) -> float:
@@ -426,6 +520,18 @@ def _pc_z(cur: dict, prior: list[dict]) -> float | None:
     return _z(cur_pc, hist)
 
 
+def _flow_mix_z_for(d: date) -> float | None:
+    """The day's 10:00 CT flow-mix z — the exact figure /session's `clocks`
+    block reports for the "10:00" row (_pc_z on the stored 10:00 snapshot vs
+    its trailing-63 history). Factored out so risk_confirm_flow_at_fire can
+    stamp the same number rather than recomputing it a second way."""
+    snap = _latest_snapshot(d)
+    if snap is None:
+        return None
+    prior = [r for r in _flow_history() if r["d"] < d]
+    return _pc_z(snap, prior)
+
+
 _rolling_baseline_cache: dict[int, dict] | None = None
 
 
@@ -511,6 +617,311 @@ async def _rolling_flow_now(request: Request) -> dict | None:
         return {"putv": putv, "totv": callv + putv, "spot": spot}
     except Exception:
         return None
+
+
+def _bucket_expirations(today: date, exps: list[str]) -> dict[str, list[str]]:
+    """Bucket SPY expiration dates by calendar days-to-expiry, capped per
+    tenor to bound the API calls a single poll makes:
+      0dte   (1)  — today
+      1_5d   (3)  — nearest three, 1-5 DTE
+      6_20d  (3)  — evenly spaced across 6-20 DTE (first/middle/last)
+      far    (2)  — nearest >20 DTE, plus the nearest >=45 DTE if different
+    Malformed expiration strings are dropped rather than raised on."""
+    parsed: list[tuple[str, int]] = []
+    for e in exps:
+        try:
+            dte = (date.fromisoformat(e) - today).days
+        except ValueError:
+            continue
+        parsed.append((e, dte))
+    parsed.sort(key=lambda x: x[1])
+
+    zero = [e for e, dte in parsed if dte == 0][:1]
+    near = [e for e, dte in parsed if 1 <= dte <= 5][:3]
+    mid_all = [e for e, dte in parsed if 6 <= dte <= 20]
+    if len(mid_all) <= 3:
+        mid = mid_all
+    else:
+        idxs = sorted({0, len(mid_all) // 2, len(mid_all) - 1})
+        mid = [mid_all[i] for i in idxs]
+    far_all = [(e, dte) for e, dte in parsed if dte > 20]
+    far: list[str] = []
+    if far_all:
+        nearest = far_all[0][0]
+        far.append(nearest)
+        at_45 = next((e for e, dte in far_all if dte >= 45), None)
+        if at_45 and at_45 != nearest:
+            far.append(at_45)
+    return {"0dte": zero, "1_5d": near, "6_20d": mid, "far": far}
+
+
+def _chain_flow_stats(opts: list[dict]) -> dict:
+    """Sum call/put volume and notional from one option-chain payload, plus
+    a buy-share proxy: volume-weighted share of contracts whose `last` print
+    sits closer to the ask than the bid (last >= mid => buy). No signed tape
+    exists live, so this is the honest proxy, not a real print classification.
+    NULL share when that side traded zero volume."""
+    call_vol = put_vol = 0
+    call_notional = put_notional = 0.0
+    call_buy_vol = put_buy_vol = 0
+    for o in opts:
+        v = int(o.get("volume") or 0)
+        if not v:
+            continue
+        bid = float(o.get("bid") or 0)
+        ask = float(o.get("ask") or 0)
+        last = float(o.get("last") or 0)
+        mid = (bid + ask) / 2.0 if (bid > 0 and ask > 0) else None
+        notional = v * mid * 100.0 if mid else 0.0
+        is_buy = mid is not None and last >= mid
+        if o.get("option_type") == "call":
+            call_vol += v
+            call_notional += notional
+            if is_buy:
+                call_buy_vol += v
+        else:
+            put_vol += v
+            put_notional += notional
+            if is_buy:
+                put_buy_vol += v
+    return {
+        "call_vol": call_vol, "put_vol": put_vol,
+        "call_notional": call_notional, "put_notional": put_notional,
+        "call_buy_share": (call_buy_vol / call_vol) if call_vol else None,
+        "put_buy_share": (put_buy_vol / put_vol) if put_vol else None,
+    }
+
+
+async def capture_flow_intraday(request: Request, now: datetime) -> None:
+    """Write one risk_flow_intraday row per tenor — called on EVERY
+    confirm_check poll (10-min cadence, 10:10-14:00 CT), not just on a fire.
+    Wrapped end to end: a failure here logs and skips, it must never block
+    the confirmation alert the same poll is trying to deliver."""
+    if SessionLocal is None:
+        return
+    try:
+        from .routes import _tradier_get, _get_quote
+        today = now.date()
+        if today < PAPER_BOOK_START:
+            return
+        q = await _get_quote(request, "SPY")
+        spot = float(q.get("last") or q.get("close") or 0) or None
+        exps = await _tradier_get(request, "/markets/options/expirations",
+                                  {"symbol": "SPY"})
+        all_exps = (exps.get("expirations") or {}).get("date") or []
+        if isinstance(all_exps, str):
+            all_exps = [all_exps]
+        buckets = _bucket_expirations(today, all_exps)
+        ts = now.replace(tzinfo=None) if now.tzinfo else now
+
+        db = SessionLocal()
+        try:
+            for tenor in FLOW_TENORS:
+                exp_list = buckets.get(tenor, [])
+                agg = {"call_vol": 0, "put_vol": 0, "call_notional": 0.0,
+                      "put_notional": 0.0, "call_buy_vol": 0.0, "put_buy_vol": 0.0}
+                for exp in exp_list:
+                    ch = await _tradier_get(request, "/markets/options/chains",
+                                            {"symbol": "SPY", "expiration": exp})
+                    opts = (ch.get("options") or {}).get("option") or []
+                    if isinstance(opts, dict):
+                        opts = [opts]
+                    stats = _chain_flow_stats(opts)
+                    agg["call_vol"] += stats["call_vol"]
+                    agg["put_vol"] += stats["put_vol"]
+                    agg["call_notional"] += stats["call_notional"]
+                    agg["put_notional"] += stats["put_notional"]
+                    agg["call_buy_vol"] += (stats["call_buy_share"] or 0.0) * stats["call_vol"]
+                    agg["put_buy_vol"] += (stats["put_buy_share"] or 0.0) * stats["put_vol"]
+                db.add(RiskFlowIntraday(
+                    ts=ts, d=today, tenor=tenor, n_expiries=len(exp_list),
+                    call_vol=agg["call_vol"], put_vol=agg["put_vol"],
+                    call_notional=agg["call_notional"], put_notional=agg["put_notional"],
+                    call_buy_share=(agg["call_buy_vol"] / agg["call_vol"]) if agg["call_vol"] else None,
+                    put_buy_share=(agg["put_buy_vol"] / agg["put_vol"]) if agg["put_vol"] else None,
+                    spot=spot,
+                ))
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+    except Exception as e:                                     # noqa: BLE001
+        logger.warning("[routes_risk] capture_flow_intraday failed: %r", e)
+
+
+async def paper_record_fire(request: Request, d: date, hit: dict) -> None:
+    """On a NEW confirm fire, price and record the paper 0DTE vertical
+    (PREREG_confirm_trade_2026_08_31.md, passed 8/31 — see the Playbook
+    section on /hunt). Never raises: any pricing failure is caught and the
+    row is written with a skipped_reason instead, so every fire from
+    PAPER_BOOK_START on gets exactly one row, priced or not.
+
+    UP fire -> CALLS, long strike nearest whole dollar to the fired spot,
+    short = long+2. DOWN fire -> PUTS, short = long-2. Quotes: one 0DTE
+    chain pull, long ASK and short BID. debit = long_ask - short_bid. Skip
+    (row still written) if today's expiry is missing from the chain, either
+    quote is missing/zero, or debit is <= 0 or >= the $2 wing width.
+    """
+    if SessionLocal is None or d < PAPER_BOOK_START:
+        return
+    fired_dir = hit["dir"]
+    fired_spot = float(hit["spot"])
+    fired_at = hit["at"]
+    if getattr(fired_at, "tzinfo", None) is not None:
+        fired_at = fired_at.replace(tzinfo=None)
+    now = datetime.now(CT).replace(tzinfo=None)
+
+    row = RiskConfirmPaper(d=d, fired_dir=fired_dir, fired_at=fired_at,
+                           fired_spot=fired_spot, contracts=PAPER_CONTRACTS,
+                           created_at=now)
+    try:
+        from .routes import _tradier_get
+        long_strike = float(round(fired_spot))
+        opt_type = "call" if fired_dir == "UP" else "put"
+        short_strike = long_strike + PAPER_WING_WIDTH if fired_dir == "UP" \
+            else long_strike - PAPER_WING_WIDTH
+        expiry = d.isoformat()
+
+        exps = await _tradier_get(request, "/markets/options/expirations",
+                                  {"symbol": "SPY"})
+        all_exps = (exps.get("expirations") or {}).get("date") or []
+        if isinstance(all_exps, str):
+            all_exps = [all_exps]
+        if expiry not in all_exps:
+            row.skipped_reason = "no_0dte"
+        else:
+            row.expiry = expiry
+            ch = await _tradier_get(request, "/markets/options/chains",
+                                    {"symbol": "SPY", "expiration": expiry})
+            opts = (ch.get("options") or {}).get("option") or []
+            if isinstance(opts, dict):
+                opts = [opts]
+            long_o = next((o for o in opts if o.get("option_type") == opt_type
+                          and float(o.get("strike") or -1) == long_strike), None)
+            short_o = next((o for o in opts if o.get("option_type") == opt_type
+                           and float(o.get("strike") or -1) == short_strike), None)
+            long_ask = float(long_o.get("ask") or 0) if long_o else 0.0
+            short_bid = float(short_o.get("bid") or 0) if short_o else 0.0
+            row.long_strike = long_strike
+            row.short_strike = short_strike
+            row.long_ask = long_ask
+            row.short_bid = short_bid
+            row.quote_at = now
+            if long_ask <= 0 or short_bid <= 0:
+                row.skipped_reason = "missing_quote"
+            else:
+                debit = round(long_ask - short_bid, 4)
+                row.debit = debit
+                if debit <= 0:
+                    row.skipped_reason = "debit_nonpositive"
+                elif debit >= PAPER_MAX_DEBIT:
+                    row.skipped_reason = "debit_too_wide"
+    except Exception as e:                                     # noqa: BLE001
+        logger.warning("[routes_risk] paper_record_fire pricing failed: %r", e)
+        row.skipped_reason = row.skipped_reason or "error"
+
+    db = SessionLocal()
+    try:
+        db.add(row)
+        db.commit()
+    except Exception as e:                                     # noqa: BLE001
+        logger.warning("[routes_risk] paper_record_fire write failed: %r", e)
+        db.rollback()
+    finally:
+        db.close()
+
+
+def flow_record_at_fire(d: date, hit: dict) -> None:
+    """At fire time, snapshot each tenor's flow: the delta since the prior
+    risk_flow_intraday reading for that tenor, that tenor's cumulative
+    totals, and the day's 10:00 flow-mix z. One row per tenor with at least
+    one reading today; a tenor with no reading yet is simply skipped rather
+    than written with all-NULL fields. Never raises."""
+    if SessionLocal is None:
+        return
+    db = SessionLocal()
+    try:
+        mix_z = _flow_mix_z_for(d)
+        fired_at = hit["at"]
+        if getattr(fired_at, "tzinfo", None) is not None:
+            fired_at = fired_at.replace(tzinfo=None)
+        for tenor in FLOW_TENORS:
+            rows = (db.query(RiskFlowIntraday)
+                      .filter(RiskFlowIntraday.d == d, RiskFlowIntraday.tenor == tenor)
+                      .order_by(RiskFlowIntraday.ts.desc())
+                      .limit(2).all())
+            if not rows:
+                continue
+            latest = rows[0]
+            prior = rows[1] if len(rows) > 1 else None
+
+            def _delta(cur, prev):
+                return (cur - prev) if (prior is not None and cur is not None
+                                        and prev is not None) else None
+
+            db.add(RiskConfirmFlowAtFire(
+                d=d, fired_dir=hit["dir"], fired_at=fired_at, tenor=tenor,
+                call_vol=latest.call_vol, put_vol=latest.put_vol,
+                call_notional=latest.call_notional, put_notional=latest.put_notional,
+                call_buy_share=latest.call_buy_share, put_buy_share=latest.put_buy_share,
+                flow_mix_z=mix_z,
+                call_vol_d=_delta(latest.call_vol, prior.call_vol if prior else None),
+                put_vol_d=_delta(latest.put_vol, prior.put_vol if prior else None),
+                call_notional_d=_delta(latest.call_notional, prior.call_notional if prior else None),
+                put_notional_d=_delta(latest.put_notional, prior.put_notional if prior else None),
+            ))
+        db.commit()
+    except Exception as e:                                     # noqa: BLE001
+        logger.warning("[routes_risk] flow_record_at_fire failed: %r", e)
+        db.rollback()
+    finally:
+        db.close()
+
+
+def paper_settle_pending() -> int:
+    """Settle every unsettled, non-skipped paper row whose date already has
+    a close_spot recorded on risk_confirm_state. Idempotent and re-runnable
+    — safe to call from confirm_record_close() every session and from a
+    backfill script alike; a row already settled is simply skipped.
+
+    settle_value = intrinsic of the $2 vertical at the close, capped at the
+    wing width: UP -> min(max(close-long,0),2); DOWN -> min(max(long-close,0),2).
+    pnl = (settle_value - debit) * 100 * contracts. Returns the count settled."""
+    if SessionLocal is None:
+        return 0
+    db = SessionLocal()
+    n = 0
+    try:
+        pending = (db.query(RiskConfirmPaper)
+                     .filter(RiskConfirmPaper.settled_at.is_(None))
+                     .filter(RiskConfirmPaper.skipped_reason.is_(None))
+                     .all())
+        for row in pending:
+            state = db.get(RiskConfirmState, row.d)
+            if state is None or state.close_spot is None:
+                continue
+            close_spot = float(state.close_spot)
+            if row.fired_dir == "UP":
+                intrinsic = min(max(close_spot - row.long_strike, 0.0), PAPER_WING_WIDTH)
+            else:
+                intrinsic = min(max(row.long_strike - close_spot, 0.0), PAPER_WING_WIDTH)
+            row.settle_spot = close_spot
+            row.settle_value = round(intrinsic, 4)
+            row.pnl = round((intrinsic - row.debit) * 100.0
+                            * (row.contracts or PAPER_CONTRACTS), 2)
+            row.settled_at = datetime.now(CT).replace(tzinfo=None)
+            n += 1
+        if n:
+            db.commit()
+        return n
+    except Exception as e:                                     # noqa: BLE001
+        logger.warning("[routes_risk] paper_settle_pending failed: %r", e)
+        db.rollback()
+        return 0
+    finally:
+        db.close()
 
 
 def _save_rolling_state(d: date, captured_at: datetime, pz: float | None,
@@ -737,7 +1148,11 @@ def confirm_step(d: date, now: datetime, spot: float, armed: bool,
 
 def confirm_record_close(d: date, close_spot: float) -> None:
     """Attach the session close to today's watcher row so the firing carries
-    its own outcome. Never raises — a missing row just means no firing."""
+    its own outcome. Never raises — a missing row just means no firing.
+
+    Also settles any pending paper-book rows for this date now that a close
+    exists (paper_settle_pending() is idempotent, so a retry or a second
+    call the same day is harmless)."""
     if SessionLocal is None:
         return
     db = SessionLocal()
@@ -750,6 +1165,10 @@ def confirm_record_close(d: date, close_spot: float) -> None:
         db.rollback()
     finally:
         db.close()
+    try:
+        paper_settle_pending()
+    except Exception:                                          # noqa: BLE001
+        pass
 
 
 def _rolling_fired_today(d: date) -> bool:
@@ -2082,6 +2501,114 @@ async def confirm_history(limit: int = 120):
         return {"status": "unavailable", "rows": []}
 
 
+def _paper_book_empty() -> dict:
+    return {
+        "start_balance": PAPER_START_BALANCE, "contracts": PAPER_CONTRACTS,
+        "book_start": PAPER_BOOK_START.isoformat(),
+        "running_balance": PAPER_START_BALANCE, "pnl_total": 0.0, "pnl_pct": 0.0,
+        "fires": 0, "settled": 0, "skipped": 0, "wins": 0, "win_rate": None,
+        "median_pnl": None, "worst_pnl": None, "best_pnl": None,
+        "gate": {"text": PAPER_GATE_TEXT, "fires_required": 40, "deadline": "2027-12-31"},
+        "rows": [], "flow_at_fire": [],
+    }
+
+
+@router.get("/paper-book")
+async def paper_book():
+    """Forward-only paper book for the flow-confirm 0DTE vertical (stage 4).
+    READ-ONLY: never writes and never triggers a Tradier call — it only
+    reads what paper_record_fire()/paper_settle_pending()/
+    flow_record_at_fire() already wrote. Degrades to the empty-book shape on
+    any failure, same discipline as /confirm-history."""
+    if SessionLocal is None:
+        return _paper_book_empty()
+    try:
+        db = SessionLocal()
+        try:
+            rows = (db.query(RiskConfirmPaper)
+                      .order_by(RiskConfirmPaper.d.asc(), RiskConfirmPaper.fired_at.asc())
+                      .all())
+            flow_rows = (db.query(RiskConfirmFlowAtFire)
+                           .order_by(RiskConfirmFlowAtFire.d.desc(),
+                                     RiskConfirmFlowAtFire.fired_at.desc())
+                           .all())
+        finally:
+            db.close()
+
+        if not rows:
+            return _paper_book_empty()
+
+        settled_pnls = [r.pnl for r in rows
+                        if r.settled_at is not None and r.pnl is not None]
+        skipped_n = sum(1 for r in rows if r.skipped_reason)
+        wins = sum(1 for p in settled_pnls if p > 0)
+        pnl_total = sum(settled_pnls)
+
+        running = PAPER_START_BALANCE
+        out_rows = []
+        for r in rows:
+            if r.settled_at is not None and r.pnl is not None:
+                running += r.pnl
+            strikes = None
+            if r.long_strike is not None and r.short_strike is not None:
+                side = "C" if r.fired_dir == "UP" else "P"
+                strikes = f"{side} {r.long_strike:.0f}/{r.short_strike:.0f}"
+            out_rows.append({
+                "date": r.d.isoformat(), "fired_dir": r.fired_dir,
+                "fired_at": r.fired_at.isoformat() if r.fired_at else None,
+                "expiry": r.expiry, "long_strike": r.long_strike,
+                "short_strike": r.short_strike, "strikes": strikes,
+                "debit": r.debit, "settle_value": r.settle_value,
+                "pnl": r.pnl, "skipped_reason": r.skipped_reason,
+                "running_balance": round(running, 2),
+            })
+        out_rows.reverse()   # newest first
+
+        median_pnl = None
+        if settled_pnls:
+            s = sorted(settled_pnls)
+            k = len(s)
+            median_pnl = s[k // 2] if k % 2 else (s[k // 2 - 1] + s[k // 2]) / 2.0
+
+        flow_out: list[dict] = []
+        by_fire: dict[tuple, dict] = {}
+        for r in flow_rows:
+            key = (r.d, r.fired_at)
+            entry = by_fire.get(key)
+            if entry is None:
+                entry = {"date": r.d.isoformat(), "fired_dir": r.fired_dir,
+                         "flow_mix_z": r.flow_mix_z, "tenors": {}}
+                by_fire[key] = entry
+                flow_out.append(entry)   # rows already ordered newest first
+            entry["tenors"][r.tenor] = {
+                "call_vol_d": r.call_vol_d, "put_vol_d": r.put_vol_d,
+                "call_notional_d": r.call_notional_d,
+                "put_notional_d": r.put_notional_d,
+                "call_buy_share": r.call_buy_share,
+                "put_buy_share": r.put_buy_share,
+            }
+
+        return {
+            "start_balance": PAPER_START_BALANCE, "contracts": PAPER_CONTRACTS,
+            "book_start": PAPER_BOOK_START.isoformat(),
+            "running_balance": round(running, 2),
+            "pnl_total": round(pnl_total, 2),
+            "pnl_pct": round(pnl_total / PAPER_START_BALANCE * 100, 3),
+            "fires": len(rows), "settled": len(settled_pnls), "skipped": skipped_n,
+            "wins": wins,
+            "win_rate": round(wins / len(settled_pnls), 4) if settled_pnls else None,
+            "median_pnl": round(median_pnl, 2) if median_pnl is not None else None,
+            "worst_pnl": round(min(settled_pnls), 2) if settled_pnls else None,
+            "best_pnl": round(max(settled_pnls), 2) if settled_pnls else None,
+            "gate": {"text": PAPER_GATE_TEXT, "fires_required": 40, "deadline": "2027-12-31"},
+            "rows": out_rows,
+            "flow_at_fire": flow_out,
+        }
+    except Exception as e:                                     # noqa: BLE001
+        logger.warning("[routes_risk] paper_book failed: %r", e)
+        return _paper_book_empty()
+
+
 @router.get("/scorecard")
 async def scorecard(request: Request, days: int = 120):
     """Self-grading: what the advisory SAID each session vs what HAPPENED,
@@ -2381,7 +2908,7 @@ async def session_tape(request: Request):
     if snap is not None:
         pz = _z(snap["putv"], [r["putv"] for r in prior])
         tz = _z(snap["totv"], [r["totv"] for r in prior])
-        cz = _pc_z(snap, prior)
+        cz = _flow_mix_z_for(today)
         clocks.append({"clock": "10:00", "captured": True, "putv_z": pz,
                        "totv_z": tz, "putcall_z": cz,
                        "flagged": bool((pz or 0) > 2 or (tz or 0) > 2
