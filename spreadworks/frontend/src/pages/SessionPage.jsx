@@ -394,11 +394,30 @@ function FlowTrack({ tape }) {
 // screen; the clocks and the alert log are proof, and proof does not need to
 // be open by default. (Same restructure that took the squeeze page from 6.3
 // screens to 3.)
-function Fold({ title, meta, children, open: init = false }) {
-  const [open, setOpen] = useState(init);
+//
+// 🚨 2026-09-02 restructure: the page is now four sections — status, the
+// call, the SPY line, and ONE fold holding everything else. `persistKey`
+// lets that outer fold remember open/closed across visits (same
+// try/catch-around-localStorage shape as MetricsBar's unit toggle); the
+// folds nested inside it stay plain — they don't need their own memory.
+function Fold({ title, meta, children, open: init = false, persistKey }) {
+  const [open, setOpen] = useState(() => {
+    if (!persistKey) return init;
+    try {
+      const saved = localStorage.getItem(persistKey);
+      return saved == null ? init : saved === '1';
+    } catch { return init; }
+  });
+  const toggle = () => setOpen((o) => {
+    const next = !o;
+    if (persistKey) {
+      try { localStorage.setItem(persistKey, next ? '1' : '0'); } catch { /* noop */ }
+    }
+    return next;
+  });
   return (
     <div style={S.card}>
-      <button onClick={() => setOpen(!open)} aria-expanded={open}
+      <button onClick={toggle} aria-expanded={open}
         style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center',
                  gap: 10, width: '100%', boxSizing: 'border-box' }}>
         <span style={{ color: DIM, fontSize: 13, width: 10 }}>{open ? '▾' : '▸'}</span>
@@ -615,10 +634,10 @@ export default function SessionPage() {
         </p>
       </div>
 
-      {/* the tape */}
+      {/* THE SPY LINE */}
       <div style={S.card}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
-          <span style={{ ...S.cardTitle, marginBottom: 0 }}>SPY since the 10:10 CT anchor</span>
+          <span style={{ ...S.cardTitle, marginBottom: 0 }}>SPY today</span>
           <Readout
             value={spotNow != null ? num(spotNow) : '—'}
             meaning={spotNow != null && c.ref_spot
@@ -631,6 +650,11 @@ export default function SessionPage() {
           />
         </div>
         <Tape tape={d.tape} levels={d.levels} confirm={c} />
+        <div style={{ ...S.small, marginTop: 8 }}>
+          The dashed lines are the two levels SPY needs to break, measured from the 10:10 CT
+          reading, for today's call to fire — {num(d.levels?.down)} on the downside and{' '}
+          {num(d.levels?.up)} on the upside.
+        </div>
 
         {/* How far from committing — arithmetic, not pixels.
             ⛔ ONLY WHILE ARMED. These two boxes give the price break top
@@ -675,195 +699,201 @@ export default function SessionPage() {
         </div>
       </div>
 
-      <TapeShape data={board.tape} />
+      {/* ONE FOLD, everything else. Collapsed by default — the first three
+          sections above are the page; this is the proof underneath it.
+          Order inside: call history first (it's the closest thing to a
+          scorecard), then the rest in the order it always rendered in. */}
+      <Fold title="How this signal has done" persistKey="sw_session_history_fold_open">
+        <CallHistory surface="session" title="Session call history" />
 
-      <BoardStrip board={board} />
+        <TapeShape data={board.tape} />
 
-      {/* the flow track — the second half of the tape, and the half that was
-          missing. Price says what happened; this says what the option flow was
-          doing while it happened. */}
-      <div style={S.card}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
-          <span style={{ ...S.cardTitle, marginBottom: 0 }}>Option flow through the session</span>
-          <Readout
-            value={mixNow != null ? `mix ${num(mixNow, 2)}` : '—'}
-            valueColor={zColor(mixNow) === DIM ? '#e6e9f0' : zColor(mixNow)}
-            meaning={mixMeaning ? `· ${mixMeaning} (arms at ${num(CONFIRM_ARM_Z, 1)})` : null}
-            meaningColor={zColor(mixNow)}
-            at={mixRow ? ctLabel(mixRow.minute_ct) : null}
-            ageMin={mixAge}
-          />
-        </div>
-        <FlowTrack tape={d.tape} />
-        <FlowVerdict d={d} c={c} />
-        <details style={{ marginTop: 8 }}>
-          <summary style={{ ...S.small, cursor: 'pointer' }}>how this is measured</summary>
-        <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6, maxWidth: '72ch' }}>
-            Each point is graded against the trailing 63 sessions at that same minute. The{' '}
-            <b style={{ color: '#e6e9f0' }}>mix</b> line — the put/call ratio — is the leg
-            that arms the call; it read 2.7 on 2026-08-17. A gap in a line means a poll
-            failed, not a flat reading. The alert only fires 10:36–14:00 CT.
+        <BoardStrip board={board} />
+
+        {/* the flow track — the second half of the tape, and the half that was
+            missing. Price says what happened; this says what the option flow was
+            doing while it happened. */}
+        <div style={S.card}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+            <span style={{ ...S.cardTitle, marginBottom: 0 }}>Option flow through the session</span>
+            <Readout
+              value={mixNow != null ? `mix ${num(mixNow, 2)}` : '—'}
+              valueColor={zColor(mixNow) === DIM ? '#e6e9f0' : zColor(mixNow)}
+              meaning={mixMeaning ? `· ${mixMeaning} (arms at ${num(CONFIRM_ARM_Z, 1)})` : null}
+              meaningColor={zColor(mixNow)}
+              at={mixRow ? ctLabel(mixRow.minute_ct) : null}
+              ageMin={mixAge}
+            />
           </div>
-        </details>
-      </div>
-
-      {/* fixed clocks */}
-      <Fold title="Flow clocks"
-            meta={`${(d.clocks || []).filter(k => k.captured).length} of ${(d.clocks || []).length} captured${(d.clocks || []).some(k => k.flagged) ? ' · flagged' : ''}`}>
-        <div style={{ display: 'grid', gap: 8 }}>
-          {(d.clocks || []).map((k) => (
-            <div key={k.clock} style={{
-              display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-              padding: '8px 10px', borderRadius: 8,
-              background: k.flagged ? `${RED}14` : '#0e1220',
-              border: `1px solid ${k.flagged ? `${RED}44` : '#1c2233'}`,
-            }}>
-              <span style={{ ...S.mono, fontWeight: 700, width: 46 }}>{k.clock}</span>
-              {!k.captured
-                ? <span style={S.small}>not captured yet</span>
-                : (<>
-                    <span style={{ fontSize: 13, color: zColor(k.putv_z) }}>
-                      put <b style={S.mono}>{num(k.putv_z, 1)}</b>
-                    </span>
-                    <span style={{ fontSize: 13, color: zColor(k.totv_z) }}>
-                      total <b style={S.mono}>{num(k.totv_z, 1)}</b>
-                    </span>
-                    <span style={{ fontSize: 13, color: zColor(k.putcall_z) }}>
-                      mix <b style={S.mono}>{num(k.putcall_z, 1)}</b>
-                    </span>
-                    {k.flagged && <Pill text="FLAGGED" color={RED} />}
-                  </>)}
+          <FlowTrack tape={d.tape} />
+          <FlowVerdict d={d} c={c} />
+          <details style={{ marginTop: 8 }}>
+            <summary style={{ ...S.small, cursor: 'pointer' }}>how this is measured</summary>
+          <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6, maxWidth: '72ch' }}>
+              Each point is graded against the trailing 63 sessions at that same minute. The{' '}
+              <b style={{ color: '#e6e9f0' }}>mix</b> line — the put/call ratio — is the leg
+              that arms the call; it read 2.7 on 2026-08-17. A gap in a line means a poll
+              failed, not a flat reading. The alert only fires 10:36–14:00 CT.
             </div>
-          ))}
+          </details>
         </div>
-        <div style={{ ...S.small, marginTop: 10, lineHeight: 1.6 }}>
-          <b style={{ color: '#c6cbd8' }}>mix</b> is the put/call volume ratio. Added after
-          2026-08-17, when put and total volume were both correctly quiet and the ratio was at
-          +2.7 — the highest in three months — 90 minutes before the slide.
-        </div>
-      </Fold>
 
-      {/* IS THE RULE STILL PASSING — the decay monitor had no UI anywhere.
-          An advisory surface that can't say whether its own rule still works
-          is asking to be trusted on faith, and this repo has already watched
-          an edge die in the open. */}
-      <Fold title="Is this signal still working?"
-            meta={d.calibration?.verdict
-              ? `${d.calibration.verdict}${d.calibration.n_armed_fired != null ? ` · ${d.calibration.n_armed_fired} armed firings` : ''}`
-              : 'no scorecard'}>
-        {d.calibration?.verdict ? (<>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
-            <Pill text={d.calibration.verdict}
-                  color={d.calibration.verdict === 'PASS' ? GREEN
-                       : d.calibration.verdict === 'DISARM' ? RED
-                       : d.calibration.verdict === 'WARN' ? AMBER : DIM}
-                  solid={d.calibration.verdict === 'DISARM'} />
-            <span style={S.small}>
-              rolling {d.calibration.window_months}-month window · {d.calibration.sessions} sessions
-              {d.calibration.live_sessions ? ` (${d.calibration.live_sessions} live)` : ''}
-            </span>
-          </div>
-          <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))' }}>
-            {[['continuation, armed', d.calibration.continuation, true],
-              ['same-window base', d.calibration.base_continuation, true],
-              ['worst plausible rate', d.calibration.continuation_lcb, true],
-              ['armed share of sessions', d.calibration.armed_share, true],
-              ['morning flow lift', d.calibration.stage1_lift, false]].map(([lbl, v, pct]) => (
-              <div key={lbl} style={{ padding: '9px 11px', borderRadius: 8, background: '#0e1220',
-                                      border: '1px solid #1c2233' }}>
-                <div style={S.small}>{lbl}</div>
-                <div style={{ ...S.mono, fontSize: 16, fontWeight: 700, marginTop: 2 }}>
-                  {v == null ? '—' : pct ? `${(v * 100).toFixed(1)}%` : `${v.toFixed(2)}×`}
-                </div>
+        {/* fixed clocks */}
+        <Fold title="Flow clocks"
+              meta={`${(d.clocks || []).filter(k => k.captured).length} of ${(d.clocks || []).length} captured${(d.clocks || []).some(k => k.flagged) ? ' · flagged' : ''}`}>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {(d.clocks || []).map((k) => (
+              <div key={k.clock} style={{
+                display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+                padding: '8px 10px', borderRadius: 8,
+                background: k.flagged ? `${RED}14` : '#0e1220',
+                border: `1px solid ${k.flagged ? `${RED}44` : '#1c2233'}`,
+              }}>
+                <span style={{ ...S.mono, fontWeight: 700, width: 46 }}>{k.clock}</span>
+                {!k.captured
+                  ? <span style={S.small}>not captured yet</span>
+                  : (<>
+                      <span style={{ fontSize: 13, color: zColor(k.putv_z) }}>
+                        put <b style={S.mono}>{num(k.putv_z, 1)}</b>
+                      </span>
+                      <span style={{ fontSize: 13, color: zColor(k.totv_z) }}>
+                        total <b style={S.mono}>{num(k.totv_z, 1)}</b>
+                      </span>
+                      <span style={{ fontSize: 13, color: zColor(k.putcall_z) }}>
+                        mix <b style={S.mono}>{num(k.putcall_z, 1)}</b>
+                      </span>
+                      {k.flagged && <Pill text="FLAGGED" color={RED} />}
+                    </>)}
               </div>
             ))}
           </div>
-          {(d.calibration.reasons || []).length > 0 && (
-            <div style={{ ...S.small, marginTop: 10, lineHeight: 1.6 }}>
-              {d.calibration.reasons.join(' · ')}
-            </div>
-          )}
-          {d.runway?.armed && d.runway?.base && (
-            <div style={{ ...S.small, marginTop: 12, lineHeight: 1.7, maxWidth: '72ch' }}>
-              <b style={{ color: '#c6cbd8' }}>Magnitude, not just hit rate.</b> A confirmed break
-              runs a median {num(d.runway.armed.median_win, 2)}% when it works and gives back{' '}
-              {num(Math.abs(d.runway.armed.median_loss), 2)}% when it doesn’t —{' '}
-              <b style={{ color: '#e6e9f0' }}>wins run {num(d.runway.payoff_ratio, 1)}x</b> the
-              size of losses. Unarmed, that shrinks to {num(d.runway.base_payoff_ratio, 2)}x.
-            </div>
-          )}
-        </>) : (
-          <div style={S.small}>The nightly scorer hasn’t written a window yet.</div>
-        )}
-      </Fold>
+          <div style={{ ...S.small, marginTop: 10, lineHeight: 1.6 }}>
+            <b style={{ color: '#c6cbd8' }}>mix</b> is the put/call volume ratio. Added after
+            2026-08-17, when put and total volume were both correctly quiet and the ratio was at
+            +2.7 — the highest in three months — 90 minutes before the slide.
+          </div>
+        </Fold>
 
-      {/* the track record — sessions, not claims */}
-      <Fold title="Recent sessions"
-            meta={`${(d.history || []).filter(h => h.armed).length} armed of ${(d.history || []).length}`}>
-        {(d.history || []).length === 0
-          ? <div style={S.small}>No scored sessions yet.</div>
-          : (<>
-            <div style={{ display: 'grid', gap: 4 }}>
-              {d.history.map((h) => (
-                <div key={h.d} style={{
-                  display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-                  padding: '6px 9px', borderRadius: 7,
-                  background: h.armed ? '#0e1220' : 'transparent',
-                  border: `1px solid ${h.armed ? '#232a3d' : 'transparent'}`,
-                }}>
-                  <span style={{ ...S.mono, fontSize: 13, color: DIM, width: 82 }}>{h.d}</span>
-                  <span style={{ fontSize: 13, color: zColor(h.pcz), width: 62 }}>
-                    mix <b style={S.mono}>{num(h.pcz, 1)}</b>
-                  </span>
-                  {h.armed
-                    ? <Pill text="ARMED" color={AMBER} />
-                    : <span style={{ ...S.small, width: 54 }}>quiet</span>}
-                  {h.fired_dir
-                    ? <span style={{ fontSize: 13, color: h.fired_dir === 'DOWN' ? RED : GREEN }}>
-                        {h.fired_dir} break
-                      </span>
-                    : <span style={S.small}>no break</span>}
-                  {h.continued != null && (
-                    <span style={{ ...S.small, color: h.continued ? GREEN : RED }}>
-                      {h.continued ? 'continued' : 'faded'}
-                    </span>
-                  )}
-                  <span style={{ ...S.mono, fontSize: 13, marginLeft: 'auto',
-                                 color: (h.move_pct || 0) >= 0 ? GREEN : RED }}>
-                    {h.move_pct == null ? '—' : `${h.move_pct >= 0 ? '+' : ''}${num(h.move_pct, 2)}%`}
-                  </span>
+        {/* IS THE RULE STILL PASSING — the decay monitor had no UI anywhere.
+            An advisory surface that can't say whether its own rule still works
+            is asking to be trusted on faith, and this repo has already watched
+            an edge die in the open. */}
+        <Fold title="Is this signal still working?"
+              meta={d.calibration?.verdict
+                ? `${d.calibration.verdict}${d.calibration.n_armed_fired != null ? ` · ${d.calibration.n_armed_fired} armed firings` : ''}`
+                : 'no scorecard'}>
+          {d.calibration?.verdict ? (<>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+              <Pill text={d.calibration.verdict}
+                    color={d.calibration.verdict === 'PASS' ? GREEN
+                         : d.calibration.verdict === 'DISARM' ? RED
+                         : d.calibration.verdict === 'WARN' ? AMBER : DIM}
+                    solid={d.calibration.verdict === 'DISARM'} />
+              <span style={S.small}>
+                rolling {d.calibration.window_months}-month window · {d.calibration.sessions} sessions
+                {d.calibration.live_sessions ? ` (${d.calibration.live_sessions} live)` : ''}
+              </span>
+            </div>
+            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))' }}>
+              {[['continuation, armed', d.calibration.continuation, true],
+                ['same-window base', d.calibration.base_continuation, true],
+                ['worst plausible rate', d.calibration.continuation_lcb, true],
+                ['armed share of sessions', d.calibration.armed_share, true],
+                ['morning flow lift', d.calibration.stage1_lift, false]].map(([lbl, v, pct]) => (
+                <div key={lbl} style={{ padding: '9px 11px', borderRadius: 8, background: '#0e1220',
+                                        border: '1px solid #1c2233' }}>
+                  <div style={S.small}>{lbl}</div>
+                  <div style={{ ...S.mono, fontSize: 16, fontWeight: 700, marginTop: 2 }}>
+                    {v == null ? '—' : pct ? `${(v * 100).toFixed(1)}%` : `${v.toFixed(2)}×`}
+                  </div>
                 </div>
               ))}
             </div>
-            <div style={{ ...S.small, marginTop: 10, lineHeight: 1.6 }}>
-              Highlighted rows armed on the morning mix. “continued” means the break kept going to
-              the close — the outcome the 63% is measured on. The % column is 10:00 CT to the close.
-            </div>
-          </>)}
-      </Fold>
+            {(d.calibration.reasons || []).length > 0 && (
+              <div style={{ ...S.small, marginTop: 10, lineHeight: 1.6 }}>
+                {d.calibration.reasons.join(' · ')}
+              </div>
+            )}
+            {d.runway?.armed && d.runway?.base && (
+              <div style={{ ...S.small, marginTop: 12, lineHeight: 1.7, maxWidth: '72ch' }}>
+                <b style={{ color: '#c6cbd8' }}>Magnitude, not just hit rate.</b> A confirmed break
+                runs a median {num(d.runway.armed.median_win, 2)}% when it works and gives back{' '}
+                {num(Math.abs(d.runway.armed.median_loss), 2)}% when it doesn’t —{' '}
+                <b style={{ color: '#e6e9f0' }}>wins run {num(d.runway.payoff_ratio, 1)}x</b> the
+                size of losses. Unarmed, that shrinks to {num(d.runway.base_payoff_ratio, 2)}x.
+              </div>
+            )}
+          </>) : (
+            <div style={S.small}>The nightly scorer hasn’t written a window yet.</div>
+          )}
+        </Fold>
 
-      {/* pushes already sent */}
-      <Fold title="Alerts sent today"
-            meta={`${(d.alerts || []).filter(a => a.fired).length} sent`}>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {(d.alerts || []).map((a) => (
-            <Pill key={a.key} text={a.label} color={a.fired ? BLUE : DIM} solid={a.fired} />
-          ))}
-        </div>
-        <div style={{ ...S.small, marginTop: 10 }}>
-          Solid = pushed to Discord and your phone. Dim = hasn’t fired.
-        </div>
-      </Fold>
+        {/* the track record — sessions, not claims */}
+        <Fold title="Recent sessions"
+              meta={`${(d.history || []).filter(h => h.armed).length} armed of ${(d.history || []).length}`}>
+          {(d.history || []).length === 0
+            ? <div style={S.small}>No scored sessions yet.</div>
+            : (<>
+              <div style={{ display: 'grid', gap: 4 }}>
+                {d.history.map((h) => (
+                  <div key={h.d} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                    padding: '6px 9px', borderRadius: 7,
+                    background: h.armed ? '#0e1220' : 'transparent',
+                    border: `1px solid ${h.armed ? '#232a3d' : 'transparent'}`,
+                  }}>
+                    <span style={{ ...S.mono, fontSize: 13, color: DIM, width: 82 }}>{h.d}</span>
+                    <span style={{ fontSize: 13, color: zColor(h.pcz), width: 62 }}>
+                      mix <b style={S.mono}>{num(h.pcz, 1)}</b>
+                    </span>
+                    {h.armed
+                      ? <Pill text="ARMED" color={AMBER} />
+                      : <span style={{ ...S.small, width: 54 }}>quiet</span>}
+                    {h.fired_dir
+                      ? <span style={{ fontSize: 13, color: h.fired_dir === 'DOWN' ? RED : GREEN }}>
+                          {h.fired_dir} break
+                        </span>
+                      : <span style={S.small}>no break</span>}
+                    {h.continued != null && (
+                      <span style={{ ...S.small, color: h.continued ? GREEN : RED }}>
+                        {h.continued ? 'continued' : 'faded'}
+                      </span>
+                    )}
+                    <span style={{ ...S.mono, fontSize: 13, marginLeft: 'auto',
+                                   color: (h.move_pct || 0) >= 0 ? GREEN : RED }}>
+                      {h.move_pct == null ? '—' : `${h.move_pct >= 0 ? '+' : ''}${num(h.move_pct, 2)}%`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ ...S.small, marginTop: 10, lineHeight: 1.6 }}>
+                Highlighted rows armed on the morning mix. “continued” means the break kept going to
+                the close — the outcome the 63% is measured on. The % column is 10:00 CT to the close.
+              </div>
+            </>)}
+        </Fold>
 
-      {/* honest exclusion */}
-      <Fold title="Why there's no gamma panel here">
-        <p style={{ fontSize: 13, lineHeight: 1.6, color: DIM, margin: 0, maxWidth: '68ch' }}>
-          {d.gamma_feed?.reason} Until that feed ticks, a gamma panel here would be a confident
-          picture of a stale number — so there isn’t one. The GEX Profile page carries the map.
-        </p>
-      </Fold>
+        {/* pushes already sent */}
+        <Fold title="Alerts sent today"
+              meta={`${(d.alerts || []).filter(a => a.fired).length} sent`}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {(d.alerts || []).map((a) => (
+              <Pill key={a.key} text={a.label} color={a.fired ? BLUE : DIM} solid={a.fired} />
+            ))}
+          </div>
+          <div style={{ ...S.small, marginTop: 10 }}>
+            Solid = pushed to Discord and your phone. Dim = hasn’t fired.
+          </div>
+        </Fold>
 
-      <CallHistory surface="session" title="Session call history" />
+        {/* honest exclusion */}
+        <Fold title="Why there's no gamma panel here">
+          <p style={{ fontSize: 13, lineHeight: 1.6, color: DIM, margin: 0, maxWidth: '68ch' }}>
+            {d.gamma_feed?.reason} Until that feed ticks, a gamma panel here would be a confident
+            picture of a stale number — so there isn’t one. The GEX Profile page carries the map.
+          </p>
+        </Fold>
+      </Fold>
     </div>
     </div>
   );
