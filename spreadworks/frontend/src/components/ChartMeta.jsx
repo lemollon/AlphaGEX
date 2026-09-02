@@ -48,7 +48,7 @@ const S = {
     background: '#0e1220', border: '1px solid #1c2233',
   },
   label: {
-    fontSize: 10, color: DIM, letterSpacing: '.05em', textTransform: 'uppercase',
+    fontSize: 13, color: DIM, letterSpacing: '.05em', textTransform: 'uppercase',
     marginBottom: 3, whiteSpace: 'nowrap',
   },
   value: {
@@ -56,7 +56,7 @@ const S = {
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
     fontVariantNumeric: 'tabular-nums',
   },
-  note: { fontSize: 10.5, color: DIM, marginTop: 2, lineHeight: 1.35 },
+  note: { fontSize: 13, color: DIM, marginTop: 2, lineHeight: 1.35 },
 };
 
 /** Whole-minute countdown. Ticks on its own so the number never goes stale

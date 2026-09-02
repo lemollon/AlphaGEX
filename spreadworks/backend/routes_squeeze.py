@@ -27,7 +27,8 @@ from fastapi import APIRouter
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from .bots.gamma_regime import (GAMMA_DAILY_TABLE, PCT_WINDOW, capture_health,
+from .bots.gamma_regime import (BREAK_CELLS, GAMMA_DAILY_TABLE, PCT_WINDOW,
+                                attach_forward_returns, capture_health,
                                 data_freshness, job_status, signal_history,
                                 signal_summary, squeeze_outlook, squeeze_signal,
                                 trade_ticket, vix_history)
@@ -166,6 +167,20 @@ async def state(sessions: str | None = None):
         logger.warning("[routes_squeeze] signal_history failed: %r", e)
         sh, summary = [], {"reason": f"signal_history error: {e}"}
 
+    # Forward return per signal_history row — what SPY did the NEXT session,
+    # read from sw_spy_daily's own closes. Never sw_gamma_daily.spot: that is
+    # an ORAT forward mark, not a settle (see gamma_regime's module docstring).
+    try:
+        fwd_coverage = attach_forward_returns(ENGINE, sh)
+        for k in ("first_date", "last_date"):
+            if fwd_coverage.get(k) is not None:
+                fwd_coverage[k] = _isoformat(fwd_coverage[k])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_squeeze] attach_forward_returns failed: %r", e)
+        fwd_coverage = {"sessions_with_fwd": 0, "sessions_total": len(sh),
+                        "first_date": None, "last_date": None,
+                        "reason": f"attach_forward_returns error: {e}"}
+
     # When each scheduled job last actually fired. The page advertised "next
     # capture 15:05 CT" with no way to see that it has never once run.
     try:
@@ -253,6 +268,9 @@ async def state(sessions: str | None = None):
         "gamma_pct": sig.get("gamma_pct"),
         "net_gex_b": sig.get("net_gex_b"),
         "vix_ratio": sig.get("vix_ratio"),
+        "break_prob": sig.get("break_prob"),
+        "break_cell": sig.get("break_cell"),
+        "break_sample": BREAK_CELLS.get("sample"),
         "prior_date": (_isoformat(sig["prior_date"])
                       if sig.get("prior_date") is not None else None),
         "reason": sig.get("reason"),
@@ -260,6 +278,7 @@ async def state(sessions: str | None = None):
         "vix_history": vh,
         "signal_history": sh,
         "signal_summary": summary,
+        "fwd_coverage": fwd_coverage,
         "advisory_only": True,
     }
 
