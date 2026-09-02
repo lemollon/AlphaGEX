@@ -57,7 +57,7 @@ function zColor(z) {
 function Pill({ text, color, solid }) {
   return (
     <span style={{
-      display: 'inline-block', padding: '3px 9px', borderRadius: 999, fontSize: 12,
+      display: 'inline-block', padding: '3px 9px', borderRadius: 999, fontSize: 13,
       fontWeight: 700, letterSpacing: '.04em', whiteSpace: 'nowrap',
       color: solid ? '#0b0e17' : color, background: solid ? color : `${color}22`,
       border: `1px solid ${color}${solid ? '' : '55'}`,
@@ -294,7 +294,7 @@ function Tape({ tape, levels, confirm }) {
             Label it on the line, and again in the header. */}
         <circle cx={X(last.minute_ct)} cy={Y(last.spot)} r="4" fill="#e6e9f0" />
         <text x={Math.min(X(last.minute_ct) + 8, W - mr - 44)} y={liveY}
-              fill="#e6e9f0" style={{ fontSize: 12, fontWeight: 700, ...S.mono }}>
+              fill="#e6e9f0" style={{ fontSize: 13, fontWeight: 700, ...S.mono }}>
           {num(last.spot)}
         </text>
         <text x={ml} y={H - 8} fill={DIM} style={{ fontSize: 11, ...S.mono }}>{ctLabel(m0)}</text>
@@ -365,7 +365,7 @@ function FlowTrack({ tape }) {
                   fill={zColor(last.roll_pc_z) === DIM ? '#e6e9f0' : zColor(last.roll_pc_z)} />
           <text x={Math.min(X(last.minute_ct) + 8, W - mr - 40)} y={Y(last.roll_pc_z) + 4}
                 fill={zColor(last.roll_pc_z) === DIM ? '#e6e9f0' : zColor(last.roll_pc_z)}
-                style={{ fontSize: 12, fontWeight: 700, ...S.mono }}>
+                style={{ fontSize: 13, fontWeight: 700, ...S.mono }}>
             {num(last.roll_pc_z, 2)}
           </text>
         </>)}
