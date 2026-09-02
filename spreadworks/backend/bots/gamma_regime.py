@@ -295,6 +295,38 @@ def gamma_percentile(engine: Engine, asof: date,
             "n_history": len(rows), "reason": None}
 
 
+# ---------------------------------------------------------------------------
+# Intraday break probability by regime cell — P(>1% intraday move), measured
+# 2020-01-02 through 2026-08-11 (1,646 sessions). Cells are net_gex sign +
+# spot vs the re-solved flip; the two collapse to the SAME variable here (net
+# gamma < 0 and spot below flip agree 96.1% of the time — see the module
+# docstring), so the sign of net_gex_b alone selects a cell.
+# ---------------------------------------------------------------------------
+BREAK_CELLS = {
+    "short_below_flip": 0.275,   # short gamma, spot below flip
+    "long_above_flip": 0.096,    # long gamma, spot above flip
+    "deep_short_gamma": 0.333,   # net gamma below -$10B — a subset of short_below_flip
+    "sample": "1,646 sessions, 2020-2026",
+}
+
+
+def break_probability(net_gex_b: float | None) -> tuple[float | None, str]:
+    """P(SPY moves >1% intraday) for today's regime cell, or (None, "no cell").
+
+    Checked most-specific first: deep short gamma is a SUBSET of "short gamma,
+    spot below flip", so it has to win the match rather than the broader cell.
+    """
+    if net_gex_b is None:
+        return None, "no cell"
+    if net_gex_b <= DEEP_SHORT_B:
+        return BREAK_CELLS["deep_short_gamma"], "deep_short_gamma"
+    if net_gex_b < 0:
+        return BREAK_CELLS["short_below_flip"], "short_below_flip"
+    if net_gex_b > 0:
+        return BREAK_CELLS["long_above_flip"], "long_above_flip"
+    return None, "no cell"
+
+
 def squeeze_signal(engine: Engine, asof: date) -> dict[str, Any]:
     """The full verdict for a decision being made ON `asof`. Prior sessions only.
 
@@ -322,9 +354,11 @@ def squeeze_signal(engine: Engine, asof: date) -> dict[str, Any]:
     vr = vix_decay_ratio(engine, asof)
     pct, ratio = gp.get("pct"), vr.get("ratio")
     b = gp.get("net_gex_b")
+    break_prob, break_cell = break_probability(b)
 
     out = {"verdict": "UNKNOWN", "gamma_pct": pct, "net_gex_b": b,
            "vix_ratio": ratio, "prior_date": gp.get("prior_date"),
+           "break_prob": break_prob, "break_cell": break_cell,
            "reason": gp.get("reason") or vr.get("reason")}
 
     if pct is None or ratio is None:
@@ -936,6 +970,85 @@ def signal_history(engine: Engine, n: int = 90,
         out.append({"trade_date": d, "net_gex_b": b, "pct": pct,
                     "vix_ratio": ratio, "verdict": verdict})
     return out[-n:]
+
+
+SPY_DAILY_TABLE = "sw_spy_daily"
+# Widest calendar gap that can still be ONE session: Friday to the Tuesday
+# after a Monday holiday, or Thursday to the Monday after Good Friday.
+MAX_NEXT_SESSION_GAP_DAYS = 4
+
+
+def attach_forward_returns(engine: Engine, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Tag each `signal_history` row with `fwd1_pct`: the NEXT session's SPY
+    close over THIS session's close, minus 1. Read from sw_spy_daily's own
+    closes only.
+
+    🚨 NEVER sw_gamma_daily.spot or the ORAT baseline's `spot` column — see the
+    module docstring: those are a forward mark solved off the option chain,
+    not a settle, and using them here would silently swap in a different
+    number under the same name.
+
+    Mutates `rows` in place (adds "fwd1_pct", float or None) and returns the
+    coverage the page prints alongside the strip. sw_spy_daily is populated
+    live from Tradier in a trailing window (see routes_calls._refresh_spy), so
+    a wide range routinely has sessions with no close on file yet — those are
+    left as None, never zero-filled, and the caller omits them from the strip
+    rather than plotting a manufactured "no move".
+    """
+    coverage: dict[str, Any] = {"sessions_with_fwd": 0, "sessions_total": len(rows),
+                                "first_date": None, "last_date": None}
+    if not rows:
+        return coverage
+
+    def _d(x: Any) -> date:
+        return x if isinstance(x, date) else date.fromisoformat(str(x))
+
+    dates = [_d(r["trade_date"]) for r in rows]
+    lo, hi = min(dates), max(dates)
+    with engine.begin() as conn:
+        spy_rows = conn.execute(text(
+            f"SELECT trade_date, close FROM {SPY_DAILY_TABLE} "
+            "WHERE trade_date >= :lo AND trade_date <= :hi AND close IS NOT NULL "
+            "ORDER BY trade_date"
+        ), {"lo": lo, "hi": hi + timedelta(days=10)}).fetchall()
+    spy = sorted((_d(r[0]), float(r[1])) for r in spy_rows)
+    close_by_date = dict(spy)
+    ordered_dates = [d for d, _ in spy]
+    pos = {d: i for i, d in enumerate(ordered_dates)}
+
+    # What counts as "the next session" is decided by TWO calendars agreeing:
+    # the next row in sw_spy_daily and the next row in the signal history
+    # itself (which is the gamma table's own session list). A hole in either
+    # table would otherwise turn this into a two-session return wearing the
+    # same name. When both tables skip the same weekday it is treated as a
+    # holiday — there is no holiday calendar in this service and that is the
+    # only evidence available. The calendar-gap cap is belt and braces on top:
+    # Fri -> Tue across a Monday holiday is the widest real gap there is.
+    row_dates = sorted(set(dates))
+    next_row = {a: b for a, b in zip(row_dates, row_dates[1:])}
+
+    n_fwd = 0
+    covered: list[date] = []
+    for r, d in zip(rows, dates):
+        fwd = None
+        c0 = close_by_date.get(d)
+        i = pos.get(d)
+        if c0 and i is not None and i + 1 < len(ordered_dates):
+            d1 = ordered_dates[i + 1]
+            c1 = close_by_date[d1]
+            if (c1 and next_row.get(d) == d1
+                    and (d1 - d).days <= MAX_NEXT_SESSION_GAP_DAYS):
+                fwd = (c1 / c0) - 1
+        r["fwd1_pct"] = fwd
+        if fwd is not None:
+            n_fwd += 1
+            covered.append(d)
+
+    coverage["sessions_with_fwd"] = n_fwd
+    if covered:
+        coverage["first_date"] = min(covered)
+        coverage["last_date"] = max(covered)
+    return coverage
 
 
 def signal_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
