@@ -12,7 +12,7 @@
 // slow DB must not blank the page — each block renders its own "unavailable"
 // state and the rest of the page keeps going, same discipline as /money and
 // /book-risk.
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Crosshair, AlertTriangle, ExternalLink } from 'lucide-react';
 import { API_URL } from '../lib/api';
 
@@ -143,20 +143,22 @@ function SignalState({ data, err }) {
 // ── SECTION 2 · THE PLAYBOOK ─────────────────────────────────────────────
 // Static, and must stay honest: what is tested, what is not, and what this
 // signal is actually allowed to do today.
-const PIPELINE = [
-  { n: 1, label: 'Found', rated: 'not rated',
-    note: 'A pattern noticed in the data. Nothing has been measured against it yet.' },
-  { n: 2, label: 'Proving the signal', rated: 'prediction quality, no dollars',
-    note: 'Does it predict anything better than chance? hedge-dump, cascade and squeeze live here. The flow-confirm signal itself is here too — 63% continuation, tested, no money attached.' },
-  { n: 3, label: 'Trade designed', rated: 'dollars/trade vs frozen bars',
-    note: 'A specific ticket (strikes, size, entry/exit) is backtested against historical prices.' },
-  { n: 4, label: 'Paper book', rated: 'starting + running balance',
-    note: 'The designed trade runs live on paper money with a real ledger. EBB and EBB-PM run here — and now the flow-confirm trade too: passed 8/31; paper accrual being built.' },
-  { n: 5, label: 'Live', rated: 'real P&L vs paper shadow',
-    note: 'Real capital, checked continuously against its own paper shadow to catch drift.' },
-];
+function pipelineRows(bookStart) {
+  return [
+    { n: 1, label: 'Found', rated: 'not rated',
+      note: 'A pattern noticed in the data. Nothing has been measured against it yet.' },
+    { n: 2, label: 'Proving the signal', rated: 'prediction quality, no dollars',
+      note: 'Does it predict anything better than chance? hedge-dump, cascade and squeeze live here. The flow-confirm signal itself is here too — 63% continuation, tested, no money attached.' },
+    { n: 3, label: 'Trade designed', rated: 'dollars/trade vs frozen bars',
+      note: 'A specific ticket (strikes, size, entry/exit) is backtested against historical prices.' },
+    { n: 4, label: 'Paper book', rated: 'starting + running balance',
+      note: `The designed trade runs live on paper money with a real ledger. EBB and EBB-PM run here — and now the flow-confirm trade too: passed 8/31; paper book live since ${bookStart || '—'}.` },
+    { n: 5, label: 'Live', rated: 'real P&L vs paper shadow',
+      note: 'Real capital, checked continuously against its own paper shadow to catch drift.' },
+  ];
+}
 
-function Playbook() {
+function Playbook({ bookStart }) {
   return (
     <div style={S.card}>
       <div style={S.h2}>The playbook</div>
@@ -250,7 +252,7 @@ function Playbook() {
               </tr>
             </thead>
             <tbody>
-              {PIPELINE.map((p) => (
+              {pipelineRows(bookStart).map((p) => (
                 <tr key={p.n}>
                   <td style={{ ...S.td, fontWeight: 700, whiteSpace: 'nowrap' }}>
                     {p.n}. {p.label}
@@ -263,6 +265,202 @@ function Playbook() {
           </table>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── SECTION 2.5 · PAPER BOOK (stage 4) ───────────────────────────────────
+// The forward-only ledger for the flow-confirm trade design. Nothing here
+// places a trade — it reads /paper-book, which reads what the confirm-check
+// job wrote when it fired. Same card/table/mono conventions as FiringHistory.
+const FLOW_TENOR_COLUMNS = [
+  ['0dte', '0DTE'], ['1_5d', '1-5D'], ['6_20d', '6-20D'], ['far', 'FAR'],
+];
+
+function StatTile({ label, value, tone }) {
+  return (
+    <div style={{
+      flex: '1 1 150px', padding: '8px 10px', borderRadius: 8,
+      background: '#0e1220', border: '1px solid #1c2233',
+    }}>
+      <div style={S.small}>{label}</div>
+      <div style={{ ...S.mono, fontSize: 15, fontWeight: 700, color: tone || '#e6e9f0', marginTop: 2 }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function PaperBook({ data, err }) {
+  if (err) {
+    return (
+      <div style={S.card}>
+        <div style={S.h2}>Paper book — stage 4</div>
+        <div style={{ marginTop: 8 }}><Chip text="unavailable — could not load /paper-book" /></div>
+      </div>
+    );
+  }
+  if (!data) {
+    return <div style={S.card}><div style={S.h2}>Paper book — stage 4</div><div style={{ ...S.small, marginTop: 8 }}>Loading…</div></div>;
+  }
+
+  const rows = data.rows || [];
+  const flowRows = data.flow_at_fire || [];
+  const pnlTone = data.pnl_total > 0 ? GREEN : data.pnl_total < 0 ? RED : DIM;
+
+  return (
+    <div style={S.card}>
+      <div style={S.h2}>Paper book — stage 4</div>
+      <div style={{ ...S.small, marginBottom: 12 }}>
+        Forward-only. Row 1 is the first fire after {data.book_start}. The
+        8/18 and 8/20 fires are not in this book — the search saw them.
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+        <StatTile label="Starting balance" value={`$${money(data.start_balance)}`} />
+        <StatTile label="Running balance" value={`$${money(data.running_balance)}`} tone={pnlTone} />
+        <StatTile
+          label="P&L ($ / %)"
+          value={`${data.pnl_total >= 0 ? '+' : ''}$${money(data.pnl_total)} (${pct(data.pnl_pct)})`}
+          tone={pnlTone}
+        />
+        <StatTile label="Fires (settled / skipped)" value={`${data.fires} (${data.settled} / ${data.skipped})`} />
+        <StatTile
+          label="Win rate"
+          value={data.win_rate == null ? '—' : `${(data.win_rate * 100).toFixed(0)}%`}
+        />
+        <StatTile
+          label="Median / fire"
+          value={data.median_pnl == null ? '—' : `${data.median_pnl >= 0 ? '+' : ''}$${money(data.median_pnl)}`}
+          tone={data.median_pnl == null ? undefined : (data.median_pnl >= 0 ? GREEN : RED)}
+        />
+        <StatTile
+          label="Worst fire"
+          value={data.worst_pnl == null ? '—' : `$${money(data.worst_pnl)}`}
+          tone={data.worst_pnl == null ? undefined : RED}
+        />
+        <StatTile
+          label="Best fire"
+          value={data.best_pnl == null ? '—' : `+$${money(data.best_pnl)}`}
+          tone={data.best_pnl == null ? undefined : GREEN}
+        />
+      </div>
+
+      <div style={{
+        padding: '10px 12px', borderRadius: 8, marginBottom: 12,
+        background: `${AMBER}12`, border: `1px solid ${AMBER}55`,
+      }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: AMBER }}>
+          {data.gate?.text}
+        </div>
+      </div>
+
+      {rows.length === 0 ? (
+        <div style={{ ...S.small }}>No fires since the book opened.</div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 760 }}>
+            <thead>
+              <tr>
+                <th style={S.th}>date</th>
+                <th style={S.th}>dir</th>
+                <th style={S.th}>fire time</th>
+                <th style={S.th}>strikes</th>
+                <th style={{ ...S.th, textAlign: 'right' }}>debit</th>
+                <th style={{ ...S.th, textAlign: 'right' }}>settle</th>
+                <th style={{ ...S.th, textAlign: 'right' }}>P&L</th>
+                <th style={{ ...S.th, textAlign: 'right' }}>balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => {
+                const dirColor = r.fired_dir === 'UP' ? GREEN : r.fired_dir === 'DOWN' ? RED : DIM;
+                return (
+                  <tr key={`${r.date}-${r.fired_at || i}`}>
+                    <td style={{ ...S.td, ...S.mono }}>{r.date}</td>
+                    <td style={{ ...S.td, fontWeight: 700, color: dirColor }}>{r.fired_dir}</td>
+                    <td style={{ ...S.td, ...S.mono, color: DIM }}>
+                      {r.fired_at ? `${ctTime(r.fired_at)} CT` : '—'}
+                    </td>
+                    <td style={{ ...S.td, ...S.mono }}>{r.strikes || '—'}</td>
+                    <td style={{ ...S.td, ...S.mono, textAlign: 'right' }}>
+                      {r.debit == null ? '—' : money(r.debit)}
+                    </td>
+                    <td style={{ ...S.td, ...S.mono, textAlign: 'right' }}>
+                      {r.settle_value == null ? '—' : money(r.settle_value)}
+                    </td>
+                    <td style={{
+                      ...S.td, ...S.mono, textAlign: 'right', fontWeight: 700,
+                      color: r.skipped_reason ? DIM : (r.pnl == null ? DIM : r.pnl >= 0 ? GREEN : RED),
+                    }}>
+                      {r.skipped_reason
+                        ? r.skipped_reason
+                        : (r.pnl == null ? '—' : `${r.pnl >= 0 ? '+' : ''}$${money(r.pnl)}`)}
+                    </td>
+                    <td style={{ ...S.td, ...S.mono, textAlign: 'right' }}>${money(r.running_balance)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {flowRows.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 700 }}>Flow at the fire</div>
+          <div style={{ ...S.small, marginBottom: 8 }}>
+            Chain snapshots every 10 minutes by tenor; buy/sell inferred from
+            the last print vs the quote. A proxy — no signed tape exists live.
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 900 }}>
+              <thead>
+                <tr>
+                  <th style={S.th}>date</th>
+                  <th style={S.th}>dir</th>
+                  <th style={{ ...S.th, textAlign: 'right' }}>flow-mix z</th>
+                  {FLOW_TENOR_COLUMNS.map(([, label]) => (
+                    <th key={label} style={{ ...S.th, textAlign: 'right' }} colSpan={2}>
+                      {label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {flowRows.map((r, i) => {
+                  const dirColor = r.fired_dir === 'UP' ? GREEN : r.fired_dir === 'DOWN' ? RED : DIM;
+                  const side = r.fired_dir === 'UP' ? 'call' : 'put';
+                  return (
+                    <tr key={`${r.date}-${r.fired_at || i}`}>
+                      <td style={{ ...S.td, ...S.mono }}>{r.date}</td>
+                      <td style={{ ...S.td, fontWeight: 700, color: dirColor }}>{r.fired_dir}</td>
+                      <td style={{ ...S.td, ...S.mono, textAlign: 'right' }}>
+                        {r.flow_mix_z == null ? '—' : `${num(r.flow_mix_z, 2)}σ`}
+                      </td>
+                      {FLOW_TENOR_COLUMNS.map(([key]) => {
+                        const t = (r.tenors && r.tenors[key]) || {};
+                        const buyShare = side === 'call' ? t.call_buy_share : t.put_buy_share;
+                        const notionalD = side === 'call' ? t.call_notional_d : t.put_notional_d;
+                        return (
+                          <Fragment key={key}>
+                            <td style={{ ...S.td, ...S.mono, textAlign: 'right' }}>
+                              {buyShare == null ? '—' : `${(buyShare * 100).toFixed(0)}%`}
+                            </td>
+                            <td style={{ ...S.td, ...S.mono, textAlign: 'right' }}>
+                              {notionalD == null ? '—' : `${notionalD >= 0 ? '+' : ''}$${Math.round(notionalD).toLocaleString()}`}
+                            </td>
+                          </Fragment>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -388,6 +586,8 @@ export default function HuntPage() {
   const [sessionErr, setSessionErr] = useState(null);
   const [history, setHistory] = useState(null);
   const [historyErr, setHistoryErr] = useState(null);
+  const [paperBook, setPaperBook] = useState(null);
+  const [paperBookErr, setPaperBookErr] = useState(null);
 
   useEffect(() => {
     let live = true;
@@ -411,6 +611,15 @@ export default function HuntPage() {
     return () => { live = false; };
   }, []);
 
+  useEffect(() => {
+    let live = true;
+    fetch(`${API_URL}/api/spreadworks/risk-advisor/paper-book`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((d) => { if (live) setPaperBook(d); })
+      .catch((e) => { if (live) setPaperBookErr(String(e)); });
+    return () => { live = false; };
+  }, []);
+
   return (
     <div className="flex-1 overflow-y-auto">
       <div style={S.wrap}>
@@ -425,7 +634,8 @@ export default function HuntPage() {
         </p>
 
         <SignalState data={session} err={sessionErr} />
-        <Playbook />
+        <Playbook bookStart={paperBook?.book_start} />
+        <PaperBook data={paperBook} err={paperBookErr} />
         <FiringHistory rows={history} err={historyErr} />
         <AlertDirectory />
       </div>
