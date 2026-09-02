@@ -904,9 +904,10 @@ export default function StatusCard({
           </span>
           <span className="text-xs font-mono text-gray-400" title={isEbbBot ? 'No stop, by design. Registry #43: every early exit collapses the edge to about zero. Settles at the 15:00 close.' : undefined}>{isEbbBot ? 'No stop · settle at close' : `SL ${config.stop_loss_pct ?? 100}%`}</span>
           {/* vix_skip is inert on this path — the decay gate is what actually
-              runs (prior session VIX ÷ 20-session max, skip above 0.90). */}
-          <span className="text-xs font-mono text-gray-400" title={isEbbBot ? 'Skips the session when the prior close divided by the trailing 20-session max exceeds 0.90 — i.e. fear is still building. Sits out roughly 28% of days.' : undefined}>
-            {isEbbBot ? 'VIX decay ≤0.90' : `VIX>${config.vix_skip ?? 32} skip`}
+              runs (prior session VIX ÷ 20-session max, skip above 0.90), and
+              since 2026-09-02 only for SPARK. FLAME trades every session. */}
+          <span className="text-xs font-mono text-gray-400" title={isEbbBot ? (bot === 'spark' ? 'Skips the session when the prior close divided by the trailing 20-session max exceeds 0.90 — i.e. fear is still building. Sits out roughly 30% of days.' : 'No VIX gate since 2026-09-02: on this stream it cost ~$509/yr and did not reduce drawdown.') : undefined}>
+            {isEbbBot ? (bot === 'spark' ? 'VIX decay ≤0.90' : 'no VIX gate') : `VIX>${config.vix_skip ?? 32} skip`}
           </span>
           <span className="text-xs font-mono text-gray-400">max {config.max_contracts === 0 ? '∞' : (config.max_contracts ?? 10)}x</span>
         </div>

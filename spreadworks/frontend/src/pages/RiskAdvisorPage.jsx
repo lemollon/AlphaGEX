@@ -71,19 +71,23 @@ function mergeCurves(none, gate) {
   return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
-// The rule BOTH live bots actually run: skip when the prior session's VIX is
-// above 90% of its 20-day high. Everything else on the page is advisory.
-const DEPLOYED_GATE = 'vix_decay';
+// What each live bot actually runs. SPARK skips when the prior session's VIX
+// is above 90% of its 20-day high; FLAME trades every session (gate removed
+// 2026-09-02: it cost FLAME ~$509/yr and did not cut drawdown). The backend
+// ships this map; the fallback matches it. Everything else here is advisory.
+const DEPLOYED_FALLBACK = { spark: 'vix_decay', flame: 'none' };
 const GATE_KEYS = ['vix_decay', 'sd60', 'caution60', 'backwardation'];
 const gateName = (label) => (label || '').replace(/ - DEPLOYED RULE.*$/, '');
 const BOT_KEYS = ['flame', 'spark'];
 
 // ---- growth panel: equity chart + compact stat table -------------------
-function EquityPanel({ bot }) {
-  const data = useMemo(() => mergeCurves(bot?.curves?.none, bot?.curves?.[DEPLOYED_GATE]), [bot]);
+function EquityPanel({ bot, deployed }) {
+  const data = useMemo(() => mergeCurves(bot?.curves?.none, bot?.curves?.vix_decay), [bot]);
   if (!bot) return <div style={S.card}><div style={S.note}>backtest unavailable</div></div>;
+  const gateDeployed = deployed === 'vix_decay';
   const g = bot.gates?.none || {};
-  const dg = bot.gates?.[DEPLOYED_GATE] || {};
+  const dg = bot.gates?.vix_decay || {};
+  const gateLabel = gateDeployed ? 'VIX gate (deployed)' : 'VIX gate (removed 9/2)';
   const p = g.periods || {}, dp = dg.periods || {};
   const cell = (v, extra) => <td style={{ ...S.td, textAlign: 'right', ...(extra || {}) }}>{v}</td>;
   const mw = (x) => (x ? `${money(x.median)} / ${money(x.worst)}` : '—');
@@ -95,7 +99,9 @@ function EquityPanel({ bot }) {
   return (
     <div style={{ ...S.card, flex: '1 1 420px', minWidth: 300 }}>
       <div style={S.cardTitle}>{bot.label} from {money(bot.start)}</div>
-      <div style={{ fontSize: 12, color: DIM, marginBottom: 6 }}>{bot.clock} · {bot.structure}</div>
+      <div style={{ fontSize: 12, color: DIM, marginBottom: 6 }}>
+        {bot.clock} · {bot.structure} · <span style={{ color: AMBER }}>deployed: {gateDeployed ? 'skip VIX-not-decaying days' : 'trade every session'}</span>
+      </div>
       {data.length === 0 ? <div style={S.note}>backtest unavailable</div> : (
         <div style={{ width: '100%', height: 200 }}>
           <ResponsiveContainer>
@@ -104,12 +110,12 @@ function EquityPanel({ bot }) {
               <XAxis dataKey="date" tick={{ fontSize: 11, fill: MUTED }} interval="preserveStartEnd" minTickGap={50} />
               <YAxis tick={{ fontSize: 11, fill: MUTED }} tickFormatter={money} width={64} />
               <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }}
-                       formatter={(v, n) => [money(v), n === 'none' ? 'trade every day' : 'deployed VIX gate']} />
+                       formatter={(v, n) => [money(v), n === 'none' ? 'trade every day' : gateLabel]} />
               <Line dataKey="none" name="trade every day" stroke={BLUE} strokeWidth={2} dot={false}
                     isAnimationActive={false} label={endLabel('trade every day', BLUE)} />
-              <Line dataKey="gate" name="deployed VIX gate" stroke={AMBER} strokeWidth={2}
+              <Line dataKey="gate" name={gateLabel} stroke={AMBER} strokeWidth={2}
                     strokeDasharray="5 4" dot={false} isAnimationActive={false}
-                    label={endLabel('deployed gate', AMBER)} />
+                    label={endLabel(gateDeployed ? 'VIX gate (deployed)' : 'VIX gate (removed)', AMBER)} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -117,8 +123,8 @@ function EquityPanel({ bot }) {
       <table style={{ borderCollapse: 'collapse', width: '100%', marginTop: 10, fontSize: 13 }}>
         <thead><tr>
           <th style={S.th}></th>
-          <th style={{ ...S.th, textAlign: 'right', color: BLUE }}>every day</th>
-          <th style={{ ...S.th, textAlign: 'right', color: AMBER }}>deployed gate</th>
+          <th style={{ ...S.th, textAlign: 'right', color: BLUE }}>every day{gateDeployed ? '' : ' (deployed)'}</th>
+          <th style={{ ...S.th, textAlign: 'right', color: AMBER }}>VIX gate{gateDeployed ? ' (deployed)' : ''}</th>
         </tr></thead>
         <tbody>
           <tr><td style={S.td}>End equity</td>{cell(money(g.end_equity), { fontWeight: 700 })}{cell(money(dg.end_equity), { fontWeight: 700 })}</tr>
@@ -142,6 +148,7 @@ function GateSection({ growth }) {
   if (!growth) return null;
   const gates = growth.gates || {};
   const bots = growth.bots || {};
+  const deployed = growth.deployed || DEPLOYED_FALLBACK;
   return (
     <div style={S.card}>
       <div style={S.cardTitle}>Would skipping the risky days have helped?</div>
@@ -162,12 +169,12 @@ function GateSection({ growth }) {
               return (
                 <tr key={gk + bk}>
                   {i === 0 && (
-                    <td style={{ ...S.td, fontWeight: 700 }} rowSpan={BOT_KEYS.length}>
-                      {gk === DEPLOYED_GATE && <span style={{ color: AMBER, marginRight: 6 }}>DEPLOYED</span>}
-                      {gateName(gates[gk]) || gk}
-                    </td>
+                    <td style={{ ...S.td, fontWeight: 700 }} rowSpan={BOT_KEYS.length}>{gateName(gates[gk]) || gk}</td>
                   )}
-                  <td style={S.td}>{bot.label || bk.toUpperCase()}</td>
+                  <td style={S.td}>
+                    {bot.label || bk.toUpperCase()}
+                    {deployed[bk] === gk && <span style={{ color: AMBER, marginLeft: 6, fontSize: 11, fontWeight: 700 }}>DEPLOYED</span>}
+                  </td>
                   <td style={S.td}>{g?.skipped ?? '—'}</td>
                   <td style={{ ...S.td, color: g && g.skipped_pnl < 0 ? RED : undefined }}>{g ? money(g.skipped_pnl) : '—'}</td>
                   <td style={{ ...S.td, color: dAnn > 0 ? GREEN : dAnn < 0 ? RED : undefined }}>{dAnn != null ? money(dAnn) : '—'}</td>
@@ -182,7 +189,8 @@ function GateSection({ growth }) {
       {BOT_KEYS.map(bk => {
         const bot = bots[bk];
         if (!bot) return null;
-        const none = bot.gates?.none, dep = bot.gates?.[DEPLOYED_GATE];
+        const none = bot.gates?.none, dep = bot.gates?.vix_decay;
+        const gateDeployed = deployed[bk] === 'vix_decay';
         let winner = null;
         for (const gk of GATE_KEYS) {
           const g = bot.gates?.[gk];
@@ -194,8 +202,9 @@ function GateSection({ growth }) {
           <div key={bk} style={{ fontSize: 13.5, marginTop: 8 }}>
             <b>{bot.label || bk.toUpperCase()}</b> —{' '}
             {dAnn != null && (
-              <>the deployed VIX gate {dAnn < 0 ? 'costs' : 'adds'} {money(Math.abs(dAnn))}/yr and{' '}
-              {dDD < 0 ? 'cuts' : 'raises'} the worst drawdown by {money(Math.abs(dDD))} versus trading every day.{' '}</>
+              <>deployed rule: {gateDeployed ? 'skip VIX-not-decaying days' : 'trade every session'}. The VIX gate{' '}
+              {dAnn < 0 ? 'costs' : 'adds'} {money(Math.abs(dAnn))}/yr and {dDD < 0 ? 'cuts' : 'raises'} the worst drawdown by{' '}
+              {money(Math.abs(dDD))} versus trading every day{gateDeployed ? '' : ', which is why FLAME dropped it on 9/2'}.{' '}</>
             )}
             {winner ? `The ${gateName(gates[winner]) || winner} gate beats trading every day with strong evidence.` : 'No gate beats trading every day with strong evidence.'}
           </div>
@@ -296,16 +305,16 @@ export default function RiskAdvisorPage() {
               </div>
               {td.vix_gate && (
                 <div style={{ fontSize: 15, marginTop: 12, fontWeight: 700, color: td.vix_gate.blocked ? RED : GREEN }}>
-                  Deployed gate today: {td.vix_gate.blocked ? 'BOTH BOTS SIT OUT' : 'BOTH BOTS TRADE'}
+                  SPARK's gate today: {td.vix_gate.blocked ? 'SPARK SITS OUT' : 'SPARK TRADES'}
                   <span style={{ fontWeight: 400, color: '#c6cbd8' }}>
-                    {' '}— the prior VIX close was {Math.round(td.vix_gate.ratio * 100)}% of its 20-day high (rule: skip above {Math.round(td.vix_gate.ceiling * 100)}%).
+                    {' '}— the prior VIX close was {Math.round(td.vix_gate.ratio * 100)}% of its 20-day high (rule: skip above {Math.round(td.vix_gate.ceiling * 100)}%). FLAME trades every session.
                   </span>
                 </div>
               )}
               <div style={{ fontSize: 13.5, marginTop: 10, color: '#c6cbd8' }}>
                 {normal
-                  ? 'The risk model reads today as normal. It is advisory; the VIX gate above is what the bots actually follow.'
-                  : 'The risk model flags today. In the test, skipping flagged days did not help FLAME and was unproven for SPARK (gate table below). It is advisory; the VIX gate above is what the bots actually follow.'}
+                  ? 'The risk model reads today as normal. It is advisory; SPARK follows the VIX gate above and FLAME trades every session.'
+                  : 'The risk model flags today. In the test, skipping flagged days did not help FLAME and was unproven for SPARK (gate table below). It is advisory; SPARK follows the VIX gate above and FLAME trades every session.'}
               </div>
               {td.computed_from && td.computed_from !== 'live' && (
                 <div style={{ ...S.note, marginTop: 8 }}>
@@ -337,8 +346,8 @@ export default function RiskAdvisorPage() {
 
         {/* 4 — growth panels */}
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-          <EquityPanel bot={growth?.bots?.flame} />
-          <EquityPanel bot={growth?.bots?.spark} />
+          <EquityPanel bot={growth?.bots?.flame} deployed={(growth?.deployed || DEPLOYED_FALLBACK).flame} />
+          <EquityPanel bot={growth?.bots?.spark} deployed={(growth?.deployed || DEPLOYED_FALLBACK).spark} />
         </div>
         {growthErr && <div style={{ ...S.card, ...S.note }}>backtest unavailable</div>}
 

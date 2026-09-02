@@ -226,7 +226,8 @@ function isNoStopBot(name: string): boolean {
  */
 
 /**
- * VIX DECAY GATE — the one regime filter that survived a blind OOS decade.
+ * VIX DECAY GATE — SPARK only since 2026-09-02 (see tryOpenFlamePutSpread).
+ * On FLAME's PM stream it cost ~$509/yr and did not reduce drawdown.
  *
  *     ratio = VIX(prior session) / max(VIX over the 20 sessions before that)
  *
@@ -237,8 +238,9 @@ function isNoStopBot(name: string): boolean {
  * knowable at a 10:05 or 13:05 entry, and conditioning on it conditions on the
  * day's own outcome. Measured on EBB's PM stream: the same-day version paid
  * $+9.44/trade against the honest $+6.51 — the look-ahead was worth roughly
- * double. The AM tranche needs this gate MORE than the PM one: ungated it is
- * $+2.87/trade at t=+1.25 (no edge), gated $+6.23 at t=+2.44.
+ * double. The "AM tranche needs this gate more" line that used to sit here
+ * was measured on the WRONG AM structure (spot-1/$2 at 10:05). On the real
+ * SPARK cell (spot-2/$5) the gate's value is drawdown, not return.
  *
  * 🚨 UNKNOWN BLOCKS. Too little history means the ratio is undefined and we do
  * NOT trade. A veto that degrades to always-on when its data is missing is worse
@@ -537,9 +539,9 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // the risk control and the validated structure (registry #23b, #49r). Anyone
   // "restoring" a $10 wing here would be applying the old strategy's finding to a
   // different trade. The old text is in git history if it is ever needed.
-  // 🚨 EBB AM TRANCHE (2026-08-16). Same structure as FLAME, entry 10:05-10:20 CT.
-  // The AM tranche needs the VIX decay gate MORE than the PM one: ungated it is
-  // +$2.87/trade (t=+1.25, no edge), gated +$6.23 (t=+2.44).
+  // 🚨 EBB AM TRANCHE (2026-08-16). Entry 10:05-10:20 CT; structure comes from
+  // botStructure() (spot-2 / $5 since 8/27). The VIX decay gate applies to
+  // SPARK only (9/2): it halves SPARK's drawdown and does nothing for FLAME.
   // starting_capital 5000 is the AM rung of the sizing ladder (29% drawdown).
   spark:   { sd: 2.01, pt_pct: 1.0, sl_mult: 9999, entry_start: 1005, entry_end: 1020, max_trades: 1, max_contracts: 1, bp_pct: 0.20, starting_capital: BOT_STARTING_CAPITAL.spark, min_credit: 0.10, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
   inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: false },
@@ -4488,8 +4490,16 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   if (!isConfigured()) return 'skip:tradier_not_configured'
 
   // Regime gate before any quote work — a blocked day costs one indexed query.
-  const vixBlock = await vixDecayBlock(getCentralTime().toISOString().slice(0, 10))
-  if (vixBlock) return `skip:${vixBlock}`
+  // 🚨 SPARK ONLY (2026-09-02, Leron). On the AM spot-2/$5 stream the gate
+  // halves the worst drawdown ($1,468 -> $767) for -$123/yr. On FLAME's PM
+  // spot-1/$2 stream it is a pure cost: -$509/yr, drawdown $490 -> $531, and
+  // the days it sat out made +$1,942 across four years, positive in every
+  // one. FLAME trades every session. (risk_advisor_growth.py, 2022-11 ->
+  // 2026-08, 1 lot, NBBO, $0.70.)
+  if (bot.name === 'spark') {
+    const vixBlock = await vixDecayBlock(getCentralTime().toISOString().slice(0, 10))
+    if (vixBlock) return `skip:${vixBlock}`
+  }
 
   const acctRows = await query(
     `SELECT id, current_balance FROM ${botTable(bot.name, 'paper_account')}
