@@ -515,24 +515,22 @@ def test_ebb_registered_and_ships_disabled(client):
 
 
 def test_ebb_fleet_stats_health_watch_on_rolling_60_drawdown(client):
-    """60 closed trades summing below the -146 watch band -> status WATCH."""
+    """60 closed trades summing below the -524 watch band -> status WATCH."""
     from backend import routes_bots
     eng = routes_bots.ENGINE
-    # Bands were re-measured 2026-08-15 for the $2-wing structure (watch -146,
-    # demote -401), so the old -10/trade fixture now lands past DEMOTE. Scaled
-    # to sit in the same place relative to the new bands:
-    # -4/trade x 60 = -240, below watch_roll60 (-146) but above demote_roll60
-    # (-401) and demote_roll120 (n<120 so that gate can't fire either way).
+    # EBB is back on the $5-wing structure (2026-09-02) and its $5-wing bands
+    # (watch -524, demote -1216). -12/trade x 60 = -720 sits below
+    # watch_roll60 but above demote_roll60; demote_roll120 cannot fire (n<120).
     for i in range(60):
-        _seed_closed_trade(eng, "ebb", f"ebb-health-{i:03d}", -4.0)
+        _seed_closed_trade(eng, "ebb", f"ebb-health-{i:03d}", -12.0)
 
     r = client.get("/api/spreadworks/bots/fleet-stats")
     assert r.status_code == 200, r.text
     health = r.json()["bots"]["ebb"]["health"]
     assert health["status"] == "WATCH"
-    assert health["roll60"] == pytest.approx(-240.0)
+    assert health["roll60"] == pytest.approx(-720.0)
     assert health["roll120"] is None
-    assert health["bands"]["watch_roll60"] == -146.0
+    assert health["bands"]["watch_roll60"] == -524.0
 
 
 # ---------------------------------------------------------------------------
