@@ -358,28 +358,31 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         # buried in the fleet's own webhook. Honored by
         # discord_alerts._webhook_url() (2026-08-13).
         "discord_webhook_env": "RISK_ADVISOR_DISCORD_WEBHOOK",
-        # RESTRUCTURED 2026-08-15 to match EBB PM: spot-$1 / $2 wing, and the
-        # same VIX decay gate. Was spot-$2 / $5 wing. The two tranches are one
-        # strategy run at two clocks, so they must share a spec — before this
-        # they did not, and the "$2,236/yr two-tranche book" that was quoted
-        # did not actually exist in code. The $2 wing also risks $200/lot
-        # instead of $500, which is what makes it fit a small account.
+        # 🚨 RESTORED 2026-09-02 to SPARK's structure: spot-$2 / $5 wing.
+        # The 2026-08-15 restructure to spot-$1 / $2 ("the two tranches must
+        # share a spec") was wrong: the AM and PM clocks are two DIFFERENT
+        # cells. Walk-forward picked spot-$1/$2 for the PM clock (FLAME) and
+        # spot-$2/$5 for the AM clock (SPARK). Run at 10:05, the $2 wing is
+        # the WORST of the nine AM cells ($5.78/tr, ret/DD 1.18) while
+        # spot-$2/$5 is $11.14/tr, ret/DD 1.87, 5/5 years. The live scanner
+        # fixed the same mix-up on 8/27 (botStructure branches on the bot
+        # name); this paper mirror lagged it until now. Max loss $500/lot.
         "params": {
-            "short_otm_abs": 1.0, "spread_abs": 2.0,
+            "short_otm_abs": 2.0, "spread_abs": 5.0,
             "min_option_price": 0.10, "max_spread_pct": 0.15,
             "min_credit": 0.10,
         },
-        # Bands MEASURED 2026-08-15 off this tranche's own gated stream (n=666,
-        # real NBBO): watch = 5th percentile of the rolling-60 sum, demote =
-        # 1st percentile, credit floor = 5th percentile of the 20-trade average
-        # credit. The old -524/-1216/30.0 were the $5-wing distribution and do
-        # not transfer. DEMOTE RULE unchanged: a breach DISABLES the bot and the
-        # bands are never re-tuned to make a breach go away.
+        # Bands are the $5-wing distribution again: pre-registered 2026-08-13
+        # from registry #23b's own 930-day stream (block bootstrap, false-alarm
+        # 5% / 1% on a healthy edge). The -146/-401/29.0 set measured 8/15 was
+        # the $2-wing stream and does not transfer back. DEMOTE RULE unchanged:
+        # a breach DISABLES the bot and the bands are never re-tuned to make a
+        # breach go away.
         "health_bands": {
-            "watch_roll60": -146.0,     # rolling-60-trade $ per lot
-            "demote_roll60": -401.0,
+            "watch_roll60": -524.0,     # rolling-60-trade $ per lot
+            "demote_roll60": -1216.0,
             "demote_roll120": 0.0,      # rolling-120 total below this = demote
-            "min_credit20": 29.0,       # 20-trade avg credit $ per lot floor
+            "min_credit20": 30.0,       # 20-trade avg credit $ per lot floor
         },
         "defaults": {
             "starting_capital": 3000.0,

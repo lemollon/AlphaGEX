@@ -203,20 +203,20 @@ def test_ebb_defaults(db_session):
     assert b["back_dte"] == 0
     assert b["one_entry_per_day"] is True
     assert b["settle_at_expiry"] is True
-    # RESTRUCTURED 2026-08-15 to match EBB PM. The two tranches are one
-    # strategy at two clocks and must share a spec; before this they did not,
-    # so the two-tranche book that was quoted did not exist in code.
-    assert b["params"]["short_otm_abs"] == 1.0
-    assert b["params"]["spread_abs"] == 2.0
+    # 🚨 SPARK's structure, NOT FLAME's. The AM (10:05) and PM (13:05) clocks
+    # are two different walk-forward cells: spot-$2/$5 for the AM clock,
+    # spot-$1/$2 for the PM clock. The 8/15 "share a spec" restructure put
+    # FLAME's structure at SPARK's clock (the worst AM cell); restored 9/2 to
+    # match the live scanner's 8/27 fix.
+    assert b["params"]["short_otm_abs"] == 2.0
+    assert b["params"]["spread_abs"] == 5.0
     assert b["params"]["min_credit"] == 0.10
-    # Bands MEASURED off this tranche's own gated stream (n=666): watch = p05
-    # of the rolling-60 sum, demote = p01, credit floor = p05 of the 20-trade
-    # average credit. The old -524/-1216/30.0 were the $5-wing distribution.
+    # The $5-wing bands, pre-registered 8/13 off #23b's own 930-day stream.
     bands = b["health_bands"]
-    assert bands["watch_roll60"] == -146.0
-    assert bands["demote_roll60"] == -401.0
+    assert bands["watch_roll60"] == -524.0
+    assert bands["demote_roll60"] == -1216.0
     assert bands["demote_roll120"] == 0.0
-    assert bands["min_credit20"] == 29.0
+    assert bands["min_credit20"] == 30.0
     # Carries the VIX decay gate too — ungated this tranche is t=+1.25.
     assert b["defaults"]["vix_decay_max"] == 0.90
     d = b["defaults"]
