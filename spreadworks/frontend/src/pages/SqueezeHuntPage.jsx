@@ -115,6 +115,18 @@ function lastPoint(points) {
   return points && points.length ? points[points.length - 1] : null;
 }
 
+// "Sep 1" from an ISO date string, WITHOUT Date() — same reasoning as
+// clock() above: new Date('2026-09-01') is parsed as UTC midnight, and
+// formatting it in a negative-UTC-offset browser rolls it back to Aug 31.
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function shortDate(iso) {
+  if (typeof iso !== 'string' || iso.length < 10) return null;
+  const [, m, d] = iso.slice(0, 10).split('-');
+  const mi = parseInt(m, 10) - 1;
+  return MONTH_ABBR[mi] ? `${MONTH_ABBR[mi]} ${parseInt(d, 10)}` : null;
+}
+
 /* ── Intraday pace sparkline — dollars per sweep, one bar per sweep ── */
 
 function PaceSpark({ points, width = 118, height = 22 }) {
@@ -617,10 +629,75 @@ function QuietSymbols({ entries }) {
   );
 }
 
+/* ── Still running — the 30-day dedupe hid these from the list above ── */
+
+function RunningRow({ r }) {
+  const st = stateStyle(r.money_state);
+  return (
+    <div className="flex items-center gap-3 py-1.5 border-b border-white/5">
+      <span className="w-16 shrink-0 font-bold text-[13px] text-text-primary sw-mono">{r.symbol}</span>
+      <span className="w-16 shrink-0 text-[12.5px] text-text-secondary sw-mono text-right">
+        ${(r.price ?? 0).toFixed(2)}
+      </span>
+      <span
+        className="w-16 shrink-0 text-[12.5px] sw-mono text-right"
+        style={{ color: (r.day_chg_pct || 0) >= 0 ? THEME.green : THEME.red }}
+      >
+        {pct(r.day_chg_pct)}
+      </span>
+      <span
+        className="w-16 shrink-0 text-[12.5px] text-text-secondary sw-mono text-right"
+        title={moneyFull(r.dollar_vol)}
+      >
+        {moneyCompact(r.dollar_vol)}
+      </span>
+      <span className="w-20 shrink-0 text-[12.5px] text-text-secondary sw-mono text-right">
+        {multiple(r.turnover)} float
+      </span>
+      <span
+        className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap shrink-0"
+        style={{ background: `${st.color}22`, color: st.color }}
+      >
+        {st.label}
+      </span>
+      <span className="ml-auto text-[11px] text-text-tertiary sw-mono shrink-0 whitespace-nowrap">
+        {r.run_days != null ? `day ${r.run_days}` : '—'}
+        {r.first_signal_date ? `, first fired ${shortDate(r.first_signal_date)}` : ''}
+      </span>
+    </div>
+  );
+}
+
+function StillRunning({ entries }) {
+  if (!entries.length) return null;
+  return (
+    <div className="mt-6">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2.5">
+        <h2 className="text-[13px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+          Still running
+        </h2>
+        <span className="text-[12px] text-text-tertiary sw-mono">{entries.length}</span>
+      </div>
+      <p className="mb-2.5 text-[11px] text-text-tertiary leading-relaxed max-w-[900px]">
+        Fired in the last 30 days, still over the line today. Hidden from the list above by design.
+      </p>
+      <div
+        className="rounded-lg sw-glass px-4"
+        style={{ boxShadow: 'inset 0 0 0 1px rgba(148,163,184,0.10)' }}
+      >
+        {entries.map((r) => (
+          <RunningRow key={r.symbol} r={r} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ── Page ─────────────────────────────────────────────────────────── */
 
 export default function SqueezeHuntPage() {
   const [signals, setSignals] = useState([]);
+  const [running, setRunning] = useState([]);
   const [tape, setTape] = useState({});
   const [siSettlementDate, setSiSettlementDate] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -640,6 +717,7 @@ export default function SqueezeHuntPage() {
         const tapeData = await tapeRes.json();
         if (!cancelled) {
           setSignals(sigData.signals || []);
+          setRunning(sigData.running || []);
           setTape(tapeData.symbols || {});
           setSiSettlementDate(sigData.si_settlement_date || null);
           setError(null);
@@ -772,6 +850,8 @@ export default function SqueezeHuntPage() {
               <SignalsTable signals={signals} tape={tape} latestSweep={latestSweep} />
             )}
           </div>
+
+          <StillRunning entries={running} />
 
           {siSettlementDate && (
             <p className="mt-2.5 mb-6 text-[11px] text-text-tertiary leading-relaxed max-w-[900px]">

@@ -12,10 +12,14 @@ GET  /api/spreadworks/squeeze-hunt/signals   Today's alert-like symbols
 GET  /api/spreadworks/squeeze-hunt/tape      Intraday dollar-vol pace by sweep
 
 Data source: the app's own Postgres, tables `sw_hunt_signals`,
-`sw_hunt_tape`, `sw_hunt_lottery`, `sw_hunt_si`. These are a one-way display
-mirror of the research warehouse's DuckDB, pushed after every sweep by
-`research/sync_to_postgres.py` in the squeeze repo. DuckDB stays the source
-of truth; nothing on this page writes back to it.
+`sw_hunt_tape`, `sw_hunt_lottery`, `sw_hunt_si`, `sw_hunt_running`. These are
+a one-way display mirror of the research warehouse's DuckDB, pushed after
+every sweep by `research/sync_to_postgres.py` in the squeeze repo. DuckDB
+stays the source of truth; nothing on this page writes back to it.
+
+`sw_hunt_running` holds the names the 30-day dedupe already hid from `signals` —
+still over the V1/V2 line today, but first seen on an earlier day — so
+`/signals` reports them separately instead of dropping them.
 
 (The original version of this file read the DuckDB file directly off a local
 Windows path, which does not exist on the deploy host — so the page rendered
@@ -24,6 +28,7 @@ empty in production. Hence the mirror.)
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -56,6 +61,20 @@ def _money_state(state: str | None, day_kind: str | None) -> str:
     if day_kind and "BOUNCE" in day_kind.upper():
         return "BOUNCE"
     return "—"  # em dash — no read yet
+
+
+def _business_days_inclusive(start, end) -> int | None:
+    """Weekday count from `start` to `end`, both included — no market-holiday
+    calendar here, just Mon-Fri, matching how "day N" is meant to read on the
+    page (first fired 9/1, still running 9/2 -> day 2)."""
+    if not start or not end or start > end:
+        return None
+    n, d = 0, start
+    while d <= end:
+        if d.weekday() < 5:
+            n += 1
+        d += timedelta(days=1)
+    return n
 
 
 @router.get("/signals")
@@ -156,7 +175,61 @@ def squeeze_hunt_signals() -> dict[str, Any]:
         })
 
     signals.sort(key=lambda s: s["dollar_vol"] or 0.0, reverse=True)
-    return {"signals": signals, "count": len(signals), "si_settlement_date": si_settlement_date}
+
+    # Still running: names the 30-day dedupe hid from `signals` above because
+    # they already fired within the last 30 days, but still clear the V1/V2
+    # line on the latest sweep. `sw_hunt_running` does not exist until the
+    # squeeze repo's sync has written it once, so a missing table must read
+    # as empty, not a 500.
+    signal_symbols = {s["symbol"] for s in signals}
+    try:
+        run_rows = _query(
+            """
+            SELECT symbol, trade_date, variant, price, day_chg, turnover,
+                   volx, dollar_vol, first_signal_date
+            FROM sw_hunt_running
+            WHERE trade_date = (SELECT MAX(trade_date) FROM sw_hunt_running)
+              AND ts = (
+                SELECT MAX(ts) FROM sw_hunt_running
+                WHERE trade_date = (SELECT MAX(trade_date) FROM sw_hunt_running)
+              )
+            """
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[squeeze-hunt] running query failed "
+                       "(table may not exist yet): %r", exc)
+        run_rows = []
+
+    # One row per symbol — prefer the V1 read over V2 when both fired on the
+    # same sweep, matching how the signal list itself treats the two tiers.
+    best: dict[str, tuple] = {}
+    for row in run_rows:
+        symbol, variant = row[0], row[2]
+        if symbol in signal_symbols:
+            continue
+        prev = best.get(symbol)
+        if prev is None or (prev[2] == "V2" and variant == "V1"):
+            best[symbol] = row
+
+    running = []
+    for (symbol, trade_date, variant, price, day_chg, turnover, volx,
+         dollar_vol, first_signal_date) in best.values():
+        running.append({
+            "symbol": symbol,
+            "price": price,
+            "day_chg_pct": (day_chg * 100.0) if day_chg is not None else None,
+            "turnover": turnover,
+            "volx": volx,
+            "dollar_vol": dollar_vol,
+            "first_signal_date": first_signal_date.isoformat() if first_signal_date else None,
+            "run_days": _business_days_inclusive(first_signal_date, trade_date),
+            "money_state": _money_state(state_by_symbol.get(symbol), None),
+            "short_interest_pct": si_by_symbol.get(symbol),
+        })
+    running.sort(key=lambda r: r["dollar_vol"] or 0.0, reverse=True)
+
+    return {"signals": signals, "count": len(signals), "si_settlement_date": si_settlement_date,
+            "running": running, "running_count": len(running)}
 
 
 @router.get("/tape")
