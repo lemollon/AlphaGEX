@@ -34,7 +34,7 @@ const S = {
   sub: { color: DIM, fontSize: 13, margin: '0 0 20px' },
   card: { background: '#141824', border: '1px solid #232a3d', borderRadius: 12, padding: 16, marginBottom: 16 },
   cardTitle: { fontSize: 13, fontWeight: 700, marginBottom: 10 },
-  small: { fontSize: 11, color: DIM },
+  small: { fontSize: 13, color: DIM },
   mono: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontVariantNumeric: 'tabular-nums' },
 };
 
@@ -57,7 +57,7 @@ function zColor(z) {
 function Pill({ text, color, solid }) {
   return (
     <span style={{
-      display: 'inline-block', padding: '3px 9px', borderRadius: 999, fontSize: 11,
+      display: 'inline-block', padding: '3px 9px', borderRadius: 999, fontSize: 12,
       fontWeight: 700, letterSpacing: '.04em', whiteSpace: 'nowrap',
       color: solid ? '#0b0e17' : color, background: solid ? color : `${color}22`,
       border: `1px solid ${color}${solid ? '' : '55'}`,
@@ -81,15 +81,15 @@ function Pill({ text, color, solid }) {
 function Readout({ value, unit, meaning, meaningColor, at, ageMin, valueColor }) {
   const stale = ageMin != null && ageMin > 15;
   return (
-    <div style={{ marginLeft: 'auto', textAlign: 'right', lineHeight: 1.25 }}>
+    <div style={{ marginLeft: 'auto', textAlign: 'right', lineHeight: 1.25, flexShrink: 0 }}>
       <div>
         <span style={{ ...S.mono, fontSize: 19, fontWeight: 700, color: valueColor || '#e6e9f0' }}>
           {value}
         </span>
         {unit && <span style={{ ...S.small, marginLeft: 3 }}>{unit}</span>}
         {meaning && (
-          <span style={{ fontSize: 11.5, fontWeight: 700, color: meaningColor || DIM,
-                         marginLeft: 8, letterSpacing: '.03em' }}>{meaning}</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: meaningColor || DIM,
+                         marginLeft: 8, letterSpacing: '.03em', whiteSpace: 'nowrap' }}>{meaning}</span>
         )}
       </div>
       <div style={{ ...S.small, ...S.mono, color: stale ? AMBER : DIM }}>
@@ -129,18 +129,18 @@ function FlowVerdict({ d, c }) {
   let tone, call, why;
   if (armed) {
     tone = AMBER;
-    call = `ARMED at ${num(c.putcall_z, 2)}σ`;
-    why = 'Stage 1 is in. The trade now depends on price breaking at a session extreme.';
+    call = `ARMED at ${num(c.putcall_z, 2)}`;
+    why = 'The morning flow leg is in. The trade now depends on price breaking at a session extreme.';
   } else if (shut) {
     tone = DIM;
     call = 'IT CANNOT ARM TODAY — WINDOW CLOSED';
-    why = `The mix never reached ${num(CONFIRM_ARM_Z, 2)}σ inside ${open}–${close} CT`
-        + (peak != null ? `; the closest it came was ${num(peak, 2)}σ at ${hhmm(peakAt)}.` : '.')
+    why = `The mix never reached ${num(CONFIRM_ARM_Z, 2)} inside ${open}–${close} CT`
+        + (peak != null ? `; the closest it came was ${num(peak, 2)} at ${hhmm(peakAt)}.` : '.')
         + ' Whatever the line does now is after the fact.';
   } else {
     tone = DIM;
-    call = `NOT ARMED — needs ${num(CONFIRM_ARM_Z, 2)}σ`;
-    why = (peak != null ? `Best so far ${num(peak, 2)}σ. ` : '')
+    call = `NOT ARMED — needs ${num(CONFIRM_ARM_Z, 2)}`;
+    why = (peak != null ? `Best so far ${num(peak, 2)}. ` : '')
         + `Still live until ${close} CT`
         + (d?.window?.closes_in_min != null ? ` (${d.window.closes_in_min} min).` : '.');
   }
@@ -152,7 +152,7 @@ function FlowVerdict({ d, c }) {
       <div style={{ fontSize: 13.5, fontWeight: 700, color: tone === DIM ? '#e6e9f0' : tone }}>
         {call}
       </div>
-      <div style={{ fontSize: 12, color: '#c6cbd8', marginTop: 3, lineHeight: 1.5 }}>{why}</div>
+      <div style={{ fontSize: 14, color: '#c6cbd8', marginTop: 3, lineHeight: 1.5 }}>{why}</div>
     </div>
   );
 }
@@ -221,14 +221,9 @@ function BoardStrip({ board }) {
         ))}
       </div>
       <div style={{ ...S.small, marginTop: 8, lineHeight: 1.5 }}>
-        Three readings of one market, shown together on purpose — but{' '}
-        <b style={{ color: '#c6cbd8' }}>not added up</b>. A squeeze-style regime and a
-        price break are not two confirmations: measured over 837 sessions, squeeze-like
-        days continued 61.2% vs a 49.7% base, and requiring a 13:40 break as well{' '}
-        <b style={{ color: '#c6cbd8' }}>lowered that to 56.7%</b> — by mid-afternoon the
-        move it would confirm is already spent. /risk and /squeeze also resolve to the
-        same short strike at the same minute, so treating them as independent votes
-        double-counts one position.
+        Three readings of one market, shown together but not added up. Requiring a
+        squeeze regime <b style={{ color: '#c6cbd8' }}>and</b> a price break performs
+        worse (56.7%) than the regime alone (61.2%) — they overlap, they don't stack.
       </div>
     </div>
   );
@@ -238,91 +233,6 @@ const VERDICT_TEXT = {
   SQUEEZE_WATCH: 'SQUEEZE WATCH', NO_SELL: 'NO SELL',
   SELL_PREMIUM: 'SELL PREMIUM', NEUTRAL: 'NEUTRAL', UNKNOWN: 'UNKNOWN',
 };
-
-// ── What the tape is WORTH. A chart that draws a shape and leaves the reader
-// to infer the trade is not finished — "the line is way below the red trigger,
-// what does that mean?" is a question the panel should never have made anyone
-// ask.
-//
-// 🚨 THE ANSWER IS USUALLY "NOTHING", AND IT HAS TO SAY SO. Distance past the
-// trigger carries no directional information. Measured on 896 sessions in the
-// warehouse, taking the 10:10 CT anchor and asking what the 13:40 CT position
-// does into the close:
-//
-//     at 13:40 vs anchor        n     kept going    median rest-of-day
-//     below the down trigger   312       46.8%            +0.020%
-//       ...  -0.10 to -0.25%   126       50.0%            -0.001%
-//       ...  -0.25 to -0.50%    97       39.2%            +0.049%
-//       ...  worse than -0.50%  89       50.6%            -0.006%
-//     EVERY session            896       49.2%            +0.002%
-//
-// No monotonic relationship, every bucket inside a standard error of the base
-// rate, and the mild tilt is toward the BOUNCE, not the continuation. Being
-// "way below" is not a bearish tell — it is the base rate wearing a costume.
-//
-// The edge lives entirely in stage 1: an ARMED break continues 65.8% (n=79)
-// and pays 3.07:1, against 49.8% and 1.06:1 unarmed. So the verdict keys on
-// `armed`, never on how far price has travelled.
-function TapeVerdict({ d, c, fired }) {
-  const armed = c?.armed === true;
-  const through = d?.to_trigger?.down != null
-    && (d.to_trigger.down <= 0 || d.to_trigger.up <= 0);
-  const r = d?.runway || {};
-  const pay = (b) => (b?.median_win && b?.median_loss
-    ? `${Math.abs(b.median_win / b.median_loss).toFixed(2)}:1` : '—');
-  const hit = (b) => (b?.continued != null ? `${(100 * b.continued).toFixed(1)}%` : '—');
-  const closed = d?.window?.closes_in_min != null && d.window.closes_in_min <= 0;
-
-  // ⛔ THE VERDICT IS AN INSTRUCTION, NOT A FINDING. The first version of this
-  // block explained the statistics ("46.8% keep going vs a 49.2% base, and the
-  // tilt is toward the bounce") and left the reader to convert that into a
-  // decision. That is the same failure as the chart it replaced, one layer up:
-  // information where an answer belongs. The evidence still has to be
-  // auditable, so it moves behind a fold instead of leading.
-  let tone, call, why, evidence;
-  if (fired && armed) {
-    tone = GREEN;
-    call = `TAKE IT — ${c.fired_dir} confirmed`;
-    why = `Reduce or close short ${c.fired_dir === 'DOWN' ? 'put' : 'call'} premium. Don't add.`;
-    evidence = `Both legs in. ${hit(r.armed)} continue to the close, payoff ${pay(r.armed)} `
-             + `(n=${r.armed?.n ?? '—'}). Roughly one in three still fails.`;
-  } else if (armed) {
-    tone = AMBER;
-    call = 'STAND BY — armed, no side yet';
-    why = 'Do nothing until price commits at a session extreme.';
-    evidence = 'Stage 1 is in. The direction is a coin flip until the break.';
-  } else {
-    // Everything below is the same answer. The tape can be doing anything at
-    // all; without the flow leg there is no trade, so it gets ONE line.
-    tone = DIM;
-    call = 'NO TRADE TODAY';
-    why = 'The flow flag never fired — it is the only thing on this page with an edge.';
-    evidence = through
-      ? 'Price is through a trigger, which is not a signal on its own: over 896 sessions '
-        + 'how far price sits past the trigger does not predict the close (46.8% keep going '
-        + `vs a 49.2% base). Unarmed breaks run ${hit(r.base)} at ${pay(r.base)}.`
-      : `Flow is ordinary and price has not committed. Unarmed breaks run ${hit(r.base)} at ${pay(r.base)}.`;
-  }
-
-  return (
-    <div style={{
-      marginTop: 10, padding: '10px 12px', borderRadius: 8,
-      background: tone === GREEN ? `${GREEN}0f` : '#0e1220',
-      border: `1px solid ${tone}${tone === GREEN ? '66' : '33'}`,
-    }}>
-      <div style={{ fontSize: 13.5, fontWeight: 700, color: tone, letterSpacing: '.02em' }}>
-        {call}
-      </div>
-      <div style={{ fontSize: 12, color: '#c6cbd8', marginTop: 3, lineHeight: 1.5 }}>
-        {why}{closed ? ' The confirmation window is closed for today.' : ''}
-      </div>
-      <details style={{ marginTop: 6 }}>
-        <summary style={{ ...S.small, cursor: 'pointer' }}>why</summary>
-        <div style={{ ...S.small, marginTop: 4, lineHeight: 1.5 }}>{evidence}</div>
-      </details>
-    </div>
-  );
-}
 
 // ── The price tape. Draws the 10:10 anchor and BOTH confirmation thresholds,
 // so the distance still to travel is readable at a glance rather than inferred
@@ -350,12 +260,21 @@ function Tape({ tape, levels, confirm }) {
       <line x1={ml} y1={Y(v)} x2={W - mr} y2={Y(v)} stroke={color} strokeWidth="1"
             strokeDasharray={dash || undefined} opacity=".8" />
       <text x={ml - 7} y={Y(v) + 3.5} textAnchor="end" fill={color}
-            style={{ fontSize: 10, ...S.mono }}>{num(v)}</text>
+            style={{ fontSize: 11, ...S.mono }}>{num(v)}</text>
       <text x={W - mr} y={Y(v) - 5} textAnchor="end" fill={color}
-            style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.08em' }}>{label}</text>
+            style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.08em' }}>{label}</text>
     </g>
   );
   const last = pts[pts.length - 1];
+  // 🚨 THE LIVE LABEL AND A TRIGGER LABEL CAN LAND ON TOP OF EACH OTHER. Both
+  // are drawn near the right edge, and when spot sits within a few px of a
+  // trigger their y-values collide. Nudge the live label clear rather than
+  // let one overwrite the other.
+  const anchorYs = [levels?.up, confirm?.ref_spot, levels?.down]
+    .filter((v) => v != null).map((v) => Y(v) - 5);
+  const liveY0 = Y(last.spot) + 4;
+  const tooClose = (y) => anchorYs.some((ay) => Math.abs(y - ay) < 12);
+  const liveY = !tooClose(liveY0) ? liveY0 : (!tooClose(liveY0 + 12) ? liveY0 + 12 : liveY0 - 12);
   return (
     <div style={{ overflowX: 'auto', minWidth: 0 }}>
       <svg width={W} height={H} role="img"
@@ -374,13 +293,13 @@ function Tape({ tape, levels, confirm }) {
             actually want — where SPY IS — existed only as an unlabelled dot.
             Label it on the line, and again in the header. */}
         <circle cx={X(last.minute_ct)} cy={Y(last.spot)} r="4" fill="#e6e9f0" />
-        <text x={Math.min(X(last.minute_ct) + 8, W - mr - 44)} y={Y(last.spot) + 4}
+        <text x={Math.min(X(last.minute_ct) + 8, W - mr - 44)} y={liveY}
               fill="#e6e9f0" style={{ fontSize: 12, fontWeight: 700, ...S.mono }}>
           {num(last.spot)}
         </text>
-        <text x={ml} y={H - 8} fill={DIM} style={{ fontSize: 10, ...S.mono }}>{ctLabel(m0)}</text>
+        <text x={ml} y={H - 8} fill={DIM} style={{ fontSize: 11, ...S.mono }}>{ctLabel(m0)}</text>
         <text x={W - mr} y={H - 8} textAnchor="end" fill={DIM}
-              style={{ fontSize: 10, ...S.mono }}>{ctLabel(m1)} CT</text>
+              style={{ fontSize: 11, ...S.mono }}>{ctLabel(m1)} CT</text>
       </svg>
     </div>
   );
@@ -424,9 +343,9 @@ function FlowTrack({ tape }) {
       <line x1={ml} y1={Y(v)} x2={W - mr} y2={Y(v)} stroke={color} strokeWidth="1"
             strokeDasharray={dash} opacity=".55" />
       <text x={ml - 7} y={Y(v) + 3.5} textAnchor="end" fill={color}
-            style={{ fontSize: 10, ...S.mono }}>{v.toFixed(1)}σ</text>
+            style={{ fontSize: 11, ...S.mono }}>{label === 'ARMS' ? `${v.toFixed(1)} ARMS` : v.toFixed(1)}</text>
       <text x={W - mr} y={Y(v) - 4} textAnchor="end" fill={color}
-            style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.08em' }}>{label}</text>
+            style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.08em' }}>{label}</text>
     </g>
   );
   const last = [...rows].reverse().find((r) => r.roll_pc_z != null);
@@ -447,25 +366,25 @@ function FlowTrack({ tape }) {
           <text x={Math.min(X(last.minute_ct) + 8, W - mr - 40)} y={Y(last.roll_pc_z) + 4}
                 fill={zColor(last.roll_pc_z) === DIM ? '#e6e9f0' : zColor(last.roll_pc_z)}
                 style={{ fontSize: 12, fontWeight: 700, ...S.mono }}>
-            {num(last.roll_pc_z, 2)}σ
+            {num(last.roll_pc_z, 2)}
           </text>
         </>)}
-        <text x={ml} y={H - 6} fill={DIM} style={{ fontSize: 10, ...S.mono }}>{ctLabel(m0)}</text>
+        <text x={ml} y={H - 6} fill={DIM} style={{ fontSize: 11, ...S.mono }}>{ctLabel(m0)}</text>
         <text x={W - mr} y={H - 6} textAnchor="end" fill={DIM}
-              style={{ fontSize: 10, ...S.mono }}>{ctLabel(m1)} CT</text>
+              style={{ fontSize: 11, ...S.mono }}>{ctLabel(m1)} CT</text>
       </svg>
       {/* The legend named the lines and never gave their values. A reader
           could see three wiggles and still not know what the flow is. */}
       <div style={{ ...S.small, display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 6 }}>
-        <span><b style={{ color: '#e6e9f0' }}>——</b> mix (put/call ratio){' '}
+        <span><b style={{ color: '#e6e9f0' }}>——</b> mix{' '}
           <b style={{ ...S.mono, color: zColor(last?.roll_pc_z) === DIM ? '#e6e9f0' : zColor(last?.roll_pc_z) }}>
-            {num(last?.roll_pc_z, 2)}σ
+            {num(last?.roll_pc_z, 2)}
           </b>
         </span>
         <span style={{ color: BLUE }}>—— put volume{' '}
-          <b style={S.mono}>{num(lastAny?.roll_putv_z, 2)}σ</b>
+          <b style={S.mono}>{num(lastAny?.roll_putv_z, 2)}</b>
         </span>
-        <span>—— total volume <b style={S.mono}>{num(lastAny?.roll_totv_z, 2)}σ</b></span>
+        <span>—— total volume <b style={S.mono}>{num(lastAny?.roll_totv_z, 2)}</b></span>
       </div>
     </div>
   );
@@ -482,7 +401,7 @@ function Fold({ title, meta, children, open: init = false }) {
       <button onClick={() => setOpen(!open)} aria-expanded={open}
         style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center',
                  gap: 10, width: '100%', boxSizing: 'border-box' }}>
-        <span style={{ color: DIM, fontSize: 11, width: 10 }}>{open ? '▾' : '▸'}</span>
+        <span style={{ color: DIM, fontSize: 13, width: 10 }}>{open ? '▾' : '▸'}</span>
         <span style={S.cardTitle}>{title}</span>
         {meta && <span style={{ ...S.small, marginLeft: 'auto' }}>{meta}</span>}
       </button>
@@ -572,6 +491,23 @@ export default function SessionPage() {
   const rsf = d.run_since_fire;
   const leftPct = (rw?.median_win != null && rsf?.pct != null) ? rw.median_win - rsf.pct : null;
 
+  // ── Evidence for THE CALL. Used to live in a second card (TapeVerdict) a
+  // few hundred pixels down the page, saying the same thing twice. It moves
+  // under the headline instead — one call, one audit trail. The edge lives
+  // entirely in the armed state: a confirmed break continues ~66% of the
+  // time and pays ~3x, against ~50% and ~1x unarmed.
+  const hit = (b) => (b?.continued != null ? `${(100 * b.continued).toFixed(1)}%` : '—');
+  const ratioText = (b) => (b?.median_win && b?.median_loss
+    ? `${Math.abs(b.median_win / b.median_loss).toFixed(1)}x` : 'unknown');
+  let evidence = null;
+  if (fired) {
+    evidence = `${hit(rw)} of confirmed breaks continue to the close; wins run ${ratioText(rw)} the size of losses. Roughly one in three still fails.`;
+  } else if (c.armed) {
+    evidence = 'The morning flow leg is in — the direction is a coin flip until price breaks.';
+  } else if (c.armed === false) {
+    evidence = `Unarmed breaks continue ${hit(rwBase)} of the time; wins run ${ratioText(rwBase)} the size of losses.`;
+  }
+
   let head, headColor, headBody;
   if (fired) {
     head = `${c.fired_dir} CONFIRMED`;
@@ -587,13 +523,16 @@ export default function SessionPage() {
     head = 'STAND BY — ARMED, NO SIDE YET';
     headColor = AMBER;
     headBody = `**Do nothing until price breaks ${num(d.levels?.down)} or ${num(d.levels?.up)} at a session extreme.** `
-      + `Morning mix was ${num(c.putcall_z, 1)}σ, so a bigger-than-normal move is likely — but the direction is a coin flip until price commits.`
+      + `Morning mix was ${num(c.putcall_z, 1)} standard deviations above normal, so a bigger-than-normal move is likely — but the direction is a coin flip until price commits.`
       + (rw ? ` If it comes, the median run to the close is ${num(rw.median, 2)}%${dollars(rw.median) ? ` ≈ $${num(dollars(rw.median))}` : ''}.` : '');
   } else if (c.armed === false) {
-    head = 'NO TRADE TODAY';
+    head = 'NOTHING TO ACT ON HERE';
     headColor = DIM;
-    headBody = `**Nothing on this page is actionable, whatever SPY does for the rest of the session.** `
-      + `The flow flag is the only thing here with an edge and it never fired — the morning mix was ordinary at ${num(c.putcall_z, 1)}σ against the ${num(CONFIRM_ARM_Z, 2)}σ it needs.`;
+    headBody = `**The intraday signal did not fire, so nothing on this page changes today's plan.** `
+      + `The bots trade on their normal schedule; the Risk page has today's tickets. `
+      + `The morning flow mix read ${num(c.putcall_z, 1)}, and a call arms at ${num(CONFIRM_ARM_Z, 1)}.`
+      + (d.window?.closes_in_min != null && d.window.closes_in_min <= 0
+          ? ' The confirmation window closed at 14:00 CT.' : '');
   } else {
     head = 'NOTHING YET — FLOW READS AT 10:00';
     headColor = DIM;
@@ -626,7 +565,7 @@ export default function SessionPage() {
         <Radio size={15} color={clockTone} />
         <Pill text={d.clock?.state} color={clockTone} solid={live} />
         {d.clock?.last_reading_ct && (
-          <span style={{ ...S.mono, fontSize: 12.5, color: clockTone, fontWeight: 700 }}>
+          <span style={{ ...S.mono, fontSize: 13, color: clockTone, fontWeight: 700 }}>
             last reading {d.clock.last_reading_ct} CT
             {d.clock.age_min != null && ` · ${d.clock.age_min}m ago`}
           </span>
@@ -659,6 +598,12 @@ export default function SessionPage() {
           {headBody.split('**').map((t, i) => i % 2
             ? <b key={i} style={{ color: '#e6e9f0' }}>{t}</b> : <span key={i}>{t}</span>)}
         </p>
+        {evidence && (
+          <details style={{ marginTop: 8 }}>
+            <summary style={{ ...S.small, cursor: 'pointer' }}>why</summary>
+            <div style={{ ...S.small, marginTop: 4, lineHeight: 1.5 }}>{evidence}</div>
+          </details>
+        )}
         {/* 🚨 This used to state that a DOWN call opposes EBB and an UP call
             doesn't. That is EBB's usual shape, not a fact this page checked —
             and a position claim nobody verified is exactly the kind of thing
@@ -672,7 +617,7 @@ export default function SessionPage() {
 
       {/* the tape */}
       <div style={S.card}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
           <span style={{ ...S.cardTitle, marginBottom: 0 }}>SPY since the 10:10 CT anchor</span>
           <Readout
             value={spotNow != null ? num(spotNow) : '—'}
@@ -705,7 +650,7 @@ export default function SessionPage() {
                 <div style={{ ...S.small, color: col, fontWeight: 700, letterSpacing: '.06em' }}>
                   {dist <= 0 ? `THROUGH THE ${lbl} TRIGGER` : `${dist.toFixed(2)} TO THE ${lbl} TRIGGER`}
                 </div>
-                <div style={{ ...S.mono, fontSize: 12, color: DIM, marginTop: 2 }}>
+                <div style={{ ...S.mono, fontSize: 13, color: DIM, marginTop: 2 }}>
                   {dist <= 0 ? 'waiting on a session extreme to count it' : `${Math.abs(pct).toFixed(2)}% away`}
                 </div>
               </div>
@@ -724,8 +669,6 @@ export default function SessionPage() {
           </div>
         )}
 
-        <TapeVerdict d={d} c={c} fired={fired} />
-
         <div style={{ ...S.small, marginTop: 8 }}>
           Session range since the anchor: {num(c.run_min)} – {num(c.run_max)}.
           A break only counts at a session extreme, so a dip that recovers doesn’t arm the rest of the day.
@@ -740,12 +683,13 @@ export default function SessionPage() {
           missing. Price says what happened; this says what the option flow was
           doing while it happened. */}
       <div style={S.card}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
           <span style={{ ...S.cardTitle, marginBottom: 0 }}>Option flow through the session</span>
           <Readout
-            value={mixNow != null ? num(mixNow, 2) : '—'} unit="σ mix"
+            value={mixNow != null ? `mix ${num(mixNow, 2)}` : '—'}
             valueColor={zColor(mixNow) === DIM ? '#e6e9f0' : zColor(mixNow)}
-            meaning={mixMeaning} meaningColor={zColor(mixNow)}
+            meaning={mixMeaning ? `· ${mixMeaning} (arms at ${num(CONFIRM_ARM_Z, 1)})` : null}
+            meaningColor={zColor(mixNow)}
             at={mixRow ? ctLabel(mixRow.minute_ct) : null}
             ageMin={mixAge}
           />
@@ -755,15 +699,10 @@ export default function SessionPage() {
         <details style={{ marginTop: 8 }}>
           <summary style={{ ...S.small, cursor: 'pointer' }}>how this is measured</summary>
         <div style={{ ...S.small, marginTop: 8, lineHeight: 1.6, maxWidth: '72ch' }}>
-            Covers {d.clock?.tape_window_ct || '08:31–14:59'} CT · each point is graded against the
-            trailing 63 sessions <i>at that same minute</i>, so 09:00 is compared with 63 other 09:00s.{' '}
-            The <b style={{ color: '#e6e9f0' }}>mix</b> line is the put/call ratio — the leg the arming
-            decision is made on, and the one that read +2.7σ on 2026-08-17 while put and total volume
-            were both quiet. It was only graded at the three fixed clocks until 2026-08-19; every 10
-            minutes is new here. A break in a line is a poll that failed, not a flat reading.
-            {' '}The tape records the <b style={{ color: '#c6cbd8' }}>whole session</b>; the flow
-            alert still only fires 10:36–14:00 CT, where it was measured. A morning or
-            late-afternoon crossing shows up here and deliberately does not push.
+            Each point is graded against the trailing 63 sessions at that same minute. The{' '}
+            <b style={{ color: '#e6e9f0' }}>mix</b> line — the put/call ratio — is the leg
+            that arms the call; it read 2.7 on 2026-08-17. A gap in a line means a poll
+            failed, not a flat reading. The alert only fires 10:36–14:00 CT.
           </div>
         </details>
       </div>
@@ -783,13 +722,13 @@ export default function SessionPage() {
               {!k.captured
                 ? <span style={S.small}>not captured yet</span>
                 : (<>
-                    <span style={{ fontSize: 12, color: zColor(k.putv_z) }}>
+                    <span style={{ fontSize: 13, color: zColor(k.putv_z) }}>
                       put <b style={S.mono}>{num(k.putv_z, 1)}</b>
                     </span>
-                    <span style={{ fontSize: 12, color: zColor(k.totv_z) }}>
+                    <span style={{ fontSize: 13, color: zColor(k.totv_z) }}>
                       total <b style={S.mono}>{num(k.totv_z, 1)}</b>
                     </span>
-                    <span style={{ fontSize: 12, color: zColor(k.putcall_z) }}>
+                    <span style={{ fontSize: 13, color: zColor(k.putcall_z) }}>
                       mix <b style={S.mono}>{num(k.putcall_z, 1)}</b>
                     </span>
                     {k.flagged && <Pill text="FLAGGED" color={RED} />}
@@ -800,7 +739,7 @@ export default function SessionPage() {
         <div style={{ ...S.small, marginTop: 10, lineHeight: 1.6 }}>
           <b style={{ color: '#c6cbd8' }}>mix</b> is the put/call volume ratio. Added after
           2026-08-17, when put and total volume were both correctly quiet and the ratio was at
-          +2.7σ — the highest in three months — 90 minutes before the slide.
+          +2.7 — the highest in three months — 90 minutes before the slide.
         </div>
       </Fold>
 
@@ -827,9 +766,9 @@ export default function SessionPage() {
           <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))' }}>
             {[['continuation, armed', d.calibration.continuation, true],
               ['same-window base', d.calibration.base_continuation, true],
-              ['95% lower bound', d.calibration.continuation_lcb, true],
+              ['worst plausible rate', d.calibration.continuation_lcb, true],
               ['armed share of sessions', d.calibration.armed_share, true],
-              ['stage-1 big-move lift', d.calibration.stage1_lift, false]].map(([lbl, v, pct]) => (
+              ['morning flow lift', d.calibration.stage1_lift, false]].map(([lbl, v, pct]) => (
               <div key={lbl} style={{ padding: '9px 11px', borderRadius: 8, background: '#0e1220',
                                       border: '1px solid #1c2233' }}>
                 <div style={S.small}>{lbl}</div>
@@ -846,13 +785,11 @@ export default function SessionPage() {
           )}
           {d.runway?.armed && d.runway?.base && (
             <div style={{ ...S.small, marginTop: 12, lineHeight: 1.7, maxWidth: '72ch' }}>
-              <b style={{ color: '#c6cbd8' }}>Magnitude, not just hit rate.</b> On an armed day a
-              confirmed break runs a median {num(d.runway.armed.median_win, 2)}% when it works and
-              gives back {num(Math.abs(d.runway.armed.median_loss), 2)}% when it doesn’t —{' '}
-              <b style={{ color: '#e6e9f0' }}>{num(d.runway.payoff_ratio, 1)}:1</b> on n={d.runway.armed.n}.
-              An unflagged break is {num(d.runway.base_payoff_ratio, 2)}:1
-              ({num(d.runway.base.median_win, 2)}% vs {num(Math.abs(d.runway.base.median_loss), 2)}%),
-              which is why the hit rate alone was never the point.
+              <b style={{ color: '#c6cbd8' }}>Magnitude, not just hit rate.</b> A confirmed break
+              runs a median {num(d.runway.armed.median_win, 2)}% when it works and gives back{' '}
+              {num(Math.abs(d.runway.armed.median_loss), 2)}% when it doesn’t —{' '}
+              <b style={{ color: '#e6e9f0' }}>wins run {num(d.runway.payoff_ratio, 1)}x</b> the
+              size of losses. Unarmed, that shrinks to {num(d.runway.base_payoff_ratio, 2)}x.
             </div>
           )}
         </>) : (
@@ -874,15 +811,15 @@ export default function SessionPage() {
                   background: h.armed ? '#0e1220' : 'transparent',
                   border: `1px solid ${h.armed ? '#232a3d' : 'transparent'}`,
                 }}>
-                  <span style={{ ...S.mono, fontSize: 11.5, color: DIM, width: 82 }}>{h.d}</span>
-                  <span style={{ fontSize: 11.5, color: zColor(h.pcz), width: 62 }}>
+                  <span style={{ ...S.mono, fontSize: 13, color: DIM, width: 82 }}>{h.d}</span>
+                  <span style={{ fontSize: 13, color: zColor(h.pcz), width: 62 }}>
                     mix <b style={S.mono}>{num(h.pcz, 1)}</b>
                   </span>
                   {h.armed
                     ? <Pill text="ARMED" color={AMBER} />
                     : <span style={{ ...S.small, width: 54 }}>quiet</span>}
                   {h.fired_dir
-                    ? <span style={{ fontSize: 11.5, color: h.fired_dir === 'DOWN' ? RED : GREEN }}>
+                    ? <span style={{ fontSize: 13, color: h.fired_dir === 'DOWN' ? RED : GREEN }}>
                         {h.fired_dir} break
                       </span>
                     : <span style={S.small}>no break</span>}
@@ -891,7 +828,7 @@ export default function SessionPage() {
                       {h.continued ? 'continued' : 'faded'}
                     </span>
                   )}
-                  <span style={{ ...S.mono, fontSize: 11.5, marginLeft: 'auto',
+                  <span style={{ ...S.mono, fontSize: 13, marginLeft: 'auto',
                                  color: (h.move_pct || 0) >= 0 ? GREEN : RED }}>
                     {h.move_pct == null ? '—' : `${h.move_pct >= 0 ? '+' : ''}${num(h.move_pct, 2)}%`}
                   </span>

@@ -55,13 +55,18 @@ CT = ZoneInfo("America/Chicago")
 
 SURFACES = ("session", "squeeze", "risk")
 
+# 🚨 The pre-open placeholder Session writes before the 10:00 snapshot exists.
+# Named here so `routes_calls` can drop it from the table/scorecard on days a
+# real 10:15 call landed, without hardcoding the string a second place.
+PLACEHOLDER_SESSION_VERDICT = "WAITING FOR THE 10:00 SNAPSHOT"
+
 # The literal strings each surface can show. Kept here so a typo in a caller
 # fails loudly instead of quietly creating a fourth verdict nobody scores.
 KNOWN_VERDICTS = {
     "squeeze": {"SQUEEZE_WATCH", "NO_SELL", "SELL_PREMIUM", "NEUTRAL", "UNKNOWN"},
     "risk": {"stand_down", "skip_entry", "normal"},
     "session": {"DOWN CONFIRMED", "UP CONFIRMED", "ARMED — WAITING FOR A SIDE",
-                "NOT ARMED", "WAITING FOR THE 10:00 SNAPSHOT"},
+                "NOT ARMED", PLACEHOLDER_SESSION_VERDICT},
 }
 
 

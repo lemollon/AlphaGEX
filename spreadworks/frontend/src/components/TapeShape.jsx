@@ -30,7 +30,7 @@ const S = {
     padding: 16, marginBottom: 16,
   },
   title: { fontSize: 13, fontWeight: 700, marginBottom: 2 },
-  small: { fontSize: 11, color: DIM },
+  small: { fontSize: 13, color: DIM },
   mono: {
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
     fontVariantNumeric: 'tabular-nums',
@@ -82,22 +82,27 @@ export default function TapeShape({ data }) {
   // day, so they are stated as instructions and the statistics sit underneath
   // as their evidence.
   const v = data.vrp;
+  // 🚨 PREFER THE UNAMBIGUOUS KEY. `realised_over_implied` is named for what
+  // it is — realised move divided by implied move — so a 0.52 reads as
+  // "moves came in at 52% of what was priced", not the reverse. `mean_ratio`
+  // is the same number under the old name; kept as a fallback for callers
+  // still on the prior backend response shape.
+  const ratio = v ? (v.realised_over_implied ?? v.mean_ratio) : null;
   const verdicts = [];
   if (data.p_up_day > 0.52 && data.drift_ratio > 1.15) {
     verdicts.push({
       call: 'SELL PUTS, NOT CONDORS',
       why: `The tape drifts up — ${pct(data.p_up_day)} of sessions close green and an ordinary `
-         + `up move is ${data.drift_ratio.toFixed(2)}× likelier than the same move down. `
+         + `up move is ${data.drift_ratio.toFixed(2)}x likelier than the same move down. `
          + `A symmetric structure hands that back on the call side.`,
     });
   }
   if (v && v.pct_inside_1sd > 0.75) {
     verdicts.push({
       call: 'SELL EVERY SESSION — DO NOT TIME IT',
-      why: `${pct(v.pct_inside_1sd)} of days finish inside the move options priced, against `
-         + `${pct(v.fair_inside)} for a fairly priced market — ${v.edge_pts.toFixed(0)} points of `
-         + `overpricing. Realised comes in at ${v.mean_ratio.toFixed(2)}× implied. `
-         + `Every filter tested against this has failed out of sample.`,
+      why: `${pct(v.pct_inside_1sd)} of days land inside the move options priced (fair value `
+         + `${pct(v.fair_inside)}). Options price about ${(1 / ratio).toFixed(1)}x the move that `
+         + `actually happens. Every filter tested against this has failed.`,
     });
   }
 
@@ -113,7 +118,7 @@ export default function TapeShape({ data }) {
               <div style={{ fontSize: 13.5, fontWeight: 700, color: GREEN, letterSpacing: '.02em' }}>
                 {x.call}
               </div>
-              <div style={{ fontSize: 12, color: '#c6cbd8', marginTop: 3, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 14, color: '#c6cbd8', marginTop: 3, lineHeight: 1.5 }}>
                 {x.why}
               </div>
             </div>
@@ -141,26 +146,26 @@ export default function TapeShape({ data }) {
         />
         <Cell
           label="ordinary moves lean up"
-          value={data.drift_ratio == null ? '—' : `${data.drift_ratio.toFixed(2)}×`}
+          value={data.drift_ratio == null ? '—' : `${data.drift_ratio.toFixed(2)}x`}
           note={`a +0.5% day (${pct(data.p_up_50)}) vs a −0.5% day (${pct(data.p_dn_50)})`}
           color={GREEN}
         />
         {v && (
           <Cell
-            label="options overprice by"
-            value={`${v.mean_ratio.toFixed(2)}×`}
-            note={`${pct(v.pct_inside_1sd)} of days finish inside the implied move (fair = ${pct(v.fair_inside)}) · n=${v.n}`}
+            label="realised vs priced"
+            value={`${ratio.toFixed(2)}x`}
+            note={`SPY moved ${pct(ratio, 0)} of what options priced in`}
             color={GREEN}
           />
         )}
         <Cell
           label="big moves"
-          value={tail == null ? '—' : `${tail.toFixed(2)}×`}
+          value={tail == null ? '—' : `${tail.toFixed(2)}x`}
           note={leftFatter
-            ? `left tail is fatter — 5th pct ${sgn(data.p05)} vs 95th ${sgn(data.p95)}`
+            ? `left tail is fatter — 5th percentile ${sgn(data.p05)} vs 95th ${sgn(data.p95)}`
             : symmetric
-              ? `roughly SYMMETRIC — 5th pct ${sgn(data.p05)} vs 95th ${sgn(data.p95)}. No crash premium in this sample.`
-              : `right tail is fatter — 95th ${sgn(data.p95)} vs 5th pct ${sgn(data.p05)}`}
+              ? `roughly SYMMETRIC — 5th percentile ${sgn(data.p05)} vs 95th ${sgn(data.p95)}. No crash premium in this sample.`
+              : `right tail is fatter — 95th percentile ${sgn(data.p95)} vs 5th ${sgn(data.p05)}`}
           color={leftFatter ? RED : null}
         />
       </div>

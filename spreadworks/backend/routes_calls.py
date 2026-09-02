@@ -18,8 +18,8 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query, Request
 
-from .call_log import (SURFACES, ensure_tables, read_calls, spy_frame,
-                       upsert_spy_days)
+from .call_log import (PLACEHOLDER_SESSION_VERDICT, SURFACES, ensure_tables,
+                       read_calls, spy_frame, upsert_spy_days)
 from .call_scoring import attach_outcomes, disagreements, score
 
 CT = ZoneInfo("America/Chicago")
@@ -34,6 +34,33 @@ RANGE_DAYS = {"week": 7, "month": 31, "year": 365, "all": 3650}
 
 _spy_refreshed: dict[str, datetime] = {}
 _SPY_TTL_MIN = 60
+
+
+def _drop_superseded_placeholders(rows: list[dict]) -> list[dict]:
+    """Hide Session's pre-open placeholder once a real 10:15 call landed.
+
+    🚨 THE PLACEHOLDER DOUBLES THE TABLE. Every session day writes
+    "WAITING FOR THE 10:00 SNAPSHOT" before the 10:00 snapshot exists, then
+    writes the real call (NOT ARMED / armed / a direction) minutes later -
+    two rows for one trading day, and the placeholder pollutes the scorecard
+    with an n that never had a directional claim to score.
+
+    But if the real call never lands - the watcher died - the placeholder is
+    the ONLY row for that day and is the signal that something broke. It
+    stays in that case. Filtering here, before `attach_outcomes`/`score`,
+    means the table and the scorecard strip see the same rows and can never
+    disagree with each other.
+    """
+    real_call_dates = {
+        r["trade_date"] for r in rows
+        if r.get("surface") == "session" and r.get("verdict") != PLACEHOLDER_SESSION_VERDICT
+    }
+    return [
+        r for r in rows
+        if not (r.get("surface") == "session"
+                and r.get("verdict") == PLACEHOLDER_SESSION_VERDICT
+                and r.get("trade_date") in real_call_dates)
+    ]
 
 
 async def _refresh_spy(request: Request) -> None:
@@ -80,6 +107,7 @@ async def calls(request: Request,
     await _refresh_spy(request)
 
     rows = read_calls(surface=surface, days=n_days)
+    rows = _drop_superseded_placeholders(rows)
     spy = spy_frame(days=n_days + 10)
     rows = attach_outcomes(rows, spy)
 
