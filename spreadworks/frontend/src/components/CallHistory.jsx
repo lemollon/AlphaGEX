@@ -183,7 +183,7 @@ export default function CallHistory({ surface, title = 'Call history' }) {
                         → {c.superseded_by}
                       </span>
                     )}
-                    {c.data_age_min > 90 && (
+                    {c.data_age_min > 90 && !c.structural_lag && (
                       <span style={{ color: AMBER, marginLeft: 6 }}
                             title="the input was already this old when the call was made">
                         stale {Math.round(c.data_age_min / 60)}h

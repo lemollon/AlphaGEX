@@ -55,7 +55,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -307,6 +307,26 @@ def register_risk_alerts(scheduler, app) -> None:
                 macro = macro_today(today)
             except Exception:
                 macro = None
+
+            # 🚨 A ROW MUST EXIST EVEN IF NOBODY LOADS THE PAGE. /state only
+            # logs a call when someone requests it; this job runs on a cron
+            # whether or not that happens, so it is the one guaranteed write
+            # per session. Same whitelist action rule /state uses (routes_risk
+            # ~1521-1522), scoped to what a morning verdict actually knows —
+            # the flow/intraday legs have not captured yet at this hour.
+            action = ("stand_down" if (backw and flag) else
+                      "skip_entry" if (backw or flag) else "normal")
+            try:
+                from .call_log import record_call
+                record_call("risk", action,
+                            detail={"backwardation": backw, "flag_vix1d": flag,
+                                    "double_floor": floor,
+                                    "vix": vix_c, "vix1d": v1_c},
+                            # The VIX close this rests on, not the moment we ran.
+                            data_ts=datetime.combine(d, time(15, 15)))
+            except Exception:
+                pass
+
             if backw or flag:
                 actions = []
                 if macro:
@@ -1187,8 +1207,27 @@ def register_risk_alerts(scheduler, app) -> None:
                 return
 
 
-            short_k, long_k = r["short_strike"], r["long_strike"]
-            credit, floor_ok = r.get("credit_now"), r.get("meets_floor")
+            # 🚨 ONE TICKET PER CLOCK. AM = SPARK (spot-2 / $5 wing), PM = FLAME
+            # (spot-1 / $2 wing). The top-level short_strike/long_strike are
+            # SPARK's, so reading them here for BOTH clocks posted SPARK's
+            # wider ticket at FLAME's clock — the same bug the live scanner
+            # fixed on 8/27. tickets[] is the per-clock truth; the top-level
+            # keys are only a fallback for a payload that predates it.
+            want = "SPARK" if session == "AM" else "FLAME"
+            tk = next((t for t in (r.get("tickets") or [])
+                       if t.get("bot") == want), None)
+            if tk:
+                short_k, long_k = tk["short"], tk["long"]
+                credit, floor_ok = tk.get("credit_now"), tk.get("meets_floor")
+                wing = int(tk.get("wing") or (5 if want == "SPARK" else 2))
+            else:
+                short_k, long_k = r["short_strike"], r["long_strike"]
+                credit, floor_ok = r.get("credit_now"), r.get("meets_floor")
+                wing = 5 if want == "SPARK" else 2
+            # Backtest 2022-11 -> 2026-08, 1 lot, NBBO fills, $0.70/lot
+            # (ironforge-data/risk_advisor/risk_advisor_growth_report.md).
+            tested = ({"acct": "$5,000", "worst": "−$485", "dd": "$1,468"} if want == "SPARK"
+                      else {"acct": "$2,000", "worst": "−$187", "dd": "$490"})
             if credit is None:
                 credit_line = ("credit: no live quote right now — check the "
                                "book before sending")
@@ -1204,19 +1243,21 @@ def register_risk_alerts(scheduler, app) -> None:
                 colour = RED
 
             _post(slot_key, today, {
-                "title": f"\U0001f4c4 {session} ticket — SPY 0DTE put spread",
+                "title": f"📄 {session} ticket — {want} SPY 0DTE put spread",
                 "description": (
-                    f"**SELL SPY {short_k}P / BUY SPY {long_k}P**\n"
+                    f"**SELL SPY {short_k}P / BUY SPY {long_k}P** (${wing} wing, "
+                    f"max loss ${wing * 100}/lot)\n"
                     f"**expires TODAY ({r['expiration']})**\n\n"
                     f"spot ${r['spot']:.2f} · {credit_line}\n\n"
-                    "• Size 1 contract per $2,500–3,000 allocated. "
-                    "Worst observed day −$484/lot.\n"
+                    f"• Tested at 1 contract on a {tested['acct']} account. "
+                    f"Worst tested day {tested['worst']}/lot, worst drawdown "
+                    f"{tested['dd']}.\n"
                     "• **NO stop-loss and NO profit-target** — every exit "
                     "tested collapses the edge to ~$0. Settling at the close "
                     "IS the trade.\n"
-                    "• **Do NOT skip flagged days on this ticket** — its "
-                    "backtest includes them; the calm-day gate cut it from "
-                    "$12.19 to $6.00/trade. The morning verdict governs your "
+                    "• **Do NOT skip flagged days on this ticket** — skipping "
+                    "STAND DOWN days cost FLAME money in the test and is "
+                    "unproven for SPARK. The morning verdict governs your "
                     "OTHER trading, not this."),
                 "color": colour,
                 "footer": {"text": "registry #23b/#41 · advisory only · "

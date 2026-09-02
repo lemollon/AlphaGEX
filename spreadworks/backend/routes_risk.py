@@ -36,6 +36,7 @@ snapshot exists, flow fields are null and `flow_status` says why.
 from __future__ import annotations
 
 import asyncio
+import bisect
 import csv
 import json
 import logging
@@ -131,10 +132,16 @@ ROLLING_BASELINE_JSON = Path(__file__).resolve().parent / "data" / "rolling_flow
 CBOE_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{sym}_History.csv"
 BASELINE_CSV = Path(__file__).resolve().parent / "data" / "risk_flow_baseline.csv"
 BASELINE_CSV_PM = Path(__file__).resolve().parent / "data" / "risk_flow_baseline_pm.csv"
+GROWTH_JSON = Path(__file__).resolve().parent / "data" / "risk_advisor_growth.json"
 
 _cboe_cache: dict[str, tuple[datetime, dict[date, float]]] = {}
 _CBOE_TTL = 1800
 _snapshot_lock = asyncio.Lock()
+# /growth's committed SPARK/FLAME backtest — loaded once per process and
+# reloaded only when the file on disk changes, keyed by mtime rather than a
+# TTL so a redeploy that ships a fresher backtest is picked up without a
+# restart, and a static file is never re-parsed on every request.
+_growth_cache: dict = {}
 
 
 class RiskFlowSnapshot(Base):
@@ -1107,20 +1114,244 @@ def _macro_block() -> dict:
         return {"today": None, "next": None}
 
 
+# ── /growth: the one-screen SPARK/FLAME backtest + today's risk read ───────
+# `risk_advisor_growth.json` ships the committed backtest (equity curves under
+# every gate, for both bots) plus a frozen risk model — mu/sd/weights fitted
+# once and never refit live, so the number this page shows today is scored
+# with the SAME model that produced the backtest, not a moving target. This
+# section scores TODAY live from that frozen model; the file's own "today"
+# block (computed at last rebuild) is the fallback when a live input is
+# missing.
+
+def _load_growth() -> dict | None:
+    """The growth JSON, cached by the file's mtime — one parse per process
+    until the file actually changes, never a TTL guess."""
+    try:
+        mtime = GROWTH_JSON.stat().st_mtime
+    except OSError:
+        return None
+    if _growth_cache.get("mtime") == mtime and "data" in _growth_cache:
+        return _growth_cache["data"]
+    try:
+        with open(GROWTH_JSON) as f:
+            data = json.load(f)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_risk] risk_advisor_growth.json unreadable: %r", e)
+        return None
+    _growth_cache["mtime"] = mtime
+    _growth_cache["data"] = data
+    return data
+
+
+def _downsample_curve(points: list, max_n: int = 400) -> list:
+    """Evenly-spaced subset of an equity curve, always keeping the first and
+    last point — a ~950-point curve is more than a line chart needs, and the
+    frontend never has to know the file shrank."""
+    n = len(points)
+    if n <= max_n:
+        return points
+    idx = [round(i * (n - 1) / (max_n - 1)) for i in range(max_n)]
+    out, seen = [], set()
+    for i in idx:
+        if i not in seen:
+            out.append(points[i])
+            seen.add(i)
+    return out
+
+
+def _stdev(xs: list[float]) -> float:
+    """Sample standard deviation (ddof=1), matching pandas' default — the
+    frozen model's mu/sd were fit with pandas, so this must agree with it."""
+    n = len(xs)
+    if n < 2:
+        return 0.0
+    m = sum(xs) / n
+    var = sum((x - m) ** 2 for x in xs) / (n - 1)
+    return var ** 0.5
+
+
+def _spy_closes_before(today: date) -> list[float]:
+    """SPY daily closes strictly before `today`, ascending. Reads
+    sw_spy_daily directly rather than call_log.spy_frame(), which returns a
+    date-keyed dict shaped for outcome joins, not an ordered price series."""
+    if SessionLocal is None:
+        return []
+    from .call_log import SpyDaily
+    db = SessionLocal()
+    try:
+        rows = (db.query(SpyDaily)
+                  .filter(SpyDaily.trade_date < today, SpyDaily.close.isnot(None))
+                  .order_by(SpyDaily.trade_date)
+                  .all())
+        return [r.close for r in rows]
+    except Exception:
+        return []
+    finally:
+        db.close()
+
+
+def _score_frozen(model: dict, feat_vals: dict) -> dict | None:
+    """Score one session's features with the FROZEN #60 model shipped in
+    risk_advisor_growth.json (mu/sd standardisation, logistic weights, q60/q80
+    cut points, p_hist for the percentile). Pure: no I/O, no clock. Returns
+    None when the model or any feature is missing — never guesses. Kept
+    separate from the live-input plumbing so a test can prove it reproduces
+    the file's own "today" block from the file's own features."""
+    feats: list[str] = model.get("feats") or []
+    mu, sd, w = model.get("mu") or {}, model.get("sd") or {}, model.get("w") or []
+    q60, q80 = model.get("q60"), model.get("q80")
+    if not feats or len(w) != len(feats) + 1 or q60 is None or q80 is None:
+        return None
+    z: dict[str, float] = {}
+    for f in feats:
+        if f not in feat_vals or feat_vals[f] is None or f not in mu or not sd.get(f):
+            return None
+        z[f] = (float(feat_vals[f]) - mu[f]) / sd[f]
+    contrib = {f: z[f] * w[i + 1] for i, f in enumerate(feats)}
+    lin = w[0] + sum(contrib.values())
+    lin = max(-30.0, min(30.0, lin))          # clip before exp — no overflow
+    p = 1.0 / (1.0 + math.exp(-lin))
+    state = "STAND DOWN" if p >= q80 else "CAUTION" if p >= q60 else "NORMAL"
+    p_hist = sorted(model.get("p_hist") or [])
+    # Fraction of scored sessions strictly below today's p (0..1, NOT 0..100).
+    percentile = (bisect.bisect_left(p_hist, p) / len(p_hist)) if p_hist else None
+    driver = max(contrib, key=contrib.get) if contrib else None
+    return {"p": p, "state": state, "percentile": percentile, "driver": driver,
+            "contrib": contrib}
+
+
+async def _growth_live_today(request: Request, data: dict) -> dict:
+    """Score TODAY's session live from PRIOR-session features and the frozen
+    weights in data["today"]["model"]. Falls back to the file's precomputed
+    "today" block — never raises, never guesses a missing input.
+    """
+    today_block = data.get("today") or {}
+    fallback = dict(today_block)
+    fallback["computed_from"] = "file"
+    try:
+        asof_str = today_block.get("asof")
+        asof_d = date.fromisoformat(asof_str) if asof_str else None
+        fallback["stale"] = bool(
+            asof_d and (datetime.now(CT).date() - asof_d).days > 5)
+    except Exception:
+        fallback["stale"] = None
+
+    try:
+        model = today_block.get("model") or {}
+        q60, q80 = model.get("q60"), model.get("q80")
+        base_rate = model.get("base_rate")
+
+        client: httpx.AsyncClient = request.app.state.http
+        vix, v3, vvix = (await _cboe(client, "VIX"), await _cboe(client, "VIX3M"),
+                        await _cboe(client, "VVIX"))
+        if not vix or not v3 or not vvix:
+            return fallback
+        d_vix, vix_l = _latest(vix)
+        vix3m_l, vvix_l = v3.get(d_vix), vvix.get(d_vix)
+        if vix3m_l is None or vvix_l is None:
+            return fallback
+
+        today_ct = datetime.now(CT).date()
+        closes = _spy_closes_before(today_ct)
+        if len(closes) < 30:
+            try:
+                from .routes_calls import _refresh_spy
+                await _refresh_spy(request)
+            except Exception:
+                pass
+            closes = _spy_closes_before(today_ct)
+        if len(closes) < 30:
+            return fallback
+
+        rets = [(closes[i] / closes[i - 1]) - 1.0 for i in range(1, len(closes))]
+        if len(rets) < 21:
+            return fallback
+
+        feat_vals = {
+            "vix_l": vix_l, "vix3m_l": vix3m_l, "vvix_l": vvix_l,
+            "ts_spread_l": vix_l - vix3m_l,
+            "backwardation_l": 1.0 if vix_l > vix3m_l else 0.0,
+            "rv5": _stdev(rets[-5:]), "rv21": _stdev(rets[-21:]),
+            "semivar5": sum(min(r, 0.0) ** 2 for r in rets[-5:]) / 5.0,
+            "absret1": abs(rets[-1]),
+        }
+
+        scored = _score_frozen(model, feat_vals)
+        if scored is None:
+            return fallback
+        p, state, percentile, driver = (scored['p'], scored['state'],
+                                        scored['percentile'], scored['driver'])
+
+        return _scrub({
+            "p": p, "state": state, "percentile": percentile,
+            "q60": q60, "q80": q80, "base_rate": base_rate,
+            "asof": d_vix.isoformat(), "target": today_ct.isoformat(),
+            "features": feat_vals, "driver": driver,
+            "computed_from": "live",
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_risk] growth live_today failed: %r", e)
+        return fallback
+
+
+@router.get("/growth")
+async def growth(request: Request):
+    """SPARK/FLAME equity curves under every gate, plus TODAY's risk read.
+
+    Never raises: a missing/unreadable file returns a status payload rather
+    than a 500, matching every other endpoint in this module.
+    """
+    data = _load_growth()
+    if data is None:
+        return {"status": "unavailable",
+                "reason": "risk_advisor_growth.json missing or unreadable"}
+
+    # Downsample only if the FULL file would push the response past what a
+    # line chart needs. Done once per file version (keyed on the same mtime
+    # _load_growth uses), not per request — serialising a 330 KB file to
+    # measure it on every 60 s poll is wasted work for a static input.
+    if _growth_cache.get("bots_mtime") != _growth_cache.get("mtime"):
+        raw_size = len(json.dumps(data, default=str))
+        bots_out: dict = {}
+        for name, bot in (data.get("bots") or {}).items():
+            b = dict(bot)
+            curves = bot.get("curves") or {}
+            if raw_size > 150_000:
+                b["curves"] = {gate: _downsample_curve(pts) for gate, pts in curves.items()}
+            bots_out[name] = b
+        _growth_cache["bots_out"] = bots_out
+        _growth_cache["bots_mtime"] = _growth_cache.get("mtime")
+    bots_out = _growth_cache["bots_out"]
+
+    payload = {
+        "as_of": data.get("as_of"),
+        "bots": bots_out,
+        "gates": data.get("gates"),
+        "today": data.get("today"),
+        "live_today": await _growth_live_today(request, data),
+    }
+    return _scrub(payload)
+
+
 # ── /recipe: the one manual ticket that survived 44 registered trials ───────
-# Registry #23b (AM, 10:05-10:20 CT) + #41 (PM, 13:05-13:10 CT) — a same-day
-# SPY vertical, short strike spot-2, wing 5 wide. EBB/EBB-PM run exactly this
-# spec on paper (see bots/registry.py); this endpoint is the read-only manual
-# companion for a human placing the same ticket by hand — it never trades.
+# Registry #23b (AM, 10:05-10:20 CT) + #41 (PM, 13:05-13:10 CT) — two DIFFERENT
+# same-day SPY put verticals, one per clock, not one spec run twice:
+#   SPARK (AM, 10:05 CT): short = round(spot-2), long = short-5 ($5 wing)
+#   FLAME (PM, 13:05 CT): short = round(spot-1), long = short-2 ($2 wing)
+# 🚨 A prior version of this comment said "spot-2, wing 5 ... EBB/EBB-PM run
+# exactly this" for BOTH clocks — false for the PM clock, which trades a
+# narrower $2 wing one point closer to the money. This endpoint is the
+# read-only manual companion for a human placing either ticket by hand — it
+# never trades.
 
 
-def _recipe_strikes(spot: float) -> tuple[int, int]:
-    """Short strike = spot rounded down/up to the nearest $1 minus 2; the
-    other leg sits 5 points further out (SPY $1 grid) — the exact registry
-    #23b/#41 spec, kept as a pure function so the strike math is unit
-    testable without a live quote or a Tradier round-trip."""
-    short_strike = round(spot - 2)
-    other_strike = short_strike - 5
+def _recipe_strikes(spot: float, otm: int, wing: int) -> tuple[int, int]:
+    """Short strike = spot rounded to the nearest $1, minus `otm`; the other
+    leg sits `wing` points further out (SPY $1 grid). `otm`/`wing` differ by
+    clock (SPARK: 2/5, FLAME: 1/2) so this stays a pure, unit-testable
+    function of the numbers rather than a hardcoded single spec."""
+    short_strike = round(spot - otm)
+    other_strike = short_strike - wing
     return short_strike, other_strike
 
 
@@ -1163,9 +1394,43 @@ def _recipe_phase(now_ct: datetime, am_start: tuple[int, int],
     return "done", None
 
 
+async def _price_put_credit(request: Request, expiration: date, short_k: int,
+                            long_k: int) -> tuple[float | None, bool | None]:
+    """Live near-touch credit for a same-day SPY put vertical: short bid minus
+    long ask. (None, None) when the chain or either quote is not available —
+    never raises, this is a nice-to-have on top of the strike math."""
+    try:
+        from .routes import _tradier_get
+        ch = await _tradier_get(request, "/markets/options/chains",
+                                {"symbol": "SPY", "expiration": expiration.isoformat()})
+        opts = (ch.get("options") or {}).get("option") or []
+        if isinstance(opts, dict):
+            opts = [opts]
+        puts = {float(o["strike"]): o for o in opts
+                if o.get("option_type") == "put" and o.get("strike") is not None}
+        near_opt, far_opt = puts.get(float(short_k)), puts.get(float(long_k))
+        if near_opt and far_opt:
+            near_bid = float(near_opt.get("bid") or 0)
+            far_ask = float(far_opt.get("ask") or 0)
+            if near_bid > 0 and far_ask > 0:
+                credit = round(near_bid - far_ask, 2)
+                return credit, credit >= 0.10
+    except Exception:
+        pass
+    return None, None
+
+
+# Deployed truth, one row per clock — this is the single place both /recipe
+# and the recipe_ticket alert should ever read the spec from.
+RECIPE_TICKETS = (
+    {"bot": "SPARK", "clock": "10:05 CT", "otm": 2, "wing": 5},
+    {"bot": "FLAME", "clock": "13:05 CT", "otm": 1, "wing": 2},
+)
+
+
 @router.get("/recipe")
 async def recipe(request: Request):
-    """Today's manual ticket, cached 60s. Never raises — any failure
+    """Today's manual ticket(s), cached 60s. Never raises — any failure
     degrades to {"status": "unavailable"} rather than a 500, same discipline
     as every other endpoint in this module."""
     now = datetime.now(CT)
@@ -1183,7 +1448,10 @@ async def recipe(request: Request):
             _recipe_cache["r"] = (now, payload)
             return payload
 
-        short_strike, other_strike = _recipe_strikes(spot)
+        # Kept for backward compatibility with existing callers (the
+        # recipe_ticket Discord alert reads short_strike/long_strike at the
+        # top level) — this is SPARK's spec, the AM clock's ticket.
+        short_strike, other_strike = _recipe_strikes(spot, 2, 5)
         today = now.date()
 
         # The recipe is a SAME-DAY put spread, so its expiration is the
@@ -1204,31 +1472,46 @@ async def recipe(request: Request):
         total = now.hour * 60 + now.minute
         am_s, am_e = am_start[0] * 60 + am_start[1], am_end[0] * 60 + am_end[1]
         pm_s, pm_e = pm_start[0] * 60 + pm_start[1], pm_end[0] * 60 + pm_end[1]
-        near_window = (am_s - 20 <= total <= am_e) or (pm_s - 20 <= total <= pm_e)
+        am_near = (am_s - 20 <= total <= am_e)
+        pm_near = (pm_s - 20 <= total <= pm_e)
+        weekday = now.weekday() < 5
 
-        credit_now = None
-        meets_floor = None
-        if near_window and now.weekday() < 5:
-            try:
-                from .routes import _tradier_get
-                ch = await _tradier_get(request, "/markets/options/chains",
-                                        {"symbol": "SPY", "expiration": today.isoformat()})
-                opts = (ch.get("options") or {}).get("option") or []
-                if isinstance(opts, dict):
-                    opts = [opts]
-                puts = {float(o["strike"]): o for o in opts
-                        if o.get("option_type") == "put" and o.get("strike") is not None}
-                near_opt = puts.get(float(short_strike))
-                far_opt = puts.get(float(other_strike))
-                if near_opt and far_opt:
-                    near_bid = float(near_opt.get("bid") or 0)
-                    far_ask = float(far_opt.get("ask") or 0)
-                    if near_bid > 0 and far_ask > 0:
-                        credit_now = round(near_bid - far_ask, 2)
-                        meets_floor = credit_now >= 0.10
-            except Exception:
-                credit_now = None
-                meets_floor = None
+        credit_now = meets_floor = None
+        if am_near and weekday:
+            credit_now, meets_floor = await _price_put_credit(
+                request, today, short_strike, other_strike)
+
+        # PER-CLOCK ticket structure — SPARK (AM) and FLAME (PM) are
+        # DIFFERENT specs (see RECIPE_TICKETS above), each priced against its
+        # own strikes only when its own window is near.
+        _window_near = {"SPARK": am_near, "FLAME": pm_near}
+        _status = ("active" if phase == "am_open" else
+                   "done" if phase in ("between", "pm_open", "done") else
+                   "upcoming")
+        _status_pm = ("active" if phase == "pm_open" else
+                      "done" if phase == "done" else "upcoming")
+        _status_by_bot = {"SPARK": _status, "FLAME": _status_pm}
+
+        tickets = []
+        active_ticket = None
+        for spec in RECIPE_TICKETS:
+            t_short, t_long = _recipe_strikes(spot, spec["otm"], spec["wing"])
+            t_credit, t_floor = (None, None)
+            if _window_near[spec["bot"]] and weekday:
+                t_credit, t_floor = (
+                    (credit_now, meets_floor) if spec["bot"] == "SPARK" else
+                    await _price_put_credit(request, today, t_short, t_long))
+            status = _status_by_bot[spec["bot"]]
+            ticket = {
+                "bot": spec["bot"], "clock": spec["clock"], "otm": spec["otm"],
+                "wing": spec["wing"], "short": t_short, "long": t_long,
+                "max_loss_per_lot": spec["wing"] * 100,
+                "credit_now": t_credit, "meets_floor": t_floor,
+                "status": status,
+            }
+            tickets.append(ticket)
+            if status == "active":
+                active_ticket = spec["bot"]
 
         payload = _scrub({
             "status": "ok",
@@ -1242,6 +1525,8 @@ async def recipe(request: Request):
             "credit_now": credit_now,
             "meets_floor": meets_floor,
             "floor": 0.10,
+            "tickets": tickets,
+            "active_ticket": active_ticket,
             "generated_at": now.isoformat(),
         })
         _recipe_cache["r"] = (now, payload)
@@ -2407,18 +2692,29 @@ def tape_shape():
             db2.close()
         pairs = []
         for a, b in zip(rows2, rows2[1:]):
-            if a[1] and b[1] and b[2]:
+            # 🚨 LOOK-AHEAD, FIXED. This used to divide the a->b move by
+            # `b`'s VIX close — the close AFTER the move already happened,
+            # which already prices in whatever just moved. The number known
+            # BEFORE the move is `a`'s VIX close (the PRIOR session's), so
+            # the join is lagged by one trading day: sd1 comes from `a`, not
+            # `b`.
+            if a[1] and b[1] and a[2]:
                 mv = abs(100.0 * (float(b[1]) - float(a[1])) / float(a[1]))
-                sd1 = float(b[2]) / (252 ** 0.5)
+                sd1 = float(a[2]) / (252 ** 0.5)
                 if sd1 > 0:
                     pairs.append((mv, sd1))
         if len(pairs) >= 120:
             ratios = sorted(m / s_ for m, s_ in pairs)
             k = len(ratios)
             inside = sum(1 for m, s_ in pairs if m < s_) / k
+            realised_over_implied = sum(ratios) / k
             vrp = {
                 "n": k,
-                "mean_ratio": sum(ratios) / k,
+                # Renamed so the number reads as what it is: realised move
+                # over implied (prior-session VIX) sigma. `mean_ratio` ships
+                # alongside it unchanged for existing callers.
+                "realised_over_implied": realised_over_implied,
+                "mean_ratio": realised_over_implied,
                 "median_ratio": ratios[k // 2],
                 "pct_inside_1sd": inside,
                 "fair_inside": 0.683,

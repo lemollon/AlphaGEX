@@ -83,6 +83,13 @@ async def calls(request: Request,
     spy = spy_frame(days=n_days + 10)
     rows = attach_outcomes(rows, spy)
 
+    # 🚨 THE RISK CALL IS BUILT FROM THE PRIOR CLOSE BY DESIGN. Its data_ts is
+    # always ~19h old (yesterday's 15:15 CT close), which every other surface
+    # would read as stale. This flag lets the frontend suppress that chip for
+    # risk rows instead of the freshness badge crying wolf every single day.
+    for r in rows:
+        r["structural_lag"] = r.get("surface") == "risk"
+
     return {
         "surface": surface or "all",
         "range": range,
