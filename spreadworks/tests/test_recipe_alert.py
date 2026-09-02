@@ -221,3 +221,71 @@ def test_the_no_stop_no_target_rule_rides_along_with_every_ticket(harness, monke
     body = sent[0]["embed"]["description"]
     assert "NO stop-loss" in body and "NO profit-target" in body
     assert "Do NOT skip flagged days" in body
+
+
+# ── one ticket per clock ──────────────────────────────────────────────────
+OK_TICKETS = dict(OK, tickets=[
+    {"bot": "SPARK", "clock": "10:05 CT", "otm": 2, "wing": 5, "short": 639,
+     "long": 634, "credit_now": 0.18, "meets_floor": True, "status": "active"},
+    {"bot": "FLAME", "clock": "13:05 CT", "otm": 1, "wing": 2, "short": 640,
+     "long": 638, "credit_now": 0.12, "meets_floor": True, "status": "upcoming"},
+])
+
+
+def test_the_pm_alert_posts_flames_ticket_not_sparks(harness, monkeypatch):
+    """🚨 THE BUG. Both clocks used to read the top-level short/long strikes,
+    which are SPARK's spot-2/$5 pair, so the 13:05 post handed over the wrong
+    ticket for FLAME's spot-1/$2 structure. The PM post must come from the
+    FLAME row of tickets[]."""
+    sched, sent, _ = harness
+    _weekday(monkeypatch, hour=13, minute=5)
+    _stub_recipe(monkeypatch, OK_TICKETS)
+
+    _fire(sched, "risk_recipe_pm")
+
+    body = sent[0]["embed"]["description"]
+    assert "SELL SPY 640P / BUY SPY 638P" in body
+    assert "$2 wing" in body and "max loss $200/lot" in body
+    assert "FLAME" in sent[0]["embed"]["title"]
+    assert "639P" not in body
+
+
+def test_the_am_alert_posts_sparks_ticket(harness, monkeypatch):
+    sched, sent, _ = harness
+    _weekday(monkeypatch)
+    _stub_recipe(monkeypatch, OK_TICKETS)
+
+    _fire(sched, "risk_recipe_am")
+
+    body = sent[0]["embed"]["description"]
+    assert "SELL SPY 639P / BUY SPY 634P" in body
+    assert "$5 wing" in body and "max loss $500/lot" in body
+    assert "SPARK" in sent[0]["embed"]["title"]
+
+
+def test_a_payload_without_tickets_falls_back_to_the_top_level_strikes(harness, monkeypatch):
+    """Older /recipe payloads carry only SPARK's strikes at the top level; the
+    alert must still post rather than crash."""
+    sched, sent, _ = harness
+    _weekday(monkeypatch)
+    _stub_recipe(monkeypatch, OK)
+
+    _fire(sched, "risk_recipe_am")
+
+    assert "SELL SPY 639P / BUY SPY 634P" in sent[0]["embed"]["description"]
+
+
+def test_the_refuted_gating_number_is_gone(harness, monkeypatch):
+    """#52r (8/14) refuted the $12.19 -> $6.00 line and the 8/27 re-measure
+    replaced the single "worst day −$484" with per-bot numbers. Neither stale
+    figure may ride along on a live ticket."""
+    sched, sent, _ = harness
+    _weekday(monkeypatch)
+    _stub_recipe(monkeypatch, OK_TICKETS)
+
+    _fire(sched, "risk_recipe_am")
+    _fire(sched, "risk_recipe_pm")
+
+    for s in sent:
+        assert "12.19" not in s["embed"]["description"]
+        assert "484" not in s["embed"]["description"]

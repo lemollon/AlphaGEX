@@ -176,8 +176,15 @@ def record_call(surface: str, verdict: Optional[str],
                   .filter(CallLog.surface == surface)
                   .order_by(desc(CallLog.call_ts), desc(CallLog.id))
                   .first())
-        if prev is not None and prev.verdict == verdict:
-            return False                 # unchanged - not a new call
+        # 🚨 Skipping on "same verdict as the last row EVER" meant a steady
+        # NORMAL never wrote again once it had written once - one row since
+        # 8/19. The dedupe is meant to collapse repeat polling WITHIN a
+        # session, not across every session forever. Comparing trade_date
+        # too gives one row per session (the first call of the day) plus
+        # every same-day flip, which is what "when did it flip" needs.
+        if (prev is not None and prev.verdict == verdict
+                and prev.trade_date == ts.date()):
+            return False                 # unchanged today - not a new call
         db.add(CallLog(surface=surface, trade_date=ts.date(), call_ts=ts,
                        verdict=verdict,
                        detail=json.dumps(detail or {}, default=str)[:4000],
