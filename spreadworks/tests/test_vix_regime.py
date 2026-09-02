@@ -112,7 +112,8 @@ def test_both_ebb_tranches_carry_the_gate():
     (no edge), gated $+6.23 at t=+2.44."""
     from backend.bots.registry import get_bot
     assert get_bot("ebb")["defaults"]["vix_decay_max"] == 0.90
-    assert get_bot("ebb_pm")["defaults"]["vix_decay_max"] == 0.90
+    # FLAME/ebb_pm: OFF (0) since 2026-09-02 — see registry comment.
+    assert get_bot("ebb_pm")["defaults"]["vix_decay_max"] == 0
 
 
 def test_only_the_measured_bots_are_gated():

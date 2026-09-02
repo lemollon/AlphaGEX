@@ -270,9 +270,10 @@ def test_ebb_pm_defaults(db_session):
     assert bands["demote_roll60"] == -196.0
     assert bands["demote_roll120"] == 0.0
     assert bands["min_credit20"] == 15.0
-    # VIX decay gate: skip the day when VIX(prior session) / 20d-max > 0.90.
-    # Prior session, never today's close — see bots/vix_regime.py.
-    assert b["defaults"]["vix_decay_max"] == 0.90
+    # VIX decay gate OFF since 2026-09-02 (0 = explicit off; None would be
+    # re-backfilled). On this cell the gate cost $509/yr and did not cut
+    # drawdown; SPARK/ebb keeps it. See the registry comment.
+    assert b["defaults"]["vix_decay_max"] == 0
     d = b["defaults"]
     assert d["starting_capital"] == 3000.0
     assert d["enabled"] is False        # no bot ships armed

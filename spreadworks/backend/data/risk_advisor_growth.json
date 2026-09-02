@@ -31031,11 +31031,11 @@
   }
  },
  "gates": {
-  "none": "Trade every session (no gate)",
+  "none": "Trade every session",
   "sd60": "Skip STAND DOWN days (risk model top 20%)",
   "caution60": "Skip CAUTION + STAND DOWN days (top 40%)",
   "backwardation": "Skip backwardation days (VIX above VIX3M)",
-  "vix_decay": "Skip VIX-not-decaying days (VIX at 90%+ of its 20-day high) - DEPLOYED RULE, both bots"
+  "vix_decay": "Skip VIX-not-decaying days (VIX at 90%+ of its 20-day high)"
  },
  "today": {
   "p": 0.22004695440389296,
@@ -32416,5 +32416,9 @@
   },
   "driver": "rv21",
   "base_rate": 0.2985305491105955
+ },
+ "deployed": {
+  "spark": "vix_decay",
+  "flame": "none"
  }
 }

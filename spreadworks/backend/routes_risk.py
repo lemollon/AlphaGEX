@@ -1350,6 +1350,8 @@ async def growth(request: Request):
         "as_of": data.get("as_of"),
         "bots": bots_out,
         "gates": data.get("gates"),
+        # Per-bot deployed rule (SPARK: vix_decay, FLAME: none since 9/2).
+        "deployed": data.get("deployed") or {"spark": "vix_decay", "flame": "none"},
         "today": data.get("today"),
         "live_today": await _growth_live_today(request, data),
     }

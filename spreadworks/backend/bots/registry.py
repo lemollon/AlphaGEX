@@ -515,8 +515,18 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             #   with this gate     $+6.51/tr  ret/DD 7.38   (2026 YTD +$302)
             # Untouched last third: $+1.78 -> $+3.04/tr (t=+0.89 — an
             # improvement, NOT significant on its own). Sits out ~29% of days.
-            # Treat as a modest consistent tilt that also rescues the flat year.
-            "vix_decay_max": 0.90,
+            #
+            # 🚨 OFF since 2026-09-02 (Leron: "remove it from flame"). The
+            # growth backtest on the engine that reproduces FLAME's deployed
+            # numbers (risk_advisor_growth.py, 2022-11 -> 2026-08, NBBO,
+            # $0.70) has the gate COSTING this cell $509/yr with the worst
+            # drawdown getting worse ($490 -> $531); the 284 skipped days made
+            # +$1,942, positive in every year. SPARK keeps it (drawdown halved).
+            # 0 is the explicit off value (db.py backfills only NULL, and the
+            # scanner skips the gate when the ceiling is not > 0). The live
+            # ebb_pm_config row must be set to 0 as well — the backfill will
+            # not overwrite the 0.90 an earlier default put there.
+            "vix_decay_max": 0,
             # Confirmed-direction pivot (2026-08-18). 1 = armed. Closes the
             # spread when the two-stage watcher confirms a move AGAINST it.
             # See monitor.decide_exit for the study and the control.
