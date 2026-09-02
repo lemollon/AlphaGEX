@@ -64,22 +64,29 @@ function nearestDecile(deciles, p) {
     return !best || dist < best.dist ? { ...d, dist } : best;
   }, null);
 }
-function mergeCurves(none, sd60) {
+function mergeCurves(none, gate) {
   const map = new Map();
   (none || []).forEach(([d, v]) => map.set(d, { date: d, none: v }));
-  (sd60 || []).forEach(([d, v]) => map.set(d, { ...(map.get(d) || { date: d }), sd60: v }));
+  (gate || []).forEach(([d, v]) => map.set(d, { ...(map.get(d) || { date: d }), gate: v }));
   return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
-const GATE_KEYS = ['sd60', 'caution60', 'backwardation', 'vix_decay'];
+// The rule BOTH live bots actually run: skip when the prior session's VIX is
+// above 90% of its 20-day high. Everything else on the page is advisory.
+const DEPLOYED_GATE = 'vix_decay';
+const GATE_KEYS = ['vix_decay', 'sd60', 'caution60', 'backwardation'];
+const gateName = (label) => (label || '').replace(/ - DEPLOYED RULE.*$/, '');
 const BOT_KEYS = ['flame', 'spark'];
 
 // ---- growth panel: equity chart + compact stat table -------------------
 function EquityPanel({ bot }) {
-  const data = useMemo(() => mergeCurves(bot?.curves?.none, bot?.curves?.sd60), [bot]);
+  const data = useMemo(() => mergeCurves(bot?.curves?.none, bot?.curves?.[DEPLOYED_GATE]), [bot]);
   if (!bot) return <div style={S.card}><div style={S.note}>backtest unavailable</div></div>;
   const g = bot.gates?.none || {};
-  const p = g.periods || {};
+  const dg = bot.gates?.[DEPLOYED_GATE] || {};
+  const p = g.periods || {}, dp = dg.periods || {};
+  const cell = (v, extra) => <td style={{ ...S.td, textAlign: 'right', ...(extra || {}) }}>{v}</td>;
+  const mw = (x) => (x ? `${money(x.median)} / ${money(x.worst)}` : '—');
   const last = data.length - 1;
   const endLabel = (text, color) => (props) => {
     if (props.index !== last) return null;
@@ -97,27 +104,33 @@ function EquityPanel({ bot }) {
               <XAxis dataKey="date" tick={{ fontSize: 11, fill: MUTED }} interval="preserveStartEnd" minTickGap={50} />
               <YAxis tick={{ fontSize: 11, fill: MUTED }} tickFormatter={money} width={64} />
               <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 12 }}
-                       formatter={(v, n) => [money(v), n === 'none' ? 'trade every day' : 'skip STAND DOWN days']} />
+                       formatter={(v, n) => [money(v), n === 'none' ? 'trade every day' : 'deployed VIX gate']} />
               <Line dataKey="none" name="trade every day" stroke={BLUE} strokeWidth={2} dot={false}
                     isAnimationActive={false} label={endLabel('trade every day', BLUE)} />
-              <Line dataKey="sd60" name="skip STAND DOWN days" stroke={AMBER} strokeWidth={2}
+              <Line dataKey="gate" name="deployed VIX gate" stroke={AMBER} strokeWidth={2}
                     strokeDasharray="5 4" dot={false} isAnimationActive={false}
-                    label={endLabel('skip STAND DOWN', AMBER)} />
+                    label={endLabel('deployed gate', AMBER)} />
             </LineChart>
           </ResponsiveContainer>
         </div>
       )}
       <table style={{ borderCollapse: 'collapse', width: '100%', marginTop: 10, fontSize: 13 }}>
+        <thead><tr>
+          <th style={S.th}></th>
+          <th style={{ ...S.th, textAlign: 'right', color: BLUE }}>every day</th>
+          <th style={{ ...S.th, textAlign: 'right', color: AMBER }}>deployed gate</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={S.td}>End equity</td><td style={{ ...S.td, textAlign: 'right', fontWeight: 700 }}>{money(g.end_equity)}</td></tr>
-          <tr><td style={S.td}>$ per year</td><td style={{ ...S.td, textAlign: 'right' }}>{money(g.ann)}</td></tr>
-          <tr><td style={S.td}>Typical (median) day</td><td style={{ ...S.td, textAlign: 'right' }}>{money(g.median)}</td></tr>
-          <tr><td style={S.td}>Worst day</td><td style={{ ...S.td, textAlign: 'right', color: RED }}>{money(g.worst)}</td></tr>
-          <tr><td style={S.td}>Worst drawdown</td><td style={{ ...S.td, textAlign: 'right', color: RED }}>{money(g.max_dd)} ({pct(g.max_dd_pct)} of start)</td></tr>
-          <tr><td style={S.td}>Win rate</td><td style={{ ...S.td, textAlign: 'right' }}>{pct(g.win_rate)}</td></tr>
-          <tr><td style={S.td}>Daily — median / worst</td><td style={{ ...S.td, textAlign: 'right' }}>{p.daily ? `${money(p.daily.median)} / ${money(p.daily.worst)}` : '—'}</td></tr>
-          <tr><td style={S.td}>Weekly — median / worst</td><td style={{ ...S.td, textAlign: 'right' }}>{p.weekly ? `${money(p.weekly.median)} / ${money(p.weekly.worst)}` : '—'}</td></tr>
-          <tr><td style={S.td}>Monthly — median / worst</td><td style={{ ...S.td, textAlign: 'right' }}>{p.monthly ? `${money(p.monthly.median)} / ${money(p.monthly.worst)}` : '—'}</td></tr>
+          <tr><td style={S.td}>End equity</td>{cell(money(g.end_equity), { fontWeight: 700 })}{cell(money(dg.end_equity), { fontWeight: 700 })}</tr>
+          <tr><td style={S.td}>$ per year</td>{cell(money(g.ann))}{cell(money(dg.ann))}</tr>
+          <tr><td style={S.td}>Days traded</td>{cell(g.n ?? '—')}{cell(dg.n ?? '—')}</tr>
+          <tr><td style={S.td}>Typical (median) day</td>{cell(money(g.median))}{cell(money(dg.median))}</tr>
+          <tr><td style={S.td}>Worst day</td>{cell(money(g.worst), { color: RED })}{cell(money(dg.worst), { color: RED })}</tr>
+          <tr><td style={S.td}>Worst drawdown</td>{cell(`${money(g.max_dd)} (${pct(g.max_dd_pct, 0)})`, { color: RED })}{cell(`${money(dg.max_dd)} (${pct(dg.max_dd_pct, 0)})`, { color: RED })}</tr>
+          <tr><td style={S.td}>Win rate</td>{cell(pct(g.win_rate))}{cell(pct(dg.win_rate))}</tr>
+          <tr><td style={S.td}>Daily — median / worst</td>{cell(mw(p.daily))}{cell(mw(dp.daily))}</tr>
+          <tr><td style={S.td}>Weekly — median / worst</td>{cell(mw(p.weekly))}{cell(mw(dp.weekly))}</tr>
+          <tr><td style={S.td}>Monthly — median / worst</td>{cell(mw(p.monthly))}{cell(mw(dp.monthly))}</tr>
         </tbody>
       </table>
     </div>
@@ -148,7 +161,12 @@ function GateSection({ growth }) {
               const dDD = g && none ? g.max_dd - none.max_dd : null;
               return (
                 <tr key={gk + bk}>
-                  {i === 0 && <td style={{ ...S.td, fontWeight: 700 }} rowSpan={BOT_KEYS.length}>{gates[gk] || gk}</td>}
+                  {i === 0 && (
+                    <td style={{ ...S.td, fontWeight: 700 }} rowSpan={BOT_KEYS.length}>
+                      {gk === DEPLOYED_GATE && <span style={{ color: AMBER, marginRight: 6 }}>DEPLOYED</span>}
+                      {gateName(gates[gk]) || gk}
+                    </td>
+                  )}
                   <td style={S.td}>{bot.label || bk.toUpperCase()}</td>
                   <td style={S.td}>{g?.skipped ?? '—'}</td>
                   <td style={{ ...S.td, color: g && g.skipped_pnl < 0 ? RED : undefined }}>{g ? money(g.skipped_pnl) : '—'}</td>
@@ -164,16 +182,22 @@ function GateSection({ growth }) {
       {BOT_KEYS.map(bk => {
         const bot = bots[bk];
         if (!bot) return null;
-        const none = bot.gates?.none;
+        const none = bot.gates?.none, dep = bot.gates?.[DEPLOYED_GATE];
         let winner = null;
         for (const gk of GATE_KEYS) {
           const g = bot.gates?.[gk];
           if (g && none && g.ann > none.ann && g.max_dd < none.max_dd && Math.abs(g.skipped_t ?? 0) >= 2) { winner = gk; break; }
         }
+        const dAnn = dep && none ? dep.ann - none.ann : null;
+        const dDD = dep && none ? dep.max_dd - none.max_dd : null;
         return (
           <div key={bk} style={{ fontSize: 13.5, marginTop: 8 }}>
             <b>{bot.label || bk.toUpperCase()}</b> —{' '}
-            {winner ? `the ${gates[winner] || winner} gate beats trading every day.` : 'nothing here beats trading every day.'}
+            {dAnn != null && (
+              <>the deployed VIX gate {dAnn < 0 ? 'costs' : 'adds'} {money(Math.abs(dAnn))}/yr and{' '}
+              {dDD < 0 ? 'cuts' : 'raises'} the worst drawdown by {money(Math.abs(dDD))} versus trading every day.{' '}</>
+            )}
+            {winner ? `The ${gateName(gates[winner]) || winner} gate beats trading every day with strong evidence.` : 'No gate beats trading every day with strong evidence.'}
           </div>
         );
       })}
@@ -223,7 +247,7 @@ export default function RiskAdvisorPage() {
       <div style={S.wrap}>
         {/* 1 — title */}
         <h1 style={S.h1}>Risk Advisor</h1>
-        <p style={S.sub}>Advisory only. Grades whether skipping risky days would have helped SPARK and FLAME.</p>
+        <p style={S.sub}>What today looks like, what the bots trade, and whether skipping risky days would have helped SPARK and FLAME.</p>
         <FreshnessBar
           state={state?.freshness?.state}
           detail={state?.freshness?.detail}
@@ -270,10 +294,18 @@ export default function RiskAdvisorPage() {
                   </tbody>
                 </table>
               </div>
-              <div style={{ fontSize: 13.5, marginTop: 12, color: '#c6cbd8' }}>
+              {td.vix_gate && (
+                <div style={{ fontSize: 15, marginTop: 12, fontWeight: 700, color: td.vix_gate.blocked ? RED : GREEN }}>
+                  Deployed gate today: {td.vix_gate.blocked ? 'BOTH BOTS SIT OUT' : 'BOTH BOTS TRADE'}
+                  <span style={{ fontWeight: 400, color: '#c6cbd8' }}>
+                    {' '}— the prior VIX close was {Math.round(td.vix_gate.ratio * 100)}% of its 20-day high (rule: skip above {Math.round(td.vix_gate.ceiling * 100)}%).
+                  </span>
+                </div>
+              )}
+              <div style={{ fontSize: 13.5, marginTop: 10, color: '#c6cbd8' }}>
                 {normal
-                  ? 'Trade the normal plan at normal size.'
-                  : 'The model flags today. In the test, skipping flagged days never earned a change for FLAME and was not proven for SPARK (see the gate table). Trading the normal plan remains the rule.'}
+                  ? 'The risk model reads today as normal. It is advisory; the VIX gate above is what the bots actually follow.'
+                  : 'The risk model flags today. In the test, skipping flagged days did not help FLAME and was unproven for SPARK (gate table below). It is advisory; the VIX gate above is what the bots actually follow.'}
               </div>
               {td.computed_from && td.computed_from !== 'live' && (
                 <div style={{ ...S.note, marginTop: 8 }}>
