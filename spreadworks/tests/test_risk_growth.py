@@ -101,3 +101,43 @@ async def test_growth_reports_unavailable_when_the_file_is_missing(monkeypatch, 
     out = await rr.growth(req)
     assert out["status"] == "unavailable"
     rr._growth_cache.clear()
+
+
+# ── the deployed gate: VIX decay ──────────────────────────────────────────
+def _vix_series(closes):
+    from datetime import date, timedelta
+    d0 = date(2026, 7, 1)
+    return {d0 + timedelta(days=i): c for i, c in enumerate(closes)}
+
+
+def test_vix_gate_blocks_when_prior_close_is_near_its_20_day_high():
+    from datetime import date, timedelta
+    vix = _vix_series([20.0] * 20 + [19.0])         # prior 19 / max 20 = 0.95
+    asof = date(2026, 7, 1) + timedelta(days=20)
+    g = rr._vix_decay_gate(vix, asof)
+    assert g["blocked"] is True and abs(g["ratio"] - 0.95) < 1e-9
+
+
+def test_vix_gate_opens_once_the_spike_has_decayed():
+    from datetime import date, timedelta
+    vix = _vix_series([20.0] * 20 + [17.0])         # 0.85
+    asof = date(2026, 7, 1) + timedelta(days=20)
+    g = rr._vix_decay_gate(vix, asof)
+    assert g["blocked"] is False
+
+
+def test_vix_gate_numerator_is_the_prior_session_not_today():
+    """The window is the 20 sessions BEFORE the prior session; the prior
+    session itself is never in its own denominator (that would cap the ratio
+    at 1.0 and hide a fresh spike)."""
+    from datetime import date, timedelta
+    vix = _vix_series([15.0] * 20 + [30.0])         # spike on the prior session
+    asof = date(2026, 7, 1) + timedelta(days=20)
+    g = rr._vix_decay_gate(vix, asof)
+    assert g["ratio"] == 2.0 and g["blocked"] is True
+
+
+def test_vix_gate_is_unknown_with_short_history_never_open():
+    from datetime import date, timedelta
+    vix = _vix_series([20.0] * 10)
+    assert rr._vix_decay_gate(vix, date(2026, 7, 1) + timedelta(days=9)) is None

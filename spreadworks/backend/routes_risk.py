@@ -1220,6 +1220,28 @@ def _score_frozen(model: dict, feat_vals: dict) -> dict | None:
             "contrib": contrib}
 
 
+VIX_DECAY_CEILING = 0.90
+VIX_DECAY_WINDOW = 20
+
+
+def _vix_decay_gate(vix: dict, asof: date) -> dict | None:
+    """The rule BOTH live bots actually run (ironforge scanner vixDecayBlock):
+    ratio = VIX(prior session) / max(VIX over the 20 sessions before that);
+    blocked when ratio > 0.90. `asof` is the prior session whose close is the
+    numerator. None when there is not enough history — unknown, not "open"."""
+    days = sorted(d for d in vix if d <= asof and vix.get(d))
+    if len(days) < VIX_DECAY_WINDOW + 1 or days[-1] != asof:
+        return None
+    prior = float(vix[asof])
+    window = [float(vix[d]) for d in days[-(VIX_DECAY_WINDOW + 1):-1]]
+    wmax = max(window)
+    if not (wmax > 0 and prior > 0):
+        return None
+    ratio = prior / wmax
+    return {"ratio": ratio, "ceiling": VIX_DECAY_CEILING, "blocked": ratio > VIX_DECAY_CEILING,
+            "prior_vix": prior, "window_max": wmax}
+
+
 async def _growth_live_today(request: Request, data: dict) -> dict:
     """Score TODAY's session live from PRIOR-session features and the frozen
     weights in data["today"]["model"]. Falls back to the file's precomputed
@@ -1287,6 +1309,7 @@ async def _growth_live_today(request: Request, data: dict) -> dict:
             "q60": q60, "q80": q80, "base_rate": base_rate,
             "asof": d_vix.isoformat(), "target": today_ct.isoformat(),
             "features": feat_vals, "driver": driver,
+            "vix_gate": _vix_decay_gate(vix, d_vix),
             "computed_from": "live",
         })
     except Exception as e:  # noqa: BLE001

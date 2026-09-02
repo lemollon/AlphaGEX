@@ -181,7 +181,7 @@ export function deriveCustomerState(input: StateInput): CustomerState {
     return {
       key: 'BLOCKED',
       headline: 'No Trading Today',
-      subtitle: `Market conditions aren’t right, so ${agent} is sitting this one out. That’s the strategy working.`,
+      subtitle: `Market conditions are unfavorable today, so ${agent} is standing aside. No trade means no risk taken — that’s the strategy working.`,
       check_line: null,
       dot: 'gray',
       timeline_step: null,
