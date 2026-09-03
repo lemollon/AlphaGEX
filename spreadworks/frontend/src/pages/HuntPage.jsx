@@ -58,6 +58,101 @@ function Chip({ text, tone = AMBER }) {
   );
 }
 
+// ── SECTION 0 · THE ACTION BOX ───────────────────────────────────────────
+// The single answer to "what do I do right now", computed server-side by
+// routes_risk.build_action() and reused verbatim (via action_sentence) in
+// the confirm Discord/ntfy alert — the page and the push can never
+// disagree. Always exactly one of NO_ACTION / ACT_NOW / DONE. This trade is
+// PAPER on every surface; the word appears in every ACT_NOW/DONE headline.
+function ActionBox({ data, err }) {
+  if (err) {
+    return (
+      <div style={S.card}>
+        <div style={S.h2}>Action</div>
+        <div style={{ marginTop: 8 }}><Chip text="unavailable — could not load /session" /></div>
+      </div>
+    );
+  }
+  if (!data) {
+    return <div style={S.card}><div style={S.h2}>Action</div><div style={{ ...S.small, marginTop: 8 }}>Loading…</div></div>;
+  }
+
+  const action = data.action || {};
+  const confirm = data.confirm || {};
+  const state = action.state;
+  const dir = confirm.fired_dir;
+  const trade = action.trade;
+
+  let color;
+  if (state === 'ACT_NOW') {
+    color = dir === 'UP' ? GREEN : dir === 'DOWN' ? RED : AMBER;
+  } else if (state === 'DONE') {
+    color = '#38bdf8';
+  } else if (action.headline && action.headline.startsWith('ARMED')) {
+    color = AMBER;
+  } else {
+    color = DIM;
+  }
+
+  return (
+    <div style={{ ...S.card, border: `1px solid ${color}55` }}>
+      <div style={S.h2}>Action</div>
+      <div style={{ fontSize: 20, fontWeight: 800, color, marginTop: 6, lineHeight: 1.3 }}>
+        {action.headline || '—'}
+      </div>
+      {action.detail && <div style={{ ...S.caption, marginTop: 8 }}>{action.detail}</div>}
+      {action.why && <div style={{ ...S.small, marginTop: 6 }}>{action.why}</div>}
+      <div style={{ ...S.small, marginTop: 10 }}>
+        mode: {action.mode || 'PAPER'} · next check: {action.next_check || '—'}
+      </div>
+
+      {trade && (
+        <div style={{ overflowX: 'auto', marginTop: 12 }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 620 }}>
+            <thead>
+              <tr>
+                <th style={S.th}>expiry</th>
+                <th style={S.th}>long strike</th>
+                <th style={S.th}>short strike</th>
+                <th style={{ ...S.th, textAlign: 'right' }}>contracts</th>
+                <th style={{ ...S.th, textAlign: 'right' }}>debit</th>
+                <th style={S.th}>quoted at</th>
+                <th style={{ ...S.th, textAlign: 'right' }}>P&amp;L</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={{ ...S.td, ...S.mono }}>{trade.expiry || '—'}</td>
+                <td style={{ ...S.td, ...S.mono }}>
+                  {trade.long_strike == null ? '—' : num(trade.long_strike, 0)}
+                </td>
+                <td style={{ ...S.td, ...S.mono }}>
+                  {trade.short_strike == null ? '—' : num(trade.short_strike, 0)}
+                </td>
+                <td style={{ ...S.td, ...S.mono, textAlign: 'right' }}>
+                  {trade.contracts == null ? '—' : trade.contracts}
+                </td>
+                <td style={{ ...S.td, ...S.mono, textAlign: 'right' }}>
+                  {trade.debit == null ? '—' : `$${money(trade.debit)}`}
+                </td>
+                <td style={{ ...S.td, ...S.mono, color: DIM }}>
+                  {trade.quote_at ? `${ctTime(trade.quote_at)} CT` : '—'}
+                </td>
+                <td style={{
+                  ...S.td, ...S.mono, textAlign: 'right', fontWeight: 700,
+                  color: trade.pnl == null ? DIM : trade.pnl >= 0 ? GREEN : RED,
+                }}>
+                  {trade.pnl == null ? '—' : `${trade.pnl >= 0 ? '+' : ''}$${money(trade.pnl)}`}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── SECTION 1 · TODAY'S SIGNAL STATE ─────────────────────────────────────
 function SignalState({ data, err }) {
   if (err) {
@@ -758,6 +853,8 @@ export default function HuntPage() {
           <Crosshair size={18} style={{ verticalAlign: -3, marginRight: 6 }} />
           Hunt
         </h1>
+        <ActionBox data={session} err={sessionErr} />
+
         <p style={S.sub}>
           The permanent reference for the SPY flow-confirmation signal: what
           it says right now, what it has proven, every day it has fired, and

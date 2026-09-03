@@ -1078,6 +1078,227 @@ def paper_settle_pending() -> int:
         db.close()
 
 
+def paper_row_to_dict(row: "RiskConfirmPaper") -> dict:
+    """A RiskConfirmPaper row as a plain JSON-safe dict — the shape /session
+    and the confirm alert's PAPER action line both need. Datetimes/dates go
+    to isoformat strings; everything else passes through as-is."""
+    return {
+        "id": row.id, "d": row.d.isoformat() if row.d else None,
+        "fired_dir": row.fired_dir,
+        "fired_at": row.fired_at.isoformat() if row.fired_at else None,
+        "fired_spot": row.fired_spot, "expiry": row.expiry,
+        "long_strike": row.long_strike, "short_strike": row.short_strike,
+        "long_ask": row.long_ask, "short_bid": row.short_bid,
+        "quote_at": row.quote_at.isoformat() if row.quote_at else None,
+        "debit": row.debit, "contracts": row.contracts,
+        "skipped_reason": row.skipped_reason,
+        "settle_spot": row.settle_spot, "settle_value": row.settle_value,
+        "pnl": row.pnl,
+        "settled_at": row.settled_at.isoformat() if row.settled_at else None,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def latest_paper_dict(d: date) -> dict | None:
+    """Today's most recent paper-book row (by created_at), as a plain dict —
+    the same query /session and the confirm alert's PAPER action line both
+    need, factored once so they cannot drift apart. Never raises."""
+    if SessionLocal is None:
+        return None
+    db = SessionLocal()
+    try:
+        row = (db.query(RiskConfirmPaper)
+                 .filter(RiskConfirmPaper.d == d)
+                 .order_by(RiskConfirmPaper.created_at.desc())
+                 .first())
+        return paper_row_to_dict(row) if row else None
+    except Exception as e:                                       # noqa: BLE001
+        logger.warning("[routes_risk] latest_paper_dict failed: %r", e)
+        return None
+    finally:
+        db.close()
+
+
+def _act_num(x: float | None, digits: int = 2) -> str:
+    """Format a number for the action box, or '—' if it's missing —
+    build_action must never raise on a None field."""
+    if x is None:
+        return "—"
+    try:
+        return f"{x:.{digits}f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _act_signed(x: float | None, digits: int = 2) -> str:
+    if x is None:
+        return "—"
+    try:
+        return f"{x:+.{digits}f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _act_hhmm(x) -> str:
+    """A datetime or ISO string as 'HH:MM' — confirm/paper timestamps are
+    stored CT-naive already, so this is a straight substring/attr read, not a
+    timezone conversion."""
+    if x is None:
+        return "—"
+    if isinstance(x, str):
+        return x.split("T")[1][:5] if "T" in x else "—"
+    try:
+        return f"{x.hour:02d}:{x.minute:02d}"
+    except AttributeError:
+        return "—"
+
+
+_ACTION_WHY = ("On flagged days this break continues 63% of the time vs 50% "
+              "on normal days (n=95, 4/4 years).")
+
+
+def _build_fired_action(now_hm: tuple[int, int], fired_dir: str,
+                        confirm: dict, paper: dict | None) -> dict:
+    """The ACT_NOW / DONE half of build_action — split out because a fired
+    day has its own ticket-formatting logic that dwarfs the quiet-day
+    branches below."""
+    time_str = _act_hhmm(confirm.get("fired_at"))
+    spot_str = _act_num(confirm.get("fired_spot"))
+    settled = bool(paper and paper.get("settled_at"))
+
+    if now_hm < (15, 0) and not settled:
+        headline = (f"ACT NOW (PAPER) — {fired_dir} confirmed {time_str} "
+                    f"CT at {spot_str}")
+        if not paper or paper.get("skipped_reason"):
+            reason = (paper.get("skipped_reason") if paper else None) or "no paper row"
+            detail = (f"Ticket not priced: {reason} — direction {fired_dir}, "
+                      f"no trade to copy.")
+        else:
+            opt_type = "call" if fired_dir == "UP" else "put"
+            long_strike = paper.get("long_strike")
+            short_strike = paper.get("short_strike")
+            strikes = (f"{long_strike:.0f}/{short_strike:.0f}"
+                      if long_strike is not None and short_strike is not None
+                      else "—")
+            contracts = paper.get("contracts")
+            detail = (
+                f"Buy 0DTE {paper.get('expiry') or '—'} {strikes} "
+                f"{opt_type} vertical, {contracts if contracts is not None else '—'} "
+                f"contract(s), debit ${_act_num(paper.get('debit'))} at "
+                f"{_act_hhmm(paper.get('quote_at'))}. Exit at the 15:00 close.")
+        return {"state": "ACT_NOW", "headline": headline, "detail": detail,
+                "why": _ACTION_WHY, "trade": paper, "mode": "PAPER",
+                "next_check": None}
+
+    headline = f"DONE (PAPER) — {fired_dir} fired {time_str} CT"
+    pnl = paper.get("pnl") if paper else None
+    detail = (f"Ticket recorded; result {pnl:+.2f}" if pnl is not None
+              else "Ticket recorded; settles after the close.")
+    return {"state": "DONE", "headline": headline, "detail": detail,
+            "why": _ACTION_WHY, "trade": paper, "mode": "PAPER",
+            "next_check": "tomorrow 10:00 CT"}
+
+
+def build_action(now_ct: datetime, confirm: dict, clock10: dict | None,
+                 levels: dict, to_trigger: dict, paper: dict | None) -> dict:
+    """The single ACT/DONE/NO_ACTION verdict for the /hunt action box — and,
+    via action_sentence(), the one-line addendum on the confirm Discord
+    alert. Pure and never raises: every field is optional and every branch
+    below tolerates None.
+
+    Decision order: a fired day (ACT_NOW while it's still tradeable, DONE
+    once the close or settlement has passed it) outranks everything; a quiet
+    day is NO_ACTION with a headline that says exactly why — before the
+    10:00 read, the 10:00 read missing, not flagged, armed and waiting, or
+    the window closed unfired. See the /hunt spec for the exact wording of
+    each branch.
+    """
+    confirm = confirm or {}
+    levels = levels or {}
+    to_trigger = to_trigger or {}
+    now_hm = (now_ct.hour, now_ct.minute)
+
+    fired_dir = confirm.get("fired_dir")
+    if fired_dir:
+        return _build_fired_action(now_hm, fired_dir, confirm, paper)
+
+    # b — before the flow read exists at all
+    if now_hm < SNAPSHOT_CT:
+        return {"state": "NO_ACTION",
+                "headline": "NO ACTION — before the 10:00 flow read",
+                "detail": "The day's flow mix is read once at 10:00 CT; "
+                          "nothing can fire before 10:10.",
+                "why": "", "trade": None, "mode": "PAPER",
+                "next_check": "10:10 CT"}
+
+    # c — the 10:00 snapshot should exist by now but doesn't (a fault)
+    clock10_captured = bool(clock10 and clock10.get("captured"))
+    if not clock10_captured:
+        return {"state": "NO_ACTION",
+                "headline": "NO ACTION — 10:00 read missing",
+                "detail": "The 10:00 snapshot was not captured; the watcher "
+                          "cannot arm today — check risk_alerts logs.",
+                "why": "", "trade": None, "mode": "PAPER",
+                "next_check": "tomorrow 10:00 CT"}
+
+    putcall_z = confirm.get("putcall_z")
+    arm_z = confirm.get("arm_z")
+    arm_z = CONFIRM_ARM_Z if arm_z is None else arm_z
+    move_pct = confirm.get("move_pct")
+    move_pct = CONFIRM_MOVE_PCT if move_pct is None else move_pct
+
+    # d — not flagged
+    armed = confirm.get("armed")
+    if not armed:
+        return {"state": "NO_ACTION",
+                "headline": "NO ACTION — not flagged today",
+                "detail": f"Flow mix z {_act_signed(putcall_z)} vs the "
+                          f"{arm_z:.1f} needed to arm. The watcher does not "
+                          f"fire on unflagged days.",
+                "why": "", "trade": None, "mode": "PAPER",
+                "next_check": "tomorrow 10:00 CT"}
+
+    win_start, win_end = CONFIRM_WINDOW_CT
+
+    # f — flagged, but the window is over and nothing fired
+    if now_hm > win_end:
+        return {"state": "NO_ACTION",
+                "headline": "NO ACTION — window closed at 14:00",
+                "detail": "Flagged today but no qualifying break inside "
+                          "10:10-14:00. Nothing fires after 14:00.",
+                "why": "", "trade": None, "mode": "PAPER",
+                "next_check": "tomorrow 10:00 CT"}
+
+    # e — flagged and still inside (or ahead of) the watch window: waiting.
+    # Folds in the 10:00-10:10 grace before the watcher's first poll too —
+    # nothing can fire there either, so it reads the same as "waiting".
+    ref_spot = confirm.get("ref_spot")
+    up = levels.get("up")
+    down = levels.get("down")
+    up_pct = to_trigger.get("up_pct")
+    down_pct = to_trigger.get("down_pct")
+    up_part = f"up through {_act_num(up)}"
+    if up_pct is not None:
+        up_part += f" ({up_pct:+.2f}% away)"
+    down_part = f"down through {_act_num(down)}"
+    if down_pct is not None:
+        down_part += f" ({down_pct:.2f}% away)"
+    detail = (f"Flagged (z {_act_signed(putcall_z)}). Fires on a "
+              f"{move_pct:.2f}% break from the 10:00 level {_act_num(ref_spot)}: "
+              f"{up_part} or {down_part}, at a session high/low.")
+    return {"state": "NO_ACTION", "headline": "ARMED — waiting for the break",
+            "detail": detail, "why": "", "trade": None, "mode": "PAPER",
+            "next_check": "every 10 min until 14:00 CT"}
+
+
+def action_sentence(action: dict) -> str:
+    """The action box's verdict as one line, for the confirm Discord alert."""
+    a = action or {}
+    headline = (a.get("headline") or "").replace("\n", " ")
+    detail = (a.get("detail") or "").replace("\n", " ")
+    return f"{headline}. {detail}"
+
+
 def _save_rolling_state(d: date, captured_at: datetime, pz: float | None,
                         tz: float | None) -> None:
     """Overwrite today's rolling-watcher reading. Called on EVERY successful
@@ -3213,6 +3434,21 @@ async def session_tape(request: Request):
     except Exception:                                        # noqa: BLE001
         pass                     # instrumentation must never break the page
 
+    # ── THE ACTION BOX — one verdict, computed once, server-side ────────────
+    # /hunt used to make the reader work out what to do from the confirm
+    # state, the trigger levels and the Playbook table separately. This is
+    # the single answer, and it is the same function the confirm Discord
+    # alert appends (see risk_alerts._action_suffix) so the page and the
+    # push can never say two different things.
+    if weekend:
+        action = {"state": "NO_ACTION", "headline": "NO ACTION — no session today",
+                  "detail": "Markets closed.", "why": "", "trade": None,
+                  "mode": "PAPER", "next_check": "next weekday 10:00 CT"}
+    else:
+        paper = latest_paper_dict(today)
+        action = build_action(now_ct, confirm, clocks[0] if clocks else None,
+                              levels, to_trigger, paper)
+
     return {
         "asof": now_ct.isoformat(),
         "clock": clock,
@@ -3223,6 +3459,7 @@ async def session_tape(request: Request):
         "headline": _session_headline(confirm),
         "levels": levels,
         "to_trigger": to_trigger,
+        "action": action,
         "run_since_fire": run_since_fire,
         "runway": runway_stats,
         "calibration": calib,

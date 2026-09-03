@@ -149,6 +149,33 @@ def _watchdog_verdict(now_min: int, last_min: int | None,
     return f"{age} min since the last reading"
 
 
+def _action_suffix(now: datetime, hit: dict, paper: dict | None) -> str:
+    """The one-line PAPER action sentence appended to the confirm alert's
+    description — the same verdict build_action() gives the /hunt action
+    box, so the push and the page can never disagree. Module-level (not a
+    closure) so it is unit-testable on its own.
+
+    🚨 NEVER LETS A FORMATTING BUG BLOCK THE ALERT. build_action/
+    action_sentence are pure and shouldn't raise, but the confirm push
+    already exists and works without this line — a broken addendum must
+    degrade to no addendum, not to no alert.
+    """
+    try:
+        from .routes_risk import (build_action, action_sentence,
+                                  CONFIRM_ARM_Z, CONFIRM_MOVE_PCT)
+        confirm = {
+            "fired_dir": hit.get("dir"), "fired_at": now,
+            "fired_spot": hit.get("spot"), "armed": True,
+            "putcall_z": hit.get("putcall_z"), "ref_spot": hit.get("ref"),
+            "arm_z": CONFIRM_ARM_Z, "move_pct": CONFIRM_MOVE_PCT,
+        }
+        action = build_action(now, confirm, None, {}, {}, paper)
+        return "\n\n**Action (PAPER):** " + action_sentence(action)
+    except Exception as e:                                       # noqa: BLE001
+        logger.warning("[RiskAlerts] _action_suffix failed: %r", e)
+        return ""
+
+
 def _post(key: str, fire_date, embed: dict, ping: bool = False) -> bool:
     """Claim the day's slot, post, and HAND THE SLOT BACK IF THE POST FAILED.
 
@@ -616,7 +643,7 @@ def register_risk_alerts(scheduler, app) -> None:
                                       confirm_step, session_log_write,
                                       undelivered_firing, mark_alerted,
                                       capture_flow_intraday, paper_record_fire,
-                                      flow_record_at_fire)
+                                      flow_record_at_fire, latest_paper_dict)
             start, end = CONFIRM_WINDOW_CT
             t = (now.hour, now.minute)
             if t < start or t > end:
@@ -687,6 +714,14 @@ def register_risk_alerts(scheduler, app) -> None:
                 f"to stay picked today. If you are short {'put' if d == 'DOWN' else 'call'} "
                 f"premium into this, you are on the wrong side of it — that is the "
                 f"position to reduce or close. Do not add.")
+            # ── ADD-ONLY: one PAPER action line, never touches what fired ───
+            # Wrapped so a formatting bug in the addendum can never cost the
+            # alert itself — see _action_suffix's own try/except too.
+            try:
+                paper = latest_paper_dict(today)
+                plain += _action_suffix(now, hit, paper)
+            except Exception as e:                               # noqa: BLE001
+                logger.warning("[RiskAlerts] action suffix append failed: %r", e)
             delivered = _post("risk_confirm", today, {
                 "title": title,
                 "description": plain,
