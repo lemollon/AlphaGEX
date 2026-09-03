@@ -13,6 +13,7 @@ import { useRouter } from 'expo-router'
 import * as Device from 'expo-device'
 import Constants from 'expo-constants'
 import { signIn } from '@/auth/session'
+import { registerPushDevice } from '@/notifications/push'
 import { color, space, radius, type, font } from '@/theme/tokens'
 
 /**
@@ -42,6 +43,8 @@ export default function SignInScreen() {
         platform: Platform.OS,
         appVersion: Constants.expoConfig?.version ?? undefined,
       })
+      // Best-effort: a push registration failure must never block getting into the app.
+      registerPushDevice().catch(() => {})
       router.replace('/')
     } catch (e) {
       setError((e as Error).message)
@@ -93,6 +96,10 @@ export default function SignInScreen() {
             {busy ? 'Signing in…' : 'Sign In'}
           </Text>
         </Pressable>
+
+        <Pressable onPress={() => router.push('/forgot-password')} style={s.forgot} hitSlop={8}>
+          <Text style={[type.body, { color: color.textDim }]}>Forgot password?</Text>
+        </Pressable>
       </KeyboardAvoidingView>
     </SafeAreaView>
   )
@@ -129,4 +136,5 @@ const s = StyleSheet.create({
     alignItems: 'center',
     marginTop: space.xl,
   },
+  forgot: { alignItems: 'center', marginTop: space.lg, padding: space.sm },
 })

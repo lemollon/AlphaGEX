@@ -35,6 +35,17 @@ export interface CommunityMessage {
    */
   channel_slug: string
   channel_name: string
+  /**
+   * Number of replies under this post (APP-055). Only meaningful on top-level feed
+   * rows — the feed excludes replies themselves, so a reply's own count would always
+   * read as "replies to a reply", which the UI never shows.
+   */
+  reply_count: number
+  /**
+   * The message this is a reply to. Undefined/null on every row the feed returns
+   * (the feed is top-level only); set on rows returned by getReplies().
+   */
+  parent_id?: string | null
 }
 
 export interface CommunityFeed {
@@ -71,7 +82,7 @@ export async function getFeed(channelSlug: string, viewerUserId: string | null):
   const [messageRows, presenceRows] = await Promise.all([
     channel
       ? customerQuery<any>(
-          `SELECT m.id, m.user_id, m.sender_name, m.sender_type, m.message, m.created_at,
+          `SELECT m.id, m.user_id, m.sender_name, m.sender_type, m.message, m.created_at, m.parent_id,
                   c.slug AS channel_slug, c.name AS channel_name,
                   COALESCE(
                     (SELECT json_agg(json_build_object('emoji', r.emoji, 'count', r.cnt, 'mine', r.mine))
@@ -84,12 +95,16 @@ export async function getFeed(channelSlug: string, viewerUserId: string | null):
                        ORDER BY cnt DESC
                      ) r),
                     '[]'::json
-                  ) AS reactions
+                  ) AS reactions,
+                  (SELECT COUNT(*)::int FROM community_messages r WHERE r.parent_id = m.id) AS reply_count
            FROM community_messages m
            JOIN community_channels c ON c.id = m.channel_id
            -- $1 NULL means "every channel" (the aggregate tab). Written as a guard
            -- rather than two queries so the block filter below cannot drift apart.
            WHERE ($1::uuid IS NULL OR m.channel_id = $1::uuid)
+             -- Replies render inside their thread, not the top-level feed — a thread
+             -- reply repeated in the main list would read as two unrelated posts.
+             AND m.parent_id IS NULL
              -- Blocked authors disappear from THIS viewer's feed only. Written as
              -- NOT EXISTS rather than a join so a NULL viewer (logged-out preview)
              -- still sees everything instead of matching nothing.
@@ -111,18 +126,7 @@ export async function getFeed(channelSlug: string, viewerUserId: string | null):
 
   return {
     channels: channels.map((c) => ({ slug: c.slug, name: c.name })),
-    messages: messageRows.reverse().map((m) => ({
-      id: String(m.id),
-      sender_name: String(m.sender_name),
-      sender_type: m.sender_type as CommunityMessage['sender_type'],
-      message: String(m.message),
-      created_at: new Date(m.created_at).toISOString(),
-      reactions: Array.isArray(m.reactions) ? m.reactions : [],
-      mine: viewerUserId != null && m.user_id != null && String(m.user_id) === viewerUserId,
-      blockable: m.user_id != null && String(m.user_id) !== viewerUserId,
-      channel_slug: String(m.channel_slug),
-      channel_name: String(m.channel_name),
-    })),
+    messages: messageRows.reverse().map((m) => mapMessageRow(m, viewerUserId)),
     online_count: presenceRows.length,
     members: presenceRows.map((p) => ({
       name: p.display_name,
@@ -131,17 +135,105 @@ export async function getFeed(channelSlug: string, viewerUserId: string | null):
   }
 }
 
+/** Shared row → CommunityMessage mapping for getFeed() and getReplies(). */
+function mapMessageRow(m: any, viewerUserId: string | null): CommunityMessage {
+  return {
+    id: String(m.id),
+    sender_name: String(m.sender_name),
+    sender_type: m.sender_type as CommunityMessage['sender_type'],
+    message: String(m.message),
+    created_at: new Date(m.created_at).toISOString(),
+    reactions: Array.isArray(m.reactions) ? m.reactions : [],
+    mine: viewerUserId != null && m.user_id != null && String(m.user_id) === viewerUserId,
+    blockable: m.user_id != null && String(m.user_id) !== viewerUserId,
+    channel_slug: String(m.channel_slug),
+    channel_name: String(m.channel_name),
+    reply_count: Number(m.reply_count ?? 0),
+    parent_id: m.parent_id != null ? String(m.parent_id) : null,
+  }
+}
+
+/**
+ * One thread's replies, oldest first (APP-055) — the natural reading order for a
+ * conversation, unlike the main feed's newest-first.
+ *
+ * Scoped through the same block guard as getFeed() so a blocked member's replies
+ * disappear from threads too, not just the top-level list.
+ */
+export async function getReplies(
+  parentId: string,
+  viewerUserId: string | null,
+  opts: { cursor?: string | null; limit?: number } = {},
+): Promise<{ replies: CommunityMessage[]; next_cursor: string | null }> {
+  const limit = Math.min(Math.max(Number(opts.limit) || 30, 1), 100)
+  const rows = await customerQuery<any>(
+    `SELECT m.id, m.user_id, m.sender_name, m.sender_type, m.message, m.created_at, m.parent_id,
+            c.slug AS channel_slug, c.name AS channel_name,
+            COALESCE(
+              (SELECT json_agg(json_build_object('emoji', r.emoji, 'count', r.cnt, 'mine', r.mine))
+               FROM (
+                 SELECT emoji, COUNT(*)::int AS cnt,
+                        BOOL_OR(user_id = $4::uuid) AS mine
+                 FROM community_reactions
+                 WHERE message_id = m.id
+                 GROUP BY emoji
+                 ORDER BY cnt DESC
+               ) r),
+              '[]'::json
+            ) AS reactions,
+            0 AS reply_count
+     FROM community_messages m
+     JOIN community_channels c ON c.id = m.channel_id
+     WHERE m.parent_id = $1::uuid
+       AND ($2::timestamptz IS NULL OR m.created_at > $2::timestamptz)
+       AND NOT EXISTS (
+         SELECT 1 FROM community_blocks b
+         WHERE b.blocker_id = $4::uuid AND b.blocked_id = m.user_id
+       )
+     ORDER BY m.created_at ASC
+     LIMIT $3`,
+    [parentId, opts.cursor ?? null, limit, viewerUserId],
+  )
+  const replies = rows.map((m) => mapMessageRow(m, viewerUserId))
+  const next_cursor = rows.length === limit ? new Date(rows[rows.length - 1].created_at).toISOString() : null
+  return { replies, next_cursor }
+}
+
+/**
+ * Whether `parentId` is a real, visible message in `channelId` — the guard behind
+ * "reply to a message that doesn't exist / was blocked / is in another channel is
+ * a 404, not a silently orphaned reply".
+ */
+export async function isReplyTargetVisible(
+  parentId: string,
+  channelId: string,
+  viewerUserId: string | null,
+): Promise<boolean> {
+  const rows = await customerQuery<{ id: string }>(
+    `SELECT m.id FROM community_messages m
+     WHERE m.id = $1::uuid AND m.channel_id = $2::uuid
+       AND NOT EXISTS (
+         SELECT 1 FROM community_blocks b
+         WHERE b.blocker_id = $3::uuid AND b.blocked_id = m.user_id
+       )`,
+    [parentId, channelId, viewerUserId],
+  )
+  return rows.length > 0
+}
+
 export async function insertMessage(opts: {
   channelId: string
   userId: string | null
   senderName: string
   senderType: 'USER' | 'FORGE' | 'SYSTEM'
   message: string
+  /** Reply target (APP-055). Undefined/null = top-level post. */
+  parentId?: string | null
 }): Promise<string | null> {
   const rows = await customerQuery<{ id: string }>(
-    `INSERT INTO community_messages (channel_id, user_id, sender_name, sender_type, message)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [opts.channelId, opts.userId, opts.senderName, opts.senderType, opts.message],
+    `INSERT INTO community_messages (channel_id, user_id, sender_name, sender_type, message, parent_id)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [opts.channelId, opts.userId, opts.senderName, opts.senderType, opts.message, opts.parentId ?? null],
   )
   return rows[0]?.id ?? null
 }
@@ -257,6 +349,12 @@ export async function maybeForgeReply(opts: {
   channelId: string
   senderName: string
   message: string
+  /**
+   * The message Forge is answering (APP-057). Set as the reply's parent so it
+   * renders inside that message's thread rather than the top-level feed —
+   * Forge's AI replies are conversation, not a second announcement.
+   */
+  parentMessageId?: string | null
 }): Promise<void> {
   if (!isForgeConfigured() || !shouldForgeReply(opts.message)) return
   try {
@@ -276,6 +374,7 @@ export async function maybeForgeReply(opts: {
       senderName: FORGE_NAME,
       senderType: 'FORGE',
       message: reply,
+      parentId: opts.parentMessageId ?? null,
     })
   } catch (e) {
     console.error('[community] forge reply failed:', e)

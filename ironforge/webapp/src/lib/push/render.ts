@@ -45,6 +45,30 @@ export function formatAmount(n: number): string {
  */
 export const CURRENCY_RE = /[$€£]|\d[\d,]*\.\d{2}/
 
+const AGENT_BOTS = new Set(['spark', 'flame'])
+
+/**
+ * The mobile app's notification tap handler (src/notifications/route-for.ts) routes
+ * on three flat `data` keys — `trade_id`, `agent`, `kind` — rather than parsing
+ * `route`/`params`, because `routeParams` is producer-defined free text (an approval
+ * uses `approvalId`, a brokerage alert uses `connectionId`, a trade event uses
+ * whatever key the scanner happened to name it). Deriving these here, once,
+ * server-side, means every producer's naming choice still lands on a deep link the
+ * app actually knows how to open, instead of every future producer having to
+ * remember the exact key the client expects.
+ */
+function deriveNavKeys(event: NotificationEvent): { trade_id?: string; agent?: string; kind?: string } {
+  const params = event.routeParams ?? {}
+  const tradeId = params.tradeId ?? params.trade_id ?? params.positionId ?? params.position_id
+  const agent = params.agent ?? params.bot ?? params.account
+  const nav: { trade_id?: string; agent?: string; kind?: string } = {}
+  if (typeof tradeId === 'string' && tradeId) nav.trade_id = tradeId
+  if (typeof agent === 'string' && AGENT_BOTS.has(agent)) nav.agent = agent
+  if (event.category === 'brokerage_health') nav.kind = 'brokerage'
+  else if (event.category === 'billing') nav.kind = 'billing'
+  return nav
+}
+
 export function renderNotification(
   event: NotificationEvent,
   prefs: RenderPrefs,
@@ -81,6 +105,7 @@ export function renderNotification(
       // app is behind biometrics, so showing it after unlock is fine. Only the visible
       // title/body are redacted.
       ...(typeof event.amount === 'number' ? { amount: event.amount } : {}),
+      ...deriveNavKeys(event),
     },
   }
 }

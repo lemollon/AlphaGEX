@@ -1,10 +1,12 @@
 import { useState } from 'react'
-import { View, Text, ScrollView, RefreshControl, Pressable, StyleSheet } from 'react-native'
+import { View, Text, ScrollView, RefreshControl, Pressable, StyleSheet, Alert } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR from 'swr'
-import { api } from '@/api/client'
+import { useRouter } from 'expo-router'
+import * as WebBrowser from 'expo-web-browser'
+import { api, ApiError } from '@/api/client'
 import type {
   LiveSummary,
   LiveAgent,
@@ -19,6 +21,7 @@ import { AppHeader, Mascot } from '@/components/Brand'
 import { PnlChart } from '@/components/PnlChart'
 import { brokerLabel, soleConnection } from '@/api/brokerage'
 import { totalCapital } from '@/live/capital'
+import { pickBanner, bannerActionHref } from '@/alerts/banner'
 
 /**
  * Forge — UX-002 (APP-011/012/013/016) and UX-003 (APP-051).
@@ -34,6 +37,7 @@ import { totalCapital } from '@/live/capital'
  * never the 4s the web uses, which on a phone is a battery and cellular-data problem.
  */
 export default function ForgeScreen() {
+  const router = useRouter()
   const summary = useSWR<LiveSummary>('/api/live/summary', (p: string) => api<LiveSummary>(p), {
     refreshInterval: 60_000,
   })
@@ -46,6 +50,9 @@ export default function ForgeScreen() {
   const conns = useSWR<BrokerageConnections>('/api/brokerage/connections', (p: string) =>
     api<BrokerageConnections>(p),
   )
+  // Only 'caution' may be dismissed (APP-016) — everything more urgent persists, so this
+  // is never checked for those severities.
+  const [dismissedCaution, setDismissedCaution] = useState(false)
 
   const refreshing = summary.isValidating || agents.isValidating
   const reload = () => {
@@ -80,6 +87,38 @@ export default function ForgeScreen() {
   const list = agents.data?.agents ?? []
   const capital = totalCapital(list, data)
 
+  const banner = pickBanner({
+    connections: conns.data,
+    agents: list,
+    membershipBadge: data.membership?.badge,
+    marketCondition: data.market.condition,
+    conditionLine: data.market.condition_line,
+  })
+  const showBanner = banner && !(banner.severity === 'caution' && dismissedCaution)
+
+  async function onBannerPress() {
+    if (!banner?.action) return
+    if (banner.action.target === 'billing') {
+      // Same call the Account tab's "Manage Membership and Billing" makes — the payment
+      // -due banner opens the portal directly rather than making the customer find the
+      // button a second time.
+      try {
+        const res = await api<{ ok: boolean; url: string }>('/api/billing/portal', {
+          method: 'POST',
+        })
+        if (res.url) await WebBrowser.openBrowserAsync(res.url)
+      } catch (e) {
+        Alert.alert(
+          'Billing unavailable',
+          e instanceof ApiError ? e.humanMessage : (e as Error).message,
+        )
+      }
+      return
+    }
+    const href = bannerActionHref(banner.action)
+    if (href) router.push(href)
+  }
+
   return (
     <Shell>
       <ScrollView
@@ -88,6 +127,14 @@ export default function ForgeScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={reload} tintColor={color.accent} />
         }
       >
+        {showBanner && banner ? (
+          <AlertBanner
+            banner={banner}
+            onPress={onBannerPress}
+            onDismiss={() => setDismissedCaution(true)}
+          />
+        ) : null}
+
         <Card>
           <SectionLabel>Total Account Capital</SectionLabel>
           <Balance value={capital.value} />
@@ -140,6 +187,44 @@ export default function ForgeScreen() {
         )}
       </ScrollView>
     </Shell>
+  )
+}
+
+/**
+ * The one prioritized banner above the agent tiles (APP-016). Colour carries severity,
+ * never agent identity — pickBanner is agent-neutral by design, so this stays that way
+ * too rather than tinting by whichever bot happens to be named in the text.
+ */
+function AlertBanner({
+  banner,
+  onPress,
+  onDismiss,
+}: {
+  banner: NonNullable<ReturnType<typeof pickBanner>>
+  onPress: () => void
+  onDismiss: () => void
+}) {
+  return (
+    <Pressable
+      onPress={banner.action ? onPress : undefined}
+      accessibilityRole={banner.action ? 'button' : undefined}
+      style={[s.banner, { borderColor: banner.color, backgroundColor: `${banner.color}18` }]}
+    >
+      <Ionicons name="alert-circle" size={18} color={banner.color} />
+      <Text style={[type.body, { color: color.text, flex: 1, marginLeft: space.sm }]}>
+        {banner.text}
+      </Text>
+      {banner.action ? (
+        <Text style={[type.label, { color: banner.color, fontFamily: font.bodyMedium }]}>
+          {banner.action.label}
+        </Text>
+      ) : null}
+      {banner.dismissible ? (
+        <Pressable onPress={onDismiss} hitSlop={10} accessibilityLabel="Dismiss" style={{ marginLeft: space.md }}>
+          <Ionicons name="close" size={18} color={color.muted} />
+        </Pressable>
+      ) : null}
+    </Pressable>
   )
 }
 
@@ -437,6 +522,14 @@ function Shell({ children }: { children: React.ReactNode }) {
 }
 
 const s = StyleSheet.create({
+  banner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: space.md,
+    marginBottom: space.lg,
+  },
   periodRow: {
     flexDirection: 'row',
     marginTop: space.xl,

@@ -1,6 +1,19 @@
+import { useEffect } from 'react'
+import { AppState, type AppStateStatus } from 'react-native'
 import { Tabs } from 'expo-router'
 import { color, font } from '@/theme/tokens'
 import { ForgeIcon, LedgerIcon, CommunityIcon, AccountIcon } from '@/components/icons'
+import { registerPushDevice, usePushNavigation } from '@/notifications/push'
+import { useScreenTracking } from '@/analytics/screen-tracking'
+import { initMonitoring } from '@/monitoring/sentry'
+
+/**
+ * Crash reporting has to be live before anything under the tabs can throw. The tabs
+ * are the first screen group that only ever mounts once a customer is signed in
+ * (app/_layout.tsx's auth gate), so this module's first import is as early as WP-E
+ * can hook in without touching WP-A's app/_layout.tsx (SPEC.md file ownership).
+ */
+initMonitoring()
 
 /**
  * The four approved bottom tabs (APP-003): Forge, Ledger, Community, Account.
@@ -11,6 +24,21 @@ import { ForgeIcon, LedgerIcon, CommunityIcon, AccountIcon } from '@/components/
  * They are vector now — see components/icons.tsx.
  */
 export default function TabsLayout() {
+  // Push device registration (APP-034) — safe to call every time the tabs mount or
+  // the app returns to the foreground; it no-ops when the token has not changed.
+  // Tap routing (usePushNavigation) and automatic screen views live here too, since
+  // the tabs are the one layout every signed-in screen sits under.
+  usePushNavigation()
+  useScreenTracking()
+
+  useEffect(() => {
+    void registerPushDevice()
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      if (next === 'active') void registerPushDevice()
+    })
+    return () => sub.remove()
+  }, [])
+
   return (
     <Tabs
       screenOptions={{

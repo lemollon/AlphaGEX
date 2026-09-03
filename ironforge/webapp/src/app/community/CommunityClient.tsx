@@ -68,11 +68,63 @@ function RailHeader({ children }: { children: React.ReactNode }) {
   return <div className="text-xs font-semibold uppercase tracking-wider text-white">{children}</div>
 }
 
+/** One reply's row inside a thread panel — same avatar/AI-tag treatment as the top-level feed. */
+function ReplyRow({ reply }: { reply: CommunityMessage }) {
+  return (
+    <div className="flex gap-2">
+      <Avatar message={reply} size="h-6 w-6" />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] font-semibold text-white">{reply.sender_name}</span>
+          {reply.sender_type !== 'USER' && (
+            <span className="rounded bg-amber-500 px-1 py-px text-[9px] font-bold leading-none text-black">AI</span>
+          )}
+          <span className="text-[10px] text-gray-500">{timeLabel(reply.created_at)}</span>
+        </div>
+        <div className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-gray-300">{reply.message}</div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Minimal thread view (APP-055) — a reply count that expands into the replies
+ * themselves. Read-only on web by design: posting a reply is the mobile flow
+ * (mobile is the priority for threads); the web page just needs a way to SEE them.
+ */
+function ThreadPanel({ parentId }: { parentId: string }) {
+  const { data, error } = useSWR<{ replies: CommunityMessage[] }>(
+    `/api/community/messages/${parentId}/replies`, fetcher,
+  )
+  const hasAi = data?.replies.some((r) => r.sender_type !== 'USER')
+  return (
+    <div className="mt-2 space-y-2 border-l-2 border-forge-border pl-3">
+      {error ? (
+        <div className="text-[11px] text-gray-500">Replies didn’t load. Try again shortly.</div>
+      ) : !data ? (
+        <div className="text-[11px] text-gray-500">Loading replies…</div>
+      ) : data.replies.length === 0 ? (
+        <div className="text-[11px] text-gray-500">No replies yet.</div>
+      ) : (
+        <>
+          {data.replies.map((r) => <ReplyRow key={r.id} reply={r} />)}
+          {hasAi && (
+            <div className="text-[10px] text-gray-500">
+              AI updates are general market context, not personalized advice.
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 function MessageRow({ msg, canReact, onReact }: {
   msg: CommunityMessage
   canReact: boolean
   onReact: (id: string, emoji: string) => void
 }) {
+  const [threadOpen, setThreadOpen] = useState(false)
   return (
     <div className="group flex gap-2.5">
       <Avatar message={msg} />
@@ -106,7 +158,14 @@ function MessageRow({ msg, canReact, onReact }: {
               ))}
             </div>
           )}
+          {(msg.reply_count ?? 0) > 0 && (
+            <button type="button" onClick={() => setThreadOpen((v) => !v)}
+              className="text-[11px] font-medium text-amber-500 hover:text-amber-400">
+              {threadOpen ? 'Hide replies' : `${msg.reply_count} ${msg.reply_count === 1 ? 'reply' : 'replies'}`}
+            </button>
+          )}
         </div>
+        {threadOpen && <ThreadPanel parentId={msg.id} />}
       </div>
     </div>
   )
@@ -245,10 +304,10 @@ export default function CommunityClient() {
   }
 
   const channels = feed?.channels ?? [
-    { slug: 'all-chat', name: 'All Chat' },
+    { slug: 'all-chat', name: 'All' },
     { slug: 'market-talk', name: 'Market Talk' },
     { slug: 'trade-ideas', name: 'Trade Ideas' },
-    { slug: 'news-events', name: 'News & Events' },
+    { slug: 'news-events', name: 'News' },
     { slug: 'general', name: 'General' },
   ]
 

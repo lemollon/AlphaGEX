@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { View, Text, ScrollView, Pressable, Switch, StyleSheet, Alert, Linking } from 'react-native'
+import { View, Text, ScrollView, Pressable, Switch, StyleSheet, Alert, Linking, Platform } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import * as WebBrowser from 'expo-web-browser'
@@ -9,6 +9,8 @@ import Constants from 'expo-constants'
 import { api, API_BASE, ApiError } from '@/api/client'
 import type { MobileMe, MembershipResponse } from '@/api/types'
 import { signOut, biometricsAvailable, isBiometricEnabled, setBiometricEnabled } from '@/auth/session'
+import { unregisterPushDevice } from '@/notifications/push'
+import { canManageBillingInApp } from '@/billing/store-policy'
 import { color, space, radius, type, font } from '@/theme/tokens'
 import { Card, SectionLabel, Row, Loading, ErrorState } from '@/components/ui'
 import { AppHeader, SPARKY_AVATAR } from '@/components/Brand'
@@ -22,11 +24,14 @@ import { BrokerageSection } from '@/components/BrokerageSection'
  * system browser, never a WebView, so the customer can see the real URL and padlock —
  * which is the whole trust argument for handing over card details.
  *
- * 🚨 The control is HIDDEN ENTIRELY ON iOS (canManageBillingInApp). Keeping it out of
- * a WebView is not sufficient there: the portal session uses Stripe's default
- * configuration, which allows changing plan, so any route to it from inside the iOS
- * app is a purchasing mechanism under App Review Guideline 3.1.1. See
- * src/billing/store-policy.ts for the full reasoning before re-enabling it.
+ * The control is PRESENT on every platform, including iOS (APP-039). It used to be
+ * hidden entirely there by a client-side gate that never actually shipped as code —
+ * this file only ever had a comment describing it, `canManageBillingInApp` and
+ * src/billing/store-policy.ts did not exist. The real guarantee is server-side: POST
+ * /api/billing/portal hands a mobile bearer client a Stripe portal configuration with
+ * plan changes switched off, and refuses (503) rather than falling back to the
+ * default (plan-changeable) portal if that configuration is missing. See
+ * store-policy.ts for the full reasoning.
  *
  * NOTE for whoever wires the membership card: the plan name comes from
  * LiveSummary.membership, which the server derives from real subscription rows and
@@ -65,6 +70,17 @@ export default function AccountScreen() {
       if (res.url) await WebBrowser.openBrowserAsync(res.url)
       mutate()
     } catch (e) {
+      // The route's body carries a machine code (`no_subscription`, `portal_unconfigured`)
+      // rather than a customer sentence for these two, so the status decides the copy here
+      // instead of trusting ApiError.humanMessage to fall back to the raw code.
+      if (e instanceof ApiError && e.status === 409) {
+        Alert.alert('Billing unavailable', 'No active subscription to manage.')
+        return
+      }
+      if (e instanceof ApiError && e.status === 503) {
+        Alert.alert('Billing unavailable', 'Billing portal is temporarily unavailable.')
+        return
+      }
       // `portal_unconfigured` is the server refusing to open the plan-changing default
       // portal for a mobile client. Deliberately does NOT point anyone at the web to go
       // and pay — that would be the call to action the refusal exists to avoid.
@@ -105,6 +121,10 @@ export default function AccountScreen() {
   }
 
   async function doSignOut() {
+    // Unregister the push token BEFORE the tokens that authorize doing so are cleared
+    // (cross-package contract, SPEC.md) — signOut() afterward would leave this device's
+    // token live server-side with no session left to revoke it with.
+    await unregisterPushDevice().catch(() => {})
     await signOut()
     router.replace('/sign-in')
   }
@@ -207,18 +227,41 @@ export default function AccountScreen() {
             configuration permits changing plan. The route now serves mobile a
             configuration with subscription updates disabled, and refuses rather than
             falling back to the default one. See api/billing/portal/route.ts.
+            canManageBillingInApp is always true today; it exists so this render stays
+            in agreement with store-policy.ts rather than a second hardcoded assumption.
           */}
-          <Pressable onPress={openBilling} style={s.outlineBtn}>
-            <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
-              Manage Membership and Billing
-            </Text>
-          </Pressable>
+          {canManageBillingInApp(Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web') ? (
+            <Pressable onPress={openBilling} style={s.outlineBtn}>
+              <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+                Manage Membership and Billing (opens secure Stripe portal)
+              </Text>
+            </Pressable>
+          ) : null}
           <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
             Securely managed through Stripe
           </Text>
         </Card>
 
         <BrokerageSection />
+
+        <View style={{ marginTop: space.xl }}>
+          <SectionLabel>Trading</SectionLabel>
+        </View>
+        <Card>
+          <Row
+            icon="flash-outline"
+            label="Agents"
+            detail="View and manage Spark and Flame"
+            onPress={() => router.push('/agents')}
+            first
+          />
+          <Row
+            icon="notifications-outline"
+            label="Notifications"
+            detail="Alerts and push preferences"
+            onPress={() => router.push('/notifications')}
+          />
+        </Card>
 
         <View style={{ marginTop: space.xl }}>
           <SectionLabel>Security</SectionLabel>

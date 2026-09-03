@@ -1,9 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { View, Text, ScrollView, TextInput, Pressable, RefreshControl, Alert, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import useSWR from 'swr'
+import { useRouter } from 'expo-router'
+import useSWRInfinite from 'swr/infinite'
 import { api } from '@/api/client'
-import type { HistoryTrade } from '@/api/types'
+import type { HistoryTrade, TradesPageResponse } from '@/api/types'
+import { getLedgerKey, mergeLedgerPages, ledgerTotal, hasMoreLedgerPages, type LedgerFilters } from '@/ledger/paging'
+import { tradeDetailHref } from '@/ledger/detail'
 import { color, space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { Card, Money, OutcomeBadge, AgentBadge, Loading, Empty, ErrorState } from '@/components/ui'
 import { AppHeader } from '@/components/Brand'
@@ -13,19 +16,18 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 /**
  * Ledger — UX-004 (APP-017/018/020/021/052/053).
  *
- * GET /api/live/trades already returns exactly the approved card fields, including a
- * normalized outcome_kind that maps 1:1 to the three badge states. Ticker and return %
- * are intentionally ABSENT from the card per UX-004 — do not add them back.
- *
- * Filtering is client-side: the endpoint returns up to 300 rows per bot in one shot, so
- * a round trip per keystroke would be strictly worse. Filters combine, and any change
- * resets scroll position — which is the mobile equivalent of "filter changes reset
- * pagination".
+ * Filtering moved server-side (APP-020): GET /api/live/trades now takes bot/days/q
+ * query params and returns a cursor-paginated page instead of up to 300 rows per bot
+ * in one shot. useSWRInfinite drives the "Load more" / onEndReached flow; a filter
+ * change is a NEW key (getLedgerKey embeds the filters), so switching agent/range/
+ * search always starts over at page 1 rather than filtering whatever pages happened
+ * to already be loaded — `setSize(1)` below makes that explicit rather than relying
+ * on SWR's cache alone.
  */
 const RANGES = [
-  { key: '30', label: 'Last 30 Days', days: 30 },
-  { key: '90', label: 'Last 90 Days', days: 90 },
-  { key: 'all', label: 'All Time', days: null },
+  { key: '30', label: 'Last 30 Days' },
+  { key: '90', label: 'Last 90 Days' },
+  { key: 'all', label: 'All Time' },
 ] as const
 
 /**
@@ -33,8 +35,6 @@ const RANGES = [
  * whatever happens to be in the returned rows — a customer whose history holds only
  * Spark trades should still see that Flame exists, and the control must not change
  * shape as the date range changes.
- *
- * Matched on `bot` (the canonical id) rather than `strategy` (a display string).
  */
 const AGENTS = [
   { key: 'all', label: 'All Agents' },
@@ -43,36 +43,35 @@ const AGENTS = [
 ] as const
 
 export default function LedgerScreen() {
-  const { data, error, isLoading, mutate, isValidating } = useSWR<{ trades: HistoryTrade[] }>(
-    '/api/live/trades',
-    (p: string) => api(p),
-    { refreshInterval: 60_000 },
-  )
-
+  const router = useRouter()
   const [query, setQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [agent, setAgent] = useState<string>('all')
   const [range, setRange] = useState<string>('30')
 
-  const trades = data?.trades ?? []
+  const filters: LedgerFilters = useMemo(() => ({ agent, range, query }), [agent, range, query])
 
-  const filtered = useMemo(() => {
-    const days = RANGES.find((r) => r.key === range)?.days ?? null
-    const cutoff = days ? Date.now() - days * 86400_000 : null
-    const q = query.trim().toLowerCase()
-    return trades.filter((t) => {
-      if (agent !== 'all' && t.bot !== agent) return false
-      if (cutoff && new Date(t.close_date).getTime() < cutoff) return false
-      if (q) {
-        const hay = `${t.strategy} ${t.outcome} ${t.close_date} ${t.underlying}`.toLowerCase()
-        if (!hay.includes(q)) return false
-      }
-      return true
-    })
-  }, [trades, agent, range, query])
+  const { data, error, isLoading, isValidating, size, setSize, mutate } = useSWRInfinite<TradesPageResponse>(
+    getLedgerKey(filters),
+    (p: string) => api<TradesPageResponse>(p),
+    { refreshInterval: 60_000 },
+  )
 
-  if (isLoading) return <Shell><Loading label="Loading your trade history…" /></Shell>
-  if (error) {
+  // A filter change resets paging to page 1 — without this, switching from "Spark"
+  // back to "All Agents" would keep whatever `size` the previous filter had reached
+  // and fire that many requests against the new key on the first render.
+  useEffect(() => {
+    setSize(1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent, range, query])
+
+  const trades = mergeLedgerPages(data)
+  const total = ledgerTotal(data)
+  const canLoadMore = hasMoreLedgerPages(data)
+  const loadingMore = isValidating && size > 0 && !!data && data.length < size
+
+  if (isLoading && !data) return <Shell><Loading label="Loading your trade history…" /></Shell>
+  if (error && !data) {
     return (
       <Shell>
         <ErrorState message={String((error as Error).message)} onRetry={() => mutate()} />
@@ -85,8 +84,17 @@ export default function LedgerScreen() {
       <ScrollView
         contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}
         refreshControl={
-          <RefreshControl refreshing={isValidating} onRefresh={() => mutate()} tintColor={color.accent} />
+          <RefreshControl refreshing={isValidating && size === 1} onRefresh={() => mutate()} tintColor={color.accent} />
         }
+        // The screen has always used a ScrollView, not a FlatList, so there is no
+        // native onEndReached prop — this is its equivalent: within 200px of the
+        // bottom, fetch the next page exactly the way the "Load more" button does.
+        onScroll={({ nativeEvent }) => {
+          const { layoutMeasurement, contentOffset, contentSize } = nativeEvent
+          const nearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 200
+          if (nearBottom && canLoadMore && !loadingMore) setSize(size + 1)
+        }}
+        scrollEventThrottle={200}
       >
         <Text style={s.title}>Ledger</Text>
 
@@ -95,7 +103,7 @@ export default function LedgerScreen() {
             Trade History
           </Text>
           <Text style={[type.label, { color: color.textDim, marginTop: space.xs }]}>
-            {filtered.length} completed {filtered.length === 1 ? 'trade' : 'trades'}
+            {trades.length} of {total} {total === 1 ? 'trade' : 'trades'}
           </Text>
 
           <View style={s.controls}>
@@ -147,45 +155,63 @@ export default function LedgerScreen() {
           ) : null}
         </Card>
 
-        {filtered.length === 0 ? (
+        {trades.length === 0 ? (
           <Empty
             title="No completed trades"
             detail={
-              trades.length === 0
+              total === 0 && agent === 'all' && range === '30' && !query
                 ? 'Closed trades appear here once your agent finishes its first position.'
                 : 'No trades match these filters. Try widening the date range.'
             }
           />
         ) : (
-          filtered.map((t) => <TradeCard key={t.id} trade={t} />)
+          <>
+            {trades.map((t) => (
+              <TradeCard key={t.id} trade={t} onPress={() => router.push(tradeDetailHref(t.id))} />
+            ))}
+            {canLoadMore ? (
+              <Pressable
+                onPress={() => setSize(size + 1)}
+                disabled={loadingMore}
+                style={[s.loadMore, loadingMore && { opacity: 0.5 }]}
+                accessibilityRole="button"
+              >
+                <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+                  {loadingMore ? 'Loading…' : 'Load more'}
+                </Text>
+              </Pressable>
+            ) : null}
+          </>
         )}
       </ScrollView>
     </Shell>
   )
 }
 
-function TradeCard({ trade }: { trade: HistoryTrade }) {
+function TradeCard({ trade, onPress }: { trade: HistoryTrade; onPress: () => void }) {
   return (
-    <Card style={{ marginBottom: space.md }}>
-      <View style={s.rowBetween}>
-        <AgentBadge name={trade.strategy} accent={agentAccent(trade.bot)} />
-        <Money value={trade.pnl} size="title" />
-      </View>
-      <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, marginTop: space.sm }]}>
-        {formatDate(trade.close_date)}
-      </Text>
-
-      <View style={s.divider} />
-
-      <View style={s.rowBetween}>
-        <Field label="Opened" value={trade.opened_ct ?? '—'} />
-        <Field label="Closed" value={trade.closed_ct ?? '—'} />
-        <View style={{ alignItems: 'center' }}>
-          <Text style={[type.label, { color: color.muted, marginBottom: space.xs }]}>Outcome</Text>
-          <OutcomeBadge kind={trade.outcome_kind} label={trade.outcome} />
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={`Trade closed ${trade.close_date}`}>
+      <Card style={{ marginBottom: space.md }}>
+        <View style={s.rowBetween}>
+          <AgentBadge name={trade.strategy} accent={agentAccent(trade.bot)} />
+          <Money value={trade.pnl} size="title" />
         </View>
-      </View>
-    </Card>
+        <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, marginTop: space.sm }]}>
+          {formatDate(trade.close_date)}
+        </Text>
+
+        <View style={s.divider} />
+
+        <View style={s.rowBetween}>
+          <Field label="Opened" value={trade.opened_ct ?? '—'} />
+          <Field label="Closed" value={trade.closed_ct ?? '—'} />
+          <View style={{ alignItems: 'center' }}>
+            <Text style={[type.label, { color: color.muted, marginBottom: space.xs }]}>Outcome</Text>
+            <OutcomeBadge kind={trade.outcome_kind} label={trade.outcome} />
+          </View>
+        </View>
+      </Card>
+    </Pressable>
   )
 }
 
@@ -293,4 +319,12 @@ const s = StyleSheet.create({
   },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   divider: { height: 1, backgroundColor: color.border, marginVertical: space.md },
+  loadMore: {
+    borderWidth: 1,
+    borderColor: color.border,
+    borderRadius: radius.md,
+    paddingVertical: space.md,
+    alignItems: 'center',
+    marginTop: space.sm,
+  },
 })
