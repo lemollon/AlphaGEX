@@ -128,6 +128,17 @@ ROLLING_LOG_WINDOW_CT: tuple[tuple[int, int], tuple[int, int]] = ((8, 31), (14, 
 CONFIRM_ARM_Z = 1.5            # stage-1 put/call z that arms the watcher
 CONFIRM_MOVE_PCT = 0.10        # stage-2 move beyond the 10:00 level, %
 CONFIRM_WINDOW_CT: tuple[tuple[int, int], tuple[int, int]] = ((10, 10), (14, 0))
+
+# 🚨 STANDALONE FLOW CAPTURE — the 2026-09-03 blind spot. confirm_check only
+# polls 10:10-14:00 CT, so on 2026-09-03 (SPY +1% from the open) there was no
+# risk_flow_intraday row at all before 10:10 CT, and the row AT 10:10 was
+# written with nothing earlier to diff against — it read as NULL. This window
+# is deliberately WIDER than CONFIRM_WINDOW_CT on both ends is not the goal
+# here (it does not touch 14:00), only the open end: capture starts at 08:40,
+# thirty minutes before confirm_check's first poll can land. This is a
+# RECORDING window, not an alerting one — it changes no threshold, no arm
+# logic, and no alert. See risk_alerts.run_flow_capture.
+FLOW_CAPTURE_WINDOW_CT: tuple[tuple[int, int], tuple[int, int]] = ((8, 40), (14, 0))
 ROLLING_BASELINE_JSON = Path(__file__).resolve().parent / "data" / "rolling_flow_baselines.json"
 CBOE_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{sym}_History.csv"
 BASELINE_CSV = Path(__file__).resolve().parent / "data" / "risk_flow_baseline.csv"
@@ -153,6 +164,19 @@ PAPER_GATE_TEXT = (
 
 # --- Flow-at-fire ledger (Part 2) — honest proxy, no signed tape exists live
 FLOW_TENORS = ("0dte", "1_5d", "6_20d", "far")
+
+# --- Live flow tape (/session, DESCRIPTIVE ONLY — see flow_burst_label) -----
+# Only the two nearest tenors are worth a 10-minute reading on the page; 6-20d
+# and far barely move within a session. Deliberately NOT all of FLOW_TENORS —
+# see /session's docstring note on keeping this query cheap.
+FLOW_TAPE_TENORS = ("0dte", "1_5d")
+FLOW_BURST_HI = 0.80
+FLOW_BURST_LO = 0.30
+# 🚨 EVERY LABEL THIS PRODUCES MUST CARRY THIS STRING. flow_burst_label is a
+# volume-share description, not a signal — it has never been backtested, has
+# no arm/fire state, and must never be confused with the validated two-stage
+# confirmation watcher above. See PREREG discipline note in the module header.
+FLOW_BURST_NOTE = "unvalidated — descriptive"
 
 _cboe_cache: dict[str, tuple[datetime, dict[date, float]]] = {}
 _CBOE_TTL = 1800
@@ -692,18 +716,24 @@ def _chain_flow_stats(opts: list[dict]) -> dict:
     }
 
 
-async def capture_flow_intraday(request: Request, now: datetime) -> None:
+async def capture_flow_intraday(request: Request, now: datetime) -> bool:
     """Write one risk_flow_intraday row per tenor — called on EVERY
-    confirm_check poll (10-min cadence, 10:10-14:00 CT), not just on a fire.
+    confirm_check poll (10-min cadence, 10:10-14:00 CT), not just on a fire,
+    and now also by the standalone risk_flow_capture job (08:40-14:00 CT).
     Wrapped end to end: a failure here logs and skips, it must never block
-    the confirmation alert the same poll is trying to deliver."""
+    the confirmation alert the same poll is trying to deliver.
+
+    Returns True when rows were actually committed, False on any failure
+    (including the early-return cases below) — callers that want a retry
+    (risk_flow_capture) act on this; confirm_check still ignores it, exactly
+    as before."""
     if SessionLocal is None:
-        return
+        return False
     try:
         from .routes import _tradier_get, _get_quote
         today = now.date()
         if today < PAPER_BOOK_START:
-            return
+            return False
         q = await _get_quote(request, "SPY")
         spot = float(q.get("last") or q.get("close") or 0) or None
         exps = await _tradier_get(request, "/markets/options/expirations",
@@ -742,6 +772,7 @@ async def capture_flow_intraday(request: Request, now: datetime) -> None:
                     spot=spot,
                 ))
             db.commit()
+            return True
         except Exception:
             db.rollback()
             raise
@@ -749,6 +780,129 @@ async def capture_flow_intraday(request: Request, now: datetime) -> None:
             db.close()
     except Exception as e:                                     # noqa: BLE001
         logger.warning("[routes_risk] capture_flow_intraday failed: %r", e)
+        return False
+
+
+def flow_slot_has_rows(d: date, minute_ct: int) -> bool:
+    """True if risk_flow_intraday already has a row for date `d` whose ts
+    falls in the 10-minute slot [minute_ct, minute_ct+10). The standalone
+    risk_flow_capture job uses this to skip a slot confirm_check already
+    wrote, rather than double-hitting Tradier for the same 10 minutes. Never
+    raises — a lookup failure just means the job captures anyway, which is
+    at worst a redundant write, never a missed one."""
+    if SessionLocal is None:
+        return False
+    try:
+        h, m = divmod(minute_ct, 60)
+        start = datetime.combine(d, time(h, m))
+        end = start + timedelta(minutes=10)
+        db = SessionLocal()
+        try:
+            row = (db.query(RiskFlowIntraday)
+                     .filter(RiskFlowIntraday.d == d,
+                             RiskFlowIntraday.ts >= start,
+                             RiskFlowIntraday.ts < end)
+                     .first())
+            return row is not None
+        finally:
+            db.close()
+    except Exception:
+        return False
+
+
+def flow_burst_label(call_buy_share: float | None,
+                     put_buy_share: float | None) -> str:
+    """Descriptive-only classification of one flow-tape slot's buyer-
+    initiated share. NEVER a direction call — see FLOW_BURST_NOTE, which
+    every caller that surfaces this text must attach. "no data" when either
+    side has no reading (zero volume that side, or no row for the slot)."""
+    if call_buy_share is None or put_buy_share is None:
+        return "no data"
+    if call_buy_share >= FLOW_BURST_HI and put_buy_share <= FLOW_BURST_LO:
+        return "bullish burst"
+    if put_buy_share >= FLOW_BURST_HI and call_buy_share <= FLOW_BURST_LO:
+        return "bearish burst"
+    return "quiet"
+
+
+def _flow_tape_read_text(time_str: str, tenor0: dict | None) -> str:
+    """One-line plain-English sentence for a flow-tape slot's 0DTE read.
+    Always carries FLOW_BURST_NOTE so it can never be mistaken for the
+    validated confirmation signal."""
+    read = flow_burst_label((tenor0 or {}).get("call_buy_share"),
+                            (tenor0 or {}).get("put_buy_share"))
+    if read == "no data":
+        return (f"{time_str} CT: not enough 0DTE volume to read — "
+                f"no data, {FLOW_BURST_NOTE}")
+    cbs_pct = round((tenor0.get("call_buy_share") or 0.0) * 100)
+    pbs_pct = round((tenor0.get("put_buy_share") or 0.0) * 100)
+    return (f"{time_str} CT: {cbs_pct}% of 0DTE call trades buyer-initiated, "
+            f"{pbs_pct}% of puts — {read}, {FLOW_BURST_NOTE}")
+
+
+def build_flow_tape(rows_by_tenor: dict[str, list]) -> tuple[list, dict]:
+    """Pure assembly of /session's `flow_tape` from raw risk_flow_intraday-
+    shaped rows (any object with .ts/.call_vol/.put_vol/.call_buy_share/
+    .put_buy_share/.spot), keyed by tenor — kept DB-free so the endpoint's
+    read path and this module's tests run the exact same logic.
+
+    Rows are deduped to one per 10-minute slot per tenor (earliest ts wins —
+    a second write inside the same slot is a race, not a new reading), then
+    merged into one tape entry per slot that has ANY tenor's data (slots with
+    nothing are skipped, never fabricated). Deltas are computed against the
+    PREVIOUS slot that tenor itself appeared in, so one tenor missing from a
+    slot never poisons another tenor's delta.
+    """
+    per_tenor_by_slot: dict[str, dict[int, object]] = {}
+    for tenor, rows in rows_by_tenor.items():
+        by_slot: dict[int, object] = {}
+        for r in sorted(rows, key=lambda x: x.ts):
+            slot = (r.ts.hour * 60 + r.ts.minute) // 10 * 10
+            if slot not in by_slot:          # earliest ts in the slot wins
+                by_slot[slot] = r
+        per_tenor_by_slot[tenor] = by_slot
+
+    all_slots = sorted({s for by_slot in per_tenor_by_slot.values() for s in by_slot})
+
+    prev_for_tenor: dict[str, object] = {}
+    tape: list[dict] = []
+    for slot in all_slots:
+        entry_tenors: dict[str, dict] = {}
+        spot = None
+        for tenor, by_slot in per_tenor_by_slot.items():
+            row = by_slot.get(slot)
+            if row is None:
+                continue
+            if spot is None and row.spot is not None:
+                spot = row.spot
+            prev = prev_for_tenor.get(tenor)
+            entry_tenors[tenor] = {
+                "call_vol": row.call_vol, "put_vol": row.put_vol,
+                "call_vol_delta": (row.call_vol - prev.call_vol) if prev is not None else None,
+                "put_vol_delta": (row.put_vol - prev.put_vol) if prev is not None else None,
+                "call_buy_share": row.call_buy_share,
+                "put_buy_share": row.put_buy_share,
+            }
+            prev_for_tenor[tenor] = row
+        h, m = divmod(slot, 60)
+        time_str = f"{h:02d}:{m:02d}"
+        read = flow_burst_label(entry_tenors.get("0dte", {}).get("call_buy_share"),
+                                entry_tenors.get("0dte", {}).get("put_buy_share"))
+        tape.append({
+            "minute_ct": slot, "time": time_str, "spot": spot,
+            "tenors": entry_tenors, "read": read, "note": FLOW_BURST_NOTE,
+        })
+
+    if tape:
+        last = tape[-1]
+        latest_read = _flow_tape_read_text(last["time"], last["tenors"].get("0dte"))
+        meta = {"first_capture": tape[0]["time"], "last_capture": last["time"],
+                "n_slots": len(tape), "note": FLOW_BURST_NOTE,
+                "latest_read": latest_read}
+    else:
+        meta = {"first_capture": None, "last_capture": None, "n_slots": 0,
+                "note": FLOW_BURST_NOTE, "latest_read": None}
+    return tape, meta
 
 
 async def paper_record_fire(request: Request, d: date, hit: dict) -> None:
@@ -2824,6 +2978,32 @@ async def session_tape(request: Request):
 
     tape = session_log_read(today)
 
+    # Live flow tape (DESCRIPTIVE ONLY) — every 10-minute risk_flow_intraday
+    # reading captured today, from whichever job got there first: confirm_check
+    # (10:10-14:00 CT) or the standalone risk_flow_capture job (08:40-14:00 CT,
+    # see routes_risk.FLOW_CAPTURE_WINDOW_CT / risk_alerts.run_flow_capture).
+    # One query per tenor, ordered by ts — cheap, no Tradier call, matching
+    # the rest of this endpoint's read-only discipline.
+    flow_tape: list[dict] = []
+    flow_tape_meta = {"first_capture": None, "last_capture": None, "n_slots": 0,
+                      "note": FLOW_BURST_NOTE, "latest_read": None}
+    if SessionLocal is not None:
+        try:
+            db = SessionLocal()
+            try:
+                rows_by_tenor: dict[str, list] = {}
+                for tenor in FLOW_TAPE_TENORS:
+                    rows_by_tenor[tenor] = (
+                        db.query(RiskFlowIntraday)
+                          .filter(RiskFlowIntraday.d == today,
+                                  RiskFlowIntraday.tenor == tenor)
+                          .order_by(RiskFlowIntraday.ts).all())
+            finally:
+                db.close()
+            flow_tape, flow_tape_meta = build_flow_tape(rows_by_tenor)
+        except Exception:
+            pass
+
     # 🚨 FRESHNESS COMES FROM THE DATA, NOT THE MARKET CLOCK.
     #
     # The first version derived "LIVE" from market hours (08:30-15:00 CT). But
@@ -3037,6 +3217,8 @@ async def session_tape(request: Request):
         "asof": now_ct.isoformat(),
         "clock": clock,
         "tape": tape,
+        "flow_tape": flow_tape,
+        "flow_tape_meta": flow_tape_meta,
         "confirm": confirm,
         "headline": _session_headline(confirm),
         "levels": levels,
