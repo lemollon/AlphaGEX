@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS tsunami_trend_trades (
     id          BIGSERIAL PRIMARY KEY,
     ts          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     letf        VARCHAR(10) NOT NULL,
-    side        VARCHAR(4)  NOT NULL CHECK (side IN ('BUY','SELL')),
+    side        VARCHAR(4)  NOT NULL CHECK (side IN ('BUY','SELL','SPLIT')),
     shares      NUMERIC(16,6) NOT NULL,
     price       DECIMAL(12,4) NOT NULL,
     reason      TEXT        NOT NULL DEFAULT '',
@@ -201,6 +201,16 @@ ALTER TABLE tsunami_trend_book    ALTER COLUMN shares        TYPE NUMERIC(16,6);
 ALTER TABLE tsunami_trend_trades  ALTER COLUMN shares        TYPE NUMERIC(16,6);
 ALTER TABLE tsunami_trend_signals ALTER COLUMN target_shares TYPE NUMERIC(16,6);
 ALTER TABLE tsunami_trend_signals ALTER COLUMN held_shares   TYPE NUMERIC(16,6);
+-- 2026-08-24 MSTU 1:10 reverse split migration: CREATE TABLE IF NOT EXISTS
+-- above never touches an already-existing table's CHECK constraint, so a
+-- pre-existing install would still reject the new 'SPLIT' side without
+-- this. Postgres auto-names an unnamed column CHECK
+-- "<table>_<column>_check", so dropping that name IF EXISTS is safe on
+-- both a fresh table (already created with 'SPLIT' inline above) and an
+-- old one that predates split-adjustment.
+ALTER TABLE tsunami_trend_trades DROP CONSTRAINT IF EXISTS tsunami_trend_trades_side_check;
+ALTER TABLE tsunami_trend_trades ADD  CONSTRAINT tsunami_trend_trades_side_check
+    CHECK (side IN ('BUY','SELL','SPLIT'));
 """
 
 
@@ -234,6 +244,90 @@ def _today_market_date():
     calendar or evening runs (past midnight UTC) stop excluding today."""
     from zoneinfo import ZoneInfo
     return datetime.now(ZoneInfo("America/New_York")).date()
+
+
+def _market_date(dt: datetime):
+    """The exchange-calendar (America/New_York) date for an arbitrary
+    datetime. `updated_at` comes back from Postgres tz-aware (usually UTC),
+    so it's converted; a naive datetime (tests, or a yfinance bar timestamp
+    which is already exchange-local) is taken as-is -- same rule
+    `_today_market_date` uses for "today"."""
+    from zoneinfo import ZoneInfo
+    return dt.astimezone(ZoneInfo("America/New_York")).date() if dt.tzinfo else dt.date()
+
+
+def _split_ratios_since(letf: str, since: datetime) -> Optional[list]:
+    """Split events for one LETF strictly after `since` (a book row's
+    updated_at), oldest first. Each item is (exchange_date, ratio) where
+    ratio<1 is a reverse split (0.1 = 1:10, e.g. MSTU 2026-08-24) and
+    ratio>1 is a forward split (2 = 2:1). Returns [] when there are none,
+    None on any fetch failure -- the caller must treat None as fail-safe
+    SKIP for this name, not "no splits happened"."""
+    try:
+        import yfinance as yf  # type: ignore
+    except ImportError as exc:
+        logger.warning("[tsunami.trend] yfinance unavailable for split lookup %s: %r", letf, exc)
+        return None
+    try:
+        splits = yf.Ticker(letf).splits
+        if splits is None or splits.empty:
+            return []
+        since_date = _market_date(since)
+        out = [(d.date(), float(r)) for d, r in zip(splits.index, splits.values)
+               if d.date() > since_date]
+        out.sort(key=lambda item: item[0])
+        return out
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[tsunami.trend] split lookup failed for %s: %r", letf, exc)
+        return None
+
+
+def _apply_splits_for_book(conn, book: dict, now: datetime) -> set:
+    """Split-adjust every HELD letf in `book` whose ETF split after that
+    row's updated_at -- must run before any signal/fill logic each cycle.
+    Without this, a reverse split (MSTU 1:10 on 2026-08-24) leaves the book
+    holding the pre-split share count against post-split prices, and the
+    next SELL books a phantom gain (or loss) on the wrong quantity.
+
+    Mutates `book` in place (shares/avg_cost updated to post-split values)
+    and writes through to the DB row + a SPLIT trade row + a Discord post
+    per split event, same commit-per-write style as the rest of the file.
+
+    Returns the set of letfs whose split lookup failed this cycle -- the
+    caller must skip those for signal/fill entirely (fail-safe: no trade
+    against a share count that might be stale, rather than raise)."""
+    skip: set = set()
+    for letf, pos in list(book.items()):
+        if not pos.get("shares"):
+            continue
+        ratios = _split_ratios_since(letf, pos["updated_at"])
+        if ratios is None:
+            logger.warning("[tsunami.trend] %s: split lookup failed — skipping this cycle", letf)
+            skip.add(letf)
+            continue
+        for split_date, r in ratios:
+            old_shares, old_avg = pos["shares"], pos["avg_cost"]
+            new_shares, new_avg = old_shares * r, old_avg / r
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE tsunami_trend_book SET shares=%s, avg_cost=%s, updated_at=NOW() WHERE letf=%s",
+                    (new_shares, new_avg, letf))
+                cur.execute(
+                    "INSERT INTO tsunami_trend_trades (letf, side, shares, price, reason, realized_pnl)"
+                    " VALUES (%s,'SPLIT',%s,%s,%s,0)",
+                    (letf, new_shares, new_avg, f"split {r:g} on {split_date}"))
+            conn.commit()
+            pos["shares"], pos["avg_cost"] = new_shares, new_avg
+            try:
+                tsunami_discord.post_embed(
+                    title="🌊 TSUNAMI-TREND split adjust",
+                    description=(f"{letf} split {r:g} on {split_date} — "
+                                 f"{old_shares:g} sh @ ${old_avg:.4f} -> "
+                                 f"{new_shares:g} sh @ ${new_avg:.4f}"),
+                )
+            except Exception:  # noqa: BLE001
+                pass
+    return skip
 
 
 def _adjusted_closes(letf: str) -> list[float]:
@@ -349,8 +443,15 @@ def run_rebalance(now: Optional[datetime] = None) -> dict:
             cur.execute("SELECT cash FROM tsunami_trend_cash WHERE id=1")
             row = cur.fetchone()
             cash = float(row[0]) if row else START_CASH
-            cur.execute("SELECT letf, shares, avg_cost FROM tsunami_trend_book")
-            book = {r[0]: {"shares": float(r[1]), "avg_cost": float(r[2])} for r in cur.fetchall()}
+            cur.execute("SELECT letf, shares, avg_cost, updated_at FROM tsunami_trend_book")
+            book = {r[0]: {"shares": float(r[1]), "avg_cost": float(r[2]), "updated_at": r[3]}
+                    for r in cur.fetchall()}
+
+        # Split-adjust HELD shares BEFORE any signal/fill logic touches the
+        # book -- a reverse split (MSTU 1:10 on 2026-08-24) between cycles
+        # otherwise leaves the book holding pre-split shares against a
+        # post-split price, and the next SELL books a phantom P&L.
+        split_skip = _apply_splits_for_book(conn, book, now)
 
         quotes: dict[str, float] = {}
         equity = cash
@@ -363,6 +464,9 @@ def run_rebalance(now: Optional[datetime] = None) -> dict:
                 equity += held * px
 
         for _, letf in PAIRS:
+            if letf in split_skip:
+                summary["skipped"].append(f"{letf}:split_lookup_failed")
+                continue
             px = quotes.get(letf, 0.0)
             held = book.get(letf, {}).get("shares", 0)
             if px <= 0:
