@@ -128,7 +128,13 @@ const config: ExpoConfig = {
     // build time (the plugin reads them from the environment on its own), which do not
     // exist yet because the Sentry project has not been created. See the build report
     // for exactly what Leron needs to fill in.
-    '@sentry/react-native',
+    //
+    // Until SENTRY_AUTH_TOKEN exists, the upload step must be OFF, not merely
+    // unconfigured: with the token absent, sentry-cli still runs inside gradle and the
+    // Xcode build phase and fails the whole build ("An organization ID or slug is
+    // required" — Android versionCode 7, 2026-09-03). Keying the switch off the token
+    // means the day the EAS secrets are set, upload turns on with no code change.
+    ['@sentry/react-native', { disableAutoUpload: !process.env.SENTRY_AUTH_TOKEN }],
     // Android API level is PINNED, not inherited from whatever the Expo SDK happens to
     // default to. Google Play requires new apps and updates to target API 36 from
     // 2026-08-31; a silent default drift below that is not a warning, it is an outright
