@@ -1377,8 +1377,8 @@ def register_risk_alerts(scheduler, app) -> None:
                       id="risk_flow_rolling")
     scheduler.add_job(confirm_check, "cron", minute="*/10", timezone=CT,
                       id="risk_confirm")
-    # second=50 so this lands after confirm_check (its chain fetches can take 30s+)'s second=0 tick — the two
-    # never race the same 10-minute slot. See run_flow_capture's docstring.
+    # second=50 so this lands after confirm_check's second=0 tick (its chain
+    # fetches can take 30s+) — the two never race the same 10-minute slot.
     scheduler.add_job(risk_flow_capture, "cron", minute="*/10", second=50,
                       timezone=CT, id="risk_flow_capture")
     scheduler.add_job(confirm_close, "cron", hour=15, minute=5, timezone=CT,
@@ -1407,7 +1407,7 @@ def register_risk_alerts(scheduler, app) -> None:
                 "08:06:30, ticket %02d:%02d & %02d:%02d, flow spike 10:06, "
                 "PM re-checks 12:06 & 13:36, rolling flow watcher */10 "
                 "10:36-14:00, CONFIRMATION watcher */10 10:10-14:00, flow "
-                "capture */10+20s 08:40-14:00, close record 15:05, EM-breach "
+                "capture */10+50s 08:40-14:00, close record 15:05, EM-breach "
                 "watch */10 in-session, health flip 15:50, Friday digest "
                 "15:55, promotion announce 16:05 (all CT)",
                 _am_h, _am_m, _pm_h, _pm_m)
