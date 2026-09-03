@@ -4,6 +4,7 @@ import './globals.css'
 import Shell from '@/components/Shell'
 import EnrollmentGate from '@/components/EnrollmentGate'
 import SandboxBanner from '@/components/SandboxBanner'
+import TrackPageView from '@/components/TrackPageView'
 import { isEnrollmentClosed } from '@/lib/enrollment-mode'
 import { isSandbox } from '@/lib/sandbox'
 
@@ -42,6 +43,9 @@ export default function RootLayout({
             for the same reason as the gate above — the flag stays off the client
             bundle, and the banner cannot be disabled from the browser. */}
         <SandboxBanner enabled={isSandbox()} />
+        {/* First-party page-view beacon. No IP/UA/cookies persisted — see
+            /api/track. Skips /ops/* on its own. */}
+        <TrackPageView />
       </body>
     </html>
   )

@@ -23,6 +23,12 @@ describe('isPublicPath', () => {
   it('treats the resend-verification endpoint as public', () => {
     expect(isPublicPath('/api/auth/resend-verification')).toBe(true)
   })
+  it('treats the page-view tracking beacon as public (anonymous visitors have no session)', () => {
+    expect(isPublicPath('/api/track')).toBe(true)
+    expect(decideAccess({ pathname: '/api/track', isApi: true, hasSession: false, hasServiceToken: false })).toBe(
+      'allow',
+    )
+  })
   it('treats operator pages and bot routes as non-public', () => {
     // NB: '/' IS public — it is the marketing homepage. This assertion used to
     // claim otherwise and had been failing since the homepage shipped.

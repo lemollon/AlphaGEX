@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import useSWR, { mutate } from 'swr'
 import { fetcher } from '@/lib/fetcher'
 
@@ -112,7 +113,12 @@ export default function OpsCustomersPage() {
   return (
     <div className="min-h-screen bg-forge-bg text-white">
       <div className="mx-auto max-w-[1000px] px-4 py-8">
-        <h1 className="text-2xl font-bold">Customer Profiles</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">Customer Profiles</h1>
+          <Link href="/ops/traffic" className="text-sm font-semibold text-amber-400 underline hover:text-amber-300">
+            Traffic
+          </Link>
+        </div>
         <p className="mt-1 text-sm text-gray-400">
           Operator console — create a profile, grant the membership that unlocks the apps, and map the bot whose
           ledger they see. Those are two different switches; a customer needs both.
