@@ -53,6 +53,7 @@ Safety rails:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import date, datetime, time, timedelta
@@ -275,6 +276,63 @@ def _already_posted(key: str, fire_date) -> bool:
         return False
     finally:
         db.close()
+
+
+async def run_flow_capture(app, now: datetime) -> None:
+    """STANDALONE FLOW CAPTURE — the 2026-09-03 blind spot.
+
+    🚨 confirm_check only polls 10:10-14:00 CT. On 2026-09-03 SPY ran +1%
+    starting at 10:10 CT, and there was no risk_flow_intraday record at all
+    before that — the very first row, written AT 10:10, had nothing earlier
+    to diff against and read as NULL. This function exists purely to widen
+    the RECORD, not to change what fires: it never imports or touches
+    confirm_step, CONFIRM_ARM_Z, CONFIRM_WINDOW_CT, the alert path, or the
+    paper book. Module-level (not a closure) so it is directly testable
+    without a fake scheduler — see test_flow_tape.py.
+
+    Runs every 10 minutes, 08:40-14:00 CT weekdays (FLOW_CAPTURE_WINDOW_CT),
+    offset :50 after confirm_check's own :00 tick so the two jobs never race
+    the same slot. If confirm_check already wrote this slot
+    (flow_slot_has_rows), this is a no-op — the goal is to fill the gap
+    confirm_check's 10:10 start leaves, not to double-capture. One retry on a
+    failed capture (Tradier hiccups happen); a warning if both attempts fail.
+    Spot for the tape is best-effort and captured AFTER the flow write, in
+    its own try/except, so a quote-fetch failure never blocks the capture.
+    """
+    try:
+        if now.weekday() >= 5:
+            return
+        from .routes_risk import (FLOW_CAPTURE_WINDOW_CT, flow_slot_has_rows,
+                                  capture_flow_intraday, session_log_write,
+                                  _rolling_flow_now)
+        start, end = FLOW_CAPTURE_WINDOW_CT
+        t = (now.hour, now.minute)
+        if t < start or t > end:
+            return
+        today = now.date()
+        slot = (now.hour * 60 + now.minute) // 10 * 10
+        if flow_slot_has_rows(today, slot):
+            return          # confirm_check already has this slot
+
+        shim = SimpleNamespace(app=app)
+        ok = await capture_flow_intraday(shim, now)
+        if not ok:
+            await asyncio.sleep(5)
+            ok = await capture_flow_intraday(shim, now)
+        if not ok:
+            h, m = divmod(slot, 60)
+            logger.warning("[RiskAlerts] risk_flow_capture: capture failed "
+                           "twice for the %02d:%02d CT slot", h, m)
+
+        try:
+            live = await _rolling_flow_now(shim)
+            if live and live.get("spot"):
+                session_log_write(today, now, spot=float(live["spot"]))
+        except Exception as e:                                 # noqa: BLE001
+            logger.warning("[RiskAlerts] risk_flow_capture: spot fetch "
+                           "failed: %r", e)
+    except Exception as e:                                     # noqa: BLE001
+        logger.warning("[RiskAlerts] risk_flow_capture failed: %r", e)
 
 
 def register_risk_alerts(scheduler, app) -> None:
@@ -657,6 +715,11 @@ def register_risk_alerts(scheduler, app) -> None:
                 f"{'put' if d == 'DOWN' else 'call'} premium; don't add.")
         except Exception as e:      # noqa: BLE001
             logger.warning("[RiskAlerts] confirm_check failed: %r", e)
+
+    async def risk_flow_capture():
+        """Thin scheduler wrapper — see the module-level run_flow_capture()
+        docstring for what this job does and why (2026-09-03 blind spot)."""
+        await run_flow_capture(app, datetime.now(CT))
 
     async def watchdog_check():
         """THE ALERT THAT WAS MISSING: nobody is told when the watchers STOP.
@@ -1314,6 +1377,10 @@ def register_risk_alerts(scheduler, app) -> None:
                       id="risk_flow_rolling")
     scheduler.add_job(confirm_check, "cron", minute="*/10", timezone=CT,
                       id="risk_confirm")
+    # second=50 so this lands after confirm_check's second=0 tick (its chain
+    # fetches can take 30s+) — the two never race the same 10-minute slot.
+    scheduler.add_job(risk_flow_capture, "cron", minute="*/10", second=50,
+                      timezone=CT, id="risk_flow_capture")
     scheduler.add_job(confirm_close, "cron", hour=15, minute=5, timezone=CT,
                       id="risk_confirm_close")
     # Offset from the */10 pollers so it never grades a row being written in
@@ -1339,7 +1406,8 @@ def register_risk_alerts(scheduler, app) -> None:
     logger.info("[RiskAlerts] registered: morning verdict 08:05:30, EM note "
                 "08:06:30, ticket %02d:%02d & %02d:%02d, flow spike 10:06, "
                 "PM re-checks 12:06 & 13:36, rolling flow watcher */10 "
-                "10:36-14:00, CONFIRMATION watcher */10 10:10-14:00 + close "
-                "record 15:05, EM-breach watch */10 in-session, health flip "
-                "15:50, Friday digest 15:55, promotion announce 16:05 "
-                "(all CT)", _am_h, _am_m, _pm_h, _pm_m)
+                "10:36-14:00, CONFIRMATION watcher */10 10:10-14:00, flow "
+                "capture */10+50s 08:40-14:00, close record 15:05, EM-breach "
+                "watch */10 in-session, health flip 15:50, Friday digest "
+                "15:55, promotion announce 16:05 (all CT)",
+                _am_h, _am_m, _pm_h, _pm_m)

@@ -140,6 +140,127 @@ function SignalState({ data, err }) {
   );
 }
 
+// ── SECTION 1.5 · LIVE FLOW TAPE (descriptive only) ──────────────────────
+// /session's flow_tape — SPY chain volume captured every 10 minutes from
+// 08:40 CT by the standalone risk_flow_capture job (backend/risk_alerts.py
+// run_flow_capture), which exists to fill the gap confirm_check's 10:10
+// start leaves (the 2026-09-03 blind spot: SPY ran +1% before the first
+// reading of the day ever landed). NEVER a call — every label carries
+// "unvalidated — descriptive" and none says buy/sell/call/put/direction.
+// The confirm signal in SignalState above is the only thing on this page
+// allowed to make one.
+function FlowTape({ data, err }) {
+  if (err) {
+    return (
+      <div style={S.card}>
+        <div style={S.h2}>Live flow tape (from 08:40 CT)</div>
+        <div style={{ marginTop: 8 }}><Chip text="unavailable — could not load /session" /></div>
+      </div>
+    );
+  }
+  if (!data) {
+    return (
+      <div style={S.card}>
+        <div style={S.h2}>Live flow tape (from 08:40 CT)</div>
+        <div style={{ ...S.small, marginTop: 8 }}>Loading…</div>
+      </div>
+    );
+  }
+
+  const tape = data.flow_tape || [];
+  const meta = data.flow_tape_meta || {};
+  const isBurst = typeof meta.latest_read === 'string' && meta.latest_read.includes('burst');
+
+  return (
+    <div style={S.card}>
+      <div style={S.h2}>Live flow tape (from 08:40 CT)</div>
+
+      {meta.latest_read && (
+        <div style={{ marginTop: 8 }}>
+          <Chip text={meta.latest_read} tone={isBurst ? AMBER : DIM} />
+        </div>
+      )}
+
+      <div style={{ ...S.small, marginTop: 8 }}>
+        {meta.first_capture && meta.last_capture
+          ? `first capture ${meta.first_capture} · last capture ${meta.last_capture} · ${meta.n_slots} slot${meta.n_slots === 1 ? '' : 's'}`
+          : 'no capture yet today'}
+      </div>
+      <div style={{ ...S.caption, marginTop: 4, color: AMBER }}>
+        Descriptive only — unvalidated. The only thing on this page allowed
+        to make a call is the confirm signal above.
+      </div>
+
+      {tape.length === 0 ? (
+        <div style={{ marginTop: 12 }}>
+          <Chip text="no flow captured yet today — capture runs every 10 min from 08:40 CT" tone={DIM} />
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto', marginTop: 12 }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 960 }}>
+            <thead>
+              <tr>
+                <th style={S.th}>time</th>
+                <th style={{ ...S.th, textAlign: 'right' }}>spot</th>
+                <th style={{ ...S.th, textAlign: 'right' }}>0DTE calls (vol, Δ)</th>
+                <th style={{ ...S.th, textAlign: 'right' }}>0DTE puts (vol, Δ)</th>
+                <th style={{ ...S.th, textAlign: 'right' }}>0DTE call-buy %</th>
+                <th style={{ ...S.th, textAlign: 'right' }}>0DTE put-buy %</th>
+                <th style={{ ...S.th, textAlign: 'right' }}>1-5d call-buy %</th>
+                <th style={{ ...S.th, textAlign: 'right' }}>1-5d put-buy %</th>
+                <th style={S.th}>read</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tape.map((row) => {
+                const t0 = (row.tenors && row.tenors['0dte']) || {};
+                const t15 = (row.tenors && row.tenors['1_5d']) || {};
+                const readColor = row.read === 'bullish burst' ? GREEN
+                  : row.read === 'bearish burst' ? RED : DIM;
+                return (
+                  <tr key={row.minute_ct}>
+                    <td style={{ ...S.td, ...S.mono }}>{row.time} CT</td>
+                    <td style={{ ...S.td, ...S.mono, textAlign: 'right' }}>{money(row.spot)}</td>
+                    <td style={{ ...S.td, ...S.mono, textAlign: 'right' }}>
+                      {t0.call_vol == null ? '—' : t0.call_vol.toLocaleString()}
+                      {t0.call_vol_delta != null && (
+                        <span style={{ color: DIM }}>
+                          {' '}({t0.call_vol_delta >= 0 ? '+' : ''}{t0.call_vol_delta.toLocaleString()})
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ ...S.td, ...S.mono, textAlign: 'right' }}>
+                      {t0.put_vol == null ? '—' : t0.put_vol.toLocaleString()}
+                      {t0.put_vol_delta != null && (
+                        <span style={{ color: DIM }}>
+                          {' '}({t0.put_vol_delta >= 0 ? '+' : ''}{t0.put_vol_delta.toLocaleString()})
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ ...S.td, ...S.mono, textAlign: 'right' }}>
+                      {t0.call_buy_share == null ? '—' : `${(t0.call_buy_share * 100).toFixed(0)}%`}
+                    </td>
+                    <td style={{ ...S.td, ...S.mono, textAlign: 'right' }}>
+                      {t0.put_buy_share == null ? '—' : `${(t0.put_buy_share * 100).toFixed(0)}%`}
+                    </td>
+                    <td style={{ ...S.td, ...S.mono, textAlign: 'right' }}>
+                      {t15.call_buy_share == null ? '—' : `${(t15.call_buy_share * 100).toFixed(0)}%`}
+                    </td>
+                    <td style={{ ...S.td, ...S.mono, textAlign: 'right' }}>
+                      {t15.put_buy_share == null ? '—' : `${(t15.put_buy_share * 100).toFixed(0)}%`}
+                    </td>
+                    <td style={{ ...S.td, fontWeight: 700, color: readColor }}>{row.read}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── SECTION 2 · THE PLAYBOOK ─────────────────────────────────────────────
 // Static, and must stay honest: what is tested, what is not, and what this
 // signal is actually allowed to do today.
@@ -591,11 +712,21 @@ export default function HuntPage() {
 
   useEffect(() => {
     let live = true;
-    fetch(`${API_URL}/api/spreadworks/risk-advisor/session`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((d) => { if (live) setSession(d); })
-      .catch((e) => { if (live) setSessionErr(String(e)); });
-    return () => { live = false; };
+    // Polled every 60s (not fetch-once) — the flow tape now changes through
+    // the whole session, not just at load, since capture runs every 10 min
+    // from 08:40 CT. Skipped while the tab is hidden to avoid burning polls
+    // nobody is looking at.
+    const load = () => {
+      fetch(`${API_URL}/api/spreadworks/risk-advisor/session`)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then((d) => { if (live) { setSession(d); setSessionErr(null); } })
+        .catch((e) => { if (live) setSessionErr(String(e)); });
+    };
+    load();
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') load();
+    }, 60000);
+    return () => { live = false; clearInterval(id); };
   }, []);
 
   useEffect(() => {
@@ -634,6 +765,7 @@ export default function HuntPage() {
         </p>
 
         <SignalState data={session} err={sessionErr} />
+        <FlowTape data={session} err={sessionErr} />
         <Playbook bookStart={paperBook?.book_start} />
         <PaperBook data={paperBook} err={paperBookErr} />
         <FiringHistory rows={history} err={historyErr} />
