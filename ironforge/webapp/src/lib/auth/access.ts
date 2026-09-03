@@ -181,6 +181,10 @@ export function isPublicPath(pathname: string): boolean {
   // Public waitlist submission — no auth by design; self-guards with validation,
   // rate limits, and a honeypot in-route.
   if (pathname === '/api/waitlist') return true
+  // First-party page-view beacon (TrackPageView) — fired by every anonymous
+  // visitor on every route change, so it must be reachable with no session.
+  // No IP/UA/cookie is ever persisted; see lib/track.ts and /api/track.
+  if (pathname === '/api/track') return true
   // CRM agent façade — middleware-open, self-guarded in-route by CRM_AGENT_TOKEN. The agent
   // carries its own credential rather than the service token precisely so it CANNOT reach the
   // other /api/ops/* tooling; that separation is the point, so it cannot be gated here.

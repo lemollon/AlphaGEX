@@ -812,6 +812,23 @@ CREATE TABLE IF NOT EXISTS mobile_analytics_events (
 );
 CREATE INDEX IF NOT EXISTS idx_mobile_analytics_events_owner ON mobile_analytics_events(owner_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_mobile_analytics_events_event ON mobile_analytics_events(event, ts DESC);
+
+-- First-party page-view analytics (9/3 traffic dashboard). ONE row per
+-- (day, path, rotating-daily-visitor-hash); hits increments on repeat views. NO
+-- IP, user agent, or cookie is ever stored — visitor is a sha256 of a daily salt
+-- (see lib/track.ts visitorHash), so it rotates every day and cannot be
+-- correlated across days or tied back to a person. Written by the public,
+-- unauthenticated POST /api/track; read by GET /api/ops/traffic.
+CREATE TABLE IF NOT EXISTS page_views (
+  day DATE NOT NULL,
+  path TEXT NOT NULL,
+  visitor TEXT NOT NULL,
+  hits INTEGER NOT NULL DEFAULT 1,
+  first_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (day, path, visitor)
+);
+CREATE INDEX IF NOT EXISTS idx_page_views_day ON page_views(day);
 `
 
 let _ensured: Promise<void> | null = null
