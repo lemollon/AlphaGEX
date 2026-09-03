@@ -10,6 +10,7 @@ Endpoints
 ---------
 GET  /api/spreadworks/squeeze-hunt/signals   Today's alert-like symbols
 GET  /api/spreadworks/squeeze-hunt/tape      Intraday dollar-vol pace by sweep
+GET  /api/spreadworks/squeeze-hunt/lottery   Confirmed lottery-setup entries, last N days
 
 Data source: the app's own Postgres, tables `sw_hunt_signals`,
 `sw_hunt_tape`, `sw_hunt_lottery`, `sw_hunt_si`, `sw_hunt_running`. These are
@@ -261,3 +262,38 @@ def squeeze_hunt_tape() -> dict[str, Any]:
         })
 
     return {"symbols": by_symbol, "count": len(by_symbol)}
+
+
+@router.get("/lottery")
+def squeeze_hunt_lottery(days: int = 7) -> dict[str, Any]:
+    """Confirmed lottery-setup entries from the last `days` days, newest
+    first. Read-only mirror of `sw_hunt_lottery` — a devbox bot consumes this
+    payload, so the JSON keys are a fixed contract, not cosmetic."""
+    days = max(1, min(60, days))
+    try:
+        rows = _query(
+            f"""
+            SELECT symbol, entry_ts, entry_date, entry_px, day_chg, si_pct, dollar_vol, sweep
+            FROM sw_hunt_lottery
+            WHERE entry_date >= CURRENT_DATE - {days}
+            ORDER BY entry_date DESC, entry_ts DESC
+            """
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("[squeeze-hunt] lottery query failed: %r", exc)
+        raise HTTPException(status_code=503, detail=f"squeeze mirror unreachable: {exc!r}")
+
+    out = []
+    for symbol, entry_ts, entry_date, entry_px, day_chg, si_pct, dollar_vol, sweep in rows:
+        out.append({
+            "symbol": symbol,
+            "entry_ts": entry_ts.isoformat() if entry_ts else None,
+            "entry_date": entry_date.isoformat() if entry_date else None,
+            "entry_px": entry_px,
+            "day_chg": day_chg,
+            "si_pct": si_pct,
+            "dollar_vol": dollar_vol,
+            "sweep": sweep,
+        })
+
+    return {"rows": out, "count": len(out), "days": days}
