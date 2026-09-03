@@ -307,7 +307,8 @@ function FlowTape({ data, err }) {
               </tr>
             </thead>
             <tbody>
-              {tape.map((row) => {
+              {/* newest slot first — the latest read is what the reader came for (Leron, 9/3) */}
+              {[...tape].reverse().map((row) => {
                 const t0 = (row.tenors && row.tenors['0dte']) || {};
                 const t15 = (row.tenors && row.tenors['1_5d']) || {};
                 const readColor = row.read === 'bullish burst' ? GREEN
