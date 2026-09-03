@@ -5,11 +5,12 @@
 --
 -- Background: MSTU did a 1:10 reverse split on 2026-08-24. TSUNAMI-TREND's
 -- trend_engine.py had no split-adjustment logic before this fix, so the
--- book kept the pre-split share count (26.131 sh @ avg_cost 2.42) against
--- the post-split price. The next SELL fired on the un-adjusted 13.5231
--- share quantity (10x too many) and booked a phantom +$377 realized gain
--- (see the "confirm-trade" / drawdown-solutions incident narrative for the
--- full account). This script retroactively split-adjusts the book row,
+-- book kept pre-split share counts against the post-split price. The 8/25
+-- SELL fired on an un-adjusted 13.5231 share quantity (10x too many) and
+-- booked a phantom +$377 realized gain, leaving a 2.6131-share ghost row
+-- (should be 0.26131 @ 24.206). See KnowledgeVault
+-- 01-projects/spreadworks/incidents/2026-09-03-tsunami-mstu-split-phantom.md.
+-- This script retroactively split-adjusts the book row,
 -- corrects the bad SELL trade's shares and realized_pnl, backs the phantom
 -- proceeds out of cash, and inserts a SPLIT trade row documenting the fix
 -- (the same shape trend_engine.py now writes going forward for real splits
@@ -29,15 +30,11 @@
 
 BEGIN;
 
--- 1. Split-adjust the held book row to 0.26131 sh @ 24.206, per the
---    literal values given in this repair's spec.
---    FLAG FOR THE HUMAN RUNNING THIS: the bug writeup that produced this
---    script separately describes the correct post-split position as
---    "2.6131 shares at 24.206" (26.131 * 0.1 = 2.6131), a 10x difference
---    from the 0.26131 used here. VERIFY the real pre-repair book row
---    (`SELECT shares, avg_cost FROM tsunami_trend_book WHERE letf='MSTU'`)
---    against both candidates before running -- shares should equal
---    (pre-repair shares * 0.1). Do not run blind on either number.
+-- 1. Split-adjust the held book row: 2.6131 sh @ 2.4206 -> 0.26131 sh @ 24.206
+--    (ratio 0.1). BEFORE RUNNING, confirm the current row is still
+--    2.6131 @ 2.4206: `SELECT shares, avg_cost FROM tsunami_trend_book
+--    WHERE letf='MSTU'`. If it differs, the engine has traded since this
+--    script was written -- stop and recompute; do not run blind.
 UPDATE tsunami_trend_book
    SET shares = 0.26131,
        avg_cost = 24.206,
