@@ -9,6 +9,7 @@ import {
   getDisplayName,
   getFeed,
   insertMessage,
+  isReplyTargetVisible,
   maybeForgeReply,
   maybePostScheduledUpdate,
   seedWelcomeMessage,
@@ -77,6 +78,14 @@ export async function POST(req: NextRequest) {
     const channelId = await getChannelId(channelSlug)
     if (!channelId) return NextResponse.json({ error: 'Unknown channel.' }, { status: 404 })
 
+    // Threaded replies (APP-055). A reply must point at a message the poster can
+    // actually see, in the SAME channel — a stale/blocked/cross-channel parent_id
+    // is a 404, not a reply nobody will ever see attached to.
+    const parentId = typeof body.parent_id === 'string' && body.parent_id.trim() ? body.parent_id.trim() : null
+    if (parentId && !(await isReplyTargetVisible(parentId, channelId, session.customerId))) {
+      return NextResponse.json({ error: 'The post you are replying to is not available.' }, { status: 404 })
+    }
+
     // Moderation executes BEFORE persistence (design doc acceptance criterion).
     const verdict = await moderateMessage(message)
     if (!verdict.ok) {
@@ -98,11 +107,13 @@ export async function POST(req: NextRequest) {
       senderName,
       senderType: 'USER',
       message,
+      parentId,
     })
     await touchPresence(session.customerId, senderName)
 
-    // Forge replies asynchronously; the 4s poll surfaces it.
-    void maybeForgeReply({ channelId, senderName, message })
+    // Forge replies asynchronously; the mobile poll / web page surfaces it. Parented
+    // to the message it's answering so it lands inside that thread (APP-057).
+    void maybeForgeReply({ channelId, senderName, message, parentMessageId: messageId })
 
     return NextResponse.json({ messageId, status: 'success' })
   } catch (e) {

@@ -83,20 +83,39 @@ def render(canvas, content_frac, supersample=4, transparent=False):
     d = ImageDraw.Draw(img)
     content_w = int(S * content_frac)
 
-    # Size both words to the SAME width so the block reads as one lockup. FORGE is
-    # the wider string, so it sets the scale.
-    f_forge = fit_font('FORGE', content_w, start=S)
-    forge_bb = f_forge.getbbox('FORGE')
-    forge_w = forge_bb[2] - forge_bb[0]
-    f_iron = fit_font('IRON', forge_w, start=S)
+    def fit_stack(target_w):
+        # Size both words to the SAME width so the block reads as one lockup. FORGE is
+        # the wider string, so it sets the scale.
+        f_forge = fit_font('FORGE', target_w, start=S)
+        forge_bb = f_forge.getbbox('FORGE')
+        forge_w = forge_bb[2] - forge_bb[0]
+        f_iron = fit_font('IRON', forge_w, start=S)
 
-    iron_bb = f_iron.getbbox('IRON')
-    iron_w = iron_bb[2] - iron_bb[0]
-    iron_h = iron_bb[3] - iron_bb[1]
-    forge_h = forge_bb[3] - forge_bb[1]
+        iron_bb = f_iron.getbbox('IRON')
+        iron_w = iron_bb[2] - iron_bb[0]
+        iron_h = iron_bb[3] - iron_bb[1]
+        forge_h = forge_bb[3] - forge_bb[1]
 
-    gap = int(forge_h * 0.14)
-    total_h = iron_h + gap + forge_h
+        gap = int(forge_h * 0.14)
+        total_h = iron_h + gap + forge_h
+        return f_forge, forge_bb, forge_w, f_iron, iron_bb, iron_w, iron_h, forge_h, gap, total_h
+
+    (f_forge, forge_bb, forge_w, f_iron, iron_bb, iron_w, iron_h, forge_h, gap,
+     total_h) = fit_stack(content_w)
+
+    # content_frac was only ever used to bound WIDTH. That is enough for iOS's 0.72
+    # squircle (wide, shallow safe area), but Android's tighter circle (content_frac
+    # 0.46 here) leaves a two-line stacked block taller than it is wide — the width fit
+    # let FORGE sit inside the safe circle while IRON, on top, sailed outside it. Treat
+    # content_w as bounding a SAFE SQUARE (width AND height) and re-fit smaller by
+    # height whenever the stacked block would overflow it vertically. This only ever
+    # engages when total_h > content_w, which iOS's shallower 0.72 never triggers, so
+    # the 1024 master is untouched.
+    if total_h > content_w:
+        shrunk_w = int(content_w * content_w / total_h)
+        (f_forge, forge_bb, forge_w, f_iron, iron_bb, iron_w, iron_h, forge_h, gap,
+         total_h) = fit_stack(shrunk_w)
+
     top = (S - total_h) // 2
 
     d.text((S // 2 - iron_w // 2 - iron_bb[0], top - iron_bb[1]), 'IRON',

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   View,
   Text,
@@ -10,16 +10,35 @@ import {
   Alert,
   Modal,
   StyleSheet,
+  ActivityIndicator,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import useSWR from 'swr'
-import { api } from '@/api/client'
-import type { BlockedMember, CommunityFeed, CommunityMessage } from '@/api/types'
+import { api, ApiError } from '@/api/client'
+import type {
+  AssistResponse,
+  BlockedMember,
+  CommunityFeedV2,
+  CommunityMessageV2,
+  ThreadReplies,
+} from '@/api/types'
 import { color, space, radius, type, font } from '@/theme/tokens'
 import { Card, Loading, Empty, ErrorState } from '@/components/ui'
 import { AppHeader, Mascot, SPARKY_AVATAR } from '@/components/Brand'
 import { applyFlame, FLAME } from '@/community/reactions'
 import { initials, channelAccent, bubbleTint } from '@/community/identity'
+import {
+  appendOptimisticReply,
+  applyFlameToReply,
+  bumpReplyCount,
+  reconcileReply,
+  removeReply,
+} from '@/community/threads'
+
+/** A post reused inside the thread sheet. */
+type CommunityMessage = CommunityMessageV2
+/** The feed shape, threaded (APP-055). */
+type CommunityFeed = CommunityFeedV2
 
 /**
  * Community — UX-005 (APP-030/031/054/055).
@@ -46,6 +65,18 @@ export default function CommunityScreen() {
   const [menuFor, setMenuFor] = useState<CommunityMessage | null>(null)
   const [reportFor, setReportFor] = useState<CommunityMessage | null>(null)
   const [blockedOpen, setBlockedOpen] = useState(false)
+  // The open thread (APP-055) — a sheet inside this tab rather than a nested route,
+  // per WP-F scope: expo-router nesting under app/(tabs)/community/ would touch the
+  // tab layout, and a modal here does not.
+  const [threadFor, setThreadFor] = useState<CommunityMessage | null>(null)
+  // The "+" composer sheet (APP-031). No upload endpoint exists under
+  // /api/community/* — see the sheet's own copy — so this never grows options
+  // beyond the "coming soon" line until a real one ships.
+  const [attachOpen, setAttachOpen] = useState(false)
+  // AI assist (APP-031): the suggestion is held separately from the draft so the
+  // member can compare "Use" vs "Keep mine" instead of the draft silently changing.
+  const [assisting, setAssisting] = useState(false)
+  const [assistSuggestion, setAssistSuggestion] = useState<string | null>(null)
 
   const { data, error, isLoading, mutate, isValidating } = useSWR<CommunityFeed>(
     `/api/community/messages?channel=${channel}`,
@@ -122,6 +153,7 @@ export default function CommunityScreen() {
     try {
       await api('/api/community/messages', { method: 'POST', body: { channel, message } })
       setDraft('')
+      setAssistSuggestion(null)
       mutate()
     } catch (e) {
       const msg = (e as Error).message
@@ -132,6 +164,35 @@ export default function CommunityScreen() {
       )
     } finally {
       setPosting(false)
+    }
+  }
+
+  /**
+   * AI assist (APP-031). Sends the current draft to be tightened/clarified — never
+   * to add a trade idea or a number that isn't already there (server-enforced, see
+   * webapp's /api/community/assist). The result sits beside the draft until the
+   * member chooses "Use" or "Keep mine"; it never overwrites what they typed.
+   */
+  async function askAssist() {
+    const text = draft.trim()
+    if (!text || assisting) return
+    setAssisting(true)
+    setAssistSuggestion(null)
+    try {
+      const res = await api<AssistResponse>('/api/community/assist', {
+        method: 'POST',
+        body: { draft: text, channel },
+      })
+      setAssistSuggestion(res.suggestion)
+    } catch (e) {
+      Alert.alert(
+        'AI assist unavailable',
+        e instanceof ApiError && e.status === 402
+          ? 'An active membership is required for AI assist.'
+          : (e as Error).message,
+      )
+    } finally {
+      setAssisting(false)
     }
   }
 
@@ -214,7 +275,18 @@ export default function CommunityScreen() {
           </Text>
         </Pressable>
 
-        <View style={s.chipRow}>
+        {/*
+          APP-054: horizontally scrollable so a 5th (or 6th, later) category never
+          wraps onto a second line and pushes the feed down. Switching channels
+          swaps the SWR key, which both refetches AND resets paging — there is no
+          separate page cursor to forget to clear.
+        */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={s.chipScroll}
+          contentContainerStyle={s.chipRow}
+        >
           {channels.map((c) => (
             <Pressable
               key={c.slug}
@@ -226,7 +298,7 @@ export default function CommunityScreen() {
               </Text>
             </Pressable>
           ))}
-        </View>
+        </ScrollView>
 
         {messages.length === 0 ? (
           <Empty title="Nothing here yet" detail="Be the first to post in this channel." />
@@ -268,7 +340,22 @@ export default function CommunityScreen() {
                   <Text style={[type.body, { color: color.textDim, marginTop: space.sm }]}>
                     {m.message}
                   </Text>
-                  <FlameRow message={m} onPress={() => void toggleFlame(m.id)} />
+                  <View style={s.rowCenter}>
+                    <FlameRow message={m} onPress={() => void toggleFlame(m.id)} />
+                    <Pressable
+                      onPress={() => setThreadFor(m)}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        (m.reply_count ?? 0) > 0 ? `${m.reply_count} replies` : 'Reply'
+                      }
+                      style={s.replyBtn}
+                    >
+                      <Text style={[type.label, { color: color.textDim, fontFamily: font.bodyMedium }]}>
+                        {(m.reply_count ?? 0) > 0 ? `💬 ${m.reply_count}` : 'Reply'}
+                      </Text>
+                    </Pressable>
+                  </View>
                 </View>
               </View>
             </Card>
@@ -280,15 +367,63 @@ export default function CommunityScreen() {
         {postError ? (
           <Text style={[type.label, { color: color.neg, marginBottom: space.sm }]}>{postError}</Text>
         ) : null}
+        {assistSuggestion ? (
+          <View style={s.assistBox}>
+            <Text style={[type.label, { color: color.spark, fontFamily: font.bodyBold, marginBottom: space.xs }]}>
+              AI assist
+            </Text>
+            <Text style={[type.body, { color: color.text }]}>{assistSuggestion}</Text>
+            <View style={[s.rowCenter, { marginTop: space.sm }]}>
+              <Pressable
+                onPress={() => {
+                  setDraft(assistSuggestion)
+                  setAssistSuggestion(null)
+                }}
+                style={s.assistUseBtn}
+              >
+                <Text style={[type.label, { color: color.bg, fontFamily: font.bodyBold }]}>Use</Text>
+              </Pressable>
+              <Pressable onPress={() => setAssistSuggestion(null)} hitSlop={8}>
+                <Text style={[type.label, { color: color.textDim }]}>Keep mine</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
         <View style={s.rowCenter}>
+          <Pressable
+            onPress={() => setAttachOpen(true)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Add to your post"
+            style={s.plusBtn}
+          >
+            <Text style={{ color: color.textDim, fontSize: 20, lineHeight: 20 }}>+</Text>
+          </Pressable>
           <TextInput
             value={draft}
-            onChangeText={setDraft}
+            onChangeText={(t) => {
+              setDraft(t)
+              setAssistSuggestion(null)
+            }}
             placeholder="Share with the community..."
             placeholderTextColor={color.muted}
             style={s.input}
             multiline
           />
+          <Pressable
+            onPress={askAssist}
+            disabled={assisting || !draft.trim()}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="AI assist — tighten my message"
+            style={[s.plusBtn, { opacity: assisting || !draft.trim() ? 0.4 : 1 }]}
+          >
+            {assisting ? (
+              <ActivityIndicator size="small" color={color.spark} />
+            ) : (
+              <Text style={{ fontSize: 16 }}>✨</Text>
+            )}
+          </Pressable>
           <Pressable onPress={send} disabled={posting || !draft.trim()} style={s.send}>
             <Text style={{ color: color.text, fontSize: 16 }}>{posting ? '…' : '➤'}</Text>
           </Pressable>
@@ -337,6 +472,15 @@ export default function CommunityScreen() {
         members={blocks?.blocked ?? []}
         onUnblock={(m) => void unblock(m)}
         onClose={() => setBlockedOpen(false)}
+      />
+
+      <AttachSheet visible={attachOpen} onClose={() => setAttachOpen(false)} />
+
+      <ThreadSheet
+        parent={threadFor}
+        channel={channel}
+        onClose={() => setThreadFor(null)}
+        onReplyPosted={() => void mutate((cur) => bumpReplyCount(cur, threadFor!.id, 1), { revalidate: false })}
       />
     </Shell>
   )
@@ -436,6 +580,220 @@ function BlockedSheet({
   )
 }
 
+/**
+ * The "+" composer sheet (APP-031). There is no upload/attachment endpoint under
+ * /api/community/* — grepped the webapp's api/community routes (messages,
+ * reactions, reports, blocks only) — so this shows exactly one honest line
+ * instead of options that would fail the moment someone tapped them.
+ */
+function AttachSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={s.scrim} onPress={onClose} accessibilityLabel="Dismiss" />
+      <View style={s.sheet}>
+        <Text style={[type.label, { color: color.muted, marginBottom: space.md }]}>Add to your post</Text>
+        <Text style={[type.body, { color: color.textDim, paddingVertical: space.md }]}>
+          Attachments are coming soon.
+        </Text>
+        <Pressable onPress={onClose} style={s.sheetRow}>
+          <Text style={[type.body, { color: color.textDim }]}>Close</Text>
+        </Pressable>
+      </View>
+    </Modal>
+  )
+}
+
+/**
+ * A thread (APP-055) — one post's replies, opened as a modal sheet inside this
+ * tab rather than an expo-router nested screen (see the note above
+ * CommunityScreen's `threadFor` state: a sheet here doesn't touch the tab layout).
+ *
+ * Optimistic reply + reconciliation mirrors toggleFlame() on the main screen:
+ * append locally, POST, then either replace the temp row with the server's copy
+ * or drop it and roll the parent's reply_count back on failure. The pure logic
+ * lives in src/community/threads.ts so it can be unit-tested without a renderer.
+ */
+function ThreadSheet({
+  parent,
+  channel,
+  onClose,
+  onReplyPosted,
+}: {
+  parent: CommunityMessage | null
+  channel: string
+  onClose: () => void
+  onReplyPosted: () => void
+}) {
+  const [draft, setDraft] = useState('')
+  const [posting, setPosting] = useState(false)
+  const [postError, setPostError] = useState<string | null>(null)
+
+  const { data, mutate, isLoading, error } = useSWR<ThreadReplies>(
+    parent ? `/api/community/messages/${parent.id}/replies` : null,
+    (p: string) => api<ThreadReplies>(p),
+    {},
+  )
+
+  // A fresh thread each time a different post is opened — otherwise a half-typed
+  // reply to one post would reappear under the next one opened.
+  useEffect(() => {
+    setDraft('')
+    setPostError(null)
+  }, [parent?.id])
+
+  const replies = data?.replies ?? []
+  const hasAi = parent?.sender_type !== 'USER' || replies.some((r) => r.sender_type !== 'USER')
+
+  async function send() {
+    if (!parent) return
+    const message = draft.trim()
+    if (!message || posting) return
+    setPosting(true)
+    setPostError(null)
+    const tempId = `temp-${Date.now()}`
+    const optimistic: CommunityMessage = {
+      id: tempId,
+      sender_name: 'You',
+      sender_type: 'USER',
+      message,
+      created_at: new Date().toISOString(),
+      reactions: [],
+      mine: true,
+      blockable: false,
+      channel_slug: parent.channel_slug,
+      channel_name: parent.channel_name,
+      reply_count: 0,
+      parent_id: parent.id,
+    }
+    await mutate((cur) => appendOptimisticReply(cur, optimistic), { revalidate: false })
+    try {
+      const res = await api<{ messageId: string | null }>('/api/community/messages', {
+        method: 'POST',
+        body: { channel, message, parent_id: parent.id },
+      })
+      setDraft('')
+      onReplyPosted()
+      await mutate(
+        (cur) => reconcileReply(cur, tempId, { ...optimistic, id: res.messageId ?? tempId }),
+        { revalidate: false },
+      )
+    } catch (e) {
+      await mutate((cur) => removeReply(cur, tempId), { revalidate: false })
+      const msg = (e as Error).message
+      setPostError(msg.includes('MEMBERSHIP') ? 'An active membership is required to reply.' : msg)
+    } finally {
+      setPosting(false)
+    }
+  }
+
+  async function toggleReplyFlame(id: string) {
+    await mutate((cur) => applyFlameToReply(cur, id), { revalidate: false })
+    try {
+      await api('/api/community/reactions', { method: 'POST', body: { message_id: id, emoji: FLAME } })
+    } catch (e) {
+      Alert.alert('Could not react', (e as Error).message)
+    } finally {
+      mutate()
+    }
+  }
+
+  return (
+    <Modal visible={parent != null} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }}>
+        <View style={s.threadHeader}>
+          <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 17 }]}>
+            Thread
+          </Text>
+          <Pressable onPress={onClose} hitSlop={8} accessibilityRole="button" accessibilityLabel="Close thread">
+            <Text style={{ color: color.textDim, fontSize: 18 }}>✕</Text>
+          </Pressable>
+        </View>
+
+        <ScrollView contentContainerStyle={{ padding: space.lg, flexGrow: 1 }}>
+          {parent ? (
+            <Card style={{ marginBottom: space.lg }}>
+              <View style={s.postRow}>
+                <Avatar message={parent} />
+                <View style={{ flex: 1 }}>
+                  <View style={s.rowCenter}>
+                    <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]}>
+                      {parent.sender_name}
+                    </Text>
+                    {parent.sender_type !== 'USER' ? (
+                      <View style={s.aiTag}>
+                        <Text style={[type.label, { color: color.spark }]}>AI</Text>
+                      </View>
+                    ) : null}
+                    <Text style={[type.label, { color: color.muted }]}>{time(parent.created_at)}</Text>
+                  </View>
+                  <Text style={[type.body, { color: color.textDim, marginTop: space.sm }]}>
+                    {parent.message}
+                  </Text>
+                </View>
+              </View>
+            </Card>
+          ) : null}
+
+          {isLoading ? (
+            <Loading label="Loading replies…" />
+          ) : error ? (
+            <ErrorState message={String((error as Error).message)} onRetry={() => mutate()} />
+          ) : replies.length === 0 ? (
+            <Empty title="No replies yet" detail="Be the first to reply." />
+          ) : (
+            replies.map((r) => (
+              <View key={r.id} style={s.replyRow}>
+                <Avatar message={r} />
+                <View style={{ flex: 1 }}>
+                  <View style={s.rowCenter}>
+                    <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 13 }]}>
+                      {r.sender_name}
+                    </Text>
+                    {r.sender_type !== 'USER' ? (
+                      <View style={s.aiTag}>
+                        <Text style={[type.label, { color: color.spark }]}>AI</Text>
+                      </View>
+                    ) : null}
+                    <Text style={[type.label, { color: color.muted }]}>{time(r.created_at)}</Text>
+                  </View>
+                  <Text style={[type.body, { color: color.textDim, marginTop: space.xs, fontSize: 14 }]}>
+                    {r.message}
+                  </Text>
+                  <FlameRow message={r} onPress={() => void toggleReplyFlame(r.id)} />
+                </View>
+              </View>
+            ))
+          )}
+
+          {hasAi ? (
+            <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
+              AI updates are general market context, not personalized advice.
+            </Text>
+          ) : null}
+        </ScrollView>
+
+        <View style={s.composer}>
+          {postError ? (
+            <Text style={[type.label, { color: color.neg, marginBottom: space.sm }]}>{postError}</Text>
+          ) : null}
+          <View style={s.rowCenter}>
+            <TextInput
+              value={draft}
+              onChangeText={setDraft}
+              placeholder="Reply…"
+              placeholderTextColor={color.muted}
+              style={s.input}
+              multiline
+            />
+            <Pressable onPress={() => void send()} disabled={posting || !draft.trim()} style={s.send}>
+              <Text style={{ color: color.text, fontSize: 16 }}>{posting ? '…' : '➤'}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </SafeAreaView>
+    </Modal>
+  )
+}
 
 /**
  * The flame count for one post. It renders at zero too — hiding the control until
@@ -581,7 +939,9 @@ const s = StyleSheet.create({
   sheetRow: { paddingVertical: space.md },
   reactRow: { flexDirection: 'row', alignItems: 'center', marginTop: space.md },
   reactBtn: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginVertical: space.lg },
+  replyBtn: { marginTop: space.md, marginLeft: space.md, paddingVertical: space.xs },
+  chipScroll: { marginVertical: space.lg },
+  chipRow: { flexDirection: 'row', gap: space.sm, paddingRight: space.lg },
   chip: {
     borderWidth: 1,
     borderColor: color.border,
@@ -620,4 +980,39 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  plusBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: color.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: space.sm,
+  },
+  assistBox: {
+    borderWidth: 1,
+    borderColor: color.spark,
+    borderRadius: radius.md,
+    padding: space.md,
+    marginBottom: space.md,
+    backgroundColor: color.bg,
+  },
+  assistUseBtn: {
+    backgroundColor: color.spark,
+    borderRadius: radius.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    marginRight: space.md,
+  },
+  threadHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomColor: color.border,
+    borderBottomWidth: 1,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+  },
+  replyRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm, marginBottom: space.lg },
 })

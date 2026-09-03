@@ -304,3 +304,193 @@ export interface DeletionRequestResponse {
   gracePeriodDays: number
   steps?: Record<string, string>
 }
+
+// ---- WP-B types ----
+
+/**
+ * GET /api/live/trades — now cursor-paginated (APP-020). `trades` is still the
+ * top-level array (unchanged shape for anything reading it pre-pagination);
+ * `next_cursor` is opaque and only meaningful passed straight back as `cursor`
+ * on the next request. `total` counts every row matching the current filters.
+ */
+export interface TradesPageResponse {
+  empty?: boolean
+  viewer?: LiveSummary['viewer']
+  trades: HistoryTrade[]
+  next_cursor: string | null
+  total: number
+}
+
+export type TradeLegSide = 'buy' | 'sell'
+export type TradeLegRight = 'put' | 'call'
+
+export interface TradeLeg {
+  side: TradeLegSide
+  right: TradeLegRight
+  strike: number
+  expiry: string
+  qty: number
+}
+
+export interface TradeLifecycleEntry {
+  at_ct: string
+  event: string
+  note: string | null
+}
+
+export type ExitReasonCode = 'profit_target' | 'stop_loss' | 'manual_close' | 'expired' | 'auto_close' | 'other'
+
+/**
+ * GET /api/live/trades/:id — trade detail (APP-019/022). Every field is
+ * independently nullable: the server sources each ONLY from a column that
+ * actually exists, so a field with nothing to source it from is null, never
+ * fabricated. `legs`/`lifecycle` are whole-array-or-null rather than an empty
+ * array, so the screen can tell "nothing happened" apart from "not available".
+ */
+export interface TradeDetail {
+  legs: TradeLeg[] | null
+  entry_at_ct: string | null
+  credit: number | null
+  buying_power_used: number | null
+  current_pnl: number | null
+  lifecycle: TradeLifecycleEntry[] | null
+  exit_reason_code: ExitReasonCode | null
+  exit_reason_text: string | null
+  monitoring_message: string | null
+}
+
+export interface TradeDetailResponse {
+  trade: HistoryTrade
+  detail: TradeDetail
+}
+
+// ---- WP-E types ----
+
+/** GET/PUT /api/notifications/preferences (APP-036). */
+export interface NotificationPreferences {
+  trade_opened: boolean
+  trade_closed: boolean
+  trade_approval: boolean
+  brokerage_health: boolean
+  billing: boolean
+  community: boolean
+  show_amounts_on_lockscreen: boolean
+}
+
+export interface NotificationPreferencesResponse {
+  ok: boolean
+  preferences: NotificationPreferences
+}
+
+/** One batched analytics event, as sent to POST /api/v1/analytics/events (APP-048). */
+export interface AnalyticsEvent {
+  event: string
+  props?: Record<string, string | number | boolean | null>
+  ts: number
+  app_version: string
+  platform: string
+}
+
+export interface AnalyticsEventsResponse {
+  ok: boolean
+  accepted: number
+}
+
+// ---- WP-C types ----
+
+/** GET /api/billing/entitlements — bots this customer's membership currently owns. */
+export interface EntitlementsResponse {
+  ok: boolean
+  bots: string[]
+}
+
+/** One row from GET/POST /api/v1/automation/pause. */
+export interface AutomationActivation {
+  activation_id: string
+  agent: string
+  paused: boolean
+  paused_at: string | null
+}
+
+export interface AutomationPauseResponse {
+  ok: boolean
+  updated?: number
+  activations: AutomationActivation[]
+}
+
+/** POST /api/v1/agent-configs — a new draft/valid configuration for one agent. */
+export interface AgentConfigResponse {
+  id: string
+  agent_code: string
+  rule_version: string
+  status: 'draft' | 'valid'
+  limits: { max_deployment_cents: number | null; buying_power_cents: number | null }
+  violations: Array<{ field?: string; message: string }>
+  warnings: Array<{ field?: string; message: string }>
+}
+
+/** One reason POST /api/v1/activations would refuse — see evaluateActivation server-side. */
+export interface ActivationBlocker {
+  code: string
+  message: string
+  field?: string
+  remediable: boolean
+}
+
+/** POST /api/v1/activations/preview — the immutable review snapshot. */
+export interface ActivationPreviewResponse {
+  preview_hash: string
+  expires_in_seconds: number
+  snapshot: {
+    agent: string
+    rule_version: string
+    account_mask: string | null
+    max_deployment_cents: number | null
+    buying_power_cents: number | null
+    legal_versions: Record<string, string> | null
+    plan: { name: string; price_monthly: number; interval: string } | null
+    trial: { eligible_days_total: number; counts: string }
+  }
+  can_activate: boolean
+  blockers: ActivationBlocker[]
+}
+
+/** POST /api/v1/activations — success body. Only ever rendered after a 2xx. */
+export interface ActivationResponse {
+  ok: boolean
+  activation_id: string
+  agent: string
+  account_mask: string | null
+  trial: { status: string; eligible_days_used: number; eligible_days_total: number }
+}
+
+// ---- WP-F types ----
+// New fields extend the base CommunityMessage/CommunityFeed above rather than editing
+// them in place (shared file — see src/api/types.ts ownership note). Both new fields
+// are optional for the same forward/backward-compat reason as `mine`/`blockable`
+// above: an installed app can be older or newer than the API it's talking to.
+
+/** A Community post carrying thread data (APP-055) — reply count and, on a reply, its parent. */
+export interface CommunityMessageV2 extends CommunityMessage {
+  /** How many replies this post has. Only meaningful on top-level feed rows. */
+  reply_count?: number
+  /** The message this is a reply to. Present on rows returned by GET .../replies. */
+  parent_id?: string | null
+}
+
+/** GET /api/community/messages?channel=… response, with thread-carrying messages. */
+export interface CommunityFeedV2 extends Omit<CommunityFeed, 'messages'> {
+  messages: CommunityMessageV2[]
+}
+
+/** GET /api/community/messages/[id]/replies?cursor&limit — one thread, oldest first. */
+export interface ThreadReplies {
+  replies: CommunityMessageV2[]
+  next_cursor: string | null
+}
+
+/** POST /api/community/assist {draft, channel} — AI-assist composer suggestion (APP-031). */
+export interface AssistResponse {
+  ok: true
+  suggestion: string
+}

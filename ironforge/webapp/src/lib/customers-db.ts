@@ -771,6 +771,47 @@ CREATE TABLE IF NOT EXISTS account_deletion_requests (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_deletion_req_one_open
   ON account_deletion_requests(user_id) WHERE status = 'requested';
 CREATE INDEX IF NOT EXISTS idx_deletion_req_status ON account_deletion_requests(status, requested_at);
+
+-- Community category chips (APP-054). Renames display names IN PLACE — slugs stay
+-- stable because messages already reference them (news-events, all-chat); renaming a
+-- slug would orphan every post already tagged with it for zero UI benefit.
+UPDATE community_channels SET name = 'All' WHERE slug = 'all-chat' AND name <> 'All';
+UPDATE community_channels SET name = 'News' WHERE slug = 'news-events' AND name <> 'News';
+-- Defensive re-seed: a deploy that only ever ran an earlier version of this blob
+-- could be missing one of the five default channels. ON CONFLICT DO NOTHING makes
+-- this a no-op everywhere the row already exists.
+INSERT INTO community_channels (slug, name, sort_order) VALUES
+  ('all-chat', 'All', 0),
+  ('market-talk', 'Market Talk', 1),
+  ('trade-ideas', 'Trade Ideas', 2),
+  ('news-events', 'News', 3),
+  ('general', 'General', 4)
+ON CONFLICT (slug) DO NOTHING;
+
+-- Threaded replies (APP-055 / APP-031). A reply is an ordinary message with a
+-- parent; NULL means top-level. Self-referencing FK, added as a column rather than
+-- folded into the CREATE TABLE above (which predates threads).
+ALTER TABLE community_messages ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES community_messages(id);
+CREATE INDEX IF NOT EXISTS idx_community_messages_parent ON community_messages(parent_id) WHERE parent_id IS NOT NULL;
+
+-- Mobile product analytics (APP-048). owner_id is nullable-in-spirit but stored NOT
+-- NULL from a resolved identity — POST /api/v1/analytics/events is bearer-guarded,
+-- so there is never an anonymous event to attribute. props is the client's already-
+-- redacted payload; the route strips the same sensitive keys again server-side
+-- (belt and suspenders — a compromised or out-of-date client is not the only thing
+-- this guards against).
+CREATE TABLE IF NOT EXISTS mobile_analytics_events (
+  id BIGSERIAL PRIMARY KEY,
+  owner_id UUID NOT NULL REFERENCES users(id),
+  event TEXT NOT NULL,
+  props JSONB,
+  ts TIMESTAMPTZ NOT NULL,
+  app_version TEXT,
+  platform TEXT,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_mobile_analytics_events_owner ON mobile_analytics_events(owner_id, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_mobile_analytics_events_event ON mobile_analytics_events(event, ts DESC);
 `
 
 let _ensured: Promise<void> | null = null

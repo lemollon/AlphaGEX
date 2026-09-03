@@ -8,7 +8,8 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_BASE": "https://ironforge-sandbox.onrender.com"
+        "EXPO_PUBLIC_API_BASE": "https://ironforge-sandbox.onrender.com",
+        "EXPO_PUBLIC_SENTRY_DSN": ""
       },
       "channel": "development"
     },
@@ -16,7 +17,8 @@
       "distribution": "internal",
       "channel": "preview",
       "env": {
-        "EXPO_PUBLIC_API_BASE": "https://ironforge-sandbox.onrender.com"
+        "EXPO_PUBLIC_API_BASE": "https://ironforge-sandbox.onrender.com",
+        "EXPO_PUBLIC_SENTRY_DSN": ""
       },
       "android": {
         "buildType": "apk"
@@ -29,7 +31,8 @@
       "channel": "production",
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_BASE": "https://ironforge.trade"
+        "EXPO_PUBLIC_API_BASE": "https://ironforge.trade",
+        "EXPO_PUBLIC_SENTRY_DSN": ""
       },
       "android": {
         "buildType": "app-bundle"

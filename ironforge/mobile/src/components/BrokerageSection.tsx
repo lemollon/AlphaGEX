@@ -23,8 +23,9 @@ import * as WebBrowser from 'expo-web-browser'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR from 'swr'
 import { api } from '@/api/client'
-import type { BrokerageConnection, BrokerageConnections } from '@/api/types'
+import type { BrokerageConnection, BrokerageConnections, LiveAgents } from '@/api/types'
 import { brokerLabel, health, type HealthKey } from '@/api/brokerage'
+import { assignedAgentLabels } from '@/agents/assignment'
 import { color, space, radius, type, font } from '@/theme/tokens'
 import { Card, SectionLabel } from '@/components/ui'
 
@@ -42,6 +43,11 @@ export function BrokerageSection() {
   const { data, error, isLoading, mutate } = useSWR<BrokerageConnections>(
     '/api/brokerage/connections',
     (p: string) => api<BrokerageConnections>(p),
+  )
+  // APP-040: "Assigned: Spark/Flame" per connection. Shares the SWR cache key with the
+  // Forge tab and the agent screens, so this fetch is free once any of them has loaded.
+  const { data: agentsData } = useSWR<LiveAgents>('/api/live/agents', (p: string) =>
+    api<LiveAgents>(p),
   )
   const [busy, setBusy] = useState(false)
 
@@ -126,6 +132,13 @@ export function BrokerageSection() {
   }
 
   const connections = data?.connections ?? []
+  // See assignedAgentLabels — only derivable with exactly one connection. With more
+  // than one, which agent trades which connection is not something either payload
+  // says, so every row falls back to "Assigned: Not available" rather than a guess.
+  const assigned = assignedAgentLabels(
+    connections.length,
+    (agentsData?.agents ?? []).map((a) => a.label),
+  )
 
   return (
     <>
@@ -149,7 +162,13 @@ export function BrokerageSection() {
           </Text>
         ) : (
           connections.map((c, i) => (
-            <ConnectionRow key={c.id} conn={c} first={i === 0} onManage={() => manage(c)} />
+            <ConnectionRow
+              key={c.id}
+              conn={c}
+              first={i === 0}
+              onManage={() => manage(c)}
+              assigned={assigned}
+            />
           ))
         )}
 
@@ -172,10 +191,13 @@ function ConnectionRow({
   conn,
   first,
   onManage,
+  assigned,
 }: {
   conn: BrokerageConnection
   first: boolean
   onManage: () => void
+  /** null = not derivable (more than one connection); [] = no agent owns it yet. */
+  assigned: string[] | null
 }) {
   const h = health(conn.status)
   const name = brokerLabel(conn.broker ?? conn.provider)
@@ -203,6 +225,13 @@ function ConnectionRow({
             {masks.map((m) => `•••• ${m}`).join('   ')}
           </Text>
         ) : null}
+        <Text style={[type.label, { color: color.muted, marginTop: 2 }]}>
+          {assigned === null
+            ? 'Assigned: Not available'
+            : assigned.length > 0
+              ? `Assigned: ${assigned.join(', ')}`
+              : 'Assigned: No agent yet'}
+        </Text>
       </View>
 
       <View style={s.rowCenter}>
