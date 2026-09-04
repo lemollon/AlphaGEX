@@ -62,3 +62,24 @@ export function nearestIndex(x: number, width: number, n: number): number {
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v))
 }
+
+/**
+ * Left-edge x for the touch tooltip box — centered on the touched point, but
+ * slid inward near either edge so it never clips outside the chart. Pure so
+ * the three cases (left edge, right edge, centered) are covered by a test
+ * instead of eyeballed on a phone.
+ */
+export function tooltipX(pointX: number, boxWidth: number, chartWidth: number, inset: number): number {
+  const centered = pointX - boxWidth / 2
+  return clamp(centered, inset, Math.max(inset, chartWidth - boxWidth - inset))
+}
+
+/** "+$36.00" / "−$12.50" — a real minus (U+2212), not a hyphen, and always two
+ *  decimals, so the tooltip and header never print a bare unsigned number. */
+export function formatPnl(v: number): string {
+  const sign = v >= 0 ? '+' : '−'
+  return `${sign}$${Math.abs(v).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { chartGeometry, nearestIndex, type Point } from '@/components/chart-geometry'
+import { chartGeometry, nearestIndex, tooltipX, formatPnl, type Point } from '@/components/chart-geometry'
 
 const W = 300
 const H = 88
@@ -83,5 +83,49 @@ describe('nearestIndex — snaps to a real sample', () => {
   it('degenerates safely with fewer than two samples', () => {
     expect(nearestIndex(123, W, 1)).toBe(0)
     expect(nearestIndex(123, 0, 5)).toBe(0)
+  })
+})
+
+describe('tooltipX — the box never clips outside the chart', () => {
+  const BOX = 88
+  const INSET = 4
+
+  it('centers the box under a point in the middle of the chart', () => {
+    expect(tooltipX(W / 2, BOX, W, INSET)).toBe(W / 2 - BOX / 2)
+  })
+
+  it('slides the box inward instead of clipping off the left edge', () => {
+    expect(tooltipX(0, BOX, W, INSET)).toBe(INSET)
+    expect(tooltipX(-50, BOX, W, INSET)).toBe(INSET)
+  })
+
+  it('slides the box inward instead of clipping off the right edge', () => {
+    expect(tooltipX(W, BOX, W, INSET)).toBe(W - BOX - INSET)
+    expect(tooltipX(W + 50, BOX, W, INSET)).toBe(W - BOX - INSET)
+  })
+})
+
+describe('formatPnl — the tooltip and header P&L label', () => {
+  it('signs a gain with + and two decimals', () => {
+    expect(formatPnl(36)).toBe('+$36.00')
+    expect(formatPnl(12.5)).toBe('+$12.50')
+  })
+
+  it('signs a loss with a real minus (U+2212), never a hyphen', () => {
+    expect(formatPnl(-12.5)).toBe('−$12.50')
+    expect(formatPnl(-12.5)).not.toContain('-')
+  })
+
+  it('treats exactly zero as a gain', () => {
+    expect(formatPnl(0)).toBe('+$0.00')
+  })
+
+  it('always renders two decimal places, even for whole dollars', () => {
+    expect(formatPnl(100)).toBe('+$100.00')
+    expect(formatPnl(-100)).toBe('−$100.00')
+  })
+
+  it('formats large values with thousands separators', () => {
+    expect(formatPnl(1234.5)).toBe('+$1,234.50')
   })
 })

@@ -13,22 +13,38 @@
  *    identity on the line and money in the number; never mix the two.
  *  - The touch readout snaps to a real sample and shows that sample's timestamp. It
  *    never interpolates a value the trade did not actually print.
+ *  - The tooltip box is PINNED to the top of the chart, not floated at the touched
+ *    point — a bubble that rides the line is exactly what a thumb parks on top of.
+ *    Only the dashed guide and the on-line marker move with the finger. On release
+ *    both fade out over 150ms instead of snapping away, so it never reads as a glitch.
  */
-import { useMemo, useState } from 'react'
-import { View, Text, StyleSheet, type LayoutChangeEvent } from 'react-native'
+import { useMemo, useRef, useState } from 'react'
+import { Animated, View, Text, StyleSheet, type LayoutChangeEvent } from 'react-native'
 import Svg, { Polyline, Line, Circle } from 'react-native-svg'
 import {
   chartGeometry,
   nearestIndex,
-  clamp,
+  tooltipX,
+  formatPnl,
   type Point as SparkPointType,
 } from '@/components/chart-geometry'
+import { formatLocalClock } from '@/live/lifecycle'
 import { color, space, radius, type, font, pnlColor } from '@/theme/tokens'
 
 export type SparkPoint = SparkPointType
 
 const HEIGHT = 88
 const PAD_Y = 10
+
+// The tooltip box's fixed geometry — pinned to the top of the plot, so the guide
+// below it always starts from the same place regardless of which sample is touched.
+const TIP_WIDTH = 88
+const TIP_TOP = 2
+const TIP_HEIGHT = 38
+const TIP_INSET = 4
+
+const AnimatedLine = Animated.createAnimatedComponent(Line)
+const AnimatedCircle = Animated.createAnimatedComponent(Circle)
 
 export function PnlChart({
   series,
@@ -43,7 +59,13 @@ export function PnlChart({
   current: number | null
 }) {
   const [width, setWidth] = useState(0)
+  // The touched sample index. Set on press/drag; kept (not nulled) through the
+  // release fade so the guide and box have something to draw while they fade out.
   const [touch, setTouch] = useState<number | null>(null)
+  // Shared by the box (Animated.View) and the SVG guide/marker (Animated react-native-svg
+  // components) — react-native-svg's animated components don't support the native driver,
+  // so this stays JS-driven throughout rather than mixing drivers on one Animated.Value.
+  const opacity = useRef(new Animated.Value(0)).current
 
   const onLayout = (e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)
 
@@ -53,7 +75,25 @@ export function PnlChart({
 
   const active = touch != null ? series[touch] : null
 
+  function showTouch(x: number) {
+    const idx = nearestIndex(x, width, series.length)
+    setTouch(idx)
+    // A new touch shows immediately, even mid-fade from the last one.
+    opacity.stopAnimation()
+    opacity.setValue(1)
+  }
+
+  function releaseTouch() {
+    Animated.timing(opacity, { toValue: 0, duration: 150, useNativeDriver: false }).start(
+      ({ finished }) => {
+        if (finished) setTouch(null)
+      },
+    )
+  }
+
   // One sample is not a chart. Say so rather than drawing a dot and calling it a line.
+  // With no series, there is also nothing for a touch to snap to — no responder is
+  // attached below, so the tooltip can never show.
   if (series.length < 2) {
     return (
       <View style={s.wrap}>
@@ -76,10 +116,10 @@ export function PnlChart({
         onLayout={onLayout}
         onStartShouldSetResponder={() => true}
         onMoveShouldSetResponder={() => true}
-        onResponderGrant={(e) => setTouch(nearestIndex(e.nativeEvent.locationX, width, series.length))}
-        onResponderMove={(e) => setTouch(nearestIndex(e.nativeEvent.locationX, width, series.length))}
-        onResponderRelease={() => setTouch(null)}
-        onResponderTerminate={() => setTouch(null)}
+        onResponderGrant={(e) => showTouch(e.nativeEvent.locationX)}
+        onResponderMove={(e) => showTouch(e.nativeEvent.locationX)}
+        onResponderRelease={releaseTouch}
+        onResponderTerminate={releaseTouch}
       >
         {geom ? (
           <Svg width={width} height={HEIGHT}>
@@ -110,22 +150,25 @@ export function PnlChart({
             />
             {active && touch != null ? (
               <>
-                <Line
+                {/* Guide drops from the pinned tooltip box down to the zero baseline —
+                    never the full chart height, and never through the box above it. */}
+                <AnimatedLine
                   x1={geom.x(touch)}
-                  y1={0}
+                  y1={TIP_TOP + TIP_HEIGHT}
                   x2={geom.x(touch)}
-                  y2={HEIGHT}
+                  y2={geom.zeroY}
                   stroke={accent}
                   strokeWidth={1}
-                  opacity={0.6}
+                  opacity={opacity.interpolate({ inputRange: [0, 1], outputRange: [0, 0.6] })}
                 />
-                <Circle
+                <AnimatedCircle
                   cx={geom.x(touch)}
                   cy={geom.y(active.pnl)}
                   r={4}
                   fill={color.bg}
                   stroke={accent}
                   strokeWidth={2}
+                  opacity={opacity}
                 />
               </>
             ) : null}
@@ -139,19 +182,22 @@ export function PnlChart({
           </Text>
         ) : null}
 
-        {active ? (
-          <View
+        {active && touch != null ? (
+          <Animated.View
             style={[
               s.tip,
-              // Keep the bubble inside the plot at both ends.
-              { left: clamp((geom?.x(touch ?? 0) ?? 0) - 44, 0, Math.max(0, width - 88)) },
+              // Pinned to the top of the chart, slid inward near either edge so it
+              // never clips — the point itself only ever moves the guide and marker.
+              { left: tooltipX(geom?.x(touch) ?? 0, TIP_WIDTH, width, TIP_INSET), opacity },
             ]}
           >
-            <Text style={[type.label, { color: color.textDim }]}>{clock(active.timestamp)}</Text>
-            <Text style={[type.label, { color: pnlColor(active.pnl), fontFamily: font.bodyBold }]}>
-              {money(active.pnl)}
+            <Text style={[type.label, { color: color.textDim }]}>
+              {formatLocalClock(active.timestamp) ?? ''}
             </Text>
-          </View>
+            <Text style={[type.body, { color: pnlColor(active.pnl), fontFamily: font.bodyBold }]}>
+              {formatPnl(active.pnl)}
+            </Text>
+          </Animated.View>
         ) : null}
       </View>
 
@@ -176,25 +222,10 @@ function Header({
     <View style={s.head}>
       <Text style={[type.label, { color: accent, fontFamily: font.bodyMedium }]}>{status}</Text>
       <Text style={[type.body, { color: pnlColor(current), fontFamily: font.bodyBold }]}>
-        {current == null ? '—' : money(current)}
+        {current == null ? '—' : formatPnl(current)}
       </Text>
     </View>
   )
-}
-
-function money(v: number): string {
-  const sign = v >= 0 ? '+' : '-'
-  return `${sign}$${Math.abs(v).toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`
-}
-
-/** Server timestamps are ISO; render them in the device's local clock. */
-function clock(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 }
 
 const s = StyleSheet.create({
@@ -206,8 +237,8 @@ const s = StyleSheet.create({
   axis: { flexDirection: 'row', justifyContent: 'space-between', marginTop: space.xs },
   tip: {
     position: 'absolute',
-    top: -4,
-    width: 88,
+    top: TIP_TOP,
+    width: TIP_WIDTH,
     alignItems: 'center',
     backgroundColor: color.card,
     borderColor: color.border,
