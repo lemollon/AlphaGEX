@@ -23,6 +23,7 @@ import { PnlChart } from '@/components/PnlChart'
 import { brokerLabel, soleConnection } from '@/api/brokerage'
 import { totalCapital } from '@/live/capital'
 import { agentStatItems } from '@/live/card-stats'
+import { formatPeriodValue, periodTone, type PeriodTone } from '@/live/period-stats'
 import { pickBanner, bannerActionHref } from '@/alerts/banner'
 
 /**
@@ -154,9 +155,9 @@ export default function ForgeScreen() {
 
           <View style={s.periodRow}>
             <Period label="Today" value={data.account.today_pnl} />
-            <Period label="This Week" value={home.data?.week_income ?? null} />
-            <Period label="This Month" value={home.data?.month_income ?? null} />
-            <Period label="Lifetime" value={home.data?.lifetime_income ?? null} />
+            <Period label="This Week" value={home.data?.wealth.weekly_income ?? null} />
+            <Period label="This Month" value={home.data?.wealth.monthly_income ?? null} />
+            <Period label="Lifetime" value={home.data?.wealth.lifetime_income ?? null} />
           </View>
         </Card>
 
@@ -230,13 +231,31 @@ function AlertBanner({
   )
 }
 
+/**
+ * One shared size, format and baseline for all four figures — Today included —
+ * so the row reads as a single line rather than Today looking like a
+ * different kind of number from the other three. Whole dollars, a sign only
+ * when non-zero, and a dash reserved for "could not load" (period-stats.ts).
+ */
+const periodToneColor: Record<PeriodTone, string> = {
+  pos: color.pos,
+  neg: color.neg,
+  zero: color.muted,
+  na: color.textDim,
+}
+
 function Period({ label, value }: { label: string; value: number | null }) {
   return (
     <View style={{ flex: 1, alignItems: 'center' }}>
-      <Text style={[type.label, { color: color.muted, marginBottom: space.xs }]}>
+      <Text
+        style={[type.label, s.periodLabel, { color: color.muted }]}
+        numberOfLines={1}
+      >
         {label.toUpperCase()}
       </Text>
-      <Money value={value} />
+      <Text style={[s.periodValue, { color: periodToneColor[periodTone(value)] }]} numberOfLines={1}>
+        {formatPeriodValue(value)}
+      </Text>
     </View>
   )
 }
@@ -548,6 +567,15 @@ const s = StyleSheet.create({
     borderTopColor: color.border,
     borderTopWidth: 1,
     paddingTop: space.lg,
+  },
+  // Fixed label height so a longer word ("This Month") never wraps and pushes
+  // the value below it out of line with the other three columns' baseline.
+  periodLabel: { height: 14, marginBottom: space.xs },
+  periodValue: {
+    fontSize: 16,
+    lineHeight: 20,
+    fontFamily: font.bodyBold,
+    fontVariant: ['tabular-nums'],
   },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   rowCenter: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
