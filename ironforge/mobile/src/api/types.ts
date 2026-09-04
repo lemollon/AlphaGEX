@@ -111,11 +111,31 @@ export interface LiveTrade {
   positions?: LiveOpenPosition[]
 }
 
+/**
+ * Mirrors webapp/src/lib/live/home.ts's getHomeData() return shape exactly —
+ * there is no shared package between the two apps, so this is hand-kept in
+ * sync. It previously wasn't: this declared flat `week_income` while the
+ * route has always returned nested `wealth.weekly_income`, so This
+ * Week/Month/Lifetime rendered "—" forever on the Forge tab. See
+ * src/live/period-stats.test.ts's `satisfies` fixture, checked by
+ * `tsc --noEmit`, for the guard against that drift recurring silently.
+ */
 export interface HomeData {
-  week_income?: number | null
-  month_income?: number | null
-  lifetime_return_pct?: number | null
-  lifetime_income?: number | null
+  wealth: {
+    weekly_income: number | null
+    monthly_income: number | null
+    lifetime_income: number | null
+    lifetime_return_pct: number | null
+  }
+  recent_trades: Array<{
+    closed_at: string
+    strategy: string
+    contract: string
+    premium: number
+    status: string
+  }>
+  yesterday_trades: number
+  as_of: string
 }
 
 export type OutcomeKind = 'profit' | 'auto' | 'stop' | 'manual' | 'expired' | 'other'
