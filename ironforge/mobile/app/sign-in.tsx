@@ -7,6 +7,7 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  Linking,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
@@ -14,11 +15,13 @@ import * as Device from 'expo-device'
 import Constants from 'expo-constants'
 import { signIn } from '@/auth/session'
 import { registerPushDevice } from '@/notifications/push'
+import { API_BASE } from '@/api/client'
 import { color, space, radius, type, font } from '@/theme/tokens'
 
 /**
- * Sign-in (APP-007). Enrollment stays on the web for MVP, so there is deliberately no
- * sign-up path here — only credentials for an existing member.
+ * Sign-in (APP-007). Enrollment stays on the web for MVP, so there is no in-app sign-up
+ * form — the "Create an account" link hands off to the web signup page (same copy and
+ * target as the web login screen) so a new member is never left at a dead end.
  *
  * The failure copy is identical for "no such account" and "wrong password". The server
  * already refuses to distinguish them (classifyLoginAttempt + a dummy bcrypt compare to
@@ -100,6 +103,19 @@ export default function SignInScreen() {
         <Pressable onPress={() => router.push('/forgot-password')} style={s.forgot} hitSlop={8}>
           <Text style={[type.body, { color: color.textDim }]}>Forgot password?</Text>
         </Pressable>
+
+        <View style={s.signupRow}>
+          <Text style={[type.body, { color: color.textDim }]}>Don't have an account? </Text>
+          <Pressable
+            onPress={() => Linking.openURL(`${API_BASE}/signup`).catch(() => {})}
+            hitSlop={8}
+            accessibilityRole="link"
+          >
+            <Text style={[type.body, { color: color.accent, fontFamily: font.bodyBold }]}>
+              Create one
+            </Text>
+          </Pressable>
+        </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   )
@@ -137,4 +153,11 @@ const s = StyleSheet.create({
     marginTop: space.xl,
   },
   forgot: { alignItems: 'center', marginTop: space.lg, padding: space.sm },
+  signupRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: space.md,
+    padding: space.sm,
+  },
 })
