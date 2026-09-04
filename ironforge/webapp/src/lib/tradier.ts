@@ -53,6 +53,16 @@ interface OptionQuote {
   last: number
   mid: number
   symbol: string
+  /** Displayed size at the best bid/ask (contracts). Absent when Tradier sent none. */
+  bidsize?: number
+  asksize?: number
+}
+
+/** Tradier sends `bidsize`/`asksize` as strings or numbers; anything unparsable is absent. */
+function parseQuoteSize(v: unknown): number | undefined {
+  if (v == null) return undefined
+  const n = Number(v)
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined
 }
 
 interface Quote {
@@ -271,6 +281,8 @@ export async function getOptionQuote(
     last: parseFloat(quote.last || '0'),
     mid: Math.round(((bid + ask) / 2) * 10000) / 10000,
     symbol: occSymbol,
+    bidsize: parseQuoteSize(quote.bidsize),
+    asksize: parseQuoteSize(quote.asksize),
   }
 }
 
@@ -1812,31 +1824,44 @@ export async function resolveEligibleAccounts(
   return eligibleAccounts
 }
 
+export interface ProductionLadderCapital {
+  /** FUNDED capital: the ledger's starting_capital, seeded from real broker equity. */
+  starting: number | null
+  /** HIGH-WATER balance: the ledger's peak current_balance, ratchets up only. */
+  highWater: number | null
+}
+
 /**
- * FUNDED capital for a production owner's ledger of `botName` — the
- * `starting_capital` on their active production paper_account row, which is
- * seeded from real broker equity at enrolment (never a guess: see
- * getAllocatedCapitalForAccount's history). The EBB count ladder keys on THIS,
- * never on live equity or option buying power (2026-08-27 study: every
- * equity-keyed rule breached the 35% drawdown ceiling in some window).
+ * The two fields the EBB count ladder keys on for a production owner's ledger
+ * of `botName` — `starting_capital` (funded, seeded from real broker equity at
+ * enrolment; never a guess: see getAllocatedCapitalForAccount's history) and
+ * `high_water_balance` (the ledger's peak balance, GREATEST()ed at every
+ * balance write). Combine them with ebbLadderCapital(); the ladder keys on
+ * max(starting, highWater), never on live equity, current_balance or option
+ * buying power (2026-08-27 study: every equity-keyed rule breached the 35%
+ * drawdown ceiling in some window; sizing DOWN in a drawdown earned $258/yr at
+ * 54% DD).
  *
  * null = no ledger row / unreadable. The caller must SKIP the account.
  */
-export async function getProductionFundedCapital(botName: string, person: string): Promise<number | null> {
+export async function getProductionLadderCapital(botName: string, person: string): Promise<ProductionLadderCapital | null> {
   try {
     const { query: dbq, botTable } = await import('./db')
     const rows = await dbq(
-      `SELECT starting_capital FROM ${botTable(botName, 'paper_account')}
+      `SELECT starting_capital, high_water_balance FROM ${botTable(botName, 'paper_account')}
        WHERE account_type = 'production' AND person = $1 AND is_active = TRUE
        ORDER BY updated_at DESC LIMIT 1`,
       [person],
     )
     if (rows.length === 0) return null
-    const n = Number(rows[0].starting_capital)
-    return Number.isFinite(n) && n > 0 ? n : null
+    const pos = (v: unknown): number | null => {
+      const n = Number(v)
+      return Number.isFinite(n) && n > 0 ? n : null
+    }
+    return { starting: pos(rows[0].starting_capital), highWater: pos(rows[0].high_water_balance) }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[tradier] getProductionFundedCapital(${botName}, '${person}') failed: ${msg}`)
+    console.warn(`[tradier] getProductionLadderCapital(${botName}, '${person}') failed: ${msg}`)
     return null
   }
 }
@@ -2035,6 +2060,24 @@ export async function placeIcOrderAllAccounts(
     }
   }
 
+  // LIQUIDITY CHECK input (ADR 0013, 2026-09-04): the displayed bid size of
+  // the put being SOLD, read ONCE from the live quote at entry and shared by
+  // every production account in this order. null = Tradier sent no size ->
+  // the sizing falls back to the ladder under EBB_LADDER_CAP and logs
+  // liquidity=UNKNOWN. Only fetched when a production EBB order is in scope.
+  const ebbSizing = await import('./ebb-sizing')
+  let shortPutBidSize: number | null = null
+  if (productionAccts.length > 0 && ebbSizing.isEbbLadderBot(botName)) {
+    try {
+      const psQ = await getOptionQuote(occPs)
+      shortPutBidSize = psQ?.bidsize != null && Number.isFinite(psQ.bidsize) ? psQ.bidsize : null
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[tradier] ${botUc} short-put quote for the liquidity check failed (${msg}); liquidity=UNKNOWN`)
+      shortPutBidSize = null
+    }
+  }
+
   async function placeForAccount(acct: SandboxAccount) {
     try {
       const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
@@ -2133,30 +2176,48 @@ export async function placeIcOrderAllAccounts(
       let ladderDetail = ''
       if (acct.type === 'production') {
         const prodCeiling = prodMaxContracts > 0 ? prodMaxContracts : Number.POSITIVE_INFINITY
-        const { ebbLadderContracts, isEbbLadderBot, ebbRungUsd } = await import('./ebb-sizing')
-        if (isEbbLadderBot(botName)) {
-          // COUNT LADDER (2026-09-04). SPARK / FLAME size from the owner's FUNDED
-          // capital: floor(funded / rung), cap 5 — lib/ebb-sizing.ts. Buying power
-          // is only a sanity floor here (never lets the ladder exceed what the
-          // broker will margin); it is NOT the sizing basis any more.
-          const funded = await getProductionFundedCapital(botName, acct.name)
-          const ladder = ebbLadderContracts(botName, funded)
+        if (ebbSizing.isEbbLadderBot(botName)) {
+          // COUNT LADDER (2026-09-04, ADR 0012/0013). SPARK / FLAME size from
+          // the owner's ledger: lots = floor(max(starting_capital,
+          // high_water_balance) / rung) — the high-water RATCHET, never
+          // current_balance — then the LIQUIDITY check: at most 25% of the
+          // displayed bid size at the short strike (static cap 100 is a
+          // safety ceiling only). lib/ebb-sizing.ts. Buying power is only a
+          // sanity floor here (never lets the ladder exceed what the broker
+          // will margin); it is NOT the sizing basis.
+          const cap = await getProductionLadderCapital(botName, acct.name)
+          const funded = cap?.starting ?? null
+          const highWater = cap?.highWater ?? null
+          const rung = ebbSizing.ebbRungUsd(botName)
+          const ladder = ebbSizing.ebbLadderContracts(botName, ebbSizing.ebbLadderCapital(funded, highWater))
           if (ladder < 1) {
             console.warn(
               `PRODUCTION [${acct.name}]: ${botName.toUpperCase()} count ladder = 0 lots ` +
-              `(funded=${funded === null ? 'NO LEDGER ROW' : '$' + funded.toFixed(0)}, ` +
-              `rung=$${ebbRungUsd(botName)}). SKIPPING — never falls back to 1.`,
+              `(${cap === null ? 'NO LEDGER ROW' : `funded=${funded === null ? 'NONE' : '$' + funded.toFixed(0)} ` +
+                `high_water=${highWater === null ? 'NONE' : '$' + highWater.toFixed(0)}`}, ` +
+              `rung=$${rung}). SKIPPING — never falls back to 1.`,
             )
             return
           }
-          acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, ladder, prodCeiling)
+          const liq = ebbSizing.liquidityCappedLots(ladder, shortPutBidSize)
+          if (liq.lots < 1) {
+            console.warn(
+              `PRODUCTION [${acct.name}]: ${botName.toUpperCase()} LIQUIDITY check = 0 lots ` +
+              `(displayed bid size ${liq.displayedSize} at the short strike, share ` +
+              `${(ebbSizing.EBB_LIQUIDITY_SHARE * 100).toFixed(0)}% -> max ${liq.maxLots}; ladder wanted ${ladder}). SKIPPING.`,
+            )
+            return
+          }
+          acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, liq.lots, prodCeiling)
           if (acctContracts > bpContracts) {
             console.warn(
               `PRODUCTION [${acct.name}]: ladder wants ${acctContracts} lots but option BP only margins ${bpContracts}. Sizing down to ${bpContracts}.`,
             )
             acctContracts = bpContracts
           }
-          ladderDetail = `ladder=${ladder} (funded=$${(funded as number).toFixed(0)} / rung=$${ebbRungUsd(botName)}), `
+          ladderDetail = ebbSizing.formatEbbSizingLine({
+            funded, highWater, rung, ladderLots: ladder, liq, finalLots: acctContracts,
+          }) + ', '
         } else {
           acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, prodCeiling)
         }
@@ -2339,6 +2400,9 @@ export interface LegQuote {
   ask: number
   mid: number
   last: number
+  /** Displayed size at the best bid/ask (contracts). Absent when Tradier sent none. */
+  bidsize?: number
+  asksize?: number
 }
 
 /**
@@ -2513,6 +2577,8 @@ export async function getBatchOptionQuotes(
       ask,
       mid: Math.round(((bid + ask) / 2) * 10000) / 10000,
       last: parseFloat(q.last || '0'),
+      bidsize: parseQuoteSize(q.bidsize),
+      asksize: parseQuoteSize(q.asksize),
     }
   }
   return results
@@ -4025,13 +4091,17 @@ export interface PutSpreadMtmResult {
  * Entry credit for a 2-leg bull put credit spread.
  * Conservative paper fill: sell short put at bid, buy long put at ask.
  * Mid-price fallback when bid/ask produces a non-positive credit.
+ *
+ * `shortBidSize` is the displayed bid size of the put being SOLD from the same
+ * quote — the input to the EBB liquidity check (lib/ebb-sizing.ts). null when
+ * Tradier sent no size.
  */
 export async function getPutSpreadEntryCredit(
   ticker: string,
   expiration: string,
   putShort: number,
   putLong: number,
-): Promise<{ putCredit: number; source: string } | null> {
+): Promise<{ putCredit: number; source: string; shortBidSize: number | null } | null> {
   const [psQ, plQ] = await Promise.all([
     getOptionQuote(buildOccSymbol(ticker, expiration, putShort, 'P')),
     getOptionQuote(buildOccSymbol(ticker, expiration, putLong, 'P')),
@@ -4050,6 +4120,7 @@ export async function getPutSpreadEntryCredit(
   return {
     putCredit: Math.round(credit * 10000) / 10000,
     source,
+    shortBidSize: psQ.bidsize ?? null,
   }
 }
 

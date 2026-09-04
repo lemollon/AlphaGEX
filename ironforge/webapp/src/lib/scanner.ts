@@ -179,7 +179,7 @@ const PRODUCTION_BOT_DTE = '1DTE' // Matches BOTS[] entry for PRODUCTION_BOT
 // in tradier.ts. These were two hand-copied pairs kept in sync by comment; they decide
 // how much real money enters a trade.
 import { SPARK_BP_CAP_POS, SPARK_BP_CAP_NEG } from './spark-sizing'
-import { ebbLadderContracts, isEbbLadderBot } from './ebb-sizing'
+import { ebbLadderCapital, ebbLadderContracts, ebbRungUsd, formatEbbSizingLine, isEbbLadderBot, liquidityCappedLots } from './ebb-sizing'
 
 function isSparkV2Sizing(name: string): boolean {
   return name === 'spark'
@@ -861,6 +861,7 @@ async function syncPaperAccountCapital(): Promise<void> {
                  current_balance = $2,
                  buying_power = $3,
                  high_water_mark = GREATEST(high_water_mark, $2),
+                 high_water_balance = GREATEST(COALESCE(high_water_balance, 0), $1, $2),
                  updated_at = NOW()
              WHERE id = $4`,
             [target, newBalance, newBp, rows[0].id],
@@ -919,6 +920,7 @@ async function syncPaperAccountCapital(): Promise<void> {
                  current_balance = $2,
                  buying_power = $3,
                  high_water_mark = GREATEST(high_water_mark, $2),
+                 high_water_balance = GREATEST(COALESCE(high_water_balance, 0), $1, $2),
                  updated_at = NOW()
              WHERE id = $4`,
             [target, newBalance, newBp, pa.id],
@@ -2165,6 +2167,7 @@ async function monitorSinglePosition(
                     const creditedPending = await dbExecute(
                       `UPDATE ${botTable(bot.name, 'paper_account')}
                        SET current_balance = current_balance + $1,
+                           high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
                            cumulative_pnl = cumulative_pnl + $1,
                            total_trades = total_trades + 1,
                            collateral_in_use = GREATEST(0, collateral_in_use - $2),
@@ -2178,6 +2181,7 @@ async function monitorSinglePosition(
                     await query(
                       `UPDATE ${botTable(bot.name, 'paper_account')}
                        SET current_balance = current_balance + $1,
+                           high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
                            cumulative_pnl = cumulative_pnl + $1,
                            total_trades = total_trades + 1,
                            collateral_in_use = GREATEST(0, collateral_in_use - $2),
@@ -2376,6 +2380,7 @@ async function monitorSinglePosition(
                       const creditedPending = await dbExecute(
                         `UPDATE ${botTable(bot.name, 'paper_account')}
                          SET current_balance = current_balance + $1,
+                             high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
                              cumulative_pnl = cumulative_pnl + $1,
                              total_trades = total_trades + 1,
                              collateral_in_use = GREATEST(0, collateral_in_use - $2),
@@ -2389,6 +2394,7 @@ async function monitorSinglePosition(
                       await query(
                         `UPDATE ${botTable(bot.name, 'paper_account')}
                          SET current_balance = current_balance + $1,
+                             high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
                              cumulative_pnl = cumulative_pnl + $1,
                              total_trades = total_trades + 1,
                              collateral_in_use = GREATEST(0, collateral_in_use - $2),
@@ -3248,6 +3254,7 @@ async function closePosition(
     const credited = await dbExecute(
       `UPDATE ${botTable(bot.name, 'paper_account')}
        SET current_balance = current_balance + $1,
+           high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
            cumulative_pnl = cumulative_pnl + $1,
            total_trades = total_trades + 1,
            collateral_in_use = GREATEST(0, collateral_in_use - $2),
@@ -3265,6 +3272,7 @@ async function closePosition(
     await query(
       `UPDATE ${botTable(bot.name, 'paper_account')}
        SET current_balance = current_balance + $1,
+           high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
            cumulative_pnl = cumulative_pnl + $1,
            total_trades = total_trades + 1,
            collateral_in_use = GREATEST(0, collateral_in_use - $2),
@@ -3671,13 +3679,15 @@ function flameParams(_equity: number): { k: number; width: number } {
  * Cost: $8,000-$9,999 now earns ~$10,090/yr instead of ~$20,179. That is the same
  * income-for-risk trade already taken at the $5,000 product boundary.
  */
-function flameContracts(botName: string, fundedCapital: number): number {
+function flameContracts(botName: string, ladderCapital: number | null): number {
   // COUNT LADDER (2026-09-04, Leron: "the ladder is count of contracts, not
-  // width"). Keyed on FUNDED capital, floor()ed, cap 5 — the 8/27 survivor rule
-  // (FLAME 1 lot / $1,500, SPARK 1 lot / $5,000). Pinned by ebb-sizing.test.ts.
-  // Any bot outside the EBB pair keeps the old flat 1 lot.
+  // width"). Keyed on the ledger's HIGH-WATER capital — max(starting_capital,
+  // high_water_balance), see ebbLadderCapital() — floor()ed, static cap 100
+  // (ADR 0013: the cap is a liquidity guard, the rung bounds drawdown). The
+  // 8/27 survivor rungs: FLAME 1 lot / $1,500, SPARK 1 lot / $5,000. Pinned by
+  // ebb-sizing.test.ts. Any bot outside the EBB pair keeps the old flat 1 lot.
   if (!isEbbLadderBot(botName)) return 1
-  return ebbLadderContracts(botName, fundedCapital)
+  return ebbLadderContracts(botName, ladderCapital)
 }
 
 /**
@@ -4505,38 +4515,46 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   }
 
   const acctRows = await query(
-    `SELECT id, current_balance, starting_capital FROM ${botTable(bot.name, 'paper_account')}
+    `SELECT id, current_balance, starting_capital, high_water_balance FROM ${botTable(bot.name, 'paper_account')}
      WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
      ORDER BY id DESC LIMIT 1`,
     [bot.dte],
   )
   let balance: number
   let funded: number
+  let highWater: number | null
   if (acctRows.length === 0) {
     const seed = botCfg.starting_capital
     await query(
       `INSERT INTO ${botTable(bot.name, 'paper_account')}
          (starting_capital, current_balance, cumulative_pnl, collateral_in_use,
-          buying_power, total_trades, high_water_mark, max_drawdown,
+          buying_power, total_trades, high_water_mark, high_water_balance, max_drawdown,
           is_active, dte_mode, account_type, created_at, updated_at)
-       VALUES ($1, $1, 0, 0, $1, 0, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
+       VALUES ($1, $1, 0, 0, $1, 0, $1, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
       [seed, bot.dte],
     )
     console.log(`[scanner] FLAME: seeded ${bot.dte} paper ledger at $${seed}`)
     balance = seed
     funded = seed
+    highWater = seed
   } else {
     balance = num(acctRows[0].current_balance)
     funded = num(acctRows[0].starting_capital)
+    const hw = Number(acctRows[0].high_water_balance)
+    highWater = Number.isFinite(hw) && hw > 0 ? hw : null
   }
   if (!(balance > 0)) return `skip:no_paper_balance($${balance.toFixed(0)})`
 
   const { otmAbs, width } = botStructure(bot.name)
-  // COUNT LADDER (2026-09-04): lots come from FUNDED capital (ledger
-  // starting_capital), never from the floating balance — see lib/ebb-sizing.ts.
+  // COUNT LADDER (2026-09-04, ADR 0013): lots come from the ledger's HIGH-WATER
+  // capital — max(starting_capital, high_water_balance), the ratchet that only
+  // moves up — never from the floating balance — see lib/ebb-sizing.ts.
   // 0 lots means the ledger is below one rung: skip, never fall back to 1.
-  const perTrade = flameContracts(bot.name, funded)
-  if (perTrade < 1) return `skip:below_ladder_rung(funded=$${funded.toFixed(0)})`
+  const ledger = { funded, highWater }
+  const perTrade = flameContracts(bot.name, ebbLadderCapital(funded, highWater))
+  if (perTrade < 1) {
+    return `skip:below_ladder_rung(funded=$${funded.toFixed(0)} high_water=${highWater === null ? 'NONE' : '$' + highWater.toFixed(0)})`
+  }
   // Each book gets an equal, NON-TRANSFERABLE third. Letting one borrow from the
   // others concentrates the account in whichever market happens to be trading,
   // which is the opposite of why three books exist.
@@ -4544,7 +4562,7 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
 
   const out: string[] = []
   for (const ticker of FLAME_BOOKS) {
-    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, otmAbs, width, perBook, perTrade, opts)}`)
+    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, otmAbs, width, perBook, perTrade, ledger, opts)}`)
   }
   return `otm$${otmAbs} w${width} x${perTrade} ` + out.join(' ')
 }
@@ -4552,6 +4570,7 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
 async function tryOpenFlameBook(
   bot: BotDef, botCfg: BotConfig, ticker: string,
   otmAbs: number, width: number, perBook: number, perTrade: number,
+  ledger: { funded: number | null; highWater: number | null },
   opts: { force?: boolean } = {},
 ): Promise<string> {
   const todayRows = await query(
@@ -4635,7 +4654,22 @@ async function tryOpenFlameBook(
   if (maxLossPer <= 0) return 'invalid_max_loss'
   // FIXED size per trade -- never "fill the remaining budget". The margin check
   // then decides whether THIS trade fits alongside the ones already running.
-  const contracts = perTrade
+  //
+  // LIQUIDITY CHECK (ADR 0013, 2026-09-04) on the paper book too: at most 25%
+  // of the displayed bid size of the put being sold, from the same quote this
+  // entry priced off (c.shortBidSize). No size -> ladder lots, liquidity=UNKNOWN.
+  const liq = isEbbLadderBot(bot.name) ? liquidityCappedLots(perTrade, c.shortBidSize) : null
+  const contracts = liq ? liq.lots : perTrade
+  const sizingLine = liq && isEbbLadderBot(bot.name)
+    ? formatEbbSizingLine({
+        funded: ledger.funded, highWater: ledger.highWater, rung: ebbRungUsd(bot.name),
+        ladderLots: perTrade, liq, finalLots: contracts,
+      })
+    : `flat=${contracts}`
+  if (contracts < 1) {
+    console.warn(`[scanner] ${bot.name.toUpperCase()} ${ticker}: LIQUIDITY check = 0 lots, skipping (${sizingLine})`)
+    return `skip:liquidity(displayed_size=${liq?.displayedSize ?? 'UNKNOWN'} max=${liq?.maxLots ?? 'n/a'} ladder=${perTrade})`
+  }
   if ((perBook - committed) < maxLossPer * contracts) {
     return `no_room($${(perBook - committed).toFixed(0)})`
   }
@@ -4666,7 +4700,8 @@ async function tryOpenFlameBook(
   console.log(
     `[scanner] ${bot.name.toUpperCase()} ${ticker}: ${contracts}x ${putLong}/${putShort}P ` +
     `exp ${expiration} @ $${entryCredit.toFixed(2)} ` +
-    `(spot ${spot.toFixed(2)}, otm $${otmAbs}, wing $${width}, EM ${em.toFixed(2)})`,
+    `(spot ${spot.toFixed(2)}, otm $${otmAbs}, wing $${width}, EM ${em.toFixed(2)}) ` +
+    `sizing: ${sizingLine}`,
   )
 
   // ────────────────────────────────────────────────────────────────────────
@@ -4798,9 +4833,9 @@ async function tryOpenForgeCondor(bot: BotDef): Promise<string> {
     await query(
       `INSERT INTO ${botTable(bot.name, 'paper_account')}
          (starting_capital, current_balance, cumulative_pnl, collateral_in_use,
-          buying_power, total_trades, high_water_mark, max_drawdown,
+          buying_power, total_trades, high_water_mark, high_water_balance, max_drawdown,
           is_active, dte_mode, account_type, created_at, updated_at)
-       VALUES ($1, $1, 0, 0, $1, 0, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
+       VALUES ($1, $1, 0, 0, $1, 0, $1, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
       [seed, bot.dte],
     )
     console.log(`[scanner] FORGE: seeded ${bot.dte} paper ledger at $${seed}`)
@@ -5108,9 +5143,9 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     await query(
       `INSERT INTO ${botTable(bot.name, 'paper_account')}
          (starting_capital, current_balance, cumulative_pnl, collateral_in_use,
-          buying_power, total_trades, high_water_mark, max_drawdown,
+          buying_power, total_trades, high_water_mark, high_water_balance, max_drawdown,
           is_active, dte_mode, account_type, created_at, updated_at)
-       VALUES ($1, $1, 0, 0, $1, 0, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
+       VALUES ($1, $1, 0, 0, $1, 0, $1, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
       [seed, bot.dte],
     )
     console.log(`[scanner] ${bot.name.toUpperCase()}: seeded ${bot.dte} paper ledger at $${seed}`)
@@ -6888,6 +6923,7 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
           const creditedRecovery = await dbExecute(
             `UPDATE ${acctTable}
              SET current_balance = current_balance + $1,
+                 high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
                  cumulative_pnl = cumulative_pnl + $1,
                  total_trades = total_trades + 1,
                  collateral_in_use = GREATEST(0, collateral_in_use - $2),

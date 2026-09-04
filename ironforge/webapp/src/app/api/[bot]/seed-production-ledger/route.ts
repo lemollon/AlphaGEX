@@ -354,10 +354,10 @@ export async function POST(req: NextRequest, { params }: { params: { bot: string
       `INSERT INTO ${botTable(bot, 'paper_account')}
          (starting_capital, current_balance, cumulative_pnl,
           collateral_in_use, buying_power, total_trades,
-          high_water_mark, max_drawdown,
+          high_water_mark, high_water_balance, max_drawdown,
           is_active, dte_mode, person, account_type,
           created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 0, TRUE, $8, $9, 'production', NOW(), NOW())`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, GREATEST($1, $2), 0, TRUE, $8, $9, 'production', NOW(), NOW())`,
       [
         p.starting_capital,
         p.current_balance,
