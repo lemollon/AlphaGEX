@@ -4,6 +4,7 @@ import {
   getLedgerKey,
   mergeLedgerPages,
   ledgerTotal,
+  ledgerTotals,
   hasMoreLedgerPages,
   type LedgerFilters,
   type LedgerPage,
@@ -127,6 +128,49 @@ describe('ledgerTotal', () => {
   it('is 0 with no pages', () => {
     expect(ledgerTotal(undefined)).toBe(0)
     expect(ledgerTotal([])).toBe(0)
+  })
+})
+
+describe('ledgerTotals', () => {
+  it('reads totals off the last loaded page', () => {
+    const pages: LedgerPage[] = [
+      { trades: [], next_cursor: 'c1', total: 8, totals: { completed_trades: 8, win_rate: 87.5 } },
+      { trades: [], next_cursor: null, total: 8, totals: { completed_trades: 8, win_rate: 87.5 } },
+    ]
+    expect(ledgerTotals(pages)).toEqual({ completed_trades: 8, win_rate: 87.5 })
+  })
+
+  it('null win_rate with 0 completed trades — never "0%"', () => {
+    const pages: LedgerPage[] = [
+      { trades: [], next_cursor: null, total: 0, totals: { completed_trades: 0, win_rate: null } },
+    ]
+    expect(ledgerTotals(pages)).toEqual({ completed_trades: 0, win_rate: null })
+  })
+
+  it('is undefined with no pages, so the caller shows a skeleton rather than "0"', () => {
+    expect(ledgerTotals(undefined)).toBeUndefined()
+    expect(ledgerTotals([])).toBeUndefined()
+  })
+
+  it('is undefined against an older server response with no totals field yet', () => {
+    expect(ledgerTotals([{ trades: [], next_cursor: null, total: 5 }])).toBeUndefined()
+  })
+
+  it('a filter change (fewer completed trades in the new population) is reflected once the new page loads', () => {
+    const allAgents: LedgerPage = {
+      trades: [],
+      next_cursor: null,
+      total: 20,
+      totals: { completed_trades: 20, win_rate: 55 },
+    }
+    const sparkOnly: LedgerPage = {
+      trades: [],
+      next_cursor: null,
+      total: 8,
+      totals: { completed_trades: 8, win_rate: 87.5 },
+    }
+    expect(ledgerTotals([allAgents])).toEqual({ completed_trades: 20, win_rate: 55 })
+    expect(ledgerTotals([sparkOnly])).toEqual({ completed_trades: 8, win_rate: 87.5 })
   })
 })
 

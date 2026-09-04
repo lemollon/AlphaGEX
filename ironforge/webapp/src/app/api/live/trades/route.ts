@@ -16,6 +16,10 @@ export const dynamic = 'force-dynamic'
  *
  * No-param calls stay backward compatible: the response still has a `trades` array
  * (now page 1 of 50, not up to 300 per bot) plus the two new pagination fields.
+ *
+ * `totals` (mobile Ledger KPI strip, APP-020 follow-up) is computed over the whole
+ * filtered population (bot/days/q), ignoring cursor/limit — the same population
+ * `total` counts — so it stays correct on every page, not just page 1.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -50,6 +54,7 @@ export async function GET(req: NextRequest) {
       trades: result.trades,
       next_cursor: result.next_cursor,
       total: result.total,
+      totals: result.totals,
       viewer,
     })
   } catch (err: unknown) {

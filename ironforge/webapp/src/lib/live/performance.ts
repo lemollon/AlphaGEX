@@ -73,6 +73,13 @@ function buildCurve(points: Array<{ t: number; pnl: number }>, base: number): Eq
   return out
 }
 
+/** Win rate as a percent, one decimal, or null when there is nothing to divide by.
+ *  Shared definition — win = realized_pnl > 0 — so every KPI derived from it (this
+ *  page's per-bot/combined win_rate, the mobile Ledger KPI strip) agrees. */
+export function winRatePct(wins: number, trades: number): number | null {
+  return trades > 0 ? Math.round((wins / trades) * 1000) / 10 : null
+}
+
 /** Sum P&L of points whose timestamp is within the trailing `days`. */
 function trailing(points: Array<{ t: number; pnl: number }>, days: number, nowMs: number): number {
   const cut = nowMs - days * 86_400_000
@@ -177,7 +184,7 @@ async function loadBot(
       account_value: accountValue,
       balance_source: balanceSource,
       total_pnl: pnl,
-      win_rate: trades > 0 ? Math.round((wins / trades) * 1000) / 10 : null,
+      win_rate: winRatePct(wins, trades),
       trades,
     },
     wins,
@@ -238,7 +245,7 @@ export async function getPerformance(
       account_value: round2(startingCapital + totalPnl),
       total_pnl: totalPnl,
       total_return_pct: startingCapital > 0 ? Math.round((totalPnl / startingCapital) * 10000) / 100 : null,
-      win_rate: totalTrades > 0 ? Math.round((wins / totalTrades) * 1000) / 10 : null,
+      win_rate: winRatePct(wins, totalTrades),
       total_trades: totalTrades,
       wins,
       losses: totalTrades - wins,
