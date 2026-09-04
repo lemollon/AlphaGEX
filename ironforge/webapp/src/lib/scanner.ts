@@ -92,6 +92,69 @@ import { isCustomersDbConfigured } from './customers-db'
 import { getCTNow } from './pt-tiers'
 import { runTrialDayClose, marketDateKey, isAfterTrialCloseTime } from './enrollment/trial-close'
 import { mirrorOpenToCustomers, mirrorCloseToCustomers, retryFailedCustomerCloses } from './customer-executor/executor'
+import { buildTradeOpenedEvent, buildTradeClosedEvent } from './push/trade-events'
+import { dispatchToCustomers } from './push/dispatch'
+import type { LiveBot } from './live/bots'
+
+/**
+ * Push notifications on trade OPEN/CLOSE (UAT #7). Scoped to the two bots on the
+ * customer product surface (live/bots.ts LIVE_BOTS) — inferno/forge are not sold to
+ * customers and have no mascot copy or deep-link target, so a push there would tap
+ * into nothing the app can open.
+ */
+const PUSH_BOTS = new Set<string>(['spark', 'flame'])
+
+/**
+ * Customers mapped to this bot — the same table live/viewer.ts uses to scope the
+ * Live page, so a push always matches what that customer can actually see (paper
+ * bots included: customers see Flame's paper ledger same as Spark's production one).
+ */
+async function customerIdsForBot(botName: string): Promise<string[]> {
+  const rows = await query<{ customer_id: string }>(
+    `SELECT customer_id FROM ironforge_customer_bots WHERE bot = $1`,
+    [botName],
+  )
+  return rows.map((r) => r.customer_id).filter((id): id is string => !!id)
+}
+
+/**
+ * Fire the trade_opened push. NEVER throws into the trade path — every failure
+ * (customer lookup, dispatch) is caught and logged here, not by the caller, exactly
+ * like mirrorOpenToCustomers/postFlameClose just above/below each call site.
+ */
+async function notifyTradeOpened(botName: string, positionId: string): Promise<void> {
+  if (!PUSH_BOTS.has(botName)) return
+  try {
+    const customerIds = await customerIdsForBot(botName)
+    if (customerIds.length === 0) return
+    await dispatchToCustomers(
+      buildTradeOpenedEvent({ bot: botName as LiveBot, positionId, occurredAt: new Date().toISOString() }),
+      customerIds,
+    )
+  } catch (e) {
+    console.warn(`[scanner] ${botName.toUpperCase()} trade_opened push failed: ${e instanceof Error ? e.message : e}`)
+  }
+}
+
+/** Fire the trade_closed push. Same never-throws contract as notifyTradeOpened. */
+async function notifyTradeClosed(botName: string, positionId: string, realizedPnl: number): Promise<void> {
+  if (!PUSH_BOTS.has(botName)) return
+  try {
+    const customerIds = await customerIdsForBot(botName)
+    if (customerIds.length === 0) return
+    await dispatchToCustomers(
+      buildTradeClosedEvent({
+        bot: botName as LiveBot,
+        positionId,
+        realizedPnl,
+        occurredAt: new Date().toISOString(),
+      }),
+      customerIds,
+    )
+  } catch (e) {
+    console.warn(`[scanner] ${botName.toUpperCase()} trade_closed push failed: ${e instanceof Error ? e.message : e}`)
+  }
+}
 import {
   getQuote,
   getOptionExpirations,
@@ -3349,6 +3412,10 @@ async function closePosition(
     })
   }
 
+  // Customer push (UAT #7): fire-and-forget, never throws into the trade path —
+  // notifyTradeClosed catches everything internally.
+  void notifyTradeClosed(bot.name, positionId, realizedPnl)
+
   // Post-close: if same-day open+close = day trade, update PDT tracking.
   // Production and sandbox PDT are tracked SEPARATELY:
   //   - Sandbox: increments shared ironforge_pdt_config.day_trade_count (used by scanner gate)
@@ -4703,6 +4770,10 @@ async function tryOpenFlameBook(
     `(spot ${spot.toFixed(2)}, otm $${otmAbs}, wing $${width}, EM ${em.toFixed(2)}) ` +
     `sizing: ${sizingLine}`,
   )
+
+  // Customer push (UAT #7): fire-and-forget, never throws into the trade path —
+  // notifyTradeOpened catches everything internally.
+  void notifyTradeOpened(bot.name, positionId)
 
   // ────────────────────────────────────────────────────────────────────────
   // LIVE ORDER — everything above this line is paper and always runs.
@@ -6413,6 +6484,10 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     callShort: strikes.callShort, callLong: strikes.callLong,
     spreadWidth, credit: effectiveCredit,
   })
+
+  // Customer push (UAT #7): fire-and-forget, never throws into the trade path —
+  // notifyTradeOpened catches everything internally.
+  void notifyTradeOpened(bot.name, positionId)
 
   return `traded:${positionId}`
 }

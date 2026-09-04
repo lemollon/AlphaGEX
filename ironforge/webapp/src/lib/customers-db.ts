@@ -717,6 +717,12 @@ CREATE TABLE IF NOT EXISTS notification_prefs (
   show_amounts_on_lockscreen BOOLEAN NOT NULL DEFAULT FALSE,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Additive on already-created DBs (UAT #7): a "Sound" toggle (defaults ON — every
+-- push already plays a sound today, so this must not silently change existing
+-- behavior) and a "Weekly summary" toggle (defaults OFF — no sender exists yet,
+-- this column only exists so the Account-tab row has something real to write to).
+ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS sound BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS weekly_summary BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Dedupe + state ledger. The PK makes "once per eligible event" an atomic
 -- INSERT ... ON CONFLICT DO NOTHING RETURNING — the same idiom already proven by

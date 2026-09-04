@@ -11,6 +11,9 @@ import type { NotificationEvent, PushMessage, NotificationCategory } from '@/lib
 
 export interface RenderPrefs {
   showAmountsOnLockscreen: boolean
+  /** "Sound" toggle (Account tab). Defaults true elsewhere so a customer who never
+   * opens settings gets the same experience shipped before this preference existed. */
+  sound?: boolean
 }
 
 /** Android notification channels. Separate channels let a customer mute one class in OS settings. */
@@ -86,8 +89,9 @@ export function renderNotification(
   return {
     to: '', // filled per-device by dispatch
     title: event.title,
+    ...(event.subtitle ? { subtitle: event.subtitle } : {}),
     body,
-    sound: 'default',
+    sound: prefs.sound === false ? null : 'default',
     priority: event.category === 'trade_approval' ? 'high' : 'default',
     channelId: CHANNEL[event.category],
     ttl: TTL_SEC[event.category],

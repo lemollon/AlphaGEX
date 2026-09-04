@@ -58,6 +58,9 @@ export interface NotificationEvent {
   routeParams?: Record<string, string>
   /** Human-facing copy fragments. Amounts travel separately — see `amount`. */
   title: string
+  /** Second line on platforms that render one (iOS notification subtitle). Optional —
+   * most categories never set it; render.ts only forwards it when present. */
+  subtitle?: string
   body: string
   /**
    * Money. NEVER interpolated into title/body by the caller; render.ts decides whether
@@ -74,6 +77,7 @@ export interface NotificationEvent {
 export interface PushMessage {
   to: string
   title: string
+  subtitle?: string
   body: string
   sound: 'default' | null
   priority: 'default' | 'high'

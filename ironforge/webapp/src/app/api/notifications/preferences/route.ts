@@ -20,6 +20,8 @@ const BOOL_COLUMNS = [
   'billing',
   'community',
   'show_amounts_on_lockscreen',
+  'sound',
+  'weekly_summary',
 ] as const
 
 const DEFAULTS: Record<string, boolean> = {
@@ -30,6 +32,8 @@ const DEFAULTS: Record<string, boolean> = {
   billing: true,
   community: false,
   show_amounts_on_lockscreen: false,
+  sound: true,
+  weekly_summary: false,
 }
 
 export async function GET() {

@@ -39,7 +39,7 @@ interface DeviceRow {
 async function loadPrefs(userId: string): Promise<PrefRow> {
   const rows = await customerQuery<PrefRow>(
     `SELECT trade_opened, trade_closed, trade_approval, brokerage_health, billing,
-            community, show_amounts_on_lockscreen
+            community, show_amounts_on_lockscreen, sound
        FROM notification_prefs WHERE user_id = $1 LIMIT 1`,
     [userId],
   )
@@ -52,6 +52,7 @@ async function loadPrefs(userId: string): Promise<PrefRow> {
       billing: true,
       community: false,
       show_amounts_on_lockscreen: false,
+      sound: true,
     }
   )
 }
@@ -165,6 +166,7 @@ export async function dispatchToCustomers(
 
     const base = renderNotification(event, {
       showAmountsOnLockscreen: prefs.show_amounts_on_lockscreen === true,
+      sound: prefs.sound !== false,
     })
     const messages = devices.map((d) => ({ ...base, to: d.expo_push_token }))
     const tickets = await sendExpoPush(messages)
