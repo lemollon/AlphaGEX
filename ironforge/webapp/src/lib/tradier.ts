@@ -2208,7 +2208,12 @@ export async function placeIcOrderAllAccounts(
             )
             return
           }
-          acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, liq.lots, prodCeiling)
+          // max_contracts is INERT for the ladder bots (ADR 0013; the config API
+          // already reports it inert for spark/flame). FLAME's production row
+          // still carries max_contracts=1 from the pre-ladder era, and honouring
+          // it here pinned every FLAME account to 1 lot. The ladder, the
+          // liquidity check, EBB_LADDER_CAP and broker BP are the only caps.
+          acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, liq.lots)
           if (acctContracts > bpContracts) {
             console.warn(
               `PRODUCTION [${acct.name}]: ladder wants ${acctContracts} lots but option BP only margins ${bpContracts}. Sizing down to ${bpContracts}.`,

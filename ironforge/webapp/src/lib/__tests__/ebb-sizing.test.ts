@@ -226,7 +226,11 @@ describe('EBB count ladder — both money paths are wired to the ratchet and the
     expect(tradier).toMatch(/const psQ = await getOptionQuote\(occPs\)/)
     expect(tradier).toMatch(/const liq = ebbSizing\.liquidityCappedLots\(ladder, shortPutBidSize\)/)
     expect(tradier).toMatch(/if \(liq\.lots < 1\) \{[\s\S]*?return\s*\n\s*\}/)
-    expect(tradier).toMatch(/acctContracts = Math\.min\(SANDBOX_MAX_CONTRACTS, liq\.lots, prodCeiling\)/)
+    // ADR 0013: spark_config.max_contracts is INERT on the ladder path. FLAME's
+    // production row still says max_contracts=1 (pre-ladder), and minning it in
+    // here pinned every FLAME account to 1 lot after PR #2960 shipped.
+    expect(tradier).toMatch(/acctContracts = Math\.min\(SANDBOX_MAX_CONTRACTS, liq\.lots\)/)
+    expect(tradier).not.toMatch(/Math\.min\(SANDBOX_MAX_CONTRACTS, liq\.lots, prodCeiling\)/)
     expect(tradier).toMatch(/if \(acctContracts > bpContracts\) \{[\s\S]*?acctContracts = bpContracts/)
     expect(tradier).toMatch(/ebbSizing\.formatEbbSizingLine\(\{[\s\S]*?finalLots: acctContracts/)
     // The old funded-only reader is gone; nothing sizes from it any more.
