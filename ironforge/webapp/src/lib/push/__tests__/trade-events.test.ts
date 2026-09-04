@@ -1,6 +1,54 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { buildTradeOpenedEvent, buildTradeClosedEvent } from '@/lib/push/trade-events'
 
+/**
+ * In-memory stand-ins for the tables dispatch touches — same pattern as
+ * dispatch.test.ts. Declared (and mocked) at module scope, not inside a
+ * describe block: vi.mock factories are hoisted above the rest of the file,
+ * so a factory closing over a variable declared inside a describe callback
+ * throws "state is not defined" at import time.
+ */
+const state = {
+  prefs: new Map<string, Record<string, boolean>>(),
+  devices: new Map<string, Array<{ id: string; expo_push_token: string }>>(),
+  claimed: new Map<string, string | null>(),
+}
+const sent: Array<{ to: string; title: string; subtitle?: string }> = []
+
+vi.mock('@/lib/push/transport', () => ({
+  isPushConfigured: () => true,
+  isExpoPushToken: (t: string) => t.startsWith('ExponentPushToken['),
+  isDeviceGone: () => false,
+  sendExpoPush: async (msgs: Array<{ to: string; title: string; subtitle?: string }>) => {
+    sent.push(...msgs)
+    return msgs.map(() => ({ status: 'ok' as const, id: 'ticket' }))
+  },
+}))
+
+vi.mock('@/lib/customers-db', () => ({
+  isCustomersDbConfigured: () => true,
+  customerExecute: async () => 0,
+  customerQuery: async (sql: string, params: unknown[] = []) => {
+    if (sql.includes('FROM notification_prefs')) {
+      const p = state.prefs.get(params[0] as string)
+      return p ? [p] : []
+    }
+    if (sql.includes('FROM push_devices')) {
+      return state.devices.get(params[0] as string) ?? []
+    }
+    if (sql.includes('INSERT INTO notification_events')) {
+      const [eventKey, userId] = params as [string, string]
+      const k = `${eventKey}|${userId}`
+      if (state.claimed.has(k)) return []
+      state.claimed.set(k, null)
+      return [{ event_key: eventKey }]
+    }
+    return []
+  },
+}))
+
+const { dispatchToCustomers } = await import('@/lib/push/dispatch')
+
 describe('buildTradeOpenedEvent — copy (UAT #7)', () => {
   it('matches the approved copy exactly', () => {
     const evt = buildTradeOpenedEvent({
@@ -108,48 +156,9 @@ describe('buildTradeClosedEvent — copy and sign (UAT #7)', () => {
 /**
  * End-to-end through the real dispatch/dedupe path (not just the eventKey in
  * isolation): a scanner retry on the SAME closed position must still deliver
- * exactly one push. Same mocking pattern as dispatch.test.ts.
+ * exactly one push.
  */
 describe('close fires exactly one trade_closed per trade (dedupe)', () => {
-  const state = {
-    prefs: new Map<string, Record<string, boolean>>(),
-    devices: new Map<string, Array<{ id: string; expo_push_token: string }>>(),
-    claimed: new Map<string, string | null>(),
-  }
-  const sent: Array<{ to: string; title: string; subtitle?: string }> = []
-
-  vi.mock('@/lib/push/transport', () => ({
-    isPushConfigured: () => true,
-    isExpoPushToken: (t: string) => t.startsWith('ExponentPushToken['),
-    isDeviceGone: () => false,
-    sendExpoPush: async (msgs: Array<{ to: string; title: string; subtitle?: string }>) => {
-      sent.push(...msgs)
-      return msgs.map(() => ({ status: 'ok' as const, id: 'ticket' }))
-    },
-  }))
-
-  vi.mock('@/lib/customers-db', () => ({
-    isCustomersDbConfigured: () => true,
-    customerExecute: async () => 0,
-    customerQuery: async (sql: string, params: unknown[] = []) => {
-      if (sql.includes('FROM notification_prefs')) {
-        const p = state.prefs.get(params[0] as string)
-        return p ? [p] : []
-      }
-      if (sql.includes('FROM push_devices')) {
-        return state.devices.get(params[0] as string) ?? []
-      }
-      if (sql.includes('INSERT INTO notification_events')) {
-        const [eventKey, userId] = params as [string, string]
-        const k = `${eventKey}|${userId}`
-        if (state.claimed.has(k)) return []
-        state.claimed.set(k, null)
-        return [{ event_key: eventKey }]
-      }
-      return []
-    },
-  }))
-
   beforeEach(() => {
     state.prefs.clear()
     state.devices.clear()
@@ -159,15 +168,14 @@ describe('close fires exactly one trade_closed per trade (dedupe)', () => {
   })
 
   it('a retried close dispatch for the same position sends only once', async () => {
-    const { dispatchToCustomers } = await import('@/lib/push/dispatch')
     const args = {
       bot: 'flame' as const,
       positionId: 'FLAME-SPY-20260904-ABC123',
       realizedPnl: 36,
       occurredAt: '2026-09-04T20:00:00.000Z',
     }
-
     const NOW = Date.parse(args.occurredAt)
+
     const first = await dispatchToCustomers(buildTradeClosedEvent(args), ['user-1'], NOW)
     expect(first.sent).toBe(1)
 
