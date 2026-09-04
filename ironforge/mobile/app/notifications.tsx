@@ -26,6 +26,8 @@ type Preferences = {
   billing: boolean
   community: boolean
   show_amounts_on_lockscreen: boolean
+  sound: boolean
+  weekly_summary: boolean
 }
 
 type PrefKey = keyof Preferences
@@ -45,6 +47,12 @@ const GROUPS: Array<{ label: string; rows: Array<{ key: PrefKey; label: string; 
         key: 'trade_approval',
         label: 'Trade needs your approval',
         detail: 'Time-sensitive — expires in 5 minutes.',
+      },
+      { key: 'sound', label: 'Sound', detail: 'Play a sound with trade and account alerts.' },
+      {
+        key: 'weekly_summary',
+        label: 'Weekly summary',
+        detail: 'A recap of the week’s trades. Off by default.',
       },
     ],
   },
