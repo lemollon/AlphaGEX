@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { View, Text, ScrollView, RefreshControl, Pressable, StyleSheet, Alert } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
@@ -24,6 +24,15 @@ import { brokerLabel, soleConnection } from '@/api/brokerage'
 import { totalCapital } from '@/live/capital'
 import { agentStatItems } from '@/live/card-stats'
 import { formatPeriodValue, periodTone, type PeriodTone } from '@/live/period-stats'
+import {
+  deriveLifecycleNodes,
+  lifecycleFillFraction,
+  formatLocalClock,
+  minutesSince,
+  formatElapsedMinutes,
+  formatTargetStopCaption,
+  formatAutoCloseCaption,
+} from '@/live/lifecycle'
 import { pickBanner, bannerActionHref } from '@/alerts/banner'
 
 /**
@@ -359,6 +368,19 @@ function AgentTile({
         </>
       )}
 
+      {/* Lifecycle line (UAT round two, mock #1) — same "has an open position"
+          condition as the Target/Stop chart below it, so it never renders
+          against a closed/no-trade tile. */}
+      {trade?.active ? (
+        <LifecycleLine
+          accent={accent}
+          openedAt={trade.opened_at}
+          targetDollars={trade.target_dollars ?? null}
+          stopDollars={trade.stop_dollars ?? null}
+          autoCloseAt={trade.auto_close_at ?? null}
+        />
+      ) : null}
+
       {agent.error === 'trade' ? (
         <Text style={[type.label, { color: color.warn, marginTop: space.lg }]}>
           Position details are unavailable right now.
@@ -429,6 +451,114 @@ function AgentTile({
         </Text>
       )}
     </Card>
+  )
+}
+
+/**
+ * The open-position lifecycle line — UAT round two, mock #1
+ * ("Open-position lifecycle with the real open time"). Four nodes on one
+ * track: Opened → Monitoring → Target/Stop → Auto Close.
+ *
+ * State derivation and every caption are pure functions in live/lifecycle.ts
+ * (tested there); this is presentation only, plus the once-a-minute tick that
+ * keeps "N min" current without the customer having to pull to refresh.
+ *
+ * Distinct from the older Stepper below: Stepper reads CustomerState.timeline_step
+ * directly and (by that convention) shows "Target / Stop" as current once a
+ * position is being monitored. This line is the newer, approved design —
+ * Monitoring itself is the current node for as long as the position is open,
+ * since Target/Stop and Auto Close describe outcomes the backend cannot yet
+ * detect live.
+ */
+function LifecycleLine({
+  accent,
+  openedAt,
+  targetDollars,
+  stopDollars,
+  autoCloseAt,
+}: {
+  accent: string
+  openedAt: string | null
+  targetDollars: number | null
+  stopDollars: number | null
+  autoCloseAt: string | null
+}) {
+  // Forces a re-render once a minute so the Monitoring caption ("37 min")
+  // ticks forward on its own — the position doesn't otherwise change shape
+  // between 60s agent polls.
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 60_000)
+    return () => clearInterval(id)
+  }, [])
+
+  const nodes = deriveLifecycleNodes(false)
+  const fillPct = lifecycleFillFraction(nodes) * 75 // track spans the middle 75% of the row
+  const captions = [
+    formatLocalClock(openedAt) ?? '—',
+    openedAt ? formatElapsedMinutes(minutesSince(openedAt)) : '—',
+    formatTargetStopCaption(targetDollars, stopDollars),
+    formatAutoCloseCaption(autoCloseAt),
+  ]
+
+  return (
+    <View style={s.lifecycle} accessibilityLabel="Trade lifecycle">
+      {/* Track first so it paints BEHIND the node dots, not over them. */}
+      <View style={s.lifecycleTrack} />
+      <View style={[s.lifecycleFill, { width: `${fillPct}%`, backgroundColor: accent }]} />
+      <View style={s.lifecycleNodes}>
+        {nodes.map((node, i) => {
+          const nodeColor =
+            node.status === 'done' ? color.pos : node.status === 'current' ? accent : color.border
+          return (
+            <View
+              key={node.label}
+              style={s.lifecycleNode}
+              accessible
+              accessibilityRole="text"
+              accessibilityLabel={`${node.label}, ${node.status}, ${captions[i]}`}
+            >
+              <View
+                style={[
+                  s.lifecycleHalo,
+                  node.status === 'current' ? { backgroundColor: `${accent}2E` } : null,
+                ]}
+              >
+                <View
+                  style={[
+                    s.lifecycleDot,
+                    {
+                      borderColor: nodeColor,
+                      backgroundColor: node.status === 'future' ? color.card : nodeColor,
+                    },
+                  ]}
+                >
+                  {node.status === 'done' ? (
+                    <Ionicons name="checkmark" size={12} color={color.bg} />
+                  ) : null}
+                </View>
+              </View>
+              <Text
+                style={[
+                  type.label,
+                  {
+                    color: node.status === 'future' ? color.muted : nodeColor,
+                    fontFamily: font.bodyMedium,
+                    marginTop: space.xs,
+                    textAlign: 'center',
+                  },
+                ]}
+              >
+                {node.label}
+              </Text>
+              <Text style={[type.label, { color: color.muted, marginTop: 1, textAlign: 'center' }]}>
+                {captions[i]}
+              </Text>
+            </View>
+          )
+        })}
+      </View>
+    </View>
   )
 }
 
@@ -607,4 +737,30 @@ const s = StyleSheet.create({
   divider: { height: 1, backgroundColor: color.border, marginVertical: space.lg },
   stepper: { flexDirection: 'row', marginTop: space.lg },
   stepDot: { width: 16, height: 16, borderRadius: 8, borderWidth: 2 },
+  lifecycle: { marginTop: space.md, position: 'relative' },
+  lifecycleNodes: { flexDirection: 'row' },
+  lifecycleNode: { flex: 1, alignItems: 'center' },
+  // 32px halo around a 24px dot — the "soft halo" ring is a plain tinted
+  // circle behind the dot rather than a CSS box-shadow, which RN has no
+  // equivalent for; only the current node gets a non-transparent halo.
+  lifecycleHalo: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  lifecycleDot: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  // Positioned to cross through the halo's vertical center (16px) minus half
+  // the line's own height, so the 3px track visually threads through every dot.
+  lifecycleTrack: {
+    position: 'absolute',
+    top: 14.5,
+    left: '12.5%',
+    right: '12.5%',
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: color.border,
+  },
+  lifecycleFill: {
+    position: 'absolute',
+    top: 14.5,
+    left: '12.5%',
+    height: 3,
+    borderRadius: 2,
+  },
 })

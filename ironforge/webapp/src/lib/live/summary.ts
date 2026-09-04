@@ -9,7 +9,13 @@ import {
   calculateIcUnrealizedPnl,
   isConfigured,
 } from '@/lib/tradier'
-import { isMarketOpen, DEFAULT_EOD_CUTOFF_MIN, formatCTClock } from '@/lib/pt-tiers'
+import {
+  isMarketOpen,
+  DEFAULT_EOD_CUTOFF_MIN,
+  formatCTClock,
+  getCurrentPTTier,
+  isSparkStrategyBot,
+} from '@/lib/pt-tiers'
 import { deriveCustomerState, getMarketSession } from './state'
 import { countProtectiveSkipDays } from './riskProtection'
 import { buildActivityFeed } from './activityFeed'
@@ -482,6 +488,38 @@ function profitBasisPct(pnl: number, maxProfitDollars: number, maxLossDollars: n
   return Math.round((pnl / basis) * 10000) / 100
 }
 
+/**
+ * A CT-local wall-clock time ("today at HH:MM CT") as an absolute UTC instant.
+ *
+ * Used for the lifecycle line's "Auto Close" node — the client needs a real
+ * instant it can format in the VIEWER's local time, not a pre-formatted CT
+ * string. Same offset trick as eventCalendar/halt-window.ts's ctWallToUtc:
+ * guess the instant, ask Intl what CT wall-clock time that guess actually is,
+ * then correct by the difference — handles DST without a timezone database.
+ */
+function ctWallTimeUtcIso(ctDateStr: string, minsSinceMidnight: number): string {
+  const [y, mo, d] = ctDateStr.split('-').map(Number)
+  const hh = Math.floor(minsSinceMidnight / 60)
+  const mm = minsSinceMidnight % 60
+  const guess = new Date(Date.UTC(y, mo - 1, d, hh, mm, 0))
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  })
+  const parts = dtf.formatToParts(guess).reduce((acc, p) => {
+    if (p.type !== 'literal') acc[p.type] = p.value
+    return acc
+  }, {} as Record<string, string>)
+  const ctMs = Date.UTC(
+    parseInt(parts.year), parseInt(parts.month) - 1, parseInt(parts.day),
+    parseInt(parts.hour === '24' ? '0' : parts.hour), parseInt(parts.minute), parseInt(parts.second),
+  )
+  const offsetMin = (ctMs - guess.getTime()) / 60000
+  return new Date(guess.getTime() - offsetMin * 60000).toISOString()
+}
+
 export async function getLiveTrade(
   BOT: LiveBot = 'spark',
   person: string | null = null,
@@ -581,6 +619,9 @@ export async function getLiveTrade(
       unrealized_pnl: null,
       unrealized_pnl_pct: null,
       pnl_source: 'none',
+      target_dollars: null,
+      stop_dollars: null,
+      auto_close_at: null,
       spark_series: sparkSeries,
       positions: [],
       today_result: todayResult,
@@ -636,6 +677,34 @@ export async function getLiveTrade(
     }
   }
 
+  // Profit-target % and stop-loss multiplier for the lifecycle line's "Target /
+  // Stop" caption — same config the operator's position-monitor route reads,
+  // with the same fallback defaults (30% / 2.0×) when the row is missing.
+  // SPARK-strategy bots ignore the DB profit_target_pct in favor of the live
+  // sliding tier (mirrors pt-tiers.ts's own note on this — position-monitor
+  // does the same override).
+  let icPtPct = 0.30
+  let icSlMult = 2.0
+  try {
+    const cfgScope = resolveAccountMode(BOT) === 'production' ? 'production' : 'sandbox'
+    const cfgRows = await dbQuery(
+      `SELECT stop_loss_pct, profit_target_pct
+       FROM ${botTable(BOT, 'config')}
+       WHERE COALESCE(account_type, 'sandbox') IN ('${escapeSql(cfgScope)}', 'sandbox')
+         ${dteFilter}
+       ORDER BY CASE WHEN COALESCE(account_type, 'sandbox') = '${escapeSql(cfgScope)}' THEN 0 ELSE 1 END
+       LIMIT 1`,
+    )
+    const slPct = num(cfgRows[0]?.stop_loss_pct)
+    if (slPct > 0) icSlMult = slPct / 100
+    const ptPct = num(cfgRows[0]?.profit_target_pct)
+    if (ptPct > 0) icPtPct = ptPct / 100
+  } catch {
+    // Leave the defaults — the lifecycle line's Target/Stop caption falls back
+    // to the same numbers position-monitor would, rather than going blank.
+  }
+  if (isSparkStrategyBot(BOT)) icPtPct = getCurrentPTTier(new Date(), BOT).pct
+
   const positions: LiveOpenPosition[] = await Promise.all(
     positionRows.map(async (p): Promise<LiveOpenPosition> => {
       const pContracts = int(p.contracts)
@@ -643,6 +712,26 @@ export async function getLiveTrade(
       const pExpiration =
         p.expiration?.toISOString?.()?.slice(0, 10) ||
         (p.expiration ? String(p.expiration).slice(0, 10) : '')
+
+      // Lifecycle line ("Target / Stop" + "Auto Close" nodes). Dollar profit at
+      // the configured PT is credit × pt% × contracts; dollar loss at the
+      // configured SL is credit × (slMult − 1) × contracts — the same two
+      // thresholds position-monitor reports as profit_target_price/stop_loss_price,
+      // converted from a per-contract price into what the customer actually
+      // stands to gain/lose. slMult <= 1 means the strategy has no real stop
+      // (holds to settlement) — null rather than a nonsense $0/negative figure.
+      const targetDollars = pCredit > 0
+        ? Math.round(pContracts * pCredit * icPtPct * 100 * 100) / 100
+        : null
+      const stopDollars = pCredit > 0 && icSlMult > 1
+        ? Math.round(pContracts * pCredit * (icSlMult - 1) * 100 * 100) / 100
+        : null
+      // Auto-close only has a same-day scheduled instant when this position
+      // expires today (the EOD safety cutoff); a swung leg expiring another
+      // day has no "close by HH:MM" moment to show today.
+      const autoCloseAt = pExpiration === ctTodayDate
+        ? ctWallTimeUtcIso(ctTodayDate, DEFAULT_EOD_CUTOFF_MIN)
+        : null
 
       let pnl: number | null = null
       let pnlPct: number | null = null
@@ -709,6 +798,9 @@ export async function getLiveTrade(
         unrealized_pnl: pnl,
         unrealized_pnl_pct: pnlPct,
         pnl_source: source,
+        target_dollars: targetDollars,
+        stop_dollars: stopDollars,
+        auto_close_at: autoCloseAt,
         held_overnight: heldOvernight,
         day_number: dayNumber,
         // Regime AT ENTRY, straight off the row. It set this trade's strikes and size,
@@ -800,6 +892,11 @@ export async function getLiveTrade(
     unrealized_pnl: unrealizedPnl,
     unrealized_pnl_pct: unrealizedPnlPct,
     pnl_source: pnlSource,
+    // Mirrors positions[0], same as every other scalar field in this return —
+    // already computed once inside the positions.map above.
+    target_dollars: positions[0]?.target_dollars ?? null,
+    stop_dollars: positions[0]?.stop_dollars ?? null,
+    auto_close_at: positions[0]?.auto_close_at ?? null,
     spark_series: sparkSeries,
     today_result: null,
     positions,

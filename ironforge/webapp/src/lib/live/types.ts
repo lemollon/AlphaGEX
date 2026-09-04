@@ -185,6 +185,20 @@ export interface LiveOpenPosition {
   unrealized_pnl: number | null
   unrealized_pnl_pct: number | null
   pnl_source: 'live' | 'scanner_snapshot' | 'none'
+  /**
+   * Lifecycle line (UAT round two, mock #1). Dollar profit at the configured
+   * profit target and dollar loss at the configured stop, derived from this
+   * position's own credit/contracts — not a percentage, so the card can show
+   * "$60 / −$120" without the customer doing the math themselves.
+   *
+   * `stop_dollars` is null when the strategy has no real stop (holds to
+   * settlement instead) — the UI must show "hold to close", never $0.
+   */
+  target_dollars: number | null
+  stop_dollars: number | null
+  /** ISO instant of today's EOD auto-close cutoff — null when this position
+   *  doesn't expire today (a swung leg), which the UI reads as "at close". */
+  auto_close_at: string | null
   /** Opened on an earlier CT date — i.e. this is the swung leg. */
   held_overnight: boolean
   /** 1 on the day it opened, 2 the next session, and so on. */
@@ -238,6 +252,10 @@ export interface LiveTrade {
   unrealized_pnl: number | null
   unrealized_pnl_pct: number | null
   pnl_source: 'live' | 'scanner_snapshot' | 'none'
+  /** Mirrors positions[0] — see LiveOpenPosition for the lifecycle-line contract. */
+  target_dollars: number | null
+  stop_dollars: number | null
+  auto_close_at: string | null
   spark_series: Array<{ timestamp: string; pnl: number }>
   /** Populated when today's trading is complete (realized result). */
   today_result: { pnl: number; pct: number | null } | null

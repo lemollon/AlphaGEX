@@ -75,6 +75,17 @@ export interface LiveOpenPosition {
   unrealized_pnl: number | null
   unrealized_pnl_pct: number | null
   pnl_source: 'live' | 'scanner_snapshot' | 'none'
+  /**
+   * Lifecycle line's "Target / Stop" caption — dollar profit at the configured
+   * profit target, dollar loss at the configured stop. `stop_dollars` is null
+   * when the strategy holds to settlement instead of stopping out; render
+   * "hold to close" in that case, never $0.
+   */
+  target_dollars?: number | null
+  stop_dollars?: number | null
+  /** ISO instant of today's EOD auto-close cutoff; null when this position
+   *  doesn't expire today (a swung leg) — render "at close" in that case. */
+  auto_close_at?: string | null
   /** Opened on an earlier CT date — this is the swung leg. */
   held_overnight: boolean
   /** 1 on the day it opened, 2 the next session, and so on. */
@@ -98,6 +109,10 @@ export interface LiveTrade {
   unrealized_pnl: number | null
   unrealized_pnl_pct: number | null
   pnl_source: 'live' | 'scanner_snapshot' | 'none'
+  /** Mirrors positions[0] — see LiveOpenPosition. Drives the lifecycle line. */
+  target_dollars?: number | null
+  stop_dollars?: number | null
+  auto_close_at?: string | null
   /** Today's intraday P&L series — the source for the UX-003 chart. */
   spark_series: Array<{ timestamp: string; pnl: number }>
   today_result: { pnl: number; pct: number | null } | null
