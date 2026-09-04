@@ -307,11 +307,20 @@ export interface DeletionRequestResponse {
 
 // ---- WP-B types ----
 
+/** The Ledger KPI strip (completed trades / win rate), over the same filtered
+ *  population as `total` — bot/days/q, ignoring cursor/limit. */
+export interface TradesTotals {
+  completed_trades: number
+  win_rate: number | null
+}
+
 /**
  * GET /api/live/trades — now cursor-paginated (APP-020). `trades` is still the
  * top-level array (unchanged shape for anything reading it pre-pagination);
  * `next_cursor` is opaque and only meaningful passed straight back as `cursor`
  * on the next request. `total` counts every row matching the current filters.
+ * `totals` is optional for the same forward/backward-compat reason as other
+ * additive fields in this file — an installed app can be older than the API.
  */
 export interface TradesPageResponse {
   empty?: boolean
@@ -319,6 +328,7 @@ export interface TradesPageResponse {
   trades: HistoryTrade[]
   next_cursor: string | null
   total: number
+  totals?: TradesTotals
 }
 
 export type TradeLegSide = 'buy' | 'sell'

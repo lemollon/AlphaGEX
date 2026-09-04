@@ -9,7 +9,7 @@
  * active filters, (2) tell useSWRInfinite when to stop, and (3) flatten the pages
  * SWR has accumulated into one ordered, de-duplicated list.
  */
-import type { HistoryTrade } from '@/api/types'
+import type { HistoryTrade, TradesTotals } from '@/api/types'
 
 export const LEDGER_PAGE_SIZE = 30
 
@@ -26,6 +26,7 @@ export interface LedgerPage {
   trades: HistoryTrade[]
   next_cursor: string | null
   total: number
+  totals?: TradesTotals
   empty?: boolean
 }
 
@@ -92,6 +93,19 @@ export function ledgerTotal(pages: Array<LedgerPage | undefined> | undefined): n
     if (p && typeof p.total === 'number') return p.total
   }
   return 0
+}
+
+/** The KPI strip's numbers, from the most recently loaded page (every page in a
+ *  run carries the same `totals`, computed over the whole filtered population —
+ *  same convention as `ledgerTotal`). Undefined while nothing has loaded yet, or
+ *  if an older server build hasn't started sending `totals`. */
+export function ledgerTotals(pages: Array<LedgerPage | undefined> | undefined): TradesTotals | undefined {
+  if (!pages || pages.length === 0) return undefined
+  for (let i = pages.length - 1; i >= 0; i--) {
+    const t = pages[i]?.totals
+    if (t) return t
+  }
+  return undefined
 }
 
 /** Whether a "Load more" control / onEndReached should be armed. */

@@ -4,8 +4,15 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import useSWRInfinite from 'swr/infinite'
 import { api } from '@/api/client'
-import type { HistoryTrade, TradesPageResponse } from '@/api/types'
-import { getLedgerKey, mergeLedgerPages, ledgerTotal, hasMoreLedgerPages, type LedgerFilters } from '@/ledger/paging'
+import type { HistoryTrade, TradesPageResponse, TradesTotals } from '@/api/types'
+import {
+  getLedgerKey,
+  mergeLedgerPages,
+  ledgerTotal,
+  ledgerTotals,
+  hasMoreLedgerPages,
+  type LedgerFilters,
+} from '@/ledger/paging'
 import { tradeDetailHref } from '@/ledger/detail'
 import { color, space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { Card, Money, OutcomeBadge, AgentBadge, Loading, Empty, ErrorState } from '@/components/ui'
@@ -67,6 +74,7 @@ export default function LedgerScreen() {
 
   const trades = mergeLedgerPages(data)
   const total = ledgerTotal(data)
+  const totals = ledgerTotals(data)
   const canLoadMore = hasMoreLedgerPages(data)
   const loadingMore = isValidating && size > 0 && !!data && data.length < size
 
@@ -97,6 +105,8 @@ export default function LedgerScreen() {
         scrollEventThrottle={200}
       >
         <Text style={s.title}>Ledger</Text>
+
+        <KpiStrip totals={totals} />
 
         <Card style={{ marginBottom: space.lg }}>
           <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]}>
@@ -186,6 +196,51 @@ export default function LedgerScreen() {
       </ScrollView>
     </Shell>
   )
+}
+
+/**
+ * Completed Trades / Win Rate — the top-of-Ledger KPI strip (approved mock,
+ * handoff/ledger-kpis.md). `totals` is undefined until the first page loads,
+ * which is when the skeleton shows instead of a flash of "0"/"—".
+ */
+function KpiStrip({ totals }: { totals: TradesTotals | undefined }) {
+  const loading = !totals
+  const zero = !!totals && totals.completed_trades === 0
+
+  return (
+    <Card style={[s.kpiCard, { marginBottom: space.lg }]}>
+      <View style={s.kpiHalf}>
+        <Text style={[s.kpiLabel, { color: color.muted }]}>Completed Trades</Text>
+        {loading ? (
+          <View style={s.kpiSkeleton} />
+        ) : (
+          <Text style={[s.kpiValue, { color: color.text }]}>
+            {zero ? '—' : totals!.completed_trades.toLocaleString('en-US')}
+          </Text>
+        )}
+      </View>
+
+      <View style={s.kpiDivider} />
+
+      <View style={s.kpiHalf}>
+        <Text style={[s.kpiLabel, { color: color.muted }]}>Win Rate</Text>
+        {loading ? (
+          <View style={s.kpiSkeleton} />
+        ) : (
+          <Text style={[s.kpiValue, { color: color.pos }]}>
+            {zero ? '—' : formatWinRate(totals!.win_rate)}
+          </Text>
+        )}
+      </View>
+    </Card>
+  )
+}
+
+/** "87%" for a whole number, "87.5%" otherwise — the mock shows the whole-number
+ *  case. Null (no completed trades) is handled by the caller, not here. */
+function formatWinRate(pct: number | null): string {
+  if (pct == null) return '—'
+  return Number.isInteger(pct) ? `${pct}%` : `${pct.toFixed(1)}%`
 }
 
 function TradeCard({ trade, onPress }: { trade: HistoryTrade; onPress: () => void }) {
@@ -286,6 +341,23 @@ function formatDate(d: string): string {
 
 const s = StyleSheet.create({
   title: { ...type.title, color: color.text, fontFamily: font.display, marginBottom: space.lg },
+  kpiCard: { flexDirection: 'row', alignItems: 'stretch' },
+  kpiHalf: { flex: 1, alignItems: 'center' },
+  kpiLabel: { fontSize: 16, marginBottom: space.xs },
+  kpiValue: {
+    fontSize: 34,
+    fontFamily: font.bodyBold,
+    letterSpacing: -0.5,
+    fontVariant: ['tabular-nums'],
+  },
+  kpiSkeleton: {
+    width: 56,
+    height: 34,
+    borderRadius: radius.sm,
+    backgroundColor: color.border,
+    opacity: 0.6,
+  },
+  kpiDivider: { width: 1, backgroundColor: color.border, marginHorizontal: space.md },
   search: {
     marginTop: space.md,
     backgroundColor: color.bg,

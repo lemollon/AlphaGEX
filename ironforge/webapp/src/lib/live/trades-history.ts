@@ -2,6 +2,7 @@ import { dbQuery, botTable, num, int, escapeSql, dteMode } from '@/lib/db'
 import { scopeFilter, type LiveBot } from './viewer'
 import { LIVE_BOT_LABEL } from './bots'
 import { classifyExitReason, type ExitReasonCode } from './exit-reasons'
+import { winRatePct } from './performance'
 
 /**
  * Customer Trade History — the viewer's own CLOSED trades across every strategy
@@ -206,6 +207,26 @@ export function paginateSorted<T extends SortedRow>(
   return { page, next_cursor }
 }
 
+export interface TradesTotals {
+  completed_trades: number
+  win_rate: number | null
+}
+
+/**
+ * KPI strip totals (mobile Ledger UX-004 addition) — computed over the SAME
+ * filtered population `loadMergedRows` hands the pagination logic, before the
+ * cursor slice, so "Completed Trades" / "Win Rate" always describe every trade
+ * matching the current bot/days/q filters, not just the loaded page. Pure and
+ * DB-independent for the same reason paginateSorted is: the merge query does
+ * the filtering in SQL, this only does the counting, so it's unit-testable
+ * without a live Postgres connection.
+ */
+export function computeTradesTotals(rows: Array<{ realized_pnl: unknown }>): TradesTotals {
+  const completed_trades = rows.length
+  const wins = rows.reduce((a, r) => (num(r.realized_pnl) > 0 ? a + 1 : a), 0)
+  return { completed_trades, win_rate: winRatePct(wins, completed_trades) }
+}
+
 export interface TradesPageFilters {
   limit?: number
   cursor?: string | null
@@ -218,6 +239,7 @@ export interface TradesPage {
   trades: HistoryTrade[]
   next_cursor: string | null
   total: number
+  totals: TradesTotals
 }
 
 interface MergedRow {
@@ -353,7 +375,11 @@ export async function getCustomerTradesPage(
   const q = filters.q?.trim() || null
 
   const rawRows = await loadMergedRows(bots, persons, isOperator, { bot: botFilter, days, q })
-  if (rawRows.length === 0) return { trades: [], next_cursor: null, total: 0 }
+  // `totals` is over rawRows — the full filtered population, ignoring cursor/limit —
+  // BEFORE the empty-check below, so a 0-trade filter reports { completed_trades: 0,
+  // win_rate: null } rather than an omitted field.
+  const totals = computeTradesTotals(rawRows)
+  if (rawRows.length === 0) return { trades: [], next_cursor: null, total: 0, totals }
 
   const cursor = decodeTradeCursor(filters.cursor)
   const { page, next_cursor } = paginateSorted(rawRows, cursor, limit)
@@ -367,7 +393,7 @@ export async function getCustomerTradesPage(
     return toHistoryTrade(bot, r, paperSet.has(bot), startCapByBot.get(bot) ?? 0)
   })
 
-  return { trades, next_cursor, total: rawRows.length }
+  return { trades, next_cursor, total: rawRows.length, totals }
 }
 
 // ---- Trade detail (APP-019, APP-022) ----
