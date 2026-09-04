@@ -17,10 +17,12 @@ import type {
 } from '@/api/types'
 import { color, space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { Card, Money, Balance, SectionLabel, Loading, Empty, ErrorState } from '@/components/ui'
+import { StatRow } from '@/components/StatRow'
 import { AppHeader, Mascot } from '@/components/Brand'
 import { PnlChart } from '@/components/PnlChart'
 import { brokerLabel, soleConnection } from '@/api/brokerage'
 import { totalCapital } from '@/live/capital'
+import { agentStatItems } from '@/live/card-stats'
 import { pickBanner, bannerActionHref } from '@/alerts/banner'
 
 /**
@@ -309,6 +311,16 @@ function AgentTile({
         ) : null}
       </View>
 
+      {/* Account Capital / Growth / Last 10 / Best Trade — LIFETIME, no filter
+          (handoff/ledger-kpis.md PART 2). `agent.stats` is null only when the server
+          couldn't compute it (both source queries must succeed); agentStatItems turns
+          that into an honest "—" per column rather than throwing or hiding the row.
+          No separate per-tile loading state: this tile does not mount until
+          agents.data has already loaded (see the agents.isLoading gate above it). */}
+      <View style={s.statsPanel}>
+        <StatRow variant="card" items={agentStatItems(agent.stats, false)} />
+      </View>
+
       {/* One agent failing must not blank the other — the server settles them separately,
           so a broken half says so instead of rendering as "nothing happening". */}
       {agent.error === 'state' || !state ? (
@@ -553,6 +565,16 @@ const s = StyleSheet.create({
     height: 38,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // Inset panel background: color.bg reads darker than the card's own color.card,
+  // matching the approved mock's slightly-recessed --card-2 without a new token.
+  statsPanel: {
+    marginTop: space.md,
+    backgroundColor: color.bg,
+    borderWidth: 1,
+    borderColor: color.border,
+    borderRadius: radius.lg,
+    paddingVertical: space.md,
   },
   divider: { height: 1, backgroundColor: color.border, marginVertical: space.lg },
   stepper: { flexDirection: 'row', marginTop: space.lg },

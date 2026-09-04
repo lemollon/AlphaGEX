@@ -71,7 +71,14 @@ function ctDate(v: unknown): string {
 }
 const r2 = (v: number) => Math.round(v * 100) / 100
 
-async function loadBotTrades(
+/**
+ * Exported (in addition to being used by getCustomerTrades below) so
+ * GET /api/live/agents can source the Forge card stats row's "Last 10" and
+ * "Best Trade" from the SAME closed-trades query rather than adding a new
+ * one — the LIMIT 300 / ORDER BY close_time DESC here already gives every
+ * consumer newest-first, which "Last 10" needs verbatim.
+ */
+export async function loadBotTrades(
   bot: LiveBot,
   person: string | null,
   paper: boolean,

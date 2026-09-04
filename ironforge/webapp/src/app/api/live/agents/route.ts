@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getLiveSummary, getLiveTrade } from '@/lib/live/summary'
+import { getLifetimeStats } from '@/lib/live/home'
+import { loadBotTrades } from '@/lib/live/trades-history'
+import { computeCardStats, type CardStats } from '@/lib/live/card-stats'
 import { resolveLiveViewer, LIVE_BOT_LABEL, type LiveBot } from '@/lib/live/viewer'
 
 export const dynamic = 'force-dynamic'
@@ -21,7 +24,8 @@ export const dynamic = 'force-dynamic'
  * resolveLiveViewer — never a client-supplied list. A customer gets only their mapped
  * bots; there is no query parameter that widens it.
  *
- * COST: one summary + one trade query set per bot. That is 2× today (Spark, Flame) at a
+ * COST: one summary + one trade + one lifetime-stats + one closed-trades query set per
+ * bot (the last two feed the Forge card stats row). That is 4× today (Spark, Flame) at a
  * 60s poll, which is why the client must not poll this faster than it polls summary.
  * If the roster ever grows past a handful, this needs a batched query, not more fan-out.
  */
@@ -48,13 +52,32 @@ export async function GET(req: NextRequest) {
         // Settled, not all-or-nothing: one bot's query failing must not blank the other
         // agent's tile. A failed agent reports itself rather than vanishing, because a
         // silently missing agent reads as "you don't own it".
-        const [summary, trade] = await Promise.allSettled([
+        //
+        // `lifetime` + `trades` feed the Forge card stats row (Account Capital / Growth /
+        // Last 10 / Best Trade, handoff/ledger-kpis.md PART 2). They reuse getLifetimeStats
+        // (home.ts) and loadBotTrades (trades-history.ts) — the same queries the Home
+        // wealth snapshot and Ledger already run — rather than adding new ones.
+        const [summary, trade, lifetime, trades] = await Promise.allSettled([
           getLiveSummary(bot, { person, allowAggregate: false }),
           getLiveTrade(bot, person, viewer.isOperator),
+          getLifetimeStats(bot, person, viewer.isOperator),
+          loadBotTrades(bot, person, (viewer.paperBots ?? []).includes(bot), viewer.isOperator),
         ])
 
         const s = summary.status === 'fulfilled' ? summary.value : null
         const t = trade.status === 'fulfilled' ? trade.value : null
+
+        // Both halves must load for an honest stats row — partial data (e.g. starting
+        // capital but no trade list) would silently misrepresent Growth/Last 10/Best
+        // Trade rather than admitting the row isn't available right now.
+        const stats: CardStats | null =
+          lifetime.status === 'fulfilled' && trades.status === 'fulfilled'
+            ? computeCardStats(
+                lifetime.value.starting_capital,
+                lifetime.value.total_realized_pnl,
+                trades.value.map((tr) => ({ realized_pnl: tr.pnl })),
+              )
+            : null
 
         return {
           bot,
@@ -63,6 +86,7 @@ export async function GET(req: NextRequest) {
           state: s?.state ?? null,
           account: s?.account ?? null,
           trade: t,
+          stats,
           error:
             summary.status === 'rejected'
               ? 'state'

@@ -16,6 +16,7 @@ import {
 import { tradeDetailHref } from '@/ledger/detail'
 import { color, space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { Card, Money, OutcomeBadge, AgentBadge, Loading, Empty, ErrorState } from '@/components/ui'
+import { StatRow } from '@/components/StatRow'
 import { AppHeader } from '@/components/Brand'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
@@ -208,30 +209,24 @@ function KpiStrip({ totals }: { totals: TradesTotals | undefined }) {
   const zero = !!totals && totals.completed_trades === 0
 
   return (
-    <Card style={[s.kpiCard, { marginBottom: space.lg }]}>
-      <View style={s.kpiHalf}>
-        <Text style={[s.kpiLabel, { color: color.muted }]}>Completed Trades</Text>
-        {loading ? (
-          <View style={s.kpiSkeleton} />
-        ) : (
-          <Text style={[s.kpiValue, { color: color.text }]}>
-            {zero ? '—' : totals!.completed_trades.toLocaleString('en-US')}
-          </Text>
-        )}
-      </View>
-
-      <View style={s.kpiDivider} />
-
-      <View style={s.kpiHalf}>
-        <Text style={[s.kpiLabel, { color: color.muted }]}>Win Rate</Text>
-        {loading ? (
-          <View style={s.kpiSkeleton} />
-        ) : (
-          <Text style={[s.kpiValue, { color: color.pos }]}>
-            {zero ? '—' : formatWinRate(totals!.win_rate)}
-          </Text>
-        )}
-      </View>
+    <Card style={{ marginBottom: space.lg }}>
+      <StatRow
+        variant="kpi"
+        items={[
+          {
+            label: 'Completed Trades',
+            value: zero ? '—' : (totals?.completed_trades ?? 0).toLocaleString('en-US'),
+            tone: color.text,
+            loading,
+          },
+          {
+            label: 'Win Rate',
+            value: zero ? '—' : formatWinRate(totals?.win_rate ?? null),
+            tone: color.pos,
+            loading,
+          },
+        ]}
+      />
     </Card>
   )
 }
@@ -341,23 +336,6 @@ function formatDate(d: string): string {
 
 const s = StyleSheet.create({
   title: { ...type.title, color: color.text, fontFamily: font.display, marginBottom: space.lg },
-  kpiCard: { flexDirection: 'row', alignItems: 'stretch' },
-  kpiHalf: { flex: 1, alignItems: 'center' },
-  kpiLabel: { fontSize: 16, marginBottom: space.xs },
-  kpiValue: {
-    fontSize: 34,
-    fontFamily: font.bodyBold,
-    letterSpacing: -0.5,
-    fontVariant: ['tabular-nums'],
-  },
-  kpiSkeleton: {
-    width: 56,
-    height: 34,
-    borderRadius: radius.sm,
-    backgroundColor: color.border,
-    opacity: 0.6,
-  },
-  kpiDivider: { width: 1, backgroundColor: color.border, marginHorizontal: space.md },
   search: {
     marginTop: space.md,
     backgroundColor: color.bg,
