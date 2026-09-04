@@ -296,6 +296,7 @@ CREATE TABLE IF NOT EXISTS ${bot}_paper_account (
   collateral_in_use NUMERIC(12,2) DEFAULT 0,
   buying_power NUMERIC(12,2) NOT NULL,
   high_water_mark NUMERIC(12,2) NOT NULL,
+  high_water_balance NUMERIC(12,2),
   max_drawdown NUMERIC(12,2) DEFAULT 0,
   is_active BOOLEAN DEFAULT TRUE,
   dte_mode TEXT DEFAULT '2DTE',
@@ -671,6 +672,18 @@ async function ensureTablesOnce(): Promise<void> {
       try {
         await client.query(`ALTER TABLE ${bot}_paper_account ADD COLUMN IF NOT EXISTS person TEXT`)
       } catch { /* column already exists or table doesn't exist yet */ }
+      // EBB high-water RATCHET (ADR 0013, 2026-09-04): the count ladder keys on
+      // max(starting_capital, high_water_balance). Every current_balance write
+      // GREATEST()s it, so it only ever moves up. Backfill = GREATEST(starting,
+      // current) so a pre-migration row never sizes below its funded seed.
+      try {
+        await client.query(`ALTER TABLE ${bot}_paper_account ADD COLUMN IF NOT EXISTS high_water_balance NUMERIC(12,2)`)
+        await client.query(
+          `UPDATE ${bot}_paper_account
+              SET high_water_balance = GREATEST(starting_capital, current_balance)
+            WHERE high_water_balance IS NULL`,
+        )
+      } catch { /* column already exists or table doesn't exist yet */ }
       // Backfill NULL person values to 'User' so existing data matches person filter
       for (const tbl of [`${bot}_positions`, `${bot}_equity_snapshots`, `${bot}_daily_perf`]) {
         try {
@@ -935,8 +948,8 @@ async function ensureTablesOnce(): Promise<void> {
       try {
         await client.query(
           `INSERT INTO ${bot}_paper_account
-            (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, dte_mode)
-           SELECT 10000, 10000, 0, 10000, 10000, $1
+            (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, high_water_balance, dte_mode)
+           SELECT 10000, 10000, 0, 10000, 10000, 10000, $1
            WHERE NOT EXISTS (
              SELECT 1 FROM ${bot}_paper_account WHERE is_active = TRUE AND dte_mode = $1
                AND COALESCE(account_type, 'sandbox') = 'sandbox'
@@ -965,9 +978,9 @@ async function ensureTablesOnce(): Promise<void> {
         try {
           await client.query(
             `INSERT INTO spark_paper_account
-              (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, max_drawdown,
+              (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, high_water_balance, max_drawdown,
                is_active, dte_mode, account_type, person)
-             SELECT $1, $1, 0, $1, $1, 0, TRUE, '1DTE', 'production', $2
+             SELECT $1, $1, 0, $1, $1, $1, 0, TRUE, '1DTE', 'production', $2
              WHERE NOT EXISTS (
                SELECT 1 FROM spark_paper_account
                WHERE account_type = 'production' AND person = $2 AND is_active = TRUE

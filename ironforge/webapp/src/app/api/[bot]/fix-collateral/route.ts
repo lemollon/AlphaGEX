@@ -362,6 +362,7 @@ export async function POST(
            buying_power = ${correctBp},
            total_trades = ${actualTrades},
            high_water_mark = GREATEST(high_water_mark, ${expectedBalance}),
+           high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), ${expectedBalance}),
            updated_at = NOW()
        WHERE dte_mode = '${escapeSql(dte)}'
          ${acctTypeFilter}`,

@@ -258,6 +258,7 @@ async function applyOne(bot: string, dte: string, c: Candidate, o: RecoveryOutco
     await dbExecute(
       `UPDATE ${botTable(bot, 'paper_account')}
        SET current_balance = current_balance + $1,
+           high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
            cumulative_pnl = cumulative_pnl + $1,
            buying_power = buying_power + $1,
            updated_at = NOW()
@@ -268,6 +269,7 @@ async function applyOne(bot: string, dte: string, c: Candidate, o: RecoveryOutco
     await dbExecute(
       `UPDATE ${botTable(bot, 'paper_account')}
        SET current_balance = current_balance + $1,
+           high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
            cumulative_pnl = cumulative_pnl + $1,
            buying_power = buying_power + $1,
            updated_at = NOW()
