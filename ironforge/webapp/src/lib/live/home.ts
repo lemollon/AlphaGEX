@@ -8,7 +8,13 @@ import { dbQuery, botTable, num, int, escapeSql, dteMode, CT_TODAY } from '@/lib
  */
 
 import { scopeFilter, type LiveBot } from './viewer'
+import { lifetimeReturnPct } from './card-stats'
 import { weekStartET, monthStartET } from './period-windows'
+
+export interface LifetimeStats {
+  starting_capital: number
+  total_realized_pnl: number
+}
 
 export interface HomeData {
   wealth: {
@@ -26,6 +32,44 @@ export interface HomeData {
   }>
   yesterday_trades: number
   as_of: string
+}
+
+/**
+ * Starting capital + all-time realized P&L for one bot — the two inputs
+ * every "lifetime return" number derives from. Extracted out of getHomeData
+ * so the Forge card stats row (webapp/src/app/api/live/agents/route.ts) can
+ * compute the same Growth % from the same unbounded SUM query rather than
+ * rolling its own — home.ts's wealth-snapshot lifetime% and the Forge card's
+ * Growth% must never be able to drift apart.
+ */
+export async function getLifetimeStats(
+  BOT: LiveBot,
+  person: string | null = null,
+  isOperator = false,
+): Promise<LifetimeStats> {
+  const dte = dteMode(BOT)
+  const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
+  const prodFilter = scopeFilter(BOT, person, isOperator)
+  const closedFilter = `status IN ('closed', 'expired') AND realized_pnl IS NOT NULL ${dteFilter} ${prodFilter}`
+
+  const [accountRows, lifetimeRows] = await Promise.all([
+    dbQuery(
+      `SELECT starting_capital
+       FROM ${botTable(BOT, 'paper_account')}
+       WHERE is_active = TRUE ${dteFilter} ${prodFilter}
+       ORDER BY id DESC LIMIT 1`,
+    ),
+    dbQuery(
+      `SELECT COALESCE(SUM(realized_pnl), 0) AS total
+       FROM ${botTable(BOT, 'positions')}
+       WHERE ${closedFilter}`,
+    ),
+  ])
+
+  return {
+    starting_capital: num(accountRows[0]?.starting_capital),
+    total_realized_pnl: num(lifetimeRows[0]?.total),
+  }
 }
 
 export async function getHomeData(
@@ -47,7 +91,7 @@ export async function getHomeData(
   const weekStart = weekStartET(now).toISOString()
   const monthStart = monthStartET(now).toISOString()
 
-  const [incomeRows, accountRows, lifetimeRows, tradeRows, yesterdayRows] = await Promise.all([
+  const [incomeRows, lifetime, tradeRows, yesterdayRows] = await Promise.all([
     dbQuery(
       `SELECT
          COALESCE(SUM(realized_pnl) FILTER (WHERE close_time >= '${weekStart}'), 0) AS weekly,
@@ -55,17 +99,7 @@ export async function getHomeData(
        FROM ${botTable(BOT, 'positions')}
        WHERE ${closedFilter}`,
     ),
-    dbQuery(
-      `SELECT starting_capital
-       FROM ${botTable(BOT, 'paper_account')}
-       WHERE is_active = TRUE ${dteFilter} ${prodFilter}
-       ORDER BY id DESC LIMIT 1`,
-    ),
-    dbQuery(
-      `SELECT COALESCE(SUM(realized_pnl), 0) AS total
-       FROM ${botTable(BOT, 'positions')}
-       WHERE ${closedFilter}`,
-    ),
+    getLifetimeStats(BOT, person, isOperator),
     dbQuery(
       `SELECT close_time, ticker, expiration, contracts, total_credit
        FROM ${botTable(BOT, 'positions')}
@@ -81,10 +115,8 @@ export async function getHomeData(
     ),
   ])
 
-  const startingCapital = num(accountRows[0]?.starting_capital)
-  const lifetimeRealizedPnl = Math.round(num(lifetimeRows[0]?.total) * 100) / 100
-  const lifetimeReturnPct =
-    startingCapital > 0 ? Math.round((lifetimeRealizedPnl / startingCapital) * 10000) / 100 : null
+  const lifetimeRealizedPnl = Math.round(lifetime.total_realized_pnl * 100) / 100
+  const lifetimeReturnPctValue = lifetimeReturnPct(lifetime.total_realized_pnl, lifetime.starting_capital)
 
   const dteLabel = dte ? `${dte.toUpperCase()}` : ''
   const recentTrades = tradeRows.map((r) => {
@@ -108,7 +140,7 @@ export async function getHomeData(
       weekly_income: Math.round(num(incomeRows[0]?.weekly) * 100) / 100,
       monthly_income: Math.round(num(incomeRows[0]?.monthly) * 100) / 100,
       lifetime_income: lifetimeRealizedPnl,
-      lifetime_return_pct: lifetimeReturnPct,
+      lifetime_return_pct: lifetimeReturnPctValue,
     },
     recent_trades: recentTrades,
     yesterday_trades: int(yesterdayRows[0]?.cnt),
