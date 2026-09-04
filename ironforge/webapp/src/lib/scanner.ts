@@ -179,6 +179,7 @@ const PRODUCTION_BOT_DTE = '1DTE' // Matches BOTS[] entry for PRODUCTION_BOT
 // in tradier.ts. These were two hand-copied pairs kept in sync by comment; they decide
 // how much real money enters a trade.
 import { SPARK_BP_CAP_POS, SPARK_BP_CAP_NEG } from './spark-sizing'
+import { ebbLadderContracts, isEbbLadderBot } from './ebb-sizing'
 
 function isSparkV2Sizing(name: string): boolean {
   return name === 'spark'
@@ -3670,11 +3671,13 @@ function flameParams(_equity: number): { k: number; width: number } {
  * Cost: $8,000-$9,999 now earns ~$10,090/yr instead of ~$20,179. That is the same
  * income-for-risk trade already taken at the $5,000 product boundary.
  */
-function flameContracts(_equity: number): number {
-  // 1, flat. The contract ladder was tuned on the void backtest, and the honest
-  // walk-forward only ever validated a single contract. Scaling it is
-  // ratio-neutral anyway -- twice the size is twice the drawdown.
-  return 1
+function flameContracts(botName: string, fundedCapital: number): number {
+  // COUNT LADDER (2026-09-04, Leron: "the ladder is count of contracts, not
+  // width"). Keyed on FUNDED capital, floor()ed, cap 5 — the 8/27 survivor rule
+  // (FLAME 1 lot / $1,500, SPARK 1 lot / $5,000). Pinned by ebb-sizing.test.ts.
+  // Any bot outside the EBB pair keeps the old flat 1 lot.
+  if (!isEbbLadderBot(botName)) return 1
+  return ebbLadderContracts(botName, fundedCapital)
 }
 
 /**
@@ -4502,12 +4505,13 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   }
 
   const acctRows = await query(
-    `SELECT id, current_balance FROM ${botTable(bot.name, 'paper_account')}
+    `SELECT id, current_balance, starting_capital FROM ${botTable(bot.name, 'paper_account')}
      WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
      ORDER BY id DESC LIMIT 1`,
     [bot.dte],
   )
   let balance: number
+  let funded: number
   if (acctRows.length === 0) {
     const seed = botCfg.starting_capital
     await query(
@@ -4520,13 +4524,19 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
     )
     console.log(`[scanner] FLAME: seeded ${bot.dte} paper ledger at $${seed}`)
     balance = seed
+    funded = seed
   } else {
     balance = num(acctRows[0].current_balance)
+    funded = num(acctRows[0].starting_capital)
   }
   if (!(balance > 0)) return `skip:no_paper_balance($${balance.toFixed(0)})`
 
   const { otmAbs, width } = botStructure(bot.name)
-  const perTrade = flameContracts(balance)
+  // COUNT LADDER (2026-09-04): lots come from FUNDED capital (ledger
+  // starting_capital), never from the floating balance — see lib/ebb-sizing.ts.
+  // 0 lots means the ledger is below one rung: skip, never fall back to 1.
+  const perTrade = flameContracts(bot.name, funded)
+  if (perTrade < 1) return `skip:below_ladder_rung(funded=$${funded.toFixed(0)})`
   // Each book gets an equal, NON-TRANSFERABLE third. Letting one borrow from the
   // others concentrates the account in whichever market happens to be trading,
   // which is the opposite of why three books exist.
