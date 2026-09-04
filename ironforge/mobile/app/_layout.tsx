@@ -46,6 +46,13 @@ export default function RootLayout() {
   const [unlocking, setUnlocking] = useState(false)
   const [unlockError, setUnlockError] = useState<string | null>(null)
   const [canUseBiometrics, setCanUseBiometrics] = useState(false)
+  /**
+   * Did a session already exist when this process launched? Only THAT session needs
+   * a cold-start re-prove. A session that appears later in the same process came from
+   * the person typing their password on /sign-in seconds ago — locking that one was
+   * the 9/4 loop: sign in → "Locked" → "Use password" (= signOut) → sign in → "Locked".
+   */
+  const bootHadSessionRef = useRef<boolean>(false)
   const segments = useSegments()
   const router = useRouter()
 
@@ -81,7 +88,10 @@ export default function RootLayout() {
    */
   useEffect(() => {
     hasSession()
-      .then(setSignedIn)
+      .then((had) => {
+        bootHadSessionRef.current = had
+        setSignedIn(had)
+      })
       .finally(() => setSessionChecked(true))
     return onSessionChange(setSignedIn)
   }, [])
@@ -107,7 +117,16 @@ export default function RootLayout() {
       const stored = await getStoredSessionPolicy()
       if (cancelled) return
       policyRef.current = stored
-      setLockState((prev) => nextLockState(prev, { type: 'cold_start' }, true, stored))
+      if (bootHadSessionRef.current) {
+        // Restored from disk: re-prove identity before showing anything.
+        setLockState((prev) => nextLockState(prev, { type: 'cold_start' }, true, stored))
+      } else {
+        // Fresh password sign-in in this process: identity was just proven. The
+        // background/foreground timer takes over from here.
+        setLockState(INITIAL_LOCK_STATE)
+      }
+      // Consumed: any later sign-in in this process is a fresh one, never a cold start.
+      bootHadSessionRef.current = false
 
       // Refresh from the server in the background; a stale local policy is fine to
       // start on, it just should not stay stale for the rest of the session.
