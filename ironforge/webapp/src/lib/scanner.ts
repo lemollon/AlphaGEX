@@ -8607,12 +8607,19 @@ async function checkVolAlerts(): Promise<void> {
         // Cooldown so a tripped↔watch flap can't re-send the same state inside 60m.
         if (!(await markNotifiedIfDue(t.signalKey, t.to, VOL_NOTIFY_COOLDOWN_MIN))) continue
         const sig = signals[t.signalKey] || {}
+        // The alert must carry THIS signal's advice, not the report-wide headline.
+        // On 2026-09-03 the report's top action was backwardation's old "Fade the
+        // spike — go long", and it was stapled onto the bearish ts_flattening
+        // early warning. Prefer the advisor's per-signal action; fall back to the
+        // report action only when the advisor predates it.
+        const sigHeadline: string | null = sig.action?.headline ?? headline
+        const sigMessage: string | null = sig.action?.plain ?? message
         const res = await sendVolAlertEmail({
           signalKey: t.signalKey,
           direction: t.direction,
           reason: verdict.reason === 'early-warning' ? 'early-warning' : 'confirmed',
-          headline,
-          message,
+          headline: sigHeadline,
+          message: sigMessage,
           regimeLabel,
           vix,
           vix3m,
@@ -8625,10 +8632,10 @@ async function checkVolAlerts(): Promise<void> {
           signalKey: t.signalKey,
           direction: t.direction,
           reason: verdict.reason === 'early-warning' ? 'early-warning' : 'confirmed',
-          headline,
+          headline: sigHeadline,
           vix,
           vix3m,
-          message,
+          message: sigMessage,
           regimeLabel,
           vvix,
           proximity: typeof sig.proximity === 'number' ? sig.proximity : null,
