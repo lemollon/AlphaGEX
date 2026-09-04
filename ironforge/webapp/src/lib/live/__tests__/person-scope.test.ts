@@ -38,9 +38,25 @@ describe('personFilter', () => {
 
 describe('scopeFilter', () => {
   it('combines the ledger filter with the owner filter', () => {
-    const scoped = scopeFilter('spark', 'User')
+    // 🚨 Every production-branch test below passes modeOverride='production'
+    // EXPLICITLY. They used to rely on SPARK being declared a production bot,
+    // which stopped being true on 2026-08-28 — and when that declaration flipped,
+    // the 2026-07-27 leak guard would have quietly stopped being exercised by any
+    // bot at all. The branch, not the bot, is the thing under test.
+    const scoped = scopeFilter('spark', 'User', false, 'production')
     expect(scoped).toContain("COALESCE(account_type, 'sandbox') = 'production'")
     expect(scoped).toContain("AND person = 'User'")
+  })
+
+  it('puts SPARK on its paper ledger, unscoped, with no override', () => {
+    // The 2026-08-28 fix. SPARK is declared 'paper' (it has no production account:
+    // live_accounts.spark = 0), so the customer read must reach the sandbox rows
+    // the scanner actually writes — NOT the inactive $5,000 production row, and
+    // NOT `AND FALSE`, both of which hid a book with real trades in it.
+    const f = scopeFilter('spark', null)
+    expect(f).toContain("COALESCE(account_type, 'sandbox') <> 'production'")
+    expect(f).not.toContain('AND FALSE')
+    expect(f).not.toContain('person')
   })
 
   it('keeps paper bots on the non-production ledger, and does NOT scope them by owner', () => {
@@ -63,7 +79,7 @@ describe('scopeFilter', () => {
     expect(f).toContain("COALESCE(account_type, 'sandbox') <> 'production'")
   })
 
-  it('honours an explicit paper override on a production bot', () => {
+  it('honours an explicit paper override on a production read', () => {
     // FLAME's Paper/Live switch. Choosing the paper ledger must not drag
     // the production owner filter along with it.
     const f = scopeFilter('spark', 'Logan', false, 'paper')
@@ -82,21 +98,23 @@ describe('scopeFilter', () => {
     // bug, not the contract. On 2026-07-27 the one row in ironforge_customer_bots
     // had person = NULL, so the query returned the SPARK production account
     // (person 'Logan', real money) to whoever loaded the page.
-    const f = scopeFilter('spark', null)
+    const f = scopeFilter('spark', null, false, 'production')
     expect(f).toContain('AND FALSE')
     expect(f).not.toBe("AND COALESCE(account_type, 'sandbox') = 'production'")
   })
 
   it('still gives an operator the unscoped fleet view', () => {
     // The fleet aggregate is legitimate for an operator and must not regress.
-    expect(scopeFilter('spark', null, true).trim()).toBe(
+    expect(scopeFilter('spark', null, true, 'production').trim()).toBe(
       "AND COALESCE(account_type, 'sandbox') = 'production'",
     )
   })
 
   it('scopes to the owner when one IS mapped, operator or not', () => {
     for (const isOperator of [false, true]) {
-      expect(scopeFilter('spark', 'Logan', isOperator)).toContain("AND person = 'Logan'")
+      expect(scopeFilter('spark', 'Logan', isOperator, 'production')).toContain(
+        "AND person = 'Logan'",
+      )
     }
   })
 })
