@@ -39,6 +39,16 @@ import { Wordmark } from '@/components/Brand'
  * src/auth/lock.ts state machine; this component is just an AppState listener and a
  * renderer for the overlay.
  */
+/** Can the lock overlay actually be answered? Face ID on in Account AND enrolled on the device. */
+async function biometricsUsable(): Promise<boolean> {
+  try {
+    const [enabled, available] = await Promise.all([isBiometricEnabled(), biometricsAvailable()])
+    return enabled && available
+  } catch {
+    return false
+  }
+}
+
 export default function RootLayout() {
   const [sessionChecked, setSessionChecked] = useState(false)
   const [signedIn, setSignedIn] = useState(false)
@@ -118,8 +128,16 @@ export default function RootLayout() {
       if (cancelled) return
       policyRef.current = stored
       if (bootHadSessionRef.current) {
-        // Restored from disk: re-prove identity before showing anything.
-        setLockState((prev) => nextLockState(prev, { type: 'cold_start' }, true, stored))
+        // Restored from disk: re-prove identity before showing anything — but ONLY if
+        // biometrics can actually answer the lock. With Face ID off, the overlay's sole
+        // button is "Use password", which signs out; locking there is not security, it
+        // is a forced re-login on every launch (Leron, 9/4). The stored session is the
+        // proof in that case; turning Face ID on in Account opts into the lock.
+        const usable = await biometricsUsable()
+        if (cancelled) return
+        setLockState((prev) =>
+          usable ? nextLockState(prev, { type: 'cold_start' }, true, stored) : INITIAL_LOCK_STATE,
+        )
       } else {
         // Fresh password sign-in in this process: identity was just proven. The
         // background/foreground timer takes over from here.
@@ -142,11 +160,22 @@ export default function RootLayout() {
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
       const nowMs = Date.now()
-      const action =
-        next === 'active'
-          ? ({ type: 'app_foregrounded', nowMs } as const)
-          : ({ type: 'app_backgrounded', nowMs } as const)
-      setLockState((prev) => nextLockState(prev, action, signedInRef.current, policyRef.current))
+      if (next !== 'active') {
+        setLockState((prev) =>
+          nextLockState(prev, { type: 'app_backgrounded', nowMs }, signedInRef.current, policyRef.current),
+        )
+        return
+      }
+      // Same rule as cold start: a foreground re-lock is only meaningful when biometrics
+      // can answer it. Re-read the preference each time so a Face ID toggle in Account
+      // takes effect without a relaunch.
+      biometricsUsable().then((usable) => {
+        setLockState((prev) =>
+          usable
+            ? nextLockState(prev, { type: 'app_foregrounded', nowMs }, signedInRef.current, policyRef.current)
+            : { locked: prev.locked, backgroundedAtMs: null },
+        )
+      })
     })
     return () => sub.remove()
   }, [])
