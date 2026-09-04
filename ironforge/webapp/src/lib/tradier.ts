@@ -1812,6 +1812,35 @@ export async function resolveEligibleAccounts(
   return eligibleAccounts
 }
 
+/**
+ * FUNDED capital for a production owner's ledger of `botName` — the
+ * `starting_capital` on their active production paper_account row, which is
+ * seeded from real broker equity at enrolment (never a guess: see
+ * getAllocatedCapitalForAccount's history). The EBB count ladder keys on THIS,
+ * never on live equity or option buying power (2026-08-27 study: every
+ * equity-keyed rule breached the 35% drawdown ceiling in some window).
+ *
+ * null = no ledger row / unreadable. The caller must SKIP the account.
+ */
+export async function getProductionFundedCapital(botName: string, person: string): Promise<number | null> {
+  try {
+    const { query: dbq, botTable } = await import('./db')
+    const rows = await dbq(
+      `SELECT starting_capital FROM ${botTable(botName, 'paper_account')}
+       WHERE account_type = 'production' AND person = $1 AND is_active = TRUE
+       ORDER BY updated_at DESC LIMIT 1`,
+      [person],
+    )
+    if (rows.length === 0) return null
+    const n = Number(rows[0].starting_capital)
+    return Number.isFinite(n) && n > 0 ? n : null
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getProductionFundedCapital(${botName}, '${person}') failed: ${msg}`)
+    return null
+  }
+}
+
 export async function placeIcOrderAllAccounts(
   ticker: string,
   expiration: string,
@@ -2101,9 +2130,36 @@ export async function placeIcOrderAllAccounts(
       //   Production: min(hardCap, bpContracts, spark_config.production.max_contracts)
       //               where max_contracts=0 means unlimited (bp_pct is the real cap)
       let acctContracts: number
+      let ladderDetail = ''
       if (acct.type === 'production') {
         const prodCeiling = prodMaxContracts > 0 ? prodMaxContracts : Number.POSITIVE_INFINITY
-        acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, prodCeiling)
+        const { ebbLadderContracts, isEbbLadderBot, ebbRungUsd } = await import('./ebb-sizing')
+        if (isEbbLadderBot(botName)) {
+          // COUNT LADDER (2026-09-04). SPARK / FLAME size from the owner's FUNDED
+          // capital: floor(funded / rung), cap 5 — lib/ebb-sizing.ts. Buying power
+          // is only a sanity floor here (never lets the ladder exceed what the
+          // broker will margin); it is NOT the sizing basis any more.
+          const funded = await getProductionFundedCapital(botName, acct.name)
+          const ladder = ebbLadderContracts(botName, funded)
+          if (ladder < 1) {
+            console.warn(
+              `PRODUCTION [${acct.name}]: ${botName.toUpperCase()} count ladder = 0 lots ` +
+              `(funded=${funded === null ? 'NO LEDGER ROW' : '$' + funded.toFixed(0)}, ` +
+              `rung=$${ebbRungUsd(botName)}). SKIPPING — never falls back to 1.`,
+            )
+            return
+          }
+          acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, ladder, prodCeiling)
+          if (acctContracts > bpContracts) {
+            console.warn(
+              `PRODUCTION [${acct.name}]: ladder wants ${acctContracts} lots but option BP only margins ${bpContracts}. Sizing down to ${bpContracts}.`,
+            )
+            acctContracts = bpContracts
+          }
+          ladderDetail = `ladder=${ladder} (funded=$${(funded as number).toFixed(0)} / rung=$${ebbRungUsd(botName)}), `
+        } else {
+          acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, prodCeiling)
+        }
       } else {
         acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, paperContracts)
       }
@@ -2111,7 +2167,7 @@ export async function placeIcOrderAllAccounts(
       const totalMargin = acctContracts * brokerMarginPer
       const sizeLabel = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
       const capsDetail = acct.type === 'production'
-        ? `bp_calc=${bpContracts}, prodMax=${prodMaxContracts > 0 ? prodMaxContracts : '∞'}, hardCap=${SANDBOX_MAX_CONTRACTS}`
+        ? `${ladderDetail}bp_calc=${bpContracts}, prodMax=${prodMaxContracts > 0 ? prodMaxContracts : '∞'}, hardCap=${SANDBOX_MAX_CONTRACTS}`
         : `bp_calc=${bpContracts}, paperCap=${paperContracts}, hardCap=${SANDBOX_MAX_CONTRACTS}`
       console.log(
         `${sizeLabel}: optionBP=$${bp.toFixed(0)}, bp_pct=${(bpPct * 100).toFixed(1)}%, ` +
