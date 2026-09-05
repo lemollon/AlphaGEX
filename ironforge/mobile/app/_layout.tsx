@@ -199,7 +199,14 @@ export default function RootLayout() {
   useEffect(() => {
     if (!ready) return
     const inAuthGroup = segments[0] === 'sign-in'
-    if (!signedIn && !inAuthGroup) router.replace('/sign-in')
+    // 'enroll' is reachable BOTH signed out (create-account, verify — there is no
+    // session yet) and signed in (legal onward, once the verify screen auto-signs the
+    // customer in). It must never trigger either bounce below: redirecting a signed-out
+    // visitor away from /enroll/create-account would make account creation unreachable,
+    // and redirecting a signed-in one to '/' the instant they finish verifying would
+    // eject them from their own enrollment funnel mid-flow.
+    const inEnrollGroup = segments[0] === 'enroll'
+    if (!signedIn && !inAuthGroup && !inEnrollGroup) router.replace('/sign-in')
     else if (signedIn && inAuthGroup) router.replace('/')
   }, [ready, signedIn, segments, router])
 

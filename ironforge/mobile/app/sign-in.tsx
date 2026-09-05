@@ -7,7 +7,6 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-  Linking,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
@@ -15,13 +14,18 @@ import * as Device from 'expo-device'
 import Constants from 'expo-constants'
 import { signIn } from '@/auth/session'
 import { registerPushDevice } from '@/notifications/push'
-import { API_BASE } from '@/api/client'
+import { resumeEnrollment } from '@/enroll/api'
+import { routeForNextStep } from '@/enroll/steps'
 import { color, space, radius, type, font } from '@/theme/tokens'
 
 /**
- * Sign-in (APP-007). Enrollment stays on the web for MVP, so there is no in-app sign-up
- * form — the "Create an account" link hands off to the web signup page (same copy and
- * target as the web login screen) so a new member is never left at a dead end.
+ * Sign-in (APP-007). "Create an account" now opens the in-app enrollment flow
+ * (UAT #6, PR A) at /enroll/create-account instead of handing off to the web signup
+ * page — that hand-off is retired by this PR, not just supplemented.
+ *
+ * On a successful sign-in, the enrollment is always resumed (POST /api/v1/enrollments)
+ * so a customer stopped mid-funnel on a previous session lands back exactly where the
+ * server says they left off, never at the tabs root by accident.
  *
  * The failure copy is identical for "no such account" and "wrong password". The server
  * already refuses to distinguish them (classifyLoginAttempt + a dummy bcrypt compare to
@@ -48,7 +52,15 @@ export default function SignInScreen() {
       })
       // Best-effort: a push registration failure must never block getting into the app.
       registerPushDevice().catch(() => {})
-      router.replace('/')
+      try {
+        const d = await resumeEnrollment()
+        const canonical = routeForNextStep(d.next_step, d.enrollment.selected_plan)
+        router.replace(canonical.route as never)
+      } catch {
+        // Enrollment resume is best-effort here — a signed-in customer must never be
+        // stuck on the sign-in screen because that one extra call failed.
+        router.replace('/')
+      }
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -107,7 +119,7 @@ export default function SignInScreen() {
         <View style={s.signupRow}>
           <Text style={[type.body, { color: color.textDim }]}>Don't have an account? </Text>
           <Pressable
-            onPress={() => Linking.openURL(`${API_BASE}/signup`).catch(() => {})}
+            onPress={() => router.push('/enroll/create-account')}
             hitSlop={8}
             accessibilityRole="link"
           >
