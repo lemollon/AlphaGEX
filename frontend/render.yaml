@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: AlphaGEX
+    runtime: node
+    repo: https://github.com/lemollon/AlphaGEX
+    branch: main
+    rootDir: frontend
+    region: oregon
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start -- --hostname 0.0.0.0 --port $PORT
+    healthCheckPath: /dashboard
+    envVars:
+      - key: NODE_VERSION
+        value: 24.18.0
+      - key: NEXT_PUBLIC_API_URL
+        value: https://alphagex-api.onrender.com
+      - key: NEXT_PUBLIC_WS_URL
+        value: wss://alphagex-api.onrender.com
+      - key: NEXT_PUBLIC_BACKEND_URL
+        value: https://alphagex-api.onrender.com
+      - key: NODE_ENV
+        value: production

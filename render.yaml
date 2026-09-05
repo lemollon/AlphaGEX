@@ -1,6 +1,6 @@
 # Render Blueprint for AlphaGEX
-# Architecture: React Frontend (Vercel) + Backend API (Render) + Workers (Render)
-# Frontend: Next.js on Vercel
+# Architecture: Next.js Frontend + Backend API + Workers, all on Render
+# Frontend: AlphaGEX service at https://alphagex.onrender.com; separate frontend/render.yaml blueprint
 # Backend: FastAPI + PostgreSQL + Background Workers on Render
 
 services:
