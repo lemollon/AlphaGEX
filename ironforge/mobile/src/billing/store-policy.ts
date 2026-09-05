@@ -19,3 +19,25 @@
 export function canManageBillingInApp(_platform: 'ios' | 'android' | 'web'): boolean {
   return true
 }
+
+/**
+ * May the /enroll/billing step open an in-app purchase surface (Stripe Checkout,
+ * a hosted card form, anything that collects a NEW payment method or creates a NEW
+ * subscription) on this platform? APP STORE REVIEW, 2026-09-05: the iOS build is IN
+ * REVIEW right now and Guideline 3.1.1 treats any in-app link to a web checkout as an
+ * external purchase mechanism for digital content — unlike the billing PORTAL above
+ * (managing a subscription that already exists), starting a NEW one is squarely a
+ * purchase, and Stripe Checkout is not Apple's in-app purchase API.
+ *
+ * Always false today, on every platform — not iOS-only. The in-app purchase path
+ * (react-native-iap, Apple/Google native billing) does not exist yet; it ships in PR B.
+ * Until then /enroll/billing shows that option disabled ("Coming soon") and offers only
+ * "I already subscribed on the web" (GET /api/billing/membership), which reads existing
+ * entitlement state rather than starting a purchase.
+ *
+ * TODO(PR B): flip this to platform-aware once react-native-iap lands — true when a
+ * native store purchase sheet is available, still false wherever it is not (e.g. web).
+ */
+export function canPurchaseInApp(_platform: 'ios' | 'android' | 'web'): boolean {
+  return false
+}
