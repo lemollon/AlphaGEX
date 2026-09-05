@@ -4,7 +4,7 @@ import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { validateSignup, type SignupPayload } from '@/lib/signup-validation'
 import { hashPassword } from '@/lib/auth/password'
 import { lookupPromo } from '@/lib/promo'
-import { generateToken, TOKEN_TTL_MS } from '@/lib/auth/verification-token'
+import { generateToken, TOKEN_TTL_MS, generateCode, hashCode, CODE_TTL_MS } from '@/lib/auth/verification-token'
 import { sendVerificationEmail } from '@/lib/email'
 import { syncContactToAttio, enqueueAttioSync } from '@/lib/attio'
 import { enqueueCrmEvent } from '@/lib/crm/outbox'
@@ -144,6 +144,8 @@ export async function POST(req: NextRequest) {
     const passwordHash = await hashPassword(payload.password)
     const { raw: rawToken, hash: tokenHash } = generateToken()
     const expiresAt = new Date(Date.now() + TOKEN_TTL_MS).toISOString()
+    const code = generateCode()
+    const codeExpiresAt = new Date(Date.now() + CODE_TTL_MS).toISOString()
 
     const userId = await customerTransaction<string>(async (run) => {
       const rows = await run(
@@ -169,10 +171,12 @@ export async function POST(req: NextRequest) {
         ],
       )
       const uid = rows[0].id as string
+      // code_hash is salted with uid (hashCode), so it must be computed after the
+      // INSERT ... RETURNING id above, not before.
       await run(
-        `INSERT INTO email_verification_tokens (user_id, token_hash, expires_at)
-         VALUES ($1,$2,$3)`,
-        [uid, tokenHash, expiresAt],
+        `INSERT INTO email_verification_tokens (user_id, token_hash, expires_at, code_hash, code_expires_at)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [uid, tokenHash, expiresAt, hashCode(code, uid), codeExpiresAt],
       )
       return uid
     })
@@ -197,7 +201,7 @@ export async function POST(req: NextRequest) {
     // Send the verification email (non-blocking: failure never blocks the account).
     const verifyUrl = `${publicOrigin(req)}/api/auth/verify?token=${encodeURIComponent(rawToken)}`
     try {
-      const emailRes = await sendVerificationEmail({ to: n.email, verifyUrl, firstName: n.firstName })
+      const emailRes = await sendVerificationEmail({ to: n.email, verifyUrl, firstName: n.firstName, code })
       if (emailRes.sent) {
         await writeAudit(userId, 'EMAIL_VERIFICATION_SENT', ip, ua, { email_masked: maskEmail(n.email) })
       } else if (emailRes.skipped) {
@@ -253,9 +257,10 @@ export async function POST(req: NextRequest) {
       },
     })
 
-    const resBody: { ok: true; verifyUrl?: string } = { ok: true }
+    const resBody: { ok: true; verifyUrl?: string; verifyCode?: string } = { ok: true }
     if (process.env.NODE_ENV !== 'production') {
       resBody.verifyUrl = `/api/auth/verify?token=${encodeURIComponent(rawToken)}`
+      resBody.verifyCode = code
     }
     return NextResponse.json(resBody)
   } catch (e) {

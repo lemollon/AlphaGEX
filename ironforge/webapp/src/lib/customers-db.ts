@@ -835,6 +835,15 @@ CREATE TABLE IF NOT EXISTS page_views (
   PRIMARY KEY (day, path, visitor)
 );
 CREATE INDEX IF NOT EXISTS idx_page_views_day ON page_views(day);
+
+-- 6-digit email verification code (9/5, mobile enrollment follow-up). Additive
+-- alongside the existing link token in the SAME row — resend rotates both. The
+-- code itself is never stored: only its sha256(code + user_id) hash, so a DB
+-- leak alone cannot be used to verify an account. code_attempts caps guessing
+-- at 5 wrong tries (verify-code/route.ts), independent of the link's own TTL.
+ALTER TABLE email_verification_tokens ADD COLUMN IF NOT EXISTS code_hash TEXT;
+ALTER TABLE email_verification_tokens ADD COLUMN IF NOT EXISTS code_expires_at TIMESTAMPTZ;
+ALTER TABLE email_verification_tokens ADD COLUMN IF NOT EXISTS code_attempts INT NOT NULL DEFAULT 0;
 `
 
 let _ensured: Promise<void> | null = null

@@ -24,12 +24,19 @@ function esc(s: string): string {
   return s.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c] as string))
 }
 
-function verificationHtml(firstName: string, verifyUrl: string): string {
+function verificationHtml(firstName: string, verifyUrl: string, code?: string): string {
   const name = firstName ? esc(firstName) : 'there'
+  const codeBlock = code
+    ? `<p style="margin:0 0 20px;text-align:center">
+      <span style="display:inline-block;background:#141416;border:1px solid #26262A;border-radius:8px;padding:14px 22px;font-family:'Courier New',monospace;font-size:28px;font-weight:bold;letter-spacing:6px;color:#ffffff">${esc(code)}</span>
+    </p>
+    <p style="color:#737373;font-size:12px;line-height:1.6;text-align:center;margin:0 0 20px">Enter this code in the app, or use the button below. Expires in 15 minutes.</p>`
+    : ''
   return `<!doctype html><html><body style="margin:0;background:#0B0B0D;font-family:Arial,Helvetica,sans-serif;color:#e5e5e5">
   <div style="max-width:480px;margin:0 auto;padding:32px 24px">
     <h1 style="font-size:20px;color:#ffffff;margin:0 0 8px">Confirm your email</h1>
     <p style="color:#a3a3a3;font-size:14px;line-height:1.6">Hi ${name}, welcome to IronForge. Confirm your email address to continue setting up your account.</p>
+    ${codeBlock}
     <p style="margin:28px 0">
       <a href="${esc(verifyUrl)}" style="display:inline-block;background:#E8531F;color:#ffffff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 24px;border-radius:6px">Verify email</a>
     </p>
@@ -42,6 +49,8 @@ export async function sendVerificationEmail(params: {
   to: string
   verifyUrl: string
   firstName: string
+  /** The 6-digit code (mobile enrollment follow-up, 9/5). Omitted = link-only email, unchanged. */
+  code?: string
 }): Promise<SendResult> {
   if (!isEmailConfigured()) return { sent: false, skipped: true }
   try {
@@ -55,7 +64,7 @@ export async function sendVerificationEmail(params: {
         from: process.env.EMAIL_FROM,
         to: params.to,
         subject: 'Verify your IronForge email',
-        html: verificationHtml(params.firstName, params.verifyUrl),
+        html: verificationHtml(params.firstName, params.verifyUrl, params.code),
       }),
     })
     if (!res.ok) {
