@@ -1,14 +1,15 @@
 services:
   - type: web
-    name: alphagex-frontend
+    name: AlphaGEX
     runtime: node
     repo: https://github.com/lemollon/AlphaGEX
     branch: main
     rootDir: frontend
     region: oregon
     plan: starter
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start -- --hostname 0.0.0.0 --port $PORT
+    healthCheckPath: /dashboard
     envVars:
       - key: NODE_VERSION
         value: 24.18.0
