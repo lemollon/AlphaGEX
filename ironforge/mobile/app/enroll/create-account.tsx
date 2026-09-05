@@ -46,7 +46,13 @@ export default function CreateAccountScreen() {
     setServerError(null)
     try {
       await apiPublic('/api/auth/signup', { ...fields, referralCode: '' })
-      router.push({ pathname: '/enroll/verify', params: { email: fields.email.trim().toLowerCase() } })
+      // password is forwarded (same tradeoff as email below) so the verify screen can
+      // auto-sign-in once the code is confirmed, without asking the customer to
+      // retype a password they entered ten seconds ago.
+      router.push({
+        pathname: '/enroll/verify',
+        params: { email: fields.email.trim().toLowerCase(), password: fields.password },
+      })
     } catch (e) {
       setServerError((e as Error).message)
     } finally {

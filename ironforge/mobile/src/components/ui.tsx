@@ -6,6 +6,7 @@
  * tokens rather than lifted, and these are the pieces every screen composes.
  */
 import { View, Text, ActivityIndicator, Pressable, Image, TextInput, StyleSheet } from 'react-native'
+import { useRef } from 'react'
 import type { ReactNode } from 'react'
 import type { TextInputProps } from 'react-native'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
@@ -222,6 +223,69 @@ export function TextField({
 }
 
 /**
+ * 6-box code entry (email verify-code, UAT #6 follow-up). A single real TextInput
+ * drives the value — RN's autofill/one-time-code suggestion bar needs one focusable
+ * field, not six — rendered invisible and overlaid on the box row; tapping any box
+ * focuses it. `textContentType="oneTimeCode"` lets iOS offer the SMS/email code
+ * autofill suggestion the same way a native code field would.
+ */
+export function CodeInput({
+  value,
+  onChangeText,
+  length = 6,
+  error,
+  onSubmitEditing,
+  autoFocus = true,
+}: {
+  value: string
+  onChangeText: (v: string) => void
+  length?: number
+  error?: string | null
+  onSubmitEditing?: () => void
+  autoFocus?: boolean
+}) {
+  const inputRef = useRef<TextInput>(null)
+  return (
+    <View style={{ marginBottom: space.lg }}>
+      <Pressable
+        onPress={() => inputRef.current?.focus()}
+        accessibilityRole="none"
+        style={{ flexDirection: 'row', gap: space.sm, justifyContent: 'center' }}
+      >
+        {Array.from({ length }, (_, i) => (
+          <View
+            key={i}
+            style={[
+              s.codeBox,
+              value.length === i && s.codeBoxActive,
+              error && { borderColor: color.neg },
+            ]}
+          >
+            <Text style={[type.title, { color: color.text, fontFamily: font.display }]}>
+              {value[i] ?? ''}
+            </Text>
+          </View>
+        ))}
+      </Pressable>
+      <TextInput
+        ref={inputRef}
+        value={value}
+        onChangeText={(v) => onChangeText(v.replace(/\D/g, '').slice(0, length))}
+        keyboardType="number-pad"
+        maxLength={length}
+        textContentType="oneTimeCode"
+        autoFocus={autoFocus}
+        onSubmitEditing={onSubmitEditing}
+        style={s.codeHiddenInput}
+      />
+      {error ? (
+        <Text style={[type.label, { color: color.neg, marginTop: space.sm, textAlign: 'center' }]}>{error}</Text>
+      ) : null}
+    </View>
+  )
+}
+
+/**
  * Step progress bar (mock: "Step N of TOTAL", a row of pill segments). Present on
  * every /enroll/* screen so a customer always sees how far along they are and that
  * the flow is resumable, not a black box.
@@ -294,4 +358,16 @@ const s = StyleSheet.create({
   },
   progressTrack: { flexDirection: 'row', gap: 4 },
   progressSeg: { flex: 1, height: 3, borderRadius: 2, backgroundColor: color.border },
+  codeBox: {
+    width: 44,
+    height: 54,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: color.border,
+    backgroundColor: color.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  codeBoxActive: { borderColor: color.accent },
+  codeHiddenInput: { position: 'absolute', opacity: 0, height: 1, width: 1 },
 })
