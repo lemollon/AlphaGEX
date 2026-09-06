@@ -3,16 +3,26 @@ import type { StatItem } from '@/components/StatRow'
 import { color } from '@/theme/tokens'
 
 /**
- * Forge agent-card stat row (handoff/ledger-kpis.md PART 2): Account Capital,
+ * Forge agent-card stat row (handoff/ledger-kpis.md PART 2): Capital,
  * Growth, Last 10, Best Trade — all LIFETIME, sourced from LiveAgent.stats.
  * Extracted from AgentTile so the formatting/colour rules are testable without
  * a React Native renderer, same reasoning as live/capital.ts.
  */
 
-/** "$5,000" — whole dollars, no cents. "—" when the bot has no configured capital. */
+/** "$5,000" — whole dollars, no cents. "—" when the value is unavailable. Shared by the
+ *  Capital tile's live-balance headline and its "Started: $X" sub-line — both are whole
+ *  dollars off a cents integer, just different source fields. */
 export function formatAccountCapital(cents: number | null): string {
   if (cents == null) return '—'
   return `$${Math.round(cents / 100).toLocaleString('en-US')}`
+}
+
+/** "Started: $4,150" — the Capital tile's sub-line, from starting capital
+ *  (account_capital_cents). A bare "—" (not "Started: —") when unavailable — a second dash
+ *  under the tile's own "—" would just read as noise. */
+export function formatStartedCapital(cents: number | null): string {
+  if (cents == null) return '—'
+  return `Started: ${formatAccountCapital(cents)}`
 }
 
 /** "+6.8%" / "0.0%" / "-4.2%", green only when strictly positive — a flat or
@@ -48,8 +58,9 @@ export function agentStatItems(stats: AgentCardStats | null, loading: boolean): 
 
   return [
     {
-      label: 'Account Capital',
-      value: formatAccountCapital(stats?.account_capital_cents ?? null),
+      label: 'Capital',
+      value: formatAccountCapital(stats?.balance_cents ?? null),
+      sub: formatStartedCapital(stats?.account_capital_cents ?? null),
       tone: color.text,
       loading,
     },

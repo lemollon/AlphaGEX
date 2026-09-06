@@ -251,14 +251,20 @@ export interface BrokerageConnections {
 }
 
 /**
- * Forge agent-card stat row (handoff/ledger-kpis.md PART 2) — Account Capital,
+ * Forge agent-card stat row (handoff/ledger-kpis.md PART 2) — Capital,
  * Growth, Last 10, Best Trade, all LIFETIME (no filter). Cents/percent so the
  * screen never re-derives money from a float. `null` when the server couldn't
  * compute it (both the starting-capital and closed-trades queries must
  * succeed) — the tile shows "—" in that case, never a fabricated number.
  */
 export interface AgentCardStats {
+  /** Starting capital — unchanged meaning, still the Growth denominator. Rendered as the
+   *  Capital tile's "Started: $X" sub-line, not the tile's headline value anymore. */
   account_capital_cents: number | null
+  /** The agent's CURRENT live balance — same source as LiveSummary['account'].value (the
+   *  header "Total Account Capital"), so with one agent the two match. This is the Capital
+   *  tile's headline value. `null` when the live-summary half failed — never fabricated. */
+  balance_cents: number | null
   growth_pct: number | null
   last10: { wins: number; losses: number }
   best_trade_cents: number | null
