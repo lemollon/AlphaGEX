@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import {
   View,
   Text,
@@ -18,7 +18,9 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import { streamSparky, SparkyUnavailableError, type SparkyTurn } from '@/api/sparky'
 import { SPARKY_AVATAR } from '@/components/Brand'
 import { SUPPORT_EMAIL, supportMailto } from '@/support/contact'
-import { color, space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 
 /**
  * Ask Sparky — APP-032.
@@ -32,6 +34,8 @@ import { color, space, radius, type, font } from '@/theme/tokens'
  * simplest possible answer to "conversation history scoped to the signed-in member".
  */
 export default function SparkyScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   const [turns, setTurns] = useState<SparkyTurn[]>([])
   const [draft, setDraft] = useState('')
@@ -158,6 +162,8 @@ export default function SparkyScreen() {
 }
 
 function Bubble({ turn, streaming }: { turn: SparkyTurn; streaming: boolean }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const mine = turn.role === 'user'
   return (
     <View style={[s.bubble, mine ? s.mine : s.theirs]}>
@@ -175,7 +181,8 @@ function Bubble({ turn, streaming }: { turn: SparkyTurn; streaming: boolean }) {
   )
 }
 
-const s = StyleSheet.create({
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -249,4 +256,4 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-})
+  })

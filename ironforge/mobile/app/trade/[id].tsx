@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useLocalSearchParams, useRouter } from 'expo-router'
@@ -7,7 +7,9 @@ import useSWR from 'swr'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { api, ApiError } from '@/api/client'
 import type { TradeDetailResponse } from '@/api/types'
-import { color, space, radius, type, font, agentAccent } from '@/theme/tokens'
+import { space, radius, type, font, agentAccent } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Card, SectionLabel, Money, OutcomeBadge, AgentBadge, Loading, ErrorState } from '@/components/ui'
 import { track } from '@/analytics/track'
 
@@ -19,6 +21,8 @@ import { track } from '@/analytics/track'
  * "Not available" is a normal, expected state here, not an error.
  */
 export default function TradeDetailScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const { id } = useLocalSearchParams<{ id: string }>()
   const router = useRouter()
 
@@ -55,6 +59,8 @@ export default function TradeDetailScreen() {
 }
 
 function Content({ data }: { data: TradeDetailResponse }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const { trade, detail } = data
 
   return (
@@ -164,6 +170,7 @@ function Content({ data }: { data: TradeDetailResponse }) {
 }
 
 function Field({ label, value }: { label: string; value: string }) {
+  const { colors: color } = useTheme()
   return (
     <View>
       <Text style={[type.label, { color: color.muted, marginBottom: space.xs }]}>{label}</Text>
@@ -173,6 +180,7 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 function NotAvailable() {
+  const { colors: color } = useTheme()
   return <Text style={[type.body, { color: color.muted }]}>Not available</Text>
 }
 
@@ -187,7 +195,8 @@ function formatDate(d: string): string {
   })
 }
 
-const s = StyleSheet.create({
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.bg },
   header: {
     flexDirection: 'row',
@@ -215,4 +224,4 @@ const s = StyleSheet.create({
     backgroundColor: color.accent,
     marginTop: 6,
   },
-})
+  })
