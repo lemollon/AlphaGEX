@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   View,
   Text,
@@ -16,7 +16,9 @@ import { signIn } from '@/auth/session'
 import { registerPushDevice } from '@/notifications/push'
 import { resumeEnrollment } from '@/enroll/api'
 import { routeForNextStep } from '@/enroll/steps'
-import { color, space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 
 /**
  * Sign-in (APP-007). "Create an account" now opens the in-app enrollment flow
@@ -33,6 +35,8 @@ import { color, space, radius, type, font } from '@/theme/tokens'
  * account-enumeration oracle that design exists to prevent.
  */
 export default function SignInScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -133,43 +137,44 @@ export default function SignInScreen() {
   )
 }
 
-const s = StyleSheet.create({
-  wrap: { flex: 1, justifyContent: 'center', padding: space.xl },
-  wordmark: {
-    ...type.title,
-    fontFamily: font.display,
-    color: color.text,
-    textAlign: 'center',
-    marginBottom: space.xxl,
-    letterSpacing: 2,
-  },
-  input: {
-    backgroundColor: color.card,
-    borderColor: color.border,
-    borderWidth: 1,
-    borderRadius: radius.md,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.lg,
-    color: color.text,
-    fontSize: 16,
-    marginBottom: space.md,
-  },
-  passwordRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  reveal: { paddingHorizontal: space.md, paddingVertical: space.lg },
-  error: { ...type.body, color: color.neg, marginTop: space.md },
-  button: {
-    backgroundColor: color.accent,
-    borderRadius: radius.md,
-    paddingVertical: space.lg,
-    alignItems: 'center',
-    marginTop: space.xl,
-  },
-  forgot: { alignItems: 'center', marginTop: space.lg, padding: space.sm },
-  signupRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: space.md,
-    padding: space.sm,
-  },
-})
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+    wrap: { flex: 1, justifyContent: 'center', padding: space.xl },
+    wordmark: {
+      ...type.title,
+      fontFamily: font.display,
+      color: color.text,
+      textAlign: 'center',
+      marginBottom: space.xxl,
+      letterSpacing: 2,
+    },
+    input: {
+      backgroundColor: color.card,
+      borderColor: color.border,
+      borderWidth: 1,
+      borderRadius: radius.md,
+      paddingHorizontal: space.lg,
+      paddingVertical: space.lg,
+      color: color.text,
+      fontSize: 16,
+      marginBottom: space.md,
+    },
+    passwordRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+    reveal: { paddingHorizontal: space.md, paddingVertical: space.lg },
+    error: { ...type.body, color: color.neg, marginTop: space.md },
+    button: {
+      backgroundColor: color.accent,
+      borderRadius: radius.md,
+      paddingVertical: space.lg,
+      alignItems: 'center',
+      marginTop: space.xl,
+    },
+    forgot: { alignItems: 'center', marginTop: space.lg, padding: space.sm },
+    signupRow: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginTop: space.md,
+      padding: space.sm,
+    },
+  })

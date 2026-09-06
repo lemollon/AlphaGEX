@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   View,
   Text,
@@ -16,7 +16,9 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR, { mutate as globalMutate } from 'swr'
 import { api } from '@/api/client'
 import type { MobileMe, ProfileResponse } from '@/api/types'
-import { color, space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Loading, ErrorState } from '@/components/ui'
 
 /**
@@ -28,6 +30,8 @@ import { Loading, ErrorState } from '@/components/ui'
  * reason is honest; an editable one that quietly does nothing is not.
  */
 export default function EditProfileScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   const { data, error, isLoading, mutate } = useSWR<MobileMe>('/api/auth/mobile/me', (p: string) =>
     api<MobileMe>(p),
@@ -130,6 +134,8 @@ function Field({
   value: string
   onChange: (v: string) => void
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={{ marginBottom: space.lg }}>
       <Text style={[type.label, { color: color.textDim, marginBottom: space.sm }]}>{label}</Text>
@@ -145,33 +151,34 @@ function Field({
   )
 }
 
-const s = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: color.bg },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.md,
-    borderBottomColor: color.border,
-    borderBottomWidth: 1,
-  },
-  input: {
-    backgroundColor: color.card,
-    borderColor: color.border,
-    borderWidth: 1,
-    borderRadius: radius.md,
-    paddingHorizontal: space.md,
-    paddingVertical: space.md,
-    color: color.text,
-    fontSize: 16,
-  },
-  disabled: { backgroundColor: color.bg },
-  primary: {
-    marginTop: space.md,
-    backgroundColor: color.accent,
-    borderRadius: radius.md,
-    paddingVertical: space.md,
-    alignItems: 'center',
-  },
-})
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: color.bg },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: space.md,
+      paddingHorizontal: space.lg,
+      paddingVertical: space.md,
+      borderBottomColor: color.border,
+      borderBottomWidth: 1,
+    },
+    input: {
+      backgroundColor: color.card,
+      borderColor: color.border,
+      borderWidth: 1,
+      borderRadius: radius.md,
+      paddingHorizontal: space.md,
+      paddingVertical: space.md,
+      color: color.text,
+      fontSize: 16,
+    },
+    disabled: { backgroundColor: color.bg },
+    primary: {
+      marginTop: space.md,
+      backgroundColor: color.accent,
+      borderRadius: radius.md,
+      paddingVertical: space.md,
+      alignItems: 'center',
+    },
+  })
