@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
@@ -6,7 +7,9 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR from 'swr'
 import { api } from '@/api/client'
 import type { LiveAgents, EntitlementsResponse, AutomationPauseResponse, BrokerageConnections } from '@/api/types'
-import { color, space, radius, type, font, agentAccent } from '@/theme/tokens'
+import { space, radius, type, font, agentAccent } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Card, Loading, ErrorState } from '@/components/ui'
 import { Mascot } from '@/components/Brand'
 import { agentAction, type AgentActionKind } from '@/agents/eligibility'
@@ -15,12 +18,15 @@ import { AGENT_LABEL, AGENT_BLURB } from '@/agents/copy'
 
 const BOTS: AgentBot[] = ['spark', 'flame']
 
-const DOT_COLOR: Record<string, string> = {
-  green: color.pos,
-  blue: color.spark,
-  amber: color.warn,
-  red: color.neg,
-  gray: color.muted,
+function dotColorFor(dot: string, color: ColorTokens): string {
+  const map: Record<string, string> = {
+    green: color.pos,
+    blue: color.spark,
+    amber: color.warn,
+    red: color.neg,
+    gray: color.muted,
+  }
+  return map[dot] ?? color.muted
 }
 
 const ACTION_COPY: Record<AgentActionKind, string> = {
@@ -39,6 +45,8 @@ const ACTION_COPY: Record<AgentActionKind, string> = {
  * on /agents/{bot} can never disagree about whether that flow should even be offered.
  */
 export default function AgentsScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   const agents = useSWR<LiveAgents>('/api/live/agents', (p: string) => api<LiveAgents>(p))
   const entitlements = useSWR<EntitlementsResponse>('/api/billing/entitlements', (p: string) =>
@@ -94,7 +102,7 @@ export default function AgentsScreen() {
             })
             const accent = agentAccent(bot)
             const dotColor = liveAgent?.state
-              ? DOT_COLOR[liveAgent.state.dot] ?? color.muted
+              ? dotColorFor(liveAgent.state.dot, color)
               : action.kind === 'add'
                 ? color.muted
                 : action.kind === 'setup_required' || action.kind === 'switch'
@@ -149,7 +157,8 @@ export default function AgentsScreen() {
   )
 }
 
-const s = StyleSheet.create({
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -168,4 +177,4 @@ const s = StyleSheet.create({
     paddingHorizontal: space.md,
     paddingVertical: space.xs,
   },
-})
+  })
