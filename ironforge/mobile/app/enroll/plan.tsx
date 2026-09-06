@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { View, Text, Pressable, StyleSheet } from 'react-native'
 import { ApiError } from '@/api/client'
-import { color, space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Loading } from '@/components/ui'
 import { EnrollShell } from '@/enroll/Shell'
 import { useEnrollment } from '@/enroll/useEnrollment'
@@ -24,6 +26,7 @@ import type { PlanCatalog } from '@/enroll/types'
  * upsell (bundle-upgrade) path, not through this funnel. The Agents screen says so.
  */
 export default function PlanScreen() {
+  const { colors: color } = useTheme()
   const { enrollment, busy, setBusy, error, setError, router } = useEnrollment('plan')
   const [catalog, setCatalog] = useState<PlanCatalog | null>(null)
   const [catalogError, setCatalogError] = useState<string | null>(null)
@@ -118,6 +121,8 @@ function PlanTile({
   onPress: () => void
   disabled: boolean
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <Pressable onPress={onPress} disabled={disabled} style={[s.tile, { borderColor: accent, opacity: disabled ? 0.6 : 1 }]}>
       <View style={{ flex: 1 }}>
@@ -129,14 +134,15 @@ function PlanTile({
   )
 }
 
-const s = StyleSheet.create({
-  tile: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    borderWidth: 1.5,
-    borderRadius: radius.lg,
-    padding: space.lg,
-    backgroundColor: color.card,
-  },
-})
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+    tile: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: space.md,
+      borderWidth: 1.5,
+      borderRadius: radius.lg,
+      padding: space.lg,
+      backgroundColor: color.card,
+    },
+  })

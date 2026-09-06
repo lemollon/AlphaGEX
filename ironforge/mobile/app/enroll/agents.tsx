@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { View, Text, Pressable, StyleSheet } from 'react-native'
 import { useLocalSearchParams } from 'expo-router'
 import { ApiError } from '@/api/client'
-import { color, space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Loading } from '@/components/ui'
 import { Mascot } from '@/components/Brand'
 import { EnrollShell } from '@/enroll/Shell'
@@ -23,6 +25,8 @@ const BOTS: AgentBot[] = ['spark', 'flame']
  * The note under the tiles says so.
  */
 export default function AgentsScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const { enrollment, busy, setBusy, error, setError, router } = useEnrollment('agents')
   const params = useLocalSearchParams<{ accountId?: string }>()
   const [accountId, setAccountId] = useState<string | null>(params.accountId ?? null)
@@ -101,14 +105,15 @@ export default function AgentsScreen() {
   )
 }
 
-const s = StyleSheet.create({
-  tile: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    borderWidth: 1.5,
-    borderRadius: radius.lg,
-    padding: space.lg,
-    backgroundColor: color.card,
-  },
-})
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+    tile: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: space.md,
+      borderWidth: 1.5,
+      borderRadius: radius.lg,
+      padding: space.lg,
+      backgroundColor: color.card,
+    },
+  })

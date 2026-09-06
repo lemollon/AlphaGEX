@@ -7,7 +7,8 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import { apiPublic } from '@/api/client'
 import { signIn } from '@/auth/session'
 import { registerPushDevice } from '@/notifications/push'
-import { color, space, type, font } from '@/theme/tokens'
+import { space, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
 import { Button, CodeInput, TextField } from '@/components/ui'
 import { EnrollShell } from '@/enroll/Shell'
 import { resumeEnrollment } from '@/enroll/api'
@@ -33,6 +34,7 @@ const RESEND_COOLDOWN_SEC = 30
  * password once, same as the old link-based screen did.
  */
 export default function VerifyScreen() {
+  const { colors: color } = useTheme()
   const router = useRouter()
   const params = useLocalSearchParams<{ email?: string }>()
   const email = String(params.email ?? '')

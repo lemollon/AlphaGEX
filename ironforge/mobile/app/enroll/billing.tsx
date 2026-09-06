@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { View, Text, Platform } from 'react-native'
 import { ApiError } from '@/api/client'
 import { canPurchaseInApp } from '@/billing/store-policy'
-import { color, space, type, font } from '@/theme/tokens'
+import { space, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
 import { Button, Loading } from '@/components/ui'
 import { EnrollShell } from '@/enroll/Shell'
 import { useEnrollment } from '@/enroll/useEnrollment'
@@ -33,6 +34,7 @@ import type { PlanCatalog } from '@/enroll/types'
  * action below is offered.
  */
 export default function BillingScreen() {
+  const { colors: color } = useTheme()
   const { enrollment, busy, setBusy, error, setError, router } = useEnrollment('billing')
   const [catalog, setCatalog] = useState<PlanCatalog | null>(null)
   const [checked, setChecked] = useState(false)

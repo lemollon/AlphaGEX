@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { View, Text, Pressable } from 'react-native'
 import { useRouter } from 'expo-router'
 import { apiPublic } from '@/api/client'
-import { color, space, type, font } from '@/theme/tokens'
+import { space, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
 import { Button, TextField } from '@/components/ui'
 import { EnrollShell } from '@/enroll/Shell'
 import { validateSignup, type SignupFields, type SignupErrors } from '@/enroll/signup-validation'
@@ -17,6 +18,7 @@ import { setPendingPassword } from '@/enroll/pending-credentials'
  * side and there is no other screen in this funnel that collects them.
  */
 export default function CreateAccountScreen() {
+  const { colors: color } = useTheme()
   const router = useRouter()
   const [fields, setFields] = useState<SignupFields>({
     firstName: '',
@@ -167,6 +169,7 @@ function Checkbox({
   label: string
   error?: string
 }) {
+  const { colors: color } = useTheme()
   return (
     <Pressable
       onPress={onToggle}

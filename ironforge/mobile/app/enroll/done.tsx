@@ -2,7 +2,8 @@ import { useEffect } from 'react'
 import { View, Text } from 'react-native'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import Ionicons from '@expo/vector-icons/Ionicons'
-import { color, space, type, font } from '@/theme/tokens'
+import { space, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
 import { Button } from '@/components/ui'
 import { EnrollShell } from '@/enroll/Shell'
 import { confirmationSeen } from '@/enroll/api'
@@ -14,6 +15,7 @@ import { agentDetailHref, type AgentBot } from '@/agents/routes'
  * then into the app. Mirrors webapp/src/app/enroll/done/page.tsx's "You're in" copy.
  */
 export default function EnrollDoneScreen() {
+  const { colors: color } = useTheme()
   const router = useRouter()
   const params = useLocalSearchParams<{ activationId?: string; agent?: string }>()
   const agent = (params.agent as AgentBot | undefined) ?? null

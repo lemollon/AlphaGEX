@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { View, Text, Pressable, StyleSheet } from 'react-native'
 import * as WebBrowser from 'expo-web-browser'
 import { ApiError, API_BASE } from '@/api/client'
-import { color, space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Button, TextField, Loading } from '@/components/ui'
 import { EnrollShell } from '@/enroll/Shell'
 import { useEnrollment } from '@/enroll/useEnrollment'
@@ -29,6 +31,8 @@ const DOC_SUBTITLES: Record<string, string> = {
  * billing immediately, mirroring the web LegalClient.tsx guard.
  */
 export default function LegalScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const { enrollment, busy, setBusy, error, setError, router } = useEnrollment('legal')
   const [docs, setDocs] = useState<LegalRequirement[]>([])
   const [opened, setOpened] = useState<Record<string, boolean>>({})
@@ -156,20 +160,21 @@ export default function LegalScreen() {
   )
 }
 
-const s = StyleSheet.create({
-  list: {
-    borderWidth: 1,
-    borderColor: color.border,
-    borderRadius: radius.lg,
-    backgroundColor: color.card,
-    overflow: 'hidden',
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.md,
-  },
-  rowDivider: { borderTopWidth: 1, borderTopColor: color.border },
-})
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+    list: {
+      borderWidth: 1,
+      borderColor: color.border,
+      borderRadius: radius.lg,
+      backgroundColor: color.card,
+      overflow: 'hidden',
+    },
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: space.md,
+      paddingHorizontal: space.lg,
+      paddingVertical: space.md,
+    },
+    rowDivider: { borderTopWidth: 1, borderTopColor: color.border },
+  })
