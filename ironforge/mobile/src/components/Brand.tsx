@@ -33,11 +33,28 @@ export const SPARKY_AVATAR = require('../../assets/brand/sparky-avatar.png')
 
 /** The IF mark + IRONFORGE lockup. */
 export function Wordmark({ height = 26 }: { height?: number }) {
-  const { colors: color } = useTheme()
+  const { colors: color, scheme } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
+  // ironforge-mark.png draws its "I" in solid white on a transparent canvas — reads
+  // fine against the dark theme's near-black bg, but is nearly invisible against the
+  // light theme's near-white one. A small dark backdrop behind just the mark restores
+  // the same contrast the dark theme gets for free, without touching the asset itself.
+  const markPadding = height * 0.12
   return (
     <View style={s.lockup}>
-      <Image source={MARK} style={{ height, width: height * 1.15 }} resizeMode="contain" />
+      <View
+        style={
+          scheme === 'light'
+            ? {
+                backgroundColor: color.text,
+                borderRadius: 4,
+                padding: markPadding,
+              }
+            : undefined
+        }
+      >
+        <Image source={MARK} style={{ height, width: height * 1.15 }} resizeMode="contain" />
+      </View>
       <Text style={[s.word, { fontSize: height * 0.78 }]}>
         <Text style={{ color: color.text }}>IRON</Text>
         <Text style={{ color: color.accent }}>FORGE</Text>
