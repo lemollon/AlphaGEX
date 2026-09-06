@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS tsunami_trend_trades (
     id          BIGSERIAL PRIMARY KEY,
     ts          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     letf        VARCHAR(10) NOT NULL,
-    side        VARCHAR(4)  NOT NULL CHECK (side IN ('BUY','SELL','SPLIT')),
+    side        VARCHAR(5)  NOT NULL CHECK (side IN ('BUY','SELL','SPLIT')),
     shares      NUMERIC(16,6) NOT NULL,
     price       DECIMAL(12,4) NOT NULL,
     reason      TEXT        NOT NULL DEFAULT '',
@@ -208,6 +208,11 @@ ALTER TABLE tsunami_trend_signals ALTER COLUMN held_shares   TYPE NUMERIC(16,6);
 -- "<table>_<column>_check", so dropping that name IF EXISTS is safe on
 -- both a fresh table (already created with 'SPLIT' inline above) and an
 -- old one that predates split-adjustment.
+-- Installs that predate split-adjustment created side as VARCHAR(4); 'SPLIT'
+-- is five characters, so the INSERT in _apply_splits_for_book() raised
+-- "value too long" until the column was widened (found 2026-09-06 running
+-- the MSTU repair against prod). Idempotent.
+ALTER TABLE tsunami_trend_trades ALTER COLUMN side TYPE VARCHAR(5);
 ALTER TABLE tsunami_trend_trades DROP CONSTRAINT IF EXISTS tsunami_trend_trades_side_check;
 ALTER TABLE tsunami_trend_trades ADD  CONSTRAINT tsunami_trend_trades_side_check
     CHECK (side IN ('BUY','SELL','SPLIT'));
