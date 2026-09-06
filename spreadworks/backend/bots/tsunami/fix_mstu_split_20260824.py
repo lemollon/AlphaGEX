@@ -73,9 +73,20 @@ def honest(shares: D, price: D) -> tuple[D, D, D]:
 def main() -> int:
     apply = "--apply" in sys.argv
     url = os.environ.get("DATABASE_URL")
-    if not url:
-        print("DATABASE_URL not set", file=sys.stderr)
+    if not url or not url.startswith("postgres"):
+        # Fallback: the Render dashboard "Copy" button puts the URL on the clipboard.
+        try:
+            import subprocess
+            url = subprocess.run(["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
+                                 capture_output=True, text=True, timeout=10).stdout.strip()
+        except Exception:  # noqa: BLE001
+            url = ""
+    if not url.startswith("postgres"):
+        print("No database URL. Click 'Copy' next to External Database URL in the Render tab, then re-run.",
+              file=sys.stderr)
         return 1
+    host = url.split("@")[-1].split("/")[0]
+    print(f"connecting to host {host} (db {url.rsplit('/', 1)[-1].split('?')[0]})")
 
     conn = psycopg2.connect(url)
     conn.autocommit = False
