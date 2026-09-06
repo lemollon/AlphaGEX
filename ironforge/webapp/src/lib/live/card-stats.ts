@@ -1,7 +1,7 @@
 import { num } from '@/lib/db'
 
 /**
- * Forge agent-card stat row (handoff/ledger-kpis.md PART 2) — Account Capital,
+ * Forge agent-card stat row (handoff/ledger-kpis.md PART 2) — Capital,
  * Growth, Last 10, Best Trade, all LIFETIME (no filter), computed per bot for
  * GET /api/live/agents. Pure and DB-independent so it is unit-testable
  * without a live Postgres connection, same reasoning as computeTradesTotals
@@ -9,7 +9,15 @@ import { num } from '@/lib/db'
  */
 
 export interface CardStats {
+  /** Starting capital — unchanged meaning, still the Growth denominator. */
   account_capital_cents: number | null
+  /**
+   * The agent's CURRENT live balance, same source as getLiveSummary's
+   * `account.value` (the mobile header's "Total Account Capital"), so with
+   * one agent the Capital tile and the header match. `null` when the
+   * summary lookup failed — never fabricated from starting capital.
+   */
+  balance_cents: number | null
   growth_pct: number | null
   last10: { wins: number; losses: number }
   best_trade_cents: number | null
@@ -37,6 +45,7 @@ export function computeCardStats(
   startingCapital: number,
   totalRealizedPnl: number,
   closedTradesDesc: Array<{ realized_pnl: unknown }>,
+  currentBalance: number | null = null,
 ): CardStats {
   const last10Trades = closedTradesDesc.slice(0, 10)
   const wins = last10Trades.reduce((a, t) => (num(t.realized_pnl) > 0 ? a + 1 : a), 0)
@@ -50,6 +59,7 @@ export function computeCardStats(
 
   return {
     account_capital_cents: startingCapital > 0 ? Math.round(startingCapital * 100) : null,
+    balance_cents: currentBalance != null ? Math.round(currentBalance * 100) : null,
     growth_pct: lifetimeReturnPct(totalRealizedPnl, startingCapital),
     last10: { wins, losses },
     best_trade_cents: bestTrade != null ? Math.round(bestTrade * 100) : null,

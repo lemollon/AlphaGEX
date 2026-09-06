@@ -76,6 +76,10 @@ export async function GET(req: NextRequest) {
                 lifetime.value.starting_capital,
                 lifetime.value.total_realized_pnl,
                 trades.value.map((tr) => ({ realized_pnl: tr.pnl })),
+                // Same source as the header's "Total Account Capital" — s.account.value
+                // from getLiveSummary — so with one agent the Capital tile and the
+                // header match. Null (never fabricated) when the summary half failed.
+                s?.account?.value ?? null,
               )
             : null
 

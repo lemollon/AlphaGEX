@@ -25,6 +25,10 @@ export interface StatItem {
   tone?: string
   /** Shows a skeleton block instead of the value while the source is loading. */
   loading?: boolean
+  /** Optional smaller muted line directly under the value, e.g. "Started: $4,150" on the
+   *  Forge card's Capital tile. Only rendered in 'card' variant, and never while loading —
+   *  the skeleton already stands in for the whole column. */
+  sub?: string
 }
 
 export function StatRow({
@@ -51,9 +55,16 @@ export function StatRow({
         {item.loading ? (
           <View style={kpi ? s.skeletonKpi : s.skeletonCard} />
         ) : (
-          <Text style={[kpi ? s.valueKpi : s.valueCard, { color: item.tone ?? color.text }]}>
-            {item.value}
-          </Text>
+          <>
+            <Text style={[kpi ? s.valueKpi : s.valueCard, { color: item.tone ?? color.text }]}>
+              {item.value}
+            </Text>
+            {!kpi && item.sub ? (
+              <Text style={s.subCard} numberOfLines={1}>
+                {item.sub}
+              </Text>
+            ) : null}
+          </>
         )}
       </View>,
     )
@@ -84,10 +95,18 @@ const s = StyleSheet.create({
   dividerKpi: { width: 1, backgroundColor: color.border, marginHorizontal: space.md },
 
   labelCard: { fontSize: 14, marginBottom: space.xs },
+  // Reduced from 20 (PR #2957) so the Capital tile's value plus its "Started: $X" sub-line
+  // both fit on an iPhone-width card without truncating — same size across all four tiles
+  // so the row still reads as one aligned strip.
   valueCard: {
-    fontSize: 20,
+    fontSize: 17,
     fontFamily: font.bodyBold,
     fontVariant: ['tabular-nums'],
+  },
+  subCard: {
+    fontSize: 11,
+    color: color.muted,
+    marginTop: 1,
   },
   skeletonCard: {
     width: 44,

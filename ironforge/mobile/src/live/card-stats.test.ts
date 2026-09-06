@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   formatAccountCapital,
+  formatStartedCapital,
   formatGrowth,
   formatLast10,
   formatBestTrade,
@@ -16,6 +17,16 @@ describe('formatAccountCapital', () => {
 
   it('— when null', () => {
     expect(formatAccountCapital(null)).toBe('—')
+  })
+})
+
+describe('formatStartedCapital', () => {
+  it('prefixes the whole-dollar amount with "Started: "', () => {
+    expect(formatStartedCapital(415000)).toBe('Started: $4,150')
+  })
+
+  it('a bare "—", not "Started: —", when unavailable', () => {
+    expect(formatStartedCapital(null)).toBe('—')
   })
 })
 
@@ -69,17 +80,40 @@ describe('formatBestTrade', () => {
 describe('agentStatItems', () => {
   it('builds all four items from a full stats payload', () => {
     const items = agentStatItems(
-      { account_capital_cents: 500000, growth_pct: 6.8, last10: { wins: 8, losses: 2 }, best_trade_cents: 12200 },
+      {
+        account_capital_cents: 500000,
+        balance_cents: 436300,
+        growth_pct: 6.8,
+        last10: { wins: 8, losses: 2 },
+        best_trade_cents: 12200,
+      },
       false,
     )
-    expect(items.map((i) => i.label)).toEqual(['Account Capital', 'Growth', 'Last 10', 'Best Trade'])
-    expect(items.map((i) => i.value)).toEqual(['$5,000', '+6.8%', '8–2', '+$122'])
+    expect(items.map((i) => i.label)).toEqual(['Capital', 'Growth', 'Last 10', 'Best Trade'])
+    expect(items.map((i) => i.value)).toEqual(['$4,363', '+6.8%', '8–2', '+$122'])
     expect(items.every((i) => i.loading === false)).toBe(true)
   })
 
-  it('null stats renders every column as "—" rather than throwing', () => {
+  it('the Capital tile carries a "Started: $X" sub-line from starting capital, not the live balance', () => {
+    const items = agentStatItems(
+      {
+        account_capital_cents: 415000,
+        balance_cents: 436300,
+        growth_pct: 6.8,
+        last10: { wins: 8, losses: 2 },
+        best_trade_cents: 12200,
+      },
+      false,
+    )
+    expect(items[0].sub).toBe('Started: $4,150')
+    // Growth/Last 10/Best Trade never carry a sub-line.
+    expect(items.slice(1).every((i) => i.sub === undefined)).toBe(true)
+  })
+
+  it('null stats renders every column as "—" rather than throwing, including the sub-line', () => {
     const items = agentStatItems(null, false)
     expect(items.map((i) => i.value)).toEqual(['—', '—', '—', '—'])
+    expect(items[0].sub).toBe('—')
   })
 
   it('propagates the loading flag to every column', () => {

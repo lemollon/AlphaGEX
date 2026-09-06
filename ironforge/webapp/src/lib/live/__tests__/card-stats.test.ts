@@ -26,6 +26,7 @@ describe('computeCardStats', () => {
   it('zero closed trades: no capital, no growth-denominator issue, "—" for last10/best trade', () => {
     expect(computeCardStats(0, 0, [])).toEqual({
       account_capital_cents: null,
+      balance_cents: null,
       growth_pct: null,
       last10: { wins: 0, losses: 0 },
       best_trade_cents: null,
@@ -35,9 +36,21 @@ describe('computeCardStats', () => {
   it('starting capital with zero trades still reports account capital and 0% growth', () => {
     const result = computeCardStats(5000, 0, [])
     expect(result.account_capital_cents).toBe(500000)
+    expect(result.balance_cents).toBeNull()
     expect(result.growth_pct).toBe(0)
     expect(result.last10).toEqual({ wins: 0, losses: 0 })
     expect(result.best_trade_cents).toBeNull()
+  })
+
+  it('current balance passed through as cents — the header and the Capital tile share this source', () => {
+    const result = computeCardStats(5000, 340, [], 5340)
+    expect(result.balance_cents).toBe(534000)
+    expect(result.account_capital_cents).toBe(500000)
+  })
+
+  it('current balance null (summary half failed) never falls back to starting capital', () => {
+    const result = computeCardStats(5000, 340, [], null)
+    expect(result.balance_cents).toBeNull()
   })
 
   it('fewer than 10 closed trades counts what exists, not padded to 10', () => {

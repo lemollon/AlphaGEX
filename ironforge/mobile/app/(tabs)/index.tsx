@@ -339,12 +339,12 @@ function AgentTile({
         ) : null}
       </View>
 
-      {/* Account Capital / Growth / Last 10 / Best Trade — LIFETIME, no filter
-          (handoff/ledger-kpis.md PART 2). `agent.stats` is null only when the server
-          couldn't compute it (both source queries must succeed); agentStatItems turns
-          that into an honest "—" per column rather than throwing or hiding the row.
-          No separate per-tile loading state: this tile does not mount until
-          agents.data has already loaded (see the agents.isLoading gate above it). */}
+      {/* Capital (live balance, "Started: $X" sub-line) / Growth / Last 10 / Best Trade —
+          LIFETIME, no filter (handoff/ledger-kpis.md PART 2). `agent.stats` is null only
+          when the server couldn't compute it (both source queries must succeed);
+          agentStatItems turns that into an honest "—" per column rather than throwing or
+          hiding the row. No separate per-tile loading state: this tile does not mount
+          until agents.data has already loaded (see the agents.isLoading gate above it). */}
       <View style={s.statsPanel}>
         <StatRow variant="card" items={agentStatItems(agent.stats, false)} />
       </View>
