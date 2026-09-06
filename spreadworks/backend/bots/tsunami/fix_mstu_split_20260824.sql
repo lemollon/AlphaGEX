@@ -1,3 +1,6 @@
+-- SUPERSEDED 2026-09-06: numbers below are stale (engine sold MSTU again 9/3 on the ghost qty).
+-- Use fix_mstu_split_20260824.py, which re-checks prod state before writing.
+
 -- fix_mstu_split_20260824.sql
 --
 -- ONE-SHOT MANUAL REPAIR. Do not run automatically; a human runs this by
