@@ -146,6 +146,8 @@ def main() -> int:
             return 0
 
         # ---- apply -------------------------------------------------------------
+        # prod's side column was created VARCHAR(4); 'SPLIT' needs 5. Idempotent.
+        cur.execute("ALTER TABLE tsunami_trend_trades ALTER COLUMN side TYPE VARCHAR(5)")
         cur.execute(
             "UPDATE tsunami_trend_book SET shares=%s, avg_cost=%s, updated_at=NOW() WHERE letf='MSTU'",
             (final_shares, AVG_POST),
