@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, Pressable, StyleSheet } from 'react-native'
 import { useLocalSearchParams } from 'expo-router'
 import { ApiError } from '@/api/client'
-import { color, space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Button, Loading } from '@/components/ui'
 import { EnrollShell } from '@/enroll/Shell'
 import { useEnrollment } from '@/enroll/useEnrollment'
@@ -40,6 +42,8 @@ const BLOCKER_ROUTE: Record<string, string> = {
  * calls confirmation-seen and enters the app.
  */
 export default function ReviewScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const { enrollment, busy, setBusy, error, setError, router } = useEnrollment('review')
   const params = useLocalSearchParams<{ configId?: string }>()
   const configId = params.configId ?? null
@@ -168,6 +172,7 @@ export default function ReviewScreen() {
 }
 
 function Kv({ label, value }: { label: string; value: string }) {
+  const { colors: color } = useTheme()
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: space.sm }}>
       <Text style={[type.label, { color: color.muted }]}>{label}</Text>
@@ -177,6 +182,7 @@ function Kv({ label, value }: { label: string; value: string }) {
 }
 
 function Ack({ checked, onToggle, label }: { checked: boolean; onToggle: () => void; label: string }) {
+  const { colors: color } = useTheme()
   return (
     <Pressable onPress={onToggle} style={{ flexDirection: 'row', gap: space.md, marginBottom: space.md }}>
       <View
@@ -196,20 +202,21 @@ function Ack({ checked, onToggle, label }: { checked: boolean; onToggle: () => v
   )
 }
 
-const s = StyleSheet.create({
-  blockBox: {
-    borderWidth: 1,
-    borderColor: color.neg,
-    borderRadius: radius.lg,
-    padding: space.md,
-    marginBottom: space.lg,
-  },
-  card: {
-    borderWidth: 1,
-    borderColor: color.border,
-    borderRadius: radius.lg,
-    padding: space.lg,
-    backgroundColor: color.card,
-    marginBottom: space.md,
-  },
-})
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+    blockBox: {
+      borderWidth: 1,
+      borderColor: color.neg,
+      borderRadius: radius.lg,
+      padding: space.md,
+      marginBottom: space.lg,
+    },
+    card: {
+      borderWidth: 1,
+      borderColor: color.border,
+      borderRadius: radius.lg,
+      padding: space.lg,
+      backgroundColor: color.card,
+      marginBottom: space.md,
+    },
+  })

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { View, Text, ScrollView, Pressable, StyleSheet, Alert } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter, useLocalSearchParams } from 'expo-router'
@@ -21,7 +21,9 @@ import type {
   ActivationPreviewResponse,
   ActivationResponse,
 } from '@/api/types'
-import { color, space, radius, type, font, agentAccent } from '@/theme/tokens'
+import { space, radius, type, font, agentAccent } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Card, SectionLabel, Money, Loading, ErrorState } from '@/components/ui'
 import { Mascot } from '@/components/Brand'
 import { soleConnection, brokerLabel } from '@/api/brokerage'
@@ -37,12 +39,15 @@ import {
 } from '@/agents/copy'
 import { formatPausedAt } from '@/agents/time'
 
-const DOT_COLOR: Record<string, string> = {
-  green: color.pos,
-  blue: color.spark,
-  amber: color.warn,
-  red: color.neg,
-  gray: color.muted,
+function dotColorFor(dot: string, color: ColorTokens): string {
+  const map: Record<string, string> = {
+    green: color.pos,
+    blue: color.spark,
+    amber: color.warn,
+    red: color.neg,
+    gray: color.muted,
+  }
+  return map[dot] ?? color.muted
 }
 
 const PAUSE_COPY =
@@ -55,6 +60,8 @@ const PAUSE_COPY =
  * explanation and hand off to the web, because neither has an in-app endpoint.
  */
 export default function AgentDetailScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   const params = useLocalSearchParams<{ bot: string }>()
   const bot = (params.bot === 'flame' ? 'flame' : 'spark') as AgentBot
@@ -126,7 +133,7 @@ export default function AgentDetailScreen() {
                   s.dot,
                   {
                     backgroundColor: liveAgent?.state
-                      ? (DOT_COLOR[liveAgent.state.dot] ?? color.muted)
+                      ? dotColorFor(liveAgent.state.dot, color)
                       : color.muted,
                   },
                 ]}
@@ -190,6 +197,8 @@ function Shell({
   router: ReturnType<typeof useRouter>
   children: React.ReactNode
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
       <View style={s.header}>
@@ -225,6 +234,8 @@ function CurrentAgentSection({
   connsSWR: ReturnType<typeof useSWR<BrokerageConnections>>
   pauseSWR: ReturnType<typeof useSWR<AutomationPauseResponse>>
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const state = liveAgent?.state ?? null
   const trade = liveAgent?.trade ?? null
   const sole = soleConnection(connections)
@@ -313,6 +324,8 @@ function PauseResumeControl({
   connsSWR: ReturnType<typeof useSWR<BrokerageConnections>>
   pauseSWR: ReturnType<typeof useSWR<AutomationPauseResponse>>
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const [pending, setPending] = useState(false)
   const paused = activation?.paused ?? false
   const accent = agentAccent(bot)
@@ -411,6 +424,8 @@ function PauseResumeControl({
 }
 
 function SetupRequiredSection({ bot, label }: { bot: AgentBot; label: string }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <Card style={{ marginTop: space.lg }}>
       <SectionLabel>Setup required</SectionLabel>
@@ -439,6 +454,8 @@ function SwitchSection({
   label: string
   otherAgent: LiveAgent | null
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const otherLabel = otherAgent?.label ?? (bot === 'spark' ? 'Flame' : 'Spark')
   const hasOpenTrade = otherAgent?.trade?.active === true
 
@@ -481,6 +498,8 @@ function ActivationFlow({
   label: string
   eligibleAccounts: EligibleAccount[]
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   const [step, setStep] = useState<ActivationStep>('select')
   const [accountId, setAccountId] = useState<string | null>(
@@ -706,6 +725,8 @@ function ActivationFlow({
 }
 
 function ReviewRow({ label, value }: { label: string; value: string }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={[s.rowBetween, { marginTop: space.sm }]}>
       <Text style={[type.body, { color: color.textDim }]}>{label}</Text>
@@ -723,6 +744,8 @@ function CheckRow({
   onToggle: () => void
   label: string
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <Pressable onPress={onToggle} style={s.checkRow} accessibilityRole="checkbox" accessibilityState={{ checked }}>
       <Ionicons
@@ -744,7 +767,8 @@ function generateIdempotencyKey(): string {
   })
 }
 
-const s = StyleSheet.create({
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -782,4 +806,4 @@ const s = StyleSheet.create({
     marginTop: space.sm,
   },
   checkRow: { flexDirection: 'row', alignItems: 'flex-start', marginTop: space.md },
-})
+  })

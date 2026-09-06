@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   View,
   Text,
@@ -22,7 +22,9 @@ import type {
   CommunityMessageV2,
   ThreadReplies,
 } from '@/api/types'
-import { color, space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Card, Loading, Empty, ErrorState } from '@/components/ui'
 import { AppHeader, Mascot, SPARKY_AVATAR } from '@/components/Brand'
 import { applyFlame, FLAME } from '@/community/reactions'
@@ -57,6 +59,8 @@ type CommunityFeed = CommunityFeedV2
  * (reading the feed does not need a membership, so neither does flagging it).
  */
 export default function CommunityScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const [channel, setChannel] = useState('all-chat')
   const [draft, setDraft] = useState('')
   const [posting, setPosting] = useState(false)
@@ -518,6 +522,8 @@ function Sheet({
   onSelect: (value: string) => void
   onClose: () => void
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={s.scrim} onPress={onClose} accessibilityLabel="Dismiss" />
@@ -550,6 +556,8 @@ function BlockedSheet({
   onUnblock: (m: BlockedMember) => void
   onClose: () => void
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={s.scrim} onPress={onClose} accessibilityLabel="Dismiss" />
@@ -587,6 +595,8 @@ function BlockedSheet({
  * instead of options that would fail the moment someone tapped them.
  */
 function AttachSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={s.scrim} onPress={onClose} accessibilityLabel="Dismiss" />
@@ -624,6 +634,8 @@ function ThreadSheet({
   onClose: () => void
   onReplyPosted: () => void
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const [draft, setDraft] = useState('')
   const [posting, setPosting] = useState(false)
   const [postError, setPostError] = useState<string | null>(null)
@@ -804,6 +816,8 @@ function ThreadSheet({
  * derived from the NAME, so the same person keeps the same colour as the feed reorders.
  */
 function Avatar({ message }: { message: CommunityMessage }) {
+  const { colors: color, scheme } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   if (message.sender_type !== 'USER') {
     // Sparky answers in threads, Forge posts market updates — different faces.
     const isSparky = message.sender_name.toLowerCase().includes('sparky')
@@ -814,7 +828,7 @@ function Avatar({ message }: { message: CommunityMessage }) {
     )
   }
   return (
-    <View style={[s.avatarBubble, { backgroundColor: bubbleTint(message.sender_name) }]}>
+    <View style={[s.avatarBubble, { backgroundColor: bubbleTint(message.sender_name, scheme) }]}>
       <Text style={[type.label, { color: color.text, fontFamily: font.bodyBold }]}>
         {initials(message.sender_name)}
       </Text>
@@ -828,8 +842,12 @@ function Avatar({ message }: { message: CommunityMessage }) {
  * worse than no chip.
  */
 function CategoryChip({ message }: { message: CommunityMessage }) {
+  const { colors: color, resolveTone } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   if (!message.channel_name) return null
-  const accent = channelAccent(message.channel_slug)
+  // channelAccent() returns a DARK-canonical hex (tested in identity.test.ts) — resolve
+  // it to the active scheme here, at the render site.
+  const accent = resolveTone(channelAccent(message.channel_slug))
   return (
     <View style={[s.categoryChip, { borderColor: accent }]}>
       <Text style={[type.label, { color: accent }]}>{message.channel_name}</Text>
@@ -838,6 +856,8 @@ function CategoryChip({ message }: { message: CommunityMessage }) {
 }
 
 function FlameRow({ message, onPress }: { message: CommunityMessage; onPress: () => void }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const flame = (message.reactions ?? []).find((r) => r.emoji === FLAME)
   const count = flame?.count ?? 0
   const mine = flame?.mine ?? false
@@ -883,6 +903,7 @@ function time(iso: string): string {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
+  const { colors: color } = useTheme()
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
       <AppHeader />
@@ -891,7 +912,8 @@ function Shell({ children }: { children: React.ReactNode }) {
   )
 }
 
-const s = StyleSheet.create({
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
   title: { ...type.title, color: color.text, fontFamily: font.display },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   postRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
@@ -1015,4 +1037,4 @@ const s = StyleSheet.create({
     paddingVertical: space.md,
   },
   replyRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm, marginBottom: space.lg },
-})
+  })

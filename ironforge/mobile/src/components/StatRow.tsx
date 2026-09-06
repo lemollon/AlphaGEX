@@ -1,5 +1,8 @@
+import { useMemo } from 'react'
 import { View, Text, StyleSheet } from 'react-native'
-import { color, space, radius, font } from '@/theme/tokens'
+import { space, radius, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 
 /**
  * Shared "row of equal columns, each a muted label over a bold value,
@@ -40,6 +43,8 @@ export function StatRow({
   variant?: 'kpi' | 'card'
   style?: object
 }) {
+  const { colors: color, resolveTone } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const kpi = variant === 'kpi'
   const children: React.ReactNode[] = []
 
@@ -47,6 +52,11 @@ export function StatRow({
     if (i > 0) {
       children.push(<View key={`div-${item.label}`} style={kpi ? s.dividerKpi : s.dividerCard} />)
     }
+    // `item.tone` may be a DARK-canonical hex handed down from a pure helper (e.g.
+    // live/card-stats.ts) — resolveTone() is the identity function in dark scheme and
+    // swaps to the light equivalent in light scheme; a caller-supplied tone that isn't
+    // a recognized dark token passes through unchanged.
+    const tone = item.tone ? resolveTone(item.tone) : color.text
     children.push(
       <View key={item.label} style={[s.col, kpi ? null : s.colCard]}>
         <Text style={[kpi ? s.labelKpi : s.labelCard, { color: color.muted }]} numberOfLines={1}>
@@ -56,7 +66,7 @@ export function StatRow({
           <View style={kpi ? s.skeletonKpi : s.skeletonCard} />
         ) : (
           <>
-            <Text style={[kpi ? s.valueKpi : s.valueCard, { color: item.tone ?? color.text }]}>
+            <Text style={[kpi ? s.valueKpi : s.valueCard, { color: tone }]}>
               {item.value}
             </Text>
             {!kpi && item.sub ? (
@@ -73,7 +83,8 @@ export function StatRow({
   return <View style={[s.row, style]}>{children}</View>
 }
 
-const s = StyleSheet.create({
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'stretch' },
   col: { flex: 1, alignItems: 'center' },
   colCard: { paddingHorizontal: space.xs },

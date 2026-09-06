@@ -29,7 +29,9 @@ import {
   type Point as SparkPointType,
 } from '@/components/chart-geometry'
 import { formatLocalClock } from '@/live/lifecycle'
-import { color, space, radius, type, font, pnlColor } from '@/theme/tokens'
+import { space, radius, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 
 export type SparkPoint = SparkPointType
 
@@ -58,6 +60,8 @@ export function PnlChart({
   status: string
   current: number | null
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const [width, setWidth] = useState(0)
   // The touched sample index. Set on press/drag; kept (not nulled) through the
   // release fade so the guide and box have something to draw while they fade out.
@@ -194,7 +198,12 @@ export function PnlChart({
             <Text style={[type.label, { color: color.textDim }]}>
               {formatLocalClock(active.timestamp) ?? ''}
             </Text>
-            <Text style={[type.body, { color: pnlColor(active.pnl), fontFamily: font.bodyBold }]}>
+            <Text
+              style={[
+                type.body,
+                { color: active.pnl >= 0 ? color.pos : color.neg, fontFamily: font.bodyBold },
+              ]}
+            >
               {formatPnl(active.pnl)}
             </Text>
           </Animated.View>
@@ -218,32 +227,36 @@ function Header({
   current: number | null
   accent: string
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
+  const tone = current == null ? color.textDim : current >= 0 ? color.pos : color.neg
   return (
     <View style={s.head}>
       <Text style={[type.label, { color: accent, fontFamily: font.bodyMedium }]}>{status}</Text>
-      <Text style={[type.body, { color: pnlColor(current), fontFamily: font.bodyBold }]}>
+      <Text style={[type.body, { color: tone, fontFamily: font.bodyBold }]}>
         {current == null ? '—' : formatPnl(current)}
       </Text>
     </View>
   )
 }
 
-const s = StyleSheet.create({
-  wrap: { marginTop: space.md },
-  head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  plot: { height: HEIGHT, marginTop: space.sm, justifyContent: 'center' },
-  emptyPlot: { alignItems: 'center' },
-  beLabel: { position: 'absolute', left: 0, color: color.muted },
-  axis: { flexDirection: 'row', justifyContent: 'space-between', marginTop: space.xs },
-  tip: {
-    position: 'absolute',
-    top: TIP_TOP,
-    width: TIP_WIDTH,
-    alignItems: 'center',
-    backgroundColor: color.card,
-    borderColor: color.border,
-    borderWidth: 1,
-    borderRadius: radius.sm,
-    paddingVertical: space.xs,
-  },
-})
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+    wrap: { marginTop: space.md },
+    head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    plot: { height: HEIGHT, marginTop: space.sm, justifyContent: 'center' },
+    emptyPlot: { alignItems: 'center' },
+    beLabel: { position: 'absolute', left: 0, color: color.muted },
+    axis: { flexDirection: 'row', justifyContent: 'space-between', marginTop: space.xs },
+    tip: {
+      position: 'absolute',
+      top: TIP_TOP,
+      width: TIP_WIDTH,
+      alignItems: 'center',
+      backgroundColor: color.card,
+      borderColor: color.border,
+      borderWidth: 1,
+      borderRadius: radius.sm,
+      paddingVertical: space.xs,
+    },
+  })

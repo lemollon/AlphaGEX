@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { View, Text, ScrollView, Pressable, StyleSheet, Alert } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
@@ -7,7 +7,9 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR from 'swr'
 import { api, ApiError } from '@/api/client'
 import type { DeletionStatusResponse, DeletionRequestResponse } from '@/api/types'
-import { color, space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Card, Loading, ErrorState } from '@/components/ui'
 import { SUPPORT_EMAIL } from '@/support/contact'
 
@@ -34,6 +36,8 @@ import { SUPPORT_EMAIL } from '@/support/contact'
  * grace period. A purge you cannot call off is not a grace period.
  */
 export default function DeleteAccountScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   const { data, error, isLoading, mutate } = useSWR<DeletionStatusResponse>(
     '/api/account/deletion-request',
@@ -212,6 +216,8 @@ export default function DeleteAccountScreen() {
 }
 
 function Bullet({ children }: { children: React.ReactNode }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={s.bullet}>
       <Text style={[type.body, { color: color.accent }]}>•</Text>
@@ -233,33 +239,34 @@ function formatRequestedAt(iso: string): string {
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-const s = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: color.bg },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.md,
-    borderBottomColor: color.border,
-    borderBottomWidth: 1,
-  },
-  rowStart: { flexDirection: 'row', alignItems: 'flex-start' },
-  bullet: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: space.sm },
-  outlineBtn: {
-    marginTop: space.lg,
-    borderColor: color.border,
-    borderWidth: 1,
-    borderRadius: radius.md,
-    paddingVertical: space.md,
-    alignItems: 'center',
-  },
-  destructive: {
-    marginTop: space.lg,
-    borderColor: color.neg,
-    borderWidth: 1,
-    borderRadius: radius.md,
-    paddingVertical: space.md,
-    alignItems: 'center',
-  },
-})
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: color.bg },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: space.md,
+      paddingHorizontal: space.lg,
+      paddingVertical: space.md,
+      borderBottomColor: color.border,
+      borderBottomWidth: 1,
+    },
+    rowStart: { flexDirection: 'row', alignItems: 'flex-start' },
+    bullet: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: space.sm },
+    outlineBtn: {
+      marginTop: space.lg,
+      borderColor: color.border,
+      borderWidth: 1,
+      borderRadius: radius.md,
+      paddingVertical: space.md,
+      alignItems: 'center',
+    },
+    destructive: {
+      marginTop: space.lg,
+      borderColor: color.neg,
+      borderWidth: 1,
+      borderRadius: radius.md,
+      paddingVertical: space.md,
+      alignItems: 'center',
+    },
+  })

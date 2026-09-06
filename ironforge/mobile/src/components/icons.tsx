@@ -12,12 +12,13 @@ import Svg, { Path } from 'react-native-svg'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts (~3 MB,
 // MaterialCommunityIcons alone is 1.3 MB). Ionicons is the only set used.
 import Ionicons from '@expo/vector-icons/Ionicons'
-import { color } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
 
 const SIZE = 26
 
 /** Shield outline with the IF mark centred — the Forge tab. */
 export function ForgeIcon({ focused }: { focused: boolean }) {
+  const { colors: color } = useTheme()
   const tint = focused ? color.accent : color.muted
   return (
     <View style={{ width: SIZE, height: SIZE, alignItems: 'center', justifyContent: 'center' }}>
@@ -45,6 +46,7 @@ export function ForgeIcon({ focused }: { focused: boolean }) {
 }
 
 export function LedgerIcon({ focused }: { focused: boolean }) {
+  const { colors: color } = useTheme()
   return (
     <Ionicons
       name={focused ? 'book' : 'book-outline'}
@@ -55,6 +57,7 @@ export function LedgerIcon({ focused }: { focused: boolean }) {
 }
 
 export function CommunityIcon({ focused }: { focused: boolean }) {
+  const { colors: color } = useTheme()
   return (
     <Ionicons
       name={focused ? 'people' : 'people-outline'}
@@ -65,6 +68,7 @@ export function CommunityIcon({ focused }: { focused: boolean }) {
 }
 
 export function AccountIcon({ focused }: { focused: boolean }) {
+  const { colors: color } = useTheme()
   return (
     <Ionicons
       name={focused ? 'person' : 'person-outline'}

@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { View, Text, ScrollView, Pressable, Switch, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { api } from '@/api/client'
-import { color, space, type, font } from '@/theme/tokens'
+import { space, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Card, SectionLabel, Loading, ErrorState } from '@/components/ui'
 
 /**
@@ -87,6 +89,8 @@ const GROUPS: Array<{ label: string; rows: Array<{ key: PrefKey; label: string; 
 ]
 
 export default function NotificationsScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   const [prefs, setPrefs] = useState<Preferences | null>(null)
   const [loading, setLoading] = useState(true)
@@ -182,25 +186,26 @@ export default function NotificationsScreen() {
   )
 }
 
-const s = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: color.bg },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.md,
-    borderBottomColor: color.border,
-    borderBottomWidth: 1,
-  },
-  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: space.md },
-  rowDivider: { borderTopWidth: 1, borderTopColor: color.border },
-  securityRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    justifyContent: 'center',
-    marginTop: space.sm,
-    marginBottom: space.xl,
-  },
-})
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: color.bg },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: space.md,
+      paddingHorizontal: space.lg,
+      paddingVertical: space.md,
+      borderBottomColor: color.border,
+      borderBottomWidth: 1,
+    },
+    row: { flexDirection: 'row', alignItems: 'center', paddingVertical: space.md },
+    rowDivider: { borderTopWidth: 1, borderTopColor: color.border },
+    securityRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: space.sm,
+      justifyContent: 'center',
+      marginTop: space.sm,
+      marginBottom: space.xl,
+    },
+  })

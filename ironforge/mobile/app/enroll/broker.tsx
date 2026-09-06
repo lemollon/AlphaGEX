@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { View, Text, Pressable, StyleSheet } from 'react-native'
 import * as WebBrowser from 'expo-web-browser'
 import * as Linking from 'expo-linking'
 import { ApiError } from '@/api/client'
-import { color, space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Button, Loading } from '@/components/ui'
 import { EnrollShell } from '@/enroll/Shell'
 import { useEnrollment } from '@/enroll/useEnrollment'
@@ -28,6 +30,8 @@ import type { BrokerAccountPick } from '@/enroll/types'
  * this funnel entirely.)
  */
 export default function BrokerScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const { enrollment, busy, setBusy, error, setError, router } = useEnrollment('broker')
   const [accounts, setAccounts] = useState<BrokerAccountPick[] | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -145,15 +149,16 @@ export default function BrokerScreen() {
   )
 }
 
-const s = StyleSheet.create({
-  list: {
-    borderWidth: 1,
-    borderColor: color.border,
-    borderRadius: radius.lg,
-    backgroundColor: color.card,
-    overflow: 'hidden',
-  },
-  row: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md },
-  rowDivider: { borderTopWidth: 1, borderTopColor: color.border },
-  radio: { width: 18, height: 18, borderRadius: 9, borderWidth: 1.5 },
-})
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+    list: {
+      borderWidth: 1,
+      borderColor: color.border,
+      borderRadius: radius.lg,
+      backgroundColor: color.card,
+      overflow: 'hidden',
+    },
+    row: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md },
+    rowDivider: { borderTopWidth: 1, borderTopColor: color.border },
+    radio: { width: 18, height: 18, borderRadius: 9, borderWidth: 1.5 },
+  })

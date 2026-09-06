@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { View, Text, TextInput, Pressable, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
@@ -6,7 +6,9 @@ import { useRouter } from 'expo-router'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { apiPublic } from '@/api/client'
 import { track } from '@/analytics/track'
-import { color, space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 
 /**
  * Forgot password (APP-009).
@@ -17,6 +19,8 @@ import { color, space, radius, type, font } from '@/theme/tokens'
  * copy is written to be true in both cases at once.
  */
 export default function ForgotPasswordScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   const [email, setEmail] = useState('')
   const [busy, setBusy] = useState(false)
@@ -111,33 +115,34 @@ export default function ForgotPasswordScreen() {
   )
 }
 
-const s = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: color.bg },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.md,
-    borderBottomColor: color.border,
-    borderBottomWidth: 1,
-  },
-  input: {
-    backgroundColor: color.card,
-    borderColor: color.border,
-    borderWidth: 1,
-    borderRadius: radius.md,
-    paddingHorizontal: space.md,
-    paddingVertical: space.md,
-    color: color.text,
-    fontSize: 16,
-  },
-  primary: {
-    marginTop: space.xl,
-    backgroundColor: color.accent,
-    borderRadius: radius.md,
-    paddingVertical: space.md,
-    alignItems: 'center',
-  },
-  doneWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl },
-})
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: color.bg },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: space.md,
+      paddingHorizontal: space.lg,
+      paddingVertical: space.md,
+      borderBottomColor: color.border,
+      borderBottomWidth: 1,
+    },
+    input: {
+      backgroundColor: color.card,
+      borderColor: color.border,
+      borderWidth: 1,
+      borderRadius: radius.md,
+      paddingHorizontal: space.md,
+      paddingVertical: space.md,
+      color: color.text,
+      fontSize: 16,
+    },
+    primary: {
+      marginTop: space.xl,
+      backgroundColor: color.accent,
+      borderRadius: radius.md,
+      paddingVertical: space.md,
+      alignItems: 'center',
+    },
+    doneWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl },
+  })

@@ -6,18 +6,24 @@
  * tokens rather than lifted, and these are the pieces every screen composes.
  */
 import { View, Text, ActivityIndicator, Pressable, Image, TextInput, StyleSheet } from 'react-native'
-import { useRef } from 'react'
+import { useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
 import type { TextInputProps } from 'react-native'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
-import { color, space, radius, type, font, outcomeColor, pnlColor } from '@/theme/tokens'
+import { space, radius, type, font, outcomeColor } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 
 export function Card({ children, style }: { children: ReactNode; style?: object }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return <View style={[s.card, style]}>{children}</View>
 }
 
 export function SectionLabel({ children }: { children: ReactNode }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return <Text style={s.sectionLabel}>{String(children).toUpperCase()}</Text>
 }
 
@@ -29,17 +35,22 @@ export function Money({
   value: number | null | undefined
   size?: 'hero' | 'title' | 'body'
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   if (value == null) return <Text style={[s.dim, type[size]]}>—</Text>
   const sign = value >= 0 ? '+' : '-'
   const text = `${sign}$${Math.abs(value).toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`
-  return <Text style={[type[size], { color: pnlColor(value), fontFamily: font.bodyBold }]}>{text}</Text>
+  const tone = value >= 0 ? color.pos : color.neg
+  return <Text style={[type[size], { color: tone, fontFamily: font.bodyBold }]}>{text}</Text>
 }
 
 /** Plain currency with no sign — for a balance, where +/- would be nonsense. */
 export function Balance({ value }: { value: number | null | undefined }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   if (value == null) return <Text style={[s.dim, type.hero]}>—</Text>
   return (
     <Text style={[type.hero, { color: color.text, fontFamily: font.display }]}>
@@ -50,7 +61,9 @@ export function Balance({ value }: { value: number | null | undefined }) {
 
 /** Profit Target / Auto Close / Stop Loss — driven by the API's normalized outcome_kind. */
 export function OutcomeBadge({ kind, label }: { kind: string; label: string }) {
-  const c = outcomeColor[kind] ?? color.textDim
+  const { colors: color, resolveTone } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
+  const c = outcomeColor[kind] ? resolveTone(outcomeColor[kind]) : color.textDim
   return (
     <View style={[s.badge, { borderColor: c }]}>
       <Text style={[type.label, { color: c, fontFamily: font.bodyMedium }]}>{label}</Text>
@@ -59,6 +72,8 @@ export function OutcomeBadge({ kind, label }: { kind: string; label: string }) {
 }
 
 export function AgentBadge({ name, accent }: { name: string; accent: string }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={[s.badge, { borderColor: accent }]}>
       <Text style={[type.label, { color: accent, fontFamily: font.bodyMedium }]}>{name}</Text>
@@ -91,6 +106,8 @@ export function Row({
   tint?: string
   badge?: ReactNode
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <Pressable
       onPress={onPress}
@@ -120,6 +137,8 @@ export function Row({
 }
 
 export function Loading({ label = 'Loading…' }: { label?: string }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={s.centered}>
       <ActivityIndicator color={color.accent} />
@@ -133,6 +152,8 @@ export function Loading({ label = 'Loading…' }: { label?: string }) {
  * an unexplained blank screen on a trading app reads as breakage.
  */
 export function Empty({ title, detail }: { title: string; detail: string }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={s.centered}>
       <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>{title}</Text>
@@ -143,6 +164,8 @@ export function Empty({ title, detail }: { title: string; detail: string }) {
 
 /** Error state (APP-006) — always paired with a retry, never a dead end. */
 export function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={s.centered}>
       <Text style={[type.body, { color: color.neg, fontFamily: font.bodyMedium }]}>
@@ -175,6 +198,8 @@ export function Button({
   disabled?: boolean
   variant?: 'primary' | 'secondary'
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const inactive = busy || disabled
   return (
     <Pressable
@@ -209,6 +234,8 @@ export function TextField({
   error,
   ...inputProps
 }: { label: string; error?: string | null } & TextInputProps) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={{ marginBottom: space.lg }}>
       <Text style={[type.label, { color: color.textDim, marginBottom: space.xs }]}>{label}</Text>
@@ -244,6 +271,8 @@ export function CodeInput({
   onSubmitEditing?: () => void
   autoFocus?: boolean
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const inputRef = useRef<TextInput>(null)
   return (
     <View style={{ marginBottom: space.lg }}>
@@ -291,6 +320,8 @@ export function CodeInput({
  * the flow is resumable, not a black box.
  */
 export function ProgressBar({ step, total }: { step: number; total: number }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <View>
       <Text style={[type.section, { color: color.accent, fontFamily: font.bodyBold, marginBottom: space.sm }]}>
@@ -305,7 +336,8 @@ export function ProgressBar({ step, total }: { step: number; total: number }) {
   )
 }
 
-const s = StyleSheet.create({
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
   card: {
     backgroundColor: color.card,
     borderColor: color.border,
@@ -370,4 +402,4 @@ const s = StyleSheet.create({
   },
   codeBoxActive: { borderColor: color.accent },
   codeHiddenInput: { position: 'absolute', opacity: 0, height: 1, width: 1 },
-})
+  })

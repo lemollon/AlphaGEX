@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   View,
   Text,
@@ -15,7 +15,9 @@ import { useRouter } from 'expo-router'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { api } from '@/api/client'
 import { signOut } from '@/auth/session'
-import { color, space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 
 /**
  * Change Password — APP-059.
@@ -39,6 +41,8 @@ const RULES = [
 ]
 
 export default function ChangePasswordScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
@@ -202,6 +206,8 @@ function Field({
   secure: boolean
   autoComplete: 'current-password' | 'new-password'
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={{ marginBottom: space.lg }}>
       <Text style={[type.label, { color: color.textDim, marginBottom: space.sm }]}>{label}</Text>
@@ -219,7 +225,8 @@ function Field({
   )
 }
 
-const s = StyleSheet.create({
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.bg },
   header: {
     flexDirection: 'row',
@@ -251,4 +258,4 @@ const s = StyleSheet.create({
     alignItems: 'center',
   },
   doneWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl },
-})
+  })

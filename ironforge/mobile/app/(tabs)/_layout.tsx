@@ -1,7 +1,8 @@
 import { useEffect } from 'react'
 import { AppState, type AppStateStatus } from 'react-native'
 import { Tabs } from 'expo-router'
-import { color, font } from '@/theme/tokens'
+import { font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
 import { ForgeIcon, LedgerIcon, CommunityIcon, AccountIcon } from '@/components/icons'
 import { registerPushDevice, usePushNavigation } from '@/notifications/push'
 import { useScreenTracking } from '@/analytics/screen-tracking'
@@ -24,6 +25,7 @@ initMonitoring()
  * They are vector now — see components/icons.tsx.
  */
 export default function TabsLayout() {
+  const { colors: color } = useTheme()
   // Push device registration (APP-034) — safe to call every time the tabs mount or
   // the app returns to the foreground; it no-ops when the token has not changed.
   // Tap routing (usePushNavigation) and automatic screen views live here too, since
@@ -44,7 +46,7 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: color.card,
+          backgroundColor: color.tabBar,
           borderTopColor: color.border,
           height: 88,
           paddingTop: 8,

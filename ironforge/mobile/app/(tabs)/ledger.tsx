@@ -14,7 +14,9 @@ import {
   type LedgerFilters,
 } from '@/ledger/paging'
 import { tradeDetailHref } from '@/ledger/detail'
-import { color, space, radius, type, font, agentAccent } from '@/theme/tokens'
+import { space, radius, type, font, agentAccent } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Card, Money, OutcomeBadge, AgentBadge, Loading, Empty, ErrorState } from '@/components/ui'
 import { StatRow } from '@/components/StatRow'
 import { AppHeader } from '@/components/Brand'
@@ -51,6 +53,8 @@ const AGENTS = [
 ] as const
 
 export default function LedgerScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   const [query, setQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
@@ -205,6 +209,7 @@ export default function LedgerScreen() {
  * which is when the skeleton shows instead of a flash of "0"/"—".
  */
 function KpiStrip({ totals }: { totals: TradesTotals | undefined }) {
+  const { colors: color } = useTheme()
   const loading = !totals
   const zero = !!totals && totals.completed_trades === 0
 
@@ -239,6 +244,8 @@ function formatWinRate(pct: number | null): string {
 }
 
 function TradeCard({ trade, onPress }: { trade: HistoryTrade; onPress: () => void }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={`Trade closed ${trade.close_date}`}>
       <Card style={{ marginBottom: space.md }}>
@@ -266,6 +273,7 @@ function TradeCard({ trade, onPress }: { trade: HistoryTrade; onPress: () => voi
 }
 
 function Field({ label, value }: { label: string; value: string }) {
+  const { colors: color } = useTheme()
   return (
     <View style={{ alignItems: 'center' }}>
       <Text style={[type.label, { color: color.muted, marginBottom: space.xs }]}>{label}</Text>
@@ -295,6 +303,8 @@ function Dropdown({
   onSelect: (key: string) => void
   icon?: React.ComponentProps<typeof Ionicons>['name']
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <Pressable
       onPress={() =>
@@ -315,6 +325,7 @@ function Dropdown({
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
+  const { colors: color } = useTheme()
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
       <AppHeader />
@@ -334,7 +345,8 @@ function formatDate(d: string): string {
   })
 }
 
-const s = StyleSheet.create({
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
   title: { ...type.title, color: color.text, fontFamily: font.display, marginBottom: space.lg },
   search: {
     marginTop: space.md,
@@ -377,4 +389,4 @@ const s = StyleSheet.create({
     alignItems: 'center',
     marginTop: space.sm,
   },
-})
+  })
