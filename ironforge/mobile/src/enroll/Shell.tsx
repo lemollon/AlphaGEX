@@ -1,10 +1,13 @@
+import { useMemo } from 'react'
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import type { ReactNode } from 'react'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
-import { color, space, type, font } from '@/theme/tokens'
+import { space, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { ProgressBar } from '@/components/ui'
 
 /** Total numbered screens in the funnel, per the SERVER's real order (plan before
@@ -26,6 +29,8 @@ export function EnrollShell({
   error?: string | null
   children: ReactNode
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   return (
     <SafeAreaView style={s.screen} edges={['top']}>
@@ -62,22 +67,23 @@ export function EnrollShell({
   )
 }
 
-const s = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: color.bg },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: space.lg,
-    paddingVertical: space.md,
-    borderBottomColor: color.border,
-    borderBottomWidth: 1,
-  },
-  errorBanner: {
-    borderWidth: 1,
-    borderColor: color.neg,
-    borderRadius: 10,
-    padding: space.md,
-    marginBottom: space.lg,
-  },
-})
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: color.bg },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: space.lg,
+      paddingVertical: space.md,
+      borderBottomColor: color.border,
+      borderBottomWidth: 1,
+    },
+    errorBanner: {
+      borderWidth: 1,
+      borderColor: color.neg,
+      borderRadius: 10,
+      padding: space.md,
+      marginBottom: space.lg,
+    },
+  })

@@ -15,7 +15,7 @@
  * the handle DELETE requires. It previously did not, so the screen could list a
  * connection and then had nothing to act on.
  */
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { View, Text, Pressable, Alert, ActivityIndicator, StyleSheet } from 'react-native'
 import * as WebBrowser from 'expo-web-browser'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts (~3 MB,
@@ -26,19 +26,26 @@ import { api } from '@/api/client'
 import type { BrokerageConnection, BrokerageConnections, LiveAgents } from '@/api/types'
 import { brokerLabel, health, type HealthKey } from '@/api/brokerage'
 import { assignedAgentLabels } from '@/agents/assignment'
-import { color, space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Card, SectionLabel } from '@/components/ui'
 
 const RETURN_URL = 'ironforge://app/return'
 
-const HEALTH_COLOR: Record<HealthKey, string> = {
-  connected: color.pos,
-  attention: color.warn,
-  disconnected: color.neg,
-  restricted: color.neg,
+function healthColor(key: HealthKey, color: ColorTokens): string {
+  const map: Record<HealthKey, string> = {
+    connected: color.pos,
+    attention: color.warn,
+    disconnected: color.neg,
+    restricted: color.neg,
+  }
+  return map[key]
 }
 
 export function BrokerageSection() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   // Generic named on api() deliberately — see the note in app/(tabs)/index.tsx.
   const { data, error, isLoading, mutate } = useSWR<BrokerageConnections>(
     '/api/brokerage/connections',
@@ -199,6 +206,8 @@ function ConnectionRow({
   /** null = not derivable (more than one connection); [] = no agent owns it yet. */
   assigned: string[] | null
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const h = health(conn.status)
   const name = brokerLabel(conn.broker ?? conn.provider)
   const masks = conn.accounts.map((a) => a.mask).filter((m): m is string => !!m)
@@ -217,8 +226,8 @@ function ConnectionRow({
       <View style={{ flex: 1 }}>
         <View style={s.rowCenter}>
           <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]}>{name}</Text>
-          <View style={[s.dot, { backgroundColor: HEALTH_COLOR[h.key] }]} />
-          <Text style={[type.label, { color: HEALTH_COLOR[h.key] }]}>{h.label}</Text>
+          <View style={[s.dot, { backgroundColor: healthColor(h.key, color) }]} />
+          <Text style={[type.label, { color: healthColor(h.key, color) }]}>{h.label}</Text>
         </View>
         {masks.length ? (
           <Text style={[type.label, { color: color.textDim, marginTop: 2 }]}>
@@ -242,26 +251,27 @@ function ConnectionRow({
   )
 }
 
-const s = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md },
-  rowDivider: { borderTopWidth: 1, borderTopColor: color.border },
-  rowCenter: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: color.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dot: { width: 7, height: 7, borderRadius: 4 },
-  outlineBtn: {
-    marginTop: space.lg,
-    borderWidth: 1,
-    borderColor: color.accent,
-    borderRadius: radius.md,
-    paddingVertical: space.md,
-    alignItems: 'center',
-  },
-})
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+    row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md },
+    rowDivider: { borderTopWidth: 1, borderTopColor: color.border },
+    rowCenter: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+    avatar: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: color.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    dot: { width: 7, height: 7, borderRadius: 4 },
+    outlineBtn: {
+      marginTop: space.lg,
+      borderWidth: 1,
+      borderColor: color.accent,
+      borderRadius: radius.md,
+      paddingVertical: space.md,
+      alignItems: 'center',
+    },
+  })

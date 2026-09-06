@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Stack, useRouter, useSegments } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
 import { View, Text, Pressable, AppState, StyleSheet, type AppStateStatus } from 'react-native'
@@ -22,7 +22,9 @@ import {
   signOut,
 } from '@/auth/session'
 import { nextLockState, INITIAL_LOCK_STATE, type LockPolicy, type LockState } from '@/auth/lock'
-import { color, space, font, type } from '@/theme/tokens'
+import { space, font, type } from '@/theme/tokens'
+import { ThemeProvider, useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Loading } from '@/components/ui'
 import { Wordmark } from '@/components/Brand'
 
@@ -50,6 +52,16 @@ async function biometricsUsable(): Promise<boolean> {
 }
 
 export default function RootLayout() {
+  return (
+    <ThemeProvider>
+      <RootLayoutInner />
+    </ThemeProvider>
+  )
+}
+
+function RootLayoutInner() {
+  const { colors: color, scheme } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const [sessionChecked, setSessionChecked] = useState(false)
   const [signedIn, setSignedIn] = useState(false)
   const [lockState, setLockState] = useState<LockState>(INITIAL_LOCK_STATE)
@@ -245,7 +257,8 @@ export default function RootLayout() {
 
   return (
     <>
-      <StatusBar style="light" />
+      {/* Light content (white text/icons) on the dark bg, dark content on the light bg. */}
+      <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
       <Stack
         screenOptions={{
           headerShown: false,
@@ -277,34 +290,35 @@ export default function RootLayout() {
   )
 }
 
-const s = StyleSheet.create({
-  overlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: color.bg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: space.xl,
-    gap: space.md,
-  },
-  locked: {
-    ...type.title,
-    fontFamily: font.display,
-    color: color.text,
-    marginBottom: space.lg,
-  },
-  primary: {
-    backgroundColor: color.accent,
-    borderRadius: 10,
-    paddingHorizontal: space.xl,
-    paddingVertical: space.md,
-    alignItems: 'center',
-  },
-  primaryLabel: { ...type.body, color: color.text, fontFamily: font.bodyBold },
-  secondary: { marginTop: space.sm, padding: space.sm },
-  secondaryLabel: { ...type.body, color: color.textDim, fontFamily: font.bodyMedium },
-  error: { ...type.label, color: color.neg, textAlign: 'center' },
-})
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+    overlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: color.bg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: space.xl,
+      gap: space.md,
+    },
+    locked: {
+      ...type.title,
+      fontFamily: font.display,
+      color: color.text,
+      marginBottom: space.lg,
+    },
+    primary: {
+      backgroundColor: color.accent,
+      borderRadius: 10,
+      paddingHorizontal: space.xl,
+      paddingVertical: space.md,
+      alignItems: 'center',
+    },
+    primaryLabel: { ...type.body, color: color.text, fontFamily: font.bodyBold },
+    secondary: { marginTop: space.sm, padding: space.sm },
+    secondaryLabel: { ...type.body, color: color.textDim, fontFamily: font.bodyMedium },
+    error: { ...type.label, color: color.neg, textAlign: 'center' },
+  })

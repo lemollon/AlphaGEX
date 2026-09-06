@@ -12,11 +12,14 @@
  *   home/flame-mascot-glow.png -> assets/brand/mascot-flame.png
  * Never regenerate these. They are signed off and they are what the mockups show.
  */
+import { useMemo } from 'react'
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts (~3 MB,
 // MaterialCommunityIcons alone is 1.3 MB). Ionicons is the only set used.
 import Ionicons from '@expo/vector-icons/Ionicons'
-import { color, space, font } from '@/theme/tokens'
+import { space, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { useNotificationBell } from '@/notifications/bell'
 
 const MARK = require('../../assets/brand/ironforge-mark.png')
@@ -30,6 +33,8 @@ export const SPARKY_AVATAR = require('../../assets/brand/sparky-avatar.png')
 
 /** The IF mark + IRONFORGE lockup. */
 export function Wordmark({ height = 26 }: { height?: number }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={s.lockup}>
       <Image source={MARK} style={{ height, width: height * 1.15 }} resizeMode="contain" />
@@ -50,6 +55,8 @@ export function Wordmark({ height = 26 }: { height?: number }) {
  * teaches people to ignore it.
  */
 export function AppHeader() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const { alert, onPress } = useNotificationBell()
   return (
     <View style={s.header}>
@@ -75,30 +82,31 @@ export function Mascot({ bot, size = 40 }: { bot: string; size?: number }) {
   return <Image source={src} style={{ width: size, height: size }} resizeMode="contain" />
 }
 
-const s = StyleSheet.create({
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: space.lg,
-    paddingTop: space.sm,
-    paddingBottom: space.md,
-  },
-  lockup: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  word: {
-    fontFamily: font.display,
-    letterSpacing: 0.5,
-  },
-  bell: { padding: space.xs },
-  dot: {
-    position: 'absolute',
-    top: 2,
-    right: 2,
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-    backgroundColor: color.accent,
-    borderWidth: 1.5,
-    borderColor: color.bg,
-  },
-})
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: space.lg,
+      paddingTop: space.sm,
+      paddingBottom: space.md,
+    },
+    lockup: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+    word: {
+      fontFamily: font.display,
+      letterSpacing: 0.5,
+    },
+    bell: { padding: space.xs },
+    dot: {
+      position: 'absolute',
+      top: 2,
+      right: 2,
+      width: 9,
+      height: 9,
+      borderRadius: 5,
+      backgroundColor: color.accent,
+      borderWidth: 1.5,
+      borderColor: color.bg,
+    },
+  })
