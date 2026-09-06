@@ -52,11 +52,19 @@ export function channelAccent(slug: string | undefined): string {
  * 🚨 Derived from the NAME, not the list index. Index-based colouring changes every
  * time the feed reorders or a post is blocked out of it, so the same person appears
  * in a different colour on every poll — which reads as a different person.
+ *
+ * Two sets, dark and light: the dark set is near-black so white initials sit on top
+ * of it (unchanged from before appearance theming existed — `bubbleTint(name)` with
+ * no scheme still returns exactly these values). The light set is the same six hues
+ * lightened to pale tints, so near-black initials text (the light palette's `text`)
+ * stays legible instead of nearly-black-on-nearly-black.
  */
-const BUBBLE_TINTS = ['#2A3340', '#33372A', '#3A2E2A', '#2A3A38', '#352A3A', '#3A3A2A']
+const BUBBLE_TINTS_DARK = ['#2A3340', '#33372A', '#3A2E2A', '#2A3A38', '#352A3A', '#3A3A2A']
+const BUBBLE_TINTS_LIGHT = ['#DCE6F2', '#EAF0D8', '#F2E4DC', '#DCEEEA', '#EFE0F2', '#F2F0DC']
 
-export function bubbleTint(name: string): string {
+export function bubbleTint(name: string, scheme: 'light' | 'dark' = 'dark'): string {
   let hash = 0
   for (const ch of name ?? '') hash = (hash * 31 + ch.codePointAt(0)!) >>> 0
-  return BUBBLE_TINTS[hash % BUBBLE_TINTS.length]
+  const tints = scheme === 'light' ? BUBBLE_TINTS_LIGHT : BUBBLE_TINTS_DARK
+  return tints[hash % tints.length]
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { View, Text, ScrollView, Pressable, Switch, StyleSheet, Alert, Linking, Platform } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -11,7 +11,10 @@ import type { MobileMe, MembershipResponse } from '@/api/types'
 import { signOut, biometricsAvailable, isBiometricEnabled, setBiometricEnabled } from '@/auth/session'
 import { unregisterPushDevice } from '@/notifications/push'
 import { canManageBillingInApp } from '@/billing/store-policy'
-import { color, space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
+import type { AppearancePreference } from '@/theme/palette'
 import { Card, SectionLabel, Row, Loading, ErrorState } from '@/components/ui'
 import { AppHeader, SPARKY_AVATAR } from '@/components/Brand'
 import { SUPPORT_EMAIL, supportMailto } from '@/support/contact'
@@ -40,6 +43,8 @@ import { BrokerageSection } from '@/components/BrokerageSection'
  * non-subscribers is exactly the bug that was deleted when Stripe landed.
  */
 export default function AccountScreen() {
+  const { colors: color, preference, setPreference } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   // The fetcher's return type must be explicit. With no third (config) argument, SWR's
   // overloads let TypeScript read `(p: string) => api(p)` — which resolves to
@@ -191,8 +196,8 @@ export default function AccountScreen() {
               {billing?.membership?.plan ?? (data?.hasMembership ? 'Membership' : 'No membership')}
             </Text>
             {billing?.membership ? (
-              <View style={[s.pill, { borderColor: statusColor(billing.membership.status) }]}>
-                <Text style={[type.label, { color: statusColor(billing.membership.status) }]}>
+              <View style={[s.pill, { borderColor: statusColor(billing.membership.status, color) }]}>
+                <Text style={[type.label, { color: statusColor(billing.membership.status, color) }]}>
                   {billing.membership.badge}
                 </Text>
               </View>
@@ -260,6 +265,19 @@ export default function AccountScreen() {
             label="Notifications"
             detail="Alerts and push preferences"
             onPress={() => router.push('/notifications')}
+          />
+        </Card>
+
+        <View style={{ marginTop: space.xl }}>
+          <SectionLabel>Appearance</SectionLabel>
+        </View>
+        <Card>
+          <Row
+            icon="contrast-outline"
+            label="Appearance"
+            detail={appearanceDetail(preference)}
+            onPress={() => openAppearancePicker(preference, setPreference)}
+            first
           />
         </Card>
 
@@ -375,8 +393,39 @@ export default function AccountScreen() {
   )
 }
 
+function appearanceLabel(pref: AppearancePreference): string {
+  if (pref === 'light') return 'Light'
+  if (pref === 'dark') return 'Dark'
+  return 'System'
+}
+
+/** Row detail text — the current choice, shown right on the row so a customer never
+ *  has to open the picker just to see what's selected. */
+function appearanceDetail(pref: AppearancePreference): string {
+  return appearanceLabel(pref)
+}
+
+/**
+ * A three-way choice with no destructive option doesn't need a bespoke modal —
+ * Alert.alert's button list is the same pattern BrokerageSection's `manage()` already
+ * uses for "pick one of a few named actions". The current choice gets a checkmark so
+ * the picker itself shows what's selected, not just the row behind it.
+ */
+function openAppearancePicker(
+  current: AppearancePreference,
+  setPreference: (pref: AppearancePreference) => void,
+) {
+  const mark = (pref: AppearancePreference) => (pref === current ? `${appearanceLabel(pref)}  ✓` : appearanceLabel(pref))
+  Alert.alert('Appearance', 'Choose how IronForge looks on this device.', [
+    { text: mark('system'), onPress: () => setPreference('system') },
+    { text: mark('light'), onPress: () => setPreference('light') },
+    { text: mark('dark'), onPress: () => setPreference('dark') },
+    { text: 'Cancel', style: 'cancel' },
+  ])
+}
+
 /** past_due is the one status that needs the customer to act, so it reads as a warning. */
-function statusColor(status: string): string {
+function statusColor(status: string, color: ColorTokens): string {
   if (status === 'past_due') return color.warn
   if (status === 'canceled') return color.neg
   return color.pos
@@ -402,6 +451,7 @@ function memberSince(iso: string): string {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
+  const { colors: color } = useTheme()
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
       <AppHeader />
@@ -410,7 +460,8 @@ function Shell({ children }: { children: React.ReactNode }) {
   )
 }
 
-const s = StyleSheet.create({
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
   title: { ...type.title, color: color.text, fontFamily: font.display, marginBottom: space.lg },
   rowCenter: { flexDirection: 'row', alignItems: 'center', gap: space.lg },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -445,4 +496,4 @@ const s = StyleSheet.create({
     paddingVertical: space.xs,
   },
   signOut: { marginTop: space.xxl, alignItems: 'center', paddingVertical: space.md },
-})
+  })

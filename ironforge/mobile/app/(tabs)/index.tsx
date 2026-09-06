@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { View, Text, ScrollView, RefreshControl, Pressable, StyleSheet, Alert } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
@@ -15,7 +15,9 @@ import type {
   HomeData,
   BrokerageConnections,
 } from '@/api/types'
-import { color, space, radius, type, font, agentAccent } from '@/theme/tokens'
+import { space, radius, type, font, agentAccent } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Card, Money, Balance, SectionLabel, Loading, Empty, ErrorState } from '@/components/ui'
 import { StatRow } from '@/components/StatRow'
 import { AppHeader, Mascot } from '@/components/Brand'
@@ -49,6 +51,8 @@ import { pickBanner, bannerActionHref } from '@/alerts/banner'
  * never the 4s the web uses, which on a phone is a battery and cellular-data problem.
  */
 export default function ForgeScreen() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   const summary = useSWR<LiveSummary>('/api/live/summary', (p: string) => api<LiveSummary>(p), {
     refreshInterval: 60_000,
@@ -216,18 +220,23 @@ function AlertBanner({
   onPress: () => void
   onDismiss: () => void
 }) {
+  const { colors: color, resolveTone } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
+  // banner.color is a DARK-canonical hex from alerts/banner.ts (a pure, tested
+  // function) — translate it to the active scheme here, at the render site.
+  const tone = resolveTone(banner.color)
   return (
     <Pressable
       onPress={banner.action ? onPress : undefined}
       accessibilityRole={banner.action ? 'button' : undefined}
-      style={[s.banner, { borderColor: banner.color, backgroundColor: `${banner.color}18` }]}
+      style={[s.banner, { borderColor: tone, backgroundColor: `${tone}18` }]}
     >
-      <Ionicons name="alert-circle" size={18} color={banner.color} />
+      <Ionicons name="alert-circle" size={18} color={tone} />
       <Text style={[type.body, { color: color.text, flex: 1, marginLeft: space.sm }]}>
         {banner.text}
       </Text>
       {banner.action ? (
-        <Text style={[type.label, { color: banner.color, fontFamily: font.bodyMedium }]}>
+        <Text style={[type.label, { color: tone, fontFamily: font.bodyMedium }]}>
           {banner.action.label}
         </Text>
       ) : null}
@@ -246,14 +255,19 @@ function AlertBanner({
  * different kind of number from the other three. Whole dollars, a sign only
  * when non-zero, and a dash reserved for "could not load" (period-stats.ts).
  */
-const periodToneColor: Record<PeriodTone, string> = {
-  pos: color.pos,
-  neg: color.neg,
-  zero: color.muted,
-  na: color.textDim,
+function periodToneColor(tone: PeriodTone, color: ColorTokens): string {
+  const map: Record<PeriodTone, string> = {
+    pos: color.pos,
+    neg: color.neg,
+    zero: color.muted,
+    na: color.textDim,
+  }
+  return map[tone]
 }
 
 function Period({ label, value }: { label: string; value: number | null }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={{ flex: 1, alignItems: 'center' }}>
       <Text
@@ -262,7 +276,7 @@ function Period({ label, value }: { label: string; value: number | null }) {
       >
         {label.toUpperCase()}
       </Text>
-      <Text style={[s.periodValue, { color: periodToneColor[periodTone(value)] }]} numberOfLines={1}>
+      <Text style={[s.periodValue, { color: periodToneColor(periodTone(value), color) }]} numberOfLines={1}>
         {formatPeriodValue(value)}
       </Text>
     </View>
@@ -280,6 +294,8 @@ function AgentTile({
   agent: LiveAgent
   connection: ReturnType<typeof soleConnection>
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const accent = agentAccent(agent.bot)
   const [showChart, setShowChart] = useState(false)
 
@@ -483,6 +499,8 @@ function LifecycleLine({
   stopDollars: number | null
   autoCloseAt: string | null
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   // Forces a re-render once a minute so the Monitoring caption ("37 min")
   // ticks forward on its own — the position doesn't otherwise change shape
   // between 60s agent polls.
@@ -583,6 +601,8 @@ function TradeRow({
   step: number | null
   showChart: boolean
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   // Each trade draws its OWN series. Falls back to the rail when this position has no
   // marks yet — a position opened before the scanner started recording them has
   // nothing to plot, and an empty chart frame says less than the rail does.
@@ -643,6 +663,8 @@ function Stepper({
   accent: string
   caption?: string | null
 }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
   const current = step ?? 0
   return (
     <View style={s.stepper}>
@@ -674,6 +696,7 @@ function Stepper({
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
+  const { colors: color } = useTheme()
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
       <AppHeader />
@@ -682,7 +705,8 @@ function Shell({ children }: { children: React.ReactNode }) {
   )
 }
 
-const s = StyleSheet.create({
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
   banner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -763,4 +787,4 @@ const s = StyleSheet.create({
     height: 3,
     borderRadius: 2,
   },
-})
+  })
