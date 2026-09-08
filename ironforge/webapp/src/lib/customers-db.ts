@@ -844,6 +844,77 @@ CREATE INDEX IF NOT EXISTS idx_page_views_day ON page_views(day);
 ALTER TABLE email_verification_tokens ADD COLUMN IF NOT EXISTS code_hash TEXT;
 ALTER TABLE email_verification_tokens ADD COLUMN IF NOT EXISTS code_expires_at TIMESTAMPTZ;
 ALTER TABLE email_verification_tokens ADD COLUMN IF NOT EXISTS code_attempts INT NOT NULL DEFAULT 0;
+
+-- Waitlist email drip (9/8, Waitlist Communication Kit Emails 1-6). One row per
+-- subscriber, keyed on lower(email) so the SAME person can never be enrolled twice
+-- (the kit's "duplicates" suppression, enforced by the index rather than by a scan).
+-- stage is the last email SENT (0 = nothing yet); next_send_at is when stage+1 is
+-- due. status: active | sending (claimed by a drain tick) | completed (stage 6 sent) |
+-- suppressed (never send again; suppression_reason says why) | failed (send kept
+-- erroring; operator attention). unsubscribe_token is an opaque 128-bit random
+-- secret — the preferences/unsubscribe URLs — revocable per row, no signing key to rotate.
+CREATE TABLE IF NOT EXISTS waitlist_sequence (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email TEXT NOT NULL,
+  first_name TEXT,
+  submission_id TEXT,
+  stage SMALLINT NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  next_send_at TIMESTAMPTZ,
+  last_sent_at TIMESTAMPTZ,
+  send_attempts SMALLINT NOT NULL DEFAULT 0,
+  last_error TEXT,
+  suppression_reason TEXT,
+  suppressed_at TIMESTAMPTZ,
+  unsubscribe_token TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_waitlist_sequence_email ON waitlist_sequence(lower(email));
+CREATE INDEX IF NOT EXISTS idx_waitlist_sequence_due ON waitlist_sequence(status, next_send_at);
+
+-- Send log. The partial unique index is the idempotency guarantee: at most ONE
+-- successful send per (subscriber, stage), whatever the drain does. Failed attempts
+-- are logged as their own rows so a retry is visible, not overwritten.
+CREATE TABLE IF NOT EXISTS waitlist_sequence_sends (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  sequence_id UUID NOT NULL REFERENCES waitlist_sequence(id),
+  stage SMALLINT NOT NULL,
+  status TEXT NOT NULL,                              -- sent | failed
+  resend_message_id TEXT,
+  error TEXT,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_waitlist_sequence_sends_sent
+  ON waitlist_sequence_sends(sequence_id, stage) WHERE status = 'sent';
+CREATE INDEX IF NOT EXISTS idx_waitlist_sequence_sends_seq ON waitlist_sequence_sends(sequence_id, stage);
+
+-- Per-address marketing preference. Keyed on the lowercased address so it outlives
+-- any one sequence row and is honoured by every future marketing send.
+CREATE TABLE IF NOT EXISTS email_preferences (
+  email TEXT PRIMARY KEY,
+  unsubscribed BOOLEAN NOT NULL DEFAULT FALSE,
+  unsubscribed_at TIMESTAMPTZ,
+  resubscribed_at TIMESTAMPTZ,
+  source TEXT,                                       -- link | one-click | preferences | ops
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Provider delivery events (Resend webhook): bounces and complaints. provider_event_id
+-- is the Svix message id, so a redelivered webhook inserts nothing the second time.
+-- A Permanent bounce or a complaint suppresses the address at the next send check.
+CREATE TABLE IF NOT EXISTS email_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider TEXT NOT NULL DEFAULT 'resend',
+  provider_event_id TEXT UNIQUE,
+  event_type TEXT NOT NULL,
+  email TEXT NOT NULL,
+  message_id TEXT,
+  bounce_type TEXT,                                  -- Permanent | Transient | NULL
+  payload JSONB,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_email_events_email ON email_events(lower(email), event_type);
 `
 
 let _ensured: Promise<void> | null = null

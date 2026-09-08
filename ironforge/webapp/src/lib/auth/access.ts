@@ -181,6 +181,14 @@ export function isPublicPath(pathname: string): boolean {
   // Public waitlist submission — no auth by design; self-guards with validation,
   // rate limits, and a honeypot in-route.
   if (pathname === '/api/waitlist') return true
+  // Email preferences / unsubscribe pages (waitlist drip). Addressed by an opaque per-
+  // subscriber token in the URL — the token IS the credential, and a recipient clicking
+  // "Unsubscribe" has no session. A login wall on an unsubscribe link is a CAN-SPAM
+  // violation, so these must stay public.
+  if (pathname.startsWith('/email/')) return true
+  // Resend delivery webhook (bounces/complaints) — self-guarded by Svix signature in-route
+  // and fails closed when RESEND_WEBHOOK_SECRET is unset. No session exists to gate on.
+  if (pathname.startsWith('/api/email/')) return true
   // First-party page-view beacon (TrackPageView) — fired by every anonymous
   // visitor on every route change, so it must be reachable with no session.
   // No IP/UA/cookie is ever persisted; see lib/track.ts and /api/track.

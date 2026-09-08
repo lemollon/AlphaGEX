@@ -18,6 +18,61 @@ export interface SendResult {
   sent: boolean
   skipped?: boolean
   error?: string
+  /** Resend message id when the provider returned one. */
+  id?: string
+}
+
+export interface SendEmailInput {
+  to: string
+  subject: string
+  html: string
+  /** Plain-text alternative. Always supplied for marketing mail (deliverability + accessibility). */
+  text?: string
+  replyTo?: string
+  /** Extra SMTP headers, e.g. List-Unsubscribe / List-Unsubscribe-Post. */
+  headers?: Record<string, string>
+  /**
+   * Resend `Idempotency-Key`: the same key within Resend's window returns the original
+   * message instead of sending twice. The waitlist drip keys on (subscriber, stage).
+   */
+  idempotencyKey?: string
+}
+
+/**
+ * Generic send through Resend. The single provider seam for mail that is not one of the
+ * fixed transactional templates above/below (the waitlist drip renders its own body). Same
+ * guard as every other sender: unconfigured → skipped, never thrown.
+ */
+export async function sendEmail(input: SendEmailInput): Promise<SendResult> {
+  if (!isEmailConfigured()) return { sent: false, skipped: true }
+  try {
+    const requestHeaders: Record<string, string> = {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    }
+    if (input.idempotencyKey) requestHeaders['Idempotency-Key'] = input.idempotencyKey
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: 'POST',
+      headers: requestHeaders,
+      body: JSON.stringify({
+        from: process.env.EMAIL_FROM,
+        to: input.to,
+        reply_to: input.replyTo ?? supportEmail(),
+        subject: input.subject,
+        html: input.html,
+        ...(input.text ? { text: input.text } : {}),
+        ...(input.headers ? { headers: input.headers } : {}),
+      }),
+    })
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      return { sent: false, error: `Resend ${res.status}: ${detail.slice(0, 200)}` }
+    }
+    const body = (await res.json().catch(() => null)) as { id?: string } | null
+    return { sent: true, id: typeof body?.id === 'string' ? body.id : undefined }
+  } catch (e) {
+    return { sent: false, error: e instanceof Error ? e.message : 'send failed' }
+  }
 }
 
 function esc(s: string): string {
@@ -80,6 +135,11 @@ export async function sendVerificationEmail(params: {
 /**
  * Waitlist confirmation (8/26 handoff). Transactional — sent immediately after the
  * Attio record persists. Copy is the approved draft; no launch date is promised.
+ *
+ * SUPERSEDED 2026-09-08 by Email 1 of the waitlist drip (lib/waitlist-drip): POST
+ * /api/waitlist no longer calls this. Both messages said "you're on the list", and two
+ * welcomes within a minute reads as a bug. Kept (not deleted) so the old template stays
+ * readable and any out-of-tree caller keeps compiling. See vault ADR 0016 (waitlist drip Email 1 replaces the confirmation).
  * reply_to → the support address per the spec. Resolved through supportEmail() rather
  * than written inline: the mailbox does not exist yet, so which address replies land
  * on has to be changeable without a deploy.

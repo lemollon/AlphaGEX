@@ -203,6 +203,8 @@ import { sendVolAlertEmail } from './email'
 import { sendVolAlertSms, sendOpsPush } from './sms'
 import { drainAttioSyncQueue, isAttioConfigured } from './attio'
 import { drainCrmOutbox, requeuePhoneRejectedDeadLetters } from './crm/outbox'
+import { drainWaitlistDrip } from './waitlist-drip/drain'
+import { isEmailConfigured } from './email'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -8601,6 +8603,15 @@ let _attioRetryRunning = false
 let _crmOutboxRunning = false
 let _crmOutboxIntervalId: ReturnType<typeof setInterval> | null = null
 
+/**
+ * Waitlist email drip drain (lib/waitlist-drip). Same 30s cadence as the CRM outbox so a
+ * new signup's Email 1 is out within a tick; later stages are due at 09:00 CT on a business
+ * day and the tick is a single indexed query returning nothing until then.
+ */
+const WAITLIST_DRIP_INTERVAL_MS = 30 * 1000
+let _waitlistDripRunning = false
+let _waitlistDripIntervalId: ReturnType<typeof setInterval> | null = null
+
 // Trial day-close ledger (Enrollment spec §7) — this IS the trial "cron".
 //
 // In-process rather than a Render cron job on purpose: the ledger must run on the ONE
@@ -8904,6 +8915,29 @@ function safeDrainCrmOutbox(): void {
     .finally(() => { _crmOutboxRunning = false })
 }
 
+/** Fire-and-forget waitlist drip drain. Re-entrancy guarded, never throws, no-ops when the
+ *  customers DB or Resend isn't configured. A missing send precondition (business address,
+ *  public origin) is reported by the drain itself and leaves every row untouched. */
+function safeDrainWaitlistDrip(): void {
+  if (_waitlistDripRunning) return
+  if (!isCustomersDbConfigured() || !isEmailConfigured()) return
+  _waitlistDripRunning = true
+  drainWaitlistDrip()
+    .then((r) => {
+      if (r.processed > 0) {
+        console.log(
+          `[scanner] waitlist drip: processed=${r.processed} sent=${r.sent} suppressed=${r.suppressed} ` +
+            `dup=${r.skippedDuplicate} failed=${r.failed} completed=${r.completed}`,
+        )
+      }
+    })
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] safeDrainWaitlistDrip error: ${msg}`)
+    })
+    .finally(() => { _waitlistDripRunning = false })
+}
+
 /**
  * Register the scan loop and all satellite intervals.
  *
@@ -8956,6 +8990,11 @@ function startScannerLocked(): void {
       .finally(safeDrainCrmOutbox)
   }, 5_000)
 
+  // Waitlist email drip — own 30s interval next to the CRM outbox it mirrors into. Kicked
+  // at 15s so a deploy landing at a send hour doesn't add a tick to the first batch.
+  _waitlistDripIntervalId = setInterval(safeDrainWaitlistDrip, WAITLIST_DRIP_INTERVAL_MS)
+  setTimeout(safeDrainWaitlistDrip, 15_000)
+
   // Trial day-close ledger — own 15-min interval, isolated from the trade loop. Self-
   // gates to after 15:05 CT, so ticks during the session are a cheap no-op. Kicked once
   // at startup so a deploy that lands right after the close still counts the day.
@@ -8974,6 +9013,7 @@ function startScannerLocked(): void {
   console.log('[scanner] vol-alerts checker registered (5m), id:', _volAlertsIntervalId)
   console.log('[scanner] attio retry drain registered (10m), id:', _attioRetryIntervalId)
   console.log('[scanner] crm outbox drain registered (30s), id:', _crmOutboxIntervalId)
+  console.log('[scanner] waitlist drip drain registered (30s), id:', _waitlistDripIntervalId)
   console.log('[scanner] trial day-close registered (15m, gated to >=15:05 CT), id:', _trialCloseIntervalId)
 }
 
