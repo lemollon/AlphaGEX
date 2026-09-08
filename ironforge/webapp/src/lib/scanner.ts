@@ -290,8 +290,8 @@ function isNoStopBot(name: string): boolean {
  */
 
 /**
- * VIX DECAY GATE — SPARK only since 2026-09-02 (see tryOpenFlamePutSpread).
- * On FLAME's PM stream it cost ~$509/yr and did not reduce drawdown.
+ * VIX DECAY GATE — SPARK at 0.90 since 2026-09-02, FLAME at 0.80 since
+ * 2026-09-08 (see tryOpenFlamePutSpread).
  *
  *     ratio = VIX(prior session) / max(VIX over the 20 sessions before that)
  *
@@ -306,6 +306,13 @@ function isNoStopBot(name: string): boolean {
  * was measured on the WRONG AM structure (spot-1/$2 at 10:05). On the real
  * SPARK cell (spot-2/$5) the gate's value is drawdown, not return.
  *
+ * 🚨 FLAME'S CEILING IS 0.80, NOT SPARK'S 0.90. Honest-engine result
+ * 2026-09-08 (vault sessions/2026-09-07-honest-engine/flame_r1_r2_results.txt):
+ * gated at 0.80 FLAME makes $2,101/yr per lot vs $656 ungated, worst trade
+ * -$181, $5k ladder 9.8%/mo full / 5.6%/mo 2026, max drawdown 19% vs 69%
+ * ungated. 0.85 and 0.90 both fail for FLAME. Threshold is frozen at 0.80 —
+ * do not retune without a fresh honest-engine pass.
+ *
  * 🚨 UNKNOWN BLOCKS. Too little history means the ratio is undefined and we do
  * NOT trade. A veto that degrades to always-on when its data is missing is worse
  * than no veto, because feeds die in exactly the conditions the veto exists for.
@@ -315,7 +322,7 @@ function isNoStopBot(name: string): boolean {
  * two that can disagree — but it does mean IronForge blocks if SpreadWorks stops
  * writing. Blocking is the safe direction.
  */
-const VIX_DECAY_CEILING = 0.90
+const VIX_DECAY_CEILING = { spark: 0.90, flame: 0.80 } as const
 const VIX_DECAY_WINDOW = 20
 const VIX_DECAY_MIN_HISTORY = VIX_DECAY_WINDOW + 1
 
@@ -376,7 +383,19 @@ async function ensureVixHistory(asofDate: string): Promise<void> {
   }
 }
 
-async function vixDecayBlock(asofDate: string): Promise<string | null> {
+/** Full detail behind a vixDecayBlock verdict — reason plus the raw numbers
+ *  that produced it, so callers that want to log the ratio (FLAME) don't have
+ *  to re-run the query. `ratio`/`prior`/`windowMax` are null whenever `reason`
+ *  came from a data problem (unavailable/unknown/bad window) rather than the
+ *  ratio itself clearing or missing the ceiling. */
+type VixDecayCheck = {
+  reason: string | null
+  ratio: number | null
+  prior: number | null
+  windowMax: number | null
+}
+
+async function vixDecayCheck(asofDate: string, ceiling: number): Promise<VixDecayCheck> {
   await ensureVixHistory(asofDate)
   let rows: Array<Record<string, unknown>>
   try {
@@ -387,20 +406,27 @@ async function vixDecayBlock(asofDate: string): Promise<string | null> {
     )
   } catch (e) {
     // A missing table or an unreachable DB must BLOCK, never wave the trade through.
-    return `vix_unavailable(${e instanceof Error ? e.message.slice(0, 60) : 'error'})`
+    return {
+      reason: `vix_unavailable(${e instanceof Error ? e.message.slice(0, 60) : 'error'})`,
+      ratio: null, prior: null, windowMax: null,
+    }
   }
   if (rows.length < VIX_DECAY_MIN_HISTORY) {
-    return `vix_unknown(have=${rows.length} need=${VIX_DECAY_MIN_HISTORY})`
+    return { reason: `vix_unknown(have=${rows.length} need=${VIX_DECAY_MIN_HISTORY})`, ratio: null, prior: null, windowMax: null }
   }
   const prior = num(rows[0].vix)
   let windowMax = 0
   for (let i = 1; i < rows.length; i++) windowMax = Math.max(windowMax, num(rows[i].vix))
-  if (!(windowMax > 0) || !(prior > 0)) return 'vix_bad_window'
+  if (!(windowMax > 0) || !(prior > 0)) return { reason: 'vix_bad_window', ratio: null, prior, windowMax }
   const ratio = prior / windowMax
-  if (ratio > VIX_DECAY_CEILING) {
-    return `vix_elevated(${ratio.toFixed(3)}>${VIX_DECAY_CEILING.toFixed(2)})`
+  if (ratio > ceiling) {
+    return { reason: `vix_elevated(${ratio.toFixed(3)}>${ceiling.toFixed(2)})`, ratio, prior, windowMax }
   }
-  return null
+  return { reason: null, ratio, prior, windowMax }
+}
+
+async function vixDecayBlock(asofDate: string, ceiling: number): Promise<string | null> {
+  return (await vixDecayCheck(asofDate, ceiling)).reason
 }
 
 /**
@@ -4570,15 +4596,31 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   if (!isConfigured()) return 'skip:tradier_not_configured'
 
   // Regime gate before any quote work — a blocked day costs one indexed query.
-  // 🚨 SPARK ONLY (2026-09-02, Leron). On the AM spot-2/$5 stream the gate
-  // halves the worst drawdown ($1,468 -> $767) for -$123/yr. On FLAME's PM
-  // spot-1/$2 stream it is a pure cost: -$509/yr, drawdown $490 -> $531, and
-  // the days it sat out made +$1,942 across four years, positive in every
-  // one. FLAME trades every session. (risk_advisor_growth.py, 2022-11 ->
-  // 2026-08, 1 lot, NBBO, $0.70.)
+  // 🚨 SPARK at 0.90 (2026-09-02, Leron). On the AM spot-2/$5 stream the gate
+  // halves the worst drawdown ($1,468 -> $767) for -$123/yr.
+  // (risk_advisor_growth.py, 2022-11 -> 2026-08, 1 lot, NBBO, $0.70.)
+  // 🚨 FLAME at 0.80 (2026-09-08, Leron). Honest-engine: $2,101/yr per lot vs
+  // $656 ungated, worst trade -$181, $5k ladder 9.8%/mo full / 5.6%/mo 2026,
+  // max drawdown 19% vs 69%. 0.85 and 0.90 both fail for FLAME — see the
+  // VIX_DECAY_CEILING doc comment above.
   if (bot.name === 'spark') {
-    const vixBlock = await vixDecayBlock(getCentralTime().toISOString().slice(0, 10))
+    const vixBlock = await vixDecayBlock(getCentralTime().toISOString().slice(0, 10), VIX_DECAY_CEILING.spark)
     if (vixBlock) return `skip:${vixBlock}`
+  } else if (bot.name === 'flame') {
+    const asofDate = getCentralTime().toISOString().slice(0, 10)
+    const flameVix = await vixDecayCheck(asofDate, VIX_DECAY_CEILING.flame)
+    if (flameVix.reason) {
+      if (flameVix.ratio !== null && flameVix.prior !== null && flameVix.windowMax !== null) {
+        console.log(
+          `[scanner] FLAME VIX GATE skip: ratio=${flameVix.ratio.toFixed(3)} threshold=${VIX_DECAY_CEILING.flame.toFixed(2)} ` +
+          `(prior VIX close ${flameVix.prior.toFixed(2)} / 20-session max ${flameVix.windowMax.toFixed(2)})`,
+        )
+      } else {
+        console.log(`[scanner] FLAME VIX GATE skip: ${flameVix.reason}`)
+      }
+      return `skip:${flameVix.reason}`
+    }
+    console.log(`[scanner] FLAME VIX GATE ok ratio=${flameVix.ratio !== null ? flameVix.ratio.toFixed(3) : 'n/a'}`)
   }
 
   const acctRows = await query(
@@ -9279,6 +9321,9 @@ export const _testing = {
   _mtmFailureCounts,
   trailingDbSeed,
   trailingDbUpdateMin,
+  vixDecayCheck,
+  vixDecayBlock,
+  VIX_DECAY_CEILING,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },
   get _scanStartedAt() { return _scanStartedAt },
