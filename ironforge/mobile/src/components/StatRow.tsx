@@ -70,9 +70,11 @@ export function StatRow({
               {item.value}
             </Text>
             {!kpi && item.sub ? (
-              <Text style={s.subCard} numberOfLines={1}>
-                {item.sub}
-              </Text>
+              // No numberOfLines cap: "Started: $4,150" is wider than a four-column
+              // iPhone tile and used to clip to "Started: $4,…" with nothing to tap to
+              // reveal the rest (UAT, 9/8). Wrapping at the space puts "Started:" over
+              // the amount instead, so the whole figure is always readable.
+              <Text style={s.subCard}>{item.sub}</Text>
             ) : null}
           </>
         )}
@@ -118,6 +120,7 @@ const makeStyles = (color: ColorTokens) =>
     fontSize: 11,
     color: color.muted,
     marginTop: 1,
+    textAlign: 'center',
   },
   skeletonCard: {
     width: 44,
