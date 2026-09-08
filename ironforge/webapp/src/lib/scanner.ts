@@ -204,6 +204,9 @@ import { sendVolAlertSms, sendOpsPush } from './sms'
 import { drainAttioSyncQueue, isAttioConfigured } from './attio'
 import { drainCrmOutbox, requeuePhoneRejectedDeadLetters } from './crm/outbox'
 import { drainWaitlistDrip } from './waitlist-drip/drain'
+import { autoEnrollWaitlistDrip, autostartConfig } from './waitlist-drip/autostart'
+import { provisionObjectAttributes } from './crm/provision'
+import { isAttioConfigured as isAttioCrmConfigured } from './crm/client'
 import { isEmailConfigured } from './email'
 
 /* ------------------------------------------------------------------ */
@@ -8611,6 +8614,9 @@ let _crmOutboxIntervalId: ReturnType<typeof setInterval> | null = null
 const WAITLIST_DRIP_INTERVAL_MS = 30 * 1000
 let _waitlistDripRunning = false
 let _waitlistDripIntervalId: ReturnType<typeof setInterval> | null = null
+/** The two Attio People attributes the drip mirrors into (crm/schema.ts). Provisioned once per boot. */
+const WAITLIST_DRIP_ATTIO_ATTRIBUTES = ['waitlist_email_stage', 'waitlist_last_email_at'] as const
+let _waitlistDripBootRan = false
 
 // Trial day-close ledger (Enrollment spec §7) — this IS the trial "cron".
 //
@@ -8920,10 +8926,16 @@ function safeDrainCrmOutbox(): void {
  *  public origin) is reported by the drain itself and leaves every row untouched. */
 function safeDrainWaitlistDrip(): void {
   if (_waitlistDripRunning) return
-  if (!isCustomersDbConfigured() || !isEmailConfigured()) return
+  if (!isCustomersDbConfigured()) return
   _waitlistDripRunning = true
-  drainWaitlistDrip()
+  // Autostart first (WAITLIST_DRIP_START_DATE): a no-op unless the env is set, and after the
+  // first pass an idempotent "0 enrolled" — so a signup that slipped past the form's own
+  // enrollment, or a founder added to the list, is on the schedule before this tick sends.
+  autoEnrollWaitlistDrip()
+    .catch(() => undefined)
+    .then(() => (isEmailConfigured() ? drainWaitlistDrip() : null))
     .then((r) => {
+      if (!r) return
       if (r.processed > 0) {
         console.log(
           `[scanner] waitlist drip: processed=${r.processed} sent=${r.sent} suppressed=${r.suppressed} ` +
@@ -8936,6 +8948,42 @@ function safeDrainWaitlistDrip(): void {
       console.warn(`[scanner] safeDrainWaitlistDrip error: ${msg}`)
     })
     .finally(() => { _waitlistDripRunning = false })
+}
+
+/**
+ * Once-per-boot waitlist drip autostart. No-op unless WAITLIST_DRIP_START_DATE is a valid date.
+ * Both halves are best-effort and independent of the send path: a failure here is logged and
+ * never blocks a send. The Attio provisioning is scoped to the two mirror attributes and is
+ * idempotent (it only creates what is missing); the key must carry object_configuration scope
+ * or it reports the error and moves on — the drip itself does not depend on the attributes.
+ */
+function safeWaitlistDripBoot(): void {
+  if (_waitlistDripBootRan) return
+  _waitlistDripBootRan = true
+  const cfg = autostartConfig()
+  if (cfg.invalidReason) console.warn(`[scanner] waitlist drip autostart: ${cfg.invalidReason}`)
+  if (!cfg.enabled) return
+  console.log(
+    `[scanner] waitlist drip autostart: startDate=${cfg.startDate} founders=${cfg.founders.join(',')}`,
+  )
+  if (isCustomersDbConfigured()) {
+    autoEnrollWaitlistDrip().catch((err: unknown) => {
+      console.warn(`[scanner] waitlist drip autostart error: ${err instanceof Error ? err.message : String(err)}`)
+    })
+  }
+  if (isAttioCrmConfigured()) {
+    provisionObjectAttributes('people', WAITLIST_DRIP_ATTIO_ATTRIBUTES)
+      .then((r) => {
+        const errs = r.items.filter((i) => i.outcome === 'error').map((i) => `${i.target}: ${i.error ?? 'error'}`)
+        console.log(
+          `[scanner] attio waitlist attributes: created=${r.created} existing=${r.existing} errors=${r.errors}` +
+            (errs.length ? ` (${errs.join('; ')})` : ''),
+        )
+      })
+      .catch((err: unknown) => {
+        console.warn(`[scanner] attio waitlist attribute provisioning error: ${err instanceof Error ? err.message : String(err)}`)
+      })
+  }
 }
 
 /**
@@ -8993,6 +9041,9 @@ function startScannerLocked(): void {
   // Waitlist email drip — own 30s interval next to the CRM outbox it mirrors into. Kicked
   // at 15s so a deploy landing at a send hour doesn't add a tick to the first batch.
   _waitlistDripIntervalId = setInterval(safeDrainWaitlistDrip, WAITLIST_DRIP_INTERVAL_MS)
+  // Autostart boot pass (10s, ahead of the 15s drain kick): enroll the list + founders on the
+  // configured date, and make sure the two Attio mirror attributes exist. Once per boot.
+  setTimeout(safeWaitlistDripBoot, 10_000)
   setTimeout(safeDrainWaitlistDrip, 15_000)
 
   // Trial day-close ledger — own 15-min interval, isolated from the trade loop. Self-

@@ -9,13 +9,15 @@ import { drainWaitlistDrip, dripLinks, sendPreconditionBlocker } from '@/lib/wai
 import { businessAddressFromEnv, renderDripEmail } from '@/lib/waitlist-drip/render'
 import { defaultFirstSendDate, firstSendAt, formatCT, isDateKey, sendHourCT, DRIP_TIMEZONE } from '@/lib/waitlist-drip/schedule'
 import { backfillWaitlistSequence } from '@/lib/waitlist-drip/sequence'
+import { autostartConfig } from '@/lib/waitlist-drip/autostart'
 
 /**
  * Waitlist drip operations. Operator session or service token — same gate as /api/ops/crm/*.
  *
  * GET — status: counts per stage and status, the next 20 due sends, recent sends, recent
- *       failures, and the send-precondition blocker (business address / origin / Resend) so
- *       a missing env var is visible here before anyone fires the backfill.
+ *       failures, the send-precondition blocker (business address / origin / Resend) so
+ *       a missing env var is visible here before anyone fires the backfill, and `autostart`
+ *       (WAITLIST_DRIP_START_DATE / WAITLIST_DRIP_FOUNDER_EMAILS — see lib/waitlist-drip/autostart).
  *
  * POST {"action":"backfill","firstSendDate":"YYYY-MM-DD","dryRun":true}
  *       Seeds a sequence row for every waitlist submission that has none, with Email 1 due at
@@ -86,6 +88,7 @@ export async function GET(req: NextRequest) {
 
   const now = new Date()
   const nextDefault = defaultFirstSendDate(now)
+  const auto = autostartConfig()
   return NextResponse.json({
     ok: true,
     now: now.toISOString(),
@@ -100,6 +103,17 @@ export async function GET(req: NextRequest) {
       resendWebhookSecretSet: !!process.env.RESEND_WEBHOOK_SECRET,
       /** null = sends may proceed; otherwise the exact missing precondition. */
       sendBlocker: sendPreconditionBlocker(),
+    },
+    /**
+     * Config-driven start (no operator click needed). enabled = WAITLIST_DRIP_START_DATE is a
+     * valid date; the scanner then backfills on boot and on every drain tick, founders included.
+     */
+    autostart: {
+      enabled: auto.enabled,
+      startDate: auto.startDate,
+      founders: auto.founders,
+      ...(auto.startDate ? { firstSendAt: firstSendAt(auto.startDate).toISOString(), firstSendAtCT: formatCT(firstSendAt(auto.startDate)) } : {}),
+      ...(auto.invalidReason ? { invalidReason: auto.invalidReason } : {}),
     },
     backfillDefault: {
       firstSendDate: nextDefault,
