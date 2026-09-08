@@ -25,6 +25,7 @@ import {
   formatEbbSizingLine,
   isEbbLadderBot,
   liquidityCappedLots,
+  EBB_UNKNOWN_LIQUIDITY_LOTS,
 } from '../ebb-sizing'
 
 describe('EBB count ladder — rungs (2026-08-27 survivor rule, unchanged by ADR 0013)', () => {
@@ -147,20 +148,21 @@ describe('EBB liquidity check — liquidityCappedLots(ladderLots, displayedSize,
     expect(liquidityCappedLots(66, 100)).toEqual({ lots: 25, liquidity: 'capped', maxLots: 25, displayedSize: 100 })
     expect(liquidityCappedLots(66, 107).lots).toBe(26)   // floor(26.75)
   })
-  it('unknown size (null / undefined / NaN / negative) passes the ladder through and says UNKNOWN', () => {
+  it('unknown size (null / undefined / NaN / negative) FAILS SAFE to 1 lot and says UNKNOWN', () => {
     for (const size of [null, undefined, NaN, -5]) {
-      expect(liquidityCappedLots(20, size)).toEqual({ lots: 20, liquidity: 'unknown', maxLots: null, displayedSize: null })
+      expect(liquidityCappedLots(20, size)).toEqual({ lots: 1, liquidity: 'unknown', maxLots: EBB_UNKNOWN_LIQUIDITY_LOTS, displayedSize: null })
     }
   })
-  it('ZERO displayed size is UNKNOWN, not "no book": falls back to the ladder lots, never to 0', () => {
-    expect(liquidityCappedLots(20, 0)).toEqual({ lots: 20, liquidity: 'unknown', maxLots: null, displayedSize: null })
+  it('ZERO displayed size is UNKNOWN, not "no book": 1 lot, never 0 and never the blind ladder', () => {
+    expect(liquidityCappedLots(20, 0)).toEqual({ lots: 1, liquidity: 'unknown', maxLots: EBB_UNKNOWN_LIQUIDITY_LOTS, displayedSize: null })
+    expect(liquidityCappedLots(0, 0).lots).toBe(0)   // a 0-lot ladder stays 0
   })
   it('a real but tiny size floors to 0 lots — the rule binding, the caller skips', () => {
     expect(liquidityCappedLots(5, 3)).toEqual({ lots: 0, liquidity: 'capped', maxLots: 0, displayedSize: 3 })
     expect(liquidityCappedLots(1, 4).lots).toBe(1)       // floor(1.0) = 1
   })
-  it('the UNKNOWN fallback is still under the static cap', () => {
-    expect(liquidityCappedLots(500, null).lots).toBe(EBB_LADDER_CAP)
+  it('the UNKNOWN fallback is 1 lot even for a huge ladder; a known book is still under the static cap', () => {
+    expect(liquidityCappedLots(500, null).lots).toBe(EBB_UNKNOWN_LIQUIDITY_LOTS)
     expect(liquidityCappedLots(500, 10_000).lots).toBe(EBB_LADDER_CAP)
   })
   it('ladder 0 stays 0 whatever the book shows', () => {
@@ -186,9 +188,9 @@ describe('EBB entry log line', () => {
     expect(line).not.toMatch(/\n/)
   })
   it('prints UNKNOWN when the quote carried no size and NONE for a missing field', () => {
-    const line = formatEbbSizingLine({ funded: 6000, highWater: null, rung: 1500, ladderLots: 4, liq: liquidityCappedLots(4, null), finalLots: 4 })
+    const line = formatEbbSizingLine({ funded: 6000, highWater: null, rung: 1500, ladderLots: 4, liq: liquidityCappedLots(4, null), finalLots: 1 })
     expect(line).toContain('high_water=NONE')
-    expect(line).toContain('displayed_size=UNKNOWN liquidity=UNKNOWN liquidity_capped_lots=4 final_lots=4')
+    expect(line).toContain('displayed_size=UNKNOWN liquidity=UNKNOWN liquidity_capped_lots=1 final_lots=1')
   })
 })
 

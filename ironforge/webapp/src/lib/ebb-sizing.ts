@@ -60,6 +60,8 @@ export const SPARK_RUNG_USD = 5000
 export const EBB_LADDER_CAP = 100
 /** Share of the displayed bid size at the short strike a single entry may take. */
 export const EBB_LIQUIDITY_SHARE = 0.25
+/** Lots allowed when the short-strike bid size is UNKNOWN: fail safe to 1, never the blind ladder. */
+export const EBB_UNKNOWN_LIQUIDITY_LOTS = 1
 
 export type EbbBot = 'spark' | 'flame'
 
@@ -128,9 +130,12 @@ export interface EbbLiquidityResult {
  *
  * `displayedSize` is the bid size of the put being SOLD, from the live quote at
  * the moment of entry. Unavailable (null/undefined/NaN/negative) or ZERO size
- * is UNKNOWN — a quote with no size tells us nothing about the book, so the
- * count falls back to the ladder lots under EBB_LADDER_CAP and the caller must
- * log liquidity=UNKNOWN. It does NOT zero the trade.
+ * is UNKNOWN — a quote with no size tells us nothing about the book. The count
+ * then FAILS SAFE to EBB_UNKNOWN_LIQUIDITY_LOTS (1 lot, the size the backtest
+ * engine is honest to) and the caller must log liquidity=UNKNOWN. It does NOT
+ * zero the trade, and it never sizes the full ladder blind (2026-09-08: before
+ * this, UNKNOWN passed the whole ladder through and the 25% guard was inert
+ * exactly when the book could not be seen).
  *
  * A real but tiny size (1-3 contracts at 25%) floors to 0 lots: the book
  * cannot absorb even one lot inside the share, so the caller skips. That is
@@ -148,7 +153,8 @@ export function liquidityCappedLots(
     : 0
   const size = positiveOrNull(displayedSize)
   if (size === null || !(share > 0)) {
-    return { lots: ladder, liquidity: 'unknown', maxLots: null, displayedSize: null }
+    const lots = Math.min(ladder, EBB_UNKNOWN_LIQUIDITY_LOTS)
+    return { lots, liquidity: 'unknown', maxLots: EBB_UNKNOWN_LIQUIDITY_LOTS, displayedSize: null }
   }
   const maxLots = Math.floor(share * size)
   const lots = Math.max(0, Math.min(ladder, maxLots))

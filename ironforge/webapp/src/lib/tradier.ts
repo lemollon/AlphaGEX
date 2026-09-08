@@ -2063,18 +2063,34 @@ export async function placeIcOrderAllAccounts(
   // LIQUIDITY CHECK input (ADR 0013, 2026-09-04): the displayed bid size of
   // the put being SOLD, read ONCE from the live quote at entry and shared by
   // every production account in this order. null = Tradier sent no size ->
-  // the sizing falls back to the ladder under EBB_LADDER_CAP and logs
-  // liquidity=UNKNOWN. Only fetched when a production EBB order is in scope.
+  // the sizing FAILS SAFE to EBB_UNKNOWN_LIQUIDITY_LOTS (1 lot) and logs
+  // liquidity=UNKNOWN (2026-09-08; before this UNKNOWN sized the full ladder
+  // blind). A missing/zero size is retried once after a short pause before it
+  // is declared UNKNOWN. Only fetched when a production EBB order is in scope.
   const ebbSizing = await import('./ebb-sizing')
   let shortPutBidSize: number | null = null
   if (productionAccts.length > 0 && ebbSizing.isEbbLadderBot(botName)) {
-    try {
-      const psQ = await getOptionQuote(occPs)
-      shortPutBidSize = psQ?.bidsize != null && Number.isFinite(psQ.bidsize) ? psQ.bidsize : null
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.warn(`[tradier] ${botUc} short-put quote for the liquidity check failed (${msg}); liquidity=UNKNOWN`)
-      shortPutBidSize = null
+    for (let attempt = 1; attempt <= 2 && shortPutBidSize === null; attempt++) {
+      try {
+        const psQ = await getOptionQuote(occPs)
+        const size = psQ?.bidsize != null && Number.isFinite(psQ.bidsize) && psQ.bidsize > 0 ? psQ.bidsize : null
+        if (size === null && attempt === 1) {
+          console.warn(`[tradier] ${botUc} short-put quote ${occPs} carried no bid size (bidsize=${String(psQ?.bidsize)}); retrying once`)
+          await new Promise((r) => setTimeout(r, 750))
+          continue
+        }
+        shortPutBidSize = size
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`[tradier] ${botUc} short-put quote for the liquidity check failed on attempt ${attempt} (${msg})`)
+        if (attempt === 1) await new Promise((r) => setTimeout(r, 750))
+      }
+    }
+    if (shortPutBidSize === null) {
+      console.warn(
+        `[tradier] ${botUc} liquidity=UNKNOWN for ${occPs}: sizing fails safe to ` +
+        `${ebbSizing.EBB_UNKNOWN_LIQUIDITY_LOTS} lot per production account (never the blind ladder)`,
+      )
     }
   }
 
