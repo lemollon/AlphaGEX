@@ -405,10 +405,16 @@ function AgentTile({
         <>
           <View style={s.divider} />
           {/*
-                UX-002 draws a rail PER TRADE, and there can be more than one: SPARK
-                swings, so a leg opened yesterday is still open beside today's. The
-                scalar fields only ever describe positions[0], which is exactly how the
-                web page once hid a live position holding real money.
+                One P&L row PER TRADE, and there can be more than one: SPARK swings, so
+                a leg opened yesterday is still open beside today's. The scalar fields
+                only ever describe positions[0], which is exactly how the web page once
+                hid a live position holding real money.
+
+                No dot rail under the row any more — the LifecycleLine above already
+                walks Opened → Monitoring → Target/Stop → Auto Close for this position,
+                and a second copy of the same four steps read as duplicate (UAT, 9/8).
+                The row keeps what the lifecycle line does not show: the trade's own
+                unrealized P&L, and the chart when the toggle is on.
 
                 Falls back to the single-trade shape when `positions` is absent, so an
                 app newer than its API still renders.
@@ -438,19 +444,12 @@ function AgentTile({
                   current={trade.unrealized_pnl}
                 />
               ) : (
-                <>
-                  <View style={s.rowBetween}>
-                    <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
-                      Open position
-                    </Text>
-                    <Money value={trade.unrealized_pnl} size="title" />
-                  </View>
-                  <Stepper
-                    step={state?.timeline_step ?? null}
-                    accent={accent}
-                    caption={state?.timeline_step === 1 ? 'Live' : null}
-                  />
-                </>
+                <View style={s.rowBetween}>
+                  <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+                    Open position
+                  </Text>
+                  <Money value={trade.unrealized_pnl} size="title" />
+                </View>
               )}
         </>
       ) : trade?.today_result ? (
@@ -479,10 +478,10 @@ function AgentTile({
  * (tested there); this is presentation only, plus the once-a-minute tick that
  * keeps "N min" current without the customer having to pull to refresh.
  *
- * Distinct from the older Stepper below: Stepper reads CustomerState.timeline_step
- * directly and (by that convention) shows "Target / Stop" as current once a
- * position is being monitored. This line is the newer, approved design —
- * Monitoring itself is the current node for as long as the position is open,
+ * This is the ONLY step rail on the card. The older per-trade Stepper (which read
+ * CustomerState.timeline_step and showed "Target / Stop" as current once a position
+ * was being monitored) was removed 9/8 after UAT flagged it as a duplicate of this
+ * line. Monitoring itself is the current node for as long as the position is open,
  * since Target/Stop and Auto Close describe outcomes the backend cannot yet
  * detect live.
  */
@@ -581,7 +580,9 @@ function LifecycleLine({
 }
 
 /**
- * One open trade: title, its own P&L, its own rail — UX-002.
+ * One open trade: title, its own P&L, and — when the chart toggle is on — its own
+ * intraday chart. UX-002 also drew a step rail here; that went 9/8 because the
+ * LifecycleLine above the divider already shows the same four steps for the position.
  *
  * Titled "Trade 1 / Trade 2" as the approved layout does, but a leg held overnight
  * also says which day it is on. The mockup's invented data had no swung legs; the real
@@ -603,9 +604,9 @@ function TradeRow({
 }) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
-  // Each trade draws its OWN series. Falls back to the rail when this position has no
-  // marks yet — a position opened before the scanner started recording them has
-  // nothing to plot, and an empty chart frame says less than the rail does.
+  // Each trade draws its OWN series. Draws nothing under the row when this position
+  // has no marks yet — a position opened before the scanner started recording them
+  // has nothing to plot, and an empty chart frame says less than the P&L figure does.
   const series = position.series ?? []
   const chart = showChart && series.length > 1
   return (
@@ -631,68 +632,19 @@ function TradeRow({
           status={stepLabel(step)}
           current={position.unrealized_pnl}
         />
-      ) : (
-        <Stepper step={step} accent={accent} caption={step === 1 ? 'Live' : null} />
-      )}
+      ) : null}
     </View>
   )
 }
 
-/** timeline_step is 0..4; there are four labels, so a step of 4 rests on the last. */
+/** timeline_step is 0..4; there are four labels, so a step of 4 rests on the last.
+ *  Only the chart's status caption reads these now — the per-trade dot rail that
+ *  drew them is gone (see LifecycleLine). */
 const STEP_LABELS: readonly string[] = ['Opened', 'Monitoring', 'Target / Stop', 'Auto Close']
 
 function stepLabel(step: number | null): string {
   const i = Math.min(Math.max(step ?? 0, 0), STEP_LABELS.length - 1)
   return STEP_LABELS[i]
-}
-
-/**
- * Opened → Monitoring → Target/Stop → Auto Close, driven by CustomerState.timeline_step.
- *
- * UX-002 puts a small caption under the step the trade is actually sitting on — "Live"
- * while it is being watched. Without it the active ring and a completed dot look nearly
- * identical at a glance, which is the one thing a customer opens this screen to tell
- * apart: is it working right now, or is it done?
- */
-function Stepper({
-  step,
-  accent,
-  caption,
-}: {
-  step: number | null
-  accent: string
-  caption?: string | null
-}) {
-  const { colors: color } = useTheme()
-  const s = useMemo(() => makeStyles(color), [color])
-  const current = step ?? 0
-  return (
-    <View style={s.stepper}>
-      {STEP_LABELS.map((l, i) => {
-        const done = i < current
-        const active = i === current
-        const c = done || active ? accent : color.border
-        return (
-          <View key={l} style={{ flex: 1, alignItems: 'center' }}>
-            <View style={[s.stepDot, { borderColor: c, backgroundColor: done ? c : 'transparent' }]} />
-            <Text
-              style={[
-                type.label,
-                { color: active ? color.text : color.muted, marginTop: space.xs, textAlign: 'center' },
-              ]}
-            >
-              {l}
-            </Text>
-            {active && caption ? (
-              <Text style={[type.label, { color: accent, marginTop: 1, textAlign: 'center' }]}>
-                {caption}
-              </Text>
-            ) : null}
-          </View>
-        )
-      })}
-    </View>
-  )
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -759,8 +711,6 @@ const makeStyles = (color: ColorTokens) =>
     paddingVertical: space.md,
   },
   divider: { height: 1, backgroundColor: color.border, marginVertical: space.lg },
-  stepper: { flexDirection: 'row', marginTop: space.lg },
-  stepDot: { width: 16, height: 16, borderRadius: 8, borderWidth: 2 },
   lifecycle: { marginTop: space.md, position: 'relative' },
   lifecycleNodes: { flexDirection: 'row' },
   lifecycleNode: { flex: 1, alignItems: 'center' },
