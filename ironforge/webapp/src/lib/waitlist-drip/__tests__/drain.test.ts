@@ -13,6 +13,7 @@ function fakeDeps(opts: {
   facts?: Partial<SuppressionFacts>
   send?: DrainDeps['send']
   now?: Date
+  founders?: string[]
 }): DrainDeps & { log: string[]; sends: Parameters<DrainDeps['send']>[0][]; crm: unknown[] } {
   const log: string[] = []
   const sends: Parameters<DrainDeps['send']>[0][] = []
@@ -63,6 +64,7 @@ function fakeDeps(opts: {
     businessAddress: () => 'IronForge Technologies LLC | Austin, TX',
     emailConfigured: () => true,
     dbConfigured: () => true,
+    isFounder: (email) => (opts.founders ?? []).includes(email.toLowerCase()),
   }
 }
 
@@ -140,6 +142,41 @@ describe('send-time suppression', () => {
       expect(deps.crm).toEqual([])
     })
   }
+})
+
+describe('founders', () => {
+  const founder: ClaimedRow = { ...row, id: 'seq-f', email: 'Leron@IronForge.trade', first_name: 'Leron' }
+
+  it('a founder with a customer account is still sent to, and is NOT mirrored to Attio', async () => {
+    const deps = fakeDeps({ rows: [founder], facts: { hasAccount: true }, founders: ['leron@ironforge.trade'] })
+    const r = await drainWaitlistDrip({}, deps)
+    expect(r).toMatchObject({ processed: 1, sent: 1, suppressed: 0 })
+    expect(deps.sends).toHaveLength(1)
+    expect(deps.sends[0].to).toBe('Leron@IronForge.trade')
+    expect(deps.sends[0].html).toContain('Hello Leron,')
+    expect(deps.log).toContain('log:1:sent')
+    expect(deps.crm).toEqual([])
+  })
+
+  for (const [fact, reason] of [
+    ['unsubscribed', 'unsubscribed'],
+    ['hardBounced', 'hard_bounce'],
+    ['complained', 'complaint'],
+  ] as const) {
+    it(`a founder who ${fact} is suppressed as ${reason} like anyone else`, async () => {
+      const deps = fakeDeps({ rows: [founder], facts: { [fact]: true, hasAccount: true }, founders: ['leron@ironforge.trade'] })
+      const r = await drainWaitlistDrip({}, deps)
+      expect(r).toMatchObject({ sent: 0, suppressed: 1 })
+      expect(deps.log).toEqual(['recover-stale', 'claim:1', `suppress:${reason}`])
+    })
+  }
+
+  it('a non-founder with an account is still suppressed as onboarding', async () => {
+    const deps = fakeDeps({ rows: [row], facts: { hasAccount: true }, founders: ['leron@ironforge.trade'] })
+    const r = await drainWaitlistDrip({}, deps)
+    expect(r).toMatchObject({ sent: 0, suppressed: 1 })
+    expect(deps.log).toContain('suppress:onboarding')
+  })
 })
 
 describe('idempotency', () => {

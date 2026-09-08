@@ -28,6 +28,7 @@ import { DRIP_FINAL_STAGE } from './copy'
 import { businessAddressFromEnv, renderDripEmail } from './render'
 import { nextSendDate } from './schedule'
 import { classifySuppression, isTerminalReason, lookupSuppressionFacts, type SuppressionFacts } from './suppression'
+import { isFounderEmail } from './autostart'
 
 /** Consecutive send failures before a row is parked as `failed` for an operator. */
 export const MAX_SEND_ATTEMPTS = 5
@@ -59,6 +60,12 @@ export interface DrainDeps {
   businessAddress: () => string
   emailConfigured: () => boolean
   dbConfigured: () => boolean
+  /**
+   * Founders (WAITLIST_DRIP_FOUNDER_EMAILS) ride the sequence to see what the list sees. They
+   * are exempt from the "has a customer account" rule ONLY — unsubscribe, complaint and bounce
+   * still apply — and are never mirrored to Attio.
+   */
+  isFounder: (email: string) => boolean
 }
 
 const defaultDeps: DrainDeps = {
@@ -72,6 +79,7 @@ const defaultDeps: DrainDeps = {
   businessAddress: businessAddressFromEnv,
   emailConfigured: isEmailConfigured,
   dbConfigured: isCustomersDbConfigured,
+  isFounder: (email) => isFounderEmail(email),
 }
 
 export interface DrainOptions {
@@ -206,9 +214,10 @@ async function processOne(
     return
   }
 
-  // 4a) Suppression, re-run at send time.
+  // 4a) Suppression, re-run at send time. A founder's account is not a reason to stop.
+  const founder = deps.isFounder(row.email)
   const facts = await deps.lookupFacts(row.email, row.id, nextStage)
-  const reason = classifySuppression(facts)
+  const reason = classifySuppression(founder ? { ...facts, hasAccount: false } : facts)
   if (reason && isTerminalReason(reason)) {
     await deps.execute(
       `UPDATE waitlist_sequence
@@ -314,6 +323,8 @@ async function processOne(
   }
 
   // 5) Attio mirror — durable outbox, never awaited for correctness, never a send blocker.
+  // Founders are not leads: no CRM record is created or touched for them.
+  if (founder) return
   void deps
     .enqueueCrm({
       eventId: `waitlist_email:${row.id}:${nextStage}`,
