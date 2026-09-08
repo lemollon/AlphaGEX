@@ -20,6 +20,7 @@ vi.mock('../db', () => ({
 // Mock tradier module
 vi.mock('../tradier', () => ({
   getQuote: vi.fn().mockResolvedValue({ last: 585.50, bid: 585.45, ask: 585.55, symbol: 'SPY' }),
+  getDailyHistory: vi.fn().mockResolvedValue([]),
   getOptionExpirations: vi.fn().mockResolvedValue(['2026-03-18', '2026-03-19', '2026-03-20']),
   getIcEntryCredit: vi.fn().mockResolvedValue({
     putCredit: 0.15, callCredit: 0.12, totalCredit: 0.27, source: 'TRADIER_LIVE',
@@ -41,6 +42,7 @@ vi.mock('../tradier', () => ({
 }))
 
 import { _testing } from '../scanner'
+import { query } from '../db'
 
 const {
   ctHHMM,
@@ -767,6 +769,83 @@ describe('VIX Gate', () => {
     const vixFactor = result.topFactors.find(([n]) => n.startsWith('VIX_'))
     expect(vixFactor![0]).toBe('VIX_HIGH_RISK')
     expect(vixFactor![1]).toBe(-0.15)
+  })
+})
+
+/* ================================================================== */
+/*  14b. VIX Decay Gate — per-bot ceiling (FLAME 0.80, SPARK 0.90)     */
+/* ================================================================== */
+
+describe('VIX Decay Gate — per-bot ceiling', () => {
+  const { vixDecayCheck, VIX_DECAY_CEILING } = _testing
+  const queryMock = vi.mocked(query)
+
+  /** 1 "prior session" row followed by 20 "window" rows, matching the
+   *  `WHERE trade_date < $1 ORDER BY trade_date DESC LIMIT 21` shape. */
+  function rowsFor(prior: number, windowVix: number, windowCount = 20) {
+    return [{ vix: prior }, ...Array(windowCount).fill({ vix: windowVix })]
+  }
+
+  beforeEach(() => {
+    queryMock.mockReset()
+  })
+
+  it('threshold is frozen: FLAME 0.80, SPARK 0.90', () => {
+    expect(VIX_DECAY_CEILING.flame).toBe(0.80)
+    expect(VIX_DECAY_CEILING.spark).toBe(0.90)
+  })
+
+  it('FLAME skips at ratio 0.85 (above its 0.80 ceiling)', async () => {
+    queryMock.mockResolvedValueOnce(rowsFor(17, 20)) // 17/20 = 0.85
+    const result = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.flame)
+    expect(result.reason).toBe('vix_elevated(0.850>0.80)')
+    expect(result.ratio).toBeCloseTo(0.85)
+  })
+
+  it('FLAME skips at ratio 0.81 (above its 0.80 ceiling)', async () => {
+    queryMock.mockResolvedValueOnce(rowsFor(16.2, 20)) // 16.2/20 = 0.81
+    const result = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.flame)
+    expect(result.reason).toBe('vix_elevated(0.810>0.80)')
+  })
+
+  it('FLAME trades at ratio 0.80 (exactly at its ceiling, not above it)', async () => {
+    queryMock.mockResolvedValueOnce(rowsFor(16, 20)) // 16/20 = 0.80
+    const result = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.flame)
+    expect(result.reason).toBeNull()
+    expect(result.ratio).toBeCloseTo(0.80)
+  })
+
+  it('FLAME trades at ratio 0.70 (well below its ceiling)', async () => {
+    queryMock.mockResolvedValueOnce(rowsFor(14, 20)) // 14/20 = 0.70
+    const result = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.flame)
+    expect(result.reason).toBeNull()
+    expect(result.ratio).toBeCloseTo(0.70)
+  })
+
+  it('SPARK still trades at ratio 0.85 (below its unchanged 0.90 ceiling)', async () => {
+    queryMock.mockResolvedValueOnce(rowsFor(17, 20)) // 17/20 = 0.85
+    const result = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.spark)
+    expect(result.reason).toBeNull()
+  })
+
+  it('SPARK skips at ratio 0.91 (above its unchanged 0.90 ceiling)', async () => {
+    queryMock.mockResolvedValueOnce(rowsFor(18.2, 20)) // 18.2/20 = 0.91
+    const result = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.spark)
+    expect(result.reason).toBe('vix_elevated(0.910>0.90)')
+  })
+
+  it('missing history (< 21 sessions) skips both FLAME and SPARK', async () => {
+    const thinHistory = [{ vix: 20 }, { vix: 19 }, { vix: 18 }] // 3 rows, need 21
+
+    queryMock.mockResolvedValueOnce(thinHistory)
+    const flameResult = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.flame)
+    expect(flameResult.reason).toBe('vix_unknown(have=3 need=21)')
+    expect(flameResult.ratio).toBeNull()
+
+    queryMock.mockResolvedValueOnce(thinHistory)
+    const sparkResult = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.spark)
+    expect(sparkResult.reason).toBe('vix_unknown(have=3 need=21)')
+    expect(sparkResult.ratio).toBeNull()
   })
 })
 
