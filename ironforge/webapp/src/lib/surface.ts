@@ -74,7 +74,8 @@ export const CUSTOMER_PAGES: readonly string[] = [
 // bridge pages that a third party redirects to and the installed app claims as a
 // Universal/App Link. Customer-surface only — they have no meaning on the operator
 // console, and the association files are served from the customer domain.
-export const CUSTOMER_PAGE_PREFIXES: readonly string[] = ['/onboarding', '/legal', '/enroll', '/app']
+// '/email' = the waitlist drip's preferences/unsubscribe pages (token-addressed, public).
+export const CUSTOMER_PAGE_PREFIXES: readonly string[] = ['/onboarding', '/legal', '/enroll', '/app', '/email']
 
 /** Pages served by the operator console. */
 export const OPERATOR_PAGES: readonly string[] = [
@@ -158,6 +159,9 @@ export const CUSTOMER_API_PREFIXES: readonly string[] = [
   // EXPLICITLY: servesPath fail-opens for unclassified paths, so leaving these out would
   // let them work by accident today and break the day the fail-open is tightened.
   '/api/notifications/',
+  // Resend delivery webhook (waitlist drip bounces/complaints). Customer surface: the
+  // customers DB it writes to lives there. Signature-guarded in-route.
+  '/api/email/',
 ]
 
 /** Shared infrastructure endpoints both services need. */

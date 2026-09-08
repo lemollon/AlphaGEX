@@ -27,6 +27,7 @@
 /** Attio attribute types used by this schema. */
 export type CrmAttributeType =
   | 'text'
+  | 'number'
   | 'checkbox'
   | 'date'
   | 'timestamp'
@@ -281,6 +282,23 @@ const PEOPLE: CrmObject = {
       description:
         'Operational health derived from enrollment/billing/connection state. Claude may set ' +
         'non-billing flags autonomously.',
+    },
+    // Waitlist drip mirror (9/8, Communication Kit Emails 1-6). Resend is the sender of
+    // record; these two fields are a read-only projection of waitlist_sequence so the CRM
+    // shows where each lead is in the sequence. Written by crm.waitlist_email_sent only.
+    {
+      apiSlug: 'waitlist_email_stage',
+      title: 'Waitlist email stage',
+      type: 'number',
+      description:
+        'Last waitlist drip email sent (1-6). Mirror of waitlist_sequence.stage in the customers DB; ' +
+        'the drip itself is driven from Postgres + Resend, never from this field.',
+    },
+    {
+      apiSlug: 'waitlist_last_email_at',
+      title: 'Waitlist last email at',
+      type: 'timestamp',
+      description: 'When the last waitlist drip email was sent (mirror of waitlist_sequence.last_sent_at).',
     },
   ],
 }

@@ -36,6 +36,8 @@ export type CrmEventType =
   | 'crm.membership_paused'
   | 'crm.membership_canceled'
   | 'crm.reactivation'
+  // Waitlist drip mirror (not one of the 11 P0 events): stage + last-sent projection.
+  | 'crm.waitlist_email_sent'
 
 export interface DeliveryResult {
   ok: boolean
@@ -425,7 +427,31 @@ async function invitationSent(payload: Record<string, unknown>): Promise<Deliver
   return result
 }
 
+/**
+ * Waitlist drip email sent → two projection fields on the Person. Deliberately NOT the
+ * lifecycle: a lead on Email 4 is still `Waitlist`. Upserts on email like every other
+ * People write, so a lead the inline path never created still gets a record.
+ */
+async function waitlistEmailSent(payload: Record<string, unknown>): Promise<DeliveryResult> {
+  const email = str(payload, 'email')
+  if (!email) return { ok: false, error: 'waitlist email event has no email', retryable: false }
+  const stage = Number(payload.waitlistEmailStage)
+  if (!Number.isInteger(stage) || stage < 1) {
+    return { ok: false, error: 'waitlist email event has no valid stage', retryable: false }
+  }
+  const values: Record<string, unknown> = {
+    email_addresses: [{ email_address: email.toLowerCase() }],
+    waitlist_email_stage: stage,
+  }
+  const at = str(payload, 'waitlistLastEmailAt')
+  if (at) values.waitlist_last_email_at = at
+  // No name write: the Person already carries first+last from crm.waitlist_submitted, and a
+  // first-name-only write here would blank the last name.
+  return toResult(await assertSafe('people', values))
+}
+
 const HANDLERS: Record<CrmEventType, (p: Record<string, unknown>) => Promise<DeliveryResult>> = {
+  'crm.waitlist_email_sent': waitlistEmailSent,
   'crm.waitlist_submitted': waitlistSubmitted,
   'crm.invitation_sent': invitationSent,
   'crm.account_created': (p) => personLifecycle(p, 'Enrollment Started'),

@@ -11,3 +11,14 @@ export function publicOrigin(req: NextRequest): string {
   const configured = process.env.IRONFORGE_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL
   return (configured || req.nextUrl.origin).replace(/\/$/, '')
 }
+
+/**
+ * Same precedence with NO request to fall back on — for links built inside a background
+ * loop (the waitlist drip's scanner drain). Returns null when neither variable is set, so
+ * the caller can refuse to send mail carrying relative or localhost links rather than
+ * guess a domain.
+ */
+export function publicOriginFromEnv(): string | null {
+  const configured = process.env.IRONFORGE_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL
+  return configured ? configured.replace(/\/$/, '') : null
+}
