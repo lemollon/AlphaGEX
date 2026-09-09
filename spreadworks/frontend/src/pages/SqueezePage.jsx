@@ -767,7 +767,10 @@ export default function SqueezePage() {
                   gamma is in the lowest fifth of its last 60 sessions — the squeeze zone, where every SPY
                   squeeze since 2020 began. Above the <b style={{ color: GREEN }}>dashed green line</b>{' '}
                   ({signedBn(chartOutlook.overbought_trigger_b)}) it is in the highest fifth — the safest state to
-                  sell premium into. The <b style={{ color: '#d6d3d1' }}>pale line</b> is SPY’s price, for context.
+                  sell premium into. The <b style={{ color: '#d6d3d1' }}>pale line</b> is SPY’s price, for context,
+                  on its own hidden axis — it shares no scale with the gamma line, so where the two sit
+                  relative to each other, or a crossing, means nothing. Only the gamma line against the
+                  two dashed triggers decides the zone.
                   {liveOk && (
                     <> The <b style={{ color: LIVE }}>purple point</b> is this minute’s reading — context, not the signal.</>
                   )}
@@ -1439,10 +1442,42 @@ export default function SqueezePage() {
                 <div style={{ ...S.caption, marginTop: 10 }}>
                   The <b style={{ color: LIVE }}>purple line</b> is net dealer gamma, recomputed from
                   the live chain every 10 minutes. The <b style={{ color: '#d6d3d1' }}>pale
-                  line</b> is SPY on a hidden right axis — net gamma measured at spot moves when spot
-                  moves, so the two together tell you whether dealers repositioned or price just slid
-                  down a fixed curve. The <b style={{ color: '#8b93a7' }}>grey dashed line</b> is the
-                  15:05 reading the verdict is currently using.
+                  line</b> is SPY's price on a hidden right axis.
+                  {' '}<b style={{ color: '#c6cbd8' }}>The two lines share no scale</b> — purple sitting
+                  above or below the pale line, or crossing it, means nothing. Read them by
+                  direction only. Net gamma measured at spot moves when spot moves, so the pair
+                  tells you whether dealers repositioned or price just slid down a fixed curve:
+                </div>
+                {/* HOW TO READ THE PAIR. Two series on two axes invite a false
+                    "purple above white = X" reading. Spell out the four
+                    co-movement cases so the only meaningful comparison — purple
+                    against the dashed triggers — is the one the reader makes. */}
+                <div style={{ ...S.caption, marginTop: 6, paddingLeft: 14 }}>
+                  <div>
+                    <b style={{ color: '#c6cbd8' }}>Both fall together</b> — price slid down the
+                    existing gamma curve. Dealers did not reposition. Nothing new.
+                  </div>
+                  <div>
+                    <b style={{ color: AMBER }}>Purple falls while SPY holds or rises</b> — dealers
+                    repositioned toward short gamma. This is the move that matters; watch the
+                    distance to the amber oversold line.
+                  </div>
+                  <div>
+                    <b style={{ color: GREEN }}>Purple rises while SPY falls</b> — gamma is moving
+                    away from the squeeze zone even as price drops, the opposite of what the
+                    squeeze leg needs.
+                  </div>
+                  <div>
+                    <b style={{ color: '#c6cbd8' }}>Purple flat while SPY moves</b> — the curve is
+                    flat here. Gamma is not saying anything today.
+                  </div>
+                </div>
+                <div style={{ ...S.caption, marginTop: 6 }}>
+                  What decides anything is purple against the dashed lines:
+                  the <b style={{ color: AMBER }}>amber oversold trigger</b>,
+                  the <b style={{ color: GREEN }}>green overbought trigger</b>, and
+                  the <b style={{ color: '#8b93a7' }}>grey dashed line</b>, the 15:05 reading the
+                  verdict is currently using.
                   {' '}<b style={{ color: '#c6cbd8' }}>Watch it; do not trade off it</b> — sampled
                   intraday, gamma lands in a different zone than its own close 21.6% of the time.
                 </div>
