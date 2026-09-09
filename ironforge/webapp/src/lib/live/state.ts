@@ -182,7 +182,11 @@ export function deriveCustomerState(input: StateInput): CustomerState {
       key: 'BLOCKED',
       headline: 'No Trading Today',
       subtitle: `Market conditions are unfavorable today, so ${agent} is standing aside. No trade means no risk taken — that’s the strategy working.`,
-      check_line: null,
+      // The banner above the agent tiles renders check_line verbatim. A skip day is
+      // routine, not a fault, so this must not read like something broke — the old
+      // null fell through to the app's "is blocked from trading" fallback, which
+      // customers read as an outage.
+      check_line: `${agent} is sitting out today — market conditions aren’t right for a trade.`,
       dot: 'gray',
       timeline_step: null,
       paused: false,

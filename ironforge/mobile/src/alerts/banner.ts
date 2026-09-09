@@ -11,7 +11,7 @@ import { agentDetailHref } from '@/agents/routes'
  * trusted to whatever `if` chain a screen happens to write. Severity order (most to
  * least urgent), per SPEC.md:
  *
- *   brokerage disconnected/auth expired > account restricted (BLOCKED) >
+ *   brokerage disconnected/auth expired > agent standing aside (BLOCKED) >
  *   ACTION_REQUIRED > membership payment due > paused > market no_trading > caution
  */
 export type BannerSeverity =
@@ -64,8 +64,13 @@ export function pickBanner(input: BannerInput): Banner | null {
   if (blocked) {
     return {
       severity: 'blocked',
-      color: color.neg,
-      text: blocked.state?.check_line ?? `${blocked.label} is blocked from trading.`,
+      // Muted, not color.neg. Every reason that actually reaches BLOCKED is a routine
+      // stand-aside (VIX gate / event blackout — see BLOCKED_REASON_PREFIXES server
+      // side), and a red banner made customers report a working skip day as an outage.
+      color: color.muted,
+      text:
+        blocked.state?.check_line ??
+        `${blocked.label} is sitting out today — no trade is being placed.`,
       action: { label: 'View', target: 'agent', bot: blocked.bot },
       dismissible: false,
     }

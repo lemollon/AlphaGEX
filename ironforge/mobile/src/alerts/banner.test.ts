@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { pickBanner, bannerActionHref, type BannerInput } from '@/alerts/banner'
 import type { LiveAgent } from '@/api/types'
+import { color } from '@/theme/tokens'
 
 function agent(bot: string, overrides: Partial<LiveAgent> = {}): LiveAgent {
   return {
@@ -68,6 +69,21 @@ describe('pickBanner', () => {
     expect(r?.severity).toBe('blocked')
     expect(r?.text).toBe('Account restricted.')
     expect(r?.action).toEqual({ label: 'View', target: 'agent', bot: 'spark' })
+  })
+
+  it('BLOCKED with no check_line reads as a routine skip, not a fault', () => {
+    const r = pickBanner({
+      ...base,
+      agents: [agent('flame', { label: 'Flame', state: { key: 'BLOCKED' } as any })],
+    })
+    expect(r?.severity).toBe('blocked')
+    expect(r?.text).toBe(
+      'Flame is sitting out today — no trade is being placed.',
+    )
+    expect(r?.text).not.toMatch(/blocked/i)
+    // Red is what made customers read a working skip day as an outage.
+    expect(r?.color).toBe(color.muted)
+    expect(r?.color).not.toBe(color.neg)
   })
 
   it('ACTION_REQUIRED beats payment, paused and market condition', () => {
