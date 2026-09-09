@@ -11,6 +11,7 @@ import {
   isLiveBot,
   type LiveBot,
 } from '../bots'
+import { describeLiveGate } from '@/lib/tradier'
 
 /**
  * FLAME was invisible on the customer Live page because LIVE_BOTS was a
@@ -43,17 +44,35 @@ describe('live bot registry', () => {
 })
 
 describe('account mode', () => {
-  it('declares spark as the only production account', () => {
+  it('declares no bot as production by default', () => {
     expect(accountMode('flame')).toBe('paper')
-    expect(accountMode('spark')).toBe('production')
-    // Exactly one production bot. A second name appearing here without a
-    // deliberate change means a paper ledger just started claiming real money.
-    expect(LIVE_BOTS.filter((b: LiveBot) => accountMode(b) === 'production')).toEqual(['spark'])
+    // SPARK lost its production account on 2026-08-23 (the dead-keyed
+    // Logan[production] row was deactivated) but stayed declared 'production'
+    // here, so the customer read went to an inactive $5,000 ledger instead of
+    // SPARK's real paper book. A name appearing here without a deliberate
+    // change means a paper ledger just started claiming real money.
+    expect(accountMode('spark')).toBe('paper')
+    expect(LIVE_BOTS.filter((b: LiveBot) => accountMode(b) === 'production')).toEqual([])
   })
 
-  it('flags flame as paper', () => {
+  it('pins the declaration against describeLiveGate so the two cannot drift', () => {
+    // 🚨 THE BUG THIS FILE EXISTS TO PREVENT. describeLiveGate is the routing
+    // layer's answer to "can this bot reach real money"; LIVE_BOT_MODE is the
+    // display layer's. They disagreed for five days and nothing failed.
+    // A bot the router calls paper-only must never be declared production.
+    for (const b of LIVE_BOTS) {
+      const gate = describeLiveGate(b)
+      if (gate.endsWith('_is_paper_only') || gate === 'not_a_production_bot') {
+        expect(accountMode(b)).toBe('paper')
+      }
+    }
+    // Pinned explicitly too, so deleting the constant fails loudly.
+    expect(describeLiveGate('spark')).toBe('spark_is_paper_only')
+  })
+
+  it('flags both bots as paper', () => {
     expect(isPaperBot('flame')).toBe(true)
-    expect(isPaperBot('spark')).toBe(false)
+    expect(isPaperBot('spark')).toBe(true)
   })
 
   it('keeps isPaperBot the exact complement of accountMode', () => {
@@ -67,8 +86,9 @@ describe('strategy accent', () => {
   it('is identity, not account mode — flame stays orange regardless', () => {
     expect(LIVE_BOT_ACCENT.flame).toBe('flame')
     expect(LIVE_BOT_ACCENT.spark).toBe('spark')
-    // flame is on paper and spark on production; the accents must not track that.
+    // both bots are on paper; the accents must not track account mode at all.
     expect(accountMode('flame')).toBe('paper')
+    expect(accountMode('spark')).toBe('paper')
     expect(LIVE_BOT_ACCENT.flame).not.toBe(LIVE_BOT_ACCENT.spark)
   })
 
