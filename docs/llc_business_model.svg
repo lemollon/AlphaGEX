@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1100" font-family="-apple-system, 'Segoe UI', Roboto, sans-serif">
+  <!-- Background -->
+  <rect width="1600" height="1100" fill="#0a0e1a"/>
+
+  <!-- Title -->
+  <text x="800" y="55" fill="#e2e8f0" font-size="32" font-weight="700" text-anchor="middle">GEX Capital Holdings LLC — Business Model</text>
+  <text x="800" y="85" fill="#94a3b8" font-size="16" text-anchor="middle">AlphaGEX · IronForge · SpreadWorks  |  Holding Co. + 3 Brand Funnel</text>
+
+  <!-- Parent LLC Box -->
+  <rect x="500" y="120" width="600" height="110" rx="12" fill="#1e293b" stroke="#fbbf24" stroke-width="2"/>
+  <text x="800" y="160" fill="#fbbf24" font-size="22" font-weight="700" text-anchor="middle">GEX CAPITAL HOLDINGS LLC</text>
+  <text x="800" y="185" fill="#cbd5e1" font-size="14" text-anchor="middle">Wyoming · single-member LLC · disregarded entity</text>
+  <text x="800" y="208" fill="#94a3b8" font-size="13" text-anchor="middle">Owns: IP · contracts · Stripe · bank · infra · employees/contractors</text>
+
+  <!-- Connectors to brands -->
+  <line x1="800" y1="230" x2="800" y2="265" stroke="#475569" stroke-width="2"/>
+  <line x1="280" y1="265" x2="1320" y2="265" stroke="#475569" stroke-width="2"/>
+  <line x1="280" y1="265" x2="280" y2="300" stroke="#475569" stroke-width="2"/>
+  <line x1="800" y1="265" x2="800" y2="300" stroke="#475569" stroke-width="2"/>
+  <line x1="1320" y1="265" x2="1320" y2="300" stroke="#475569" stroke-width="2"/>
+
+  <!-- AlphaGEX brand -->
+  <rect x="100" y="300" width="360" height="200" rx="10" fill="#1e293b" stroke="#22d3ee" stroke-width="2"/>
+  <text x="280" y="335" fill="#22d3ee" font-size="22" font-weight="700" text-anchor="middle">AlphaGEX</text>
+  <text x="280" y="360" fill="#94a3b8" font-size="13" text-anchor="middle">Flagship Platform</text>
+  <line x1="140" y1="375" x2="420" y2="375" stroke="#334155" stroke-width="1"/>
+  <text x="280" y="400" fill="#e2e8f0" font-size="13" text-anchor="middle">20+ autonomous trading bots</text>
+  <text x="280" y="420" fill="#e2e8f0" font-size="13" text-anchor="middle">PROPHET · WISDOM · STARS ML</text>
+  <text x="280" y="440" fill="#e2e8f0" font-size="13" text-anchor="middle">800+ API endpoints · 285+ tables</text>
+  <text x="280" y="475" fill="#fbbf24" font-size="14" font-weight="600" text-anchor="middle">Pro $499/mo · License $10K+</text>
+
+  <!-- IronForge brand -->
+  <rect x="620" y="300" width="360" height="200" rx="10" fill="#1e293b" stroke="#f97316" stroke-width="2"/>
+  <text x="800" y="335" fill="#f97316" font-size="22" font-weight="700" text-anchor="middle">IronForge</text>
+  <text x="800" y="360" fill="#94a3b8" font-size="13" text-anchor="middle">Wedge Product</text>
+  <line x1="660" y1="375" x2="940" y2="375" stroke="#334155" stroke-width="1"/>
+  <text x="800" y="400" fill="#e2e8f0" font-size="13" text-anchor="middle">FLAME 2DTE · SPARK 1DTE · INFERNO 0DTE</text>
+  <text x="800" y="420" fill="#e2e8f0" font-size="13" text-anchor="middle">SPY Iron Condors · BYO Tradier key</text>
+  <text x="800" y="440" fill="#e2e8f0" font-size="13" text-anchor="middle">Next.js + PostgreSQL, multi-tenant</text>
+  <text x="800" y="475" fill="#fbbf24" font-size="14" font-weight="600" text-anchor="middle">Pro $49/mo · Live $149/mo</text>
+
+  <!-- SpreadWorks brand -->
+  <rect x="1140" y="300" width="360" height="200" rx="10" fill="#1e293b" stroke="#a855f7" stroke-width="2"/>
+  <text x="1320" y="335" fill="#a855f7" font-size="22" font-weight="700" text-anchor="middle">SpreadWorks</text>
+  <text x="1320" y="360" fill="#94a3b8" font-size="13" text-anchor="middle">Community + Viral Hook</text>
+  <line x1="1180" y1="375" x2="1460" y2="375" stroke="#334155" stroke-width="1"/>
+  <text x="1320" y="400" fill="#e2e8f0" font-size="13" text-anchor="middle">Double Diagonal / Calendar analyzer</text>
+  <text x="1320" y="420" fill="#e2e8f0" font-size="13" text-anchor="middle">Discord /spread bot + Web UI</text>
+  <text x="1320" y="440" fill="#e2e8f0" font-size="13" text-anchor="middle">Pulls GEX from AlphaGEX</text>
+  <text x="1320" y="475" fill="#fbbf24" font-size="14" font-weight="600" text-anchor="middle">Free · Discord Pro $19/mo</text>
+
+  <!-- Funnel section title -->
+  <text x="800" y="560" fill="#e2e8f0" font-size="22" font-weight="700" text-anchor="middle">Customer Acquisition Ladder</text>
+  <text x="800" y="585" fill="#94a3b8" font-size="13" text-anchor="middle">Free Discord users climb the price ladder — each step is real revenue + higher intent</text>
+
+  <!-- Funnel trapezoids -->
+  <!-- Tier 1: Free Discord (widest) -->
+  <polygon points="200,610 1400,610 1330,660 270,660" fill="#a855f7" opacity="0.85"/>
+  <text x="800" y="641" fill="#0a0e1a" font-size="15" font-weight="700" text-anchor="middle">FREE · SpreadWorks Discord /spread  →  acquisition channel · zero CAC</text>
+
+  <!-- Tier 2: Discord Pro -->
+  <polygon points="270,665 1330,665 1260,715 340,715" fill="#a855f7" opacity="0.95"/>
+  <text x="800" y="696" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">$19/mo · Discord Pro — custom symbols · alerts · private channels</text>
+
+  <!-- Tier 3: Forge Pro -->
+  <polygon points="340,720 1260,720 1190,770 410,770" fill="#f97316" opacity="0.85"/>
+  <text x="800" y="751" fill="#0a0e1a" font-size="15" font-weight="700" text-anchor="middle">$49/mo · IronForge Pro — 3 paper bots · Tradier sandbox · Kelly sizing</text>
+
+  <!-- Tier 4: Forge Live -->
+  <polygon points="410,775 1190,775 1120,825 480,825" fill="#f97316" opacity="1.0"/>
+  <text x="800" y="806" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">$149/mo · IronForge Live — production Tradier · real money execution</text>
+
+  <!-- Tier 5: AlphaGEX Pro -->
+  <polygon points="480,830 1120,830 1050,880 550,880" fill="#22d3ee" opacity="0.9"/>
+  <text x="800" y="861" fill="#0a0e1a" font-size="15" font-weight="700" text-anchor="middle">$499/mo · AlphaGEX Pro — full bot fleet · PROPHET · COUNSELOR AI</text>
+
+  <!-- Tier 6: Self-Hosted (narrowest, premium) -->
+  <polygon points="550,885 1050,885 980,935 620,935" fill="#fbbf24" opacity="0.95"/>
+  <text x="800" y="916" fill="#0a0e1a" font-size="15" font-weight="700" text-anchor="middle">$10–25K + $500/mo · Self-Hosted License — prop shops · family offices</text>
+
+  <!-- Year-1 Metrics Card -->
+  <rect x="100" y="970" width="680" height="110" rx="10" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="440" y="1000" fill="#22d3ee" font-size="16" font-weight="700" text-anchor="middle">YEAR-1 TARGET (200 paid users)</text>
+  <text x="130" y="1030" fill="#cbd5e1" font-size="13">Discord Pro</text><text x="270" y="1030" fill="#fbbf24" font-size="13" font-weight="600">100 × $19 = $1,900</text>
+  <text x="450" y="1030" fill="#cbd5e1" font-size="13">Forge Pro</text><text x="570" y="1030" fill="#fbbf24" font-size="13" font-weight="600">60 × $49 = $2,940</text>
+  <text x="130" y="1052" fill="#cbd5e1" font-size="13">Forge Live</text><text x="270" y="1052" fill="#fbbf24" font-size="13" font-weight="600">30 × $149 = $4,470</text>
+  <text x="450" y="1052" fill="#cbd5e1" font-size="13">AlphaGEX Pro</text><text x="595" y="1052" fill="#fbbf24" font-size="13" font-weight="600">10 × $499 = $4,990</text>
+  <text x="440" y="1075" fill="#22d3ee" font-size="14" font-weight="700" text-anchor="middle">MRR ≈ $14,300  ·  ARR ≈ $172K  ·  Infra burn ≈ $1.5–4K/mo</text>
+
+  <!-- Regulatory Card -->
+  <rect x="820" y="970" width="680" height="110" rx="10" fill="#1e293b" stroke="#f97316" stroke-width="1.5"/>
+  <text x="1160" y="1000" fill="#f97316" font-size="16" font-weight="700" text-anchor="middle">REGULATORY POSTURE — YEAR 1</text>
+  <text x="1160" y="1025" fill="#e2e8f0" font-size="13" text-anchor="middle">Software-only · "tool, not advice" · customer trades own broker</text>
+  <text x="1160" y="1045" fill="#e2e8f0" font-size="13" text-anchor="middle">No custody · no perf fees · heavy disclaimers · lawyer-drafted TOS</text>
+  <text x="1160" y="1070" fill="#94a3b8" font-size="12" text-anchor="middle">RIA/CTA registration deferred until &gt;$1M AUM interest or fund LP appears</text>
+
+  <!-- Footer -->
+  <text x="800" y="1095" fill="#475569" font-size="11" text-anchor="middle">Draft 2026-05-16 · Not legal/tax/investment advice · See LLC_BUSINESS_MODEL_ANALYSIS.md</text>
+</svg>
