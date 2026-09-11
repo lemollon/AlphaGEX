@@ -96,7 +96,25 @@ import { buildTradeOpenedEvent, buildTradeClosedEvent } from './push/trade-event
 import { dispatchToCustomers } from './push/dispatch'
 import type { LiveBot } from './live/bots'
 import { PROTECTIVE_REASON_PREFIXES } from './live/riskProtection'
-import { PROTECTIVE_GATE_LABELS } from './live/activityFeed'
+
+/**
+ * Ops-channel-only "why no trade today" copy, keyed by the same prefixes as
+ * PROTECTIVE_REASON_PREFIXES. Deliberately separate from activityFeed.ts's
+ * PROTECTIVE_GATE_LABELS (customer-facing Live page) — this wording is for
+ * the private ops Discord only and can be as candid/detailed as useful there.
+ */
+const OPS_NO_TRADE_LABELS: Record<string, string> = {
+  'skip:vix_elevated': 'Volatility spiked today, so the bot held back instead of forcing a trade into rough conditions. Capital protected, ready for tomorrow.',
+  'skip:vix_bad_window': 'Not enough VIX history yet to confirm conditions, so the bot held off rather than guess.',
+  'skip:vix_too_high': 'VIX was too high today, so the bot stayed out for safety.',
+  'skip:event_blackout': 'Sat out a scheduled market event today — avoiding unnecessary risk around the news. Planned, not a glitch.',
+  'skip:cooldown_after_first_loss': 'Standing down after a recent loss — a built-in cooldown, not a problem. Back at it once the window clears.',
+  'skip:standdown': 'Standing down after a recent loss — a built-in cooldown, not a problem. Back at it once the window clears.',
+  'skip:standdown_after_loss': 'Standing down after a recent loss — a built-in cooldown, not a problem. Back at it once the window clears.',
+  'skip:credit_too_low': "Today's premium wasn't worth the risk, so the bot passed rather than take a bad trade. Discipline paying off.",
+  'skip:credit_pct_too_low': "Today's premium wasn't worth the risk, so the bot passed rather than take a bad trade. Discipline paying off.",
+  'skip:neg_gamma_env': 'Conditions weren\'t favorable today, so the bot stayed out of a bad tape.',
+}
 
 /**
  * Push notifications on trade OPEN/CLOSE (UAT #7). Scoped to the two bots on the
@@ -4552,6 +4570,11 @@ async function tradeHeartbeatCheck(bot: BotDef, ct: Date): Promise<void> {
   // was completely invisible outside the raw scan logs; the 2026-09-11 FLAME/SPARK
   // VIX-gate skip surfaced that gap. This always posts on a 0-trade day, whether
   // the reason is a healthy protective gate or not.
+  //
+  // Ops-channel-only wording (never shown to customers — that's activityFeed.ts's
+  // PROTECTIVE_GATE_LABELS, a separate map by design). Warm framing for the
+  // healthy gates; the last two stay plainly alert-toned on purpose — an
+  // encouraging tone must never soften an actual problem.
   const todayOpens = opensByDate.get(todayStr) ?? 0
   if (todayOpens === 0) {
     const todayReasons = reasonsByDate.get(todayStr) ?? []
@@ -4562,13 +4585,13 @@ async function tradeHeartbeatCheck(bot: BotDef, ct: Date): Promise<void> {
     const reason = evaluated ?? todayReasons[0] ?? null
     const prefix = reason ? PROTECTIVE_REASON_PREFIXES.find((p) => reason.startsWith(p)) : undefined
     const label = reason == null
-      ? 'No scan activity recorded today — worth checking the scanner is running.'
+      ? 'No scan activity recorded today — this one is worth a look, not a shrug.'
       : prefix
-        ? PROTECTIVE_GATE_LABELS[prefix]
-        : `Held off today (${reason})`
+        ? OPS_NO_TRADE_LABELS[prefix]
+        : `Held off today — reason: ${reason}. Flag it if this repeats.`
     void postOpsAlert({
       botName: bot.name,
-      title: 'No trade today',
+      title: `${bot.name.toUpperCase()} sat today out`,
       body: label,
       severity: 'info',
     }).catch(() => { /* never take a scan cycle down */ })

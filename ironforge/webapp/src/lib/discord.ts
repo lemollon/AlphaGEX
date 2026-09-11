@@ -36,6 +36,11 @@ const COLOR_STATS = 0x1f2937 // slate
 const WEBHOOK_USERNAME = 'FLAME · IronForge'
 const WEBHOOK_AVATAR = 'https://em-content.zobj.net/source/microsoft-teams/337/fire_1f525.png'
 
+// Actual IronForge brand mark (public/forge-logo-mark.png), served from the
+// production customer domain so Discord can fetch it. Used for ops-identity
+// posts (postOpsAlert) instead of an emoji character in the author name.
+const IRONFORGE_ICON_URL = 'https://ironforge.trade/forge-logo-mark.png'
+
 function nowIso(): string {
   return new Date().toISOString()
 }
@@ -524,7 +529,7 @@ export async function postOpsAlert(args: {
   fields?: Array<{ name: string; value: string; inline?: boolean }>
 }): Promise<boolean> {
   const embed: DiscordEmbed = {
-    author: { name: `${args.severity === 'critical' ? '🚨' : '🛠️'} ${args.botName.toUpperCase()} · IronForge Ops` },
+    author: { name: `${args.botName.toUpperCase()} · IronForge Ops`, icon_url: IRONFORGE_ICON_URL },
     title: args.title,
     description: args.body.slice(0, 3800),
     color: args.severity === 'critical' ? COLOR_LOSS : COLOR_OPEN,
