@@ -5,9 +5,14 @@ placebo (memory `flowmix-singlename-fails.md`, PREREG_FLOWMIX_SINGLENAME).
 GEX walls are also not levels — SPY placebo-tested 5x, single names now
 tested too, same conclusion. So this module makes NO directional call. It
 reports, per ticker: spot, the nearest call wall above spot and put wall
-below spot (by |net GEX|), and the $ / % distance to each. That is the
-entire feature. If a future signal earns a directional call, it ships as a
-separate, explicitly-validated surface — never bolted onto this one.
+below spot (by |net GEX|), the $ / % distance to each, ticker-wide open
+interest / $-per-1%-move context, the 1-day options-implied expected move
+(for "is this distance even plausible today" context), and — via the
+history table below — whether OI/GEX at the closest wall has grown since
+the last few captures. None of this is a verdict on whether the wall holds
+or breaks; it is the raw ingredients so the viewer can judge that
+themselves. If a future signal earns an actual directional call, it ships
+as a separate, explicitly-validated surface — never bolted onto this one.
 
 SCANNER, not a fixed basket (corrected 2026-09-11 — the original 8-ticker
 list from the flowmix research was a dashboard, not a scanner). The
@@ -19,9 +24,10 @@ Results are sorted by tightest $ gap to either wall first (the closest
 thing to "scan for something notable" this descriptive-only page can do
 without making a call).
 
-Data source: TradingVolatility v2 `/top-setups` (universe) and
-`/tickers/{ticker}/curves/gex_by_strike` (per-ticker wall data) — same base
-URL + Bearer auth pattern as `tsunami/data/tv_client.py`.
+Data source: TradingVolatility v2 `/top-setups` (universe),
+`/tickers/{ticker}/curves/gex_by_strike` (per-ticker wall data), and
+`/tickers/{ticker}/levels` (1-day expected-move bounds) — same base URL +
+Bearer auth pattern as `tsunami/data/tv_client.py`.
 """
 from __future__ import annotations
 
@@ -29,9 +35,12 @@ import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone as dt_timezone
 from typing import Any, Optional
 
 import requests
+from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +49,47 @@ _TIMEOUT = 20
 _UNIVERSE_LIMIT = 200
 # Independent per-ticker calls; TV is the constraint here, not our CPU.
 _MAX_WORKERS = 20
-# A full scan is ~200 sequential-cost HTTP calls even with concurrency — cache
-# it rather than pay that on every page load. Same lazy-refresh shape as
-# routes_squeeze.py's _INTRADAY_CACHE.
+# A full scan is ~100 sequential-cost HTTP calls (gex_by_strike + levels per
+# ticker) even with concurrency — cache it rather than pay that on every page
+# load. Same lazy-refresh shape as routes_squeeze.py's _INTRADAY_CACHE. The
+# scheduled capture job (backend/__init__.py) keeps this warm in practice;
+# this TTL is the fallback for whenever that hasn't run yet.
 _CACHE_TTL = 300
 _cache: dict[str, Any] = {"ts": 0.0, "payload": None}
+
+# ── History (for "is OI/GEX building at the wall") ──────────────────────
+# One row per ticker per capture, for whichever wall was closest at that
+# moment. A wall's STRIKE can itself change between captures (the tightest
+# side can flip, or the strike with the biggest concentration can move) —
+# when that happens there is simply no matching prior row for the new
+# strike, and the delta reads as "no history yet" rather than a fabricated
+# comparison across different strikes.
+HISTORY_TABLE = "wall_scanner_snapshots"
+
+_HISTORY_DDL = f"""
+CREATE TABLE IF NOT EXISTS {HISTORY_TABLE} (
+    id           BIGSERIAL PRIMARY KEY,
+    ticker       VARCHAR(16) NOT NULL,
+    side         VARCHAR(4) NOT NULL,
+    strike       DOUBLE PRECISION NOT NULL,
+    net_gex      DOUBLE PRECISION,
+    call_oi_sum  DOUBLE PRECISION,
+    put_oi_sum   DOUBLE PRECISION,
+    spot         DOUBLE PRECISION,
+    captured_at  TIMESTAMPTZ NOT NULL
+)
+"""
+_HISTORY_INDEX_DDL = (
+    f"CREATE INDEX IF NOT EXISTS idx_{HISTORY_TABLE}_ticker_side_time "
+    f"ON {HISTORY_TABLE} (ticker, side, captured_at)"
+)
+
+
+def ensure_history_table(engine: Engine) -> None:
+    """Idempotent create. Safe to call every capture."""
+    with engine.begin() as conn:
+        conn.execute(text(_HISTORY_DDL))
+        conn.execute(text(_HISTORY_INDEX_DDL))
 
 
 def _base_url() -> str:
@@ -114,20 +159,40 @@ def fetch_universe(limit: int = _UNIVERSE_LIMIT) -> list[str]:
     return sorted(set(tickers))
 
 
-def _nearest_walls(
-    points: list[dict[str, Any]], spot: float
-) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
-    """Nearest call wall above spot, nearest put wall below spot.
+def _top_walls(points: list[dict[str, Any]], spot: float, side: str, n: int = 3) -> list[dict[str, Any]]:
+    """Top-N strikes on `side` of spot, ranked by signed net GEX extremum.
 
-    'Wall' = the strike with the largest |net GEX| on that side of spot —
-    where dealer positioning currently concentrates, not a predicted
-    turning point (see module docstring).
+    'Wall' = strikes with the largest |net GEX| — where dealer positioning
+    currently concentrates, not a predicted turning point (see module
+    docstring). Calls rank by largest POSITIVE net (descending); puts rank
+    by largest NEGATIVE net (ascending) — same convention as the original
+    single-wall pick, generalized to a top-N list so a second concentration
+    building just past the primary wall is visible instead of discarded.
     """
-    above = [p for p in points if p.get("strike") is not None and p.get("net") is not None and p["strike"] > spot]
-    below = [p for p in points if p.get("strike") is not None and p.get("net") is not None and p["strike"] < spot]
-    call_wall = max(above, key=lambda p: p["net"]) if above else None
-    put_wall = min(below, key=lambda p: p["net"]) if below else None  # most negative net
-    return call_wall, put_wall
+    if side == "call":
+        candidates = [p for p in points if p.get("strike") is not None and p.get("net") is not None and p["strike"] > spot]
+        candidates.sort(key=lambda p: p["net"], reverse=True)
+    else:
+        candidates = [p for p in points if p.get("strike") is not None and p.get("net") is not None and p["strike"] < spot]
+        candidates.sort(key=lambda p: p["net"])
+    return candidates[:n]
+
+
+def _fetch_levels(ticker: str) -> Optional[dict[str, float]]:
+    """1-day options-implied expected-move bounds — context for "is the $
+    distance to the wall even a plausible move today", not a forecast."""
+    payload = _get(f"/tickers/{ticker}/levels", {})
+    if payload is None:
+        return None
+    data = payload.get("data", payload) if isinstance(payload, dict) else None
+    levels = data.get("levels") if isinstance(data, dict) else None
+    if not isinstance(levels, list):
+        return None
+    by_name = {lv.get("name"): lv.get("price") for lv in levels if isinstance(lv, dict)}
+    plus1, minus1 = by_name.get("plus_1s_1d"), by_name.get("minus_1s_1d")
+    if plus1 is None or minus1 is None:
+        return None
+    return {"plus_1s_1d": plus1, "minus_1s_1d": minus1}
 
 
 def scan_ticker(ticker: str) -> dict[str, Any]:
@@ -145,7 +210,22 @@ def scan_ticker(ticker: str) -> dict[str, Any]:
     if not spot or not points:
         return {"ticker": ticker, "available": False}
 
-    call_wall, put_wall = _nearest_walls(points, spot)
+    def _fmt(p: dict[str, Any], is_call: bool) -> dict[str, Any]:
+        dollars = (p["strike"] - spot) if is_call else (spot - p["strike"])
+        return {
+            "strike": p["strike"],
+            "net_gex": p["net"],
+            "dollars_to_break": round(dollars, 2),
+            "pct_to_break": round(dollars / spot * 100, 2),
+        }
+
+    call_walls = [_fmt(p, True) for p in _top_walls(points, spot, "call")]
+    put_walls = [_fmt(p, False) for p in _top_walls(points, spot, "put")]
+
+    levels = _fetch_levels(ticker)
+    expected_move_1d = (
+        round((levels["plus_1s_1d"] - levels["minus_1s_1d"]) / 2, 2) if levels else None
+    )
 
     result: dict[str, Any] = {
         "ticker": ticker,
@@ -163,39 +243,24 @@ def scan_ticker(ticker: str) -> dict[str, Any]:
         "call_oi_sum": totals.get("call_oi_sum"),
         "put_oi_sum": totals.get("put_oi_sum"),
         "put_call_oi": totals.get("put_call_oi"),
+        # 1-day options-implied expected move, half-width in dollars — lets
+        # the viewer judge "is $X to the wall a big or small move today"
+        # without this module ever saying so itself.
+        "expected_move_1d_dollars": expected_move_1d,
+        "call_walls": call_walls,
+        "put_walls": put_walls,
+        "call_wall": call_walls[0] if call_walls else None,
+        "put_wall": put_walls[0] if put_walls else None,
     }
 
-    if call_wall is not None:
-        dollars = call_wall["strike"] - spot
-        result["call_wall"] = {
-            "strike": call_wall["strike"],
-            "net_gex": call_wall["net"],
-            "dollars_to_break": round(dollars, 2),
-            "pct_to_break": round(dollars / spot * 100, 2),
-        }
-    else:
-        result["call_wall"] = None
-
-    if put_wall is not None:
-        dollars = spot - put_wall["strike"]
-        result["put_wall"] = {
-            "strike": put_wall["strike"],
-            "net_gex": put_wall["net"],
-            "dollars_to_break": round(dollars, 2),
-            "pct_to_break": round(dollars / spot * 100, 2),
-        }
-    else:
-        result["put_wall"] = None
-
-    # The single number the row is sorted on, named explicitly instead of
-    # making the viewer eyeball two symmetric columns to find it.
     candidates = [
         (side, w) for side, w in (("call", result["call_wall"]), ("put", result["put_wall"]))
         if w is not None
     ]
     if candidates:
         side, w = min(candidates, key=lambda sw: sw[1]["pct_to_break"])
-        result["closest_wall"] = {"side": side, **w}
+        vs_move = round(w["dollars_to_break"] / expected_move_1d, 2) if expected_move_1d else None
+        result["closest_wall"] = {"side": side, **w, "vs_expected_move_1d": vs_move}
     else:
         result["closest_wall"] = None
 
@@ -242,7 +307,7 @@ def run_scan(limit: int = _UNIVERSE_LIMIT) -> dict[str, Any]:
 
 
 def scan_all(limit: int = _UNIVERSE_LIMIT, force: bool = False) -> dict[str, Any]:
-    """Cached market-wide scan — a full pass is ~200 external calls."""
+    """Cached market-wide scan — a full pass is ~100 external calls."""
     now = time.monotonic()
     if not force and _cache["payload"] is not None and (now - _cache["ts"]) < _CACHE_TTL:
         return _cache["payload"]
@@ -251,3 +316,159 @@ def scan_all(limit: int = _UNIVERSE_LIMIT, force: bool = False) -> dict[str, Any
     _cache["payload"] = payload
     _cache["ts"] = now
     return payload
+
+
+def capture_snapshot(engine: Optional[Engine], rows: list[dict[str, Any]]) -> None:
+    """Write each available row's closest wall to history.
+
+    Called by the scheduled capture job (backend/__init__.py), never inline
+    in a request path — this is a write, and the request path only ever
+    reads (see wall_history_delta). Never raises: a DB hiccup should not
+    take the scan down, only skip that capture.
+    """
+    if engine is None:
+        return
+    now = datetime.now(dt_timezone.utc)
+    try:
+        ensure_history_table(engine)
+        with engine.begin() as conn:
+            for row in rows:
+                closest = row.get("closest_wall")
+                if not row.get("available") or not closest:
+                    continue
+                conn.execute(
+                    text(
+                        f"""
+                        INSERT INTO {HISTORY_TABLE}
+                            (ticker, side, strike, net_gex, call_oi_sum, put_oi_sum, spot, captured_at)
+                        VALUES (:ticker, :side, :strike, :net_gex, :call_oi, :put_oi, :spot, :ts)
+                        """
+                    ),
+                    {
+                        "ticker": row["ticker"],
+                        "side": closest["side"],
+                        "strike": closest["strike"],
+                        "net_gex": closest.get("net_gex"),
+                        "call_oi": row.get("call_oi_sum"),
+                        "put_oi": row.get("put_oi_sum"),
+                        "spot": row.get("spot"),
+                        "ts": now,
+                    },
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[wall_scanner] history capture failed: %r", exc)
+
+
+def capture_and_store() -> dict[str, Any]:
+    """Scheduled entry point: scan, warm the request cache, write history."""
+    from ..db import engine as _engine  # local import — avoid a hard dependency at module load
+
+    payload = run_scan()
+    _cache["payload"] = payload
+    _cache["ts"] = time.monotonic()
+    capture_snapshot(_engine, payload.get("data", []))
+    return payload
+
+
+def wall_history_delta(
+    engine: Optional[Engine], ticker: str, side: str, strike: float, minutes_back: int = 60
+) -> Optional[dict[str, Any]]:
+    """Nearest snapshot at/before (now - minutes_back) for this exact
+    ticker/side/strike. None if the wall wasn't at this strike back then (or
+    the table has no history yet) — no fabricated cross-strike comparison.
+    """
+    if engine is None:
+        return None
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    f"""
+                    SELECT net_gex, call_oi_sum, put_oi_sum, captured_at
+                    FROM {HISTORY_TABLE}
+                    WHERE ticker = :ticker AND side = :side AND strike = :strike
+                      AND captured_at <= now() - (:mins * interval '1 minute')
+                    ORDER BY captured_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {"ticker": ticker, "side": side, "strike": strike, "mins": minutes_back},
+            ).mappings().first()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[wall_scanner] history lookup failed for %s: %r", ticker, exc)
+        return None
+    if not row:
+        return None
+    return {
+        "net_gex": row["net_gex"],
+        "call_oi_sum": row["call_oi_sum"],
+        "put_oi_sum": row["put_oi_sum"],
+        "captured_at": row["captured_at"].isoformat() if row["captured_at"] else None,
+    }
+
+
+def wall_history_series(
+    engine: Optional[Engine], ticker: str, side: str, strike: float, days_back: int = 5
+) -> list[dict[str, Any]]:
+    """Every capture for this exact ticker/side/strike over the lookback
+    window, oldest first — intraday points AND day-over-day in one series
+    (the capture job runs every 5 min during market hours, so a few days of
+    uptime is a few hundred points; nothing exists before this feature
+    shipped, so a fresh deploy returns an empty or short series honestly
+    rather than backfilling anything synthetic).
+    """
+    if engine is None:
+        return []
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text(
+                    f"""
+                    SELECT net_gex, call_oi_sum, put_oi_sum, spot, captured_at
+                    FROM {HISTORY_TABLE}
+                    WHERE ticker = :ticker AND side = :side AND strike = :strike
+                      AND captured_at >= now() - (:days * interval '1 day')
+                    ORDER BY captured_at ASC
+                    """
+                ),
+                {"ticker": ticker, "side": side, "strike": strike, "days": days_back},
+            ).mappings().all()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[wall_scanner] history series failed for %s: %r", ticker, exc)
+        return []
+    return [
+        {
+            "net_gex": r["net_gex"],
+            "call_oi_sum": r["call_oi_sum"],
+            "put_oi_sum": r["put_oi_sum"],
+            "spot": r["spot"],
+            "captured_at": r["captured_at"].isoformat() if r["captured_at"] else None,
+        }
+        for r in rows
+    ]
+
+
+def attach_history_deltas(engine: Optional[Engine], rows: list[dict[str, Any]], minutes_back: int = 60) -> None:
+    """Mutates `rows` in place: adds closest_wall['delta'] = {net_gex_then,
+    call_oi_then, put_oi_then, minutes_back} or None. Composed at the route
+    layer (see routes_wall_scanner.py) so this module's core scan stays free
+    of DB concerns beyond these explicit, opt-in capture/query functions.
+    """
+    if engine is None:
+        return
+    for row in rows:
+        closest = row.get("closest_wall")
+        if not row.get("available") or not closest:
+            continue
+        prior = wall_history_delta(engine, row["ticker"], closest["side"], closest["strike"], minutes_back)
+        closest["delta"] = (
+            {
+                "minutes_back": minutes_back,
+                "net_gex_then": prior["net_gex"],
+                "call_oi_then": prior["call_oi_sum"],
+                "put_oi_then": prior["put_oi_sum"],
+                "captured_at": prior["captured_at"],
+            }
+            if prior
+            else None
+        )

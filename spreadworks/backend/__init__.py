@@ -1304,6 +1304,22 @@ def _start_scheduler(app: FastAPI):
         )
 
     # ------------------------------------------------------------------
+    # Wall Scanner capture — every 5 min during market hours. Keeps the
+    # request-path cache warm AND writes wall_scanner_snapshots history so
+    # the page can show OI/GEX build-up over time (Leron 2026-09-11: "show
+    # position over days and intradays"). Advisory only, no bot reads this.
+    # ------------------------------------------------------------------
+    async def _wall_scanner_capture():
+        if not _is_trading_day():
+            return
+        import asyncio
+        from .bots import wall_scanner
+        try:
+            await asyncio.to_thread(wall_scanner.capture_and_store)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[SpreadWorks] wall_scanner capture failed: {exc}")
+
+    # ------------------------------------------------------------------
     # NEW: GEX Shift Alert — every 5 min during market hours
     # ------------------------------------------------------------------
     _last_flip_point = {"SPY": None}  # in-memory state for comparison
@@ -1460,6 +1476,11 @@ def _start_scheduler(app: FastAPI):
     # Every 5 min 8:30-15:00 CT — GEX shift detection + snapshot
     scheduler.add_job(_fire_gex_shift_check, "cron", minute="*/5",
                       hour="8-14", day_of_week="mon-fri", id="discord_gex_shift", replace_existing=True)
+
+    # Every 5 min 8:30-15:00 CT — Wall Scanner capture (history for build-up
+    # over time). Independent of the Discord jobs above; never posts anything.
+    scheduler.add_job(_wall_scanner_capture, "cron", minute="*/5",
+                      hour="8-15", day_of_week="mon-fri", id="wall_scanner_capture", replace_existing=True)
 
     # Every 15 min 8:30-15:00 CT — sample all three call surfaces.
     # 🚨 WITHOUT THIS THE HISTORY ONLY EXISTS WHEN SOMEONE IS LOOKING. The
