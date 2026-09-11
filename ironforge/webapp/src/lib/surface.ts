@@ -136,6 +136,13 @@ export const OPERATOR_API_PREFIXES: readonly string[] = [
 export const CUSTOMER_API_EXCEPTIONS: readonly string[] = [
   '/api/spark/production-pause',
   '/api/flame/production-pause',
+  // The ONLY route under /api/scanner/ (verified 2026-09-11). Read-only, no
+  // credentials/positions — bot name, heartbeat age, last scan reason. Exposed here
+  // so the customer-facing service (the one that actually runs the scanner,
+  // SCANNER_ENABLED=true) can be Render-health-checked against its own real state.
+  // ironforge-legacy is a web-only reader (SCANNER_ENABLED=false) and cannot be
+  // auto-restarted into fixing a stuck scanner no matter what it's health-checked on.
+  '/api/scanner/status',
 ]
 
 /**
