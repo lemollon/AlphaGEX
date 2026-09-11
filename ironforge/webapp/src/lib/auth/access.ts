@@ -56,6 +56,13 @@ const PUBLIC_EXACT = new Set<string>([
   '/api/auth/forgot-password',
   '/api/auth/reset-password',
   '/api/health',
+  // Scanner heartbeat/health aggregate — bot name, last-scan timestamp, staleness,
+  // last skip reason, last error message. No credentials, balances, or positions.
+  // Made reachable on the customer surface (surface.ts CUSTOMER_API_EXCEPTIONS) so
+  // Render's own health check — which cannot send a session cookie or bearer token —
+  // can monitor the process that actually runs the scanner. Same public-exact
+  // treatment as /api/health, which exists for the identical reason.
+  '/api/scanner/status',
   // Public proof surface: the paper/live track record shown to prospects. Read-only
   // aggregate of CLOSED trades — no balances, no open positions, no controls.
   '/track-record',

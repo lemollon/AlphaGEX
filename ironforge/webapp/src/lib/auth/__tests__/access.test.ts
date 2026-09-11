@@ -163,7 +163,10 @@ describe('mobile bearer access', () => {
 
   it('does NOT open the operator surface', () => {
     // The failure mode this pins: a customer token reaching bot control or account CRUD.
-    for (const p of ['/api/spark/status', '/api/accounts/manage', '/api/scanner/status']) {
+    // /api/scanner/status is deliberately excluded here — it was made PUBLIC_EXACT
+    // (see access.ts) so Render's unauthenticated health check can reach it, so a
+    // bearer token reaching it is no longer a meaningful test of this guard.
+    for (const p of ['/api/spark/status', '/api/accounts/manage']) {
       expect(decideAccess({ ...base, pathname: p, hasBearerCustomer: true })).toBe('unauthorized')
     }
     expect(decideAccess({ ...base, isApi: false, pathname: '/spark', hasBearerCustomer: true }))
