@@ -8646,7 +8646,12 @@ let _volSignalStreaks: Record<string, SignalStreak> = {}
 const ALPHAGEX_API_BASE = (
   process.env.ALPHAGEX_API_BASE || 'https://alphagex-api.onrender.com'
 ).replace(/\/$/, '')
-const VOL_ADVISOR_FETCH_TIMEOUT_MS = 5_000
+// 5s was too tight for a cross-service call to alphagex-api (a separate, often-busy
+// Render service running 20+ bots + ML) — measured ~8% of 5-min polls aborting on
+// 2026-09-11 even though the advisor always eventually answered. Non-blocking
+// (own setInterval, independent of the trade loop), so a longer timeout costs
+// nothing but a slightly later vol-alert update on a slow poll.
+const VOL_ADVISOR_FETCH_TIMEOUT_MS = 12_000
 
 /**
  * Poll the AlphaGEX vol-regime advisor and reconcile the `vol_alerts` table:
