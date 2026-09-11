@@ -156,6 +156,7 @@ export default function WallScannerPage() {
           : 'Scanning…'}
         {payload?.elapsed_sec != null && ` · ${payload.elapsed_sec}s`}
         {loadedAt && ` · updated ${loadedAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`}
+        {' · auto-refreshes every 5 min'}
       </p>
 
       <div style={S.banner}>
