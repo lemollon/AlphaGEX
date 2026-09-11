@@ -255,6 +255,7 @@ export default function WallScannerPage() {
   }, [allRows, q]);
 
   return (
+    <div className="flex-1 overflow-y-auto">
     <div style={S.wrap}>
       <h1 style={S.h1}>Wall Scanner</h1>
       <p style={S.sub}>
@@ -349,6 +350,7 @@ export default function WallScannerPage() {
           </table>
         </div>
       </div>
+    </div>
     </div>
   );
 }
