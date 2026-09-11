@@ -1,4 +1,4 @@
-"""Wall Scanner — descriptive-only GEX wall distances (2026-09-11).
+"""Wall Scanner — descriptive-only GEX wall distances, MARKET-WIDE (2026-09-11).
 
 CLOSED DECISION, do not relitigate: single-name flow-mix continuation FAILS
 placebo (memory `flowmix-singlename-fails.md`, PREREG_FLOWMIX_SINGLENAME).
@@ -9,25 +9,42 @@ below spot (by |net GEX|), and the $ / % distance to each. That is the
 entire feature. If a future signal earns a directional call, it ships as a
 separate, explicitly-validated surface — never bolted onto this one.
 
-Data source: TradingVolatility v2 `/tickers/{ticker}/curves/gex_by_strike`
-(same base URL + Bearer auth pattern as `tsunami/data/tv_client.py`).
+SCANNER, not a fixed basket (corrected 2026-09-11 — the original 8-ticker
+list from the flowmix research was a dashboard, not a scanner). The
+universe is TradingVolatility's own `/top-setups` cross-sectional roster:
+that endpoint only carries names TV actively snapshots options structure
+for, which is itself a liquid/optionable filter — "the whole stock market
+that has options and is liquid" as far as any data vendor can define it.
+Results are sorted by tightest $ gap to either wall first (the closest
+thing to "scan for something notable" this descriptive-only page can do
+without making a call).
+
+Data source: TradingVolatility v2 `/top-setups` (universe) and
+`/tickers/{ticker}/curves/gex_by_strike` (per-ticker wall data) — same base
+URL + Bearer auth pattern as `tsunami/data/tv_client.py`.
 """
 from __future__ import annotations
 
 import logging
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Optional
 
 import requests
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = 30
-
-# GME (the research trigger) + the 7 tickers flow-mix continuation was tested
-# and failed on. Every ticker here is descriptive-only for the same reason —
-# GME inherits that by default, it is not a special case.
-TICKERS: list[str] = ["GME", "AMD", "COIN", "NVDA", "MSTR", "PLTR", "SMCI", "TSLA"]
+_TIMEOUT = 20
+# TV's documented max for /top-setups.
+_UNIVERSE_LIMIT = 200
+# Independent per-ticker calls; TV is the constraint here, not our CPU.
+_MAX_WORKERS = 20
+# A full scan is ~200 sequential-cost HTTP calls even with concurrency — cache
+# it rather than pay that on every page load. Same lazy-refresh shape as
+# routes_squeeze.py's _INTRADAY_CACHE.
+_CACHE_TTL = 300
+_cache: dict[str, Any] = {"ts": 0.0, "payload": None}
 
 
 def _base_url() -> str:
@@ -44,25 +61,44 @@ def _token() -> str:
     )
 
 
-def _fetch_gex_by_strike(ticker: str) -> Optional[dict[str, Any]]:
+def _get(path: str, params: dict[str, Any]) -> Optional[dict[str, Any]]:
     token = _token()
     if not token:
-        logger.info("[wall_scanner] no TV token set — %s unavailable", ticker)
+        logger.info("[wall_scanner] no TV token set — %s unavailable", path)
         return None
     try:
         resp = requests.get(
-            f"{_base_url().rstrip('/')}/tickers/{ticker}/curves/gex_by_strike",
-            params={"exp": "combined"},
+            f"{_base_url().rstrip('/')}{path}",
+            params=params,
             headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
             timeout=_TIMEOUT,
         )
         if resp.status_code != 200:
-            logger.warning("[wall_scanner] %s http %s", ticker, resp.status_code)
+            logger.warning("[wall_scanner] %s http %s", path, resp.status_code)
             return None
         return resp.json()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("[wall_scanner] %s fetch failed: %r", ticker, exc)
+        logger.warning("[wall_scanner] %s failed: %r", path, exc)
         return None
+
+
+def fetch_universe(limit: int = _UNIVERSE_LIMIT) -> list[str]:
+    """TV's covered, liquid, optionable universe — the scan target.
+
+    /top-setups returns TV's most recent snapshot per ticker (36h recency
+    window); we only want which tickers exist, not the opportunity ranking
+    it computes (that's a different, directional feature this page does not
+    make). min_score=0 + no other filters pulls the full roster it tracks.
+    """
+    payload = _get("/top-setups", {"limit": limit, "min_score": 0})
+    if payload is None:
+        return []
+    data = payload.get("data", payload) if isinstance(payload, dict) else None
+    items = data.get("items") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return []
+    tickers = [it.get("ticker") for it in items if isinstance(it, dict) and it.get("ticker")]
+    return sorted(set(tickers))
 
 
 def _nearest_walls(
@@ -82,7 +118,7 @@ def _nearest_walls(
 
 
 def scan_ticker(ticker: str) -> dict[str, Any]:
-    payload = _fetch_gex_by_strike(ticker)
+    payload = _get(f"/tickers/{ticker}/curves/gex_by_strike", {"exp": "combined"})
     if payload is None:
         return {"ticker": ticker, "available": False}
 
@@ -128,5 +164,56 @@ def scan_ticker(ticker: str) -> dict[str, Any]:
     return result
 
 
-def scan_all(tickers: Optional[list[str]] = None) -> list[dict[str, Any]]:
-    return [scan_ticker(t) for t in (tickers or TICKERS)]
+def _tightest_pct(row: dict[str, Any]) -> float:
+    """Sort key: smallest % distance to EITHER wall. Missing data sorts last."""
+    pcts = [
+        w["pct_to_break"]
+        for w in (row.get("call_wall"), row.get("put_wall"))
+        if w is not None
+    ]
+    return min(pcts) if pcts else float("inf")
+
+
+def run_scan(limit: int = _UNIVERSE_LIMIT) -> dict[str, Any]:
+    """Scan TV's covered universe, sorted tightest-gap-first."""
+    started = time.monotonic()
+    tickers = fetch_universe(limit)
+    if not tickers:
+        return {"tickers_scanned": 0, "data": [], "generated_at": None}
+
+    results: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
+        futures = {pool.submit(scan_ticker, t): t for t in tickers}
+        for fut in as_completed(futures):
+            try:
+                results.append(fut.result())
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[wall_scanner] scan_ticker %s raised: %r", futures[fut], exc)
+                results.append({"ticker": futures[fut], "available": False})
+
+    available = [r for r in results if r.get("available")]
+    unavailable = [r for r in results if not r.get("available")]
+    available.sort(key=_tightest_pct)
+
+    elapsed = round(time.monotonic() - started, 1)
+    logger.info(
+        "[wall_scanner] scanned %d tickers (%d available) in %ss",
+        len(tickers), len(available), elapsed,
+    )
+    return {
+        "tickers_scanned": len(tickers),
+        "data": available + unavailable,
+        "elapsed_sec": elapsed,
+    }
+
+
+def scan_all(limit: int = _UNIVERSE_LIMIT, force: bool = False) -> dict[str, Any]:
+    """Cached market-wide scan — a full pass is ~200 external calls."""
+    now = time.monotonic()
+    if not force and _cache["payload"] is not None and (now - _cache["ts"]) < _CACHE_TTL:
+        return _cache["payload"]
+
+    payload = run_scan(limit)
+    _cache["payload"] = payload
+    _cache["ts"] = now
+    return payload

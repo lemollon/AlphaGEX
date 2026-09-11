@@ -1,11 +1,13 @@
 // Wall Scanner — descriptive-only $/% distance to the nearest GEX call/put
-// wall, per ticker (GME + 7 tickers flow-mix continuation was tested and
-// FAILED on). NO directional fade/breakout call anywhere on this page — that
-// door is closed (memory `flowmix-singlename-fails.md`), not a style choice.
-// This page states where the walls sit and how far price is from them.
-// Nothing predicts which way price goes when it gets there.
-import { useEffect, useState } from 'react';
-import { AlertTriangle } from 'lucide-react';
+// wall, scanned across TradingVolatility's whole covered universe (liquid,
+// optionable names — not a fixed basket; corrected 2026-09-11 after the
+// original 8-ticker dashboard version). NO directional fade/breakout call
+// anywhere on this page — that door is closed (memory
+// `flowmix-singlename-fails.md`), not a style choice. This page states
+// where the walls sit and how far price is from them, sorted tightest-gap
+// first. Nothing predicts which way price goes when it gets there.
+import { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, Search } from 'lucide-react';
 import { API_URL } from '../lib/api';
 
 const GREEN = '#34d399', RED = '#f87171', AMBER = '#fbbf24', GREY = '#9ca3af', DIM = '#8b93a7';
@@ -21,6 +23,15 @@ const S = {
     color: '#e8d9a8', lineHeight: 1.6,
   },
   card: { background: '#141824', border: '1px solid #232a3d', borderRadius: 12, padding: 16, marginBottom: 16 },
+  searchWrap: {
+    display: 'flex', alignItems: 'center', gap: 8, background: '#0e1220',
+    border: '1px solid #232a3d', borderRadius: 8, padding: '8px 12px', marginBottom: 16,
+    maxWidth: 280,
+  },
+  searchInput: {
+    background: 'transparent', border: 'none', outline: 'none', color: '#e6e9f2',
+    fontSize: 13, width: '100%',
+  },
   table: { width: '100%', borderCollapse: 'collapse' },
   th: { textAlign: 'left', color: DIM, fontSize: 13, padding: '6px 10px', fontWeight: 600 },
   td: { padding: '8px 10px', fontSize: 13, borderTop: '1px solid #1c2233' },
@@ -65,6 +76,7 @@ export default function WallScannerPage() {
   const [payload, setPayload] = useState(null);
   const [err, setErr] = useState(null);
   const [loadedAt, setLoadedAt] = useState(null);
+  const [q, setQ] = useState('');
 
   useEffect(() => {
     let live = true;
@@ -76,17 +88,27 @@ export default function WallScannerPage() {
       } catch (e) { if (live) setErr(String(e)); }
     };
     load();
-    const t = setInterval(load, 60 * 1000);
+    // A full scan is a cached ~200-ticker pass server-side (5 min TTL) — no
+    // point polling faster than that TTL.
+    const t = setInterval(load, 5 * 60 * 1000);
     return () => { live = false; clearInterval(t); };
   }, []);
 
-  const rows = payload?.data || [];
+  const allRows = payload?.data || [];
+  const rows = useMemo(() => {
+    const needle = q.trim().toUpperCase();
+    if (!needle) return allRows;
+    return allRows.filter((r) => r.ticker.includes(needle));
+  }, [allRows, q]);
 
   return (
     <div style={S.wrap}>
       <h1 style={S.h1}>Wall Scanner</h1>
       <p style={S.sub}>
-        {rows.length ? `${rows.length} tickers` : 'Loading…'}
+        {payload
+          ? `${payload.tickers_scanned || allRows.length} tickers scanned, sorted tightest-gap-first`
+          : 'Scanning…'}
+        {payload?.elapsed_sec != null && ` · ${payload.elapsed_sec}s`}
         {loadedAt && ` · updated ${loadedAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`}
       </p>
 
@@ -97,12 +119,23 @@ export default function WallScannerPage() {
           points — this has been placebo-tested on SPY and, more recently, on
           single names, and neither held up. This page shows only where the
           largest call/put gamma concentration currently sits relative to spot,
-          and the $ / % distance to it. It makes no directional call and should
+          and the $ / % distance to it, across every liquid optionable ticker
+          TradingVolatility covers. It makes no directional call and should
           not be read as one.
         </span>
       </div>
 
       {err && <div style={S.errBox}>Failed to load: {err}</div>}
+
+      <div style={S.searchWrap}>
+        <Search size={14} color={DIM} />
+        <input
+          style={S.searchInput}
+          placeholder="Filter ticker…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+      </div>
 
       <div style={S.card}>
         <table style={S.table}>
