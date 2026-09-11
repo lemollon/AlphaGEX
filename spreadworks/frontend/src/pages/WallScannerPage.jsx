@@ -109,24 +109,23 @@ function gapColor(pctVal) {
   return GREEN;
 }
 
+// Deliberately NOT red/green -- red/green on this page means "gap size" (see
+// gapColor) and would make POSITIVE/NEGATIVE gamma look like a bullish/
+// bearish call. It isn't one; it's a structural fact about dealer
+// positioning, not a direction (Leron 2026-09-11: "pin prone is not true").
 const REGIME_COLOR = {
-  'PIN-PRONE': GREEN,
-  DAMPENED: GREEN,
-  AMPLIFIED: RED,
-  'AMPLIFIED-NEAR-WALL': RED,
-  NEUTRAL: GREY,
+  'POSITIVE GAMMA': '#60a5fa',
+  'NEGATIVE GAMMA': '#c084fc',
+  'AT FLIP': GREY,
   UNKNOWN: GREY,
 };
 
-function ReadCell({ read, gammaRegime }) {
+function ReadCell({ read }) {
   if (!read) return <span style={S.small}>—</span>;
   const color = REGIME_COLOR[read.label] || GREY;
   return (
     <div style={{ maxWidth: 260 }}>
       <span style={{ ...S.badge, background: `${color}26`, color, marginRight: 0 }}>{read.label}</span>
-      {gammaRegime && (
-        <span style={{ ...S.small, marginLeft: 6 }}>{gammaRegime} gamma</span>
-      )}
       <div style={{ ...S.small, marginTop: 4, lineHeight: 1.5 }}>{read.note}</div>
     </div>
   );
@@ -299,11 +298,13 @@ export default function WallScannerPage() {
           the call/put gap; the $ and % under it are how far spot has to move
           to reach that strike. Expected-move ratio, OI, and the history chart
           (click a ticker) are all size/liquidity/build-up context. The{' '}
-          <b>Read</b> column states standard, well-documented options
-          market-structure mechanics (positive gamma → dealers dampen moves,
-          historically pin-prone; negative gamma → dealers amplify moves) —
-          it is a heuristic synthesis of the columns to its right, NOT a
-          backtested edge or a probability. None of this page is a forecast
+          <b>Read</b> column states whether spot is above or below the gamma
+          flip (positive/negative gamma — a fact about current dealer
+          positioning) plus wall proximity and OI skew. It does NOT predict
+          a behavior like "pinning" or "bigger moves" — that's a secondary
+          hedging-flow effect trend and news routinely override, and
+          claiming otherwise is exactly the overclaim already corrected once
+          today. None of this page is a forecast
           of whether a wall holds or breaks.
         </span>
       </div>
@@ -351,7 +352,7 @@ export default function WallScannerPage() {
                       </td>
                       {row.available ? (
                         <>
-                          <td style={S.td}><ReadCell read={row.read} gammaRegime={row.gamma_regime} /></td>
+                          <td style={S.td}><ReadCell read={row.read} /></td>
                           <td style={{ ...S.td, ...S.mono }}>{money(row.spot)}</td>
                           <td style={S.td}><ClosestWallCell wall={row.closest_wall} /></td>
                           <td style={{ ...S.td, ...S.mono }}>{abbrev(row.closest_wall?.net_gex, '$')}</td>

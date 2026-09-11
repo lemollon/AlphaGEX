@@ -345,23 +345,21 @@ def scan_ticker(ticker: str) -> dict[str, Any]:
 def _composite_read(
     gamma_regime: Optional[str], closest_wall: Optional[dict[str, Any]], put_call_oi: Optional[float]
 ) -> dict[str, str]:
-    """One plain-English synthesis of regime + wall proximity + skew.
+    """States the current facts (regime, wall proximity, OI skew) in plain
+    English. Does NOT predict a behavior (no "pin-prone" / "amplified" —
+    those claim a specific outcome that positive/negative gamma does not
+    reliably produce; it's a secondary hedging-flow effect that trend, news,
+    and real order flow routinely override, which is part of why
+    wall-proximity signals failed testing in the first place —
+    flowmix-singlename-fails.md, gex-walls-are-not-levels).
 
-    HEURISTIC, not a validated edge: this states well-documented options
-    market-structure mechanics (positive gamma -> dealers buy dips/sell rips
-    -> dampens realized moves, historically pin-prone; negative gamma ->
-    dealers sell dips/buy rips -> amplifies moves) applied to THIS ticker's
-    current numbers. It is NOT the same claim as "GEX wall proximity
-    predicts a bounce/break" (flowmix-singlename-fails.md,
-    gex-walls-are-not-levels) — that specific claim was tested and killed.
-    This has NOT been backtested as a standalone signal; treat the label as
-    a reading aid, not a probability. See handoff
-    wall-scanner-gamma-regime-research.md for the real validation work.
+    NOT a validated edge, NOT a probability, NOT a forecast of what price
+    does next. See handoff wall-scanner-gamma-regime-research.md for the
+    real validation work if this is meant to become an actual signal.
     """
     if gamma_regime is None:
         return {"label": "UNKNOWN", "note": "gamma flip price unavailable for this ticker"}
 
-    tight = closest_wall is not None and closest_wall.get("vs_expected_move_1d") is not None and closest_wall["vs_expected_move_1d"] < 0.5
     skew_word = None
     if put_call_oi is not None:
         if put_call_oi >= 1.3:
@@ -370,25 +368,17 @@ def _composite_read(
             skew_word = "call-heavy OI"
 
     if gamma_regime == "positive":
-        label = "PIN-PRONE" if tight else "DAMPENED"
-        note = (
-            "Positive gamma: dealers historically buy dips / sell rips here, which tends to "
-            "dampen realized moves"
-            + (" — and price is already close to a wall, classic pin setup." if tight
-               else ".")
-        )
+        label = "POSITIVE GAMMA"
+        note = "Spot is above the gamma flip — dealers are net long gamma here."
     elif gamma_regime == "negative":
-        label = "AMPLIFIED-NEAR-WALL" if tight else "AMPLIFIED"
-        note = (
-            "Negative gamma: dealers historically sell dips / buy rips here, which tends to "
-            "amplify realized moves"
-            + (" — and the closest wall is within half a normal day's move, so a break "
-               "would come with less resistance than usual." if tight else ".")
-        )
+        label = "NEGATIVE GAMMA"
+        note = "Spot is below the gamma flip — dealers are net short gamma here."
     else:
-        label = "NEUTRAL"
-        note = "Spot is sitting right at the gamma flip — no regime lean either way."
+        label = "AT FLIP"
+        note = "Spot is sitting right at the gamma flip."
 
+    if closest_wall is not None and closest_wall.get("vs_expected_move_1d") is not None:
+        note += f" Closest wall is {closest_wall['vs_expected_move_1d']:.2f}x today's expected move away."
     if skew_word:
         note += f" OI skew: {skew_word}."
 
