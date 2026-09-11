@@ -245,11 +245,14 @@ def _fetch_levels(ticker: str) -> Optional[dict[str, float]]:
 
 
 def scan_ticker(ticker: str) -> dict[str, Any]:
-    # first_weekly, not combined (2026-09-11, Leron: "focus on weekly
-    # strikes") -- combined blends in far-dated OI/gamma that isn't
-    # relevant to near-term price action; the weekly expiration is what a
-    # trader watching this scanner actually cares about.
-    payload = _get(f"/tickers/{ticker}/curves/gex_by_strike", {"exp": "first_weekly"})
+    # nearest, not combined (2026-09-11, Leron: "focus on weekly strikes") --
+    # combined blends in far-dated OI/gamma that isn't relevant to near-term
+    # price action. "first_weekly" is documented for the /curves/gamma
+    # endpoint but NOT for /curves/gex_by_strike (only combined | nearest |
+    # first_monthly are valid there -- confirmed the hard way: first_weekly
+    # made every ticker come back empty). "nearest" is the front expiration,
+    # i.e. the weekly for any liquid name that has one.
+    payload = _get(f"/tickers/{ticker}/curves/gex_by_strike", {"exp": "nearest"})
     if payload is None:
         return {"ticker": ticker, "available": False}
 
