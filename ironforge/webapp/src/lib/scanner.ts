@@ -8203,7 +8203,16 @@ async function scanBot(bot: BotDef): Promise<void> {
       // else: has position + monitoring already happened above
     } else if (!hasOpenPosition) {
       action = 'outside_entry_window'
-      reason = `Past entry cutoff (${ct.getHours()}:${String(ct.getMinutes()).padStart(2, '0')} CT, cutoff ${botCfg.entry_end})`
+      // Branch the message on WHY isInEntryWindow(ct, bot) returned false — "past
+      // cutoff" was previously logged even before the window opened, which is
+      // misleading nearly all day (entry_start is a fixed code constant, not the
+      // scanner's problem) and caused a real misdiagnosis on 2026-09-11.
+      const hhmmNow = ct.getHours() * 100 + ct.getMinutes()
+      const entryStart = botCfg.entry_start ?? 830
+      const clock = `${ct.getHours()}:${String(ct.getMinutes()).padStart(2, '0')} CT`
+      reason = hhmmNow < entryStart
+        ? `Before entry open (${clock}, opens ${entryStart})`
+        : `Past entry cutoff (${clock}, cutoff ${botCfg.entry_end})`
     }
 
     // Take equity snapshot every cycle — save SEPARATE snapshots for sandbox and production.

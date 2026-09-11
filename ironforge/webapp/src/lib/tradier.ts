@@ -3634,9 +3634,28 @@ export async function getProductionPauseState(botName: string): Promise<Producti
         updated_at: toIso(r.updated_at),
       }
     }
-  } catch {
-    // Table may not exist yet on pre-migration deploys — treat as unpaused
-    // (default safe behavior is "no pause active").
+  } catch (e: unknown) {
+    // Postgres 42P01 = relation does not exist: a genuine pre-migration deploy,
+    // where "no pause active" is the correct safe default (see db.ts ensureTablesOnce).
+    // Any OTHER error (timeout, connection drop, pool exhaustion) means we could not
+    // confirm whether an operator paused this bot — fail CLOSED like getOwnerPauseState,
+    // because trading against an explicit pause is unrecoverable and a false stop just
+    // costs one scan cycle.
+    const code = (e as { code?: string } | null)?.code
+    if (code !== '42P01') {
+      console.error(
+        `[tradier] ${botName.toUpperCase()} production-pause read FAILED (${e instanceof Error ? e.message : String(e)}) — ` +
+        `failing CLOSED: treating as paused until this resolves.`,
+      )
+      return {
+        bot_name: botName.toUpperCase(),
+        paused: true,
+        paused_at: null,
+        paused_by: 'system',
+        paused_reason: 'production-pause read failed — failing closed',
+        updated_at: null,
+      }
+    }
   }
   return {
     bot_name: botName.toUpperCase(),
