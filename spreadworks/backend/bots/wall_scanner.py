@@ -139,6 +139,8 @@ def scan_ticker(ticker: str) -> dict[str, Any]:
     points = data.get("points") if isinstance(data, dict) else None
     spot = data.get("price") if isinstance(data, dict) else None
     asof = data.get("asof") if isinstance(data, dict) else None
+    totals = data.get("totals") if isinstance(data, dict) else None
+    totals = totals if isinstance(totals, dict) else {}
 
     if not spot or not points:
         return {"ticker": ticker, "available": False}
@@ -150,6 +152,17 @@ def scan_ticker(ticker: str) -> dict[str, Any]:
         "available": True,
         "spot": spot,
         "asof": asof,
+        # Ticker-wide context, already in the payload we fetched for the wall
+        # calc — free liquidity/size signal, no extra call. gex_value_per_1pct
+        # is TV's own "$ notional per 1% underlying move" (the "money number"
+        # requested 2026-09-11); *_oi_sum / put_call_oi are open interest, the
+        # closest liquidity proxy available without a second, expiration-
+        # specific call (options/volume requires a concrete expiration date
+        # that exp=combined does not resolve to).
+        "gex_value_per_1pct": totals.get("gex_value_per_1pct"),
+        "call_oi_sum": totals.get("call_oi_sum"),
+        "put_oi_sum": totals.get("put_oi_sum"),
+        "put_call_oi": totals.get("put_call_oi"),
     }
 
     if call_wall is not None:
@@ -174,17 +187,25 @@ def scan_ticker(ticker: str) -> dict[str, Any]:
     else:
         result["put_wall"] = None
 
+    # The single number the row is sorted on, named explicitly instead of
+    # making the viewer eyeball two symmetric columns to find it.
+    candidates = [
+        (side, w) for side, w in (("call", result["call_wall"]), ("put", result["put_wall"]))
+        if w is not None
+    ]
+    if candidates:
+        side, w = min(candidates, key=lambda sw: sw[1]["pct_to_break"])
+        result["closest_wall"] = {"side": side, **w}
+    else:
+        result["closest_wall"] = None
+
     return result
 
 
 def _tightest_pct(row: dict[str, Any]) -> float:
     """Sort key: smallest % distance to EITHER wall. Missing data sorts last."""
-    pcts = [
-        w["pct_to_break"]
-        for w in (row.get("call_wall"), row.get("put_wall"))
-        if w is not None
-    ]
-    return min(pcts) if pcts else float("inf")
+    closest = row.get("closest_wall")
+    return closest["pct_to_break"] if closest else float("inf")
 
 
 def run_scan(limit: int = _UNIVERSE_LIMIT) -> dict[str, Any]:
