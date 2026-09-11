@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone as dt_timezone
@@ -47,15 +48,14 @@ logger = logging.getLogger(__name__)
 _TIMEOUT = 20
 # TV's documented max for /top-setups.
 _UNIVERSE_LIMIT = 200
-# Independent per-ticker calls; TV is the constraint here, not our CPU.
-# Lowered from 20 -> 8 on 2026-09-11 after adding a 2nd call per ticker
-# (curves/gex_by_strike + levels) turned this into ~100 near-simultaneous
-# requests and TV started answering ~58% of them with 429 (confirmed in
-# Render logs: dozens of "http 429" lines the same second). 8 workers x 2
-# calls each is a gentler ceiling; _get()'s retry-with-backoff below is the
-# real safety net for whatever TV's actual limit is, since we don't have it
-# documented.
-_MAX_WORKERS = 8
+# Workers can be generous again (2026-09-11) because the real limiter is
+# _pace() below, not thread count. Retry-with-backoff alone (first fix,
+# same day) DID recover every ticker but took 135s for one scan -- reacting
+# to a 429 after the fact is much slower than never sending the burst that
+# triggers one. TV's actual rate limit isn't documented anywhere we have
+# access to, so _MIN_REQUEST_INTERVAL is a conservative guess, not a known
+# figure -- tighten it further if 429s reappear in the logs.
+_MAX_WORKERS = 10
 # A full scan is ~100 sequential-cost HTTP calls (gex_by_strike + levels per
 # ticker) even with concurrency — cache it rather than pay that on every page
 # load. Same lazy-refresh shape as routes_squeeze.py's _INTRADAY_CACHE. The
@@ -116,6 +116,28 @@ def _token() -> str:
 _RATE_LIMIT_RETRIES = 4
 _RATE_LIMIT_BASE_DELAY = 0.75  # seconds; doubles each retry (0.75, 1.5, 3, 6)
 
+# ── Global pacer ─────────────────────────────────────────────────────────
+# Proactive, not reactive: cap how often ANY thread may fire a TV request,
+# regardless of _MAX_WORKERS. The retry-with-backoff below still exists as a
+# safety net, but paced requests shouldn't need it in the normal case — a
+# scan that recovers from a 429 storm one retry at a time (measured: 135s
+# for 50 tickers) is much slower than a scan that never triggers the storm.
+# ~6.7 req/sec is a conservative guess at TV's real limit, which isn't
+# documented anywhere we have access to; tighten _MIN_REQUEST_INTERVAL if
+# 429s show up in the logs again, loosen it if a scan ever feels too slow.
+_MIN_REQUEST_INTERVAL = 0.15
+_pace_lock = threading.Lock()
+_last_request_at = [0.0]
+
+
+def _pace() -> None:
+    with _pace_lock:
+        now = time.monotonic()
+        wait = _last_request_at[0] + _MIN_REQUEST_INTERVAL - now
+        if wait > 0:
+            time.sleep(wait)
+        _last_request_at[0] = time.monotonic()
+
 
 def _get(path: str, params: dict[str, Any]) -> Optional[dict[str, Any]]:
     token = _token()
@@ -124,6 +146,7 @@ def _get(path: str, params: dict[str, Any]) -> Optional[dict[str, Any]]:
         return None
     delay = _RATE_LIMIT_BASE_DELAY
     for attempt in range(_RATE_LIMIT_RETRIES + 1):
+        _pace()
         try:
             resp = requests.get(
                 f"{_base_url().rstrip('/')}{path}",
