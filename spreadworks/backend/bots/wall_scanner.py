@@ -96,8 +96,21 @@ def fetch_universe(limit: int = _UNIVERSE_LIMIT) -> list[str]:
     data = payload.get("data", payload) if isinstance(payload, dict) else None
     items = data.get("items") if isinstance(data, dict) else None
     if not isinstance(items, list):
+        # Silent-empty is the failure mode a 200-with-unexpected-shape produces
+        # (e.g. a tier/scope restriction returning an empty/different body
+        # instead of an HTTP error) — log what we actually got instead of
+        # guessing at the schema a second time.
+        logger.warning(
+            "[wall_scanner] /top-setups: no items[] found. top-level keys=%r, "
+            "data type=%r, sample=%r",
+            list(payload.keys()) if isinstance(payload, dict) else type(payload),
+            type(data),
+            str(payload)[:500],
+        )
         return []
     tickers = [it.get("ticker") for it in items if isinstance(it, dict) and it.get("ticker")]
+    if not tickers:
+        logger.warning("[wall_scanner] /top-setups: items[] present but empty of tickers, len=%d", len(items))
     return sorted(set(tickers))
 
 
