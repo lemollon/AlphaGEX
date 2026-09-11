@@ -48,7 +48,14 @@ _TIMEOUT = 20
 # TV's documented max for /top-setups.
 _UNIVERSE_LIMIT = 200
 # Independent per-ticker calls; TV is the constraint here, not our CPU.
-_MAX_WORKERS = 20
+# Lowered from 20 -> 8 on 2026-09-11 after adding a 2nd call per ticker
+# (curves/gex_by_strike + levels) turned this into ~100 near-simultaneous
+# requests and TV started answering ~58% of them with 429 (confirmed in
+# Render logs: dozens of "http 429" lines the same second). 8 workers x 2
+# calls each is a gentler ceiling; _get()'s retry-with-backoff below is the
+# real safety net for whatever TV's actual limit is, since we don't have it
+# documented.
+_MAX_WORKERS = 8
 # A full scan is ~100 sequential-cost HTTP calls (gex_by_strike + levels per
 # ticker) even with concurrency — cache it rather than pay that on every page
 # load. Same lazy-refresh shape as routes_squeeze.py's _INTRADAY_CACHE. The
@@ -106,25 +113,44 @@ def _token() -> str:
     )
 
 
+_RATE_LIMIT_RETRIES = 4
+_RATE_LIMIT_BASE_DELAY = 0.75  # seconds; doubles each retry (0.75, 1.5, 3, 6)
+
+
 def _get(path: str, params: dict[str, Any]) -> Optional[dict[str, Any]]:
     token = _token()
     if not token:
         logger.info("[wall_scanner] no TV token set — %s unavailable", path)
         return None
-    try:
-        resp = requests.get(
-            f"{_base_url().rstrip('/')}{path}",
-            params=params,
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-            timeout=_TIMEOUT,
-        )
-        if resp.status_code != 200:
-            logger.warning("[wall_scanner] %s http %s", path, resp.status_code)
+    delay = _RATE_LIMIT_BASE_DELAY
+    for attempt in range(_RATE_LIMIT_RETRIES + 1):
+        try:
+            resp = requests.get(
+                f"{_base_url().rstrip('/')}{path}",
+                params=params,
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                timeout=_TIMEOUT,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[wall_scanner] %s failed: %r", path, exc)
             return None
-        return resp.json()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("[wall_scanner] %s failed: %r", path, exc)
+
+        if resp.status_code == 200:
+            return resp.json()
+
+        if resp.status_code == 429 and attempt < _RATE_LIMIT_RETRIES:
+            # Honor a Retry-After header if TV sends one; otherwise our own
+            # exponential backoff. This is what actually fixes the 2026-09-11
+            # regression (dropping _MAX_WORKERS alone just makes it rarer).
+            wait = float(resp.headers.get("Retry-After", delay))
+            logger.info("[wall_scanner] %s 429, retry %d/%d after %.1fs", path, attempt + 1, _RATE_LIMIT_RETRIES, wait)
+            time.sleep(wait)
+            delay *= 2
+            continue
+
+        logger.warning("[wall_scanner] %s http %s", path, resp.status_code)
         return None
+    return None
 
 
 def fetch_universe(limit: int = _UNIVERSE_LIMIT) -> list[str]:
