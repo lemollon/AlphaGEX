@@ -95,6 +95,8 @@ import { mirrorOpenToCustomers, mirrorCloseToCustomers, retryFailedCustomerClose
 import { buildTradeOpenedEvent, buildTradeClosedEvent } from './push/trade-events'
 import { dispatchToCustomers } from './push/dispatch'
 import type { LiveBot } from './live/bots'
+import { PROTECTIVE_REASON_PREFIXES } from './live/riskProtection'
+import { PROTECTIVE_GATE_LABELS } from './live/activityFeed'
 
 /**
  * Push notifications on trade OPEN/CLOSE (UAT #7). Scoped to the two bots on the
@@ -4542,6 +4544,34 @@ async function tradeHeartbeatCheck(bot: BotDef, ct: Date): Promise<void> {
     if (dow === 0 || dow === 6) continue
     if (isMarketHoliday(probe)) continue
     days.push({ date: iso, opens: opensByDate.get(iso) ?? 0, reasons: reasonsByDate.get(iso) ?? [] })
+  }
+
+  // Daily "why no trade" note — one routine (non-paging) message per bot per
+  // trading day, independent of the multi-day silent-heartbeat escalation below.
+  // Before this, a legitimate skip (VIX gate, thin credit, already stood down)
+  // was completely invisible outside the raw scan logs; the 2026-09-11 FLAME/SPARK
+  // VIX-gate skip surfaced that gap. This always posts on a 0-trade day, whether
+  // the reason is a healthy protective gate or not.
+  const todayOpens = opensByDate.get(todayStr) ?? 0
+  if (todayOpens === 0) {
+    const todayReasons = reasonsByDate.get(todayStr) ?? []
+    // Prefer an actual evaluated decision ("skip:...", "no_trade | ...") over a
+    // window/cutoff reason — the latter just means the clock hadn't hit the
+    // window yet at some point today, not the day's real explanation.
+    const evaluated = todayReasons.find((r) => r.startsWith('skip:') || r.startsWith('no_trade'))
+    const reason = evaluated ?? todayReasons[0] ?? null
+    const prefix = reason ? PROTECTIVE_REASON_PREFIXES.find((p) => reason.startsWith(p)) : undefined
+    const label = reason == null
+      ? 'No scan activity recorded today — worth checking the scanner is running.'
+      : prefix
+        ? PROTECTIVE_GATE_LABELS[prefix]
+        : `Held off today (${reason})`
+    void postOpsAlert({
+      botName: bot.name,
+      title: 'No trade today',
+      body: label,
+      severity: 'info',
+    }).catch(() => { /* never take a scan cycle down */ })
   }
 
   const verdict = evaluateTradeHeartbeat(bot.name, days, HEARTBEAT_SILENT_DAYS)
