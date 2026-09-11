@@ -65,86 +65,30 @@ async def get_wall_scanner_history(
     return {"ticker": ticker.upper(), "side": side, "strike": strike, "days": days, "series": series}
 
 
-# ── Edge-discovery triage (2026-09-11) ──────────────────────────────────
-# Five candidates, each a DIFFERENT mechanism from gamma/dealer-hedging
-# (gamma-regime-vs-move-size-fails.md already killed that one 3 ways --
-# flow continuation, wall proximity, regime sign). Cheap triage per
-# edge-discovery skill: rank leads with real-vs-placebo, don't call them
-# dead on one look. Same harness (pooled panel, Welch's t, within-ticker
-# shuffle placebo) proven on the gamma test, one data pull (all metrics in
-# one /series call per ticker), five hypotheses tested against it at once.
-_TRIAGE_HYPOTHESES = {
-    "put_call_iv_skew": {
-        "feature": "put_call_iv_spread",
-        "target": "signed",
-        "thesis": "Extreme put-over-call IV skew (fear priced into puts) predicts a "
-                   "POSITIVE next-day return -- informed/behavioral overreaction unwind "
-                   "(published equity-options anomaly; mechanism is options-market "
-                   "information asymmetry, NOT dealer gamma hedging).",
-        "expect_high_minus_low_sign": "+",
-    },
-    "put_call_volume_sentiment": {
-        "feature": "pcr_volume",
-        "target": "signed",
-        "thesis": "High put/call VOLUME ratio that day (capitulation-style put buying) "
-                   "predicts a POSITIVE next-day return; low ratio (call-heavy, greed) "
-                   "predicts negative -- contrarian sentiment, tested single-name rather "
-                   "than the usual index-level version.",
-        "expect_high_minus_low_sign": "+",
-    },
-    "iv_rank_fear": {
-        "feature": "iv_rank",
-        "target": "signed",
-        "thesis": "Extreme high IV rank (options expensive vs the stock's own history, "
-                   "fear priced in) predicts a POSITIVE next-day return.",
-        "expect_high_minus_low_sign": "+",
-    },
-    "tv_opportunity_score": {
-        "feature": "opportunity_score",
-        "target": "abs",
-        "thesis": "META-TEST: does TV's own composite opportunity_score (0-10, "
-                   "direction-agnostic -- a high score can back a short setup too, hence "
-                   "testing |return| not signed) actually predict a bigger next-day move? "
-                   "If not, the vendor's own ranking is descriptive marketing, not signal.",
-        "expect_high_minus_low_sign": "+",
-    },
-    "momentum_continuation": {
-        "feature": "trend_score",
-        "target": "signed",
-        "thesis": "EXPECTED TO FAIL (included per edge-discovery's 'include the weird "
-                   "ones' -- momentum at a 1-day single-stock horizon is dominated by "
-                   "short-term REVERSAL in the literature, not continuation). High "
-                   "trend_score predicting a positive next-day return would be the "
-                   "surprise; the more likely outcome is negative or null.",
-        "expect_high_minus_low_sign": "+",
-    },
-}
-
-
-@router.get("/_debug/edge-discovery-triage")
-async def _debug_edge_discovery_triage(window: str = "2y", min_days: int = 20):
-    """TEMPORARY research route (2026-09-11) -- edge-discovery cheap-triage
-    pass, five hypotheses (see _TRIAGE_HYPOTHESES), one data pull. Each
-    hypothesis: split each ticker's own history into top/bottom terciles of
-    its feature, compare mean target (signed or |return|) high vs low tercile,
-    Welch's t, real split vs a within-ticker-shuffled placebo -- identical
-    discipline to the gamma-regime test (memory
-    gamma-regime-vs-move-size-fails.md). This is TRIAGE (rank, don't kill) --
-    a weak real-vs-placebo gap still gets reported and reframed before being
-    called dead. Remove this route once results are reported and acted on.
-    """
+# ── quant-edge confirmation: 1-day trend_score reversal (2026-09-11) ────
+# Survivor from the edge-discovery triage (5 hypotheses; this was the only
+# one where real (t=-3.06) diverged from placebo (t=+0.34) -- see memory
+# gamma-regime-vs-move-size-fails.md for the 4 that died and the sibling
+# writeup this test confirms/refutes. This route runs the quant-edge
+# gauntlet the triage did NOT: a genuine chronological train/test split
+# (tercile cutoffs fit on train only, significance tested on unseen test
+# days only -- the triage tested on the same data it discovered on, which
+# is exactly the multiplicity/overfitting risk this route exists to rule
+# out) plus a fee-hurdle check and a market-wide-vs-idiosyncratic check.
+# Remove this route once the result is reported and acted on.
+@router.get("/_debug/quant-edge-confirm-reversal")
+async def _debug_quant_edge_confirm_reversal(
+    window: str = "2y", min_days: int = 30, train_frac: float = 0.7, round_trip_bps: float = 15.0
+):
     import statistics
     import random
 
     from .bots.wall_scanner import _get, fetch_universe
 
-    features = sorted({h["feature"] for h in _TRIAGE_HYPOTHESES.values()})
-    metrics_param = ",".join(["price"] + features)
-
     tickers = fetch_universe()
     panels: dict[str, list[dict]] = {}
     for t in tickers:
-        payload = _get(f"/tickers/{t}/series", {"metrics": metrics_param, "window": window})
+        payload = _get(f"/tickers/{t}/series", {"metrics": "price,trend_score", "window": window})
         if payload is None:
             continue
         data = payload.get("data", payload) if isinstance(payload, dict) else None
@@ -158,80 +102,118 @@ async def _debug_edge_discovery_triage(window: str = "2y", min_days: int = 20):
         n = len(s)
         return s[n // 3], s[(2 * n) // 3]
 
-    def _run_hypothesis(feature: str, target_kind: str) -> dict:
-        # Build per-ticker (feature_t, fwd_return_t) then bucket by that
-        # ticker's OWN tercile cutoffs (avoids cross-ticker scale issues).
-        rows = []
-        for t, points in panels.items():
-            fvals = [p.get(feature) for p in points if p.get(feature) is not None]
-            if len(fvals) < min_days:
+    def _bucket_rows(points: list[dict], lo_cut: float, hi_cut: float) -> list[dict]:
+        out = []
+        for i in range(len(points) - 1):
+            p0, p1 = points[i], points[i + 1]
+            f0, price0, price1 = p0.get("trend_score"), p0.get("price"), p1.get("price")
+            if f0 is None or price0 is None or price1 is None or price0 == 0:
                 continue
-            lo_cut, hi_cut = _terciles(fvals)
-            if lo_cut == hi_cut:
+            if f0 >= hi_cut:
+                bucket = "high"
+            elif f0 <= lo_cut:
+                bucket = "low"
+            else:
                 continue
-            for i in range(len(points) - 1):
-                p0, p1 = points[i], points[i + 1]
-                f0, price0, price1 = p0.get(feature), p0.get("price"), p1.get("price")
-                if f0 is None or price0 is None or price1 is None or price0 == 0:
-                    continue
-                if f0 >= hi_cut:
-                    bucket = "high"
-                elif f0 <= lo_cut:
-                    bucket = "low"
-                else:
-                    continue
-                ret = (price1 - price0) / price0
-                target = ret if target_kind == "signed" else abs(ret)
-                rows.append({"ticker": t, "bucket": bucket, "target": target})
+            out.append({"date": p0.get("date"), "bucket": bucket, "ret": (price1 - price0) / price0})
+        return out
 
-        def _summarize(sample: list[dict]) -> dict:
-            by_bucket: dict[str, list[float]] = {"high": [], "low": []}
-            for r in sample:
-                by_bucket[r["bucket"]].append(r["target"])
-            out = {}
-            for k, vals in by_bucket.items():
-                out[k] = {
-                    "n": len(vals),
-                    "mean": round(statistics.mean(vals), 5) if vals else None,
-                    "stdev": round(statistics.stdev(vals), 5) if len(vals) > 1 else None,
-                }
-            hi, lo = out.get("high"), out.get("low")
-            t_stat = None
-            if hi and lo and hi["n"] > 1 and lo["n"] > 1 and hi["stdev"] and lo["stdev"]:
-                se = ((hi["stdev"] ** 2) / hi["n"] + (lo["stdev"] ** 2) / lo["n"]) ** 0.5
-                if se > 0:
-                    t_stat = round((hi["mean"] - lo["mean"]) / se, 3)
-            out["welch_t_high_minus_low"] = t_stat
-            return out
+    train_rows_by_ticker: dict[str, list[dict]] = {}
+    test_rows: list[dict] = []
+    market_wide_rows: list[dict] = []  # {date, bucket, ret} pooled, for the day-clustering check
 
-        real = _summarize(rows)
+    for t, points in panels.items():
+        split_i = int(len(points) * train_frac)
+        train_points, test_points = points[:split_i], points[split_i:]
+        train_fvals = [p.get("trend_score") for p in train_points if p.get("trend_score") is not None]
+        if len(train_fvals) < min_days // 2:
+            continue
+        lo_cut, hi_cut = _terciles(train_fvals)
+        if lo_cut == hi_cut:
+            continue
+        # In-sample (train) reference -- same statistic the triage reported, on this ticker's train slice only.
+        train_rows_by_ticker[t] = _bucket_rows(train_points, lo_cut, hi_cut)
+        # Held-out: cutoffs fit on TRAIN, bucketing + returns computed on TEST days never used to fit anything.
+        for r in _bucket_rows(test_points, lo_cut, hi_cut):
+            test_rows.append({"ticker": t, **r})
+            market_wide_rows.append(r)
 
-        rnd = random.Random(20260911)
-        by_ticker: dict[str, list[dict]] = {}
-        for r in rows:
-            by_ticker.setdefault(r["ticker"], []).append(r)
-        placebo_rows = []
-        for t, trows in by_ticker.items():
-            buckets = [r["bucket"] for r in trows]
-            rnd.shuffle(buckets)
-            for r, b in zip(trows, buckets):
-                placebo_rows.append({**r, "bucket": b})
-        placebo = _summarize(placebo_rows)
+    def _summarize(sample: list[dict]) -> dict:
+        by_bucket: dict[str, list[float]] = {"high": [], "low": []}
+        for r in sample:
+            by_bucket[r["bucket"]].append(r["ret"])
+        out = {}
+        for k, vals in by_bucket.items():
+            out[k] = {
+                "n": len(vals),
+                "mean_pct": round(statistics.mean(vals) * 100, 4) if vals else None,
+                "stdev": round(statistics.stdev(vals), 5) if len(vals) > 1 else None,
+            }
+        hi, lo = out.get("high"), out.get("low")
+        t_stat = None
+        if hi and lo and hi["n"] > 1 and lo["n"] > 1 and hi["stdev"] and lo["stdev"]:
+            se = ((hi["stdev"] ** 2) / hi["n"] + (lo["stdev"] ** 2) / lo["n"]) ** 0.5
+            if se > 0:
+                t_stat = round(((hi["mean_pct"] - lo["mean_pct"]) / 100) / se, 3)
+        out["welch_t_high_minus_low"] = t_stat
+        out["gross_spread_pct"] = round((hi["mean_pct"] - lo["mean_pct"]), 4) if hi and lo else None
+        return out
 
-        return {"n_rows": len(rows), "real": real, "placebo": placebo}
+    held_out = _summarize(test_rows)
 
-    results = {}
-    for name, spec in _TRIAGE_HYPOTHESES.items():
-        results[name] = {
-            "thesis": spec["thesis"],
-            "feature": spec["feature"],
-            "target": spec["target"],
-            "expected_sign": spec["expect_high_minus_low_sign"],
-            **_run_hypothesis(spec["feature"], spec["target"]),
-        }
+    # Placebo on the held-out set: shuffle bucket labels within ticker, same as before.
+    rnd = random.Random(20260911)
+    by_ticker: dict[str, list[dict]] = {}
+    for r in test_rows:
+        by_ticker.setdefault(r["ticker"], []).append(r)
+    placebo_rows = []
+    for t, trows in by_ticker.items():
+        buckets = [r["bucket"] for r in trows]
+        rnd.shuffle(buckets)
+        for r, b in zip(trows, buckets):
+            placebo_rows.append({**r, "bucket": b})
+    held_out_placebo = _summarize(placebo_rows)
+
+    # Day-clustering check: is "high" mostly the SAME calendar days across
+    # tickers (-> this is a market-wide move, not stock-specific), or spread
+    # across different days per ticker (-> idiosyncratic, actually a
+    # cross-sectional stock-picking signal)? Report the top 5 most common
+    # dates in the "high" bucket and what fraction of high-bucket rows they
+    # cover -- if a handful of dates dominate, the "spread" is largely one
+    # or two market-wide events, not a repeatable per-stock effect.
+    high_dates = [r["date"] for r in test_rows if r["bucket"] == "high"]
+    date_counts: dict[str, int] = {}
+    for d in high_dates:
+        date_counts[d] = date_counts.get(d, 0) + 1
+    top_dates = sorted(date_counts.items(), key=lambda kv: -kv[1])[:5]
+    top5_share = round(sum(c for _, c in top_dates) / len(high_dates), 3) if high_dates else None
+
+    gross_spread = held_out.get("gross_spread_pct")
+    fee_hurdle_pct = round_trip_bps / 100.0  # e.g. 15bps = 0.15%
+    survives_fees = gross_spread is not None and abs(gross_spread) > fee_hurdle_pct
 
     return {
         "tickers_in_universe": len(tickers),
         "tickers_with_usable_series": len(panels),
-        "results": results,
+        "train_frac": train_frac,
+        "held_out_test": held_out,
+        "held_out_placebo": held_out_placebo,
+        "day_clustering_check": {
+            "n_high_bucket_rows": len(high_dates),
+            "n_distinct_dates": len(date_counts),
+            "top5_dates_by_count": top_dates,
+            "top5_share_of_high_bucket": top5_share,
+            "note": "If top5_share is large (e.g. >0.3-0.4 for ~35 test days/ticker), "
+                    "the 'high' bucket is dominated by a few market-wide days, not a "
+                    "repeatable per-stock signal.",
+        },
+        "fee_hurdle": {
+            "round_trip_bps_assumed": round_trip_bps,
+            "gross_spread_pct_high_minus_low": gross_spread,
+            "survives_assumed_fee": survives_fees,
+            "note": "Gross spread is high-bucket minus low-bucket mean return, both "
+                    "legs would need trading (long low, short high, or vice versa) "
+                    "-- so the ROUND TRIP cost applies to the SPREAD, not each leg "
+                    "separately; this is a simplification worth revisiting before sizing.",
+        },
     }
