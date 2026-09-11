@@ -63,3 +63,17 @@ async def get_wall_scanner_history(
 ):
     series = wall_history_series(_engine, ticker.upper(), side, strike, days_back=days)
     return {"ticker": ticker.upper(), "side": side, "strike": strike, "days": days, "series": series}
+
+
+@router.get("/_debug/tv-series")
+async def _debug_tv_series(ticker: str = "AAPL", metrics: str = "gex_flip,price", window: str = "2y"):
+    """TEMPORARY diagnostic (2026-09-11) -- checking whether TV's /series
+    endpoint has deep historical gex_flip coverage for single names, which
+    would mean the gamma-regime research doesn't need to rebuild GEX from
+    raw option chains (there is no usable single-name OI/IV data anywhere
+    in the existing warehouse -- confirmed via backtest-data skill). Remove
+    this route once that question is answered either way."""
+    from .bots.wall_scanner import _get
+
+    payload = _get(f"/tickers/{ticker}/series", {"metrics": metrics, "window": window})
+    return {"ticker": ticker, "metrics": metrics, "window": window, "payload": payload}
