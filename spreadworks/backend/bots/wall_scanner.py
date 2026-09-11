@@ -245,7 +245,11 @@ def _fetch_levels(ticker: str) -> Optional[dict[str, float]]:
 
 
 def scan_ticker(ticker: str) -> dict[str, Any]:
-    payload = _get(f"/tickers/{ticker}/curves/gex_by_strike", {"exp": "combined"})
+    # first_weekly, not combined (2026-09-11, Leron: "focus on weekly
+    # strikes") -- combined blends in far-dated OI/gamma that isn't
+    # relevant to near-term price action; the weekly expiration is what a
+    # trader watching this scanner actually cares about.
+    payload = _get(f"/tickers/{ticker}/curves/gex_by_strike", {"exp": "first_weekly"})
     if payload is None:
         return {"ticker": ticker, "available": False}
 
@@ -276,6 +280,21 @@ def scan_ticker(ticker: str) -> dict[str, Any]:
         round((levels["plus_1s_1d"] - levels["minus_1s_1d"]) / 2, 2) if levels else None
     )
 
+    # Gamma regime — TV's own deterministic classification (their
+    # /agent/trade-setup docs: "positive when spot > flip, negative when
+    # spot < flip"), computed from a field (gex_flip_price) already in the
+    # totals we fetch for the wall calc. This is a FACT about current dealer
+    # positioning, not a claim about what happens next.
+    flip = totals.get("gex_flip_price")
+    if flip is None:
+        gamma_regime = None
+    elif spot > flip:
+        gamma_regime = "positive"
+    elif spot < flip:
+        gamma_regime = "negative"
+    else:
+        gamma_regime = "neutral"
+
     result: dict[str, Any] = {
         "ticker": ticker,
         "available": True,
@@ -292,6 +311,8 @@ def scan_ticker(ticker: str) -> dict[str, Any]:
         "call_oi_sum": totals.get("call_oi_sum"),
         "put_oi_sum": totals.get("put_oi_sum"),
         "put_call_oi": totals.get("put_call_oi"),
+        "gamma_flip_price": flip,
+        "gamma_regime": gamma_regime,
         # 1-day options-implied expected move, half-width in dollars — lets
         # the viewer judge "is $X to the wall a big or small move today"
         # without this module ever saying so itself.
@@ -313,7 +334,62 @@ def scan_ticker(ticker: str) -> dict[str, Any]:
     else:
         result["closest_wall"] = None
 
+    result["read"] = _composite_read(gamma_regime, result["closest_wall"], result["put_call_oi"])
+
     return result
+
+
+def _composite_read(
+    gamma_regime: Optional[str], closest_wall: Optional[dict[str, Any]], put_call_oi: Optional[float]
+) -> dict[str, str]:
+    """One plain-English synthesis of regime + wall proximity + skew.
+
+    HEURISTIC, not a validated edge: this states well-documented options
+    market-structure mechanics (positive gamma -> dealers buy dips/sell rips
+    -> dampens realized moves, historically pin-prone; negative gamma ->
+    dealers sell dips/buy rips -> amplifies moves) applied to THIS ticker's
+    current numbers. It is NOT the same claim as "GEX wall proximity
+    predicts a bounce/break" (flowmix-singlename-fails.md,
+    gex-walls-are-not-levels) — that specific claim was tested and killed.
+    This has NOT been backtested as a standalone signal; treat the label as
+    a reading aid, not a probability. See handoff
+    wall-scanner-gamma-regime-research.md for the real validation work.
+    """
+    if gamma_regime is None:
+        return {"label": "UNKNOWN", "note": "gamma flip price unavailable for this ticker"}
+
+    tight = closest_wall is not None and closest_wall.get("vs_expected_move_1d") is not None and closest_wall["vs_expected_move_1d"] < 0.5
+    skew_word = None
+    if put_call_oi is not None:
+        if put_call_oi >= 1.3:
+            skew_word = "put-heavy OI"
+        elif put_call_oi <= 0.7:
+            skew_word = "call-heavy OI"
+
+    if gamma_regime == "positive":
+        label = "PIN-PRONE" if tight else "DAMPENED"
+        note = (
+            "Positive gamma: dealers historically buy dips / sell rips here, which tends to "
+            "dampen realized moves"
+            + (" — and price is already close to a wall, classic pin setup." if tight
+               else ".")
+        )
+    elif gamma_regime == "negative":
+        label = "AMPLIFIED-NEAR-WALL" if tight else "AMPLIFIED"
+        note = (
+            "Negative gamma: dealers historically sell dips / buy rips here, which tends to "
+            "amplify realized moves"
+            + (" — and the closest wall is within half a normal day's move, so a break "
+               "would come with less resistance than usual." if tight else ".")
+        )
+    else:
+        label = "NEUTRAL"
+        note = "Spot is sitting right at the gamma flip — no regime lean either way."
+
+    if skew_word:
+        note += f" OI skew: {skew_word}."
+
+    return {"label": label, "note": note}
 
 
 def _tightest_pct(row: dict[str, Any]) -> float:

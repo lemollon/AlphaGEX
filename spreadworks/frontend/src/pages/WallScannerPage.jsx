@@ -109,6 +109,29 @@ function gapColor(pctVal) {
   return GREEN;
 }
 
+const REGIME_COLOR = {
+  'PIN-PRONE': GREEN,
+  DAMPENED: GREEN,
+  AMPLIFIED: RED,
+  'AMPLIFIED-NEAR-WALL': RED,
+  NEUTRAL: GREY,
+  UNKNOWN: GREY,
+};
+
+function ReadCell({ read, gammaRegime }) {
+  if (!read) return <span style={S.small}>—</span>;
+  const color = REGIME_COLOR[read.label] || GREY;
+  return (
+    <div style={{ maxWidth: 260 }}>
+      <span style={{ ...S.badge, background: `${color}26`, color, marginRight: 0 }}>{read.label}</span>
+      {gammaRegime && (
+        <span style={{ ...S.small, marginLeft: 6 }}>{gammaRegime} gamma</span>
+      )}
+      <div style={{ ...S.small, marginTop: 4, lineHeight: 1.5 }}>{read.note}</div>
+    </div>
+  );
+}
+
 function ClosestWallCell({ wall }) {
   if (!wall) return <span style={S.small}>no wall found</span>;
   const isCall = wall.side === 'call';
@@ -206,7 +229,7 @@ function RowDetail({ row }) {
 
   return (
     <tr style={S.detailRow}>
-      <td colSpan={7} style={{ ...S.td, borderTop: '1px solid #232a3d' }}>
+      <td colSpan={8} style={{ ...S.td, borderTop: '1px solid #232a3d' }}>
         <div style={S.detailWrap}>
           <div style={{ ...S.detailCol, minWidth: 320, flex: '2 1 320px' }}>
             <div style={S.detailTitle}>
@@ -275,8 +298,13 @@ export default function WallScannerPage() {
           single names, and neither held up. "Closest wall" is the tighter of
           the call/put gap; the $ and % under it are how far spot has to move
           to reach that strike. Expected-move ratio, OI, and the history chart
-          (click a ticker) are all size/liquidity/build-up context — none of
-          it is a forecast of whether the wall holds or breaks.
+          (click a ticker) are all size/liquidity/build-up context. The{' '}
+          <b>Read</b> column states standard, well-documented options
+          market-structure mechanics (positive gamma → dealers dampen moves,
+          historically pin-prone; negative gamma → dealers amplify moves) —
+          it is a heuristic synthesis of the columns to its right, NOT a
+          backtested edge or a probability. None of this page is a forecast
+          of whether a wall holds or breaks.
         </span>
       </div>
 
@@ -298,6 +326,7 @@ export default function WallScannerPage() {
             <thead>
               <tr>
                 <th style={S.th}>Ticker</th>
+                <th style={S.th}>Read (heuristic, not a probability)</th>
                 <th style={S.th}>Spot</th>
                 <th style={S.th}>Closest wall ($ / % to break)</th>
                 <th style={S.th}>$ GEX at wall</th>
@@ -322,6 +351,7 @@ export default function WallScannerPage() {
                       </td>
                       {row.available ? (
                         <>
+                          <td style={S.td}><ReadCell read={row.read} gammaRegime={row.gamma_regime} /></td>
                           <td style={{ ...S.td, ...S.mono }}>{money(row.spot)}</td>
                           <td style={S.td}><ClosestWallCell wall={row.closest_wall} /></td>
                           <td style={{ ...S.td, ...S.mono }}>{abbrev(row.closest_wall?.net_gex, '$')}</td>
@@ -339,7 +369,7 @@ export default function WallScannerPage() {
                           </td>
                         </>
                       ) : (
-                        <td style={{ ...S.td, color: DIM }} colSpan={6}>data unavailable</td>
+                        <td style={{ ...S.td, color: DIM }} colSpan={7}>data unavailable</td>
                       )}
                     </tr>
                     {isOpen && <RowDetail row={row} />}
