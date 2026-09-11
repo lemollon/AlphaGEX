@@ -57,6 +57,7 @@ export const STRATEGY_SKIP_MARKERS: readonly string[] = [
   'cooldown_after_first_loss',   // intraday cooldown
   'neg_gamma_env',               // confirmed negative-gamma day, skip_neg_gamma bots
   'credit_too_low',              // thin tape — skipping is the validated behaviour
+  'credit_low',                  // FLAME/SPARK's actual EBB reason string (tryOpenFlamePutSpread) — no "too_"
   'credit_pct_too_low',
   'event_blackout',              // calendar event gate
   'advisor(',                    // the oracle said SKIP
