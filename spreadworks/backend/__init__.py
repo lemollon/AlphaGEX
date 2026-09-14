@@ -1933,6 +1933,19 @@ except Exception as _wall_scanner_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] Wall Scanner routes failed to load: %r", _wall_scanner_exc)
 
+# Opportunity Scanner (backend/opportunity_scanner.py) — concrete trades from
+# strategies that passed a real test: idea #69's dividend raise, the same-day
+# SPY 0DTE put spread, and FilingSense insider/filing calls. Read-only surface
+# plus one push endpoint for the laptop FilingSense pusher; import-guarded
+# like the other advisory surfaces so a Polygon/yfinance hiccup never takes
+# down the API.
+try:
+    from .routes_opportunity import router as opportunity_router
+    app.include_router(opportunity_router)
+except Exception as _opportunity_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] Opportunity Scanner routes failed to load: %r", _opportunity_exc)
+
 
 @app.get("/api/spreadworks/version", include_in_schema=False)
 async def frontend_version():

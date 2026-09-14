@@ -10,7 +10,7 @@
 //
 // 🚨 EVERY SECTION DEGRADES TO A CHIP, NEVER A CRASH. A missing table or a
 // slow DB must not blank the page — each block renders its own "unavailable"
-// state and the rest of the page keeps going, same discipline as /money and
+// state and the rest of the page keeps going, same discipline as the retired /money and
 // /book-risk.
 import { Fragment, useEffect, useState } from 'react';
 import { Crosshair, AlertTriangle, ExternalLink } from 'lucide-react';
