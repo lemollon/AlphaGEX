@@ -84,6 +84,37 @@ class GexSnapshot(Base):
     captured_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class OpportunitySnapshot(Base):
+    """The single latest Opportunity Scanner snapshot, pushed whole by the
+    laptop script (dev/meltup/opportunity/build_opportunity_snapshot.py) —
+    ThetaData/Polygon/yfinance are all laptop-only, so the backend never
+    computes this itself, only stores and serves it. id is always the fixed
+    string "latest"; a push overwrites it in place (single row, no history).
+    """
+    __tablename__ = "opportunity_snapshots"
+
+    id = Column(String(16), primary_key=True, default="latest")
+    payload_json = Column(Text, nullable=False)
+    pushed_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class OpportunityFilingSenseRow(Base):
+    """One row per FilingSense ledger call pushed by the laptop pusher script
+    (dev/filingsense/push_to_spreadworks.py). id = "<ticker>|<posted_utc>" —
+    stable across re-pushes so a retry upserts instead of duplicating.
+    payload_json carries the row verbatim (same shape as ledger.jsonl) so the
+    Opportunity Scanner's wording logic never has to guess at a schema the
+    ledger evolves independently of this table.
+    """
+    __tablename__ = "opportunity_filingsense_rows"
+
+    id = Column(String(160), primary_key=True)
+    ticker = Column(String(16), nullable=False)
+    posted_utc = Column(String(40), nullable=False)
+    payload_json = Column(Text, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class DiscordPostLog(Base):
     """One row per (message_key, fire_date). Cross-process / cross-replica
     dedup for scheduled Discord posts — guarantees only one worker actually
