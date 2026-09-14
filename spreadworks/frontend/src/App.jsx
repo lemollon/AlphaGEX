@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { ShieldAlert, Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, PieChart, Zap, Radio, Wallet, Crosshair, Ruler, Target } from 'lucide-react';
+import { ShieldAlert, Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, Zap, Radio, Crosshair, Ruler, Target } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import UpdateBanner from './components/UpdateBanner';
 import ChartArea from './components/ChartArea';
@@ -17,8 +17,6 @@ const FleetPage = lazy(() => import('./pages/FleetPage'));
 const RiskAdvisorPage = lazy(() => import('./pages/RiskAdvisorPage'));
 const SessionPage = lazy(() => import('./pages/SessionPage'));
 const SqueezePage = lazy(() => import('./pages/SqueezePage'));
-const BookRiskPage = lazy(() => import('./pages/BookRiskPage'));
-const MoneyPage = lazy(() => import('./pages/MoneyPage'));
 const TsunamiPage = lazy(() => import('./pages/TsunamiPage'));
 const HuntPage = lazy(() => import('./pages/HuntPage'));
 const SqueezeHuntPage = lazy(() => import('./pages/SqueezeHuntPage'));
@@ -201,8 +199,6 @@ function NavBar() {
           <RouteBtn to="/risk"            icon={<ShieldAlert size={14} />} label="Risk" />
           <RouteBtn to="/session"         icon={<Radio size={14} />} label="Session" />
           <RouteBtn to="/squeeze"         icon={<Zap size={14} />} label="Squeeze" />
-          <RouteBtn to="/book-risk"       icon={<PieChart size={14} />} label="Book Risk" />
-          <RouteBtn to="/money"           icon={<Wallet size={14} />} label="Money" />
           <RouteBtn to="/hunt"            icon={<Crosshair size={14} />} label="Hunt" />
           <RouteBtn to="/squeeze-hunt"            icon={<Crosshair size={14} />} label="Squeeze Hunt" />
           <RouteBtn to="/wall-scanner"     icon={<Ruler size={14} />} label="Wall Scanner" />
@@ -426,8 +422,6 @@ export default function App() {
             <Route path="/risk" element={<RiskAdvisorPage />} />
             <Route path="/session" element={<SessionPage />} />
             <Route path="/squeeze" element={<SqueezePage />} />
-            <Route path="/book-risk" element={<BookRiskPage />} />
-            <Route path="/money" element={<MoneyPage />} />
             <Route path="/hunt" element={<HuntPage />} />
             <Route path="/squeeze-hunt" element={<SqueezeHuntPage />} />
             <Route path="/wall-scanner" element={<WallScannerPage />} />
