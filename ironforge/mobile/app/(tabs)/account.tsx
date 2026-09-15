@@ -27,14 +27,10 @@ import { BrokerageSection } from '@/components/BrokerageSection'
  * system browser, never a WebView, so the customer can see the real URL and padlock —
  * which is the whole trust argument for handing over card details.
  *
- * The control is PRESENT on every platform, including iOS (APP-039). It used to be
- * hidden entirely there by a client-side gate that never actually shipped as code —
- * this file only ever had a comment describing it, `canManageBillingInApp` and
- * src/billing/store-policy.ts did not exist. The real guarantee is server-side: POST
- * /api/billing/portal hands a mobile bearer client a Stripe portal configuration with
- * plan changes switched off, and refuses (503) rather than falling back to the
- * default (plan-changeable) portal if that configuration is missing. See
- * store-policy.ts for the full reasoning.
+ * The control is HIDDEN on iOS (APP-039 exception) per `canManageBillingInApp` in
+ * src/billing/store-policy.ts — Apple rejected the app 2026-09-14 (Guideline 3.1.1)
+ * for exposing this exact control, even restricted to a no-plan-change Stripe
+ * configuration. See store-policy.ts for the full reasoning. Android and web keep it.
  *
  * NOTE for whoever wires the membership card: the plan name comes from
  * LiveSummary.membership, which the server derives from real subscription rows and
@@ -227,13 +223,10 @@ export default function AccountScreen() {
             </Text>
           )}
           {/*
-            APP-039, Must Have, MVP. Present on every platform — the 3.1.1 problem was
-            never this button, it was WHICH portal the server opened: Stripe's default
-            configuration permits changing plan. The route now serves mobile a
-            configuration with subscription updates disabled, and refuses rather than
-            falling back to the default one. See api/billing/portal/route.ts.
-            canManageBillingInApp is always true today; it exists so this render stays
-            in agreement with store-policy.ts rather than a second hardcoded assumption.
+            APP-039, Must Have, MVP — present on Android/web. Hidden on iOS: Apple
+            rejected 2026-09-14 (Guideline 3.1.1) for exposing this control at all,
+            even pointed at a Stripe portal with plan changes disabled server-side.
+            See canManageBillingInApp in src/billing/store-policy.ts.
           */}
           {canManageBillingInApp(Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web') ? (
             <Pressable onPress={openBilling} style={s.outlineBtn}>
