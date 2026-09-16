@@ -12,7 +12,10 @@
 //      intraday pace folded in as a sparkline column (it used to be a
 //      second full-width table below, which buried the table above it).
 //   3. Base rates — reference, not a decision. Collapsed by default.
-//   4. Tracked-but-quiet symbols — collapsed.
+//   4. The lottery ledger — confirmed entries that passed the mechanism
+//      gate, then (collapsed) the ones it rejected. Record only, same as
+//      everything above it.
+//   5. Tracked-but-quiet symbols — collapsed.
 //
 // Base-rate numbers are the pre-registered ones, verbatim. Not recomputed
 // here — see the project overview.
@@ -67,6 +70,17 @@ function multiple(v) {
   return `${v.toFixed(1)}×`;
 }
 
+// Runway quarters, one decimal. 99+ reads as effectively unlimited (a huge
+// cash pile against near-zero burn divides out to a meaningless number of
+// quarters), and `runway_basis === 'annual/4'` means the underlying filer
+// only reports annually, so the quarterly figure is an estimate — mark it.
+function runwayText(quarters, basis) {
+  if (quarters == null || Number.isNaN(quarters)) return '—';
+  const star = basis === 'annual/4' ? '*' : '';
+  if (quarters >= 99) return `∞${star}`;
+  return `${quarters.toFixed(1)}${star}`;
+}
+
 // A 48% spread means you cannot get anything near the modelled fill.
 // Say so in colour instead of printing a number that looks like the others.
 function spreadColor(spreadPct) {
@@ -85,6 +99,26 @@ const STATE_STYLE = {
 
 function stateStyle(s) {
   return STATE_STYLE[s] || { label: s && s !== '—' ? s : 'NO READ', color: THEME.dim };
+}
+
+// Mechanism-gate outcome pills. RUN is what reaches the ledger; STALL
+// (recent offering filing) and UNKNOWN (gate could not get a clean read)
+// only ever show up in the rejected section.
+const REJECT_STYLE = {
+  STALL: { color: THEME.red },
+  UNKNOWN: { color: '#94a3b8' },
+};
+
+function Pill({ label, color }) {
+  if (!label) return <span className="text-text-tertiary">—</span>;
+  return (
+    <span
+      className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider whitespace-nowrap"
+      style={{ background: `${color}22`, color }}
+    >
+      {label}
+    </span>
+  );
 }
 
 function isBounce(dayKind) {
@@ -238,9 +272,10 @@ function VerdictBar({ loading, error, cutNames, totalNames, asOf, noSiCount, sig
         </div>
       )}
 
-      {/* The cut REQUIRES short interest of 10-20%. A name with no trusted SI
-          figure cannot qualify, so a "0 hit the cut" headline is partly a
-          coverage fact, not a market fact. Say which it is. */}
+      {/* The cut REQUIRES short interest of >= 10% (upper cap removed
+          2026-09-16, mechanism-gated — see the note below). A name with no
+          trusted SI figure cannot qualify, so a "0 hit the cut" headline is
+          partly a coverage fact, not a market fact. Say which it is. */}
       {noSiCount > 0 && totalNames > 0 && (
         <div className="mt-2 text-[12.5px] leading-relaxed" style={{ color: '#fde68a' }}>
           <strong>{noSiCount} of {totalNames}</strong> {noSiCount === 1 ? 'name has' : 'names have'} no trusted
@@ -253,6 +288,14 @@ function VerdictBar({ loading, error, cutNames, totalNames, asOf, noSiCount, sig
         <strong style={{ color: THEME.red }}>Record only.</strong>{' '}
         The cut is <strong>unproven</strong> — it was found by slicing spent history and is being written to a
         forward ledger. No live capital before the read trigger (150 distinct symbols, or 2028-12-31).
+      </div>
+      {/* The live filter (2026-09-16): price/SI alone no longer decides what
+          reaches the ledger — every candidate is also gated on a point-in-time
+          MECHANISM read. */}
+      <div className="mt-1.5 text-[12.5px] leading-relaxed text-text-secondary">
+        Buys only names with no offering filing in the last 180 days and at least 2 quarters of cash runway
+        (<span className="font-bold" style={{ color: THEME.green }}>RUN</span>). STALL and UNKNOWN are
+        recorded, not bought.
       </div>
     </div>
   );
@@ -310,13 +353,22 @@ function BaseRates() {
               style={{ boxShadow: `inset 0 0 0 1px ${THEME.primaryRing}` }}
             >
               <div className="text-[10px] uppercase tracking-[0.14em] mb-1.5" style={{ color: THEME.primary }}>
-                The cut — under $5 AND short interest 10-20%
+                The researched cut — under $5 AND short interest 10-20%
               </div>
               <div className="text-[19px] font-bold sw-mono" style={{ color: THEME.green }}>+138% average</div>
               <div className="text-[11px] text-text-secondary sw-mono mt-1">
                 303 trades · 99 symbols · 27% doubled · 8% returned 5× · 5% lost more than 80%
               </div>
             </div>
+          </div>
+          {/* This box is the frozen historical finding, unchanged — do not
+              rewrite its band. The LIVE filter widened on 2026-09-16 (upper
+              SI cap removed, mechanism-gated); say so once here rather than
+              silently disagreeing with the badge above. */}
+          <div className="mb-3 text-[11px] text-text-tertiary leading-relaxed">
+            The live filter today is wider than the band above: short interest{' '}
+            <strong style={{ color: THEME.primary }}>≥ 10%</strong> (no upper cap), plus a mechanism gate — see
+            the ledger below.
           </div>
           <div
             className="px-4 py-3 rounded-md text-[12px] leading-relaxed"
@@ -345,7 +397,7 @@ const COL_HEAD = 'px-3 py-2 text-[10px] uppercase tracking-[0.1em] font-semibold
 // anyone who hasn't just read the research.
 const COL_TIP = {
   symbol:
-    'The ticker. A green rail and "hits the cut" group mean it is under $5 with short interest between 10% and 20% — the pre-registered PREREG #2 cut. A STALE chip means this row has not been swept since the time shown.',
+    'The ticker. A green rail and "hits the cut" group mean it is under $5 with short interest of 10% or more — the live PREREG #2 cut (upper cap removed 2026-09-16). A STALE chip means this row has not been swept since the time shown.',
   price:
     'Last price, and how far the stock has moved today. Under $5 at entry is the single biggest divider in the research: sub-$5 names averaged +63%, over-$5 names averaged −49%.',
   dollars:
@@ -386,8 +438,8 @@ function GroupHeader({ label, count, color, note }) {
 function SignalRow({ s, points, stale }) {
   const st = stateStyle(s.money_state);
   const spread = s.spread_pct != null ? s.spread_pct * 100 : null;
-  const siInBand =
-    s.short_interest_pct != null && s.short_interest_pct >= 10 && s.short_interest_pct <= 20;
+  // Upper SI cap removed 2026-09-16 — the cut is now a floor, not a band.
+  const siInBand = s.short_interest_pct != null && s.short_interest_pct >= 10;
   return (
     <tr
       className="border-t border-white/5 hover:bg-white/[0.03]"
@@ -468,7 +520,7 @@ function SignalRow({ s, points, stale }) {
       </td>
 
       {/* Short interest — the sub-line only appears when it means something.
-          No SI is not a cosmetic blank: the cut needs 10-20%, so the row is
+          No SI is not a cosmetic blank: the cut needs >= 10%, so the row is
           disqualified outright and must not read as a quiet zero. */}
       <td className="px-3 py-3 text-right">
         <div
@@ -482,7 +534,7 @@ function SignalRow({ s, points, stale }) {
         >
           {pctPlain(s.short_interest_pct)}
         </div>
-        {siInBand && <div className="text-[11px]" style={{ color: THEME.green }}>in the band</div>}
+        {siInBand && <div className="text-[11px]" style={{ color: THEME.green }}>meets the cut</div>}
         {s.short_interest_pct == null && (
           <div className="text-[11px]" style={{ color: THEME.amber }}>no data — can’t qualify</div>
         )}
@@ -569,7 +621,7 @@ function SignalsTable({ signals, tape, latestSweep }) {
               label="Hits the cut"
               count={cut.length}
               color={THEME.green}
-              note="under $5 and short interest 10-20%"
+              note="under $5 and short interest ≥ 10%"
             />
             {renderRows(cut)}
           </>
@@ -693,6 +745,242 @@ function StillRunning({ entries }) {
   );
 }
 
+/* ── Lottery ledger — confirmed entries that passed the mechanism gate ── */
+
+const LEDGER_COL_HEAD = 'px-3 py-2 text-[10px] uppercase tracking-[0.1em] font-semibold text-text-tertiary';
+
+function LotteryLedgerRow({ r }) {
+  return (
+    <tr className="border-t border-white/5 hover:bg-white/[0.03]">
+      <td className="px-3 py-2.5">
+        <span className="font-bold text-[13px] text-text-primary sw-mono">{r.symbol}</span>
+      </td>
+      <td className="px-3 py-2.5 text-text-secondary sw-mono text-[12.5px]">
+        {shortDate(r.entry_date) || '—'}{clock(r.entry_ts) ? ` ${clock(r.entry_ts)}` : ''}
+      </td>
+      <td className="px-3 py-2.5 text-right sw-mono text-[13px] text-text-primary">
+        ${(r.entry_px ?? 0).toFixed(2)}
+      </td>
+      <td
+        className="px-3 py-2.5 text-right sw-mono text-[12.5px]"
+        style={{ color: (r.day_chg || 0) >= 0 ? THEME.green : THEME.red }}
+      >
+        {pct(r.day_chg != null ? r.day_chg * 100 : null)}
+      </td>
+      <td className="px-3 py-2.5 text-right sw-mono text-[12.5px] text-text-secondary">
+        {pctPlain(r.si_pct)}
+      </td>
+      <td className="px-3 py-2.5 text-center sw-mono text-[12px] text-text-secondary">
+        {r.si_band || '—'}
+      </td>
+      <td className="px-3 py-2.5 text-center">
+        <Pill label={r.mech_class} color={THEME.green} />
+      </td>
+      <td className="px-3 py-2.5 text-right sw-mono text-[12.5px] text-text-secondary">
+        {r.n_offering_docs_180d != null ? r.n_offering_docs_180d : '—'}
+      </td>
+      <td
+        className="px-3 py-2.5 text-right sw-mono text-[12.5px] text-text-secondary"
+        title={r.runway_basis === 'annual/4' ? 'Filer reports annually — quarterly figure is estimated (annual ÷ 4)' : undefined}
+      >
+        {runwayText(r.runway_quarters, r.runway_basis)}
+      </td>
+    </tr>
+  );
+}
+
+function LotteryLedgerTable({ rows }) {
+  return (
+    <table className="w-full min-w-[820px] table-fixed">
+      <colgroup>
+        <col style={{ width: '12%' }} />
+        <col style={{ width: '15%' }} />
+        <col style={{ width: '10%' }} />
+        <col style={{ width: '10%' }} />
+        <col style={{ width: '10%' }} />
+        <col style={{ width: '10%' }} />
+        <col style={{ width: '10%' }} />
+        <col style={{ width: '11%' }} />
+        <col style={{ width: '12%' }} />
+      </colgroup>
+      <thead>
+        <tr className="border-b border-white/5">
+          <th className={`${LEDGER_COL_HEAD} text-left`}>Symbol</th>
+          <th className={`${LEDGER_COL_HEAD} text-left`}>Entry</th>
+          <th className={`${LEDGER_COL_HEAD} text-right`}>Price</th>
+          <th className={`${LEDGER_COL_HEAD} text-right`}>Day</th>
+          <th className={`${LEDGER_COL_HEAD} text-right`}>Short int.</th>
+          <th className={`${LEDGER_COL_HEAD} text-center`}>
+            <span style={TIP_STYLE} title="The short-interest band this entry cleared. The >20 band only started admitting entries 2026-09-16, when the upper cap was removed.">
+              Band
+            </span>
+          </th>
+          <th className={`${LEDGER_COL_HEAD} text-center`}>
+            <span style={TIP_STYLE} title="Mechanism-gate read at entry. Only RUN — no recent offering filing and at least 2 quarters of cash runway — reaches this ledger.">
+              Class
+            </span>
+          </th>
+          <th className={`${LEDGER_COL_HEAD} text-right`}>
+            <span style={TIP_STYLE} title="Offering-related filings (S-1/S-3/424B/etc.) in the 180 days before entry.">
+              Offering docs
+            </span>
+          </th>
+          <th className={`${LEDGER_COL_HEAD} text-right`}>
+            <span style={TIP_STYLE} title="Cash ÷ quarterly cash burn, in quarters. ∞ means burn was at or below zero. A * means the filer only reports annually, so this is cash ÷ (annual burn ÷ 4).">
+              Runway
+            </span>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <LotteryLedgerRow key={`${r.symbol}-${r.entry_ts}`} r={r} />
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function LotteryLedger({ rows, loading, error }) {
+  return (
+    <div className="mt-6">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2.5">
+        <h2 className="text-[13px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+          Lottery ledger
+        </h2>
+        <span className="text-[12px] text-text-tertiary sw-mono">{rows.length}</span>
+      </div>
+      <p className="mb-2.5 text-[11px] text-text-tertiary leading-relaxed max-w-[900px]">
+        Confirmed entries — passed price/SI and the mechanism gate (RUN). Record only, same rule as above.
+      </p>
+      <div
+        className="rounded-lg sw-glass overflow-x-auto"
+        style={{ boxShadow: 'inset 0 0 0 1px rgba(148,163,184,0.10)' }}
+      >
+        {loading ? (
+          <div className="px-5 py-8 text-center text-text-tertiary text-[13px]">Loading…</div>
+        ) : error ? (
+          <div className="px-5 py-8 text-center text-[13px]" style={{ color: THEME.red }}>{error}</div>
+        ) : !rows.length ? (
+          <div className="px-5 py-8 text-center text-text-tertiary text-[13px]">No confirmed entries yet.</div>
+        ) : (
+          <LotteryLedgerTable rows={rows} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Rejected by the mechanism filter — collapsed, record only ────────── */
+
+function RejectedRow({ r }) {
+  const rs = REJECT_STYLE[r.reject_reason] || { color: THEME.dim };
+  return (
+    <tr className="border-t border-white/5 hover:bg-white/[0.03]">
+      <td className="px-3 py-2.5 text-text-secondary sw-mono text-[12.5px]">
+        {shortDate(r.entry_date) || '—'}
+      </td>
+      <td className="px-3 py-2.5">
+        <span className="font-bold text-[13px] text-text-primary sw-mono">{r.symbol}</span>
+      </td>
+      <td className="px-3 py-2.5 text-right sw-mono text-[13px] text-text-primary">
+        ${(r.entry_px ?? 0).toFixed(2)}
+      </td>
+      <td
+        className="px-3 py-2.5 text-right sw-mono text-[12.5px]"
+        style={{ color: (r.day_chg || 0) >= 0 ? THEME.green : THEME.red }}
+      >
+        {pct(r.day_chg != null ? r.day_chg * 100 : null)}
+      </td>
+      <td className="px-3 py-2.5 text-right sw-mono text-[12.5px] text-text-secondary">
+        {pctPlain(r.si_pct)}
+      </td>
+      <td className="px-3 py-2.5 text-center">
+        <Pill label={r.reject_reason} color={rs.color} />
+      </td>
+      <td className="px-3 py-2.5 text-right sw-mono text-[12.5px] text-text-secondary">
+        {r.n_offering_docs_180d != null ? r.n_offering_docs_180d : '—'}
+      </td>
+      <td className="px-3 py-2.5 text-right sw-mono text-[12.5px] text-text-secondary">
+        {runwayText(r.runway_quarters, r.runway_basis)}
+      </td>
+    </tr>
+  );
+}
+
+function RejectedLottery({ rows, loading, error }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div
+      className="mt-3 rounded-lg sw-glass"
+      style={{ boxShadow: 'inset 0 0 0 1px rgba(148,163,184,0.10)' }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-4 py-3 text-left"
+      >
+        <span className="text-[12px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+          Rejected by the mechanism filter
+        </span>
+        <span className="text-[12px] text-text-tertiary sw-mono">{rows.length}</span>
+        <ChevronRight
+          size={15}
+          className="ml-auto transition-transform text-text-tertiary"
+          style={{ transform: open ? 'rotate(90deg)' : 'none' }}
+        />
+      </button>
+      {open && (
+        <div className="px-4 pb-4">
+          <p className="mb-2 text-[11px] text-text-tertiary leading-relaxed max-w-[900px]">
+            Cleared price/SI but the mechanism gate turned them away — a recent offering filing (STALL) or a
+            read the gate could not resolve cleanly (UNKNOWN). Never bought, kept only as a record.
+          </p>
+          {loading ? (
+            <div className="px-1 py-4 text-center text-text-tertiary text-[13px]">Loading…</div>
+          ) : error ? (
+            <div className="px-1 py-4 text-center text-[13px]" style={{ color: THEME.red }}>{error}</div>
+          ) : !rows.length ? (
+            <div className="px-1 py-4 text-center text-text-tertiary text-[13px]">Nothing rejected yet.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] table-fixed">
+                <colgroup>
+                  <col style={{ width: '13%' }} />
+                  <col style={{ width: '12%' }} />
+                  <col style={{ width: '11%' }} />
+                  <col style={{ width: '11%' }} />
+                  <col style={{ width: '11%' }} />
+                  <col style={{ width: '14%' }} />
+                  <col style={{ width: '14%' }} />
+                  <col style={{ width: '14%' }} />
+                </colgroup>
+                <thead>
+                  <tr className="border-b border-white/5">
+                    <th className={`${LEDGER_COL_HEAD} text-left`}>Date</th>
+                    <th className={`${LEDGER_COL_HEAD} text-left`}>Symbol</th>
+                    <th className={`${LEDGER_COL_HEAD} text-right`}>Price</th>
+                    <th className={`${LEDGER_COL_HEAD} text-right`}>Day</th>
+                    <th className={`${LEDGER_COL_HEAD} text-right`}>Short int.</th>
+                    <th className={`${LEDGER_COL_HEAD} text-center`}>Reject reason</th>
+                    <th className={`${LEDGER_COL_HEAD} text-right`}>Offering docs</th>
+                    <th className={`${LEDGER_COL_HEAD} text-right`}>Runway</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <RejectedRow key={`${r.symbol}-${r.entry_ts}`} r={r} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Page ─────────────────────────────────────────────────────────── */
 
 export default function SqueezeHuntPage() {
@@ -702,6 +990,13 @@ export default function SqueezeHuntPage() {
   const [siSettlementDate, setSiSettlementDate] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  const [lotteryRows, setLotteryRows] = useState([]);
+  const [lotteryLoading, setLotteryLoading] = useState(true);
+  const [lotteryError, setLotteryError] = useState(null);
+  const [rejectedRows, setRejectedRows] = useState([]);
+  const [rejectedLoading, setRejectedLoading] = useState(true);
+  const [rejectedError, setRejectedError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -736,6 +1031,47 @@ export default function SqueezeHuntPage() {
     };
   }, []);
 
+  // Lottery ledger + rejected-by-mechanism, polled independently of
+  // signals/tape above — a mirror outage on this pair must not blank the
+  // rest of the page, which is why each keeps its own loading/error state.
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetch(`${API_BASE}/api/spreadworks/squeeze-hunt/lottery`);
+        if (!res.ok) throw new Error(`lottery ${res.status}`);
+        const data = await res.json();
+        if (!cancelled) {
+          setLotteryRows(data.rows || []);
+          setLotteryError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setLotteryError(e.message || 'load failed');
+      } finally {
+        if (!cancelled) setLotteryLoading(false);
+      }
+      try {
+        const res = await fetch(`${API_BASE}/api/spreadworks/squeeze-hunt/lottery/rejected`);
+        if (!res.ok) throw new Error(`lottery/rejected ${res.status}`);
+        const data = await res.json();
+        if (!cancelled) {
+          setRejectedRows(data.rows || []);
+          setRejectedError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setRejectedError(e.message || 'load failed');
+      } finally {
+        if (!cancelled) setRejectedLoading(false);
+      }
+    }
+    load();
+    const iv = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, []);
+
   const cutNames = useMemo(
     () => signals.filter((s) => s.prereg_cut).map((s) => s.symbol),
     [signals],
@@ -754,7 +1090,7 @@ export default function SqueezeHuntPage() {
   }, [tape]);
 
   // How many of today's names have no trusted short-interest figure. The cut
-  // needs 10-20%, so each one is disqualified before price is even considered
+  // needs >= 10%, so each one is disqualified before price is even considered
   // — without this the "0 hit the cut" headline reads as a market fact.
   const noSiCount = useMemo(
     () => signals.filter((s) => s.short_interest_pct == null).length,
@@ -852,6 +1188,9 @@ export default function SqueezeHuntPage() {
           </div>
 
           <StillRunning entries={running} />
+
+          <LotteryLedger rows={lotteryRows} loading={lotteryLoading} error={lotteryError} />
+          <RejectedLottery rows={rejectedRows} loading={rejectedLoading} error={rejectedError} />
 
           {siSettlementDate && (
             <p className="mt-2.5 mb-6 text-[11px] text-text-tertiary leading-relaxed max-w-[900px]">

@@ -11,9 +11,11 @@ Endpoints
 GET  /api/spreadworks/squeeze-hunt/signals   Today's alert-like symbols
 GET  /api/spreadworks/squeeze-hunt/tape      Intraday dollar-vol pace by sweep
 GET  /api/spreadworks/squeeze-hunt/lottery   Confirmed lottery-setup entries, last N days
+GET  /api/spreadworks/squeeze-hunt/lottery/rejected  Candidates the MECHANISM gate rejected
 
 Data source: the app's own Postgres, tables `sw_hunt_signals`,
-`sw_hunt_tape`, `sw_hunt_lottery`, `sw_hunt_si`, `sw_hunt_running`. These are
+`sw_hunt_tape`, `sw_hunt_lottery`, `sw_hunt_lottery_shadow`, `sw_hunt_si`,
+`sw_hunt_running`. These are
 a one-way display mirror of the research warehouse's DuckDB, pushed after
 every sweep by `research/sync_to_postgres.py` in the squeeze repo. DuckDB
 stays the source of truth; nothing on this page writes back to it.
@@ -148,12 +150,13 @@ def squeeze_hunt_signals() -> dict[str, Any]:
     for (symbol, signal_ts, price, day_chg, dollar_vol, dollar_x, turnover,
          spread_pct, off_day_high, day_kind, run_days, hot_days) in sig_rows:
         si_pct = si_by_symbol.get(symbol)
-        # PREREG #2 cut: sub-$5 AND short interest 10-20%, evaluated on
-        # today's own numbers — independent of whether the lottery table has
-        # confirmed it yet (that table stays empty until 9/1).
+        # Live cut (upper SI cap removed 2026-09-16, `569bdee`): sub-$5 AND
+        # short interest >= 10%, evaluated on today's own numbers —
+        # independent of whether the lottery table has confirmed it yet
+        # (that table stays empty until 9/1). Label reads "met the cut".
         prereg_cut = (
             si_pct is not None and price is not None
-            and price <= 5.0 and 10.0 <= si_pct <= 20.0
+            and price <= 5.0 and si_pct >= 10.0
         )
         signals.append({
             "symbol": symbol,
@@ -273,7 +276,8 @@ def squeeze_hunt_lottery(days: int = 7) -> dict[str, Any]:
     try:
         rows = _query(
             f"""
-            SELECT symbol, entry_ts, entry_date, entry_px, day_chg, si_pct, dollar_vol, sweep
+            SELECT symbol, entry_ts, entry_date, entry_px, day_chg, si_pct, dollar_vol, sweep,
+                   si_band, mech_class, n_offering_docs_180d, runway_quarters, runway_basis
             FROM sw_hunt_lottery
             WHERE entry_date >= CURRENT_DATE - {days}
             ORDER BY entry_date DESC, entry_ts DESC
@@ -284,7 +288,8 @@ def squeeze_hunt_lottery(days: int = 7) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=f"squeeze mirror unreachable: {exc!r}")
 
     out = []
-    for symbol, entry_ts, entry_date, entry_px, day_chg, si_pct, dollar_vol, sweep in rows:
+    for (symbol, entry_ts, entry_date, entry_px, day_chg, si_pct, dollar_vol, sweep,
+         si_band, mech_class, n_offering_docs_180d, runway_quarters, runway_basis) in rows:
         out.append({
             "symbol": symbol,
             "entry_ts": entry_ts.isoformat() if entry_ts else None,
@@ -294,6 +299,58 @@ def squeeze_hunt_lottery(days: int = 7) -> dict[str, Any]:
             "si_pct": si_pct,
             "dollar_vol": dollar_vol,
             "sweep": sweep,
+            "si_band": si_band,
+            "mech_class": mech_class,
+            "n_offering_docs_180d": n_offering_docs_180d,
+            "runway_quarters": runway_quarters,
+            "runway_basis": runway_basis,
         })
 
     return {"rows": out, "count": len(out), "days": days}
+
+
+@router.get("/lottery/rejected")
+def squeeze_hunt_lottery_rejected() -> dict[str, Any]:
+    """Candidates the MECHANISM gate (research/mech_gate.py in the squeeze
+    repo) rejected before they could reach `sw_hunt_lottery` — same shape as
+    `/lottery` plus `reject_reason` ('STALL' | 'UNKNOWN'). Read-only mirror of
+    `sw_hunt_lottery_shadow`, newest first, capped at 100 rows. This table
+    never held live capital and never will — it exists so a rejection is
+    recorded, not just a confirmation."""
+    try:
+        rows = _query(
+            """
+            SELECT symbol, entry_ts, entry_date, entry_px, day_chg, si_pct, dollar_vol, sweep,
+                   si_band, mech_class, n_offering_docs_180d, runway_quarters, runway_basis,
+                   reject_reason
+            FROM sw_hunt_lottery_shadow
+            ORDER BY entry_date DESC, entry_ts DESC
+            LIMIT 100
+            """
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("[squeeze-hunt] lottery/rejected query failed: %r", exc)
+        raise HTTPException(status_code=503, detail=f"squeeze mirror unreachable: {exc!r}")
+
+    out = []
+    for (symbol, entry_ts, entry_date, entry_px, day_chg, si_pct, dollar_vol, sweep,
+         si_band, mech_class, n_offering_docs_180d, runway_quarters, runway_basis,
+         reject_reason) in rows:
+        out.append({
+            "symbol": symbol,
+            "entry_ts": entry_ts.isoformat() if entry_ts else None,
+            "entry_date": entry_date.isoformat() if entry_date else None,
+            "entry_px": entry_px,
+            "day_chg": day_chg,
+            "si_pct": si_pct,
+            "dollar_vol": dollar_vol,
+            "sweep": sweep,
+            "si_band": si_band,
+            "mech_class": mech_class,
+            "n_offering_docs_180d": n_offering_docs_180d,
+            "runway_quarters": runway_quarters,
+            "runway_basis": runway_basis,
+            "reject_reason": reject_reason,
+        })
+
+    return {"rows": out, "count": len(out)}
