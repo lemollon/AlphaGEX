@@ -81,6 +81,26 @@ services:
         sync: false
       - key: DISCORD_WEBHOOK_URL
         sync: false
+      - key: QQQ_RETEST_WATCH_ENABLED
+        value: "true"
+      - key: QQQ_RETEST_LEVELS_DATE
+        value: "2026-09-17"
+      - key: QQQ_RETEST_SUPPORT_LOW
+        value: "714"
+      - key: QQQ_RETEST_SUPPORT_HIGH
+        value: "715"
+      - key: QQQ_RETEST_RECLAIM_LOW
+        value: "717"
+      - key: QQQ_RETEST_RECLAIM_HIGH
+        value: "718"
+      - key: QQQ_RETEST_STALE_AFTER_SECONDS
+        value: "90"
+      - key: QQQ_RETEST_POLL_SECONDS
+        value: "10"
+      - key: QQQ_RETEST_SESSIONS
+        value: "premarket,regular,postmarket"
+      - key: QQQ_RETEST_ALLOW_YAHOO_FALLBACK
+        value: "true"
       - key: DATABASE_URL
         fromDatabase:
           name: alphagex-db
