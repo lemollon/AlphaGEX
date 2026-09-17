@@ -17,6 +17,7 @@ Market-data policy:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -826,6 +827,9 @@ def register_qqq_retest_watch(scheduler, app) -> None:
     if scheduler is None:
         logger.warning("[QQQWatch] no scheduler; watcher disabled")
         return
+    if not settings.enabled:
+        logger.info("[QQQWatch] web scheduler disabled; worker owns execution")
+        return
 
     async def tick() -> None:
         try:
@@ -847,4 +851,45 @@ def register_qqq_retest_watch(scheduler, app) -> None:
 @router.get("/status")
 async def qqq_retest_watch_status() -> dict[str, Any]:
     """Current watcher result, timestamps, freshness, and scheduler proof."""
-    return {**_STATUS, "scheduler": scheduled_jobs()}
+    worker = await asyncio.to_thread(_read_worker_status)
+    if worker is not None:
+        return worker
+    return {**_STATUS, "scheduler": scheduled_jobs(),
+            "runtime": "render-web-service"}
+
+
+def _read_worker_status() -> dict[str, Any] | None:
+    """Read the dedicated worker heartbeat without exposing DB failures."""
+    try:
+        from .db import SessionLocal
+        from .models import QQQWatchRuntimeStatus
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[QQQWatch] worker status imports unavailable: %r", exc)
+        return None
+    if SessionLocal is None:
+        return None
+    db = SessionLocal()
+    try:
+        row = db.get(QQQWatchRuntimeStatus, "qqq-retest")
+        if row is None:
+            return None
+        payload = json.loads(row.payload_json)
+        heartbeat = row.heartbeat_at
+        if heartbeat.tzinfo is None:
+            heartbeat = heartbeat.replace(tzinfo=UTC)
+        age = _age_seconds(datetime.now(UTC), heartbeat)
+        payload["runtime"] = "render-background-worker"
+        payload["worker_heartbeat_at"] = heartbeat.astimezone(UTC).isoformat()
+        payload["worker_heartbeat_age_seconds"] = round(age, 1)
+        payload["worker_healthy"] = age <= 60
+        payload["scheduler"] = {
+            "registered": True,
+            "jobs": {"qqq_retest_worker": payload.get("next_cycle_at")},
+            "reason": None if age <= 60 else "Worker heartbeat is stale.",
+        }
+        return payload
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[QQQWatch] worker status read failed: %r", exc)
+        return None
+    finally:
+        db.close()
