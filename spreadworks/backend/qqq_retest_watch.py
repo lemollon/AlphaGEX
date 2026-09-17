@@ -8,6 +8,8 @@ Market-data policy:
 * Prefer Tradier's production consolidated feed already configured on Render.
 * Fall back to Yahoo one-minute chart data only when Tradier is unavailable or
   stale, and label that source unofficial/not exchange-certified.
+* Use TradingVolatility only for its liquid-options universe and descriptive
+  positioning context; it never changes the one-minute-bar classification.
 * Reject quotes or newest completed bars older than 90 seconds in an active
   session.
 * Option bid/ask/IV/Greeks are included only when every required Tradier field
@@ -26,6 +28,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter
+
+from .trading_volatility_context import get_trading_volatility_context
 
 logger = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
@@ -53,6 +57,9 @@ class Settings:
     example_spread_width: float
     allow_yahoo_fallback: bool
     sessions: tuple[str, ...]
+    tv_context_refresh_seconds: int = 300
+    tv_context_max_age_seconds: float = 129600.0
+    tv_universe_limit: int = 200
 
 
 @dataclass(frozen=True)
@@ -86,6 +93,7 @@ _STATUS: dict[str, Any] = {
     "qqq": None,
     "spy": None,
     "options": None,
+    "trading_volatility": None,
     "last_checked_at": None,
     "last_alert_at": None,
     "last_error": None,
@@ -129,6 +137,15 @@ def load_settings() -> Settings:
         allow_yahoo_fallback=_env_bool(
             "QQQ_RETEST_ALLOW_YAHOO_FALLBACK", True),
         sessions=sessions,
+        tv_context_refresh_seconds=max(
+            60, int(os.getenv("TV_CONTEXT_REFRESH_SECONDS", "300"))
+        ),
+        tv_context_max_age_seconds=max(
+            60.0, float(os.getenv("TV_CONTEXT_MAX_AGE_SECONDS", "129600"))
+        ),
+        tv_universe_limit=max(
+            1, min(200, int(os.getenv("TV_UNIVERSE_LIMIT", "200")))
+        ),
     )
     if not settings.support_low < settings.support_high:
         raise ValueError("QQQ support low must be below support high")
@@ -620,6 +637,7 @@ def _build_embed(classification: Classification, market: dict[str, Any] | None,
                  settings: Settings, session: str,
                  options: dict[str, Any] | None,
                  options_reason: str | None,
+                 tv_context: dict[str, Any] | None,
                  retrieved_at: datetime) -> dict[str, Any]:
     colors = {"BULLISH_RETEST": 0x34D399, "FAILED_RETEST": 0xF87171,
               "WAIT": 0xFBBF24, "DATA_UNAVAILABLE": 0x9CA3AF,
@@ -649,6 +667,31 @@ def _build_embed(classification: Classification, market: dict[str, Any] | None,
         fields.append({"name": "Source",
                        "value": (f"{market['source']} | {market['certification']} | "
                                  f"session {session}"), "inline": False})
+    if (tv_context and tv_context.get("available")
+            and (tv_context.get("symbol_context") or {}).get("fresh")):
+        context = tv_context.get("symbol_context") or {}
+        call_walls = context.get("call_walls") or []
+        put_walls = context.get("put_walls") or []
+        call_wall = call_walls[0].get("strike") if call_walls else None
+        put_wall = put_walls[0].get("strike") if put_walls else None
+        expected_move = context.get("expected_move_1d_dollars")
+        expected_move_text = (
+            f"${expected_move}" if expected_move is not None else "unavailable"
+        )
+        fields.append({
+            "name": "Trading Volatility context",
+            "value": (
+                f"Universe {tv_context.get('universe_count')} liquid optionable symbols | "
+                f"QQQ gamma regime {context.get('gamma_regime') or 'unavailable'} | "
+                f"nearest call/put concentrations "
+                f"{call_wall if call_wall is not None else 'unavailable'} / "
+                f"{put_wall if put_wall is not None else 'unavailable'} | "
+                f"1d expected move {expected_move_text} | "
+                f"vendor {context.get('vendor_timestamp') or 'timestamp unavailable'} | "
+                f"descriptive only"
+            ),
+            "inline": False,
+        })
     if options:
         buy, sell = options["buy"], options["sell"]
         fields.append({
@@ -727,8 +770,19 @@ async def run_watch_cycle(app, *, now: datetime | None = None) -> dict[str, Any]
         return dict(_STATUS)
     if session == "closed" or session not in settings.sessions:
         _set_status(state="OFF_SESSION", reason="Outside selected market sessions",
-                    source=None, qqq=None, spy=None, options=None, last_error=None)
+                    source=None, qqq=None, spy=None, options=None,
+                    trading_volatility=None, last_error=None)
         return dict(_STATUS)
+
+    tv_context = await get_trading_volatility_context(
+        app.state.http,
+        symbol="QQQ",
+        retrieved_at=retrieved_at,
+        refresh_seconds=settings.tv_context_refresh_seconds,
+        max_age_seconds=settings.tv_context_max_age_seconds,
+        universe_limit=settings.tv_universe_limit,
+    )
+    _set_status(trading_volatility=tv_context)
 
     if now_et.date() != settings.levels_date:
         classification = Classification(
@@ -739,7 +793,8 @@ async def run_watch_cycle(app, *, now: datetime | None = None) -> dict[str, Any]
             None,
         )
         await _process_state_change(app, classification, None, settings,
-                                    session, None, "levels expired", retrieved_at)
+                                    session, None, "levels expired", tv_context,
+                                    retrieved_at)
         return dict(_STATUS)
 
     try:
@@ -755,12 +810,14 @@ async def run_watch_cycle(app, *, now: datetime | None = None) -> dict[str, Any]
             except Exception as exc:  # noqa: BLE001
                 options_reason = f"Tradier option enrichment failed: {exc}"
         await _process_state_change(app, classification, market, settings,
-                                    session, options, options_reason, retrieved_at)
+                                    session, options, options_reason, tv_context,
+                                    retrieved_at)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[QQQWatch] market cycle failed: %r", exc)
         classification = Classification("DATA_UNAVAILABLE", str(exc), None)
         await _process_state_change(app, classification, None, settings,
-                                    session, None, str(exc), retrieved_at)
+                                    session, None, str(exc), tv_context,
+                                    retrieved_at)
         _set_status(last_error=str(exc))
     return dict(_STATUS)
 
@@ -770,6 +827,7 @@ async def _process_state_change(app, classification: Classification,
                                 settings: Settings, session: str,
                                 options: dict[str, Any] | None,
                                 options_reason: str | None,
+                                tv_context: dict[str, Any] | None,
                                 retrieved_at: datetime) -> None:
     previous = _STATE.get("last_state")
     changed = previous != classification.state
@@ -782,6 +840,7 @@ async def _process_state_change(app, classification: Classification,
         spy=_public_snapshot(market.get("spy") if market else None),
         options=options,
         options_unavailable_reason=(None if options else options_reason),
+        trading_volatility=tv_context,
         transition_at=_iso(classification.transition_at),
         last_error=None,
     )
@@ -796,7 +855,7 @@ async def _process_state_change(app, classification: Classification,
     if event_key == _STATE.get("last_event_key"):
         return
     embed = _build_embed(classification, market, settings, session, options,
-                         options_reason, retrieved_at)
+                         options_reason, tv_context, retrieved_at)
     posted = await _send_alert(embed, event_key,
                                retrieved_at.astimezone(ET).date())
     _STATE["last_event_key"] = event_key
