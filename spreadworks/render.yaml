@@ -123,6 +123,10 @@ services:
         value: "3.11.0"
       - key: TRADIER_TOKEN
         sync: false
+      - key: TRADING_VOLATILITY_API_TOKEN
+        sync: false
+      - key: TRADING_VOLATILITY_API_KEY
+        sync: false
       - key: DISCORD_WEBHOOK_URL
         sync: false
       - key: QQQ_RETEST_WATCH_ENABLED
@@ -145,6 +149,12 @@ services:
         value: "premarket,regular,postmarket"
       - key: QQQ_RETEST_ALLOW_YAHOO_FALLBACK
         value: "true"
+      - key: TV_CONTEXT_REFRESH_SECONDS
+        value: "300"
+      - key: TV_CONTEXT_MAX_AGE_SECONDS
+        value: "129600"
+      - key: TV_UNIVERSE_LIMIT
+        value: "200"
       - key: DATABASE_URL
         fromDatabase:
           name: alphagex-db
