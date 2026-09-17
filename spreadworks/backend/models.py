@@ -128,6 +128,22 @@ class DiscordPostLog(Base):
     posted_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class QQQWatchRuntimeStatus(Base):
+    """Latest cross-service heartbeat for the Render QQQ watcher.
+
+    The dedicated worker writes one fixed row.  The web API reads it so the
+    public status endpoint remains useful even though the worker has no URL.
+    """
+    __tablename__ = "qqq_watch_runtime_status"
+
+    watcher_id = Column(String(32), primary_key=True, default="qqq-retest")
+    payload_json = Column(Text, nullable=False)
+    heartbeat_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Position(Base):
     __tablename__ = "positions"
 
