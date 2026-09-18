@@ -191,7 +191,8 @@ def test_astra3_falls_through_to_backdraft_mechanism():
 
 
 def test_astra3_registry_is_the_frozen_500_dollar_forward_book():
-    d = get_bot("astra3")["defaults"]
+    bot = get_bot("astra3")
+    d = bot["defaults"]
     assert d["enabled"] is False
     assert d["starting_capital"] == 500.0
     assert d["bp_pct"] == 0.25 and d["max_contracts"] == 3
@@ -201,6 +202,13 @@ def test_astra3_registry_is_the_frozen_500_dollar_forward_book():
     assert d["backdraft_flow_max"] == -0.35
     assert d["max_concurrent_positions"] == 1
     assert d["cooldown_min"] == 30
+    gate = bot["forward_gate"]
+    assert gate == {
+        "start_at": "2026-09-18T00:00:00",
+        "required_trades": 20,
+        "minimum_pnl": 0.0,
+        "drawdown_floor": -80.0,
+    }
 
 
 # ------------------------------------------------------------- flow_store
