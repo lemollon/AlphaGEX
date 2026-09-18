@@ -50,6 +50,20 @@ else:
         print(f"[SpreadWorks]   {p} -> exists={p.exists()}")
 
 
+# Master kill switch for EVERY SpreadWorks Discord post (scheduler posts,
+# bot open/close embeds, gamma/risk alerts, intraday + QQQ watchers, TSUNAMI,
+# and the spreadworks-daily-bot worker). Default OFF: the user asked for
+# SpreadWorks to stop posting to their Discord, and each of those paths had
+# its own on/off knob, so turning one off left the rest talking. Re-enable
+# with SPREADWORKS_DISCORD_ENABLED=true on the Render service.
+DISCORD_ENABLED_ENV = "SPREADWORKS_DISCORD_ENABLED"
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def discord_posting_enabled() -> bool:
+    return os.getenv(DISCORD_ENABLED_ENV, "").strip().lower() in _TRUTHY
+
+
 def _send_webhook_sync(embed_or_embeds, webhook_url: str | None = None) -> bool:
     """Send embeds to Discord webhook (sync, for scheduler use).
 
@@ -69,6 +83,10 @@ def _send_webhook_sync(embed_or_embeds, webhook_url: str | None = None) -> bool:
         embeds = [embed_or_embeds]
     else:
         embeds = list(embed_or_embeds)[:10]  # Discord caps at 10
+
+    if not discord_posting_enabled():
+        logger.info(f"[SpreadWorks] Discord posting disabled ({DISCORD_ENABLED_ENV} not true) — skipping")
+        return False
 
     url = webhook_url or os.getenv("DISCORD_WEBHOOK_URL", "")
     if not url:
