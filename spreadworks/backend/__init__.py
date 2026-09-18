@@ -1839,14 +1839,15 @@ async def lifespan(app: FastAPI):
     except Exception as _ga_exc:  # noqa: BLE001
         logger.warning("[SpreadWorks] gamma alerts failed to register: %r", _ga_exc)
 
-    # QQQ retest watch: 10-second cloud classifier + state-change alerts.
-    # Advisory only; it has no broker order path and never previews an order.
-    try:
-        from .qqq_retest_watch import register_qqq_retest_watch
-        register_qqq_retest_watch(scheduler, app)
-    except Exception as _qqq_exc:  # noqa: BLE001
-        logger.warning("[SpreadWorks] QQQ retest watch failed to register: %r",
-                       _qqq_exc)
+    # The dedicated Render worker owns market-watch cycles.  The web process
+    # continues to serve status, but does not race the worker for alert claims.
+    if os.getenv("QQQ_RETEST_RUN_IN_WEB", "false").strip().lower() == "true":
+        try:
+            from .qqq_retest_watch import register_qqq_retest_watch
+            register_qqq_retest_watch(scheduler, app)
+        except Exception as _qqq_exc:  # noqa: BLE001
+            logger.warning("[SpreadWorks] QQQ retest watch failed to register: %r",
+                           _qqq_exc)
 
     yield
 
@@ -1872,6 +1873,9 @@ app.include_router(router)
 
 from .qqq_retest_watch import router as qqq_retest_watch_router
 app.include_router(qqq_retest_watch_router)
+
+from .intraday_watch import router as intraday_watch_router
+app.include_router(intraday_watch_router)
 
 from .routes_bots import router as bots_router
 app.include_router(bots_router)
