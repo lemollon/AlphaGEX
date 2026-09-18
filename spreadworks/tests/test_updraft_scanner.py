@@ -16,8 +16,8 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
-from backend.bots.executor import list_open_positions
-from backend.bots.scanner import ChainProvider, run_scan_cycle
+from backend.bots.executor import close_position, list_open_positions
+from backend.bots.scanner import ChainProvider, run_scan_cycle, _position_time_ct
 
 CT = ZoneInfo("America/Chicago")
 
@@ -52,6 +52,10 @@ class FlowChainProvider(ChainProvider):
     def get_leg_mids(self, *, ticker, legs):
         return [leg["entry_price"] for leg in legs]
 
+    def get_leg_exit_prices(self, *, ticker, legs):
+        return [self.ask if leg.get("side") == "short" else self.bid
+                for leg in legs]
+
     def get_daily_history(self, *, ticker, days):
         return []
 
@@ -59,6 +63,82 @@ class FlowChainProvider(ChainProvider):
 def _enable(engine, bot):
     with engine.begin() as conn:
         conn.execute(text(f"UPDATE {bot}_config SET enabled=1"))
+
+
+def test_production_naive_utc_entry_time_is_converted_back_to_central():
+    # Render/Postgres stored 08:35 CT as naive 13:35 UTC. Treating 13:35 as CT
+    # delayed the 30/45-minute timer by five hours.
+    now_ct = datetime(2026, 9, 17, 9, 20, tzinfo=CT)
+    stored = datetime(2026, 9, 17, 13, 35)
+    fixed = _position_time_ct(stored, now_ct, "postgresql")
+    assert fixed == datetime(2026, 9, 17, 8, 35, tzinfo=CT)
+    assert (now_ct - fixed).total_seconds() / 60 == 45
+
+
+def _open_astra3_backdraft(eng, provider):
+    _enable(eng, "astra3")
+    run_scan_cycle(
+        engine=eng, bot="astra3",
+        now_ct=datetime(2026, 9, 17, 8, 5, tzinfo=CT),
+        chain_provider=provider, event_blackout=False,
+    )
+    provider.call_vol, provider.put_vol = 600, 3000
+    return run_scan_cycle(
+        engine=eng, bot="astra3",
+        now_ct=datetime(2026, 9, 17, 8, 35, tzinfo=CT),
+        chain_provider=provider, event_blackout=False,
+    )
+
+
+def test_astra3_opens_at_ask_plus_fee_and_exits_after_30_minutes(db_session):
+    eng = db_session.get_bind()
+    provider = FlowChainProvider(
+        spot=600.0, call_vol=0, put_vol=0, put_wall=595.0,
+    )
+    _open_astra3_backdraft(eng, provider)
+    positions = list_open_positions(eng, "astra3")
+    assert len(positions) == 1
+    assert positions[0]["strategy"] == "backdraft"
+    assert float(positions[0]["entry_price"]) == 0.647
+
+    run_scan_cycle(
+        engine=eng, bot="astra3",
+        now_ct=datetime(2026, 9, 17, 9, 4, tzinfo=CT),
+        chain_provider=provider, event_blackout=False,
+    )
+    assert len(list_open_positions(eng, "astra3")) == 1
+    run_scan_cycle(
+        engine=eng, bot="astra3",
+        now_ct=datetime(2026, 9, 17, 9, 5, tzinfo=CT),
+        chain_provider=provider, event_blackout=False,
+    )
+    assert len(list_open_positions(eng, "astra3")) == 0
+    closed = eng.connect().execute(text(
+        "SELECT close_reason, realized_pnl FROM astra3_closed_trades"
+    )).mappings().first()
+    assert closed["close_reason"] == "TIME_STOP"
+    # Paid the $0.64 ask plus $0.70 fee; sold at the $0.60 bid.
+    assert round(float(closed["realized_pnl"]), 2) == -4.70
+
+
+def test_astra3_blocks_reentry_during_frozen_30_minute_cooldown(db_session):
+    eng = db_session.get_bind()
+    provider = FlowChainProvider(
+        spot=600.0, call_vol=0, put_vol=0, put_wall=595.0,
+    )
+    _open_astra3_backdraft(eng, provider)
+    position = list_open_positions(eng, "astra3")[0]
+    close_position(
+        eng, "astra3", position["position_id"], 0.64, "TEST_CLOSE",
+        datetime(2026, 9, 17, 8, 40, tzinfo=CT),
+    )
+    result = run_scan_cycle(
+        engine=eng, bot="astra3",
+        now_ct=datetime(2026, 9, 17, 8, 50, tzinfo=CT),
+        chain_provider=provider, event_blackout=False,
+    )
+    assert result["outcome"] == "BLOCKED_COOLDOWN"
+    assert len(list_open_positions(eng, "astra3")) == 0
 
 
 def test_first_scan_does_not_trade_while_flow_is_warming_up(db_session):

@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -27,14 +27,11 @@ from .monitor import (
     MULTI_DAY_STRATEGIES,
 )
 
-# Every mode of the updraft module. Position rows now store the MODE as their
-# strategy (so the UI can say WHICH leg a position belongs to), and this set
-# is what keeps mode-labelled rows on the updraft timer-exit path. Legacy
-# rows that still say 'updraft' match too.
-UPDRAFT_FAMILY = {"updraft", "backdraft", "reversal", "em_breach", "afterburn",
-                  "weekender", "flashpoint", "afterglow", "ember", "tempest"}
 from .registry import BOT_REGISTRY, get_bot
-from .strategies import CREDIT_STRATEGIES
+from .strategies import CREDIT_STRATEGIES, LONG_OPTION_STRATEGIES
+
+# Backwards-compatible public name used by tests and the timer path.
+UPDRAFT_FAMILY = LONG_OPTION_STRATEGIES
 from .strategies.iron_butterfly import build_iron_butterfly_signal
 from .strategies.long_butterfly import build_long_butterfly_signal
 from .strategies.iron_condor import build_iron_condor_signal
@@ -66,6 +63,54 @@ class ChainProvider(Protocol):
     # Optional: per-leg half-spread for taker-cost grading. Providers that
     # don't implement it fall back to the flat per-leg slippage default.
     def get_leg_spreads(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[float | None]: ...
+    # Optional: executable liquidation touches from ONE quote snapshot. Long
+    # legs return bid; short legs return ask. This avoids racing a separate
+    # mid request against a separate spread request.
+    def get_leg_exit_prices(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[float | None]: ...
+
+
+def _position_time_ct(value: datetime | str, now_ct: datetime,
+                      dialect_name: str) -> datetime:
+    """Put a stored position timestamp on the same clock as ``now_ct``.
+
+    PostgreSQL converts the scanner's aware Central input to naive UTC when it
+    writes a ``TIMESTAMP`` column. SQLite tests retain Central wall-clock. The
+    old reader treated both as Central, pushing production timer exits roughly
+    five hours into the future.
+    """
+    stored = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+    if now_ct.tzinfo is None:
+        return stored.replace(tzinfo=None)
+    if stored.tzinfo is not None:
+        return stored.astimezone(now_ct.tzinfo)
+    if dialect_name == "postgresql":
+        return stored.replace(tzinfo=timezone.utc).astimezone(now_ct.tzinfo)
+    return stored.replace(tzinfo=now_ct.tzinfo)
+
+
+def _last_entry_time(engine: Engine, bot: str) -> datetime | None:
+    t = bot_table(bot, "positions")
+    with engine.begin() as conn:
+        row = conn.execute(text(
+            f"SELECT MAX(entry_time) AS t FROM {t}"
+        )).mappings().first()
+    return row["t"] if row and row["t"] is not None else None
+
+
+def _executable_exit_prices(chain_provider: Any, ticker: str,
+                            legs: list[dict[str, Any]]) -> list[float | None] | None:
+    """Return one-snapshot exit touches when the provider supports them."""
+    fn = getattr(chain_provider, "get_leg_exit_prices", None)
+    if fn is None:
+        return None
+    try:
+        prices = fn(ticker=ticker, legs=legs)
+    except Exception as e:  # noqa: BLE001 - a quote hiccup must not kill the fleet
+        logger.warning(f"get_leg_exit_prices failed for {ticker}: {e}; mid/spread fallback")
+        return None
+    if not isinstance(prices, (list, tuple)) or len(prices) != len(legs):
+        return None
+    return list(prices)
 
 
 def _slippage_total(chain_provider: Any, ticker: str,
@@ -430,6 +475,7 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
         tunable = ("mode", "flow_max", "r30_min", "backdraft_flow_max",
                    "require_put_wall", "strike_offset", "hold_minutes",
                    "min_option_price", "max_spread_pct", "cooldown_min",
+                   "astra3_fee",
                    "rsi_threshold", "rsi_period",
                    "em_frac", "max_open_straddle_pct", "afterburn_min_ret_pct",
                    "or_width_min_em")
@@ -906,9 +952,22 @@ def _evaluate_entry(
             chain_provider=chain_provider, opens=opens,
         )
 
-    # Stacking bots open at most ONE new position per entry-day. Closed rows
-    # stay in {bot}_positions, so an earlier same-day open-then-close counts.
-    if allow_stacking and count_positions_opened_on(engine, bot, now_ct) > 0:
+    # Intraday burst books use a frozen entry-to-entry cooldown; MEADOW is the
+    # legacy stacking bot with no cooldown and remains capped at one new entry
+    # per eligible day. The old blanket one-entry/day rule silently reduced
+    # UPDRAFT/BACKDRAFT to a different strategy than their backtests.
+    reg_defaults = ((BOT_REGISTRY.get(bot) or {}).get("defaults") or {})
+    cooldown_min = int(reg_defaults.get("cooldown_min") or 0)
+    if allow_stacking and cooldown_min > 0:
+        last_entry = _last_entry_time(engine, bot)
+        if last_entry is not None:
+            last_ct = _position_time_ct(last_entry, now_ct, engine.dialect.name)
+            elapsed = (now_ct - last_ct).total_seconds() / 60.0
+            if elapsed < cooldown_min:
+                return {"outcome": "BLOCKED_COOLDOWN",
+                        "reason": (f"cooldown: elapsed={elapsed:.1f}m "
+                                   f"need={cooldown_min}m")}
+    elif allow_stacking and count_positions_opened_on(engine, bot, now_ct) > 0:
         return {"outcome": "BLOCKED_ALREADY_OPENED_TODAY"}
 
     # one_entry_per_day (registry meta): after ANY entry today — open OR
@@ -925,7 +984,7 @@ def _evaluate_entry(
     # later scans FILL it if the ask touches. TEST +7.8% -> +11.9%/trade at
     # -15%. Verified NOT to transfer to EMBREACH (flips negative) — only
     # bots whose registry carries the knob ever enter this path.
-    reg_d = ((BOT_REGISTRY.get(bot) or {}).get("defaults") or {})
+    reg_d = reg_defaults
     limit_frac = float(
         cfg.get("limit_entry_frac")
         if cfg.get("limit_entry_frac") is not None
@@ -1050,11 +1109,15 @@ def _evaluate_entry(
     # tellable apart leg by leg (and the per-leg exit params travel on the
     # position row as usual).
     store_mode = (getattr(signal, "mode", None)
-                  if reg_mode == "tempest" else reg_mode)
+                  if reg_mode in ("tempest", "astra3") else reg_mode)
     pid = open_position(
         engine, bot, store_mode or meta["strategy"], signal, now_ct,
-        slippage_total=_slippage_total(chain_provider, signal.ticker,
-                                       signal.legs(), cfg))
+        # Single-long option signals already carry the displayed ask as debit.
+        # Do not fetch another quote and charge a second half-spread.
+        mid_fill=False if meta["strategy"] == "updraft" else True,
+        slippage_total=(None if meta["strategy"] == "updraft" else
+                        _slippage_total(chain_provider, signal.ticker,
+                                        signal.legs(), cfg)))
     if bool(cfg.get("discord_alerts")):
         try:
             from . import discord_alerts
@@ -1128,7 +1191,11 @@ def run_scan_cycle(
                     monitor_result = {"outcome": "TRADE", "reason": "CLOSE_SETTLE",
                                       "position_id": pos["position_id"]}
                     continue
-            mids = chain_provider.get_leg_mids(ticker=pos["ticker"], legs=legs)
+            exit_prices = _executable_exit_prices(
+                chain_provider, pos["ticker"], legs)
+            using_touches = exit_prices is not None
+            mids = (exit_prices if using_touches else
+                    chain_provider.get_leg_mids(ticker=pos["ticker"], legs=legs))
             marks_stale = any(m is None for m in mids)
             if marks_stale:
                 # One or more leg quotes missing — the fresh mark would be
@@ -1148,8 +1215,12 @@ def run_scan_cycle(
                     entry_price=float(pos["entry_price"]),
                     contracts=int(pos["contracts"]),
                     leg_mids=mids,
-                    slippage_total=_slippage_total(
-                        chain_provider, pos["ticker"], legs, cfg),
+                    # Executable touches already ARE long-bid / short-ask.
+                    # The fallback retains the legacy mid-minus-half-spread
+                    # model for providers that cannot return an atomic quote.
+                    slippage_total=(0.0 if using_touches else
+                                    _slippage_total(
+                                        chain_provider, pos["ticker"], legs, cfg)),
                 )
                 update_mtm(engine, bot, pos["position_id"], mtm_value, mtm_pnl, now_ct)
 
@@ -1194,8 +1265,8 @@ def run_scan_cycle(
             dip_entry_time = None
             if pos["strategy"] in MULTI_DAY_STRATEGIES:
                 dip_hold_days = int((meta.get("params") or {}).get("hold_days", 2))
-                dip_entry_time = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
-                    else datetime.fromisoformat(str(pos["entry_time"]))
+                dip_entry_time = _position_time_ct(
+                    pos["entry_time"], now_ct, engine.dialect.name)
 
             # UPDRAFT/BACKDRAFT are intraday TIMER exits (45m / 30m). The
             # timer is the real exit — pt_pct is deliberately unreachable
@@ -1204,8 +1275,8 @@ def run_scan_cycle(
             if pos["strategy"] in UPDRAFT_FAMILY:
                 hold_minutes = int(cfg.get("hold_minutes")
                                    or (meta.get("defaults") or {}).get("hold_minutes", 45))
-                dip_entry_time = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
-                    else datetime.fromisoformat(str(pos["entry_time"]))
+                dip_entry_time = _position_time_ct(
+                    pos["entry_time"], now_ct, engine.dialect.name)
 
             # On a stale mark, disarm PT/SL entirely (targets pushed to ±inf)
             # so only the time-based exits can fire — the position is never
@@ -1229,10 +1300,8 @@ def run_scan_cycle(
                 if bool(cfg.get("discord_alerts")):
                     try:
                         from . import discord_alerts
-                        entry_dt = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
-                            else datetime.fromisoformat(str(pos["entry_time"]))
-                        if entry_dt.tzinfo is None:
-                            entry_dt = entry_dt.replace(tzinfo=now_ct.tzinfo)
+                        entry_dt = _position_time_ct(
+                            pos["entry_time"], now_ct, engine.dialect.name)
                         mins = int((now_ct - entry_dt).total_seconds() // 60)
                         discord_alerts.post_close(
                             bot=bot, display=meta["display"], strategy=pos["strategy"],
