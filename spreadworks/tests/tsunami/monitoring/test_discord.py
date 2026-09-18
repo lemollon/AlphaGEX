@@ -78,27 +78,55 @@ class PostEmbedSafetyFallbacks(unittest.TestCase):
         session = MagicMock()
         resp = MagicMock(status_code=204, text="")
         session.post.return_value = resp
-        ok = discord.post_embed(
-            "title", "body",
-            webhook_url="https://discord.com/api/webhooks/x/y",
-            session=session,
-        )
+        with patch.dict(os.environ, {"SPREADWORKS_DISCORD_ENABLED": "true"}):
+            ok = discord.post_embed(
+                "title", "body",
+                webhook_url="https://discord.com/api/webhooks/x/y",
+                session=session,
+            )
         self.assertTrue(ok)
+
+    def test_kill_switch_off_by_default_never_posts(self):
+        # SPREADWORKS_DISCORD_ENABLED unset -> no HTTP call even with a webhook.
+        session = MagicMock()
+        session.post.return_value = MagicMock(status_code=204, text="")
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SPREADWORKS_DISCORD_ENABLED", None)
+            ok = discord.post_embed(
+                "title", "body",
+                webhook_url="https://discord.com/api/webhooks/x/y",
+                session=session,
+            )
+        self.assertFalse(ok)
+        session.post.assert_not_called()
+
+    def test_kill_switch_explicit_false_never_posts(self):
+        session = MagicMock()
+        session.post.return_value = MagicMock(status_code=204, text="")
+        with patch.dict(os.environ, {"SPREADWORKS_DISCORD_ENABLED": "false"}):
+            ok = discord.post_embed(
+                "title", "body",
+                webhook_url="https://discord.com/api/webhooks/x/y",
+                session=session,
+            )
+        self.assertFalse(ok)
+        session.post.assert_not_called()
 
 
 class PayloadShape(unittest.TestCase):
     def test_payload_is_valid_discord_shape(self):
         session = MagicMock()
         session.post.return_value = MagicMock(status_code=204, text="")
-        discord.post_embed(
-            "Test title",
-            "Test description",
-            color=discord.COLOR_OPEN,
-            fields=[{"name": "k", "value": "v", "inline": True}],
-            footer_text="footer",
-            webhook_url="https://discord.com/api/webhooks/x/y",
-            session=session,
-        )
+        with patch.dict(os.environ, {"SPREADWORKS_DISCORD_ENABLED": "true"}):
+            discord.post_embed(
+                "Test title",
+                "Test description",
+                color=discord.COLOR_OPEN,
+                fields=[{"name": "k", "value": "v", "inline": True}],
+                footer_text="footer",
+                webhook_url="https://discord.com/api/webhooks/x/y",
+                session=session,
+            )
         kwargs = session.post.call_args.kwargs
         import json
         body = json.loads(kwargs["data"])
@@ -114,11 +142,12 @@ class PayloadShape(unittest.TestCase):
         session = MagicMock()
         session.post.return_value = MagicMock(status_code=204, text="")
         long_title = "A" * 500
-        discord.post_embed(
-            long_title, "body",
-            webhook_url="https://discord.com/api/webhooks/x/y",
-            session=session,
-        )
+        with patch.dict(os.environ, {"SPREADWORKS_DISCORD_ENABLED": "true"}):
+            discord.post_embed(
+                long_title, "body",
+                webhook_url="https://discord.com/api/webhooks/x/y",
+                session=session,
+            )
         import json
         body = json.loads(session.post.call_args.kwargs["data"])
         self.assertEqual(len(body["embeds"][0]["title"]), 256)

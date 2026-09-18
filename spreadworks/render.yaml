@@ -81,6 +81,9 @@ services:
         sync: false
       - key: DISCORD_WEBHOOK_URL
         sync: false
+      # Master switch for ALL SpreadWorks Discord posts. Flip to "true" to re-enable.
+      - key: SPREADWORKS_DISCORD_ENABLED
+        value: "false"
       - key: QQQ_RETEST_WATCH_ENABLED
         value: "true"
       - key: QQQ_RETEST_LEVELS_DATE
@@ -133,6 +136,9 @@ services:
         sync: false
       - key: DISCORD_WEBHOOK_URL
         sync: false
+      # Master switch for ALL SpreadWorks Discord posts. Flip to "true" to re-enable.
+      - key: SPREADWORKS_DISCORD_ENABLED
+        value: "false"
       - key: QQQ_RETEST_WATCH_ENABLED
         value: "true"
       - key: QQQ_RETEST_LEVELS_DATE
@@ -187,6 +193,9 @@ services:
         sync: false
       - key: DISCORD_WEBHOOK_URL
         sync: false
+      # Master switch for ALL SpreadWorks Discord posts. Flip to "true" to re-enable.
+      - key: SPREADWORKS_DISCORD_ENABLED
+        value: "false"
       - key: VITE_API_URL
         sync: false
 

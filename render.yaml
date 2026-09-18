@@ -180,6 +180,9 @@ services:
         value: "3.11.0"
       - key: DISCORD_WEBHOOK_URL
         sync: false
+      # Master switch for ALL SpreadWorks Discord posts. Flip to "true" to re-enable.
+      - key: SPREADWORKS_DISCORD_ENABLED
+        value: "false"
 
   # SERVICE 4: Backtest Worker (Background Worker)
   # Processes long-running backtests without HTTP timeouts
