@@ -573,10 +573,12 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     # ASTRA-3 — exact $500 UPDRAFT/BACKDRAFT book frozen 2026-09-18 after
-    # executable-NBBO account-wall validation. Historical primary window
-    # 2025-03-27..2026-07-24: $500 -> $2,358.50, 105 trades, doubled in 204
-    # calendar days, -15.43% max drawdown. This is still HISTORICAL ONLY:
-    # zero-order paper forward until enough new trades exist.
+    # executable-NBBO account-wall validation. The original one-contract path
+    # was $500 -> $2,358.50. A frozen staged-compound audit (same signals and
+    # fills, 25% of realized equity, max 3 contracts) was $500 -> $4,612.40
+    # with -24.02% max drawdown. Multi-contract touch depth is not present in
+    # the historical table, so the three-contract cap remains PAPER ONLY and
+    # cannot be raised without forward execution evidence.
     "astra3": {
         "display": "ASTRA-3",
         "strategy": "updraft",
@@ -586,8 +588,9 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "defaults": {
             "starting_capital": 500.0,
             "enabled": False,          # paper-only; explicitly enable after deploy
-            "max_contracts": 1,
-            # Exact frozen affordability rule: ask*100 + $0.70 <= 25% equity.
+            "max_contracts": 3,
+            # Exact staged-compound rule: floor(25% of current realized equity
+            # / (ask*100 + $0.70)), capped at three whole contracts.
             "bp_pct": 0.25,
             "sd_mult": 1.0,
             "delta_skew": 0,

@@ -141,6 +141,42 @@ def test_astra3_uses_exact_book_rule_ask_fill_fee_and_cap():
     ) is None
 
 
+def test_astra3_staged_compounding_sizes_from_current_equity_and_caps_at_three():
+    params = {
+        **DEFAULT_PARAMS,
+        "mode": "astra3",
+        "astra3_fee": True,
+        "min_option_price": 0.0,
+        "max_spread_pct": 999.0,
+    }
+    config = {
+        "bp_pct": 0.25,
+        "max_contracts": 3,
+        "pt_pct": 9.9999,
+        "sl_pct": 0.50,
+    }
+
+    one = build_updraft_signal(
+        chain=_chain(flow_imb=-0.20, r30=25.0),
+        today=date(2026, 9, 18), params=params, mode="astra3",
+        config=config, equity=500.0,
+    )
+    three = build_updraft_signal(
+        chain=_chain(flow_imb=-0.20, r30=25.0),
+        today=date(2026, 9, 18), params=params, mode="astra3",
+        config=config, equity=1000.0,
+    )
+    still_three = build_updraft_signal(
+        chain=_chain(flow_imb=-0.20, r30=25.0),
+        today=date(2026, 9, 18), params=params, mode="astra3",
+        config=config, equity=10000.0,
+    )
+
+    assert one is not None and one.contracts == 1
+    assert three is not None and three.contracts == 3
+    assert still_three is not None and still_three.contracts == 3
+
+
 def test_astra3_falls_through_to_backdraft_mechanism():
     params = {**DEFAULT_PARAMS, "mode": "astra3", "astra3_fee": True,
               "min_option_price": 0.0, "max_spread_pct": 999.0}
@@ -158,7 +194,7 @@ def test_astra3_registry_is_the_frozen_500_dollar_forward_book():
     d = get_bot("astra3")["defaults"]
     assert d["enabled"] is False
     assert d["starting_capital"] == 500.0
-    assert d["bp_pct"] == 0.25 and d["max_contracts"] == 1
+    assert d["bp_pct"] == 0.25 and d["max_contracts"] == 3
     assert d["mode"] == "astra3" and d["hold_minutes"] == 30
     assert d["flow_max"] == -0.13376407997558806
     assert d["r30_min"] == 19.982448725892155
