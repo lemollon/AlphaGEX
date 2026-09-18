@@ -197,8 +197,14 @@ def close_position(
     close_value: float,
     close_reason: str,
     now: datetime,
+    *,
+    legs_override: list[dict[str, Any]] | None = None,
 ) -> float:
-    """Move position OPEN -> CLOSED. Returns realized_pnl ($)."""
+    """Move position OPEN -> CLOSED. Returns realized_pnl ($).
+
+    ``legs_override`` atomically persists close-time execution evidence (for
+    ASTRA-3, the displayed touch size) into both the position and closed ledger.
+    """
     t_pos = bot_table(bot, "positions")
     t_cls = bot_table(bot, "closed_trades")
     with engine.begin() as conn:
@@ -216,11 +222,15 @@ def close_position(
         else:
             realized = (float(close_value) - entry_price) * contracts * 100.0
 
+        legs_json = (json.dumps(legs_override) if legs_override is not None
+                     else row["legs"])
+
         conn.execute(text(
             f"UPDATE {t_pos} SET status='CLOSED', "
-            "mtm_value=:cv, mtm_pnl=:rp, mtm_updated_at=:n "
+            "mtm_value=:cv, mtm_pnl=:rp, mtm_updated_at=:n, legs=:legs "
             "WHERE position_id=:p"
-        ), {"cv": close_value, "rp": realized, "n": now, "p": position_id})
+        ), {"cv": close_value, "rp": realized, "n": now,
+             "legs": legs_json, "p": position_id})
 
         conn.execute(text(
             f"INSERT INTO {t_cls} ("
@@ -231,7 +241,7 @@ def close_position(
             ")"
         ), {
             "pid": position_id, "cp": close_value, "ct": now, "cr": close_reason,
-            "rp": realized, "con": contracts, "legs": row["legs"],
+            "rp": realized, "con": contracts, "legs": legs_json,
             "ep": entry_price, "et": row["entry_time"],
             "tk": row["ticker"], "st": strategy,
         })

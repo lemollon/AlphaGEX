@@ -1,5 +1,5 @@
 """Unit tests for the live chain provider's pure helpers (no network)."""
-from backend.bots.routes_helpers import LiveTradierChainProvider
+from backend.bots.routes_helpers import LiveTradierChainProvider, _displayed_size
 
 
 class _Response:
@@ -41,8 +41,10 @@ def test_occ_symbol_spx_uses_spxw_root():
 def test_exit_prices_use_long_bid_and_short_ask_from_one_snapshot():
     p = LiveTradierChainProvider.__new__(LiveTradierChainProvider)
     p._client = _Client([
-        {"symbol": "SPY260918C00763000", "bid": 0.38, "ask": 0.39},
-        {"symbol": "SPY260918C00764000", "bid": 0.21, "ask": 0.22},
+        {"symbol": "SPY260918C00763000", "bid": 0.38, "ask": 0.39,
+         "bidsize": 7, "asksize": 8},
+        {"symbol": "SPY260918C00764000", "bid": 0.21, "ask": 0.22,
+         "bidsize": 9, "asksize": 10},
     ])
     legs = [
         {"side": "long", "type": "call", "strike": 763,
@@ -51,6 +53,18 @@ def test_exit_prices_use_long_bid_and_short_ask_from_one_snapshot():
          "expiration": "2026-09-18"},
     ]
     assert p.get_leg_exit_prices(ticker="SPY", legs=legs) == [0.38, 0.22]
+    assert p.get_leg_exit_quotes(ticker="SPY", legs=legs) == [
+        {"price": 0.38, "size": 7},
+        {"price": 0.22, "size": 10},
+    ]
+
+
+def test_displayed_size_rejects_missing_negative_or_fractional_values():
+    assert _displayed_size("3") == 3
+    assert _displayed_size(0) == 0
+    assert _displayed_size(None) is None
+    assert _displayed_size(-1) is None
+    assert _displayed_size(2.5) is None
 
 
 def test_exit_prices_distinguish_missing_bid_from_displayed_zero():

@@ -6,6 +6,7 @@ directly, never this module.
 from __future__ import annotations
 
 import logging
+import math
 import os
 from datetime import date, timedelta
 from typing import Any
@@ -23,6 +24,17 @@ ALPHAGEX_BASE_URL = os.getenv("ALPHAGEX_BASE_URL", "http://localhost:8000")
 
 def _headers() -> dict:
     return {"Authorization": f"Bearer {TRADIER_TOKEN}", "Accept": "application/json"}
+
+
+def _displayed_size(value: Any) -> int | None:
+    """Return a non-negative whole-contract quote size, else ``None``."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number < 0 or not number.is_integer():
+        return None
+    return int(number)
 
 
 class LiveTradierChainProvider:
@@ -70,6 +82,8 @@ class LiveTradierChainProvider:
             "options": [
                 {"strike": o["strike"], "type": o["option_type"],
                  "bid": o.get("bid") or 0, "ask": o.get("ask") or 0,
+                 "bid_size": _displayed_size(o.get("bidsize")),
+                 "ask_size": _displayed_size(o.get("asksize")),
                  # volume is CUMULATIVE for the session, not an interval.
                  # UPDRAFT/BACKDRAFT difference it across snapshots to get a
                  # 30-minute call/put imbalance (see bots/flow_store.py).
@@ -205,6 +219,12 @@ class LiveTradierChainProvider:
         cannot fire a price exit on fabricated liquidity. A displayed zero bid
         on a long leg is retained as the conservative liquidation floor.
         """
+        quotes = self.get_leg_exit_quotes(ticker=ticker, legs=legs)
+        return [None if q is None else q["price"] for q in quotes]
+
+    def get_leg_exit_quotes(self, *, ticker: str,
+                            legs: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
+        """Executable close touches and displayed sizes from one snapshot."""
         symbols = [self._occ(ticker, leg) for leg in legs]
         resp = self._client.get(
             f"{TRADIER_BASE}/markets/quotes",
@@ -217,7 +237,7 @@ class LiveTradierChainProvider:
         if isinstance(quotes, dict):
             quotes = [quotes]
         by_sym = {q["symbol"]: q for q in quotes if q.get("symbol")}
-        out: list[float | None] = []
+        out: list[dict[str, Any] | None] = []
         for sym, leg in zip(symbols, legs):
             q = by_sym.get(sym)
             if q is None:
@@ -232,11 +252,14 @@ class LiveTradierChainProvider:
                 out.append(None)
                 continue
             if leg.get("side") == "short":
-                out.append(ask if ask is not None and ask > 0 else None)
+                price = ask if ask is not None and ask > 0 else None
+                size = _displayed_size(q.get("asksize"))
             else:
                 # A zero bid is executable and is the true lower bound for a
                 # long option. Never turn it into a negative liquidation value.
-                out.append(bid if bid is not None and bid >= 0 else None)
+                price = bid if bid is not None and bid >= 0 else None
+                size = _displayed_size(q.get("bidsize"))
+            out.append({"price": price, "size": size})
         return out
 
     def get_daily_history(self, *, ticker: str, days: int) -> list[dict[str, Any]]:

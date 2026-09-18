@@ -11,6 +11,7 @@ DIFFERENT cumulative volumes.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -26,13 +27,16 @@ class FlowChainProvider(ChainProvider):
     """Serves a 0DTE SPY chain whose cumulative volume we control per scan."""
 
     def __init__(self, spot=600.0, call_vol=1000, put_vol=1000,
-                 put_wall=598.0, bid=0.60, ask=0.64):
+                 put_wall=598.0, bid=0.60, ask=0.64,
+                 bid_size=10, ask_size=10):
         self.spot = spot
         self.call_vol = call_vol
         self.put_vol = put_vol
         self.put_wall = put_wall
         self.bid = bid
         self.ask = ask
+        self.bid_size = bid_size
+        self.ask_size = ask_size
 
     def get_chain(self, *, ticker, dte, today):
         strikes = [self.spot + d for d in (-2, -1, 0, 1, 2, 3)]
@@ -41,6 +45,7 @@ class FlowChainProvider(ChainProvider):
             "spot": self.spot, "ticker": ticker, "expiration": today,
             "options": [
                 {"strike": s, "type": t, "bid": self.bid, "ask": self.ask,
+                 "bid_size": self.bid_size, "ask_size": self.ask_size,
                  # split the session total evenly across strikes
                  "volume": (self.call_vol if t == "call" else self.put_vol) // n,
                  "open_interest": 100}
@@ -55,6 +60,14 @@ class FlowChainProvider(ChainProvider):
     def get_leg_exit_prices(self, *, ticker, legs):
         return [self.ask if leg.get("side") == "short" else self.bid
                 for leg in legs]
+
+    def get_leg_exit_quotes(self, *, ticker, legs):
+        return [
+            {"price": self.ask, "size": self.ask_size}
+            if leg.get("side") == "short" else
+            {"price": self.bid, "size": self.bid_size}
+            for leg in legs
+        ]
 
     def get_daily_history(self, *, ticker, days):
         return []
@@ -114,11 +127,16 @@ def test_astra3_opens_at_ask_plus_fee_and_exits_after_30_minutes(db_session):
     )
     assert len(list_open_positions(eng, "astra3")) == 0
     closed = eng.connect().execute(text(
-        "SELECT close_reason, realized_pnl FROM astra3_closed_trades"
+        "SELECT close_reason, realized_pnl, contracts, legs "
+        "FROM astra3_closed_trades"
     )).mappings().first()
     assert closed["close_reason"] == "TIME_STOP"
     # Paid the $0.64 ask plus $0.70 fee; sold at the $0.60 bid.
     assert round(float(closed["realized_pnl"]), 2) == -4.70
+    leg = json.loads(closed["legs"])[0]
+    assert leg["entry_touch_size"] == 10
+    assert leg["exit_touch_size"] == 10
+    assert leg["exit_depth_ok"] is True
 
 
 def test_astra3_blocks_reentry_during_frozen_30_minute_cooldown(db_session):

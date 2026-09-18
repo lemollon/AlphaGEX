@@ -624,6 +624,10 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "required_trades": 20,
             "minimum_pnl": 0.0,       # strict greater-than in the evaluator
             "drawdown_floor": -80.0,  # peak-to-trough dollars, inclusive
+            # Every contract must have been displayed at the entry ask and
+            # exit bid used by the paper ledger. Missing depth permanently
+            # invalidates the forward sample; PASS remains human-review only.
+            "require_touch_depth": True,
         },
     },
 

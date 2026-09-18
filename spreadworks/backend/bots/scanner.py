@@ -67,6 +67,9 @@ class ChainProvider(Protocol):
     # legs return bid; short legs return ask. This avoids racing a separate
     # mid request against a separate spread request.
     def get_leg_exit_prices(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[float | None]: ...
+    # Optional richer form used by ASTRA-3 to prove that enough contracts were
+    # displayed at the same executable touch used for its paper exit.
+    def get_leg_exit_quotes(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[dict[str, Any] | None]: ...
 
 
 def _position_time_ct(value: datetime | str, now_ct: datetime,
@@ -111,6 +114,49 @@ def _executable_exit_prices(chain_provider: Any, ticker: str,
     if not isinstance(prices, (list, tuple)) or len(prices) != len(legs):
         return None
     return list(prices)
+
+
+def _executable_exit_quotes(chain_provider: Any, ticker: str,
+                            legs: list[dict[str, Any]]) -> list[dict[str, Any] | None] | None:
+    """Return one-snapshot executable touches plus displayed sizes."""
+    fn = getattr(chain_provider, "get_leg_exit_quotes", None)
+    if fn is None:
+        return None
+    try:
+        quotes = fn(ticker=ticker, legs=legs)
+    except Exception as e:  # noqa: BLE001 - quote hiccups cannot kill the fleet
+        logger.warning(f"get_leg_exit_quotes failed for {ticker}: {e}; price-only fallback")
+        return None
+    if not isinstance(quotes, (list, tuple)) or len(quotes) != len(legs):
+        return None
+    if any(q is not None and not isinstance(q, dict) for q in quotes):
+        return None
+    return list(quotes)
+
+
+def _legs_with_exit_depth(legs: list[dict[str, Any]],
+                          exit_quotes: list[dict[str, Any] | None] | None,
+                          contracts: int) -> list[dict[str, Any]]:
+    """Copy legs and attach the exact exit-touch liquidity audit."""
+    audited: list[dict[str, Any]] = []
+    for index, leg in enumerate(legs):
+        out = dict(leg)
+        quote = (exit_quotes[index]
+                 if exit_quotes is not None and index < len(exit_quotes) else None)
+        raw_size = quote.get("size") if quote is not None else None
+        raw_price = quote.get("price") if quote is not None else None
+        try:
+            size_number = float(raw_size)
+            size = (int(size_number) if size_number >= 0
+                    and size_number.is_integer() else None)
+        except (TypeError, ValueError):
+            size = None
+        out["exit_touch_price"] = raw_price
+        out["exit_touch_size"] = size
+        out["exit_depth_ok"] = bool(raw_price is not None and size is not None
+                                    and size >= contracts)
+        audited.append(out)
+    return audited
 
 
 def _slippage_total(chain_provider: Any, ticker: str,
@@ -1191,8 +1237,13 @@ def run_scan_cycle(
                     monitor_result = {"outcome": "TRADE", "reason": "CLOSE_SETTLE",
                                       "position_id": pos["position_id"]}
                     continue
-            exit_prices = _executable_exit_prices(
+            exit_quotes = _executable_exit_quotes(
                 chain_provider, pos["ticker"], legs)
+            exit_prices = (
+                [None if q is None else q.get("price") for q in exit_quotes]
+                if exit_quotes is not None else
+                _executable_exit_prices(chain_provider, pos["ticker"], legs)
+            )
             using_touches = exit_prices is not None
             mids = (exit_prices if using_touches else
                     chain_provider.get_leg_mids(ticker=pos["ticker"], legs=legs))
@@ -1294,9 +1345,13 @@ def run_scan_cycle(
                 pivot_confirmed=_pivot_against(cfg, pos, now_ct),
             )
             if d.should_close:
+                close_legs = (
+                    _legs_with_exit_depth(legs, exit_quotes, int(pos["contracts"]))
+                    if bot == "astra3" else None
+                )
                 close_position(engine, bot, pos["position_id"],
                                close_value=mtm_value, close_reason=d.reason,
-                               now=now_ct)
+                               now=now_ct, legs_override=close_legs)
                 if bool(cfg.get("discord_alerts")):
                     try:
                         from . import discord_alerts
