@@ -984,10 +984,51 @@ async def fetch_symbol_market(app, symbol: str, now: datetime) -> dict[str, Any]
         }),
     )
     quotes = _quote_rows(quote_payload)
-    if not quotes or quotes[0].get("last") is None or quotes[0].get("trade_date") is None:
+    if not quotes:
         raise RuntimeError(f"Tradier returned no usable {symbol} quote")
     quote = quotes[0]
-    quote_at = datetime.fromtimestamp(float(quote["trade_date"]) / 1000.0, UTC)
+    last_price = quote.get("last")
+    trade_at = _option_time(quote.get("trade_date"))
+    try:
+        last_value = float(last_price) if last_price is not None else None
+        if last_value is not None and last_value <= 0:
+            last_value = None
+    except (TypeError, ValueError):
+        last_value = None
+    bid, ask = quote.get("bid"), quote.get("ask")
+    bid_at = _option_time(quote.get("bid_date"))
+    ask_at = _option_time(quote.get("ask_date"))
+    last_fresh = (
+        last_value is not None and trade_at is not None
+        and freshness(trade_at, now)["fresh"]
+    )
+    bbo_fresh = False
+    if bid is not None and ask is not None and bid_at and ask_at:
+        try:
+            bid_value, ask_value = float(bid), float(ask)
+            bbo_fresh = (
+                bid_value > 0 and ask_value >= bid_value
+                and freshness(bid_at, now)["fresh"]
+                and freshness(ask_at, now)["fresh"]
+            )
+        except (TypeError, ValueError):
+            bbo_fresh = False
+    if last_fresh:
+        price = last_value
+        quote_at = trade_at
+        price_basis = "last trade"
+    elif bbo_fresh:
+        price = (bid_value + ask_value) / 2.0
+        quote_at = min(bid_at, ask_at)
+        price_basis = "bid/ask midpoint"
+    elif last_value is not None and trade_at is not None:
+        # Preserve the stale last and its real timestamp. The rule evaluator
+        # will reject it through the unchanged 90-second freshness gate.
+        price = last_value
+        quote_at = trade_at
+        price_basis = "last trade"
+    else:
+        raise RuntimeError(f"Tradier returned no timestamped {symbol} last trade or fresh valid BBO")
     bars: list[MarketBar] = []
     for raw in _bar_rows(bars_payload):
         if any(raw.get(key) is None for key in ("timestamp", "open", "high", "low", "close")):
@@ -998,7 +1039,8 @@ async def fetch_symbol_market(app, symbol: str, now: datetime) -> dict[str, Any]
             close=float(raw["close"]), volume=int(raw["volume"]) if raw.get("volume") is not None else None,
             vwap=float(raw["vwap"]) if raw.get("vwap") is not None else None,
         ))
-    return {"symbol": symbol, "price": float(quote["last"]), "quote_timestamp": quote_at,
+    return {"symbol": symbol, "price": price, "price_basis": price_basis,
+            "quote_timestamp": quote_at,
             "bars": bars, "source": "Tradier production consolidated feed",
             "session": market_session(now), **freshness(quote_at, now)}
 
@@ -1071,58 +1113,161 @@ def _choose_expiration(available: list[date], setup: dict[str, Any], today: date
     return available[0] if available else None
 
 
+def _display_et(value: Any) -> str:
+    if value is None:
+        return "unavailable"
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return "unavailable"
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(ET).strftime("%Y-%m-%d %I:%M:%S %p ET")
+
+
+def _human_trigger(entry: dict[str, Any]) -> str:
+    kind = entry.get("type")
+    bars = int(entry.get("confirmation_bars", 2))
+    if kind == "breakout_hold":
+        return f"Break and hold above ${entry['breakout_level']:g} for {bars} completed 1-minute bar(s)."
+    if kind == "breakout_retest":
+        return f"Break above ${entry['breakout_level']:g}, retest it, then hold for {bars} completed 1-minute bar(s)."
+    if kind == "support_hold":
+        return f"Test support ${entry['support_low']:g}-${entry['support_high']:g} and hold it for {bars} completed 1-minute bar(s)."
+    if kind == "failed_reclaim":
+        return f"Fail to reclaim ${entry['reclaim_level']:g}, confirmed by {bars} completed 1-minute close(s) below it."
+    if kind == "vwap_reclaim":
+        return f"Reclaim VWAP and hold above it for {bars} completed 1-minute bar(s)."
+    if kind == "opening_range_breakout":
+        return f"Close above the ${entry['range_high']:g} opening-range high for {bars} completed 1-minute bar(s)."
+    if kind == "opening_range_rejection":
+        return f"Reject the ${entry['range_low']:g}-${entry['range_high']:g} opening range and close below it for {bars} bar(s)."
+    if kind == "opening_range_hold":
+        return f"Test both sides of ${entry['range_low']:g}-${entry['range_high']:g}, then hold inside for {bars} completed 1-minute bar(s)."
+    return "NOT DEFINED — plan did not provide a supported entry trigger."
+
+
+def _human_invalidation(rule: dict[str, Any] | None) -> str:
+    rule = rule or {}
+    if rule.get("type") == "close_below" and rule.get("level") is not None:
+        return f"Invalid on a completed 1-minute close below ${float(rule['level']):g}."
+    if rule.get("type") == "close_above" and rule.get("level") is not None:
+        return f"Invalid on a completed 1-minute close above ${float(rule['level']):g}."
+    if rule.get("type") == "time" and rule.get("time"):
+        return f"Invalid after {rule['time']}."
+    return "NOT DEFINED — plan did not provide an actionable invalidation."
+
+
+def _defined_or_warning(value: Any, label: str) -> str:
+    if value is None or value == "" or value == []:
+        return f"NOT DEFINED — plan did not provide {label}."
+    if isinstance(value, dict):
+        return "; ".join(
+            f"{str(key).replace('_', ' ')}: {_defined_or_warning(item, label)}"
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return "; ".join(_defined_or_warning(item, label) for item in value)
+    return str(value)
+
+
 def build_alert_embed(setup: dict[str, Any], prior_state: str, result: RuleResult,
                       market: dict[str, Any], option_selection: dict[str, Any] | None,
                       options_reason: str | None, now: datetime) -> dict[str, Any]:
-    title = f"{result.state.replace('_', ' ')} — {setup['symbol']} {setup['strategy'].replace('_', ' ').upper()}"
+    strategy = setup["strategy"].replace("_", " ").upper()
+    unavailable = result.state == "DATA_UNAVAILABLE"
+    if unavailable:
+        title = f"NO TRADE — {setup['symbol']} DATA UNAVAILABLE"
+        action = (
+            f"NO TRADE. {result.reason} Market data must be 90 seconds old or less. "
+            "Monitoring resumes automatically when fresh data returns."
+        )
+    elif result.state == "ENTRY_READY":
+        title = f"ENTRY READY — {setup['symbol']} {strategy}"
+        action = "Review the qualified alert and defined risk; advisory only—no order was routed."
+    elif result.state == "INVALIDATED":
+        title = f"INVALIDATED — {setup['symbol']} {strategy}"
+        action = f"NO TRADE / EXIT REVIEW. {result.reason}"
+    else:
+        title = f"{result.state.replace('_', ' ')} — {setup['symbol']} {strategy}"
+        action = result.reason
+
+    price = f"${market['price']:.2f}" if market.get("price") is not None else "unavailable"
+    basis = market.get("price_basis") or "price basis unavailable"
     fields = [
-        {"name": "Symbol", "value": setup["symbol"], "inline": True},
-        {"name": "Thesis", "value": setup["thesis"], "inline": True},
-        {"name": "Current underlying price", "value": (f"{market['price']:.2f}" if market.get("price") is not None else "unavailable"), "inline": True},
-        {"name": "State transition", "value": f"{prior_state} -> {result.state}", "inline": True},
-        {"name": "Trigger evidence", "value": result.reason, "inline": False},
-        {"name": "Original trigger", "value": _json(setup["entry"])[:1024], "inline": False},
-        {"name": "Invalidation", "value": _json(setup["invalidation"]), "inline": False},
-        {"name": "Profit framework", "value": str(setup.get("profit_taking_framework") or "not specified"), "inline": False},
-        {"name": "Main risk", "value": str(setup.get("main_risks") or "not specified"), "inline": False},
-        {"name": "Market data", "value": f"{market['source']} | {market['session']} | exchange {market['exchange_timestamp']} | retrieved {market['retrieval_timestamp']} | age {market['age_seconds']}s", "inline": False},
+        {"name": "Action", "value": action[:1024], "inline": False},
+        {"name": "Setup", "value": (
+            f"{setup['symbol']} | {strategy} | {setup['thesis'].upper()} | "
+            f"{prior_state} → {result.state} | underlying {price} ({basis})"
+        )[:1024], "inline": False},
+        {"name": "Entry rule", "value": _human_trigger(setup.get("entry") or {}), "inline": False},
+        {"name": "Decision evidence", "value": result.reason[:1024], "inline": False},
+        {"name": "Invalidation", "value": _human_invalidation(setup.get("invalidation")), "inline": False},
+        {"name": "Profit target", "value": _defined_or_warning(
+            setup.get("profit_taking_framework"), "a profit target or framework"
+        )[:1024], "inline": False},
+        {"name": "Main risk", "value": _defined_or_warning(
+            setup.get("main_risks"), "the main setup risk"
+        )[:1024], "inline": False},
+        {"name": "Underlying data", "value": (
+            f"{market.get('source') or 'source unavailable'} | session {market.get('session') or 'unavailable'} | "
+            f"exchange {_display_et(market.get('exchange_timestamp'))} | "
+            f"retrieved {_display_et(market.get('retrieval_timestamp'))} | "
+            f"age {market.get('age_seconds') if market.get('age_seconds') is not None else 'unavailable'}s"
+        )[:1024], "inline": False},
     ]
     if option_selection:
-        leg_lines = []
-        greek_lines = []
+        leg_lines, greek_lines, provenance = [], [], []
         for leg in option_selection.get("legs", []):
             expiration = leg.get("expiration") or option_selection.get("expiration")
             leg_lines.append(
-                f"{leg['action'].upper()} {leg['right']} {leg['strike']:g} exp {expiration} | "
-                f"bid/ask {leg['bid']:.2f}/{leg['ask']:.2f} | delta {leg['delta']:.3f}"
+                f"{leg['action'].upper()} {leg['right']} ${leg['strike']:g} exp {expiration} | "
+                f"bid/ask {leg['bid']:.2f}/{leg['ask']:.2f} | Δ {leg['delta']:.3f}"
             )
             greek_lines.append(
-                f"{leg['right']} {leg['strike']:g}: gamma {float(leg['gamma']):.4f}, "
-                f"theta {float(leg['theta']):.4f}, vega {float(leg['vega']):.4f}, IV {float(leg['iv']):.2%}"
+                f"{leg['right']} ${leg['strike']:g}: Γ {float(leg['gamma']):.4f}, "
+                f"Θ {float(leg['theta']):.4f}, Vega {float(leg['vega']):.4f}, IV {float(leg['iv']):.1%}"
+            )
+            provenance.append(
+                f"{leg['right']} ${leg['strike']:g}: exchange {_display_et(leg.get('exchange_timestamp'))}, "
+                f"retrieved {_display_et(leg.get('retrieval_timestamp'))}, age {leg.get('age_seconds')}s"
             )
         price_name = "Natural credit" if "natural_credit" in option_selection else "Natural debit"
-        price = option_selection.get("natural_credit", option_selection.get("natural_debit"))
+        option_price = option_selection.get("natural_credit", option_selection.get("natural_debit"))
+        width = option_selection.get("width")
+        max_risk = option_selection.get("max_risk")
+        cost_text = f"{price_name} ${option_price:.2f}"
+        if width is not None:
+            cost_text += f" | width ${float(width):g}"
+        cost_text += (f" | max risk ${float(max_risk):.2f}" if max_risk is not None
+                      else " | max risk NOT DEFINED")
         fields.extend([
-            {"name": "Expiration and legs", "value": "\n".join(leg_lines)[:1024], "inline": False},
+            {"name": "Option legs", "value": "\n".join(leg_lines)[:1024], "inline": False},
             {"name": "Greeks / IV", "value": "\n".join(greek_lines)[:1024], "inline": False},
+            {"name": "Defined cost / risk", "value": cost_text, "inline": False},
             {"name": "Options data", "value": (
-                f"{option_selection.get('source')} | "
-                + "; ".join(
-                    f"{leg['right']} {leg['strike']:g} exchange {leg['exchange_timestamp']} "
-                    f"retrieved {leg['retrieval_timestamp']} age {leg['age_seconds']}s"
-                    for leg in option_selection.get("legs", [])
-                )
+                f"{option_selection.get('source') or 'source unavailable'} | session regular | "
+                + "; ".join(provenance)
             )[:1024], "inline": False},
-            {"name": "Defined risk", "value": f"{price_name} {price:.2f} | width {option_selection.get('width', 'n/a')} | max risk ${option_selection.get('max_risk', 'n/a')}", "inline": False},
-            {"name": "Strike selection", "value": str(option_selection.get("selection_reason"))[:1024], "inline": False},
         ])
         if option_selection.get("settlement_note"):
             fields.append({"name": "Settlement", "value": option_selection["settlement_note"][:1024], "inline": False})
     elif result.state == "ENTRY_READY":
-        fields.append({"name": "Options", "value": options_reason or "ENTRY TRIGGER HIT — STRIKES PENDING OPTIONS DATA", "inline": False})
-    return {"title": title, "color": 0x34D399 if result.state == "ENTRY_READY" else 0xF87171,
-            "fields": fields, "timestamp": now.isoformat(),
-            "footer": {"text": "Render Intraday Options Watch | alert only | no order routing"}}
+        fields.append({
+            "name": "Options",
+            "value": (options_reason or "ENTRY TRIGGER HIT — STRIKES PENDING OPTIONS DATA")[:1024],
+            "inline": False,
+        })
+    return {
+        "title": title,
+        "description": "Alert only. No order preview, routing, modification, or cancellation.",
+        "color": 0x9CA3AF if unavailable else (0x34D399 if result.state == "ENTRY_READY" else 0xF87171),
+        "fields": fields, "timestamp": now.isoformat(),
+        "footer": {"text": "Render Intraday Options Watch | alert only | no order routing"},
+    }
 
 
 def _return_from_bars(market: dict[str, Any]) -> float | None:

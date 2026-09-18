@@ -204,6 +204,77 @@ def test_stale_quote_and_bar_are_rejected_at_90_seconds():
     assert stale_bar.state == "DATA_UNAVAILABLE"
 
 
+def test_fetch_symbol_market_uses_fresh_bbo_midpoint_when_last_is_stale(monkeypatch):
+    last_at = int((NOW - timedelta(seconds=120)).timestamp() * 1000)
+    bid_at = int((NOW - timedelta(seconds=20)).timestamp() * 1000)
+    ask_at = int((NOW - timedelta(seconds=10)).timestamp() * 1000)
+
+    async def fake_get(_app, path, _params):
+        if path.endswith("quotes"):
+            return {"quotes": {"quote": {
+                "symbol": "QQQ", "last": 100, "trade_date": last_at,
+                "bid": 101, "ask": 101.2, "bid_date": bid_at, "ask_date": ask_at,
+            }}}
+        return {"series": {"data": []}}
+
+    monkeypatch.setattr(watch, "_tradier_get", fake_get)
+    market = asyncio.run(watch.fetch_symbol_market(object(), "QQQ", NOW))
+    assert market["price"] == pytest.approx(101.1)
+    assert market["price_basis"] == "bid/ask midpoint"
+    assert market["quote_timestamp"] == NOW - timedelta(seconds=20)
+    assert market["fresh"] is True
+
+
+def test_fetch_symbol_market_uses_fresh_bbo_midpoint_when_last_is_missing(monkeypatch):
+    bid_at = int((NOW - timedelta(seconds=15)).timestamp() * 1000)
+    ask_at = int((NOW - timedelta(seconds=5)).timestamp() * 1000)
+
+    async def fake_get(_app, path, _params):
+        if path.endswith("quotes"):
+            return {"quotes": {"quote": {
+                "symbol": "XSP", "last": None, "trade_date": None,
+                "bid": 700, "ask": 700.4, "bid_date": bid_at, "ask_date": ask_at,
+            }}}
+        return {"series": {"data": []}}
+
+    monkeypatch.setattr(watch, "_tradier_get", fake_get)
+    market = asyncio.run(watch.fetch_symbol_market(object(), "XSP", NOW))
+    assert market["price"] == pytest.approx(700.2)
+    assert market["price_basis"] == "bid/ask midpoint"
+    assert market["quote_timestamp"] == NOW - timedelta(seconds=15)
+
+
+def test_fetch_symbol_market_preserves_stale_last_when_bbo_is_also_stale(monkeypatch):
+    last_at = int((NOW - timedelta(seconds=120)).timestamp() * 1000)
+    bid_at = int((NOW - timedelta(seconds=110)).timestamp() * 1000)
+    ask_at = int((NOW - timedelta(seconds=100)).timestamp() * 1000)
+    bar_at = int((NOW - timedelta(minutes=1, seconds=30)).timestamp())
+
+    async def fake_get(_app, path, _params):
+        if path.endswith("quotes"):
+            return {"quotes": {"quote": {
+                "symbol": "QQQ", "last": 100, "trade_date": last_at,
+                "bid": 101, "ask": 101.2, "bid_date": bid_at, "ask_date": ask_at,
+            }}}
+        return {"series": {"data": [{
+            "timestamp": bar_at, "open": 100, "high": 101,
+            "low": 99.9, "close": 100.5, "volume": 1000,
+        }]}}
+
+    monkeypatch.setattr(watch, "_tradier_get", fake_get)
+    market = asyncio.run(watch.fetch_symbol_market(object(), "QQQ", NOW))
+    assert market["price"] == 100
+    assert market["price_basis"] == "last trade"
+    assert market["fresh"] is False
+    result = evaluate_setup(
+        _setup({"type": "breakout_hold", "breakout_level": 99}),
+        market["bars"], NOW, quote_timestamp=market["quote_timestamp"],
+        quote_price=market["price"],
+    )
+    assert result.state == "DATA_UNAVAILABLE"
+    assert "quote is stale" in result.reason
+
+
 def test_prior_day_setup_expires_without_using_levels():
     setup = _setup({"type": "support_hold", "support_low": 99, "support_high": 100})
     setup["trading_date"] = "2026-09-17"
@@ -515,6 +586,80 @@ def test_plan_endpoint_requires_symbols_and_setups(monkeypatch):
         asyncio.run(watch.post_plan(
             Request(), x_intraday_watch_token="configured-token", authorization=None
         ))
+
+
+def test_alert_embed_is_decision_first_human_readable_and_has_no_raw_json():
+    setup = _setup(
+        {"type": "breakout_retest", "breakout_level": 718},
+        invalidation={"type": "close_below", "level": 717},
+        profit_taking_framework=None, main_risks=None,
+    )
+    market = {
+        "price": 719.25, "price_basis": "bid/ask midpoint",
+        "source": "Tradier production consolidated feed", "session": "regular",
+        "exchange_timestamp": (NOW - timedelta(seconds=12)).isoformat(),
+        "retrieval_timestamp": NOW.isoformat(), "age_seconds": 12.0,
+    }
+    stamp = (NOW - timedelta(seconds=8)).isoformat()
+    option_selection = {
+        "source": "Tradier production option chain", "expiration": "2026-09-25",
+        "natural_debit": 1.25, "width": 5, "max_risk": 125,
+        "legs": [{
+            "action": "buy", "right": "C", "strike": 720, "bid": 3.1,
+            "ask": 3.2, "delta": .57, "gamma": .04, "theta": -.08,
+            "vega": .11, "iv": .24, "exchange_timestamp": stamp,
+            "retrieval_timestamp": NOW.isoformat(), "age_seconds": 8,
+        }, {
+            "action": "sell", "right": "C", "strike": 725, "bid": 1.95,
+            "ask": 2.05, "delta": .33, "gamma": .03, "theta": -.05,
+            "vega": .09, "iv": .23, "exchange_timestamp": stamp,
+            "retrieval_timestamp": NOW.isoformat(), "age_seconds": 8,
+        }],
+    }
+    embed = watch.build_alert_embed(
+        setup, "WAIT", watch.RuleResult("ENTRY_READY", "Two completed bars confirmed the retest."),
+        market, option_selection, None, NOW,
+    )
+    values = "\n".join(field["value"] for field in embed["fields"])
+    assert embed["title"] == "ENTRY READY — QQQ CALL DEBIT SPREAD"
+    assert embed["fields"][0]["name"] == "Action"
+    assert "Break above $718, retest it" in values
+    assert "completed 1-minute close below $717" in values
+    assert "BUY C $720" in values and "SELL C $725" in values
+    assert "bid/ask 3.10/3.20" in values and "Δ 0.570" in values
+    assert "Natural debit $1.25" in values and "max risk $125.00" in values
+    assert "2026-09-18 10:34:18 AM ET" in values
+    assert "NOT DEFINED — plan did not provide a profit target" in values
+    assert "NOT DEFINED — plan did not provide the main setup risk" in values
+    assert "{" not in values and "}" not in values
+    assert embed["footer"]["text"].endswith("no order routing")
+    rendered_framework = watch._defined_or_warning(
+        {"take_profit": "50% of debit", "scale_out": "first target"},
+        "a profit target",
+    )
+    assert rendered_framework == "take profit: 50% of debit; scale out: first target"
+    assert "{" not in rendered_framework
+
+
+def test_data_unavailable_embed_explicitly_says_no_trade_and_auto_resume():
+    setup = _setup({"type": "breakout_hold", "breakout_level": 718})
+    market = {
+        "price": 717.5, "price_basis": "last trade",
+        "source": "Tradier production consolidated feed", "session": "regular",
+        "exchange_timestamp": (NOW - timedelta(seconds=121)).isoformat(),
+        "retrieval_timestamp": NOW.isoformat(), "age_seconds": 121.0,
+    }
+    embed = watch.build_alert_embed(
+        setup, "NEAR_TRIGGER",
+        watch.RuleResult("DATA_UNAVAILABLE", "Underlying quote is stale (121.0s)."),
+        market, None, "options not requested", NOW,
+    )
+    values = "\n".join(field["value"] for field in embed["fields"])
+    assert embed["title"] == "NO TRADE — QQQ DATA UNAVAILABLE"
+    assert "NO TRADE" in values
+    assert "stale (121.0s)" in values
+    assert "90 seconds old or less" in values
+    assert "Monitoring resumes automatically" in values
 
 
 def test_no_order_routing_imports_or_calls_exist():
