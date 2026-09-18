@@ -82,19 +82,31 @@ def _direction(setup: dict[str, Any]) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _expected_move(levels_payload: dict[str, Any]) -> dict[str, float | None]:
+def _expected_move(levels_payload: dict[str, Any], market_structure: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Prefer the 1-week surface for next-week contract selection; retain 1-day context."""
     levels = _tv_data(levels_payload).get("levels")
-    if not isinstance(levels, list):
-        return {"lower": None, "upper": None, "dollars": None}
+    levels = levels if isinstance(levels, list) else []
     by_name = {
         row.get("name"): _coerce_float(row.get("price"))
         for row in levels
         if isinstance(row, dict) and row.get("name")
     }
-    upper = by_name.get("plus_1s_1d")
-    lower = by_name.get("minus_1s_1d")
-    dollars = round((upper - lower) / 2.0, 4) if upper is not None and lower is not None else None
-    return {"lower": lower, "upper": upper, "dollars": dollars}
+    structure = _tv_data(market_structure or {})
+    key_levels = structure.get("key_levels") if isinstance(structure.get("key_levels"), dict) else {}
+
+    upper_1w = _coerce_float(key_levels.get("plus_1sigma_1w"))
+    lower_1w = _coerce_float(key_levels.get("minus_1sigma_1w"))
+    upper_1d = _coerce_float(key_levels.get("plus_1sigma_1d")) or by_name.get("plus_1s_1d")
+    lower_1d = _coerce_float(key_levels.get("minus_1sigma_1d")) or by_name.get("minus_1s_1d")
+
+    dollars_1w = round((upper_1w - lower_1w) / 2.0, 4) if upper_1w is not None and lower_1w is not None else None
+    dollars_1d = round((upper_1d - lower_1d) / 2.0, 4) if upper_1d is not None and lower_1d is not None else None
+    return {
+        "preferred_horizon": "1w" if dollars_1w is not None else "1d",
+        "dollars": dollars_1w if dollars_1w is not None else dollars_1d,
+        "one_week": {"lower": lower_1w, "upper": upper_1w, "dollars": dollars_1w},
+        "one_day": {"lower": lower_1d, "upper": upper_1d, "dollars": dollars_1d},
+    }
 
 
 def _gamma_expiration_context(payload: dict[str, Any]) -> dict[str, Any]:
@@ -161,6 +173,8 @@ def _score_contract(
     iv_rank: float | None,
     expected_move: float | None,
     spot: float,
+    dte: int | None = None,
+    speculative_interest: float | None = None,
 ) -> tuple[float, dict[str, float]]:
     delta = abs(float(contract["delta"]))
     midpoint = sum(band) / 2.0
@@ -198,6 +212,20 @@ def _score_contract(
     else:
         iv_score = 1.0
 
+    # For next-week long premium, 7-12 DTE balances convexity with some theta runway.
+    if dte is None:
+        expiration_score = 0.0
+    elif 7 <= dte <= 12:
+        expiration_score = 5.0
+    elif 5 <= dte <= 14:
+        expiration_score = 3.0
+    else:
+        expiration_score = 1.0
+
+    speculation_score = 0.0
+    if speculative_interest is not None:
+        speculation_score = max(0.0, min(5.0, speculative_interest * 5.0))
+
     parts = {
         "tv_opportunity": round(vendor_score, 2),
         "delta_fit": round(delta_score, 2),
@@ -205,6 +233,8 @@ def _score_contract(
         "liquidity": round(liquidity_score, 2),
         "expected_move_fit": round(move_score, 2),
         "iv_rank_fit": round(iv_score, 2),
+        "expiration_fit": round(expiration_score, 2),
+        "speculative_interest": round(speculation_score, 2),
     }
     return round(sum(parts.values()), 2), parts
 
@@ -218,6 +248,8 @@ def _choose_candidate(
     opportunity_score: float | None,
     iv_rank: float | None,
     expected_move: float | None,
+    today: date,
+    speculative_interest: float | None = None,
 ) -> dict[str, Any] | None:
     rows = []
     for contract in contracts:
@@ -234,6 +266,10 @@ def _choose_candidate(
             continue
         if int(contract.get("open_interest") or 0) < 50:
             continue
+        try:
+            dte = (date.fromisoformat(str(contract.get("expiration"))) - today).days
+        except (TypeError, ValueError):
+            dte = None
         score, parts = _score_contract(
             contract,
             band=band,
@@ -241,6 +277,8 @@ def _choose_candidate(
             iv_rank=iv_rank,
             expected_move=expected_move,
             spot=spot,
+            dte=dte,
+            speculative_interest=speculative_interest,
         )
         rows.append((score, parts, contract))
     if not rows:
@@ -272,10 +310,11 @@ async def get_speculative_contracts(
         raise HTTPException(400, "min_dte must be <= max_dte")
 
     now = datetime.now(UTC)
-    setup_payload, ticker_payload, levels_payload, gamma_exp_payload, expirations_payload = await asyncio.gather(
+    setup_payload, ticker_payload, levels_payload, market_structure_payload, gamma_exp_payload, expirations_payload = await asyncio.gather(
         _tv_get(request.app.state.http, f"/agent/trade-setup/{symbol}", {}),
         _tv_get(request.app.state.http, f"/tickers/{symbol}", {"trade_recommendation": "true"}),
         _tv_get(request.app.state.http, f"/tickers/{symbol}/levels", {}),
+        _tv_get(request.app.state.http, f"/tickers/{symbol}/market-structure", {}),
         _tv_get(request.app.state.http, f"/tickers/{symbol}/curves/gamma/expirations", {}),
         _tradier_get(request, "/markets/options/expirations", {"symbol": symbol, "includeAllRoots": "true"}),
     )
@@ -294,8 +333,29 @@ async def get_speculative_contracts(
     opportunity_score = _walk_for_number(setup, ("opportunity_score",))
     iv_rank = _walk_for_number(ticker_state, ("iv_rank", "ivRank", "iv_rank_30d"))
     spot = _walk_for_number(ticker_state, ("price", "spot", "spot_price", "underlying_price"))
-    expected = _expected_move(levels_payload)
+    market_structure = _tv_data(market_structure_payload)
+    expected = _expected_move(levels_payload, market_structure_payload)
     gamma_expiration = _gamma_expiration_context(gamma_exp_payload)
+    speculative_interest = _walk_for_number(
+        market_structure,
+        ("speculative_interest_score", "speculation_score"),
+    )
+    supporting = market_structure.get("supporting_factors") if isinstance(market_structure.get("supporting_factors"), dict) else {}
+    skew_tone = (
+        ((market_structure.get("drivers") or {}).get("skew_tone") or {})
+        if isinstance(market_structure.get("drivers"), dict)
+        else {}
+    )
+    surface_context = {
+        "signal": market_structure.get("signal"),
+        "bias": market_structure.get("bias"),
+        "structure_regime": market_structure.get("structure_regime"),
+        "skew_tone": skew_tone,
+        "put_call_25d_iv_premium_pct": supporting.get("put_call_25d_iv_premium_pct"),
+        "speculative_interest_score": speculative_interest,
+        "pct_gamma_expiring_nearest_expiry": supporting.get("pct_gamma_expiring_nearest_expiry"),
+        "expected_move_pct_1w": supporting.get("expected_move_pct_1w"),
+    }
 
     expirations = _expiration_dates(expirations_payload, now.date(), min_dte, max_dte)
     if not expirations:
@@ -365,6 +425,8 @@ async def get_speculative_contracts(
             opportunity_score=opportunity_score,
             iv_rank=iv_rank,
             expected_move=expected.get("dollars"),
+            today=now.date(),
+            speculative_interest=speculative_interest,
         )
 
     return {
@@ -383,6 +445,7 @@ async def get_speculative_contracts(
         "iv_rank": iv_rank,
         "expected_move": expected,
         "gamma_by_expiration": gamma_expiration,
+        "volatility_surface_context": surface_context,
         "expiration_window": {
             "min_dte": min_dte,
             "max_dte": max_dte,
