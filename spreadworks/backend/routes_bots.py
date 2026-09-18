@@ -46,18 +46,41 @@ def _forward_gate_status(bot: str, rows: list) -> dict[str, Any] | None:
     required = int(gate["required_trades"])
     minimum_pnl = float(gate["minimum_pnl"])
     drawdown_floor = float(gate["drawdown_floor"])
+    require_touch_depth = bool(gate.get("require_touch_depth"))
     cumulative = 0.0
     peak = 0.0
     max_drawdown = 0.0
+    depth_failures: list[dict[str, Any]] = []
     for row in rows:
         cumulative += float(row["realized_pnl"] or 0.0)
         peak = max(peak, cumulative)
         max_drawdown = min(max_drawdown, cumulative - peak)
+        if require_touch_depth:
+            try:
+                contracts = int(row["contracts"])
+                legs = (json.loads(row["legs"])
+                        if isinstance(row["legs"], str) else row["legs"])
+                depth_ok = bool(legs) and all(
+                    int(leg["entry_touch_size"]) >= contracts
+                    and int(leg["exit_touch_size"]) >= contracts
+                    and leg.get("exit_depth_ok") is True
+                    for leg in legs
+                )
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                depth_ok = False
+            if not depth_ok:
+                depth_failures.append({
+                    "position_id": str(row["position_id"]),
+                    "close_time": str(row["close_time"]),
+                })
 
     count_ok = len(rows) >= required
     pnl_ok = cumulative > minimum_pnl
     drawdown_ok = max_drawdown >= drawdown_floor
-    if not drawdown_ok:
+    execution_depth_ok = not depth_failures
+    if not execution_depth_ok:
+        state = "FAILED_EXECUTION_DEPTH"
+    elif not drawdown_ok:
         state = "FAILED_DRAWDOWN"
     elif not count_ok:
         state = "IN_PROGRESS"
@@ -80,6 +103,10 @@ def _forward_gate_status(bot: str, rows: list) -> dict[str, Any] | None:
         "count_ok": count_ok,
         "pnl_ok": pnl_ok,
         "drawdown_ok": drawdown_ok,
+        "require_touch_depth": require_touch_depth,
+        "execution_depth_ok": execution_depth_ok,
+        "execution_compliant_trades": len(rows) - len(depth_failures),
+        "depth_failures": depth_failures,
         "start_at": str(gate["start_at"]),
         "evaluated_through": str(rows[-1]["close_time"]) if rows else None,
         "live_money_authorized": False,
@@ -132,7 +159,7 @@ def get_status(bot: str):
         if gate_cfg:
             start_at = datetime.fromisoformat(str(gate_cfg["start_at"]))
             gate_rows = conn.execute(text(
-                f"SELECT close_time, realized_pnl "
+                f"SELECT position_id, close_time, realized_pnl, contracts, legs "
                 f"FROM {bot_table(bot, 'closed_trades')} "
                 "WHERE close_time >= :start_at "
                 "ORDER BY close_time, position_id"
