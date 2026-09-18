@@ -196,6 +196,49 @@ class LiveTradierChainProvider:
             out.append((ask - bid) / 2.0)
         return out
 
+    def get_leg_exit_prices(self, *, ticker: str,
+                            legs: list[dict[str, Any]]) -> list[float | None]:
+        """Executable close touches from one atomic quote response.
+
+        A long leg liquidates at bid; a short leg is bought back at ask. A
+        missing leg returns ``None`` so the scanner holds its last mark and
+        cannot fire a price exit on fabricated liquidity. A displayed zero bid
+        on a long leg is retained as the conservative liquidation floor.
+        """
+        symbols = [self._occ(ticker, leg) for leg in legs]
+        resp = self._client.get(
+            f"{TRADIER_BASE}/markets/quotes",
+            params={"symbols": ",".join(symbols), "greeks": "false"},
+            headers=_headers(),
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"quote fetch failed: {resp.status_code}")
+        quotes = resp.json().get("quotes", {}).get("quote", []) or []
+        if isinstance(quotes, dict):
+            quotes = [quotes]
+        by_sym = {q["symbol"]: q for q in quotes if q.get("symbol")}
+        out: list[float | None] = []
+        for sym, leg in zip(symbols, legs):
+            q = by_sym.get(sym)
+            if q is None:
+                out.append(None)
+                continue
+            raw_bid = q.get("bid")
+            raw_ask = q.get("ask")
+            try:
+                bid = None if raw_bid is None else float(raw_bid)
+                ask = None if raw_ask is None else float(raw_ask)
+            except (TypeError, ValueError):
+                out.append(None)
+                continue
+            if leg.get("side") == "short":
+                out.append(ask if ask is not None and ask > 0 else None)
+            else:
+                # A zero bid is executable and is the true lower bound for a
+                # long option. Never turn it into a negative liquidation value.
+                out.append(bid if bid is not None and bid >= 0 else None)
+        return out
+
     def get_daily_history(self, *, ticker: str, days: int) -> list[dict[str, Any]]:
         """Daily OHLC bars for the last `days` calendar days (Tradier history).
 

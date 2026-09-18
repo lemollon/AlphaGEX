@@ -110,6 +110,19 @@ def test_compute_mtm_clamps_negative_long_fly_mark():
     assert mtm_pnl == -75.0  # exactly -debit, never deeper
 
 
+def test_compute_mtm_clamps_negative_single_long_option_mark():
+    """A long call cannot liquidate below zero. This is the exact UPDRAFT
+    failure that booked a -$0.005 close from a $0.005 mid minus $0.01 spread."""
+    legs = [{"side": "long", "type": "call", "strike": 767,
+             "expiration": "2026-08-21", "entry_price": 0.51}]
+    mtm_value, mtm_pnl = compute_mtm(
+        strategy="updraft", legs=legs, entry_price=0.51, contracts=1,
+        leg_mids=[0.005], slippage_total=0.01,
+    )
+    assert mtm_value == 0.0
+    assert mtm_pnl == -51.0
+
+
 # ---------------------------------------------------------------------------
 # Slippage model: a real multi-leg fill crosses the spread on every leg, on
 # entry AND exit. slip=0 must reproduce the old mid-fill numbers exactly.

@@ -109,6 +109,64 @@ def test_backdraft_needs_more_extreme_flow_than_updraft():
                                 mode="backdraft") is None
 
 
+def test_astra3_uses_exact_book_rule_ask_fill_fee_and_cap():
+    params = {
+        **DEFAULT_PARAMS,
+        "mode": "astra3",
+        "astra3_fee": True,
+        "min_option_price": 0.0,
+        "max_spread_pct": 999.0,
+    }
+    sig = build_updraft_signal(
+        chain=_chain(flow_imb=-0.20, r30=25.0),
+        today=date(2026, 9, 18), params=params, mode="astra3",
+        config={"bp_pct": 0.25, "max_contracts": 1,
+                "pt_pct": 9.9999, "sl_pct": 0.50},
+        equity=500.0,
+    )
+    assert sig is not None and sig.mode == "updraft"
+    assert sig.hold_minutes == 30
+    assert sig.entry_ask == 0.64
+    assert sig.debit == 0.647             # ask + $0.70 round trip
+    assert sig.legs()[0]["entry_price"] == 0.64
+    assert sig.sl_target_pnl == 32.70     # 50% premium + commission
+
+    # Same signal is unaffordable when ask + commission breaches 25% equity.
+    expensive = _chain(flow_imb=-0.20, r30=25.0, bid=1.29, ask=1.30)
+    assert build_updraft_signal(
+        chain=expensive, today=date(2026, 9, 18), params=params,
+        mode="astra3",
+        config={"bp_pct": 0.25, "max_contracts": 1,
+                "pt_pct": 9.9999, "sl_pct": 0.50}, equity=500.0,
+    ) is None
+
+
+def test_astra3_falls_through_to_backdraft_mechanism():
+    params = {**DEFAULT_PARAMS, "mode": "astra3", "astra3_fee": True,
+              "min_option_price": 0.0, "max_spread_pct": 999.0}
+    sig = build_updraft_signal(
+        chain=_chain(flow_imb=-0.40, r30=0.0, put_wall=595.0),
+        today=date(2026, 9, 18), params=params, mode="astra3",
+        config={"bp_pct": 0.25, "max_contracts": 1,
+                "pt_pct": 9.9999, "sl_pct": 0.50}, equity=500.0,
+    )
+    assert sig is not None and sig.mode == "backdraft"
+    assert sig.hold_minutes == 30
+
+
+def test_astra3_registry_is_the_frozen_500_dollar_forward_book():
+    d = get_bot("astra3")["defaults"]
+    assert d["enabled"] is False
+    assert d["starting_capital"] == 500.0
+    assert d["bp_pct"] == 0.25 and d["max_contracts"] == 1
+    assert d["mode"] == "astra3" and d["hold_minutes"] == 30
+    assert d["flow_max"] == -0.13376407997558806
+    assert d["r30_min"] == 19.982448725892155
+    assert d["backdraft_flow_max"] == -0.35
+    assert d["max_concurrent_positions"] == 1
+    assert d["cooldown_min"] == 30
+
+
 # ------------------------------------------------------------- flow_store
 def test_chain_volume_totals_sums_the_whole_chain():
     """Research summed ALL 0DTE strikes with no window - narrowing to

@@ -572,6 +572,50 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "max_concurrent_positions": 2,
         },
     },
+    # ASTRA-3 — exact $500 UPDRAFT/BACKDRAFT book frozen 2026-09-18 after
+    # executable-NBBO account-wall validation. Historical primary window
+    # 2025-03-27..2026-07-24: $500 -> $2,358.50, 105 trades, doubled in 204
+    # calendar days, -15.43% max drawdown. This is still HISTORICAL ONLY:
+    # zero-order paper forward until enough new trades exist.
+    "astra3": {
+        "display": "ASTRA-3",
+        "strategy": "updraft",
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": 0,
+        "defaults": {
+            "starting_capital": 500.0,
+            "enabled": False,          # paper-only; explicitly enable after deploy
+            "max_contracts": 1,
+            # Exact frozen affordability rule: ask*100 + $0.70 <= 25% equity.
+            "bp_pct": 0.25,
+            "sd_mult": 1.0,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            "mode": "astra3",
+            "flow_max": -0.13376407997558806,
+            "r30_min": 19.982448725892155,
+            "backdraft_flow_max": -0.35,
+            "require_put_wall": True,
+            "strike_offset": 1,
+            "hold_minutes": 30,
+            "pt_pct": 9.9999,         # no profit target; the right tail is the edge
+            "sl_pct": 0.50,
+            "astra3_fee": True,       # $0.70 round trip embedded in paper P&L
+            # The frozen research imposed no extra price/spread filter beyond
+            # affordability and an observed NBBO on the chosen contract.
+            "min_option_price": 0.0,
+            "max_spread_pct": 999.0,
+            "entry_start_ct": "08:31",
+            "entry_end_ct": "14:01", # research included 15:00 ET / 14:00 CT
+            "eod_close_ct": "14:45", # safety backstop; timer should exit first
+            "allow_stacking": True,
+            "max_concurrent_positions": 1,
+            "cooldown_min": 30,
+            "discord_alerts": False,
+        },
+    },
+
     # UPDRAFT — SPY 0DTE long call on put-heavy flow INTO a rising tape.
     # Research 2026-07-26 (ironforge-data/examples/hf_*.py, ADR 0007):
     # buy the +1 OTM call when the 30-min 0DTE tape is put-heavy AND spot is

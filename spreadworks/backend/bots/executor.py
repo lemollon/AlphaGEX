@@ -32,13 +32,15 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from .db import bot_table, load_config
-from .strategies import CREDIT_STRATEGIES
+from .strategies import CREDIT_STRATEGIES, LONG_OPTION_STRATEGIES
 
 # Debit structures whose liquidation value is bounded below by ZERO (a long
 # fly is worth 0..wing at any price; the pin+drift combo is the fly plus two
 # long calendars, each also >= 0). A computed negative unwind value for these
 # can only be quote noise — clamped in compute_mtm.
-NET_LONG_DEBIT_STRATEGIES = frozenset({"long_butterfly", "pin_drift_combo"})
+NET_LONG_DEBIT_STRATEGIES = frozenset(
+    {"long_butterfly", "pin_drift_combo"} | set(LONG_OPTION_STRATEGIES)
+)
 
 # Default half-spread crossed per leg per side, $/share. 0.02 is a realistic
 # figure for the SPY 0/1DTE options these bots trade (near-ATM shorts sit a
