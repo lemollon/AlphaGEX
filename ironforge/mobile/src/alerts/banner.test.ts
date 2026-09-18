@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { pickBanner, bannerActionHref, type BannerInput } from '@/alerts/banner'
+import { pickBanner, bannerActionHref, billingBannerMode, type BannerInput, type Banner } from '@/alerts/banner'
 import type { LiveAgent } from '@/api/types'
 import { color } from '@/theme/tokens'
 
@@ -138,5 +138,45 @@ describe('bannerActionHref', () => {
 
   it('routes an agent action to that agent detail screen', () => {
     expect(bannerActionHref({ label: '', target: 'agent', bot: 'flame' })).toBe('/agents/flame')
+  })
+})
+
+const paymentBanner: Banner = {
+  severity: 'payment',
+  color: color.warn,
+  text: 'Your payment is past due. Update billing to keep your agents trading.',
+  action: { label: 'Manage Billing', target: 'billing' },
+  dismissible: false,
+}
+
+const brokerageBanner: Banner = {
+  severity: 'brokerage',
+  color: color.neg,
+  text: 'Tastytrade needs attention — reconnect it so your agents can keep trading.',
+  action: { label: 'Fix in Account', target: 'brokerage' },
+  dismissible: false,
+}
+
+describe('billingBannerMode', () => {
+  it('is "not-billing" for null or a non-billing banner, on every platform', () => {
+    expect(billingBannerMode(null, 'ios', null)).toBe('not-billing')
+    expect(billingBannerMode(brokerageBanner, 'ios', 'apple')).toBe('not-billing')
+    expect(billingBannerMode(brokerageBanner, 'android', null)).toBe('not-billing')
+  })
+
+  it('is "stripe" on android and web regardless of provider — canManageBillingInApp is true there', () => {
+    expect(billingBannerMode(paymentBanner, 'android', null)).toBe('stripe')
+    expect(billingBannerMode(paymentBanner, 'web', 'stripe')).toBe('stripe')
+    expect(billingBannerMode(paymentBanner, 'android', 'apple')).toBe('stripe')
+  })
+
+  it('is "apple-manage" on iOS only when the membership is Apple-provisioned', () => {
+    expect(billingBannerMode(paymentBanner, 'ios', 'apple')).toBe('apple-manage')
+  })
+
+  it('is "suppressed" on iOS for a Stripe or unknown-provider membership — never the portal', () => {
+    expect(billingBannerMode(paymentBanner, 'ios', 'stripe')).toBe('suppressed')
+    expect(billingBannerMode(paymentBanner, 'ios', null)).toBe('suppressed')
+    expect(billingBannerMode(paymentBanner, 'ios', undefined)).toBe('suppressed')
   })
 })

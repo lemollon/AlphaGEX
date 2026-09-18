@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { View, Text, ScrollView, RefreshControl, Pressable, StyleSheet, Alert } from 'react-native'
+import { View, Text, ScrollView, RefreshControl, Pressable, StyleSheet, Alert, Platform, Linking } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
@@ -14,8 +14,9 @@ import type {
   LiveOpenPosition,
   HomeData,
   BrokerageConnections,
+  MembershipResponse,
 } from '@/api/types'
-import { space, radius, type, font, agentAccent } from '@/theme/tokens'
+import { space, radius, type, font, agentAccent, color as staticColor } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Card, Money, Balance, SectionLabel, Loading, Empty, ErrorState } from '@/components/ui'
@@ -35,7 +36,8 @@ import {
   formatTargetStopCaption,
   formatAutoCloseCaption,
 } from '@/live/lifecycle'
-import { pickBanner, bannerActionHref } from '@/alerts/banner'
+import { pickBanner, bannerActionHref, billingBannerMode } from '@/alerts/banner'
+import { manageSubscriptionUrl } from '@/billing/store-policy'
 
 /**
  * Forge — UX-002 (APP-011/012/013/016) and UX-003 (APP-051).
@@ -66,9 +68,17 @@ export default function ForgeScreen() {
   const conns = useSWR<BrokerageConnections>('/api/brokerage/connections', (p: string) =>
     api<BrokerageConnections>(p),
   )
+  // Same key/fetcher as the Account tab's membership card — SWR shares the cache, so
+  // this costs nothing extra there. Only needed to decide what the payment-due banner
+  // does on iOS (Apple IAP handoff §4): never open Stripe, and only offer Apple's own
+  // subscription settings when the membership is actually Apple-provisioned.
+  const billing = useSWR<MembershipResponse>('/api/billing/membership', (p: string) =>
+    api<MembershipResponse>(p),
+  )
   // Only 'caution' may be dismissed (APP-016) — everything more urgent persists, so this
   // is never checked for those severities.
   const [dismissedCaution, setDismissedCaution] = useState(false)
+  const platform = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web'
 
   const refreshing = summary.isValidating || agents.isValidating
   const reload = () => {
@@ -110,14 +120,24 @@ export default function ForgeScreen() {
     marketCondition: data.market.condition,
     conditionLine: data.market.condition_line,
   })
-  const showBanner = banner && !(banner.severity === 'caution' && dismissedCaution)
+  // The payment-due banner (Banner.action.target === 'billing') is the ONLY banner that
+  // ever opens the Stripe portal — billingBannerMode guards it the same way the
+  // Account tab's "Manage Membership and Billing" control is guarded (Apple IAP
+  // handoff §4, follow-up to PR #2992): Apple rejected exposing that surface on iOS at
+  // all, even restricted, so it must never render there, banner included.
+  const billingMode = billingBannerMode(banner, platform, billing.data?.membership?.provider)
+  const showBanner =
+    banner && billingMode !== 'suppressed' && billingMode !== 'apple-manage' &&
+    !(banner.severity === 'caution' && dismissedCaution)
+  const showManageSubscriptionBanner = billingMode === 'apple-manage'
 
   async function onBannerPress() {
     if (!banner?.action) return
     if (banner.action.target === 'billing') {
       // Same call the Account tab's "Manage Membership and Billing" makes — the payment
       // -due banner opens the portal directly rather than making the customer find the
-      // button a second time.
+      // button a second time. Unreachable on iOS: billingBannerMode never returns
+      // 'stripe' there, see showBanner above.
       try {
         const res = await api<{ ok: boolean; url: string }>('/api/billing/portal', {
           method: 'POST',
@@ -135,6 +155,11 @@ export default function ForgeScreen() {
     if (href) router.push(href)
   }
 
+  async function onManageSubscriptionPress() {
+    const url = manageSubscriptionUrl(billing.data?.membership?.provider ?? null, platform)
+    if (url) await Linking.openURL(url).catch(() => {})
+  }
+
   return (
     <Shell>
       <ScrollView
@@ -148,6 +173,18 @@ export default function ForgeScreen() {
             banner={banner}
             onPress={onBannerPress}
             onDismiss={() => setDismissedCaution(true)}
+          />
+        ) : showManageSubscriptionBanner ? (
+          <AlertBanner
+            banner={{
+              severity: 'payment',
+              color: staticColor.warn,
+              text: 'Your payment is past due. Manage your subscription in the App Store.',
+              action: { label: 'Manage subscription', target: 'billing' },
+              dismissible: false,
+            }}
+            onPress={onManageSubscriptionPress}
+            onDismiss={() => {}}
           />
         ) : null}
 
