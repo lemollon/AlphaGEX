@@ -258,6 +258,31 @@ def list_open_positions(engine: Engine, bot: str) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def update_position_legs(
+    engine: Engine,
+    bot: str,
+    position_id: str,
+    legs: list[dict[str, Any]],
+) -> None:
+    """Persist execution-state metadata on an open paper position.
+
+    ASTRA-3 uses this to make an insufficient-depth exit latch survive across
+    one-minute scan cycles and process restarts. Refuse to update a position
+    that is no longer open so a late scan cannot rewrite closed evidence.
+    """
+    t = bot_table(bot, "positions")
+    with engine.begin() as conn:
+        result = conn.execute(
+            text(
+                f"UPDATE {t} SET legs=:legs "
+                "WHERE position_id=:pid AND status='OPEN'"
+            ),
+            {"legs": json.dumps(legs), "pid": position_id},
+        )
+        if result.rowcount != 1:
+            raise ValueError(f"{position_id} not OPEN (already closed or unknown)")
+
+
 def count_positions_opened_on(engine: Engine, bot: str, now: datetime) -> int:
     """Count positions (any status) whose entry_time falls on `now`'s date.
 

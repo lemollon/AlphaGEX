@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from typing import Any, Protocol
@@ -20,6 +21,7 @@ from .db import bot_table, load_config
 from .executor import (
     account_equity, list_open_positions, open_position,
     close_position, compute_mtm, update_mtm, count_positions_opened_on,
+    update_position_legs,
     configured_slippage_per_leg, configured_fill_mode, closed_trade_totals,
 )
 from .monitor import (
@@ -51,6 +53,7 @@ from . import ai_rationale
 logger = logging.getLogger("spreadworks.bots.scanner")
 CT = ZoneInfo("America/Chicago")
 SCAN_TIMEOUT_SEC = 15
+ASTRA3_EXIT_PENDING_KEY = "astra3_exit_pending"
 
 
 class ChainProvider(Protocol):
@@ -157,6 +160,168 @@ def _legs_with_exit_depth(legs: list[dict[str, Any]],
                                     and size >= contracts)
         audited.append(out)
     return audited
+
+
+def _astra3_touch(
+    exit_quotes: list[dict[str, Any] | None] | None,
+) -> tuple[float | None, int | None]:
+    """Return one valid long-option exit bid and whole displayed size."""
+    if not exit_quotes or exit_quotes[0] is None:
+        return None, None
+    quote = exit_quotes[0]
+    try:
+        price = float(quote.get("price"))
+        size_number = float(quote.get("size"))
+    except (TypeError, ValueError):
+        return None, None
+    if (
+        not math.isfinite(price)
+        or price < 0.0
+        or not math.isfinite(size_number)
+        or size_number < 0.0
+        or not size_number.is_integer()
+    ):
+        return None, None
+    return price, int(size_number)
+
+
+def _astra3_pending_exit(legs: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not legs:
+        return None
+    pending = legs[0].get(ASTRA3_EXIT_PENDING_KEY)
+    return dict(pending) if isinstance(pending, dict) else None
+
+
+def _latch_astra3_exit(
+    legs: list[dict[str, Any]],
+    exit_quotes: list[dict[str, Any] | None] | None,
+    contracts: int,
+    reason: str,
+    now_ct: datetime,
+) -> list[dict[str, Any]]:
+    """Persist an irrevocable full-lot exit request after a thin touch."""
+    audited = _legs_with_exit_depth(legs, exit_quotes, contracts)
+    trigger_bid, trigger_size = _astra3_touch(exit_quotes)
+    audited[0][ASTRA3_EXIT_PENDING_KEY] = {
+        "reason": reason,
+        "trigger_time": now_ct.isoformat(),
+        "trigger_bid": trigger_bid,
+        "trigger_bid_size": trigger_size,
+        "contracts": contracts,
+        "attempts": 1,
+    }
+    return audited
+
+
+def _resolve_astra3_pending_exit(
+    legs: list[dict[str, Any]],
+    exit_quotes: list[dict[str, Any] | None] | None,
+    contracts: int,
+    now_ct: datetime,
+    max_wait_minutes: int,
+) -> tuple[str, float | None, str, list[dict[str, Any]], float]:
+    """Resolve, retain, or time out a previously latched ASTRA-3 exit.
+
+    A complete-lot fresh quote can fill only within the frozen wait window and
+    only at the worse of its bid and the original trigger bid. Missing trigger
+    price can never qualify. At timeout the whole lot is valued at zero and its
+    depth evidence is forced false, permanently failing the forward sample.
+    """
+    pending = _astra3_pending_exit(legs)
+    if pending is None:
+        raise ValueError("ASTRA-3 exit is not pending")
+    try:
+        trigger_time = datetime.fromisoformat(str(pending["trigger_time"]))
+        if trigger_time.tzinfo is None:
+            trigger_time = trigger_time.replace(tzinfo=CT)
+        else:
+            trigger_time = trigger_time.astimezone(CT)
+        reason = str(pending["reason"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("invalid ASTRA-3 exit latch metadata") from exc
+
+    elapsed = max(0.0, (now_ct - trigger_time).total_seconds() / 60.0)
+    current_bid, current_size = _astra3_touch(exit_quotes)
+    try:
+        trigger_bid = float(pending.get("trigger_bid"))
+        trigger_bid_ok = math.isfinite(trigger_bid) and trigger_bid >= 0.0
+    except (TypeError, ValueError):
+        trigger_bid = 0.0
+        trigger_bid_ok = False
+
+    audited = _legs_with_exit_depth(legs, exit_quotes, contracts)
+    pending_out = dict(pending)
+    pending_out.update({
+        "attempts": int(pending.get("attempts") or 0) + 1,
+        "last_quote_time": now_ct.isoformat(),
+        "last_bid": current_bid,
+        "last_bid_size": current_size,
+        "wait_minutes": round(elapsed, 4),
+    })
+    audited[0][ASTRA3_EXIT_PENDING_KEY] = pending_out
+
+    full_depth = (
+        current_bid is not None
+        and current_size is not None
+        and current_size >= contracts
+    )
+    if full_depth and trigger_bid_ok and elapsed <= max_wait_minutes:
+        fill_bid = min(current_bid, trigger_bid)
+        pending_out.update({
+            "resolved": True,
+            "timed_out": False,
+            "fill_time": now_ct.isoformat(),
+            "fill_bid": fill_bid,
+        })
+        audited[0]["exit_fill_price"] = fill_bid
+        return "CLOSE", fill_bid, reason, audited, elapsed
+
+    if elapsed >= max_wait_minutes:
+        pending_out.update({
+            "resolved": True,
+            "timed_out": True,
+            "fill_time": now_ct.isoformat(),
+            "fill_bid": 0.0,
+        })
+        for leg in audited:
+            leg["exit_depth_ok"] = False
+            leg["exit_depth_timeout"] = True
+            leg["exit_fill_price"] = 0.0
+        return "TIMEOUT", 0.0, reason, audited, elapsed
+
+    return "HOLD", None, reason, audited, elapsed
+
+
+def _post_close_alert(
+    *,
+    engine: Engine,
+    bot: str,
+    meta: dict[str, Any],
+    cfg: dict[str, Any],
+    pos: dict[str, Any],
+    now_ct: datetime,
+    close_reason: str,
+    realized_pnl: float,
+) -> None:
+    if not bool(cfg.get("discord_alerts")):
+        return
+    try:
+        from . import discord_alerts
+        entry_dt = _position_time_ct(
+            pos["entry_time"], now_ct, engine.dialect.name
+        )
+        mins = int((now_ct - entry_dt).total_seconds() // 60)
+        discord_alerts.post_close(
+            bot=bot,
+            display=meta["display"],
+            strategy=pos["strategy"],
+            position_id=pos["position_id"],
+            close_reason=close_reason,
+            realized_pnl=realized_pnl,
+            time_in_trade_min=mins,
+        )
+    except Exception as exc:  # noqa: BLE001 - alerts cannot stop paper exits
+        logger.warning(f"[{bot}] discord post_close failed: {exc}")
 
 
 def _slippage_total(chain_provider: Any, ticker: str,
@@ -1275,6 +1440,64 @@ def run_scan_cycle(
                 )
                 update_mtm(engine, bot, pos["position_id"], mtm_value, mtm_pnl, now_ct)
 
+            # ASTRA-3 depth exits are irrevocable once triggered. A recovered
+            # option price cannot cancel the exit, and a rebound cannot improve
+            # the fill above the original trigger bid. The latch lives in the
+            # position's legs JSON so deploys/restarts cannot forget it.
+            pending_exit = (
+                _astra3_pending_exit(legs) if bot == "astra3" else None
+            )
+            if pending_exit is not None:
+                max_wait = int(
+                    (meta.get("defaults") or {}).get("exit_latch_minutes", 5)
+                )
+                action, close_value, pending_reason, pending_legs, elapsed = (
+                    _resolve_astra3_pending_exit(
+                        legs,
+                        exit_quotes,
+                        int(pos["contracts"]),
+                        now_ct,
+                        max_wait,
+                    )
+                )
+                if action in ("CLOSE", "TIMEOUT"):
+                    realized = close_position(
+                        engine,
+                        bot,
+                        pos["position_id"],
+                        close_value=float(close_value),
+                        close_reason=pending_reason,
+                        now=now_ct,
+                        legs_override=pending_legs,
+                    )
+                    _post_close_alert(
+                        engine=engine,
+                        bot=bot,
+                        meta=meta,
+                        cfg=cfg,
+                        pos=pos,
+                        now_ct=now_ct,
+                        close_reason=pending_reason,
+                        realized_pnl=realized,
+                    )
+                    suffix = "DEPTH_TIMEOUT" if action == "TIMEOUT" else "DEPTH_LATCH"
+                    monitor_result = {
+                        "outcome": "TRADE",
+                        "reason": f"CLOSE_{pending_reason}_{suffix}",
+                        "position_id": pos["position_id"],
+                    }
+                else:
+                    update_position_legs(
+                        engine, bot, pos["position_id"], pending_legs
+                    )
+                    monitor_result = {
+                        "outcome": "MONITOR",
+                        "reason": "EXIT_PENDING_DEPTH",
+                        "position_id": pos["position_id"],
+                        "wait_minutes": round(elapsed, 2),
+                    }
+                continue
+
             pt_target = float(pos["pt_target_pnl"])
             # Manual Adjust shipped 2026-05-19 sets pt_override=TRUE on
             # the row. When it's set, the scanner respects the stored
@@ -1349,25 +1572,53 @@ def run_scan_cycle(
                     _legs_with_exit_depth(legs, exit_quotes, int(pos["contracts"]))
                     if bot == "astra3" else None
                 )
-                close_position(engine, bot, pos["position_id"],
-                               close_value=mtm_value, close_reason=d.reason,
-                               now=now_ct, legs_override=close_legs)
-                if bool(cfg.get("discord_alerts")):
-                    try:
-                        from . import discord_alerts
-                        entry_dt = _position_time_ct(
-                            pos["entry_time"], now_ct, engine.dialect.name)
-                        mins = int((now_ct - entry_dt).total_seconds() // 60)
-                        discord_alerts.post_close(
-                            bot=bot, display=meta["display"], strategy=pos["strategy"],
-                            position_id=pos["position_id"], close_reason=d.reason,
-                            realized_pnl=mtm_pnl,
-                            time_in_trade_min=mins,
-                        )
-                    except Exception as e:
-                        logger.warning(f"[{bot}] discord post_close failed: {e}")
-                monitor_result = {"outcome": "TRADE", "reason": f"CLOSE_{d.reason}",
-                                  "position_id": pos["position_id"]}
+                astra_depth_ok = (
+                    bot != "astra3"
+                    or bool(close_legs)
+                    and all(leg.get("exit_depth_ok") is True for leg in close_legs)
+                )
+                if bot == "astra3" and not astra_depth_ok:
+                    pending_legs = _latch_astra3_exit(
+                        legs,
+                        exit_quotes,
+                        int(pos["contracts"]),
+                        d.reason,
+                        now_ct,
+                    )
+                    update_position_legs(
+                        engine, bot, pos["position_id"], pending_legs
+                    )
+                    monitor_result = {
+                        "outcome": "MONITOR",
+                        "reason": "EXIT_PENDING_DEPTH",
+                        "position_id": pos["position_id"],
+                        "wait_minutes": 0.0,
+                    }
+                else:
+                    realized = close_position(
+                        engine,
+                        bot,
+                        pos["position_id"],
+                        close_value=mtm_value,
+                        close_reason=d.reason,
+                        now=now_ct,
+                        legs_override=close_legs,
+                    )
+                    _post_close_alert(
+                        engine=engine,
+                        bot=bot,
+                        meta=meta,
+                        cfg=cfg,
+                        pos=pos,
+                        now_ct=now_ct,
+                        close_reason=d.reason,
+                        realized_pnl=realized,
+                    )
+                    monitor_result = {
+                        "outcome": "TRADE",
+                        "reason": f"CLOSE_{d.reason}",
+                        "position_id": pos["position_id"],
+                    }
             elif monitor_result is None or monitor_result["outcome"] != "TRADE":
                 monitor_result = {"outcome": "MONITOR", "position_id": pos["position_id"]}
 
