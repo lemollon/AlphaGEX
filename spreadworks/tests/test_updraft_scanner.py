@@ -120,6 +120,7 @@ def test_astra3_opens_at_ask_plus_fee_and_exits_after_30_minutes(db_session):
     positions = list_open_positions(eng, "astra3")
     assert len(positions) == 1
     assert positions[0]["strategy"] == "backdraft"
+    assert json.loads(positions[0]["legs"])[0]["strike"] == 602.0
     assert float(positions[0]["entry_price"]) == 0.647
 
     run_scan_cycle(
