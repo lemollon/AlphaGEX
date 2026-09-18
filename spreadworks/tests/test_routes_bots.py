@@ -58,6 +58,79 @@ def test_status_returns_basic_fields(client):
     assert d["open_positions"] == 0
 
 
+def _insert_astra3_closed_trades(pnls, start_index=0):
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import text
+    from backend import routes_bots
+
+    opened = datetime(2026, 9, 18, 8, 31)
+    with routes_bots.ENGINE.begin() as conn:
+        for offset, pnl in enumerate(pnls):
+            index = start_index + offset
+            closed = opened + timedelta(minutes=31 * index + 30)
+            conn.execute(text(
+                "INSERT INTO astra3_closed_trades ("
+                "position_id, close_price, close_time, close_reason, "
+                "realized_pnl, contracts, legs, entry_price, entry_time, "
+                "ticker, strategy) VALUES ("
+                ":pid, 0.50, :closed, 'TEST', :pnl, 1, '[]', 0.50, "
+                ":opened, 'SPY', 'updraft')"
+            ), {
+                "pid": f"astra3-gate-{index}",
+                "closed": closed,
+                "pnl": pnl,
+                "opened": closed - timedelta(minutes=30),
+            })
+
+
+def test_astra3_status_exposes_frozen_forward_gate(client):
+    gate = client.get("/api/spreadworks/bots/astra3/status").json()["forward_gate"]
+    assert gate["state"] == "IN_PROGRESS"
+    assert gate["completed_trades"] == 0
+    assert gate["required_trades"] == 20
+    assert gate["remaining_trades"] == 20
+    assert gate["drawdown_floor"] == -80.0
+    assert gate["promotion_review_ready"] is False
+    assert gate["live_money_authorized"] is False
+
+
+def test_astra3_forward_gate_passes_only_after_twenty_positive_compliant_trades(client):
+    _insert_astra3_closed_trades([5.0] * 19)
+    before = client.get("/api/spreadworks/bots/astra3/status").json()["forward_gate"]
+    assert before["state"] == "IN_PROGRESS"
+    assert before["cumulative_pnl"] == 95.0
+
+    _insert_astra3_closed_trades([5.0], start_index=19)
+    after = client.get("/api/spreadworks/bots/astra3/status").json()["forward_gate"]
+    assert after["state"] == "PASS"
+    assert after["completed_trades"] == 20
+    assert after["cumulative_pnl"] == 100.0
+    assert after["max_drawdown"] == 0.0
+    assert after["promotion_review_ready"] is True
+    assert after["live_money_authorized"] is False
+
+
+def test_astra3_forward_gate_drawdown_breach_is_permanent_failure(client):
+    _insert_astra3_closed_trades([-81.0] + [10.0] * 19)
+    gate = client.get("/api/spreadworks/bots/astra3/status").json()["forward_gate"]
+    assert gate["completed_trades"] == 20
+    assert gate["cumulative_pnl"] == 109.0
+    assert gate["max_drawdown"] == -81.0
+    assert gate["state"] == "FAILED_DRAWDOWN"
+    assert gate["promotion_review_ready"] is False
+
+
+def test_astra3_forward_gate_waits_for_positive_pnl_after_count(client):
+    _insert_astra3_closed_trades([-1.0] * 20)
+    gate = client.get("/api/spreadworks/bots/astra3/status").json()["forward_gate"]
+    assert gate["completed_trades"] == 20
+    assert gate["cumulative_pnl"] == -20.0
+    assert gate["max_drawdown"] == -20.0
+    assert gate["state"] == "WAIT_POSITIVE_PNL"
+    assert gate["promotion_review_ready"] is False
+
+
 def test_unknown_bot_returns_404(client):
     r = client.get("/api/spreadworks/bots/notabot/status")
     assert r.status_code == 404

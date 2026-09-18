@@ -617,6 +617,14 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "cooldown_min": 30,
             "discord_alerts": False,
         },
+        # Frozen paper-forward promotion gate. Passing permits a human review;
+        # it never enables broker routing or raises the three-contract cap.
+        "forward_gate": {
+            "start_at": "2026-09-18T00:00:00",
+            "required_trades": 20,
+            "minimum_pnl": 0.0,       # strict greater-than in the evaluator
+            "drawdown_floor": -80.0,  # peak-to-trough dollars, inclusive
+        },
     },
 
     # UPDRAFT — SPY 0DTE long call on put-heavy flow INTO a rising tape.

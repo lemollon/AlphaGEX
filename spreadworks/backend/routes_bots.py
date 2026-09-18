@@ -31,6 +31,61 @@ def _validate(bot: str) -> None:
         raise HTTPException(404, f"Unknown bot: {bot}")
 
 
+def _forward_gate_status(bot: str, rows: list) -> dict[str, Any] | None:
+    """Evaluate a registry-frozen paper gate from chronological closed trades.
+
+    Drawdown is calculated on cumulative realized P&L from a zero baseline, so
+    it is identical to peak-to-trough account-equity drawdown. A drawdown breach
+    is permanent for this ledger and surfaces immediately, even before the
+    minimum trade count. Passing is review-only and never changes configuration.
+    """
+    gate = BOT_REGISTRY[bot].get("forward_gate")
+    if not gate:
+        return None
+
+    required = int(gate["required_trades"])
+    minimum_pnl = float(gate["minimum_pnl"])
+    drawdown_floor = float(gate["drawdown_floor"])
+    cumulative = 0.0
+    peak = 0.0
+    max_drawdown = 0.0
+    for row in rows:
+        cumulative += float(row["realized_pnl"] or 0.0)
+        peak = max(peak, cumulative)
+        max_drawdown = min(max_drawdown, cumulative - peak)
+
+    count_ok = len(rows) >= required
+    pnl_ok = cumulative > minimum_pnl
+    drawdown_ok = max_drawdown >= drawdown_floor
+    if not drawdown_ok:
+        state = "FAILED_DRAWDOWN"
+    elif not count_ok:
+        state = "IN_PROGRESS"
+    elif not pnl_ok:
+        state = "WAIT_POSITIVE_PNL"
+    else:
+        state = "PASS"
+
+    return {
+        "state": state,
+        "promotion_review_ready": state == "PASS",
+        "paper_only": True,
+        "completed_trades": len(rows),
+        "required_trades": required,
+        "remaining_trades": max(0, required - len(rows)),
+        "cumulative_pnl": round(cumulative, 2),
+        "minimum_pnl_exclusive": minimum_pnl,
+        "max_drawdown": round(max_drawdown, 2),
+        "drawdown_floor": drawdown_floor,
+        "count_ok": count_ok,
+        "pnl_ok": pnl_ok,
+        "drawdown_ok": drawdown_ok,
+        "start_at": str(gate["start_at"]),
+        "evaluated_through": str(rows[-1]["close_time"]) if rows else None,
+        "live_money_authorized": False,
+    }
+
+
 @router.get("/{bot}/status")
 def get_status(bot: str):
     _validate(bot)
@@ -72,7 +127,18 @@ def get_status(bot: str):
             "WHERE close_time >= :s AND close_time < :e"
         ), {"s": day_start, "e": day_end}).mappings().first()
 
-    return {
+        gate_cfg = BOT_REGISTRY[bot].get("forward_gate")
+        gate_rows = []
+        if gate_cfg:
+            start_at = datetime.fromisoformat(str(gate_cfg["start_at"]))
+            gate_rows = conn.execute(text(
+                f"SELECT close_time, realized_pnl "
+                f"FROM {bot_table(bot, 'closed_trades')} "
+                "WHERE close_time >= :start_at "
+                "ORDER BY close_time, position_id"
+            ), {"start_at": start_at}).mappings().all()
+
+    result = {
         "bot": bot,
         "display": BOT_REGISTRY[bot]["display"],
         "strategy": BOT_REGISTRY[bot]["strategy"],
@@ -85,6 +151,10 @@ def get_status(bot: str):
         "unrealized_pnl": float(unrealized),
         "last_scan_at": str(last["s"]) if last["s"] else None,
     }
+    forward_gate = _forward_gate_status(bot, gate_rows)
+    if forward_gate is not None:
+        result["forward_gate"] = forward_gate
+    return result
 
 
 @router.get("/{bot}/positions")
