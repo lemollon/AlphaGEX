@@ -48,6 +48,7 @@ STRATEGIES = {
 ENTRY_TYPES = {
     "breakout_hold", "breakout_retest", "support_hold", "failed_reclaim",
     "vwap_reclaim", "opening_range_breakout", "opening_range_rejection",
+    "opening_range_hold",
 }
 SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 router = APIRouter(prefix="/api/spreadworks/intraday-watch",
@@ -155,6 +156,7 @@ def validate_setup(raw: dict[str, Any], trading_date: date) -> dict[str, Any]:
         "vwap_reclaim": (),
         "opening_range_breakout": ("range_high",),
         "opening_range_rejection": ("range_low", "range_high"),
+        "opening_range_hold": ("range_low", "range_high"),
     }[entry["type"]]
     for key in numeric_keys:
         try:
@@ -163,6 +165,14 @@ def validate_setup(raw: dict[str, Any], trading_date: date) -> dict[str, Any]:
             raise HTTPException(status_code=422, detail=f"entry.{key} must be numeric") from exc
     if entry["type"] == "support_hold" and entry["support_low"] > entry["support_high"]:
         raise HTTPException(status_code=422, detail="support_low must not exceed support_high")
+    if entry["type"] == "opening_range_hold":
+        if entry["range_low"] >= entry["range_high"]:
+            raise HTTPException(status_code=422, detail="range_low must be below range_high")
+        if thesis != "neutral" or strategy not in {"iron_condor", "calendar", "double_calendar"}:
+            raise HTTPException(
+                status_code=422,
+                detail="opening_range_hold requires a neutral iron condor or calendar strategy",
+            )
     if invalidation["type"] in {"close_below", "close_above"}:
         try:
             invalidation["level"] = float(invalidation["level"])
@@ -421,6 +431,33 @@ def evaluate_setup(
         ready = rejected and all(bar.close < low for bar in recent)
         near = quote_price <= high * 1.003 and quote_price >= low * 0.997
         evidence.append(f"opening range rejected with {needed} closes below {low:g}" if ready else "waiting for opening-range rejection")
+    elif kind == "opening_range_hold":
+        low, high = entry["range_low"], entry["range_high"]
+        quote_in_range = low <= quote_price <= high
+        lower_touched = any(bar.low <= low for bar in completed)
+        upper_touched = any(bar.high >= high for bar in completed)
+        closes_held = all(low <= bar.close <= high for bar in recent)
+        ready = quote_in_range and lower_touched and upper_touched and closes_held
+        near = quote_in_range
+        if ready:
+            evidence.append(
+                f"both sides of opening range {low:g}-{high:g} were tested and "
+                f"the latest {needed} completed closes held inside"
+            )
+        else:
+            missing = []
+            if not lower_touched:
+                missing.append("lower-side test")
+            if not upper_touched:
+                missing.append("upper-side test")
+            if not closes_held:
+                missing.append(f"{needed} in-range closes")
+            if not quote_in_range:
+                missing.append("quote back inside range")
+            evidence.append(
+                f"waiting for two-sided hold in {low:g}-{high:g}: "
+                + ", ".join(missing)
+            )
 
     rs_ok, rs_reason = _relative_strength_ok(setup, relative_context)
     if setup.get("relative_strength") or (setup.get("confirmation_rule") or {}).get("relative_strength"):
