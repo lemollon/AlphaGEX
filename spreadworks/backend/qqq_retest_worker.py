@@ -23,7 +23,15 @@ import httpx
 import websockets
 
 from .db import Base, SessionLocal, engine
-from .models import QQQWatchRuntimeStatus
+from .intraday_watch import run_intraday_cycle
+from .models import (
+    IntradayAlertDedup,
+    IntradaySelectedWatchlist,
+    IntradaySetup,
+    IntradayTradePlan,
+    IntradayWatchRuntimeStatus,
+    QQQWatchRuntimeStatus,
+)
 from .qqq_retest_watch import load_settings, run_watch_cycle
 
 
@@ -31,6 +39,9 @@ UTC = timezone.utc
 TRADIER_BASE = "https://api.tradier.com/v1"
 TRADIER_STREAM = "wss://ws.tradier.com/v1/markets/events"
 WATCHER_ID = "qqq-retest"
+# Keep the proven stream subscription narrow. The generalized engine polls the
+# remaining core/index symbols through their legitimate REST market-data paths.
+STREAM_SYMBOLS = {"QQQ", "SPY"}
 logger = logging.getLogger("spreadworks.qqq_retest_worker")
 
 _STOP = asyncio.Event()
@@ -78,7 +89,7 @@ def _record_stream_message(message: str, received_at: datetime) -> None:
             continue
         if event.get("error"):
             raise RuntimeError(f"Tradier stream error: {event['error']}")
-        if str(event.get("symbol", "")).upper() not in {"QQQ", "SPY"}:
+        if str(event.get("symbol", "")).upper() not in STREAM_SYMBOLS:
             continue
         _STREAM["last_event_at"] = received_at
         exchange_at = _parse_exchange_timestamp(event)
@@ -118,7 +129,7 @@ async def _stream_forever(client: httpx.AsyncClient) -> None:
                 close_timeout=5, ping_interval=20, ping_timeout=20,
             ) as websocket:
                 await websocket.send(json.dumps({
-                    "symbols": ["QQQ", "SPY"],
+                    "symbols": sorted(STREAM_SYMBOLS),
                     "filter": ["quote", "timesale"],
                     "sessionid": session_id,
                     "linebreak": True,
@@ -179,17 +190,36 @@ async def _run_worker() -> None:
         raise RuntimeError("QQQ_RETEST_WATCH_ENABLED must be true on the worker")
     if engine is None:
         raise RuntimeError("DATABASE_URL is not configured on Render")
-    Base.metadata.create_all(
-        bind=engine, tables=[QQQWatchRuntimeStatus.__table__]
-    )
+    Base.metadata.create_all(bind=engine, tables=[
+        QQQWatchRuntimeStatus.__table__, IntradayTradePlan.__table__,
+        IntradaySelectedWatchlist.__table__, IntradaySetup.__table__,
+        IntradayAlertDedup.__table__, IntradayWatchRuntimeStatus.__table__,
+    ])
     timeout = httpx.Timeout(15.0, connect=10.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         app = SimpleNamespace(state=SimpleNamespace(http=client))
         stream_task = asyncio.create_task(_stream_forever(client))
+        last_intraday_cycle: datetime | None = None
         try:
             while not _STOP.is_set():
                 started_at = datetime.now(UTC)
                 status = await run_watch_cycle(app, now=started_at)
+                intraday_poll = max(
+                    30, int(os.getenv("INTRADAY_WATCH_POLL_SECONDS", "60"))
+                )
+                if (last_intraday_cycle is None
+                        or (started_at - last_intraday_cycle).total_seconds()
+                        >= intraday_poll):
+                    try:
+                        status["intraday_watch"] = await run_intraday_cycle(
+                            app, now=started_at
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.exception("[IntradayWatch] cycle failed: %r", exc)
+                        status["intraday_watch"] = {
+                            "worker_healthy": False, "errors": [str(exc)]
+                        }
+                    last_intraday_cycle = started_at
                 next_cycle = started_at + timedelta(seconds=settings.poll_seconds)
                 status.update(
                     runtime="render-background-worker",
