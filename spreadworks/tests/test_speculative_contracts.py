@@ -30,7 +30,9 @@ def test_expected_move_reads_one_sigma_levels():
             {"name": "minus_1s_1d", "price": 90},
         ]}
     })
-    assert result == {"lower": 90.0, "upper": 110.0, "dollars": 10.0}
+    assert result["preferred_horizon"] == "1d"
+    assert result["dollars"] == 10.0
+    assert result["one_day"] == {"lower": 90.0, "upper": 110.0, "dollars": 10.0}
 
 
 def test_choose_candidate_requires_otm_delta_and_liquidity():
@@ -48,6 +50,7 @@ def test_choose_candidate_requires_otm_delta_and_liquidity():
         opportunity_score=8.0,
         iv_rank=30,
         expected_move=8,
+        today=__import__("datetime").date(2026, 9, 18),
     )
     assert result["strike"] == 105
     assert result["speculative_contract_score"] > 0
@@ -63,3 +66,19 @@ def test_gamma_expiration_context_identifies_dominant_bucket():
     })
     assert result["available"] is True
     assert result["dominant_bucket"] == "first_weekly"
+
+
+def test_expected_move_prefers_one_week_market_structure():
+    result = sc._expected_move(
+        {"data": {"levels": [
+            {"name": "plus_1s_1d", "price": 102},
+            {"name": "minus_1s_1d", "price": 98},
+        ]}},
+        {"data": {"key_levels": {
+            "plus_1sigma_1w": 108,
+            "minus_1sigma_1w": 92,
+        }}},
+    )
+    assert result["preferred_horizon"] == "1w"
+    assert result["dollars"] == 8.0
+    assert result["one_week"]["upper"] == 108.0
