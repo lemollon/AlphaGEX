@@ -295,6 +295,143 @@ def _choose_candidate(
     return result
 
 
+def _best_recommendation_score(result: dict[str, Any]) -> float:
+    recommendations = result.get("recommendations") or {}
+    scores = [
+        _coerce_float((value or {}).get("speculative_contract_score"))
+        for value in recommendations.values()
+        if isinstance(value, dict)
+    ]
+    clean = [score for score in scores if score is not None]
+    return max(clean) if clean else float("-inf")
+
+
+def _parse_symbol_list(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    symbols = []
+    for item in raw.split(","):
+        symbol = item.strip().upper()
+        if symbol and symbol.isalnum() and len(symbol) <= 8 and symbol not in symbols:
+            symbols.append(symbol)
+    return symbols
+
+
+@router.get("/scan")
+async def scan_speculative_contracts(
+    request: Request,
+    symbols: str | None = Query(
+        None,
+        description="Comma-separated symbols. Use the exact morning watchlist here.",
+    ),
+    limit: int = Query(10, ge=1, le=20),
+    min_score: float = Query(0.0, ge=0.0),
+    min_dte: int = Query(5, ge=1, le=45),
+    max_dte: int = Query(14, ge=2, le=60),
+):
+    """Score every requested/watchlist stock and rank the resulting contracts.
+
+    If symbols are omitted, use TradingVolatility /top-setups as the discovery
+    universe. Concurrency is deliberately capped to protect vendor rate limits.
+    """
+    if min_dte > max_dte:
+        raise HTTPException(400, "min_dte must be <= max_dte")
+
+    requested = _parse_symbol_list(symbols)
+    leaderboard_source = "explicit_symbols"
+
+    if requested:
+        selected = requested[:limit]
+        tv_rank_by_symbol: dict[str, dict[str, Any]] = {}
+    else:
+        top_payload = await _tv_get(
+            request.app.state.http,
+            "/top-setups",
+            {"limit": limit, "min_score": min_score},
+        )
+        items = _tv_data(top_payload).get("items")
+        if not isinstance(items, list):
+            raise HTTPException(502, "TradingVolatility /top-setups returned no items list")
+        leaderboard_source = "TradingVolatility /top-setups"
+        selected = []
+        tv_rank_by_symbol = {}
+        for rank, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                continue
+            ticker = str(item.get("ticker") or item.get("symbol") or "").upper()
+            if not ticker or ticker in selected:
+                continue
+            selected.append(ticker)
+            tv_rank_by_symbol[ticker] = {
+                "rank": rank,
+                "opportunity_score": _walk_for_number(item, ("opportunity_score",)),
+                "opportunity_tier": item.get("opportunity_tier"),
+                "trade_bias": item.get("trade_bias"),
+                "direction": item.get("direction"),
+                "trade_type": item.get("trade_type"),
+            }
+            if len(selected) >= limit:
+                break
+
+    semaphore = asyncio.Semaphore(3)
+
+    async def one(symbol: str) -> dict[str, Any]:
+        async with semaphore:
+            try:
+                result = await get_speculative_contracts(
+                    request,
+                    symbol,
+                    min_dte=min_dte,
+                    max_dte=max_dte,
+                )
+            except HTTPException as exc:
+                result = {
+                    "symbol": symbol,
+                    "status": "ERROR",
+                    "error": exc.detail,
+                }
+            except Exception as exc:  # noqa: BLE001
+                result = {
+                    "symbol": symbol,
+                    "status": "ERROR",
+                    "error": str(exc)[:240],
+                }
+            if symbol in tv_rank_by_symbol:
+                result["trading_volatility_rank"] = tv_rank_by_symbol[symbol]
+            result["best_recommendation_score"] = _best_recommendation_score(result)
+            return result
+
+    results = await asyncio.gather(*(one(symbol) for symbol in selected))
+    ranked = sorted(
+        results,
+        key=lambda row: row.get("best_recommendation_score", float("-inf")),
+        reverse=True,
+    )
+
+    qualified = [
+        row for row in ranked
+        if row.get("status") == "OK"
+        and row.get("best_recommendation_score", float("-inf")) != float("-inf")
+    ]
+
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "source_universe": leaderboard_source,
+        "symbols_requested": selected,
+        "symbols_scanned": len(results),
+        "qualified_count": len(qualified),
+        "ranked_results": ranked,
+        "top_opportunities": qualified[:5],
+        "policy": {
+            "per_stock_outputs": ["best_contract", "aggressive_otm", "lotto"],
+            "vendor_concurrency": 3,
+            "options_freshness_seconds": 90,
+            "advisory_only": True,
+            "order_routing": False,
+        },
+    }
+
+
 @router.get("/{symbol}")
 async def get_speculative_contracts(
     request: Request,
