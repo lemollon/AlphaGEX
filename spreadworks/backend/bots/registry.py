@@ -602,6 +602,11 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "require_put_wall": True,
             "strike_offset": 1,
             "hold_minutes": 30,
+            # If the timer/stop touch cannot display the full 1-3 lot, latch
+            # the exit for at most five one-minute scans. A later fill is
+            # capped at the original bid; timeout values the lot at zero and
+            # fails the forward depth gate.
+            "exit_latch_minutes": 5,
             "pt_pct": 9.9999,         # no profit target; the right tail is the edge
             "sl_pct": 0.50,
             "astra3_fee": True,       # $0.70 round trip embedded in paper P&L
