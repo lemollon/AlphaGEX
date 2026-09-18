@@ -100,6 +100,74 @@ def test_vwap_reclaim_and_opening_range_rules():
     assert (vwap.state, orb.state, reject.state) == ("ENTRY_READY", "ENTRY_READY", "ENTRY_READY")
 
 
+def test_opening_range_hold_requires_both_side_tests_and_in_range_closes():
+    setup = _setup(
+        {"type": "opening_range_hold", "range_low": 100, "range_high": 102},
+        strategy="double_calendar", thesis="neutral",
+    )
+    bars = _bars(
+        [100.4, 101.7, 101.0, 101.2],
+        lows=[99.9, 101.2, 100.7, 100.8],
+        highs=[100.8, 102.1, 101.4, 101.5],
+    )
+    result = _evaluate(setup, bars, price=101.1)
+    assert result.state == "ENTRY_READY"
+    assert "both sides" in result.reason
+
+
+def test_opening_range_hold_is_near_only_inside_range_until_both_sides_test():
+    setup = _setup(
+        {"type": "opening_range_hold", "range_low": 100, "range_high": 102},
+        strategy="iron_condor", thesis="neutral",
+    )
+    bars = _bars([100.4, 100.8], lows=[99.9, 100.4], highs=[101.0, 101.2])
+    assert _evaluate(setup, bars, price=101).state == "NEAR_TRIGGER"
+    assert _evaluate(setup, bars, price=102.01).state == "WAIT"
+
+
+def test_opening_range_hold_accepts_exact_boundaries():
+    setup = _setup(
+        {"type": "opening_range_hold", "range_low": 100, "range_high": 102},
+        strategy="double_calendar", thesis="neutral",
+    )
+    bars = _bars([100, 102], lows=[100, 101], highs=[101, 102])
+    assert _evaluate(setup, bars, price=102).state == "ENTRY_READY"
+
+
+def test_opening_range_hold_rejects_stale_quote_and_completed_bar():
+    setup = _setup(
+        {"type": "opening_range_hold", "range_low": 100, "range_high": 102},
+        strategy="iron_condor", thesis="neutral",
+    )
+    bars = _bars([100, 102], lows=[100, 101], highs=[101, 102])
+    assert _evaluate(setup, bars, price=101, quote_at=NOW - timedelta(seconds=91)).state == "DATA_UNAVAILABLE"
+    old = [
+        MarketBar(NOW - timedelta(minutes=4), 100, 101, 100, 100.5),
+        MarketBar(NOW - timedelta(minutes=3), 101, 102, 101, 101.5),
+    ]
+    assert _evaluate(setup, old, price=101).state == "DATA_UNAVAILABLE"
+
+
+def test_opening_range_hold_validation_is_neutral_and_bounded():
+    valid = _raw_setup("BX", strategy="double_calendar")
+    valid.update(
+        thesis="neutral",
+        entry={"type": "opening_range_hold", "range_low": 50,
+               "range_high": 52, "confirmation_bars": 1},
+    )
+    assert watch.validate_setup(valid, date(2026, 9, 18))["entry"]["confirmation_bars"] == 1
+    invalid_range = dict(valid, entry={"type": "opening_range_hold", "range_low": 52, "range_high": 52})
+    with pytest.raises(HTTPException, match="range_low must be below"):
+        watch.validate_setup(invalid_range, date(2026, 9, 18))
+    directional = dict(valid, thesis="bullish")
+    with pytest.raises(HTTPException, match="requires a neutral"):
+        watch.validate_setup(directional, date(2026, 9, 18))
+    too_many = dict(valid, entry={"type": "opening_range_hold", "range_low": 50,
+                                  "range_high": 52, "confirmation_bars": 11})
+    with pytest.raises(HTTPException, match="confirmation_bars"):
+        watch.validate_setup(too_many, date(2026, 9, 18))
+
+
 def test_relative_strength_confirmation_can_block_otherwise_ready_entry():
     setup = _setup({"type": "breakout_hold", "breakout_level": 100},
                    relative_strength={"minimum_outperformance": .01})
