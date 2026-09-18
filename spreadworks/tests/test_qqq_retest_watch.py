@@ -3,9 +3,12 @@
 The values below came from Yahoo Finance's live chart response captured on the
 same date.  They are fixed production observations, not generated sample data.
 """
-from datetime import date, datetime
+import asyncio
+from datetime import date, datetime, timezone
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+import backend.qqq_retest_watch as watch
 from backend.qqq_retest_watch import Bar, Settings, classify_bars
 
 
@@ -106,3 +109,54 @@ def test_real_bar_after_reclaim_returns_to_wait() -> None:
 
     assert result.state == "WAIT"
     assert result.transition_at == datetime(2026, 9, 17, 13, 3, tzinfo=ET)
+
+
+def test_expired_levels_preserve_recorded_live_price_snapshot(monkeypatch) -> None:
+    """Old levels block signals, not fresh independent price reporting."""
+    settings = _settings()
+    # Midpoints of the fresh ThetaData BBO observed at 08:11:05.134 ET on
+    # 2026-09-18: SPY 760.77/760.82 and QQQ 718.41/718.47.
+    exchange_at = datetime(
+        2026, 9, 18, 8, 11, 5, 134000, tzinfo=ET
+    ).astimezone(timezone.utc)
+    retrieved_at = exchange_at.replace(microsecond=248000)
+    market = {
+        "provider": "Yahoo",
+        "source": "Yahoo Finance chart/quote",
+        "certification": "Unofficial; not exchange-certified BBO",
+        "retrieval_timestamp": retrieved_at,
+        "qqq": {
+            "symbol": "QQQ", "price": 718.44,
+            "exchange_timestamp": exchange_at,
+            "retrieval_timestamp": retrieved_at, "age_seconds": 0.114,
+        },
+        "spy": {
+            "symbol": "SPY", "price": 760.795,
+            "exchange_timestamp": exchange_at,
+            "retrieval_timestamp": retrieved_at, "age_seconds": 0.114,
+        },
+        "qqq_bars": [], "spy_bars": [],
+    }
+
+    async def recorded_market(*_args, **_kwargs):
+        return market
+
+    async def no_tv_context(*_args, **_kwargs):
+        return {"available": False, "configured": False}
+
+    monkeypatch.setattr(watch, "load_settings", lambda: settings)
+    monkeypatch.setattr(watch, "_fetch_market", recorded_market)
+    monkeypatch.setattr(watch, "get_trading_volatility_context", no_tv_context)
+    monkeypatch.setattr(watch, "_STATE", {"last_state": "LEVELS_EXPIRED"})
+    monkeypatch.setattr(watch, "_STATUS", {})
+
+    result = asyncio.run(watch.run_watch_cycle(
+        SimpleNamespace(state=SimpleNamespace(http=object())),
+        now=retrieved_at,
+    ))
+
+    assert result["state"] == "LEVELS_EXPIRED"
+    assert result["source"] == "Yahoo Finance chart/quote"
+    assert result["qqq"]["price"] == 718.44
+    assert result["spy"]["price"] == 760.795
+    assert result["options"] is None

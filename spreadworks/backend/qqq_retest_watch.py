@@ -784,21 +784,25 @@ async def run_watch_cycle(app, *, now: datetime | None = None) -> dict[str, Any]
     )
     _set_status(trading_volatility=tv_context)
 
-    if now_et.date() != settings.levels_date:
-        classification = Classification(
-            "LEVELS_EXPIRED",
-            (f"Configured levels are prior user-defined levels from "
-             f"{settings.levels_date.isoformat()}; update them before using "
-             f"on {now_et.date().isoformat()}."),
-            None,
-        )
-        await _process_state_change(app, classification, None, settings,
-                                    session, None, "levels expired", tv_context,
-                                    retrieved_at)
-        return dict(_STATUS)
-
     try:
         market = await _fetch_market(app, settings, retrieved_at)
+        # Expired setup levels must never suppress the independent live-price
+        # snapshot.  Morning consumers still need fresh QQQ/SPY context, but
+        # the old levels remain unable to produce a directional signal.
+        if now_et.date() != settings.levels_date:
+            classification = Classification(
+                "LEVELS_EXPIRED",
+                (f"Configured levels are prior user-defined levels from "
+                 f"{settings.levels_date.isoformat()}; update them before using "
+                 f"on {now_et.date().isoformat()}."),
+                None,
+            )
+            await _process_state_change(
+                app, classification, market, settings, session, None,
+                "levels expired", tv_context, retrieved_at,
+            )
+            return dict(_STATUS)
+
         classification = classify_bars(market["qqq_bars"], settings)
         options = None
         options_reason = "state is not actionable"
