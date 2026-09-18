@@ -82,3 +82,18 @@ def test_expected_move_prefers_one_week_market_structure():
     assert result["preferred_horizon"] == "1w"
     assert result["dollars"] == 8.0
     assert result["one_week"]["upper"] == 108.0
+
+
+def test_parse_symbol_list_dedupes_and_normalizes():
+    assert sc._parse_symbol_list(" meta,LOW,META, qqq ") == ["META", "LOW", "QQQ"]
+
+
+def test_best_recommendation_score_uses_highest_contract():
+    result = {
+        "recommendations": {
+            "best_contract": {"speculative_contract_score": 72.5},
+            "aggressive_otm": {"speculative_contract_score": 81.25},
+            "lotto": None,
+        }
+    }
+    assert sc._best_recommendation_score(result) == 81.25
