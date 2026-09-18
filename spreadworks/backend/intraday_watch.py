@@ -127,7 +127,13 @@ def validate_setup(raw: dict[str, Any], trading_date: date) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail="each setup must be an object")
     setup = dict(raw)
     setup["symbol"] = _normalize_symbol(setup.get("symbol"))
-    strategy = str(setup.get("strategy") or "").strip().lower()
+    strategy = str(setup.get("strategy") or "").strip().lower().replace(" ", "_")
+    disposition = str(
+        setup.get("action") or setup.get("recommendation")
+        or setup.get("trade_status") or ""
+    ).strip().lower().replace(" ", "_")
+    if strategy in {"watch_only", "no_trade"} or disposition in {"watch_only", "no_trade"}:
+        raise HTTPException(status_code=422, detail="Watch Only / No Trade ideas are not actionable setups")
     if strategy not in STRATEGIES:
         raise HTTPException(status_code=422, detail=f"unsupported strategy: {strategy}")
     thesis = str(setup.get("thesis") or "").strip().lower()
@@ -213,6 +219,39 @@ def validate_setups_payload(payload: dict[str, Any]) -> tuple[date, list[dict[st
     if len(set(ids)) != len(ids):
         raise HTTPException(status_code=422, detail="setup IDs must be unique")
     return trading_date, setups
+
+
+def validate_plan_parity(symbols: list[str], setups: list[dict[str, Any]]) -> dict[str, Any]:
+    selected = set(symbols)
+    non_core_setups = {
+        item["symbol"] for item in setups if item["symbol"] not in set(CORE_SYMBOLS)
+    }
+    missing = sorted(selected - non_core_setups)
+    outside = sorted(non_core_setups - selected)
+    if missing or outside:
+        details = []
+        if missing:
+            details.append(f"selected symbols without actionable setups: {', '.join(missing)}")
+        if outside:
+            details.append(f"non-core setup symbols outside selected watchlist: {', '.join(outside)}")
+        raise HTTPException(status_code=422, detail="; ".join(details))
+    return {
+        "valid": True,
+        "selected_non_core_symbols": sorted(selected),
+        "non_core_setup_symbols": sorted(non_core_setups),
+        "selected_symbol_count": len(symbols),
+        "setup_count": len(setups),
+    }
+
+
+def plan_hash(trading_date: date, symbols: list[str],
+              setups: list[dict[str, Any]]) -> str:
+    canonical = {
+        "trading_date": trading_date.isoformat(),
+        "symbols": sorted(symbols),
+        "setups": sorted(setups, key=lambda item: item["setup_id"]),
+    }
+    return hashlib.sha256(_json(canonical).encode("utf-8")).hexdigest()
 
 
 def market_session(now: datetime) -> str:
@@ -673,6 +712,84 @@ def store_plan(trading_date: date, payload: dict[str, Any]) -> None:
         db.close()
 
 
+def store_morning_plan_atomic(trading_date: date, symbols: list[str],
+                              setups: list[dict[str, Any]],
+                              payload: dict[str, Any],
+                              *, ingested_at: datetime | None = None) -> dict[str, Any]:
+    """Persist the plan, exact watchlist, and setups in one transaction."""
+    parity = validate_plan_parity(symbols, setups)
+    digest = plan_hash(trading_date, symbols, setups)
+    ingested = (ingested_at or datetime.now(UTC)).astimezone(UTC)
+    normalized = dict(payload)
+    normalized.update(
+        trading_date=trading_date.isoformat(), symbols=symbols, setups=setups,
+        plan_hash=digest, ingested_at=ingested.isoformat(), parity=parity,
+    )
+    db = _db_required()
+    try:
+        db.query(IntradayTradePlan).filter(
+            IntradayTradePlan.trading_date < trading_date
+        ).update({"active": 0})
+        db.query(IntradaySetup).filter(
+            IntradaySetup.trading_date < trading_date
+        ).update({"active": 0, "state": "EXPIRED"})
+
+        watchlist = db.get(IntradaySelectedWatchlist, trading_date)
+        if watchlist is None:
+            db.add(IntradaySelectedWatchlist(
+                trading_date=trading_date, symbols_json=_json(symbols)
+            ))
+        else:
+            watchlist.symbols_json = _json(symbols)
+
+        incoming = {item["setup_id"] for item in setups}
+        for row in db.query(IntradaySetup).filter(
+            IntradaySetup.trading_date == trading_date
+        ).all():
+            if row.setup_id not in incoming:
+                row.active = 0
+        for item in setups:
+            row = db.get(IntradaySetup, item["setup_id"])
+            if row is None:
+                db.add(IntradaySetup(
+                    setup_id=item["setup_id"], trading_date=trading_date,
+                    symbol=item["symbol"], strategy=item["strategy"],
+                    thesis=item["thesis"], state=item["setup_state"],
+                    payload_json=_json(item), active=1,
+                ))
+            else:
+                row.trading_date = trading_date
+                row.symbol = item["symbol"]
+                row.strategy = item["strategy"]
+                row.thesis = item["thesis"]
+                row.state = item["setup_state"]
+                row.payload_json = _json(item)
+                row.active = 1
+
+        plan = db.get(IntradayTradePlan, trading_date)
+        if plan is None:
+            db.add(IntradayTradePlan(
+                trading_date=trading_date, payload_json=_json(normalized), active=1
+            ))
+        else:
+            plan.payload_json = _json(normalized)
+            plan.active = 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+    return {
+        "trading_date": trading_date.isoformat(), "persisted": True,
+        "registered_symbol_count": len(symbols),
+        "registered_setup_count": len(setups),
+        "registered_total_symbol_count": len(set(CORE_SYMBOLS) | set(symbols)),
+        "plan_hash": digest, "ingested_at": ingested.isoformat(),
+        "parity": parity,
+    }
+
+
 def claim_alert(db, setup_id: str, trading_date: date, state: str,
                 transition_at: datetime, payload: dict[str, Any] | None = None) -> str | None:
     bucket = transition_at.astimezone(UTC).replace(second=0, microsecond=0)
@@ -755,22 +872,21 @@ async def post_plan(request: Request,
     _require_write_token(x_intraday_watch_token, authorization)
     payload = await request.json()
     trading_date = _parse_date(payload.get("trading_date"))
-    normalized = dict(payload)
-    symbols = None
-    setups = None
-    if "symbols" in payload:
-        _, symbols = validate_watchlist({"trading_date": trading_date.isoformat(), "symbols": payload["symbols"]})
-        normalized["symbols"] = symbols
-    if "setups" in payload:
-        _, setups = validate_setups_payload({"trading_date": trading_date.isoformat(), "setups": payload["setups"]})
-        normalized["setups"] = setups
-    if symbols is not None:
-        await asyncio.to_thread(store_watchlist, trading_date, symbols)
-    if setups is not None:
-        await asyncio.to_thread(store_setups, trading_date, setups)
-    await asyncio.to_thread(store_plan, trading_date, normalized)
-    return {"trading_date": trading_date.isoformat(), "persisted": True,
-            "setup_count": len(normalized.get("setups", []))}
+    if "symbols" not in payload or "setups" not in payload:
+        raise HTTPException(
+            status_code=422,
+            detail="morning plan requires both symbols and setups",
+        )
+    _, symbols = validate_watchlist({
+        "trading_date": trading_date.isoformat(), "symbols": payload["symbols"]
+    })
+    _, setups = validate_setups_payload({
+        "trading_date": trading_date.isoformat(), "setups": payload["setups"]
+    })
+    validate_plan_parity(symbols, setups)
+    return await asyncio.to_thread(
+        store_morning_plan_atomic, trading_date, symbols, setups, payload
+    )
 
 
 @router.get("/plan")
@@ -1011,6 +1127,8 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
         "last_options_data_timestamp": None, "last_alert": None,
         "data_source": "Tradier production consolidated feed", "data_freshness": {},
         "discord_configured": bool(os.getenv("DISCORD_WEBHOOK_URL", "").strip()),
+        "plan_ingestion_timestamp": None, "plan_hash": None,
+        "plan_parity": {"valid": False, "reason": "no plan ingested"},
         "errors": [],
     }
     if SessionLocal is None:
@@ -1033,6 +1151,31 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
                 pass
         rows = db.query(IntradaySetup).filter(IntradaySetup.trading_date == today, IntradaySetup.active == 1).all()
         status["active_setup_count"] = len(rows)
+        plan_row = db.get(IntradayTradePlan, today)
+        if plan_row:
+            try:
+                plan_payload = json.loads(plan_row.payload_json)
+                expected_symbols = set(plan_payload.get("symbols") or [])
+                expected_ids = {
+                    item.get("setup_id") for item in plan_payload.get("setups") or []
+                }
+                actual_symbols = set(status["selected_daily_symbols"])
+                actual_ids = {row.setup_id for row in rows}
+                symbols_match = actual_symbols == expected_symbols
+                setups_match = actual_ids == expected_ids
+                status["plan_ingestion_timestamp"] = plan_payload.get("ingested_at")
+                status["plan_hash"] = plan_payload.get("plan_hash")
+                status["plan_parity"] = {
+                    "valid": symbols_match and setups_match,
+                    "selected_symbols_match": symbols_match,
+                    "active_setups_match": setups_match,
+                    "expected_symbol_count": len(expected_symbols),
+                    "registered_symbol_count": len(actual_symbols),
+                    "expected_setup_count": len(expected_ids),
+                    "registered_setup_count": len(actual_ids),
+                }
+            except (json.JSONDecodeError, TypeError) as exc:
+                status["errors"].append(f"morning plan metadata: {exc}")
         market_cache: dict[str, dict[str, Any]] = {}
         extra_confirmations: set[str] = set()
         for row in rows:

@@ -41,6 +41,17 @@ def _setup(entry: dict, **overrides):
     return value
 
 
+def _raw_setup(symbol="AMD", strategy="call_debit_spread", level=100, setup_id=None):
+    value = {
+        "symbol": symbol, "strategy": strategy, "thesis": "bullish",
+        "entry": {"type": "breakout_hold", "breakout_level": level},
+        "invalidation": {"type": "close_below", "level": level - 1},
+    }
+    if setup_id:
+        value["setup_id"] = setup_id
+    return value
+
+
 def _bars(closes, lows=None, highs=None, vwaps=None):
     start = NOW - timedelta(minutes=len(closes), seconds=30)
     rows = []
@@ -338,6 +349,104 @@ def test_explicit_setup_ids_are_date_bound():
     first = watch.validate_setup(raw, date(2026, 9, 18))["setup_id"]
     second = watch.validate_setup(raw, date(2026, 9, 19))["setup_id"]
     assert first != second
+
+
+@pytest.mark.parametrize(("symbols", "raw_setups", "message"), [
+    (["AMD"], [_raw_setup("NVDA")], "selected symbols without actionable setups"),
+    (["AMD"], [_raw_setup("QQQ")], "selected symbols without actionable setups"),
+    ([], [_raw_setup("AMD")], "outside selected watchlist"),
+])
+def test_morning_plan_rejects_watchlist_setup_parity_mismatches(symbols, raw_setups, message):
+    setups = [watch.validate_setup(item, date(2026, 9, 18)) for item in raw_setups]
+    with pytest.raises(HTTPException, match=message):
+        watch.validate_plan_parity(symbols, setups)
+
+
+def test_watch_only_and_no_trade_are_not_actionable_setups():
+    with pytest.raises(HTTPException, match="not actionable"):
+        watch.validate_setup(_raw_setup(strategy="Watch Only"), date(2026, 9, 18))
+    raw = _raw_setup()
+    raw["recommendation"] = "No Trade"
+    with pytest.raises(HTTPException, match="not actionable"):
+        watch.validate_setup(raw, date(2026, 9, 18))
+
+
+def test_exact_plan_parity_accepts_core_and_multiple_setups_per_selected_ticker(sqlite_store):
+    trading_date = date(2026, 9, 18)
+    setups = [
+        watch.validate_setup(_raw_setup("AMD", level=100, setup_id="amd-breakout"), trading_date),
+        watch.validate_setup(_raw_setup("AMD", strategy="put_credit_spread", level=99, setup_id="amd-credit"), trading_date),
+        watch.validate_setup(_raw_setup("QQQ", level=718, setup_id="qqq-core"), trading_date),
+    ]
+    response = watch.store_morning_plan_atomic(
+        trading_date, ["AMD"], setups,
+        {"trading_date": trading_date.isoformat(), "symbols": ["AMD"], "setups": setups},
+        ingested_at=NOW,
+    )
+    assert response["registered_symbol_count"] == 1
+    assert response["registered_setup_count"] == 3
+    assert response["registered_total_symbol_count"] == 5
+    assert response["parity"]["valid"] is True
+    assert response["plan_hash"] == watch.plan_hash(trading_date, ["AMD"], list(reversed(setups)))
+
+
+def test_atomic_plan_rolls_back_all_three_surfaces_on_commit_failure(sqlite_store, monkeypatch):
+    trading_date = date(2026, 9, 18)
+    setup = watch.validate_setup(_raw_setup("AMD"), trading_date)
+    real_factory = sqlite_store
+
+    class FailingSession:
+        def __init__(self):
+            self._session = real_factory()
+
+        def __getattr__(self, name):
+            return getattr(self._session, name)
+
+        def commit(self):
+            raise RuntimeError("forced commit failure")
+
+    monkeypatch.setattr(watch, "SessionLocal", FailingSession)
+    with pytest.raises(RuntimeError, match="forced commit failure"):
+        watch.store_morning_plan_atomic(
+            trading_date, ["AMD"], [setup],
+            {"trading_date": trading_date.isoformat(), "symbols": ["AMD"], "setups": [setup]},
+            ingested_at=NOW,
+        )
+    db = real_factory()
+    try:
+        assert db.get(IntradayTradePlan, trading_date) is None
+        assert db.get(IntradaySelectedWatchlist, trading_date) is None
+        assert db.query(IntradaySetup).count() == 0
+    finally:
+        db.close()
+
+
+def test_status_exposes_plan_hash_ingestion_and_parity(sqlite_store):
+    trading_date = date(2026, 9, 18)
+    setup = watch.validate_setup(_raw_setup("AMD"), trading_date)
+    stored = watch.store_morning_plan_atomic(
+        trading_date, ["AMD"], [setup],
+        {"trading_date": trading_date.isoformat(), "symbols": ["AMD"], "setups": [setup]},
+        ingested_at=NOW,
+    )
+    result = asyncio.run(watch.run_intraday_cycle(
+        SimpleNamespace(state=SimpleNamespace(http=None)), now=NOW
+    ))
+    assert result["plan_hash"] == stored["plan_hash"]
+    assert result["plan_ingestion_timestamp"] == NOW.isoformat()
+    assert result["plan_parity"]["valid"] is True
+
+
+def test_plan_endpoint_requires_symbols_and_setups(monkeypatch):
+    class Request:
+        async def json(self):
+            return {"trading_date": "2026-09-18", "symbols": ["AMD"]}
+
+    monkeypatch.setenv("INTRADAY_WATCH_API_TOKEN", "configured-token")
+    with pytest.raises(HTTPException, match="requires both symbols and setups"):
+        asyncio.run(watch.post_plan(
+            Request(), x_intraday_watch_token="configured-token", authorization=None
+        ))
 
 
 def test_no_order_routing_imports_or_calls_exist():
