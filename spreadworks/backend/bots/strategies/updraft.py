@@ -201,15 +201,16 @@ def build_updraft_signal(
     if mode == "astra3":
         # Frozen ASTRA-3 $500 book (2026-09-18): direct ask entry, one combined
         # UPDRAFT/BACKDRAFT stream, 30-minute busy window and exact TRAIN-only
-        # thresholds from the real-NBBO study. First matching mechanism wins.
+        # thresholds from the real-NBBO study. The +2 call is the separately
+        # validated lower-exposure expression; first matching mechanism wins.
         sub_diag: list[str] = []
         for m2, ov in (
             ("updraft", {"flow_max": -0.13376407997558806,
                           "r30_min": 19.982448725892155,
-                          "strike_offset": 1, "hold_minutes": 30}),
+                          "strike_offset": 2, "hold_minutes": 30}),
             ("backdraft", {"backdraft_flow_max": -0.35,
                             "require_put_wall": True,
-                            "strike_offset": 1, "hold_minutes": 30}),
+                            "strike_offset": 2, "hold_minutes": 30}),
         ):
             sig = build_updraft_signal(
                 chain=chain, today=today, params={**p, **ov, "mode": m2},

@@ -126,6 +126,7 @@ def test_astra3_uses_exact_book_rule_ask_fill_fee_and_cap():
         equity=500.0,
     )
     assert sig is not None and sig.mode == "updraft"
+    assert sig.strike == 602.0
     assert sig.hold_minutes == 30
     assert sig.entry_ask == 0.64
     assert sig.entry_touch_size == 10
@@ -226,6 +227,7 @@ def test_astra3_registry_is_the_frozen_500_dollar_forward_book():
     assert d["starting_capital"] == 500.0
     assert d["bp_pct"] == 0.25 and d["max_contracts"] == 3
     assert d["mode"] == "astra3" and d["hold_minutes"] == 30
+    assert d["strike_offset"] == 2
     assert d["flow_max"] == -0.13376407997558806
     assert d["r30_min"] == 19.982448725892155
     assert d["backdraft_flow_max"] == -0.35
