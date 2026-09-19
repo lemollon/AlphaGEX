@@ -2,6 +2,7 @@ import type { LiveAgent, BrokerageConnections } from '@/api/types'
 import { health } from '@/api/brokerage'
 import { color } from '@/theme/tokens'
 import { agentDetailHref } from '@/agents/routes'
+import { canManageBillingInApp } from '@/billing/store-policy'
 
 /**
  * The ONE banner shown above the Forge tab's agent tiles (APP-016).
@@ -137,4 +138,29 @@ export function bannerActionHref(action: NonNullable<Banner['action']>): string 
   if (action.target === 'billing') return '/account'
   if (action.target === 'agent' && action.bot) return agentDetailHref(action.bot as 'spark' | 'flame')
   return null
+}
+
+export type BillingBannerMode = 'not-billing' | 'stripe' | 'apple-manage' | 'suppressed'
+
+/**
+ * What the payment-due banner should DO, given the platform and (for iOS) which rail
+ * actually billed this membership — pulled out as pure, tested logic rather than an
+ * inline ternary in the Forge tab (Apple IAP handoff §4, follow-up to PR #2992).
+ *
+ * 'stripe' is the ORIGINAL behavior (tap opens the Stripe portal) and is the only
+ * outcome on Android/web. On iOS, `canManageBillingInApp` is false — Apple rejected
+ * that surface on iOS at all, even restricted — so the banner is never allowed to
+ * reach it: 'apple-manage' (tap opens Apple's own subscription settings) only when
+ * this membership was actually billed through Apple, else 'suppressed' (render
+ * nothing at all; naming ironforge.trade as the fix would itself be the
+ * call-to-action Guideline 3.1.1 exists to prevent).
+ */
+export function billingBannerMode(
+  banner: Banner | null,
+  platform: 'ios' | 'android' | 'web',
+  membershipProvider: 'stripe' | 'apple' | null | undefined,
+): BillingBannerMode {
+  if (!banner || banner.action?.target !== 'billing') return 'not-billing'
+  if (canManageBillingInApp(platform)) return 'stripe'
+  return membershipProvider === 'apple' ? 'apple-manage' : 'suppressed'
 }

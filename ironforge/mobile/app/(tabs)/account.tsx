@@ -10,7 +10,7 @@ import { api, API_BASE, ApiError } from '@/api/client'
 import type { MobileMe, MembershipResponse } from '@/api/types'
 import { signOut, biometricsAvailable, isBiometricEnabled, setBiometricEnabled } from '@/auth/session'
 import { unregisterPushDevice } from '@/notifications/push'
-import { canManageBillingInApp } from '@/billing/store-policy'
+import { canManageBillingInApp, manageSubscriptionUrl } from '@/billing/store-policy'
 import { space, radius, type, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
@@ -31,6 +31,15 @@ import { BrokerageSection } from '@/components/BrokerageSection'
  * src/billing/store-policy.ts — Apple rejected the app 2026-09-14 (Guideline 3.1.1)
  * for exposing this exact control, even restricted to a no-plan-change Stripe
  * configuration. See store-policy.ts for the full reasoning. Android and web keep it.
+ *
+ * iOS gets its OWN membership control instead (Apple IAP handoff, "Mobile contract"
+ * §4), keyed off `billing.membership.provider`: an 'apple' membership shows "Manage
+ * subscription" deep-linking to Apple's own App Store subscription settings
+ * (`manageSubscriptionUrl` — that is Apple's IAP management UI, not a competing
+ * purchase surface, so 3.1.1 does not apply to it); a 'stripe' (or unknown-provider)
+ * membership on iOS shows a plain sentence with NO link or button at all — naming
+ * ironforge.trade as the place to manage it would itself be the call-to-action
+ * Guideline 3.1.1 exists to prevent.
  *
  * NOTE for whoever wires the membership card: the plan name comes from
  * LiveSummary.membership, which the server derives from real subscription rows and
@@ -140,6 +149,7 @@ export default function AccountScreen() {
   }
 
   const c = data?.customer
+  const platform = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web'
 
   return (
     <Shell>
@@ -227,17 +237,41 @@ export default function AccountScreen() {
             rejected 2026-09-14 (Guideline 3.1.1) for exposing this control at all,
             even pointed at a Stripe portal with plan changes disabled server-side.
             See canManageBillingInApp in src/billing/store-policy.ts.
+
+            iOS gets its own branch below instead of nothing: an 'apple' membership
+            (Apple IAP handoff §4) still needs SOME way to manage it, just not this
+            one — Apple's own subscription settings, never Stripe's.
           */}
-          {canManageBillingInApp(Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web') ? (
+          {canManageBillingInApp(platform) ? (
             <Pressable onPress={openBilling} style={s.outlineBtn}>
               <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
                 Manage Membership and Billing (opens secure Stripe portal)
               </Text>
             </Pressable>
+          ) : platform === 'ios' && billing?.membership ? (
+            billing.membership.provider === 'apple' ? (
+              <Pressable
+                onPress={() => {
+                  const url = manageSubscriptionUrl(billing.membership!.provider, platform)
+                  if (url) Linking.openURL(url).catch(() => {})
+                }}
+                style={s.outlineBtn}
+              >
+                <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+                  Manage subscription
+                </Text>
+              </Pressable>
+            ) : (
+              <Text style={[type.body, { color: color.textDim, marginTop: space.lg }]}>
+                Billing for this membership is managed on the web.
+              </Text>
+            )
           ) : null}
-          <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
-            Securely managed through Stripe
-          </Text>
+          {billing?.membership?.provider !== 'apple' ? (
+            <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
+              Securely managed through Stripe
+            </Text>
+          ) : null}
         </Card>
 
         <BrokerageSection />
