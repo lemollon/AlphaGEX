@@ -1857,6 +1857,15 @@ async def lifespan(app: FastAPI):
     except Exception as _ga_exc:  # noqa: BLE001
         logger.warning("[SpreadWorks] gamma alerts failed to register: %r", _ga_exc)
 
+    # EMBER owns the live Robinhood sleeves.  The module is disabled unless
+    # EMBER_XSP_ENABLED is explicitly set, and its own live flag and durable
+    # state checks still fail closed before any order tool is exposed.
+    try:
+        from .ember.runtime import register as register_ember
+        register_ember(scheduler)
+    except Exception as _ember_exc:  # noqa: BLE001
+        logger.error("[EMBER] failed to register: %r", _ember_exc)
+
     # The dedicated Render worker owns market-watch cycles.  The web process
     # continues to serve status, but does not race the worker for alert claims.
     if os.getenv("QQQ_RETEST_RUN_IN_WEB", "false").strip().lower() == "true":
@@ -1897,6 +1906,9 @@ app.include_router(intraday_watch_router)
 
 from .speculative_contracts import router as speculative_contracts_router
 app.include_router(speculative_contracts_router)
+
+from .ember.routes import router as ember_router
+app.include_router(ember_router)
 
 from .routes_bots import router as bots_router
 app.include_router(bots_router)
