@@ -405,3 +405,5 @@ def register(scheduler: Any) -> None:
         )
     from .fleet_runtime import register as register_fleet
     register_fleet(scheduler)
+    from .astra_runtime import register as register_astra
+    register_astra(scheduler)
