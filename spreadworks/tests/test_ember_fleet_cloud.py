@@ -38,17 +38,23 @@ def test_live_refuses_an_unmigrated_empty_state(monkeypatch):
 def test_seed_replaces_earlier_empty_boot_once(monkeypatch, tmp_path):
     original = fleet.SPECS["call_diag"]
     spec = replace(original, state_path=tmp_path / "state.json")
-    spec.state_path.write_text(json.dumps(spec.default_state), encoding="utf-8")
+    post_boot = {
+        **spec.default_state,
+        "2026-09-21": {"ref_ids": {"reconcile": "dry-run-only"}},
+    }
+    spec.state_path.write_text(json.dumps(post_boot), encoding="utf-8")
     seed = {"positions": [{"id": "owned-1", "state": "open"}], "legs": {}}
     encoded = base64.b64encode(json.dumps(seed).encode()).decode()
     monkeypatch.setenv(spec.seed_env, encoded)
-    store = {spec.state_key: json.dumps(spec.default_state)}
+    store = {spec.state_key: json.dumps(post_boot)}
     monkeypatch.setattr(fleet.xsp_runtime, "_config_get", store.get)
     monkeypatch.setattr(fleet.xsp_runtime, "_config_put", store.__setitem__)
 
     assert fleet._hydrate(spec) == "seed"
-    assert json.loads(spec.state_path.read_text(encoding="utf-8")) == seed
-    assert json.loads(store[spec.state_key]) == seed
+    hydrated = json.loads(spec.state_path.read_text(encoding="utf-8"))
+    assert hydrated["positions"] == seed["positions"]
+    assert hydrated["2026-09-21"] == post_boot["2026-09-21"]
+    assert json.loads(store[spec.state_key]) == hydrated
     assert store[spec.seed_key]
     assert fleet._hydrate(spec) == "disk"
 

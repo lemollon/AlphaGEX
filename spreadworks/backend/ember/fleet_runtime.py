@@ -172,6 +172,39 @@ def _decode_seed(value: str, spec: StrategySpec) -> dict[str, Any]:
     return payload
 
 
+def _is_empty_state_value(value: Any) -> bool:
+    return value is None or value == "" or value == [] or value == {}
+
+
+def _merge_seed_state(
+    spec: StrategySpec,
+    seed: dict[str, Any],
+    existing: dict[str, Any] | None,
+    source_name: str,
+) -> dict[str, Any]:
+    """Merge harmless post-boot metadata without losing migrated ownership."""
+    if existing is None or existing == spec.default_state:
+        return dict(seed)
+    merged = dict(seed)
+    for key, current in existing.items():
+        if key not in merged:
+            merged[key] = current
+            continue
+        migrated = merged[key]
+        if current == migrated:
+            continue
+        default = spec.default_state.get(key)
+        if current == default or _is_empty_state_value(current):
+            continue
+        if migrated == default or _is_empty_state_value(migrated):
+            merged[key] = current
+            continue
+        raise xsp_runtime.EmberRuntimeError(
+            f"{spec.name} {source_name} state conflicts with migration seed"
+        )
+    return merged
+
+
 def _hydrate(spec: StrategySpec) -> str:
     disk_state: dict[str, Any] | None = None
     if spec.state_path.exists():
@@ -210,15 +243,12 @@ def _hydrate(spec: StrategySpec) -> str:
         ).hexdigest()
         applied = xsp_runtime._config_get(spec.seed_key)
         if applied != digest:
-            for source_name, existing in (("disk", disk_state), ("database", database_state)):
-                if existing is not None and existing not in (spec.default_state, seed):
-                    raise xsp_runtime.EmberRuntimeError(
-                        f"{spec.name} {source_name} state conflicts with migration seed"
-                    )
-            xsp_runtime._atomic_json(spec.state_path, seed)
+            state = _merge_seed_state(spec, seed, disk_state, "disk")
+            state = _merge_seed_state(spec, state, database_state, "database")
+            xsp_runtime._atomic_json(spec.state_path, state)
             xsp_runtime._config_put(
                 spec.state_key,
-                json.dumps(seed, separators=(",", ":"), default=str),
+                json.dumps(state, separators=(",", ":"), default=str),
             )
             xsp_runtime._config_put(spec.seed_key, digest)
             return "seed"
