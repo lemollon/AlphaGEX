@@ -393,7 +393,11 @@ def single_instance_lock(path: Path = LOCK_PATH) -> Iterator[None]:
                 stale = (datetime.now(UTC) - started).total_seconds() > LOCK_STALE_SECONDS
             except Exception:
                 pid, stale = 0, True
-            if not stale or _pid_is_running(pid):
+            # Scheduler ticks run in the long-lived Uvicorn PID.  A crashed
+            # thread therefore leaves a lock whose PID still exists forever.
+            # The 12-minute age exceeds the 10-minute agent timeout, so age is
+            # authoritative once stale even when that Uvicorn PID is alive.
+            if not stale and _pid_is_running(pid):
                 raise FlowError(f"another {BOT_ID} process is already running (pid={pid})")
             path.unlink(missing_ok=True)
     try:
@@ -415,6 +419,10 @@ def read_secret_environment() -> dict[str, str]:
         child_env["HOME"] = claude_home
         child_env["USERPROFILE"] = claude_home
     if child_env.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        # Claude Code prefers ANTHROPIC_API_KEY when both are present.  Render
+        # carries a legacy metered key as well as the operator's OAuth token;
+        # the depleted key must not shadow the valid subscription session.
+        child_env.pop("ANTHROPIC_API_KEY", None)
         return child_env
     if not SOURCE_ENV.exists():
         return child_env
@@ -426,6 +434,8 @@ def read_secret_environment() -> dict[str, str]:
         if key.strip() == "CLAUDE_CODE_OAUTH_TOKEN":
             child_env[key.strip()] = value.strip().strip('"').strip("'")
             break
+    if child_env.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        child_env.pop("ANTHROPIC_API_KEY", None)
     return child_env
 
 

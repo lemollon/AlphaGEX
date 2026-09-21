@@ -1,12 +1,14 @@
 import base64
 import gzip
 import json
+import os
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
 from backend.ember import fleet_runtime as fleet
+from backend.ember import astra_live, astra_runtime
 from backend.ember import xsp_flow_live
 from backend.ember.legacy import divhike, night_shift, spike
 
@@ -129,6 +131,62 @@ def test_headless_claude_command_accepts_only_allowlisted_tools():
         "--permission-prompts", "none",
         "--allowedTools", *tools,
     ]
+
+
+def test_oauth_token_takes_precedence_over_legacy_api_key(monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-test-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "depleted-api-key")
+    child = xsp_flow_live.read_secret_environment()
+    assert child["CLAUDE_CODE_OAUTH_TOKEN"] == "oauth-test-token"
+    assert "ANTHROPIC_API_KEY" not in child
+
+
+def test_xsp_stale_lock_recovers_when_scheduler_pid_is_still_alive(monkeypatch, tmp_path):
+    lock = tmp_path / "xsp-flow.lock"
+    lock.write_text(json.dumps({
+        "pid": os.getpid(),
+        "started_at": (datetime.now(UTC) - timedelta(minutes=13)).isoformat(),
+    }))
+    with xsp_flow_live.single_instance_lock(lock):
+        assert json.loads(lock.read_text())["pid"] == os.getpid()
+    assert not lock.exists()
+
+
+def test_astra_live_requires_migrated_state(monkeypatch, tmp_path):
+    monkeypatch.setattr(astra_live, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setenv("ASTRA_LIVE_ARMED", "1")
+    monkeypatch.setenv("ASTRA_LIVE_DRY_RUN", "0")
+    monkeypatch.setenv("ASTRA_LIVE_FORWARD_GATE_OVERRIDE", "1")
+    monkeypatch.delenv("ASTRA_LIVE_STATE_B64", raising=False)
+    with pytest.raises(fleet.xsp_runtime.EmberRuntimeError, match="not migrated"):
+        astra_runtime._hydrate_state()
+
+
+def test_astra_state_seed_is_account_bound(monkeypatch, tmp_path):
+    monkeypatch.setattr(astra_live, "STATE_PATH", tmp_path / "state.json")
+    state = astra_live._default_state(astra_live.Config.load())
+    monkeypatch.setenv(
+        "ASTRA_LIVE_STATE_B64",
+        base64.b64encode(json.dumps(state).encode()).decode(),
+    )
+    assert astra_runtime._hydrate_state() == "seed"
+    assert json.loads(astra_live.STATE_PATH.read_text())["account"] == astra_live.ACCOUNT
+
+
+def test_astra_jobs_are_registered_when_enabled(monkeypatch):
+    monkeypatch.setenv("ASTRA_LIVE_ENABLED", "1")
+
+    class Scheduler:
+        def __init__(self):
+            self.jobs = []
+
+        def add_job(self, func, trigger, **kwargs):
+            self.jobs.append((func, trigger, kwargs))
+
+    scheduler = Scheduler()
+    astra_runtime.register(scheduler)
+    ids = {kwargs["id"] for _, _, kwargs in scheduler.jobs}
+    assert ids == {"ember_astra3_live_preflight", "ember_astra3_live_cycle"}
 
 
 def test_cloud_status_redacts_provider_credentials():
