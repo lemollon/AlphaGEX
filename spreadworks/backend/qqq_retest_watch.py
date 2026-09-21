@@ -733,8 +733,13 @@ def _build_embed(classification: Classification, market: dict[str, Any] | None,
 
 async def _send_alert(embed: dict[str, Any], event_key: str,
                       fire_date: date) -> bool:
-    from . import _claim_post_slot_db, _release_post_slot_db, _send_webhook_sync
-    webhook = (os.getenv("QQQ_RETEST_WEBHOOK_URL", "").strip()
+    from . import (
+        _claim_post_slot_db,
+        _release_post_slot_db,
+        _send_intraday_webhook_sync,
+    )
+    webhook = (os.getenv("INTRADAY_DISCORD_WEBHOOK_URL", "").strip()
+               or os.getenv("QQQ_RETEST_WEBHOOK_URL", "").strip()
                or os.getenv("DISCORD_WEBHOOK_URL", "").strip())
     if not webhook:
         logger.warning("[QQQWatch] no webhook configured; event retained in status")
@@ -742,7 +747,7 @@ async def _send_alert(embed: dict[str, Any], event_key: str,
     dedup_key = event_key[:64]
     if not _claim_post_slot_db(dedup_key, fire_date):
         return False
-    sent = await asyncio.to_thread(_send_webhook_sync, embed, webhook)
+    sent = await asyncio.to_thread(_send_intraday_webhook_sync, embed, webhook)
     if not sent:
         _release_post_slot_db(dedup_key, fire_date)
     return sent

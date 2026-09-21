@@ -50,13 +50,13 @@ else:
         print(f"[SpreadWorks]   {p} -> exists={p.exists()}")
 
 
-# Master kill switch for EVERY SpreadWorks Discord post (scheduler posts,
-# bot open/close embeds, gamma/risk alerts, intraday + QQQ watchers, TSUNAMI,
-# and the spreadworks-daily-bot worker). Default OFF: the user asked for
-# SpreadWorks to stop posting to their Discord, and each of those paths had
-# its own on/off knob, so turning one off left the rest talking. Re-enable
-# with SPREADWORKS_DISCORD_ENABLED=true on the Render service.
+# Master kill switch for the fleet-wide SpreadWorks Discord route (scheduler,
+# bot open/close embeds, gamma/risk alerts, TSUNAMI, and daily brief). The
+# intraday + QQQ entry watchers use a separate, narrowly scoped switch below.
+# Default OFF because enabling entry alerts must not reactivate the fleet.
 DISCORD_ENABLED_ENV = "SPREADWORKS_DISCORD_ENABLED"
+INTRADAY_DISCORD_ENABLED_ENV = "INTRADAY_ALERTS_ENABLED"
+INTRADAY_DISCORD_WEBHOOK_ENV = "INTRADAY_DISCORD_WEBHOOK_URL"
 _TRUTHY = {"1", "true", "yes", "on"}
 
 
@@ -64,8 +64,56 @@ def discord_posting_enabled() -> bool:
     return os.getenv(DISCORD_ENABLED_ENV, "").strip().lower() in _TRUTHY
 
 
+def intraday_discord_posting_enabled() -> bool:
+    """Return whether the isolated intraday/QQQ alert route is enabled."""
+    return os.getenv(INTRADAY_DISCORD_ENABLED_ENV, "").strip().lower() in _TRUTHY
+
+
+def _post_discord_webhook_sync(embed_or_embeds, webhook_url: str,
+                               *, log_prefix: str) -> bool:
+    """Post one Discord payload after the caller has applied its scope gate."""
+    import requests as req
+
+    if isinstance(embed_or_embeds, dict):
+        embeds = [embed_or_embeds]
+    else:
+        embeds = list(embed_or_embeds)[:10]  # Discord caps at 10
+
+    import time as _time
+    # Per-attempt timeout (30s) — Render egress to discord.com can be slow.
+    # Read-timeout retries are NOT safe for webhook POSTs: Discord may have
+    # processed the message even though the response timed out client-side.
+    # So we only retry on connect errors and 5xx, never on read timeout.
+    for attempt in range(3):
+        try:
+            resp = req.post(webhook_url, json={"embeds": embeds},
+                            headers={"Content-Type": "application/json"}, timeout=30)
+            if resp.status_code == 429:
+                retry_after = resp.json().get("retry_after", 5)
+                logger.warning("[%s] Rate limited, waiting %ss", log_prefix,
+                               retry_after)
+                _time.sleep(retry_after)
+                continue
+            resp.raise_for_status()
+            return True
+        except req.exceptions.ReadTimeout:
+            # Don't retry read timeouts — message may already be delivered.
+            logger.error("[%s] Webhook read timeout on attempt %s — NOT "
+                         "retrying (would risk duplicate)", log_prefix,
+                         attempt + 1)
+            return False
+        except Exception as exc:  # noqa: BLE001
+            # requests exceptions can include the full webhook URL. Log only
+            # the exception class so the Discord credential never reaches logs.
+            logger.error("[%s] Webhook attempt %s/3 failed: %s", log_prefix,
+                         attempt + 1, type(exc).__name__)
+            if attempt < 2:
+                _time.sleep(2 ** (attempt + 1))
+    return False
+
+
 def _send_webhook_sync(embed_or_embeds, webhook_url: str | None = None) -> bool:
-    """Send embeds to Discord webhook (sync, for scheduler use).
+    """Send embeds through the fleet-wide SpreadWorks Discord route.
 
     Accepts either a single embed dict or a list of embeds (max 10 per
     Discord's webhook limit). Multi-embed posts render as a vertical
@@ -77,13 +125,6 @@ def _send_webhook_sync(embed_or_embeds, webhook_url: str | None = None) -> bool:
     EBB's posts to the risk-advisor channel via a per-bot registry
     override). Falls back to DISCORD_WEBHOOK_URL when omitted/empty.
     """
-    import requests as req
-
-    if isinstance(embed_or_embeds, dict):
-        embeds = [embed_or_embeds]
-    else:
-        embeds = list(embed_or_embeds)[:10]  # Discord caps at 10
-
     if not discord_posting_enabled():
         logger.info(f"[SpreadWorks] Discord posting disabled ({DISCORD_ENABLED_ENV} not true) — skipping")
         return False
@@ -92,32 +133,27 @@ def _send_webhook_sync(embed_or_embeds, webhook_url: str | None = None) -> bool:
     if not url:
         logger.warning("[SpreadWorks] DISCORD_WEBHOOK_URL not set — skipping")
         return False
+    return _post_discord_webhook_sync(embed_or_embeds, url,
+                                      log_prefix="SpreadWorks")
 
-    import time as _time
-    # Per-attempt timeout (30s) — Render egress to discord.com can be slow.
-    # Read-timeout retries are NOT safe for webhook POSTs: Discord may have
-    # processed the message even though the response timed out client-side.
-    # So we only retry on connect errors and 5xx, never on read timeout.
-    for attempt in range(3):
-        try:
-            resp = req.post(url, json={"embeds": embeds},
-                            headers={"Content-Type": "application/json"}, timeout=30)
-            if resp.status_code == 429:
-                retry_after = resp.json().get("retry_after", 5)
-                logger.warning(f"[SpreadWorks] Rate limited, waiting {retry_after}s")
-                _time.sleep(retry_after)
-                continue
-            resp.raise_for_status()
-            return True
-        except req.exceptions.ReadTimeout:
-            # Don't retry read timeouts — message may already be delivered.
-            logger.error(f"[SpreadWorks] Webhook read timeout on attempt {attempt+1} — NOT retrying (would risk duplicate)")
-            return False
-        except Exception as e:
-            logger.error(f"[SpreadWorks] Webhook attempt {attempt+1}/3 failed: {e}")
-            if attempt < 2:
-                _time.sleep(2 ** (attempt + 1))
-    return False
+
+def _send_intraday_webhook_sync(embed_or_embeds,
+                                webhook_url: str | None = None) -> bool:
+    """Send only intraday/QQQ alerts, independent of the fleet-wide switch."""
+    if not intraday_discord_posting_enabled():
+        logger.info("[IntradayAlerts] Discord posting disabled (%s not true) "
+                    "— skipping", INTRADAY_DISCORD_ENABLED_ENV)
+        return False
+
+    url = (webhook_url
+           or os.getenv(INTRADAY_DISCORD_WEBHOOK_ENV, "").strip()
+           or os.getenv("DISCORD_WEBHOOK_URL", "").strip())
+    if not url:
+        logger.warning("[IntradayAlerts] %s and DISCORD_WEBHOOK_URL are not "
+                       "set — skipping", INTRADAY_DISCORD_WEBHOOK_ENV)
+        return False
+    return _post_discord_webhook_sync(embed_or_embeds, url,
+                                      log_prefix="IntradayAlerts")
 
 
 _active_scheduler = None  # singleton guard — only one scheduler per process
