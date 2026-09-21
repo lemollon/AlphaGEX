@@ -1,6 +1,7 @@
 import base64
 import gzip
 import json
+from dataclasses import replace
 from datetime import date, datetime
 
 import pytest
@@ -32,6 +33,40 @@ def test_live_refuses_an_unmigrated_empty_state(monkeypatch):
     monkeypatch.setattr(fleet.xsp_runtime, "_validate_runtime", lambda live: None)
     with pytest.raises(fleet.xsp_runtime.EmberRuntimeError, match="migrated"):
         fleet._validate_live(spec, True, "fresh_empty")
+
+
+def test_seed_replaces_earlier_empty_boot_once(monkeypatch, tmp_path):
+    original = fleet.SPECS["call_diag"]
+    spec = replace(original, state_path=tmp_path / "state.json")
+    spec.state_path.write_text(json.dumps(spec.default_state), encoding="utf-8")
+    seed = {"positions": [{"id": "owned-1", "state": "open"}], "legs": {}}
+    encoded = base64.b64encode(json.dumps(seed).encode()).decode()
+    monkeypatch.setenv(spec.seed_env, encoded)
+    store = {spec.state_key: json.dumps(spec.default_state)}
+    monkeypatch.setattr(fleet.xsp_runtime, "_config_get", store.get)
+    monkeypatch.setattr(fleet.xsp_runtime, "_config_put", store.__setitem__)
+
+    assert fleet._hydrate(spec) == "seed"
+    assert json.loads(spec.state_path.read_text(encoding="utf-8")) == seed
+    assert json.loads(store[spec.state_key]) == seed
+    assert store[spec.seed_key]
+    assert fleet._hydrate(spec) == "disk"
+
+
+def test_seed_refuses_to_overwrite_nonempty_runtime_state(monkeypatch, tmp_path):
+    original = fleet.SPECS["call_diag"]
+    spec = replace(original, state_path=tmp_path / "state.json")
+    current = {"positions": [{"id": "current", "state": "open"}], "legs": {}}
+    seed = {"positions": [{"id": "old", "state": "open"}], "legs": {}}
+    spec.state_path.write_text(json.dumps(current), encoding="utf-8")
+    monkeypatch.setenv(
+        spec.seed_env,
+        base64.b64encode(json.dumps(seed).encode()).decode(),
+    )
+    monkeypatch.setattr(fleet.xsp_runtime, "_config_get", lambda key: None)
+
+    with pytest.raises(fleet.xsp_runtime.EmberRuntimeError, match="conflicts"):
+        fleet._hydrate(spec)
 
 
 def test_status_expands_tv_book_into_rr_and_bounce_and_redacts(monkeypatch):
