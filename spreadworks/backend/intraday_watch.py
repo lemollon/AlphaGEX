@@ -258,10 +258,12 @@ def validate_setup(raw: dict[str, Any], trading_date: date) -> dict[str, Any]:
     return setup
 
 
-def validate_setups_payload(payload: dict[str, Any]) -> tuple[date, list[dict[str, Any]]]:
+def validate_setups_payload(
+    payload: dict[str, Any], *, allow_empty: bool = False,
+) -> tuple[date, list[dict[str, Any]]]:
     trading_date = _parse_date(payload.get("trading_date"))
     raw = payload.get("setups")
-    if not isinstance(raw, list) or not raw:
+    if not isinstance(raw, list) or (not raw and not allow_empty):
         raise HTTPException(status_code=422, detail="setups must be a non-empty list")
     setups = [validate_setup(item, trading_date) for item in raw]
     ids = [item["setup_id"] for item in setups]
@@ -1055,9 +1057,10 @@ async def post_plan(request: Request,
     _, symbols = validate_watchlist({
         "trading_date": trading_date.isoformat(), "symbols": payload["symbols"]
     })
-    _, setups = validate_setups_payload({
-        "trading_date": trading_date.isoformat(), "setups": payload["setups"]
-    })
+    _, setups = validate_setups_payload(
+        {"trading_date": trading_date.isoformat(), "setups": payload["setups"]},
+        allow_empty=True,
+    )
     validate_plan_parity(symbols, setups)
     return await asyncio.to_thread(
         store_morning_plan_atomic, trading_date, symbols, setups, payload
