@@ -176,3 +176,60 @@ def test_spike_cloud_snapshot_stays_on_curated_universe(monkeypatch):
     universe, history = spike._load_polygon_enter_market_data()
     assert [row["symbol"] for row in universe] == ["AAA"]
     assert set(history) == {"AAA", "BBB"}
+
+
+def test_spike_cloud_prefers_complete_theta_feed(monkeypatch):
+    monkeypatch.setenv("THETADATA_BASE_URL", "thetadata-proxy:10000")
+    monkeypatch.setenv("POLYGON_API_KEY", "polygon-fallback")
+    monkeypatch.setenv("SPIKE_UNIVERSE", "AAA,BBB")
+    theta_rows = [
+        {"symbol": "AAA", "price": 1.0, "vol": 2_000_000, "provider": "theta"},
+        {"symbol": "BBB", "price": 2.0, "vol": 2_000_000, "provider": "theta"},
+    ]
+    theta_history = {
+        symbol: ([{"date": "2026-09-18", "close": 1.0, "volume": 1_000_000}], "theta")
+        for symbol in ("AAA", "BBB")
+    }
+    monkeypatch.setattr(
+        spike, "_load_theta_enter_market_data",
+        lambda today, symbols: (theta_rows, theta_history),
+    )
+    monkeypatch.setattr(
+        spike, "_load_polygon_enter_market_data",
+        lambda *args, **kwargs: pytest.fail("Polygon must not run when Theta covers the universe"),
+    )
+
+    universe, history = spike._load_cloud_enter_market_data(date(2026, 9, 21))
+    assert {row["provider"] for row in universe} == {"theta"}
+    assert set(history) == {"AAA", "BBB"}
+
+
+def test_spike_cloud_uses_polygon_only_for_theta_gaps(monkeypatch):
+    monkeypatch.setenv("THETADATA_BASE_URL", "http://thetadata-proxy:10000")
+    monkeypatch.setenv("POLYGON_API_KEY", "polygon-fallback")
+    monkeypatch.setenv("SPIKE_UNIVERSE", "AAA,BBB")
+    monkeypatch.setattr(
+        spike, "_load_theta_enter_market_data",
+        lambda today, symbols: (
+            [{"symbol": "AAA", "price": 1.0, "vol": 2_000_000, "provider": "theta"}],
+            {"AAA": ([], "broker"), "BBB": ([], "broker")},
+        ),
+    )
+
+    def polygon(symbols=None, today=None):
+        assert symbols == ["BBB"]
+        return ([{"symbol": "BBB", "price": 2.0, "vol": 3_000_000,
+                  "provider": "polygon"}], {"BBB": ([], "broker")})
+
+    monkeypatch.setattr(spike, "_load_polygon_enter_market_data", polygon)
+    universe, _ = spike._load_cloud_enter_market_data(date(2026, 9, 21))
+    assert {row["symbol"]: row["provider"] for row in universe} == {
+        "AAA": "theta", "BBB": "polygon",
+    }
+
+
+def test_spike_dependency_accepts_theta_without_polygon(monkeypatch):
+    monkeypatch.delenv("POLYGON_API_KEY", raising=False)
+    monkeypatch.setenv("THETADATA_BASE_URL", "thetadata-proxy:10000")
+    monkeypatch.setenv("SPIKE_UNIVERSE", "AAA")
+    assert fleet._dependency_gaps(fleet.SPECS["spike"]) == []

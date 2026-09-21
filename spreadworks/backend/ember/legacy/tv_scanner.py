@@ -219,7 +219,9 @@ ROOT.mkdir(parents=True, exist_ok=True)
 STOCK_EOD = ROOT / "data" / "stock_eod"
 TOOLS = ROOT / "tools"; CACHE_DIR = TOOLS / "ember_cache"; CACHE_DIR.mkdir(parents=True, exist_ok=True)
 LEDGER = ROOT / "ember_ledger.jsonl"
-THETA = os.getenv("THETADATA_BASE_URL", "http://127.0.0.1:25503").rstrip("/")
+THETA = os.getenv("THETADATA_BASE_URL", "http://127.0.0.1:25503").strip().rstrip("/")
+if THETA and "://" not in THETA:
+    THETA = f"http://{THETA}"
 BUF, CURVE_PACE_S = 0.005, 13.0     # 13s between expensive calls = <5/min
 LIQ_SPREAD_MAX = 15.0               # max per-leg (ask-bid)/mid*100 for a structure to be "liquid" (Leron 2026-09-16)
 LIQ_OI_MIN, LIQ_VOL_MIN = 5000, 500 # soft floor on name-level combined call+put OI / volume; below either = not liquid
@@ -369,11 +371,24 @@ def _tradier_rows(theta_url):
 
 def theta_csv(url):
     source = os.getenv("EMBER_OPTION_QUOTE_SOURCE", "").strip().lower()
-    if source == "tradier" or os.getenv("RENDER", "").strip().lower() == "true":
+    if source == "tradier":
         return _tradier_rows(url)
-    try:
-        with urllib.request.urlopen(url, timeout=30) as r: return list(csv.DictReader(io.StringIO(r.read().decode())))
-    except Exception: return []
+    theta_configured = bool(os.getenv("THETADATA_BASE_URL", "").strip()) or \
+        os.getenv("RENDER", "").strip().lower() != "true"
+    if theta_configured:
+        try:
+            with urllib.request.urlopen(url, timeout=30) as r:
+                rows = list(csv.DictReader(io.StringIO(r.read().decode())))
+            if rows:
+                return rows
+        except Exception:
+            pass
+    # Render fallback remains executable Tradier NBBO.  It is reached only
+    # after the private ThetaData service is missing, unhealthy, or empty.
+    if os.getenv("TRADIER_TOKEN", "").strip():
+        print("EMBER option data fallback theta->tradier")
+        return _tradier_rows(url)
+    return []
 
 def theta_probe():
     """Fix 2: single connectivity check for the local ThetaData v3 Terminal at scan start,
@@ -381,18 +396,35 @@ def theta_probe():
     the Terminal answered (even a 'no data' code) -- reachable. Any other exception (connection
     refused, timeout) means the Terminal is down. Never raises."""
     source = os.getenv("EMBER_OPTION_QUOTE_SOURCE", "").strip().lower()
-    if source == "tradier" or os.getenv("RENDER", "").strip().lower() == "true":
+    if source == "tradier":
         payload = _tradier_json("/markets/clock", {})
         return bool(payload and payload.get("clock"))
-    today_str = dt.date.today().strftime("%Y%m%d")
-    url = f"{THETA}/v3/stock/history/eod?symbol=SPY&start_date={today_str}&end_date={today_str}"
-    try:
-        with urllib.request.urlopen(url, timeout=10) as r: r.read()
+    theta_configured = bool(os.getenv("THETADATA_BASE_URL", "").strip()) or \
+        os.getenv("RENDER", "").strip().lower() != "true"
+    if theta_configured:
+        try:
+            with urllib.request.urlopen(f"{THETA}/health", timeout=10) as r:
+                return r.status == 200
+        except Exception:
+            pass
+        # A workstation Theta Terminal has no /health route; retain the
+        # original read-only EOD connectivity probe for local operation.
+        today_str = dt.date.today().strftime("%Y%m%d")
+        eod_url = (f"{THETA}/v3/stock/history/eod?symbol=SPY"
+                   f"&start_date={today_str}&end_date={today_str}")
+        try:
+            with urllib.request.urlopen(eod_url, timeout=10) as r:
+                r.read()
+            return True
+        except urllib.error.HTTPError:
+            return True
+        except Exception:
+            pass
+    payload = _tradier_json("/markets/clock", {})
+    if payload and payload.get("clock"):
+        print("EMBER option data probe fallback theta->tradier")
         return True
-    except urllib.error.HTTPError:
-        return True
-    except Exception:
-        return False
+    return False
 
 def leg_spread_pct(bid, ask):
     """(ask-bid)/mid*100 for one option leg. None if either side of the market is missing."""
@@ -460,7 +492,7 @@ def option_structures(t, side, entry, target, stop, sess, exp, iv_rank):
         r = dict(none_shaped); r["note"] = "no 25-45 DTE expiry / Terminal down"; return r
     rows = theta_csv(f"{THETA}/v3/option/history/quote?symbol={t}&expiration={exp:%Y%m%d}&strike=*&start_date={sess:%Y%m%d}&end_date={sess:%Y%m%d}&interval=1m&start_time=15:59:00&end_time=15:59:00")
     right = "CALL" if side == "long" else "PUT"
-    same = [r for r in rows if r.get("right") == right]
+    same = [r for r in rows if str(r.get("right") or "").upper() == right]
     ask_rows = [r for r in same if float(r.get("ask", 0) or 0) > 0]
     if not ask_rows:
         r = dict(none_shaped); r["note"] = "no quote"; return r
@@ -521,8 +553,8 @@ def option_structures(t, side, entry, target, stop, sess, exp, iv_rank):
     else:
         note = None
 
-    calls = [r for r in rows if r.get("right") == "CALL" and float(r.get("ask", 0) or 0) > 0]
-    puts = [r for r in rows if r.get("right") == "PUT" and float(r.get("ask", 0) or 0) > 0]
+    calls = [r for r in rows if str(r.get("right") or "").upper() == "CALL" and float(r.get("ask", 0) or 0) > 0]
+    puts = [r for r in rows if str(r.get("right") or "").upper() == "PUT" and float(r.get("ask", 0) or 0) > 0]
     skew_px = None
     if calls and puts:
         c5 = min(calls, key=lambda r: abs(float(r["strike"]) - entry * 1.05))
@@ -619,8 +651,8 @@ def bounce_term_structure(t, price, sess):
     for exp in cands:
         dte = (exp - sess).days
         rows = theta_csv(f"{THETA}/v3/option/history/quote?symbol={t}&expiration={exp:%Y%m%d}&strike=*&start_date={sess:%Y%m%d}&end_date={sess:%Y%m%d}&interval=1m&start_time=15:59:00&end_time=15:59:00")
-        calls = [r for r in rows if r.get("right") == "CALL" and float(r.get("ask", 0) or 0) > 0]
-        puts = [r for r in rows if r.get("right") == "PUT" and float(r.get("ask", 0) or 0) > 0]
+        calls = [r for r in rows if str(r.get("right") or "").upper() == "CALL" and float(r.get("ask", 0) or 0) > 0]
+        puts = [r for r in rows if str(r.get("right") or "").upper() == "PUT" and float(r.get("ask", 0) or 0) > 0]
         if not calls or not puts: continue
         c_atm = min(calls, key=lambda r: abs(float(r["strike"]) - price))
         p_atm = min(puts, key=lambda r: abs(float(r["strike"]) - price))
@@ -663,7 +695,7 @@ def price_bounce_pcs(entry, put_wall, pcs_leg, stop):
                         pcs_rr_stop=None, pcs_note=None, pcs_spread_pct=None, pcs_struct_liquid=False)
     if pcs_leg is None: return none_shaped
     rows, dte = pcs_leg["rows"], pcs_leg["dte"]
-    puts = [r for r in rows if r.get("right") == "PUT"]
+    puts = [r for r in rows if str(r.get("right") or "").upper() == "PUT"]
     strikes = sorted(set(float(r["strike"]) for r in puts))
     below_eq = [k for k in strikes if k <= put_wall]
     if not below_eq:
