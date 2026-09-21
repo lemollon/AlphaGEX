@@ -112,6 +112,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import math
 import os
@@ -991,9 +993,11 @@ def load_enter_market_data(today: date, db_path: Path = SQUEEZE_DB, pop_path: Pa
     caller (select_enter_candidates()) defers it to the agent's own
     get_equity_historicals instead of skipping it.
     """
-    if os.getenv("RENDER", "").strip().lower() == "true" or \
-            os.getenv("SPIKE_DATA_SOURCE", "").strip().lower() == "polygon":
-        return _load_polygon_enter_market_data()
+    source = os.getenv("SPIKE_DATA_SOURCE", "").strip().lower()
+    if os.getenv("RENDER", "").strip().lower() == "true" or source in {"theta", "polygon"}:
+        if source == "polygon":
+            return _load_polygon_enter_market_data(today=today)
+        return _load_cloud_enter_market_data(today)
 
     import duckdb
     if not db_path.exists():
@@ -1027,7 +1031,177 @@ def load_enter_market_data(today: date, db_path: Path = SQUEEZE_DB, pop_path: Pa
     return universe, history_by_symbol
 
 
-def _load_polygon_enter_market_data() -> tuple[list[dict], dict[str, tuple[list[dict], str]]]:
+def _configured_spike_symbols() -> list[str]:
+    symbols = sorted({value.strip().upper() for value in
+                      os.getenv("SPIKE_UNIVERSE", "").split(",") if value.strip()})
+    if not symbols:
+        raise RuntimeError("SPIKE_UNIVERSE is not configured")
+    return symbols
+
+
+def _theta_base_url() -> str:
+    value = os.getenv("THETADATA_BASE_URL", "").strip().rstrip("/")
+    if value and "://" not in value:
+        value = f"http://{value}"
+    return value
+
+
+def _theta_csv(path: str, params: dict[str, str], timeout: int = 60) -> list[dict]:
+    import requests
+
+    base_url = _theta_base_url()
+    if not base_url:
+        raise RuntimeError("THETADATA_BASE_URL is not configured")
+    response = requests.get(f"{base_url}{path}", params=params, timeout=timeout)
+    response.raise_for_status()
+    return list(csv.DictReader(io.StringIO(response.text)))
+
+
+def _parse_theta_timestamp(raw: object) -> datetime | None:
+    value = str(raw or "").strip()
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo("America/New_York"))
+    return parsed.astimezone(CT)
+
+
+def _load_theta_history(symbols: list[str], today: date
+                        ) -> dict[str, tuple[list[dict], str]]:
+    """Load completed ThetaData EOD bars, cached for the current session."""
+    cache = HERE / f"theta_history_{today.isoformat()}.json"
+    if cache.exists():
+        try:
+            payload = json.loads(cache.read_text(encoding="utf-8"))
+            if isinstance(payload, dict) and set(symbols).issubset(payload):
+                return {
+                    symbol: (payload.get(symbol) or [], "theta")
+                    if sessions_available_and_fresh(payload.get(symbol) or [], today)
+                    else ([], "broker")
+                    for symbol in symbols
+                }
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    start = today - timedelta(days=95)
+    cache_payload: dict[str, list[dict]] = {}
+    result: dict[str, tuple[list[dict], str]] = {}
+    for symbol in symbols:
+        rows: list[dict] = []
+        try:
+            raw_rows = _theta_csv(
+                "/v3/stock/history/eod",
+                {
+                    "symbol": symbol,
+                    "start_date": start.isoformat(),
+                    "end_date": (today - timedelta(days=1)).isoformat(),
+                },
+            )
+            for row in raw_rows:
+                stamp = _parse_theta_timestamp(row.get("last_trade") or row.get("created"))
+                close = row.get("close")
+                volume = row.get("volume")
+                if not stamp or stamp.date() >= today or close in (None, "") or volume in (None, ""):
+                    continue
+                rows.append({
+                    "symbol": symbol,
+                    "date": stamp.date().isoformat(),
+                    "close": float(close),
+                    "volume": float(volume),
+                })
+        except Exception:  # noqa: BLE001 - one name falls through to broker history
+            rows = []
+        rows.sort(key=lambda row: row["date"])
+        cache_payload[symbol] = rows
+        result[symbol] = (rows, "theta") if sessions_available_and_fresh(rows, today) else ([], "broker")
+    save_json(cache, cache_payload)
+    return result
+
+
+def _load_theta_enter_market_data(today: date, symbols: list[str] | None = None
+                                  ) -> tuple[list[dict], dict[str, tuple[list[dict], str]]]:
+    """Primary Render SPIKE tape from fresh ThetaData stock snapshots and EOD history."""
+    symbols = symbols or _configured_spike_symbols()
+    history = _load_theta_history(symbols, today)
+    rows = _theta_csv(
+        "/v3/stock/snapshot/ohlc",
+        {"symbol": ",".join(symbols), "venue": "nqb"},
+    )
+    max_age_seconds = max(30, int(os.getenv("SPIKE_THETA_MAX_AGE_SECONDS", "300")))
+    now = datetime.now(CT)
+    universe: list[dict] = []
+    for row in rows:
+        symbol = str(row.get("symbol") or "").upper()
+        if symbol not in symbols:
+            continue
+        timestamp = _parse_theta_timestamp(row.get("timestamp"))
+        if not timestamp or timestamp.date() != today:
+            continue
+        age_seconds = (now - timestamp).total_seconds()
+        if age_seconds < -30 or age_seconds > max_age_seconds:
+            continue
+        prior_rows = history.get(symbol, ([], "broker"))[0]
+        try:
+            price = float(row.get("close"))
+            volume = float(row.get("volume"))
+            prior_close = float(prior_rows[-1]["close"]) if prior_rows else None
+        except (TypeError, ValueError, KeyError, IndexError):
+            continue
+        if price <= 0 or volume < 0 or (prior_close is not None and prior_close <= 0):
+            continue
+        universe.append({
+            "symbol": symbol,
+            "price": price,
+            "vol": volume,
+            "prior_close": prior_close,
+            "provider": "theta",
+            "provider_timestamp": timestamp.isoformat(),
+            "provider_age_seconds": round(age_seconds, 3),
+        })
+    universe.sort(key=lambda row: float(row["price"]) * float(row["vol"]), reverse=True)
+    return universe, history
+
+
+def _load_cloud_enter_market_data(today: date
+                                  ) -> tuple[list[dict], dict[str, tuple[list[dict], str]]]:
+    """ThetaData first, Polygon only for missing names or provider failure."""
+    symbols = _configured_spike_symbols()
+    theta_universe: list[dict] = []
+    theta_history: dict[str, tuple[list[dict], str]] = {}
+    if _theta_base_url():
+        try:
+            theta_universe, theta_history = _load_theta_enter_market_data(today, symbols)
+        except Exception as exc:  # noqa: BLE001 - audited failover, never a trade signal
+            print(f"SPIKE market data fallback theta->polygon error_type={type(exc).__name__}")
+
+    covered = {row["symbol"] for row in theta_universe}
+    missing = [symbol for symbol in symbols if symbol not in covered]
+    polygon_universe: list[dict] = []
+    polygon_history: dict[str, tuple[list[dict], str]] = {}
+    if missing:
+        try:
+            polygon_universe, polygon_history = _load_polygon_enter_market_data(
+                symbols=missing, today=today,
+            )
+        except Exception as exc:  # noqa: BLE001 - Theta rows can still be usable
+            print(f"SPIKE market data fallback polygon unavailable error_type={type(exc).__name__}")
+            if not theta_universe:
+                raise RuntimeError("no fresh ThetaData or Polygon SPIKE market data") from exc
+
+    universe = theta_universe + polygon_universe
+    universe.sort(key=lambda row: float(row["price"]) * float(row["vol"]), reverse=True)
+    history = {**polygon_history, **theta_history}
+    for symbol in symbols:
+        history.setdefault(symbol, ([], "broker"))
+    return universe, history
+
+
+def _load_polygon_enter_market_data(symbols: list[str] | None = None, today: date | None = None
+                                    ) -> tuple[list[dict], dict[str, tuple[list[dict], str]]]:
     """Cloud-native SPIKE tape.
 
     Polygon supplies current price and cumulative day volume for the same
@@ -1041,10 +1215,7 @@ def _load_polygon_enter_market_data() -> tuple[list[dict], dict[str, tuple[list[
     api_key = os.getenv("POLYGON_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("POLYGON_API_KEY is not configured")
-    symbols = sorted({value.strip().upper() for value in
-                      os.getenv("SPIKE_UNIVERSE", "").split(",") if value.strip()})
-    if not symbols:
-        raise RuntimeError("SPIKE_UNIVERSE is not configured")
+    symbols = symbols or _configured_spike_symbols()
     response = requests.get(
         f"{POLYGON_BASE}/v2/snapshot/locale/us/markets/stocks/tickers",
         params={"apiKey": api_key, "tickers": ",".join(symbols)}, timeout=60,
@@ -1076,10 +1247,10 @@ def _load_polygon_enter_market_data() -> tuple[list[dict], dict[str, tuple[list[
             continue
         universe.append({
             "symbol": str(symbol), "price": price_f, "vol": volume_f,
-            "prior_close": prior_f,
+            "prior_close": prior_f, "provider": "polygon",
         })
     universe.sort(key=lambda row: float(row["price"]) * float(row["vol"]), reverse=True)
-    history = _load_cloud_history(symbols, date.today())
+    history = _load_cloud_history(symbols, today or date.today())
     return universe, history
 
 

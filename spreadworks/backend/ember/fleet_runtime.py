@@ -110,14 +110,15 @@ SPECS: dict[str, StrategySpec] = {
     "tv_book": StrategySpec(
         "tv_book", "TVBOOK", tv_book.ORDER_STATE, tv_book.LOG_TXT,
         {"positions": [], "in_flight": {}}, _tick_runner(tv_book), tv_book.load_cfg,
-        required_any=(("TV_API_KEY", "TRADING_VOLATILITY_API_KEY"), ("TRADIER_TOKEN",)),
+        required_any=(("TV_API_KEY", "TRADING_VOLATILITY_API_KEY"),
+                      ("THETADATA_BASE_URL", "TRADIER_TOKEN")),
         aliases=("rr", "bounce"),
     ),
     "spike": StrategySpec(
         "spike", "SPIKE", spike.STATE_FILE, spike.LOG_TXT,
         {"positions": [], "seen": {}, "shadow": [], "tape_prev": {}},
         _spike_runner, spike.load_cfg,
-        required_any=(("POLYGON_API_KEY",), ("SPIKE_UNIVERSE",)),
+        required_any=(("THETADATA_BASE_URL", "POLYGON_API_KEY"), ("SPIKE_UNIVERSE",)),
     ),
 }
 
