@@ -667,7 +667,10 @@ def run_agent(payload: dict[str, Any], live: bool) -> int:
         try:
             result = subprocess.run(
                 command,
-                cwd=str(HERE),
+                # Claude confines file tools to its working tree.  On Render the
+                # durable state/log files live under EMBER_DATA_DIR, outside the
+                # checked-out source tree, so the agent must start there.
+                cwd=str(DATA_DIR),
                 input=prompt,
                 stdout=transcript,
                 stderr=subprocess.STDOUT,

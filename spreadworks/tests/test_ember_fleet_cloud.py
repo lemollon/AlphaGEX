@@ -131,6 +131,13 @@ def test_headless_claude_command_accepts_only_allowlisted_tools():
     ]
 
 
+def test_cloud_status_redacts_provider_credentials():
+    message = "403 for https://data.example.test/path?apiKey=secret-value&tickers=SPY"
+    redacted = fleet._redact(message)
+    assert "secret-value" not in redacted
+    assert "apiKey=[redacted]&tickers=SPY" in redacted
+
+
 def test_divhike_entry_eligibility_requires_today_bar(monkeypatch):
     today = date(2026, 9, 21)
     bars = []

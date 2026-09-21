@@ -284,6 +284,11 @@ def _last_line(path: Path) -> str:
 def _redact(text: str) -> str:
     text = re.sub(r"account[=: ]+\d+", "account=***2331", text, flags=re.I)
     text = re.sub(r"(?i)(?:order_id|long_order|short_order|entry_order_id)=\S+", "order=[redacted]", text)
+    text = re.sub(
+        r"(?i)(api[_-]?key|token)=([^&\s]+)",
+        r"\1=[redacted]",
+        text,
+    )
     return text[-800:]
 
 
@@ -325,7 +330,7 @@ def _mirror(spec: StrategySpec, mode: str, rc: int, source: str) -> None:
             "mode": mode,
             "return_code": rc,
             "updated_at": datetime.now(CT).isoformat(),
-            "last_log": _last_line(spec.log_path),
+            "last_log": _redact(_last_line(spec.log_path)),
             "hydrate_source": source,
             "dependency_gaps": _dependency_gaps(spec),
         }, separators=(",", ":")),
@@ -342,7 +347,7 @@ def _record_blocked(spec: StrategySpec, mode: str, exc: Exception) -> None:
                 "mode": mode,
                 "return_code": 2,
                 "updated_at": datetime.now(CT).isoformat(),
-                "last_log": f"BLOCKED {type(exc).__name__}: {exc}",
+                "last_log": _redact(f"BLOCKED {type(exc).__name__}: {exc}"),
                 "dependency_gaps": _dependency_gaps(spec),
             }, separators=(",", ":")),
         )
@@ -384,7 +389,12 @@ def _run(
         _mirror(spec, label, rc, source)
         logger.info("[EMBER:%s] mode=%s live=%s rc=%s", name, label, int(live), rc)
     except Exception as exc:  # noqa: BLE001
-        logger.exception("[EMBER:%s] cycle blocked: %s", name, exc)
+        logger.error(
+            "[EMBER:%s] cycle blocked: %s: %s",
+            name,
+            type(exc).__name__,
+            _redact(str(exc)),
+        )
         _record_blocked(spec, label, exc)
     finally:
         _release_lock(lock_db, name)
