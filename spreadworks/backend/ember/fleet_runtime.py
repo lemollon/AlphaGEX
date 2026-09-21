@@ -74,6 +74,10 @@ class StrategySpec:
     def seed_key(self) -> str:
         return f"ember.{self.name}.seed_applied"
 
+    @property
+    def preflight_key(self) -> str:
+        return f"ember.{self.name}.preflight"
+
 
 def _tick_runner(module: Any) -> Callable[[datetime, Any, str | None], int]:
     def run(now: datetime, cfg: Any, mode: str | None) -> int:
@@ -426,6 +430,7 @@ def _broker_preflight(name: str, account: str, output: Path) -> int:
     """Verify Claude+Robinhood connectivity without supplying any order tool."""
     home = xsp_runtime._prepare_claude_home()
     del home
+    output.parent.mkdir(parents=True, exist_ok=True)
     bundled = Path(__file__).resolve().parents[2] / "frontend" / "node_modules" / ".bin" / "claude"
     prompt = (
         f"Read-only preflight for EMBER {name}. Call get_accounts and confirm account "
@@ -438,27 +443,104 @@ def _broker_preflight(name: str, account: str, output: Path) -> int:
         "mcp__robinhood-trading__get_equity_positions",
         "mcp__robinhood-trading__get_option_positions",
     ]
-    output.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        xsp_flow_live.build_claude_command(bundled, tools),
+        cwd=str(output.parent), input=prompt, stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT, text=True, timeout=180,
+        env=xsp_flow_live.read_secret_environment(), check=False,
+    )
+    transcript = result.stdout or ""
+    claude_ok = int(result.returncode) == 0
+    broker_ok = bool(re.search(r"(?im)^PREFLIGHT OK\b", transcript))
+    rc = 0 if claude_ok and broker_ok else 2
+    verdict = "PREFLIGHT OK" if rc == 0 else "PREFLIGHT BLOCKED"
     with output.open("a", encoding="utf-8") as stream:
-        result = subprocess.run(
-            xsp_flow_live.build_claude_command(bundled, tools),
-            cwd=str(output.parent), input=prompt, stdout=stream,
-            stderr=subprocess.STDOUT, text=True, timeout=180,
-            env=xsp_flow_live.read_secret_environment(), check=False,
-        )
-    return int(result.returncode)
+        stream.write(transcript)
+        if transcript and not transcript.endswith("\n"):
+            stream.write("\n")
+        stream.write(f"{datetime.now(CT).isoformat()} | {name} | {verdict}\n")
+    return rc
+
+
+def _record_preflight(spec: StrategySpec, rc: int, result: str) -> None:
+    xsp_runtime._config_put(
+        spec.preflight_key,
+        json.dumps({
+            "strategy": spec.name,
+            "return_code": int(rc),
+            "checked_at": datetime.now(CT).isoformat(),
+            "result": _redact(result),
+        }, separators=(",", ":")),
+    )
 
 
 def run_preflight(name: str) -> None:
-    mode = "PREFLIGHT" if name == "spike" else "RECONCILE"
-    _run(name, mode, agent_wait_seconds=10 * 60)
+    """Run a read-only broker check without replaying or replacing bot status."""
+    spec = SPECS[name]
+    if not _env_bool(spec.enabled_env):
+        return
+    lock_db = _acquire_lock(name)
+    if lock_db is None:
+        _record_preflight(spec, 2, "PREFLIGHT BLOCKED strategy cycle already running")
+        return
+    try:
+        agent_lock = _acquire_lock("agent-runtime", wait_seconds=BROKER_LOCK_WAIT_SECONDS)
+        if agent_lock is None:
+            raise xsp_runtime.EmberRuntimeError(
+                "shared broker runner busy; preflight lock wait expired"
+            )
+        output = spec.log_path.parent / "preflight.log"
+        accounts = {
+            "call_diag": call_diag.ACCOUNT,
+            "night_shift": night_shift.ACCOUNT,
+            "divhike": divhike.ACCOUNT,
+            "tv_book": tv_book.ACCOUNT,
+            "spike": spike.ACCOUNT,
+        }
+        try:
+            rc = _broker_preflight(name, accounts[name], output)
+        finally:
+            _release_lock(agent_lock, "agent-runtime")
+        _record_preflight(spec, rc, _last_line(output))
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "[EMBER:%s] broker preflight blocked: %s: %s",
+            name,
+            type(exc).__name__,
+            _redact(str(exc)),
+        )
+        _record_preflight(spec, 2, f"PREFLIGHT BLOCKED {type(exc).__name__}: {exc}")
+    finally:
+        _release_lock(lock_db, name)
 
 
 def run_fleet_preflights() -> None:
-    """Run startup broker checks sequentially so none are lost to lock contention."""
-    for name, spec in SPECS.items():
-        if _env_bool(spec.enabled_env):
-            run_preflight(name)
+    """Run one startup broker check and publish it to every enabled strategy."""
+    enabled = [spec for spec in SPECS.values() if _env_bool(spec.enabled_env)]
+    if not enabled:
+        return
+    agent_lock = _acquire_lock("agent-runtime", wait_seconds=BROKER_LOCK_WAIT_SECONDS)
+    if agent_lock is None:
+        for spec in enabled:
+            _record_preflight(spec, 2, "PREFLIGHT BLOCKED shared broker runner busy")
+        return
+    output = enabled[0].log_path.parent / "fleet-preflight.log"
+    try:
+        try:
+            rc = _broker_preflight("fleet", call_diag.ACCOUNT, output)
+            result = _last_line(output)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "[EMBER:fleet] broker preflight blocked: %s: %s",
+                type(exc).__name__,
+                _redact(str(exc)),
+            )
+            rc = 2
+            result = f"PREFLIGHT BLOCKED {type(exc).__name__}: {exc}"
+        for spec in enabled:
+            _record_preflight(spec, rc, result)
+    finally:
+        _release_lock(agent_lock, "agent-runtime")
 
 
 def run_call_diag() -> None:
@@ -492,6 +574,8 @@ def run_spike_manage() -> None:
 def _state_count(name: str, state: Any) -> int:
     if not isinstance(state, dict):
         return 0
+    if name == "night_shift":
+        return int(bool(state.get("position")))
     positions = state.get("position") if name == "night_shift" else state.get("positions")
     if isinstance(positions, dict):
         return len(positions)
@@ -505,6 +589,7 @@ def read_status() -> list[dict[str, Any]]:
     for name, spec in SPECS.items():
         raw = xsp_runtime._config_get(spec.status_key)
         state_raw = xsp_runtime._config_get(spec.state_key)
+        preflight_raw = xsp_runtime._config_get(spec.preflight_key)
         try:
             status = json.loads(raw) if raw else {}
         except json.JSONDecodeError:
@@ -513,17 +598,38 @@ def read_status() -> list[dict[str, Any]]:
             state = json.loads(state_raw) if state_raw else {}
         except json.JSONDecodeError:
             state = {}
+        try:
+            preflight = json.loads(preflight_raw) if preflight_raw else {}
+        except json.JSONDecodeError:
+            preflight = {
+                "return_code": 2,
+                "result": "PREFLIGHT BLOCKED malformed preflight row",
+            }
+        dependency_gaps = status.get("dependency_gaps", _dependency_gaps(spec))
+        configured_live = _env_bool(spec.live_env)
+        last_return_code = status.get("return_code")
+        preflight_return_code = preflight.get("return_code")
         base = {
             "enabled": _env_bool(spec.enabled_env),
-            "configured_live": _env_bool(spec.live_env),
+            "configured_live": configured_live,
             "runtime": "render",
             "last_run_at": status.get("updated_at"),
             "last_mode": status.get("mode"),
-            "last_return_code": status.get("return_code"),
+            "last_return_code": last_return_code,
             "last_result": _redact(str(status.get("last_log", "not run"))),
             "state_source": status.get("hydrate_source"),
-            "dependency_gaps": status.get("dependency_gaps", _dependency_gaps(spec)),
+            "dependency_gaps": dependency_gaps,
             "open_position_count": _state_count(name, state),
+            "broker_preflight_at": preflight.get("checked_at"),
+            "broker_preflight_return_code": preflight_return_code,
+            "broker_preflight_result": _redact(str(preflight.get("result", "not run"))),
+            "ready_to_trade": bool(
+                _env_bool(spec.enabled_env)
+                and configured_live
+                and not dependency_gaps
+                and last_return_code == 0
+                and preflight_return_code == 0
+            ),
         }
         names = spec.aliases or (name,)
         result.extend([{"strategy": alias, **base} for alias in names])
