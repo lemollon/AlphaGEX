@@ -568,7 +568,10 @@ def _discord_embed(payload: dict[str, Any]) -> dict[str, Any]:
         title = "7:00 AM PLAN REGISTERED — NO TRADE"
         color = 0xF59E0B
     else:
-        title = "7:00 AM PLAN FAILED CLOSED — NO ACTIVE SETUPS"
+        title = (
+            "7:00 AM PLAN FAILED CLOSED — MANUAL WATCHES PRESERVED"
+            if setups else "7:00 AM PLAN FAILED CLOSED — NO ACTIVE SETUPS"
+        )
         color = 0xEF4444
     setup_lines = []
     for setup in setups[:12]:
@@ -744,8 +747,15 @@ async def run_morning_options_report(app: Any, *, now: datetime | None = None,
 
     result = await asyncio.to_thread(
         store_morning_plan_atomic, trading_date, payload["symbols"], payload["setups"],
-        payload, ingested_at=started,
+        payload, ingested_at=started, preserve_manual=True,
     )
+    payload["symbols"] = result.pop("stored_symbols")
+    payload["setups"] = result.pop("stored_setups")
+    if payload["run_status"] != "SUCCESS" and result["preserved_manual_setup_count"]:
+        payload["reason"] += (
+            f" {result['preserved_manual_setup_count']} manually pasted watch(es) "
+            "remain active."
+        )
     payload.update(result)
     posted = await asyncio.to_thread(_send_discord, payload)
     await asyncio.to_thread(_update_delivery, trading_date, posted=posted, attempted_at=datetime.now(UTC))

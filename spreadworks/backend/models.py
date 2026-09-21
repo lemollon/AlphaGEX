@@ -220,6 +220,26 @@ class IntradayWatchRuntimeStatus(Base):
     )
 
 
+class IntradaySetupOutcome(Base):
+    """Operator-supplied result for one historical intraday watch.
+
+    Outcomes are separate from machine states: ENTRY_READY/INVALIDATED describe
+    what the watcher observed, while WINNER/LOSER records the operator's review.
+    """
+    __tablename__ = "intraday_setup_outcomes"
+
+    setup_id = Column(
+        String(64), ForeignKey("intraday_setups.setup_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    outcome = Column(String(12), nullable=False)
+    notes = Column(Text, nullable=True)
+    labeled_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Position(Base):
     __tablename__ = "positions"
 

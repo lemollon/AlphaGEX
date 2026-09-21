@@ -1949,6 +1949,9 @@ app.include_router(qqq_retest_watch_router)
 from .intraday_watch import router as intraday_watch_router
 app.include_router(intraday_watch_router)
 
+from .watch_manager import router as watch_manager_router
+app.include_router(watch_manager_router)
+
 from .speculative_contracts import router as speculative_contracts_router
 app.include_router(speculative_contracts_router)
 
