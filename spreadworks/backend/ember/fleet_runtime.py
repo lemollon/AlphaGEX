@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import gzip
+import hashlib
 import json
 import logging
 import os
@@ -65,6 +66,10 @@ class StrategySpec:
     @property
     def seed_env(self) -> str:
         return f"EMBER_{self.env_prefix}_STATE_B64"
+
+    @property
+    def seed_key(self) -> str:
+        return f"ember.{self.name}.seed_applied"
 
 
 def _tick_runner(module: Any) -> Callable[[datetime, Any, str | None], int]:
@@ -168,25 +173,64 @@ def _decode_seed(value: str, spec: StrategySpec) -> dict[str, Any]:
 
 
 def _hydrate(spec: StrategySpec) -> str:
+    disk_state: dict[str, Any] | None = None
     if spec.state_path.exists():
-        return "disk"
+        try:
+            loaded = json.loads(spec.state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise xsp_runtime.EmberRuntimeError(
+                f"{spec.name} disk state is malformed"
+            ) from exc
+        if not isinstance(loaded, dict):
+            raise xsp_runtime.EmberRuntimeError(
+                f"{spec.name} disk state must contain a JSON object"
+            )
+        disk_state = loaded
+
     raw = xsp_runtime._config_get(spec.state_key)
-    source = "database"
+    database_state: dict[str, Any] | None = None
     if raw:
         try:
-            state = json.loads(raw)
+            loaded = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise xsp_runtime.EmberRuntimeError(
                 f"{spec.name} database state is malformed"
             ) from exc
+        if not isinstance(loaded, dict):
+            raise xsp_runtime.EmberRuntimeError(
+                f"{spec.name} database state must contain a JSON object"
+            )
+        database_state = loaded
+
+    seed_text = os.getenv(spec.seed_env, "").strip()
+    if seed_text:
+        seed = _decode_seed(seed_text, spec)
+        digest = hashlib.sha256(
+            json.dumps(seed, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest()
+        applied = xsp_runtime._config_get(spec.seed_key)
+        if applied != digest:
+            for source_name, existing in (("disk", disk_state), ("database", database_state)):
+                if existing is not None and existing not in (spec.default_state, seed):
+                    raise xsp_runtime.EmberRuntimeError(
+                        f"{spec.name} {source_name} state conflicts with migration seed"
+                    )
+            xsp_runtime._atomic_json(spec.state_path, seed)
+            xsp_runtime._config_put(
+                spec.state_key,
+                json.dumps(seed, separators=(",", ":"), default=str),
+            )
+            xsp_runtime._config_put(spec.seed_key, digest)
+            return "seed"
+
+    if disk_state is not None:
+        return "disk"
+    if database_state is not None:
+        state = database_state
+        source = "database"
     else:
-        seed = os.getenv(spec.seed_env, "").strip()
-        if seed:
-            state = _decode_seed(seed, spec)
-            source = "seed"
-        else:
-            state = spec.default_state
-            source = "fresh_empty"
+        state = spec.default_state
+        source = "fresh_empty"
     xsp_runtime._atomic_json(spec.state_path, state)
     return source
 
