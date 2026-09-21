@@ -136,6 +136,11 @@ services:
         sync: false
       - key: DISCORD_WEBHOOK_URL
         sync: false
+      - key: INTRADAY_DISCORD_WEBHOOK_URL
+        sync: false
+      # Isolated entry-alert route; the fleet-wide Discord switch stays off.
+      - key: INTRADAY_ALERTS_ENABLED
+        value: "true"
       # Master switch for ALL SpreadWorks Discord posts. Flip to "true" to re-enable.
       - key: SPREADWORKS_DISCORD_ENABLED
         value: "false"

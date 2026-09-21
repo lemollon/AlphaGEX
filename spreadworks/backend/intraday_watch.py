@@ -37,6 +37,9 @@ UTC = timezone.utc
 TRADIER_BASE = "https://api.tradier.com/v1"
 CORE_SYMBOLS = ("SPY", "QQQ", "XSP", "IWM")
 CONFIRMATION_SYMBOLS = ("VIX",)
+INTRADAY_DISCORD_ENABLED_ENV = "INTRADAY_ALERTS_ENABLED"
+INTRADAY_DISCORD_WEBHOOK_ENV = "INTRADAY_DISCORD_WEBHOOK_URL"
+_TRUTHY = {"1", "true", "yes", "on"}
 STATES = {
     "WAIT", "NEAR_TRIGGER", "ENTRY_READY", "ACTIVE", "INVALIDATED",
     "EXPIRED", "DATA_UNAVAILABLE", "LIQUIDITY_BLOCKED",
@@ -80,6 +83,15 @@ def _iso(value: datetime | None) -> str | None:
 
 def _json(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), sort_keys=True, default=str)
+
+
+def _intraday_discord_webhook() -> str:
+    return (os.getenv(INTRADAY_DISCORD_WEBHOOK_ENV, "").strip()
+            or os.getenv("DISCORD_WEBHOOK_URL", "").strip())
+
+
+def _intraday_discord_enabled() -> bool:
+    return os.getenv(INTRADAY_DISCORD_ENABLED_ENV, "").strip().lower() in _TRUTHY
 
 
 def _parse_date(value: Any, field: str = "trading_date") -> date:
@@ -1468,7 +1480,10 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
         "active_setup_count": 0, "per_symbol_state": {}, "last_market_data_timestamp": None,
         "last_options_data_timestamp": None, "last_alert": None,
         "data_source": "Tradier production consolidated feed", "data_freshness": {},
-        "discord_configured": bool(os.getenv("DISCORD_WEBHOOK_URL", "").strip()),
+        "discord_configured": bool(_intraday_discord_webhook()),
+        "discord_enabled": _intraday_discord_enabled(),
+        "discord_route": ("dedicated" if os.getenv(
+            INTRADAY_DISCORD_WEBHOOK_ENV, "").strip() else "shared_fallback"),
         "plan_ingestion_timestamp": None, "plan_hash": None,
         "plan_parity": {"valid": False, "reason": "no plan ingested"},
         "errors": [],
@@ -1635,9 +1650,11 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
                 event_key = claim_alert(db, row.setup_id, today, result.state, now, embed)
                 if event_key:
                     attempted_alerts.add(event_key)
-                    from . import _send_webhook_sync
-                    webhook = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
-                    posted = bool(webhook) and await asyncio.to_thread(_send_webhook_sync, embed, webhook)
+                    from . import _send_intraday_webhook_sync
+                    webhook = _intraday_discord_webhook()
+                    posted = bool(webhook) and await asyncio.to_thread(
+                        _send_intraday_webhook_sync, embed, webhook
+                    )
                     if posted:
                         alert_row = db.get(IntradayAlertDedup, event_key)
                         if alert_row:
@@ -1647,19 +1664,21 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
                                             "transition_at": now.isoformat(), "posted": posted}
         # A failed webhook stays durable and is retried after restarts. Posted
         # transitions are never sent again.
-        webhook = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+        webhook = _intraday_discord_webhook()
         pending = db.query(IntradayAlertDedup).filter(
             IntradayAlertDedup.posted_at.is_(None),
             IntradayAlertDedup.trading_date == today,
         ).all()
         if webhook:
-            from . import _send_webhook_sync
+            from . import _send_intraday_webhook_sync
             for alert in pending:
                 if alert.event_key in attempted_alerts or not alert.payload_json:
                     continue
                 try:
                     embed = json.loads(alert.payload_json)
-                    posted = await asyncio.to_thread(_send_webhook_sync, embed, webhook)
+                    posted = await asyncio.to_thread(
+                        _send_intraday_webhook_sync, embed, webhook
+                    )
                 except (json.JSONDecodeError, TypeError) as exc:
                     status["errors"].append(f"pending alert {alert.event_key}: {exc}")
                     continue
