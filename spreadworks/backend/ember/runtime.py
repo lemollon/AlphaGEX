@@ -89,7 +89,7 @@ def _config_put(key: str, value: str) -> None:
 
 
 def _acquire_cycle_lock() -> Any | None:
-    """Return the DB session holding the cross-process advisory lock."""
+    """Return the session holding both XSP and fleet-wide broker locks."""
     if SessionLocal is None:
         raise EmberRuntimeError("DATABASE_URL is unavailable")
     db = SessionLocal()
@@ -101,6 +101,17 @@ def _acquire_cycle_lock() -> Any | None:
         if not acquired:
             db.close()
             return None
+        global_acquired = db.execute(
+            sa_text("SELECT pg_try_advisory_lock(hashtext(:name))"),
+            {"name": "ember-fleet:agent-runtime"},
+        ).scalar_one()
+        if not global_acquired:
+            db.execute(
+                sa_text("SELECT pg_advisory_unlock(hashtext(:name))"),
+                {"name": xsp_flow_live.BOT_ID},
+            )
+            db.close()
+            return None
         return db
     except Exception:
         db.close()
@@ -109,6 +120,10 @@ def _acquire_cycle_lock() -> Any | None:
 
 def _release_cycle_lock(db: Any) -> None:
     try:
+        db.execute(
+            sa_text("SELECT pg_advisory_unlock(hashtext(:name))"),
+            {"name": "ember-fleet:agent-runtime"},
+        )
         db.execute(
             sa_text("SELECT pg_advisory_unlock(hashtext(:name))"),
             {"name": xsp_flow_live.BOT_ID},
@@ -356,34 +371,37 @@ def read_status() -> dict[str, Any]:
 
 
 def register(scheduler: Any) -> None:
-    """Attach XSP Flow to the existing Ember-capable scheduler."""
+    """Attach XSP Flow and the rest of EMBER to the Render scheduler."""
     if not _env_bool("EMBER_XSP_ENABLED"):
         logger.info("[EMBER] XSP module disabled")
-        return
-    scheduler.add_job(
-        run_preflight,
-        "date",
-        run_date=datetime.now(CT) + timedelta(seconds=10),
-        id="ember_xsp_preflight",
-        replace_existing=True,
-        max_instances=1,
-        misfire_grace_time=60,
-    )
-    scheduler.add_job(
-        run_cycle,
-        "cron",
-        day_of_week="mon-fri",
-        hour="8-15",
-        minute="*",
-        timezone="America/Chicago",
-        id="ember_xsp_cycle",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=30,
-    )
-    logger.warning(
-        "[EMBER] XSP module registered configured_live=%s account=%s",
-        int(_env_bool("EMBER_XSP_LIVE")),
-        xsp_flow_live.ACCOUNT,
-    )
+    else:
+        scheduler.add_job(
+            run_preflight,
+            "date",
+            run_date=datetime.now(CT) + timedelta(seconds=10),
+            id="ember_xsp_preflight",
+            replace_existing=True,
+            max_instances=1,
+            misfire_grace_time=60,
+        )
+        scheduler.add_job(
+            run_cycle,
+            "cron",
+            day_of_week="mon-fri",
+            hour="8-15",
+            minute="*",
+            second="50",
+            timezone="America/Chicago",
+            id="ember_xsp_cycle",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=30,
+        )
+        logger.warning(
+            "[EMBER] XSP module registered configured_live=%s account=%s",
+            int(_env_bool("EMBER_XSP_LIVE")),
+            xsp_flow_live.ACCOUNT,
+        )
+    from .fleet_runtime import register as register_fleet
+    register_fleet(scheduler)
