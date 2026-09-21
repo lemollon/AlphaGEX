@@ -35,6 +35,7 @@ from .legacy import call_diag, divhike, night_shift, spike, tv_book
 
 logger = logging.getLogger("spreadworks.ember.fleet")
 CT = ZoneInfo("America/Chicago")
+BROKER_LOCK_WAIT_SECONDS = 10 * 60
 
 
 @dataclass(frozen=True)
@@ -461,27 +462,31 @@ def run_fleet_preflights() -> None:
 
 
 def run_call_diag() -> None:
-    _run("call_diag")
+    _run("call_diag", agent_wait_seconds=BROKER_LOCK_WAIT_SECONDS)
 
 
 def run_night_shift() -> None:
-    _run("night_shift")
+    _run("night_shift", agent_wait_seconds=BROKER_LOCK_WAIT_SECONDS)
 
 
 def run_divhike() -> None:
-    _run("divhike")
+    _run("divhike", agent_wait_seconds=BROKER_LOCK_WAIT_SECONDS)
 
 
 def run_tv_book() -> None:
-    _run("tv_book", scan_tv=True)
+    _run(
+        "tv_book",
+        scan_tv=True,
+        agent_wait_seconds=BROKER_LOCK_WAIT_SECONDS,
+    )
 
 
 def run_spike_enter() -> None:
-    _run("spike", "ENTER")
+    _run("spike", "ENTER", agent_wait_seconds=BROKER_LOCK_WAIT_SECONDS)
 
 
 def run_spike_manage() -> None:
-    _run("spike", "MANAGE")
+    _run("spike", "MANAGE", agent_wait_seconds=BROKER_LOCK_WAIT_SECONDS)
 
 
 def _state_count(name: str, state: Any) -> int:

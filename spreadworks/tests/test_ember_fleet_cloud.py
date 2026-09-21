@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 
 from backend.ember import fleet_runtime as fleet
+from backend.ember import runtime as xsp_runtime
 from backend.ember import astra_live, astra_runtime
 from backend.ember import xsp_flow_live
 from backend.ember.legacy import divhike, night_shift, spike
@@ -120,6 +121,59 @@ def test_all_enabled_jobs_are_registered(monkeypatch):
         "ember_call_diag_cycle", "ember_night_shift_cycle", "ember_divhike_cycle",
         "ember_tv_book_cycle", "ember_spike_enter_cycle", "ember_spike_manage_cycle",
     }.issubset(ids)
+
+
+def test_scheduled_fleet_cycles_wait_for_the_shared_broker(monkeypatch):
+    calls = []
+    monkeypatch.setattr(fleet, "_run", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    fleet.run_call_diag()
+    fleet.run_night_shift()
+    fleet.run_divhike()
+    fleet.run_tv_book()
+    fleet.run_spike_enter()
+    fleet.run_spike_manage()
+
+    assert len(calls) == 6
+    assert all(
+        kwargs["agent_wait_seconds"] == fleet.BROKER_LOCK_WAIT_SECONDS
+        for _, kwargs in calls
+    )
+
+
+def test_xsp_waits_for_the_shared_broker_lock(monkeypatch):
+    names = []
+    global_results = iter([False, True])
+
+    class Scalar:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one(self):
+            return self.value
+
+    class Db:
+        def execute(self, _query, params):
+            names.append(params["name"])
+            if params["name"] == xsp_flow_live.BOT_ID:
+                return Scalar(True)
+            return Scalar(next(global_results))
+
+        def close(self):
+            return None
+
+    db = Db()
+    monotonic = iter([0.0, 0.0, 0.0])
+    monkeypatch.setattr(xsp_runtime, "SessionLocal", lambda: db)
+    monkeypatch.setattr(xsp_runtime.time, "monotonic", lambda: next(monotonic))
+    monkeypatch.setattr(xsp_runtime.time, "sleep", lambda _seconds: None)
+
+    assert xsp_runtime._acquire_cycle_lock(wait_seconds=10) is db
+    assert names == [
+        xsp_flow_live.BOT_ID,
+        "ember-fleet:agent-runtime",
+        "ember-fleet:agent-runtime",
+    ]
 
 
 def test_headless_claude_command_accepts_only_allowlisted_tools():

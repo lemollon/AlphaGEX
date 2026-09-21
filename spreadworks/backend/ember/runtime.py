@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -88,7 +89,7 @@ def _config_put(key: str, value: str) -> None:
         db.close()
 
 
-def _acquire_cycle_lock() -> Any | None:
+def _acquire_cycle_lock(*, wait_seconds: float = 0) -> Any | None:
     """Return the session holding both XSP and fleet-wide broker locks."""
     if SessionLocal is None:
         raise EmberRuntimeError("DATABASE_URL is unavailable")
@@ -101,17 +102,22 @@ def _acquire_cycle_lock() -> Any | None:
         if not acquired:
             db.close()
             return None
-        global_acquired = db.execute(
-            sa_text("SELECT pg_try_advisory_lock(hashtext(:name))"),
-            {"name": "ember-fleet:agent-runtime"},
-        ).scalar_one()
-        if not global_acquired:
-            db.execute(
-                sa_text("SELECT pg_advisory_unlock(hashtext(:name))"),
-                {"name": xsp_flow_live.BOT_ID},
-            )
-            db.close()
-            return None
+        deadline = time.monotonic() + max(0, wait_seconds)
+        while True:
+            global_acquired = db.execute(
+                sa_text("SELECT pg_try_advisory_lock(hashtext(:name))"),
+                {"name": "ember-fleet:agent-runtime"},
+            ).scalar_one()
+            if global_acquired:
+                break
+            if time.monotonic() >= deadline:
+                db.execute(
+                    sa_text("SELECT pg_advisory_unlock(hashtext(:name))"),
+                    {"name": xsp_flow_live.BOT_ID},
+                )
+                db.close()
+                return None
+            time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
         return db
     except Exception:
         db.close()
@@ -280,7 +286,7 @@ def _mirror_state(mode: str, rc: int) -> None:
 def _run(mode: str | None) -> None:
     if not _env_bool("EMBER_XSP_ENABLED"):
         return
-    lock_db = _acquire_cycle_lock()
+    lock_db = _acquire_cycle_lock(wait_seconds=10 * 60)
     if lock_db is None:
         logger.info("[EMBER] skipped overlapping XSP cycle")
         return
