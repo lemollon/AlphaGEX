@@ -1878,6 +1878,15 @@ async def lifespan(app: FastAPI):
     # Start scheduler for Discord notifications (inside lifespan, not module-level)
     scheduler = _start_scheduler(app)
 
+    # The weekday 07:00 CT morning options report now runs in this always-on
+    # Render process.  It writes an atomic advisory plan for the dedicated
+    # worker; it never imports or calls broker order code.
+    try:
+        from .morning_options_report import register as register_morning_options
+        register_morning_options(scheduler, app)
+    except Exception as _morning_exc:  # noqa: BLE001
+        logger.error("[MorningOptions] failed to register: %r", _morning_exc)
+
     # Risk Advisor playbook alerts (import-guarded; advisory only)
     try:
         from .risk_alerts import register_risk_alerts
