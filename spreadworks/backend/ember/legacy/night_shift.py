@@ -325,14 +325,14 @@ def build_allowlist(cfg: Cfg) -> list[str]:
 def run_agent(sig: dict, cfg: Cfg) -> int:
     tools = build_allowlist(cfg)
     prompt = render_prompt(sig)
-    from ..xsp_flow_live import read_secret_environment
+    from ..xsp_flow_live import build_claude_command, read_secret_environment
     bundled = CODE_DIR.parents[2] / "frontend" / "node_modules" / ".bin" / "claude"
     configured = cfg.claude_bin if cfg.claude_bin != "claude" else ""
     exe = configured or shutil.which("claude") or str(bundled)
     child_env = read_secret_environment()
     # Prompt over STDIN, never argv -- same Windows CreateProcess command-line
     # length limit call_diag/daily_cal's run_agent() documents (WinError 206).
-    cmd = [exe, "-p", "--allowedTools", *tools]
+    cmd = build_claude_command(exe, tools)
     with RUN_OUTPUT.open("a", encoding="utf-8") as out:
         out.write(f"===== {sig['mode']} run started {sig['now_ct']} armed={sig['armed']} "
                   f"dry_run={sig['dry_run']} =====\n")

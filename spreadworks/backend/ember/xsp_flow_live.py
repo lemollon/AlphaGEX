@@ -433,6 +433,20 @@ def build_allowlist(live: bool) -> list[str]:
     return READ_TOOLS + (ORDER_TOOLS if live else [])
 
 
+def build_claude_command(executable: str | Path, tools: list[str]) -> list[str]:
+    """Build the noninteractive Claude command without widening its tool gate."""
+    return [
+        str(executable),
+        "-p",
+        "--permission-mode",
+        "acceptEdits",
+        "--permission-prompts",
+        "none",
+        "--allowedTools",
+        *tools,
+    ]
+
+
 def ensure_day_refs(state: dict[str, Any], today_key: str) -> dict[str, str]:
     day = state.setdefault("days", {}).setdefault(today_key, {})
     refs = day.setdefault("ref_ids", {})
@@ -641,7 +655,7 @@ def run_agent(payload: dict[str, Any], live: bool) -> int:
     bundled = HERE.parent.parent / "frontend" / "node_modules" / ".bin" / "claude"
     claude = configured or shutil.which("claude") or str(bundled)
     allow_orders = live and payload.get("mode") == "ENTRY"
-    command = [claude, "-p", "--allowedTools", *build_allowlist(allow_orders)]
+    command = build_claude_command(claude, build_allowlist(allow_orders))
     prompt = render_prompt(payload)
     child_env = read_secret_environment()
     TRANSCRIPT_PATH.parent.mkdir(parents=True, exist_ok=True)

@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -28,6 +29,7 @@ from sqlalchemy import text as sa_text
 
 from ..db import SessionLocal
 from . import runtime as xsp_runtime
+from . import xsp_flow_live
 from .legacy import call_diag, divhike, night_shift, spike, tv_book
 
 
@@ -127,19 +129,23 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _acquire_lock(name: str) -> Any | None:
+def _acquire_lock(name: str, *, wait_seconds: float = 0) -> Any | None:
     if SessionLocal is None:
         raise xsp_runtime.EmberRuntimeError("DATABASE_URL is unavailable")
     db = SessionLocal()
+    deadline = time.monotonic() + max(0, wait_seconds)
     try:
-        acquired = db.execute(
-            sa_text("SELECT pg_try_advisory_lock(hashtext(:name))"),
-            {"name": f"ember-fleet:{name}"},
-        ).scalar_one()
-        if not acquired:
-            db.close()
-            return None
-        return db
+        while True:
+            acquired = db.execute(
+                sa_text("SELECT pg_try_advisory_lock(hashtext(:name))"),
+                {"name": f"ember-fleet:{name}"},
+            ).scalar_one()
+            if acquired:
+                return db
+            if time.monotonic() >= deadline:
+                db.close()
+                return None
+            time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
     except Exception:
         db.close()
         raise
@@ -344,7 +350,13 @@ def _record_blocked(spec: StrategySpec, mode: str, exc: Exception) -> None:
         logger.exception("[EMBER:%s] failed to persist blocked status", spec.name)
 
 
-def _run(name: str, mode: str | None = None, *, scan_tv: bool = False) -> None:
+def _run(
+    name: str,
+    mode: str | None = None,
+    *,
+    scan_tv: bool = False,
+    agent_wait_seconds: float = 0,
+) -> None:
     spec = SPECS[name]
     if not _env_bool(spec.enabled_env):
         return
@@ -360,10 +372,10 @@ def _run(name: str, mode: str | None = None, *, scan_tv: bool = False) -> None:
         cfg = _forced_cfg(spec, live)
         if scan_tv:
             _run_tv_scanner()
-        agent_lock = _acquire_lock("agent-runtime")
+        agent_lock = _acquire_lock("agent-runtime", wait_seconds=agent_wait_seconds)
         if agent_lock is None:
             raise xsp_runtime.EmberRuntimeError(
-                "shared broker runner busy; next scheduled tick will retry"
+                "shared broker runner busy; lock wait expired"
             )
         try:
             rc = spec.runner(datetime.now(CT), cfg, mode)
@@ -417,17 +429,24 @@ def _broker_preflight(name: str, account: str, output: Path) -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("a", encoding="utf-8") as stream:
         result = subprocess.run(
-            [str(bundled), "-p", "--allowedTools", *tools],
+            xsp_flow_live.build_claude_command(bundled, tools),
             cwd=str(output.parent), input=prompt, stdout=stream,
             stderr=subprocess.STDOUT, text=True, timeout=180,
-            env=xsp_runtime.xsp_flow_live.read_secret_environment(), check=False,
+            env=xsp_flow_live.read_secret_environment(), check=False,
         )
     return int(result.returncode)
 
 
 def run_preflight(name: str) -> None:
     mode = "PREFLIGHT" if name == "spike" else "RECONCILE"
-    _run(name, mode)
+    _run(name, mode, agent_wait_seconds=10 * 60)
+
+
+def run_fleet_preflights() -> None:
+    """Run startup broker checks sequentially so none are lost to lock contention."""
+    for name, spec in SPECS.items():
+        if _env_bool(spec.enabled_env):
+            run_preflight(name)
 
 
 def run_call_diag() -> None:
@@ -497,18 +516,17 @@ def read_status() -> list[dict[str, Any]]:
 
 def register(scheduler: Any) -> None:
     """Register enabled fleet jobs on the existing single Render service."""
-    preflight_delay = 75
+    enabled = [name for name, spec in SPECS.items() if _env_bool(spec.enabled_env)]
     for name, spec in SPECS.items():
         if not _env_bool(spec.enabled_env):
             logger.info("[EMBER:%s] module disabled", name)
-            continue
+    if enabled:
         scheduler.add_job(
-            run_preflight, "date",
-            args=[name], run_date=datetime.now(CT) + timedelta(seconds=preflight_delay),
-            id=f"ember_{name}_preflight", replace_existing=True, max_instances=1,
-            misfire_grace_time=120,
+            run_fleet_preflights, "date",
+            run_date=datetime.now(CT) + timedelta(seconds=75),
+            id="ember_fleet_preflight", replace_existing=True, max_instances=1,
+            misfire_grace_time=15 * 60,
         )
-        preflight_delay += 75
 
     jobs = [
         ("night_shift", run_night_shift, {"hour": "8-9,14-15", "minute": "*", "second": "0"}),
