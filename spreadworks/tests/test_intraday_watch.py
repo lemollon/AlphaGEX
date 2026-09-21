@@ -12,6 +12,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 import backend.intraday_watch as watch
 from backend.db import Base
@@ -494,7 +495,11 @@ def test_xsp_is_never_rewritten_to_spy_in_validation():
 
 @pytest.fixture
 def sqlite_store(monkeypatch):
-    engine = create_engine("sqlite://")
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(bind=engine, tables=[
         IntradayTradePlan.__table__, IntradaySelectedWatchlist.__table__,
         IntradaySetup.__table__, IntradayAlertDedup.__table__,
@@ -592,6 +597,15 @@ def test_missing_option_data_produces_strikes_pending(monkeypatch):
 def test_malformed_setup_payload_is_rejected(payload):
     with pytest.raises(HTTPException):
         watch.validate_setups_payload(payload)
+
+
+def test_standalone_setups_rejects_empty_payload_but_atomic_plan_accepts_it():
+    payload = {"trading_date": "2026-09-18", "setups": []}
+    with pytest.raises(HTTPException, match="non-empty"):
+        watch.validate_setups_payload(payload)
+    trading_date, setups = watch.validate_setups_payload(payload, allow_empty=True)
+    assert trading_date == date(2026, 9, 18)
+    assert setups == []
 
 
 def test_watchlist_rejects_duplicates_and_more_than_eight():
@@ -707,6 +721,38 @@ def test_plan_endpoint_requires_symbols_and_setups(monkeypatch):
         asyncio.run(watch.post_plan(
             Request(), x_intraday_watch_token="configured-token", authorization=None
         ))
+
+
+def test_plan_endpoint_persists_truthful_no_trade_day(sqlite_store, monkeypatch):
+    class Request:
+        async def json(self):
+            return {
+                "trading_date": "2026-09-18",
+                "symbols": [],
+                "setups": [],
+                "reason": "No Trade: no setup passed the morning confirmation rules.",
+            }
+
+    monkeypatch.setenv("INTRADAY_WATCH_API_TOKEN", "configured-token")
+    result = asyncio.run(watch.post_plan(
+        Request(), x_intraday_watch_token="configured-token", authorization=None
+    ))
+    assert result["registered_symbol_count"] == 0
+    assert result["registered_setup_count"] == 0
+    assert result["parity"] == {
+        "valid": True,
+        "selected_non_core_symbols": [],
+        "non_core_setup_symbols": [],
+        "selected_symbol_count": 0,
+        "setup_count": 0,
+    }
+    assert len(result["plan_hash"]) == 64
+
+    stored = asyncio.run(watch.get_plan("2026-09-18"))
+    assert stored["reason"].startswith("No Trade")
+    assert stored["symbols"] == []
+    assert stored["setups"] == []
+    assert stored["plan_hash"] == result["plan_hash"]
 
 
 def test_alert_embed_is_decision_first_human_readable_and_has_no_raw_json():
