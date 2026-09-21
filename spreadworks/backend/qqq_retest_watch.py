@@ -921,6 +921,14 @@ async def qqq_retest_watch_status() -> dict[str, Any]:
     """Current watcher result, timestamps, freshness, and scheduler proof."""
     worker = await asyncio.to_thread(_read_worker_status)
     if worker is not None:
+        try:
+            from .morning_options_report import scheduled_status
+            worker["morning_options_report"] = await asyncio.to_thread(scheduled_status)
+        except Exception as exc:  # noqa: BLE001
+            worker["morning_options_report"] = {
+                "registered": False,
+                "reason": f"status unavailable ({type(exc).__name__})",
+            }
         return worker
     return {**_STATUS, "scheduler": scheduled_jobs(),
             "runtime": "render-web-service"}

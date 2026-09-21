@@ -81,6 +81,15 @@ services:
         sync: false
       - key: DISCORD_WEBHOOK_URL
         sync: false
+      - key: INTRADAY_DISCORD_WEBHOOK_URL
+        sync: false
+      # Dedicated morning-plan and entry-alert route; does not enable the fleet.
+      - key: INTRADAY_ALERTS_ENABLED
+        value: "true"
+      - key: MORNING_OPTIONS_CLOUD_ENABLED
+        value: "true"
+      - key: MORNING_OPTIONS_MODEL
+        value: claude-sonnet-4-6
       # Master switch for ALL SpreadWorks Discord posts. Flip to "true" to re-enable.
       - key: SPREADWORKS_DISCORD_ENABLED
         value: "false"

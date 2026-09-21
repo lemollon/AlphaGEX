@@ -1084,7 +1084,16 @@ async def get_plan(trading_date: str | None = None):
 
 @router.get("/status")
 async def get_status():
-    return await asyncio.to_thread(_load_runtime_status)
+    status = await asyncio.to_thread(_load_runtime_status)
+    try:
+        from .morning_options_report import scheduled_status
+        status["morning_options_report"] = await asyncio.to_thread(scheduled_status)
+    except Exception as exc:  # noqa: BLE001
+        status["morning_options_report"] = {
+            "registered": False,
+            "reason": f"status unavailable ({type(exc).__name__})",
+        }
+    return status
 
 
 async def _tradier_get(app, path: str, params: dict[str, Any]) -> dict[str, Any]:
