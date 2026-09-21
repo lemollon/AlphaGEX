@@ -7,6 +7,7 @@ from datetime import date, datetime
 import pytest
 
 from backend.ember import fleet_runtime as fleet
+from backend.ember import xsp_flow_live
 from backend.ember.legacy import divhike, night_shift, spike
 
 
@@ -111,11 +112,23 @@ def test_all_enabled_jobs_are_registered(monkeypatch):
     scheduler = Scheduler()
     fleet.register(scheduler)
     ids = {kwargs["id"] for _, _, kwargs in scheduler.jobs}
-    assert {f"ember_{name}_preflight" for name in fleet.SPECS}.issubset(ids)
+    assert "ember_fleet_preflight" in ids
+    assert not any(job_id.endswith("_preflight") for job_id in ids - {"ember_fleet_preflight"})
     assert {
         "ember_call_diag_cycle", "ember_night_shift_cycle", "ember_divhike_cycle",
         "ember_tv_book_cycle", "ember_spike_enter_cycle", "ember_spike_manage_cycle",
     }.issubset(ids)
+
+
+def test_headless_claude_command_accepts_only_allowlisted_tools():
+    tools = ["Read", "Write", "mcp__robinhood-trading__get_accounts"]
+    command = xsp_flow_live.build_claude_command("claude", tools)
+    assert command == [
+        "claude", "-p",
+        "--permission-mode", "acceptEdits",
+        "--permission-prompts", "none",
+        "--allowedTools", *tools,
+    ]
 
 
 def test_divhike_entry_eligibility_requires_today_bar(monkeypatch):
