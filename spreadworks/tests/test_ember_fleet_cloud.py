@@ -90,6 +90,12 @@ def test_status_expands_tv_book_into_rr_and_bounce_and_redacts(monkeypatch):
                 "last_log": "account=570892331 order_id=secret filled",
                 "hydrate_source": "seed", "dependency_gaps": [],
             })
+        if key.endswith(".preflight"):
+            return json.dumps({
+                "checked_at": "2026-09-21T09:00:00-05:00",
+                "return_code": 0,
+                "result": "PREFLIGHT OK account=570892331",
+            })
         return json.dumps({"positions": []})
 
     monkeypatch.setattr(fleet.xsp_runtime, "_config_get", fake_get)
@@ -99,6 +105,74 @@ def test_status_expands_tv_book_into_rr_and_bounce_and_redacts(monkeypatch):
     }
     assert all("570892331" not in row["last_result"] for row in rows)
     assert all("secret" not in row["last_result"] for row in rows)
+    assert all("570892331" not in row["broker_preflight_result"] for row in rows)
+    assert all(row["ready_to_trade"] for row in rows)
+
+
+def test_night_status_counts_one_position_not_position_fields():
+    assert fleet._state_count("night_shift", {"position": None}) == 0
+    assert fleet._state_count(
+        "night_shift",
+        {"position": {"qty": 3.8, "opened_date": "2026-09-21", "dry_run": False}},
+    ) == 1
+
+
+def test_preflight_is_read_only_and_does_not_run_reconcile(monkeypatch, tmp_path):
+    spec = replace(
+        fleet.SPECS["call_diag"],
+        log_path=tmp_path / "call_diag.log",
+    )
+    monkeypatch.setitem(fleet.SPECS, "call_diag", spec)
+    monkeypatch.setenv(spec.enabled_env, "1")
+    locks = []
+    monkeypatch.setattr(fleet, "_acquire_lock", lambda name, **kwargs: locks.append(name) or object())
+    monkeypatch.setattr(fleet, "_release_lock", lambda _db, _name: None)
+
+    def fake_preflight(name, account, output):
+        output.write_text("PREFLIGHT OK broker read-only\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(fleet, "_broker_preflight", fake_preflight)
+    recorded = {}
+    monkeypatch.setattr(fleet.xsp_runtime, "_config_put", recorded.__setitem__)
+    monkeypatch.setattr(fleet, "_run", lambda *args, **kwargs: pytest.fail("must not replay RECONCILE"))
+
+    fleet.run_preflight("call_diag")
+
+    assert locks == ["call_diag", "agent-runtime"]
+    payload = json.loads(recorded[spec.preflight_key])
+    assert payload["return_code"] == 0
+    assert payload["result"].endswith("PREFLIGHT OK broker read-only")
+
+
+def test_startup_uses_one_shared_broker_preflight(monkeypatch, tmp_path):
+    for spec in fleet.SPECS.values():
+        monkeypatch.setenv(spec.enabled_env, "1")
+    first = replace(fleet.SPECS["call_diag"], log_path=tmp_path / "call_diag.log")
+    monkeypatch.setitem(fleet.SPECS, "call_diag", first)
+    calls = []
+    monkeypatch.setattr(fleet, "_acquire_lock", lambda name, **kwargs: object())
+    monkeypatch.setattr(fleet, "_release_lock", lambda _db, _name: None)
+
+    def fake_preflight(name, account, output):
+        calls.append((name, account))
+        output.write_text("PREFLIGHT OK broker read-only\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(fleet, "_broker_preflight", fake_preflight)
+    recorded = {}
+    monkeypatch.setattr(fleet.xsp_runtime, "_config_put", recorded.__setitem__)
+
+    fleet.run_fleet_preflights()
+
+    assert calls == [("fleet", fleet.call_diag.ACCOUNT)]
+    assert {
+        key for key in recorded if key.endswith(".preflight")
+    } == {spec.preflight_key for spec in fleet.SPECS.values()}
+    assert all(
+        json.loads(recorded[spec.preflight_key])["return_code"] == 0
+        for spec in fleet.SPECS.values()
+    )
 
 
 def test_all_enabled_jobs_are_registered(monkeypatch):
