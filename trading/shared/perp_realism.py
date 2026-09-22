@@ -287,8 +287,11 @@ def estimate_margin(
     entry_notional = entry_price * qty
     tier = select_margin_tier(rules, current_notional)
 
-    initial = entry_notional / lev
-    margin = float(isolated_margin) if isolated_margin is not None else initial
+    # Current margin burden follows current mark-price notional. The collateral
+    # originally assigned to an isolated position is still based on entry notional.
+    initial = current_notional / lev
+    entry_initial_margin = entry_notional / lev
+    margin = float(isolated_margin) if isolated_margin is not None else entry_initial_margin
     maintenance = max(
         0.0,
         current_notional * tier.maintenance_margin_rate - tier.maintenance_amount,
