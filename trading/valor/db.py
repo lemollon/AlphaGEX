@@ -17,7 +17,7 @@ import json
 from datetime import datetime, date
 from typing import List, Optional, Dict, Any, Tuple
 from contextlib import contextmanager
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from database_adapter import get_connection
 from .audit import QUALITY_SELECT, PERFORMANCE_SQL
@@ -878,7 +878,7 @@ class ValorDatabase:
                     return False, 0.0
                 position.contracts = contracts_closed
             # Calculate P&L
-            realized_pnl = position.calculate_pnl(close_price)
+            realized_pnl = float(Decimal(str(position.calculate_pnl(close_price))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
             with db_connection() as conn:
                 c = conn.cursor()
@@ -2246,10 +2246,11 @@ class ValorDatabase:
                 # Calculate discrepancy
                 result["discrepancy"] = abs(result["paper_pnl"] - result["trades_pnl"])
 
-                # Allow floating point accumulation drift (< $1.00)
-                # Incremental Python addition vs PostgreSQL SUM() can diverge
-                # over hundreds of trades due to IEEE 754 float precision
-                result["is_consistent"] = result["discrepancy"] < 1.00
+                # Money is booked at cent precision; counts must also reconcile.
+                result["is_consistent"] = (
+                    result["discrepancy"] < 0.005 and
+                    result["trade_count_account"] == result["trade_count_actual"]
+                )
 
                 if not result["is_consistent"]:
                     logger.error(
@@ -2329,11 +2330,12 @@ class ValorDatabase:
                     UPDATE valor_paper_account
                     SET cumulative_pnl = %s,
                         current_balance = %s,
+                        margin_available = %s - margin_used,
                         total_trades = %s,
                         high_water_mark = GREATEST(high_water_mark, %s),
                         updated_at = NOW()
                     WHERE id = %s
-                """, (actual_pnl, new_balance, actual_count, new_hwm, account_id))
+                """, (actual_pnl, new_balance, new_balance, actual_count, new_hwm, account_id))
 
                 conn.commit()
                 result["reconciled"] = True

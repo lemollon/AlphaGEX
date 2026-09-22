@@ -222,6 +222,7 @@ class ValorTrader:
             f"tickers={self.config.tickers}, capital=${self.config.capital:,.2f}"
         )
 
+    @serialized
     def _startup_integrity_check(self) -> None:
         """
         Check data integrity on startup and RECONCILE if discrepancy found.
@@ -279,6 +280,9 @@ class ValorTrader:
         _run_ticker_scan(ticker) for each one independently.
         """
         self._scan_count += 1
+        if self.config.mode == TradingMode.PAPER and self._scan_count % 5 == 1:
+            # Reconcile after rolling-deploy overlap as well as at startup.
+            self._startup_integrity_check()
         now = datetime.now(CENTRAL_TZ)
 
         # Update direction tracker
