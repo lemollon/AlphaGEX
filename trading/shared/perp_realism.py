@@ -334,3 +334,76 @@ def net_realized_pnl(
     direction = 1.0 if side.lower() == "long" else -1.0
     gross = (float(exit_fill_price) - float(entry_fill_price)) * abs(float(quantity)) * direction
     return gross - float(entry_fee_usd) - float(exit_fee_usd) + float(funding_cashflow_usd)
+
+
+
+def get_reference_market(symbol: str):
+    """Return read-only reference market data when configured.
+
+    PERP_REFERENCE_VENUE=hyperliquid enables public Hyperliquid mark/index,
+    funding, risk tiers and L2 best bid/ask. Any provider failure returns None
+    so paper mode can use the explicit conservative fallback path.
+    """
+    venue = os.getenv("PERP_REFERENCE_VENUE", "hyperliquid").strip().lower()
+    if venue not in ("hyperliquid", "hl"):
+        return None
+    try:
+        from data.hyperliquid_perp_provider import get_hyperliquid_perp_provider
+        base = symbol.replace("-PERP", "")
+        return get_hyperliquid_perp_provider().get_market(base)
+    except Exception as exc:
+        logger.warning("Reference perp venue unavailable for %s: %s", symbol, exc)
+        return None
+
+
+def simulate_reference_fill(
+    symbol: str,
+    side: str,
+    quantity: float,
+    fallback_price: float,
+    *,
+    default_leverage: float,
+    max_leverage: float,
+    fallback_maintenance_margin_rate: float,
+    funding_interval_hours: float = 8.0,
+):
+    """Build rules from the live reference venue and simulate a taker fill."""
+    rules = get_rules(
+        symbol,
+        default_leverage=default_leverage,
+        max_leverage=max_leverage,
+        fallback_maintenance_margin_rate=fallback_maintenance_margin_rate,
+        funding_interval_hours=funding_interval_hours,
+    )
+    market = get_reference_market(symbol)
+    if market is not None:
+        rules = PerpVenueRules(
+            symbol=rules.symbol,
+            default_leverage=min(rules.default_leverage, market.max_leverage),
+            max_leverage=market.max_leverage,
+            taker_fee_bps=rules.taker_fee_bps,
+            maker_fee_bps=rules.maker_fee_bps,
+            funding_interval_hours=1.0,
+            fallback_maintenance_margin_rate=rules.fallback_maintenance_margin_rate,
+            impact_bps=rules.impact_bps,
+            fallback_slippage_bps=rules.fallback_slippage_bps,
+            tiers=market.tiers or rules.tiers,
+        )
+        fill = simulate_taker_fill(
+            side,
+            quantity,
+            rules,
+            bid=market.quote.bid,
+            ask=market.quote.ask,
+            mark=market.quote.mark,
+            fallback_price=fallback_price,
+        )
+        return fill, market, rules
+
+    fill = simulate_taker_fill(
+        side,
+        quantity,
+        rules,
+        fallback_price=fallback_price,
+    )
+    return fill, None, rules
