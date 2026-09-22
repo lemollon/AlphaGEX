@@ -16,6 +16,7 @@ import logging
 import requests
 import asyncio
 from datetime import datetime, timedelta
+from .reconciliation import summarize_order
 from typing import Optional, Dict, Any, Tuple, List
 from zoneinfo import ZoneInfo
 
@@ -155,8 +156,7 @@ class TastytradeExecutor:
 
         Priority:
         1. Tastytrade DXLinkStreamer (real-time via WebSocket)
-        2. Yahoo Finance (may have 15-min delay)
-        3. SPY-derived price (last resort for MES paper trading only)
+        2. Fresh Yahoo Finance data for paper mode only
 
         Args:
             symbol: Contract symbol (e.g. /MESH6, /MNQH6)
@@ -170,7 +170,7 @@ class TastytradeExecutor:
         ticker_cfg = FUTURES_TICKERS.get(ticker, {})
 
         # Check cache first
-        cache_key = ticker  # Cache by instrument, not contract symbol
+        cache_key = (ticker, self.config.mode.value)  # Never share paper quotes with live execution
         if cache_key in _quote_cache:
             cached_quote, cache_time = _quote_cache[cache_key]
             if datetime.now(CENTRAL_TZ) - cache_time < timedelta(seconds=QUOTE_CACHE_TTL_SECONDS) and self._quote_is_usable(cached_quote):
@@ -484,61 +484,66 @@ class TastytradeExecutor:
 
         return True, f"Paper order filled at {fill_price:.2f}", order_id
 
-    def _live_execution(self, signal: FuturesSignal, position_id: str) -> Tuple[bool, str, Optional[str]]:
-        """Execute a live order via Tastytrade"""
+    def find_order(self, intent_id: str, order_id=None) -> Optional[Dict[str, Any]]:
+        """Read-only recovery; absence is never permission to resubmit."""
         if not self._ensure_session():
-            return False, "Authentication failed", None
+            return None
+        url = f"{self.base_url}/accounts/{self.account_id}/orders"
+        if order_id:
+            response = requests.get(f"{url}/{order_id}", headers=self._get_headers(), timeout=15)
+            response.raise_for_status()
+            order = response.json().get('data', {})
+            if order.get('external-identifier') != intent_id:
+                raise ValueError('Broker order identifier mismatch')
+            return order
+        for page in range(10):
+            response = requests.get(url, params={'per-page':100, 'page-offset':page},
+                                    headers=self._get_headers(), timeout=15)
+            response.raise_for_status()
+            payload = response.json()
+            items = payload.get('data', {}).get('items', [])
+            matches = [o for o in items if o.get('external-identifier') == intent_id]
+            if len(matches) > 1:
+                raise ValueError('Multiple broker orders match one intent')
+            if matches:
+                return matches[0]
+            if len(items) < 100:
+                break
+        return None
 
+    def _submit_market_order(self, symbol, quantity, action, intent_id):
+        """Single submission; persist/reconcile ambiguous outcomes instead of retrying."""
+        self.last_broker_order_id = None
+        if not self._ensure_session():
+            return None
+        payload = {'time-in-force':'Day', 'order-type':'Market',
+                   'external-identifier':intent_id,
+                   'legs':[{'instrument-type':'Future','symbol':symbol,'quantity':quantity,'action':action}]}
+        response = requests.post(f"{self.base_url}/accounts/{self.account_id}/orders",
+                                 headers=self._get_headers(),json=payload,timeout=30)
+        response.raise_for_status()
+        order = response.json().get('data',{}).get('order',{})
+        self.last_broker_order_id = order.get('id')
+        return summarize_order(order,symbol,quantity,action)
+
+    def _live_execution(self, signal: FuturesSignal, position_id: str) -> Tuple[bool, str, Optional[str]]:
         try:
-            # Build order payload
-            order_payload = {
-                "time-in-force": "Day",
-                "order-type": "Market",
-                "external-identifier": position_id,
-                "legs": [
-                    {
-                        "instrument-type": "Future",
-                        "symbol": self.config.get_ticker_symbol(signal.ticker),
-                        "quantity": signal.contracts,
-                        "action": "Buy to Open" if signal.direction == TradeDirection.LONG else "Sell to Open"
-                    }
-                ]
-            }
-
-            response = requests.post(
-                f"{self.base_url}/accounts/{self.account_id}/orders",
-                headers=self._get_headers(),
-                json=order_payload,
-                timeout=30
-            )
-
-            if response.status_code in [200, 201]:
-                data = response.json().get("data", {})
-                order_id = data.get("order", {}).get("id")
-                status = data.get("order", {}).get("status")
-
-                logger.info(f"Order placed: {order_id}, status: {status}")
-                if status != "Filled":
-                    return False, f"Order {order_id} pending reconciliation: {status}", order_id
-                fill = float(data.get("order", {}).get("fill-price") or 0)
-                if fill <= 0:
-                    return False, f"Order {order_id} requires fill reconciliation", order_id
-                signal.entry_price = fill
-                return True, f"Order {order_id} filled", order_id
-            else:
-                error_msg = response.json().get("error", {}).get("message", response.text[:200])
-                logger.error(f"Order failed: {error_msg}")
-                return False, f"Order failed: {error_msg}", None
-
-        except Exception as e:
-            logger.error(f"Error executing order: {e}")
-            return False, str(e), None
+            action = 'Buy to Open' if signal.direction == TradeDirection.LONG else 'Sell to Open'
+            result = self._submit_market_order(self.config.get_ticker_symbol(signal.ticker),signal.contracts,action,position_id)
+            if result and result['terminal'] and result['quantity'] == signal.contracts:
+                signal.entry_price = result['price']
+                return True,'Broker fill confirmed',result['order_id']
+            return False,'Broker order pending reconciliation',self.last_broker_order_id
+        except Exception:
+            logger.exception('VALOR entry requires reconciliation')
+            return False,'Broker order pending reconciliation',getattr(self,'last_broker_order_id',None)
 
     def close_position_order(
         self,
         position: FuturesPosition,
         close_reason: str,
-        intended_close_price: float = 0.0
+        intended_close_price: float = 0.0,
+        intent_id: Optional[str] = None,
     ) -> Tuple[bool, str, float]:
         """
         Close an existing position.
@@ -546,9 +551,7 @@ class TastytradeExecutor:
         Args:
             position: The position to close
             close_reason: Reason for closing
-            intended_close_price: For PAPER stop orders, this is the stop price we want to fill at.
-                                  This simulates exchange-level stop orders that fill at the stop price,
-                                  not the current market price (which could be much worse).
+            intended_close_price: Trigger price for context only; paper fills use current bid/ask.
 
         Returns:
             (success, message, fill_price)
@@ -556,7 +559,7 @@ class TastytradeExecutor:
         if self.config.mode == TradingMode.PAPER:
             return self._simulate_close(position, close_reason, intended_close_price)
 
-        return self._live_close(position, close_reason)
+        return self._live_close(position, close_reason, intent_id)
 
     def _simulate_close(
         self,
@@ -575,59 +578,16 @@ class TastytradeExecutor:
             return False, "Invalid executable futures quote", 0.0
         return True, f"Paper close filled at {fill_price:.2f}", fill_price
 
-    def _live_close(
-        self,
-        position: FuturesPosition,
-        close_reason: str
-    ) -> Tuple[bool, str, float]:
-        """Close a live position via Tastytrade"""
-        if not self._ensure_session():
-            return False, "Authentication failed", 0.0
-
+    def _live_close(self, position: FuturesPosition, close_reason: str, intent_id: Optional[str] = None) -> Tuple[bool, str, float]:
         try:
-            # Determine closing action
-            if position.direction == TradeDirection.LONG:
-                action = "Sell to Close"
-            else:
-                action = "Buy to Close"
-
-            order_payload = {
-                "time-in-force": "Day",
-                "order-type": "Market",
-                "legs": [
-                    {
-                        "instrument-type": "Future",
-                        "symbol": position.symbol,
-                        "quantity": position.contracts,
-                        "action": action
-                    }
-                ]
-            }
-
-            response = requests.post(
-                f"{self.base_url}/accounts/{self.account_id}/orders",
-                headers=self._get_headers(),
-                json=order_payload,
-                timeout=30
-            )
-
-            if response.status_code in [200, 201]:
-                data = response.json().get("data", {})
-                order_id = data.get("order", {}).get("id")
-                fill_price = float(data.get("order", {}).get("fill-price", 0))
-
-                logger.info(f"Close order placed: {order_id}, fill: {fill_price}")
-                if data.get("order", {}).get("status") != "Filled" or fill_price <= 0:
-                    return False, f"Close order {order_id} requires reconciliation", 0.0
-                return True, f"Close order {order_id} filled at {fill_price}", fill_price
-            else:
-                error_msg = response.json().get("error", {}).get("message", response.text[:200])
-                logger.error(f"Close order failed: {error_msg}")
-                return False, f"Close failed: {error_msg}", 0.0
-
-        except Exception as e:
-            logger.error(f"Error closing position: {e}")
-            return False, str(e), 0.0
+            action = 'Sell to Close' if position.direction == TradeDirection.LONG else 'Buy to Close'
+            result = self._submit_market_order(position.symbol,position.contracts,action,intent_id or f'close:{position.position_id}')
+            if result and result['terminal'] and result['quantity'] == position.contracts:
+                return True,'Broker close confirmed',result['price']
+            return False,'Broker close pending reconciliation',0.0
+        except Exception:
+            logger.exception('VALOR close requires reconciliation')
+            return False,'Broker close pending reconciliation',0.0
 
     # ========================================================================
     # Stop Order Management

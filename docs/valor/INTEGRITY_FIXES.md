@@ -1,6 +1,6 @@
 # Valor lifecycle and performance integrity fixes
 
-This change preserves every historical trade and the raw paper balance. It does not enable live trading, rewrite historical fills, reset the account, or retrain/approve a model.
+This change preserves every historical trade and the raw paper balance. It does not enable live trading, rewrite historical fills, reset the account, or approve a model.
 
 ## Behavior
 
@@ -22,7 +22,7 @@ OAuth protocol reference: https://developer.tastytrade.com/docs/authentication/o
 
 Screen v1 excludes recapitalization records, invalid records, watchdog closures, excessive holding periods and entire duplicate-candidate clusters. Duplicate candidates match instrument/contract, side, quantity, entry/exit prices and entry/exit seconds. These are heuristics, not proof that every excluded trade was invalid or every retained trade was real. Priority classification assigns one exclusion reason per row.
 
-ML training samples must link to an eligible position. New watchdog outcomes do not update Bayesian or external learning feedback. Previously trained models and accumulated trackers are not retroactively repaired; review/retrain them on screened data before relying on them.
+ML training samples must link to an eligible position. New watchdog outcomes do not update Bayesian or external learning feedback. Bayesian totals are rebuilt from screened outcomes at startup. Prior ML approval is revoked once when the quality-screen migration first runs; retained model files require retraining/review before reapproval.
 
 Historical quotes, contract rolls, commissions, slippage and executable liquidity cannot be reconstructed from the ledger. Metrics are gross, realized-only paper statistics, not net executable returns. No Sharpe ratio is claimed from these transaction-level observations.
 
@@ -31,11 +31,11 @@ Historical quotes, contract rolls, commissions, slippage and executable liquidit
 Targeted command:
 
 ```sh
-python -m pytest -o addopts='' tests/test_valor_integrity_fixes.py tests/test_valor_rty_gate.py -q
+python -m pytest -o addopts='' tests/test_valor*.py -q
 ```
 
-The screened performance SELECT was executed successfully against the live Render database in a read-only CTE, without creating a production view or changing data. The older overnight/GEX suites have 11 failures and 5 setup errors, reproduced identically on untouched main at 307e7d7 (fixtures omit ticker/win_tracker arguments and contain outdated expectations).
+The screened performance SELECT was executed successfully against the live Render database in a read-only CTE, without creating a production view or changing data. Legacy overnight/GEX tests now use current per-ticker providers, current default stop values, isolated mocks and portable paths. The full collected Valor suite passes.
 
 Deploy this branch through the normal review process. Verify the additive view/table migration, monitor heartbeat, single-position entry rule, CL quarantine, and quote availability. The stricter quote rule can stop paper entries if only delayed Yahoo data is available.
 
-Pending intents are deliberately not automatically retried or deleted. For a live intent, reconcile broker order status, quantities and fills against its external identifier and local ledger before marking it complete. This patch does not implement an asynchronous broker-fill reconciler; it fails closed on uncertain results. No real-money readiness or live broker execution test is claimed.
+Pending intents are deliberately not automatically retried or deleted. For a live intent, reconcile broker order status, quantities and fills against its external identifier and local ledger before marking it complete. The frequent monitor reconciles persisted intents against broker order IDs/external identifiers, verifies single-leg fills and quantities, recovers terminal fills, cancels partially filled working remainders, and records terminal partial closes atomically. Cancelled/unfilled intents release their entry block. If a submission cannot be found or the execution history is incomplete, it remains blocked rather than being resubmitted. No real-money readiness or live broker execution test is claimed.

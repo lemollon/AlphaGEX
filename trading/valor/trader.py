@@ -15,6 +15,8 @@ Orchestrates:
 
 import logging
 import uuid
+from dataclasses import asdict
+from .reconciliation import summarize_order
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 from zoneinfo import ZoneInfo
@@ -499,6 +501,10 @@ class ValorTrader:
                 if closed:
                     scan_result["positions_closed"] += 1
 
+            if ticker in self.config.quarantined_tickers:
+                scan_result['status'] = 'quarantined'
+                return scan_result
+
             # 2. Check for new signals (if room for more positions for this ticker)
             open_count = len(self.db.get_open_positions(ticker=ticker))
 
@@ -680,6 +686,54 @@ class ValorTrader:
 
         return scan_result
 
+    @serialized
+    def reconcile_pending_orders(self):
+        """Recover known fills after timeouts/restarts without resubmission."""
+        if self.config.mode == TradingMode.PAPER:
+            return
+        for intent in self.db.get_pending_order_intents():
+            try:
+                context = intent['context']
+                if not context:
+                    logger.error('Legacy intent requires manual reconciliation: %s',intent['intent_id'])
+                    continue
+                existing = self.db.get_position_by_id(context.get('position_id',intent['intent_id']))
+                if (context['kind']=='entry' and existing) or (context['kind']=='close' and existing and existing.status != PositionStatus.OPEN):
+                    self.db.complete_order_intent(intent['intent_id'])
+                    continue
+                order = self.executor.find_order(intent['intent_id'],intent['broker_order_id'])
+                if not order:
+                    continue
+                result = summarize_order(order,context['symbol'],context['contracts'],context['action'])
+                self.db.record_broker_order(intent['intent_id'],result['order_id'])
+                if not result['terminal']:
+                    if result['quantity'] > 0:
+                        # Cancel unfilled remainder before recording a stable final quantity.
+                        self.executor.cancel_order(result['order_id'])
+                    continue
+                if result['quantity'] == 0:
+                    self.db.complete_order_intent(intent['intent_id'])
+                    continue
+                if context['kind']=='entry':
+                    data = dict(context['signal'])
+                    data['direction']=TradeDirection(data['direction'])
+                    data['gamma_regime']=GammaRegime(data['gamma_regime'])
+                    data['source']=SignalSource(data['source'])
+                    result['symbol']=context['symbol']
+                    self._execute_signal_internal(FuturesSignal(**data),0,intent['intent_id'],
+                        scan_id=context['scan_id'],ticker=intent['ticker'],reconciled_order=result)
+                elif existing and result['quantity']==existing.contracts:
+                    self._close_position(existing,result['price'],PositionStatus(context['status']),
+                        context['reason'],reconciled_fill=result['price'])
+                elif existing:
+                    closed, pnl = self.db.close_position(existing.position_id,result['price'],
+                        'PARTIAL_BROKER_CLOSE',PositionStatus.CLOSED,contracts_closed=result['quantity'],
+                        execution_id=intent['intent_id'])
+                    if closed:
+                        logger.info('Reconciled partial close %s: %s contracts, pnl=%s',intent['intent_id'],result['quantity'],pnl)
+            except Exception:
+                logger.exception('VALOR reconciliation failed for %s',intent['intent_id'])
+
     def monitor_positions(self) -> Dict[str, Any]:
         """
         Lightweight position monitor - checks stops/targets only.
@@ -700,6 +754,7 @@ class ValorTrader:
         }
 
         try:
+            self.reconcile_pending_orders()
             if not self.executor.is_market_open():
                 result["status"] = "market_closed"
                 return result
@@ -1282,28 +1337,37 @@ class ValorTrader:
         position: FuturesPosition,
         close_price: float,
         status: PositionStatus,
-        reason: str
+        reason: str,
+        reconciled_fill: Optional[float] = None,
     ) -> bool:
         """
         Close a position at the specified close_price.
 
-        PAPER TRADING STOP ORDER FIX:
-        For stop orders, close_price is the STOP PRICE where we should fill,
-        not the current market price. This simulates exchange-level stop orders.
+        The trigger price explains the exit. The executor supplies the actual
+        bid/ask paper fill or a confirmed broker fill; trigger prices are not fills.
         """
         try:
             current = self.db.get_position_by_id(position.position_id)
             if current is None or current.status != PositionStatus.OPEN:
                 return False
             position = current
-            close_intent = f"close:{position.position_id}"
-            if self.config.mode != TradingMode.PAPER and not self.db.claim_order_intent(close_intent, position.ticker):
-                logger.error("Close intent pending reconciliation: %s", close_intent)
-                return False
-            # Execute close order - pass intended close_price for stop order simulation
-            success, message, fill_price = self.executor.close_position_order(
-                position, reason, intended_close_price=close_price
-            )
+            pending = [i for i in self.db.get_pending_order_intents()
+                       if i.get('context',{}).get('kind')=='close' and i['context'].get('position_id')==position.position_id] if self.config.mode != TradingMode.PAPER else []
+            close_intent = pending[0]['intent_id'] if pending else f"close:{uuid.uuid4().hex[:24]}"
+            if reconciled_fill is not None:
+                success, message, fill_price = True, 'Reconciled broker fill', reconciled_fill
+            else:
+                context = {'kind':'close', 'position_id':position.position_id,'symbol':position.symbol,
+                           'contracts':position.contracts,'reason':reason,'status':status.value,
+                           'action':'Sell to Close' if position.direction == TradeDirection.LONG else 'Buy to Close'}
+                if pending:
+                    return False
+                if self.config.mode != TradingMode.PAPER and not self.db.claim_order_intent(close_intent, position.ticker, context):
+                    return False
+                success, message, fill_price = self.executor.close_position_order(position, reason, intended_close_price=close_price,
+                    intent_id=close_intent)
+                if self.config.mode != TradingMode.PAPER:
+                    self.db.record_broker_order(close_intent, getattr(self.executor,'last_broker_order_id',None))
 
             if success:
                 # Only observed execution prices are accepted.
@@ -1325,7 +1389,12 @@ class ValorTrader:
                         self.db.complete_order_intent(close_intent)
                     # Update win tracker
                     won = realized_pnl > 0
-                    eligible_outcome = not reason.upper().startswith("STALE_WATCHDOG")
+                    eligible_outcome = (
+                        not reason.upper().startswith("STALE_WATCHDOG") and
+                        position.open_time is not None and position.open_time.tzinfo is not None and
+                        datetime.now(CENTRAL_TZ) - position.open_time <= timedelta(
+                            hours=get_ticker_config(position.ticker).get('max_hold_hours',24))
+                    )
                     if eligible_outcome:
                         self.win_tracker.update(won, position.gamma_regime)
                         self.db.save_win_tracker(self.win_tracker)
@@ -1542,38 +1611,49 @@ class ValorTrader:
         return self._execute_signal_internal(signal, account_balance, position_id, ticker=signal.ticker)
 
     @serialized
-    def _execute_signal_internal(self, signal: FuturesSignal, account_balance: float, position_id: str, scan_id: str = "", ticker: str = "MES") -> bool:
+    def _execute_signal_internal(self, signal: FuturesSignal, account_balance: float, position_id: str, scan_id: str = "", ticker: str = "MES", reconciled_order: Optional[Dict] = None) -> bool:
         """Execute a trading signal with specified position_id and scan_id for ML tracking"""
         try:
-            if ticker != signal.ticker or ticker not in FUTURES_TICKERS:
-                return False
-            if ticker in self.config.quarantined_tickers:
-                logger.warning("VALOR %s entries quarantined", ticker)
-                return False
-            if not self.db.entry_allowed(ticker, self.config.entry_cooldown_seconds):
-                return False
-            # Validate order parameters
-            valid, validation_msg = self.executor.validate_order_params(signal, account_balance)
-            if not valid:
-                logger.warning(f"Order validation failed: {validation_msg}")
-                return False
+            if reconciled_order is not None:
+                signal.entry_price = reconciled_order['price']
+                signal.contracts = reconciled_order['quantity']
+                order_id = reconciled_order['order_id']
+            else:
+                if ticker != signal.ticker or ticker not in FUTURES_TICKERS:
+                    return False
+                if ticker in self.config.quarantined_tickers:
+                    logger.warning("VALOR %s entries quarantined", ticker)
+                    return False
+                if not self.db.entry_allowed(ticker, self.config.entry_cooldown_seconds):
+                    return False
+                # Validate order parameters
+                valid, validation_msg = self.executor.validate_order_params(signal, account_balance)
+                if not valid:
+                    logger.warning(f"Order validation failed: {validation_msg}")
+                    return False
 
-            if not self.db.claim_order_intent(position_id, ticker):
-                return False
-            # Execute order
-            success, message, order_id = self.executor.execute_signal(signal, position_id)
+                context = {'kind':'entry','signal':{k:(v.value if hasattr(v,'value') else v) for k,v in asdict(signal).items()},
+                           'symbol':self.config.get_ticker_symbol(ticker),'scan_id':scan_id,
+                           'contracts':signal.contracts,
+                           'action':'Buy to Open' if signal.direction == TradeDirection.LONG else 'Sell to Open'}
+                if not self.db.claim_order_intent(position_id, ticker, context):
+                    return False
+                # Execute order
+                success, message, order_id = self.executor.execute_signal(signal, position_id)
 
-            if not success:
-                if self.config.mode == TradingMode.PAPER:
-                    self.db.complete_order_intent(position_id)
-                logger.error(f"Order execution failed: {message}")
-                return False
+                if self.config.mode != TradingMode.PAPER:
+                    self.db.record_broker_order(position_id, order_id)
+                if not success:
+                    if self.config.mode == TradingMode.PAPER:
+                        self.db.complete_order_intent(position_id)
+                    logger.error(f"Order execution failed: {message}")
+                    return False
 
             # Create position object with per-ticker point value
             point_value = get_ticker_point_value(ticker)
             position = FuturesPosition(
                 position_id=position_id,
-                symbol=self.config.get_ticker_symbol(ticker),
+                symbol=reconciled_order['symbol'] if reconciled_order else self.config.get_ticker_symbol(ticker),
                 direction=signal.direction,
                 contracts=signal.contracts,
                 entry_price=signal.entry_price,
@@ -1596,7 +1676,7 @@ class ValorTrader:
                 order_id=order_id or "",
                 scan_id=scan_id,  # Link to scan activity for ML training
                 status=PositionStatus.OPEN,
-                open_time=datetime.now(CENTRAL_TZ),
+                open_time=datetime.fromisoformat(reconciled_order['filled_at']) if reconciled_order and reconciled_order.get('filled_at') else datetime.now(CENTRAL_TZ),
                 ticker=ticker,
                 # A/B Test tracking - copy from signal
                 stop_type=signal.stop_type,

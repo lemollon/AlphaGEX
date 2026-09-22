@@ -141,6 +141,10 @@ class ValorDatabase:
                     )
                 """)
 
+                c.execute("ALTER TABLE valor_order_intents ADD COLUMN IF NOT EXISTS context JSONB NOT NULL DEFAULT '{}'::jsonb")
+                c.execute("ALTER TABLE valor_order_intents ADD COLUMN IF NOT EXISTS broker_order_id TEXT")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_valor_pending_intents ON valor_order_intents(ticker) WHERE state='pending'")
+
                 # Main positions table
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS valor_positions (
@@ -588,6 +592,13 @@ class ValorDatabase:
                     pass
 
                 c.execute("CREATE OR REPLACE VIEW valor_trade_quality AS " + QUALITY_SELECT)
+                # One-time invalidation: old model approval predates the screened training set.
+                c.execute("SELECT 1 FROM valor_config WHERE config_key='quality_screen_version'")
+                if not c.fetchone():
+                    c.execute("INSERT INTO valor_config (config_key,config_value) VALUES ('ml_approved','false') "
+                              "ON CONFLICT (config_key) DO UPDATE SET config_value='false'")
+                    c.execute("INSERT INTO valor_config (config_key,config_value) VALUES ('quality_screen_version','1') "
+                              "ON CONFLICT DO NOTHING")
                 conn.commit()
                 logger.info("VALOR database tables ensured (multi-ticker)")
 
@@ -637,15 +648,28 @@ class ValorDatabase:
         if cursor.rowcount != 1:
             raise RuntimeError("No active paper account; rolling back position change")
 
-    def claim_order_intent(self, intent_id: str, ticker: str) -> bool:
+    def claim_order_intent(self, intent_id: str, ticker: str, context: Optional[Dict] = None) -> bool:
         """Durable crash/timeout barrier. Pending intents require reconciliation."""
         with db_connection() as conn:
             c = conn.cursor()
-            c.execute("INSERT INTO valor_order_intents (intent_id, ticker) VALUES (%s, %s) "
-                      "ON CONFLICT DO NOTHING", (intent_id, ticker))
+            c.execute("INSERT INTO valor_order_intents (intent_id, ticker, context) VALUES (%s, %s, %s::jsonb) "
+                      "ON CONFLICT DO NOTHING", (intent_id, ticker, json.dumps(context or {})))
             claimed = c.rowcount == 1
             conn.commit()
             return claimed
+
+    def get_pending_order_intents(self) -> List[Dict]:
+        with db_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT intent_id,ticker,context,broker_order_id FROM valor_order_intents WHERE state='pending' ORDER BY created_at")
+            return [dict(zip(['intent_id','ticker','context','broker_order_id'], row)) for row in c.fetchall()]
+
+    def record_broker_order(self, intent_id: str, order_id) -> None:
+        if order_id is not None:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("UPDATE valor_order_intents SET broker_order_id=%s WHERE intent_id=%s", (str(order_id),intent_id))
+                conn.commit()
 
     def complete_order_intent(self, intent_id: str) -> None:
         with db_connection() as conn:
@@ -808,7 +832,9 @@ class ValorDatabase:
         close_price: float,
         close_reason: str,
         status: PositionStatus = PositionStatus.CLOSED,
-        paper: bool = False
+        paper: bool = False,
+        contracts_closed: Optional[int] = None,
+        execution_id: Optional[str] = None,
     ) -> Tuple[bool, float]:
         """
         Close a position and calculate P&L.
@@ -820,6 +846,14 @@ class ValorDatabase:
             if not position:
                 return False, 0.0
 
+            original_contracts = position.contracts
+            partial = contracts_closed is not None and contracts_closed < original_contracts
+            if contracts_closed is not None and (contracts_closed <= 0 or contracts_closed > original_contracts):
+                return False, 0.0
+            if partial:
+                if paper or not execution_id:
+                    return False, 0.0
+                position.contracts = contracts_closed
             # Calculate P&L
             realized_pnl = position.calculate_pnl(close_price)
 
@@ -827,16 +861,24 @@ class ValorDatabase:
                 c = conn.cursor()
                 now = datetime.now(CENTRAL_TZ)
 
-                # Update position status to closed
-                c.execute("""
-                    UPDATE valor_positions
-                    SET status = %s, close_time = %s, close_price = %s,
-                        close_reason = %s, realized_pnl = %s, updated_at = NOW()
-                    WHERE position_id = %s AND status = 'open'
-                """, (
-                    status.value, now, _to_python(close_price),
-                    close_reason, _to_python(realized_pnl), position_id
-                ))
+                if partial:
+                    c.execute("""UPDATE valor_positions SET contracts=contracts-%s,
+                                 entry_value=entry_price*(contracts-%s)*%s,updated_at=NOW()
+                                 WHERE position_id=%s AND status='open' AND contracts=%s
+                                 AND NOT EXISTS (SELECT 1 FROM valor_closed_trades WHERE position_id=%s)""",
+                              (contracts_closed,contracts_closed,get_ticker_point_value(position.ticker),
+                               position_id,original_contracts,execution_id))
+                else:
+                    # Update position status to closed
+                    c.execute("""
+                        UPDATE valor_positions
+                        SET status = %s, close_time = %s, close_price = %s,
+                            close_reason = %s, realized_pnl = %s, updated_at = NOW()
+                        WHERE position_id = %s AND status = 'open'
+                    """, (
+                        status.value, now, _to_python(close_price),
+                        close_reason, _to_python(realized_pnl), position_id
+                    ))
 
                 # CRITICAL: Verify the UPDATE actually affected a row
                 rows_updated = c.rowcount
@@ -911,7 +953,7 @@ class ValorDatabase:
                         mae_points = EXCLUDED.mae_points,
                         was_profitable_before_loss = EXCLUDED.was_profitable_before_loss
                 """, (
-                    position_id, getattr(position, 'ticker', 'MES'),
+                    execution_id if partial else position_id, getattr(position, 'ticker', 'MES'),
                     position.symbol, position.direction.value,
                     position.contracts, _to_python(position.entry_price),
                     _to_python(close_price), _to_python(realized_pnl),
@@ -941,6 +983,8 @@ class ValorDatabase:
                     from .margin_manager import get_margin_requirement
                     self._apply_paper_delta(c, realized_pnl,
                         -position.contracts * get_margin_requirement(position.ticker)["maintenance"], True)
+                if execution_id:
+                    c.execute("UPDATE valor_order_intents SET state='complete' WHERE intent_id=%s", (execution_id,))
                 conn.commit()
                 logger.info(f"Closed position {position_id}: P&L=${realized_pnl:.2f}, reason={close_reason}")
 
@@ -1560,33 +1604,19 @@ class ValorDatabase:
     # ========================================================================
 
     def get_win_tracker(self) -> BayesianWinTracker:
-        """Load Bayesian win tracker from database"""
-        tracker = BayesianWinTracker()
-        try:
-            with db_connection() as conn:
-                c = conn.cursor()
-                c.execute("""
-                    SELECT * FROM valor_win_tracker ORDER BY id DESC LIMIT 1
-                """)
-                row = c.fetchone()
-
-                if row:
-                    columns = [desc[0] for desc in c.description]
-                    data = dict(zip(columns, row))
-                    tracker = BayesianWinTracker(
-                        alpha=float(data.get('alpha', 1.0)),
-                        beta=float(data.get('beta', 1.0)),
-                        total_trades=int(data.get('total_trades', 0)),
-                        positive_gamma_wins=int(data.get('positive_gamma_wins', 0)),
-                        positive_gamma_losses=int(data.get('positive_gamma_losses', 0)),
-                        negative_gamma_wins=int(data.get('negative_gamma_wins', 0)),
-                        negative_gamma_losses=int(data.get('negative_gamma_losses', 0)),
-                    )
-
-        except Exception as e:
-            logger.warning(f"Failed to load win tracker, using defaults: {e}")
-
-        return tracker
+        """Rebuild from screened outcomes; never restore contaminated historical totals."""
+        with db_connection() as conn:
+            c = conn.cursor()
+            c.execute("""SELECT COUNT(*) FILTER (WHERE realized_pnl>0),
+                         COUNT(*) FILTER (WHERE realized_pnl<=0),
+                         COUNT(*) FILTER (WHERE realized_pnl>0 AND gamma_regime='POSITIVE'),
+                         COUNT(*) FILTER (WHERE realized_pnl<=0 AND gamma_regime='POSITIVE'),
+                         COUNT(*) FILTER (WHERE realized_pnl>0 AND gamma_regime<>'POSITIVE'),
+                         COUNT(*) FILTER (WHERE realized_pnl<=0 AND gamma_regime<>'POSITIVE')
+                         FROM valor_trade_quality WHERE quality_status='eligible'""")
+            wins, losses, pw, pl, nw, nl = map(int,c.fetchone())
+            return BayesianWinTracker(alpha=1+wins,beta=1+losses,total_trades=wins+losses,
+                positive_gamma_wins=pw,positive_gamma_losses=pl,negative_gamma_wins=nw,negative_gamma_losses=nl)
 
     def save_win_tracker(self, tracker: BayesianWinTracker) -> bool:
         """Save win tracker to database"""
