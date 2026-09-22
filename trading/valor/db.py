@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from decimal import Decimal
 
 from database_adapter import get_connection
+from .audit import QUALITY_SELECT, PERFORMANCE_SQL
 from .models import (
     FuturesPosition, TradeDirection, GammaRegime, PositionStatus,
     SignalSource, ValorConfig, TradingMode, DailySummary,
@@ -132,6 +133,13 @@ class ValorDatabase:
                 c = conn.cursor()
 
                 self._migrate_from_heracles(c)
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS valor_order_intents (
+                        intent_id TEXT PRIMARY KEY, ticker TEXT NOT NULL,
+                        state TEXT NOT NULL DEFAULT 'pending',
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                """)
 
                 # Main positions table
                 c.execute("""
@@ -579,6 +587,7 @@ class ValorDatabase:
                 except Exception:
                     pass
 
+                c.execute("CREATE OR REPLACE VIEW valor_trade_quality AS " + QUALITY_SELECT)
                 conn.commit()
                 logger.info("VALOR database tables ensured (multi-ticker)")
 
@@ -589,7 +598,84 @@ class ValorDatabase:
     # Position Operations
     # ========================================================================
 
-    def save_position(self, position: FuturesPosition) -> bool:
+    def get_quality_performance(self) -> Dict[str, Any]:
+        """Expose raw/excluded counts and screened metrics without rewriting history."""
+        with db_connection() as conn:
+            c = conn.cursor()
+            def rows():
+                keys = [d[0] for d in c.description]
+                return [{k: _to_python(v) for k, v in zip(keys, row)} for row in c.fetchall()]
+            c.execute("SELECT ticker, quality_status, COUNT(*) AS trades, SUM(realized_pnl) AS pnl "
+                      "FROM valor_trade_quality GROUP BY ticker, quality_status ORDER BY ticker, quality_status")
+            quality = rows()
+            c.execute(PERFORMANCE_SQL)
+            performance = rows()
+            c.execute("""SELECT ticker, gamma_regime, direction, signal_source,
+                        EXTRACT(HOUR FROM open_time AT TIME ZONE 'America/Chicago') AS entry_hour_ct,
+                        COUNT(*) AS trades, AVG(realized_pnl) AS expectancy, SUM(realized_pnl) AS pnl
+                        FROM valor_trade_quality WHERE quality_status='eligible'
+                        GROUP BY 1,2,3,4,5 ORDER BY pnl DESC""")
+            return {"screen_version": 1, "quality": quality, "performance": performance, "setups": rows(),
+                    "limitations": "Screened paper outcomes, not verified fills. Costs not deducted; "
+                    "duplicate candidates are excluded as entire clusters. Drawdown is realized only. "
+                    "Historical quote/rollover accuracy cannot be reconstructed from this ledger."}
+
+    def _apply_paper_delta(self, cursor, pnl: float, margin: float, closed: bool) -> None:
+        """Apply ledger and account changes in the SAME transaction."""
+        cursor.execute("""
+            UPDATE valor_paper_account SET
+              current_balance=current_balance + %s,
+              cumulative_pnl=cumulative_pnl + %s,
+              total_trades=total_trades + %s,
+              margin_used=GREATEST(0, margin_used + %s),
+              margin_available=current_balance + %s - GREATEST(0, margin_used + %s),
+              high_water_mark=GREATEST(high_water_mark, current_balance + %s),
+              max_drawdown=GREATEST(max_drawdown, high_water_mark - current_balance - %s),
+              updated_at=NOW()
+            WHERE id=(SELECT id FROM valor_paper_account WHERE is_active=TRUE ORDER BY id DESC LIMIT 1)
+        """, (pnl, pnl, int(closed), margin, pnl, margin, pnl, pnl))
+        if cursor.rowcount != 1:
+            raise RuntimeError("No active paper account; rolling back position change")
+
+    def claim_order_intent(self, intent_id: str, ticker: str) -> bool:
+        """Durable crash/timeout barrier. Pending intents require reconciliation."""
+        with db_connection() as conn:
+            c = conn.cursor()
+            c.execute("INSERT INTO valor_order_intents (intent_id, ticker) VALUES (%s, %s) "
+                      "ON CONFLICT DO NOTHING", (intent_id, ticker))
+            claimed = c.rowcount == 1
+            conn.commit()
+            return claimed
+
+    def complete_order_intent(self, intent_id: str) -> None:
+        with db_connection() as conn:
+            c = conn.cursor()
+            c.execute("UPDATE valor_order_intents SET state='complete' WHERE intent_id=%s", (intent_id,))
+            conn.commit()
+
+    def entry_allowed(self, ticker: str, cooldown_seconds: int) -> bool:
+        """Called inside lifecycle lock. Database failures propagate (fail closed)."""
+        with db_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT EXISTS (SELECT 1 FROM valor_positions WHERE ticker=%s AND
+                    (status='open' OR GREATEST(open_time, close_time) >
+                     NOW() - (%s * INTERVAL '1 second')))
+                OR EXISTS (SELECT 1 FROM valor_order_intents WHERE ticker=%s AND state='pending')
+            """, (ticker, max(60, cooldown_seconds), ticker))
+            if c.fetchone()[0]:
+                return False
+            c.execute("""
+                SELECT COALESCE(SUM(LEAST(realized_pnl,0)) FILTER (WHERE ticker=%s),0),
+                       COALESCE(SUM(LEAST(realized_pnl,0)),0)
+                FROM valor_closed_trades
+                WHERE close_time >= (date_trunc('day', NOW() AT TIME ZONE 'America/Chicago')
+                                      AT TIME ZONE 'America/Chicago')
+            """, (ticker,))
+            per_ticker, combined = c.fetchone()
+            return per_ticker > -2000 and combined > -6000
+
+    def save_position(self, position: FuturesPosition, paper: bool = False) -> bool:
         """Save a position to database (insert or update)"""
         try:
             with db_connection() as conn:
@@ -613,17 +699,7 @@ class ValorDatabase:
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
-                    ON CONFLICT (position_id) DO UPDATE SET
-                        current_stop = EXCLUDED.current_stop,
-                        trailing_active = EXCLUDED.trailing_active,
-                        status = EXCLUDED.status,
-                        close_time = EXCLUDED.close_time,
-                        close_price = EXCLUDED.close_price,
-                        close_reason = EXCLUDED.close_reason,
-                        realized_pnl = EXCLUDED.realized_pnl,
-                        high_water_mark = EXCLUDED.high_water_mark,
-                        max_adverse_excursion = EXCLUDED.max_adverse_excursion,
-                        updated_at = NOW()
+                    ON CONFLICT (position_id) DO NOTHING
                 """, (
                     position.position_id,
                     position.ticker,
@@ -663,8 +739,12 @@ class ValorDatabase:
                     _to_python(position.stop_points_used),
                 ))
 
+                saved = c.rowcount == 1
+                if saved and paper:
+                    from .margin_manager import get_margin_requirement
+                    self._apply_paper_delta(c, 0, position.contracts * get_margin_requirement(position.ticker)["maintenance"], False)
                 conn.commit()
-                return True
+                return saved
 
         except Exception as e:
             logger.error(f"Failed to save position {position.position_id}: {e}")
@@ -692,8 +772,10 @@ class ValorDatabase:
 
                 for row in rows:
                     data = dict(zip(columns, row))
-                    position = self._row_to_position(data)
-                    positions.append(position)
+                    try:
+                        positions.append(self._row_to_position(data))
+                    except Exception:
+                        logger.exception("Invalid VALOR position row %s", data.get('position_id'))
 
         except Exception as e:
             logger.error(f"Failed to get open positions: {e}")
@@ -725,7 +807,8 @@ class ValorDatabase:
         position_id: str,
         close_price: float,
         close_reason: str,
-        status: PositionStatus = PositionStatus.CLOSED
+        status: PositionStatus = PositionStatus.CLOSED,
+        paper: bool = False
     ) -> Tuple[bool, float]:
         """
         Close a position and calculate P&L.
@@ -854,6 +937,10 @@ class ValorDatabase:
                 if rows_affected == 0:
                     logger.error(f"CRITICAL: closed_trades INSERT/UPDATE affected 0 rows for {position_id}")
 
+                if paper:
+                    from .margin_manager import get_margin_requirement
+                    self._apply_paper_delta(c, realized_pnl,
+                        -position.contracts * get_margin_requirement(position.ticker)["maintenance"], True)
                 conn.commit()
                 logger.info(f"Closed position {position_id}: P&L=${realized_pnl:.2f}, reason={close_reason}")
 
@@ -1919,7 +2006,7 @@ class ValorDatabase:
                            margin_used, high_water_mark, max_drawdown, starting_capital
                     FROM valor_paper_account
                     WHERE is_active = TRUE
-                    ORDER BY id DESC LIMIT 1
+                    ORDER BY id DESC LIMIT 1 FOR UPDATE
                 """)
 
                 row = c.fetchone()
@@ -1941,7 +2028,7 @@ class ValorDatabase:
                 new_cumulative_pnl = cumulative_pnl + realized_pnl
                 new_margin_used = max(0, margin_used + margin_change)
                 new_margin_available = new_balance - new_margin_used
-                new_total_trades = total_trades + (1 if realized_pnl != 0 else 0)
+                new_total_trades = total_trades + (1 if margin_change < 0 else 0)
 
                 # Update high water mark and max drawdown
                 new_high_water_mark = max(high_water_mark, new_balance)
@@ -2711,6 +2798,9 @@ class ValorDatabase:
                     FROM valor_scan_activity
                     WHERE trade_executed = TRUE
                       AND trade_outcome IS NOT NULL
+                      AND EXISTS (SELECT 1 FROM valor_trade_quality q
+                                  WHERE q.position_id = valor_scan_activity.position_id
+                                    AND q.quality_status = 'eligible')
                     ORDER BY scan_time DESC
                 """)
 

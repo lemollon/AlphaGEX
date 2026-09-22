@@ -494,11 +494,14 @@ export default function ValorPage() {
                   Paper Trading Mode - {selectedTicker ? `${selectedTicker} Futures` : 'Multi-Instrument Futures'} Scalping
                 </h3>
                 <p className="text-gray-300 text-sm mt-1">
-                  VALOR is paper trading {selectedTicker || 'MES, MNQ, CL, NG, RTY, MGC'} futures with $100K per instrument. Uses GEX signals for mean reversion (positive gamma) and momentum (negative gamma).
+                  VALOR uses simulated futures trades. Raw balances include historical trades flagged for data quality and are not verified strategy returns. CL new entries are quarantined by default.
                 </p>
                 <p className="text-gray-400 text-xs mt-2">
                   24/5 trading: Sun 5pm - Fri 4pm CT with 4-5pm daily maintenance break.
                 </p>
+                <a className="text-yellow-300 text-sm underline" href={`${process.env.NEXT_PUBLIC_API_URL || ''}/api/valor/performance/quality`} target="_blank" rel="noopener noreferrer">
+                  View screened performance and excluded-trade counts (JSON)
+                </a>
               </div>
             </div>
           </div>
@@ -633,7 +636,7 @@ export default function ValorPage() {
                     </div>
                   </div>
                   <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
-                    <div className="text-sm text-gray-400">Current Balance</div>
+                    <div className="text-sm text-gray-400">Raw Paper Balance</div>
                     <div className={`text-2xl font-bold mt-1 ${
                       (paperAccount.current_balance ?? 0) >= startingCapital
                         ? 'text-green-400' : 'text-red-400'
