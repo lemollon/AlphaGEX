@@ -38,3 +38,28 @@ SELECT ticker, COUNT(*) AS trades, SUM(realized_pnl) AS pnl,
  AVG(mfe_points) AS mean_mfe_points, AVG(mae_points) AS mean_mae_points
 FROM drawdowns GROUP BY ticker ORDER BY pnl DESC
 """
+
+# Classify history once and reuse a narrow snapshot for all report sections.
+QUALITY_REPORT_SQL = """
+WITH screened AS MATERIALIZED (
+ SELECT ticker, quality_status, realized_pnl, close_time, position_id,
+        mfe_points, mae_points, gamma_regime, direction, signal_source, open_time
+ FROM valor_trade_quality
+), performance AS (
+""" + PERFORMANCE_SQL.replace("valor_trade_quality", "screened") + """
+), quality AS (
+ SELECT ticker, quality_status, COUNT(*) AS trades, SUM(realized_pnl) AS pnl
+ FROM screened GROUP BY ticker, quality_status ORDER BY ticker, quality_status
+), setups AS (
+ SELECT ticker, gamma_regime, direction, signal_source,
+        EXTRACT(HOUR FROM open_time AT TIME ZONE 'America/Chicago') AS entry_hour_ct,
+        COUNT(*) AS trades, AVG(realized_pnl) AS expectancy, SUM(realized_pnl) AS pnl
+ FROM screened WHERE quality_status='eligible'
+ GROUP BY 1,2,3,4,5 ORDER BY pnl DESC
+)
+SELECT jsonb_build_object(
+ 'quality', COALESCE((SELECT jsonb_agg(q) FROM quality q), '[]'::jsonb),
+ 'performance', COALESCE((SELECT jsonb_agg(p) FROM performance p), '[]'::jsonb),
+ 'setups', COALESCE((SELECT jsonb_agg(s) FROM setups s), '[]'::jsonb)
+)
+"""
