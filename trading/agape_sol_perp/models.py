@@ -133,7 +133,7 @@ class AgapeSolPerpConfig:
     def load_from_db(cls, db) -> "AgapeSolPerpConfig":
         """Load config from database, falling back to defaults."""
         config = cls()
-        code_controlled_keys = {"cooldown_minutes", "max_open_positions"}
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries"}
         try:
             db_config = db.load_config()
             if db_config:
