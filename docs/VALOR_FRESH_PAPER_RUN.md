@@ -51,3 +51,12 @@ CL remains quarantined; a reset does not override an instrument's safety gate.
 
 The fresh run does not imply profitability. It is forward observation with
 explicit execution assumptions. Do not call its fills identical to a broker.
+
+## Missing feed timestamps
+
+The production feed returns zero bid/ask times. Paper mode may use a changed
+stream event after the initial snapshot within a five-second subscription window.
+Its locally observed time is explicitly labeled `observed_stream_change` and
+`exchange_timestamp_verified=false`. This demonstrates stream activity, not
+exchange freshness or the absence of vendor delay. Live mode cannot use this
+fallback. Nonzero stale timestamps remain rejected; quiet snapshots never fill.
