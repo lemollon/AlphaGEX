@@ -115,3 +115,42 @@ def test_concurrent_schema_initializers_complete(database):
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(initialize) for _ in range(2)]
         assert all(f.result(timeout=15) is not None for f in futures)
+
+
+def test_paper_fees_are_atomic_once_with_fill_audit(database):
+    db,connect=database
+    assert db.save_position(position(),paper=True,paper_fill={'bid':99.75,'ask':100,'contract_symbol':'/MESZ6'})
+    assert db.close_position('test',101,'TEST',paper=True,paper_fee=3,paper_fill={'bid':101})==(True,2)
+    assert db.close_position('test',101,'TEST',paper=True,paper_fee=3)==(False,0)
+    assert db.get_paper_account()['current_balance']==100002
+    with connect() as conn,conn.cursor() as c:
+        c.execute("SELECT details FROM valor_paper_fills WHERE phase='exit'")
+        assert c.fetchone()[0]['fees']==3
+
+
+def test_reset_archives_and_removes_old_performance(database):
+    db,connect=database
+    p=position();p.order_id='PAPER-test'
+    assert db.save_position(p,paper=True)
+    assert db.reset_paper_account(600000)
+    account=db.get_paper_account()
+    assert account['current_balance']==600000
+    assert account['total_trades']==0 and account['margin_used']==0
+    assert db.get_open_positions()==[]
+    with connect() as conn,conn.cursor() as c:
+        c.execute("SELECT COUNT(*) FROM valor_paper_archive_rows WHERE source_table='valor_positions'")
+        assert c.fetchone()[0]==1
+        c.execute("SELECT COUNT(*) FROM valor_paper_reset_batches")
+        assert c.fetchone()[0]==1
+
+
+def test_reset_refuses_live_mode_or_pending_intents(database):
+    db,connect=database
+    with connect() as conn,conn.cursor() as c:
+        c.execute("INSERT INTO valor_config(config_key,config_value) VALUES ('mode','\"live\"')")
+    assert not db.reset_paper_account(600000)
+    with connect() as conn,conn.cursor() as c:
+        c.execute("UPDATE valor_config SET config_value='\"paper\"' WHERE config_key='mode'")
+    assert db.claim_order_intent('pending','MES',{'kind':'entry'})
+    assert not db.reset_paper_account(600000)
+    assert db.get_paper_account()['current_balance']==100000

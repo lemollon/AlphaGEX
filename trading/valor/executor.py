@@ -147,9 +147,41 @@ class TastytradeExecutor:
             bid, ask, last = (float(quote[k]) for k in ("bid", "ask", "last"))
             timestamp = datetime.fromisoformat(quote["timestamp"])
             age = (datetime.now(CENTRAL_TZ) - timestamp).total_seconds()
-            return all(isfinite(v) and v > 0 for v in (bid, ask, last)) and bid <= ask and 0 <= age <= 120
+            return all(isfinite(v) and v > 0 for v in (bid, ask, last)) and bid <= ask and 0 <= age <= 10
         except (KeyError, TypeError, ValueError):
             return False
+
+    def get_entry_symbol(self, ticker):
+        if ticker in {"MES", "MNQ", "RTY"}:
+            return self.config.get_ticker_symbol(ticker)
+        if not TASTYTRADE_SDK_AVAILABLE or self.auth_method != "OAUTH":
+            return None
+        cache = getattr(self, '_entry_contract_cache', {})
+        cached = cache.get(ticker)
+        now = datetime.now(CENTRAL_TZ)
+        if cached and (now-cached[1]).total_seconds() < 60:
+            return cached[0]
+        async def resolve():
+            session = Session(self.client_secret,self.refresh_token)
+            code = FUTURES_TICKERS[ticker]['contract_prefix'].lstrip('/')
+            futures = await asyncio.wait_for(Future.get(session,product_codes=[code]),10)
+            return self._choose_active_contract(futures,code,now)
+        try:
+            symbol = asyncio.run(resolve())
+            if symbol:
+                cache[ticker] = (symbol,now)
+                self._entry_contract_cache = cache
+            return symbol
+        except Exception:
+            logger.warning("No verified active contract for %s",ticker)
+            return None
+
+    @staticmethod
+    def _choose_active_contract(futures, code, now):
+        eligible = [f for f in futures if f.product_code == code and f.active_month
+                    and f.is_tradeable and not f.is_closing_only and f.stops_trading_at > now
+                    and f.streamer_symbol and f.symbol.startswith('/'+code)]
+        return eligible[0].symbol if len(eligible) == 1 else None
 
     def get_mes_quote(self, symbol: str = None, ticker: str = None) -> Optional[Dict[str, Any]]:
         """
@@ -168,10 +200,10 @@ class TastytradeExecutor:
             Dict with bid, ask, last, volume or None if failed
         """
         ticker = ticker or "MES"
-        symbol = symbol or self.config.get_ticker_symbol(ticker)
+        symbol = symbol or self.get_entry_symbol(ticker)
         ticker_cfg = FUTURES_TICKERS.get(ticker, {})
         prefix = ticker_cfg.get("contract_prefix")
-        if not prefix or not symbol.startswith(prefix) or len(symbol) != len(prefix) + 2:
+        if not symbol or not prefix or not symbol.startswith(prefix) or len(symbol) != len(prefix) + 2:
             return None
 
         # Check cache first
@@ -240,7 +272,7 @@ class TastytradeExecutor:
             future = await asyncio.wait_for(Future.get(session, contract_symbol), timeout=10)
             if future.symbol != contract_symbol or not future.streamer_symbol:
                 return None
-            if future.expiration_date < datetime.now(CENTRAL_TZ).date():
+            if future.stops_trading_at <= datetime.now(CENTRAL_TZ):
                 logger.error("Expired contract %s requires reconciliation", contract_symbol)
                 return None
             symbol = future.streamer_symbol
@@ -280,6 +312,7 @@ class TastytradeExecutor:
                 "last": float(quote.bid_price + quote.ask_price) / 2,
                 "price": float(quote.bid_price + quote.ask_price) / 2,
                 "volume": 0, "timestamp": observed.isoformat(), "source": "TASTYTRADE_DXLINK",
+                "bid_size": float(quote.bid_size), "ask_size": float(quote.ask_size),
             }
             return result if TastytradeExecutor._quote_is_usable(result) else None
         except (AttributeError, TypeError, ValueError, OverflowError, OSError):
@@ -484,13 +517,13 @@ class TastytradeExecutor:
         )
 
         from math import isfinite
-        quote = self.get_mes_quote(ticker=signal.ticker)
+        quote = self.get_mes_quote(symbol=getattr(signal,"contract_symbol",None) or None,ticker=signal.ticker)
         if not quote:
             return False, "No executable futures quote", None
         side = "ask" if signal.direction == TradeDirection.LONG else "bid"
-        fill_price = float(quote.get(side) or 0)
-        if not isfinite(fill_price) or fill_price <= 0:
-            return False, "Invalid executable futures quote", None
+        fill_price = self._paper_fill(quote, side, signal.contracts, signal.ticker)
+        if fill_price is None:
+            return False, "No sufficiently sized, fresh contract quote", None
         signal.entry_price = fill_price
 
         order_id = f"PAPER-{position_id}"
@@ -542,7 +575,7 @@ class TastytradeExecutor:
     def _live_execution(self, signal: FuturesSignal, position_id: str) -> Tuple[bool, str, Optional[str]]:
         try:
             action = 'Buy to Open' if signal.direction == TradeDirection.LONG else 'Sell to Open'
-            result = self._submit_market_order(self.config.get_ticker_symbol(signal.ticker),signal.contracts,action,position_id)
+            result = self._submit_market_order(signal.contract_symbol or self.get_entry_symbol(signal.ticker),signal.contracts,action,position_id)
             if result and result['terminal'] and result['quantity'] == signal.contracts:
                 signal.entry_price = result['price']
                 return True,'Broker fill confirmed',result['order_id']
@@ -586,10 +619,34 @@ class TastytradeExecutor:
         if not quote:
             return False, "No executable futures quote", 0.0
         side = "bid" if position.direction == TradeDirection.LONG else "ask"
-        fill_price = float(quote.get(side) or 0)
-        if not isfinite(fill_price) or fill_price <= 0:
-            return False, "Invalid executable futures quote", 0.0
+        fill_price = self._paper_fill(quote, side, position.contracts, position.ticker)
+        if fill_price is None:
+            return False, "No sufficiently sized, fresh contract quote", 0.0
         return True, f"Paper close filled at {fill_price:.2f}", fill_price
+
+    def _paper_fill(self, quote, side, quantity, ticker):
+        from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
+        from math import isfinite
+        self.last_paper_fill = None
+        try:
+            if not self.is_market_open() or not self._quote_is_usable(quote) or quantity < 1:
+                return None
+            size = float(quote.get(side + "_size", 0))
+            if not isfinite(size) or size < quantity:
+                return None  # No invented liquidity or unmodeled partial fills.
+            ticks = self.config.paper_slippage_ticks
+            if isinstance(ticks, bool) or int(ticks) != ticks or ticks < 0:
+                return None
+            tick = Decimal(str(FUTURES_TICKERS[ticker]["tick_size"]))
+            raw = Decimal(str(quote[side])) + (1 if side == "ask" else -1) * int(ticks) * tick
+            price = float((raw/tick).to_integral_value(rounding=ROUND_CEILING if side == "ask" else ROUND_FLOOR)*tick)
+            if price <= 0:
+                return None
+            self.last_paper_fill = dict(quote, fill_price=price, side=side, quantity=quantity,
+                                       slippage_ticks=ticks, observed_at=datetime.now(CENTRAL_TZ).isoformat())
+            return price
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            return None
 
     def _live_close(self, position: FuturesPosition, close_reason: str, intent_id: Optional[str] = None) -> Tuple[bool, str, float]:
         try:

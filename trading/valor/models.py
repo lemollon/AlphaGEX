@@ -732,6 +732,9 @@ class ValorConfig:
 
     quarantined_tickers: List[str] = field(default_factory=lambda: ["CL"])
     entry_cooldown_seconds: int = 60
+    paper_round_trip_fee: float = 3.0  # Estimated per contract; override with verified costs
+    paper_slippage_ticks: int = 1  # Adverse ticks beyond observed bid/ask
+    paper_fee_source: str = "assumed; verify broker statement"
 
     # Risk limits (shared defaults, overridden per-ticker by FUTURES_TICKERS)
     capital: float = 600000.0  # Paper trading capital ($100k per instrument × 6)
@@ -1050,6 +1053,7 @@ class FuturesSignal:
 
     # Calculated values
     entry_price: float = 0.0
+    contract_symbol: str = ""  # Exact broker contract pinned before execution
     stop_price: float = 0.0
     target_price: float = 0.0
     contracts: int = 1

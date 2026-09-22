@@ -582,7 +582,7 @@ async def get_valor_paper_account():
 
 @router.post("/api/valor/paper-account/initialize")
 async def initialize_valor_paper_account(
-    starting_capital: float = Query(500000.0, ge=1000, le=10000000, description="Starting capital for paper trading ($100K per instrument × 5)")
+    starting_capital: float = Query(600000.0, ge=1000, le=10000000, description="Starting capital for paper trading ($100K per instrument × 5)")
 ):
     """
     Initialize VALOR paper trading account.
@@ -617,14 +617,14 @@ async def initialize_valor_paper_account(
 
 @router.post("/api/valor/paper-account/reset")
 async def reset_valor_paper_account(
-    starting_capital: float = Query(500000.0, ge=1000, le=10000000, description="Starting capital for new account ($100K per instrument × 5)"),
+    starting_capital: float = Query(600000.0, ge=1000, le=10000000, description="Starting capital for new account ($100K per instrument × 5)"),
     full_reset: bool = Query(True, description="If true, also clears closed_trades, positions, equity snapshots for clean slate")
 ):
     """
     Reset VALOR paper trading account.
 
     Deactivates current account and creates a fresh one.
-    WARNING: This will lose all paper trading history.
+    Previous paper trading history is archived transactionally before reset.
 
     With full_reset=True (default), also clears:
     - All closed trades history
@@ -636,7 +636,7 @@ async def reset_valor_paper_account(
     """
     try:
         trader = _get_trader()
-        success = trader.db.reset_paper_account(starting_capital, full_reset=full_reset)
+        success = trader.reset_paper_account(starting_capital, full_reset=full_reset)
 
         if success:
             paper_account = trader.get_paper_account()
@@ -727,7 +727,7 @@ async def force_reset_valor():
         trader = _get_trader()
 
         # Force full reset
-        success = trader.db.reset_paper_account(
+        success = trader.reset_paper_account(
             starting_capital=trader.config.capital,
             full_reset=True
         )

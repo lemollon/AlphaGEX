@@ -57,7 +57,7 @@ def test_contract_specific_cache_and_missing_exact_quote_fail_closed():
 def test_received_snapshot_preserves_broker_age_and_identity(age, wrong_symbol, valid):
     now = datetime.now(CENTRAL_TZ)
     event = SimpleNamespace(event_symbol="/MESU26:XCME" if wrong_symbol else "/MESZ26:XCME",
-                            bid_price=7800, ask_price=7800.25,
+                            bid_price=7800, ask_price=7800.25, bid_size=10, ask_size=10,
                             bid_time=int((now - timedelta(seconds=age)).timestamp() * 1000),
                             ask_time=int(now.timestamp() * 1000))
     result = TastytradeExecutor._normalize_contract_quote(event, "/MESZ26:XCME", "/MESZ6")
