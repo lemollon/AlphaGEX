@@ -103,3 +103,15 @@ def test_count_and_cent_drift_reconcile_without_deleting_history(database):
     assert len(db.get_closed_trades())==1
     account=db.get_paper_account()
     assert account['margin_available']==account['current_balance']-account['margin_used']
+
+
+def test_concurrent_schema_initializers_complete(database):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    ready = Barrier(2)
+    def initialize():
+        ready.wait(timeout=5)
+        return ValorDatabase()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(initialize) for _ in range(2)]
+        assert all(f.result(timeout=15) is not None for f in futures)

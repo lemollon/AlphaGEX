@@ -14,6 +14,7 @@ Orchestrates:
 """
 
 import logging
+from threading import Lock
 import uuid
 from dataclasses import asdict
 from .reconciliation import summarize_order
@@ -2597,13 +2598,16 @@ class ValorTrader:
 # ============================================================================
 
 _trader_instance: Optional[ValorTrader] = None
+_trader_init_lock = Lock()
 
 
 def get_valor_trader() -> ValorTrader:
     """Get or create VALOR trader instance"""
     global _trader_instance
     if _trader_instance is None:
-        _trader_instance = ValorTrader()
+        with _trader_init_lock:
+            if _trader_instance is None:
+                _trader_instance = ValorTrader()
     return _trader_instance
 
 
