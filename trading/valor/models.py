@@ -715,6 +715,9 @@ class ValorConfig:
     # Multi-ticker configuration
     tickers: List[str] = field(default_factory=lambda: list(DEFAULT_VALOR_TICKERS))
 
+    quarantined_tickers: List[str] = field(default_factory=lambda: ["CL"])
+    entry_cooldown_seconds: int = 60
+
     # Risk limits (shared defaults, overridden per-ticker by FUTURES_TICKERS)
     capital: float = 600000.0  # Paper trading capital ($100k per instrument × 6)
     risk_per_trade_pct: float = 1.0  # Risk 1% per trade

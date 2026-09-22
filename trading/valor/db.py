@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from decimal import Decimal
 
 from database_adapter import get_connection
+from .audit import QUALITY_SELECT, PERFORMANCE_SQL
 from .models import (
     FuturesPosition, TradeDirection, GammaRegime, PositionStatus,
     SignalSource, ValorConfig, TradingMode, DailySummary,
@@ -63,6 +64,20 @@ def db_connection():
                 pass
 
 
+@contextmanager
+def migration_savepoint(cursor):
+    """Optional legacy migrations must not poison the schema transaction."""
+    cursor.execute("SAVEPOINT valor_migration")
+    try:
+        yield
+    except Exception:
+        cursor.execute("ROLLBACK TO SAVEPOINT valor_migration")
+        cursor.execute("RELEASE SAVEPOINT valor_migration")
+        raise
+    else:
+        cursor.execute("RELEASE SAVEPOINT valor_migration")
+
+
 class ValorDatabase:
     """
     All VALOR database operations in one place.
@@ -90,38 +105,40 @@ class ValorDatabase:
             ('heracles_scan_activity', 'valor_scan_activity'),
         ]:
             try:
-                cursor.execute(
-                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
-                    (old_name,)
-                )
-                if not cursor.fetchone()[0]:
-                    continue
-                cursor.execute(
-                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
-                    (new_name,)
-                )
-                if cursor.fetchone()[0]:
-                    cursor.execute(f"SELECT COUNT(*) FROM {new_name}")
-                    if cursor.fetchone()[0] > 0:
+                with migration_savepoint(cursor):
+                    cursor.execute(
+                        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                        (old_name,)
+                    )
+                    if not cursor.fetchone()[0]:
                         continue
-                    cursor.execute(f"DROP TABLE {new_name}")
-                cursor.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
-                logger.info(f"{self.bot_name}: Migrated {old_name} -> {new_name}")
+                    cursor.execute(
+                        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                        (new_name,)
+                    )
+                    if cursor.fetchone()[0]:
+                        cursor.execute(f"SELECT COUNT(*) FROM {new_name}")
+                        if cursor.fetchone()[0] > 0:
+                            continue
+                        cursor.execute(f"DROP TABLE {new_name}")
+                    cursor.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+                    logger.info(f"{self.bot_name}: Migrated {old_name} -> {new_name}")
             except Exception as e:
                 logger.warning(f"{self.bot_name}: Migration {old_name}: {e}")
 
         try:
-            cursor.execute("""
-                UPDATE autonomous_config
-                SET key = 'valor_' || SUBSTRING(key FROM 10)
-                WHERE key LIKE 'heracles_%'
-                  AND NOT EXISTS (
-                      SELECT 1 FROM autonomous_config ac2
-                      WHERE ac2.key = 'valor_' || SUBSTRING(autonomous_config.key FROM 10)
-                  )
-            """)
-            if cursor.rowcount > 0:
-                logger.info(f"{self.bot_name}: Migrated {cursor.rowcount} config keys heracles_* -> valor_*")
+            with migration_savepoint(cursor):
+                cursor.execute("""
+                    UPDATE autonomous_config
+                    SET key = 'valor_' || SUBSTRING(key FROM 10)
+                    WHERE key LIKE 'heracles_%'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM autonomous_config ac2
+                          WHERE ac2.key = 'valor_' || SUBSTRING(autonomous_config.key FROM 10)
+                      )
+                """)
+                if cursor.rowcount > 0:
+                    logger.info(f"{self.bot_name}: Migrated {cursor.rowcount} config keys heracles_* -> valor_*")
         except Exception as e:
             logger.warning(f"{self.bot_name}: Config key migration: {e}")
 
@@ -132,6 +149,17 @@ class ValorDatabase:
                 c = conn.cursor()
 
                 self._migrate_from_heracles(c)
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS valor_order_intents (
+                        intent_id TEXT PRIMARY KEY, ticker TEXT NOT NULL,
+                        state TEXT NOT NULL DEFAULT 'pending',
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                """)
+
+                c.execute("ALTER TABLE valor_order_intents ADD COLUMN IF NOT EXISTS context JSONB NOT NULL DEFAULT '{}'::jsonb")
+                c.execute("ALTER TABLE valor_order_intents ADD COLUMN IF NOT EXISTS broker_order_id TEXT")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_valor_pending_intents ON valor_order_intents(ticker) WHERE state='pending'")
 
                 # Main positions table
                 c.execute("""
@@ -226,10 +254,11 @@ class ValorDatabase:
                 ]
                 for col_name, col_type in migration_columns:
                     try:
-                        c.execute(f"""
-                            ALTER TABLE valor_closed_trades
-                            ADD COLUMN IF NOT EXISTS {col_name} {col_type}
-                        """)
+                        with migration_savepoint(c):
+                            c.execute(f"""
+                                ALTER TABLE valor_closed_trades
+                                ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+                            """)
                     except Exception as e:
                         # Column might already exist, ignore
                         logger.debug(f"Column migration for {col_name}: {e}")
@@ -483,10 +512,11 @@ class ValorDatabase:
                 # for values like 'NO_LOSS_TRAIL_OVERNIGHT' (21 chars)
                 for table in ['valor_positions', 'valor_closed_trades', 'valor_scan_activity']:
                     try:
-                        c.execute(f"""
-                            ALTER TABLE {table}
-                            ALTER COLUMN stop_type TYPE VARCHAR(50)
-                        """)
+                        with migration_savepoint(c):
+                            c.execute(f"""
+                                ALTER TABLE {table}
+                                ALTER COLUMN stop_type TYPE VARCHAR(50)
+                            """)
                     except Exception:
                         pass  # Column might not exist or already be VARCHAR(50)
 
@@ -496,10 +526,11 @@ class ValorDatabase:
                     ("bayesian_probability_at_scan", "DECIMAL(5, 4)"),
                 ]:
                     try:
-                        c.execute(f"""
-                            ALTER TABLE valor_scan_activity
-                            ADD COLUMN IF NOT EXISTS {col} {typedef}
-                        """)
+                        with migration_savepoint(c):
+                            c.execute(f"""
+                                ALTER TABLE valor_scan_activity
+                                ADD COLUMN IF NOT EXISTS {col} {typedef}
+                            """)
                     except Exception:
                         pass
 
@@ -547,49 +578,151 @@ class ValorDatabase:
                 ]
                 for table in ticker_tables:
                     try:
-                        c.execute(f"""
-                            ALTER TABLE {table}
-                            ADD COLUMN IF NOT EXISTS ticker VARCHAR(20) DEFAULT 'MES'
-                        """)
+                        with migration_savepoint(c):
+                            c.execute(f"""
+                                ALTER TABLE {table}
+                                ADD COLUMN IF NOT EXISTS ticker VARCHAR(20) DEFAULT 'MES'
+                            """)
                     except Exception:
                         pass  # Column may already exist
 
                 # Indexes for per-ticker queries
                 try:
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_positions_ticker ON valor_positions(ticker)")
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_positions_ticker_status ON valor_positions(ticker, status)")
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_closed_trades_ticker ON valor_closed_trades(ticker)")
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_equity_snapshots_ticker ON valor_equity_snapshots(ticker)")
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_equity_snapshots_ticker_time ON valor_equity_snapshots(ticker, snapshot_time DESC)")
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_scan_activity_ticker ON valor_scan_activity(ticker)")
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_daily_perf_ticker ON valor_daily_perf(ticker)")
+                    with migration_savepoint(c):
+                        c.execute("CREATE INDEX IF NOT EXISTS idx_valor_positions_ticker ON valor_positions(ticker)")
+                        c.execute("CREATE INDEX IF NOT EXISTS idx_valor_positions_ticker_status ON valor_positions(ticker, status)")
+                        c.execute("CREATE INDEX IF NOT EXISTS idx_valor_closed_trades_ticker ON valor_closed_trades(ticker)")
+                        c.execute("CREATE INDEX IF NOT EXISTS idx_valor_equity_snapshots_ticker ON valor_equity_snapshots(ticker)")
+                        c.execute("CREATE INDEX IF NOT EXISTS idx_valor_equity_snapshots_ticker_time ON valor_equity_snapshots(ticker, snapshot_time DESC)")
+                        c.execute("CREATE INDEX IF NOT EXISTS idx_valor_scan_activity_ticker ON valor_scan_activity(ticker)")
+                        c.execute("CREATE INDEX IF NOT EXISTS idx_valor_daily_perf_ticker ON valor_daily_perf(ticker)")
                 except Exception:
                     pass  # Indexes may already exist
 
                 # Drop the unique constraint on trade_date for daily_perf
                 # (now unique per ticker+date, not just date)
                 try:
-                    c.execute("""
-                        ALTER TABLE valor_daily_perf DROP CONSTRAINT IF EXISTS valor_daily_perf_trade_date_key
-                    """)
-                    c.execute("""
-                        CREATE UNIQUE INDEX IF NOT EXISTS idx_valor_daily_perf_ticker_date
-                        ON valor_daily_perf(ticker, trade_date)
-                    """)
+                    with migration_savepoint(c):
+                        c.execute("""
+                            ALTER TABLE valor_daily_perf DROP CONSTRAINT IF EXISTS valor_daily_perf_trade_date_key
+                        """)
+                        c.execute("""
+                            CREATE UNIQUE INDEX IF NOT EXISTS idx_valor_daily_perf_ticker_date
+                            ON valor_daily_perf(ticker, trade_date)
+                        """)
                 except Exception:
                     pass
 
+                c.execute("CREATE OR REPLACE VIEW valor_trade_quality AS " + QUALITY_SELECT)
+                # One-time invalidation: old model approval predates the screened training set.
+                c.execute("SELECT 1 FROM valor_config WHERE config_key='quality_screen_version'")
+                if not c.fetchone():
+                    c.execute("INSERT INTO valor_config (config_key,config_value) VALUES ('ml_approved','false') "
+                              "ON CONFLICT (config_key) DO UPDATE SET config_value='false'")
+                    c.execute("INSERT INTO valor_config (config_key,config_value) VALUES ('quality_screen_version','1') "
+                              "ON CONFLICT DO NOTHING")
                 conn.commit()
                 logger.info("VALOR database tables ensured (multi-ticker)")
 
         except Exception as e:
             logger.error(f"Failed to ensure VALOR tables: {e}")
+            raise
 
     # ========================================================================
     # Position Operations
     # ========================================================================
 
-    def save_position(self, position: FuturesPosition) -> bool:
+    def get_quality_performance(self) -> Dict[str, Any]:
+        """Expose raw/excluded counts and screened metrics without rewriting history."""
+        with db_connection() as conn:
+            c = conn.cursor()
+            def rows():
+                keys = [d[0] for d in c.description]
+                return [{k: _to_python(v) for k, v in zip(keys, row)} for row in c.fetchall()]
+            c.execute("SELECT ticker, quality_status, COUNT(*) AS trades, SUM(realized_pnl) AS pnl "
+                      "FROM valor_trade_quality GROUP BY ticker, quality_status ORDER BY ticker, quality_status")
+            quality = rows()
+            c.execute(PERFORMANCE_SQL)
+            performance = rows()
+            c.execute("""SELECT ticker, gamma_regime, direction, signal_source,
+                        EXTRACT(HOUR FROM open_time AT TIME ZONE 'America/Chicago') AS entry_hour_ct,
+                        COUNT(*) AS trades, AVG(realized_pnl) AS expectancy, SUM(realized_pnl) AS pnl
+                        FROM valor_trade_quality WHERE quality_status='eligible'
+                        GROUP BY 1,2,3,4,5 ORDER BY pnl DESC""")
+            return {"screen_version": 1, "quality": quality, "performance": performance, "setups": rows(),
+                    "limitations": "Screened paper outcomes, not verified fills. Costs not deducted; "
+                    "duplicate candidates are excluded as entire clusters. Drawdown is realized only. "
+                    "Historical quote/rollover accuracy cannot be reconstructed from this ledger."}
+
+    def _apply_paper_delta(self, cursor, pnl: float, margin: float, closed: bool) -> None:
+        """Apply ledger and account changes in the SAME transaction."""
+        cursor.execute("""
+            UPDATE valor_paper_account SET
+              current_balance=current_balance + %s,
+              cumulative_pnl=cumulative_pnl + %s,
+              total_trades=total_trades + %s,
+              margin_used=GREATEST(0, margin_used + %s),
+              margin_available=current_balance + %s - GREATEST(0, margin_used + %s),
+              high_water_mark=GREATEST(high_water_mark, current_balance + %s),
+              max_drawdown=GREATEST(max_drawdown, high_water_mark - current_balance - %s),
+              updated_at=NOW()
+            WHERE id=(SELECT id FROM valor_paper_account WHERE is_active=TRUE ORDER BY id DESC LIMIT 1)
+        """, (pnl, pnl, int(closed), margin, pnl, margin, pnl, pnl))
+        if cursor.rowcount != 1:
+            raise RuntimeError("No active paper account; rolling back position change")
+
+    def claim_order_intent(self, intent_id: str, ticker: str, context: Optional[Dict] = None) -> bool:
+        """Durable crash/timeout barrier. Pending intents require reconciliation."""
+        with db_connection() as conn:
+            c = conn.cursor()
+            c.execute("INSERT INTO valor_order_intents (intent_id, ticker, context) VALUES (%s, %s, %s::jsonb) "
+                      "ON CONFLICT DO NOTHING", (intent_id, ticker, json.dumps(context or {})))
+            claimed = c.rowcount == 1
+            conn.commit()
+            return claimed
+
+    def get_pending_order_intents(self) -> List[Dict]:
+        with db_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT intent_id,ticker,context,broker_order_id FROM valor_order_intents WHERE state='pending' ORDER BY created_at")
+            return [dict(zip(['intent_id','ticker','context','broker_order_id'], row)) for row in c.fetchall()]
+
+    def record_broker_order(self, intent_id: str, order_id) -> None:
+        if order_id is not None:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("UPDATE valor_order_intents SET broker_order_id=%s WHERE intent_id=%s", (str(order_id),intent_id))
+                conn.commit()
+
+    def complete_order_intent(self, intent_id: str) -> None:
+        with db_connection() as conn:
+            c = conn.cursor()
+            c.execute("UPDATE valor_order_intents SET state='complete' WHERE intent_id=%s", (intent_id,))
+            conn.commit()
+
+    def entry_allowed(self, ticker: str, cooldown_seconds: int) -> bool:
+        """Called inside lifecycle lock. Database failures propagate (fail closed)."""
+        with db_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT EXISTS (SELECT 1 FROM valor_positions WHERE ticker=%s AND
+                    (status='open' OR GREATEST(open_time, close_time) >
+                     NOW() - (%s * INTERVAL '1 second')))
+                OR EXISTS (SELECT 1 FROM valor_order_intents WHERE ticker=%s AND state='pending')
+            """, (ticker, max(60, cooldown_seconds), ticker))
+            if c.fetchone()[0]:
+                return False
+            c.execute("""
+                SELECT COALESCE(SUM(LEAST(realized_pnl,0)) FILTER (WHERE ticker=%s),0),
+                       COALESCE(SUM(LEAST(realized_pnl,0)),0)
+                FROM valor_closed_trades
+                WHERE close_time >= (date_trunc('day', NOW() AT TIME ZONE 'America/Chicago')
+                                      AT TIME ZONE 'America/Chicago')
+            """, (ticker,))
+            per_ticker, combined = c.fetchone()
+            return per_ticker > -2000 and combined > -6000
+
+    def save_position(self, position: FuturesPosition, paper: bool = False) -> bool:
         """Save a position to database (insert or update)"""
         try:
             with db_connection() as conn:
@@ -613,17 +746,7 @@ class ValorDatabase:
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
-                    ON CONFLICT (position_id) DO UPDATE SET
-                        current_stop = EXCLUDED.current_stop,
-                        trailing_active = EXCLUDED.trailing_active,
-                        status = EXCLUDED.status,
-                        close_time = EXCLUDED.close_time,
-                        close_price = EXCLUDED.close_price,
-                        close_reason = EXCLUDED.close_reason,
-                        realized_pnl = EXCLUDED.realized_pnl,
-                        high_water_mark = EXCLUDED.high_water_mark,
-                        max_adverse_excursion = EXCLUDED.max_adverse_excursion,
-                        updated_at = NOW()
+                    ON CONFLICT (position_id) DO NOTHING
                 """, (
                     position.position_id,
                     position.ticker,
@@ -663,8 +786,12 @@ class ValorDatabase:
                     _to_python(position.stop_points_used),
                 ))
 
+                saved = c.rowcount == 1
+                if saved and paper:
+                    from .margin_manager import get_margin_requirement
+                    self._apply_paper_delta(c, 0, position.contracts * get_margin_requirement(position.ticker)["maintenance"], False)
                 conn.commit()
-                return True
+                return saved
 
         except Exception as e:
             logger.error(f"Failed to save position {position.position_id}: {e}")
@@ -692,8 +819,10 @@ class ValorDatabase:
 
                 for row in rows:
                     data = dict(zip(columns, row))
-                    position = self._row_to_position(data)
-                    positions.append(position)
+                    try:
+                        positions.append(self._row_to_position(data))
+                    except Exception:
+                        logger.exception("Invalid VALOR position row %s", data.get('position_id'))
 
         except Exception as e:
             logger.error(f"Failed to get open positions: {e}")
@@ -725,7 +854,10 @@ class ValorDatabase:
         position_id: str,
         close_price: float,
         close_reason: str,
-        status: PositionStatus = PositionStatus.CLOSED
+        status: PositionStatus = PositionStatus.CLOSED,
+        paper: bool = False,
+        contracts_closed: Optional[int] = None,
+        execution_id: Optional[str] = None,
     ) -> Tuple[bool, float]:
         """
         Close a position and calculate P&L.
@@ -737,6 +869,14 @@ class ValorDatabase:
             if not position:
                 return False, 0.0
 
+            original_contracts = position.contracts
+            partial = contracts_closed is not None and contracts_closed < original_contracts
+            if contracts_closed is not None and (contracts_closed <= 0 or contracts_closed > original_contracts):
+                return False, 0.0
+            if partial:
+                if paper or not execution_id:
+                    return False, 0.0
+                position.contracts = contracts_closed
             # Calculate P&L
             realized_pnl = position.calculate_pnl(close_price)
 
@@ -744,16 +884,24 @@ class ValorDatabase:
                 c = conn.cursor()
                 now = datetime.now(CENTRAL_TZ)
 
-                # Update position status to closed
-                c.execute("""
-                    UPDATE valor_positions
-                    SET status = %s, close_time = %s, close_price = %s,
-                        close_reason = %s, realized_pnl = %s, updated_at = NOW()
-                    WHERE position_id = %s AND status = 'open'
-                """, (
-                    status.value, now, _to_python(close_price),
-                    close_reason, _to_python(realized_pnl), position_id
-                ))
+                if partial:
+                    c.execute("""UPDATE valor_positions SET contracts=contracts-%s,
+                                 entry_value=entry_price*(contracts-%s)*%s,updated_at=NOW()
+                                 WHERE position_id=%s AND status='open' AND contracts=%s
+                                 AND NOT EXISTS (SELECT 1 FROM valor_closed_trades WHERE position_id=%s)""",
+                              (contracts_closed,contracts_closed,get_ticker_point_value(position.ticker),
+                               position_id,original_contracts,execution_id))
+                else:
+                    # Update position status to closed
+                    c.execute("""
+                        UPDATE valor_positions
+                        SET status = %s, close_time = %s, close_price = %s,
+                            close_reason = %s, realized_pnl = %s, updated_at = NOW()
+                        WHERE position_id = %s AND status = 'open'
+                    """, (
+                        status.value, now, _to_python(close_price),
+                        close_reason, _to_python(realized_pnl), position_id
+                    ))
 
                 # CRITICAL: Verify the UPDATE actually affected a row
                 rows_updated = c.rowcount
@@ -828,7 +976,7 @@ class ValorDatabase:
                         mae_points = EXCLUDED.mae_points,
                         was_profitable_before_loss = EXCLUDED.was_profitable_before_loss
                 """, (
-                    position_id, getattr(position, 'ticker', 'MES'),
+                    execution_id if partial else position_id, getattr(position, 'ticker', 'MES'),
                     position.symbol, position.direction.value,
                     position.contracts, _to_python(position.entry_price),
                     _to_python(close_price), _to_python(realized_pnl),
@@ -854,6 +1002,12 @@ class ValorDatabase:
                 if rows_affected == 0:
                     logger.error(f"CRITICAL: closed_trades INSERT/UPDATE affected 0 rows for {position_id}")
 
+                if paper:
+                    from .margin_manager import get_margin_requirement
+                    self._apply_paper_delta(c, realized_pnl,
+                        -position.contracts * get_margin_requirement(position.ticker)["maintenance"], True)
+                if execution_id:
+                    c.execute("UPDATE valor_order_intents SET state='complete' WHERE intent_id=%s", (execution_id,))
                 conn.commit()
                 logger.info(f"Closed position {position_id}: P&L=${realized_pnl:.2f}, reason={close_reason}")
 
@@ -1473,33 +1627,19 @@ class ValorDatabase:
     # ========================================================================
 
     def get_win_tracker(self) -> BayesianWinTracker:
-        """Load Bayesian win tracker from database"""
-        tracker = BayesianWinTracker()
-        try:
-            with db_connection() as conn:
-                c = conn.cursor()
-                c.execute("""
-                    SELECT * FROM valor_win_tracker ORDER BY id DESC LIMIT 1
-                """)
-                row = c.fetchone()
-
-                if row:
-                    columns = [desc[0] for desc in c.description]
-                    data = dict(zip(columns, row))
-                    tracker = BayesianWinTracker(
-                        alpha=float(data.get('alpha', 1.0)),
-                        beta=float(data.get('beta', 1.0)),
-                        total_trades=int(data.get('total_trades', 0)),
-                        positive_gamma_wins=int(data.get('positive_gamma_wins', 0)),
-                        positive_gamma_losses=int(data.get('positive_gamma_losses', 0)),
-                        negative_gamma_wins=int(data.get('negative_gamma_wins', 0)),
-                        negative_gamma_losses=int(data.get('negative_gamma_losses', 0)),
-                    )
-
-        except Exception as e:
-            logger.warning(f"Failed to load win tracker, using defaults: {e}")
-
-        return tracker
+        """Rebuild from screened outcomes; never restore contaminated historical totals."""
+        with db_connection() as conn:
+            c = conn.cursor()
+            c.execute("""SELECT COUNT(*) FILTER (WHERE realized_pnl>0),
+                         COUNT(*) FILTER (WHERE realized_pnl<=0),
+                         COUNT(*) FILTER (WHERE realized_pnl>0 AND gamma_regime='POSITIVE'),
+                         COUNT(*) FILTER (WHERE realized_pnl<=0 AND gamma_regime='POSITIVE'),
+                         COUNT(*) FILTER (WHERE realized_pnl>0 AND gamma_regime<>'POSITIVE'),
+                         COUNT(*) FILTER (WHERE realized_pnl<=0 AND gamma_regime<>'POSITIVE')
+                         FROM valor_trade_quality WHERE quality_status='eligible'""")
+            wins, losses, pw, pl, nw, nl = map(int,c.fetchone())
+            return BayesianWinTracker(alpha=1+wins,beta=1+losses,total_trades=wins+losses,
+                positive_gamma_wins=pw,positive_gamma_losses=pl,negative_gamma_wins=nw,negative_gamma_losses=nl)
 
     def save_win_tracker(self, tracker: BayesianWinTracker) -> bool:
         """Save win tracker to database"""
@@ -1919,7 +2059,7 @@ class ValorDatabase:
                            margin_used, high_water_mark, max_drawdown, starting_capital
                     FROM valor_paper_account
                     WHERE is_active = TRUE
-                    ORDER BY id DESC LIMIT 1
+                    ORDER BY id DESC LIMIT 1 FOR UPDATE
                 """)
 
                 row = c.fetchone()
@@ -1941,7 +2081,7 @@ class ValorDatabase:
                 new_cumulative_pnl = cumulative_pnl + realized_pnl
                 new_margin_used = max(0, margin_used + margin_change)
                 new_margin_available = new_balance - new_margin_used
-                new_total_trades = total_trades + (1 if realized_pnl != 0 else 0)
+                new_total_trades = total_trades + (1 if margin_change < 0 else 0)
 
                 # Update high water mark and max drawdown
                 new_high_water_mark = max(high_water_mark, new_balance)
@@ -2711,6 +2851,9 @@ class ValorDatabase:
                     FROM valor_scan_activity
                     WHERE trade_executed = TRUE
                       AND trade_outcome IS NOT NULL
+                      AND EXISTS (SELECT 1 FROM valor_trade_quality q
+                                  WHERE q.position_id = valor_scan_activity.position_id
+                                    AND q.quality_status = 'eligible')
                     ORDER BY scan_time DESC
                 """)
 

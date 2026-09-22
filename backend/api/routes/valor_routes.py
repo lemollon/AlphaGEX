@@ -2219,3 +2219,13 @@ async def get_valor_margin_events(
     except Exception as e:
         logger.error(f"Error getting VALOR margin events: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/performance/quality")
+def valor_quality_performance():
+    """Screened results with exclusion counts; raw ledger remains unchanged."""
+    try:
+        return {"success": True, "data": _get_trader().db.get_quality_performance()}
+    except Exception:
+        logger.exception("VALOR quality report failed")
+        raise HTTPException(status_code=503, detail="VALOR quality report unavailable")

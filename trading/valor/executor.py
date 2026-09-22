@@ -16,6 +16,7 @@ import logging
 import requests
 import asyncio
 from datetime import datetime, timedelta
+from .reconciliation import summarize_order
 from typing import Optional, Dict, Any, Tuple, List
 from zoneinfo import ZoneInfo
 
@@ -78,8 +79,8 @@ class TastytradeExecutor:
             self.auth_method = "OAUTH"
             logger.info("Tastytrade: Using OAuth authentication (2FA compatible)")
         elif self.username and self.password:
-            self.auth_method = "PASSWORD"
-            logger.warning("Tastytrade: Using password auth (may fail with 2FA enabled)")
+            self.auth_method = None
+            logger.error("Tastytrade password authentication retired; configure OAuth")
         else:
             self.auth_method = None
             logger.warning("Tastytrade: No credentials configured - will use Yahoo fallback")
@@ -100,48 +101,54 @@ class TastytradeExecutor:
         return self._authenticate()
 
     def _authenticate(self) -> bool:
-        """Authenticate with Tastytrade API"""
-        if not self.username or not self.password:
-            logger.error("TASTYTRADE_USERNAME and TASTYTRADE_PASSWORD must be set")
+        """Exchange the personal OAuth grant; never fall back to retired sessions."""
+        self.session_token = None
+        self.token_expiry = None
+        if not self.client_secret or not self.refresh_token:
+            logger.error("Tastytrade OAuth client secret and refresh token are required")
             return False
-
         try:
             response = requests.post(
-                f"{self.base_url}/sessions",
-                json={
-                    "login": self.username,
-                    "password": self.password,
-                    "remember-me": True
-                },
-                headers={"Content-Type": "application/json"},
-                timeout=30
+                f"{self.base_url}/oauth/token",
+                json={"grant_type": "refresh_token", "client_secret": self.client_secret,
+                      "refresh_token": self.refresh_token},
+                headers={"Content-Type": "application/json", "User-Agent": "AlphaGEX-Valor/1.0"},
+                timeout=30,
             )
-
-            if response.status_code == 201:
-                data = response.json()
-                self.session_token = data.get("data", {}).get("session-token")
-                # Token valid for 24 hours, refresh at 23 hours
-                self.token_expiry = datetime.now(CENTRAL_TZ).replace(hour=23, minute=0)
-                logger.info("Tastytrade authentication successful")
-                return True
-            else:
-                logger.error(f"Tastytrade auth failed: {response.status_code} - {response.text[:200]}")
+            if response.status_code != 200:
+                logger.error("Tastytrade OAuth failed: HTTP %s", response.status_code)
                 return False
-
-        except Exception as e:
-            logger.error(f"Tastytrade auth error: {e}")
+            data = response.json()
+            token = data.get("access_token")
+            expires = int(data.get("expires_in", 900))
+            if not token or expires <= 60:
+                return False
+            self.session_token = token
+            self.token_expiry = datetime.now(CENTRAL_TZ) + timedelta(seconds=expires - 60)
+            return True
+        except Exception:
+            logger.error("Tastytrade OAuth exchange failed")
             return False
 
     def _get_headers(self) -> Dict[str, str]:
-        """Get authenticated headers"""
-        return {
-            "Authorization": self.session_token,
-            "Content-Type": "application/json"
-        }
+        return {"Authorization": f"Bearer {self.session_token}",
+                "Content-Type": "application/json", "User-Agent": "AlphaGEX-Valor/1.0"}
 
     # ========================================================================
     # Quote & Market Data
     # ========================================================================
+
+    @staticmethod
+    def _quote_is_usable(quote: Dict[str, Any]) -> bool:
+        """Reject non-finite, crossed, missing-time and stale market data."""
+        from math import isfinite
+        try:
+            bid, ask, last = (float(quote[k]) for k in ("bid", "ask", "last"))
+            timestamp = datetime.fromisoformat(quote["timestamp"])
+            age = (datetime.now(CENTRAL_TZ) - timestamp).total_seconds()
+            return all(isfinite(v) and v > 0 for v in (bid, ask, last)) and bid <= ask and 0 <= age <= 120
+        except (KeyError, TypeError, ValueError):
+            return False
 
     def get_mes_quote(self, symbol: str = None, ticker: str = None) -> Optional[Dict[str, Any]]:
         """
@@ -149,8 +156,7 @@ class TastytradeExecutor:
 
         Priority:
         1. Tastytrade DXLinkStreamer (real-time via WebSocket)
-        2. Yahoo Finance (may have 15-min delay)
-        3. SPY-derived price (last resort for MES paper trading only)
+        2. Fresh Yahoo Finance data for paper mode only
 
         Args:
             symbol: Contract symbol (e.g. /MESH6, /MNQH6)
@@ -164,10 +170,10 @@ class TastytradeExecutor:
         ticker_cfg = FUTURES_TICKERS.get(ticker, {})
 
         # Check cache first
-        cache_key = ticker  # Cache by instrument, not contract symbol
+        cache_key = (ticker, self.config.mode.value)  # Never share paper quotes with live execution
         if cache_key in _quote_cache:
             cached_quote, cache_time = _quote_cache[cache_key]
-            if datetime.now(CENTRAL_TZ) - cache_time < timedelta(seconds=QUOTE_CACHE_TTL_SECONDS):
+            if datetime.now(CENTRAL_TZ) - cache_time < timedelta(seconds=QUOTE_CACHE_TTL_SECONDS) and self._quote_is_usable(cached_quote):
                 logger.debug(f"Using cached quote for {ticker}")
                 return cached_quote
 
@@ -176,28 +182,22 @@ class TastytradeExecutor:
         if TASTYTRADE_SDK_AVAILABLE and self.auth_method:
             try:
                 quote = self._get_tastytrade_streaming_quote(dxfeed_symbol)
-                if quote:
+                if quote and self._quote_is_usable(quote):
                     quote["ticker"] = ticker
                     _quote_cache[cache_key] = (quote, datetime.now(CENTRAL_TZ))
                     return quote
             except Exception as e:
                 logger.warning(f"DXLinkStreamer quote failed for {ticker}: {e}")
 
+        if self.config.mode != TradingMode.PAPER:
+            return None
+
         # Fallback: Yahoo Finance quote for this ticker
         yahoo_symbol = ticker_cfg.get("yahoo_symbol", "MES=F")
         yahoo_quote = self._get_yahoo_futures_quote(yahoo_symbol, ticker)
-        if yahoo_quote:
+        if yahoo_quote and self._quote_is_usable(yahoo_quote):
             _quote_cache[cache_key] = (yahoo_quote, datetime.now(CENTRAL_TZ))
             return yahoo_quote
-
-        # Last resort: SPY-derived price (only works for MES)
-        spy_mult = ticker_cfg.get("spy_derive_multiplier")
-        if self.config.mode == TradingMode.PAPER and spy_mult:
-            spy_quote = self._get_spy_derived_quote(symbol, spy_mult)
-            if spy_quote:
-                spy_quote["ticker"] = ticker
-                _quote_cache[cache_key] = (spy_quote, datetime.now(CENTRAL_TZ))
-            return spy_quote
 
         return None
 
@@ -305,7 +305,7 @@ class TastytradeExecutor:
                     price = meta.get("regularMarketPrice", 0)
                     prev_close = meta.get("previousClose", price)
 
-                    if price > 0:
+                    if price > 0 and 0 <= datetime.now(CENTRAL_TZ).timestamp() - meta.get("regularMarketTime", 0) <= 120:
                         # Estimate spread based on instrument
                         ticker_cfg = FUTURES_TICKERS.get(ticker, {})
                         spread = ticker_cfg.get("tick_size", 0.25)
@@ -318,7 +318,7 @@ class TastytradeExecutor:
                             "price": price,
                             "prev_close": prev_close,
                             "volume": meta.get("regularMarketVolume", 0),
-                            "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
+                            "timestamp": datetime.fromtimestamp(meta.get("regularMarketTime", 0), tz=CENTRAL_TZ).isoformat(),
                             "source": f"YAHOO_{ticker}",
                             "exchange": meta.get("exchangeName", "CME")
                         }
@@ -470,65 +470,80 @@ class TastytradeExecutor:
             f"{signal.contracts} contracts at {signal.entry_price:.2f}"
         )
 
-        # Simulate execution with slight slippage
-        slippage = 0.25  # 1 tick slippage
-        if signal.direction == TradeDirection.LONG:
-            fill_price = signal.entry_price + slippage
-        else:
-            fill_price = signal.entry_price - slippage
+        from math import isfinite
+        quote = self.get_mes_quote(ticker=signal.ticker)
+        if not quote:
+            return False, "No executable futures quote", None
+        side = "ask" if signal.direction == TradeDirection.LONG else "bid"
+        fill_price = float(quote.get(side) or 0)
+        if not isfinite(fill_price) or fill_price <= 0:
+            return False, "Invalid executable futures quote", None
+        signal.entry_price = fill_price
 
         order_id = f"PAPER-{position_id}"
 
         return True, f"Paper order filled at {fill_price:.2f}", order_id
 
-    def _live_execution(self, signal: FuturesSignal, position_id: str) -> Tuple[bool, str, Optional[str]]:
-        """Execute a live order via Tastytrade"""
+    def find_order(self, intent_id: str, order_id=None) -> Optional[Dict[str, Any]]:
+        """Read-only recovery; absence is never permission to resubmit."""
         if not self._ensure_session():
-            return False, "Authentication failed", None
+            return None
+        url = f"{self.base_url}/accounts/{self.account_id}/orders"
+        if order_id:
+            response = requests.get(f"{url}/{order_id}", headers=self._get_headers(), timeout=15)
+            response.raise_for_status()
+            order = response.json().get('data', {})
+            if order.get('external-identifier') != intent_id:
+                raise ValueError('Broker order identifier mismatch')
+            return order
+        for page in range(10):
+            response = requests.get(url, params={'per-page':100, 'page-offset':page},
+                                    headers=self._get_headers(), timeout=15)
+            response.raise_for_status()
+            payload = response.json()
+            items = payload.get('data', {}).get('items', [])
+            matches = [o for o in items if o.get('external-identifier') == intent_id]
+            if len(matches) > 1:
+                raise ValueError('Multiple broker orders match one intent')
+            if matches:
+                return matches[0]
+            if len(items) < 100:
+                break
+        return None
 
+    def _submit_market_order(self, symbol, quantity, action, intent_id):
+        """Single submission; persist/reconcile ambiguous outcomes instead of retrying."""
+        self.last_broker_order_id = None
+        if not self._ensure_session():
+            return None
+        payload = {'time-in-force':'Day', 'order-type':'Market',
+                   'external-identifier':intent_id,
+                   'legs':[{'instrument-type':'Future','symbol':symbol,'quantity':quantity,'action':action}]}
+        response = requests.post(f"{self.base_url}/accounts/{self.account_id}/orders",
+                                 headers=self._get_headers(),json=payload,timeout=30)
+        response.raise_for_status()
+        order = response.json().get('data',{}).get('order',{})
+        self.last_broker_order_id = order.get('id')
+        return summarize_order(order,symbol,quantity,action)
+
+    def _live_execution(self, signal: FuturesSignal, position_id: str) -> Tuple[bool, str, Optional[str]]:
         try:
-            # Build order payload
-            order_payload = {
-                "time-in-force": "Day",
-                "order-type": "Market",
-                "legs": [
-                    {
-                        "instrument-type": "Future",
-                        "symbol": self.config.symbol,
-                        "quantity": signal.contracts,
-                        "action": "Buy to Open" if signal.direction == TradeDirection.LONG else "Sell to Open"
-                    }
-                ]
-            }
-
-            response = requests.post(
-                f"{self.base_url}/accounts/{self.account_id}/orders",
-                headers=self._get_headers(),
-                json=order_payload,
-                timeout=30
-            )
-
-            if response.status_code in [200, 201]:
-                data = response.json().get("data", {})
-                order_id = data.get("order", {}).get("id")
-                status = data.get("order", {}).get("status")
-
-                logger.info(f"Order placed: {order_id}, status: {status}")
-                return True, f"Order {order_id} placed, status: {status}", order_id
-            else:
-                error_msg = response.json().get("error", {}).get("message", response.text[:200])
-                logger.error(f"Order failed: {error_msg}")
-                return False, f"Order failed: {error_msg}", None
-
-        except Exception as e:
-            logger.error(f"Error executing order: {e}")
-            return False, str(e), None
+            action = 'Buy to Open' if signal.direction == TradeDirection.LONG else 'Sell to Open'
+            result = self._submit_market_order(self.config.get_ticker_symbol(signal.ticker),signal.contracts,action,position_id)
+            if result and result['terminal'] and result['quantity'] == signal.contracts:
+                signal.entry_price = result['price']
+                return True,'Broker fill confirmed',result['order_id']
+            return False,'Broker order pending reconciliation',self.last_broker_order_id
+        except Exception:
+            logger.exception('VALOR entry requires reconciliation')
+            return False,'Broker order pending reconciliation',getattr(self,'last_broker_order_id',None)
 
     def close_position_order(
         self,
         position: FuturesPosition,
         close_reason: str,
-        intended_close_price: float = 0.0
+        intended_close_price: float = 0.0,
+        intent_id: Optional[str] = None,
     ) -> Tuple[bool, str, float]:
         """
         Close an existing position.
@@ -536,9 +551,7 @@ class TastytradeExecutor:
         Args:
             position: The position to close
             close_reason: Reason for closing
-            intended_close_price: For PAPER stop orders, this is the stop price we want to fill at.
-                                  This simulates exchange-level stop orders that fill at the stop price,
-                                  not the current market price (which could be much worse).
+            intended_close_price: Trigger price for context only; paper fills use current bid/ask.
 
         Returns:
             (success, message, fill_price)
@@ -546,7 +559,7 @@ class TastytradeExecutor:
         if self.config.mode == TradingMode.PAPER:
             return self._simulate_close(position, close_reason, intended_close_price)
 
-        return self._live_close(position, close_reason)
+        return self._live_close(position, close_reason, intent_id)
 
     def _simulate_close(
         self,
@@ -554,95 +567,27 @@ class TastytradeExecutor:
         close_reason: str,
         intended_close_price: float = 0.0
     ) -> Tuple[bool, str, float]:
-        """
-        Simulate closing a position for paper trading.
-
-        PAPER STOP ORDER FIX:
-        If intended_close_price is provided (> 0), use that as the fill price.
-        This simulates an exchange-level stop order that would fill at the stop price,
-        not the current market price (which could gap past the stop).
-
-        Without this fix, a stop at 6910 could "fill" at 6920 if that's where the
-        market is when we detect the stop was hit (due to 15-second polling delay).
-        """
-        # If intended close price is provided (stop order simulation), use it
-        if intended_close_price > 0:
-            fill_price = intended_close_price
-            logger.info(
-                f"[PAPER STOP] Simulating stop fill for {position.position_id}: "
-                f"{position.direction.value} {position.contracts} contracts at STOP PRICE {fill_price:.2f}"
-            )
-        else:
-            # Market order simulation - use current quote
-            quote = self.get_mes_quote(position.symbol)
-
-            if quote:
-                if position.direction == TradeDirection.LONG:
-                    fill_price = quote.get("bid", position.current_stop)
-                else:
-                    fill_price = quote.get("ask", position.current_stop)
-            else:
-                # Use stop price as fill price if no quote
-                fill_price = position.current_stop
-
-            logger.info(
-                f"[PAPER MARKET] Simulating close for {position.position_id}: "
-                f"{position.direction.value} {position.contracts} contracts at {fill_price:.2f}"
-            )
-
+        """Use observable bid/ask, including gaps; never invent a stop fill."""
+        from math import isfinite
+        quote = self.get_mes_quote(ticker=position.ticker)
+        if not quote:
+            return False, "No executable futures quote", 0.0
+        side = "bid" if position.direction == TradeDirection.LONG else "ask"
+        fill_price = float(quote.get(side) or 0)
+        if not isfinite(fill_price) or fill_price <= 0:
+            return False, "Invalid executable futures quote", 0.0
         return True, f"Paper close filled at {fill_price:.2f}", fill_price
 
-    def _live_close(
-        self,
-        position: FuturesPosition,
-        close_reason: str
-    ) -> Tuple[bool, str, float]:
-        """Close a live position via Tastytrade"""
-        if not self._ensure_session():
-            return False, "Authentication failed", 0.0
-
+    def _live_close(self, position: FuturesPosition, close_reason: str, intent_id: Optional[str] = None) -> Tuple[bool, str, float]:
         try:
-            # Determine closing action
-            if position.direction == TradeDirection.LONG:
-                action = "Sell to Close"
-            else:
-                action = "Buy to Close"
-
-            order_payload = {
-                "time-in-force": "Day",
-                "order-type": "Market",
-                "legs": [
-                    {
-                        "instrument-type": "Future",
-                        "symbol": position.symbol,
-                        "quantity": position.contracts,
-                        "action": action
-                    }
-                ]
-            }
-
-            response = requests.post(
-                f"{self.base_url}/accounts/{self.account_id}/orders",
-                headers=self._get_headers(),
-                json=order_payload,
-                timeout=30
-            )
-
-            if response.status_code in [200, 201]:
-                data = response.json().get("data", {})
-                order_id = data.get("order", {}).get("id")
-                fill_price = float(data.get("order", {}).get("fill-price", 0))
-
-                logger.info(f"Close order placed: {order_id}, fill: {fill_price}")
-                return True, f"Close order {order_id} filled at {fill_price}", fill_price
-            else:
-                error_msg = response.json().get("error", {}).get("message", response.text[:200])
-                logger.error(f"Close order failed: {error_msg}")
-                return False, f"Close failed: {error_msg}", 0.0
-
-        except Exception as e:
-            logger.error(f"Error closing position: {e}")
-            return False, str(e), 0.0
+            action = 'Sell to Close' if position.direction == TradeDirection.LONG else 'Buy to Close'
+            result = self._submit_market_order(position.symbol,position.contracts,action,intent_id or f'close:{position.position_id}')
+            if result and result['terminal'] and result['quantity'] == position.contracts:
+                return True,'Broker close confirmed',result['price']
+            return False,'Broker close pending reconciliation',0.0
+        except Exception:
+            logger.exception('VALOR close requires reconciliation')
+            return False,'Broker close pending reconciliation',0.0
 
     # ========================================================================
     # Stop Order Management
