@@ -83,8 +83,34 @@ class AgapeSolPerpExecutor:
     def _execute_paper(self, signal: AgapeSolPerpSignal) -> Optional[AgapeSolPerpPosition]:
         """Execute a paper trade with simulated slippage."""
         try:
-            slippage = signal.spot_price * 0.001
-            fill_price = signal.spot_price + slippage if signal.side == "long" else signal.spot_price - slippage
+            from trading.shared.margin_config import PERPETUAL_MARGIN_SPECS
+            from trading.shared.perp_realism import simulate_reference_fill
+
+            spec = PERPETUAL_MARGIN_SPECS.get(self.config.instrument, {})
+            fill, reference_market, venue_rules = simulate_reference_fill(
+                self.config.instrument,
+                signal.side,
+                signal.quantity,
+                signal.spot_price,
+                default_leverage=float(spec.get("default_leverage", 5) or 5),
+                max_leverage=float(spec.get("max_leverage", 20) or 20),
+                fallback_maintenance_margin_rate=float(
+                    spec.get("maintenance_margin_rate", 0.01) or 0.01
+                ),
+                funding_interval_hours=float(
+                    spec.get("funding_interval_hours", 8) or 8
+                ),
+            )
+            fill_price = fill.fill_price
+            logger.info(
+                "%s paper fill source=%s ref=%.8f fill=%.8f slippage=%.2fbps fee=$%.4f",
+                self.config.instrument,
+                reference_market.quote.source if reference_market else "fallback",
+                fill.reference_price,
+                fill.fill_price,
+                fill.slippage_bps,
+                fill.fee_usd,
+            )
             position_id = f"AGAPE-SOL-PERP-{uuid.uuid4().hex[:8].upper()}"
             return AgapeSolPerpPosition(
                 position_id=position_id,
