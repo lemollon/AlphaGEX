@@ -38,14 +38,14 @@ def test_oauth_failure_clears_old_token():
 @pytest.mark.parametrize('direction,expected', [(TradeDirection.LONG,90),(TradeDirection.SHORT,110)])
 def test_gap_exit_uses_market_not_perfect_stop(direction,expected):
     e=executor(); e.get_mes_quote=MagicMock(return_value={'bid':90,'ask':110})
-    p=SimpleNamespace(ticker='MNQ',direction=direction)
+    p=SimpleNamespace(ticker='MNQ',symbol='/MNQZ6',direction=direction)
     assert e._simulate_close(p,'STOP',100)[2]==expected
-    e.get_mes_quote.assert_called_once_with(ticker='MNQ')
+    e.get_mes_quote.assert_called_once_with(symbol='/MNQZ6',ticker='MNQ')
 
 
 def test_missing_quote_does_not_fabricate_exit():
     e=executor(); e.get_mes_quote=MagicMock(return_value=None)
-    assert not e._simulate_close(SimpleNamespace(ticker='MGC'),'STALE',100)[0]
+    assert not e._simulate_close(SimpleNamespace(ticker='MGC',symbol='/MGCZ6'),'STALE',100)[0]
 
 
 def test_actual_paper_entry_fill_is_persistable():

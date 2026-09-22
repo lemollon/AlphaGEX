@@ -502,7 +502,10 @@ class ValorTrader:
             scan_result["positions_checked"] = len(positions)
 
             for position in positions:
-                closed = self._manage_position(position, current_price, ticker=ticker)
+                position_quote = self.executor.get_mes_quote(symbol=position.symbol, ticker=ticker)
+                if not position_quote:
+                    continue
+                closed = self._manage_position(position, position_quote["last"], ticker=ticker)
                 if closed:
                     scan_result["positions_closed"] += 1
 
@@ -775,10 +778,10 @@ class ValorTrader:
             if not all_positions:
                 return result
 
-            # Group positions by ticker for efficient quote fetching
-            positions_by_ticker: Dict[str, List[FuturesPosition]] = {}
+            # Never mark an old contract with the new lead contract's price.
+            positions_by_ticker: Dict[Tuple[str, str], List[FuturesPosition]] = {}
             for pos in all_positions:
-                t = getattr(pos, 'ticker', 'MES')
+                t = (getattr(pos, 'ticker', 'MES'), pos.symbol)
                 if t not in positions_by_ticker:
                     positions_by_ticker[t] = []
                 positions_by_ticker[t].append(pos)
@@ -789,8 +792,8 @@ class ValorTrader:
                 logger.info(f"MONITOR HEARTBEAT: Tickers={ticker_counts}, Total={len(all_positions)}")
 
             # Check positions per-ticker (one quote per ticker)
-            for ticker, positions in positions_by_ticker.items():
-                quote = self.executor.get_mes_quote(ticker=ticker)
+            for (ticker, symbol), positions in positions_by_ticker.items():
+                quote = self.executor.get_mes_quote(symbol=symbol, ticker=ticker)
                 if not quote:
                     continue
 
@@ -2087,14 +2090,15 @@ class ValorTrader:
             realized_pnl = ticker_stats.get(ticker, {}).get("total_pnl", 0.0)
             ticker_equity = starting_cap + realized_pnl
 
-            # Get current quote for unrealized P&L (for this ticker)
-            quote = self.executor.get_mes_quote(ticker=ticker)
-            current_price = quote.get("last", 0) if quote else 0
-
             unrealized_pnl = 0.0
             for position in positions:
-                if position.is_open and current_price > 0:
-                    unrealized_pnl += position.calculate_pnl(current_price)
+                if position.is_open:
+                    quote = self.executor.get_mes_quote(symbol=position.symbol, ticker=ticker)
+                    if not quote or quote.get("last", 0) <= 0:
+                        # Missing marks are unknown, not a zero-P&L snapshot.
+                        logger.warning("Equity snapshot awaiting quote for %s", position.symbol)
+                        return
+                    unrealized_pnl += position.calculate_pnl(quote["last"])
 
             # Get today's stats
             summary = self.db.get_daily_summary()
@@ -2271,7 +2275,7 @@ class ValorTrader:
 
                 if hold_duration > max_hold_hours:
                     # Try to get current price for accurate P&L
-                    quote = self.executor.get_mes_quote(ticker=pos_ticker)
+                    quote = self.executor.get_mes_quote(symbol=pos.symbol, ticker=pos_ticker)
                     close_price = quote.get("last", 0) if quote else 0
 
                     if close_price <= 0:
@@ -2322,18 +2326,18 @@ class ValorTrader:
                 logger.info("VALOR EOD: No open positions to process")
                 return result
 
-            # Group by ticker for efficient quote fetching
-            positions_by_ticker: Dict[str, List[FuturesPosition]] = {}
+            # Group by contract to avoid closing old positions using a new expiry.
+            positions_by_ticker: Dict[Tuple[str, str], List[FuturesPosition]] = {}
             for pos in all_positions:
-                t = getattr(pos, 'ticker', 'MES')
+                t = (getattr(pos, 'ticker', 'MES'), pos.symbol)
                 if t not in positions_by_ticker:
                     positions_by_ticker[t] = []
                 positions_by_ticker[t].append(pos)
 
             logger.info(f"VALOR EOD: Processing {len(all_positions)} position(s) across {list(positions_by_ticker.keys())}")
 
-            for ticker, positions in positions_by_ticker.items():
-                quote = self.executor.get_mes_quote(ticker=ticker)
+            for (ticker, symbol), positions in positions_by_ticker.items():
+                quote = self.executor.get_mes_quote(symbol=symbol, ticker=ticker)
                 current_price = quote.get("last", 0) if quote else 0
 
                 if current_price <= 0:
@@ -2384,15 +2388,15 @@ class ValorTrader:
             return {'closed': 0, 'failed': 0, 'total_pnl': 0.0, 'details': []}
 
         # Group by ticker for efficient quote fetching
-        positions_by_ticker: Dict[str, List[FuturesPosition]] = {}
+        positions_by_ticker: Dict[Tuple[str, str], List[FuturesPosition]] = {}
         for pos in positions:
-            t = getattr(pos, 'ticker', 'MES')
+            t = (getattr(pos, 'ticker', 'MES'), pos.symbol)
             if t not in positions_by_ticker:
                 positions_by_ticker[t] = []
             positions_by_ticker[t].append(pos)
 
-        for t, t_positions in positions_by_ticker.items():
-            quote = self.executor.get_mes_quote(ticker=t)
+        for (t, symbol), t_positions in positions_by_ticker.items():
+            quote = self.executor.get_mes_quote(symbol=symbol, ticker=t)
             current_price = quote.get("last", 0) if quote else 0
 
             if current_price <= 0:
