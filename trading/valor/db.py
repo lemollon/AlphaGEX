@@ -148,6 +148,9 @@ class ValorDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
 
+                # Schema changes share the lifecycle lock so startup cannot
+                # deadlock with another initializer or an in-flight order.
+                c.execute("SELECT pg_advisory_xact_lock(8675309, 42)")
                 self._migrate_from_heracles(c)
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS valor_order_intents (
