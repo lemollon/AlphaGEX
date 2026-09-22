@@ -114,8 +114,8 @@ class AgapeXrpPerpExecutor:
         integrate with a specific perpetual exchange API (e.g., Binance,
         Bybit, dYdX). For now, falls back to paper execution.
         """
-        logger.warning("AGAPE-XRP-PERP Executor: Live perpetual execution not yet integrated, using paper mode")
-        return self._execute_paper(signal)
+        logger.error("AGAPE-XRP-PERP Executor: LIVE execution is disabled until a real perpetual venue adapter is configured")
+        return None
 
     def get_current_price(self) -> Optional[float]:
         """Get current XRP price via CryptoDataProvider.
