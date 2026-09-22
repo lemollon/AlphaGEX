@@ -64,6 +64,20 @@ def db_connection():
                 pass
 
 
+@contextmanager
+def migration_savepoint(cursor):
+    """Optional legacy migrations must not poison the schema transaction."""
+    cursor.execute("SAVEPOINT valor_migration")
+    try:
+        yield
+    except Exception:
+        cursor.execute("ROLLBACK TO SAVEPOINT valor_migration")
+        cursor.execute("RELEASE SAVEPOINT valor_migration")
+        raise
+    else:
+        cursor.execute("RELEASE SAVEPOINT valor_migration")
+
+
 class ValorDatabase:
     """
     All VALOR database operations in one place.
@@ -91,38 +105,40 @@ class ValorDatabase:
             ('heracles_scan_activity', 'valor_scan_activity'),
         ]:
             try:
-                cursor.execute(
-                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
-                    (old_name,)
-                )
-                if not cursor.fetchone()[0]:
-                    continue
-                cursor.execute(
-                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
-                    (new_name,)
-                )
-                if cursor.fetchone()[0]:
-                    cursor.execute(f"SELECT COUNT(*) FROM {new_name}")
-                    if cursor.fetchone()[0] > 0:
+                with migration_savepoint(cursor):
+                    cursor.execute(
+                        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                        (old_name,)
+                    )
+                    if not cursor.fetchone()[0]:
                         continue
-                    cursor.execute(f"DROP TABLE {new_name}")
-                cursor.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
-                logger.info(f"{self.bot_name}: Migrated {old_name} -> {new_name}")
+                    cursor.execute(
+                        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                        (new_name,)
+                    )
+                    if cursor.fetchone()[0]:
+                        cursor.execute(f"SELECT COUNT(*) FROM {new_name}")
+                        if cursor.fetchone()[0] > 0:
+                            continue
+                        cursor.execute(f"DROP TABLE {new_name}")
+                    cursor.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+                    logger.info(f"{self.bot_name}: Migrated {old_name} -> {new_name}")
             except Exception as e:
                 logger.warning(f"{self.bot_name}: Migration {old_name}: {e}")
 
         try:
-            cursor.execute("""
-                UPDATE autonomous_config
-                SET key = 'valor_' || SUBSTRING(key FROM 10)
-                WHERE key LIKE 'heracles_%'
-                  AND NOT EXISTS (
-                      SELECT 1 FROM autonomous_config ac2
-                      WHERE ac2.key = 'valor_' || SUBSTRING(autonomous_config.key FROM 10)
-                  )
-            """)
-            if cursor.rowcount > 0:
-                logger.info(f"{self.bot_name}: Migrated {cursor.rowcount} config keys heracles_* -> valor_*")
+            with migration_savepoint(cursor):
+                cursor.execute("""
+                    UPDATE autonomous_config
+                    SET key = 'valor_' || SUBSTRING(key FROM 10)
+                    WHERE key LIKE 'heracles_%'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM autonomous_config ac2
+                          WHERE ac2.key = 'valor_' || SUBSTRING(autonomous_config.key FROM 10)
+                      )
+                """)
+                if cursor.rowcount > 0:
+                    logger.info(f"{self.bot_name}: Migrated {cursor.rowcount} config keys heracles_* -> valor_*")
         except Exception as e:
             logger.warning(f"{self.bot_name}: Config key migration: {e}")
 
@@ -238,10 +254,11 @@ class ValorDatabase:
                 ]
                 for col_name, col_type in migration_columns:
                     try:
-                        c.execute(f"""
-                            ALTER TABLE valor_closed_trades
-                            ADD COLUMN IF NOT EXISTS {col_name} {col_type}
-                        """)
+                        with migration_savepoint(c):
+                            c.execute(f"""
+                                ALTER TABLE valor_closed_trades
+                                ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+                            """)
                     except Exception as e:
                         # Column might already exist, ignore
                         logger.debug(f"Column migration for {col_name}: {e}")
@@ -495,10 +512,11 @@ class ValorDatabase:
                 # for values like 'NO_LOSS_TRAIL_OVERNIGHT' (21 chars)
                 for table in ['valor_positions', 'valor_closed_trades', 'valor_scan_activity']:
                     try:
-                        c.execute(f"""
-                            ALTER TABLE {table}
-                            ALTER COLUMN stop_type TYPE VARCHAR(50)
-                        """)
+                        with migration_savepoint(c):
+                            c.execute(f"""
+                                ALTER TABLE {table}
+                                ALTER COLUMN stop_type TYPE VARCHAR(50)
+                            """)
                     except Exception:
                         pass  # Column might not exist or already be VARCHAR(50)
 
@@ -508,10 +526,11 @@ class ValorDatabase:
                     ("bayesian_probability_at_scan", "DECIMAL(5, 4)"),
                 ]:
                     try:
-                        c.execute(f"""
-                            ALTER TABLE valor_scan_activity
-                            ADD COLUMN IF NOT EXISTS {col} {typedef}
-                        """)
+                        with migration_savepoint(c):
+                            c.execute(f"""
+                                ALTER TABLE valor_scan_activity
+                                ADD COLUMN IF NOT EXISTS {col} {typedef}
+                            """)
                     except Exception:
                         pass
 
@@ -559,35 +578,38 @@ class ValorDatabase:
                 ]
                 for table in ticker_tables:
                     try:
-                        c.execute(f"""
-                            ALTER TABLE {table}
-                            ADD COLUMN IF NOT EXISTS ticker VARCHAR(20) DEFAULT 'MES'
-                        """)
+                        with migration_savepoint(c):
+                            c.execute(f"""
+                                ALTER TABLE {table}
+                                ADD COLUMN IF NOT EXISTS ticker VARCHAR(20) DEFAULT 'MES'
+                            """)
                     except Exception:
                         pass  # Column may already exist
 
                 # Indexes for per-ticker queries
                 try:
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_positions_ticker ON valor_positions(ticker)")
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_positions_ticker_status ON valor_positions(ticker, status)")
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_closed_trades_ticker ON valor_closed_trades(ticker)")
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_equity_snapshots_ticker ON valor_equity_snapshots(ticker)")
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_equity_snapshots_ticker_time ON valor_equity_snapshots(ticker, snapshot_time DESC)")
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_scan_activity_ticker ON valor_scan_activity(ticker)")
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_daily_perf_ticker ON valor_daily_perf(ticker)")
+                    with migration_savepoint(c):
+                        c.execute("CREATE INDEX IF NOT EXISTS idx_valor_positions_ticker ON valor_positions(ticker)")
+                        c.execute("CREATE INDEX IF NOT EXISTS idx_valor_positions_ticker_status ON valor_positions(ticker, status)")
+                        c.execute("CREATE INDEX IF NOT EXISTS idx_valor_closed_trades_ticker ON valor_closed_trades(ticker)")
+                        c.execute("CREATE INDEX IF NOT EXISTS idx_valor_equity_snapshots_ticker ON valor_equity_snapshots(ticker)")
+                        c.execute("CREATE INDEX IF NOT EXISTS idx_valor_equity_snapshots_ticker_time ON valor_equity_snapshots(ticker, snapshot_time DESC)")
+                        c.execute("CREATE INDEX IF NOT EXISTS idx_valor_scan_activity_ticker ON valor_scan_activity(ticker)")
+                        c.execute("CREATE INDEX IF NOT EXISTS idx_valor_daily_perf_ticker ON valor_daily_perf(ticker)")
                 except Exception:
                     pass  # Indexes may already exist
 
                 # Drop the unique constraint on trade_date for daily_perf
                 # (now unique per ticker+date, not just date)
                 try:
-                    c.execute("""
-                        ALTER TABLE valor_daily_perf DROP CONSTRAINT IF EXISTS valor_daily_perf_trade_date_key
-                    """)
-                    c.execute("""
-                        CREATE UNIQUE INDEX IF NOT EXISTS idx_valor_daily_perf_ticker_date
-                        ON valor_daily_perf(ticker, trade_date)
-                    """)
+                    with migration_savepoint(c):
+                        c.execute("""
+                            ALTER TABLE valor_daily_perf DROP CONSTRAINT IF EXISTS valor_daily_perf_trade_date_key
+                        """)
+                        c.execute("""
+                            CREATE UNIQUE INDEX IF NOT EXISTS idx_valor_daily_perf_ticker_date
+                            ON valor_daily_perf(ticker, trade_date)
+                        """)
                 except Exception:
                     pass
 
@@ -604,6 +626,7 @@ class ValorDatabase:
 
         except Exception as e:
             logger.error(f"Failed to ensure VALOR tables: {e}")
+            raise
 
     # ========================================================================
     # Position Operations
