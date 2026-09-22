@@ -133,8 +133,8 @@ class AgapeBtcPerpExecutor:
         is integrated (e.g., Binance, Bybit, dYdX), this method will place
         real orders via that exchange's SDK.
         """
-        logger.warning("AGAPE-BTC-PERP Executor: Live execution not yet integrated, using paper mode")
-        return self._execute_paper(signal)
+        logger.error("AGAPE-BTC-PERP Executor: LIVE execution is disabled until a real perpetual venue adapter is configured")
+        return None
 
     def get_current_price(self) -> Optional[float]:
         """Get current BTC price via CryptoDataProvider.
