@@ -2221,7 +2221,7 @@ async def get_valor_margin_events(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/performance/quality")
+@router.get("/api/valor/performance/quality")
 def valor_quality_performance():
     """Screened results with exclusion counts; raw ledger remains unchanged."""
     try:

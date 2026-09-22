@@ -88,3 +88,18 @@ def test_screened_tracker_and_view_are_installed(database):
     report=db.get_quality_performance()
     assert report['quality'][0]['quality_status']=='hold_violation'
     assert report['performance']==[]
+
+
+def test_count_and_cent_drift_reconcile_without_deleting_history(database):
+    db,connect=database
+    assert db.save_position(position(),paper=True)
+    assert db.close_position('test',101,'TEST',paper=True)[0]
+    with connect() as conn:
+        with conn.cursor() as c:
+            c.execute("UPDATE valor_paper_account SET cumulative_pnl=cumulative_pnl+0.01,total_trades=0")
+    assert not db.verify_data_integrity()['is_consistent']
+    assert db.reconcile_paper_account()['reconciled']
+    assert db.verify_data_integrity()['is_consistent']
+    assert len(db.get_closed_trades())==1
+    account=db.get_paper_account()
+    assert account['margin_available']==account['current_balance']-account['margin_used']
