@@ -88,8 +88,8 @@ class AgapeDogePerpExecutor:
 
     def _execute_live(self, signal: AgapeDogePerpSignal) -> Optional[AgapeDogePerpPosition]:
         # Live perpetual contract execution placeholder - falls back to paper for now
-        logger.warning("AGAPE-DOGE-PERP Executor: Live execution not yet implemented, falling back to paper")
-        return self._execute_paper(signal)
+        logger.error("AGAPE-DOGE-PERP Executor: LIVE execution is disabled until a real perpetual venue adapter is configured")
+        return None
 
     def get_current_price(self) -> Optional[float]:
         try:
