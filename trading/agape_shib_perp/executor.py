@@ -51,7 +51,8 @@ class AgapeShibPerpExecutor:
             return None
 
         if self.config.mode == TradingMode.LIVE:
-            return self._execute_paper(signal)
+            logger.error("AGAPE-SHIB-PERP Executor: LIVE execution is disabled until a real perpetual venue adapter is configured")
+            return None
         return self._execute_paper(signal)
 
     def _execute_paper(self, signal: AgapeShibPerpSignal) -> Optional[AgapeShibPerpPosition]:
