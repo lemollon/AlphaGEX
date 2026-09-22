@@ -59,7 +59,7 @@ class AgapeDogePerpConfig:
 
     # Risk management
     starting_capital: float = 2500.0    # $2.5K starting capital
-    risk_per_trade_pct: float = 5.0     # 5% risk per trade
+    risk_per_trade_pct: float = 1.0     # 5% risk per trade
     max_quantity: float = 50000.0       # Max DOGE per trade
     max_open_positions: int = 3         # Conservative for meme coin
 
@@ -84,7 +84,7 @@ class AgapeDogePerpConfig:
     no_loss_profit_target_pct: float = 0.0
 
     # Stop-and-Reverse (SAR) Strategy
-    use_sar: bool = True
+    use_sar: bool = False
     sar_trigger_pct: float = 1.5
     sar_mfe_threshold_pct: float = 0.3
 
@@ -101,7 +101,9 @@ class AgapeDogePerpConfig:
     force_exit: str = ""               # No forced exit - perpetual
 
     # Signal thresholds - AGGRESSIVE
-    min_confidence: str = "LOW"
+    min_confidence: str = "MEDIUM"
+    allow_range_bound_entries: bool = False
+    allow_wait_fallback_entries: bool = False
     min_funding_rate_signal: float = 0.001
     min_ls_ratio_extreme: float = 1.1
     min_liquidation_proximity_pct: float = 5.0
