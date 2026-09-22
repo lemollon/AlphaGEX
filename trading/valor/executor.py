@@ -283,12 +283,27 @@ class TastytradeExecutor:
 
                 # Get one quote with a timeout
                 try:
-                    quote = await asyncio.wait_for(
-                        streamer.get_event(Quote),
-                        timeout=5.0  # 5 second timeout
-                    )
-
-                    return self._normalize_contract_quote(quote, symbol, contract_symbol)
+                    deadline = asyncio.get_running_loop().time() + 5.0
+                    previous = None
+                    while True:
+                        remaining = deadline - asyncio.get_running_loop().time()
+                        if remaining <= 0:
+                            return None
+                        quote = await asyncio.wait_for(streamer.get_event(Quote), timeout=remaining)
+                        normalized = self._normalize_contract_quote(quote, symbol, contract_symbol)
+                        if normalized:
+                            return normalized
+                        signature = (quote.event_symbol, quote.bid_price, quote.ask_price,
+                                     quote.bid_size, quote.ask_size)
+                        # Missing times occur on this feed. Only paper may use a
+                        # changed post-snapshot event; never relabel stale times.
+                        if (self.config.mode == TradingMode.PAPER and previous is not None
+                                and signature != previous and quote.event_symbol == symbol
+                                and quote.bid_time == 0 and quote.ask_time == 0):
+                            return self._normalize_contract_quote(
+                                quote, symbol, contract_symbol,
+                                observed_update=datetime.now(CENTRAL_TZ))
+                        previous = signature
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout waiting for quote on {symbol}")
 
@@ -298,14 +313,20 @@ class TastytradeExecutor:
         return None
 
     @staticmethod
-    def _normalize_contract_quote(quote, streamer_symbol: str, contract_symbol: str):
+    def _normalize_contract_quote(quote, streamer_symbol: str, contract_symbol: str, observed_update=None):
         """Reception time must not make a stale snapshot look executable."""
         try:
             if quote.event_symbol != streamer_symbol:
                 return None
             # dxFeed bid/ask change times are Unix milliseconds. Require both
             # sides to be recent, using the older side as the quote timestamp.
-            observed = datetime.fromtimestamp(min(quote.bid_time, quote.ask_time) / 1000, CENTRAL_TZ)
+            missing_times = quote.bid_time == 0 and quote.ask_time == 0
+            if missing_times:
+                if observed_update is None:
+                    return None
+                observed = observed_update
+            else:
+                observed = datetime.fromtimestamp(min(quote.bid_time, quote.ask_time) / 1000, CENTRAL_TZ)
             result = {
                 "symbol": streamer_symbol, "contract_symbol": contract_symbol,
                 "bid": float(quote.bid_price), "ask": float(quote.ask_price),
@@ -313,6 +334,9 @@ class TastytradeExecutor:
                 "price": float(quote.bid_price + quote.ask_price) / 2,
                 "volume": 0, "timestamp": observed.isoformat(), "source": "TASTYTRADE_DXLINK",
                 "bid_size": float(quote.bid_size), "ask_size": float(quote.ask_size),
+                "timestamp_basis": "observed_stream_change" if missing_times else "broker_bid_ask",
+                "exchange_timestamp_verified": not missing_times,
+                "broker_bid_time": quote.bid_time, "broker_ask_time": quote.ask_time,
             }
             return result if TastytradeExecutor._quote_is_usable(result) else None
         except (AttributeError, TypeError, ValueError, OverflowError, OSError):

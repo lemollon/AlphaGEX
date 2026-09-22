@@ -26,7 +26,16 @@ def database(monkeypatch):
         assert db.initialize_paper_account(100000)
         yield db,connect
     finally:
-        with admin.cursor() as c: c.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(schema)))
+        with admin.cursor() as c:
+            c.execute("SELECT to_regclass(%s)", (schema+'.valor_paper_reset_batches',))
+            if c.fetchone()[0]:
+                c.execute(sql.SQL('SELECT archive_schema FROM {}.valor_paper_reset_batches').format(sql.Identifier(schema)))
+                archives = c.fetchall()
+            else:
+                archives = []
+            c.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(schema)))
+            for (archive,) in archives:
+                c.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(archive)))
         admin.close()
 
 
@@ -138,7 +147,17 @@ def test_reset_archives_and_removes_old_performance(database):
     assert account['total_trades']==0 and account['margin_used']==0
     assert db.get_open_positions()==[]
     with connect() as conn,conn.cursor() as c:
-        c.execute("SELECT COUNT(*) FROM valor_paper_archive_rows WHERE source_table='valor_positions'")
+        from psycopg2 import sql
+        c.execute("SELECT archive_schema FROM valor_paper_reset_batches")
+        archive=c.fetchone()[0]
+        c.execute(sql.SQL('SELECT COUNT(*) FROM {}.valor_positions').format(sql.Identifier(archive)))
+        assert c.fetchone()[0]==1
+        c.execute("SELECT COUNT(*) FROM valor_trade_quality")
+        assert c.fetchone()[0]==0
+    assert db.save_position(position('fresh'),paper=True)
+    assert db.close_position('fresh',101,'TEST',paper=True)[0]
+    with connect() as conn,conn.cursor() as c:
+        c.execute("SELECT COUNT(*) FROM valor_trade_quality")
         assert c.fetchone()[0]==1
         c.execute("SELECT COUNT(*) FROM valor_paper_reset_batches")
         assert c.fetchone()[0]==1

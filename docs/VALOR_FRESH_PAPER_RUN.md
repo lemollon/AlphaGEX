@@ -8,10 +8,14 @@ CL remains quarantined; a reset does not override an instrument's safety gate.
 
 - Reset obtains the lifecycle advisory transaction lock, refuses live mode,
   unresolved intents and open positions without paper order identifiers.
-- Previous positions, trades, scans, signals, logs, fills, account/config/ML
-  state and daily/equity statistics are archived as individual JSONB records
-  in Postgres before active histories are cleared. An archive batch lists
-  per-table counts. Any failure rolls back the transaction.
+- Previous positions, trades, scans, signals, logs, fills and daily/equity
+  statistics are moved into a dedicated archive schema without copying their
+  storage. Empty active tables retain constraints and indexes; dependent views
+  are rebound to them. Account/config/ML state is archived as JSONB. Batch
+  metadata records the archive schema and exact counts. Any failure rolls back
+  the transaction. This avoids duplicating millions of rows on a small disk.
+  Archive schemas own shared ID sequences and must not be dropped casually.
+  Reset routes run in a thread so database work does not block the API event loop.
 - Accounts restart at $600,000, zero realized P&L, trades and margin. Other
   processes detect the new account ID and clear transient loss-streak state.
 - Exact contract symbols are pinned from signal through execution. Equity
@@ -47,3 +51,12 @@ CL remains quarantined; a reset does not override an instrument's safety gate.
 
 The fresh run does not imply profitability. It is forward observation with
 explicit execution assumptions. Do not call its fills identical to a broker.
+
+## Missing feed timestamps
+
+The production feed returns zero bid/ask times. Paper mode may use a changed
+stream event after the initial snapshot within a five-second subscription window.
+Its locally observed time is explicitly labeled `observed_stream_change` and
+`exchange_timestamp_verified=false`. This demonstrates stream activity, not
+exchange freshness or the absence of vendor delay. Live mode cannot use this
+fallback. Nonzero stale timestamps remain rejected; quiet snapshots never fill.

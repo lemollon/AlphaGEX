@@ -44,3 +44,20 @@ def test_broker_active_contract_selection_refuses_expired_or_ambiguous():
     assert TastytradeExecutor._choose_active_contract([expired,current],'MNG',now)=='/MNGV6'
     assert TastytradeExecutor._choose_active_contract([expired],'MNG',now) is None
     assert TastytradeExecutor._choose_active_contract([current,current],'MNG',now) is None
+
+
+def test_missing_feed_times_require_post_snapshot_observation():
+    from types import SimpleNamespace
+    from datetime import datetime, timedelta
+    from trading.valor.models import CENTRAL_TZ
+    from trading.valor.executor import TastytradeExecutor
+    q=SimpleNamespace(event_symbol='/MESZ26:XCME',bid_time=0,ask_time=0,
+                      bid_price=100,ask_price=100.25,bid_size=5,ask_size=5)
+    normalize=TastytradeExecutor._normalize_contract_quote
+    assert normalize(q,q.event_symbol,'/MESZ6') is None
+    result=normalize(q,q.event_symbol,'/MESZ6',datetime.now(CENTRAL_TZ))
+    assert result['timestamp_basis']=='observed_stream_change'
+    assert result['exchange_timestamp_verified'] is False
+    assert normalize(q,q.event_symbol,'/MESZ6',datetime.now(CENTRAL_TZ)-timedelta(seconds=20)) is None
+    q.bid_time=q.ask_time=int((datetime.now(CENTRAL_TZ)-timedelta(seconds=20)).timestamp()*1000)
+    assert normalize(q,q.event_symbol,'/MESZ6',datetime.now(CENTRAL_TZ)) is None

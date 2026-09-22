@@ -616,7 +616,7 @@ async def initialize_valor_paper_account(
 
 
 @router.post("/api/valor/paper-account/reset")
-async def reset_valor_paper_account(
+def reset_valor_paper_account(
     starting_capital: float = Query(600000.0, ge=1000, le=10000000, description="Starting capital for new account ($100K per instrument × 5)"),
     full_reset: bool = Query(True, description="If true, also clears closed_trades, positions, equity snapshots for clean slate")
 ):
@@ -717,7 +717,7 @@ async def get_valor_diagnostics_raw():
 
 
 @router.post("/api/valor/force-reset")
-async def force_reset_valor():
+def force_reset_valor():
     """
     EMERGENCY: Force a complete reset of all VALOR data.
 
