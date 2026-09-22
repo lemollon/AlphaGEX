@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from decimal import Decimal, ROUND_HALF_UP
 
 from database_adapter import get_connection
-from .audit import QUALITY_SELECT, PERFORMANCE_SQL
+from .audit import QUALITY_SELECT, PERFORMANCE_SQL, QUALITY_REPORT_SQL
 from .models import (
     FuturesPosition, TradeDirection, GammaRegime, PositionStatus,
     SignalSource, ValorConfig, TradingMode, DailySummary,
@@ -639,20 +639,9 @@ class ValorDatabase:
         """Expose raw/excluded counts and screened metrics without rewriting history."""
         with db_connection() as conn:
             c = conn.cursor()
-            def rows():
-                keys = [d[0] for d in c.description]
-                return [{k: _to_python(v) for k, v in zip(keys, row)} for row in c.fetchall()]
-            c.execute("SELECT ticker, quality_status, COUNT(*) AS trades, SUM(realized_pnl) AS pnl "
-                      "FROM valor_trade_quality GROUP BY ticker, quality_status ORDER BY ticker, quality_status")
-            quality = rows()
-            c.execute(PERFORMANCE_SQL)
-            performance = rows()
-            c.execute("""SELECT ticker, gamma_regime, direction, signal_source,
-                        EXTRACT(HOUR FROM open_time AT TIME ZONE 'America/Chicago') AS entry_hour_ct,
-                        COUNT(*) AS trades, AVG(realized_pnl) AS expectancy, SUM(realized_pnl) AS pnl
-                        FROM valor_trade_quality WHERE quality_status='eligible'
-                        GROUP BY 1,2,3,4,5 ORDER BY pnl DESC""")
-            return {"screen_version": 1, "quality": quality, "performance": performance, "setups": rows(),
+            c.execute(QUALITY_REPORT_SQL)
+            report = c.fetchone()[0]
+            return {"screen_version": 1, **report,
                     "limitations": "Screened paper outcomes, not verified fills. Costs not deducted; "
                     "duplicate candidates are excluded as entire clusters. Drawdown is realized only. "
                     "Historical quote/rollover accuracy cannot be reconstructed from this ledger."}
