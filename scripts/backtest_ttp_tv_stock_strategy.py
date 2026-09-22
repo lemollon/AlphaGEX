@@ -318,16 +318,20 @@ def evaluate_sequence(trades: pd.DataFrame, account: float, program: Program, ma
             equity_pnl += pnl
             day_pnl += pnl
             position_count += 1
+            # Eligible net profit must include every loss. Gross winners alone
+            # can reach the target while account equity is still below it.
             if pnl > 0:
-                vp = float(t["valid_profit"])
+                vp = max(0.0, min(pnl, float(t["valid_profit"])))
                 valid_profit += vp
                 best_valid_trade = max(best_valid_trade, vp)
+            else:
+                valid_profit += pnl
 
             if equity_pnl <= -max_loss:
                 return {"status": "FAIL_MAX_LOSS", "equity_pnl": equity_pnl, "valid_profit": valid_profit, "positions": position_count}
 
             consistency_ok = best_valid_trade <= target * program.consistency_pct / 100.0
-            if valid_profit >= target and position_count >= program.min_positions and consistency_ok:
+            if equity_pnl >= target and valid_profit >= target and position_count >= program.min_positions and consistency_ok:
                 return {"status": "PASS", "equity_pnl": equity_pnl, "valid_profit": valid_profit, "positions": position_count}
 
     consistency_ok = best_valid_trade <= target * program.consistency_pct / 100.0
@@ -341,29 +345,17 @@ def evaluate_sequence(trades: pd.DataFrame, account: float, program: Program, ma
 
 
 def monte_carlo(trades: pd.DataFrame, account: float, program: Program, max_trades_day: int, trials: int, seed: int) -> dict:
-    if trades.empty or trades["trading_date"].nunique() < 10:
-        return {"trials": 0, "warning": "Need at least 10 stored trading days before Monte Carlo is meaningful."}
-
-    grouped = [g.copy() for _, g in trades.groupby("trading_date", sort=True)]
-    rng = np.random.default_rng(seed)
-    statuses: list[str] = []
-    for _ in range(trials):
-        sampled = []
-        base = date(2020, 1, 1)
-        for i in range(max(60, len(grouped))):
-            g = grouped[int(rng.integers(0, len(grouped)))].copy()
-            g["trading_date"] = base + timedelta(days=i)
-            sampled.append(g)
-        sim = pd.concat(sampled, ignore_index=True)
-        statuses.append(evaluate_sequence(sim, account, program, max_trades_day)["status"])
-
-    s = pd.Series(statuses)
+    # A larger sample cannot repair an incomplete account simulator.
+    # Keep the API for compatibility, but do not publish a funding probability.
     return {
-        "trials": trials,
-        "pass_rate_pct": round(float((s == "PASS").mean() * 100), 2),
-        "max_loss_fail_pct": round(float((s == "FAIL_MAX_LOSS").mean() * 100), 2),
-        "timeout_pct": round(float((s == "TIMEOUT").mean() * 100), 2),
-        "incomplete_pct": round(float((s == "INCOMPLETE").mean() * 100), 2),
+        "trials": 0,
+        "status": "BLOCKED_MODEL_VALIDATION",
+        "warning": (
+            "Funding probability withheld: requires chronological portfolio fills, "
+            "intraday unrealized loss checks, concurrent exposure/buying-power limits, "
+            "actual session/calendar handling, verified account-specific rules, and "
+            "out-of-sample validation. Closed-trade evaluation is diagnostic only."
+        ),
     }
 
 
@@ -450,7 +442,7 @@ def main() -> None:
             "note": "Only AlphaGEX-stored historical watchlists are tested; missing historical TV rankings are not reconstructed.",
         },
         "metrics": metrics,
-        "evaluation": sequence,
+        "evaluation": {**sequence, "diagnostic_only": True, "funding_validated": False},
         "monte_carlo": mc,
     }
     with open(f"{args.out_prefix}_summary.json", "w", encoding="utf-8") as f:
