@@ -32,14 +32,15 @@ logger = logging.getLogger(__name__)
 try:
     from tastytrade import Session, DXLinkStreamer
     from tastytrade.dxfeed import Quote
+    from tastytrade.instruments import Future
     TASTYTRADE_SDK_AVAILABLE = True
     logger.info("Tastytrade SDK loaded - real-time futures quotes available")
 except ImportError:
     TASTYTRADE_SDK_AVAILABLE = False
-    logger.warning("Tastytrade SDK not installed - falling back to Yahoo for quotes")
+    logger.warning("Tastytrade SDK not installed - executable contract quotes unavailable")
 
-# Quote cache for reducing API calls
-_quote_cache: Dict[str, Tuple[Dict[str, Any], datetime]] = {}
+# Cache must distinguish expiry as well as ticker and execution mode.
+_quote_cache: Dict[Tuple[str, str, str], Tuple[Dict[str, Any], datetime]] = {}
 QUOTE_CACHE_TTL_SECONDS = 5  # Cache quotes for 5 seconds
 
 # Tastytrade API endpoints
@@ -83,7 +84,7 @@ class TastytradeExecutor:
             logger.error("Tastytrade password authentication retired; configure OAuth")
         else:
             self.auth_method = None
-            logger.warning("Tastytrade: No credentials configured - will use Yahoo fallback")
+            logger.warning("Tastytrade: No credentials configured - executable contract quotes unavailable")
 
         # Use sandbox for paper trading
         self.base_url = TASTYTRADE_BASE_URL
@@ -146,9 +147,41 @@ class TastytradeExecutor:
             bid, ask, last = (float(quote[k]) for k in ("bid", "ask", "last"))
             timestamp = datetime.fromisoformat(quote["timestamp"])
             age = (datetime.now(CENTRAL_TZ) - timestamp).total_seconds()
-            return all(isfinite(v) and v > 0 for v in (bid, ask, last)) and bid <= ask and 0 <= age <= 120
+            return all(isfinite(v) and v > 0 for v in (bid, ask, last)) and bid <= ask and 0 <= age <= 10
         except (KeyError, TypeError, ValueError):
             return False
+
+    def get_entry_symbol(self, ticker):
+        if ticker in {"MES", "MNQ", "RTY"}:
+            return self.config.get_ticker_symbol(ticker)
+        if not TASTYTRADE_SDK_AVAILABLE or self.auth_method != "OAUTH":
+            return None
+        cache = getattr(self, '_entry_contract_cache', {})
+        cached = cache.get(ticker)
+        now = datetime.now(CENTRAL_TZ)
+        if cached and (now-cached[1]).total_seconds() < 60:
+            return cached[0]
+        async def resolve():
+            session = Session(self.client_secret,self.refresh_token)
+            code = FUTURES_TICKERS[ticker]['contract_prefix'].lstrip('/')
+            futures = await asyncio.wait_for(Future.get(session,product_codes=[code]),10)
+            return self._choose_active_contract(futures,code,now)
+        try:
+            symbol = asyncio.run(resolve())
+            if symbol:
+                cache[ticker] = (symbol,now)
+                self._entry_contract_cache = cache
+            return symbol
+        except Exception:
+            logger.warning("No verified active contract for %s",ticker)
+            return None
+
+    @staticmethod
+    def _choose_active_contract(futures, code, now):
+        eligible = [f for f in futures if f.product_code == code and f.active_month
+                    and f.is_tradeable and not f.is_closing_only and f.stops_trading_at > now
+                    and f.streamer_symbol and f.symbol.startswith('/'+code)]
+        return eligible[0].symbol if len(eligible) == 1 else None
 
     def get_mes_quote(self, symbol: str = None, ticker: str = None) -> Optional[Dict[str, Any]]:
         """
@@ -156,7 +189,8 @@ class TastytradeExecutor:
 
         Priority:
         1. Tastytrade DXLinkStreamer (real-time via WebSocket)
-        2. Fresh Yahoo Finance data for paper mode only
+        Contract metadata must resolve to an exact broker streamer symbol.
+        Continuous Yahoo quotes cannot identify the contract being executed.
 
         Args:
             symbol: Contract symbol (e.g. /MESH6, /MNQH6)
@@ -166,11 +200,14 @@ class TastytradeExecutor:
             Dict with bid, ask, last, volume or None if failed
         """
         ticker = ticker or "MES"
-        symbol = symbol or self.config.symbol
+        symbol = symbol or self.get_entry_symbol(ticker)
         ticker_cfg = FUTURES_TICKERS.get(ticker, {})
+        prefix = ticker_cfg.get("contract_prefix")
+        if not symbol or not prefix or not symbol.startswith(prefix) or len(symbol) != len(prefix) + 2:
+            return None
 
         # Check cache first
-        cache_key = (ticker, self.config.mode.value)  # Never share paper quotes with live execution
+        cache_key = (ticker, symbol, self.config.mode.value)
         if cache_key in _quote_cache:
             cached_quote, cache_time = _quote_cache[cache_key]
             if datetime.now(CENTRAL_TZ) - cache_time < timedelta(seconds=QUOTE_CACHE_TTL_SECONDS) and self._quote_is_usable(cached_quote):
@@ -178,26 +215,15 @@ class TastytradeExecutor:
                 return cached_quote
 
         # Try Tastytrade DXLinkStreamer (real-time WebSocket streaming)
-        dxfeed_symbol = ticker_cfg.get("dxfeed_symbol", f"/{ticker}:XCME")
         if TASTYTRADE_SDK_AVAILABLE and self.auth_method:
             try:
-                quote = self._get_tastytrade_streaming_quote(dxfeed_symbol)
-                if quote and self._quote_is_usable(quote):
+                quote = self._get_tastytrade_streaming_quote(symbol)
+                if quote and quote.get("contract_symbol") == symbol and self._quote_is_usable(quote):
                     quote["ticker"] = ticker
                     _quote_cache[cache_key] = (quote, datetime.now(CENTRAL_TZ))
                     return quote
             except Exception as e:
                 logger.warning(f"DXLinkStreamer quote failed for {ticker}: {e}")
-
-        if self.config.mode != TradingMode.PAPER:
-            return None
-
-        # Fallback: Yahoo Finance quote for this ticker
-        yahoo_symbol = ticker_cfg.get("yahoo_symbol", "MES=F")
-        yahoo_quote = self._get_yahoo_futures_quote(yahoo_symbol, ticker)
-        if yahoo_quote and self._quote_is_usable(yahoo_quote):
-            _quote_cache[cache_key] = (yahoo_quote, datetime.now(CENTRAL_TZ))
-            return yahoo_quote
 
         return None
 
@@ -206,7 +232,7 @@ class TastytradeExecutor:
         Get real-time futures quote via Tastytrade DXLinkStreamer.
 
         Args:
-            dxfeed_symbol: DXFeed symbol (e.g., /MES:XCME, /MNQ:XCME, /CL:XNYM)
+            dxfeed_symbol: Exact broker contract (e.g., /MESZ6); resolved below.
         """
         if not TASTYTRADE_SDK_AVAILABLE:
             return None
@@ -242,6 +268,15 @@ class TastytradeExecutor:
                 session = Session(self.username, self.password)
                 logger.debug("Created Tastytrade session via password")
 
+            contract_symbol = symbol
+            future = await asyncio.wait_for(Future.get(session, contract_symbol), timeout=10)
+            if future.symbol != contract_symbol or not future.streamer_symbol:
+                return None
+            if future.stops_trading_at <= datetime.now(CENTRAL_TZ):
+                logger.error("Expired contract %s requires reconciliation", contract_symbol)
+                return None
+            symbol = future.streamer_symbol
+
             async with DXLinkStreamer(session) as streamer:
                 # Subscribe to the futures symbol
                 await streamer.subscribe(Quote, [symbol])
@@ -253,17 +288,7 @@ class TastytradeExecutor:
                         timeout=5.0  # 5 second timeout
                     )
 
-                    if quote and quote.bid_price and quote.ask_price:
-                        return {
-                            "symbol": symbol,
-                            "bid": float(quote.bid_price),
-                            "ask": float(quote.ask_price),
-                            "last": float(quote.bid_price + quote.ask_price) / 2,  # Mid price if no last
-                            "price": float(quote.bid_price + quote.ask_price) / 2,
-                            "volume": 0,  # DXFeed Quote doesn't include volume
-                            "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
-                            "source": "TASTYTRADE_DXLINK"
-                        }
+                    return self._normalize_contract_quote(quote, symbol, contract_symbol)
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout waiting for quote on {symbol}")
 
@@ -271,6 +296,27 @@ class TastytradeExecutor:
             logger.warning(f"DXLinkStreamer error: {e}")
 
         return None
+
+    @staticmethod
+    def _normalize_contract_quote(quote, streamer_symbol: str, contract_symbol: str):
+        """Reception time must not make a stale snapshot look executable."""
+        try:
+            if quote.event_symbol != streamer_symbol:
+                return None
+            # dxFeed bid/ask change times are Unix milliseconds. Require both
+            # sides to be recent, using the older side as the quote timestamp.
+            observed = datetime.fromtimestamp(min(quote.bid_time, quote.ask_time) / 1000, CENTRAL_TZ)
+            result = {
+                "symbol": streamer_symbol, "contract_symbol": contract_symbol,
+                "bid": float(quote.bid_price), "ask": float(quote.ask_price),
+                "last": float(quote.bid_price + quote.ask_price) / 2,
+                "price": float(quote.bid_price + quote.ask_price) / 2,
+                "volume": 0, "timestamp": observed.isoformat(), "source": "TASTYTRADE_DXLINK",
+                "bid_size": float(quote.bid_size), "ask_size": float(quote.ask_size),
+            }
+            return result if TastytradeExecutor._quote_is_usable(result) else None
+        except (AttributeError, TypeError, ValueError, OverflowError, OSError):
+            return None
 
     def _get_yahoo_mes_quote(self) -> Optional[Dict[str, Any]]:
         """Legacy method - calls _get_yahoo_futures_quote for MES."""
@@ -471,13 +517,13 @@ class TastytradeExecutor:
         )
 
         from math import isfinite
-        quote = self.get_mes_quote(ticker=signal.ticker)
+        quote = self.get_mes_quote(symbol=getattr(signal,"contract_symbol",None) or None,ticker=signal.ticker)
         if not quote:
             return False, "No executable futures quote", None
         side = "ask" if signal.direction == TradeDirection.LONG else "bid"
-        fill_price = float(quote.get(side) or 0)
-        if not isfinite(fill_price) or fill_price <= 0:
-            return False, "Invalid executable futures quote", None
+        fill_price = self._paper_fill(quote, side, signal.contracts, signal.ticker)
+        if fill_price is None:
+            return False, "No sufficiently sized, fresh contract quote", None
         signal.entry_price = fill_price
 
         order_id = f"PAPER-{position_id}"
@@ -529,7 +575,7 @@ class TastytradeExecutor:
     def _live_execution(self, signal: FuturesSignal, position_id: str) -> Tuple[bool, str, Optional[str]]:
         try:
             action = 'Buy to Open' if signal.direction == TradeDirection.LONG else 'Sell to Open'
-            result = self._submit_market_order(self.config.get_ticker_symbol(signal.ticker),signal.contracts,action,position_id)
+            result = self._submit_market_order(signal.contract_symbol or self.get_entry_symbol(signal.ticker),signal.contracts,action,position_id)
             if result and result['terminal'] and result['quantity'] == signal.contracts:
                 signal.entry_price = result['price']
                 return True,'Broker fill confirmed',result['order_id']
@@ -569,14 +615,38 @@ class TastytradeExecutor:
     ) -> Tuple[bool, str, float]:
         """Use observable bid/ask, including gaps; never invent a stop fill."""
         from math import isfinite
-        quote = self.get_mes_quote(ticker=position.ticker)
+        quote = self.get_mes_quote(symbol=position.symbol, ticker=position.ticker)
         if not quote:
             return False, "No executable futures quote", 0.0
         side = "bid" if position.direction == TradeDirection.LONG else "ask"
-        fill_price = float(quote.get(side) or 0)
-        if not isfinite(fill_price) or fill_price <= 0:
-            return False, "Invalid executable futures quote", 0.0
+        fill_price = self._paper_fill(quote, side, position.contracts, position.ticker)
+        if fill_price is None:
+            return False, "No sufficiently sized, fresh contract quote", 0.0
         return True, f"Paper close filled at {fill_price:.2f}", fill_price
+
+    def _paper_fill(self, quote, side, quantity, ticker):
+        from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
+        from math import isfinite
+        self.last_paper_fill = None
+        try:
+            if not self.is_market_open() or not self._quote_is_usable(quote) or quantity < 1:
+                return None
+            size = float(quote.get(side + "_size", 0))
+            if not isfinite(size) or size < quantity:
+                return None  # No invented liquidity or unmodeled partial fills.
+            ticks = self.config.paper_slippage_ticks
+            if isinstance(ticks, bool) or int(ticks) != ticks or ticks < 0:
+                return None
+            tick = Decimal(str(FUTURES_TICKERS[ticker]["tick_size"]))
+            raw = Decimal(str(quote[side])) + (1 if side == "ask" else -1) * int(ticks) * tick
+            price = float((raw/tick).to_integral_value(rounding=ROUND_CEILING if side == "ask" else ROUND_FLOOR)*tick)
+            if price <= 0:
+                return None
+            self.last_paper_fill = dict(quote, fill_price=price, side=side, quantity=quantity,
+                                       slippage_ticks=ticks, observed_at=datetime.now(CENTRAL_TZ).isoformat())
+            return price
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            return None
 
     def _live_close(self, position: FuturesPosition, close_reason: str, intent_id: Optional[str] = None) -> Tuple[bool, str, float]:
         try:

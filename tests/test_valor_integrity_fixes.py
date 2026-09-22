@@ -35,24 +35,24 @@ def test_oauth_failure_clears_old_token():
     assert e.session_token is None
 
 
-@pytest.mark.parametrize('direction,expected', [(TradeDirection.LONG,90),(TradeDirection.SHORT,110)])
+@pytest.mark.parametrize('direction,expected', [(TradeDirection.LONG,89.75),(TradeDirection.SHORT,110.25)])
 def test_gap_exit_uses_market_not_perfect_stop(direction,expected):
-    e=executor(); e.get_mes_quote=MagicMock(return_value={'bid':90,'ask':110})
-    p=SimpleNamespace(ticker='MNQ',direction=direction)
+    e=executor(); e.is_market_open=MagicMock(return_value=True); e.get_mes_quote=MagicMock(return_value={'bid':90,'ask':110,'last':100,'bid_size':10,'ask_size':10,'timestamp':datetime.now(CENTRAL_TZ).isoformat()})
+    p=SimpleNamespace(ticker='MNQ',symbol='/MNQZ6',direction=direction,contracts=1)
     assert e._simulate_close(p,'STOP',100)[2]==expected
-    e.get_mes_quote.assert_called_once_with(ticker='MNQ')
+    e.get_mes_quote.assert_called_once_with(symbol='/MNQZ6',ticker='MNQ')
 
 
 def test_missing_quote_does_not_fabricate_exit():
     e=executor(); e.get_mes_quote=MagicMock(return_value=None)
-    assert not e._simulate_close(SimpleNamespace(ticker='MGC'),'STALE',100)[0]
+    assert not e._simulate_close(SimpleNamespace(ticker='MGC',symbol='/MGCZ6'),'STALE',100)[0]
 
 
 def test_actual_paper_entry_fill_is_persistable():
-    e=executor(); e.get_mes_quote=MagicMock(return_value={'bid':99,'ask':101})
+    e=executor(); e.is_market_open=MagicMock(return_value=True); e.get_mes_quote=MagicMock(return_value={'bid':99,'ask':101,'last':100,'bid_size':10,'ask_size':10,'timestamp':datetime.now(CENTRAL_TZ).isoformat()})
     s=SimpleNamespace(ticker='MGC',direction=TradeDirection.LONG,contracts=1,entry_price=100)
     assert e._simulate_execution(s,'id')[0]
-    assert s.entry_price==101
+    assert s.entry_price==101.1
 
 
 def trader():

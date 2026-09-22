@@ -13,7 +13,7 @@ Single source of truth for all position and configuration data.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional, Dict, Any, List
 from zoneinfo import ZoneInfo
@@ -450,7 +450,7 @@ def get_ticker_point_value(ticker: str) -> float:
     return cfg.get("point_value", MES_POINT_VALUE)
 
 
-def get_front_month_symbol(ticker: str) -> str:
+def get_front_month_symbol(ticker: str, as_of: Optional[datetime] = None) -> str:
     """
     Get the current front month contract symbol for any futures ticker.
 
@@ -461,7 +461,22 @@ def get_front_month_symbol(ticker: str) -> str:
     prefix = cfg.get("contract_prefix", f"/{ticker}")
     months_str = cfg.get("contract_months", "HMUZ")
 
-    now = datetime.now(CENTRAL_TZ)
+    now = as_of or datetime.now(CENTRAL_TZ)
+    if now.tzinfo is None:
+        raise ValueError("Contract selection requires a timezone-aware timestamp")
+    now = now.astimezone(CENTRAL_TZ)
+    if ticker in {"MES", "MNQ", "RTY"}:
+        # CME customary equity-index roll: Monday before the third Friday.
+        # Adopt that lead contract at the Sunday 17:00 CT session opening.
+        # This is an entry policy, never a relabeling of existing positions.
+        # https://www.cmegroup.com/trading/equity-index/rolldates.html
+        for contract_year in (now.year, now.year + 1):
+            for contract_month, code in ((3, "H"), (6, "M"), (9, "U"), (12, "Z")):
+                first = datetime(contract_year, contract_month, 1, tzinfo=CENTRAL_TZ)
+                third_friday = first + timedelta(days=(4 - first.weekday()) % 7 + 14)
+                roll_open = (third_friday - timedelta(days=5)).replace(hour=17)
+                if now < roll_open:
+                    return f"{prefix}{code}{contract_year % 10}"
     month = now.month
     year = now.year % 10
 
@@ -717,6 +732,9 @@ class ValorConfig:
 
     quarantined_tickers: List[str] = field(default_factory=lambda: ["CL"])
     entry_cooldown_seconds: int = 60
+    paper_round_trip_fee: float = 3.0  # Estimated per contract; override with verified costs
+    paper_slippage_ticks: int = 1  # Adverse ticks beyond observed bid/ask
+    paper_fee_source: str = "assumed; verify broker statement"
 
     # Risk limits (shared defaults, overridden per-ticker by FUTURES_TICKERS)
     capital: float = 600000.0  # Paper trading capital ($100k per instrument × 6)
@@ -870,24 +888,8 @@ class ValorConfig:
         return config
 
     def get_front_month_symbol(self) -> str:
-        """
-        Get the current front month MES contract symbol.
-
-        Month codes: H=Mar, M=Jun, U=Sep, Z=Dec
-        """
-        now = datetime.now(CENTRAL_TZ)
-        month = now.month
-        year = now.year % 10  # Last digit
-
-        # Determine front month
-        if month <= 3:
-            return f"/MESH{year}"  # March
-        elif month <= 6:
-            return f"/MESM{year}"  # June
-        elif month <= 9:
-            return f"/MESU{year}"  # September
-        else:
-            return f"/MESZ{year}"  # December
+        """Legacy MES accessor uses the same roll policy as multi-ticker entries."""
+        return get_front_month_symbol("MES")
 
     def calculate_position_size(
         self,
@@ -1051,6 +1053,7 @@ class FuturesSignal:
 
     # Calculated values
     entry_price: float = 0.0
+    contract_symbol: str = ""  # Exact broker contract pinned before execution
     stop_price: float = 0.0
     target_price: float = 0.0
     contracts: int = 1

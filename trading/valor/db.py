@@ -152,6 +152,10 @@ class ValorDatabase:
                 # deadlock with another initializer or an in-flight order.
                 c.execute("SELECT pg_advisory_xact_lock(8675309, 42)")
                 self._migrate_from_heracles(c)
+                c.execute("""CREATE TABLE IF NOT EXISTS valor_paper_fills (
+                    position_id TEXT NOT NULL, phase TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), details JSONB NOT NULL,
+                    PRIMARY KEY(position_id,phase))""")
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS valor_order_intents (
                         intent_id TEXT PRIMARY KEY, ticker TEXT NOT NULL,
@@ -457,6 +461,7 @@ class ValorDatabase:
 
                 # Create indexes for performance
                 c.execute("CREATE INDEX IF NOT EXISTS idx_valor_positions_status ON valor_positions(status)")
+                c.execute("ALTER TABLE valor_scan_activity ADD COLUMN IF NOT EXISTS research_context JSONB")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_valor_closed_trades_close_time ON valor_closed_trades(close_time)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_valor_equity_snapshots_time ON valor_equity_snapshots(snapshot_time)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_valor_signals_time ON valor_signals(signal_time)")
@@ -714,7 +719,7 @@ class ValorDatabase:
             per_ticker, combined = c.fetchone()
             return per_ticker > -2000 and combined > -6000
 
-    def save_position(self, position: FuturesPosition, paper: bool = False) -> bool:
+    def save_position(self, position: FuturesPosition, paper: bool = False, paper_fill: Optional[Dict] = None) -> bool:
         """Save a position to database (insert or update)"""
         try:
             with db_connection() as conn:
@@ -779,6 +784,9 @@ class ValorDatabase:
                 ))
 
                 saved = c.rowcount == 1
+                if saved and paper and paper_fill:
+                    c.execute("INSERT INTO valor_paper_fills(position_id,phase,details) VALUES (%s,'entry',%s::jsonb)",
+                              (position.position_id,json.dumps(paper_fill)))
                 if saved and paper:
                     from .margin_manager import get_margin_requirement
                     self._apply_paper_delta(c, 0, position.contracts * get_margin_requirement(position.ticker)["maintenance"], False)
@@ -850,6 +858,8 @@ class ValorDatabase:
         paper: bool = False,
         contracts_closed: Optional[int] = None,
         execution_id: Optional[str] = None,
+        paper_fill: Optional[Dict] = None,
+        paper_fee: float = 0.0,
     ) -> Tuple[bool, float]:
         """
         Close a position and calculate P&L.
@@ -869,8 +879,13 @@ class ValorDatabase:
                 if paper or not execution_id:
                     return False, 0.0
                 position.contracts = contracts_closed
+            from math import isfinite
+            if not isfinite(paper_fee) or paper_fee < 0 or (not paper and paper_fee):
+                return False, 0.0
+            # Costs are booked once on close, atomically with the paper ledger.
+            gross_pnl = position.calculate_pnl(close_price)
             # Calculate P&L
-            realized_pnl = float(Decimal(str(position.calculate_pnl(close_price))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+            realized_pnl = float((Decimal(str(gross_pnl)) - Decimal(str(paper_fee))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
             with db_connection() as conn:
                 c = conn.cursor()
@@ -995,6 +1010,9 @@ class ValorDatabase:
                     logger.error(f"CRITICAL: closed_trades INSERT/UPDATE affected 0 rows for {position_id}")
 
                 if paper:
+                    details = dict(paper_fill or {}, gross_pnl=gross_pnl, fees=paper_fee, net_pnl=realized_pnl)
+                    c.execute("INSERT INTO valor_paper_fills(position_id,phase,details) VALUES (%s,'exit',%s::jsonb)",
+                              (position_id,json.dumps(details)))
                     from .margin_manager import get_margin_requirement
                     self._apply_paper_delta(c, realized_pnl,
                         -position.contracts * get_margin_requirement(position.ticker)["maintenance"], True)
@@ -2118,70 +2136,13 @@ class ValorDatabase:
             return False, {}
 
     def reset_paper_account(self, starting_capital: float = 500000.0, full_reset: bool = True) -> bool:
-        """
-        Reset paper trading account (for fresh start).
-
-        Args:
-            starting_capital: Starting balance for new account
-            full_reset: If True, also clears closed_trades, positions, equity snapshots
-                       to ensure data consistency (recommended after bugs)
-        """
+        """Archive and reset under the same lock used by execution; fail closed."""
+        from .paper_reset import reset_paper
         try:
-            with db_connection() as conn:
-                c = conn.cursor()
-
-                if full_reset:
-                    # FULL RESET: Clear all related tables to prevent data inconsistency
-                    # This is necessary after bugs where closed_trades got out of sync
-                    logger.warning("FULL RESET: Clearing all VALOR trading data...")
-
-                    # Clear closed trades (historical P&L data)
-                    c.execute("DELETE FROM valor_closed_trades")
-                    deleted_trades = c.rowcount
-
-                    # Clear open positions
-                    c.execute("DELETE FROM valor_positions")
-                    deleted_positions = c.rowcount
-
-                    # Clear equity snapshots (intraday curve data)
-                    c.execute("DELETE FROM valor_equity_snapshots")
-                    deleted_snapshots = c.rowcount
-
-                    # Clear scan activity ML training data
-                    # CRITICAL: Must clear this too to avoid showing "TRADED" with no actual positions
-                    c.execute("DELETE FROM valor_scan_activity")
-                    deleted_scans = c.rowcount
-
-                    # Reset win tracker to default Bayesian priors
-                    c.execute("""
-                        UPDATE valor_win_tracker
-                        SET alpha = 1.0, beta = 1.0, total_trades = 0,
-                            positive_gamma_wins = 0, positive_gamma_losses = 0,
-                            negative_gamma_wins = 0, negative_gamma_losses = 0,
-                            updated_at = NOW()
-                    """)
-
-                    logger.warning(f"FULL RESET completed: {deleted_trades} trades, "
-                                  f"{deleted_positions} positions, {deleted_snapshots} snapshots, "
-                                  f"{deleted_scans} scans cleared")
-
-                # Deactivate existing accounts
-                c.execute("UPDATE valor_paper_account SET is_active = FALSE")
-
-                # Create new account
-                c.execute("""
-                    INSERT INTO valor_paper_account (
-                        starting_capital, current_balance, cumulative_pnl,
-                        margin_available, high_water_mark
-                    ) VALUES (%s, %s, 0, %s, %s)
-                """, (starting_capital, starting_capital, starting_capital, starting_capital))
-
-                conn.commit()
-                logger.info(f"Paper trading account reset with ${starting_capital:,.2f}")
-                return True
-
-        except Exception as e:
-            logger.error(f"Failed to reset paper account: {e}")
+            self.last_reset_batch = reset_paper(starting_capital, full_reset)
+            return True
+        except Exception:
+            logger.exception("Archived paper reset refused or rolled back")
             return False
 
     def verify_data_integrity(self) -> Dict[str, Any]:
@@ -2646,6 +2607,7 @@ class ValorDatabase:
         ml_probability: float = None,
         bayesian_probability_at_scan: float = None,
         ticker: str = "MES",
+        research_context: Optional[Dict] = None,
     ) -> bool:
         """
         Save scan activity for ML training data collection.
@@ -2716,6 +2678,9 @@ class ValorDatabase:
                     ticker,
                 ))
 
+                if research_context is not None:
+                    c.execute("UPDATE valor_scan_activity SET research_context=%s::jsonb WHERE scan_id=%s",
+                              (json.dumps(research_context, default=str, allow_nan=False),scan_id))
                 conn.commit()
                 logger.info(f"Scan activity saved: {scan_id} - {outcome}")
                 return True
