@@ -8,10 +8,14 @@ CL remains quarantined; a reset does not override an instrument's safety gate.
 
 - Reset obtains the lifecycle advisory transaction lock, refuses live mode,
   unresolved intents and open positions without paper order identifiers.
-- Previous positions, trades, scans, signals, logs, fills, account/config/ML
-  state and daily/equity statistics are archived as individual JSONB records
-  in Postgres before active histories are cleared. An archive batch lists
-  per-table counts. Any failure rolls back the transaction.
+- Previous positions, trades, scans, signals, logs, fills and daily/equity
+  statistics are moved into a dedicated archive schema without copying their
+  storage. Empty active tables retain constraints and indexes; dependent views
+  are rebound to them. Account/config/ML state is archived as JSONB. Batch
+  metadata records the archive schema and exact counts. Any failure rolls back
+  the transaction. This avoids duplicating millions of rows on a small disk.
+  Archive schemas own shared ID sequences and must not be dropped casually.
+  Reset routes run in a thread so database work does not block the API event loop.
 - Accounts restart at $600,000, zero realized P&L, trades and margin. Other
   processes detect the new account ID and clear transient loss-streak state.
 - Exact contract symbols are pinned from signal through execution. Equity
