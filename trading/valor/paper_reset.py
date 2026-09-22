@@ -30,6 +30,14 @@ def reset_paper(starting_capital, full_reset=True):
             c.execute('SELECT to_regclass(%s)', (table,))
             if c.fetchone()[0] is not None:
                 available.append(table)
+        c.execute("SELECT DISTINCT v.oid,n.nspname,v.relname,v.relkind,pg_get_viewdef(v.oid,true) FROM pg_depend d JOIN pg_rewrite r ON r.oid=d.objid JOIN pg_class v ON v.oid=r.ev_class JOIN pg_namespace n ON n.oid=v.relnamespace WHERE d.refobjid IN (SELECT oid FROM pg_class WHERE relnamespace=current_schema()::regnamespace AND relname=ANY(%s)) AND v.relkind IN ('v','m')", (list(TABLES),))
+        views = c.fetchall()
+        if any(v[3] != 'v' for v in views):
+            raise ValueError('Reset refused: materialized view requires migration')
+        # Lock views before base tables, matching reader lock order. Otherwise
+        # a reader can hold the view while waiting on a table we already moved.
+        for _, schema, name, _, _ in views:
+            c.execute('LOCK TABLE ' + _ident(schema) + '.' + _ident(name) + ' IN ACCESS EXCLUSIVE MODE')
         c.execute('LOCK TABLE ' + ','.join(available) + ' IN SHARE ROW EXCLUSIVE MODE')
         c.execute("SELECT config_value FROM valor_config WHERE config_key='mode'")
         mode = c.fetchone()
@@ -61,10 +69,6 @@ def reset_paper(starting_capital, full_reset=True):
             c.execute("SELECT COUNT(*) FROM pg_trigger WHERE tgrelid=to_regclass(%s) AND NOT tgisinternal", (table,))
             if c.fetchone()[0]:
                 raise ValueError('Reset refused: table trigger requires migration')
-        c.execute("SELECT DISTINCT v.oid,n.nspname,v.relname,v.relkind,pg_get_viewdef(v.oid,true) FROM pg_depend d JOIN pg_rewrite r ON r.oid=d.objid JOIN pg_class v ON v.oid=r.ev_class JOIN pg_namespace n ON n.oid=v.relnamespace WHERE d.refobjid IN (SELECT oid FROM pg_class WHERE relnamespace=current_schema()::regnamespace AND relname=ANY(%s)) AND v.relkind IN ('v','m')", (list(TABLES),))
-        views = c.fetchall()
-        if any(v[3] != 'v' for v in views):
-            raise ValueError('Reset refused: materialized view requires migration')
         c.execute('CREATE SCHEMA ' + _ident(archive_schema))
         c.execute('ALTER TABLE valor_paper_reset_batches ADD COLUMN IF NOT EXISTS archive_schema TEXT')
         counts = {}
