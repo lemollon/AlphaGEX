@@ -121,8 +121,8 @@ class AgapeAvaxPerpExecutor:
         Perpetual contract exchange integration is not yet implemented.
         Falls back to paper execution with a warning.
         """
-        logger.warning("AGAPE-AVAX-PERP Executor: Live perpetual contract execution not yet implemented, falling back to paper")
-        return self._execute_paper(signal)
+        logger.error("AGAPE-AVAX-PERP Executor: LIVE execution is disabled until a real perpetual venue adapter is configured")
+        return None
 
     def get_current_price(self) -> Optional[float]:
         """Get current AVAX price from CryptoDataProvider.
