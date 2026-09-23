@@ -29,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        days: [30, 90, 180]
+        days: [30, 90, 180, 365]
     steps:
       - uses: actions/checkout@v4
 
@@ -64,7 +64,7 @@ jobs:
           python-version: "3.12"
       - name: Search per-coin strategy families
         run: |
-          python backtest/perp_strategy_family_search.py --windows "30,90,180" --out artifacts/perp_strategy_family_search
+          python backtest/perp_strategy_family_search.py --windows "30,90,180,365" --out artifacts/perp_strategy_family_search
       - name: Show family report
         run: cat artifacts/perp_strategy_family_search/report.md
       - uses: actions/upload-artifact@v4
@@ -85,7 +85,7 @@ jobs:
           python-version: "3.12"
       - name: Search selective coin-specific profiles
         run: |
-          python backtest/perp_coin_profile_search.py --windows "30,90,180" --out artifacts/perp_coin_profile_search
+          python backtest/perp_coin_profile_search.py --windows "30,90,180,365" --out artifacts/perp_coin_profile_search
       - name: Show selective profile report
         run: cat artifacts/perp_coin_profile_search/report.md
       - uses: actions/upload-artifact@v4
@@ -106,7 +106,7 @@ jobs:
           python-version: "3.12"
       - name: Refine direction and volatility regime
         run: |
-          python backtest/perp_direction_regime_search.py --windows "30,90,180" --out artifacts/perp_direction_regime
+          python backtest/perp_direction_regime_search.py --windows "30,90,180,365" --out artifacts/perp_direction_regime
       - name: Show direction/regime report
         run: cat artifacts/perp_direction_regime/report.md
       - uses: actions/upload-artifact@v4
