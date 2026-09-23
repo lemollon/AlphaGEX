@@ -1,11 +1,9 @@
 # Render Blueprint for AlphaGEX
-# Architecture: Next.js Frontend + Backend API + Workers, all on Render
-# Frontend: AlphaGEX service at https://alphagex.onrender.com; separate frontend/render.yaml blueprint
-# Backend: FastAPI + PostgreSQL + Background Workers on Render
+# Active AlphaGEX scope: VALOR + crypto perpetuals.
+# SpreadWorks remains a separate protected service below.
+# IronForge remains separate at ironforge/render.yaml and is not modified here.
 
 services:
-  # SERVICE 1: FastAPI Backend API
-  # Zero-downtime deployment enabled via gracePeriodSeconds
   - type: web
     name: alphagex-api
     runtime: python
@@ -13,16 +11,9 @@ services:
     region: oregon
     branch: main
     autoDeploy: true
-    # pip --retries/--timeout added to survive transient PyPI "RemoteDisconnected"
-    # errors that were failing builds (see 2026-06-03 deploy incident).
-    buildCommand: "pip install --upgrade pip setuptools wheel && chmod +x verify_deployment.sh && ./verify_deployment.sh && pip install --retries 10 --timeout 120 --no-cache-dir -r requirements-render.txt"
+    buildCommand: "pip install --upgrade pip setuptools wheel && pip install --retries 10 --timeout 120 --no-cache-dir -r requirements-render.txt"
     startCommand: "./start.sh"
     healthCheckPath: /health
-    # Zero-downtime deployment settings:
-    # - New instance starts and must pass /health
-    # - Load balancer switches traffic to new instance
-    # - Old instance receives SIGTERM
-    # - gracePeriodSeconds gives old instance time to drain requests
     gracePeriodSeconds: 60
     envVars:
       - key: TZ
@@ -31,15 +22,31 @@ services:
         value: production
       - key: PYTHON_VERSION
         value: "3.11.0"
-      - key: CLAUDE_API_KEY
-        sync: false
       - key: TRADING_VOLATILITY_API_KEY
         sync: false
       - key: TRADING_VOLATILITY_API_TOKEN
         sync: false
       - key: TV_USERNAME
         sync: false
-      - key: POLYGON_API_KEY
+      - key: COINGLASS_API_KEY
+        sync: false
+      - key: COINBASE_API_KEY
+        sync: false
+      - key: COINBASE_API_SECRET
+        sync: false
+      - key: COINBASE_DEDICATED_API_KEY
+        sync: false
+      - key: COINBASE_DEDICATED_API_SECRET
+        sync: false
+      - key: TASTYTRADE_USERNAME
+        sync: false
+      - key: TASTYTRADE_PASSWORD
+        sync: false
+      - key: TASTYTRADE_ACCOUNT_ID
+        sync: false
+      - key: TASTYTRADE_CLIENT_SECRET
+        sync: false
+      - key: TASTYTRADE_REFRESH_TOKEN
         sync: false
       - key: ALLOWED_ORIGINS
         value: https://alphagex-frontend.vercel.app,https://*.vercel.app,http://localhost:3000,http://localhost:5173
@@ -48,13 +55,6 @@ services:
           name: alphagex-db
           property: connectionString
 
-  # SERVICE 2: Autonomous Trader (Background Worker)
-  # Runs ALL trading bots:
-  #   - FORTRESS: Aggressive Iron Condor (every 5 min, once daily)
-  #   - SOLOMON: GEX Directional Spreads (every 5 min, up to 5/day)
-  #   - LAZARUS: 0DTE SPY/SPX options (hourly during market hours)
-  #   - CORNERSTONE: SPX Wheel strategy (daily at 9:05 AM CT)
-  # Zero-downtime: handles SIGTERM, drains active scans, cleans up DB connections
   - type: worker
     name: alphagex-trader
     runtime: python
@@ -77,43 +77,16 @@ services:
         sync: false
       - key: TRADING_VOLATILITY_API_TOKEN
         sync: false
-      # Tradier API for trade execution (REQUIRED for FORTRESS/SOLOMON)
-      - key: TRADIER_API_KEY
-        sync: false
-      - key: TRADIER_ACCOUNT_ID
-        sync: false
-      - key: TRADIER_SANDBOX_API_KEY
-        sync: false
-      - key: TRADIER_SANDBOX_ACCOUNT_ID
-        sync: false
-      # Tradier - FORTRESS additional sandbox accounts for trade mirroring
-      - key: TRADIER_FORTRESS_SANDBOX_API_KEY_2
-        sync: false
-      - key: TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_2
-        sync: false
-      - key: TRADIER_FORTRESS_SANDBOX_API_KEY_3
-        sync: false
-      - key: TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_3
-        sync: false
-      # Anthropic API for Claude AI explanations
-      - key: ANTHROPIC_API_KEY
-        sync: false
-      # Discord webhook for GOLIATH alerts (same webhook as spreadworks/flame)
-      - key: DISCORD_WEBHOOK_URL
-        sync: false
-      # Tastytrade API for VALOR futures trading (REQUIRED for MES scalping)
       - key: TASTYTRADE_USERNAME
         sync: false
       - key: TASTYTRADE_PASSWORD
         sync: false
       - key: TASTYTRADE_ACCOUNT_ID
         sync: false
-      # OAuth method (PREFERRED - works with 2FA enabled)
       - key: TASTYTRADE_CLIENT_SECRET
         sync: false
       - key: TASTYTRADE_REFRESH_TOKEN
         sync: false
-      # Coinbase API for AGAPE-SPOT crypto trading (REQUIRED for spot execution)
       - key: COINBASE_API_KEY
         sync: false
       - key: COINBASE_API_SECRET
@@ -122,40 +95,7 @@ services:
         sync: false
       - key: COINBASE_DEDICATED_API_SECRET
         sync: false
-      # CoinGlass API for crypto market microstructure (funding rates, L/S ratios, liquidations)
-      # REQUIRED for XRP, SHIB, DOGE signal quality — without this key, signals degrade to LOW confidence
       - key: COINGLASS_API_KEY
-        sync: false
-      - key: DATABASE_URL
-        fromDatabase:
-          name: alphagex-db
-          property: connectionString
-
-  # SERVICE 3: Automated Data Collector (Background Worker)
-  # Zero-downtime: handles SIGTERM, finishes current collection, cleans up DB
-  - type: worker
-    name: alphagex-collector
-    runtime: python
-    plan: starter
-    branch: main
-    autoDeploy: true
-    gracePeriodSeconds: 45
-    buildCommand: pip install --upgrade pip setuptools wheel && pip install --retries 10 --timeout 120 --no-cache-dir -r requirements.txt
-    startCommand: python data/automated_data_collector.py
-    envVars:
-      - key: TZ
-        value: America/Chicago
-      - key: PYTHON_VERSION
-        value: 3.11.0
-      - key: PYTHONPATH
-        value: /opt/render/project/src
-      - key: POLYGON_API_KEY
-        sync: false
-      - key: TRADING_VOLATILITY_API_KEY
-        sync: false
-      - key: TRADING_VOLATILITY_API_TOKEN
-        sync: false
-      - key: TV_USERNAME
         sync: false
       - key: DATABASE_URL
         fromDatabase:
@@ -184,44 +124,9 @@ services:
       - key: SPREADWORKS_DISCORD_ENABLED
         value: "false"
 
-  # SERVICE 4: Backtest Worker (Background Worker)
-  # Processes long-running backtests without HTTP timeouts
-  # Jobs are queued via API and processed asynchronously
-  # Zero-downtime: handles SIGTERM, marks running jobs for retry, cleans up DB
-  - type: worker
-    name: alphagex-backtester
-    runtime: python
-    plan: starter  # Can upgrade to standard for better performance
-    branch: main
-    autoDeploy: true
-    gracePeriodSeconds: 90
-    buildCommand: pip install --upgrade pip setuptools wheel && pip install --retries 10 --timeout 120 --no-cache-dir -r requirements.txt
-    startCommand: python backend/services/backtest_worker.py
-    envVars:
-      - key: TZ
-        value: America/Chicago
-      - key: PYTHON_VERSION
-        value: 3.11.0
-      - key: PYTHONPATH
-        value: /opt/render/project/src
-      - key: POLYGON_API_KEY
-        sync: false
-      - key: TRADING_VOLATILITY_API_KEY
-        sync: false
-      - key: TRADING_VOLATILITY_API_TOKEN
-        sync: false
-      - key: TV_USERNAME
-        sync: false
-      - key: DATABASE_URL
-        fromDatabase:
-          name: alphagex-db
-          property: connectionString
-
-# PostgreSQL Database (shared by both services)
-# NOTE: IronForge (FLAME/SPARK) has its own render.yaml at ironforge/render.yaml
 databases:
   - name: alphagex-db
     databaseName: alphagex
     user: alphagex
-    plan: starter  # Free tier available
+    plan: starter
     region: oregon
