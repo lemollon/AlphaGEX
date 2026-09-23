@@ -13,6 +13,9 @@ CASES = [
     ("trading.agape_shib_perp.models", "AgapeShibPerpConfig", "trading.agape_shib_perp.signals", "AgapeShibPerpSignalGenerator"),
 ]
 
+# BTC/ETH trade RANGE_BOUND (operator decision 2026-09-23); alts stay off.
+RANGE_BOUND_ON = {"AgapeBtcPerpConfig", "AgapeEthPerpConfig"}
+
 
 @pytest.mark.parametrize("model_mod,config_name,signal_mod,generator_name", CASES)
 def test_hardened_defaults(model_mod, config_name, signal_mod, generator_name):
@@ -21,7 +24,7 @@ def test_hardened_defaults(model_mod, config_name, signal_mod, generator_name):
     assert cfg.risk_per_trade_pct == 1.0
     assert cfg.min_confidence == "MEDIUM"
     assert cfg.use_sar is False
-    assert cfg.allow_range_bound_entries is False
+    assert cfg.allow_range_bound_entries is (config_name in RANGE_BOUND_ON)
     assert cfg.allow_wait_fallback_entries is False
 
 
@@ -47,4 +50,7 @@ def test_wait_and_range_do_not_manufacture_entries(model_mod, config_name, signa
     range_action = gen._determine_action("RANGE_BOUND", "HIGH", md)
 
     assert wait_action[0].value == "WAIT"
-    assert range_action[0].value == "WAIT"
+    if config_name in RANGE_BOUND_ON:
+        assert range_action[0].value in ("LONG", "SHORT", "WAIT")
+    else:
+        assert range_action[0].value == "WAIT"

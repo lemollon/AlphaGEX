@@ -116,7 +116,7 @@ class AgapeEthPerpConfig:
 
     # Signal thresholds - AGGRESSIVE
     min_confidence: str = "MEDIUM"
-    allow_range_bound_entries: bool = False
+    allow_range_bound_entries: bool = True  # 2026-09-23: operator enabled range-bound entries
     allow_wait_fallback_entries: bool = False
     # CoinGlass-outage relief valve: when funding/L-S/OI/taker data is dead
     # (funding_regime == "UNKNOWN"), the combined signal can still carry a
