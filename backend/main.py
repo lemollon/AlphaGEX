@@ -9,9 +9,6 @@ or imported by this application.
 """
 
 import os
-import subprocess
-import sys
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,33 +25,6 @@ from backend.api.routes import (
     agape_perpetuals_trades_routes,
     perp_exit_optimizer_routes,
 )
-
-
-def _maybe_reset_perp_paper_accounts():
-    """One-shot reset for the six active perpetual PAPER accounts only."""
-    if os.getenv("PERP_RESET_ON_START", "") != "CONFIRM_PERP_PAPER_RESET":
-        return
-
-    repo_root = Path(__file__).resolve().parent.parent
-    script = repo_root / "scripts" / "reset_perpetual_bots.py"
-
-    print("PERP_RESET_ON_START confirmed: resetting active perpetual PAPER accounts")
-    for args in (["--reset", "--confirm"], ["--verify"]):
-        proc = subprocess.run(
-            [sys.executable, str(script), *args],
-            cwd=str(repo_root),
-            text=True,
-            capture_output=True,
-            check=True,
-        )
-        if proc.stdout:
-            print(proc.stdout)
-        if proc.stderr:
-            print(proc.stderr)
-    print("PERP paper reset completed and verified")
-
-
-_maybe_reset_perp_paper_accounts()
 
 
 app = FastAPI(
