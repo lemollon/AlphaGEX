@@ -147,17 +147,12 @@ class RunRequest(BaseModel):
 # the prefix to produce the attr name, so the keys we write here must
 # match the dataclass attribute names exactly.
 _BOT_KEY_PREFIX = {
-    "XRP":  "agape_xrp_perp_",
-    "BTC":  "agape_btc_perp_",
-    "ETH":  "agape_eth_perp_",
-    "SOL":  "agape_sol_perp_",
+    "XRP": "agape_xrp_perp_",
+    "BTC": "agape_btc_perp_",
+    "ETH": "agape_eth_perp_",
+    "SOL": "agape_sol_perp_",
     "AVAX": "agape_avax_perp_",
     "DOGE": "agape_doge_perp_",
-    "SHIB": "agape_shib_perp_",
-    "SHIB_FUTURES": "agape_shib_futures_",
-    "LINK_FUTURES": "agape_link_futures_",
-    "LTC_FUTURES": "agape_ltc_futures_",
-    "BCH_FUTURES": "agape_bch_futures_",
 }
 
 # Whitelist of exit-rule knobs the apply endpoint is allowed to change.
@@ -186,8 +181,7 @@ _ALLOWED_KEYS = {
 
 
 class ApplyRequest(BaseModel):
-    bot: str                          # one of XRP / BTC / ETH / SOL / AVAX / DOGE / SHIB
-                                      # / SHIB_FUTURES / LINK_FUTURES / LTC_FUTURES / BCH_FUTURES
+    bot: str                          # one of XRP / BTC / ETH / SOL / AVAX / DOGE
     config: dict[str, Any]            # subset of _ALLOWED_KEYS -> value
     note: Optional[str] = None
 
@@ -268,22 +262,12 @@ async def apply_config(req: ApplyRequest):
 # Bot label -> scan_activity table prefix. Matches _BOT_KEY_PREFIX shape but
 # the tickers are written without the trailing _ for human readability.
 _HISTOGRAM_TABLES = {
-    "BTC":          "agape_btc_perp",
-    "ETH":          "agape_eth_perp",
-    "SOL":          "agape_sol_perp",
-    "AVAX":         "agape_avax_perp",
-    "XRP":          "agape_xrp_perp",
-    "DOGE":         "agape_doge_perp",
-    "SHIB_PERP":    "agape_shib_perp",
-    "SHIB_FUTURES": "agape_shib_futures",
-    "LINK_FUTURES": "agape_link_futures",
-    "LTC_FUTURES":  "agape_ltc_futures",
-    "BCH_FUTURES":  "agape_bch_futures",
-    # Bare SHIB/LINK/LTC/BCH default to the active futures bot
-    "SHIB":         "agape_shib_futures",
-    "LINK":         "agape_link_futures",
-    "LTC":          "agape_ltc_futures",
-    "BCH":          "agape_bch_futures",
+    "BTC": "agape_btc_perp",
+    "ETH": "agape_eth_perp",
+    "SOL": "agape_sol_perp",
+    "AVAX": "agape_avax_perp",
+    "XRP": "agape_xrp_perp",
+    "DOGE": "agape_doge_perp",
 }
 
 
