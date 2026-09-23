@@ -143,6 +143,7 @@ def _run(start:date,end:date):
         conn.close()
         with _lock:_running=False
 
+@router.get("/start")
 @router.post("/start")
 def start(start:str=Query("2025-01-01"),end:str=Query("2025-12-31")):
     global _running
