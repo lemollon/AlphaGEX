@@ -111,34 +111,56 @@ function Pills<T extends string>({ items, value, onChange }: { items: { id: T; l
 
 type Bar = { o: number; h: number; l: number; c: number }
 
-// 1-minute bars built from VALOR's own scan prices (one scan per minute per ticker).
+const BUCKET_MS = 5 * 60 * 1000 // 5-minute bars
+
+// 5-minute OHLC bars built from VALOR's own scan prices (scans fire every few seconds).
 function barsFromScans(scans: any[], ticker: string, max = 48): Bar[] {
   const pts = scans
     .filter(s => (s.ticker || 'MES') === ticker && s.underlying_price)
     .sort((a, b) => new Date(a.scan_time).getTime() - new Date(b.scan_time).getTime())
-    .map(s => Number(s.underlying_price))
-  const bars: Bar[] = []
-  for (let i = 1; i < pts.length; i++) {
-    const o = pts[i - 1], c = pts[i]
-    bars.push({ o, c, h: Math.max(o, c), l: Math.min(o, c) })
+    .map(s => ({ t: new Date(s.scan_time).getTime(), p: Number(s.underlying_price) }))
+
+  const buckets = new Map<number, { o: number; h: number; l: number; c: number }>()
+  for (const { t, p } of pts) {
+    const key = Math.floor(t / BUCKET_MS)
+    const b = buckets.get(key)
+    if (!b) {
+      buckets.set(key, { o: p, h: p, l: p, c: p })
+    } else {
+      b.h = Math.max(b.h, p)
+      b.l = Math.min(b.l, p)
+      b.c = p
+    }
   }
+
+  const bars = Array.from(buckets.keys())
+    .sort((a, b) => a - b)
+    .map(key => buckets.get(key)!)
+
   return bars.slice(-max)
 }
 
 function CandleChart({ bars, levels, price, d }: { bars: Bar[]; levels: { cw?: number; pw?: number; flip?: number }; price?: number; d: number }) {
   if (bars.length < 2) {
-    return <div className="h-[300px] flex items-center justify-center text-sm text-gray-500">Waiting for scan prices to build 1m bars…</div>
+    return <div className="h-[300px] flex items-center justify-center text-sm text-gray-500">Waiting for scan prices to build 5m bars…</div>
   }
   const W = 700, H = 360, R0 = 66
-  const lvl = [levels.cw, levels.pw, levels.flip].filter((v): v is number => !!v)
-  let lo = Math.min(...bars.map(b => b.l), ...lvl), hi = Math.max(...bars.map(b => b.h), ...lvl)
+  const barLo = Math.min(...bars.map(b => b.l))
+  const barHi = Math.max(...bars.map(b => b.h))
+  const barRange = barHi - barLo || 1
+  const nearRange = (v: number) => v >= barLo - barRange * 2 && v <= barHi + barRange * 2
+  const cwLevel = levels.cw != null && nearRange(levels.cw) ? levels.cw : undefined
+  const pwLevel = levels.pw != null && nearRange(levels.pw) ? levels.pw : undefined
+  const flipLevel = levels.flip != null && nearRange(levels.flip) ? levels.flip : undefined
+  const lvl = [cwLevel, pwLevel, flipLevel].filter((v): v is number => !!v)
+  let lo = Math.min(barLo, ...lvl), hi = Math.max(barHi, ...lvl)
   const pad = (hi - lo) * 0.07 || 1; lo -= pad; hi += pad
   const y = (v: number) => ((hi - v) / (hi - lo)) * H
   const cw = (W - R0) / bars.length
   const lines: [string, number | undefined, string, string | undefined][] = [
-    ['CALL WALL', levels.cw, '#3b82f6', undefined],
-    ['GAMMA FLIP', levels.flip, '#f59e0b', '6 4'],
-    ['PUT WALL', levels.pw, '#8b5cf6', undefined],
+    ['CALL WALL', cwLevel, '#3b82f6', undefined],
+    ['GAMMA FLIP', flipLevel, '#f59e0b', '6 4'],
+    ['PUT WALL', pwLevel, '#8b5cf6', undefined],
   ]
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto block">
@@ -405,7 +427,7 @@ export default function ValorPage() {
                   <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-4 border-b border-[#1c2233]">
                     <div className="flex items-baseline gap-3.5">
                       <span className="flex items-center gap-2 text-base font-semibold"><Dot color={meta(sel).color} size={9} />{sel}</span>
-                      <span className="text-[13px] text-gray-400">{meta(sel).label} · 1m</span>
+                      <span className="text-[13px] text-gray-400">{meta(sel).label} · 5m</span>
                       <span className="font-mono text-[22px] font-semibold">{selPrice ? Number(selPrice).toFixed(meta(sel).d) : '—'}</span>
                     </div>
                     <div className="flex flex-wrap gap-3.5 text-xs font-semibold tracking-wide">
@@ -425,7 +447,7 @@ export default function ValorPage() {
                         <div key={l as string} className="flex justify-between"><span style={{ color: c as string }}>{l}</span><span className="font-mono">{v ? Number(v).toFixed(meta(sel).d) : '—'}</span></div>
                       ))}
                       <div className="flex justify-between border-t border-[#1c2233] pt-3"><span className="text-gray-400">Net GEX</span><span className="font-mono" style={{ color: pnlColor(selScan.net_gex || 0) }}>{selScan.net_gex != null ? Number(selScan.net_gex).toExponential(2) : '—'}</span></div>
-                      <div className="text-[11px] text-gray-500 leading-snug">{selScan.decision_summary || selScan.skip_reason || ''}</div>
+                      <div className="text-[11px] text-gray-500 leading-snug">Last scan: {selScan.decision_summary || selScan.skip_reason || ''}</div>
                     </div>
                   </div>
                 </Card>
