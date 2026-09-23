@@ -1,7 +1,7 @@
 'use client'
 
-// Crypto Perps — one consolidated hub for all ten AGAPE derivative bots.
-// Route: /perpetuals-crypto?coin=btc|eth|xrp|sol|doge|avax|link|ltc|bch|shib&tab=overview|market|activity|history|config
+// Crypto Perps — one consolidated hub for the six AGAPE perpetual bots.
+// Route: /perpetuals-crypto?coin=btc|eth|xrp|sol|doge|avax&tab=overview|market|activity|history|config
 // Replaces the old "ALL coins dashboard" (PerpetualsCryptoContent) and the
 // six-bot /agape-perps hub (AgapePerpsContent) with a single overview +
 // coin-detail view, per the Crypto Perps design handoff.
@@ -19,10 +19,6 @@ import {
   useAGAPESolPerpStatus, useAGAPESolPerpPerformance, useAGAPESolPerpPositions, useAGAPESolPerpScanActivity, useAGAPESolPerpSnapshot, useAGAPESolPerpGexMapping,
   useAGAPEDogePerpStatus, useAGAPEDogePerpPerformance, useAGAPEDogePerpPositions, useAGAPEDogePerpScanActivity, useAGAPEDogePerpSnapshot, useAGAPEDogePerpGexMapping,
   useAGAPEAvaxPerpStatus, useAGAPEAvaxPerpPerformance, useAGAPEAvaxPerpPositions, useAGAPEAvaxPerpScanActivity, useAGAPEAvaxPerpSnapshot, useAGAPEAvaxPerpGexMapping,
-  useAGAPELinkFuturesStatus, useAGAPELinkFuturesPerformance, useAGAPELinkFuturesPositions, useAGAPELinkFuturesScanActivity, useAGAPELinkFuturesSnapshot, useAGAPELinkFuturesGexMapping,
-  useAGAPELtcFuturesStatus, useAGAPELtcFuturesPerformance, useAGAPELtcFuturesPositions, useAGAPELtcFuturesScanActivity, useAGAPELtcFuturesSnapshot, useAGAPELtcFuturesGexMapping,
-  useAGAPEBchFuturesStatus, useAGAPEBchFuturesPerformance, useAGAPEBchFuturesPositions, useAGAPEBchFuturesScanActivity, useAGAPEBchFuturesSnapshot, useAGAPEBchFuturesGexMapping,
-  useAGAPEShibFuturesStatus, useAGAPEShibFuturesPerformance, useAGAPEShibFuturesPositions, useAGAPEShibFuturesScanActivity, useAGAPEShibFuturesSnapshot, useAGAPEShibFuturesGexMapping,
 } from '@/lib/hooks/useMarketData'
 
 const G = '#10b981'
@@ -30,11 +26,10 @@ const R = '#ef4444'
 const REFRESH_MS = 15000
 const MONO = "font-[Geist_Mono,monospace]"
 
-type Coin = 'btc' | 'eth' | 'xrp' | 'sol' | 'doge' | 'avax' | 'link' | 'ltc' | 'bch' | 'shib'
+type Coin = 'btc' | 'eth' | 'xrp' | 'sol' | 'doge' | 'avax'
 
 const PERP_COINS: Coin[] = ['btc', 'eth', 'xrp', 'sol', 'doge', 'avax']
-const FUT_COINS: Coin[] = ['link', 'ltc', 'bch', 'shib']
-const COINS: Coin[] = [...PERP_COINS, ...FUT_COINS]
+const COINS: Coin[] = [...PERP_COINS]
 
 const META: Record<Coin, { sym: string; name: string; color: string; d: number; type: 'PERP' | 'FUT'; instrument: string; cap: number }> = {
   btc:  { sym: 'BTC',  name: 'Bitcoin',      color: '#F7931A', d: 2, type: 'PERP', instrument: 'BTC-PERP',     cap: 25000 },
@@ -43,16 +38,11 @@ const META: Record<Coin, { sym: string; name: string; color: string; d: number; 
   sol:  { sym: 'SOL',  name: 'Solana',       color: '#9945FF', d: 2, type: 'PERP', instrument: 'SOL-PERP',     cap: 5000 },
   doge: { sym: 'DOGE', name: 'Dogecoin',     color: '#C2A633', d: 5, type: 'PERP', instrument: 'DOGE-PERP',    cap: 2500 },
   avax: { sym: 'AVAX', name: 'Avalanche',    color: '#E84142', d: 3, type: 'PERP', instrument: 'AVAX-PERP',    cap: 2500 },
-  link: { sym: 'LINK', name: 'Chainlink',    color: '#2A5ADA', d: 3, type: 'FUT',  instrument: 'LINK-FUT',     cap: 2500 },
-  ltc:  { sym: 'LTC',  name: 'Litecoin',     color: '#A6A9AA', d: 2, type: 'FUT',  instrument: 'LTC-FUT',      cap: 2500 },
-  bch:  { sym: 'BCH',  name: 'Bitcoin Cash', color: '#8DC351', d: 2, type: 'FUT',  instrument: 'BCH-FUT',      cap: 2500 },
-  shib: { sym: 'SHIB', name: 'Shiba Inu',    color: '#FFA409', d: 5, type: 'FUT',  instrument: '1000SHIB-FUT', cap: 1000 },
 }
 
 // bot_id slug used by /api/agape-perpetuals/trades
 const BOT_ID: Record<Coin, string> = {
   btc: 'btc', eth: 'eth', xrp: 'xrp', sol: 'sol', doge: 'doge', avax: 'avax',
-  link: 'link_futures', ltc: 'ltc_futures', bch: 'bch_futures', shib: 'shib_futures',
 }
 const COIN_OF_BOT_ID: Record<string, Coin> = Object.fromEntries(COINS.map(c => [BOT_ID[c], c])) as Record<string, Coin>
 
@@ -104,10 +94,6 @@ function useBot(coin: Coin, opts: { snapshot: boolean; mapping: boolean }): BotD
     sol:  [useAGAPESolPerpStatus, useAGAPESolPerpPerformance, useAGAPESolPerpPositions, useAGAPESolPerpScanActivity, useAGAPESolPerpSnapshot, useAGAPESolPerpGexMapping],
     doge: [useAGAPEDogePerpStatus, useAGAPEDogePerpPerformance, useAGAPEDogePerpPositions, useAGAPEDogePerpScanActivity, useAGAPEDogePerpSnapshot, useAGAPEDogePerpGexMapping],
     avax: [useAGAPEAvaxPerpStatus, useAGAPEAvaxPerpPerformance, useAGAPEAvaxPerpPositions, useAGAPEAvaxPerpScanActivity, useAGAPEAvaxPerpSnapshot, useAGAPEAvaxPerpGexMapping],
-    link: [useAGAPELinkFuturesStatus, useAGAPELinkFuturesPerformance, useAGAPELinkFuturesPositions, useAGAPELinkFuturesScanActivity, useAGAPELinkFuturesSnapshot, useAGAPELinkFuturesGexMapping],
-    ltc:  [useAGAPELtcFuturesStatus, useAGAPELtcFuturesPerformance, useAGAPELtcFuturesPositions, useAGAPELtcFuturesScanActivity, useAGAPELtcFuturesSnapshot, useAGAPELtcFuturesGexMapping],
-    bch:  [useAGAPEBchFuturesStatus, useAGAPEBchFuturesPerformance, useAGAPEBchFuturesPositions, useAGAPEBchFuturesScanActivity, useAGAPEBchFuturesSnapshot, useAGAPEBchFuturesGexMapping],
-    shib: [useAGAPEShibFuturesStatus, useAGAPEShibFuturesPerformance, useAGAPEShibFuturesPositions, useAGAPEShibFuturesScanActivity, useAGAPEShibFuturesSnapshot, useAGAPEShibFuturesGexMapping],
   }[coin] as any[]
   const [useStatus, usePerf, usePositions, useScans, useSnapshot, useMapping] = H
   const status = useStatus({ refreshInterval: REFRESH_MS })
@@ -303,7 +289,6 @@ export default function PerpetualsCryptoContent() {
   const bots: Record<Coin, BotData> = {
     btc: useBot('btc', o('btc')), eth: useBot('eth', o('eth')), xrp: useBot('xrp', o('xrp')),
     sol: useBot('sol', o('sol')), doge: useBot('doge', o('doge')), avax: useBot('avax', o('avax')),
-    link: useBot('link', o('link')), ltc: useBot('ltc', o('ltc')), bch: useBot('bch', o('bch')), shib: useBot('shib', o('shib')),
   }
   const list = COINS.map(c => bots[c])
   const cur = bots[curCoin]
@@ -499,8 +484,6 @@ export default function PerpetualsCryptoContent() {
             <button onClick={goOverview} className={`flex-none rounded-lg px-3.5 py-2 text-[13px] font-semibold transition-colors ${!isCoinView ? 'bg-[#1a1f2e] text-[#f3f4f6]' : 'text-[#9ca3af] hover:text-[#f3f4f6]'}`}>All bots</button>
             <span className="flex-none w-px bg-[#1c2233] my-1.5 mx-1" />
             {PERP_COINS.map(c => <CoinChip key={c} coin={c} active={view === c} price={S[c].price} chg={S[c].chg} onClick={() => goCoin(c)} />)}
-            <span className="flex-none flex items-center gap-2 mx-1 text-[10px] tracking-[0.12em] text-[#6b7280] font-semibold"><span className="w-px h-[60%] bg-[#1c2233]" />FUTURES</span>
-            {FUT_COINS.map(c => <CoinChip key={c} coin={c} active={view === c} price={S[c].price} chg={S[c].chg} onClick={() => goCoin(c)} />)}
           </div>
 
           {/* ================= OVERVIEW ================= */}
@@ -572,23 +555,6 @@ export default function PerpetualsCryptoContent() {
                   </div>
                   <div className="px-5 py-2 bg-[#0c1019] border-t border-[#1c2233] text-[11px] font-semibold tracking-[0.12em] text-[#9ca3af]">PERPETUALS</div>
                   {PERP_COINS.map(c => {
-                    const row = botRow(c)
-                    return (
-                      <div key={c} onClick={() => goCoin(c)} className="grid gap-3.5 items-center px-5 py-3 border-t border-[#1c2233] text-sm cursor-pointer hover:bg-[#1a1f2e]" style={{ gridTemplateColumns: BOT_ROW_COLS }}>
-                        <span className="flex items-center gap-2.5"><Dot color={row.dot} /><span className="font-semibold">{row.sym}</span><span className="text-[13px] text-[#6b7280]">{row.name}</span></span>
-                        <span className={`${MONO} text-right`}>{row.price}</span>
-                        <span className={`${MONO} text-right text-[#9ca3af]`}>{row.cap}</span>
-                        <span className={`${MONO} text-right font-semibold`} style={{ color: row.pnlColor }}>{row.pnl}</span>
-                        <span className={`${MONO} text-right`} style={{ color: row.pnlColor }}>{row.ret}</span>
-                        <span className={`${MONO} text-right`}>{row.wr}</span>
-                        <span className={`${MONO} text-right text-[#9ca3af]`}>{row.trades}</span>
-                        <span className={`${MONO} text-right text-[#9ca3af]`}>{row.open}</span>
-                        <span className="text-right text-[11px] font-semibold tracking-[0.06em]" style={{ color: row.statusColor }}>{row.status}</span>
-                      </div>
-                    )
-                  })}
-                  <div className="px-5 py-2 bg-[#0c1019] border-t border-[#1c2233] text-[11px] font-semibold tracking-[0.12em] text-[#9ca3af]">MONTHLY FUTURES</div>
-                  {FUT_COINS.map(c => {
                     const row = botRow(c)
                     return (
                       <div key={c} onClick={() => goCoin(c)} className="grid gap-3.5 items-center px-5 py-3 border-t border-[#1c2233] text-sm cursor-pointer hover:bg-[#1a1f2e]" style={{ gridTemplateColumns: BOT_ROW_COLS }}>
