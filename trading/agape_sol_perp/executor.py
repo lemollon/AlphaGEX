@@ -68,7 +68,7 @@ class AgapeSolPerpExecutor:
             bot_name="AGAPE_SOL_PERP",
             symbol="SOL-PERP",
             side=signal.side or "long",
-            quantity=signal.quantity,
+            quantity=signal.quantity * fill.fill_fraction,
             entry_price=signal.entry_price or signal.spot_price,
             strict=is_live,
         )
@@ -84,10 +84,10 @@ class AgapeSolPerpExecutor:
         """Execute a paper trade with simulated slippage."""
         try:
             from trading.shared.margin_config import PERPETUAL_MARGIN_SPECS
-            from trading.shared.perp_realism import simulate_reference_fill
+            from trading.shared.perp_realism import simulate_selective_reference_fill
 
             spec = PERPETUAL_MARGIN_SPECS.get(self.config.instrument, {})
-            fill, reference_market, venue_rules = simulate_reference_fill(
+            fill, reference_market, venue_rules = simulate_selective_reference_fill(
                 self.config.instrument,
                 signal.side,
                 signal.quantity,
@@ -100,12 +100,16 @@ class AgapeSolPerpExecutor:
                 funding_interval_hours=float(
                     spec.get("funding_interval_hours", 8) or 8
                 ),
+                prefer_maker=getattr(signal, "confidence", "") in ("HIGH", "VERY_HIGH"),
+                seed_key=f"{self.config.instrument}|{getattr(signal, 'side', '')}|{getattr(signal, 'entry_price', 0)}|{getattr(signal, 'spot_price', 0)}|{getattr(signal, 'confidence', '')}",
             )
             fill_price = fill.fill_price
             logger.info(
-                "%s paper fill source=%s ref=%.8f fill=%.8f slippage=%.2fbps fee=$%.4f",
+                "%s paper fill source=%s style=%s fill_frac=%.2f ref=%.8f fill=%.8f slippage=%.2fbps fee=$%.4f",
                 self.config.instrument,
                 reference_market.quote.source if reference_market else "fallback",
+                fill.execution_style,
+                fill.fill_fraction,
                 fill.reference_price,
                 fill.fill_price,
                 fill.slippage_bps,
