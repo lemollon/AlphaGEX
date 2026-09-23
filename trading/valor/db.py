@@ -1528,38 +1528,69 @@ class ValorDatabase:
                           AND ticker = %s
                         ORDER BY snapshot_time ASC
                     """, (ticker,))
+                    rows = c.fetchall()
+                    columns = [desc[0] for desc in c.description]
+                    for row in rows:
+                        point = dict(zip(columns, row))
+                        if point.get('snapshot_time') and hasattr(point['snapshot_time'], 'isoformat'):
+                            point['snapshot_time'] = point['snapshot_time'].isoformat()
+                        for key in ['account_balance', 'unrealized_pnl', 'realized_pnl_today', 'equity']:
+                            if point.get(key) is not None:
+                                point[key] = float(point[key])
+                        data.append(point)
                 else:
-                    # ALL view: aggregate per-ticker snapshots by minute bucket
-                    # Each ticker saves its own snapshot per scan cycle; sum them
-                    # to get combined portfolio equity per time period.
+                    # ALL view. Each ticker writes its own snapshot on its own
+                    # schedule, so summing whatever rows land in a minute mixes
+                    # 1 ticker (~$100k) with 6+ (~$600k-$3M) and the curve
+                    # spikes. Instead carry each ticker's LATEST snapshot
+                    # forward and emit one combined point per minute = sum of
+                    # every ticker's most recent state at that time.
                     c.execute("""
-                        SELECT
-                            date_trunc('minute', snapshot_time) as snapshot_time,
-                            SUM(account_balance) as account_balance,
-                            SUM(COALESCE(unrealized_pnl, 0)) as unrealized_pnl,
-                            SUM(COALESCE(realized_pnl_today, 0)) as realized_pnl_today,
-                            SUM(COALESCE(open_positions, 0)) as open_positions,
-                            SUM(COALESCE(trades_today, 0)) as trades_today,
-                            SUM(account_balance + COALESCE(unrealized_pnl, 0)) as equity
+                        SELECT snapshot_time, COALESCE(ticker, 'MES') AS ticker,
+                               account_balance, COALESCE(unrealized_pnl, 0) AS unrealized_pnl,
+                               COALESCE(realized_pnl_today, 0) AS realized_pnl_today,
+                               COALESCE(open_positions, 0) AS open_positions,
+                               COALESCE(trades_today, 0) AS trades_today
                         FROM valor_equity_snapshots
                         WHERE DATE(snapshot_time AT TIME ZONE 'America/Chicago') =
                               DATE(NOW() AT TIME ZONE 'America/Chicago')
-                        GROUP BY date_trunc('minute', snapshot_time)
                         ORDER BY snapshot_time ASC
                     """)
-
-                rows = c.fetchall()
-                columns = [desc[0] for desc in c.description]
-
-                for row in rows:
-                    point = dict(zip(columns, row))
-                    if point.get('snapshot_time') and hasattr(point['snapshot_time'], 'isoformat'):
-                        point['snapshot_time'] = point['snapshot_time'].isoformat()
-                    # Convert Decimal to float for JSON serialization
-                    for key in ['account_balance', 'unrealized_pnl', 'realized_pnl_today', 'equity']:
-                        if point.get(key) is not None:
-                            point[key] = float(point[key])
-                    data.append(point)
+                    latest: Dict[str, Dict[str, float]] = {}
+                    current_minute = None
+                    rows = c.fetchall()
+                    # Don't emit until every ticker reporting today has a value,
+                    # otherwise the first minutes ramp up one ticker at a time.
+                    expected = len({r[1] for r in rows})
+                    def emit(minute):
+                        if not latest or len(latest) < expected:
+                            return
+                        bal = sum(v['account_balance'] for v in latest.values())
+                        upl = sum(v['unrealized_pnl'] for v in latest.values())
+                        data.append({
+                            'snapshot_time': minute.isoformat() if hasattr(minute, 'isoformat') else minute,
+                            'account_balance': bal,
+                            'unrealized_pnl': upl,
+                            'realized_pnl_today': sum(v['realized_pnl_today'] for v in latest.values()),
+                            'open_positions': int(sum(v['open_positions'] for v in latest.values())),
+                            'trades_today': int(sum(v['trades_today'] for v in latest.values())),
+                            'equity': bal + upl,
+                            'tickers_reporting': len(latest),
+                        })
+                    for snap_time, tk, bal, upl, rpt, openp, trades in rows:
+                        minute = snap_time.replace(second=0, microsecond=0) if hasattr(snap_time, 'replace') else snap_time
+                        if current_minute is not None and minute != current_minute:
+                            emit(current_minute)
+                        current_minute = minute
+                        latest[tk] = {
+                            'account_balance': float(bal or 0),
+                            'unrealized_pnl': float(upl or 0),
+                            'realized_pnl_today': float(rpt or 0),
+                            'open_positions': float(openp or 0),
+                            'trades_today': float(trades or 0),
+                        }
+                    if current_minute is not None:
+                        emit(current_minute)
 
         except Exception as e:
             logger.error(f"Failed to get intraday equity: {e}")
