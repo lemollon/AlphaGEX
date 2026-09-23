@@ -15,6 +15,7 @@ import os
 import logging
 import requests
 import asyncio
+import threading
 from datetime import datetime, timedelta
 from .reconciliation import summarize_order
 from typing import Optional, Dict, Any, Tuple, List
@@ -167,7 +168,7 @@ class TastytradeExecutor:
             futures = await asyncio.wait_for(Future.get(session,product_codes=[code]),10)
             return self._choose_active_contract(futures,code,now)
         try:
-            symbol = asyncio.run(resolve())
+            symbol = self._run_async_sync(resolve)
             if symbol:
                 cache[ticker] = (symbol,now)
                 self._entry_contract_cache = cache
@@ -227,6 +228,31 @@ class TastytradeExecutor:
 
         return None
 
+    def _run_async_sync(self, coro_factory):
+        """Run a coroutine from sync code even when the caller already owns an event loop."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro_factory())
+
+        result = {}
+        error = {}
+
+        def runner():
+            try:
+                result["value"] = asyncio.run(coro_factory())
+            except Exception as exc:
+                error["exc"] = exc
+
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+        thread.join(timeout=15)
+        if thread.is_alive():
+            raise TimeoutError("Timed out waiting for async Tastytrade operation")
+        if "exc" in error:
+            raise error["exc"]
+        return result.get("value")
+
     def _get_tastytrade_streaming_quote(self, dxfeed_symbol: str) -> Optional[Dict[str, Any]]:
         """
         Get real-time futures quote via Tastytrade DXLinkStreamer.
@@ -243,8 +269,11 @@ class TastytradeExecutor:
             streamer_symbol = dxfeed_symbol if dxfeed_symbol.startswith('/') else f'/{dxfeed_symbol}'
             logger.debug(f"DXLinkStreamer quote for: {streamer_symbol}")
 
-            # Run async function synchronously
-            return asyncio.run(self._async_get_streaming_quote(streamer_symbol))
+            # Run async quote retrieval safely from both scheduler threads and
+            # FastAPI request handlers that already have an event loop.
+            return self._run_async_sync(
+                lambda: self._async_get_streaming_quote(streamer_symbol)
+            )
 
         except Exception as e:
             logger.warning(f"Tastytrade streaming quote error for {dxfeed_symbol}: {e}")
@@ -545,6 +574,21 @@ class TastytradeExecutor:
         if not quote:
             return False, "No executable futures quote", None
         side = "ask" if signal.direction == TradeDirection.LONG else "bid"
+        requested_contracts = int(signal.contracts)
+        available_contracts = int(float(quote.get(side + "_size", 0) or 0))
+        if available_contracts < 1:
+            return False, "No executable top-of-book liquidity", None
+
+        # Realistic paper partial fill: never invent liquidity. If top-of-book
+        # size is smaller than the requested order, fill only the observable
+        # quantity and persist that smaller position size.
+        if available_contracts < requested_contracts:
+            logger.info(
+                "[PAPER] %s partial fill: requested=%s available=%s",
+                signal.ticker, requested_contracts, available_contracts,
+            )
+            signal.contracts = available_contracts
+
         fill_price = self._paper_fill(quote, side, signal.contracts, signal.ticker)
         if fill_price is None:
             return False, "No sufficiently sized, fresh contract quote", None
