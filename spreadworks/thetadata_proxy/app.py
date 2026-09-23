@@ -189,3 +189,41 @@ def option_history_quote(
     else:
         raise HTTPException(status_code=422, detail="date or start_date/end_date required")
     return _csv_response(_call("option_history_quote", **kwargs))
+
+
+@app.get("/v3/stock/history/ohlc")
+def stock_history_ohlc(
+    symbol: str = Query(...),
+    date_value: str | None = Query(None, alias="date"),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    interval: str = Query("1m", pattern="^(1m|5m|10m|15m|30m|1h)$"),
+    start_time: str = "09:30:00",
+    end_time: str = "16:00:00",
+    venue: str = Query("utp_cta", pattern="^(nqb|utp_cta)$"),
+) -> PlainTextResponse:
+    """Bounded, read-only stock intraday history; timestamps mark bar starts."""
+    from datetime import time as clock_time
+
+    try:
+        start_clock = clock_time.fromisoformat(start_time)
+        end_clock = clock_time.fromisoformat(end_time)
+        if start_clock.tzinfo or end_clock.tzinfo or end_clock < start_clock:
+            raise ValueError("invalid clock range")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="invalid time range") from exc
+    kwargs: dict[str, Any] = {
+        "symbol": _symbol(symbol), "interval": interval,
+        "start_time": start_time, "end_time": end_time, "venue": venue,
+    }
+    if date_value:
+        kwargs["date"] = _date(date_value, "date")
+    elif start_date and end_date:
+        start, end = _date_range(start_date, end_date, max_days=30)
+        kwargs.update(start_date=start, end_date=end)
+    else:
+        raise HTTPException(status_code=422, detail="date or start_date/end_date required")
+    response = _csv_response(_call("stock_history_ohlc", **kwargs))
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Bar-Timestamp"] = "interval-start"
+    return response
