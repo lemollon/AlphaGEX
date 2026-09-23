@@ -1,47 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import {
-  Activity,
-  TrendingUp,
-  TrendingDown,
-  DollarSign,
-  Clock,
-  Zap,
-  PieChart,
-  Settings,
-  AlertTriangle,
-  CheckCircle,
-  XCircle,
-  Eye,
-  GraduationCap,
-  RefreshCw,
-  Wallet,
-  History,
-  LayoutDashboard,
-  Shield,
-  ChevronDown,
-  ChevronUp,
-} from 'lucide-react'
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceLine,
-} from 'recharts'
+// VALOR — "Live terminal" redesign (option 2a).
+// Drop-in replacement for frontend/src/app/valor/ValorContent.tsx.
+// Uses the same data hooks and ML/A-B actions as the previous version.
+
+import { useState, useEffect, useMemo } from 'react'
 import Navigation from '@/components/Navigation'
-import MarginAnalysis from '@/components/MarginAnalysis'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
-import {
-  BotPageHeader,
-  StatCard,
-  LoadingState,
-  BOT_BRANDS,
-} from '@/components/trader'
+import { LoadingState } from '@/components/trader'
 import {
   useValorStatus,
   useValorPositions,
@@ -49,31 +15,35 @@ import {
   useValorEquityCurve,
   useValorIntradayEquity,
   useValorScanActivity,
-  useValorMLTrainingData,
   useValorMLTrainingDataStats,
   useValorMLStatus,
-  useValorMLFeatureImportance,
   useValorMLApprovalStatus,
-  useValorMLShadowStatus,
   useValorABTestStatus,
-  useValorABTestResults,
   trainValorML,
   approveValorML,
   revokeValorML,
   rejectValorML,
   enableValorABTest,
   disableValorABTest,
-  useValorSignals,
   useUnifiedBotSummary,
   useValorTickers,
   useValorTickerStats,
 } from '@/lib/hooks/useMarketData'
 
-// ==============================================================================
-// TIMEFRAME OPTIONS
-// ==============================================================================
+const G = '#10b981'
+const R = '#ef4444'
+const REFRESH_MS = 15000
 
-const EQUITY_TIMEFRAMES = [
+const TABS = [
+  { id: 'portfolio', label: 'Portfolio', desc: 'Live P&L and positions' },
+  { id: 'overview', label: 'Overview', desc: 'Bot status and metrics' },
+  { id: 'activity', label: 'Activity', desc: 'Scans and signals' },
+  { id: 'history', label: 'History', desc: 'Closed trades' },
+  { id: 'config', label: 'Config', desc: 'Settings' },
+] as const
+type TabId = typeof TABS[number]['id']
+
+const TIMEFRAMES = [
   { id: 'intraday', label: 'Today', days: 0 },
   { id: '7d', label: '7D', days: 7 },
   { id: '14d', label: '14D', days: 14 },
@@ -81,2097 +51,629 @@ const EQUITY_TIMEFRAMES = [
   { id: '90d', label: '90D', days: 90 },
 ]
 
-// ==============================================================================
-// TABS
-// ==============================================================================
+const TICKERS = ['MES', 'MNQ', 'CL', 'NG', 'RTY', 'MGC'] as const
+const META: Record<string, { label: string; color: string; d: number }> = {
+  MES: { label: 'Micro S&P 500', color: '#A855F7', d: 2 },
+  MNQ: { label: 'Micro Nasdaq', color: '#06B6D4', d: 2 },
+  CL: { label: 'Crude Oil', color: '#F59E0B', d: 2 },
+  NG: { label: 'Natural Gas', color: '#22C55E', d: 3 },
+  RTY: { label: 'Micro Russell', color: '#F97316', d: 2 },
+  MGC: { label: 'Micro Gold', color: '#EAB308', d: 2 },
+}
+const meta = (t?: string) => META[t || 'MES'] || META.MES
 
-const VALOR_TABS = [
-  { id: 'portfolio' as const, label: 'Portfolio', icon: Wallet, description: 'Live P&L and positions' },
-  { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard, description: 'Bot status and metrics' },
-  { id: 'activity' as const, label: 'Activity', icon: Activity, description: 'Scans and signals' },
-  { id: 'history' as const, label: 'History', icon: History, description: 'Closed trades' },
-  { id: 'config' as const, label: 'Config', icon: Settings, description: 'Settings' },
-]
-type ValorTabId = typeof VALOR_TABS[number]['id']
-
-// ==============================================================================
-// TICKER METADATA (matches AGAPE-SPOT TICKER_META pattern)
-// ==============================================================================
-
-const VALOR_TICKERS = ['ALL', 'MES', 'MNQ', 'CL', 'NG', 'RTY', 'MGC'] as const
-type ValorTickerId = typeof VALOR_TICKERS[number]
-
-const TICKER_META: Record<string, {
-  symbol: string
-  label: string
-  hexColor: string
-  bgActive: string
-  textActive: string
-  bgCard: string
-  borderCard: string
-}> = {
-  'ALL': { symbol: 'ALL',  label: 'All Instruments', hexColor: '#6366f1', bgActive: 'bg-indigo-600',  textActive: 'text-indigo-400',  bgCard: 'bg-indigo-950/30', borderCard: 'border-indigo-700/40' },
-  'MES': { symbol: 'MES',  label: 'Micro S&P 500',   hexColor: '#A855F7', bgActive: 'bg-purple-600',  textActive: 'text-purple-400',  bgCard: 'bg-purple-950/30', borderCard: 'border-purple-700/40' },
-  'MNQ': { symbol: 'MNQ',  label: 'Micro Nasdaq',    hexColor: '#06B6D4', bgActive: 'bg-cyan-600',    textActive: 'text-cyan-400',    bgCard: 'bg-cyan-950/30',   borderCard: 'border-cyan-700/40' },
-  'CL':  { symbol: 'CL',   label: 'Crude Oil',       hexColor: '#F59E0B', bgActive: 'bg-amber-600',   textActive: 'text-amber-400',   bgCard: 'bg-amber-950/30',  borderCard: 'border-amber-700/40' },
-  'NG':  { symbol: 'NG',   label: 'Natural Gas',     hexColor: '#22C55E', bgActive: 'bg-green-600',   textActive: 'text-green-400',   bgCard: 'bg-green-950/30',  borderCard: 'border-green-700/40' },
-  'RTY': { symbol: 'RTY',  label: 'Micro Russell',   hexColor: '#F97316', bgActive: 'bg-orange-600',  textActive: 'text-orange-400',  bgCard: 'bg-orange-950/30', borderCard: 'border-orange-700/40' },
-  'MGC': { symbol: 'MGC',  label: 'Micro Gold',      hexColor: '#EAB308', bgActive: 'bg-yellow-600', textActive: 'text-yellow-400', bgCard: 'bg-yellow-950/30', borderCard: 'border-yellow-700/40' },
+const SPECS: Record<string, [string, string, string, string]> = {
+  MES: ['$5.00/point', '0.25 points', '$1.25/tick', '~$1,500'],
+  MNQ: ['$2.00/point', '0.25 points', '$0.50/tick', '~$1,800'],
+  CL: ['$100/point (MCL)', '0.01 points', '$1.00/tick', '~$1,100'],
+  NG: ['$100/point (MNG)', '0.001 points', '$0.10/tick', '~$500'],
+  RTY: ['$5.00/point', '0.10 points', '$0.50/tick', '~$800'],
+  MGC: ['$10.00/point', '0.10 points', '$1.00/tick', '~$1,100'],
 }
 
-// Per-ticker contract specifications ($100K starting capital each)
-const TICKER_SPECS: Record<string, {
-  pointValue: string
-  tickSize: string
-  tickValue: string
-  dayMargin: string
-  startingCapital: number
-}> = {
-  'MES': { pointValue: '$5.00/point',     tickSize: '0.25 points', tickValue: '$1.25/tick',    dayMargin: '~$1,500',  startingCapital: 100000 },
-  'MNQ': { pointValue: '$2.00/point',     tickSize: '0.25 points', tickValue: '$0.50/tick',    dayMargin: '~$1,800',  startingCapital: 100000 },
-  'CL':  { pointValue: '$100/point (MCL)', tickSize: '0.01 points', tickValue: '$1.00/tick',    dayMargin: '~$1,100',  startingCapital: 100000 },
-  'NG':  { pointValue: '$100/point (MNG)', tickSize: '0.001 points', tickValue: '$0.10/tick',  dayMargin: '~$500',    startingCapital: 100000 },
-  'RTY': { pointValue: '$5.00/point',     tickSize: '0.10 points', tickValue: '$0.50/tick',    dayMargin: '~$800',    startingCapital: 100000 },
-  'MGC': { pointValue: '$10.00/point',    tickSize: '0.10 points', tickValue: '$1.00/tick',    dayMargin: '~$1,100',  startingCapital: 100000 },
+const money = (n: number, sign = false) =>
+  (sign ? (n >= 0 ? '+' : '−') : n < 0 ? '−' : '') +
+  '$' + Math.abs(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const pct = (n: number, sign = true) => (sign && n >= 0 ? '+' : '') + (n || 0).toFixed(2) + '%'
+const pnlColor = (n: number) => (n > 0 ? G : n < 0 ? R : '#9ca3af')
+const zoneColor = (u: number) => (u < 50 ? G : u < 70 ? '#eab308' : u < 80 ? '#f97316' : R)
+
+// ------------------------------------------------------------------ small UI
+
+function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return <div className={`bg-[#11151f] border border-[#1c2233] rounded-xl ${className}`}>{children}</div>
+}
+function Stat({ label, value, color }: { label: string; value: React.ReactNode; color?: string }) {
+  return (
+    <Card className="p-4 flex flex-col gap-1.5">
+      <span className="text-[13px] text-gray-400">{label}</span>
+      <span className="font-mono text-2xl font-semibold" style={{ color: color || '#f3f4f6' }}>{value}</span>
+    </Card>
+  )
+}
+function Dot({ color, size = 8 }: { color: string; size?: number }) {
+  return <span className="inline-block rounded-full shrink-0" style={{ width: size, height: size, background: color }} />
+}
+function Pills<T extends string>({ items, value, onChange }: { items: { id: T; label: string }[]; value: T; onChange: (v: T) => void }) {
+  return (
+    <div className="flex gap-1 flex-wrap">
+      {items.map(i => (
+        <button key={i.id} onClick={() => onChange(i.id)}
+          className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${value === i.id ? 'bg-yellow-500 text-[#0a0e1a]' : 'text-gray-400 hover:text-gray-200'}`}>
+          {i.label}
+        </button>
+      ))}
+    </div>
+  )
 }
 
-// Helper: get metadata for a ticker (with fallback)
-const getTickerMeta = (ticker: string) => TICKER_META[ticker] || TICKER_META['MES']
+// ------------------------------------------------------------------ charts
 
-// ==============================================================================
-// MAIN COMPONENT
-// ==============================================================================
+type Bar = { o: number; h: number; l: number; c: number }
+
+// 1-minute bars built from VALOR's own scan prices (one scan per minute per ticker).
+function barsFromScans(scans: any[], ticker: string, max = 48): Bar[] {
+  const pts = scans
+    .filter(s => (s.ticker || 'MES') === ticker && s.underlying_price)
+    .sort((a, b) => new Date(a.scan_time).getTime() - new Date(b.scan_time).getTime())
+    .map(s => Number(s.underlying_price))
+  const bars: Bar[] = []
+  for (let i = 1; i < pts.length; i++) {
+    const o = pts[i - 1], c = pts[i]
+    bars.push({ o, c, h: Math.max(o, c), l: Math.min(o, c) })
+  }
+  return bars.slice(-max)
+}
+
+function CandleChart({ bars, levels, price, d }: { bars: Bar[]; levels: { cw?: number; pw?: number; flip?: number }; price?: number; d: number }) {
+  if (bars.length < 2) {
+    return <div className="h-[300px] flex items-center justify-center text-sm text-gray-500">Waiting for scan prices to build 1m bars…</div>
+  }
+  const W = 700, H = 360, R0 = 66
+  const lvl = [levels.cw, levels.pw, levels.flip].filter((v): v is number => !!v)
+  let lo = Math.min(...bars.map(b => b.l), ...lvl), hi = Math.max(...bars.map(b => b.h), ...lvl)
+  const pad = (hi - lo) * 0.07 || 1; lo -= pad; hi += pad
+  const y = (v: number) => ((hi - v) / (hi - lo)) * H
+  const cw = (W - R0) / bars.length
+  const lines: [string, number | undefined, string, string | undefined][] = [
+    ['CALL WALL', levels.cw, '#3b82f6', undefined],
+    ['GAMMA FLIP', levels.flip, '#f59e0b', '6 4'],
+    ['PUT WALL', levels.pw, '#8b5cf6', undefined],
+  ]
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto block">
+      {[0, 1, 2, 3, 4].map(i => {
+        const v = lo + (hi - lo) * (i + 0.5) / 5
+        return (
+          <g key={i}>
+            <line x1={0} x2={W - R0} y1={y(v)} y2={y(v)} stroke="#1c2233" />
+            <text x={W - R0 + 8} y={y(v) + 4} fill="#6b7280" fontSize={11} className="font-mono">{v.toFixed(d)}</text>
+          </g>
+        )
+      })}
+      {lines.map(([l, v, col, dash]) => v ? (
+        <g key={l}>
+          <line x1={0} x2={W - R0} y1={y(v)} y2={y(v)} stroke={col} strokeWidth={1.5} strokeDasharray={dash} />
+          <text x={8} y={y(v) - 6} fill={col} fontSize={11} fontWeight={600} letterSpacing={1}>{l}  {v.toFixed(d)}</text>
+        </g>
+      ) : null)}
+      {bars.map((b, i) => {
+        const x = i * cw + cw / 2, col = b.c >= b.o ? G : R
+        return (
+          <g key={i}>
+            <line x1={x} x2={x} y1={y(b.h)} y2={y(b.l)} stroke={col} />
+            <rect x={x - cw * 0.32} width={cw * 0.64} y={y(Math.max(b.o, b.c))} height={Math.max(1, Math.abs(y(b.o) - y(b.c)))} fill={col} rx={1} />
+          </g>
+        )
+      })}
+      {price ? (
+        <g>
+          <line x1={0} x2={W - R0} y1={y(price)} y2={y(price)} stroke="#eab308" strokeDasharray="2 3" />
+          <rect x={W - R0 + 2} y={y(price) - 10} width={R0 - 2} height={20} rx={4} fill="#eab308" />
+          <text x={W - R0 + 7} y={y(price) + 4} fill="#0a0e1a" fontSize={11} fontWeight={700} className="font-mono">{price.toFixed(d)}</text>
+        </g>
+      ) : null}
+    </svg>
+  )
+}
+
+function EquityChart({ points, start, animKey }: { points: number[]; start: number; animKey: string }) {
+  if (points.length < 2) return <div className="h-full flex items-center justify-center text-sm text-gray-500">Data will appear after trades are executed</div>
+  const mn = Math.min(start, ...points), mx = Math.max(start, ...points), pad = (mx - mn) * 0.12 || 50
+  const y = (v: number) => 200 - ((v - mn + pad) / (mx - mn + 2 * pad)) * 200
+  const line = points.map((v, i) => `${i ? 'L' : 'M'}${(i / (points.length - 1) * 1000).toFixed(1)} ${y(v).toFixed(1)}`).join(' ')
+  const lastY = y(points[points.length - 1])
+  return (
+    <div className="relative h-full">
+      <svg key={animKey} viewBox="0 0 1000 200" preserveAspectRatio="none" className="w-full h-full block">
+        <line x1={0} x2={1000} y1={y(start)} y2={y(start)} stroke="#ef4444" strokeDasharray="5 5" vectorEffect="non-scaling-stroke" />
+        <path d={`${line} L1000 200 L0 200 Z`} fill="rgba(234,179,8,.10)" className="valor-fade" />
+        <path d={line} pathLength={1} strokeDasharray={1} fill="none" stroke="#eab308" strokeWidth={2} vectorEffect="non-scaling-stroke" className="valor-draw" />
+      </svg>
+      <span className="absolute -right-1 w-2 h-2 rounded-full bg-yellow-500 valor-pulse" style={{ top: `calc(${(lastY / 2).toFixed(1)}% - 4px)` }} />
+    </div>
+  )
+}
+
+// ------------------------------------------------------------------ page
 
 export default function ValorPage() {
   const sidebarPadding = useSidebarPadding()
-  const [activeTab, setActiveTab] = useState<ValorTabId>('portfolio')
-  const [equityTimeframe, setEquityTimeframe] = useState('intraday')
-  const [selectedTicker, setSelectedTicker] = useState<string | undefined>(undefined)  // undefined = ALL
-  const [isTraining, setIsTraining] = useState(false)
-  const [trainingResult, setTrainingResult] = useState<any>(null)
-  const [isApproving, setIsApproving] = useState(false)
-  const [isRevoking, setIsRevoking] = useState(false)  // BUG FIX: Separate state for revoke to avoid race condition
-  const [isRejecting, setIsRejecting] = useState(false)
-  const [isTogglingABTest, setIsTogglingABTest] = useState(false)
+  const [tab, setTab] = useState<TabId>('portfolio')
+  const [sel, setSel] = useState<string>('MES')
+  const [tf, setTf] = useState('intraday')
+  const [histFilter, setHistFilter] = useState<string>('ALL')
+  const [busy, setBusy] = useState<string | null>(null)
+  const [now, setNow] = useState(Date.now())
 
-  // Get days for current timeframe
-  const selectedTimeframe = EQUITY_TIMEFRAMES.find(t => t.id === equityTimeframe) || EQUITY_TIMEFRAMES[0]
-  const isIntraday = equityTimeframe === 'intraday'
-
-  // Data hooks (per-ticker filtering)
-  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useValorStatus(selectedTicker)
-  const { data: positionsData } = useValorPositions(selectedTicker)
-  const { data: closedTradesData } = useValorClosedTrades(1000, selectedTicker)
-  const { data: equityCurveData } = useValorEquityCurve(selectedTimeframe.days || 30, selectedTicker)
-  const { data: intradayEquityData } = useValorIntradayEquity(selectedTicker)
+  const tfo = TIMEFRAMES.find(t => t.id === tf) || TIMEFRAMES[0]
+  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useValorStatus(undefined)
+  const { data: positionsData, mutate: refreshPositions } = useValorPositions(undefined)
+  const { data: closedTradesData } = useValorClosedTrades(1000, undefined)
+  const { data: equityCurveData } = useValorEquityCurve(tfo.days || 30, undefined)
+  const { data: intradayEquityData, mutate: refreshIntraday } = useValorIntradayEquity(undefined)
   const { data: tickersData } = useValorTickers()
   const { data: tickerStatsData } = useValorTickerStats()
-  const { data: scanActivityData, mutate: mutateScanActivity } = useValorScanActivity(1000, undefined, selectedTicker)
-  const { data: mlTrainingData } = useValorMLTrainingData()
-  const { data: mlTrainingDataStats, mutate: refreshTrainingStats } = useValorMLTrainingDataStats()
+  const { data: scanData, mutate: refreshScans } = useValorScanActivity(1000, undefined, undefined)
+  const { data: mlStats, mutate: refreshTrainingStats } = useValorMLTrainingDataStats()
   const { data: mlStatus, mutate: refreshMLStatus } = useValorMLStatus()
-  const { data: featureImportance, mutate: refreshFeatureImportance } = useValorMLFeatureImportance()
-  const { data: mlApprovalStatus, mutate: refreshApprovalStatus } = useValorMLApprovalStatus()
-  const { data: mlShadowData, mutate: refreshShadow } = useValorMLShadowStatus()
-  const { data: abTestStatus, mutate: refreshABTestStatus } = useValorABTestStatus()
-  const { data: abTestResults, mutate: refreshABTestResults } = useValorABTestResults()
-  const { data: signalsData } = useValorSignals(50, selectedTicker)
+  const { data: mlApproval, mutate: refreshApproval } = useValorMLApprovalStatus()
+  const { data: abStatus, mutate: refreshAB } = useValorABTestStatus()
+  const { data: unifiedData } = useUnifiedBotSummary('VALOR')
 
-  // Margin zone data (inline fetch, 15s refresh)
-  const [marginZoneData, setMarginZoneData] = useState<any>(null)
-  const [marginEventsExpanded, setMarginEventsExpanded] = useState(false)
+  // Live: 1s clock for the scan countdown + periodic refresh of fast-moving data.
   useEffect(() => {
-    const API_BASE = process.env.NEXT_PUBLIC_API_URL || ''
-    const fetchMarginZones = async () => {
-      try {
-        const url = selectedTicker
-          ? `${API_BASE}/api/valor/margin/zones?ticker=${selectedTicker}`
-          : `${API_BASE}/api/valor/margin/zones`
-        const res = await fetch(url)
-        if (res.ok) {
-          const json = await res.json()
-          setMarginZoneData(json.data)
-        }
-      } catch {
-        // Silently fail — margin zones are informational
-      }
-    }
-    fetchMarginZones()
-    const interval = setInterval(fetchMarginZones, 15000)
-    return () => clearInterval(interval)
-  }, [selectedTicker])
+    const clock = setInterval(() => setNow(Date.now()), 1000)
+    const poll = setInterval(() => { refreshStatus(); refreshPositions(); refreshScans(); refreshIntraday() }, REFRESH_MS)
+    return () => { clearInterval(clock); clearInterval(poll) }
+  }, [refreshStatus, refreshPositions, refreshScans, refreshIntraday])
 
-  // ML Training handler
-  const handleTrainML = async () => {
-    setIsTraining(true)
-    setTrainingResult(null)
-    try {
-      const result = await trainValorML(50)
-      setTrainingResult(result)
-      if (result.success) {
-        // Refresh ML status, feature importance, training stats, approval status, and shadow
-        refreshMLStatus()
-        refreshFeatureImportance()
-        refreshApprovalStatus()
-        refreshTrainingStats()
-        refreshShadow()
-      }
-    } catch (error: any) {
-      setTrainingResult({ success: false, error: error.message || 'Training failed' })
-    } finally {
-      setIsTraining(false)
-    }
-  }
+  // Margin zones (same endpoint as before)
+  const [marginZones, setMarginZones] = useState<any>(null)
+  useEffect(() => {
+    const API = process.env.NEXT_PUBLIC_API_URL || ''
+    const load = async () => { try { const r = await fetch(`${API}/api/valor/margin/zones`); if (r.ok) setMarginZones((await r.json()).data) } catch {} }
+    load(); const i = setInterval(load, REFRESH_MS); return () => clearInterval(i)
+  }, [])
 
-  // ML Approval handler
-  const handleApproveML = async () => {
-    setIsApproving(true)
-    try {
-      const result = await approveValorML()
-      if (result.success) {
-        refreshApprovalStatus()
-        refreshMLStatus()
-      }
-    } catch (error) {
-      console.error('Failed to approve ML:', error)
-    } finally {
-      setIsApproving(false)
-    }
-  }
-
-  // ML Revoke handler - Uses separate isRevoking state to avoid race condition with Approve
-  const handleRevokeML = async () => {
-    setIsRevoking(true)
-    try {
-      const result = await revokeValorML()
-      if (result.success) {
-        refreshApprovalStatus()
-        refreshMLStatus()
-      }
-    } catch (error) {
-      console.error('Failed to revoke ML:', error)
-    } finally {
-      setIsRevoking(false)
-    }
-  }
-
-  // ML Reject handler (completely discard newly trained model)
-  const handleRejectML = async () => {
-    setIsRejecting(true)
-    try {
-      const result = await rejectValorML()
-      if (result.success) {
-        setTrainingResult(null)  // Clear training result UI
-        refreshApprovalStatus()
-        refreshMLStatus()
-      }
-    } catch (error) {
-      console.error('Failed to reject ML:', error)
-    } finally {
-      setIsRejecting(false)
-    }
-  }
-
-  // A/B Test toggle handler
-  const handleToggleABTest = async () => {
-    setIsTogglingABTest(true)
-    try {
-      if (abTestStatus?.ab_test_enabled) {
-        const result = await disableValorABTest()
-        if (result.success) {
-          refreshABTestStatus()
-          refreshABTestResults()
-        }
-      } else {
-        const result = await enableValorABTest()
-        if (result.success) {
-          refreshABTestStatus()
-          refreshABTestResults()
-        }
-      }
-    } catch (error) {
-      console.error('Failed to toggle A/B test:', error)
-    } finally {
-      setIsTogglingABTest(false)
-    }
-  }
-
-  // Unified metrics for consistent data (single source of truth)
-  const { data: unifiedData, mutate: refreshUnified } = useUnifiedBotSummary('VALOR')
-  const unifiedMetrics = unifiedData?.data
-
-  // Extract data
   const status = statusData || {}
-  // Use dedicated positions endpoint (has unrealized P&L), fall back to status
-  const positions = positionsData?.positions || status?.positions?.positions || []
-  const performance = status?.performance || {}
+  const performance = status.performance || {}
+  const winTracker = status.win_tracker || {}
+  const config = status.config || {}
+  const lossStreak = status.loss_streak || {}
+  const paper = status.paper_account || {}
+  const unified = unifiedData?.data
+  const positions: any[] = positionsData?.positions || status?.positions?.positions || []
+  const trades: any[] = closedTradesData?.trades || []
+  const scans: any[] = scanData?.scans || []
+  const scanSummary = scanData?.summary || {}
+  const tickerStats = tickerStatsData?.ticker_stats || {}
+  const activeTickers: string[] = tickersData?.active_tickers || [...TICKERS]
 
-  // SINGLE SOURCE OF TRUTH for starting capital
-  // Per-ticker: $100K per instrument (from backend paper_account when ticker is filtered)
-  // ALL view: N instruments × $100K (derived from VALOR_TICKERS, excluding 'ALL')
-  // When a ticker is selected, paper_account already has per-ticker values from backend
-  // When ALL is selected, use unified metrics or paper_account combined values
-  const CAPITAL_PER_INSTRUMENT = 100000
-  const ACTIVE_INSTRUMENT_COUNT = VALOR_TICKERS.filter(t => t !== 'ALL').length
-  const startingCapital = selectedTicker
-    ? (status?.paper_account?.starting_capital ?? CAPITAL_PER_INSTRUMENT)
-    : (unifiedMetrics?.starting_capital ?? status?.paper_account?.starting_capital ?? CAPITAL_PER_INSTRUMENT * ACTIVE_INSTRUMENT_COUNT)
-  const scanToday = scanActivityData?.today_summary || {}
-  const config = status?.config || {}
-  const winTracker = status?.win_tracker || {}
-  const paperAccount = status?.paper_account || null
-  const lossStreak = status?.loss_streak || {}
-  const closedTrades = closedTradesData?.trades || []
-  const dailyEquityCurve = equityCurveData?.equity_curve || []
-  const intradayEquityCurve = intradayEquityData?.equity_curve || []
-  const scans = scanActivityData?.scans || []
-  const scanSummary = scanActivityData?.summary || {}
-  const signals = signalsData?.signals || []
+  const startingCapital = unified?.starting_capital ?? paper.starting_capital ?? 100000 * activeTickers.length
+  const unrealized = positions.reduce((a, p) => a + (p.unrealized_pnl || 0), 0)
+  const realized = paper.cumulative_pnl ?? performance.total_pnl ?? 0
+  const equity = (paper.current_balance ?? startingCapital + realized) + unrealized
 
-  // Brand
-  const brand = BOT_BRANDS.VALOR
+  // Latest scan per ticker → live price + GEX levels
+  const latest = useMemo(() => {
+    const out: Record<string, any> = {}
+    for (const s of scans) {
+      const t = s.ticker || 'MES'
+      if (!out[t] || new Date(s.scan_time) > new Date(out[t].scan_time)) out[t] = s
+    }
+    return out
+  }, [scans])
+  const firstPrice = (t: string) => {
+    const b = barsFromScans(scans, t); return b.length ? b[0].o : undefined
+  }
+  const selScan = latest[sel] || {}
+  const selPrice: number | undefined = selScan.underlying_price
+  const selBars = useMemo(() => barsFromScans(scans, sel), [scans, sel])
+  const levels = { cw: selScan.call_wall || undefined, pw: selScan.put_wall || undefined, flip: selScan.flip_point || undefined }
+  const lastScanAt = selScan.scan_time ? new Date(selScan.scan_time).getTime() : null
+  const nextScan = lastScanAt ? Math.max(0, 60 - Math.floor((now - lastScanAt) / 1000) % 60) : null
 
-  // Select appropriate equity curve based on timeframe
-  const equityCurve = isIntraday ? intradayEquityCurve : dailyEquityCurve
+  const eqPoints: number[] = (tf === 'intraday' ? intradayEquityData?.equity_curve : equityCurveData?.equity_curve || [])
+    ?.map((p: any) => Number(p.equity)).filter((v: number) => !isNaN(v)) || []
 
-  // Format equity curve data for chart
-  const equityChartData = equityCurve.map((point: any) => ({
-    date: isIntraday ? point.snapshot_time || point.timestamp : point.date,
-    equity: point.equity,
-    pnl: isIntraday ? point.unrealized_pnl : point.cumulative_pnl,
-    return: point.return_pct || 0,
-  }))
+  const histTrades = trades.filter(t => histFilter === 'ALL' || (t.ticker || 'MES') === histFilter)
+  const wins = histTrades.filter(t => t.realized_pnl > 0), losses = histTrades.filter(t => t.realized_pnl < 0)
+  const histTotal = histTrades.reduce((a, t) => a + (t.realized_pnl || 0), 0)
+  const avg = (xs: any[]) => (xs.length ? xs.reduce((a, t) => a + t.realized_pnl, 0) / xs.length : 0)
 
-  // Loading state
-  if (statusLoading) {
-    return (
-      <>
-        <Navigation />
-        <div className="flex items-center justify-center h-screen">
-          <LoadingState message="Loading VALOR..." />
+  const run = async (key: string, fn: () => Promise<any>, after: (() => void)[]) => {
+    setBusy(key)
+    try { const r = await fn(); if (r?.success) after.forEach(f => f()) } catch (e) { console.error(`VALOR ${key} failed`, e) } finally { setBusy(null) }
+  }
+  const mlApproved = !!mlApproval?.ml_approved
+  const accuracy = ((mlStatus?.accuracy || 0) * 100).toFixed(1)
+
+  if (statusLoading) return (<><Navigation /><div className="flex items-center justify-center h-screen bg-[#0a0e1a]"><LoadingState message="Loading VALOR..." /></div></>)
+  if (statusError) return (
+    <><Navigation />
+      <main className={`min-h-screen bg-[#0a0e1a] text-white px-4 pt-24 ${sidebarPadding}`}>
+        <div className="max-w-7xl mx-auto bg-red-900/40 border border-red-500/60 rounded-xl p-6">
+          <h2 className="text-xl font-bold text-red-400">VALOR Not Available</h2>
+          <p className="text-red-300 mt-2">The VALOR futures bot is not currently available. Check backend deployment.</p>
         </div>
-      </>
-    )
-  }
+      </main></>
+  )
 
-  // Error state
-  if (statusError) {
-    return (
-      <>
-        <Navigation />
-        <main className={`min-h-screen bg-black text-white px-4 pb-4 pt-24 transition-all duration-300 ${sidebarPadding}`}>
-          <div className="max-w-7xl mx-auto">
-            <div className="bg-red-900/50 border border-red-500 rounded-lg p-6">
-              <h2 className="text-xl font-bold text-red-400 flex items-center gap-2">
-                <AlertTriangle className="h-6 w-6" />
-                VALOR Not Available
-              </h2>
-              <p className="text-red-300 mt-2">
-                The VALOR futures bot is not currently available. Check backend deployment.
-              </p>
-            </div>
-          </div>
-        </main>
-      </>
-    )
-  }
+  const tabMeta = TABS.find(t => t.id === tab)!
 
   return (
     <>
       <Navigation />
-      <main className={`min-h-screen bg-black text-white px-4 pb-4 md:px-6 md:pb-6 pt-24 transition-all duration-300 ${sidebarPadding}`}>
-        <div className="max-w-7xl mx-auto space-y-6">
-
-          {/* Header - Branded */}
-          <BotPageHeader
-            botName="VALOR"
-            isActive={status?.market_open || false}
-            onRefresh={() => refreshStatus()}
-            isRefreshing={statusLoading}
-            scanIntervalMinutes={1}
-          />
-
-          {/* Ticker Selector (matches AGAPE-SPOT pattern) */}
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {(tickersData?.active_tickers
-              ? ['ALL', ...tickersData.active_tickers]
-              : VALOR_TICKERS as unknown as string[]
-            ).map((ticker: string) => {
-              const meta = getTickerMeta(ticker)
-              const isActive = ticker === 'ALL' ? !selectedTicker : selectedTicker === ticker
-              const tickerApiInfo = tickersData?.tickers?.[ticker]
-              return (
-                <button
-                  key={ticker}
-                  onClick={() => setSelectedTicker(ticker === 'ALL' ? undefined : ticker)}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-all whitespace-nowrap ${
-                    isActive
-                      ? `${meta.bgActive} border-transparent text-white shadow-lg`
-                      : 'bg-gray-900 border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-white hover:border-gray-600'
-                  }`}
-                  title={meta.label}
-                >
-                  <span className="font-bold">{meta.symbol}</span>
-                  <span className={`text-xs ${isActive ? 'text-white/70' : 'text-gray-500'}`}>
-                    {meta.label}
-                  </span>
-                  {ticker !== 'ALL' && tickerApiInfo?.point_value != null && (
-                    <span className={`text-[10px] font-mono ${isActive ? 'text-white/50' : 'text-gray-600'}`}>
-                      ${tickerApiInfo.point_value}/pt
+      <style>{`
+        @keyframes valor-tape{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+        @keyframes valor-draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+        @keyframes valor-fade{from{opacity:0}to{opacity:1}}
+        @keyframes valor-pulse{0%{box-shadow:0 0 0 0 rgba(234,179,8,.6)}100%{box-shadow:0 0 0 10px rgba(234,179,8,0)}}
+        .valor-tape{animation:valor-tape 40s linear infinite}.valor-draw{animation:valor-draw 1.4s ease-out both}
+        .valor-fade{animation:valor-fade 1.4s ease both}.valor-pulse{animation:valor-pulse 1.2s ease-out infinite}
+      `}</style>
+      <main className={`min-h-screen bg-[#0a0e1a] text-gray-100 pt-16 transition-all duration-300 ${sidebarPadding}`}>
+        {/* Ticker tape */}
+        <div className="h-10 border-b border-[#1c2233] bg-[#080b14] overflow-hidden flex items-center">
+          <div className="valor-tape flex w-max">
+            {[0, 1, 2, 3].map(k => (
+              <div key={k} className="flex gap-10 pr-10">
+                {activeTickers.map(t => {
+                  const p = latest[t]?.underlying_price, o = firstPrice(t), ch = p && o ? (p - o) / o * 100 : 0
+                  return (
+                    <span key={t} className="flex gap-2.5 text-[13px] whitespace-nowrap">
+                      <span className="font-semibold">{t}</span>
+                      <span className="font-mono">{p ? Number(p).toFixed(meta(t).d) : '—'}</span>
+                      <span className="font-mono" style={{ color: pnlColor(ch) }}>{p && o ? pct(ch) : ''}</span>
                     </span>
-                  )}
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)]">
+          {/* Rail */}
+          <aside className="border-r border-[#1c2233] bg-[#0c1019] px-3.5 py-6 flex flex-col gap-7">
+            <div className="px-2 flex flex-col gap-1.5">
+              <div className="text-[22px] font-bold tracking-[.08em]">VALOR</div>
+              <div className="flex items-center gap-2 text-[13px]" style={{ color: status.market_open ? G : '#6b7280' }}>
+                <Dot color={status.market_open ? G : '#6b7280'} size={7} />
+                {status.market_open ? `Market open${nextScan !== null ? ` · next scan ${nextScan}s` : ''}` : 'Market closed'}
+              </div>
+            </div>
+            <nav className="flex lg:flex-col gap-0.5 overflow-x-auto">
+              {TABS.map(t => (
+                <button key={t.id} onClick={() => setTab(t.id)}
+                  className={`text-left px-3 py-2.5 rounded-lg text-sm font-medium whitespace-nowrap ${tab === t.id ? 'text-yellow-500 bg-yellow-500/10' : 'text-gray-400 hover:text-gray-100'}`}>
+                  {t.label}
                 </button>
-              )
-            })}
-          </div>
-
-          {/* Per-Ticker Stats Summary (ALL view only) */}
-          {!selectedTicker && tickerStatsData?.ticker_stats && Object.keys(tickerStatsData.ticker_stats).length > 0 && (
-            <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 overflow-hidden">
-              <div className="px-5 py-3 border-b border-gray-800 flex items-center gap-2">
-                <PieChart className="w-4 h-4 text-indigo-400" />
-                <h3 className="text-sm font-semibold text-gray-200">Per-Instrument Performance</h3>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-900/50">
-                    <tr>
-                      <th className="px-4 py-2.5 text-left text-gray-400 font-medium">Ticker</th>
-                      <th className="px-4 py-2.5 text-right text-gray-400 font-medium">Trades</th>
-                      <th className="px-4 py-2.5 text-right text-gray-400 font-medium">Win Rate</th>
-                      <th className="px-4 py-2.5 text-right text-gray-400 font-medium">P&L</th>
-                      <th className="px-4 py-2.5 text-center text-gray-400 font-medium">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-800/60">
-                    {Object.entries(tickerStatsData.ticker_stats).map(([tk, stats]: [string, any]) => {
-                      const meta = getTickerMeta(tk)
-                      const pnl = stats?.total_pnl ?? 0
-                      const winRate = stats?.win_rate ?? 0
-                      const trades = stats?.total_trades ?? 0
-                      return (
-                        <tr
-                          key={tk}
-                          className="hover:bg-gray-800/30 cursor-pointer"
-                          onClick={() => setSelectedTicker(tk)}
-                        >
-                          <td className="px-4 py-2.5">
-                            <div className="flex items-center gap-2">
-                              <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: meta.hexColor }} />
-                              <span className="font-bold text-white">{meta.symbol}</span>
-                              <span className="text-xs text-gray-500">{meta.label}</span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-mono text-gray-300">{trades}</td>
-                          <td className="px-4 py-2.5 text-right font-mono">
-                            <span className={winRate >= 50 ? 'text-green-400' : winRate > 0 ? 'text-red-400' : 'text-gray-500'}>
-                              {trades > 0 ? `${winRate.toFixed(1)}%` : '—'}
-                            </span>
-                          </td>
-                          <td className={`px-4 py-2.5 text-right font-mono font-semibold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                            {trades > 0 ? `$${pnl.toFixed(2)}` : '—'}
-                          </td>
-                          <td className="px-4 py-2.5 text-center">
-                            <span className={`inline-block w-2.5 h-2.5 rounded-full ${
-                              trades === 0 ? 'bg-gray-600' : pnl >= 0 ? 'bg-green-500' : 'bg-red-500'
-                            }`} />
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Paper Trading Info Banner */}
-          <div className={`bg-yellow-900/30 border border-yellow-500/50 rounded-lg p-4`}>
-            <div className="flex items-start gap-3">
-              <Wallet className="w-5 h-5 text-yellow-400 mt-0.5 flex-shrink-0" />
-              <div className="flex-1">
-                <h3 className="text-yellow-400 font-semibold">
-                  Paper Trading Mode - {selectedTicker ? `${selectedTicker} Futures` : 'Multi-Instrument Futures'} Scalping
-                </h3>
-                <p className="text-gray-300 text-sm mt-1">
-                  VALOR uses simulated futures trades. Raw balances include historical trades flagged for data quality and are not verified strategy returns. CL new entries are quarantined by default.
-                </p>
-                <p className="text-gray-400 text-xs mt-2">
-                  24/5 trading: Sun 5pm - Fri 4pm CT with 4-5pm daily maintenance break.
-                </p>
-                <a className="text-yellow-300 text-sm underline" href={`${process.env.NEXT_PUBLIC_API_URL || ''}/api/valor/performance/quality`} target="_blank" rel="noopener noreferrer">
-                  View screened performance and excluded-trade counts (JSON)
-                </a>
-              </div>
-            </div>
-          </div>
-
-          {/* Loss Streak Pause Banner - Shows when paused after consecutive losses */}
-          {lossStreak?.is_paused && (
-            <div className="bg-red-900/40 border border-red-500/50 rounded-lg p-4 animate-pulse">
-              <div className="flex items-center gap-3">
-                <div className="w-4 h-4 rounded-full bg-red-500 animate-ping" />
-                <div className="flex-1">
-                  <h3 className="text-red-400 font-semibold flex items-center gap-2">
-                    <span>PAUSED - Loss Streak Protection Active</span>
-                    <span className="text-white bg-red-600/50 px-2 py-0.5 rounded text-sm">
-                      {Math.ceil(lossStreak.pause_remaining_seconds / 60)}:{String(Math.floor(lossStreak.pause_remaining_seconds % 60)).padStart(2, '0')} remaining
-                    </span>
-                  </h3>
-                  <p className="text-gray-300 text-sm mt-1">
-                    {lossStreak.consecutive_losses} consecutive losses detected. New entries paused for {lossStreak.pause_minutes} minutes.
-                    Existing positions are still being managed.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Loss Streak Warning Banner - Shows when approaching pause threshold */}
-          {!lossStreak?.is_paused && lossStreak?.consecutive_losses > 0 && (
-            <div className="bg-orange-900/30 border border-orange-500/50 rounded-lg p-3">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-orange-500" />
-                <p className="text-orange-300 text-sm">
-                  <span className="font-semibold">Loss Streak: {lossStreak.consecutive_losses}</span>
-                  <span className="text-gray-400 ml-2">
-                    ({lossStreak.max_consecutive_losses - lossStreak.consecutive_losses} more before {lossStreak.pause_minutes}min pause)
-                  </span>
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* ML Status Banner - Shows when ML is active or awaiting approval */}
-          {mlStatus?.model_trained && (
-            <div className={`rounded-lg p-4 border ${
-              mlApprovalStatus?.ml_approved
-                ? 'bg-green-900/30 border-green-500/50'
-                : 'bg-yellow-900/30 border-yellow-500/50'
-            }`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`w-3 h-3 rounded-full ${
-                    mlApprovalStatus?.ml_approved ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'
-                  }`} />
-                  <div>
-                    <h3 className={`font-semibold ${
-                      mlApprovalStatus?.ml_approved ? 'text-green-400' : 'text-yellow-400'
-                    }`}>
-                      {mlApprovalStatus?.ml_approved
-                        ? 'ML Model ACTIVE - Using ML Predictions'
-                        : 'ML Model Trained - Awaiting Approval'}
-                    </h3>
-                    <p className="text-gray-300 text-sm">
-                      {mlApprovalStatus?.ml_approved
-                        ? `Win probability calculated via XGBoost ML (${((mlStatus.accuracy || 0) * 100).toFixed(1)}% accuracy)`
-                        : `Currently using Bayesian fallback. Approve to use ML (${((mlStatus.accuracy || 0) * 100).toFixed(1)}% accuracy)`}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    mlApprovalStatus?.probability_source === 'ML'
-                      ? 'bg-green-600/50 text-green-200'
-                      : 'bg-blue-600/50 text-blue-200'
-                  }`}>
-                    Source: {mlApprovalStatus?.probability_source || 'BAYESIAN'}
-                  </span>
-                  {!mlApprovalStatus?.ml_approved && (
-                    <button
-                      onClick={handleApproveML}
-                      disabled={isApproving}
-                      className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg font-semibold transition-colors disabled:opacity-50"
-                    >
-                      {isApproving ? (
-                        <>
-                          <RefreshCw className="h-4 w-4 animate-spin" />
-                          Approving...
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle className="h-4 w-4" />
-                          Approve ML
-                        </>
-                      )}
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Tab Navigation */}
-          <div className="flex gap-2 border-b border-gray-800 overflow-x-auto pb-px">
-            {VALOR_TABS.map((tab) => {
-              const Icon = tab.icon
-              const isActive = activeTab === tab.id
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-all ${
-                    isActive
-                      ? 'border-yellow-500 text-yellow-400'
-                      : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-600'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  {tab.label}
-                </button>
-              )
-            })}
-          </div>
-
-          {/* Tab Content */}
-          {activeTab === 'portfolio' && (
-            <div className="space-y-6">
-              {/* Paper Account Summary */}
-              {paperAccount && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
-                    <div className="text-sm text-gray-400">Starting Capital</div>
-                    <div className="text-2xl font-bold text-white mt-1">
-                      ${startingCapital.toLocaleString()}
-                    </div>
-                  </div>
-                  <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
-                    <div className="text-sm text-gray-400">Raw Paper Balance</div>
-                    <div className={`text-2xl font-bold mt-1 ${
-                      (paperAccount.current_balance ?? 0) >= startingCapital
-                        ? 'text-green-400' : 'text-red-400'
-                    }`}>
-                      ${(paperAccount?.current_balance ?? startingCapital).toLocaleString()}
-                    </div>
-                  </div>
-                  <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
-                    <div className="text-sm text-gray-400">Cumulative P&L</div>
-                    <div className={`text-2xl font-bold mt-1 ${
-                      (paperAccount.cumulative_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
-                    }`}>
-                      ${(paperAccount.cumulative_pnl || 0) >= 0 ? '+' : ''}{(paperAccount.cumulative_pnl || 0).toFixed(2)}
-                    </div>
-                  </div>
-                  <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
-                    <div className="text-sm text-gray-400">Return</div>
-                    <div className={`text-2xl font-bold mt-1 ${
-                      (paperAccount.return_pct || 0) >= 0 ? 'text-green-400' : 'text-red-400'
-                    }`}>
-                      {(paperAccount.return_pct || 0) >= 0 ? '+' : ''}{(paperAccount.return_pct || 0).toFixed(2)}%
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Margin Analysis */}
-              <MarginAnalysis botName="VALOR" marketType="stock_futures" marginEndpoint={selectedTicker ? `/api/valor/margin?ticker=${selectedTicker}` : '/api/valor/margin'} />
-
-              {/* Margin Zone Protection */}
-              {marginZoneData && (
-                <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-semibold flex items-center gap-2">
-                      <Shield className="h-5 w-5 text-yellow-400" />
-                      Margin Protection Zones
-                    </h3>
-                    {marginZoneData.combined && (
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                        marginZoneData.combined.zone === 'GREEN' ? 'bg-green-900/50 text-green-400 border border-green-700' :
-                        marginZoneData.combined.zone === 'YELLOW' ? 'bg-yellow-900/50 text-yellow-400 border border-yellow-700' :
-                        marginZoneData.combined.zone === 'ORANGE' ? 'bg-orange-900/50 text-orange-400 border border-orange-700' :
-                        marginZoneData.combined.zone === 'RED' ? 'bg-red-900/50 text-red-400 border border-red-700 animate-pulse' :
-                        'bg-gray-900/50 text-red-300 border border-red-600 animate-pulse'
-                      }`}>
-                        Portfolio: {marginZoneData.combined.zone} ({marginZoneData.combined.utilization_pct}%)
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Per-instrument zone bars */}
-                  <div className="space-y-2">
-                    {Object.entries(marginZoneData.instruments || {}).map(([tk, state]: [string, any]) => {
-                      const utilPct = state.utilization_pct || 0
-                      const zone = state.zone || 'GREEN'
-                      const barColor =
-                        zone === 'GREEN' ? 'bg-green-500' :
-                        zone === 'YELLOW' ? 'bg-yellow-500' :
-                        zone === 'ORANGE' ? 'bg-orange-500' :
-                        zone === 'RED' ? 'bg-red-500' :
-                        'bg-red-600 animate-pulse'
-                      const zoneEmoji =
-                        zone === 'GREEN' ? '' :
-                        zone === 'YELLOW' ? ' ⚠️' :
-                        zone === 'ORANGE' ? ' 🟠' :
-                        zone === 'RED' ? ' 🔴' : ' ⚫'
-
-                      const cooldown = marginZoneData.cooldowns?.[tk]
-                      const inCooldown = cooldown?.in_cooldown
-
-                      return (
-                        <div key={tk} className="flex items-center gap-3">
-                          <span className="text-sm font-mono w-10 text-gray-300">{tk}</span>
-                          <div className="flex-1 bg-gray-800 rounded-full h-4 relative overflow-hidden">
-                            <div
-                              className={`h-full rounded-full transition-all duration-500 ${barColor}`}
-                              style={{ width: `${Math.min(utilPct, 100)}%` }}
-                            />
-                            {/* Zone boundary markers */}
-                            <div className="absolute top-0 left-[50%] w-px h-full bg-gray-600 opacity-50" />
-                            <div className="absolute top-0 left-[70%] w-px h-full bg-gray-600 opacity-50" />
-                            <div className="absolute top-0 left-[80%] w-px h-full bg-gray-600 opacity-50" />
-                            <div className="absolute top-0 left-[90%] w-px h-full bg-gray-600 opacity-50" />
-                          </div>
-                          <span className={`text-xs font-mono w-16 text-right ${
-                            zone === 'GREEN' ? 'text-green-400' :
-                            zone === 'YELLOW' ? 'text-yellow-400' :
-                            zone === 'ORANGE' ? 'text-orange-400' :
-                            'text-red-400'
-                          }`}>
-                            {utilPct.toFixed(1)}%{zoneEmoji}
-                          </span>
-                          <span className="text-xs text-gray-500 w-24 text-right">
-                            ${(state.maintenance_margin_used || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}
-                          </span>
-                          {inCooldown && (
-                            <span className="text-xs text-red-400 animate-pulse">
-                              ⏱ {Math.ceil(cooldown.remaining_minutes || 0)}m
-                            </span>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-
-                  {/* Zone legend */}
-                  <div className="mt-3 flex gap-4 text-xs text-gray-500">
-                    <span><span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1" />0-50% Green</span>
-                    <span><span className="inline-block w-2 h-2 rounded-full bg-yellow-500 mr-1" />50-70% Yellow</span>
-                    <span><span className="inline-block w-2 h-2 rounded-full bg-orange-500 mr-1" />70-80% Orange</span>
-                    <span><span className="inline-block w-2 h-2 rounded-full bg-red-500 mr-1" />80-90% Red</span>
-                    <span><span className="inline-block w-2 h-2 rounded-full bg-red-600 mr-1" />90%+ Critical</span>
-                  </div>
-
-                  {/* Margin events log (collapsible) */}
-                  {marginZoneData.recent_events && marginZoneData.recent_events.length > 0 && (
-                    <div className="mt-4 border-t border-gray-800 pt-3">
-                      <button
-                        onClick={() => setMarginEventsExpanded(!marginEventsExpanded)}
-                        className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-300 transition-colors"
-                      >
-                        {marginEventsExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                        Margin Events ({marginZoneData.recent_events.length})
-                      </button>
-                      {marginEventsExpanded && (
-                        <div className="mt-2 max-h-48 overflow-y-auto">
-                          <table className="w-full text-xs">
-                            <thead>
-                              <tr className="text-gray-500 border-b border-gray-800">
-                                <th className="text-left py-1 pr-2">Time</th>
-                                <th className="text-left py-1 pr-2">Ticker</th>
-                                <th className="text-left py-1 pr-2">Event</th>
-                                <th className="text-left py-1">Description</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {marginZoneData.recent_events.map((evt: any, i: number) => (
-                                <tr key={i} className="border-b border-gray-800/50">
-                                  <td className="py-1 pr-2 text-gray-500 font-mono">
-                                    {new Date(evt.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                                  </td>
-                                  <td className="py-1 pr-2 text-gray-300 font-mono">{evt.ticker}</td>
-                                  <td className={`py-1 pr-2 ${
-                                    evt.event === 'forced_liquidation' ? 'text-red-400' :
-                                    evt.event === 'zone_change' ? 'text-yellow-400' :
-                                    'text-gray-400'
-                                  }`}>
-                                    {evt.event}
-                                  </td>
-                                  <td className="py-1 text-gray-400">{evt.description}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Equity Curve */}
-              <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-semibold flex items-center gap-2">
-                    <TrendingUp className="h-5 w-5 text-yellow-400" />
-                    Equity Curve ({selectedTimeframe.label})
-                  </h3>
-                  {/* Timeframe Selector */}
-                  <div className="flex gap-1">
-                    {EQUITY_TIMEFRAMES.map((tf) => (
-                      <button
-                        key={tf.id}
-                        onClick={() => setEquityTimeframe(tf.id)}
-                        className={`px-3 py-1 text-xs rounded transition-colors ${
-                          equityTimeframe === tf.id
-                            ? 'bg-yellow-500 text-black font-semibold'
-                            : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                        }`}
-                      >
-                        {tf.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {equityChartData.length > 0 ? (
-                  <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={equityChartData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                        <XAxis
-                          dataKey="date"
-                          stroke="#9CA3AF"
-                          tick={{ fill: '#9CA3AF', fontSize: 11 }}
-                          tickFormatter={(value) => {
-                            if (!value) return ''
-                            const date = new Date(value)
-                            if (isIntraday) {
-                              // Show time for intraday (e.g., "9:30 AM")
-                              return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
-                            }
-                            // Show date for daily (e.g., "Jan 15")
-                            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                          }}
-                        />
-                        <YAxis
-                          stroke="#9CA3AF"
-                          tick={{ fill: '#9CA3AF', fontSize: 12 }}
-                          tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
-                          domain={['dataMin - 1000', 'dataMax + 1000']}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: '#1F2937',
-                            border: '1px solid #374151',
-                            borderRadius: '8px',
-                          }}
-                          labelFormatter={(value) => {
-                            if (!value) return ''
-                            const date = new Date(value)
-                            if (isIntraday) {
-                              return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
-                            }
-                            return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-                          }}
-                          formatter={(value: number, name: string) => [
-                            `$${value.toLocaleString()}`,
-                            name === 'equity' ? 'Equity' : 'P&L'
-                          ]}
-                        />
-                        <ReferenceLine
-                          y={startingCapital}
-                          stroke="#EF4444"
-                          strokeDasharray="5 5"
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="equity"
-                          stroke={brand.hexPrimary}
-                          strokeWidth={2}
-                          dot={equityChartData.length < 20}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                ) : (
-                  <div className="h-64 flex items-center justify-center text-gray-500">
-                    <div className="text-center">
-                      <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                      <p>No equity data{selectedTicker ? ` for ${selectedTicker}` : ''} ({selectedTimeframe.label})</p>
-                      <p className="text-xs mt-1">{selectedTicker ? `${selectedTicker} equity snapshots will appear after trades are executed for this instrument` : 'Data will appear after trades are executed'}</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Open Positions */}
-              <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
-                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                  <Activity className="h-5 w-5 text-yellow-400" />
-                  Open Positions ({positions.length})
-                </h3>
-
-                {positions.length === 0 ? (
-                  <div className="text-center py-8">
-                    <Zap className="h-12 w-12 text-gray-600 mx-auto mb-4" />
-                    <p className="text-gray-400">No open positions</p>
-                    <p className="text-gray-500 text-sm mt-2">
-                      VALOR will open positions when GEX signals meet criteria
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {positions.map((position: any) => {
-                      const posTicker = position.ticker || 'MES'
-                      const posMeta = getTickerMeta(posTicker)
-                      return (
-                      <div key={position.position_id} className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4">
-                            <div className={`p-2 rounded-lg ${
-                              position.direction === 'LONG'
-                                ? 'bg-green-900/50 text-green-400'
-                                : 'bg-red-900/50 text-red-400'
-                            }`}>
-                              {position.direction === 'LONG'
-                                ? <TrendingUp className="h-5 w-5" />
-                                : <TrendingDown className="h-5 w-5" />
-                              }
-                            </div>
-                            <div>
-                              <div className="font-semibold flex items-center gap-2">
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold" style={{ backgroundColor: posMeta.hexColor + '20', color: posMeta.hexColor }}>
-                                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: posMeta.hexColor }} />
-                                  {posTicker}
-                                </span>
-                                {position.symbol}
-                              </div>
-                              <div className="text-sm text-gray-400">
-                                {position.contracts} contracts @ {position.entry_price?.toFixed(2)}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <div className={`px-3 py-1 rounded-full text-sm ${
-                              position.gamma_regime === 'POSITIVE'
-                                ? 'bg-blue-900/50 text-blue-400'
-                                : 'bg-purple-900/50 text-purple-400'
-                            }`}>
-                              {position.gamma_regime} GAMMA
-                            </div>
-                            <span className={`text-lg font-mono font-bold ${
-                              (position.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
-                            }`}>
-                              {(position.unrealized_pnl || 0) >= 0 ? '+' : ''}${position.unrealized_pnl?.toFixed(2) || '0.00'}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mt-3 text-sm text-gray-400">
-                          <div>
-                            <span className="text-gray-500">Current</span>
-                            <p className="text-white font-mono">{position.current_price ? `$${position.current_price.toFixed(2)}` : '---'}</p>
-                          </div>
-                          <div>
-                            <span className="text-gray-500">Stop</span>
-                            <p className="text-red-400 font-mono">{position.current_stop?.toFixed(2)}</p>
-                          </div>
-                          <div>
-                            <span className="text-gray-500">Trailing</span>
-                            <p className={position.trailing_active ? 'text-green-400' : 'text-gray-500'}>{position.trailing_active ? 'Active' : 'Inactive'}</p>
-                          </div>
-                          <div>
-                            <span className="text-gray-500">Opened</span>
-                            <p className="text-white">{new Date(position.open_time).toLocaleTimeString()}</p>
-                          </div>
-                          <div>
-                            <span className="text-gray-500">Signal</span>
-                            <p className="text-white">{position.signal_confidence ? `${(position.signal_confidence * 100).toFixed(0)}%` : '---'}</p>
-                          </div>
-                          <div>
-                            <span className="text-gray-500">ID</span>
-                            <p className="text-white font-mono text-xs">{position.position_id?.slice(0, 8)}</p>
-                          </div>
-                        </div>
-                      </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'overview' && (
-            <div className="space-y-6">
-              {/* Stats Grid */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <StatCard
-                  label="Total P&L"
-                  value={`$${(performance.total_pnl || 0).toFixed(2)}`}
-                  trend={(performance.total_pnl || 0) >= 0 ? 'up' : 'down'}
-                />
-                <StatCard
-                  label="Win Rate"
-                  value={`${(performance.win_rate || 0).toFixed(1)}%`}
-                  trend={(performance.win_rate || 0) >= 50 ? 'up' : 'down'}
-                />
-                <StatCard
-                  label="Total Trades"
-                  value={performance.total_trades || 0}
-                />
-                <StatCard
-                  label="Open Positions"
-                  value={positions.length}
-                />
-              </div>
-
-              {/* Win Probability Tracker */}
-              <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
-                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                  <PieChart className="h-5 w-5 text-yellow-400" />
-                  Bayesian Win Probability Tracker
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="bg-gray-900/50 rounded-lg p-4">
-                    <div className="text-sm text-gray-400">Overall Win Probability</div>
-                    <div className="text-3xl font-bold text-yellow-400 mt-1">
-                      {((winTracker.win_probability || 0.5) * 100).toFixed(1)}%
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      Based on {winTracker.total_trades || 0} trades
-                    </div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded-lg p-4">
-                    <div className="text-sm text-gray-400">Positive Gamma (Mean Reversion)</div>
-                    <div className="flex items-center gap-4 mt-2">
-                      <span className="text-green-400">W: {winTracker.positive_gamma_wins || 0}</span>
-                      <span className="text-red-400">L: {winTracker.positive_gamma_losses || 0}</span>
-                    </div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded-lg p-4">
-                    <div className="text-sm text-gray-400">Negative Gamma (Momentum)</div>
-                    <div className="flex items-center gap-4 mt-2">
-                      <span className="text-green-400">W: {winTracker.negative_gamma_wins || 0}</span>
-                      <span className="text-red-400">L: {winTracker.negative_gamma_losses || 0}</span>
-                    </div>
-                  </div>
-                </div>
-                {winTracker.should_use_ml && (
-                  <div className="mt-4 p-3 bg-green-900/30 border border-green-500/30 rounded-lg">
-                    <span className="text-green-400 flex items-center gap-2">
-                      <CheckCircle className="h-4 w-4" />
-                      Ready for ML model training (50+ trades collected)
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {/* ML Shadow Advisor */}
-              {(() => {
-                const ml = mlShadowData?.data
-                const phase = ml?.phase ?? 'COLLECTING'
-                const comp = ml?.shadow_comparison
-
-                const phaseColors: Record<string, string> = {
-                  COLLECTING: 'bg-gray-700 text-gray-300',
-                  TRAINING: 'bg-blue-900/50 text-blue-400 border border-blue-700/40',
-                  SHADOW: 'bg-yellow-900/40 text-yellow-400 border border-yellow-700/40',
-                  ELIGIBLE: 'bg-green-900/40 text-green-400 border border-green-700/40',
-                  PROMOTED: 'bg-purple-900/40 text-purple-400 border border-purple-700/40',
-                }
-                const phaseLabels: Record<string, string> = {
-                  COLLECTING: 'Collecting Data',
-                  TRAINING: 'Model Trained',
-                  SHADOW: 'Shadow Running',
-                  ELIGIBLE: 'Ready to Promote',
-                  PROMOTED: 'Active (Live)',
-                }
-
+              ))}
+            </nav>
+            <div className="flex flex-col gap-1">
+              <div className="text-xs tracking-[.1em] uppercase text-gray-500 px-3 pb-1.5">Instruments</div>
+              {activeTickers.map(t => {
+                const m = meta(t), p = latest[t]?.underlying_price, o = firstPrice(t), ch = p && o ? (p - o) / o * 100 : 0, on = t === sel
                 return (
-                  <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
-                    <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                      <Eye className="h-5 w-5 text-yellow-400" />
-                      ML Shadow Advisor
-                    </h3>
-
-                    {/* Phase + model info */}
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <span className={`px-2.5 py-1 rounded text-xs font-bold ${phaseColors[phase] || phaseColors.COLLECTING}`}>
-                          {phaseLabels[phase] || phase}
-                        </span>
-                        {ml?.is_trained && (
-                          <span className="text-xs text-gray-500">
-                            v{ml.model_version} &middot; {ml.samples ?? 0} samples
-                          </span>
-                        )}
-                      </div>
-                      {ml?.training_date && (
-                        <span className="text-xs text-gray-600">
-                          Trained {new Date(ml.training_date).toLocaleDateString()}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Shadow comparison stats */}
-                    {comp && comp.resolved_predictions > 0 && (
-                      <>
-                        <div className="text-xs text-gray-400 mb-2">Shadow Comparison (ML vs Bayesian)</div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                          <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                            <span className="text-gray-500 text-[10px] block">ML Brier</span>
-                            <span className={`font-mono font-bold text-sm ${comp.ml_brier <= comp.bayesian_brier ? 'text-green-400' : 'text-red-400'}`}>
-                              {comp.ml_brier.toFixed(4)}
-                            </span>
-                          </div>
-                          <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                            <span className="text-gray-500 text-[10px] block">Bayes Brier</span>
-                            <span className="font-mono font-bold text-sm text-gray-300">{comp.bayesian_brier.toFixed(4)}</span>
-                          </div>
-                          <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                            <span className="text-gray-500 text-[10px] block">Improvement</span>
-                            <span className={`font-mono font-bold text-sm ${comp.brier_improvement_pct > 0 ? 'text-green-400' : comp.brier_improvement_pct < 0 ? 'text-red-400' : 'text-gray-400'}`}>
-                              {comp.brier_improvement_pct > 0 ? '+' : ''}{comp.brier_improvement_pct.toFixed(1)}%
-                            </span>
-                          </div>
-                          <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                            <span className="text-gray-500 text-[10px] block">Resolved</span>
-                            <span className="font-mono font-bold text-sm text-white">{comp.resolved_predictions}</span>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-3 gap-3 mb-3">
-                          <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                            <span className="text-gray-500 text-[10px] block">ML Accuracy</span>
-                            <span className="font-mono font-bold text-sm text-white">{(comp.ml_accuracy * 100).toFixed(1)}%</span>
-                          </div>
-                          <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                            <span className="text-gray-500 text-[10px] block">Bayes Accuracy</span>
-                            <span className="font-mono font-bold text-sm text-gray-300">{(comp.bayesian_accuracy * 100).toFixed(1)}%</span>
-                          </div>
-                          <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                            <span className="text-gray-500 text-[10px] block">Catastrophic Miss</span>
-                            <span className={`font-mono font-bold text-sm ${comp.catastrophic_miss_rate <= 0.10 ? 'text-green-400' : 'text-red-400'}`}>
-                              {(comp.catastrophic_miss_rate * 100).toFixed(1)}%
-                            </span>
-                          </div>
-                        </div>
-                      </>
-                    )}
-
-                    {/* Promotion blockers */}
-                    {comp?.promotion_blockers && comp.promotion_blockers.length > 0 && phase !== 'PROMOTED' && (
-                      <div className="bg-gray-800/30 rounded-lg p-3 mb-3">
-                        <div className="text-xs text-gray-400 mb-1.5">Promotion Blockers</div>
-                        <ul className="space-y-1">
-                          {comp.promotion_blockers.map((b: string, i: number) => (
-                            <li key={i} className="text-xs text-yellow-400/80 flex items-start gap-1.5">
-                              <span className="text-yellow-500 mt-0.5">&#x2022;</span>
-                              {b}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {/* Action buttons */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <button
-                        onClick={handleTrainML}
-                        disabled={isTraining}
-                        className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-900/40 text-blue-400 border border-blue-700/40 hover:bg-blue-800/50 disabled:opacity-40 transition-colors"
-                      >
-                        {isTraining ? 'Training...' : ml?.is_trained ? 'Retrain Model' : 'Train Model'}
-                      </button>
-                      {phase !== 'PROMOTED' && ml?.is_trained && (
-                        <button
-                          onClick={handleApproveML}
-                          disabled={isApproving || phase !== 'ELIGIBLE'}
-                          title={phase !== 'ELIGIBLE' ? 'Not yet eligible - resolve promotion blockers first' : 'Promote ML to control live trading'}
-                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-green-900/40 text-green-400 border border-green-700/40 hover:bg-green-800/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                        >
-                          {isApproving ? 'Promoting...' : 'Promote ML'}
-                        </button>
-                      )}
-                      {phase === 'PROMOTED' && (
-                        <button
-                          onClick={handleRevokeML}
-                          disabled={isRevoking}
-                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-900/40 text-red-400 border border-red-700/40 hover:bg-red-800/50 disabled:opacity-40 transition-colors"
-                        >
-                          {isRevoking ? 'Revoking...' : 'Revoke ML'}
-                        </button>
-                      )}
-                      {ml?.is_trained && phase !== 'PROMOTED' && (
-                        <button
-                          onClick={handleRejectML}
-                          disabled={isRejecting}
-                          title="Delete trained model and start fresh"
-                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700 hover:text-red-400 disabled:opacity-40 transition-colors"
-                        >
-                          {isRejecting ? 'Discarding...' : 'Discard Model'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )
-              })()}
-
-              {/* ML Training Data Status */}
-              <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
-                <div className="mb-4">
-                  <h3 className="text-lg font-semibold flex items-center gap-2">
-                    <GraduationCap className="h-5 w-5 text-yellow-400" />
-                    ML Training Data Status
-                  </h3>
-                  <p className="text-xs text-gray-500 mt-1">Use ML Shadow Advisor above to train, promote, or discard models.</p>
-                </div>
-
-                {/* Parameter Version Warning Banner */}
-                {mlTrainingDataStats && (
-                  <div className={`mb-4 p-4 rounded-lg border ${
-                    mlTrainingDataStats.ready_for_ml_training
-                      ? 'bg-green-900/20 border-green-500/50'
-                      : 'bg-yellow-900/20 border-yellow-500/50'
-                  }`}>
-                    <div className="flex items-center gap-2 mb-2">
-                      <AlertTriangle className={`h-5 w-5 ${
-                        mlTrainingDataStats.ready_for_ml_training ? 'text-green-400' : 'text-yellow-400'
-                      }`} />
-                      <span className={`font-semibold ${
-                        mlTrainingDataStats.ready_for_ml_training ? 'text-green-400' : 'text-yellow-400'
-                      }`}>
-                        Parameter Version {mlTrainingDataStats.parameter_version}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-300 mb-3">
-                      {mlTrainingDataStats.parameter_description}
-                    </p>
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div className="bg-red-900/30 rounded-lg p-3 border border-red-500/30">
-                        <div className="text-red-400 font-medium">Old Parameters (Garbage Data)</div>
-                        <div className="text-xl font-bold text-red-300 mt-1">
-                          {mlTrainingDataStats.old_parameter_trades?.count || 0} trades
-                        </div>
-                        <div className="text-xs text-gray-400">
-                          Win Rate: {mlTrainingDataStats.old_parameter_trades?.win_rate || 0}%
-                          <span className="text-red-400 ml-2">(asymmetric risk/reward)</span>
-                        </div>
-                      </div>
-                      <div className="bg-green-900/30 rounded-lg p-3 border border-green-500/30">
-                        <div className="text-green-400 font-medium">New Parameters (Quality Data)</div>
-                        <div className="text-xl font-bold text-green-300 mt-1">
-                          {mlTrainingDataStats.new_parameter_trades?.count || 0} trades
-                        </div>
-                        <div className="text-xs text-gray-400">
-                          {mlTrainingDataStats.ready_for_ml_training ? (
-                            <span className="text-green-400">Ready for ML training!</span>
-                          ) : (
-                            <span className="text-yellow-400">
-                              Need {mlTrainingDataStats.trades_needed_for_ml} more trades
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <p className="text-xs text-gray-500 mt-2">
-                      ML will ONLY train on new parameter trades. Old data had big losses/small wins.
-                    </p>
-                  </div>
-                )}
-
-                {/* Training Data Stats */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="bg-gray-900/50 rounded-lg p-4">
-                    <div className="text-sm text-gray-400">New Param Trades</div>
-                    <div className="text-2xl font-bold text-white mt-1">
-                      {mlTrainingDataStats?.new_parameter_trades?.count || 0}
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">Need 50 for ML</div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded-lg p-4">
-                    <div className="text-sm text-gray-400">Win/Loss (New)</div>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-green-400 text-lg font-bold">{mlTrainingDataStats?.new_parameter_trades?.wins || 0}W</span>
-                      <span className="text-gray-500">/</span>
-                      <span className="text-red-400 text-lg font-bold">{mlTrainingDataStats?.new_parameter_trades?.losses || 0}L</span>
-                    </div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded-lg p-4">
-                    <div className="text-sm text-gray-400">New Win Rate</div>
-                    <div className="text-2xl font-bold text-yellow-400 mt-1">
-                      {(mlTrainingDataStats?.new_parameter_trades?.win_rate || 0).toFixed(1)}%
-                    </div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded-lg p-4">
-                    <div className="text-sm text-gray-400">Ready for Training</div>
-                    <div className={`text-xl font-bold mt-1 flex items-center gap-2 ${
-                      mlTrainingDataStats?.ready_for_ml_training ? 'text-green-400' : 'text-yellow-400'
-                    }`}>
-                      {mlTrainingDataStats?.ready_for_ml_training ? (
-                        <><CheckCircle className="h-5 w-5" /> Yes</>
-                      ) : (
-                        <><RefreshCw className="h-5 w-5" /> {mlTrainingDataStats?.trades_needed_for_ml || 50} more</>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Training Results (shown after training) */}
-                {trainingResult && (
-                  <div className={`mt-4 p-4 rounded-lg border ${
-                    trainingResult.success
-                      ? 'bg-green-900/20 border-green-500/50'
-                      : 'bg-red-900/20 border-red-500/50'
-                  }`}>
-                    {trainingResult.success ? (
-                      <div className="space-y-4">
-                        <div className="flex items-center gap-2 text-green-400 font-semibold">
-                          <CheckCircle className="h-5 w-5" />
-                          Model Trained Successfully
-                        </div>
-
-                        {/* New vs Previous Comparison */}
-                        {trainingResult.comparison && (
-                          <div className={`p-3 rounded-lg border ${
-                            trainingResult.comparison.is_improvement
-                              ? 'bg-green-900/30 border-green-600/50'
-                              : trainingResult.comparison.regressions?.length > 0
-                                ? 'bg-yellow-900/30 border-yellow-600/50'
-                                : 'bg-blue-900/30 border-blue-600/50'
-                          }`}>
-                            <div className="flex items-center gap-2 mb-2">
-                              {trainingResult.comparison.is_improvement ? (
-                                <TrendingUp className="h-4 w-4 text-green-400" />
-                              ) : trainingResult.comparison.regressions?.length > 0 ? (
-                                <AlertTriangle className="h-4 w-4 text-yellow-400" />
-                              ) : (
-                                <Eye className="h-4 w-4 text-blue-400" />
-                              )}
-                              <span className={`font-medium ${
-                                trainingResult.comparison.is_improvement ? 'text-green-400' :
-                                trainingResult.comparison.regressions?.length > 0 ? 'text-yellow-400' : 'text-blue-400'
-                              }`}>
-                                {trainingResult.comparison.recommendation}
-                              </span>
-                            </div>
-
-                            {/* Improvement Reasons */}
-                            {trainingResult.comparison.improvement_reasons?.length > 0 && (
-                              <ul className="text-sm text-gray-300 space-y-1 ml-6">
-                                {trainingResult.comparison.improvement_reasons.map((reason: string, i: number) => (
-                                  <li key={i} className="flex items-center gap-2">
-                                    <CheckCircle className="h-3 w-3 text-green-500" />
-                                    {reason}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-
-                            {/* Regressions */}
-                            {trainingResult.comparison.regressions?.length > 0 && (
-                              <ul className="text-sm text-yellow-300 space-y-1 ml-6 mt-2">
-                                {trainingResult.comparison.regressions.map((regression: string, i: number) => (
-                                  <li key={i} className="flex items-center gap-2">
-                                    <AlertTriangle className="h-3 w-3 text-yellow-500" />
-                                    {regression}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-
-                            {/* Previous vs New comparison table */}
-                            {trainingResult.comparison.previous && (
-                              <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                                <div className="text-gray-500">Metric</div>
-                                <div className="text-gray-500">Previous</div>
-                                <div className="text-gray-500">New</div>
-
-                                <div className="text-gray-400">Accuracy</div>
-                                <div className="text-gray-300">{(trainingResult.comparison.previous.accuracy * 100).toFixed(1)}%</div>
-                                <div className={trainingResult.comparison.changes?.accuracy > 0 ? 'text-green-400' : trainingResult.comparison.changes?.accuracy < 0 ? 'text-red-400' : 'text-white'}>
-                                  {((trainingResult.metrics?.accuracy || 0) * 100).toFixed(1)}%
-                                  {trainingResult.comparison.changes?.accuracy !== 0 && (
-                                    <span className="ml-1">
-                                      ({trainingResult.comparison.changes?.accuracy > 0 ? '+' : ''}{(trainingResult.comparison.changes?.accuracy * 100).toFixed(1)}%)
-                                    </span>
-                                  )}
-                                </div>
-
-                                <div className="text-gray-400">AUC-ROC</div>
-                                <div className="text-gray-300">{trainingResult.comparison.previous.auc_roc.toFixed(3)}</div>
-                                <div className={trainingResult.comparison.changes?.auc_roc > 0 ? 'text-green-400' : trainingResult.comparison.changes?.auc_roc < 0 ? 'text-red-400' : 'text-white'}>
-                                  {(trainingResult.metrics?.auc_roc || 0).toFixed(3)}
-                                  {trainingResult.comparison.changes?.auc_roc !== 0 && (
-                                    <span className="ml-1">
-                                      ({trainingResult.comparison.changes?.auc_roc > 0 ? '+' : ''}{trainingResult.comparison.changes?.auc_roc.toFixed(3)})
-                                    </span>
-                                  )}
-                                </div>
-
-                                <div className="text-gray-400">Samples</div>
-                                <div className="text-gray-300">{trainingResult.comparison.previous.training_samples}</div>
-                                <div className="text-white">
-                                  {trainingResult.training_samples}
-                                  {trainingResult.comparison.changes?.samples_added > 0 && (
-                                    <span className="ml-1 text-green-400">(+{trainingResult.comparison.changes?.samples_added})</span>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Core Metrics Grid */}
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                          {[
-                            { label: 'Accuracy', value: trainingResult.metrics?.accuracy, pct: true },
-                            { label: 'Precision', value: trainingResult.metrics?.precision, pct: true },
-                            { label: 'Recall', value: trainingResult.metrics?.recall, pct: true },
-                            { label: 'F1 Score', value: trainingResult.metrics?.f1_score, pct: true },
-                            { label: 'AUC-ROC', value: trainingResult.metrics?.auc_roc, pct: false },
-                            { label: 'Brier Score', value: trainingResult.metrics?.brier_score, pct: false, lower: true },
-                            { label: 'Win Rate', value: trainingResult.metrics?.win_rate_actual, pct: true },
-                            { label: 'Predicted WR', value: trainingResult.metrics?.win_rate_predicted, pct: true },
-                          ].map(({ label, value, pct, lower }) => (
-                            <div key={label} className="bg-gray-800/50 rounded-lg p-2.5 text-center">
-                              <span className="text-gray-500 text-[10px] block">{label}</span>
-                              <span className={`font-mono font-bold text-sm ${
-                                value == null ? 'text-gray-600' :
-                                lower ? (value <= 0.25 ? 'text-green-400' : value <= 0.35 ? 'text-yellow-400' : 'text-red-400') :
-                                pct ? (value >= 0.6 ? 'text-green-400' : value >= 0.5 ? 'text-yellow-400' : 'text-red-400') :
-                                (value >= 0.65 ? 'text-green-400' : value >= 0.55 ? 'text-yellow-400' : 'text-red-400')
-                              }`}>
-                                {value != null ? (pct ? `${(value * 100).toFixed(1)}%` : value.toFixed(4)) : '\u2014'}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Sample Breakdown */}
-                        <div className="grid grid-cols-3 gap-2">
-                          <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
-                            <span className="text-gray-500 text-[10px] block">Total Samples</span>
-                            <span className="font-mono font-bold text-sm text-white">{trainingResult.samples?.total ?? trainingResult.training_samples ?? '\u2014'}</span>
-                          </div>
-                          <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
-                            <span className="text-gray-500 text-[10px] block">Wins</span>
-                            <span className="font-mono font-bold text-sm text-green-400">{trainingResult.samples?.wins ?? '\u2014'}</span>
-                          </div>
-                          <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
-                            <span className="text-gray-500 text-[10px] block">Losses</span>
-                            <span className="font-mono font-bold text-sm text-red-400">{trainingResult.samples?.losses ?? '\u2014'}</span>
-                          </div>
-                        </div>
-
-                        {/* Regime-Specific Accuracy */}
-                        {(trainingResult.metrics?.positive_gamma_accuracy != null || trainingResult.metrics?.negative_gamma_accuracy != null) && (
-                          <div className="grid grid-cols-2 gap-2">
-                            <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
-                              <span className="text-gray-500 text-[10px] block">Positive Gamma Acc</span>
-                              <span className={`font-mono font-bold text-sm ${
-                                trainingResult.metrics?.positive_gamma_accuracy >= 0.6 ? 'text-green-400' : 'text-yellow-400'
-                              }`}>
-                                {trainingResult.metrics?.positive_gamma_accuracy != null
-                                  ? `${(trainingResult.metrics.positive_gamma_accuracy * 100).toFixed(1)}%`
-                                  : '\u2014'}
-                              </span>
-                            </div>
-                            <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
-                              <span className="text-gray-500 text-[10px] block">Negative Gamma Acc</span>
-                              <span className={`font-mono font-bold text-sm ${
-                                trainingResult.metrics?.negative_gamma_accuracy >= 0.6 ? 'text-green-400' : 'text-yellow-400'
-                              }`}>
-                                {trainingResult.metrics?.negative_gamma_accuracy != null
-                                  ? `${(trainingResult.metrics.negative_gamma_accuracy * 100).toFixed(1)}%`
-                                  : '\u2014'}
-                              </span>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Feature Importance */}
-                        {trainingResult.feature_importance?.length > 0 && (
-                          <div>
-                            <div className="text-xs text-gray-400 mb-2">Feature Importance</div>
-                            <div className="space-y-1">
-                              {trainingResult.feature_importance.slice(0, 8).map((f: any) => (
-                                <div key={f.feature} className="flex items-center gap-2 text-xs">
-                                  <span className="text-gray-400 w-44 truncate">{f.feature}</span>
-                                  <div className="flex-1 bg-gray-800 rounded-full h-2 overflow-hidden">
-                                    <div
-                                      className="h-full bg-cyan-500 rounded-full"
-                                      style={{ width: `${Math.min(f.importance * 100, 100)}%` }}
-                                    />
-                                  </div>
-                                  <span className="text-gray-500 w-12 text-right font-mono">{(f.importance * 100).toFixed(1)}%</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="text-xs text-gray-500">
-                          Model saved to database &middot; v{trainingResult.model_version}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2 text-red-400">
-                        <AlertTriangle className="h-5 w-5" />
-                        Training Failed: {trainingResult.error}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Model Status (read-only summary) */}
-                {mlStatus && mlStatus.model_trained && (
-                  <div className="mt-4 p-4 bg-gray-900/30 rounded-lg border border-gray-700">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-3 h-3 rounded-full ${
-                          mlApprovalStatus?.ml_approved ? 'bg-green-500' : 'bg-yellow-500'
-                        }`} />
-                        <span className="font-medium">
-                          {mlApprovalStatus?.ml_approved ? 'ML Model Active' : 'ML Model Trained (Awaiting Promotion)'}
-                        </span>
-                      </div>
-                      {mlStatus.last_trained && (
-                        <span className="text-sm text-gray-400">
-                          Last trained: {new Date(mlStatus.last_trained).toLocaleString()}
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-3 grid grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <span className="text-gray-400">Model Accuracy:</span>
-                        <span className="ml-2 text-yellow-400 font-mono">{((mlStatus.accuracy || 0) * 100).toFixed(1)}%</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-400">Training Samples:</span>
-                        <span className="ml-2 text-white font-mono">{mlStatus.training_samples || 0}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-400">Probability Source:</span>
-                        <span className={`ml-2 font-mono ${mlApprovalStatus?.probability_source === 'ML' ? 'text-green-400' : 'text-blue-400'}`}>
-                          {mlApprovalStatus?.probability_source || 'BAYESIAN'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* A/B Test for Dynamic Stops */}
-                <div className="mt-4 p-4 bg-gray-900/30 rounded-lg border border-gray-700">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <PieChart className="h-5 w-5 text-purple-400" />
-                      <span className="font-medium">A/B Test: Fixed vs Dynamic Stops</span>
-                    </div>
-                    <button
-                      onClick={handleToggleABTest}
-                      disabled={isTogglingABTest}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-                        abTestStatus?.ab_test_enabled
-                          ? 'bg-purple-600 hover:bg-purple-500 text-white'
-                          : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                      } disabled:opacity-50`}
-                    >
-                      {isTogglingABTest ? (
-                        <>
-                          <RefreshCw className="h-4 w-4 animate-spin" />
-                          {abTestStatus?.ab_test_enabled ? 'Disabling...' : 'Enabling...'}
-                        </>
-                      ) : abTestStatus?.ab_test_enabled ? (
-                        'Disable A/B Test'
-                      ) : (
-                        'Enable A/B Test'
-                      )}
-                    </button>
-                  </div>
-                  <p className="text-sm text-gray-400 mb-3">
-                    {abTestStatus?.ab_test_enabled
-                      ? '50% of trades use FIXED stops, 50% use DYNAMIC stops. Need 100+ trades for comparison.'
-                      : 'When enabled, randomly assigns trades to FIXED or DYNAMIC stops for comparison.'}
-                  </p>
-
-                  {/* A/B Test Results */}
-                  {abTestResults?.results && (
-                    <div className="mt-3 space-y-3">
-                      <div className="grid grid-cols-2 gap-4">
-                        {/* Fixed Results */}
-                        <div className="p-3 bg-gray-800/50 rounded-lg">
-                          <div className="text-sm font-medium text-blue-400 mb-2">FIXED Stops</div>
-                          <div className="grid grid-cols-2 gap-2 text-sm">
-                            <div>
-                              <span className="text-gray-400">Trades:</span>
-                              <span className="ml-1 text-white">{abTestResults.results.fixed.trades}</span>
-                            </div>
-                            <div>
-                              <span className="text-gray-400">Win Rate:</span>
-                              <span className="ml-1 text-white">{abTestResults.results.fixed.win_rate.toFixed(1)}%</span>
-                            </div>
-                            <div>
-                              <span className="text-gray-400">Total P&L:</span>
-                              <span className={`ml-1 ${abTestResults.results.fixed.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                ${abTestResults.results.fixed.total_pnl.toFixed(2)}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-gray-400">Avg P&L:</span>
-                              <span className={`ml-1 ${abTestResults.results.fixed.avg_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                ${abTestResults.results.fixed.avg_pnl.toFixed(2)}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Dynamic Results */}
-                        <div className="p-3 bg-gray-800/50 rounded-lg">
-                          <div className="text-sm font-medium text-purple-400 mb-2">DYNAMIC Stops</div>
-                          <div className="grid grid-cols-2 gap-2 text-sm">
-                            <div>
-                              <span className="text-gray-400">Trades:</span>
-                              <span className="ml-1 text-white">{abTestResults.results.dynamic.trades}</span>
-                            </div>
-                            <div>
-                              <span className="text-gray-400">Win Rate:</span>
-                              <span className="ml-1 text-white">{abTestResults.results.dynamic.win_rate.toFixed(1)}%</span>
-                            </div>
-                            <div>
-                              <span className="text-gray-400">Total P&L:</span>
-                              <span className={`ml-1 ${abTestResults.results.dynamic.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                ${abTestResults.results.dynamic.total_pnl.toFixed(2)}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-gray-400">Avg P&L:</span>
-                              <span className={`ml-1 ${abTestResults.results.dynamic.avg_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                ${abTestResults.results.dynamic.avg_pnl.toFixed(2)}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Summary */}
-                      {abTestResults.results.summary && (
-                        <div className={`p-3 rounded-lg ${
-                          abTestResults.results.summary.recommended_stop === 'FIXED'
-                            ? 'bg-blue-900/30 border border-blue-700'
-                            : abTestResults.results.summary.recommended_stop === 'DYNAMIC'
-                              ? 'bg-purple-900/30 border border-purple-700'
-                              : 'bg-gray-800/50'
-                        }`}>
-                          <div className="text-sm">
-                            <span className="text-gray-400">Status:</span>
-                            <span className="ml-2 text-white">{abTestResults.results.summary.message}</span>
-                          </div>
-                          {abTestResults.results.summary.recommended_stop && abTestResults.results.summary.recommended_stop !== 'INCONCLUSIVE' && (
-                            <div className="mt-1 text-sm">
-                              <span className="text-gray-400">Recommendation:</span>
-                              <span className={`ml-2 font-medium ${
-                                abTestResults.results.summary.recommended_stop === 'FIXED' ? 'text-blue-400' : 'text-purple-400'
-                              }`}>
-                                Use {abTestResults.results.summary.recommended_stop} stops
-                              </span>
-                              <span className="ml-2 text-gray-500">
-                                (Confidence: {abTestResults.results.summary.confidence})
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Feature Importance (shown when model is trained) */}
-              {featureImportance && featureImportance.features && featureImportance.features.length > 0 && (
-                <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
-                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                    <PieChart className="h-5 w-5 text-yellow-400" />
-                    ML Feature Importance
-                  </h3>
-                  <div className="space-y-2">
-                    {featureImportance.features.slice(0, 10).map((feature: { name: string; importance: number }, idx: number) => (
-                      <div key={feature.name} className="flex items-center gap-3">
-                        <span className="text-xs text-gray-500 w-4">{idx + 1}</span>
-                        <span className="text-sm text-gray-300 w-48 truncate" title={feature.name}>
-                          {feature.name.replace(/_/g, ' ')}
-                        </span>
-                        <div className="flex-1 h-4 bg-gray-800 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-gradient-to-r from-yellow-600 to-yellow-400 rounded-full"
-                            style={{ width: `${(feature.importance * 100)}%` }}
-                          />
-                        </div>
-                        <span className="text-xs text-gray-400 w-12 text-right font-mono">
-                          {(feature.importance * 100).toFixed(1)}%
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-xs text-gray-500 mt-4">
-                    Features ranked by their contribution to predicting trade outcomes. Higher importance = more predictive power.
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {activeTab === 'activity' && (
-            <div className="space-y-6">
-              {/* Scan Summary */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
-                  <div className="text-sm text-gray-400">Total Scans</div>
-                  <div className="text-2xl font-bold mt-1">{scanActivityData?.count || 0}</div>
-                </div>
-                <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
-                  <div className="text-sm text-gray-400">Traded</div>
-                  <div className="text-2xl font-bold mt-1 text-green-400">{scanSummary.traded || 0}</div>
-                </div>
-                <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
-                  <div className="text-sm text-gray-400">No Trade</div>
-                  <div className="text-2xl font-bold mt-1 text-yellow-400">{scanSummary.no_trade || 0}</div>
-                </div>
-                <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
-                  <div className="text-sm text-gray-400">Skipped</div>
-                  <div className="text-2xl font-bold mt-1 text-gray-400">{scanSummary.skip || 0}</div>
-                </div>
-                <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
-                  <div className="text-sm text-gray-400">Trade Rate</div>
-                  <div className="text-2xl font-bold mt-1 text-yellow-400">{(scanSummary.trade_rate_pct || 0).toFixed(1)}%</div>
-                </div>
-              </div>
-
-              {/* Today's Scan Summary */}
-              {(scanToday.scans_today > 0) && (
-                <div className="bg-yellow-900/20 border border-yellow-700/40 rounded-lg p-4">
-                  <div className="flex items-center gap-3 text-sm">
-                    <Zap className="h-4 w-4 text-yellow-400" />
-                    <span className="text-yellow-400 font-semibold">Today:</span>
-                    <span className="text-gray-300">{scanToday.scans_today} scans</span>
-                    <span className="text-gray-500">&middot;</span>
-                    <span className="text-green-400">{scanToday.traded_today} traded</span>
-                    <span className="text-gray-500">&middot;</span>
-                    <span className="text-gray-300">{(scanToday.trade_rate_today_pct || 0).toFixed(1)}% rate</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Recent Signals */}
-              {signals.length > 0 && (
-                <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 overflow-hidden">
-                  <div className="p-4 border-b border-gray-800">
-                    <h3 className="font-semibold flex items-center gap-2">
-                      <Zap className="h-5 w-5 text-yellow-400" />
-                      Recent Signals ({signals.length})
-                    </h3>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-900">
-                        <tr>
-                          <th className="px-4 py-3 text-left text-gray-400">Time</th>
-                          <th className="px-4 py-3 text-left text-gray-400">Ticker</th>
-                          <th className="px-4 py-3 text-left text-gray-400">Direction</th>
-                          <th className="px-4 py-3 text-left text-gray-400">Source</th>
-                          <th className="px-4 py-3 text-left text-gray-400">Regime</th>
-                          <th className="px-4 py-3 text-right text-gray-400">Price</th>
-                          <th className="px-4 py-3 text-right text-gray-400">Win Prob</th>
-                          <th className="px-4 py-3 text-left text-gray-400">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-800">
-                        {signals.slice(0, 20).map((signal: any, idx: number) => {
-                          const sigTicker = signal.ticker || 'MES'
-                          const sigMeta = getTickerMeta(sigTicker)
-                          return (
-                            <tr key={signal.signal_id || idx} className="hover:bg-gray-900/50">
-                              <td className="px-4 py-3 font-mono text-xs">
-                                {signal.signal_time ? new Date(signal.signal_time).toLocaleTimeString() : '—'}
-                              </td>
-                              <td className="px-4 py-3">
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold" style={{ backgroundColor: sigMeta.hexColor + '20', color: sigMeta.hexColor }}>
-                                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: sigMeta.hexColor }} />
-                                  {sigTicker}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3">
-                                <span className={`px-2 py-1 rounded text-xs ${
-                                  signal.direction === 'LONG' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
-                                }`}>
-                                  {signal.direction}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-xs text-gray-400">{signal.source || signal.signal_source || '—'}</td>
-                              <td className="px-4 py-3">
-                                {signal.gamma_regime && (
-                                  <span className={`px-2 py-1 rounded text-xs ${
-                                    signal.gamma_regime === 'POSITIVE' ? 'bg-blue-900/50 text-blue-400' : 'bg-purple-900/50 text-purple-400'
-                                  }`}>
-                                    {signal.gamma_regime}
-                                  </span>
-                                )}
-                              </td>
-                              <td className="px-4 py-3 text-right font-mono">{signal.current_price?.toFixed(2) || signal.entry_price?.toFixed(2) || signal.price?.toFixed(2) || '—'}</td>
-                              <td className="px-4 py-3 text-right font-mono text-xs">
-                                {signal.win_probability != null
-                                  ? <span className={signal.win_probability >= 0.55 ? 'text-green-400' : signal.win_probability >= 0.45 ? 'text-yellow-400' : 'text-red-400'}>
-                                      {(signal.win_probability * 100).toFixed(0)}%
-                                    </span>
-                                  : <span className="text-gray-600">—</span>
-                                }
-                              </td>
-                              <td className="px-4 py-3">
-                                <span className={`px-2 py-1 rounded text-xs ${
-                                  signal.executed ? 'bg-green-900/50 text-green-400' : 'bg-gray-700 text-gray-400'
-                                }`}>
-                                  {signal.executed ? 'Executed' : 'Skipped'}
-                                </span>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Scan Activity Table */}
-              <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 overflow-hidden">
-                <div className="p-4 border-b border-gray-800 flex items-center justify-between">
-                  <h3 className="font-semibold flex items-center gap-2">
-                    <Eye className="h-5 w-5 text-yellow-400" />
-                    Scan Activity (ML Training Data)
-                  </h3>
-                  <button
-                    onClick={() => mutateScanActivity()}
-                    className="flex items-center gap-2 px-3 py-1.5 bg-yellow-600 rounded-lg hover:bg-yellow-700 transition-colors text-sm"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                    Refresh
+                  <button key={t} onClick={() => { setSel(t); setTab('portfolio') }}
+                    className={`flex flex-col gap-0.5 px-3 py-2 rounded-lg text-left border-l-2 hover:bg-[#1a1f2e] ${on ? 'bg-[#1a1f2e]' : ''}`}
+                    style={{ borderColor: on ? m.color : 'transparent' }}>
+                    <span className="flex justify-between items-center">
+                      <span className="flex items-center gap-2 text-sm font-semibold"><Dot color={m.color} />{t}</span>
+                      <span className="font-mono text-[13px]">{p ? Number(p).toFixed(m.d) : '—'}</span>
+                    </span>
+                    <span className="flex justify-between text-xs">
+                      <span className="text-gray-500">{m.label}</span>
+                      <span className="font-mono" style={{ color: pnlColor(ch) }}>{p && o ? pct(ch) : ''}</span>
+                    </span>
                   </button>
+                )
+              })}
+            </div>
+            <div className="text-xs text-yellow-500 border border-yellow-500/35 rounded-lg px-3 py-2.5 leading-relaxed">Paper trading mode. Simulated trades, not verified returns.</div>
+          </aside>
+
+          {/* Main */}
+          <section className="px-4 md:px-8 pt-7 pb-10 flex flex-col gap-6 min-w-0">
+            <div className="flex items-baseline gap-3">
+              <h1 className="text-xl font-semibold">{tabMeta.label}</h1>
+              <span className="text-sm text-gray-500">{tabMeta.desc}</span>
+            </div>
+
+            {tab === 'portfolio' && (
+              <div className="flex flex-col gap-6">
+                <div className="flex flex-wrap justify-between items-end gap-6">
+                  <div className="flex flex-col gap-2">
+                    <span className="text-sm text-gray-400">Account equity · live</span>
+                    <span className="font-mono text-5xl md:text-[56px] font-semibold tracking-tight leading-none">{money(equity)}</span>
+                    <span className="flex flex-wrap gap-4 font-mono text-[15px]">
+                      <span className="font-semibold" style={{ color: pnlColor(realized) }}>{money(realized, true)} realized</span>
+                      <span style={{ color: pnlColor(unrealized) }}>{money(unrealized, true)} open</span>
+                      <span className="text-gray-500">from {money(startingCapital)}</span>
+                    </span>
+                  </div>
+                  <div className="flex gap-7">
+                    {[['Win rate', `${(performance.win_rate || 0).toFixed(1)}%`, (performance.win_rate || 0) >= 50 ? G : R], ['Trades', performance.total_trades || 0, '#f3f4f6'], ['Return', pct(paper.return_pct || 0), pnlColor(paper.return_pct || 0)]].map(([l, v, c]) => (
+                      <div key={l as string} className="flex flex-col gap-1 items-end"><span className="text-xs text-gray-500">{l}</span><span className="font-mono text-lg font-semibold" style={{ color: c as string }}>{v}</span></div>
+                    ))}
+                  </div>
                 </div>
 
-                {scans.length === 0 ? (
-                  <div className="p-8 text-center">
-                    <Eye className="h-12 w-12 text-gray-600 mx-auto mb-4" />
-                    <p className="text-gray-400">No scan activity yet</p>
-                    <p className="text-gray-500 text-sm mt-2">Scans will appear here once VALOR starts running</p>
+                <Card className="overflow-hidden">
+                  <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-4 border-b border-[#1c2233]">
+                    <div className="flex items-baseline gap-3.5">
+                      <span className="flex items-center gap-2 text-base font-semibold"><Dot color={meta(sel).color} size={9} />{sel}</span>
+                      <span className="text-[13px] text-gray-400">{meta(sel).label} · 1m</span>
+                      <span className="font-mono text-[22px] font-semibold">{selPrice ? Number(selPrice).toFixed(meta(sel).d) : '—'}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-3.5 text-xs font-semibold tracking-wide">
+                      <span className="text-blue-500">— Call wall</span>
+                      <span className="text-amber-500">- - Gamma flip</span>
+                      <span className="text-violet-500">— Put wall</span>
+                      {selScan.gamma_regime && <span style={{ color: selScan.gamma_regime === 'POSITIVE' ? G : '#a855f7' }}>{selScan.gamma_regime} GAMMA</span>}
+                    </div>
                   </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-900">
-                        <tr>
-                          <th className="px-4 py-3 text-left text-gray-400">Time</th>
-                          <th className="px-4 py-3 text-left text-gray-400">Ticker</th>
-                          <th className="px-4 py-3 text-left text-gray-400">Outcome</th>
-                          <th className="px-4 py-3 text-left text-gray-400">Regime</th>
-                          <th className="px-4 py-3 text-right text-gray-400">Price</th>
-                          <th className="px-4 py-3 text-left text-gray-400">Signal</th>
-                          <th className="px-4 py-3 text-right text-gray-400">Bayes</th>
-                          <th className="px-4 py-3 text-right text-gray-400">ML</th>
-                          <th className="px-4 py-3 text-left text-gray-400">Decision</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-800">
-                        {scans.slice(0, 50).map((scan: any) => {
-                          const scanTicker = scan.ticker || 'MES'
-                          const scanMeta = getTickerMeta(scanTicker)
-                          return (
-                          <tr key={scan.scan_id} className="hover:bg-gray-900/50">
-                            <td className="px-4 py-3 font-mono text-xs">
-                              {new Date(scan.scan_time).toLocaleTimeString()}
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold" style={{ backgroundColor: scanMeta.hexColor + '20', color: scanMeta.hexColor }}>
-                                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: scanMeta.hexColor }} />
-                                {scanTicker}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`px-2 py-1 rounded text-xs ${
-                                scan.outcome === 'TRADED' ? 'bg-green-900/50 text-green-400' :
-                                scan.outcome === 'NO_TRADE' ? 'bg-yellow-900/50 text-yellow-400' :
-                                scan.outcome === 'SKIP' ? 'bg-gray-700 text-gray-400' :
-                                scan.outcome === 'MARKET_CLOSED' ? 'bg-gray-800 text-gray-500' :
-                                scan.outcome === 'ERROR' ? 'bg-red-900/50 text-red-400' :
-                                'bg-gray-700 text-gray-400'
-                              }`}>
-                                {scan.outcome}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              {scan.gamma_regime && (
-                                <span className={`px-2 py-1 rounded text-xs ${
-                                  scan.gamma_regime === 'POSITIVE' ? 'bg-blue-900/50 text-blue-400' :
-                                  scan.gamma_regime === 'NEGATIVE' ? 'bg-purple-900/50 text-purple-400' :
-                                  'bg-gray-700 text-gray-400'
-                                }`}>
-                                  {scan.gamma_regime}
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-right font-mono">
-                              {scan.underlying_price?.toFixed(2) || '-'}
-                            </td>
-                            <td className="px-4 py-3">
-                              {scan.signal_direction && (
-                                <span className={`px-2 py-1 rounded text-xs ${
-                                  scan.signal_direction === 'LONG' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
-                                }`}>
-                                  {scan.signal_direction}
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-right font-mono text-xs">
-                              {scan.bayesian_probability_at_scan != null
-                                ? <span className={scan.bayesian_probability_at_scan >= 0.55 ? 'text-green-400' : scan.bayesian_probability_at_scan >= 0.45 ? 'text-yellow-400' : 'text-red-400'}>
-                                    {(scan.bayesian_probability_at_scan * 100).toFixed(0)}%
-                                  </span>
-                                : scan.signal_win_probability
-                                  ? <span className="text-gray-400">{(scan.signal_win_probability * 100).toFixed(0)}%</span>
-                                  : <span className="text-gray-600">-</span>
-                              }
-                            </td>
-                            <td className="px-4 py-3 text-right font-mono text-xs">
-                              {scan.ml_probability != null
-                                ? <span className={scan.ml_probability >= 0.55 ? 'text-purple-400' : scan.ml_probability >= 0.45 ? 'text-yellow-400' : 'text-red-400'}>
-                                    {(scan.ml_probability * 100).toFixed(0)}%
-                                  </span>
-                                : <span className="text-gray-600">-</span>
-                              }
-                            </td>
-                            <td className="px-4 py-3 text-gray-400 truncate max-w-xs" title={scan.decision_summary}>
-                              {scan.decision_summary || scan.skip_reason || '-'}
-                            </td>
-                          </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
+                  <div className="flex flex-wrap">
+                    <div className="flex-[1_1_480px] min-w-0 pl-4 pr-2 pt-3 pb-2">
+                      <CandleChart bars={selBars} levels={levels} price={selPrice} d={meta(sel).d} />
+                    </div>
+                    <div className="flex-[1_0_220px] border-l border-[#1c2233] p-4 flex flex-col gap-3 text-sm">
+                      <div className="font-semibold text-[13px]">GEX levels</div>
+                      {[['Call wall', levels.cw, '#3b82f6'], ['Gamma flip', levels.flip, '#f59e0b'], ['Put wall', levels.pw, '#8b5cf6']].map(([l, v, c]) => (
+                        <div key={l as string} className="flex justify-between"><span style={{ color: c as string }}>{l}</span><span className="font-mono">{v ? Number(v).toFixed(meta(sel).d) : '—'}</span></div>
+                      ))}
+                      <div className="flex justify-between border-t border-[#1c2233] pt-3"><span className="text-gray-400">Net GEX</span><span className="font-mono" style={{ color: pnlColor(selScan.net_gex || 0) }}>{selScan.net_gex != null ? Number(selScan.net_gex).toExponential(2) : '—'}</span></div>
+                      <div className="text-[11px] text-gray-500 leading-snug">{selScan.decision_summary || selScan.skip_reason || ''}</div>
+                    </div>
+                  </div>
+                </Card>
+
+                <div className="grid gap-5 grid-cols-[repeat(auto-fit,minmax(340px,1fr))]">
+                  <Card className="px-5 py-4 flex flex-col gap-3.5">
+                    <div className="flex justify-between items-center"><span className="text-base font-semibold">Equity curve</span>
+                      <Pills items={TIMEFRAMES.map(t => ({ id: t.id, label: t.label }))} value={tf} onChange={setTf} /></div>
+                    <div className="h-[180px]"><EquityChart points={eqPoints} start={startingCapital} animKey={tf} /></div>
+                  </Card>
+                  <Card className="flex flex-col">
+                    <div className="px-5 py-4 text-base font-semibold flex justify-between"><span>Open positions ({positions.length})</span><span className="text-xs text-gray-500 font-normal">live</span></div>
+                    {positions.length === 0 && <div className="px-5 py-5 border-t border-[#1c2233] text-sm text-gray-500">No open positions. VALOR will open positions when GEX signals meet criteria.</div>}
+                    {positions.map(p => (
+                      <div key={p.position_id} className="flex justify-between items-center px-5 py-3.5 border-t border-[#1c2233]">
+                        <div className="flex flex-col gap-1">
+                          <span className="flex items-center gap-2 font-semibold text-sm"><Dot color={meta(p.ticker).color} />{p.ticker || 'MES'}
+                            <span className="text-xs" style={{ color: p.direction === 'LONG' ? G : R }}>{p.direction} × {p.contracts}</span>
+                            <span className="text-[11px] text-gray-500 font-medium">{p.gamma_regime} GAMMA</span></span>
+                          <span className="text-xs text-gray-500 font-mono">{p.entry_price?.toFixed(2)} → {p.current_price?.toFixed(2) ?? '—'}</span>
+                        </div>
+                        <span className="font-mono text-base font-semibold" style={{ color: pnlColor(p.unrealized_pnl || 0) }}>{money(p.unrealized_pnl || 0, true)}</span>
+                      </div>
+                    ))}
+                  </Card>
+                </div>
+
+                <Card className="overflow-hidden">
+                  <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-4 border-b border-[#1c2233]">
+                    <span className="text-base font-semibold">Per-instrument performance</span>
+                    {marginZones?.combined && <span className="text-xs px-2.5 py-1 rounded-full" style={{ color: zoneColor(marginZones.combined.utilization_pct), background: 'rgba(255,255,255,.04)' }}>Portfolio margin {marginZones.combined.utilization_pct}% · {marginZones.combined.zone}</span>}
+                  </div>
+                  <div className="overflow-x-auto"><div className="min-w-[760px]">
+                    <div className="grid grid-cols-[minmax(200px,1.4fr)_90px_100px_130px_minmax(180px,1fr)] gap-4 px-5 py-2.5 text-xs text-gray-500 uppercase tracking-wider">
+                      <span>Instrument</span><span className="text-right">Trades</span><span className="text-right">Win rate</span><span className="text-right">P&amp;L</span><span>Margin used</span></div>
+                    {activeTickers.map(t => {
+                      const s = tickerStats[t] || {}, m = meta(t), util = marginZones?.instruments?.[t]?.utilization_pct || 0
+                      return (
+                        <button key={t} onClick={() => setSel(t)} className={`w-full grid grid-cols-[minmax(200px,1.4fr)_90px_100px_130px_minmax(180px,1fr)] gap-4 px-5 py-3 border-t border-[#1c2233] text-sm items-center text-left hover:bg-[#1a1f2e] ${t === sel ? 'bg-[#1a1f2e]' : ''}`}>
+                          <span className="flex items-center gap-2.5"><Dot color={m.color} /><span className="font-semibold">{t}</span><span className="text-gray-400">{m.label}</span>{t === 'CL' && <span className="text-xs text-amber-500">Entries quarantined</span>}</span>
+                          <span className="font-mono text-right text-gray-300">{s.total_trades ?? 0}</span>
+                          <span className="font-mono text-right" style={{ color: (s.win_rate || 0) >= 50 ? G : R }}>{s.total_trades ? `${s.win_rate.toFixed(1)}%` : '—'}</span>
+                          <span className="font-mono text-right font-semibold" style={{ color: pnlColor(s.total_pnl || 0) }}>{s.total_trades ? money(s.total_pnl, true) : '—'}</span>
+                          <span className="grid grid-cols-[1fr_48px] gap-2.5 items-center">
+                            <span className="h-1.5 bg-[#1c2233] rounded-full overflow-hidden"><span className="block h-full" style={{ width: `${Math.min(util, 100)}%`, background: zoneColor(util) }} /></span>
+                            <span className="font-mono text-xs text-right" style={{ color: zoneColor(util) }}>{util.toFixed(1)}%</span>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div></div>
+                </Card>
+
+                <div className="text-[13px] text-gray-400 leading-relaxed flex flex-col gap-1 max-w-[900px]">
+                  <span>VALOR uses simulated futures trades. Raw balances include historical trades flagged for data quality and are not verified strategy returns. CL new entries are quarantined by default.</span>
+                  <span className="text-gray-500">24/5 trading: Sun 5pm - Fri 4pm CT with 4-5pm daily maintenance break.</span>
+                  <a className="text-yellow-500 hover:text-yellow-400" href={`${process.env.NEXT_PUBLIC_API_URL || ''}/api/valor/performance/quality`} target="_blank" rel="noopener noreferrer">View screened performance and excluded-trade counts (JSON)</a>
+                </div>
+              </div>
+            )}
+
+            {tab === 'overview' && (
+              <div className="flex flex-col gap-5">
+                {lossStreak?.is_paused && (
+                  <div className="flex items-center gap-3 border border-red-500/50 bg-red-900/30 rounded-xl px-4 py-3 text-sm">
+                    <Dot color={R} size={9} /><span className="text-red-400 font-semibold">PAUSED - Loss Streak Protection Active</span>
+                    <span className="text-gray-300">{lossStreak.consecutive_losses} consecutive losses detected. New entries paused for {lossStreak.pause_minutes} minutes.</span>
                   </div>
                 )}
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'history' && (
-            <div className="space-y-6">
-              {/* Trade Summary Stats */}
-              {closedTrades.length > 0 && (() => {
-                const wins = closedTrades.filter((t: any) => (t.realized_pnl || 0) > 0)
-                const losses = closedTrades.filter((t: any) => (t.realized_pnl || 0) <= 0)
-                const totalPnl = closedTrades.reduce((sum: number, t: any) => sum + (t.realized_pnl || 0), 0)
-                const winRate = (wins.length / closedTrades.length) * 100
-                const avgWin = wins.length > 0 ? wins.reduce((s: number, t: any) => s + t.realized_pnl, 0) / wins.length : 0
-                const avgLoss = losses.length > 0 ? losses.reduce((s: number, t: any) => s + t.realized_pnl, 0) / losses.length : 0
-                return (
-                  <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-                    <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
-                      <div className="text-sm text-gray-400">Total Trades</div>
-                      <div className="text-2xl font-bold mt-1">{closedTrades.length}</div>
-                    </div>
-                    <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
-                      <div className="text-sm text-gray-400">Win Rate</div>
-                      <div className={`text-2xl font-bold mt-1 ${winRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>{winRate.toFixed(1)}%</div>
-                    </div>
-                    <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
-                      <div className="text-sm text-gray-400">Total P&L</div>
-                      <div className={`text-2xl font-bold mt-1 ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>${totalPnl.toFixed(2)}</div>
-                    </div>
-                    <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
-                      <div className="text-sm text-gray-400">Avg Win</div>
-                      <div className="text-2xl font-bold mt-1 text-green-400">${avgWin.toFixed(2)}</div>
-                    </div>
-                    <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
-                      <div className="text-sm text-gray-400">Avg Loss</div>
-                      <div className="text-2xl font-bold mt-1 text-red-400">${avgLoss.toFixed(2)}</div>
-                    </div>
-                    <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
-                      <div className="text-sm text-gray-400">W/L</div>
-                      <div className="text-2xl font-bold mt-1">
-                        <span className="text-green-400">{wins.length}</span>
-                        <span className="text-gray-500">/</span>
-                        <span className="text-red-400">{losses.length}</span>
+                {!lossStreak?.is_paused && lossStreak?.consecutive_losses > 0 && (
+                  <div className="flex items-center gap-3 border border-orange-500/45 bg-orange-500/10 rounded-xl px-4 py-3 text-sm">
+                    <Dot color="#f97316" size={9} /><span className="text-orange-300 font-semibold">Loss Streak: {lossStreak.consecutive_losses}</span>
+                    <span className="text-gray-400">({lossStreak.max_consecutive_losses - lossStreak.consecutive_losses} more before {lossStreak.pause_minutes}min pause)</span>
+                  </div>
+                )}
+                {mlStatus?.model_trained && (
+                  <div className={`flex flex-wrap justify-between items-center gap-4 rounded-xl px-5 py-4 border ${mlApproved ? 'border-emerald-500/45 bg-emerald-500/5' : 'border-yellow-500/45 bg-yellow-500/5'}`}>
+                    <div className="flex items-center gap-3"><Dot color={mlApproved ? G : '#eab308'} size={10} />
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-semibold" style={{ color: mlApproved ? G : '#eab308' }}>{mlApproved ? 'ML Model ACTIVE - Using ML Predictions' : 'ML Model Trained - Awaiting Approval'}</span>
+                        <span className="text-sm text-gray-300">{mlApproved ? `Win probability calculated via XGBoost ML (${accuracy}% accuracy)` : `Currently using Bayesian fallback. Approve to use ML (${accuracy}% accuracy)`}</span>
                       </div>
                     </div>
-                  </div>
-                )
-              })()}
-
-              <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 overflow-hidden">
-                <div className="p-4 border-b border-gray-800">
-                  <h3 className="font-semibold flex items-center gap-2">
-                    <History className="h-5 w-5 text-yellow-400" />
-                    Closed Trades ({closedTrades.length})
-                  </h3>
-                </div>
-
-                {closedTrades.length === 0 ? (
-                  <div className="p-8 text-center">
-                    <Clock className="h-12 w-12 text-gray-600 mx-auto mb-4" />
-                    <p className="text-gray-400">No trade history yet</p>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="bg-gray-900">
-                        <tr>
-                          <th className="px-4 py-3 text-left text-sm text-gray-400">Time</th>
-                          <th className="px-4 py-3 text-left text-sm text-gray-400">Ticker</th>
-                          <th className="px-4 py-3 text-left text-sm text-gray-400">Direction</th>
-                          <th className="px-4 py-3 text-left text-sm text-gray-400">Regime</th>
-                          <th className="px-4 py-3 text-right text-sm text-gray-400">Entry</th>
-                          <th className="px-4 py-3 text-right text-sm text-gray-400">Exit</th>
-                          <th className="px-4 py-3 text-right text-sm text-gray-400">P&L</th>
-                          <th className="px-4 py-3 text-left text-sm text-gray-400">Reason</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-800">
-                        {closedTrades.map((trade: any) => {
-                          const tradeTicker = trade.ticker || 'MES'
-                          const tradeMeta = getTickerMeta(tradeTicker)
-                          return (
-                          <tr key={trade.position_id} className="hover:bg-gray-900/50">
-                            <td className="px-4 py-3 text-sm">
-                              {new Date(trade.close_time).toLocaleString()}
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold" style={{ backgroundColor: tradeMeta.hexColor + '20', color: tradeMeta.hexColor }}>
-                                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tradeMeta.hexColor }} />
-                                {tradeTicker}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`px-2 py-1 rounded text-xs ${
-                                trade.direction === 'LONG' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
-                              }`}>
-                                {trade.direction}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`px-2 py-1 rounded text-xs ${
-                                trade.gamma_regime === 'POSITIVE' ? 'bg-blue-900/50 text-blue-400' : 'bg-purple-900/50 text-purple-400'
-                              }`}>
-                                {trade.gamma_regime}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-right font-mono">{trade.entry_price?.toFixed(2)}</td>
-                            <td className="px-4 py-3 text-right font-mono">{trade.exit_price?.toFixed(2)}</td>
-                            <td className={`px-4 py-3 text-right font-mono ${
-                              trade.realized_pnl >= 0 ? 'text-green-400' : 'text-red-400'
-                            }`}>
-                              ${trade.realized_pnl?.toFixed(2)}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-400">{trade.close_reason}</td>
-                          </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-[13px] font-semibold px-3 py-1 rounded-full bg-[#1c2233] text-gray-300">Source: {mlApproval?.probability_source || 'BAYESIAN'}</span>
+                      {mlApproved
+                        ? <button disabled={!!busy} onClick={() => run('revoke', revokeValorML, [refreshApproval, refreshMLStatus])} className="text-sm font-semibold px-3.5 py-2 rounded-lg text-red-300 border border-red-500/40 disabled:opacity-50">{busy === 'revoke' ? 'Revoking…' : 'Revoke ML'}</button>
+                        : <button disabled={!!busy} onClick={() => run('approve', approveValorML, [refreshApproval, refreshMLStatus])} className="text-sm font-semibold px-3.5 py-2 rounded-lg bg-emerald-500 text-[#0a0e1a] disabled:opacity-50">{busy === 'approve' ? 'Approving…' : 'Approve ML'}</button>}
+                    </div>
                   </div>
                 )}
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'config' && (
-            <div className="space-y-6">
-              <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
-                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                  <Settings className="h-5 w-5 text-yellow-400" />
-                  VALOR Configuration {selectedTicker ? `(${selectedTicker})` : '(All Instruments)'}
-                </h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <ConfigItem label="Instruments" value={selectedTicker || 'MES, MNQ, CL, NG, RTY, MGC'} />
-                  <ConfigItem label="Capital / Instrument" value="$100,000" />
-                  <ConfigItem label="Risk/Trade" value={`${config.risk_per_trade_pct || 1}%`} />
-                  <ConfigItem label="Max Contracts" value={config.max_contracts || 5} />
-                  <ConfigItem label="Initial Stop" value={`${config.initial_stop_points || 3} pts`} />
-                  <ConfigItem label="Breakeven At" value={`+${config.breakeven_activation_points || 2} pts`} />
-                  <ConfigItem label="Trail Distance" value={`${config.trailing_stop_points || 1} pt`} />
-                  <ConfigItem label="Max Positions" value={config.max_open_positions || 2} />
+                <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(180px,1fr))]">
+                  <Stat label="Total P&L" value={money(performance.total_pnl || 0, true)} color={pnlColor(performance.total_pnl || 0)} />
+                  <Stat label="Win Rate" value={`${(performance.win_rate || 0).toFixed(1)}%`} color={(performance.win_rate || 0) >= 50 ? G : R} />
+                  <Stat label="Total Trades" value={performance.total_trades || 0} />
+                  <Stat label="Open Positions" value={positions.length} />
                 </div>
+                <Card className="px-5 py-4 flex flex-col gap-4">
+                  <span className="text-base font-semibold">Win probability</span>
+                  <div className="grid gap-5 grid-cols-[repeat(auto-fit,minmax(220px,1fr))]">
+                    {[
+                      ['Overall Win Probability', (winTracker.win_probability || 0.5) * 100, '#eab308', `Based on ${winTracker.total_trades || 0} trades`],
+                      ['Positive Gamma (Mean Reversion)', rate(winTracker.positive_gamma_wins, winTracker.positive_gamma_losses), G, `W: ${winTracker.positive_gamma_wins || 0}  L: ${winTracker.positive_gamma_losses || 0}`],
+                      ['Negative Gamma (Momentum)', rate(winTracker.negative_gamma_wins, winTracker.negative_gamma_losses), '#a855f7', `W: ${winTracker.negative_gamma_wins || 0}  L: ${winTracker.negative_gamma_losses || 0}`],
+                    ].map(([l, v, c, sub]) => (
+                      <div key={l as string} className="flex flex-col gap-2">
+                        <div className="flex justify-between text-sm"><span className="text-gray-400">{l}</span><span className="font-mono font-semibold" style={{ color: c as string }}>{(v as number).toFixed(1)}%</span></div>
+                        <div className="h-1.5 bg-[#1c2233] rounded-full overflow-hidden"><div className="h-full" style={{ width: `${v}%`, background: c as string }} /></div>
+                        <span className="text-xs text-gray-500">{sub}</span>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+                <Card className="px-5 py-4 flex flex-col gap-4">
+                  <div className="flex flex-wrap justify-between items-center gap-3">
+                    <span className="text-base font-semibold">ML training</span>
+                    <div className="flex gap-2">
+                      <button disabled={!!busy} onClick={() => run('train', () => trainValorML(50), [refreshMLStatus, refreshApproval, refreshTrainingStats])} className="text-[13px] font-semibold px-3.5 py-1.5 rounded-lg bg-yellow-500 text-[#0a0e1a] disabled:opacity-50">{busy === 'train' ? 'Training…' : 'Train model'}</button>
+                      <button disabled={!!busy} onClick={() => run('reject', rejectValorML, [refreshApproval, refreshMLStatus])} className="text-[13px] font-semibold px-3.5 py-1.5 rounded-lg border border-[#2a3245] text-gray-300 hover:bg-[#1a1f2e] disabled:opacity-50">{busy === 'reject' ? 'Rejecting…' : 'Reject model'}</button>
+                    </div>
+                  </div>
+                  <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(160px,1fr))]">
+                    {[
+                      ['New Param Trades', mlStats?.new_parameter_trades?.count || 0, '#f3f4f6'],
+                      ['Win/Loss (New)', `${mlStats?.new_parameter_trades?.wins || 0} / ${mlStats?.new_parameter_trades?.losses || 0}`, '#f3f4f6'],
+                      ['New Win Rate', `${(mlStats?.new_parameter_trades?.win_rate || 0).toFixed(1)}%`, G],
+                      ['Ready for Training', mlStats?.ready_for_ml_training ? 'Yes' : `${mlStats?.trades_needed_for_ml || 50} more`, mlStats?.ready_for_ml_training ? G : '#eab308'],
+                    ].map(([l, v, c]) => (
+                      <div key={l as string} className="border border-[#1c2233] rounded-lg px-4 py-3.5 flex flex-col gap-1.5"><span className="text-[13px] text-gray-400">{l}</span><span className="font-mono text-xl font-semibold" style={{ color: c as string }}>{v}</span></div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap justify-between items-center gap-3 border-t border-[#1c2233] pt-3.5">
+                    <div className="flex flex-col gap-0.5"><span className="text-sm font-semibold">A/B test</span><span className="text-[13px] text-gray-400">Split new entries between ML and Bayesian probability</span></div>
+                    <button disabled={!!busy} aria-pressed={!!abStatus?.ab_test_enabled}
+                      onClick={() => run('ab', abStatus?.ab_test_enabled ? disableValorABTest : enableValorABTest, [refreshAB])}
+                      className={`relative w-11 h-6 rounded-full transition-colors disabled:opacity-50 ${abStatus?.ab_test_enabled ? 'bg-yellow-500' : 'bg-[#2a3245]'}`}>
+                      <span className={`absolute top-[3px] w-[18px] h-[18px] rounded-full bg-gray-100 transition-all ${abStatus?.ab_test_enabled ? 'left-[23px]' : 'left-[3px]'}`} />
+                    </button>
+                  </div>
+                </Card>
               </div>
+            )}
 
-              {/* Per-Ticker Contract Specifications */}
-              <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
-                <h3 className="text-lg font-semibold mb-4">
-                  {selectedTicker ? `${selectedTicker} Futures Specifications` : 'Futures Contract Specifications'}
-                </h3>
-                {selectedTicker && TICKER_SPECS[selectedTicker] ? (
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-gray-400">Point Value</div>
-                      <div className="font-mono mt-1">{TICKER_SPECS[selectedTicker].pointValue}</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-gray-400">Tick Size</div>
-                      <div className="font-mono mt-1">{TICKER_SPECS[selectedTicker].tickSize}</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-gray-400">Tick Value</div>
-                      <div className="font-mono mt-1">{TICKER_SPECS[selectedTicker].tickValue}</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-gray-400">Day Margin</div>
-                      <div className="font-mono mt-1">{TICKER_SPECS[selectedTicker].dayMargin}</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-gray-400">Starting Capital</div>
-                      <div className="font-mono mt-1">${TICKER_SPECS[selectedTicker].startingCapital.toLocaleString()}</div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-900/50">
-                        <tr>
-                          <th className="px-4 py-2.5 text-left text-gray-400 font-medium">Ticker</th>
-                          <th className="px-4 py-2.5 text-right text-gray-400 font-medium">Point Value</th>
-                          <th className="px-4 py-2.5 text-right text-gray-400 font-medium">Tick Size</th>
-                          <th className="px-4 py-2.5 text-right text-gray-400 font-medium">Tick Value</th>
-                          <th className="px-4 py-2.5 text-right text-gray-400 font-medium">Day Margin</th>
-                          <th className="px-4 py-2.5 text-right text-gray-400 font-medium">Capital</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-800/60">
-                        {Object.entries(TICKER_SPECS).map(([tk, spec]) => {
-                          const meta = getTickerMeta(tk)
-                          return (
-                            <tr key={tk} className="hover:bg-gray-800/30">
-                              <td className="px-4 py-2.5">
-                                <div className="flex items-center gap-2">
-                                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: meta.hexColor }} />
-                                  <span className="font-bold text-white">{tk}</span>
-                                  <span className="text-xs text-gray-500">{meta.label}</span>
-                                </div>
-                              </td>
-                              <td className="px-4 py-2.5 text-right font-mono text-gray-300">{spec.pointValue}</td>
-                              <td className="px-4 py-2.5 text-right font-mono text-gray-300">{spec.tickSize}</td>
-                              <td className="px-4 py-2.5 text-right font-mono text-gray-300">{spec.tickValue}</td>
-                              <td className="px-4 py-2.5 text-right font-mono text-gray-300">{spec.dayMargin}</td>
-                              <td className="px-4 py-2.5 text-right font-mono text-green-400">${spec.startingCapital.toLocaleString()}</td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+            {tab === 'activity' && (
+              <div className="flex flex-col gap-5">
+                <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(150px,1fr))]">
+                  <Stat label="Total Scans" value={(scanSummary.total ?? scans.length).toLocaleString()} />
+                  <Stat label="Traded" value={scanSummary.traded ?? 0} color={G} />
+                  <Stat label="No Trade" value={scanSummary.no_trade ?? 0} />
+                  <Stat label="Skipped" value={scanSummary.skipped ?? 0} color="#f59e0b" />
+                  <Stat label="Trade Rate" value={`${(scanSummary.trade_rate ?? 0).toFixed?.(1) ?? scanSummary.trade_rate}%`} />
+                </div>
+                <Card className="overflow-hidden">
+                  <div className="px-5 py-4 text-base font-semibold border-b border-[#1c2233]">Recent scans</div>
+                  <div className="overflow-x-auto"><div className="min-w-[860px]">
+                    <div className="grid grid-cols-[100px_80px_120px_110px_100px_minmax(240px,1fr)] gap-4 px-5 py-2.5 text-xs text-gray-500 uppercase tracking-wider"><span>Time</span><span>Ticker</span><span>Outcome</span><span>Regime</span><span className="text-right">Price</span><span>Reason</span></div>
+                    {scans.slice(0, 100).map(s => (
+                      <div key={s.scan_id} className="grid grid-cols-[100px_80px_120px_110px_100px_minmax(240px,1fr)] gap-4 px-5 py-2.5 border-t border-[#1c2233] text-sm items-center">
+                        <span className="font-mono text-[13px] text-gray-400">{new Date(s.scan_time).toLocaleTimeString()}</span>
+                        <span className="flex items-center gap-2 font-semibold"><Dot color={meta(s.ticker).color} size={7} />{s.ticker || 'MES'}</span>
+                        <span><span className={`text-[11px] font-bold tracking-wide px-2 py-0.5 rounded-md ${s.outcome === 'TRADED' ? 'bg-emerald-500/15 text-emerald-400' : s.outcome === 'SKIP' ? 'bg-amber-500/15 text-amber-400' : s.outcome === 'ERROR' ? 'bg-red-500/15 text-red-400' : 'bg-[#1c2233] text-gray-400'}`}>{String(s.outcome || '').replace('_', ' ')}</span></span>
+                        <span className="text-xs text-gray-400">{s.gamma_regime ? `${s.gamma_regime} GAMMA` : '—'}</span>
+                        <span className="font-mono text-right">{s.underlying_price?.toFixed(meta(s.ticker).d) || '—'}</span>
+                        <span className="text-gray-300 truncate" title={s.decision_summary}>{s.decision_summary || s.skip_reason || '—'}</span>
+                      </div>
+                    ))}
+                  </div></div>
+                </Card>
               </div>
-            </div>
-          )}
+            )}
+
+            {tab === 'history' && (
+              <div className="flex flex-col gap-5">
+                <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(140px,1fr))]">
+                  <Stat label="Total Trades" value={histTrades.length} />
+                  <Stat label="Win Rate" value={histTrades.length ? `${(wins.length / histTrades.length * 100).toFixed(1)}%` : '—'} color={wins.length / (histTrades.length || 1) >= 0.5 ? G : R} />
+                  <Stat label="Total P&L" value={money(histTotal, true)} color={pnlColor(histTotal)} />
+                  <Stat label="Avg Win" value={money(avg(wins), true)} color={G} />
+                  <Stat label="Avg Loss" value={money(avg(losses), true)} color={R} />
+                  <Stat label="W/L" value={`${wins.length} / ${losses.length}`} />
+                </div>
+                <Card className="overflow-hidden">
+                  <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-3.5 border-b border-[#1c2233]">
+                    <span className="text-base font-semibold">Closed trades</span>
+                    <Pills items={['ALL', ...activeTickers].map(t => ({ id: t, label: t }))} value={histFilter} onChange={setHistFilter} />
+                  </div>
+                  <div className="overflow-x-auto"><div className="min-w-[960px]">
+                    <div className="grid grid-cols-[150px_70px_80px_100px_1fr_1fr_110px_140px] gap-3 px-5 py-2.5 text-xs text-gray-500 uppercase tracking-wider"><span>Time</span><span>Ticker</span><span>Direction</span><span>Regime</span><span className="text-right">Entry</span><span className="text-right">Exit</span><span className="text-right">P&amp;L</span><span>Reason</span></div>
+                    {histTrades.length === 0 && <div className="px-5 py-5 border-t border-[#1c2233] text-sm text-gray-500">No closed trades yet.</div>}
+                    {histTrades.slice(0, 200).map(t => (
+                      <div key={t.position_id} className="grid grid-cols-[150px_70px_80px_100px_1fr_1fr_110px_140px] gap-3 px-5 py-2.5 border-t border-[#1c2233] text-sm items-center">
+                        <span className="font-mono text-[13px] text-gray-400">{new Date(t.close_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="flex items-center gap-2 font-semibold"><Dot color={meta(t.ticker).color} size={7} />{t.ticker || 'MES'}</span>
+                        <span className="text-[13px] font-semibold" style={{ color: t.direction === 'LONG' ? G : R }}>{t.direction}</span>
+                        <span className="text-xs text-gray-400">{t.gamma_regime}</span>
+                        <span className="font-mono text-right">{t.entry_price?.toFixed(meta(t.ticker).d)}</span>
+                        <span className="font-mono text-right">{t.exit_price?.toFixed(meta(t.ticker).d)}</span>
+                        <span className="font-mono text-right font-semibold" style={{ color: pnlColor(t.realized_pnl) }}>{money(t.realized_pnl || 0, true)}</span>
+                        <span className="text-[13px] text-gray-400">{t.close_reason}</span>
+                      </div>
+                    ))}
+                  </div></div>
+                </Card>
+              </div>
+            )}
+
+            {tab === 'config' && (
+              <div className="flex flex-col gap-5">
+                <Card className="px-5 py-4 flex flex-col gap-4">
+                  <span className="text-base font-semibold">Strategy settings</span>
+                  <div className="grid gap-px bg-[#1c2233] border border-[#1c2233] rounded-lg overflow-hidden grid-cols-[repeat(auto-fit,minmax(200px,1fr))]">
+                    {[
+                      ['Instruments', activeTickers.join(', ')],
+                      ['Capital / Instrument', '$100,000'],
+                      ['Risk/Trade', `${config.risk_per_trade_pct || 1}%`],
+                      ['Max Contracts', config.max_contracts || 5],
+                      ['Initial Stop', `${config.initial_stop_points || 3} pts`],
+                      ['Breakeven At', `+${config.breakeven_activation_points || 2} pts`],
+                      ['Trail Distance', `${config.trailing_stop_points || 1} pt`],
+                      ['Max Positions', config.max_open_positions || 2],
+                    ].map(([l, v]) => (
+                      <div key={l as string} className="bg-[#11151f] px-4 py-3.5 flex flex-col gap-1.5"><span className="text-[13px] text-gray-400">{l}</span><span className="font-mono text-base font-semibold">{v}</span></div>
+                    ))}
+                  </div>
+                </Card>
+                <Card className="overflow-hidden">
+                  <div className="px-5 py-4 text-base font-semibold border-b border-[#1c2233]">Contract specifications</div>
+                  <div className="overflow-x-auto"><div className="min-w-[720px]">
+                    <div className="grid grid-cols-[minmax(180px,1.3fr)_1fr_1fr_1fr_1fr] gap-3 px-5 py-2.5 text-xs text-gray-500 uppercase tracking-wider"><span>Instrument</span><span>Point value</span><span>Tick size</span><span>Tick value</span><span>Day margin</span></div>
+                    {TICKERS.map(t => (
+                      <div key={t} className="grid grid-cols-[minmax(180px,1.3fr)_1fr_1fr_1fr_1fr] gap-3 px-5 py-3 border-t border-[#1c2233] text-sm items-center">
+                        <span className="flex items-center gap-2.5"><Dot color={meta(t).color} /><span className="font-semibold">{t}</span><span className="text-gray-400">{meta(t).label}</span></span>
+                        {SPECS[t].map((v, i) => <span key={i} className="font-mono">{v}</span>)}
+                      </div>
+                    ))}
+                  </div></div>
+                </Card>
+                <div className="text-[13px] text-gray-400">24/5 trading: Sun 5pm - Fri 4pm CT with 4-5pm daily maintenance break.</div>
+              </div>
+            )}
+          </section>
         </div>
       </main>
     </>
   )
 }
 
-// ==============================================================================
-// HELPER COMPONENTS
-// ==============================================================================
-
-function ConfigItem({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="bg-gray-900/50 rounded-lg p-3">
-      <div className="text-xs text-gray-400">{label}</div>
-      <div className="font-mono text-sm mt-1">{value}</div>
-    </div>
-  )
+function rate(w?: number, l?: number) {
+  const t = (w || 0) + (l || 0)
+  return t ? ((w || 0) / t) * 100 : 0
 }
