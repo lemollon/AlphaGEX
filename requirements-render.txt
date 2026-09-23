@@ -50,6 +50,8 @@ xgboost>=2.0.0,<3.0.0
 # Financial Data
 # ============================================================================
 yfinance>=0.2.50
+# Historical CME futures research (read-only VALOR backtests)
+databento>=0.60.0
 
 # Tastytrade SDK for HERACLES futures trading (DXLinkStreamer for real-time quotes)
 tastytrade>=11.0.0
