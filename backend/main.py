@@ -8,6 +8,8 @@ SpreadWorks and IronForge are separate protected projects and are not modified
 or imported by this application.
 """
 
+import asyncio
+import concurrent.futures
 import os
 
 from fastapi import FastAPI
@@ -69,6 +71,19 @@ app.include_router(agape_doge_perp_routes.router)
 app.include_router(agape_perpetuals_trades_routes.router)
 app.include_router(perp_exit_optimizer_routes.router)
 app.include_router(unified_metrics_routes.router)
+
+
+@app.on_event("startup")
+async def cap_default_executor_workers():
+    """Cap the event loop's default thread pool so asyncio.to_thread callers
+    (blocking psycopg2 DB calls and the Tastytrade HTTP calls) never try to
+    open more concurrent DB connections than database_adapter.py's pool can
+    serve (max=25). 20 workers leaves headroom under that cap since not every
+    thread holds a DB connection for its full lifetime, and non-DB
+    to_thread calls share this same worker pool.
+    """
+    loop = asyncio.get_event_loop()
+    loop.set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=20))
 
 
 @app.on_event("startup")
