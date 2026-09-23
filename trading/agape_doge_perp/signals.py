@@ -15,6 +15,7 @@ from trading.agape_doge_perp.models import (
     AgapeDogePerpSignal,
     SignalAction,
     PositionSide,
+    TradingMode,
 )
 
 logger = logging.getLogger(__name__)
@@ -265,21 +266,54 @@ class AgapeDogePerpSignalGenerator:
             take_profit=take_profit, quantity=quantity, max_risk_usd=max_risk,
         )
 
+    @staticmethod
+    def _is_degraded_data(market_data: Dict) -> bool:
+        """True when CoinGlass funding/L-S/OI/taker data is unavailable.
+
+        Mirrors has_coinglass in CryptoDataProvider._calculate_combined_signal:
+        a CoinGlass outage forces funding_regime to UNKNOWN.
+        """
+        funding_regime = market_data.get("funding_regime")
+        return funding_regime in (None, "", "UNKNOWN")
+
     def _determine_action(self, combined_signal, confidence, market_data):
         confidence_rank = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
+
+        # Degraded-data paper allowance: CoinGlass is down (funding_regime
+        # UNKNOWN) but the combined signal still carries a directional call
+        # from Deribit GEX / price momentum at LOW confidence. Trade it in
+        # PAPER only, without inflating the confidence label. Never applies
+        # in LIVE regardless of the flag.
+        degraded_paper_ok = (
+            self._is_degraded_data(market_data)
+            and self.config.mode == TradingMode.PAPER
+            and getattr(self.config, "allow_degraded_data_trades", True)
+        )
+
         if confidence_rank.get(confidence, 0) < confidence_rank.get(self.config.min_confidence, 1):
-            return (SignalAction.WAIT, None, f"LOW_CONFIDENCE_{confidence}")
+            if not (degraded_paper_ok and combined_signal in ("LONG", "SHORT")):
+                return (SignalAction.WAIT, None, f"LOW_CONFIDENCE_{confidence}")
+            logger.info(
+                f"AGAPE-DOGE-PERP Signals: DEGRADED_NO_COINGLASS override - "
+                f"trading {combined_signal} at {confidence} confidence (CoinGlass unavailable)"
+            )
         tracker = get_agape_doge_perp_direction_tracker(self.config)
         if combined_signal == "LONG":
             skip, reason = tracker.should_skip_direction("LONG")
             if skip:
                 return (SignalAction.WAIT, None, f"DIRECTION_TRACKER_{reason}")
-            return (SignalAction.LONG, "long", self._build_reasoning("LONG", market_data))
+            reasoning = self._build_reasoning("LONG", market_data)
+            if degraded_paper_ok:
+                reasoning += " | DEGRADED_NO_COINGLASS"
+            return (SignalAction.LONG, "long", reasoning)
         elif combined_signal == "SHORT":
             skip, reason = tracker.should_skip_direction("SHORT")
             if skip:
                 return (SignalAction.WAIT, None, f"DIRECTION_TRACKER_{reason}")
-            return (SignalAction.SHORT, "short", self._build_reasoning("SHORT", market_data))
+            reasoning = self._build_reasoning("SHORT", market_data)
+            if degraded_paper_ok:
+                reasoning += " | DEGRADED_NO_COINGLASS"
+            return (SignalAction.SHORT, "short", reasoning)
         elif combined_signal == "RANGE_BOUND":
             if not getattr(self.config, "allow_range_bound_entries", False):
                 return (SignalAction.WAIT, None, "RANGE_BOUND_DISABLED")

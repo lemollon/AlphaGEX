@@ -110,6 +110,15 @@ class AgapeAvaxPerpConfig:
     min_confidence: str = "MEDIUM"
     allow_range_bound_entries: bool = False
     allow_wait_fallback_entries: bool = False
+    # CoinGlass-outage relief valve: when funding/L-S/OI/taker data is dead
+    # (funding_regime == "UNKNOWN"), the combined signal can still carry a
+    # LOW-confidence LONG/SHORT call from Deribit GEX or price momentum
+    # (see crypto_data_provider._calculate_combined_signal). This flag lets
+    # the PAPER path trade that call instead of WAITing on LOW_CONFIDENCE.
+    # Confidence label is never inflated; reasoning is tagged
+    # DEGRADED_NO_COINGLASS so these scans/positions can be excluded from
+    # live-data stats. Never applies when mode=LIVE, regardless of value.
+    allow_degraded_data_trades: bool = True
     min_funding_rate_signal: float = 0.001
     min_ls_ratio_extreme: float = 1.1
     min_liquidation_proximity_pct: float = 5.0
@@ -134,7 +143,7 @@ class AgapeAvaxPerpConfig:
     def load_from_db(cls, db) -> "AgapeAvaxPerpConfig":
         """Load config from database, falling back to defaults."""
         config = cls()
-        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries"}
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries", "allow_degraded_data_trades"}
         try:
             db_config = db.load_config()
             if db_config:
