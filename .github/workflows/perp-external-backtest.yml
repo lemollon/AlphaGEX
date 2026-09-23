@@ -7,6 +7,12 @@ on:
     paths:
       - backtest/external_perp_reconstruction.py
       - .github/workflows/perp-external-backtest.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - backtest/external_perp_reconstruction.py
+      - .github/workflows/perp-external-backtest.yml
   workflow_dispatch:
     inputs:
       days:
