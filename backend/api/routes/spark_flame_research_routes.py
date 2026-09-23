@@ -171,3 +171,18 @@ def status():
         sums=[{"bot":x[0],"trades":x[1],"pnl":float(x[2]),"avg":float(x[3]),"win_rate":float(x[4]),"worst":float(x[5]) if x[5] is not None else None} for x in c.fetchall()]
         return {"running":_running,"latest":{"run_id":row[0],"started_at":str(row[1]),"finished_at":str(row[2]) if row[2] else None,"start":str(row[3]),"end":str(row[4]),"status":row[5],"detail":row[6],"summary":sums}}
     finally:conn.close()
+
+
+def launch_autorun_if_enabled():
+    """Start read-only intraday research on API startup when explicitly enabled."""
+    global _running
+    if os.getenv("SPARK_FLAME_RESEARCH_AUTORUN", "").strip().lower() not in {"1","true","yes","on"}:
+        return False
+    start = date.fromisoformat(os.getenv("SPARK_FLAME_RESEARCH_START", "2025-01-01"))
+    end = date.fromisoformat(os.getenv("SPARK_FLAME_RESEARCH_END", "2025-12-31"))
+    with _lock:
+        if _running:
+            return False
+        _running = True
+    threading.Thread(target=_run,args=(start,end),daemon=True,name="spark-flame-intraday-autorun").start()
+    return True
