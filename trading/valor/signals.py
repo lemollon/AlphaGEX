@@ -1750,6 +1750,8 @@ def get_gex_data_for_valor(symbol: str = "SPY", ticker: str = "MES") -> Dict[str
                             'put_wall': raw_put,
                             'net_gex': net_gex,
                             'gex_ratio': gex_result.get('gex_ratio', 1.0),
+                            'expiration_date': gex_result.get('expiration_date'),
+                            'is_0dte': gex_result.get('is_0dte', False),
                         }
 
                         # MES queries SPX directly (no scaling). Other tickers

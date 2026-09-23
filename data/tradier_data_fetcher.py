@@ -300,17 +300,23 @@ class TradierDataFetcher:
 
         return {}
 
-    def get_option_expirations(self, symbol: str) -> List[str]:
+    def get_option_expirations(self, symbol: str, include_all_roots: bool = False) -> List[str]:
         """
         Get available option expiration dates for underlying.
 
         Args:
             symbol: Underlying symbol (SPY, SPX)
+            include_all_roots: Include every option root for the underlying.
+                SPX dailies/weeklies live under the SPXW root, so without this
+                SPX returns only the AM-settled monthly expirations.
 
         Returns:
             List of expiration dates in YYYY-MM-DD format
         """
-        response = self._make_request('GET', 'markets/options/expirations', params={'symbol': symbol})
+        params = {'symbol': symbol}
+        if include_all_roots:
+            params['includeAllRoots'] = 'true'
+        response = self._make_request('GET', 'markets/options/expirations', params=params)
         if response is None:
             logger.warning(f"No response from expirations API for {symbol}")
             return []
