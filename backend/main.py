@@ -99,7 +99,7 @@ async def start_active_trading_scheduler():
     # replay used overlapping horizon buckets and uncached paid downloads.
     # Research must never prevent the trading API from starting.
     try:
-        from scripts.valor_mes_rebuild_v4 import launch_if_enabled
+        from scripts.valor_mes_gex_overlay_v5 import launch_if_enabled
         launch_if_enabled()
     except Exception:
         import logging
