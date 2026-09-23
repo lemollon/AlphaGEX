@@ -68,7 +68,7 @@ class AgapeAvaxPerpExecutor:
             bot_name="AGAPE_AVAX_PERP",
             symbol="AVAX-PERP",
             side=signal.side or "long",
-            quantity=signal.quantity * fill.fill_fraction,
+            quantity=signal.quantity,
             entry_price=signal.entry_price or signal.spot_price,
             strict=is_live,
         )
@@ -119,7 +119,7 @@ class AgapeAvaxPerpExecutor:
             return AgapeAvaxPerpPosition(
                 position_id=position_id,
                 side=PositionSide.LONG if signal.side == "long" else PositionSide.SHORT,
-                quantity=signal.quantity, entry_price=round(fill_price, 2),
+                quantity=signal.quantity * fill.fill_fraction, entry_price=round(fill_price, 2),
                 stop_loss=signal.stop_loss, take_profit=signal.take_profit,
                 max_risk_usd=signal.max_risk_usd,
                 underlying_at_entry=signal.spot_price,
