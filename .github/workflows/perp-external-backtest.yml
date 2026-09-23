@@ -14,11 +14,6 @@ on:
       - backtest/external_perp_reconstruction.py
       - .github/workflows/perp-external-backtest.yml
   workflow_dispatch:
-    inputs:
-      days:
-        description: Backtest window in days
-        required: false
-        default: "180"
 
 permissions:
   contents: read
@@ -27,6 +22,10 @@ jobs:
   backtest:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        days: [30, 90, 180]
     steps:
       - uses: actions/checkout@v4
 
@@ -35,19 +34,17 @@ jobs:
           python-version: "3.12"
 
       - name: Run Hyperliquid reconstruction backtest
-        env:
-          DAYS: ${{ github.event.inputs.days || '180' }}
         run: |
           python backtest/external_perp_reconstruction.py \
-            --days "$DAYS" \
-            --out artifacts/perp_external_backtest
+            --days "${{ matrix.days }}" \
+            --out "artifacts/perp_external_backtest_${{ matrix.days }}d"
 
       - name: Show report
-        run: cat artifacts/perp_external_backtest/report.md
+        run: cat "artifacts/perp_external_backtest_${{ matrix.days }}d/report.md"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: perp-external-backtest
-          path: artifacts/perp_external_backtest/
+          name: perp-external-backtest-${{ matrix.days }}d
+          path: artifacts/perp_external_backtest_${{ matrix.days }}d/
           if-no-files-found: error
           retention-days: 30
