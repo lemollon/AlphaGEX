@@ -62,7 +62,7 @@ jobs:
           python-version: "3.12"
       - name: Search per-coin strategy families
         run: |
-          python -m backtest.perp_strategy_family_search             --windows "30,90,180"             --out artifacts/perp_strategy_family_search
+          python backtest/perp_strategy_family_search.py --windows "30,90,180" --out artifacts/perp_strategy_family_search
       - name: Show family report
         run: cat artifacts/perp_strategy_family_search/report.md
       - uses: actions/upload-artifact@v4
