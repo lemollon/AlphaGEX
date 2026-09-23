@@ -25,12 +25,26 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from backtest.external_perp_reconstruction import (
-    Bar, COINS, Result, Position,
-    TAKER_FEE_BPS, SLIPPAGE_BPS,
-    MAX_HOLD_HOURS,
-    load_bars, ema, rolling_std, adverse_fill,
-)
+import importlib.util
+import sys
+
+_SIBLING = Path(__file__).with_name("external_perp_reconstruction.py")
+_spec = importlib.util.spec_from_file_location("external_perp_reconstruction", _SIBLING)
+_ext = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = _ext
+_spec.loader.exec_module(_ext)
+
+Bar = _ext.Bar
+COINS = _ext.COINS
+Result = _ext.Result
+Position = _ext.Position
+TAKER_FEE_BPS = _ext.TAKER_FEE_BPS
+SLIPPAGE_BPS = _ext.SLIPPAGE_BPS
+MAX_HOLD_HOURS = _ext.MAX_HOLD_HOURS
+load_bars = _ext.load_bars
+ema = _ext.ema
+rolling_std = _ext.rolling_std
+adverse_fill = _ext.adverse_fill
 
 FAMILIES = (
     "slow_trend",
