@@ -260,41 +260,60 @@ def _ensure_research_tables(conn):
 
 
 def _autorun_three_year_research():
-    """Estimate cost, then run 2023-2025 if estimated total fits free-credit ceiling."""
+    """Resume or start 2023-2025 research without redoing completed ticker-years."""
     import uuid
     from database_adapter import get_connection
 
-    run_id = "valor3y-" + uuid.uuid4().hex[:12]
     conn = get_connection()
+    run_id = None
     try:
         _ensure_research_tables(conn)
         cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO valor_three_year_research_runs(run_id,status,detail) VALUES (%s,%s,%s)",
-            (run_id, "estimating_cost", "Databento 2023-2025 six-contract research"),
-        )
-        conn.commit()
 
-        client = _client()
-        total = 0.0
-        pieces = []
-        for ticker, cfg in PRODUCTS.items():
-            cost = float(client.metadata.get_cost(
-                dataset="GLBX.MDP3",
-                schema="ohlcv-1m",
-                symbols=str(cfg["symbol"]),
-                stype_in="continuous",
-                start="2023-01-01",
-                end="2026-01-01",
-            ))
-            pieces.append((ticker, cost))
-            total += cost
+        # Resume the latest incomplete run if one exists.
+        cur.execute("""
+            SELECT run_id, estimated_cost_usd
+            FROM valor_three_year_research_runs
+            WHERE status IN ('estimating_cost','cost_estimated','running')
+            ORDER BY started_at DESC
+            LIMIT 1
+        """)
+        existing = cur.fetchone()
 
-        cur.execute(
-            "UPDATE valor_three_year_research_runs SET estimated_cost_usd=%s, status=%s, detail=%s WHERE run_id=%s",
-            (total, "cost_estimated", str(pieces), run_id),
-        )
-        conn.commit()
+        if existing:
+            run_id, estimated_cost = existing
+        else:
+            run_id = "valor3y-" + uuid.uuid4().hex[:12]
+            estimated_cost = None
+            cur.execute(
+                "INSERT INTO valor_three_year_research_runs(run_id,status,detail) VALUES (%s,%s,%s)",
+                (run_id, "estimating_cost", "Databento 2023-2025 six-contract research"),
+            )
+            conn.commit()
+
+        if estimated_cost is None:
+            client = _client()
+            total = 0.0
+            pieces = []
+            for ticker, cfg in PRODUCTS.items():
+                cost = float(client.metadata.get_cost(
+                    dataset="GLBX.MDP3",
+                    schema="ohlcv-1m",
+                    symbols=str(cfg["symbol"]),
+                    stype_in="continuous",
+                    start="2023-01-01",
+                    end="2026-01-01",
+                ))
+                pieces.append((ticker, cost))
+                total += cost
+
+            cur.execute(
+                "UPDATE valor_three_year_research_runs SET estimated_cost_usd=%s, status=%s, detail=%s WHERE run_id=%s",
+                (total, "cost_estimated", str(pieces), run_id),
+            )
+            conn.commit()
+        else:
+            total = float(estimated_cost)
 
         ceiling = float(os.getenv("VALOR_RESEARCH_MAX_COST_USD", "125"))
         if total > ceiling:
@@ -307,12 +326,23 @@ def _autorun_three_year_research():
 
         cur.execute(
             "UPDATE valor_three_year_research_runs SET status=%s, detail=%s WHERE run_id=%s",
-            ("running", f"Estimated \${total:.2f}; running all 18 ticker-year jobs", run_id),
+            ("running", f"Estimated \${total:.2f}; resuming incomplete ticker-year jobs", run_id),
         )
         conn.commit()
 
+        cur.execute("""
+            SELECT ticker, year, COUNT(*)
+            FROM valor_three_year_research_results
+            WHERE run_id=%s
+            GROUP BY ticker, year
+        """, (run_id,))
+        completed = {(r[0], int(r[1])) for r in cur.fetchall() if int(r[2]) >= 75}
+
         for ticker in PRODUCTS:
             for year in (2023, 2024, 2025):
+                if (ticker, year) in completed:
+                    continue
+
                 payload = _run_year(ticker, year)
                 for row in payload["results"]:
                     cur.execute(
@@ -341,26 +371,39 @@ def _autorun_three_year_research():
                     )
                 conn.commit()
 
-        cur.execute(
-            "UPDATE valor_three_year_research_runs SET finished_at=NOW(), status=%s, detail=%s WHERE run_id=%s",
-            ("completed", "All six contracts x 2023-2025 completed", run_id),
-        )
+        cur.execute("""
+            SELECT COUNT(DISTINCT ticker || '-' || year::text)
+            FROM valor_three_year_research_results
+            WHERE run_id=%s
+        """, (run_id,))
+        finished_jobs = int(cur.fetchone()[0] or 0)
+
+        if finished_jobs >= 18:
+            cur.execute(
+                "UPDATE valor_three_year_research_runs SET finished_at=NOW(), status=%s, detail=%s WHERE run_id=%s",
+                ("completed", "All six contracts x 2023-2025 completed", run_id),
+            )
+        else:
+            cur.execute(
+                "UPDATE valor_three_year_research_runs SET status=%s, detail=%s WHERE run_id=%s",
+                ("running", f"{finished_jobs}/18 ticker-year jobs stored; resume on next startup if interrupted", run_id),
+            )
         conn.commit()
     except Exception as exc:
         try:
             _ensure_research_tables(conn)
             cur = conn.cursor()
-            cur.execute(
-                "UPDATE valor_three_year_research_runs SET finished_at=NOW(), status=%s, detail=%s WHERE run_id=%s",
-                ("failed", repr(exc), run_id),
-            )
-            conn.commit()
+            if run_id:
+                cur.execute(
+                    "UPDATE valor_three_year_research_runs SET status=%s, detail=%s WHERE run_id=%s",
+                    ("running", f"Interrupted: {repr(exc)}; will resume", run_id),
+                )
+                conn.commit()
         except Exception:
             pass
         raise
     finally:
         conn.close()
-
 
 def launch_autorun_if_enabled():
     """Start the research in a daemon thread; safe for API startup."""
