@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import { Activity, Menu, X } from 'lucide-react'
 import { useState } from 'react'
 import BuildVersion from './BuildVersion'
-import { CrossButton, DedicationModal, StewardshipBanner, StewardshipTagline } from './StewardshipBanner'
+import { CrossButton, DedicationModal, StewardshipTagline } from './StewardshipBanner'
 
 // Global top nav — exactly two links (design handoff §1).
 // "Crypto Perps" stays active across the whole AGAPE derivatives area:
@@ -106,10 +106,6 @@ export default function Navigation() {
           {renderTopBarItems()}
         </div>
       </nav>
-
-      <div className="fixed top-16 left-0 right-0 z-40">
-        <StewardshipBanner />
-      </div>
 
       <DedicationModal
         isOpen={dedicationModalOpen}
