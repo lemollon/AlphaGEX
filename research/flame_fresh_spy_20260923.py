@@ -27,7 +27,7 @@ OUT = pathlib.Path('/tmp/flame_direct_source_audit')
 ET = ZoneInfo('America/New_York')
 STATE = {'stage': 'disabled'}
 SPEC = {
-    'version': 'direct-source-audit-v1', 'symbol': 'SPY',
+    'version': 'direct-source-audit-v2-half-open-stock-window', 'symbol': 'SPY',
     'dates': ['2025-01-13', '2026-09-22'],
     'interval': '1m', 'prior_result_inputs': [], 'local_cache_reads': False,
     'max_requests': 12, 'purpose': 'source-repeatability-not-profitability',
@@ -63,7 +63,7 @@ def timestamp(value: str) -> datetime:
     return dt.replace(tzinfo=ET) if dt.tzinfo is None else dt.astimezone(ET)
 
 
-def normalize(text: str, kind: str, day: str, strike: int | None = None):
+def normalize(text: str, kind: str, day: str, strike: int | None = None, exclusive_end: datetime | None = None):
     """Strictly validate contract identity, clocks, values, and unique timestamps."""
     rows = list(csv.DictReader(io.StringIO(text)))
     if not rows:
@@ -74,6 +74,12 @@ def normalize(text: str, kind: str, day: str, strike: int | None = None):
         ts = timestamp(row.get('timestamp', ''))
         if ts.date().isoformat() != day:
             raise DataError('wrong_requested_date')
+        # Stock bars at the request endpoint have no complete observation window.
+        # Exclude exactly that terminal bucket; never remove a missing interior bar.
+        if exclusive_end is not None and ts == exclusive_end:
+            continue
+        if exclusive_end is not None and ts > exclusive_end:
+            raise DataError('unexpected_bar_after_request_end')
         if ts in seen:
             raise DataError('duplicate_timestamp')
         seen.add(ts)
@@ -145,7 +151,8 @@ class DirectFeed:
             raise DataError('unexpected_source_response')
         if kind == 'stock' and response.headers.get('X-Bar-Timestamp') != 'interval-start':
             raise DataError('unverified_bar_timestamp_semantics')
-        rows = normalize(response.text, kind, params['date'], strike)
+        end = timestamp(params['date'] + 'T' + params['end_time']) if kind == 'stock' and params.get('end_time') else None
+        rows = normalize(response.text, kind, params['date'], strike, end)
         canonical = json.dumps(rows, sort_keys=True, separators=(',', ':')).encode()
         rec.update({'rows': len(rows), 'canonical_sha256': hashlib.sha256(canonical).hexdigest()})
         return rows, rec
@@ -162,7 +169,7 @@ def audit():
         for pass_number in (1, 2):
             for day in SPEC['dates']:
                 p = {'symbol': 'SPY', 'date': day, 'interval': '1m',
-                     'start_time': '09:30:00', 'end_time': '10:04:00', 'venue': 'utp_cta'}
+                     'start_time': '09:30:00', 'end_time': '10:05:00', 'venue': 'utp_cta'}
                 stock, record = feed.fetch('/v3/stock/history/ohlc', p, 'stock')
                 require_minutes(stock, day, '09:30:00', 35)
                 key = (day, 'stock')
