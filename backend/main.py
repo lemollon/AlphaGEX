@@ -65,6 +65,27 @@ app.include_router(agape_perpetuals_trades_routes.router)
 app.include_router(perp_exit_optimizer_routes.router)
 
 
+
+@app.on_event("startup")
+async def start_active_trading_scheduler():
+    """Start the single VALOR + crypto perpetual scheduler."""
+    from scheduler.trader_scheduler import get_scheduler
+
+    scheduler = get_scheduler()
+    if not scheduler.is_running:
+        scheduler.start()
+
+
+@app.on_event("shutdown")
+async def stop_active_trading_scheduler():
+    """Stop the active trading scheduler during graceful shutdown."""
+    from scheduler.trader_scheduler import get_scheduler
+
+    scheduler = get_scheduler()
+    if scheduler.is_running:
+        scheduler.stop()
+
+
 @app.get("/")
 async def root():
     return {
