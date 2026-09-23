@@ -267,7 +267,7 @@ Its standalone blueprint is `frontend/render.yaml`, with `rootDir: frontend` and
 - `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_BACKEND_URL`: `https://alphagex-api.onrender.com`
 - `NEXT_PUBLIC_WS_URL`: `wss://alphagex-api.onrender.com`
 
-The `alphagex.com` domain cutover is pending. Keep frontend deployment separate from the root backend/worker blueprint.
+The `alphagex.com` domain cutover is done — verified 2026-09-23 (DNS on Vercel-managed nameservers, apex A record 216.24.57.1 and `www` CNAME both resolve to this Render service, TLS live). Keep frontend deployment separate from the root backend/worker blueprint.
 
 ---
 
