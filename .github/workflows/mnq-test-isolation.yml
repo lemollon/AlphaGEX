@@ -1,0 +1,49 @@
+name: Isolate MNQ test imports
+on:
+  push:
+    branches: [feature/mnq-cash-breakout-v1]
+    paths: ['.github/workflows/mnq-test-isolation.yml']
+permissions:
+  contents: write
+jobs:
+  isolate:
+    if: github.ref == 'refs/heads/feature/mnq-cash-breakout-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mnq-cash-breakout-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Keep test-only adapters in a private package namespace
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('tests/valor/test_mnq_breakout.py');s=p.read_text()
+          assert "for name in ('trading', 'trading.valor'):" in s
+          s=s.replace("for name in ('trading', 'trading.valor'):","for name in ('_mnqtest', '_mnqtest.valor'):")
+          s=s.replace("name.replace('.', '/')","name.replace('_mnqtest', 'trading').replace('.', '/')")
+          s=s.replace("load('trading.valor.","load('_mnqtest.valor.")
+          s=s.replace("ModuleType('trading.valor.","ModuleType('_mnqtest.valor.")
+          s=s.replace("__name__='trading.valor.tests', __package__='trading.valor'","__name__='_mnqtest.valor.tests', __package__='_mnqtest.valor'")
+          p.write_text(s)
+          PY
+          python -m unittest discover -s tests/valor -p 'test_mnq_breakout*.py' -v
+          python - <<'PY'
+          import runpy,sys
+          runpy.run_path('tests/valor/test_mnq_breakout.py',run_name='isolated_audit')
+          assert not any(n=='trading' or n.startswith('trading.') for n in sys.modules), 'Test mocks polluted the real application namespace'
+          print('Real trading namespace remains untouched by isolated tests')
+          PY
+          git diff --check
+      - name: Commit only the test isolation change
+        run: |
+          test "${GITHUB_REF}" = 'refs/heads/feature/mnq-cash-breakout-v1'
+          git add tests/valor/test_mnq_breakout.py
+          git rm .github/workflows/mnq-test-isolation.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test(valor): prevent offline MNQ mocks from affecting other tests'
+          git push origin HEAD:refs/heads/feature/mnq-cash-breakout-v1
