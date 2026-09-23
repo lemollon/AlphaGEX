@@ -5,15 +5,10 @@ import { usePathname } from 'next/navigation'
 import {
   Activity,
   Bitcoin,
-  ChevronLeft,
-  ChevronRight,
   Menu,
-  Pin,
-  PinOff,
   X,
 } from 'lucide-react'
 import { useState } from 'react'
-import { useSidebar } from '@/contexts/SidebarContext'
 import BuildVersion from './BuildVersion'
 import { CrossButton, DedicationModal, StewardshipBanner, StewardshipTagline } from './StewardshipBanner'
 
@@ -30,10 +25,10 @@ const navItems = [
 
 export default function Navigation() {
   const pathname = usePathname()
-  const { isPinned, setIsPinned, isHovered, setIsHovered, isExpanded } = useSidebar()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [dedicationModalOpen, setDedicationModalOpen] = useState(false)
 
+  // Mobile drawer list (unchanged behavior — click-triggered overlay, not a hover rail)
   const renderItems = (mobile = false) => (
     <div className="space-y-1">
       {navItems.map((item) => {
@@ -44,17 +39,39 @@ export default function Navigation() {
             key={item.href}
             href={item.href}
             onClick={() => mobile && setMobileMenuOpen(false)}
-            title={!mobile && !isExpanded ? item.label : undefined}
             className={
-              'flex items-center rounded-lg font-medium transition-all text-sm ' +
-              (mobile || isExpanded ? 'px-3 py-2.5 space-x-3 ' : 'px-3 py-2.5 justify-center ') +
+              'flex items-center rounded-lg font-medium transition-all text-sm px-3 py-2.5 space-x-3 ' +
               (active
                 ? 'bg-primary text-white shadow-lg'
                 : 'text-text-secondary hover:text-text-primary hover:bg-background-hover')
             }
           >
             <Icon className="w-5 h-5 flex-shrink-0" />
-            {(mobile || isExpanded) && <span className="truncate">{item.label}</span>}
+            <span className="truncate">{item.label}</span>
+          </Link>
+        )
+      })}
+    </div>
+  )
+
+  // Desktop top-bar link row (replaces the old hover-expand left rail)
+  const renderTopBarItems = () => (
+    <div className="hidden lg:flex items-center gap-1 overflow-x-hidden">
+      {navItems.map((item) => {
+        const active = pathname === item.href
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            title={item.label}
+            className={
+              'whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ' +
+              (active
+                ? 'bg-primary text-white shadow-lg'
+                : 'text-text-secondary hover:text-text-primary hover:bg-background-hover')
+            }
+          >
+            {item.label}
           </Link>
         )
       })}
@@ -85,11 +102,7 @@ export default function Navigation() {
             <CrossButton onClick={() => setDedicationModalOpen(true)} />
           </div>
 
-          <div className="hidden sm:flex items-center gap-2 text-sm text-text-secondary">
-            <span>VALOR</span>
-            <span>•</span>
-            <span>Crypto Perpetuals</span>
-          </div>
+          {renderTopBarItems()}
         </div>
       </nav>
 
@@ -101,62 +114,6 @@ export default function Navigation() {
         isOpen={dedicationModalOpen}
         onClose={() => setDedicationModalOpen(false)}
       />
-
-      <aside
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-        className={
-          'hidden lg:block fixed top-16 left-0 bottom-0 z-40 bg-background-card border-r border-gray-800 ' +
-          'transition-all duration-300 ease-in-out overflow-hidden ' +
-          (isExpanded ? 'w-64' : 'w-16')
-        }
-      >
-        <div className="h-full flex flex-col">
-          <div className="flex-1 overflow-y-auto overflow-x-hidden py-4 px-2">
-            {renderItems()}
-          </div>
-
-          <div className="border-t border-gray-800 p-2">
-            <button
-              onClick={() => setIsPinned(!isPinned)}
-              title={isPinned ? 'Unpin sidebar' : 'Pin sidebar open'}
-              className={
-                'w-full flex items-center rounded-lg text-text-secondary hover:text-text-primary ' +
-                'hover:bg-background-hover transition-all ' +
-                (isExpanded ? 'px-3 py-2 space-x-3' : 'px-3 py-2 justify-center')
-              }
-            >
-              {isPinned
-                ? <PinOff className="w-5 h-5 flex-shrink-0" />
-                : <Pin className="w-5 h-5 flex-shrink-0" />}
-              {isExpanded && <span className="text-sm">{isPinned ? 'Unpin Sidebar' : 'Pin Sidebar'}</span>}
-            </button>
-
-            {isExpanded && (
-              <div className="mt-2 flex items-center justify-between">
-                <BuildVersion />
-                <button
-                  onClick={() => setIsPinned(false)}
-                  className="p-1 text-text-muted hover:text-text-primary"
-                  aria-label="Collapse sidebar"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-
-            {!isExpanded && (
-              <button
-                onClick={() => setIsPinned(true)}
-                className="w-full mt-1 flex justify-center p-2 text-text-muted hover:text-text-primary"
-                aria-label="Expand sidebar"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        </div>
-      </aside>
 
       {mobileMenuOpen && (
         <div
