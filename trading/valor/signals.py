@@ -1661,7 +1661,7 @@ def _fetch_gex_from_trading_volatility(symbol: str, clear_stale_cache: bool = Fa
     return None
 
 
-def get_gex_data_for_valor(symbol: str = "SPY", ticker: str = "MES") -> Dict[str, Any]:
+def get_gex_data_for_valor(symbol: str = "SPY", ticker: str = "MES", futures_price: float = 0.0) -> Dict[str, Any]:
     """
     Fetch GEX data for VALOR signal generation - PER-INSTRUMENT.
 
@@ -1754,15 +1754,30 @@ def get_gex_data_for_valor(symbol: str = "SPY", ticker: str = "MES") -> Dict[str
                             'is_0dte': gex_result.get('is_0dte', False),
                         }
 
-                        # MES queries SPX directly (no scaling). Other tickers
-                        # query a proxy ETF and need to be scaled into the
-                        # futures price space using gex_scale_factor.
-                        if ticker == "MES":
-                            gex_data = dict(raw_data)
-                            gex_data['data_source'] = 'tradier_calculator'
+                        # Scale levels from the proxy's price space into the
+                        # futures' price space. Prefer the LIVE ratio
+                        # (futures price / proxy spot): the static
+                        # gex_scale_factor drifts (MNQ/QQQ is ~41 not 50,
+                        # MGC/GLD ~11 not 10, NG/UNG ~0.28 not 1) and MES
+                        # trades at a basis to SPX, which put walls off-chart.
+                        proxy_spot = float(gex_result.get('spot_price', 0) or 0)
+                        if futures_price > 0 and proxy_spot > 0:
+                            effective_scale = futures_price / proxy_spot
+                            scale_basis = 'live_ratio'
+                        elif ticker == "MES":
+                            effective_scale = 1.0
+                            scale_basis = 'none'
                         else:
-                            gex_data = _scale_gex_data(raw_data, scale_factor)
-                            gex_data['data_source'] = f'tradier_calculator_{tradier_symbol}'
+                            effective_scale = scale_factor
+                            scale_basis = 'static_config'
+                        gex_data = _scale_gex_data(raw_data, effective_scale)
+                        gex_data['scale_factor_used'] = effective_scale
+                        gex_data['scale_basis'] = scale_basis
+                        gex_data['proxy_spot'] = proxy_spot
+                        gex_data['data_source'] = (
+                            'tradier_calculator' if ticker == "MES"
+                            else f'tradier_calculator_{tradier_symbol}'
+                        )
 
                         logger.info(
                             f"[VALOR][{ticker}] Source: Tradier/{tradier_symbol} | "

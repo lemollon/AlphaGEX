@@ -281,6 +281,8 @@ export default function ValorPage() {
   const latest = useMemo(() => {
     const out: Record<string, any> = {}
     for (const s of scans) {
+      // Skip failed scans (no quote → price 0, no walls) so one bad scan doesn't blank the chart
+      if (!(Number(s.underlying_price) > 0)) continue
       const t = s.ticker || 'MES'
       if (!out[t] || new Date(s.scan_time) > new Date(out[t].scan_time)) out[t] = s
     }
