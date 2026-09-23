@@ -4873,6 +4873,12 @@ async function tryOpenFlameBook(
 
   // Customer push (UAT #7): fire-and-forget, never throws into the trade path —
   // notifyTradeOpened catches everything internally.
+  void mirrorOpenToCustomers({
+    botName: bot.name, positionId, ticker, expiration,
+    putShort, putLong, callShort, callLong,
+    spreadWidth: width, credit: entryCredit,
+  })
+
   void notifyTradeOpened(bot.name, positionId)
 
   // ────────────────────────────────────────────────────────────────────────
