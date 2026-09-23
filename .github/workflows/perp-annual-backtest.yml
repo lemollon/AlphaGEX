@@ -35,13 +35,19 @@ jobs:
       - name: Run 365-day coin profile search
         run: |
           python backtest/perp_coin_profile_search.py             --windows "30,90,180,365"             --out artifacts/perp_coin_profile_search_365d
+      - name: Run 365-day chop/regime study
+        run: |
+          python backtest/perp_chop_regime_study.py             --days 365             --out artifacts/perp_chop_regime_study
       - name: Show annual profile report
         run: cat artifacts/perp_coin_profile_search_365d/report.md
+      - name: Show chop/regime report
+        run: cat artifacts/perp_chop_regime_study/report.md
       - uses: actions/upload-artifact@v4
         with:
           name: perp-annual-backtest
           path: |
             artifacts/perp_external_backtest_365d/
             artifacts/perp_coin_profile_search_365d/
+            artifacts/perp_chop_regime_study/
           if-no-files-found: error
           retention-days: 30
