@@ -49,7 +49,7 @@ def number(value) -> Decimal:
     try:
         result = Decimal(str(value))
     except InvalidOperation as exc:
-        raise DataError('invalid_numeric_value') from exc
+        raise DataError('invalid_numeric_value=' + repr(value)[:30]) from exc
     if not result.is_finite():
         raise DataError('nonfinite_numeric_value')
     return result
@@ -80,7 +80,12 @@ def normalize(text: str, kind: str, day: str, strike: int | None = None):
         if row.get('symbol', 'SPY') != 'SPY':
             raise DataError('wrong_symbol')
         if kind == 'stock':
-            ns = {k: number(row[k]) for k in ('open', 'high', 'low', 'close', 'volume')}
+            ns = {}
+            for k in ('open', 'high', 'low', 'close', 'volume'):
+                try:
+                    ns[k] = number(row[k])
+                except (DataError, KeyError) as exc:
+                    raise DataError(f'stock_field={k};timestamp={ts.isoformat()};value={str(row.get(k))[:30]};columns={list(row)}') from exc
             if min(ns[k] for k in ('open', 'high', 'low', 'close')) <= 0:
                 raise DataError('nonpositive_stock_price')
             if ns['volume'] < 0 or ns['low'] > min(ns['open'], ns['close']) or ns['high'] < max(ns['open'], ns['close']):
