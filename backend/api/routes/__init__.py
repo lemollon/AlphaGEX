@@ -14,6 +14,7 @@ from . import agape_xrp_perp_routes
 from . import agape_doge_perp_routes
 from . import agape_perpetuals_trades_routes
 from . import perp_exit_optimizer_routes
+from . import unified_metrics_routes
 
 __all__ = [
     "tastytrade_routes",
@@ -26,4 +27,5 @@ __all__ = [
     "agape_doge_perp_routes",
     "agape_perpetuals_trades_routes",
     "perp_exit_optimizer_routes",
+    "unified_metrics_routes",
 ]
