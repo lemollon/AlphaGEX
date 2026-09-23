@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 from .models import (
     FuturesPosition, FuturesSignal, TradeDirection, PositionStatus,
     ValorConfig, TradingMode, MES_POINT_VALUE, CENTRAL_TZ,
-    FUTURES_TICKERS, get_ticker_point_value
+    FUTURES_TICKERS, get_ticker_point_value, SignalSource
 )
 
 logger = logging.getLogger(__name__)
@@ -532,6 +532,10 @@ class TastytradeExecutor:
         Returns:
             (success, message, order_id)
         """
+        if signal.source == SignalSource.MNQ_BREAKOUT_30M:
+            from .mnq_breakout import paper_order_valid
+            if not paper_order_valid(signal, self.config.mode, datetime.now(CENTRAL_TZ)):
+                return False, "MNQ breakout is paper-only or its decision expired", None
         # Pre-trade margin check (LIVE only). VALOR is multi-instrument but the
         # shared margin engine looks up specs by bot_name, and BOT_INSTRUMENT_MAP
         # pins VALOR → MES, so MNQ's $27k entry × 4 ctr × MES multiplier 5.0 is
@@ -641,6 +645,8 @@ class TastytradeExecutor:
         return summarize_order(order,symbol,quantity,action)
 
     def _live_execution(self, signal: FuturesSignal, position_id: str) -> Tuple[bool, str, Optional[str]]:
+        if signal.source == SignalSource.MNQ_BREAKOUT_30M:
+            return False, "MNQ breakout live execution prohibited", None
         try:
             action = 'Buy to Open' if signal.direction == TradeDirection.LONG else 'Sell to Open'
             result = self._submit_market_order(signal.contract_symbol or self.get_entry_symbol(signal.ticker),signal.contracts,action,position_id)
@@ -670,6 +676,8 @@ class TastytradeExecutor:
         Returns:
             (success, message, fill_price)
         """
+        if position.signal_source == SignalSource.MNQ_BREAKOUT_30M and self.config.mode != TradingMode.PAPER:
+            return False, "Paper MNQ position cannot be closed through a live broker", 0.0
         if self.config.mode == TradingMode.PAPER:
             return self._simulate_close(position, close_reason, intended_close_price)
 
@@ -717,6 +725,8 @@ class TastytradeExecutor:
             return None
 
     def _live_close(self, position: FuturesPosition, close_reason: str, intent_id: Optional[str] = None) -> Tuple[bool, str, float]:
+        if position.signal_source == SignalSource.MNQ_BREAKOUT_30M:
+            return False, "Paper MNQ position cannot be closed through a live broker", 0.0
         try:
             action = 'Sell to Close' if position.direction == TradeDirection.LONG else 'Buy to Close'
             result = self._submit_market_order(position.symbol,position.contracts,action,intent_id or f'close:{position.position_id}')
@@ -884,12 +894,16 @@ class TastytradeExecutor:
         if signal.contracts > self.config.max_contracts:
             return False, f"Contracts {signal.contracts} exceeds max {self.config.max_contracts}"
 
-        # Check risk per trade
-        risk_amount = signal.risk_dollars
-        max_risk = account_balance * (self.config.risk_per_trade_pct / 100)
-
-        if risk_amount > max_risk * 1.5:  # Allow 50% buffer
-            return False, f"Risk ${risk_amount:.2f} exceeds max ${max_risk:.2f}"
+        # Time-only MNQ is a one-contract PAPER experiment, never zero-risk live trading.
+        if signal.source == SignalSource.MNQ_BREAKOUT_30M:
+            from .mnq_breakout import paper_order_valid
+            if not paper_order_valid(signal, self.config.mode, datetime.now(CENTRAL_TZ)):
+                return False, "MNQ breakout requires a current one-contract paper decision"
+        else:
+            risk_amount = signal.risk_dollars
+            max_risk = account_balance * (self.config.risk_per_trade_pct / 100)
+            if risk_amount is None or risk_amount > max_risk * 1.5:
+                return False, "Stop-defined risk is absent or exceeds the configured maximum"
 
         # Check minimum balance for MES margin (~$1,500 per contract)
         min_margin_per_contract = 1500

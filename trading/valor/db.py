@@ -2810,6 +2810,7 @@ class ValorDatabase:
                     FROM valor_scan_activity
                     WHERE trade_executed = TRUE
                       AND trade_outcome IS NOT NULL
+                      AND COALESCE(signal_source,'') <> 'MNQ_BREAKOUT_30M'
                       AND EXISTS (SELECT 1 FROM valor_trade_quality q
                                   WHERE q.position_id = valor_scan_activity.position_id
                                     AND q.quality_status = 'eligible')

@@ -31,6 +31,7 @@ from .models import (
 )
 from .db import ValorDatabase
 from .integrity import serialized
+from .mnq_breakout_trader import MNQBreakoutMixin
 from .signals import ValorSignalGenerator, get_gex_data_for_valor
 from .executor import TastytradeExecutor
 from .margin_manager import (
@@ -149,7 +150,7 @@ except ImportError:
     record_bot_outcome = None
 
 
-class ValorTrader:
+class ValorTrader(MNQBreakoutMixin):
     """
     VALOR - MES Futures Scalping Bot
 
@@ -419,6 +420,8 @@ class ValorTrader:
 
         This contains the per-ticker logic that was previously in run_scan().
         """
+        if ticker == "MNQ":
+            return self._run_mnq_breakout_scan(account_balance=account_balance)
         scan_id = f"VALOR-{ticker}-{uuid.uuid4().hex[:12]}"
         ticker_cfg = get_ticker_config(ticker)
 
@@ -983,6 +986,8 @@ class ValorTrader:
             if current is None or current.status != PositionStatus.OPEN:
                 return False
             position = current
+            if self._is_mnq_breakout(position):
+                return self._manage_mnq_breakout(position, current_price)
             opened = position.open_time
             if opened is None or opened.tzinfo is None:
                 logger.error("Position %s has invalid open_time; requires reconciliation", position.position_id)
@@ -1381,6 +1386,8 @@ class ValorTrader:
             if current is None or current.status != PositionStatus.OPEN:
                 return False
             position = current
+            if self._is_mnq_breakout(position):
+                return self._close_mnq_breakout(position, close_price, status, reason)
             pending = [i for i in self.db.get_pending_order_intents()
                        if i.get('context',{}).get('kind')=='close' and i['context'].get('position_id')==position.position_id] if self.config.mode != TradingMode.PAPER else []
             close_intent = pending[0]['intent_id'] if pending else f"close:{uuid.uuid4().hex[:24]}"
@@ -1646,6 +1653,12 @@ class ValorTrader:
     def _execute_signal_internal(self, signal: FuturesSignal, account_balance: float, position_id: str, scan_id: str = "", ticker: str = "MES", reconciled_order: Optional[Dict] = None) -> bool:
         """Execute a trading signal with specified position_id and scan_id for ML tracking"""
         try:
+            if signal.source == SignalSource.MNQ_BREAKOUT_30M:
+                if reconciled_order is not None or not self._mnq_entry_permitted(signal, account_balance):
+                    return False
+            elif ticker == "MNQ" and reconciled_order is None:
+                # Preserve legacy fill reconciliation, but do not open new GEX/SAR positions.
+                return False
             if reconciled_order is not None:
                 signal.entry_price = reconciled_order['price']
                 signal.contracts = reconciled_order['quantity']
@@ -2495,6 +2508,7 @@ class ValorTrader:
 
         status_dict = {
             "bot_name": "VALOR",
+            "mnq_breakout": self.mnq_breakout_status(),
             "status": "paused_loss_streak" if is_paused else ("active" if self.executor.is_market_open() else "market_closed"),
             "mode": config.mode.value,
             "symbol": config.symbol,
@@ -2545,6 +2559,8 @@ class ValorTrader:
             "market_open": self.executor.is_market_open()
         }
 
+        if ticker is None or ticker == "MNQ":
+            status_dict["mnq_breakout"]["forward_performance"] = self.mnq_breakout_performance()
         # Add paper account info if available
         if paper_account:
             if ticker:

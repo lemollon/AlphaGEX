@@ -320,6 +320,7 @@ class ValorMLAdvisor:
                     FROM valor_scan_activity
                     WHERE trade_executed = true
                       AND trade_outcome IS NOT NULL
+                      AND COALESCE(signal_source,'') <> 'MNQ_BREAKOUT_30M'
                       AND scan_time >= '{PARAMETER_VERSION_DATE}'::timestamp
                     ORDER BY scan_time ASC
                 """
@@ -345,6 +346,7 @@ class ValorMLAdvisor:
                     FROM valor_scan_activity
                     WHERE trade_executed = true
                       AND trade_outcome IS NOT NULL
+                      AND COALESCE(signal_source,'') <> 'MNQ_BREAKOUT_30M'
                     ORDER BY scan_time ASC
                 """
 
@@ -384,6 +386,7 @@ class ValorMLAdvisor:
             cursor.execute("""
                 SELECT COUNT(*) FROM valor_scan_activity
                 WHERE trade_executed = true AND trade_outcome IS NOT NULL
+                      AND COALESCE(signal_source,'') <> 'MNQ_BREAKOUT_30M'
             """)
             total_trades = cursor.fetchone()[0]
 
@@ -395,6 +398,7 @@ class ValorMLAdvisor:
                 FROM valor_scan_activity
                 WHERE trade_executed = true
                   AND trade_outcome IS NOT NULL
+                      AND COALESCE(signal_source,'') <> 'MNQ_BREAKOUT_30M'
                   AND scan_time < '{PARAMETER_VERSION_DATE}'::timestamp
             """)
             old_row = cursor.fetchone()
@@ -410,6 +414,7 @@ class ValorMLAdvisor:
                 FROM valor_scan_activity
                 WHERE trade_executed = true
                   AND trade_outcome IS NOT NULL
+                      AND COALESCE(signal_source,'') <> 'MNQ_BREAKOUT_30M'
                   AND scan_time >= '{PARAMETER_VERSION_DATE}'::timestamp
             """)
             new_row = cursor.fetchone()
