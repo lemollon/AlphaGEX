@@ -1,1903 +1,869 @@
 'use client'
 
-import { useState, useMemo } from 'react'
-import useSWR from 'swr'
-import {
-  XAxis, YAxis, Tooltip, ResponsiveContainer,
-  CartesianGrid, Area, AreaChart,
-} from 'recharts'
-import {
-  TrendingUp,
-  TrendingDown,
-  Activity,
-  Eye,
-  RefreshCw,
-  Wallet,
-  History,
-  BarChart3,
-  Layers,
-  ArrowRight,
-  Calendar,
-  Zap,
-  Globe,
-  DollarSign,
-  Shield,
-  Target,
-  ArrowUpDown,
-  Settings,
-  LineChart,
-  Brain,
-} from 'lucide-react'
-import PerpMarketCharts from '@/components/charts/PerpMarketCharts'
-import SignalBriefCard from '@/components/trader/SignalBriefCard'
+// Crypto Perps — one consolidated hub for all ten AGAPE derivative bots.
+// Route: /perpetuals-crypto?coin=btc|eth|xrp|sol|doge|avax|link|ltc|bch|shib&tab=overview|market|activity|history|config
+// Replaces the old "ALL coins dashboard" (PerpetualsCryptoContent) and the
+// six-bot /agape-perps hub (AgapePerpsContent) with a single overview +
+// coin-detail view, per the Crypto Perps design handoff.
+
+import { useMemo, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Navigation from '@/components/Navigation'
-import { TradeHistoryTable } from '@/components/perpetuals/TradeHistoryTable'
-import { MultiBotPerpEquityChart, type ChartBot } from '@/components/perpetuals/MultiBotPerpEquityChart'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
+import { LoadingState } from '@/components/trader'
+import { useAgapePerpTrades, type RangePreset, type Trade } from '@/lib/hooks/useAgapePerpTrades'
+import {
+  useAGAPEBtcPerpStatus, useAGAPEBtcPerpPerformance, useAGAPEBtcPerpPositions, useAGAPEBtcPerpScanActivity, useAGAPEBtcPerpSnapshot, useAGAPEBtcPerpGexMapping,
+  useAGAPEEthPerpStatus, useAGAPEEthPerpPerformance, useAGAPEEthPerpPositions, useAGAPEEthPerpScanActivity, useAGAPEEthPerpSnapshot, useAGAPEEthPerpGexMapping,
+  useAGAPEXrpPerpStatus, useAGAPEXrpPerpPerformance, useAGAPEXrpPerpPositions, useAGAPEXrpPerpScanActivity, useAGAPEXrpPerpSnapshot, useAGAPEXrpPerpGexMapping,
+  useAGAPESolPerpStatus, useAGAPESolPerpPerformance, useAGAPESolPerpPositions, useAGAPESolPerpScanActivity, useAGAPESolPerpSnapshot, useAGAPESolPerpGexMapping,
+  useAGAPEDogePerpStatus, useAGAPEDogePerpPerformance, useAGAPEDogePerpPositions, useAGAPEDogePerpScanActivity, useAGAPEDogePerpSnapshot, useAGAPEDogePerpGexMapping,
+  useAGAPEAvaxPerpStatus, useAGAPEAvaxPerpPerformance, useAGAPEAvaxPerpPositions, useAGAPEAvaxPerpScanActivity, useAGAPEAvaxPerpSnapshot, useAGAPEAvaxPerpGexMapping,
+  useAGAPELinkFuturesStatus, useAGAPELinkFuturesPerformance, useAGAPELinkFuturesPositions, useAGAPELinkFuturesScanActivity, useAGAPELinkFuturesSnapshot, useAGAPELinkFuturesGexMapping,
+  useAGAPELtcFuturesStatus, useAGAPELtcFuturesPerformance, useAGAPELtcFuturesPositions, useAGAPELtcFuturesScanActivity, useAGAPELtcFuturesSnapshot, useAGAPELtcFuturesGexMapping,
+  useAGAPEBchFuturesStatus, useAGAPEBchFuturesPerformance, useAGAPEBchFuturesPositions, useAGAPEBchFuturesScanActivity, useAGAPEBchFuturesSnapshot, useAGAPEBchFuturesGexMapping,
+  useAGAPEShibFuturesStatus, useAGAPEShibFuturesPerformance, useAGAPEShibFuturesPositions, useAGAPEShibFuturesScanActivity, useAGAPEShibFuturesSnapshot, useAGAPEShibFuturesGexMapping,
+} from '@/lib/hooks/useMarketData'
 
-// ==============================================================================
-// TYPES
-// ==============================================================================
+const G = '#10b981'
+const R = '#ef4444'
+const REFRESH_MS = 15000
+const MONO = "font-[Geist_Mono,monospace]"
 
-type CoinId = 'ALL' | 'ETH' | 'SOL' | 'AVAX' | 'BTC' | 'XRP' | 'DOGE' | 'SHIB' | 'LINK' | 'LTC' | 'BCH'
+type Coin = 'btc' | 'eth' | 'xrp' | 'sol' | 'doge' | 'avax' | 'link' | 'ltc' | 'bch' | 'shib'
 
-// ==============================================================================
-// CONSTANTS
-// ==============================================================================
+const PERP_COINS: Coin[] = ['btc', 'eth', 'xrp', 'sol', 'doge', 'avax']
+const FUT_COINS: Coin[] = ['link', 'ltc', 'bch', 'shib']
+const COINS: Coin[] = [...PERP_COINS, ...FUT_COINS]
 
-const API = process.env.NEXT_PUBLIC_API_URL || ''
-
-// Fixed top 3 by user pref: ETH, BTC, XRP. Remaining ordered by market cap / name recognition.
-const COINS: CoinId[] = ['ALL', 'ETH', 'BTC', 'XRP', 'SOL', 'DOGE', 'AVAX', 'LINK', 'LTC', 'BCH', 'SHIB']
-
-// productType marks each bot as a perpetual ("PERP") or dated futures ("FUTURE").
-// PERP = Coinbase International (1000SHIB-PERP-INTX, geo-blocked from US) OR
-//        Coinbase Derivatives 5-year-dated "perpetual-style" (e.g., BIP-20DEC30-CDE).
-// FUTURE = Coinbase Derivatives monthly dated futures (e.g., SHB-29MAY26-CDE),
-//          traded via FCM (Tastytrade/NinjaTrader/IBKR) with monthly contract rolls.
-type ProductType = 'PERP' | 'FUTURE'
-
-const COIN_META: Record<CoinId, {
-  symbol: string; label: string; instrument: string; hexColor: string;
-  bgActive: string; borderActive: string; textActive: string;
-  bgCard: string; borderCard: string;
-  apiPrefix: string; priceKey: string; priceField: string; priceDecimals: number;
-  quantityLabel: string; startingCapital: number;
-  productType: ProductType;        // PERP or FUTURE — drives UI badge
-  productTypeNote?: string;        // optional sub-label (e.g., "US, no roll" / "monthly roll")
-  liveAvailableUS: boolean;        // false = paper-only because no US-accessible market
-}> = {
-  'ALL': {
-    symbol: 'ALL', label: 'All Derivatives', instrument: '', hexColor: '#06B6D4',
-    bgActive: 'bg-cyan-600', borderActive: 'border-cyan-500', textActive: 'text-cyan-400',
-    bgCard: 'bg-cyan-950/30', borderCard: 'border-cyan-700/40',
-    apiPrefix: '', priceKey: '', priceField: '', priceDecimals: 2,
-    quantityLabel: '', startingCapital: 50000,
-    productType: 'PERP', liveAvailableUS: true,
-  },
-  'ETH': {
-    symbol: 'ETH', label: 'Ethereum', instrument: 'ETH-PERP', hexColor: '#D946EF',
-    bgActive: 'bg-fuchsia-600', borderActive: 'border-fuchsia-500', textActive: 'text-fuchsia-400',
-    bgCard: 'bg-fuchsia-950/30', borderCard: 'border-fuchsia-700/40',
-    apiPrefix: '/api/agape-eth-perp', priceKey: 'current_eth_price', priceField: 'eth_price', priceDecimals: 2,
-    quantityLabel: 'ETH', startingCapital: 12500,
-    productType: 'PERP', productTypeNote: 'Coinbase US (ETP-20DEC30-CDE)', liveAvailableUS: true,
-  },
-  'SOL': {
-    symbol: 'SOL', label: 'Solana', instrument: 'SOL-PERP', hexColor: '#22D3EE',
-    bgActive: 'bg-cyan-600', borderActive: 'border-cyan-500', textActive: 'text-cyan-400',
-    bgCard: 'bg-cyan-950/30', borderCard: 'border-cyan-700/40',
-    apiPrefix: '/api/agape-sol-perp', priceKey: 'current_sol_price', priceField: 'sol_price', priceDecimals: 2,
-    quantityLabel: 'SOL', startingCapital: 5000,
-    productType: 'PERP', productTypeNote: 'Coinbase US (SLP-20DEC30-CDE)', liveAvailableUS: true,
-  },
-  'AVAX': {
-    symbol: 'AVAX', label: 'Avalanche', instrument: 'AVAX-PERP', hexColor: '#EF4444',
-    bgActive: 'bg-red-600', borderActive: 'border-red-500', textActive: 'text-red-400',
-    bgCard: 'bg-red-950/30', borderCard: 'border-red-700/40',
-    apiPrefix: '/api/agape-avax-perp', priceKey: 'current_avax_price', priceField: 'avax_price', priceDecimals: 2,
-    quantityLabel: 'AVAX', startingCapital: 2500,
-    productType: 'PERP', productTypeNote: 'Coinbase US (AVP-20DEC30-CDE)', liveAvailableUS: true,
-  },
-  'BTC': {
-    symbol: 'BTC', label: 'Bitcoin', instrument: 'BTC-PERP', hexColor: '#F97316',
-    bgActive: 'bg-orange-600', borderActive: 'border-orange-500', textActive: 'text-orange-400',
-    bgCard: 'bg-orange-950/30', borderCard: 'border-orange-700/40',
-    apiPrefix: '/api/agape-btc-perp', priceKey: 'current_btc_price', priceField: 'btc_price', priceDecimals: 2,
-    quantityLabel: 'BTC', startingCapital: 25000,
-    productType: 'PERP', productTypeNote: 'Coinbase US (BIP-20DEC30-CDE)', liveAvailableUS: true,
-  },
-  'XRP': {
-    symbol: 'XRP', label: 'Ripple', instrument: 'XRP-PERP', hexColor: '#0EA5E9',
-    bgActive: 'bg-sky-600', borderActive: 'border-sky-500', textActive: 'text-sky-400',
-    bgCard: 'bg-sky-950/30', borderCard: 'border-sky-700/40',
-    apiPrefix: '/api/agape-xrp-perp', priceKey: 'current_xrp_price', priceField: 'xrp_price', priceDecimals: 4,
-    quantityLabel: 'XRP', startingCapital: 9000,
-    productType: 'PERP', productTypeNote: 'Coinbase US (XPP-20DEC30-CDE)', liveAvailableUS: true,
-  },
-  'DOGE': {
-    symbol: 'DOGE', label: 'Dogecoin', instrument: 'DOGE-PERP', hexColor: '#FACC15',
-    bgActive: 'bg-yellow-600', borderActive: 'border-yellow-500', textActive: 'text-yellow-400',
-    bgCard: 'bg-yellow-950/30', borderCard: 'border-yellow-700/40',
-    apiPrefix: '/api/agape-doge-perp', priceKey: 'current_doge_price', priceField: 'doge_price', priceDecimals: 6,
-    quantityLabel: 'DOGE', startingCapital: 2500,
-    productType: 'PERP', productTypeNote: 'Coinbase US (DOP-20DEC30-CDE)', liveAvailableUS: true,
-  },
-  'SHIB': {
-    symbol: 'SHIB', label: 'Shiba Inu', instrument: '1000SHIB-FUT', hexColor: '#FB7185',
-    bgActive: 'bg-rose-600', borderActive: 'border-rose-500', textActive: 'text-rose-400',
-    bgCard: 'bg-rose-950/30', borderCard: 'border-rose-700/40',
-    apiPrefix: '/api/agape-shib-futures', priceKey: 'current_shib_price', priceField: 'shib_price', priceDecimals: 8,
-    quantityLabel: 'SHIB', startingCapital: 1000,
-    // SHIB has no US-accessible perpetual (Coinbase International lists
-    // 1000SHIB-PERP-INTX but it geo-blocks US persons). The US-accessible
-    // SHIB exposure is the monthly 1000SHIB futures on Coinbase Derivatives
-    // (SHB-29MAY26-CDE, SHB-26JUN26-CDE, etc.) traded via FCM (Tastytrade /
-    // NinjaTrader / IBKR). Each contract = 10K units of "1000SHIB" = 10M SHIB.
-    // The paper bot still uses the agape_shib_perp directory; live execution
-    // via Tastytrade FCM with monthly contract rolls is a separate build.
-    productType: 'FUTURE',
-    productTypeNote: 'Coinbase US 1k SHIB futures (SHB-29MAY26-CDE, monthly roll, FCM)',
-    liveAvailableUS: true,  // contract IS available; live integration pending
-  },
-  'LINK': {
-    symbol: 'LINK', label: 'Chainlink', instrument: 'LINK-FUT', hexColor: '#3B82F6',
-    bgActive: 'bg-blue-600', borderActive: 'border-blue-500', textActive: 'text-blue-400',
-    bgCard: 'bg-blue-950/30', borderCard: 'border-blue-700/40',
-    apiPrefix: '/api/agape-link-futures', priceKey: 'current_link_price', priceField: 'link_price', priceDecimals: 2,
-    quantityLabel: 'LINK', startingCapital: 2500,
-    productType: 'FUTURE',
-    productTypeNote: 'Coinbase US LINK futures (LNK-29MAY26-CDE, 100 LINK/contract, monthly roll, FCM)',
-    liveAvailableUS: true,
-  },
-  'LTC': {
-    symbol: 'LTC', label: 'Litecoin', instrument: 'LTC-FUT', hexColor: '#94A3B8',
-    bgActive: 'bg-slate-600', borderActive: 'border-slate-500', textActive: 'text-slate-300',
-    bgCard: 'bg-slate-950/30', borderCard: 'border-slate-700/40',
-    apiPrefix: '/api/agape-ltc-futures', priceKey: 'current_ltc_price', priceField: 'ltc_price', priceDecimals: 2,
-    quantityLabel: 'LTC', startingCapital: 2500,
-    productType: 'FUTURE',
-    productTypeNote: 'Coinbase US LTC futures (LTC-29MAY26-CDE, 50 LTC/contract, monthly roll, FCM)',
-    liveAvailableUS: true,
-  },
-  'BCH': {
-    symbol: 'BCH', label: 'Bitcoin Cash', instrument: 'BCH-FUT', hexColor: '#22C55E',
-    bgActive: 'bg-green-600', borderActive: 'border-green-500', textActive: 'text-green-400',
-    bgCard: 'bg-green-950/30', borderCard: 'border-green-700/40',
-    apiPrefix: '/api/agape-bch-futures', priceKey: 'current_bch_price', priceField: 'bch_price', priceDecimals: 2,
-    quantityLabel: 'BCH', startingCapital: 2500,
-    productType: 'FUTURE',
-    productTypeNote: 'Coinbase US BCH futures (BCH-29MAY26-CDE, 25 BCH/contract, monthly roll, FCM)',
-    liveAvailableUS: true,
-  },
+const META: Record<Coin, { sym: string; name: string; color: string; d: number; type: 'PERP' | 'FUT'; instrument: string; cap: number }> = {
+  btc:  { sym: 'BTC',  name: 'Bitcoin',      color: '#F7931A', d: 2, type: 'PERP', instrument: 'BTC-PERP',     cap: 25000 },
+  eth:  { sym: 'ETH',  name: 'Ethereum',     color: '#627EEA', d: 2, type: 'PERP', instrument: 'ETH-PERP',     cap: 12500 },
+  xrp:  { sym: 'XRP',  name: 'Ripple',       color: '#94A3B8', d: 4, type: 'PERP', instrument: 'XRP-PERP',     cap: 9000 },
+  sol:  { sym: 'SOL',  name: 'Solana',       color: '#9945FF', d: 2, type: 'PERP', instrument: 'SOL-PERP',     cap: 5000 },
+  doge: { sym: 'DOGE', name: 'Dogecoin',     color: '#C2A633', d: 5, type: 'PERP', instrument: 'DOGE-PERP',    cap: 2500 },
+  avax: { sym: 'AVAX', name: 'Avalanche',    color: '#E84142', d: 3, type: 'PERP', instrument: 'AVAX-PERP',    cap: 2500 },
+  link: { sym: 'LINK', name: 'Chainlink',    color: '#2A5ADA', d: 3, type: 'FUT',  instrument: 'LINK-FUT',     cap: 2500 },
+  ltc:  { sym: 'LTC',  name: 'Litecoin',     color: '#A6A9AA', d: 2, type: 'FUT',  instrument: 'LTC-FUT',      cap: 2500 },
+  bch:  { sym: 'BCH',  name: 'Bitcoin Cash', color: '#8DC351', d: 2, type: 'FUT',  instrument: 'BCH-FUT',      cap: 2500 },
+  shib: { sym: 'SHIB', name: 'Shiba Inu',    color: '#FFA409', d: 5, type: 'FUT',  instrument: '1000SHIB-FUT', cap: 1000 },
 }
 
-const ACTIVE_COINS = ['ETH', 'BTC', 'XRP', 'SOL', 'DOGE', 'AVAX', 'LINK', 'LTC', 'BCH', 'SHIB'] as const
-type ActiveCoinId = typeof ACTIVE_COINS[number]
-
-// Maps the all-page CoinId to the bot_id slug used by /api/agape-perpetuals/trades.
-const COIN_TO_BOT_ID: Record<ActiveCoinId, string> = {
-  ETH: 'eth', SOL: 'sol', AVAX: 'avax', BTC: 'btc', XRP: 'xrp',
-  DOGE: 'doge', SHIB: 'shib_futures', LINK: 'link_futures',
-  LTC: 'ltc_futures', BCH: 'bch_futures',
+// bot_id slug used by /api/agape-perpetuals/trades
+const BOT_ID: Record<Coin, string> = {
+  btc: 'btc', eth: 'eth', xrp: 'xrp', sol: 'sol', doge: 'doge', avax: 'avax',
+  link: 'link_futures', ltc: 'ltc_futures', bch: 'bch_futures', shib: 'shib_futures',
 }
+const COIN_OF_BOT_ID: Record<string, Coin> = Object.fromEntries(COINS.map(c => [BOT_ID[c], c])) as Record<string, Coin>
 
-// Bot list passed to MultiBotPerpEquityChart. Built once at module scope so
-// the chart's per-bot useSWR hook order is stable across renders.
-const CHART_BOTS: ChartBot[] = ACTIVE_COINS.map(c => ({
-  bot_id: COIN_TO_BOT_ID[c],
-  label: COIN_META[c].instrument,
-  color: COIN_META[c].hexColor,
-  apiPrefix: COIN_META[c].apiPrefix,
-}))
-
-const SECTION_TABS = [
-  { id: 'overview' as const,    label: 'Overview',      icon: Layers },
-  { id: 'analytics' as const,   label: 'Analytics + AI',icon: Brain },
-  { id: 'margin' as const,      label: 'Margin Risk',   icon: Shield },
-  { id: 'positions' as const,   label: 'Positions',     icon: Wallet },
-  { id: 'performance' as const, label: 'Performance',   icon: BarChart3 },
-  { id: 'equity' as const,      label: 'Equity Curve',  icon: TrendingUp },
-  { id: 'activity' as const,    label: 'Activity',      icon: Activity },
-  { id: 'history' as const,     label: 'History',       icon: History },
+const TABS = [
+  { id: 'overview' as const, label: 'Overview' },
+  { id: 'market' as const,   label: 'Market' },
+  { id: 'activity' as const, label: 'Activity' },
+  { id: 'history' as const,  label: 'History' },
+  { id: 'config' as const,   label: 'Config' },
 ]
-type SectionTabId = typeof SECTION_TABS[number]['id']
+type TabId = typeof TABS[number]['id']
 
-const TOTAL_CAPITAL = 65000  // ETH 12.5 + SOL 5 + AVAX 2.5 + BTC 25 + XRP 9 + DOGE 2.5 + SHIB 1 + LINK 2.5 + LTC 2.5 + BCH 2.5
+const RANGES: { id: RangePreset; label: string }[] = [
+  { id: '7d', label: '7D' }, { id: '30d', label: '30D' }, { id: '90d', label: '90D' }, { id: 'all', label: 'All' },
+]
 
-const TIME_FRAMES = [
-  { id: 'today', label: 'Today', days: 0 },
-  { id: '7d',    label: '7D',    days: 7 },
-  { id: '14d',   label: '14D',   days: 14 },
-  { id: '30d',   label: '30D',   days: 30 },
-  { id: '90d',   label: '90D',   days: 90 },
-  { id: 'all',   label: 'ALL',   days: 365 },
-] as const
-type TimeFrameId = typeof TIME_FRAMES[number]['id']
+// ------------------------------------------------------------------ helpers
 
-// ==============================================================================
-// SWR FETCHER
-// ==============================================================================
+const money = (n: number, sign = false) =>
+  (sign ? (n >= 0 ? '+' : '−') : n < 0 ? '−' : '') +
+  '$' + Math.abs(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const px = (v: number | undefined | null, d: number) =>
+  v == null || isNaN(Number(v)) ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d })
+const pct = (v: number | undefined | null) => (v == null || isNaN(Number(v)) ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`)
+const pnlColor = (n: number) => (n > 0 ? G : n < 0 ? R : '#9ca3af')
+const sigColor = (s?: string) =>
+  !s ? '#9ca3af' : /LONG|BULL|POSITIVE/.test(s) ? G : /SHORT|BEAR|NEGATIVE/.test(s) ? R : s === 'RANGE_BOUND' ? '#eab308' : '#9ca3af'
+const riskColor = (r?: string) => (r === 'HIGH' ? R : r === 'ELEVATED' ? '#f97316' : G)
+const priceOf = (coin: Coin, obj: any): number | null => obj?.[`current_${coin}_price`] ?? obj?.[`${coin}_price`] ?? obj?.current_price ?? obj?.spot_price ?? null
 
-const fetcher = (url: string) => fetch(`${API}${url}`).then(r => {
-  if (!r.ok) throw new Error(`API error ${r.status}`)
-  return r.json()
-})
+// ------------------------------------------------------------------ bot data hook
 
-// ==============================================================================
-// SWR HOOKS (per-coin, using each bot's API)
-// ==============================================================================
-
-function usePerpStatus(coin: CoinId) {
-  const prefix = coin !== 'ALL' ? COIN_META[coin].apiPrefix : null
-  return useSWR(prefix ? `${prefix}/status` : null, fetcher, { refreshInterval: 10_000 })
+interface BotData {
+  coin: Coin
+  status: any
+  loading: boolean
+  perf: any
+  positions: any[]
+  scans: any[]
+  snapshot: any
+  mapping: any
 }
 
-function usePerpPerformance(coin: CoinId) {
-  const prefix = coin !== 'ALL' ? COIN_META[coin].apiPrefix : null
-  return useSWR(prefix ? `${prefix}/performance` : null, fetcher, { refreshInterval: 30_000 })
-}
-
-function usePerpPositions(coin: CoinId) {
-  const prefix = coin !== 'ALL' ? COIN_META[coin].apiPrefix : null
-  return useSWR(prefix ? `${prefix}/positions` : null, fetcher, { refreshInterval: 10_000 })
-}
-
-function usePerpEquityCurve(coin: CoinId, days: number = 30) {
-  const prefix = coin !== 'ALL' ? COIN_META[coin].apiPrefix : null
-  return useSWR(prefix ? `${prefix}/equity-curve?days=${days}` : null, fetcher, { refreshInterval: 30_000 })
-}
-
-function usePerpIntradayEquity(coin: CoinId) {
-  const prefix = coin !== 'ALL' ? COIN_META[coin].apiPrefix : null
-  return useSWR(prefix ? `${prefix}/equity-curve/intraday` : null, fetcher, { refreshInterval: 15_000 })
-}
-
-function usePerpScanActivity(coin: CoinId, limit: number = 30) {
-  const prefix = coin !== 'ALL' ? COIN_META[coin].apiPrefix : null
-  return useSWR(prefix ? `${prefix}/scan-activity?limit=${limit}` : null, fetcher, { refreshInterval: 15_000 })
-}
-
-function usePerpSnapshot(coin: CoinId) {
-  const prefix = coin !== 'ALL' ? COIN_META[coin].apiPrefix : null
-  return useSWR(prefix ? `${prefix}/snapshot` : null, fetcher, { refreshInterval: 15_000 })
-}
-
-// ==============================================================================
-// HELPERS
-// ==============================================================================
-
-function pnlColor(val: number): string {
-  if (val > 0) return 'text-green-400'
-  if (val < 0) return 'text-red-400'
-  return 'text-gray-400'
-}
-
-function fmtUsd(val: number | null | undefined, decimals = 2): string {
-  if (val == null) return '---'
-  const prefix = val >= 0 ? '' : '-'
-  return `${prefix}$${Math.abs(val).toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`
-}
-
-function fmtPct(val: number | null | undefined): string {
-  if (val == null) return '---'
-  const prefix = val >= 0 ? '+' : ''
-  return `${prefix}${val.toFixed(2)}%`
-}
-
-function fmtPrice(val: number | null | undefined, decimals: number = 2): string {
-  if (val == null) return '---'
-  return `$${val.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`
-}
-
-function computeDrawdown(points: any[], startingCapital: number): any[] {
-  if (!points || points.length === 0) return []
-  let peak = startingCapital
-  return points.map(p => {
-    const eq = p.equity ?? startingCapital
-    if (eq > peak) peak = eq
-    const dd = peak > 0 ? ((eq - peak) / peak) * 100 : 0
-    return { ...p, drawdown: Math.round(dd * 100) / 100 }
-  })
-}
-
-function buildHeatmapDays(equityPoints: any[]): { date: string; pnl: number | null; trades: number }[] {
-  if (!equityPoints || equityPoints.length === 0) return []
-  const pnlMap = new Map<string, { pnl: number; trades: number }>()
-  for (const p of equityPoints) {
-    if (p.date) pnlMap.set(p.date, { pnl: p.daily_pnl ?? 0, trades: p.trades ?? 0 })
+function useBot(coin: Coin, opts: { snapshot: boolean; mapping: boolean }): BotData {
+  const H = {
+    btc:  [useAGAPEBtcPerpStatus, useAGAPEBtcPerpPerformance, useAGAPEBtcPerpPositions, useAGAPEBtcPerpScanActivity, useAGAPEBtcPerpSnapshot, useAGAPEBtcPerpGexMapping],
+    eth:  [useAGAPEEthPerpStatus, useAGAPEEthPerpPerformance, useAGAPEEthPerpPositions, useAGAPEEthPerpScanActivity, useAGAPEEthPerpSnapshot, useAGAPEEthPerpGexMapping],
+    xrp:  [useAGAPEXrpPerpStatus, useAGAPEXrpPerpPerformance, useAGAPEXrpPerpPositions, useAGAPEXrpPerpScanActivity, useAGAPEXrpPerpSnapshot, useAGAPEXrpPerpGexMapping],
+    sol:  [useAGAPESolPerpStatus, useAGAPESolPerpPerformance, useAGAPESolPerpPositions, useAGAPESolPerpScanActivity, useAGAPESolPerpSnapshot, useAGAPESolPerpGexMapping],
+    doge: [useAGAPEDogePerpStatus, useAGAPEDogePerpPerformance, useAGAPEDogePerpPositions, useAGAPEDogePerpScanActivity, useAGAPEDogePerpSnapshot, useAGAPEDogePerpGexMapping],
+    avax: [useAGAPEAvaxPerpStatus, useAGAPEAvaxPerpPerformance, useAGAPEAvaxPerpPositions, useAGAPEAvaxPerpScanActivity, useAGAPEAvaxPerpSnapshot, useAGAPEAvaxPerpGexMapping],
+    link: [useAGAPELinkFuturesStatus, useAGAPELinkFuturesPerformance, useAGAPELinkFuturesPositions, useAGAPELinkFuturesScanActivity, useAGAPELinkFuturesSnapshot, useAGAPELinkFuturesGexMapping],
+    ltc:  [useAGAPELtcFuturesStatus, useAGAPELtcFuturesPerformance, useAGAPELtcFuturesPositions, useAGAPELtcFuturesScanActivity, useAGAPELtcFuturesSnapshot, useAGAPELtcFuturesGexMapping],
+    bch:  [useAGAPEBchFuturesStatus, useAGAPEBchFuturesPerformance, useAGAPEBchFuturesPositions, useAGAPEBchFuturesScanActivity, useAGAPEBchFuturesSnapshot, useAGAPEBchFuturesGexMapping],
+    shib: [useAGAPEShibFuturesStatus, useAGAPEShibFuturesPerformance, useAGAPEShibFuturesPositions, useAGAPEShibFuturesScanActivity, useAGAPEShibFuturesSnapshot, useAGAPEShibFuturesGexMapping],
+  }[coin] as any[]
+  const [useStatus, usePerf, usePositions, useScans, useSnapshot, useMapping] = H
+  const status = useStatus({ refreshInterval: REFRESH_MS })
+  const perf = usePerf({ refreshInterval: REFRESH_MS })
+  const positions = usePositions({ refreshInterval: REFRESH_MS })
+  const scans = useScans(60, { enabled: true, refreshInterval: REFRESH_MS })
+  const snapshot = useSnapshot({ enabled: opts.snapshot, refreshInterval: REFRESH_MS })
+  const mapping = useMapping({ enabled: opts.mapping })
+  return {
+    coin,
+    status: status.data?.data,
+    loading: status.isLoading && !status.data,
+    perf: perf.data?.data,
+    positions: (positions.data?.data || []) as any[],
+    scans: (scans.data?.data || []) as any[],
+    snapshot: snapshot.data?.data,
+    mapping: mapping.data?.data,
   }
-  const first = new Date(equityPoints[0].date + 'T12:00:00')
-  const today = new Date()
-  today.setHours(12, 0, 0, 0)
-  const days: { date: string; pnl: number | null; trades: number }[] = []
-  const d = new Date(first)
-  while (d <= today) {
-    const ds = d.toISOString().slice(0, 10)
-    const entry = pnlMap.get(ds)
-    days.push({ date: ds, pnl: entry?.pnl ?? null, trades: entry?.trades ?? 0 })
-    d.setDate(d.getDate() + 1)
-  }
-  return days
 }
 
-// ==============================================================================
-// MAIN PAGE COMPONENT
-// ==============================================================================
+function startOf(b: BotData): number {
+  return b.status?.paper_account?.starting_capital ?? b.status?.starting_capital ?? META[b.coin].cap
+}
+function realizedOf(b: BotData): number {
+  return b.perf?.realized_pnl ?? b.status?.paper_account?.realized_pnl ?? b.status?.paper_account?.cumulative_pnl ?? 0
+}
+function unrealOf(b: BotData): number {
+  return b.status?.total_unrealized_pnl ?? b.positions.reduce((a: number, p: any) => a + (p.unrealized_pnl || 0), 0)
+}
+function livePrice(b: BotData): number | null {
+  return priceOf(b.coin, b.status) ?? priceOf(b.coin, b.scans[0])
+}
+function firstPrice(b: BotData): number | null {
+  const bars = barsFromScans(b.coin, b.scans)
+  return bars.length ? bars[0].o : null
+}
 
-export default function PerpetualsCryptoPage() {
-  const [selectedCoin, setSelectedCoin] = useState<CoinId>('ALL')
-  const [activeTab, setActiveTab] = useState<SectionTabId>('overview')
+// ------------------------------------------------------------------ UI atoms
+
+function Card({ children, className = '', style }: { children: React.ReactNode; className?: string; style?: React.CSSProperties }) {
+  return <div className={`bg-[#11151f] border border-[#1c2233] rounded-xl ${className}`} style={style}>{children}</div>
+}
+const Dot = ({ color, size = 8 }: { color: string; size?: number }) =>
+  <span className="inline-block rounded-full shrink-0" style={{ width: size, height: size, background: color }} />
+function Pills<T extends string>({ items, value, onChange }: { items: { id: T; label: string }[]; value: T; onChange: (v: T) => void }) {
+  return (
+    <div className="flex gap-1">
+      {items.map(i => (
+        <button key={i.id} onClick={() => onChange(i.id)}
+          className={`border-0 rounded-md px-2.5 py-1 text-xs font-semibold cursor-pointer ${value === i.id ? 'bg-[#eab308] text-[#0a0e1a]' : 'bg-[#1c2233] text-[#9ca3af] hover:text-gray-200'}`}>{i.label}</button>
+      ))}
+    </div>
+  )
+}
+const Row = ({ label, value, color }: { label: string; value: React.ReactNode; color?: string }) => (
+  <div className="flex justify-between text-sm"><span className="text-[#9ca3af]">{label}</span><span className={MONO} style={{ color: color || '#f3f4f6' }}>{value}</span></div>
+)
+function StatCell({ label, value, color, size = 20 }: { label: string; value: React.ReactNode; color?: string; size?: number }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-xs text-[#6b7280]">{label}</span>
+      <span className={`${MONO} font-semibold`} style={{ color: color || '#f3f4f6', fontSize: size }}>{value}</span>
+    </div>
+  )
+}
+function MarketTile({ l, v, c }: { l: string; v: string; c?: string }) {
+  return <Card className="p-[14px_16px] flex flex-col gap-1.5"><span className="text-xs text-[#6b7280]">{l}</span><span className="text-[15px] font-semibold" style={{ color: c || '#f3f4f6' }}>{v}</span></Card>
+}
+function MarketCard({ title, sub, rows }: { title: string; sub: string; rows: { l: string; v: React.ReactNode; c?: string }[] }) {
+  return (
+    <Card className="p-[18px_20px] flex flex-col gap-3">
+      <div className="flex flex-col gap-0.5"><span className="text-[15px] font-semibold">{title}</span><span className="text-xs text-[#6b7280]">{sub}</span></div>
+      {rows.map(r => <Row key={r.l} label={r.l} value={r.v} color={r.c} />)}
+    </Card>
+  )
+}
+
+// ------------------------------------------------------------------ charts
+
+type Bar = { o: number; h: number; l: number; c: number }
+
+// 5-minute bars from the bot's own scan prices (one scan per 5 min).
+function barsFromScans(coin: Coin, scans: any[], max = 48): Bar[] {
+  const pts = [...scans]
+    .filter(s => priceOf(coin, s))
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+    .map(s => Number(priceOf(coin, s)))
+  const bars: Bar[] = []
+  for (let i = 1; i < pts.length; i++) bars.push({ o: pts[i - 1], c: pts[i], h: Math.max(pts[i - 1], pts[i]), l: Math.min(pts[i - 1], pts[i]) })
+  return bars.slice(-max)
+}
+
+function CandleChart({ bars, sl, ll, flip, price, d }: { bars: Bar[]; sl?: number | null; ll?: number | null; flip?: number | null; price?: number | null; d: number }) {
+  if (bars.length < 2) return <div className="h-[320px] flex items-center justify-center text-sm text-[#6b7280]">Waiting for scan prices to build bars…</div>
+  const W = 700, H = 320, R0 = 80
+  const lv = [sl, ll, flip].filter((v): v is number => !!v)
+  let lo = Math.min(...bars.map(b => b.l), ...lv), hi = Math.max(...bars.map(b => b.h), ...lv)
+  const pad = (hi - lo) * 0.07 || Math.abs(hi) * 0.001; lo -= pad; hi += pad
+  const y = (v: number) => ((hi - v) / (hi - lo)) * H
+  const cw = (W - R0) / bars.length
+  const lines: [string, number | undefined | null, string, string | undefined][] = [
+    ['SHORT LIQ', sl, '#3b82f6', undefined], ['GEX FLIP', flip, '#f59e0b', '6 4'], ['LONG LIQ', ll, '#8b5cf6', undefined],
+  ]
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto block">
+      {[0, 1, 2, 3, 4].map(i => { const v = lo + (hi - lo) * (i + 0.5) / 5; return (
+        <g key={i}><line x1={0} x2={W - R0} y1={y(v)} y2={y(v)} stroke="#161b28" /><text x={W - R0 + 8} y={y(v) + 4} fill="#6b7280" fontSize={11} className="font-[Geist_Mono,monospace]">{px(v, d)}</text></g>
+      ) })}
+      {lines.map(([l, v, col, dash]) => v ? (
+        <g key={l}>
+          <line x1={0} x2={W - R0} y1={y(v)} y2={y(v)} stroke={col} strokeWidth={1.5} strokeDasharray={dash} />
+          <text x={8} y={y(v) - 8} fill={col} fontSize={10} fontWeight={600} letterSpacing={0.8}>{l}  {px(v, d)}</text>
+        </g>
+      ) : null)}
+      {bars.map((b, i) => { const x = i * cw + cw / 2, col = b.c >= b.o ? G : R; return (
+        <g key={i}><line x1={x} x2={x} y1={y(b.h)} y2={y(b.l)} stroke={col} /><rect x={x - cw * 0.32} width={cw * 0.64} y={y(Math.max(b.o, b.c))} height={Math.max(1, Math.abs(y(b.o) - y(b.c)))} fill={col} rx={1} /></g>
+      ) })}
+      {price ? (
+        <g>
+          <line x1={0} x2={W - R0} y1={y(price)} y2={y(price)} stroke="#eab308" strokeDasharray="2 3" />
+          <rect x={W - R0 + 2} y={y(price) - 10} width={R0 - 2} height={20} rx={4} fill="#eab308" />
+          <text x={W - R0 + 6} y={y(price) + 4} fill="#0a0e1a" fontSize={11} fontWeight={700} className="font-[Geist_Mono,monospace]">{px(price, d)}</text>
+        </g>
+      ) : null}
+    </svg>
+  )
+}
+
+// Dashed baseline sits at starting capital (design token #4b5563).
+function EquityChart({ points, start, animKey }: { points: number[]; start: number; animKey: string }) {
+  if (points.length < 2) return <div className="h-full flex items-center justify-center text-sm text-[#6b7280]">Equity will appear after trades close</div>
+  const mn = Math.min(start, ...points), mx = Math.max(start, ...points), pad = (mx - mn) * 0.12 || 50
+  const y = (v: number) => 200 - ((v - mn + pad) / (mx - mn + 2 * pad)) * 200
+  const line = points.map((v, i) => `${i ? 'L' : 'M'}${(i / (points.length - 1) * 1000).toFixed(1)} ${y(v).toFixed(1)}`).join(' ')
+  return (
+    <div className="relative h-full">
+      <svg key={animKey} viewBox="0 0 1000 200" preserveAspectRatio="none" className="w-full h-full block">
+        <line x1={0} x2={1000} y1={y(start)} y2={y(start)} stroke="#4b5563" strokeDasharray="4 5" vectorEffect="non-scaling-stroke" />
+        <path d={`${line} L1000 200 L0 200 Z`} fill="rgba(234,179,8,.10)" className="ag-fade" />
+        <path d={line} pathLength={1} strokeDasharray={1} fill="none" stroke="#eab308" strokeWidth={2} vectorEffect="non-scaling-stroke" className="ag-draw" />
+      </svg>
+    </div>
+  )
+}
+
+function CoinChip({ coin, active, price, chg, onClick }: { coin: Coin; active: boolean; price: number | null; chg: number | null; onClick: () => void }) {
+  const m = META[coin]
+  return (
+    <button onClick={onClick} className={`flex-none flex items-center gap-[7px] rounded-lg px-2.5 py-2 whitespace-nowrap transition-colors ${active ? 'bg-[#1a1f2e]' : 'hover:bg-[#1a1f2e]'}`} title={px(price, m.d)}>
+      <Dot color={m.color} size={7} />
+      <span className="text-[13px] font-semibold">{m.sym}</span>
+      <span className={`${MONO} text-xs`} style={{ color: chg == null ? '#9ca3af' : pnlColor(chg) }}>{pct(chg)}</span>
+    </button>
+  )
+}
+
+// ------------------------------------------------------------------ page
+
+export default function PerpetualsCryptoContent() {
   const sidebarPadding = useSidebarPadding()
+  const router = useRouter()
+  const params = useSearchParams()
 
-  // Fetch all 7 bots status for the combined view and price ticker
-  const { data: ethStatusData, isLoading: ethLoading, mutate: refreshEth } = useSWR('/api/agape-eth-perp/status', fetcher, { refreshInterval: 10_000 })
-  const { data: solStatusData, isLoading: solLoading, mutate: refreshSol } = useSWR('/api/agape-sol-perp/status', fetcher, { refreshInterval: 10_000 })
-  const { data: avaxStatusData, isLoading: avaxLoading, mutate: refreshAvax } = useSWR('/api/agape-avax-perp/status', fetcher, { refreshInterval: 10_000 })
-  const { data: btcStatusData, isLoading: btcLoading, mutate: refreshBtc } = useSWR('/api/agape-btc-perp/status', fetcher, { refreshInterval: 10_000 })
-  const { data: xrpStatusData, isLoading: xrpLoading, mutate: refreshXrp } = useSWR('/api/agape-xrp-perp/status', fetcher, { refreshInterval: 10_000 })
-  const { data: dogeStatusData, isLoading: dogeLoading, mutate: refreshDoge } = useSWR('/api/agape-doge-perp/status', fetcher, { refreshInterval: 10_000 })
-  const { data: shibStatusData, isLoading: shibLoading, mutate: refreshShib } = useSWR('/api/agape-shib-futures/status', fetcher, { refreshInterval: 10_000 })
-  const { data: linkStatusData, isLoading: linkLoading, mutate: refreshLink } = useSWR('/api/agape-link-futures/status', fetcher, { refreshInterval: 10_000 })
-  const { data: ltcStatusData, isLoading: ltcLoading, mutate: refreshLtc } = useSWR('/api/agape-ltc-futures/status', fetcher, { refreshInterval: 10_000 })
-  const { data: bchStatusData, isLoading: bchLoading, mutate: refreshBch } = useSWR('/api/agape-bch-futures/status', fetcher, { refreshInterval: 10_000 })
+  const initialCoin = (params.get('coin') || '').toLowerCase()
+  const initialTab = (params.get('tab') || 'overview') as TabId
+  const [view, setView] = useState<'overview' | Coin>(
+    (COINS as string[]).includes(initialCoin) ? (initialCoin as Coin) : 'overview'
+  )
+  const [tab, setTab] = useState<TabId>(TABS.some(t => t.id === initialTab) ? initialTab : 'overview')
+  const [range, setRange] = useState<RangePreset>('30d')
+  const [now, setNow] = useState(Date.now())
 
-  // Fetch all 10 performance for combined stats
-  const { data: ethPerfData } = useSWR('/api/agape-eth-perp/performance', fetcher, { refreshInterval: 30_000 })
-  const { data: solPerfData } = useSWR('/api/agape-sol-perp/performance', fetcher, { refreshInterval: 30_000 })
-  const { data: avaxPerfData } = useSWR('/api/agape-avax-perp/performance', fetcher, { refreshInterval: 30_000 })
-  const { data: btcPerfData } = useSWR('/api/agape-btc-perp/performance', fetcher, { refreshInterval: 30_000 })
-  const { data: xrpPerfData } = useSWR('/api/agape-xrp-perp/performance', fetcher, { refreshInterval: 30_000 })
-  const { data: dogePerfData } = useSWR('/api/agape-doge-perp/performance', fetcher, { refreshInterval: 30_000 })
-  const { data: shibPerfData } = useSWR('/api/agape-shib-futures/performance', fetcher, { refreshInterval: 30_000 })
-  const { data: linkPerfData } = useSWR('/api/agape-link-futures/performance', fetcher, { refreshInterval: 30_000 })
-  const { data: ltcPerfData } = useSWR('/api/agape-ltc-futures/performance', fetcher, { refreshInterval: 30_000 })
-  const { data: bchPerfData } = useSWR('/api/agape-bch-futures/performance', fetcher, { refreshInterval: 30_000 })
+  const isCoinView = view !== 'overview'
+  const curCoin: Coin = isCoinView ? (view as Coin) : 'btc'
 
-  const isAllView = selectedCoin === 'ALL'
-  const allLoading = ethLoading && solLoading && avaxLoading && btcLoading && xrpLoading && dogeLoading && shibLoading && linkLoading && ltcLoading && bchLoading
+  const goOverview = () => {
+    setView('overview')
+    router.replace('/perpetuals-crypto', { scroll: false })
+  }
+  const goCoin = (c: Coin) => {
+    setView(c)
+    setTab('overview')
+    router.replace(`?coin=${c}&tab=overview`, { scroll: false })
+  }
+  const changeTab = (t: TabId) => {
+    setTab(t)
+    if (isCoinView) router.replace(`?coin=${curCoin}&tab=${t}`, { scroll: false })
+  }
 
-  const refreshAll = () => { refreshEth(); refreshSol(); refreshAvax(); refreshBtc(); refreshXrp(); refreshDoge(); refreshShib(); refreshLink(); refreshLtc(); refreshBch() }
+  // Only fetch the heavier per-coin endpoints (snapshot / GEX mapping) for
+  // whichever bot is actually on screen.
+  const o = (c: Coin) => ({ snapshot: view === c && (tab === 'market' || tab === 'overview'), mapping: view === c && tab === 'config' })
+  const bots: Record<Coin, BotData> = {
+    btc: useBot('btc', o('btc')), eth: useBot('eth', o('eth')), xrp: useBot('xrp', o('xrp')),
+    sol: useBot('sol', o('sol')), doge: useBot('doge', o('doge')), avax: useBot('avax', o('avax')),
+    link: useBot('link', o('link')), ltc: useBot('ltc', o('ltc')), bch: useBot('bch', o('bch')), shib: useBot('shib', o('shib')),
+  }
+  const list = COINS.map(c => bots[c])
+  const cur = bots[curCoin]
 
-  // Build per-coin summary data for the combined view
-  const coinSummaries = useMemo(() => {
-    const build = (statusData: any, perfData: any, coin: CoinId) => {
-      const status = statusData?.data
-      const perf = perfData?.data
-      const pa = status?.paper_account
-      const meta = COIN_META[coin]
-      return {
-        coin,
-        price: status?.[meta.priceKey] ?? null,
-        openPositions: status?.open_positions ?? 0,
-        unrealizedPnl: status?.total_unrealized_pnl ?? 0,
-        totalPnl: perf?.total_pnl ?? pa?.cumulative_pnl ?? 0,
-        returnPct: perf?.return_pct ?? pa?.return_pct ?? 0,
-        winRate: perf?.win_rate ?? pa?.win_rate ?? null,
-        totalTrades: perf?.total_trades ?? pa?.total_trades ?? 0,
-        startingCapital: pa?.starting_capital ?? status?.starting_capital ?? meta.startingCapital,
-        currentBalance: pa?.current_balance ?? meta.startingCapital,
-        isActive: status?.status === 'ACTIVE',
-        mode: status?.mode ?? 'paper',
-      }
-    }
+  const { trades, hasMore, loadMore, isLoading: tradesLoading } = useAgapePerpTrades({
+    bots: COINS.map(c => BOT_ID[c]), range,
+  })
+
+  useMemo(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  // ---- derived stats, per bot ----
+  const stat = (b: BotData) => {
+    const realized = realizedOf(b), unreal = unrealOf(b)
+    const price = livePrice(b), first = firstPrice(b)
     return {
-      ETH: build(ethStatusData, ethPerfData, 'ETH'),
-      SOL: build(solStatusData, solPerfData, 'SOL'),
-      AVAX: build(avaxStatusData, avaxPerfData, 'AVAX'),
-      BTC: build(btcStatusData, btcPerfData, 'BTC'),
-      XRP: build(xrpStatusData, xrpPerfData, 'XRP'),
-      DOGE: build(dogeStatusData, dogePerfData, 'DOGE'),
-      SHIB: build(shibStatusData, shibPerfData, 'SHIB'),
-      LINK: build(linkStatusData, linkPerfData, 'LINK'),
-      LTC: build(ltcStatusData, ltcPerfData, 'LTC'),
-      BCH: build(bchStatusData, bchPerfData, 'BCH'),
+      realized, unreal, tot: realized + unreal,
+      wr: (b.perf?.win_rate ?? b.status?.paper_account?.win_rate ?? null) as number | null,
+      trades: (b.perf?.total_trades ?? b.status?.paper_account?.total_trades ?? 0) as number,
+      price, chg: first && price ? (price / first - 1) * 100 : null,
     }
-  }, [ethStatusData, solStatusData, avaxStatusData, btcStatusData, xrpStatusData, dogeStatusData, shibStatusData, linkStatusData, ltcStatusData, bchStatusData, ethPerfData, solPerfData, avaxPerfData, btcPerfData, xrpPerfData, dogePerfData, shibPerfData, linkPerfData, ltcPerfData, bchPerfData])
+  }
+  const S: Record<Coin, ReturnType<typeof stat>> = Object.fromEntries(COINS.map(c => [c, stat(bots[c])])) as any
 
-  // Loading state
-  if (allLoading && !ethStatusData && !solStatusData && !avaxStatusData && !btcStatusData && !xrpStatusData && !dogeStatusData && !shibStatusData && !linkStatusData && !ltcStatusData && !bchStatusData) {
+  const totalStart = list.reduce((a, b) => a + startOf(b), 0)
+  const realized = list.reduce((a, b) => a + S[b.coin].realized, 0)
+  const unreal = list.reduce((a, b) => a + S[b.coin].unreal, 0)
+  const totTrades = list.reduce((a, b) => a + S[b.coin].trades, 0)
+  const wAvg = totTrades ? list.reduce((a, b) => a + (S[b.coin].wr ?? 0) * S[b.coin].trades, 0) / totTrades : 0
+  const allPositions = list.flatMap(b => b.positions.map(p => ({ ...p, coin: b.coin })))
+
+  // Overview: combined equity curve + last 12 closed trades across all bots.
+  const equityPoints = useMemo(() => {
+    const closed = [...trades].filter(t => t.close_time).sort((a, b) => new Date(a.close_time!).getTime() - new Date(b.close_time!).getTime())
+    let eq = totalStart + realized - closed.reduce((a, t) => a + (t.realized_pnl || 0), 0)
+    const pts = [eq]; for (const t of closed) { eq += t.realized_pnl || 0; pts.push(eq) }
+    pts.push(eq + unreal)
+    return pts
+  }, [trades, totalStart, realized, unreal])
+
+  const recentTrades = useMemo(
+    () => [...trades].filter(t => t.close_time).sort((a, b) => new Date(b.close_time!).getTime() - new Date(a.close_time!).getTime()).slice(0, 12),
+    [trades]
+  )
+
+  // Coin view: this bot's trades only, from the same shared fetch/range.
+  const coinTradesList = useMemo(() => trades.filter(t => t.bot_id === BOT_ID[curCoin]), [trades, curCoin])
+  const coinStart = startOf(cur), coinRealized = S[curCoin].realized, coinUnreal = S[curCoin].unreal
+  const coinEquityPoints = useMemo(() => {
+    const closed = [...coinTradesList].filter(t => t.close_time).sort((a, b) => new Date(a.close_time!).getTime() - new Date(b.close_time!).getTime())
+    let eq = coinStart + coinRealized - closed.reduce((a, t) => a + (t.realized_pnl || 0), 0)
+    const pts = [eq]; for (const t of closed) { eq += t.realized_pnl || 0; pts.push(eq) }
+    pts.push(eq + coinUnreal)
+    return pts
+  }, [coinTradesList, coinStart, coinRealized, coinUnreal])
+
+  const curPrice = S[curCoin].price
+  const curBars = useMemo(() => barsFromScans(curCoin, cur.scans), [curCoin, cur.scans])
+  const snap = cur.snapshot
+  const aggressive = cur.status?.aggressive_features || {}
+
+  const perfMetrics = useMemo(() => {
+    const wins = coinTradesList.filter(t => t.realized_pnl > 0)
+    const losses = coinTradesList.filter(t => t.realized_pnl < 0)
+    const sumWin = wins.reduce((a, t) => a + t.realized_pnl, 0)
+    const sumLoss = losses.reduce((a, t) => a + t.realized_pnl, 0)
+    const dir = cur.status?.aggressive_features?.direction_tracker || {}
+    return [
+      { l: 'Profit factor', v: losses.length ? (sumWin / -sumLoss).toFixed(2) : '—' },
+      { l: 'Avg win', v: wins.length ? money(sumWin / wins.length) : '—', c: G },
+      { l: 'Avg loss', v: losses.length ? money(sumLoss / losses.length) : '—', c: R },
+      { l: 'Realized', v: money(coinRealized, true), c: pnlColor(coinRealized) },
+      { l: 'Unrealized', v: money(coinUnreal, true), c: pnlColor(coinUnreal) },
+      { l: 'Best trade', v: coinTradesList.length ? money(Math.max(...coinTradesList.map(t => t.realized_pnl)), true) : '—', c: G },
+      { l: 'Worst trade', v: coinTradesList.length ? money(Math.min(...coinTradesList.map(t => t.realized_pnl)), true) : '—', c: R },
+      { l: 'Direction L / S', v: dir.long_win_rate != null ? `${(dir.long_win_rate * 100).toFixed(0)}% / ${(dir.short_win_rate * 100).toFixed(0)}%` : '—' },
+    ]
+  }, [coinTradesList, coinRealized, coinUnreal, cur.status])
+
+  const riskRows = useMemo(() => {
+    const aggr = cur.status?.aggressive_features || {}
+    return [
+      { l: 'Mode', v: (cur.status?.mode || 'paper').toUpperCase(), c: '#eab308' },
+      { l: 'Capital', v: money(META[curCoin].cap) },
+      { l: 'No-loss trailing', v: aggr.use_no_loss_trailing ? 'ACTIVE' : 'OFF', c: aggr.use_no_loss_trailing ? G : '#6b7280' },
+      { l: 'Stop-and-reverse', v: aggr.use_sar ? 'ACTIVE' : 'OFF', c: aggr.use_sar ? G : '#6b7280' },
+      { l: 'Loss-streak pause', v: 'after 3 consecutive losses' },
+      { l: 'Consecutive losses', v: aggr.consecutive_losses ?? 0, c: (aggr.consecutive_losses || 0) >= 3 ? R : undefined },
+      { l: 'Scan interval', v: `${cur.status?.scan_interval_minutes ?? 5} min` },
+    ]
+  }, [cur.status, curCoin])
+
+  const mapRows = useMemo(() => {
+    if (cur.mapping?.mappings?.length) {
+      return cur.mapping.mappings.map((m: any) => ({ a: m.gex_concept, b: m.crypto_equivalent }))
+    }
+    // GEX -> crypto concept mapping is a fixed design mapping (not a live
+    // metric) — used only when a bot hasn't returned its own mapping yet.
+    return [
+      { a: 'Gamma regime', b: 'Funding rate' },
+      { a: 'GEX directional bias', b: 'Long / short ratio' },
+      { a: 'Gamma walls / magnets', b: 'Liquidation clusters' },
+      { a: 'Net GEX', b: 'Crypto GEX (Deribit)' },
+    ]
+  }, [cur.mapping])
+
+  const primaryLastScan = bots.btc.status?.heartbeat?.last_scan_iso || bots.btc.status?.last_scan_iso
+    || list.map(b => b.status?.heartbeat?.last_scan_iso || b.status?.last_scan_iso).find(Boolean)
+  const lastScan = isCoinView
+    ? (cur.status?.heartbeat?.last_scan_iso || cur.status?.last_scan_iso || primaryLastScan)
+    : primaryLastScan
+  const secsToScan = lastScan ? Math.max(0, 300 - Math.floor((now - new Date(lastScan).getTime()) / 1000) % 300) : null
+  const nextScanLabel = secsToScan != null ? `${Math.floor(secsToScan / 60)}:${String(secsToScan % 60).padStart(2, '0')}` : '—:—'
+
+  if (list.every(b => b.loading)) {
     return (
       <>
         <Navigation />
-        <div className="flex items-center justify-center h-screen bg-gray-950">
-          <div className="text-center space-y-3">
-            <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin mx-auto" />
-            <p className="text-gray-400 text-sm">Loading AGAPE Derivatives...</p>
-          </div>
+        <div className="flex items-center justify-center h-screen bg-[#0a0e1a]">
+          <LoadingState message="Loading AGAPE Derivatives..." />
         </div>
       </>
     )
   }
 
+  const tradeRow = (t: Trade) => {
+    const c = COIN_OF_BOT_ID[t.bot_id] || 'btc'
+    const m = META[c]
+    return {
+      id: `${t.bot_id}-${t.position_id}`,
+      time: t.close_time ? new Date(t.close_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—',
+      sym: m.sym, dot: m.color,
+      side: (t.side || '').toUpperCase(), sideColor: t.side === 'long' ? G : R,
+      qty: t.quantity,
+      entry: px(t.entry_price, m.d), close: px(t.close_price, m.d),
+      pnl: money(t.realized_pnl, true), pnlColor: pnlColor(t.realized_pnl),
+      pctv: t.realized_pnl_pct != null ? pct(t.realized_pnl_pct) : '—',
+      reason: t.close_reason || '—',
+    }
+  }
+
+  const botRow = (c: Coin) => {
+    const st = S[c], m = META[c], b = bots[c]
+    return {
+      coin: c, sym: m.sym, name: m.name, dot: m.color,
+      price: px(st.price, m.d), cap: money(m.cap),
+      pnl: money(st.tot, true), pnlColor: pnlColor(st.tot),
+      ret: pct(st.tot / m.cap * 100),
+      wr: st.wr == null ? '—' : `${Number(st.wr).toFixed(1)}%`,
+      trades: st.trades, open: b.positions.length,
+      status: b.status?.status || 'IDLE', statusColor: b.status?.status === 'ACTIVE' ? G : '#6b7280',
+    }
+  }
+
+  const BOT_ROW_COLS = 'minmax(200px,1.6fr) repeat(6,minmax(84px,1fr)) 56px 84px'
+
   return (
     <>
       <Navigation />
-      <main className={`min-h-screen bg-gray-950 text-white px-4 pb-6 md:px-6 pt-24 transition-all duration-300 ${sidebarPadding}`}>
-        <div className="max-w-7xl mx-auto space-y-5">
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" />
+      <style>{`
+        @keyframes ag-draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+        @keyframes ag-fade{from{opacity:0}to{opacity:1}}
+        .ag-draw{animation:ag-draw 1.4s ease-out both}
+        .ag-fade{animation:ag-fade 1.4s ease both}
+      `}</style>
+      <main
+        className={`min-h-screen bg-[#0a0e1a] text-[#f3f4f6] pt-16 transition-all duration-300 ${sidebarPadding}`}
+        style={{ fontFamily: "'Geist', system-ui, sans-serif" }}
+      >
+        <div className="max-w-[1280px] mx-auto flex flex-col gap-6" style={{ padding: '28px 24px 72px' }}>
 
           {/* PAGE HEADER */}
-          <div className="flex items-start justify-between">
-            <div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="text-2xl md:text-3xl font-bold text-white">
-                  AGAPE <span className="text-cyan-400">Derivatives</span>
-                </h1>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-green-900/40 border border-green-500/40 rounded-full text-xs font-semibold text-green-400">
-                  <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                  24/7
-                </span>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-900/40 border border-blue-500/30 rounded text-[11px] font-bold text-blue-300" title="Perpetual contracts — no expiration, no contract rolls">
-                  PERP = Perpetual
-                </span>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-900/40 border border-amber-500/30 rounded text-[11px] font-bold text-amber-300" title="Dated futures — monthly expiration, requires contract rolls (FCM-traded)">
-                  FUTURE = Monthly Futures
-                </span>
+          <div className="flex flex-wrap justify-between items-end gap-4">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-[13px] text-[#6b7280]">
+                <span className="cursor-pointer text-[#9ca3af] hover:text-[#f3f4f6]" onClick={goOverview}>Crypto Perps</span>
+                {isCoinView && <><span>/</span><span className="text-[#f3f4f6]">{META[curCoin].instrument}</span></>}
               </div>
-              <p className="text-gray-500 text-sm mt-1">
-                Perpetuals + monthly futures: ETH, BTC, XRP, SOL, DOGE, AVAX, LINK, LTC, BCH, SHIB
-              </p>
+              <h1 className="m-0 text-[26px] font-semibold tracking-[-0.02em]">AGAPE Derivatives</h1>
             </div>
-            <button
-              onClick={refreshAll}
-              disabled={allLoading}
-              className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
-              title="Refresh All"
-            >
-              <RefreshCw className={`w-4 h-4 ${allLoading ? 'animate-spin' : ''}`} />
-            </button>
+            <div className="flex items-center gap-4 text-[13px] text-[#9ca3af]">
+              <span className="flex items-center gap-2 text-[#10b981]"><span className="w-[7px] h-[7px] rounded-full bg-[#10b981]" />24/7 · next scan {nextScanLabel}</span>
+              <span className="text-[#eab308] border border-[rgba(234,179,8,0.35)] rounded-md px-2 py-[3px] text-xs font-semibold">PAPER</span>
+            </div>
           </div>
 
-          {/* LIVE PRICE TICKER STRIP */}
-          <PriceTickerStrip summaries={coinSummaries} />
-
-          {/* COIN SELECTOR */}
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {COINS.map((coin) => {
-              const meta = COIN_META[coin]
-              const isActive = selectedCoin === coin
-              const summary = coin !== 'ALL' ? coinSummaries[coin as ActiveCoinId] : null
-              return (
-                <button
-                  key={coin}
-                  onClick={() => { setSelectedCoin(coin); setActiveTab('overview') }}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-all whitespace-nowrap ${
-                    isActive
-                      ? `${meta.bgActive} border-transparent text-white shadow-lg`
-                      : 'bg-gray-900 border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-white hover:border-gray-600'
-                  }`}
-                >
-                  <span className="font-bold">{meta.symbol}</span>
-                  {coin !== 'ALL' && (
-                    <span
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide ${
-                        meta.productType === 'PERP'
-                          ? (isActive ? 'bg-white/25 text-white' : 'bg-blue-900/60 text-blue-300')
-                          : (isActive ? 'bg-white/25 text-white' : 'bg-amber-900/60 text-amber-300')
-                      }`}
-                      title={meta.productTypeNote || meta.productType}
-                    >
-                      {meta.productType}
-                    </span>
-                  )}
-                  {coin !== 'ALL' && !meta.liveAvailableUS && (
-                    <span
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                        isActive ? 'bg-white/25 text-white' : 'bg-gray-700 text-gray-400'
-                      }`}
-                      title="Paper-only — no US-accessible market for this product"
-                    >
-                      PAPER
-                    </span>
-                  )}
-                  {coin !== 'ALL' && summary?.price != null && (
-                    <span className={`text-xs font-mono ${isActive ? 'text-white/80' : 'text-gray-500'}`}>
-                      {fmtPrice(summary.price, meta.priceDecimals)}
-                    </span>
-                  )}
-                </button>
-              )
-            })}
+          {/* COIN STRIP */}
+          <div className="flex items-stretch gap-1 bg-[#0c1019] border border-[#1c2233] rounded-xl p-1 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+            <button onClick={goOverview} className={`flex-none rounded-lg px-3.5 py-2 text-[13px] font-semibold transition-colors ${!isCoinView ? 'bg-[#1a1f2e] text-[#f3f4f6]' : 'text-[#9ca3af] hover:text-[#f3f4f6]'}`}>All bots</button>
+            <span className="flex-none w-px bg-[#1c2233] my-1.5 mx-1" />
+            {PERP_COINS.map(c => <CoinChip key={c} coin={c} active={view === c} price={S[c].price} chg={S[c].chg} onClick={() => goCoin(c)} />)}
+            <span className="flex-none flex items-center gap-2 mx-1 text-[10px] tracking-[0.12em] text-[#6b7280] font-semibold"><span className="w-px h-[60%] bg-[#1c2233]" />FUTURES</span>
+            {FUT_COINS.map(c => <CoinChip key={c} coin={c} active={view === c} price={S[c].price} chg={S[c].chg} onClick={() => goCoin(c)} />)}
           </div>
 
-          {/* ALL VIEW - Combined Summary */}
-          {isAllView && <AllCoinsDashboard summaries={coinSummaries} />}
+          {/* ================= OVERVIEW ================= */}
+          {!isCoinView && (
+            <div className="flex flex-col gap-6">
 
-          {/* SINGLE COIN VIEW */}
-          {!isAllView && (
-            <>
-              {/* Coin header stats */}
-              <SingleCoinHeader coin={selectedCoin} summaries={coinSummaries} />
-
-              {/* Section Tabs */}
-              <div className="flex gap-1.5 border-b border-gray-800 pb-2 overflow-x-auto">
-                {SECTION_TABS.map((tab) => {
-                  const isActive = activeTab === tab.id
-                  const meta = COIN_META[selectedCoin]
-                  return (
-                    <button
-                      key={tab.id}
-                      onClick={() => setActiveTab(tab.id)}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors whitespace-nowrap text-sm font-medium ${
-                        isActive
-                          ? `${meta.bgCard} ${meta.textActive} border ${meta.borderCard}`
-                          : 'text-gray-400 hover:text-white hover:bg-gray-800'
-                      }`}
-                    >
-                      <tab.icon className="w-4 h-4" />
-                      {tab.label}
-                    </button>
-                  )
-                })}
+              {/* Summary row */}
+              <div className="flex flex-wrap justify-between items-end gap-6">
+                <div className="flex flex-col gap-2.5">
+                  <span className="text-[13px] text-[#9ca3af]">Combined equity · {COINS.length} bots</span>
+                  <span className={`${MONO} text-[52px] font-semibold tracking-[-0.03em] leading-none`}>{money(totalStart + realized + unreal)}</span>
+                  <span className={`flex flex-wrap gap-4 ${MONO} text-sm`}>
+                    <span className="font-semibold" style={{ color: pnlColor(realized) }}>{money(realized, true)} realized</span>
+                    <span style={{ color: pnlColor(unreal) }}>{money(unreal, true)} open</span>
+                    <span className="text-[#6b7280]">from {money(totalStart)}</span>
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-8">
+                  <StatCell label="Return" value={pct((realized + unreal) / (totalStart || 1) * 100)} color={pnlColor(realized + unreal)} />
+                  <StatCell label="Win rate" value={totTrades ? `${wAvg.toFixed(1)}%` : '—'} />
+                  <StatCell label="Trades" value={totTrades} />
+                  <StatCell label="Open" value={allPositions.length} />
+                </div>
               </div>
 
-              {/* Tab Content */}
-              <div className="space-y-5">
-                {activeTab === 'overview' && <OverviewTab coin={selectedCoin} />}
-                {activeTab === 'analytics' && <AnalyticsTab coin={selectedCoin} />}
-                {activeTab === 'margin' && <MarginRiskTab coin={selectedCoin} />}
-                {activeTab === 'positions' && <PositionsTab coin={selectedCoin} />}
-                {activeTab === 'performance' && <PerformanceTab coin={selectedCoin} />}
-                {activeTab === 'equity' && <EquityCurveTab coin={selectedCoin} />}
-                {activeTab === 'activity' && <ActivityTab coin={selectedCoin} />}
-                {activeTab === 'history' && <HistoryTab coin={selectedCoin} />}
+              {/* Equity curve + Open positions */}
+              <div className="grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))' }}>
+                <Card className="p-[18px_20px] flex flex-col gap-3.5">
+                  <div className="flex justify-between items-center gap-3">
+                    <span className="text-[15px] font-semibold">Equity curve</span>
+                    <Pills items={RANGES} value={range} onChange={setRange} />
+                  </div>
+                  <div className="h-[200px]"><EquityChart points={equityPoints} start={totalStart} animKey={range} /></div>
+                </Card>
+                <Card className="flex flex-col">
+                  <div className="flex justify-between items-baseline px-5 pt-[18px] pb-3.5">
+                    <span className="text-[15px] font-semibold">Open positions</span>
+                    <span className="text-xs text-[#6b7280]">{allPositions.length} live</span>
+                  </div>
+                  {allPositions.length === 0 && <div className="px-5 py-5 border-t border-[#1c2233] text-sm text-[#6b7280]">No open positions. The bots are scanning.</div>}
+                  {allPositions.map((p: any) => {
+                    const m = META[p.coin as Coin]
+                    return (
+                      <div key={`${p.coin}-${p.position_id}`} onClick={() => goCoin(p.coin as Coin)} className="flex justify-between items-center gap-3 px-5 py-3.5 border-t border-[#1c2233] cursor-pointer hover:bg-[#1a1f2e]">
+                        <div className="flex flex-col gap-1">
+                          <span className="flex items-center gap-2 text-sm font-semibold">
+                            <Dot color={m.color} size={7} />{m.sym}
+                            <span className="text-xs" style={{ color: p.side === 'long' ? G : R }}>{(p.side || '').toUpperCase()} × {p.quantity}</span>
+                            {p.trailing_active && <span className="text-[11px] text-[#eab308] font-medium">TRAILING @ {px(p.current_stop, m.d)}</span>}
+                          </span>
+                          <span className={`${MONO} text-xs text-[#6b7280]`}>{px(p.entry_price, m.d)} → {px(p.current_price ?? S[p.coin as Coin].price, m.d)}</span>
+                        </div>
+                        <span className={`${MONO} text-[15px] font-semibold`} style={{ color: pnlColor(p.unrealized_pnl || 0) }}>{money(p.unrealized_pnl || 0, true)}</span>
+                      </div>
+                    )
+                  })}
+                </Card>
               </div>
-            </>
+
+              {/* Bots table */}
+              <Card className="overflow-hidden">
+                <div className="flex justify-between items-baseline px-5 pt-[18px] pb-3.5">
+                  <span className="text-[15px] font-semibold">Bots</span>
+                  <span className="text-xs text-[#6b7280]">Select a bot for detail</span>
+                </div>
+                <div className="overflow-x-auto"><div className="min-w-[960px]">
+                  <div className="grid gap-3.5 px-5 py-2.5 text-[11px] uppercase tracking-[0.08em] text-[#6b7280] border-t border-[#1c2233]" style={{ gridTemplateColumns: BOT_ROW_COLS }}>
+                    <span>Bot</span><span className="text-right">Price</span><span className="text-right">Capital</span><span className="text-right">P&amp;L</span><span className="text-right">Return</span><span className="text-right">Win rate</span><span className="text-right">Trades</span><span className="text-right">Open</span><span className="text-right">Status</span>
+                  </div>
+                  <div className="px-5 py-2 bg-[#0c1019] border-t border-[#1c2233] text-[11px] font-semibold tracking-[0.12em] text-[#9ca3af]">PERPETUALS</div>
+                  {PERP_COINS.map(c => {
+                    const row = botRow(c)
+                    return (
+                      <div key={c} onClick={() => goCoin(c)} className="grid gap-3.5 items-center px-5 py-3 border-t border-[#1c2233] text-sm cursor-pointer hover:bg-[#1a1f2e]" style={{ gridTemplateColumns: BOT_ROW_COLS }}>
+                        <span className="flex items-center gap-2.5"><Dot color={row.dot} /><span className="font-semibold">{row.sym}</span><span className="text-[13px] text-[#6b7280]">{row.name}</span></span>
+                        <span className={`${MONO} text-right`}>{row.price}</span>
+                        <span className={`${MONO} text-right text-[#9ca3af]`}>{row.cap}</span>
+                        <span className={`${MONO} text-right font-semibold`} style={{ color: row.pnlColor }}>{row.pnl}</span>
+                        <span className={`${MONO} text-right`} style={{ color: row.pnlColor }}>{row.ret}</span>
+                        <span className={`${MONO} text-right`}>{row.wr}</span>
+                        <span className={`${MONO} text-right text-[#9ca3af]`}>{row.trades}</span>
+                        <span className={`${MONO} text-right text-[#9ca3af]`}>{row.open}</span>
+                        <span className="text-right text-[11px] font-semibold tracking-[0.06em]" style={{ color: row.statusColor }}>{row.status}</span>
+                      </div>
+                    )
+                  })}
+                  <div className="px-5 py-2 bg-[#0c1019] border-t border-[#1c2233] text-[11px] font-semibold tracking-[0.12em] text-[#9ca3af]">MONTHLY FUTURES</div>
+                  {FUT_COINS.map(c => {
+                    const row = botRow(c)
+                    return (
+                      <div key={c} onClick={() => goCoin(c)} className="grid gap-3.5 items-center px-5 py-3 border-t border-[#1c2233] text-sm cursor-pointer hover:bg-[#1a1f2e]" style={{ gridTemplateColumns: BOT_ROW_COLS }}>
+                        <span className="flex items-center gap-2.5"><Dot color={row.dot} /><span className="font-semibold">{row.sym}</span><span className="text-[13px] text-[#6b7280]">{row.name}</span></span>
+                        <span className={`${MONO} text-right`}>{row.price}</span>
+                        <span className={`${MONO} text-right text-[#9ca3af]`}>{row.cap}</span>
+                        <span className={`${MONO} text-right font-semibold`} style={{ color: row.pnlColor }}>{row.pnl}</span>
+                        <span className={`${MONO} text-right`} style={{ color: row.pnlColor }}>{row.ret}</span>
+                        <span className={`${MONO} text-right`}>{row.wr}</span>
+                        <span className={`${MONO} text-right text-[#9ca3af]`}>{row.trades}</span>
+                        <span className={`${MONO} text-right text-[#9ca3af]`}>{row.open}</span>
+                        <span className="text-right text-[11px] font-semibold tracking-[0.06em]" style={{ color: row.statusColor }}>{row.status}</span>
+                      </div>
+                    )
+                  })}
+                </div></div>
+              </Card>
+
+              {/* Recent trades */}
+              <Card className="overflow-hidden">
+                <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-4">
+                  <span className="text-[15px] font-semibold">Recent trades</span>
+                  <Pills items={RANGES} value={range} onChange={setRange} />
+                </div>
+                <div className="overflow-x-auto"><div className="min-w-[840px]">
+                  <div className="grid gap-3 px-5 py-2.5 text-[11px] uppercase tracking-[0.08em] text-[#6b7280] border-t border-[#1c2233]" style={{ gridTemplateColumns: '130px 80px 70px minmax(90px,1fr) minmax(90px,1fr) 110px 80px 130px' }}>
+                    <span>Closed</span><span>Bot</span><span>Side</span><span className="text-right">Entry</span><span className="text-right">Exit</span><span className="text-right">P&amp;L</span><span className="text-right">%</span><span>Reason</span>
+                  </div>
+                  {recentTrades.length === 0 && <div className="px-5 py-[22px] border-t border-[#1c2233] text-sm text-[#6b7280]">No closed trades in this range.</div>}
+                  {recentTrades.map(tradeRow).map(t => (
+                    <div key={t.id} className="grid gap-3 items-center px-5 py-[11px] border-t border-[#1c2233] text-sm" style={{ gridTemplateColumns: '130px 80px 70px minmax(90px,1fr) minmax(90px,1fr) 110px 80px 130px' }}>
+                      <span className={`${MONO} text-[13px] text-[#9ca3af]`}>{t.time}</span>
+                      <span className="flex items-center gap-2 font-semibold"><Dot color={t.dot} size={7} />{t.sym}</span>
+                      <span className="text-xs font-semibold" style={{ color: t.sideColor }}>{t.side}</span>
+                      <span className={`${MONO} text-right`}>{t.entry}</span>
+                      <span className={`${MONO} text-right`}>{t.close}</span>
+                      <span className={`${MONO} text-right font-semibold`} style={{ color: t.pnlColor }}>{t.pnl}</span>
+                      <span className={`${MONO} text-right text-[13px]`} style={{ color: t.pnlColor }}>{t.pctv}</span>
+                      <span className="text-xs text-[#9ca3af]">{t.reason}</span>
+                    </div>
+                  ))}
+                </div></div>
+              </Card>
+            </div>
+          )}
+
+          {/* ================= COIN VIEW ================= */}
+          {isCoinView && (
+            <div className="flex flex-col gap-5">
+
+              {/* Coin header */}
+              <div className="flex flex-wrap justify-between items-end gap-6">
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <span className="w-[10px] h-[10px] rounded-full" style={{ background: META[curCoin].color }} />
+                    <span className="text-xl font-semibold">{META[curCoin].instrument}</span>
+                    <span className="text-sm text-[#6b7280]">{META[curCoin].name} · {META[curCoin].type === 'PERP' ? 'Perpetual' : 'Monthly future'}</span>
+                    <span className="text-[11px] font-semibold tracking-[0.06em] border border-[#1c2233] rounded-md px-2 py-[3px]" style={{ color: cur.status?.status === 'ACTIVE' ? G : '#6b7280' }}>{cur.status?.status || 'IDLE'}</span>
+                  </div>
+                  <div className="flex items-baseline gap-3.5">
+                    <span className={`${MONO} text-[44px] font-semibold tracking-[-0.03em] leading-none`}>{curPrice == null ? '—' : `$${px(curPrice, META[curCoin].d)}`}</span>
+                    <span className={`${MONO} text-base`} style={{ color: pnlColor(S[curCoin].chg || 0) }}>{pct(S[curCoin].chg)}</span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-8">
+                  <StatCell label="Capital" value={money(META[curCoin].cap)} size={18} />
+                  <StatCell label="P&L" value={money(S[curCoin].tot, true)} color={pnlColor(S[curCoin].tot)} size={18} />
+                  <StatCell label="Return" value={pct(S[curCoin].tot / META[curCoin].cap * 100)} color={pnlColor(S[curCoin].tot)} size={18} />
+                  <StatCell label="Win rate" value={S[curCoin].wr == null ? '—' : `${Number(S[curCoin].wr).toFixed(1)}%`} size={18} />
+                  <StatCell label="Trades" value={S[curCoin].trades} size={18} />
+                </div>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex gap-1 overflow-x-auto" style={{ boxShadow: 'inset 0 -1px 0 #1c2233', scrollbarWidth: 'none' }}>
+                {TABS.map(t => (
+                  <button key={t.id} onClick={() => changeTab(t.id)} className="flex-none border-0 bg-transparent px-3.5 py-2.5 text-sm font-semibold cursor-pointer"
+                    style={{ color: tab === t.id ? '#f3f4f6' : '#9ca3af', borderBottom: `2px solid ${tab === t.id ? '#eab308' : 'transparent'}` }}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Overview tab */}
+              {tab === 'overview' && (
+                <div className="flex flex-col gap-5">
+                  {(aggressive.consecutive_losses || 0) > 0 && (
+                    <div className="flex items-center gap-2.5 border rounded-xl px-4 py-3 text-sm" style={{ borderColor: 'rgba(249,115,22,0.45)', background: 'rgba(249,115,22,0.08)' }}>
+                      <Dot color="#f97316" size={8} />
+                      <span className="font-semibold" style={{ color: '#fdba74' }}>{META[curCoin].sym} loss streak: {aggressive.consecutive_losses}</span>
+                      <span className="text-[#9ca3af]">Bot pauses after 3 consecutive losses.</span>
+                    </div>
+                  )}
+
+                  <Card className="overflow-hidden">
+                    <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-3.5 border-b border-[#1c2233]">
+                      <div className="flex items-baseline gap-3">
+                        <span className="text-[15px] font-semibold">Price · 5m</span>
+                        <span className="text-xs text-[#6b7280]">built from bot scan prices</span>
+                      </div>
+                      <div className="flex flex-wrap gap-3.5 text-xs font-semibold">
+                        <span style={{ color: '#3b82f6' }}>— Short liq</span>
+                        <span style={{ color: '#f59e0b' }}>- - GEX flip</span>
+                        <span style={{ color: '#8b5cf6' }}>— Long liq</span>
+                        {snap?.signals?.combined_signal && <span style={{ color: sigColor(snap.signals.combined_signal) }}>{snap.signals.combined_signal}{snap.signals.combined_confidence ? ` (${snap.signals.combined_confidence})` : ''}</span>}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap">
+                      <div className="flex-[1_1_520px] min-w-0 pt-4 pb-2 pl-5 pr-2">
+                        <CandleChart bars={curBars} sl={snap?.liquidations?.nearest_short_liq} ll={snap?.liquidations?.nearest_long_liq} flip={snap?.crypto_gex?.flip_point} price={curPrice} d={META[curCoin].d} />
+                      </div>
+                      <div className="flex-[1_0_240px] border-l border-[#1c2233] p-4 flex flex-col gap-1">
+                        <div className="text-[13px] font-semibold mb-1.5">Liquidation clusters</div>
+                        {(() => {
+                          const cl: any[] = (snap?.liquidations?.top_clusters || []).slice(0, 12)
+                          if (!cl.length) return <div className="text-xs text-[#6b7280]">No cluster data yet</div>
+                          const p = curPrice || 0
+                          const w = (c: any) => c.intensity === 'HIGH' ? 100 : c.intensity === 'ELEVATED' ? 66 : 33
+                          return [...cl].sort((a, b) => b.price - a.price).map((c, i) => (
+                            <div key={i} className="grid items-center gap-1.5 h-[24px]" style={{ gridTemplateColumns: '84px 1fr 48px' }}>
+                              <span className={`${MONO} text-[11px] text-[#9ca3af]`}>{px(c.price, META[curCoin].d)}</span>
+                              <span className="h-2.5 rounded-sm" style={{ width: `${w(c)}%`, background: c.price > p ? '#3b82f6' : '#8b5cf6' }} />
+                              <span className={`${MONO} text-[10px] text-[#6b7280] text-right`}>{c.distance_pct}%</span>
+                            </div>
+                          ))
+                        })()}
+                        <div className="text-[11px] text-[#6b7280] mt-1.5 leading-snug">Blue: shorts liquidated above price. Violet: longs below.</div>
+                      </div>
+                    </div>
+                  </Card>
+
+                  <div className="grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))' }}>
+                    <Card className="flex flex-col">
+                      <span className="px-5 pt-[18px] pb-3.5 text-[15px] font-semibold">Open position</span>
+                      {cur.positions.length === 0 && <div className="px-5 py-5 border-t border-[#1c2233] text-sm text-[#6b7280]">Flat. Scanning every 5 minutes.</div>}
+                      {cur.positions.map((p: any) => (
+                        <div key={p.position_id} className="grid gap-4 px-5 py-4 border-t border-[#1c2233]" style={{ gridTemplateColumns: 'repeat(2, minmax(0,1fr))' }}>
+                          <div className="flex flex-col gap-1"><span className="text-xs text-[#6b7280]">Side</span><span className="text-[15px] font-semibold" style={{ color: p.side === 'long' ? G : R }}>{(p.side || '').toUpperCase()} × {p.quantity}</span></div>
+                          <div className="flex flex-col gap-1"><span className="text-xs text-[#6b7280]">Unrealized</span><span className={`${MONO} text-[15px] font-semibold`} style={{ color: pnlColor(p.unrealized_pnl || 0) }}>{money(p.unrealized_pnl || 0, true)}</span></div>
+                          <div className="flex flex-col gap-1"><span className="text-xs text-[#6b7280]">Entry</span><span className={`${MONO} text-[15px]`}>{px(p.entry_price, META[curCoin].d)}</span></div>
+                          <div className="flex flex-col gap-1"><span className="text-xs text-[#6b7280]">Stop</span><span className={`${MONO} text-[15px] text-[#eab308]`}>{p.current_stop != null ? px(p.current_stop, META[curCoin].d) : '—'}</span></div>
+                        </div>
+                      ))}
+                    </Card>
+                    <Card className="p-[18px_20px] flex flex-col gap-3.5">
+                      <div className="flex justify-between items-center gap-3"><span className="text-[15px] font-semibold">Equity</span><Pills items={RANGES} value={range} onChange={setRange} /></div>
+                      <div className="h-[150px]"><EquityChart points={coinEquityPoints} start={coinStart} animKey={range + curCoin} /></div>
+                    </Card>
+                  </div>
+
+                  <Card className="p-[18px_20px] flex flex-col gap-4">
+                    <span className="text-[15px] font-semibold">Performance</span>
+                    <div className="grid gap-[18px]" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px,1fr))' }}>
+                      {perfMetrics.map(m => <StatCell key={m.l} label={m.l} value={m.v} color={m.c} size={16} />)}
+                    </div>
+                  </Card>
+                </div>
+              )}
+
+              {/* Market tab */}
+              {tab === 'market' && (
+                !snap ? <Card className="p-10 text-center text-sm text-[#6b7280]">Waiting for crypto market data</Card> : (
+                  <div className="flex flex-col gap-5">
+                    <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px,1fr))' }}>
+                      <MarketTile l="Combined signal" v={snap.signals?.combined_signal ? `${snap.signals.combined_signal}${snap.signals.combined_confidence ? ' · ' + snap.signals.combined_confidence : ''}` : '—'} c={sigColor(snap.signals?.combined_signal)} />
+                      <MarketTile l="Leverage regime" v={snap.signals?.leverage_regime || '—'} />
+                      <MarketTile l="Direction bias" v={snap.signals?.directional_bias || '—'} c={sigColor(snap.signals?.directional_bias)} />
+                      <MarketTile l="Squeeze risk" v={snap.signals?.squeeze_risk || '—'} c={riskColor(snap.signals?.squeeze_risk)} />
+                      <MarketTile l="Volatility" v={snap.signals?.volatility_regime || '—'} />
+                    </div>
+                    <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px,1fr))' }}>
+                      <MarketCard title="Funding rate" sub="Replaces: Gamma regime" rows={[
+                        { l: 'Current', v: snap.funding?.rate != null ? `${(snap.funding.rate * 100).toFixed(4)}%` : '—' },
+                        { l: 'Predicted', v: snap.funding?.predicted != null ? `${(snap.funding.predicted * 100).toFixed(4)}%` : '—' },
+                        { l: 'Regime', v: snap.funding?.regime || '—', c: sigColor(snap.funding?.regime) },
+                        { l: 'Annualized', v: snap.funding?.annualized != null ? `${(snap.funding.annualized * 100).toFixed(1)}%` : '—' },
+                      ]} />
+                      <MarketCard title="Long / short ratio" sub="Replaces: GEX directional bias" rows={[
+                        { l: 'Ratio', v: snap.long_short?.ratio != null ? snap.long_short.ratio.toFixed(2) : '—' },
+                        { l: 'Long', v: snap.long_short?.long_pct != null ? `${snap.long_short.long_pct.toFixed(1)}%` : '—', c: G },
+                        { l: 'Short', v: snap.long_short?.short_pct != null ? `${snap.long_short.short_pct.toFixed(1)}%` : '—', c: R },
+                        { l: 'Bias', v: snap.long_short?.bias || '—', c: sigColor(snap.long_short?.bias) },
+                      ]} />
+                      <MarketCard title="Liquidation clusters" sub="Replaces: Gamma walls / price magnets" rows={[
+                        { l: 'Nearest short liq', v: snap.liquidations?.nearest_short_liq ? `$${px(snap.liquidations.nearest_short_liq, META[curCoin].d)}` : '—', c: '#93c5fd' },
+                        { l: 'Nearest long liq', v: snap.liquidations?.nearest_long_liq ? `$${px(snap.liquidations.nearest_long_liq, META[curCoin].d)}` : '—', c: '#c4b5fd' },
+                        { l: 'Cluster count', v: snap.liquidations?.cluster_count ?? '—' },
+                      ]} />
+                      <MarketCard title="Crypto GEX (Deribit)" sub="Direct equivalent of Net GEX" rows={[
+                        { l: 'Net GEX', v: snap.crypto_gex?.net_gex != null ? snap.crypto_gex.net_gex.toFixed(2) : '—', c: pnlColor(snap.crypto_gex?.net_gex || 0) },
+                        { l: 'Call GEX', v: snap.crypto_gex?.call_gex != null ? snap.crypto_gex.call_gex.toFixed(2) : '—', c: G },
+                        { l: 'Put GEX', v: snap.crypto_gex?.put_gex != null ? snap.crypto_gex.put_gex.toFixed(2) : '—', c: R },
+                        { l: 'Flip point', v: snap.crypto_gex?.flip_point ? `$${px(snap.crypto_gex.flip_point, META[curCoin].d)}` : '—' },
+                      ]} />
+                    </div>
+                  </div>
+                )
+              )}
+
+              {/* Activity tab */}
+              {tab === 'activity' && (
+                <Card className="overflow-hidden">
+                  <div className="px-5 py-4 text-[15px] font-semibold border-b border-[#1c2233]">Scan activity</div>
+                  <div className="overflow-x-auto"><div className="min-w-[680px]">
+                    <div className="grid gap-3 px-5 py-2.5 text-[11px] uppercase tracking-[0.08em] text-[#6b7280] border-t border-[#1c2233]" style={{ gridTemplateColumns: '90px 120px 170px minmax(140px,1fr) 150px' }}>
+                      <span>Time</span><span className="text-right">Price</span><span>Funding</span><span>Signal</span><span>Outcome</span>
+                    </div>
+                    {cur.scans.length === 0 && <div className="px-5 py-[22px] border-t border-[#1c2233] text-sm text-[#6b7280]">No scan activity yet</div>}
+                    {cur.scans.slice(0, 150).map((s: any, i: number) => {
+                      const oc: string = s.outcome || ''
+                      return (
+                        <div key={i} className="grid gap-3 items-center px-5 py-2.5 border-t border-[#1c2233] text-sm" style={{ gridTemplateColumns: '90px 120px 170px minmax(140px,1fr) 150px' }}>
+                          <span className={`${MONO} text-[13px] text-[#9ca3af]`}>{s.timestamp ? new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+                          <span className={`${MONO} text-right`}>{px(priceOf(curCoin, s), META[curCoin].d)}</span>
+                          <span className="text-xs text-[#9ca3af]">{s.funding_regime || '—'}</span>
+                          <span className="text-xs font-semibold" style={{ color: sigColor(s.combined_signal) }}>{s.combined_signal || '—'}{s.combined_confidence ? ` (${s.combined_confidence})` : ''}</span>
+                          <span><span className="text-[11px] font-semibold tracking-[0.04em] px-2 py-[3px] rounded-md" style={{ background: oc === 'TRADED' ? 'rgba(234,179,8,0.15)' : '#1c2233', color: oc === 'TRADED' ? '#eab308' : '#9ca3af' }}>{oc || '—'}</span></span>
+                        </div>
+                      )
+                    })}
+                  </div></div>
+                </Card>
+              )}
+
+              {/* History tab */}
+              {tab === 'history' && (
+                <Card className="overflow-hidden">
+                  <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-4">
+                    <span className="text-[15px] font-semibold">Closed trades</span>
+                    <Pills items={RANGES} value={range} onChange={setRange} />
+                  </div>
+                  <div className="overflow-x-auto"><div className="min-w-[820px]">
+                    <div className="grid gap-3 px-5 py-2.5 text-[11px] uppercase tracking-[0.08em] text-[#6b7280] border-t border-[#1c2233]" style={{ gridTemplateColumns: '130px 70px 90px minmax(90px,1fr) minmax(90px,1fr) 110px 80px 130px' }}>
+                      <span>Closed</span><span>Side</span><span className="text-right">Qty</span><span className="text-right">Entry</span><span className="text-right">Exit</span><span className="text-right">P&amp;L</span><span className="text-right">%</span><span>Reason</span>
+                    </div>
+                    {tradesLoading && <div className="px-5 py-5 border-t border-[#1c2233] text-sm text-[#6b7280]">Loading trades…</div>}
+                    {!tradesLoading && coinTradesList.length === 0 && <div className="px-5 py-[22px] border-t border-[#1c2233] text-sm text-[#6b7280]">No closed trades in this range.</div>}
+                    {[...coinTradesList].sort((a, b) => new Date(b.close_time || 0).getTime() - new Date(a.close_time || 0).getTime()).map(t => (
+                      <div key={`${t.bot_id}-${t.position_id}`} className="grid gap-3 items-center px-5 py-2.5 border-t border-[#1c2233] text-sm" style={{ gridTemplateColumns: '130px 70px 90px minmax(90px,1fr) minmax(90px,1fr) 110px 80px 130px' }}>
+                        <span className={`${MONO} text-[13px] text-[#9ca3af]`}>{t.close_time ? new Date(t.close_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+                        <span className="text-xs font-semibold" style={{ color: t.side === 'long' ? G : R }}>{(t.side || '').toUpperCase()}</span>
+                        <span className={`${MONO} text-right`}>{t.quantity}</span>
+                        <span className={`${MONO} text-right`}>{px(t.entry_price, META[curCoin].d)}</span>
+                        <span className={`${MONO} text-right`}>{px(t.close_price, META[curCoin].d)}</span>
+                        <span className={`${MONO} text-right font-semibold`} style={{ color: pnlColor(t.realized_pnl) }}>{money(t.realized_pnl, true)}</span>
+                        <span className={`${MONO} text-right text-[13px]`} style={{ color: pnlColor(t.realized_pnl) }}>{t.realized_pnl_pct != null ? pct(t.realized_pnl_pct) : '—'}</span>
+                        <span className="text-xs text-[#9ca3af]">{t.close_reason || '—'}</span>
+                      </div>
+                    ))}
+                    {hasMore && <button onClick={loadMore} className="w-full py-3 border-t border-[#1c2233] text-sm text-[#eab308] hover:bg-[#1a1f2e]">Load more</button>}
+                  </div></div>
+                </Card>
+              )}
+
+              {/* Config tab */}
+              {tab === 'config' && (
+                <div className="grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px,1fr))' }}>
+                  <Card className="p-[18px_20px] flex flex-col gap-3">
+                    <span className="text-[15px] font-semibold">Risk controls</span>
+                    {riskRows.map(r => <Row key={r.l} label={r.l} value={r.v} color={r.c} />)}
+                  </Card>
+                  <Card className="p-[18px_20px] flex flex-col gap-3">
+                    <div className="flex flex-col gap-0.5"><span className="text-[15px] font-semibold">GEX → crypto signal mapping</span><span className="text-xs text-[#6b7280]">How options-market concepts translate for this bot</span></div>
+                    {mapRows.map((r: { a: string; b: string }, i: number) => (
+                      <div key={i} className="grid gap-2 items-center pt-3 border-t border-[#1c2233]" style={{ gridTemplateColumns: 'minmax(0,1fr) 20px minmax(0,1fr)' }}>
+                        <span className="text-sm text-[#9ca3af]">{r.a}</span><span className="text-[#6b7280] text-center">→</span><span className="text-sm">{r.b}</span>
+                      </div>
+                    ))}
+                  </Card>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </main>
     </>
-  )
-}
-
-// ==============================================================================
-// ALL COINS DASHBOARD
-// ==============================================================================
-
-function AllCoinsDashboard({ summaries }: { summaries: Record<ActiveCoinId, any> }) {
-  // Aggregate totals
-  const totalPnl = ACTIVE_COINS.reduce((s, c) => s + (summaries[c]?.totalPnl ?? 0), 0)
-  const totalReturn = TOTAL_CAPITAL > 0 ? (totalPnl / TOTAL_CAPITAL) * 100 : 0
-  const totalUnrealized = ACTIVE_COINS.reduce((s, c) => s + (summaries[c]?.unrealizedPnl ?? 0), 0)
-  const totalTrades = ACTIVE_COINS.reduce((s, c) => s + (summaries[c]?.totalTrades ?? 0), 0)
-  const totalPositions = ACTIVE_COINS.reduce((s, c) => s + (summaries[c]?.openPositions ?? 0), 0)
-
-  return (
-    <div className="space-y-5">
-      {/* Combined totals row */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <MetricCard label="Total Capital" value={fmtUsd(TOTAL_CAPITAL)} color="text-white" />
-        <MetricCard label="Total P&L" value={fmtUsd(totalPnl)} color={pnlColor(totalPnl)} />
-        <MetricCard label="Return" value={fmtPct(totalReturn)} color={pnlColor(totalReturn)} />
-        <MetricCard label="Unrealized" value={fmtUsd(totalUnrealized)} color={pnlColor(totalUnrealized)} />
-        <MetricCard label="Open Positions" value={String(totalPositions)} color="text-cyan-400" />
-      </div>
-
-      {/* Per-coin summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-        {ACTIVE_COINS.map((coin) => (
-          <CoinCard key={coin} coin={coin} data={summaries[coin]} />
-        ))}
-      </div>
-
-      {/* Normalized multi-bot performance comparison */}
-      <MultiBotPerpEquityChart bots={CHART_BOTS} defaultMode="indexed" defaultWindow="30d" />
-
-      {/* Recent activity across all coins */}
-      <AllCoinsRecentTrades />
-    </div>
-  )
-}
-
-function AllCoinsRecentTrades() {
-  const allBotIds = ACTIVE_COINS.map(c => COIN_TO_BOT_ID[c])
-  return (
-    <TradeHistoryTable
-      bots={allBotIds}
-      showBotColumn
-      defaultRange="30d"
-      title="Recent Trades — All Bots"
-    />
-  )
-}
-
-// ==============================================================================
-// SINGLE COIN HEADER
-// ==============================================================================
-
-function SingleCoinHeader({ coin, summaries }: { coin: CoinId; summaries: Record<string, any> }) {
-  const meta = COIN_META[coin]
-  const summary = summaries[coin]
-
-  const productLabel = meta.productType === 'PERP' ? 'Perpetual Contract' : 'Monthly Futures'
-  return (
-    <div className={`rounded-xl border p-4 ${meta.bgCard} ${meta.borderCard}`}>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className={`text-2xl font-bold ${meta.textActive}`}>{meta.symbol}</span>
-          <span className="text-gray-400 text-sm">{meta.label}</span>
-          <span
-            className={`px-2 py-0.5 rounded text-[11px] font-bold tracking-wide ${
-              meta.productType === 'PERP'
-                ? 'bg-blue-900/60 text-blue-300 border border-blue-700/50'
-                : 'bg-amber-900/60 text-amber-300 border border-amber-700/50'
-            }`}
-            title={meta.productTypeNote || meta.productType}
-          >
-            {meta.productType}
-          </span>
-          {!meta.liveAvailableUS && (
-            <span
-              className="px-2 py-0.5 rounded text-[11px] font-bold bg-gray-700 text-gray-400 border border-gray-600"
-              title="Paper-only — no US-accessible market for this product"
-            >
-              PAPER ONLY
-            </span>
-          )}
-          <ArrowRight className="w-4 h-4 text-gray-600" />
-          <span className="text-white font-mono text-lg">{fmtPrice(summary?.price, meta.priceDecimals)}</span>
-        </div>
-        <div className="flex items-center gap-4 text-sm">
-          <div className="text-right">
-            <span className="text-gray-500 text-xs block">Open</span>
-            <span className="text-white font-mono">{summary?.openPositions ?? 0}</span>
-          </div>
-          <div className="text-right">
-            <span className="text-gray-500 text-xs block">Unrealized</span>
-            <span className={`font-mono ${pnlColor(summary?.unrealizedPnl ?? 0)}`}>{fmtUsd(summary?.unrealizedPnl)}</span>
-          </div>
-          <div className="text-right">
-            <span className="text-gray-500 text-xs block">Mode</span>
-            <span className={`font-mono text-xs ${summary?.mode === 'live' ? 'text-green-400' : 'text-yellow-400'}`}>
-              {(summary?.mode || 'paper').toUpperCase()}
-            </span>
-          </div>
-        </div>
-      </div>
-      <p className="text-gray-500 text-xs">
-        {productLabel}: {meta.instrument} | Directional trading (Long & Short) | {fmtUsd(meta.startingCapital)} starting capital
-        {meta.productTypeNote && <span className="text-gray-600"> | {meta.productTypeNote}</span>}
-      </p>
-    </div>
-  )
-}
-
-// ==============================================================================
-// OVERVIEW TAB (single coin)
-// ==============================================================================
-
-function OverviewTab({ coin }: { coin: CoinId }) {
-  const { data: statusData } = usePerpStatus(coin)
-  const { data: perfData } = usePerpPerformance(coin)
-  const { data: snapshotData } = usePerpSnapshot(coin)
-
-  const status = statusData?.data
-  const perf = perfData?.data
-  const meta = COIN_META[coin]
-  const pa = status?.paper_account
-
-  const startingCapital = pa?.starting_capital ?? status?.starting_capital ?? meta.startingCapital
-  const currentBalance = pa?.current_balance ?? startingCapital
-  const cumulativePnl = perf?.total_pnl ?? pa?.cumulative_pnl ?? 0
-  const returnPct = perf?.return_pct ?? pa?.return_pct ?? 0
-  const winRate = perf?.win_rate ?? pa?.win_rate
-  const totalTrades = perf?.total_trades ?? pa?.total_trades ?? 0
-  const aggressive = status?.aggressive_features || {}
-
-  return (
-    <div className="space-y-5">
-      {/* Capital summary */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MetricCard label="Starting Capital" value={fmtUsd(startingCapital)} color="text-white" />
-        <MetricCard label="Current Balance" value={fmtUsd(currentBalance)} color={pnlColor(currentBalance - startingCapital)} />
-        <MetricCard label="Cumulative P&L" value={fmtUsd(cumulativePnl)} color={pnlColor(cumulativePnl)} />
-        <MetricCard label="Return" value={fmtPct(returnPct)} color={pnlColor(returnPct)} />
-      </div>
-
-      {/* Quick stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MetricCard
-          label="Win Rate"
-          value={winRate != null ? `${Number(winRate).toFixed(1)}%` : '---'}
-          color={winRate != null && winRate >= 55 ? 'text-green-400' : winRate != null && winRate >= 45 ? 'text-yellow-400' : 'text-gray-400'}
-        />
-        <MetricCard label="Total Trades" value={String(totalTrades)} color="text-white" />
-        <MetricCard label="Profit Factor" value={perf?.profit_factor != null ? String(perf.profit_factor) : '---'} color="text-white" />
-        <MetricCard label="Mode" value={(status?.mode || 'paper').toUpperCase()} color={status?.mode === 'live' ? 'text-green-400' : 'text-yellow-400'} />
-      </div>
-
-      {/* Aggressive Features */}
-      <SectionCard title="Aggressive Features" icon={<Zap className={`w-5 h-5 ${meta.textActive}`} />}>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <div className="flex items-start gap-2">
-            <Shield className={`w-4 h-4 ${meta.textActive} mt-0.5 flex-shrink-0`} />
-            <div>
-              <span className="text-gray-500">No-Loss Trailing</span>
-              <p className={`font-mono font-semibold ${aggressive.use_no_loss_trailing ? 'text-green-400' : 'text-gray-500'}`}>
-                {aggressive.use_no_loss_trailing ? 'ACTIVE' : 'OFF'}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-start gap-2">
-            <RefreshCw className={`w-4 h-4 ${meta.textActive} mt-0.5 flex-shrink-0`} />
-            <div>
-              <span className="text-gray-500">Stop-and-Reverse</span>
-              <p className={`font-mono font-semibold ${aggressive.use_sar ? 'text-green-400' : 'text-gray-500'}`}>
-                {aggressive.use_sar ? 'ACTIVE' : 'OFF'}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-start gap-2">
-            <Target className={`w-4 h-4 ${meta.textActive} mt-0.5 flex-shrink-0`} />
-            <div>
-              <span className="text-gray-500">Consecutive Losses</span>
-              <p className={`font-mono font-semibold ${(aggressive.consecutive_losses || 0) >= 3 ? 'text-red-400' : 'text-white'}`}>
-                {aggressive.consecutive_losses || 0}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-start gap-2">
-            <ArrowUpDown className={`w-4 h-4 ${meta.textActive} mt-0.5 flex-shrink-0`} />
-            <div>
-              <span className="text-gray-500">Direction Tracker</span>
-              <p className="text-white font-mono text-xs">
-                L: {aggressive.direction_tracker?.long_win_rate != null ? `${(aggressive.direction_tracker.long_win_rate * 100).toFixed(0)}%` : '--'}
-                {' '}S: {aggressive.direction_tracker?.short_win_rate != null ? `${(aggressive.direction_tracker.short_win_rate * 100).toFixed(0)}%` : '--'}
-              </p>
-            </div>
-          </div>
-        </div>
-      </SectionCard>
-
-      {/* Market Snapshot (if available) */}
-      {snapshotData?.data && (
-        <MarketSnapshotPanel data={snapshotData.data} coin={coin} />
-      )}
-
-      {/* Configuration */}
-      <SectionCard title="Configuration" icon={<Settings className={`w-5 h-5 ${meta.textActive}`} />}>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <div>
-            <span className="text-gray-500">Instrument</span>
-            <p className={`font-mono ${meta.textActive}`}>{status?.instrument || meta.instrument}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Direction</span>
-            <p className="text-white font-mono">LONG & SHORT</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Risk Per Trade</span>
-            <p className="text-white font-mono">{status?.risk_per_trade_pct ?? 5}%</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Max Quantity</span>
-            <p className="text-white font-mono">{status?.max_contracts ?? status?.max_quantity ?? 10} {meta.quantityLabel}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Cooldown</span>
-            <p className="text-white font-mono">{status?.cooldown_minutes ?? 5} min</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Prophet</span>
-            <p className="text-white font-mono">{status?.require_oracle ? 'Required' : 'Advisory'}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Cycles Run</span>
-            <p className="text-white font-mono">{status?.cycle_count ?? 0}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Market</span>
-            <p className="text-cyan-400 font-mono">Perpetual 24/7</p>
-          </div>
-        </div>
-      </SectionCard>
-    </div>
-  )
-}
-
-// ==============================================================================
-// MARKET SNAPSHOT PANEL (compact inline version for overview)
-// ==============================================================================
-
-function MarketSnapshotPanel({ data, coin }: { data: any; coin: CoinId }) {
-  const meta = COIN_META[coin]
-  const signalColor = (signal: string) => {
-    if (['LONG', 'BULLISH'].some(s => signal?.includes(s))) return 'text-green-400'
-    if (['SHORT', 'BEARISH'].some(s => signal?.includes(s))) return 'text-red-400'
-    if (signal === 'RANGE_BOUND') return 'text-yellow-400'
-    return 'text-gray-400'
-  }
-
-  return (
-    <SectionCard
-      title={`Market Structure (${meta.symbol})`}
-      icon={<Globe className={`w-5 h-5 ${meta.textActive}`} />}
-      headerRight={
-        data.signals?.combined_signal && (
-          <span className={`px-3 py-1 rounded-full font-semibold text-xs ${signalColor(data.signals.combined_signal)}`}>
-            {data.signals.combined_signal} {data.signals.combined_confidence && `(${data.signals.combined_confidence})`}
-          </span>
-        )
-      }
-    >
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-        <div>
-          <span className="text-gray-500">Funding Regime</span>
-          <p className={signalColor(data.funding?.regime)}>{data.funding?.regime || '---'}</p>
-        </div>
-        <div>
-          <span className="text-gray-500">L/S Ratio</span>
-          <p className="text-white font-mono">{data.long_short?.ratio?.toFixed(2) || '---'}</p>
-        </div>
-        <div>
-          <span className="text-gray-500">Crypto GEX</span>
-          <p className={signalColor(data.crypto_gex?.regime)}>{data.crypto_gex?.regime || '---'}</p>
-        </div>
-        <div>
-          <span className="text-gray-500">Squeeze Risk</span>
-          <p className={
-            data.signals?.squeeze_risk === 'HIGH' ? 'text-red-400' :
-            data.signals?.squeeze_risk === 'ELEVATED' ? 'text-orange-400' :
-            'text-green-400'
-          }>{data.signals?.squeeze_risk || '---'}</p>
-        </div>
-      </div>
-    </SectionCard>
-  )
-}
-
-// ==============================================================================
-// ANALYTICS + AI TAB — charts and Claude commentary per coin
-// ==============================================================================
-
-function usePerpChartData(coin: ActiveCoinId) {
-  const prefix = COIN_META[coin].apiPrefix
-  return useSWR(`${prefix}/chart-data`, fetcher, { refreshInterval: 5 * 60_000 })
-}
-
-function usePerpBrief(coin: ActiveCoinId) {
-  const prefix = COIN_META[coin].apiPrefix
-  return useSWR(`${prefix}/brief`, fetcher, { refreshInterval: 5 * 60_000 })
-}
-
-function CoinAnalytics({ coin }: { coin: ActiveCoinId }) {
-  const meta = COIN_META[coin]
-  const { data: chartData, isLoading: chartLoading } = usePerpChartData(coin)
-  const { data: briefData, isLoading: briefLoading } = usePerpBrief(coin)
-
-  const chart = (chartData as any)?.data
-  const brief = (briefData as any)?.data
-  const briefReason = (briefData as any)?.reason
-
-  return (
-    <div className={`rounded-xl border ${meta.borderCard} ${meta.bgCard} p-4 space-y-4`}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className={`px-2 py-1 rounded text-sm font-bold ${meta.bgActive}/30 ${meta.textActive}`}>
-            {meta.symbol}
-          </span>
-          <span className="text-xs text-gray-500">
-            {chart ? `${chart.lookback_days}d / ${chart.interval}` : '...'}
-          </span>
-        </div>
-        {chart?.fetched_at && (
-          <span className="text-xs text-gray-500">
-            data: {new Date(chart.fetched_at).toLocaleTimeString()}
-          </span>
-        )}
-      </div>
-      <SignalBriefCard data={brief} loading={briefLoading} reason={briefReason} />
-      <PerpMarketCharts data={chart || null} loading={chartLoading} />
-    </div>
-  )
-}
-
-function AnalyticsTab({ coin }: { coin: CoinId }) {
-  const coinsToShow: ActiveCoinId[] = coin === 'ALL'
-    ? (ACTIVE_COINS as readonly ActiveCoinId[]).slice() as ActiveCoinId[]
-    : [coin as ActiveCoinId]
-
-  return (
-    <div className="space-y-5">
-      <div className="bg-gradient-to-br from-purple-900/30 to-blue-900/30 border border-purple-700/40 rounded-lg p-4">
-        <div className="flex items-start gap-3">
-          <Brain className="w-5 h-5 text-purple-300 mt-0.5" />
-          <div className="text-sm text-gray-200">
-            <div className="text-purple-200 font-semibold mb-1">Per-Coin Analytics + Claude Commentary</div>
-            <p className="text-gray-300">
-              30-day h4 history of <span className="text-blue-300">price</span>, <span className="text-green-300">L/S ratio</span>,{' '}
-              <span className="text-purple-300">open interest</span>, and <span className="text-orange-300">funding rate</span> from CoinGlass.
-              Claude reads the live market data and writes a plain-English brief on what the bot is seeing and what it likely means for the next move.
-              Switch coins above to drill into one, or pick "ALL" to see all 5 stacked.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {coinsToShow.map(c => <CoinAnalytics key={c} coin={c} />)}
-    </div>
-  )
-}
-
-
-// ==============================================================================
-// MARGIN RISK TAB
-// ==============================================================================
-
-function usePerpMargin(coin: ActiveCoinId) {
-  const prefix = COIN_META[coin].apiPrefix
-  return useSWR(`${prefix}/margin`, fetcher, { refreshInterval: 15_000 })
-}
-
-function marginHealthClass(health: string | undefined): { text: string; bg: string; border: string } {
-  switch ((health || '').toUpperCase()) {
-    case 'HEALTHY':  return { text: 'text-green-400',   bg: 'bg-green-500/20',   border: 'border-green-700/40' }
-    case 'WARNING':  return { text: 'text-yellow-400',  bg: 'bg-yellow-500/20',  border: 'border-yellow-700/40' }
-    case 'DANGER':   return { text: 'text-orange-400',  bg: 'bg-orange-500/20',  border: 'border-orange-700/40' }
-    case 'CRITICAL': return { text: 'text-red-400',     bg: 'bg-red-500/20',     border: 'border-red-700/40' }
-    default:         return { text: 'text-slate-400',   bg: 'bg-slate-500/20',   border: 'border-slate-700/40' }
-  }
-}
-
-function usagePctClass(pct: number | undefined): string {
-  if (pct == null) return 'bg-slate-500'
-  if (pct >= 100) return 'bg-red-600'
-  if (pct >= 80)  return 'bg-orange-500'
-  if (pct >= 60)  return 'bg-yellow-500'
-  return 'bg-green-500'
-}
-
-function MarginRow({ coin }: { coin: ActiveCoinId }) {
-  const { data, error, isLoading } = usePerpMargin(coin)
-  const meta = COIN_META[coin]
-  const m = data?.data
-  const health = m?.margin_health
-  const cls = marginHealthClass(health)
-  const usage = m?.margin_usage_pct ?? 0
-
-  return (
-    <tr className="border-t border-gray-800 hover:bg-gray-800/40 transition">
-      <td className="py-3 px-4">
-        <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${cls.bg}`} />
-          <span className={`font-bold ${meta.textActive}`}>{coin}-PERP</span>
-        </div>
-      </td>
-      <td className="py-3 px-4 text-right">
-        {isLoading ? '—' : error ? <span className="text-red-400">err</span> : fmtUsd(m?.account_equity)}
-      </td>
-      <td className="py-3 px-4 text-right">{isLoading ? '—' : fmtUsd(m?.margin_used)}</td>
-      <td className="py-3 px-4 text-right">{isLoading ? '—' : fmtUsd(m?.available_margin)}</td>
-      <td className="py-3 px-4">
-        <div className="flex items-center gap-2">
-          <div className="flex-1 h-2 bg-gray-800 rounded overflow-hidden">
-            <div
-              className={`h-full ${usagePctClass(usage)}`}
-              style={{ width: `${Math.min(100, usage)}%` }}
-            />
-          </div>
-          <span className={`w-14 text-right font-mono text-xs ${usage >= 100 ? 'text-red-400 font-bold' : usage >= 80 ? 'text-orange-400' : 'text-gray-300'}`}>
-            {isLoading ? '—' : `${usage.toFixed(1)}%`}
-          </span>
-        </div>
-      </td>
-      <td className="py-3 px-4 text-right">
-        {isLoading ? '—' : (m?.position_count ?? 0)}
-      </td>
-      <td className="py-3 px-4 text-right">
-        {isLoading ? '—' : `${(m?.effective_leverage ?? 0).toFixed(2)}x`}
-      </td>
-      <td className="py-3 px-4 text-right">
-        <span className={pnlColor(m?.total_unrealized_pnl ?? 0)}>
-          {isLoading ? '—' : fmtUsd(m?.total_unrealized_pnl)}
-        </span>
-      </td>
-      <td className="py-3 px-4">
-        <span className={`px-2 py-0.5 rounded text-xs font-semibold ${cls.bg} ${cls.text}`}>
-          {isLoading ? '...' : (health || 'UNKNOWN')}
-        </span>
-      </td>
-    </tr>
-  )
-}
-
-function MarginRiskTab({ coin }: { coin: CoinId }) {
-  const coinsToShow: ActiveCoinId[] = coin === 'ALL'
-    ? (ACTIVE_COINS as readonly ActiveCoinId[]).slice() as ActiveCoinId[]
-    : [coin as ActiveCoinId]
-
-  return (
-    <div className="space-y-5">
-      <div className="bg-gradient-to-br from-blue-950/40 to-cyan-950/30 border border-blue-700/40 rounded-lg p-4">
-        <div className="flex items-start gap-3">
-          <Shield className="w-5 h-5 text-blue-400 mt-0.5" />
-          <div className="text-sm text-gray-300">
-            <div className="text-blue-300 font-semibold mb-1">Margin Risk Manager</div>
-            <p>
-              Position-count cap was removed — every qualifying signal opens a position. Margin engine is the backstop.
-              Watch the usage bar: <span className="text-yellow-400">≥60% caution</span>,{' '}
-              <span className="text-orange-400">≥80% danger</span>,{' '}
-              <span className="text-red-400 font-semibold">≥100% over-leveraged</span>.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-800/60 text-xs uppercase tracking-wide text-gray-400">
-            <tr>
-              <th className="py-3 px-4 text-left">Bot</th>
-              <th className="py-3 px-4 text-right">Equity</th>
-              <th className="py-3 px-4 text-right">Margin Used</th>
-              <th className="py-3 px-4 text-right">Available</th>
-              <th className="py-3 px-4 text-left min-w-[180px]">Usage</th>
-              <th className="py-3 px-4 text-right">Pos</th>
-              <th className="py-3 px-4 text-right">Lev</th>
-              <th className="py-3 px-4 text-right">uPnL</th>
-              <th className="py-3 px-4 text-left">Health</th>
-            </tr>
-          </thead>
-          <tbody>
-            {coinsToShow.map(c => <MarginRow key={c} coin={c} />)}
-          </tbody>
-        </table>
-      </div>
-
-      <TradeEconomicsTable coinsToShow={coinsToShow} />
-
-      {coin !== 'ALL' && <PerCoinPositionMargin coin={coin as ActiveCoinId} />}
-    </div>
-  )
-}
-
-// ==============================================================================
-// TRADE ECONOMICS — what each trade actually costs and how to fund the account
-// ==============================================================================
-
-const PER_POSITION_MARGIN_PCT = 7.0   // matches signals.py cap
-const MARGIN_GATE_PCT = 70.0          // matches trader entry gate
-const TYPICAL_TRADES_TARGET = 10      // funding sized for this many concurrent trades
-
-function TradeEconomicsRow({ coin }: { coin: ActiveCoinId }) {
-  const meta = COIN_META[coin]
-  const { data: marginData } = usePerpMargin(coin)
-  const { data: statusData } = usePerpStatus(coin)
-  const m = (marginData as any)?.data
-  const s = (statusData as any)?.data
-
-  const equity = m?.account_equity ?? s?.starting_capital ?? 0
-  const startingCapital = s?.starting_capital ?? 0
-  const leverage = m?.spec?.default_leverage ?? m?.effective_leverage ?? 0
-  const spot = s?.[meta.priceKey] ?? 0
-  const riskPct = s?.risk_per_trade_pct ?? 5
-
-  // What ONE new position will cost, given the live 7%-of-equity sizer
-  const marginPerTrade = equity * (PER_POSITION_MARGIN_PCT / 100)
-  const notionalPerTrade = marginPerTrade * leverage
-  const qtyPerTrade = spot > 0 ? notionalPerTrade / spot : 0
-  const riskPerTrade = startingCapital * (riskPct / 100)
-  const slotsBeforeGate = marginPerTrade > 0 ? Math.floor((equity * MARGIN_GATE_PCT / 100) / marginPerTrade) : 0
-
-  // Real cash needed for N trades sized at target margin pct
-  const fundForN = (n: number) => (n * marginPerTrade) / (MARGIN_GATE_PCT / 100)
-
-  return (
-    <tr className="border-t border-gray-800 hover:bg-gray-800/40">
-      <td className="py-3 px-3"><span className={`font-bold ${meta.textActive}`}>{coin}</span></td>
-      <td className="py-3 px-3 text-right text-white font-mono text-xs">{spot ? fmtPrice(spot, meta.priceDecimals) : '—'}</td>
-      <td className="py-3 px-3 text-right text-gray-300 text-xs">{leverage ? `${leverage}x` : '—'}</td>
-      <td className="py-3 px-3 text-right text-white font-mono text-xs">{fmtUsd(equity, 0)}</td>
-      <td className="py-3 px-3 text-right text-blue-300 font-mono">{fmtUsd(marginPerTrade, 0)}</td>
-      <td className="py-3 px-3 text-right text-purple-300 font-mono">{fmtUsd(notionalPerTrade, 0)}</td>
-      <td className="py-3 px-3 text-right text-gray-300 font-mono text-xs">{qtyPerTrade > 0 ? qtyPerTrade.toLocaleString(undefined, { maximumFractionDigits: meta.priceDecimals }) : '—'} {meta.quantityLabel}</td>
-      <td className="py-3 px-3 text-right text-orange-400 font-mono">{fmtUsd(riskPerTrade, 0)}</td>
-      <td className="py-3 px-3 text-right text-gray-300 font-mono text-xs">{slotsBeforeGate}</td>
-      <td className="py-3 px-3 text-right text-green-300 font-mono">{fmtUsd(fundForN(TYPICAL_TRADES_TARGET), 0)}</td>
-    </tr>
-  )
-}
-
-function TradeEconomicsTable({ coinsToShow }: { coinsToShow: ActiveCoinId[] }) {
-  return (
-    <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-800 flex items-start gap-3">
-        <DollarSign className="w-5 h-5 text-green-400 mt-0.5" />
-        <div className="text-sm">
-          <div className="text-green-300 font-semibold">Trade Economics — what each position costs</div>
-          <div className="text-xs text-gray-400 mt-0.5">
-            Sizer caps each new position at <span className="text-blue-300">{PER_POSITION_MARGIN_PCT}% of equity in margin</span>;
-            entry gate refuses opens above <span className="text-yellow-400">{MARGIN_GATE_PCT}%</span>.
-            "Fund for {TYPICAL_TRADES_TARGET} trades" is the real cash needed to comfortably run that many concurrent positions before the gate trips.
-          </div>
-        </div>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-800/60 text-xs uppercase tracking-wide text-gray-400">
-            <tr>
-              <th className="py-3 px-3 text-left">Coin</th>
-              <th className="py-3 px-3 text-right">Spot</th>
-              <th className="py-3 px-3 text-right">Lev</th>
-              <th className="py-3 px-3 text-right">Equity Now</th>
-              <th className="py-3 px-3 text-right">Cost / Trade</th>
-              <th className="py-3 px-3 text-right">Notional / Trade</th>
-              <th className="py-3 px-3 text-right">Size / Trade</th>
-              <th className="py-3 px-3 text-right">Max Loss / Trade</th>
-              <th className="py-3 px-3 text-right">Slots</th>
-              <th className="py-3 px-3 text-right">Fund for {TYPICAL_TRADES_TARGET}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {coinsToShow.map(c => <TradeEconomicsRow key={c} coin={c} />)}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
-
-function PerCoinPositionMargin({ coin }: { coin: ActiveCoinId }) {
-  const { data, isLoading } = usePerpMargin(coin)
-  const positions = data?.data?.positions || []
-  const meta = COIN_META[coin]
-
-  if (isLoading) return null
-  if (positions.length === 0) {
-    return (
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 text-center text-gray-500 text-sm">
-        No open positions for {coin}-PERP.
-      </div>
-    )
-  }
-
-  return (
-    <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-800 text-sm font-semibold text-gray-200">
-        Per-Position Breakdown · {coin}-PERP
-      </div>
-      <table className="w-full text-sm">
-        <thead className="bg-gray-800/60 text-xs uppercase tracking-wide text-gray-400">
-          <tr>
-            <th className="py-3 px-4 text-left">Position</th>
-            <th className="py-3 px-4 text-left">Side</th>
-            <th className="py-3 px-4 text-right">Qty</th>
-            <th className="py-3 px-4 text-right">Entry</th>
-            <th className="py-3 px-4 text-right">Current</th>
-            <th className="py-3 px-4 text-right">Notional</th>
-            <th className="py-3 px-4 text-right">Margin</th>
-            <th className="py-3 px-4 text-right">Liq Price</th>
-            <th className="py-3 px-4 text-right">uPnL</th>
-          </tr>
-        </thead>
-        <tbody>
-          {positions.map((p: any, i: number) => (
-            <tr key={p.position_id || i} className="border-t border-gray-800">
-              <td className="py-2 px-4 font-mono text-xs text-gray-400">{(p.position_id || '').slice(-8)}</td>
-              <td className="py-2 px-4">
-                <span className={p.side === 'long' ? 'text-green-400' : 'text-red-400'}>{(p.side || '').toUpperCase()}</span>
-              </td>
-              <td className="py-2 px-4 text-right">{(p.quantity ?? 0).toLocaleString()}</td>
-              <td className="py-2 px-4 text-right">{fmtPrice(p.entry_price, meta.priceDecimals)}</td>
-              <td className="py-2 px-4 text-right">{fmtPrice(p.current_price, meta.priceDecimals)}</td>
-              <td className="py-2 px-4 text-right">{fmtUsd(p.notional_value, 0)}</td>
-              <td className="py-2 px-4 text-right">{fmtUsd(p.initial_margin_required, 0)}</td>
-              <td className="py-2 px-4 text-right text-orange-300">{fmtPrice(p.liquidation_price, meta.priceDecimals)}</td>
-              <td className={`py-2 px-4 text-right ${pnlColor(p.unrealized_pnl ?? 0)}`}>{fmtUsd(p.unrealized_pnl)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-
-// ==============================================================================
-// POSITIONS TAB
-// ==============================================================================
-
-function PositionsTab({ coin }: { coin: CoinId }) {
-  const { data: posData, isLoading } = usePerpPositions(coin)
-  const marginPrefix = coin !== 'ALL' ? COIN_META[coin].apiPrefix : null
-  const { data: marginData } = useSWR(
-    marginPrefix ? `${marginPrefix}/margin` : null,
-    fetcher,
-    { refreshInterval: 15_000 }
-  )
-  const positions = posData?.data || []
-  const meta = COIN_META[coin]
-
-  // Build a lookup of margin/notional per position_id from the /margin endpoint
-  const marginByPosId: Record<string, any> = {}
-  for (const p of ((marginData as any)?.data?.positions || [])) {
-    if (p?.position_id) marginByPosId[p.position_id] = p
-  }
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <RefreshCw className="w-6 h-6 text-gray-500 animate-spin" />
-      </div>
-    )
-  }
-
-  if (positions.length === 0) {
-    return <EmptyBox message={`No open positions for ${meta.symbol}. The bot is scanning for opportunities.`} />
-  }
-
-  return (
-    <div className="space-y-3">
-      {positions.map((pos: any, idx: number) => {
-        const m = marginByPosId[pos.position_id] || {}
-        return (
-        <div key={pos.position_id || idx} className={`rounded-xl border p-4 ${meta.bgCard} ${meta.borderCard}`}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <span className={`px-2 py-1 rounded text-xs font-bold ${
-                pos.side === 'long' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
-              }`}>
-                {pos.side?.toUpperCase()}
-              </span>
-              <span className="text-white font-mono font-semibold">
-                {pos.quantity ?? pos.contracts} {meta.quantityLabel}-PERP @ {fmtPrice(pos.entry_price, meta.priceDecimals)}
-              </span>
-              {pos.trailing_active && (
-                <span className={`px-2 py-0.5 ${meta.bgCard} ${meta.textActive} text-xs rounded font-mono`}>
-                  TRAILING @ {fmtPrice(pos.current_stop, meta.priceDecimals)}
-                </span>
-              )}
-            </div>
-            <div className="flex items-baseline gap-4">
-              <div className="text-right">
-                <div className="text-xs text-gray-500">Cost (Margin)</div>
-                <span className="text-base font-mono font-semibold text-blue-300">
-                  {m.initial_margin_required != null ? fmtUsd(m.initial_margin_required, 0) : '---'}
-                </span>
-              </div>
-              <div className="text-right">
-                <div className="text-xs text-gray-500">Notional</div>
-                <span className="text-base font-mono font-semibold text-purple-300">
-                  {m.notional_value != null ? fmtUsd(m.notional_value, 0) : '---'}
-                </span>
-              </div>
-              <div className="text-right">
-                <div className="text-xs text-gray-500">At Risk</div>
-                <span className="text-base font-mono font-semibold text-orange-400">
-                  {pos.max_risk_usd != null ? fmtUsd(pos.max_risk_usd) : '---'}
-                </span>
-              </div>
-              <div className="text-right">
-                <div className="text-xs text-gray-500">P&L</div>
-                <span className={`text-lg font-mono font-bold ${pnlColor(pos.unrealized_pnl ?? 0)}`}>
-                  {fmtUsd(pos.unrealized_pnl)}
-                </span>
-              </div>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
-            <div>
-              <span className="text-gray-500">Stop Loss</span>
-              <p className="text-red-400 font-mono">{pos.stop_loss ? fmtPrice(pos.stop_loss, meta.priceDecimals) : 'Trailing'}</p>
-            </div>
-            <div>
-              <span className="text-gray-500">Take Profit</span>
-              <p className="text-green-400 font-mono">{pos.take_profit ? fmtPrice(pos.take_profit, meta.priceDecimals) : 'No-Loss Trail'}</p>
-            </div>
-            <div>
-              <span className="text-gray-500">Liq Price</span>
-              <p className="text-orange-300 font-mono">{m.liquidation_price != null ? fmtPrice(m.liquidation_price, meta.priceDecimals) : '---'}</p>
-            </div>
-            <div>
-              <span className="text-gray-500">Prophet</span>
-              <p className="text-gray-300">
-                {pos.oracle_advice || 'Advisory'}
-                {pos.oracle_win_probability ? ` (${(pos.oracle_win_probability * 100).toFixed(0)}%)` : ''}
-              </p>
-            </div>
-            <div>
-              <span className="text-gray-500">Opened</span>
-              <p className="text-white">{pos.open_time ? new Date(pos.open_time).toLocaleString() : '---'}</p>
-            </div>
-            <div>
-              <span className="text-gray-500">ID</span>
-              <p className="text-white font-mono">{pos.position_id?.slice(0, 8) || '---'}</p>
-            </div>
-          </div>
-        </div>
-        )
-      })}
-    </div>
-  )
-}
-
-// ==============================================================================
-// PERFORMANCE TAB
-// ==============================================================================
-
-function PerformanceTab({ coin }: { coin: CoinId }) {
-  const { data: perfData, isLoading } = usePerpPerformance(coin)
-  const perf = perfData?.data ?? perfData
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <RefreshCw className="w-6 h-6 text-gray-500 animate-spin" />
-      </div>
-    )
-  }
-
-  if (!perf) {
-    return <EmptyBox message={`No performance data available for ${COIN_META[coin].symbol}.`} />
-  }
-
-  const meta = COIN_META[coin]
-
-  return (
-    <div className="space-y-5">
-      <SectionCard title="Performance Statistics" icon={<BarChart3 className={`w-5 h-5 ${meta.textActive}`} />}>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <div>
-            <span className="text-gray-500">Total Trades</span>
-            <p className="text-white font-mono text-lg">{perf.total_trades ?? 0}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Win Rate</span>
-            <p className={`font-mono text-lg ${
-              (perf.win_rate ?? 0) >= 55 ? 'text-green-400' : (perf.win_rate ?? 0) >= 45 ? 'text-yellow-400' : 'text-red-400'
-            }`}>
-              {perf.win_rate != null ? `${Number(perf.win_rate).toFixed(1)}%` : '---'}
-            </p>
-          </div>
-          <div>
-            <span className="text-gray-500">Total P&L</span>
-            <p className={`font-mono text-lg ${pnlColor(perf.total_pnl ?? 0)}`}>
-              {fmtUsd(perf.total_pnl)}
-            </p>
-          </div>
-          <div>
-            <span className="text-gray-500">Return</span>
-            <p className={`font-mono text-lg ${pnlColor(perf.return_pct ?? 0)}`}>
-              {fmtPct(perf.return_pct)}
-            </p>
-          </div>
-          <div>
-            <span className="text-gray-500">Profit Factor</span>
-            <p className="text-white font-mono">{perf.profit_factor ?? '---'}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Avg Win</span>
-            <p className="text-green-400 font-mono">{perf.avg_win != null ? fmtUsd(perf.avg_win) : '---'}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Avg Loss</span>
-            <p className="text-red-400 font-mono">{perf.avg_loss != null ? fmtUsd(-Math.abs(perf.avg_loss)) : '---'}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Unrealized P&L</span>
-            <p className={`font-mono ${pnlColor(perf.unrealized_pnl ?? 0)}`}>
-              {fmtUsd(perf.unrealized_pnl)}
-            </p>
-          </div>
-          <div>
-            <span className="text-gray-500">Best Trade</span>
-            <p className="text-green-400 font-mono">{perf.best_trade != null ? fmtUsd(perf.best_trade) : '---'}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Worst Trade</span>
-            <p className="text-red-400 font-mono">{perf.worst_trade != null ? fmtUsd(perf.worst_trade) : '---'}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Wins</span>
-            <p className="text-green-400 font-mono">{perf.wins ?? 0}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Losses</span>
-            <p className="text-red-400 font-mono">{perf.losses ?? 0}</p>
-          </div>
-        </div>
-      </SectionCard>
-
-      {/* Closed Trades */}
-      <ClosedTradesTable coin={coin} />
-    </div>
-  )
-}
-
-function ClosedTradesTable({ coin }: { coin: CoinId }) {
-  if (coin === 'ALL') return null
-  const meta = COIN_META[coin]
-  const botId = COIN_TO_BOT_ID[coin as ActiveCoinId]
-  return (
-    <TradeHistoryTable
-      bots={[botId]}
-      showBotColumn={false}
-      defaultRange="30d"
-      title={`${meta.symbol} Closed Trades`}
-    />
-  )
-}
-
-// ==============================================================================
-// EQUITY CURVE TAB
-// ==============================================================================
-
-function EquityCurveTab({ coin }: { coin: CoinId }) {
-  const [eqTimeFrame, setEqTimeFrame] = useState<TimeFrameId>('today')
-  const isIntraday = eqTimeFrame === 'today'
-  const eqDays = TIME_FRAMES.find(tf => tf.id === eqTimeFrame)?.days ?? 30
-
-  const { data: equityData, isLoading: histLoading } = usePerpEquityCurve(coin, eqDays)
-  const { data: intradayData, isLoading: intradayLoading } = usePerpIntradayEquity(coin)
-  const meta = COIN_META[coin]
-  const points = isIntraday
-    ? (intradayData?.data_points || [])
-    : (equityData?.data?.equity_curve || [])
-  const gradientId = `eqFill-perp-${coin}`
-  const isLoading = isIntraday ? intradayLoading : histLoading
-
-  const startCap = equityData?.data?.starting_capital ?? meta.startingCapital
-  const drawdownPoints = useMemo(() => computeDrawdown(points, startCap), [points, startCap])
-  const histPoints = equityData?.data?.equity_curve || []
-  const heatmapDays = useMemo(() => buildHeatmapDays(histPoints), [histPoints])
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <RefreshCw className="w-6 h-6 text-gray-500 animate-spin" />
-      </div>
-    )
-  }
-
-  if (points.length === 0) {
-    return (
-      <SectionCard
-        title={isIntraday ? `${meta.symbol} Today (5-min)` : `${meta.symbol} Equity Curve`}
-        icon={<TrendingUp className={`w-5 h-5 ${meta.textActive}`} />}
-        headerRight={<TimeFrameSelector selected={eqTimeFrame} onChange={setEqTimeFrame} />}
-      >
-        <EmptyBox message={isIntraday
-          ? `No intraday snapshots for ${meta.symbol} yet. The bot saves equity every 5 minutes.`
-          : `No equity data for ${meta.symbol} yet. Complete trades to populate this chart.`
-        } />
-      </SectionCard>
-    )
-  }
-
-  return (
-    <SectionCard
-      title={isIntraday ? `${meta.symbol} Today (5-min)` : `${meta.symbol} Equity Curve`}
-      icon={<TrendingUp className={`w-5 h-5 ${meta.textActive}`} />}
-      headerRight={
-        <div className="flex items-center gap-3">
-          {isIntraday && intradayData && (
-            <span className={`text-xs font-mono ${pnlColor(intradayData.day_pnl ?? 0)}`}>
-              Day P&L: {fmtUsd(intradayData.day_pnl)}
-            </span>
-          )}
-          <TimeFrameSelector selected={eqTimeFrame} onChange={setEqTimeFrame} />
-        </div>
-      }
-    >
-      <div className="h-80">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={points} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-            <defs>
-              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={meta.hexColor} stopOpacity={0.3} />
-                <stop offset="95%" stopColor={meta.hexColor} stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-            <XAxis
-              dataKey={isIntraday ? 'time' : 'date'}
-              tick={{ fill: '#6b7280', fontSize: 11 }}
-              tickFormatter={(v: string) => {
-                if (isIntraday) return v?.slice(0, 5) || v
-                const d = new Date(v + 'T00:00:00')
-                return `${d.getMonth() + 1}/${d.getDate()}`
-              }}
-            />
-            <YAxis
-              tick={{ fill: '#6b7280', fontSize: 11 }}
-              tickFormatter={(v: number) => `$${v.toLocaleString()}`}
-            />
-            <Tooltip
-              contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
-              labelStyle={{ color: '#9ca3af' }}
-              formatter={(value: number) => [`$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Equity']}
-              labelFormatter={(label: string) => isIntraday ? `Time: ${label}` : label}
-            />
-            <Area
-              type="monotone"
-              dataKey="equity"
-              stroke={meta.hexColor}
-              strokeWidth={2}
-              fill={`url(#${gradientId})`}
-              dot={(props: any) => {
-                const { cx, cy, payload, key } = props
-                if (!payload?.trades || payload.trades === 0) return <g key={key} />
-                const color = (payload.daily_pnl ?? 0) >= 0 ? '#4ade80' : '#f87171'
-                return <circle key={key} cx={cx} cy={cy} r={4} fill={color} stroke="#111827" strokeWidth={1.5} />
-              }}
-              activeDot={{ r: 5, strokeWidth: 2 }}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-      <DrawdownChart points={drawdownPoints} isIntraday={isIntraday} />
-      {!isIntraday && heatmapDays.length > 1 && (
-        <div className="mt-4">
-          <PnlHeatmap days={heatmapDays} />
-        </div>
-      )}
-    </SectionCard>
-  )
-}
-
-// ==============================================================================
-// ACTIVITY TAB (Scan Activity)
-// ==============================================================================
-
-function ActivityTab({ coin }: { coin: CoinId }) {
-  const { data: scanData, isLoading } = usePerpScanActivity(coin, 40)
-  const scans = scanData?.data || []
-  const meta = COIN_META[coin]
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <RefreshCw className="w-6 h-6 text-gray-500 animate-spin" />
-      </div>
-    )
-  }
-
-  if (scans.length === 0) {
-    return <EmptyBox message={`No scan activity for ${meta.symbol} yet.`} />
-  }
-
-  // Auto-detect price field using COIN_META
-  const priceField = meta.priceField
-
-  return (
-    <SectionCard title={`Scan Activity (${scans.length})`} icon={<Activity className={`w-5 h-5 ${meta.textActive}`} />}>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-800">
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Time</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Price</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Funding</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Signal</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Prophet</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Outcome</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-800/60">
-            {scans.map((scan: any, i: number) => (
-              <tr key={i} className="hover:bg-gray-800/30">
-                <td className="px-3 py-2 text-gray-500 font-mono text-xs">
-                  {scan.timestamp ? new Date(scan.timestamp).toLocaleTimeString() : '---'}
-                </td>
-                <td className="px-3 py-2 text-white font-mono text-xs">
-                  {fmtPrice(scan[priceField] ?? scan.price ?? scan.current_price, meta.priceDecimals)}
-                </td>
-                <td className="px-3 py-2 text-xs text-gray-400">{scan.funding_regime || '---'}</td>
-                <td className="px-3 py-2">
-                  <span className={`text-xs font-semibold ${
-                    scan.combined_signal === 'LONG' ? 'text-green-400' :
-                    scan.combined_signal === 'SHORT' ? 'text-red-400' :
-                    scan.combined_signal === 'RANGE_BOUND' ? 'text-yellow-400' :
-                    'text-gray-500'
-                  }`}>
-                    {scan.combined_signal || '---'}
-                    {scan.combined_confidence ? ` (${scan.combined_confidence})` : ''}
-                  </span>
-                </td>
-                <td className="px-3 py-2 text-xs text-gray-400">{scan.oracle_advice || '---'}</td>
-                <td className="px-3 py-2">
-                  <span className={`text-xs px-2 py-0.5 rounded ${
-                    scan.outcome?.includes('TRADED') ? 'bg-cyan-900/50 text-cyan-300' :
-                    scan.outcome?.includes('SAR') ? 'bg-violet-900/50 text-violet-300' :
-                    scan.outcome?.includes('ERROR') ? 'bg-red-900/50 text-red-300' :
-                    scan.outcome?.includes('LOSS_STREAK') ? 'bg-orange-900/50 text-orange-300' :
-                    scan.outcome?.includes('LIQUIDAT') ? 'bg-red-900/50 text-red-300' :
-                    'bg-gray-800 text-gray-500'
-                  }`}>
-                    {scan.outcome || '---'}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </SectionCard>
-  )
-}
-
-// ==============================================================================
-// HISTORY TAB (Closed Trades)
-// ==============================================================================
-
-function HistoryTab({ coin }: { coin: CoinId }) {
-  if (coin === 'ALL') return null
-  const meta = COIN_META[coin]
-  const botId = COIN_TO_BOT_ID[coin as ActiveCoinId]
-  return (
-    <TradeHistoryTable
-      bots={[botId]}
-      showBotColumn={false}
-      defaultRange="30d"
-      title={`${meta.symbol} Trade History`}
-    />
-  )
-}
-
-// ==============================================================================
-// SHARED UI PRIMITIVES
-// ==============================================================================
-
-function MetricCard({ label, value, color }: { label: string; value: string; color: string }) {
-  return (
-    <div className="bg-gray-900 rounded-lg border border-gray-800 p-4">
-      <div className="text-xs text-gray-500 mb-1">{label}</div>
-      <div className={`text-xl font-bold font-mono ${color}`}>{value}</div>
-    </div>
-  )
-}
-
-function SectionCard({ title, icon, children, headerRight }: {
-  title: string
-  icon?: React.ReactNode
-  children: React.ReactNode
-  headerRight?: React.ReactNode
-}) {
-  return (
-    <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800">
-        <div className="flex items-center gap-2">
-          {icon}
-          <h3 className="text-sm font-semibold text-gray-200">{title}</h3>
-        </div>
-        {headerRight}
-      </div>
-      <div className="p-5">{children}</div>
-    </div>
-  )
-}
-
-function TimeFrameSelector({ selected, onChange }: { selected: TimeFrameId; onChange: (id: TimeFrameId) => void }) {
-  return (
-    <div className="flex gap-1">
-      {TIME_FRAMES.map((tf) => (
-        <button
-          key={tf.id}
-          onClick={() => onChange(tf.id)}
-          className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-            selected === tf.id
-              ? 'bg-violet-600 text-white'
-              : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
-          }`}
-        >
-          {tf.label}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-function EmptyBox({ message }: { message: string }) {
-  return (
-    <div className="bg-gray-900 rounded-xl border border-gray-800 p-12 text-center">
-      <Eye className="w-10 h-10 text-gray-700 mx-auto mb-3" />
-      <p className="text-gray-500 text-sm">{message}</p>
-    </div>
-  )
-}
-
-// ==============================================================================
-// LIVE PRICE TICKER STRIP
-// ==============================================================================
-
-function PriceTickerStrip({ summaries }: { summaries: Record<string, any> }) {
-  return (
-    <div className="flex items-center gap-4 overflow-x-auto py-2 px-3 bg-gray-900/60 rounded-lg border border-gray-800/50">
-      {ACTIVE_COINS.map((coin, idx) => {
-        const meta = COIN_META[coin]
-        const data = summaries[coin]
-        if (!data) return null
-        const ret = data.returnPct ?? 0
-        return (
-          <div key={coin} className="flex items-center gap-2 whitespace-nowrap">
-            <span className={`text-xs font-bold ${meta.textActive}`}>{meta.symbol}</span>
-            <span className="text-white font-mono text-sm">{fmtPrice(data.price, meta.priceDecimals)}</span>
-            <span className={`text-xs font-mono ${pnlColor(ret)}`}>
-              {ret >= 0 ? '+' : ''}{ret.toFixed(2)}%
-            </span>
-            <span className={`text-xs font-mono ${pnlColor(data.totalPnl)}`}>
-              ({fmtUsd(data.totalPnl)})
-            </span>
-            {idx < ACTIVE_COINS.length - 1 && <span className="text-gray-700 mx-1">|</span>}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-// ==============================================================================
-// PER-COIN CARD (for ALL view)
-// ==============================================================================
-
-function CoinCard({ coin, data }: { coin: string; data: any }) {
-  const meta = COIN_META[coin as CoinId]
-  const pnl = data?.totalPnl ?? 0
-  const returnPct = data?.returnPct ?? 0
-
-  return (
-    <div className={`rounded-xl border p-4 ${meta.bgCard} ${meta.borderCard} transition-colors`}>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className={`font-bold text-lg ${meta.textActive}`}>{meta.symbol}</span>
-          <span
-            className={`px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide ${
-              meta.productType === 'PERP'
-                ? 'bg-blue-900/60 text-blue-300'
-                : 'bg-amber-900/60 text-amber-300'
-            }`}
-            title={meta.productTypeNote || meta.productType}
-          >
-            {meta.productType}
-          </span>
-          {!meta.liveAvailableUS && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-700 text-gray-400" title="Paper-only">
-              PAPER
-            </span>
-          )}
-          <span className="text-gray-500 text-xs">{meta.label}</span>
-        </div>
-        <span className="text-white font-mono text-sm">{fmtPrice(data?.price, meta.priceDecimals)}</span>
-      </div>
-      <div className="grid grid-cols-2 gap-y-2 text-sm">
-        <div>
-          <span className="text-gray-500 text-xs">P&L</span>
-          <p className={`font-mono font-semibold ${pnlColor(pnl)}`}>{fmtUsd(pnl)}</p>
-        </div>
-        <div>
-          <span className="text-gray-500 text-xs">Return</span>
-          <p className={`font-mono font-semibold ${pnlColor(returnPct)}`}>{fmtPct(returnPct)}</p>
-        </div>
-        <div>
-          <span className="text-gray-500 text-xs">Open</span>
-          <p className="text-white font-mono">{data?.openPositions ?? 0}</p>
-        </div>
-        <div>
-          <span className="text-gray-500 text-xs">Trades</span>
-          <p className="text-white font-mono">{data?.totalTrades ?? 0}</p>
-        </div>
-        <div>
-          <span className="text-gray-500 text-xs">Win Rate</span>
-          <p className="text-white font-mono">
-            {data?.winRate != null ? `${Number(data.winRate).toFixed(1)}%` : '---'}
-          </p>
-        </div>
-        <div>
-          <span className="text-gray-500 text-xs">Instrument</span>
-          <p className={`font-mono text-xs ${meta.textActive}`}>{meta.instrument}</p>
-        </div>
-      </div>
-      {/* Capital & Status */}
-      <div className="mt-3 pt-2 border-t border-gray-700/50 flex items-center justify-between">
-        <span className="text-gray-500 text-xs">Capital: {fmtUsd(meta.startingCapital)}</span>
-        <span className={`text-xs font-mono px-2 py-0.5 rounded ${
-          data?.isActive ? 'bg-green-900/50 text-green-400' : 'bg-gray-800 text-gray-500'
-        }`}>
-          {data?.isActive ? 'ACTIVE' : 'IDLE'}
-        </span>
-      </div>
-    </div>
-  )
-}
-
-// ==============================================================================
-// DRAWDOWN CHART
-// ==============================================================================
-
-function DrawdownChart({ points, isIntraday }: { points: any[]; isIntraday: boolean }) {
-  if (!points || points.length < 2) return null
-  const minDD = Math.min(...points.map(p => p.drawdown ?? 0))
-  if (minDD >= -0.01) return null
-
-  return (
-    <div className="mt-3">
-      <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
-        <TrendingDown className="w-3 h-3" /> Drawdown
-      </div>
-      <div className="h-20">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={points} margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
-            <defs>
-              <linearGradient id="drawdownFillPerp" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#ef4444" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-            <XAxis dataKey={isIntraday ? 'time' : 'date'} hide />
-            <YAxis
-              tick={{ fill: '#6b7280', fontSize: 10 }}
-              tickFormatter={(v: number) => `${v.toFixed(1)}%`}
-              width={45}
-              domain={['dataMin', 0]}
-            />
-            <Tooltip
-              contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
-              labelStyle={{ color: '#9ca3af' }}
-              formatter={(value: number) => [`${value.toFixed(2)}%`, 'Drawdown']}
-            />
-            <Area
-              type="monotone"
-              dataKey="drawdown"
-              stroke="#ef4444"
-              strokeWidth={1.5}
-              fill="url(#drawdownFillPerp)"
-              dot={false}
-              isAnimationActive={false}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  )
-}
-
-// ==============================================================================
-// DAILY P&L HEATMAP
-// ==============================================================================
-
-function PnlHeatmap({ days }: { days: { date: string; pnl: number | null; trades: number }[] }) {
-  if (!days || days.length < 2) return null
-
-  const maxAbs = Math.max(
-    ...days.filter(d => d.pnl != null).map(d => Math.abs(d.pnl!)),
-    1,
-  )
-
-  function cellColor(pnl: number | null): string {
-    if (pnl == null || pnl === 0) return 'bg-gray-800'
-    const intensity = Math.min(Math.abs(pnl) / maxAbs, 1)
-    if (pnl > 0) {
-      if (intensity > 0.6) return 'bg-green-500'
-      if (intensity > 0.3) return 'bg-green-600'
-      return 'bg-green-800'
-    }
-    if (intensity > 0.6) return 'bg-red-500'
-    if (intensity > 0.3) return 'bg-red-600'
-    return 'bg-red-800'
-  }
-
-  return (
-    <div>
-      <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
-        <Calendar className="w-3 h-3" /> Daily P&L Map
-      </div>
-      <div className="flex gap-[3px] flex-wrap">
-        {days.map((d, i) => (
-          <div
-            key={i}
-            title={`${d.date}: ${d.pnl != null ? fmtUsd(d.pnl) : 'No trades'}${d.trades ? ` (${d.trades} trade${d.trades > 1 ? 's' : ''})` : ''}`}
-            className={`w-3.5 h-3.5 rounded-sm ${cellColor(d.pnl)} cursor-default transition-colors hover:ring-1 hover:ring-white/30`}
-          />
-        ))}
-      </div>
-      <div className="flex items-center gap-3 mt-2 text-[10px] text-gray-500">
-        <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-sm bg-gray-800" /> No trades</div>
-        <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-sm bg-red-800" /> Loss</div>
-        <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-sm bg-red-500" /> Big loss</div>
-        <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-sm bg-green-800" /> Win</div>
-        <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-sm bg-green-500" /> Big win</div>
-      </div>
-    </div>
   )
 }

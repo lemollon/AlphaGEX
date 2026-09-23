@@ -1,17 +1,12 @@
-'use client'
+import { redirect } from 'next/navigation'
 
-import dynamic from 'next/dynamic'
-import { Suspense } from 'react'
-
-const AgapePerpsContent = dynamic(() => import('./AgapePerpsContent'), {
-  ssr: false,
-  loading: () => <div className="min-h-screen bg-[#0a0e1a]" />,
-})
-
-export default function AgapePerpsPage() {
-  return (
-    <Suspense fallback={<div className="min-h-screen bg-[#0a0e1a]" />}>
-      <AgapePerpsContent />
-    </Suspense>
-  )
+// Consolidated into /perpetuals-crypto (coin view). Preserve ?coin= so
+// bookmarked/linked per-coin URLs still land on the right bot.
+export default function Page({
+  searchParams,
+}: {
+  searchParams: { [key: string]: string | string[] | undefined }
+}) {
+  const coin = typeof searchParams?.coin === 'string' ? searchParams.coin : undefined
+  redirect(coin ? `/perpetuals-crypto?coin=${coin}` : '/perpetuals-crypto')
 }

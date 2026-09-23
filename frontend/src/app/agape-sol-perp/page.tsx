@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 
-// Consolidated into /agape-perps
+// Consolidated into /perpetuals-crypto
 export default function Page() {
-  redirect('/agape-perps?coin=sol')
+  redirect('/perpetuals-crypto?coin=sol')
 }
