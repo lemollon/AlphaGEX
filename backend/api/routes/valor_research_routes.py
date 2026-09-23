@@ -221,3 +221,152 @@ async def databento_run_year(ticker: str, year: int):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _ensure_research_tables(conn):
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS valor_three_year_research_runs (
+            run_id TEXT PRIMARY KEY,
+            started_at TIMESTAMPTZ DEFAULT NOW(),
+            finished_at TIMESTAMPTZ,
+            status TEXT NOT NULL,
+            estimated_cost_usd NUMERIC,
+            detail TEXT
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS valor_three_year_research_results (
+            run_id TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            year INTEGER NOT NULL,
+            bars INTEGER,
+            first_bar TIMESTAMPTZ,
+            last_bar TIMESTAMPTZ,
+            cost_model_points NUMERIC,
+            rule TEXT NOT NULL,
+            horizon_min INTEGER NOT NULL,
+            session TEXT NOT NULL,
+            trades INTEGER,
+            net_dollars NUMERIC,
+            avg_trade NUMERIC,
+            win_rate NUMERIC,
+            profit_factor NUMERIC,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (run_id, ticker, year, rule, horizon_min, session)
+        )
+    """)
+    conn.commit()
+
+
+def _autorun_three_year_research():
+    """Estimate cost, then run 2023-2025 if estimated total fits free-credit ceiling."""
+    import uuid
+    from database_adapter import get_connection
+
+    run_id = "valor3y-" + uuid.uuid4().hex[:12]
+    conn = get_connection()
+    try:
+        _ensure_research_tables(conn)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO valor_three_year_research_runs(run_id,status,detail) VALUES (%s,%s,%s)",
+            (run_id, "estimating_cost", "Databento 2023-2025 six-contract research"),
+        )
+        conn.commit()
+
+        client = _client()
+        total = 0.0
+        pieces = []
+        for ticker, cfg in PRODUCTS.items():
+            cost = float(client.metadata.get_cost(
+                dataset="GLBX.MDP3",
+                schema="ohlcv-1m",
+                symbols=str(cfg["symbol"]),
+                stype_in="continuous",
+                start="2023-01-01",
+                end="2026-01-01",
+            ))
+            pieces.append((ticker, cost))
+            total += cost
+
+        cur.execute(
+            "UPDATE valor_three_year_research_runs SET estimated_cost_usd=%s, status=%s, detail=%s WHERE run_id=%s",
+            (total, "cost_estimated", str(pieces), run_id),
+        )
+        conn.commit()
+
+        ceiling = float(os.getenv("VALOR_RESEARCH_MAX_COST_USD", "125"))
+        if total > ceiling:
+            cur.execute(
+                "UPDATE valor_three_year_research_runs SET finished_at=NOW(), status=%s, detail=%s WHERE run_id=%s",
+                ("stopped_cost_limit", f"Estimated \${total:.2f} exceeds ceiling \${ceiling:.2f}", run_id),
+            )
+            conn.commit()
+            return
+
+        cur.execute(
+            "UPDATE valor_three_year_research_runs SET status=%s, detail=%s WHERE run_id=%s",
+            ("running", f"Estimated \${total:.2f}; running all 18 ticker-year jobs", run_id),
+        )
+        conn.commit()
+
+        for ticker in PRODUCTS:
+            for year in (2023, 2024, 2025):
+                payload = _run_year(ticker, year)
+                for row in payload["results"]:
+                    cur.execute(
+                        """
+                        INSERT INTO valor_three_year_research_results
+                        (run_id,ticker,year,bars,first_bar,last_bar,cost_model_points,
+                         rule,horizon_min,session,trades,net_dollars,avg_trade,win_rate,profit_factor)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (run_id,ticker,year,rule,horizon_min,session)
+                        DO UPDATE SET
+                          bars=EXCLUDED.bars,
+                          first_bar=EXCLUDED.first_bar,
+                          last_bar=EXCLUDED.last_bar,
+                          cost_model_points=EXCLUDED.cost_model_points,
+                          trades=EXCLUDED.trades,
+                          net_dollars=EXCLUDED.net_dollars,
+                          avg_trade=EXCLUDED.avg_trade,
+                          win_rate=EXCLUDED.win_rate,
+                          profit_factor=EXCLUDED.profit_factor
+                        """,
+                        (
+                            run_id, ticker, year, payload["bars"], payload["first_bar"], payload["last_bar"],
+                            payload["cost_model_points"], row["rule"], row["horizon_min"], row["session"],
+                            row["trades"], row["net_dollars"], row["avg_trade"], row["win_rate"], row["profit_factor"],
+                        ),
+                    )
+                conn.commit()
+
+        cur.execute(
+            "UPDATE valor_three_year_research_runs SET finished_at=NOW(), status=%s, detail=%s WHERE run_id=%s",
+            ("completed", "All six contracts x 2023-2025 completed", run_id),
+        )
+        conn.commit()
+    except Exception as exc:
+        try:
+            _ensure_research_tables(conn)
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE valor_three_year_research_runs SET finished_at=NOW(), status=%s, detail=%s WHERE run_id=%s",
+                ("failed", repr(exc), run_id),
+            )
+            conn.commit()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
+def launch_autorun_if_enabled():
+    """Start the research in a daemon thread; safe for API startup."""
+    if os.getenv("VALOR_RESEARCH_AUTORUN", "").strip().lower() not in {"1","true","yes","on"}:
+        return False
+    import threading
+    t = threading.Thread(target=_autorun_three_year_research, name="valor-3y-research", daemon=True)
+    t.start()
+    return True
