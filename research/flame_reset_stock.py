@@ -39,6 +39,37 @@ def stock_rows(rows, day):
     return out
 
 core.stock_rows=stock_rows
+# Provider floats can arrive as 0.6900000000000001. Only normalize a tail
+# within 1e-10 dollars of the exact four-decimal grid; never round a real tick.
+_precision_repairs = 0
+_original_units = core.units
+
+def wire_units(value):
+    global _precision_repairs
+    try:
+        return _original_units(value)
+    except core.DataError:
+        try: raw = Decimal(str(value)) * core.U
+        except InvalidOperation as exc: raise core.DataError('invalid_source_price') from exc
+        nearest = raw.to_integral_value()
+        if not raw.is_finite() or abs(raw-nearest) > Decimal('0.000001'):
+            raise core.DataError('unsupported_source_precision')
+        _precision_repairs += 1
+        if _precision_repairs <= 8:
+            core.emit('wire_tail_normalized', original=str(value), exact_units=int(nearest),
+                      max_tolerance_dollars='0.0000000001')
+        return int(nearest)
+
+core.units = wire_units
+_original_replay = core.replay
+
+def identified_replay(data, strike, width, slippage):
+    result = _original_replay(data, strike, width, slippage)
+    result.setdefault('width', width)
+    result.setdefault('short_units', strike)
+    return result
+
+core.replay = identified_replay
 # Exact source decimals are serialized as strings, never rounded to floats.
 _original_dumps = json.dumps
 
