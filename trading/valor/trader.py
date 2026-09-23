@@ -484,7 +484,7 @@ class ValorTrader:
             # GATE 4: GEX Data (per-ticker proxy ETF + GEX source)
             # ============================================================
             gex_symbol = ticker_cfg.get("gex_symbol", "SPY") if ticker_cfg else "SPY"
-            gex_data = get_gex_data_for_valor(symbol=gex_symbol, ticker=ticker)
+            gex_data = get_gex_data_for_valor(symbol=gex_symbol, ticker=ticker, futures_price=current_price)
             scan_context["gex_data"] = gex_data
             gex_source = gex_data.get('data_source', 'unknown')
             gex_flip = gex_data.get('flip_point', 0)
@@ -514,6 +514,11 @@ class ValorTrader:
 
             if ticker in self.config.quarantined_tickers:
                 scan_result['status'] = 'quarantined'
+                # Still record price + GEX levels so the dashboard can chart
+                # the instrument; only new entries are blocked.
+                self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
+                                       skip_reason=f"{ticker} quarantined: entries disabled",
+                                       ticker=ticker)
                 return scan_result
 
             # 2. Check for new signals (if room for more positions for this ticker)
