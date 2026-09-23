@@ -62,7 +62,7 @@ class AgapeXrpPerpConfig:
 
     # Risk management
     starting_capital: float = 9000.0    # $9K starting capital
-    risk_per_trade_pct: float = 5.0     # 5% risk per trade ($450 on $9K)
+    risk_per_trade_pct: float = 1.0     # 5% risk per trade ($450 on $9K)
     default_quantity: float = 100.0     # 100 XRP per trade
     min_quantity: float = 1.0           # Minimum 1 XRP
     max_quantity: float = 50000.0       # Maximum 50,000 XRP
@@ -86,7 +86,7 @@ class AgapeXrpPerpConfig:
     no_loss_profit_target_pct: float = 0.0
 
     # Stop-and-Reverse (SAR) Strategy
-    use_sar: bool = True
+    use_sar: bool = False
     sar_trigger_pct: float = 1.5
     sar_mfe_threshold_pct: float = 0.3
 
@@ -104,7 +104,9 @@ class AgapeXrpPerpConfig:
     force_exit: str = ""
 
     # Signal thresholds - AGGRESSIVE
-    min_confidence: str = "LOW"
+    min_confidence: str = "MEDIUM"
+    allow_range_bound_entries: bool = False
+    allow_wait_fallback_entries: bool = False
     min_funding_rate_signal: float = 0.001
     min_ls_ratio_extreme: float = 1.1
     min_liquidation_proximity_pct: float = 5.0
@@ -129,7 +131,7 @@ class AgapeXrpPerpConfig:
     def load_from_db(cls, db) -> "AgapeXrpPerpConfig":
         """Load config from database, falling back to defaults."""
         config = cls()
-        code_controlled_keys = {"cooldown_minutes", "max_open_positions"}
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries"}
         try:
             db_config = db.load_config()
             if db_config:

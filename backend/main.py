@@ -7,6 +7,7 @@ import os
 import sys
 import asyncio
 import requests
+import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -197,6 +198,35 @@ try:
     print("✅ Backend: Unified Data Provider (Tradier) integrated")
 except ImportError as e:
     print(f"⚠️ Backend: Unified Data Provider not available: {e}")
+
+def _maybe_reset_perp_paper_accounts():
+    """Run the explicitly requested one-shot perpetual paper reset.
+
+    Guarded by an exact environment confirmation token. The underlying reset
+    script is whitelist-scoped to the seven AGAPE perpetual paper bots only.
+    """
+    if os.getenv("PERP_RESET_ON_START", "") != "CONFIRM_PERP_PAPER_RESET":
+        return
+    repo_root = Path(__file__).resolve().parent.parent
+    script = repo_root / "scripts" / "reset_perpetual_bots.py"
+    print("PERP_RESET_ON_START confirmed: resetting ONLY perpetual paper bot data")
+    for args in (["--reset", "--confirm"], ["--verify"]):
+        proc = subprocess.run(
+            [sys.executable, str(script), *args],
+            cwd=str(repo_root),
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        if proc.stdout:
+            print(proc.stdout)
+        if proc.stderr:
+            print(proc.stderr)
+    print("PERP paper reset and verification completed successfully")
+
+
+_maybe_reset_perp_paper_accounts()
+
 
 # Initialize database schema on startup (if available)
 if init_database:

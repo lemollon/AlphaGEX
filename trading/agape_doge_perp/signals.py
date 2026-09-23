@@ -281,8 +281,12 @@ class AgapeDogePerpSignalGenerator:
                 return (SignalAction.WAIT, None, f"DIRECTION_TRACKER_{reason}")
             return (SignalAction.SHORT, "short", self._build_reasoning("SHORT", market_data))
         elif combined_signal == "RANGE_BOUND":
+            if not getattr(self.config, "allow_range_bound_entries", False):
+                return (SignalAction.WAIT, None, "RANGE_BOUND_DISABLED")
             return self._derive_range_bound_direction(market_data, tracker)
         elif combined_signal == "WAIT":
+            if not getattr(self.config, "allow_wait_fallback_entries", False):
+                return (SignalAction.WAIT, None, "WAIT_FALLBACK_DISABLED")
             return self._derive_fallback_direction(market_data, tracker)
         return (SignalAction.WAIT, None, f"NO_SIGNAL_{combined_signal}")
 

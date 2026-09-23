@@ -68,7 +68,7 @@ class AgapeBtcPerpConfig:
 
     # Risk management
     starting_capital: float = 25000.0
-    risk_per_trade_pct: float = 5.0
+    risk_per_trade_pct: float = 1.0
     max_open_positions: int = 3
 
     # Position sizing - BTC-PERP quantity-based (float BTC, not integer contracts)
@@ -92,7 +92,7 @@ class AgapeBtcPerpConfig:
     no_loss_profit_target_pct: float = 0.0
 
     # Stop-and-Reverse (SAR) Strategy
-    use_sar: bool = True
+    use_sar: bool = False
     sar_trigger_pct: float = 1.5
     sar_mfe_threshold_pct: float = 0.3
 
@@ -110,7 +110,9 @@ class AgapeBtcPerpConfig:
     force_exit: str = ""
 
     # Signal thresholds - AGGRESSIVE
-    min_confidence: str = "LOW"
+    min_confidence: str = "MEDIUM"
+    allow_range_bound_entries: bool = False
+    allow_wait_fallback_entries: bool = False
     min_funding_rate_signal: float = 0.001
     min_ls_ratio_extreme: float = 1.1
     min_liquidation_proximity_pct: float = 5.0
@@ -135,7 +137,7 @@ class AgapeBtcPerpConfig:
     def load_from_db(cls, db) -> "AgapeBtcPerpConfig":
         """Load config from database, falling back to defaults."""
         config = cls()
-        code_controlled_keys = {"cooldown_minutes", "max_open_positions"}
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries"}
         try:
             db_config = db.load_config()
             if db_config:
