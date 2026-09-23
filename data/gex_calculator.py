@@ -618,8 +618,40 @@ class TradierGEXCalculator:
             if spot_price <= 0:
                 return {'error': f'Invalid spot price for {symbol}'}
 
-            # Get options chain with Greeks
-            chain = tradier.get_option_chain(symbol, greeks=True)
+            # Resolve an EXPLICIT expiration date before fetching the chain.
+            # Previously this called get_option_chain(symbol, greeks=True)
+            # with no expiration, relying on Tradier's own "nearest" default
+            # and on chain.chains only ever containing that one expiration.
+            # That default is not guaranteed to be today's 0DTE date, and a
+            # bad "nearest" resolution silently pulled in gamma from the
+            # wrong expiration (e.g. a far-dated strike with dominant legacy
+            # open interest overwhelming today's actual 0DTE positioning).
+            # Pick today's date if it's a listed expiration (true 0DTE), else
+            # fall back to the earliest expiration >= today, which matches
+            # the old implicit behavior for underlyings without daily options.
+            today_str = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+            resolved_expiration = None
+            is_0dte = False
+            try:
+                expirations = tradier.get_option_expirations(symbol)
+            except Exception as e:
+                logger.warning(f"Could not fetch expirations for {symbol}, falling back to Tradier default: {e}")
+                expirations = []
+
+            if expirations:
+                if today_str in expirations:
+                    resolved_expiration = today_str
+                    is_0dte = True
+                else:
+                    future = sorted(e for e in expirations if e >= today_str)
+                    resolved_expiration = future[0] if future else sorted(expirations)[0]
+
+            # Get options chain with Greeks, scoped to the resolved expiration
+            # when we have one (falls back to Tradier's own default otherwise).
+            if resolved_expiration:
+                chain = tradier.get_option_chain(symbol, expiration=resolved_expiration, greeks=True)
+            else:
+                chain = tradier.get_option_chain(symbol, greeks=True)
             if not chain or not chain.chains:
                 return {'error': f'Could not get options chain for {symbol}'}
 
@@ -656,6 +688,8 @@ class TradierGEXCalculator:
                 'max_pain': result.max_pain,
                 'data_source': 'tradier_calculated',
                 'collection_date': result.timestamp.strftime('%Y-%m-%d'),
+                'expiration_date': resolved_expiration,
+                'is_0dte': is_0dte,
                 'is_calculated': True
             }
 
