@@ -815,6 +815,13 @@ async def get_valor_scan_activity(
             ticker=ticker
         )
 
+        # Frontend GEX chart (call wall / put wall / gamma flip / net GEX lines) expects
+        # `net_gex` — the underlying column is `gex_value`. Alias it here rather than
+        # renaming the column everywhere it's written.
+        for s in scans:
+            if "net_gex" not in s:
+                s["net_gex"] = s.get("gex_value")
+
         # Filter to today only if requested
         if today_only:
             from zoneinfo import ZoneInfo
