@@ -4,7 +4,7 @@ This module never places orders and never writes IronForge customer tables.
 It persists only research runs/trades in AlphaGEX research tables.
 """
 from __future__ import annotations
-import csv, io, json, math, os, threading, uuid
+import csv, io, json, math, os, re, threading, uuid
 from datetime import date, datetime, timedelta
 from statistics import median
 from typing import Any
@@ -40,10 +40,12 @@ def _guard_window(d:date)->dict[str,list[dict[str,str]]]:
     })
     out={t:[] for t in _guard_times}
     for row in rows:
-        raw=str(row.get("timestamp",""))
-        hms=raw.split("T")[-1][:8] if "T" in raw else raw[-8:]
-        if hms in out:
-            out[hms].append(row)
+        raw=" ".join(str(row.get(k,"")) for k in ("timestamp","datetime","date_time","time","bar_time","ms_of_day"))
+        m=re.search(r"(15:5[789]:[0-5][0-9])",raw)
+        if m:
+            hms=m.group(1)
+            if hms in out:
+                out[hms].append(row)
     return out
 
 def _n(v:Any)->float|None:
