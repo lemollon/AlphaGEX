@@ -79,6 +79,9 @@ async def start_active_trading_scheduler():
     if not scheduler.is_running:
         scheduler.start()
 
+    # Optional read-only historical research; never places orders.
+    valor_research_routes.launch_autorun_if_enabled()
+
 
 @app.on_event("shutdown")
 async def stop_active_trading_scheduler():
