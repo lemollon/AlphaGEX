@@ -352,6 +352,7 @@ export default function ValorPage() {
   }, [])
 
   const status = statusData || {}
+  const mnqBreakout = (status as any).mnq_breakout
   const performance = status.performance || {}
   const winTracker = status.win_tracker || {}
   const config = status.config || {}
@@ -431,6 +432,15 @@ export default function ValorPage() {
         .valor-fade{animation:valor-fade 1.4s ease both}.valor-pulse{animation:valor-pulse 1.2s ease-out infinite}
       `}</style>
       <main className={`min-h-screen bg-[#0a0e1a] text-gray-100 pt-16 transition-all duration-300 ${sidebarPadding}`}>
+        {mnqBreakout && (sel === 'MNQ' || tab === 'config') && (
+          <div className="mx-4 mt-4 rounded-lg border border-cyan-800 bg-cyan-950/30 p-4 text-sm">
+            <p className="font-semibold">MNQ: 30-minute breakout - PAPER {mnqBreakout.active ? 'ENABLED' : 'PAUSED'}</p>
+            <p>One contract, one position. Maximum four-hour hold; flat five minutes before the cash close.</p>
+            <p className="text-amber-300">Time-only exit: no protective stop, SAR, or trailing stop. Not approved for real money.</p>
+            {mnqBreakout.forward_performance && <p>Breakout paper record: {mnqBreakout.forward_performance.closed_trades} closed trades | {money(mnqBreakout.forward_performance.net_realized, true)}</p>}
+            <p className="text-gray-400">New trades use MNQ_BREAKOUT_30M. Existing history is preserved; GEX and old strategy statistics are not the record for this strategy.</p>
+          </div>
+        )}
         {/* Ticker tape */}
         <div className="h-10 border-b border-[#1c2233] bg-[#080b14] overflow-hidden flex items-center">
           <div className="valor-tape flex w-max">

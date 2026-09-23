@@ -540,6 +540,7 @@ class SignalSource(Enum):
     GEX_WALL_BOUNCE = "GEX_WALL_BOUNCE"        # Bounce off call/put wall
     OVERNIGHT_N1 = "OVERNIGHT_N1"              # Overnight using n+1 GEX
     SAR_REVERSAL = "SAR_REVERSAL"              # Stop-and-Reverse momentum capture
+    MNQ_BREAKOUT_30M = "MNQ_BREAKOUT_30M"      # Paper-only, time exit; no protective stop
 
 
 @dataclass
@@ -628,8 +629,10 @@ class FuturesPosition:
         return self.status == PositionStatus.OPEN
 
     @property
-    def risk_amount(self) -> float:
-        """Dollar risk from entry to initial stop"""
+    def risk_amount(self) -> Optional[float]:
+        """Dollar stop-defined risk; None means this paper strategy has no stop."""
+        if self.signal_source == SignalSource.MNQ_BREAKOUT_30M:
+            return None
         stop_distance = abs(self.entry_price - self.initial_stop)
         point_value = get_ticker_point_value(self.ticker)
         return stop_distance * self.contracts * point_value
@@ -683,8 +686,10 @@ class FuturesPosition:
             'contracts': self.contracts,
             'entry_price': self.entry_price,
             'entry_value': self.entry_value,
-            'initial_stop': self.initial_stop,
-            'current_stop': self.current_stop,
+            'initial_stop': None if self.signal_source == SignalSource.MNQ_BREAKOUT_30M else self.initial_stop,
+            'current_stop': None if self.signal_source == SignalSource.MNQ_BREAKOUT_30M else self.current_stop,
+            'has_protective_stop': self.signal_source != SignalSource.MNQ_BREAKOUT_30M,
+            'stop_type': self.stop_type,
             'breakeven_price': self.breakeven_price,
             'trailing_active': self.trailing_active,
             # Market context
@@ -1080,13 +1085,17 @@ class FuturesSignal:
         )
 
     @property
-    def risk_points(self) -> float:
-        """Risk in points from entry to stop"""
+    def risk_points(self) -> Optional[float]:
+        """Risk in points from entry to stop; absent for time-only paper trades."""
+        if self.source == SignalSource.MNQ_BREAKOUT_30M:
+            return None
         return abs(self.entry_price - self.stop_price)
 
     @property
-    def risk_dollars(self) -> float:
-        """Risk in dollars"""
+    def risk_dollars(self) -> Optional[float]:
+        """Stop-defined risk, not a claim of zero risk for time-only positions."""
+        if self.risk_points is None:
+            return None
         point_value = get_ticker_point_value(self.ticker)
         return self.risk_points * self.contracts * point_value
 
