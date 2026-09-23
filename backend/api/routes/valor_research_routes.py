@@ -413,3 +413,260 @@ def launch_autorun_if_enabled():
     t = threading.Thread(target=_autorun_three_year_research, name="valor-3y-research", daemon=True)
     t.start()
     return True
+
+
+# ---------------------------------------------------------------------------
+# Contract-specific candidate search (2023-2025 only; 2026 remains untouched)
+# ---------------------------------------------------------------------------
+
+def _rth_minutes(ts: pd.Series, ticker: str) -> pd.Series:
+    local = pd.to_datetime(ts, utc=True).dt.tz_convert("America/Chicago")
+    start, _ = RTH[ticker]
+    return (local.dt.hour * 60 + local.dt.minute) - (start.hour * 60 + start.minute)
+
+
+def _cross_events(raw_side: pd.Series) -> pd.Series:
+    s = raw_side.fillna(0).astype(int)
+    return s.where((s != 0) & (s != s.shift(1).fillna(0)), 0)
+
+
+def _candidate_sides(df: pd.DataFrame, ticker: str) -> Dict[str, pd.Series]:
+    close = df["close"]
+    high = df["high"]
+    low = df["low"]
+    ret15 = close - close.shift(15)
+    ret30 = close - close.shift(30)
+    ret60 = close - close.shift(60)
+
+    tr = pd.concat([
+        high - low,
+        (high - close.shift(1)).abs(),
+        (low - close.shift(1)).abs(),
+    ], axis=1).max(axis=1)
+    atr14 = tr.rolling(14, min_periods=14).mean()
+    atr60 = tr.rolling(60, min_periods=60).mean()
+    atr_ratio = atr14 / atr60.replace(0, np.nan)
+
+    ema20 = close.ewm(span=20, adjust=False).mean()
+    ema80 = close.ewm(span=80, adjust=False).mean()
+    ema200 = close.ewm(span=200, adjust=False).mean()
+
+    hh30 = high.shift(1).rolling(30, min_periods=30).max()
+    ll30 = low.shift(1).rolling(30, min_periods=30).min()
+    hh60 = high.shift(1).rolling(60, min_periods=60).max()
+    ll60 = low.shift(1).rolling(60, min_periods=60).min()
+    hh120 = high.shift(1).rolling(120, min_periods=120).max()
+    ll120 = low.shift(1).rolling(120, min_periods=120).min()
+
+    mom15 = pd.Series(np.sign(ret15), index=df.index).astype(int)
+    mom30 = pd.Series(np.sign(ret30), index=df.index).astype(int)
+    mom60 = pd.Series(np.sign(ret60), index=df.index).astype(int)
+
+    br30 = pd.Series(np.where(close > hh30, 1, np.where(close < ll30, -1, 0)), index=df.index)
+    br60 = pd.Series(np.where(close > hh60, 1, np.where(close < ll60, -1, 0)), index=df.index)
+    br120 = pd.Series(np.where(close > hh120, 1, np.where(close < ll120, -1, 0)), index=df.index)
+
+    trend = pd.Series(np.sign(ema20 - ema80), index=df.index).astype(int)
+    trend_long = pd.Series(np.sign(ema80 - ema200), index=df.index).astype(int)
+
+    # Trend-confirmed breakout families.
+    br30_trend = br30.where(br30 == trend, 0)
+    br60_trend = br60.where(br60 == trend, 0)
+    br120_trend = br120.where(br120 == trend_long, 0)
+
+    # High-volatility and low-volatility specializations.
+    br30_hv = br30.where(atr_ratio >= 1.05, 0)
+    br60_hv = br60.where(atr_ratio >= 1.05, 0)
+    mr15_lv = (-mom15).where(atr_ratio <= 0.95, 0)
+    mr30_lv = (-mom30).where(atr_ratio <= 0.95, 0)
+
+    # RTH opening range, using first 30/60 minutes of each CT session.
+    local = pd.to_datetime(df["timestamp"], utc=True).dt.tz_convert("America/Chicago")
+    session_date = local.dt.date
+    mins = _rth_minutes(df["timestamp"], ticker)
+    rth_mask = df["rth"]
+
+    def opening_range(n: int):
+        seed = rth_mask & (mins >= 0) & (mins < n)
+        or_high = high.where(seed).groupby(session_date).transform("max")
+        or_low = low.where(seed).groupby(session_date).transform("min")
+        active = rth_mask & (mins >= n)
+        breakout = pd.Series(np.where(active & (close > or_high), 1,
+                                      np.where(active & (close < or_low), -1, 0)), index=df.index)
+        reversion = pd.Series(np.where(active & (close > or_high), -1,
+                                       np.where(active & (close < or_low), 1, 0)), index=df.index)
+        return breakout, reversion
+
+    orb30, orm30 = opening_range(30)
+    orb60, orm60 = opening_range(60)
+
+    all_rules = {
+        "momentum_15m": mom15,
+        "momentum_30m": mom30,
+        "momentum_60m": mom60,
+        "mean_reversion_15m": -mom15,
+        "mean_reversion_30m": -mom30,
+        "breakout_30m": br30,
+        "breakout_60m": br60,
+        "breakout_120m": br120,
+        "breakout_30m_trend": br30_trend,
+        "breakout_60m_trend": br60_trend,
+        "breakout_120m_trend": br120_trend,
+        "breakout_30m_highvol": br30_hv,
+        "breakout_60m_highvol": br60_hv,
+        "meanrev_15m_lowvol": mr15_lv,
+        "meanrev_30m_lowvol": mr30_lv,
+        "ema_trend_20_80": trend,
+        "ema_trend_80_200": trend_long,
+        "opening_range_breakout_30": _cross_events(orb30),
+        "opening_range_breakout_60": _cross_events(orb60),
+        "opening_range_revert_30": _cross_events(orm30),
+        "opening_range_revert_60": _cross_events(orm60),
+    }
+
+    # Contract-specific shortlist: deliberately different playbooks.
+    keep = {
+        "MNQ": {
+            "breakout_30m","breakout_60m","breakout_30m_trend","breakout_60m_trend",
+            "breakout_30m_highvol","ema_trend_20_80","opening_range_breakout_30",
+            "opening_range_breakout_60",
+        },
+        "MES": {
+            "mean_reversion_15m","mean_reversion_30m","meanrev_15m_lowvol","meanrev_30m_lowvol",
+            "opening_range_revert_30","opening_range_revert_60",
+            "breakout_60m_trend","opening_range_breakout_30",
+        },
+        "RTY": {
+            "mean_reversion_15m","mean_reversion_30m","meanrev_15m_lowvol","meanrev_30m_lowvol",
+            "opening_range_revert_30","opening_range_revert_60",
+            "breakout_30m_highvol","opening_range_breakout_30",
+        },
+        "MGC": {
+            "mean_reversion_15m","mean_reversion_30m","breakout_60m","breakout_120m",
+            "breakout_60m_trend","breakout_120m_trend","ema_trend_80_200",
+            "opening_range_breakout_60","opening_range_revert_60",
+        },
+        "NG": {
+            "breakout_30m","breakout_60m","breakout_120m","breakout_30m_highvol",
+            "breakout_60m_highvol","breakout_60m_trend","breakout_120m_trend",
+            "momentum_60m","opening_range_breakout_30","opening_range_breakout_60",
+        },
+        "CL": {
+            "breakout_30m","breakout_60m","breakout_120m","breakout_30m_highvol",
+            "breakout_60m_highvol","breakout_60m_trend","ema_trend_20_80",
+            "opening_range_breakout_30","opening_range_breakout_60",
+        },
+    }
+    return {k: v for k, v in all_rules.items() if k in keep[ticker]}
+
+
+def _run_contract_specific_year(ticker: str, year: int) -> dict:
+    t = _validate_ticker(ticker)
+    cfg = PRODUCTS[t]
+    client = _client()
+    data = client.timeseries.get_range(
+        dataset="GLBX.MDP3",
+        schema="ohlcv-1m",
+        symbols=str(cfg["symbol"]),
+        stype_in="continuous",
+        start=f"{year}-01-01",
+        end=f"{year+1}-01-01",
+    )
+    df = data.to_df().reset_index()
+    if df.empty:
+        raise RuntimeError(f"No Databento bars returned for {t} {year}")
+
+    ts_col = "ts_event" if "ts_event" in df.columns else df.columns[0]
+    df["timestamp"] = pd.to_datetime(df[ts_col], utc=True)
+    df = df.sort_values("timestamp").reset_index(drop=True)
+    for col in ("open","high","low","close"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["rth"] = df["timestamp"].map(lambda x: _is_rth(x, t))
+
+    rules = _candidate_sides(df, t)
+    results = []
+    for horizon in (30, 60, 90, 120, 180, 240):
+        future = _future_close(df, horizon)
+        epoch = df["timestamp"].astype("int64") // 1_000_000_000
+        bucket = (epoch // (horizon * 60)).astype("int64")
+        for rule_name, side in rules.items():
+            base = pd.DataFrame({
+                "timestamp": df["timestamp"], "close": df["close"],
+                "future_close": future, "side": side, "rth": df["rth"], "bucket": bucket,
+            })
+            base = base[(base["side"] != 0) & base["future_close"].notna()].copy()
+            for session in ("ALL","RTH","OVERNIGHT"):
+                x = base if session=="ALL" else base[base["rth"].eq(session=="RTH")]
+                x = x.drop_duplicates(subset=["bucket"], keep="first")
+                gross_pts = x["side"] * (x["future_close"] - x["close"])
+                pnl = (gross_pts - float(cfg["cost_pts"])) * float(cfg["point_value"])
+                results.append({
+                    "ticker": t, "year": year, "rule": rule_name, "horizon_min": horizon,
+                    "session": session, **_summarize(pnl),
+                })
+    return {"ticker": t, "year": year, "bars": len(df), "results": results}
+
+
+def _ensure_candidate_table(conn):
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS valor_contract_strategy_results (
+            research_id TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            year INTEGER NOT NULL,
+            rule TEXT NOT NULL,
+            horizon_min INTEGER NOT NULL,
+            session TEXT NOT NULL,
+            trades INTEGER,
+            net_dollars NUMERIC,
+            avg_trade NUMERIC,
+            win_rate NUMERIC,
+            profit_factor NUMERIC,
+            bars INTEGER,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY(research_id,ticker,year,rule,horizon_min,session)
+        )
+    """)
+    conn.commit()
+
+
+def _autorun_contract_strategy_search():
+    from database_adapter import get_connection
+    research_id = "valor-contract-v1"
+    conn = get_connection()
+    try:
+        _ensure_candidate_table(conn)
+        cur = conn.cursor()
+        for ticker in PRODUCTS:
+            for year in (2023,2024,2025):
+                cur.execute("""
+                    SELECT COUNT(*) FROM valor_contract_strategy_results
+                    WHERE research_id=%s AND ticker=%s AND year=%s
+                """, (research_id,ticker,year))
+                if int(cur.fetchone()[0] or 0) > 0:
+                    continue
+                payload = _run_contract_specific_year(ticker, year)
+                for row in payload["results"]:
+                    cur.execute("""
+                        INSERT INTO valor_contract_strategy_results
+                        (research_id,ticker,year,rule,horizon_min,session,trades,net_dollars,
+                         avg_trade,win_rate,profit_factor,bars)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT DO NOTHING
+                    """, (
+                        research_id,ticker,year,row["rule"],row["horizon_min"],row["session"],
+                        row["trades"],row["net_dollars"],row["avg_trade"],row["win_rate"],
+                        row["profit_factor"],payload["bars"],
+                    ))
+                conn.commit()
+    finally:
+        conn.close()
+
+
+def launch_contract_search_if_enabled():
+    if os.getenv("VALOR_CONTRACT_RESEARCH_AUTORUN", "").strip().lower() not in {"1","true","yes","on"}:
+        return False
+    import threading
+    t = threading.Thread(target=_autorun_contract_strategy_search, name="valor-contract-research", daemon=True)
+    t.start()
+    return True
