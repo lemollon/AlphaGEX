@@ -48,3 +48,24 @@ jobs:
           path: artifacts/perp_external_backtest_${{ matrix.days }}d/
           if-no-files-found: error
           retention-days: 30
+
+
+  strategy-family-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Search per-coin strategy families
+        run: |
+          python -m backtest.perp_strategy_family_search             --windows "30,90,180"             --out artifacts/perp_strategy_family_search
+      - name: Show family report
+        run: cat artifacts/perp_strategy_family_search/report.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perp-strategy-family-search
+          path: artifacts/perp_strategy_family_search/
+          if-no-files-found: error
+          retention-days: 30
