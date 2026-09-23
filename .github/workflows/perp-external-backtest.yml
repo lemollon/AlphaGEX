@@ -1,0 +1,47 @@
+name: Perp External Backtest
+
+on:
+  push:
+    branches:
+      - feature/perp-edge-hardening
+    paths:
+      - backtest/external_perp_reconstruction.py
+      - .github/workflows/perp-external-backtest.yml
+  workflow_dispatch:
+    inputs:
+      days:
+        description: Backtest window in days
+        required: false
+        default: "180"
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Hyperliquid reconstruction backtest
+        env:
+          DAYS: ${{ github.event.inputs.days || '180' }}
+        run: |
+          python backtest/external_perp_reconstruction.py \
+            --days "$DAYS" \
+            --out artifacts/perp_external_backtest
+
+      - name: Show report
+        run: cat artifacts/perp_external_backtest/report.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perp-external-backtest
+          path: artifacts/perp_external_backtest/
+          if-no-files-found: error
+          retention-days: 30
