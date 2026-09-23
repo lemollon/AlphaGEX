@@ -16,6 +16,7 @@ Endpoints:
 - /signals/recent - Recent signals (scan activity)
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Optional
@@ -105,7 +106,7 @@ async def get_valor_ticker_stats():
     """
     try:
         trader = _get_trader()
-        stats = trader.get_ticker_stats()
+        stats = await asyncio.to_thread(trader.get_ticker_stats)
         # Enrich with per-ticker starting capital from FUTURES_TICKERS config
         for ticker_sym, ticker_data in stats.items():
             cfg = (FUTURES_TICKERS or {}).get(ticker_sym, {})
@@ -137,7 +138,7 @@ async def get_valor_status(
     """
     try:
         trader = _get_trader()
-        return trader.get_status(ticker=ticker)
+        return await asyncio.to_thread(trader.get_status, ticker=ticker)
     except HTTPException:
         raise
     except Exception as e:
@@ -165,7 +166,7 @@ async def get_valor_positions(
     try:
         trader = _get_trader()
         from trading.valor.models import get_ticker_point_value
-        status = trader.get_status(ticker=ticker)
+        status = await asyncio.to_thread(trader.get_status, ticker=ticker)
         positions = status.get("positions", {}).get("positions", [])
 
         # Enrich each position with current_price and unrealized_pnl
@@ -178,7 +179,7 @@ async def get_valor_positions(
             # Get current price (cached per ticker)
             if pos_ticker not in price_cache:
                 try:
-                    quote = trader.executor.get_mes_quote(ticker=pos_ticker)
+                    quote = await asyncio.to_thread(trader.executor.get_mes_quote, ticker=pos_ticker)
                     price_cache[pos_ticker] = quote.get("price") or quote.get("last") if quote else None
                 except Exception:
                     price_cache[pos_ticker] = None
@@ -223,7 +224,7 @@ async def get_valor_closed_trades(
     """
     try:
         trader = _get_trader()
-        trades = trader.get_closed_trades(limit=limit, ticker=ticker)
+        trades = await asyncio.to_thread(trader.get_closed_trades, limit=limit, ticker=ticker)
 
         # Filter to today only if requested
         if today_only:
@@ -284,7 +285,7 @@ async def get_valor_equity_curve(
     """
     try:
         trader = _get_trader()
-        curve = trader.get_equity_curve(days=days, ticker=ticker)
+        curve = await asyncio.to_thread(trader.get_equity_curve, days=days, ticker=ticker)
         return {
             "equity_curve": curve,
             "points": len(curve),
@@ -307,7 +308,7 @@ async def get_valor_intraday_equity(
     """
     try:
         trader = _get_trader()
-        curve = trader.get_intraday_equity(ticker=ticker)
+        curve = await asyncio.to_thread(trader.get_intraday_equity, ticker=ticker)
         return {
             "equity_curve": curve,
             "points": len(curve),
@@ -338,7 +339,7 @@ async def get_valor_performance(
     """
     try:
         trader = _get_trader()
-        status = trader.get_status(ticker=ticker)
+        status = await asyncio.to_thread(trader.get_status, ticker=ticker)
         return {
             "performance": status.get("performance", {}),
             "win_tracker": status.get("win_tracker", {}),
@@ -365,7 +366,7 @@ async def get_valor_logs(
     """
     try:
         trader = _get_trader()
-        logs = trader.get_logs(limit=limit)
+        logs = await asyncio.to_thread(trader.get_logs, limit=limit)
         return {
             "logs": logs,
             "count": len(logs),
@@ -392,7 +393,7 @@ async def get_valor_recent_signals(
     """
     try:
         trader = _get_trader()
-        signals = trader.get_recent_signals(limit=limit, ticker=ticker)
+        signals = await asyncio.to_thread(trader.get_recent_signals, limit=limit, ticker=ticker)
         return {
             "signals": signals,
             "count": len(signals),
@@ -423,7 +424,7 @@ async def trigger_valor_scan():
                 detail="VALOR module not available"
             )
 
-        result = run_valor_scan()
+        result = await asyncio.to_thread(run_valor_scan)
         return {
             "success": True,
             "scan_result": result,
@@ -447,7 +448,7 @@ async def get_valor_config():
     """
     try:
         trader = _get_trader()
-        status = trader.get_status()
+        status = await asyncio.to_thread(trader.get_status)
         return {
             "config": status.get("config", {}),
             "symbol": status.get("symbol"),
@@ -474,7 +475,7 @@ async def get_valor_win_tracker():
     """
     try:
         trader = _get_trader()
-        status = trader.get_status()
+        status = await asyncio.to_thread(trader.get_status)
         return {
             "win_tracker": status.get("win_tracker", {}),
             "timestamp": datetime.now().isoformat()
@@ -498,7 +499,7 @@ async def reset_valor_win_tracker():
     """
     try:
         trader = _get_trader()
-        fresh_tracker = trader.db.reset_win_tracker()
+        fresh_tracker = await asyncio.to_thread(trader.db.reset_win_tracker)
         # Update in-memory tracker so it takes effect immediately
         trader.win_tracker = fresh_tracker
         trader.signal_generator.win_tracker = fresh_tracker
@@ -559,7 +560,7 @@ async def get_valor_paper_account():
     """
     try:
         trader = _get_trader()
-        paper_account = trader.get_paper_account()
+        paper_account = await asyncio.to_thread(trader.get_paper_account)
 
         if not paper_account:
             return {
@@ -592,10 +593,10 @@ async def initialize_valor_paper_account(
     """
     try:
         trader = _get_trader()
-        success = trader.db.initialize_paper_account(starting_capital)
+        success = await asyncio.to_thread(trader.db.initialize_paper_account, starting_capital)
 
         if success:
-            paper_account = trader.get_paper_account()
+            paper_account = await asyncio.to_thread(trader.get_paper_account)
             return {
                 "success": True,
                 "message": f"Paper trading account initialized with ${starting_capital:,.2f}",
@@ -673,7 +674,7 @@ async def check_valor_data_integrity():
     """
     try:
         trader = _get_trader()
-        result = trader.db.verify_data_integrity()
+        result = await asyncio.to_thread(trader.db.verify_data_integrity)
 
         return {
             "is_consistent": result.get("is_consistent", False),
@@ -703,7 +704,7 @@ async def get_valor_diagnostics_raw():
         trader = _get_trader()
 
         # Get raw counts from each table
-        diagnostics = trader.db.get_diagnostics()
+        diagnostics = await asyncio.to_thread(trader.db.get_diagnostics)
 
         return {
             "timestamp": datetime.now().isoformat(),
@@ -769,7 +770,7 @@ async def cleanup_orphaned_positions():
     """
     try:
         trader = _get_trader()
-        result = trader.db.cleanup_orphaned_positions()
+        result = await asyncio.to_thread(trader.db.cleanup_orphaned_positions)
         return {
             "success": True,
             "cleanup_result": result,
@@ -808,7 +809,8 @@ async def get_valor_scan_activity(
     """
     try:
         trader = _get_trader()
-        scans = trader.db.get_scan_activity(
+        scans = await asyncio.to_thread(
+            trader.db.get_scan_activity,
             limit=limit,
             outcome=outcome,
             gamma_regime=gamma_regime,
@@ -893,7 +895,7 @@ async def get_valor_ml_training_data():
     """
     try:
         trader = _get_trader()
-        training_data = trader.db.get_ml_training_data()
+        training_data = await asyncio.to_thread(trader.db.get_ml_training_data)
 
         # Separate wins and losses for balance check
         wins = [t for t in training_data if t.get('trade_outcome') == 'WIN']
@@ -936,7 +938,7 @@ async def get_valor_ml_training_data_stats():
     try:
         from trading.valor.ml import get_training_data_stats
 
-        stats = get_training_data_stats()
+        stats = await asyncio.to_thread(get_training_data_stats)
 
         if 'error' in stats:
             raise HTTPException(status_code=500, detail=stats['error'])
@@ -1000,13 +1002,13 @@ async def train_valor_ml_model(
             }
 
         # Get current data count first (using new params filter)
-        training_df = advisor.get_training_data(use_new_params_only=use_new_params_only)
+        training_df = await asyncio.to_thread(advisor.get_training_data, use_new_params_only=use_new_params_only)
         if training_df is None or len(training_df) < min_samples:
             sample_count = len(training_df) if training_df is not None else 0
 
             # Get stats about old vs new data for helpful error message
             from trading.valor.ml import get_training_data_stats
-            stats = get_training_data_stats()
+            stats = await asyncio.to_thread(get_training_data_stats)
 
             return {
                 "success": False,
@@ -1023,7 +1025,7 @@ async def train_valor_ml_model(
             }
 
         # Train the model (with new params filter)
-        metrics = advisor.train(min_samples=min_samples, use_new_params_only=use_new_params_only)
+        metrics = await asyncio.to_thread(advisor.train, min_samples=min_samples, use_new_params_only=use_new_params_only)
 
         if not metrics:
             return {
@@ -1171,7 +1173,7 @@ async def get_valor_ml_status():
         status = advisor.get_status()
 
         # Also get training data availability
-        training_df = advisor.get_training_data()
+        training_df = await asyncio.to_thread(advisor.get_training_data)
         samples_available = len(training_df) if training_df is not None else 0
 
         return {
@@ -1272,12 +1274,12 @@ async def approve_valor_ml_model():
             }
 
         # Approve the model
-        success = approve_ml_model()
+        success = await asyncio.to_thread(approve_ml_model)
 
         return {
             "success": success,
             "message": "ML model approved and now active for win probability predictions" if success else "Failed to approve ML model",
-            "ml_approved": is_ml_approved(),
+            "ml_approved": await asyncio.to_thread(is_ml_approved),
             "model_version": advisor.model_version,
             "accuracy": advisor.training_metrics.accuracy if advisor.training_metrics else None,
             "timestamp": datetime.now().isoformat()
@@ -1303,12 +1305,12 @@ async def revoke_valor_ml_approval():
     try:
         from trading.valor.signals import revoke_ml_approval, is_ml_approved
 
-        success = revoke_ml_approval()
+        success = await asyncio.to_thread(revoke_ml_approval)
 
         return {
             "success": success,
             "message": "ML model revoked - using Bayesian probability estimation" if success else "Failed to revoke ML approval",
-            "ml_approved": is_ml_approved(),
+            "ml_approved": await asyncio.to_thread(is_ml_approved),
             "timestamp": datetime.now().isoformat()
         }
 
@@ -1337,13 +1339,13 @@ async def reject_valor_ml_model():
         from trading.valor.signals import reject_ml_model, is_ml_approved
         from trading.valor.ml import get_valor_ml_advisor
 
-        success = reject_ml_model()
+        success = await asyncio.to_thread(reject_ml_model)
         advisor = get_valor_ml_advisor()
 
         return {
             "success": success,
             "message": "ML model rejected and cleared - using Bayesian probability estimation" if success else "Failed to reject ML model",
-            "ml_approved": is_ml_approved(),
+            "ml_approved": await asyncio.to_thread(is_ml_approved),
             "model_trained": advisor.is_trained if advisor else False,
             "probability_source": "BAYESIAN",
             "timestamp": datetime.now().isoformat()
@@ -1371,7 +1373,7 @@ async def get_valor_ml_approval_status():
         from trading.valor.ml import get_valor_ml_advisor
 
         advisor = get_valor_ml_advisor()
-        ml_approved = is_ml_approved()
+        ml_approved = await asyncio.to_thread(is_ml_approved)
 
         return {
             "ml_approved": ml_approved,
@@ -1420,8 +1422,8 @@ async def get_valor_ml_shadow_status():
 
         advisor = get_valor_ml_advisor()
         status = advisor.get_status()
-        comparison = advisor.get_shadow_comparison()
-        ml_approved = is_ml_approved()
+        comparison = await asyncio.to_thread(advisor.get_shadow_comparison)
+        ml_approved = await asyncio.to_thread(is_ml_approved)
 
         if ml_approved and advisor.is_trained:
             phase = "PROMOTED"
@@ -1473,7 +1475,7 @@ async def get_valor_shadow_comparison():
         from trading.valor.ml import get_valor_ml_advisor
 
         advisor = get_valor_ml_advisor()
-        comparison = advisor.get_shadow_comparison()
+        comparison = await asyncio.to_thread(advisor.get_shadow_comparison)
 
         return {
             "success": True,
@@ -1504,8 +1506,12 @@ async def get_valor_shadow_predictions(
     """Get recent ML shadow predictions with outcomes."""
     try:
         from trading.valor.db import ValorDatabase
-        db = ValorDatabase()
-        predictions = db.get_recent_shadow_predictions(limit=limit)
+
+        def _fetch_shadow_predictions():
+            db = ValorDatabase()
+            return db.get_recent_shadow_predictions(limit=limit)
+
+        predictions = await asyncio.to_thread(_fetch_shadow_predictions)
 
         return {
             "success": True,
@@ -1537,7 +1543,7 @@ async def promote_valor_ml():
         if not advisor.is_trained:
             return {"success": False, "message": "ML model not trained yet"}
 
-        comparison = advisor.get_shadow_comparison()
+        comparison = await asyncio.to_thread(advisor.get_shadow_comparison)
         if not comparison.is_eligible:
             return {
                 "success": False,
@@ -1545,7 +1551,7 @@ async def promote_valor_ml():
                 "blockers": comparison.promotion_blockers,
             }
 
-        approve_ml_model()
+        await asyncio.to_thread(approve_ml_model)
 
         return {
             "success": True,
@@ -1580,11 +1586,11 @@ async def enable_valor_ab_test():
     try:
         from trading.valor.signals import enable_ab_test, is_ab_test_enabled
 
-        success = enable_ab_test()
+        success = await asyncio.to_thread(enable_ab_test)
 
         return {
             "success": success,
-            "ab_test_enabled": is_ab_test_enabled(),
+            "ab_test_enabled": await asyncio.to_thread(is_ab_test_enabled),
             "message": "A/B test enabled - 50% fixed / 50% dynamic stops" if success else "Failed to enable A/B test",
             "timestamp": datetime.now().isoformat()
         }
@@ -1608,11 +1614,11 @@ async def disable_valor_ab_test():
     try:
         from trading.valor.signals import disable_ab_test, is_ab_test_enabled
 
-        success = disable_ab_test()
+        success = await asyncio.to_thread(disable_ab_test)
 
         return {
             "success": success,
-            "ab_test_enabled": is_ab_test_enabled(),
+            "ab_test_enabled": await asyncio.to_thread(is_ab_test_enabled),
             "message": "A/B test disabled - all trades use FIXED stops (2.5 pts / $12.50 max loss)" if success else "Failed to disable A/B test",
             "timestamp": datetime.now().isoformat()
         }
@@ -1635,7 +1641,7 @@ async def get_valor_ab_test_status():
         from trading.valor.signals import is_ab_test_enabled
 
         return {
-            "ab_test_enabled": is_ab_test_enabled(),
+            "ab_test_enabled": await asyncio.to_thread(is_ab_test_enabled),
             "description": "When enabled, 50% trades use FIXED stops, 50% use DYNAMIC stops",
             "timestamp": datetime.now().isoformat()
         }
@@ -1663,12 +1669,12 @@ async def get_valor_ab_test_results():
     """
     try:
         trader = _get_trader()
-        results = trader.db.get_ab_test_results()
+        results = await asyncio.to_thread(trader.db.get_ab_test_results)
 
         from trading.valor.signals import is_ab_test_enabled
 
         return {
-            "ab_test_enabled": is_ab_test_enabled(),
+            "ab_test_enabled": await asyncio.to_thread(is_ab_test_enabled),
             "results": results,
             "timestamp": datetime.now().isoformat()
         }
@@ -1697,11 +1703,11 @@ async def get_valor_paper_equity_curve(
     """
     try:
         trader = _get_trader()
-        curve = trader.db.get_paper_equity_curve(days=days)
+        curve = await asyncio.to_thread(trader.db.get_paper_equity_curve, days=days)
 
         # If no trades yet, return starting point
         if not curve:
-            paper_account = trader.get_paper_account()
+            paper_account = await asyncio.to_thread(trader.get_paper_account)
             starting_capital = paper_account.get('starting_capital', 100000.0) if paper_account else 100000.0
             curve = [{
                 'date': datetime.now().date().isoformat(),
@@ -1744,7 +1750,7 @@ async def run_valor_cycle():
                 detail="VALOR module not available"
             )
 
-        result = run_valor_scan()
+        result = await asyncio.to_thread(run_valor_scan)
         return {
             "success": True,
             "action": "run_cycle",
@@ -1770,7 +1776,7 @@ async def force_close_all_valor_positions(
     """
     try:
         trader = _get_trader()
-        result = trader.force_close_all(reason=reason)
+        result = await asyncio.to_thread(trader.force_close_all, reason=reason)
         return {
             "success": True,
             "action": "force_close_all",
@@ -1794,7 +1800,7 @@ async def process_expired_valor_positions():
     """
     try:
         trader = _get_trader()
-        result = trader.process_expired_positions()
+        result = await asyncio.to_thread(trader.process_expired_positions)
         return {
             "success": True,
             "action": "process_expired",
@@ -1827,7 +1833,7 @@ async def get_valor_diagnostics():
     """
     try:
         trader = _get_trader()
-        status = trader.get_status()
+        status = await asyncio.to_thread(trader.get_status)
 
         # Check execution capability
         execution_status = {}
@@ -1843,8 +1849,8 @@ async def get_valor_diagnostics():
         # Check database connectivity
         db_status = {}
         try:
-            position_count = trader.db.get_position_count()
-            trades_today = trader.db.get_trades_today_count()
+            position_count = await asyncio.to_thread(trader.db.get_position_count)
+            trades_today = await asyncio.to_thread(trader.db.get_trades_today_count)
             db_status = {
                 "connected": True,
                 "position_count": position_count,
@@ -1856,7 +1862,7 @@ async def get_valor_diagnostics():
         # Get current quote
         quote_status = {}
         try:
-            quote = trader.executor.get_mes_quote()
+            quote = await asyncio.to_thread(trader.executor.get_mes_quote)
             if quote:
                 quote_status = {
                     "available": True,
@@ -1874,7 +1880,7 @@ async def get_valor_diagnostics():
         gex_status = {}
         try:
             from trading.valor.signals import get_gex_data_for_valor
-            gex_data = get_gex_data_for_valor("SPX")
+            gex_data = await asyncio.to_thread(get_gex_data_for_valor, "SPX")
             flip_point = gex_data.get("flip_point", 0)
             net_gex = gex_data.get("net_gex", 0)
             current_price = quote_status.get("last", 0) if quote_status.get("available") else 0
@@ -1921,7 +1927,7 @@ async def get_valor_diagnostics():
             try:
                 from data.tradier_data_fetcher import TradierDataFetcher
                 fetcher = TradierDataFetcher()
-                vix_quote = fetcher.get_quote("VIX")
+                vix_quote = await asyncio.to_thread(fetcher.get_quote, "VIX")
                 if vix_quote and vix_quote.get("last"):
                     vix = vix_quote["last"]
             except Exception:
@@ -2017,12 +2023,12 @@ async def get_valor_margin_analysis(
             ticker_cfg = FUTURES_TICKERS.get(ticker, {})
             starting_capital = ticker_cfg.get("starting_capital", 100000.0)
             # Get realized P&L for this specific ticker
-            ticker_stats = trader.db.get_ticker_performance_stats([ticker])
+            ticker_stats = await asyncio.to_thread(trader.db.get_ticker_performance_stats, [ticker])
             realized_pnl = ticker_stats.get(ticker, {}).get("total_pnl", 0.0)
             account_equity = starting_capital + realized_pnl
         else:
             # Combined equity: paper account balance across all instruments
-            paper_account = trader.get_paper_account()
+            paper_account = await asyncio.to_thread(trader.get_paper_account)
             if paper_account:
                 starting_capital = paper_account.get("starting_capital", 500000.0)
                 account_equity = paper_account.get("current_balance") or starting_capital
@@ -2031,7 +2037,7 @@ async def get_valor_margin_analysis(
                 account_equity = starting_capital
 
         # Get open positions (already filtered by ticker if specified)
-        status = trader.get_status(ticker=ticker)
+        status = await asyncio.to_thread(trader.get_status, ticker=ticker)
         positions = status.get("positions", {}).get("positions", [])
 
         position_margins = []
@@ -2044,7 +2050,7 @@ async def get_valor_margin_analysis(
             # Get current price for this ticker
             current_price = None
             try:
-                quote = trader.executor.get_mes_quote(ticker=pos_ticker)
+                quote = await asyncio.to_thread(trader.executor.get_mes_quote, ticker=pos_ticker)
                 current_price = quote.get("price") or quote.get("last") if quote else None
             except Exception:
                 pass
@@ -2142,11 +2148,11 @@ async def get_valor_margin_zones(
             if ticker and tk != ticker:
                 continue
 
-            positions = trader.db.get_open_positions(ticker=tk)
+            positions = await asyncio.to_thread(trader.db.get_open_positions, ticker=tk)
             tk_cfg = FUTURES_TICKERS.get(tk, {})
             starting_capital = tk_cfg.get("starting_capital", 100000.0)
             try:
-                tk_stats = trader.db.get_ticker_performance_stats([tk])
+                tk_stats = await asyncio.to_thread(trader.db.get_ticker_performance_stats, [tk])
                 realized_pnl = tk_stats.get(tk, {}).get("total_pnl", 0.0)
             except Exception:
                 realized_pnl = 0.0
@@ -2163,11 +2169,11 @@ async def get_valor_margin_zones(
             # Need states with zone as enum for combined calc
             states_for_combined = {}
             for tk in trader.config.tickers:
-                positions = trader.db.get_open_positions(ticker=tk)
+                positions = await asyncio.to_thread(trader.db.get_open_positions, ticker=tk)
                 tk_cfg = FUTURES_TICKERS.get(tk, {})
                 starting_capital = tk_cfg.get("starting_capital", 100000.0)
                 try:
-                    tk_stats = trader.db.get_ticker_performance_stats([tk])
+                    tk_stats = await asyncio.to_thread(trader.db.get_ticker_performance_stats, [tk])
                     realized_pnl = tk_stats.get(tk, {}).get("total_pnl", 0.0)
                 except Exception:
                     realized_pnl = 0.0
