@@ -148,7 +148,13 @@ function CandleChart({ bars, levels, price, d }: { bars: Bar[]; levels: { cw?: n
   const barLo = Math.min(...bars.map(b => b.l))
   const barHi = Math.max(...bars.map(b => b.h))
   const barRange = barHi - barLo || 1
-  const nearRange = (v: number) => v >= barLo - barRange * 2 && v <= barHi + barRange * 2
+  // Show a level if it's within 4% of price (so walls appear even when there
+  // are only a few bars, e.g. NG's put wall sits ~3% away), or within 2x the
+  // visible bar range.
+  const ref = price || bars[bars.length - 1].c
+  const nearRange = (v: number) =>
+    (ref > 0 && Math.abs(v - ref) / ref <= 0.04) ||
+    (v >= barLo - barRange * 2 && v <= barHi + barRange * 2)
   const cwLevel = levels.cw != null && nearRange(levels.cw) ? levels.cw : undefined
   const pwLevel = levels.pw != null && nearRange(levels.pw) ? levels.pw : undefined
   const flipLevel = levels.flip != null && nearRange(levels.flip) ? levels.flip : undefined
