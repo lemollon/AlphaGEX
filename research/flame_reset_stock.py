@@ -9,6 +9,7 @@ import io
 import json
 import os
 import threading
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from http.server import HTTPServer
@@ -38,6 +39,14 @@ def stock_rows(rows, day):
     return out
 
 core.stock_rows=stock_rows
+# Exact source decimals are serialized as strings, never rounded to floats.
+_original_dumps = json.dumps
+
+def exact_json(value, **kwargs):
+    kwargs.setdefault('default', str)
+    return _original_dumps(value, **kwargs)
+
+core.json = SimpleNamespace(dumps=exact_json)
 
 if __name__=='__main__':
     if os.getenv('FLAME_FRESH_MODE')=='reset-regime-v1' and datetime.now(timezone.utc)<datetime.fromisoformat('2026-09-23T23:30:00+00:00'):
