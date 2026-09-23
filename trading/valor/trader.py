@@ -986,7 +986,7 @@ class ValorTrader(MNQBreakoutMixin):
             if current is None or current.status != PositionStatus.OPEN:
                 return False
             position = current
-            if self._is_mnq_breakout(position):
+            if position.ticker == "MNQ" and position.signal_source == SignalSource.MNQ_BREAKOUT_30M:
                 return self._manage_mnq_breakout(position, current_price)
             opened = position.open_time
             if opened is None or opened.tzinfo is None:
@@ -1386,7 +1386,7 @@ class ValorTrader(MNQBreakoutMixin):
             if current is None or current.status != PositionStatus.OPEN:
                 return False
             position = current
-            if self._is_mnq_breakout(position):
+            if position.ticker == "MNQ" and position.signal_source == SignalSource.MNQ_BREAKOUT_30M:
                 return self._close_mnq_breakout(position, close_price, status, reason)
             pending = [i for i in self.db.get_pending_order_intents()
                        if i.get('context',{}).get('kind')=='close' and i['context'].get('position_id')==position.position_id] if self.config.mode != TradingMode.PAPER else []
