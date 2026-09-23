@@ -128,19 +128,66 @@ def post_json(payload: dict, timeout: int = 20):
 
 
 def fetch_candles(coin: str, start_ms: int, end_ms: int) -> List[dict]:
-    return post_json({
-        "type": "candleSnapshot",
-        "req": {"coin": coin, "interval": "1h", "startTime": start_ms, "endTime": end_ms},
-    })
+    """Fetch a complete hourly candle window using forward pagination.
+
+    Hyperliquid limits each candleSnapshot response, so long windows such as
+    365 days must be paged. We advance from the last returned candle and
+    de-duplicate by open timestamp.
+    """
+    rows: Dict[int, dict] = {}
+    cursor = start_ms
+    while cursor < end_ms:
+        batch = post_json({
+            "type": "candleSnapshot",
+            "req": {"coin": coin, "interval": "1h", "startTime": cursor, "endTime": end_ms},
+        })
+        if not batch:
+            break
+        max_ts = cursor
+        for row in batch:
+            ts = int(row.get("t", row.get("T", 0)) or 0)
+            if ts <= 0:
+                continue
+            rows[ts] = row
+            max_ts = max(max_ts, ts)
+        next_cursor = max_ts + MS_HOUR
+        if next_cursor <= cursor:
+            break
+        cursor = next_cursor
+        if len(batch) < 4900:
+            break
+        time.sleep(0.15)
+    return [rows[k] for k in sorted(rows)]
 
 
 def fetch_funding(coin: str, start_ms: int, end_ms: int) -> List[dict]:
-    return post_json({
-        "type": "fundingHistory",
-        "coin": coin,
-        "startTime": start_ms,
-        "endTime": end_ms,
-    })
+    """Fetch complete funding history using forward pagination."""
+    rows: Dict[int, dict] = {}
+    cursor = start_ms
+    while cursor < end_ms:
+        batch = post_json({
+            "type": "fundingHistory",
+            "coin": coin,
+            "startTime": cursor,
+            "endTime": end_ms,
+        })
+        if not batch:
+            break
+        max_ts = cursor
+        for row in batch:
+            ts = int(row.get("time", 0) or 0)
+            if ts <= 0:
+                continue
+            rows[ts] = row
+            max_ts = max(max_ts, ts)
+        next_cursor = max_ts + 1
+        if next_cursor <= cursor:
+            break
+        cursor = next_cursor
+        if len(batch) < 450:
+            break
+        time.sleep(0.15)
+    return [rows[k] for k in sorted(rows)]
 
 
 def to_float(x, default=0.0):
