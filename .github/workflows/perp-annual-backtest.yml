@@ -8,6 +8,7 @@ on:
       - backtest/external_perp_reconstruction.py
       - backtest/perp_coin_profile_search.py
       - backtest/perp_chop_regime_study.py
+      - backtest/perp_dynamic_v2.py
       - .github/workflows/perp-annual-backtest.yml
   pull_request:
     branches:
@@ -39,10 +40,15 @@ jobs:
       - name: Run 365-day chop/regime study
         run: |
           python backtest/perp_chop_regime_study.py             --days 365             --out artifacts/perp_chop_regime_study
+      - name: Run Dynamic v2 regime permission study
+        run: |
+          python backtest/perp_dynamic_v2.py             --days 365             --out artifacts/perp_dynamic_v2
       - name: Show annual profile report
         run: cat artifacts/perp_coin_profile_search_365d/report.md
       - name: Show chop/regime report
         run: cat artifacts/perp_chop_regime_study/report.md
+      - name: Show Dynamic v2 report
+        run: cat artifacts/perp_dynamic_v2/report.md
       - uses: actions/upload-artifact@v4
         with:
           name: perp-annual-backtest
@@ -50,5 +56,6 @@ jobs:
             artifacts/perp_external_backtest_365d/
             artifacts/perp_coin_profile_search_365d/
             artifacts/perp_chop_regime_study/
+            artifacts/perp_dynamic_v2/
           if-no-files-found: error
           retention-days: 30
