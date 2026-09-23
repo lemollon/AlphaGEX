@@ -264,6 +264,7 @@ export default function PerpetualsCryptoContent() {
   )
   const [tab, setTab] = useState<TabId>(TABS.some(t => t.id === initialTab) ? initialTab : 'overview')
   const [range, setRange] = useState<RangePreset>('30d')
+  const [openGroup, setOpenGroup] = useState<Coin | null>(null)
   const [now, setNow] = useState(Date.now())
 
   const isCoinView = view !== 'overview'
@@ -321,6 +322,24 @@ export default function PerpetualsCryptoContent() {
   const totTrades = list.reduce((a, b) => a + S[b.coin].trades, 0)
   const wAvg = totTrades ? list.reduce((a, b) => a + (S[b.coin].wr ?? 0) * S[b.coin].trades, 0) / totTrades : 0
   const allPositions = list.flatMap(b => b.positions.map(p => ({ ...p, coin: b.coin })))
+  // One summary row per bot; individual lots shown only when expanded.
+  const positionGroups = list
+    .filter(b => b.positions.length > 0)
+    .map(b => {
+      const ps = b.positions
+      const qty = (p: any) => Math.abs(Number(p.quantity) || 0)
+      const totalQty = ps.reduce((a: number, p: any) => a + qty(p), 0)
+      const avgEntry = totalQty > 0 ? ps.reduce((a: number, p: any) => a + qty(p) * (Number(p.entry_price) || 0), 0) / totalQty : null
+      return {
+        coin: b.coin,
+        positions: ps,
+        longs: ps.filter((p: any) => p.side === 'long').length,
+        shorts: ps.filter((p: any) => p.side === 'short').length,
+        trailing: ps.filter((p: any) => p.trailing_active).length,
+        avgEntry,
+        upl: ps.reduce((a: number, p: any) => a + (Number(p.unrealized_pnl) || 0), 0),
+      }
+    })
 
   // Overview: combined equity curve + last 12 closed trades across all bots.
   const equityPoints = useMemo(() => {
@@ -510,7 +529,7 @@ export default function PerpetualsCryptoContent() {
               </div>
 
               {/* Equity curve + Open positions */}
-              <div className="grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))' }}>
+              <div className="grid gap-5 items-start" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))' }}>
                 <Card className="p-[18px_20px] flex flex-col gap-3.5">
                   <div className="flex justify-between items-center gap-3">
                     <span className="text-[15px] font-semibold">Equity curve</span>
@@ -521,22 +540,42 @@ export default function PerpetualsCryptoContent() {
                 <Card className="flex flex-col">
                   <div className="flex justify-between items-baseline px-5 pt-[18px] pb-3.5">
                     <span className="text-[15px] font-semibold">Open positions</span>
-                    <span className="text-xs text-[#6b7280]">{allPositions.length} live</span>
+                    <span className="text-xs text-[#6b7280]">{allPositions.length} open · {positionGroups.length} bots</span>
                   </div>
-                  {allPositions.length === 0 && <div className="px-5 py-5 border-t border-[#1c2233] text-sm text-[#6b7280]">No open positions. The bots are scanning.</div>}
-                  {allPositions.map((p: any) => {
-                    const m = META[p.coin as Coin]
+                  {positionGroups.length === 0 && <div className="px-5 py-5 border-t border-[#1c2233] text-sm text-[#6b7280]">No open positions. The bots are scanning.</div>}
+                  {positionGroups.map(g => {
+                    const m = META[g.coin]
+                    const expanded = openGroup === g.coin
                     return (
-                      <div key={`${p.coin}-${p.position_id}`} onClick={() => goCoin(p.coin as Coin)} className="flex justify-between items-center gap-3 px-5 py-3.5 border-t border-[#1c2233] cursor-pointer hover:bg-[#1a1f2e]">
-                        <div className="flex flex-col gap-1">
-                          <span className="flex items-center gap-2 text-sm font-semibold">
-                            <Dot color={m.color} size={7} />{m.sym}
-                            <span className="text-xs" style={{ color: p.side === 'long' ? G : R }}>{(p.side || '').toUpperCase()} × {p.quantity}</span>
-                            {p.trailing_active && <span className="text-[11px] text-[#eab308] font-medium">TRAILING @ {px(p.current_stop, m.d)}</span>}
-                          </span>
-                          <span className={`${MONO} text-xs text-[#6b7280]`}>{px(p.entry_price, m.d)} → {px(p.current_price ?? S[p.coin as Coin].price, m.d)}</span>
+                      <div key={g.coin} className="border-t border-[#1c2233]">
+                        <div onClick={() => setOpenGroup(expanded ? null : g.coin)} className="flex justify-between items-center gap-3 px-5 py-3.5 cursor-pointer hover:bg-[#1a1f2e]">
+                          <div className="flex flex-col gap-1">
+                            <span className="flex items-center gap-2 text-sm font-semibold">
+                              <span className="text-[10px] text-[#6b7280] w-2.5">{expanded ? '▾' : '▸'}</span>
+                              <Dot color={m.color} size={7} />{m.sym}
+                              <span className="text-xs font-medium text-[#9ca3af]">{g.positions.length} open</span>
+                              {g.longs > 0 && <span className="text-xs" style={{ color: G }}>{g.longs}L</span>}
+                              {g.shorts > 0 && <span className="text-xs" style={{ color: R }}>{g.shorts}S</span>}
+                              {g.trailing > 0 && <span className="text-[11px] text-[#eab308] font-medium">{g.trailing} trailing</span>}
+                            </span>
+                            <span className={`${MONO} text-xs text-[#6b7280]`}>avg {px(g.avgEntry, m.d)} → {px(S[g.coin].price, m.d)}</span>
+                          </div>
+                          <span className={`${MONO} text-[15px] font-semibold`} style={{ color: pnlColor(g.upl) }}>{money(g.upl, true)}</span>
                         </div>
-                        <span className={`${MONO} text-[15px] font-semibold`} style={{ color: pnlColor(p.unrealized_pnl || 0) }}>{money(p.unrealized_pnl || 0, true)}</span>
+                        {expanded && (
+                          <div className="bg-[#0c1019] max-h-[280px] overflow-y-auto">
+                            {g.positions.map((p: any) => (
+                              <div key={`${g.coin}-${p.position_id}`} onClick={() => goCoin(g.coin)} className="flex justify-between items-center gap-3 pl-11 pr-5 py-2 border-t border-[#161b28] cursor-pointer hover:bg-[#1a1f2e]">
+                                <span className="flex items-center gap-2 text-xs">
+                                  <span style={{ color: p.side === 'long' ? G : R }}>{(p.side || '').toUpperCase()} × {p.quantity}</span>
+                                  <span className={`${MONO} text-[#6b7280]`}>{px(p.entry_price, m.d)}</span>
+                                  {p.trailing_active && <span className="text-[11px] text-[#eab308]">TRAIL @ {px(p.current_stop, m.d)}</span>}
+                                </span>
+                                <span className={`${MONO} text-[13px] font-semibold`} style={{ color: pnlColor(p.unrealized_pnl || 0) }}>{money(p.unrealized_pnl || 0, true)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )
                   })}
