@@ -71,6 +71,9 @@ except ImportError:
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import logging
+import os
+import subprocess
+import sys
 import traceback
 from pathlib import Path
 import json
@@ -8356,9 +8359,37 @@ def run_standalone():
         logger.info("=" * 60)
 
 
-if __name__ == "__main__":
-    import sys
+def _maybe_reset_perp_paper_accounts():
+    """One-shot operational hook for an explicitly requested paper-perp reset.
 
+    Safety:
+    - Disabled unless PERP_RESET_ON_START exactly equals CONFIRM_PERP_PAPER_RESET.
+    - Runs the existing scripts/reset_perpetual_bots.py implementation, whose
+      whitelist is limited to the seven AGAPE perpetual paper bots.
+    - Intended to be enabled for one deployment only, then disabled.
+    """
+    if os.getenv("PERP_RESET_ON_START", "") != "CONFIRM_PERP_PAPER_RESET":
+        return
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "reset_perpetual_bots.py"
+    logger.warning("PERP_RESET_ON_START confirmed: resetting ONLY perpetual paper bot data")
+    for args in (["--reset", "--confirm"], ["--verify"]):
+        proc = subprocess.run(
+            [sys.executable, str(script), *args],
+            cwd=str(repo_root),
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        if proc.stdout:
+            logger.warning(proc.stdout)
+        if proc.stderr:
+            logger.warning(proc.stderr)
+    logger.warning("PERP paper reset and verification completed successfully")
+
+
+if __name__ == "__main__":
+    _maybe_reset_perp_paper_accounts()
     if len(sys.argv) > 1 and sys.argv[1] == "--standalone":
         run_standalone()
     else:
