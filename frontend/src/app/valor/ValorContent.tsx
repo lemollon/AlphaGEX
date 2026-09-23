@@ -141,11 +141,17 @@ function barsFromScans(scans: any[], ticker: string, max = 48): Bar[] {
   return bars.slice(-max)
 }
 
-function CandleChart({ bars, levels, price, d }: { bars: Bar[]; levels: { cw?: number; pw?: number; flip?: number }; price?: number; d: number }) {
+type GexStrike = { strike: number; net_gex: number }
+
+function CandleChart({ bars, levels, price, d, gex }: { bars: Bar[]; levels: { cw?: number; pw?: number; flip?: number }; price?: number; d: number; gex?: any }) {
   if (bars.length < 2) {
     return <div className="h-[300px] flex items-center justify-center text-sm text-gray-500">Waiting for scan prices to build 5m bars…</div>
   }
-  const W = 700, H = 360, R0 = 66
+  // Candles occupy 0..(PW - R0), price axis labels PW-R0..PW, then a Net GEX
+  // column (GX..W) drawn on the SAME y-scale so each bar lines up with its strike.
+  const PW = 700, R0 = 66, GAP = 14, GW = 220
+  const GX = PW + GAP
+  const W = PW + GAP + GW, H = 360
   const barLo = Math.min(...bars.map(b => b.l))
   const barHi = Math.max(...bars.map(b => b.h))
   const barRange = barHi - barLo || 1
@@ -163,7 +169,18 @@ function CandleChart({ bars, levels, price, d }: { bars: Bar[]; levels: { cw?: n
   let lo = Math.min(barLo, ...lvl), hi = Math.max(barHi, ...lvl)
   const pad = (hi - lo) * 0.07 || 1; lo -= pad; hi += pad
   const y = (v: number) => ((hi - v) / (hi - lo)) * H
-  const cw = (W - R0) / bars.length
+  const cw = (PW - R0) / bars.length
+
+  // Net GEX column: horizontal bars from a centre baseline (right = positive,
+  // left = negative), only for strikes inside the visible price range.
+  const gexStrikes: GexStrike[] = gex?.available ? (gex.strikes || []) : []
+  const visible = gexStrikes.filter(s => s.strike >= lo && s.strike <= hi)
+  const gMax = Math.max(1, ...visible.map(s => Math.abs(s.net_gex)))
+  const gMid = GX + GW / 2, gHalf = GW / 2 - 6
+  const sorted = [...visible].sort((a, b) => a.strike - b.strike)
+  const gaps = sorted.slice(1).map((s, i) => s.strike - sorted[i].strike).filter(g => g > 0).sort((a, b) => a - b)
+  const stepPx = gaps.length ? Math.abs(y(0) - y(gaps[Math.floor(gaps.length / 2)])) : 8
+  const barH = Math.max(2, Math.min(18, stepPx * 0.7))
   const lines: [string, number | undefined, string, string | undefined][] = [
     ['CALL WALL', cwLevel, '#3b82f6', undefined],
     ['GAMMA FLIP', flipLevel, '#f59e0b', '6 4'],
@@ -175,14 +192,14 @@ function CandleChart({ bars, levels, price, d }: { bars: Bar[]; levels: { cw?: n
         const v = lo + (hi - lo) * (i + 0.5) / 5
         return (
           <g key={i}>
-            <line x1={0} x2={W - R0} y1={y(v)} y2={y(v)} stroke="#1c2233" />
-            <text x={W - R0 + 8} y={y(v) + 4} fill="#6b7280" fontSize={11} className="font-mono">{v.toFixed(d)}</text>
+            <line x1={0} x2={PW - R0} y1={y(v)} y2={y(v)} stroke="#1c2233" />
+            <text x={PW - R0 + 8} y={y(v) + 4} fill="#6b7280" fontSize={11} className="font-mono">{v.toFixed(d)}</text>
           </g>
         )
       })}
       {lines.map(([l, v, col, dash]) => v ? (
         <g key={l}>
-          <line x1={0} x2={W - R0} y1={y(v)} y2={y(v)} stroke={col} strokeWidth={1.5} strokeDasharray={dash} />
+          <line x1={0} x2={PW - R0} y1={y(v)} y2={y(v)} stroke={col} strokeWidth={1.5} strokeDasharray={dash} />
           <text x={8} y={y(v) - 6} fill={col} fontSize={11} fontWeight={600} letterSpacing={1}>{l}  {v.toFixed(d)}</text>
         </g>
       ) : null)}
@@ -197,76 +214,35 @@ function CandleChart({ bars, levels, price, d }: { bars: Bar[]; levels: { cw?: n
       })}
       {price ? (
         <g>
-          <line x1={0} x2={W - R0} y1={y(price)} y2={y(price)} stroke="#eab308" strokeDasharray="2 3" />
-          <rect x={W - R0 + 2} y={y(price) - 10} width={R0 - 2} height={20} rx={4} fill="#eab308" />
-          <text x={W - R0 + 7} y={y(price) + 4} fill="#0a0e1a" fontSize={11} fontWeight={700} className="font-mono">{price.toFixed(d)}</text>
+          <line x1={0} x2={PW - R0} y1={y(price)} y2={y(price)} stroke="#eab308" strokeDasharray="2 3" />
+          <rect x={PW - R0 + 2} y={y(price) - 10} width={R0 - 2} height={20} rx={4} fill="#eab308" />
+          <text x={PW - R0 + 7} y={y(price) + 4} fill="#0a0e1a" fontSize={11} fontWeight={700} className="font-mono">{price.toFixed(d)}</text>
         </g>
       ) : null}
-    </svg>
-  )
-}
-
-// Net GEX by strike, 0DTE, for the selected instrument (scaled into futures price space by the backend).
-function GexProfileChart({ data }: { data: any }) {
-  const strikes: { strike: number; net_gex: number }[] = data?.available ? (data.strikes || []) : []
-  if (!data?.available || strikes.length < 2) {
-    return (
-      <div className="h-[220px] flex flex-col items-center justify-center gap-1 text-sm text-gray-500">
-        <span>GEX profile unavailable</span>
-        {data?.reason && <span className="text-xs text-gray-600">{data.reason}</span>}
-      </div>
-    )
-  }
-
-  const W = 900, H = 220, padL = 12, padR = 12, padTop = 28, padBottom = 24
-  const plotH = H - padTop - padBottom
-
-  const strikeVals = strikes.map(s => s.strike)
-  const markerVals = [data.call_wall, data.put_wall, data.flip_point, data.futures_price].filter((v: number) => v > 0)
-  const lo = Math.min(...strikeVals, ...markerVals)
-  const hi = Math.max(...strikeVals, ...markerVals)
-  const range = hi - lo || 1
-  const x = (v: number) => padL + ((v - lo) / range) * (W - padL - padR)
-
-  const maxAbs = Math.max(1, ...strikes.map(s => Math.abs(s.net_gex)))
-  const yZero = padTop + plotH / 2
-  const y = (v: number) => yZero - (v / maxAbs) * (plotH / 2)
-
-  // Bar width from the median gap between adjacent strikes (strikes aren't
-  // always contiguous once scaled/filtered, so avoid a naive index-based width).
-  const sortedStrikes = [...strikeVals].sort((a, b) => a - b)
-  const gaps = sortedStrikes.slice(1).map((v, i) => v - sortedStrikes[i]).filter(g => g > 0).sort((a, b) => a - b)
-  const step = gaps.length ? gaps[Math.floor(gaps.length / 2)] : range / strikes.length
-  const barW = Math.max(2, (step / range) * (W - padL - padR) * 0.7)
-
-  const tickIdx = Array.from(new Set([0, Math.floor((strikes.length - 1) / 2), strikes.length - 1]))
-  const ticks = tickIdx.map(i => strikes[i].strike)
-
-  const markers: [string, number | undefined, string, string | undefined][] = [
-    ['CALL WALL', data.call_wall > 0 ? data.call_wall : undefined, '#3b82f6', undefined],
-    ['PUT WALL', data.put_wall > 0 ? data.put_wall : undefined, '#8b5cf6', undefined],
-    ['GAMMA FLIP', data.flip_point > 0 ? data.flip_point : undefined, '#f59e0b', '6 4'],
-    ['PRICE', data.futures_price > 0 ? data.futures_price : undefined, '#eab308', '2 3'],
-  ]
-
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[220px] block">
-      <line x1={padL} x2={W - padR} y1={yZero} y2={yZero} stroke="#1c2233" />
-      {strikes.map((s, i) => {
-        const col = s.net_gex >= 0 ? G : R
-        const top = s.net_gex >= 0 ? y(s.net_gex) : yZero
-        const barH = Math.max(1, Math.abs(y(s.net_gex) - yZero))
-        return <rect key={i} x={x(s.strike) - barW / 2} width={barW} y={top} height={barH} fill={col} rx={1} />
-      })}
-      {markers.map(([label, v, col, dash]) => v ? (
-        <g key={label}>
-          <line x1={x(v)} x2={x(v)} y1={padTop} y2={H - padBottom} stroke={col} strokeWidth={1.5} strokeDasharray={dash} />
-          <text x={x(v)} y={padTop - 8} fill={col} fontSize={10} fontWeight={600} textAnchor="middle" letterSpacing={0.5}>{label}</text>
-        </g>
-      ) : null)}
-      {ticks.map((v, i) => (
-        <text key={i} x={x(v)} y={H - 6} fill="#6b7280" fontSize={11} fontFamily="monospace" textAnchor="middle">{v.toFixed(2)}</text>
-      ))}
+      <g>
+        <line x1={GX} x2={GX} y1={0} y2={H} stroke="#1c2233" />
+        <text x={GX + 8} y={14} fill="#9ca3af" fontSize={11} fontWeight={600} letterSpacing={1}>
+          NET GEX{gex?.available && gex?.expiration_date ? ` · ${gex.is_0dte ? '0DTE' : 'NEAREST'}` : ''}
+        </text>
+        {visible.length ? (
+          <>
+            <line x1={gMid} x2={gMid} y1={22} y2={H} stroke="#1c2233" />
+            {lines.map(([l, v, col, dash]) => v ? (
+              <line key={`g-${l}`} x1={GX} x2={W} y1={y(v)} y2={y(v)} stroke={col} strokeWidth={1} strokeDasharray={dash} opacity={0.6} />
+            ) : null)}
+            {price ? <line x1={GX} x2={W} y1={y(price)} y2={y(price)} stroke="#eab308" strokeDasharray="2 3" opacity={0.6} /> : null}
+            {visible.map((s, i) => {
+              const len = (Math.abs(s.net_gex) / gMax) * gHalf
+              const pos = s.net_gex >= 0
+              return <rect key={i} x={pos ? gMid : gMid - len} width={Math.max(1, len)} y={y(s.strike) - barH / 2} height={barH} fill={pos ? G : R} rx={1} />
+            })}
+          </>
+        ) : (
+          <text x={gMid} y={H / 2} fill="#6b7280" fontSize={11} textAnchor="middle">
+            {gex?.available ? 'No strikes in view' : 'GEX profile unavailable'}
+          </text>
+        )}
+      </g>
     </svg>
   )
 }
@@ -512,34 +488,13 @@ export default function ValorPage() {
                       {selScan.gamma_regime && <span style={{ color: selScan.gamma_regime === 'POSITIVE' ? G : '#a855f7' }}>{selScan.gamma_regime} GAMMA</span>}
                     </div>
                   </div>
-                  <div className="flex flex-wrap">
-                    <div className="flex-[1_1_480px] min-w-0 pl-4 pr-2 pt-3 pb-2">
-                      <CandleChart bars={selBars} levels={levels} price={selPrice} d={meta(sel).d} />
-                    </div>
-                    <div className="flex-[1_0_220px] border-l border-[#1c2233] p-4 flex flex-col gap-3 text-sm">
-                      <div className="font-semibold text-[13px]">GEX levels</div>
-                      {[['Call wall', levels.cw, '#3b82f6'], ['Gamma flip', levels.flip, '#f59e0b'], ['Put wall', levels.pw, '#8b5cf6']].map(([l, v, c]) => (
-                        <div key={l as string} className="flex justify-between"><span style={{ color: c as string }}>{l}</span><span className="font-mono">{v ? Number(v).toFixed(meta(sel).d) : '—'}</span></div>
-                      ))}
-                      <div className="flex justify-between border-t border-[#1c2233] pt-3"><span className="text-gray-400">Net GEX</span><span className="font-mono" style={{ color: pnlColor(selScan.net_gex || 0) }}>{selScan.net_gex != null ? Number(selScan.net_gex).toExponential(2) : '—'}</span></div>
-                      <div className="text-[11px] text-gray-500 leading-snug">Last scan: {selScan.decision_summary || selScan.skip_reason || ''}</div>
-                    </div>
+                  <div className="pl-4 pr-3 pt-3 pb-2">
+                    <CandleChart bars={selBars} levels={levels} price={selPrice} d={meta(sel).d} gex={gexProfileData} />
                   </div>
-                </Card>
-
-                <Card className="overflow-hidden">
-                  <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-4 border-b border-[#1c2233]">
-                    <div className="flex items-baseline gap-3">
-                      <span className="text-base font-semibold">Net GEX by strike</span>
-                      {gexProfileData?.available && gexProfileData?.expiration_date && (
-                        <span className="text-[13px] text-gray-400">
-                          {gexProfileData.is_0dte ? '0DTE' : 'nearest expiry'} · {gexProfileData.expiration_date}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="px-4 py-3">
-                    <GexProfileChart data={gexProfileData} />
+                  <div className="flex flex-wrap items-center gap-x-6 gap-y-1 px-5 py-3 border-t border-[#1c2233] text-[13px]">
+                    <span className="text-gray-400">Net GEX{gexProfileData?.available && gexProfileData?.expiration_date ? ` (${gexProfileData.is_0dte ? '0DTE' : 'nearest'} ${gexProfileData.expiration_date})` : ''}</span>
+                    <span className="font-mono" style={{ color: pnlColor(selScan.net_gex || 0) }}>{selScan.net_gex != null ? Number(selScan.net_gex).toExponential(2) : '—'}</span>
+                    <span className="text-[12px] text-gray-500">Last scan: {selScan.decision_summary || selScan.skip_reason || '—'}</span>
                   </div>
                 </Card>
 
