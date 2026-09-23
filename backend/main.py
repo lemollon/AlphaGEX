@@ -80,9 +80,17 @@ async def start_active_trading_scheduler():
     if not scheduler.is_running:
         scheduler.start()
 
-    # Optional read-only historical research; never places orders.
-    valor_research_routes.launch_autorun_if_enabled()
-        valor_research_routes.launch_contract_search_if_enabled()
+    # Legacy VALOR research autoruns are intentionally disabled: the original
+    # replay used overlapping horizon buckets and uncached paid downloads.
+    # Research must never prevent the trading API from starting.
+    try:
+        from scripts.valor_contract_research_v2 import launch_if_enabled
+        launch_if_enabled()
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception(
+            "VALOR research launch failed; trading scheduler unchanged"
+        )
     spark_flame_research_routes.launch_autorun_if_enabled()
     spark_flame_research_routes.launch_optimizer_if_enabled()
 
