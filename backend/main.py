@@ -82,6 +82,7 @@ async def start_active_trading_scheduler():
 
     # Optional read-only historical research; never places orders.
     valor_research_routes.launch_autorun_if_enabled()
+        valor_research_routes.launch_contract_search_if_enabled()
     spark_flame_research_routes.launch_autorun_if_enabled()
     spark_flame_research_routes.launch_optimizer_if_enabled()
 
