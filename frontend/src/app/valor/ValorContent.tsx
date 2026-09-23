@@ -149,7 +149,7 @@ function CandleChart({ bars, levels, price, d, gex }: { bars: Bar[]; levels: { c
   }
   // Candles occupy 0..(PW - R0), price axis labels PW-R0..PW, then a Net GEX
   // column (GX..W) drawn on the SAME y-scale so each bar lines up with its strike.
-  const PW = 700, R0 = 66, GAP = 14, GW = 220
+  const PW = 700, R0 = 66, GAP = 12, GW = 140
   const GX = PW + GAP
   const W = PW + GAP + GW, H = 360
   const barLo = Math.min(...bars.map(b => b.l))
@@ -180,7 +180,7 @@ function CandleChart({ bars, levels, price, d, gex }: { bars: Bar[]; levels: { c
   const sorted = [...visible].sort((a, b) => a.strike - b.strike)
   const gaps = sorted.slice(1).map((s, i) => s.strike - sorted[i].strike).filter(g => g > 0).sort((a, b) => a - b)
   const stepPx = gaps.length ? Math.abs(y(0) - y(gaps[Math.floor(gaps.length / 2)])) : 8
-  const barH = Math.max(2, Math.min(18, stepPx * 0.7))
+  const barH = Math.max(2, Math.min(10, stepPx * 0.6))
   const lines: [string, number | undefined, string, string | undefined][] = [
     ['CALL WALL', cwLevel, '#3b82f6', undefined],
     ['GAMMA FLIP', flipLevel, '#f59e0b', '6 4'],
