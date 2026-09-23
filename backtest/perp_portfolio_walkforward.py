@@ -41,6 +41,7 @@ def simulate(data,timestamps,idxmap,start_step,end_step,params,start_equity=4500
     positions={}; next_entry={c:0 for c in data}; trades=[]; fees=funding=0.0
     scale=params["risk_scale"]; max_total=params["max_total"]; max_group=params["max_group"]
     doge_score_mult=params["doge_score_mult"]; doge_loss_cd=params["doge_loss_cd"]
+    shib_score_mult=params.get("shib_score_mult",1.0); shib_loss_cd=params.get("shib_loss_cd",12)
     coins=list(data)
 
     def open_risk(): return sum(v["risk_pct"] for v in positions.values())
@@ -96,7 +97,7 @@ def simulate(data,timestamps,idxmap,start_step,end_step,params,start_equity=4500
                 if peak>0: maxdd=max(maxdd,(peak-equity)/peak*100)
                 next_entry[coin]=i+p.cooldown_hours
                 if mode=="dynamic_v2" and net<=0:
-                    cd=doge_loss_cd if coin=="DOGE" else COOLDOWN_AFTER_LOSS[coin]
+                    cd=doge_loss_cd if coin=="DOGE" else shib_loss_cd if coin=="SHIB" else COOLDOWN_AFTER_LOSS[coin]
                     next_entry[coin]=max(next_entry[coin],i+cd)
                 del positions[coin]
 
@@ -109,6 +110,8 @@ def simulate(data,timestamps,idxmap,start_step,end_step,params,start_equity=4500
             if direction==0: continue
             p=data[coin]["profile"]
             if coin=="DOGE" and abs(score) < p.score_threshold*doge_score_mult:
+                continue
+            if coin=="SHIB" and abs(score) < p.score_threshold*shib_score_mult:
                 continue
             regime=data[coin]["regimes"][i]; mult=permission_mult(coin,MODE[coin],regime)
             if mult<=0: continue
@@ -156,7 +159,7 @@ def simulate(data,timestamps,idxmap,start_step,end_step,params,start_equity=4500
 def score(r):
     # favor return and PF, penalize drawdown; reject structurally weak configs
     if r["profit_factor"]<1.05: return -999
-    return r["return_pct"] + 8.0*(r["profit_factor"]-1.0) - 0.8*r["max_drawdown_pct"]
+    return r["return_pct"] + 8.0*(r["profit_factor"]-1.0) - 0.8*r["max_drawdown_pct"] - 0.0025*r["trades"] - 0.00005*r["fees_usd"]
 
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument("--days",type=int,default=365); ap.add_argument("--out",default="artifacts/perp_portfolio_walkforward")
@@ -173,21 +176,24 @@ def main():
     timestamps=sorted(common); idxmap={c:{b.ts:i for i,b in enumerate(data[c]["bars"])} for c in coins}
     split=int(len(timestamps)*270/365)
     configs=[]
-    for risk_scale in (0.75,1.0,1.25,1.5):
-        for max_total in (1.5,2.0,2.5,3.0):
-            max_group=min(1.5,max_total/2)
-            for doge_score_mult in (1.0,1.15,1.30):
-                for doge_loss_cd in (12,18,24):
-                    p={"risk_scale":risk_scale,"max_total":max_total,"max_group":max_group,
-                       "doge_score_mult":doge_score_mult,"doge_loss_cd":doge_loss_cd}
-                    r=simulate(data,timestamps,idxmap,0,split,p)
-                    configs.append({**p,**{k:v for k,v in r.items() if k!="by_coin"},"score":round(score(r),4)})
+    for risk_scale in (1.25,1.5):
+        for max_total in (1.75,2.0,2.25):
+            max_group=min(1.25,max_total/2)
+            for doge_score_mult in (1.0,1.10,1.20,1.30):
+                for doge_loss_cd in (12,18,24,36):
+                    for shib_score_mult in (1.0,1.10,1.20):
+                        for shib_loss_cd in (12,18,24):
+                            p={"risk_scale":risk_scale,"max_total":max_total,"max_group":max_group,
+                               "doge_score_mult":doge_score_mult,"doge_loss_cd":doge_loss_cd,
+                               "shib_score_mult":shib_score_mult,"shib_loss_cd":shib_loss_cd}
+                            r=simulate(data,timestamps,idxmap,0,split,p)
+                            configs.append({**p,**{k:v for k,v in r.items() if k!="by_coin"},"score":round(score(r),4)})
     configs.sort(key=lambda x:x["score"],reverse=True)
 
     # evaluate top 10 distinct train configs on untouched holdout
     finalists=[]
     for tr in configs[:10]:
-        p={k:tr[k] for k in ("risk_scale","max_total","max_group","doge_score_mult","doge_loss_cd")}
+        p={k:tr[k] for k in ("risk_scale","max_total","max_group","doge_score_mult","doge_loss_cd","shib_score_mult","shib_loss_cd")}
         ho=simulate(data,timestamps,idxmap,split,len(timestamps),p)
         full=simulate(data,timestamps,idxmap,0,len(timestamps),p)
         finalists.append({"params":p,"train":tr,"holdout":ho,"full":full})
@@ -204,11 +210,11 @@ def main():
            f"- Common hourly bars: {len(timestamps)}",
            f"- Train hours: {split}",
            f"- Holdout hours: {len(timestamps)-split}","",
-           "| Rank | Risk scale | Max total | Max group | DOGE score x | DOGE loss CD | Train ret | Train PF | Train DD | Holdout ret | Holdout PF | Holdout DD | Full ret | Full PF | Full DD |",
-           "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+           "| Rank | Risk scale | Max total | Max group | DOGE score x | DOGE loss CD | SHIB score x | SHIB loss CD | Train ret | Train PF | Train DD | Holdout ret | Holdout PF | Holdout DD | Full ret | Full PF | Full DD | Full trades | Full fees |",
+           "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for n,x in enumerate(finalists,1):
         p=x["params"]; tr=x["train"]; h=x["holdout"]; full=x["full"]
-        lines.append(f"| {n} | {p['risk_scale']} | {p['max_total']} | {p['max_group']} | {p['doge_score_mult']} | {p['doge_loss_cd']} | {tr['return_pct']}% | {tr['profit_factor']} | {tr['max_drawdown_pct']}% | {h['return_pct']}% | {h['profit_factor']} | {h['max_drawdown_pct']}% | {full['return_pct']}% | {full['profit_factor']} | {full['max_drawdown_pct']}% |")
+        lines.append(f"| {n} | {p['risk_scale']} | {p['max_total']} | {p['max_group']} | {p['doge_score_mult']} | {p['doge_loss_cd']} | {p['shib_score_mult']} | {p['shib_loss_cd']} | {tr['return_pct']}% | {tr['profit_factor']} | {tr['max_drawdown_pct']}% | {h['return_pct']}% | {h['profit_factor']} | {h['max_drawdown_pct']}% | {full['return_pct']}% | {full['profit_factor']} | {full['max_drawdown_pct']}% | {full['trades']} | ${full['fees_usd']} |")
     (out/"report.md").write_text("\n".join(lines))
 
 if __name__=="__main__":
