@@ -633,7 +633,7 @@ class TradierGEXCalculator:
             resolved_expiration = None
             is_0dte = False
             try:
-                expirations = tradier.get_option_expirations(symbol)
+                expirations = tradier.get_option_expirations(symbol, include_all_roots=True)
             except Exception as e:
                 logger.warning(f"Could not fetch expirations for {symbol}, falling back to Tradier default: {e}")
                 expirations = []
