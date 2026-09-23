@@ -315,6 +315,9 @@ export default function ValorPage() {
   const sidebarPadding = useSidebarPadding()
   const [tab, setTab] = useState<TabId>('portfolio')
   const [sel, setSel] = useState<string>('MES')
+  // Equity scope: whole account ('ALL') or the selected instrument
+  const [scope, setScope] = useState<string>('ALL')
+  const scopeTicker = scope === 'ALL' ? undefined : scope
   const [tf, setTf] = useState('intraday')
   const [histFilter, setHistFilter] = useState<string>('ALL')
   const [busy, setBusy] = useState<string | null>(null)
@@ -324,8 +327,8 @@ export default function ValorPage() {
   const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useValorStatus(undefined)
   const { data: positionsData, mutate: refreshPositions } = useValorPositions(undefined)
   const { data: closedTradesData } = useValorClosedTrades(1000, undefined)
-  const { data: equityCurveData } = useValorEquityCurve(tfo.days || 30, undefined)
-  const { data: intradayEquityData, mutate: refreshIntraday } = useValorIntradayEquity(undefined)
+  const { data: equityCurveData } = useValorEquityCurve(tfo.days || 30, scopeTicker)
+  const { data: intradayEquityData, mutate: refreshIntraday } = useValorIntradayEquity(scopeTicker)
   const { data: tickersData } = useValorTickers()
   const { data: tickerStatsData } = useValorTickerStats()
   const { data: gexProfileData } = useValorGexProfile(sel)
@@ -371,6 +374,18 @@ export default function ValorPage() {
   const realized = paper.cumulative_pnl ?? performance.total_pnl ?? 0
   const equity = (paper.current_balance ?? startingCapital + realized) + unrealized
 
+  // Header numbers for the current scope (whole account, or one instrument)
+  const scopeStats = scopeTicker ? (tickerStats[scopeTicker] || {}) : null
+  const scopeStart = scopeStats ? Number(scopeStats.starting_capital ?? 100000) : startingCapital
+  const scopeRealized = scopeStats ? Number(scopeStats.total_pnl ?? 0) : realized
+  const scopeUnrealized = scopeTicker
+    ? positions.filter(p => (p.ticker || 'MES') === scopeTicker).reduce((a, p) => a + (p.unrealized_pnl || 0), 0)
+    : unrealized
+  const scopeEquity = scopeStats ? scopeStart + scopeRealized + scopeUnrealized : equity
+  const scopeWinRate = scopeStats ? Number(scopeStats.win_rate ?? 0) * 100 : Number(performance.win_rate || 0)
+  const scopeTrades = scopeStats ? Number(scopeStats.total_trades ?? 0) : Number(performance.total_trades || 0)
+  const scopeReturn = scopeStats ? ((scopeRealized + scopeUnrealized) / (scopeStart || 1)) * 100 : Number(paper.return_pct || 0)
+
   // Latest scan per ticker → live price + GEX levels
   const latest = useMemo(() => {
     const out: Record<string, any> = {}
@@ -392,8 +407,14 @@ export default function ValorPage() {
   const lastScanAt = selScan.scan_time ? new Date(selScan.scan_time).getTime() : null
   const nextScan = lastScanAt ? Math.max(0, 60 - Math.floor((now - lastScanAt) / 1000) % 60) : null
 
-  const eqPoints: number[] = (tf === 'intraday' ? intradayEquityData?.equity_curve : equityCurveData?.equity_curve || [])
+  const rawEqPoints: number[] = (tf === 'intraday' ? intradayEquityData?.equity_curve : equityCurveData?.equity_curve || [])
     ?.map((p: any) => Number(p.equity)).filter((v: number) => !isNaN(v)) || []
+  // Intraday snapshots can miss an instrument's capital (e.g. one that isn't
+  // saving snapshots), so anchor the curve's last point to the live equity
+  // shown in the header; the shape is unchanged.
+  const eqPoints: number[] = tf === 'intraday' && rawEqPoints.length
+    ? rawEqPoints.map(v => v + (scopeEquity - rawEqPoints[rawEqPoints.length - 1]))
+    : rawEqPoints
 
   const histTrades = trades.filter(t => histFilter === 'ALL' || (t.ticker || 'MES') === histFilter)
   const wins = histTrades.filter(t => t.realized_pnl > 0), losses = histTrades.filter(t => t.realized_pnl < 0)
@@ -481,10 +502,15 @@ export default function ValorPage() {
             </nav>
             <div className="flex flex-col gap-1">
               <div className="text-xs tracking-[.1em] uppercase text-gray-500 px-3 pb-1.5">Instruments</div>
+              <button onClick={() => { setScope('ALL'); setTab('portfolio') }}
+                className={`flex justify-between items-center px-3 py-2 rounded-lg text-left border-l-2 text-sm font-semibold hover:bg-[#1a1f2e] ${scope === 'ALL' ? 'bg-[#1a1f2e] border-yellow-500' : 'border-transparent'}`}>
+                <span>All instruments</span>
+                <span className="font-mono text-[13px] text-gray-400">{activeTickers.length}</span>
+              </button>
               {activeTickers.map(t => {
-                const m = meta(t), p = latest[t]?.underlying_price, o = firstPrice(t), ch = p && o ? (p - o) / o * 100 : 0, on = t === sel
+                const m = meta(t), p = latest[t]?.underlying_price, o = firstPrice(t), ch = p && o ? (p - o) / o * 100 : 0, on = t === scope
                 return (
-                  <button key={t} onClick={() => { setSel(t); setTab('portfolio') }}
+                  <button key={t} onClick={() => { setSel(t); setScope(t); setTab('portfolio') }}
                     className={`flex flex-col gap-0.5 px-3 py-2 rounded-lg text-left border-l-2 hover:bg-[#1a1f2e] ${on ? 'bg-[#1a1f2e]' : ''}`}
                     style={{ borderColor: on ? m.color : 'transparent' }}>
                     <span className="flex justify-between items-center">
@@ -513,16 +539,16 @@ export default function ValorPage() {
               <div className="flex flex-col gap-6">
                 <div className="flex flex-wrap justify-between items-end gap-6">
                   <div className="flex flex-col gap-2">
-                    <span className="text-sm text-gray-400">Account equity · live</span>
-                    <span className="font-mono text-5xl md:text-[56px] font-semibold tracking-tight leading-none">{money(equity)}</span>
+                    <span className="text-sm text-gray-400">{scopeTicker ? `${scopeTicker} · ${meta(scopeTicker).label} equity · live` : 'Account equity · live'}</span>
+                    <span className="font-mono text-5xl md:text-[56px] font-semibold tracking-tight leading-none">{money(scopeEquity)}</span>
                     <span className="flex flex-wrap gap-4 font-mono text-[15px]">
-                      <span className="font-semibold" style={{ color: pnlColor(realized) }}>{money(realized, true)} realized</span>
-                      <span style={{ color: pnlColor(unrealized) }}>{money(unrealized, true)} open</span>
-                      <span className="text-gray-500">from {money(startingCapital)}</span>
+                      <span className="font-semibold" style={{ color: pnlColor(scopeRealized) }}>{money(scopeRealized, true)} realized</span>
+                      <span style={{ color: pnlColor(scopeUnrealized) }}>{money(scopeUnrealized, true)} open</span>
+                      <span className="text-gray-500">from {money(scopeStart)}</span>
                     </span>
                   </div>
                   <div className="flex gap-7">
-                    {[['Win rate', `${(performance.win_rate || 0).toFixed(1)}%`, (performance.win_rate || 0) >= 50 ? G : R], ['Trades', performance.total_trades || 0, '#f3f4f6'], ['Return', pct(paper.return_pct || 0), pnlColor(paper.return_pct || 0)]].map(([l, v, c]) => (
+                    {[['Win rate', `${scopeWinRate.toFixed(1)}%`, scopeWinRate >= 50 ? G : R], ['Trades', scopeTrades, '#f3f4f6'], ['Return', pct(scopeReturn), pnlColor(scopeReturn)]].map(([l, v, c]) => (
                       <div key={l as string} className="flex flex-col gap-1 items-end"><span className="text-xs text-gray-500">{l}</span><span className="font-mono text-lg font-semibold" style={{ color: c as string }}>{v}</span></div>
                     ))}
                   </div>
@@ -556,7 +582,7 @@ export default function ValorPage() {
                   <Card className="px-5 py-4 flex flex-col gap-3.5">
                     <div className="flex justify-between items-center"><span className="text-base font-semibold">Equity curve</span>
                       <Pills items={TIMEFRAMES.map(t => ({ id: t.id, label: t.label }))} value={tf} onChange={setTf} /></div>
-                    <div className="h-[180px]"><EquityChart points={eqPoints} start={startingCapital} animKey={tf} /></div>
+                    <div className="h-[180px]"><EquityChart points={eqPoints} start={scopeStart} animKey={`${tf}-${scope}`} /></div>
                   </Card>
                   <Card className="flex flex-col">
                     <div className="px-5 py-4 text-base font-semibold flex justify-between"><span>Open positions ({positions.length})</span><span className="text-xs text-gray-500 font-normal">live</span></div>

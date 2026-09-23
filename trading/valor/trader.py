@@ -522,6 +522,9 @@ class ValorTrader(MNQBreakoutMixin):
                 self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
                                        skip_reason=f"{ticker} quarantined: entries disabled",
                                        ticker=ticker)
+                # Keep its equity snapshots flowing so the combined equity
+                # curve includes this instrument's capital.
+                self._save_equity_snapshot(account_balance, self.db.get_open_positions(ticker=ticker), ticker=ticker)
                 return scan_result
 
             # 2. Check for new signals (if room for more positions for this ticker)
