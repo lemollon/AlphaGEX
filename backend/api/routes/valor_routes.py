@@ -44,6 +44,14 @@ try:
 except ImportError as e:
     logger.warning(f"⚠️ VALOR module not available: {e}")
 
+# GEX profile endpoint reuses the same singleton calculator/cache the VALOR
+# scanner already hits, so this never generates extra Tradier load.
+_get_tradier_gex_calculator = None
+try:
+    from trading.valor.signals import _get_tradier_gex_calculator
+except ImportError as e:
+    logger.warning(f"⚠️ VALOR GEX calculator helper not available: {e}")
+
 
 def _get_trader():
     """Get VALOR trader instance or raise error"""
@@ -2242,3 +2250,125 @@ def valor_quality_performance():
     except Exception:
         logger.exception("VALOR quality report failed")
         raise HTTPException(status_code=503, detail="VALOR quality report unavailable")
+
+
+# ============================================================================
+# GEX Profile Endpoint (Net GEX by strike, for the VALOR page chart)
+# ============================================================================
+
+def _get_latest_futures_price(ticker: str) -> float:
+    """Latest known futures price for `ticker` from valor_scan_activity."""
+    from database_adapter import get_connection
+    conn = None
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT underlying_price FROM valor_scan_activity
+            WHERE ticker = %s AND underlying_price > 0
+            ORDER BY scan_time DESC LIMIT 1
+            """,
+            (ticker,),
+        )
+        row = c.fetchone()
+        return float(row[0]) if row and row[0] else 0.0
+    except Exception as e:
+        logger.warning(f"Could not fetch latest futures price for {ticker}: {e}")
+        return 0.0
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+@router.get("/api/valor/gex-profile")
+async def get_valor_gex_profile(
+    ticker: str = Query("MES", description="Futures ticker (MES, MNQ, CL, NG, RTY, MGC)")
+):
+    """
+    Net GEX by strike for today's 0DTE (or nearest) expiration, scaled into
+    the selected futures instrument's price space.
+
+    Reuses the same Tradier GEX calculator singleton + 5-min cache the VALOR
+    scanner already hits, so this adds no extra Tradier load.
+    """
+    if not FUTURES_TICKERS or ticker not in FUTURES_TICKERS:
+        raise HTTPException(status_code=400, detail=f"Unknown ticker: {ticker}")
+
+    ticker_cfg = FUTURES_TICKERS[ticker]
+
+    # Same Tradier symbol resolution as trading/valor/signals.py get_gex_data_for_valor()
+    if ticker == "MES":
+        tradier_symbol = "SPX"
+    else:
+        tradier_symbol = ticker_cfg.get('gex_symbol') or ticker_cfg.get('proxy_etf')
+
+    if not tradier_symbol:
+        return {"available": False, "ticker": ticker, "reason": "No GEX symbol configured for ticker"}
+
+    if _get_tradier_gex_calculator is None:
+        return {"available": False, "ticker": ticker, "reason": "VALOR GEX calculator not available"}
+
+    try:
+        calculator = _get_tradier_gex_calculator()
+        if not calculator:
+            return {"available": False, "ticker": ticker, "reason": "Tradier GEX calculator unavailable"}
+
+        gex = await asyncio.to_thread(calculator.calculate_gex, tradier_symbol)
+        if not gex:
+            return {"available": False, "ticker": ticker, "reason": f"No GEX data for {tradier_symbol}"}
+
+        proxy_spot = float(gex.get('spot_price', 0) or 0)
+        strikes_raw = gex.get('strikes') or []
+        if proxy_spot <= 0 or not strikes_raw:
+            return {"available": False, "ticker": ticker, "reason": f"No strike data for {tradier_symbol}"}
+
+        futures_price = await asyncio.to_thread(_get_latest_futures_price, ticker)
+
+        if futures_price > 0 and proxy_spot > 0:
+            scale = futures_price / proxy_spot
+        elif ticker == "MES":
+            scale = 1.0
+        else:
+            scale = ticker_cfg.get('gex_scale_factor') or 1.0
+
+        # Keep only strikes within +-5% of the proxy spot (unscaled price space)
+        band = proxy_spot * 0.05
+        strikes = []
+        for s in strikes_raw:
+            strike = float(s.get('strike', 0) or 0)
+            if strike <= 0 or abs(strike - proxy_spot) > band:
+                continue
+            strikes.append({
+                'strike': strike * scale,
+                'net_gex': float(s.get('net_gex', 0) or 0),
+                'call_gex': float(s.get('call_gex', 0) or 0),
+                'put_gex': float(s.get('put_gex', 0) or 0),
+            })
+        strikes.sort(key=lambda s: s['strike'])
+
+        flip_point = float(gex.get('flip_point', 0) or 0)
+        call_wall = float(gex.get('call_wall', 0) or 0)
+        put_wall = float(gex.get('put_wall', 0) or 0)
+
+        return {
+            "available": True,
+            "ticker": ticker,
+            "proxy_symbol": tradier_symbol,
+            "expiration_date": gex.get('expiration_date'),
+            "is_0dte": bool(gex.get('is_0dte', False)),
+            "proxy_spot": proxy_spot,
+            "futures_price": futures_price if futures_price > 0 else proxy_spot * scale,
+            "scale": scale,
+            "net_gex": float(gex.get('net_gex', 0) or 0),
+            "flip_point": flip_point * scale if flip_point else flip_point,
+            "call_wall": call_wall * scale if call_wall else call_wall,
+            "put_wall": put_wall * scale if put_wall else put_wall,
+            "strikes": strikes,
+        }
+    except Exception as e:
+        logger.error(f"VALOR GEX profile failed for {ticker}: {e}")
+        return {"available": False, "ticker": ticker, "reason": str(e)}

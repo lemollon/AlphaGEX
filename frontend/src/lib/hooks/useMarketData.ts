@@ -796,6 +796,11 @@ const fetchers = {
     const response = await api.get('/api/valor/ticker-stats')
     return response.data
   },
+  valorGexProfile: async (ticker?: string) => {
+    const params = ticker ? `?ticker=${ticker}` : ''
+    const response = await api.get(`/api/valor/gex-profile${params}`)
+    return response.data
+  },
   valorConfig: async () => {
     const response = await api.get('/api/valor/config')
     return response.data
@@ -2235,6 +2240,14 @@ export function useValorTickerStats(options?: SWRConfiguration) {
     refreshInterval: 60 * 1000,
     ...options,
   })
+}
+
+export function useValorGexProfile(ticker?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `valor-gex-profile-${ticker || 'MES'}`,
+    () => fetchers.valorGexProfile(ticker),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
 }
 
 export function useValorIntradayEquity(ticker?: string, options?: SWRConfiguration) {
