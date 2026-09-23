@@ -1,0 +1,69 @@
+name: Apply tested MNQ integration
+on:
+  push:
+    branches: [feature/mnq-cash-breakout-v1]
+    paths:
+      - '.github/mnq-update.patch'
+      - '.github/workflows/mnq-apply.yml'
+permissions:
+  contents: write
+concurrency:
+  group: mnq-feature-patch
+  cancel-in-progress: false
+jobs:
+  integrate:
+    if: github.ref == 'refs/heads/feature/mnq-cash-breakout-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mnq-cash-breakout-v1
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply exact reviewed patch without overwriting unrelated files
+        run: |
+          git apply --check .github/mnq-update.patch
+          git apply --index .github/mnq-update.patch
+          python - <<'PY'
+          import subprocess
+          expected = {'trading/valor/models.py', 'trading/valor/executor.py', 'trading/valor/trader.py', 'trading/valor/db.py', 'trading/valor/ml.py', 'frontend/src/app/valor/ValorContent.tsx'}
+          actual = set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
+          assert actual == expected, (actual, expected)
+          PY
+      - name: Compile and run offline safety/lifecycle regression checks
+        run: |
+          python -m compileall -q trading/valor
+          python -m unittest discover -s tests/valor -p 'test_mnq_breakout*.py' -v
+          git diff --cached --check
+      - name: Check frontend TypeScript syntax
+        run: |
+          npm install --prefix /tmp/mnq-typescript --ignore-scripts --no-audit --no-fund typescript@5
+          node - <<'JS'
+          const fs = require('fs');
+          const ts = require('/tmp/mnq-typescript/node_modules/typescript');
+          const name='frontend/src/app/valor/ValorContent.tsx';
+          const r=ts.transpileModule(fs.readFileSync(name,'utf8'), {fileName:name,reportDiagnostics:true,compilerOptions:{jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2020}});
+          const errors=(r.diagnostics||[]).filter(x=>x.category===ts.DiagnosticCategory.Error);
+          if(errors.length){ console.error(errors); process.exit(1); }
+          console.log('Modified TSX parses/transpiles; full application build is a separate deploy check.');
+          JS
+      - name: Commit validated integration to feature branch, never main
+        run: |
+          test "${GITHUB_REF}" = 'refs/heads/feature/mnq-cash-breakout-v1'
+          git rm .github/mnq-update.patch .github/workflows/mnq-apply.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'valor: integrate tested paper-only MNQ breakout and isolated time exits'
+          git push origin HEAD:refs/heads/feature/mnq-cash-breakout-v1
+      - name: Preserve verified implementation for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: mnq-integrated-source
+          retention-days: 3
+          path: |
+            trading/valor/*.py
+            frontend/src/app/valor/ValorContent.tsx
+            tests/valor/test_mnq_breakout.py
