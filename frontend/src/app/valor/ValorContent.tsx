@@ -28,6 +28,7 @@ import {
   useUnifiedBotSummary,
   useValorTickers,
   useValorTickerStats,
+  useValorGexProfile,
 } from '@/lib/hooks/useMarketData'
 
 const G = '#10b981'
@@ -205,6 +206,71 @@ function CandleChart({ bars, levels, price, d }: { bars: Bar[]; levels: { cw?: n
   )
 }
 
+// Net GEX by strike, 0DTE, for the selected instrument (scaled into futures price space by the backend).
+function GexProfileChart({ data }: { data: any }) {
+  const strikes: { strike: number; net_gex: number }[] = data?.available ? (data.strikes || []) : []
+  if (!data?.available || strikes.length < 2) {
+    return (
+      <div className="h-[220px] flex flex-col items-center justify-center gap-1 text-sm text-gray-500">
+        <span>GEX profile unavailable</span>
+        {data?.reason && <span className="text-xs text-gray-600">{data.reason}</span>}
+      </div>
+    )
+  }
+
+  const W = 900, H = 220, padL = 12, padR = 12, padTop = 28, padBottom = 24
+  const plotH = H - padTop - padBottom
+
+  const strikeVals = strikes.map(s => s.strike)
+  const markerVals = [data.call_wall, data.put_wall, data.flip_point, data.futures_price].filter((v: number) => v > 0)
+  const lo = Math.min(...strikeVals, ...markerVals)
+  const hi = Math.max(...strikeVals, ...markerVals)
+  const range = hi - lo || 1
+  const x = (v: number) => padL + ((v - lo) / range) * (W - padL - padR)
+
+  const maxAbs = Math.max(1, ...strikes.map(s => Math.abs(s.net_gex)))
+  const yZero = padTop + plotH / 2
+  const y = (v: number) => yZero - (v / maxAbs) * (plotH / 2)
+
+  // Bar width from the median gap between adjacent strikes (strikes aren't
+  // always contiguous once scaled/filtered, so avoid a naive index-based width).
+  const sortedStrikes = [...strikeVals].sort((a, b) => a - b)
+  const gaps = sortedStrikes.slice(1).map((v, i) => v - sortedStrikes[i]).filter(g => g > 0).sort((a, b) => a - b)
+  const step = gaps.length ? gaps[Math.floor(gaps.length / 2)] : range / strikes.length
+  const barW = Math.max(2, (step / range) * (W - padL - padR) * 0.7)
+
+  const tickIdx = Array.from(new Set([0, Math.floor((strikes.length - 1) / 2), strikes.length - 1]))
+  const ticks = tickIdx.map(i => strikes[i].strike)
+
+  const markers: [string, number | undefined, string, string | undefined][] = [
+    ['CALL WALL', data.call_wall > 0 ? data.call_wall : undefined, '#3b82f6', undefined],
+    ['PUT WALL', data.put_wall > 0 ? data.put_wall : undefined, '#8b5cf6', undefined],
+    ['GAMMA FLIP', data.flip_point > 0 ? data.flip_point : undefined, '#f59e0b', '6 4'],
+    ['PRICE', data.futures_price > 0 ? data.futures_price : undefined, '#eab308', '2 3'],
+  ]
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[220px] block">
+      <line x1={padL} x2={W - padR} y1={yZero} y2={yZero} stroke="#1c2233" />
+      {strikes.map((s, i) => {
+        const col = s.net_gex >= 0 ? G : R
+        const top = s.net_gex >= 0 ? y(s.net_gex) : yZero
+        const barH = Math.max(1, Math.abs(y(s.net_gex) - yZero))
+        return <rect key={i} x={x(s.strike) - barW / 2} width={barW} y={top} height={barH} fill={col} rx={1} />
+      })}
+      {markers.map(([label, v, col, dash]) => v ? (
+        <g key={label}>
+          <line x1={x(v)} x2={x(v)} y1={padTop} y2={H - padBottom} stroke={col} strokeWidth={1.5} strokeDasharray={dash} />
+          <text x={x(v)} y={padTop - 8} fill={col} fontSize={10} fontWeight={600} textAnchor="middle" letterSpacing={0.5}>{label}</text>
+        </g>
+      ) : null)}
+      {ticks.map((v, i) => (
+        <text key={i} x={x(v)} y={H - 6} fill="#6b7280" fontSize={11} fontFamily="monospace" textAnchor="middle">{v.toFixed(2)}</text>
+      ))}
+    </svg>
+  )
+}
+
 function EquityChart({ points, start, animKey }: { points: number[]; start: number; animKey: string }) {
   if (points.length < 2) return <div className="h-full flex items-center justify-center text-sm text-gray-500">Data will appear after trades are executed</div>
   const mn = Math.min(start, ...points), mx = Math.max(start, ...points), pad = (mx - mn) * 0.12 || 50
@@ -242,6 +308,7 @@ export default function ValorPage() {
   const { data: intradayEquityData, mutate: refreshIntraday } = useValorIntradayEquity(undefined)
   const { data: tickersData } = useValorTickers()
   const { data: tickerStatsData } = useValorTickerStats()
+  const { data: gexProfileData } = useValorGexProfile(sel)
   const { data: scanData, mutate: refreshScans } = useValorScanActivity(1000, undefined, undefined)
   const { data: mlStats, mutate: refreshTrainingStats } = useValorMLTrainingDataStats()
   const { data: mlStatus, mutate: refreshMLStatus } = useValorMLStatus()
@@ -457,6 +524,22 @@ export default function ValorPage() {
                       <div className="flex justify-between border-t border-[#1c2233] pt-3"><span className="text-gray-400">Net GEX</span><span className="font-mono" style={{ color: pnlColor(selScan.net_gex || 0) }}>{selScan.net_gex != null ? Number(selScan.net_gex).toExponential(2) : '—'}</span></div>
                       <div className="text-[11px] text-gray-500 leading-snug">Last scan: {selScan.decision_summary || selScan.skip_reason || ''}</div>
                     </div>
+                  </div>
+                </Card>
+
+                <Card className="overflow-hidden">
+                  <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-4 border-b border-[#1c2233]">
+                    <div className="flex items-baseline gap-3">
+                      <span className="text-base font-semibold">Net GEX by strike</span>
+                      {gexProfileData?.available && gexProfileData?.expiration_date && (
+                        <span className="text-[13px] text-gray-400">
+                          {gexProfileData.is_0dte ? '0DTE' : 'nearest expiry'} · {gexProfileData.expiration_date}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="px-4 py-3">
+                    <GexProfileChart data={gexProfileData} />
                   </div>
                 </Card>
 

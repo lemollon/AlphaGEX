@@ -690,7 +690,8 @@ class TradierGEXCalculator:
                 'collection_date': result.timestamp.strftime('%Y-%m-%d'),
                 'expiration_date': resolved_expiration,
                 'is_0dte': is_0dte,
-                'is_calculated': True
+                'is_calculated': True,
+                'strikes': result.strikes_data or [],
             }
 
             # Cache the result
