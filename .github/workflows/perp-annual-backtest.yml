@@ -7,6 +7,7 @@ on:
     paths:
       - backtest/external_perp_reconstruction.py
       - backtest/perp_coin_profile_search.py
+      - backtest/perp_chop_regime_study.py
       - .github/workflows/perp-annual-backtest.yml
   pull_request:
     branches:
