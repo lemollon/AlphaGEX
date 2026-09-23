@@ -56,7 +56,17 @@ class IntegrityError(RuntimeError):
 
 
 def canonical(value):
-    return json.dumps(value, sort_keys=True, separators=(',',':'), allow_nan=False).encode()
+    # PostgreSQL JSONB normalizes IEEE signed zero. Its sign is not economic
+    # information: preserve exact nonzero values and reject nonfinite numbers.
+    def normalize(item):
+        if isinstance(item, float) and item == 0.0:
+            return 0.0
+        if isinstance(item, dict):
+            return {k: normalize(v) for k, v in item.items()}
+        if isinstance(item, (tuple, list)):
+            return [normalize(v) for v in item]
+        return item
+    return json.dumps(normalize(value), sort_keys=True, separators=(',',':'), allow_nan=False).encode()
 
 
 def digest(value):
