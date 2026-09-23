@@ -4,7 +4,7 @@
 // Drop-in replacement for frontend/src/app/valor/ValorContent.tsx.
 // Uses the same data hooks and ML/A-B actions as the previous version.
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { LoadingState } from '@/components/trader'
@@ -142,110 +142,154 @@ function barsFromScans(scans: any[], ticker: string, max = 48): Bar[] {
 }
 
 type GexStrike = { strike: number; net_gex: number }
+type Levels = { cw?: number; pw?: number; flip?: number }
 
-function CandleChart({ bars, levels, price, d, gex }: { bars: Bar[]; levels: { cw?: number; pw?: number; flip?: number }; price?: number; d: number; gex?: any }) {
+// Render the chart at real pixel size (not a stretched viewBox) so its text
+// matches the rest of the page on any screen width.
+function CandleChart(props: { bars: Bar[]; levels: Levels; price?: number; d: number; gex?: any }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(0)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    setWidth(Math.floor(el.clientWidth))
+    const ro = new ResizeObserver(entries => setWidth(Math.floor(entries[0].contentRect.width)))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return (
+    <div ref={ref} className="w-full">
+      {width > 0 ? <CandleSvg {...props} width={width} /> : <div className="h-[320px]" />}
+    </div>
+  )
+}
+
+function CandleSvg({ bars, levels, price, d, gex, width }: { bars: Bar[]; levels: Levels; price?: number; d: number; gex?: any; width: number }) {
   if (bars.length < 2) {
-    return <div className="h-[300px] flex items-center justify-center text-sm text-gray-500">Waiting for scan prices to build 5m bars…</div>
+    return <div className="h-[320px] flex items-center justify-center text-sm text-gray-500">Waiting for scan prices to build 5m bars…</div>
   }
-  // Candles occupy 0..(PW - R0), price axis labels PW-R0..PW, then a Net GEX
-  // column (GX..W) drawn on the SAME y-scale so each bar lines up with its strike.
-  const PW = 700, R0 = 66, GAP = 12, GW = 140
-  const GX = PW + GAP
-  const W = PW + GAP + GW, H = 360
+  // Layout (px): candles 0..PW | price axis PW..PW+AX | gap | Net GEX column GX..W
+  const H = 320, TOP = 22, BOT = 8
+  const GW = width >= 700 ? 120 : 80, AX = 80, GAP = 12
+  const W = width
+  const PW = Math.max(160, W - GW - GAP - AX)
+  const GX = PW + AX + GAP
+
   const barLo = Math.min(...bars.map(b => b.l))
   const barHi = Math.max(...bars.map(b => b.h))
   const barRange = barHi - barLo || 1
-  // Show a level if it's within 4% of price (so walls appear even when there
-  // are only a few bars, e.g. NG's put wall sits ~3% away), or within 2x the
-  // visible bar range.
+  // Show a level if it's within 4% of price or within 2x the visible bar range.
   const ref = price || bars[bars.length - 1].c
   const nearRange = (v: number) =>
     (ref > 0 && Math.abs(v - ref) / ref <= 0.04) ||
     (v >= barLo - barRange * 2 && v <= barHi + barRange * 2)
-  const cwLevel = levels.cw != null && nearRange(levels.cw) ? levels.cw : undefined
-  const pwLevel = levels.pw != null && nearRange(levels.pw) ? levels.pw : undefined
-  const flipLevel = levels.flip != null && nearRange(levels.flip) ? levels.flip : undefined
-  const lvl = [cwLevel, pwLevel, flipLevel].filter((v): v is number => !!v)
+  const keep = (v?: number) => (v != null && v > 0 && nearRange(v) ? v : undefined)
+  const cwLevel = keep(levels.cw), pwLevel = keep(levels.pw), flipLevel = keep(levels.flip)
+  // Size the chart to the candles; levels farther than 1x the candle range
+  // are pinned to the top/bottom edge as ▲/▼ tags instead of stretching the axis.
+  const inView = (v: number) => v >= barLo - barRange && v <= barHi + barRange
+  const lvl = [cwLevel, pwLevel, flipLevel].filter((v): v is number => !!v && inView(v))
   let lo = Math.min(barLo, ...lvl), hi = Math.max(barHi, ...lvl)
-  const pad = (hi - lo) * 0.07 || 1; lo -= pad; hi += pad
-  const y = (v: number) => ((hi - v) / (hi - lo)) * H
-  const cw = (PW - R0) / bars.length
+  const pad = (hi - lo) * 0.06 || 1; lo -= pad; hi += pad
+  const y = (v: number) => TOP + ((hi - v) / (hi - lo)) * (H - TOP - BOT)
+  const cw = PW / bars.length
+  const bodyW = Math.max(2, Math.min(12, cw * 0.62))
 
-  // Net GEX column: horizontal bars from a centre baseline (right = positive,
-  // left = negative), only for strikes inside the visible price range.
+  const lines: [string, number | undefined, string, string | undefined][] = [
+    ['Call wall', cwLevel, '#3b82f6', undefined],
+    ['Gamma flip', flipLevel, '#f59e0b', '6 4'],
+    ['Put wall', pwLevel, '#8b5cf6', undefined],
+  ]
+
+  // Right-axis tags (levels + price), nudged apart so they never overlap.
+  const TAG_H = 18
+  const tags = [
+    ...lines.filter(([, v]) => v).map(([l, v, col]) => ({ key: l, v: v as number, col, text: '#fff' })),
+    ...(price ? [{ key: 'Price', v: price, col: '#eab308', text: '#0a0e1a' }] : []),
+  ].map(t => {
+    const above = t.v > hi, below = t.v < lo
+    const ty = above ? TOP + TAG_H / 2 : below ? H - BOT - TAG_H / 2 : y(t.v)
+    return { ...t, ty, arrow: above ? '▲ ' : below ? '▼ ' : '' }
+  }).sort((a, b) => a.ty - b.ty)
+  for (let i = 1; i < tags.length; i++) {
+    if (tags[i].ty - tags[i - 1].ty < TAG_H + 2) tags[i].ty = tags[i - 1].ty + TAG_H + 2
+  }
+  for (let i = tags.length - 1; i >= 0; i--) {
+    const maxY = i === tags.length - 1 ? H - BOT - TAG_H / 2 : tags[i + 1].ty - TAG_H - 2
+    if (tags[i].ty > maxY) tags[i].ty = maxY
+  }
+  const nearTag = (yy: number) => tags.some(t => Math.abs(t.ty - yy) < TAG_H)
+
+  // Net GEX column: bars from a centre baseline (right = positive, left = negative),
+  // on the same y-scale as the candles, only for strikes in view.
   const gexStrikes: GexStrike[] = gex?.available ? (gex.strikes || []) : []
   const visible = gexStrikes.filter(s => s.strike >= lo && s.strike <= hi)
   const gMax = Math.max(1, ...visible.map(s => Math.abs(s.net_gex)))
-  const gMid = GX + GW / 2, gHalf = GW / 2 - 6
+  const gMid = GX + GW / 2, gHalf = GW / 2 - 4
   const sorted = [...visible].sort((a, b) => a.strike - b.strike)
   const gaps = sorted.slice(1).map((s, i) => s.strike - sorted[i].strike).filter(g => g > 0).sort((a, b) => a - b)
-  const stepPx = gaps.length ? Math.abs(y(0) - y(gaps[Math.floor(gaps.length / 2)])) : 8
-  const barH = Math.max(2, Math.min(10, stepPx * 0.6))
-  const lines: [string, number | undefined, string, string | undefined][] = [
-    ['CALL WALL', cwLevel, '#3b82f6', undefined],
-    ['GAMMA FLIP', flipLevel, '#f59e0b', '6 4'],
-    ['PUT WALL', pwLevel, '#8b5cf6', undefined],
-  ]
+  const stepPx = gaps.length ? Math.abs(y(0) - y(gaps[Math.floor(gaps.length / 2)])) : 6
+  const gBarH = Math.max(2, Math.min(8, stepPx * 0.6))
+
+  const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace'
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto block">
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="block">
       {[0, 1, 2, 3, 4].map(i => {
         const v = lo + (hi - lo) * (i + 0.5) / 5
         return (
           <g key={i}>
-            <line x1={0} x2={PW - R0} y1={y(v)} y2={y(v)} stroke="#1c2233" />
-            <text x={PW - R0 + 8} y={y(v) + 4} fill="#6b7280" fontSize={11} className="font-mono">{v.toFixed(d)}</text>
+            <line x1={0} x2={PW} y1={y(v)} y2={y(v)} stroke="#161b28" />
+            {!nearTag(y(v)) && <text x={PW + 8} y={y(v) + 4} fill="#6b7280" fontSize={11} fontFamily={MONO}>{v.toFixed(d)}</text>}
           </g>
         )
       })}
-      {lines.map(([l, v, col, dash]) => v ? (
-        <g key={l}>
-          <line x1={0} x2={PW - R0} y1={y(v)} y2={y(v)} stroke={col} strokeWidth={1.5} strokeDasharray={dash} />
-          <text x={8} y={y(v) - 6} fill={col} fontSize={11} fontWeight={600} letterSpacing={1}>{l}  {v.toFixed(d)}</text>
-        </g>
+      {lines.map(([l, v, col, dash]) => v && v >= lo && v <= hi ? (
+        <line key={l} x1={0} x2={PW} y1={y(v)} y2={y(v)} stroke={col} strokeWidth={1.25} strokeDasharray={dash} opacity={0.9} />
       ) : null)}
       {bars.map((b, i) => {
         const x = i * cw + cw / 2, col = b.c >= b.o ? G : R
         return (
           <g key={i}>
             <line x1={x} x2={x} y1={y(b.h)} y2={y(b.l)} stroke={col} />
-            <rect x={x - cw * 0.32} width={cw * 0.64} y={y(Math.max(b.o, b.c))} height={Math.max(1, Math.abs(y(b.o) - y(b.c)))} fill={col} rx={1} />
+            <rect x={x - bodyW / 2} width={bodyW} y={y(Math.max(b.o, b.c))} height={Math.max(1, Math.abs(y(b.o) - y(b.c)))} fill={col} rx={1} />
           </g>
         )
       })}
-      {price ? (
-        <g>
-          <line x1={0} x2={PW - R0} y1={y(price)} y2={y(price)} stroke="#eab308" strokeDasharray="2 3" />
-          <rect x={PW - R0 + 2} y={y(price) - 10} width={R0 - 2} height={20} rx={4} fill="#eab308" />
-          <text x={PW - R0 + 7} y={y(price) + 4} fill="#0a0e1a" fontSize={11} fontWeight={700} className="font-mono">{price.toFixed(d)}</text>
+      {price ? <line x1={0} x2={PW} y1={y(price)} y2={y(price)} stroke="#eab308" strokeDasharray="2 3" /> : null}
+      {tags.map(t => (
+        <g key={t.key}>
+          <rect x={PW + 2} y={t.ty - TAG_H / 2} width={AX - 4} height={TAG_H} rx={3} fill={t.col} />
+          <text x={PW + 6} y={t.ty + 4} fill={t.text} fontSize={11} fontWeight={600} fontFamily={MONO}>{t.arrow}{t.v.toFixed(d)}</text>
         </g>
-      ) : null}
+      ))}
       <g>
         <line x1={GX} x2={GX} y1={0} y2={H} stroke="#1c2233" />
-        <text x={GX + 8} y={14} fill="#9ca3af" fontSize={11} fontWeight={600} letterSpacing={1}>
-          NET GEX{gex?.available && gex?.expiration_date ? ` · ${gex.is_0dte ? '0DTE' : 'NEAREST'}` : ''}
+        <text x={GX + 6} y={12} fill="#6b7280" fontSize={10} fontWeight={600} letterSpacing={0.8}>
+          NET GEX{gex?.available ? ` · ${gex.is_0dte ? '0DTE' : 'NEAREST'}` : ''}
         </text>
         {visible.length ? (
           <>
-            <line x1={gMid} x2={gMid} y1={22} y2={H} stroke="#1c2233" />
-            {lines.map(([l, v, col, dash]) => v ? (
-              <line key={`g-${l}`} x1={GX} x2={W} y1={y(v)} y2={y(v)} stroke={col} strokeWidth={1} strokeDasharray={dash} opacity={0.6} />
+            <line x1={gMid} x2={gMid} y1={TOP} y2={H - BOT} stroke="#1c2233" />
+            {lines.map(([l, v, col, dash]) => v && v >= lo && v <= hi ? (
+              <line key={`g-${l}`} x1={GX} x2={W} y1={y(v)} y2={y(v)} stroke={col} strokeWidth={1} strokeDasharray={dash} opacity={0.5} />
             ) : null)}
-            {price ? <line x1={GX} x2={W} y1={y(price)} y2={y(price)} stroke="#eab308" strokeDasharray="2 3" opacity={0.6} /> : null}
+            {price ? <line x1={GX} x2={W} y1={y(price)} y2={y(price)} stroke="#eab308" strokeDasharray="2 3" opacity={0.5} /> : null}
             {visible.map((s, i) => {
               const len = (Math.abs(s.net_gex) / gMax) * gHalf
               const pos = s.net_gex >= 0
-              return <rect key={i} x={pos ? gMid : gMid - len} width={Math.max(1, len)} y={y(s.strike) - barH / 2} height={barH} fill={pos ? G : R} rx={1} />
+              return <rect key={i} x={pos ? gMid : gMid - len} width={Math.max(1, len)} y={y(s.strike) - gBarH / 2} height={gBarH} fill={pos ? G : R} rx={1} />
             })}
           </>
         ) : (
           <text x={gMid} y={H / 2} fill="#6b7280" fontSize={11} textAnchor="middle">
-            {gex?.available ? 'No strikes in view' : 'GEX profile unavailable'}
+            {gex?.available ? 'No strikes in view' : 'Unavailable'}
           </text>
         )}
       </g>
     </svg>
   )
 }
+
 
 function EquityChart({ points, start, animKey }: { points: number[]; start: number; animKey: string }) {
   if (points.length < 2) return <div className="h-full flex items-center justify-center text-sm text-gray-500">Data will appear after trades are executed</div>
