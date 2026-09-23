@@ -265,7 +265,7 @@ def score(rows: List[Result]) -> float:
 
 
 def main():
-    ap=argparse.ArgumentParser(); ap.add_argument("--windows",default="30,90,180"); ap.add_argument("--out",default="artifacts/perp_coin_profile_search")
+    ap=argparse.ArgumentParser(); ap.add_argument("--windows",default="30,90,180,365"); ap.add_argument("--out",default="artifacts/perp_coin_profile_search")
     args=ap.parse_args(); windows=sorted(int(x) for x in args.windows.split(",")); maxd=max(windows)
     out=Path(args.out); out.mkdir(parents=True,exist_ok=True)
     allrows=[]; winners=[]
@@ -290,9 +290,13 @@ def main():
             "return_30d":next(r.return_pct for r,d in zip(rows,windows) if d==30),
             "return_90d":next(r.return_pct for r,d in zip(rows,windows) if d==90),
             "return_180d":next(r.return_pct for r,d in zip(rows,windows) if d==180),
+            "return_365d":next((r.return_pct for r,d in zip(rows,windows) if d==365),None),
             "pf_180d":next(r.profit_factor for r,d in zip(rows,windows) if d==180),
+            "pf_365d":next((r.profit_factor for r,d in zip(rows,windows) if d==365),None),
             "dd_180d":next(r.max_drawdown_pct for r,d in zip(rows,windows) if d==180),
+            "dd_365d":next((r.max_drawdown_pct for r,d in zip(rows,windows) if d==365),None),
             "trades_180d":next(r.trades for r,d in zip(rows,windows) if d==180),
+            "trades_365d":next((r.trades for r,d in zip(rows,windows) if d==365),None),
             "runner_up":ranked[1][1].name,
         })
     with (out/"all_results.csv").open("w",newline="") as f:
@@ -301,10 +305,10 @@ def main():
         w=csv.DictWriter(f,fieldnames=list(winners[0].keys())); w.writeheader(); w.writerows(winners)
     (out/"winners.json").write_text(json.dumps(winners,indent=2))
     lines=["# Coin-Specific Selective Strategy Search","",
-           "| Coin | Profile | Family | +Windows | 30d | 90d | 180d | PF 180d | DD 180d | Trades 180d |",
-           "|---|---|---|---:|---:|---:|---:|---:|---:|---:|"]
+           "| Coin | Profile | Family | +Windows | 30d | 90d | 180d | 365d | PF 365d | DD 365d | Trades 365d |",
+           "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for x in winners:
-        lines.append(f"| {x['coin']} | {x['profile']} | {x['family']} | {x['positive_windows']}/3 | {x['return_30d']}% | {x['return_90d']}% | {x['return_180d']}% | {x['pf_180d']:.2f} | {x['dd_180d']}% | {x['trades_180d']} |")
+        lines.append(f"| {x['coin']} | {x['profile']} | {x['family']} | {x['positive_windows']}/{len(windows)} | {x['return_30d']}% | {x['return_90d']}% | {x['return_180d']}% | {x['return_365d']}% | {x['pf_365d']:.2f} | {x['dd_365d']}% | {x['trades_365d']} |")
     (out/"report.md").write_text("\n".join(lines))
 
 
