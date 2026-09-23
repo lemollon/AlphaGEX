@@ -6,12 +6,14 @@ on:
       - feature/perp-edge-hardening
     paths:
       - backtest/external_perp_reconstruction.py
+      - backtest/perp_strategy_family_search.py
       - .github/workflows/perp-external-backtest.yml
   pull_request:
     branches:
       - main
     paths:
       - backtest/external_perp_reconstruction.py
+      - backtest/perp_strategy_family_search.py
       - .github/workflows/perp-external-backtest.yml
   workflow_dispatch:
 
