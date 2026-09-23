@@ -210,3 +210,141 @@ def launch_autorun_if_enabled():
         _running = True
     threading.Thread(target=_run,args=(start,end),daemon=True,name="spark-flame-intraday-autorun").start()
     return True
+
+
+# ---- bounded parameter discovery -------------------------------------------------
+OPT_TIMES = {
+    "spark": ("10:55:00","11:05:00","11:15:00"),   # 09:55/10:05/10:15 CT
+    "flame": ("13:55:00","14:05:00","14:15:00"),   # 12:55/13:05/13:15 CT
+}
+OPT_OTM = (1.0,2.0,3.0,4.0)
+OPT_WIDTHS = (2.0,3.0,5.0)
+
+def _candidate_result(entry_rows, guard_by_time, spot, otm, width, min_credit=0.10, guard_buffer=0.50):
+    if spot is None:
+        return None
+    short=_js_round(spot-otm); long=short-width
+    sq,lq=_put(entry_rows,short),_put(entry_rows,long)
+    if not sq or not lq:
+        return None
+    credit=sq[0]-lq[1]
+    if credit<min_credit:
+        return {"status":"skip","credit":credit}
+    for gt in _guard_times:
+        g=guard_by_time.get(gt,[])
+        gspot=_parity(g)
+        if gspot is None:
+            continue
+        if gspot<=short+guard_buffer:
+            qs,ql=_put(g,short),_put(g,long)
+            if qs and ql:
+                debit=max(0.0,qs[1]-ql[0])
+                return {"status":"trade","credit":credit,"pnl":(credit-debit)*100,"guard":1}
+    final=guard_by_time.get("15:59:00",[])
+    settle=_parity(final)
+    if settle is None:
+        return None
+    value=min(max(short-settle,0.0),width)
+    return {"status":"trade","credit":credit,"pnl":(credit-value)*100,"guard":0}
+
+def _opt_tables(conn):
+    c=conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS spark_flame_optimizer_runs(
+      run_id TEXT PRIMARY KEY, started_at TIMESTAMPTZ DEFAULT NOW(), finished_at TIMESTAMPTZ,
+      start_date DATE, end_date DATE, status TEXT NOT NULL, detail TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS spark_flame_optimizer_results(
+      run_id TEXT NOT NULL, bot TEXT NOT NULL, entry_et TEXT NOT NULL, otm NUMERIC NOT NULL,
+      width NUMERIC NOT NULL, vix_gate NUMERIC NOT NULL, min_credit NUMERIC NOT NULL,
+      guard_buffer NUMERIC NOT NULL, trades INTEGER NOT NULL, pnl NUMERIC NOT NULL,
+      avg_trade NUMERIC NOT NULL, win_rate NUMERIC NOT NULL, worst_trade NUMERIC,
+      guard_rate NUMERIC NOT NULL, PRIMARY KEY(run_id,bot,entry_et,otm,width,vix_gate,min_credit,guard_buffer))""")
+    conn.commit()
+
+def _run_optimizer(start:date,end:date):
+    run_id="sfo-"+uuid.uuid4().hex[:12]
+    conn=get_connection()
+    try:
+        _opt_tables(conn); c=conn.cursor()
+        c.execute("UPDATE spark_flame_optimizer_runs SET finished_at=NOW(),status='interrupted',detail='superseded' WHERE status='running' AND finished_at IS NULL")
+        c.execute("INSERT INTO spark_flame_optimizer_runs(run_id,start_date,end_date,status,detail) VALUES(%s,%s,%s,'running','bounded structure/timing discovery; 1m NBBO; fixed production guard')",(run_id,start,end)); conn.commit()
+        vixs=_vix_series(conn)
+        stats={}
+        for bot in ("spark","flame"):
+            for et in OPT_TIMES[bot]:
+                for otm in OPT_OTM:
+                    for width in OPT_WIDTHS:
+                        stats[(bot,et,otm,width)]={"pnls":[],"guards":0}
+        d=start
+        while d<=end:
+            if d.weekday()<5:
+                try:
+                    guard=_guard_window(d)
+                    entry_cache={}
+                    for bot in ("spark","flame"):
+                        ratio=_vix_ratio(vixs,d)
+                        if ratio is None or ratio>BOT[bot]["vix"]:
+                            continue
+                        for et in OPT_TIMES[bot]:
+                            try:
+                                rows=_snap(d,et)
+                            except Exception:
+                                continue
+                            entry_cache[(bot,et)]=rows
+                            spot=_parity(rows)
+                            for otm in OPT_OTM:
+                                for width in OPT_WIDTHS:
+                                    rec=_candidate_result(rows,guard,spot,otm,width)
+                                    if rec and rec.get("status")=="trade":
+                                        s=stats[(bot,et,otm,width)]
+                                        s["pnls"].append(float(rec["pnl"]))
+                                        s["guards"]+=int(rec.get("guard",0))
+                except Exception:
+                    pass
+            d+=timedelta(days=1)
+        for (bot,et,otm,width),s in stats.items():
+            pnls=s["pnls"]
+            if not pnls:
+                continue
+            trades=len(pnls); pnl=sum(pnls); avg=pnl/trades
+            wins=sum(1 for x in pnls if x>0)
+            wr=100*wins/trades; worst=min(pnls); gr=100*s["guards"]/trades
+            c.execute("""INSERT INTO spark_flame_optimizer_results
+            (run_id,bot,entry_et,otm,width,vix_gate,min_credit,guard_buffer,trades,pnl,avg_trade,win_rate,worst_trade,guard_rate)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (run_id,bot,et,otm,width,BOT[bot]["vix"],0.10,0.50,trades,pnl,avg,wr,worst,gr))
+        c.execute("UPDATE spark_flame_optimizer_runs SET finished_at=NOW(),status='completed',detail='completed' WHERE run_id=%s",(run_id,)); conn.commit()
+    except Exception as e:
+        try:
+            c=conn.cursor(); c.execute("UPDATE spark_flame_optimizer_runs SET finished_at=NOW(),status='failed',detail=%s WHERE run_id=%s",(repr(e),run_id)); conn.commit()
+        except Exception: pass
+    finally:
+        conn.close()
+
+def launch_optimizer_if_enabled():
+    if os.getenv("SPARK_FLAME_OPTIMIZER_AUTORUN","").strip().lower() not in {"1","true","yes","on"}:
+        return False
+    start=date.fromisoformat(os.getenv("SPARK_FLAME_OPTIMIZER_START","2026-03-09"))
+    end=date.fromisoformat(os.getenv("SPARK_FLAME_OPTIMIZER_END","2026-05-22"))
+    threading.Thread(target=_run_optimizer,args=(start,end),daemon=True,name="spark-flame-optimizer").start()
+    return True
+
+@router.get("/optimizer/status")
+def optimizer_status():
+    conn=get_connection()
+    try:
+        _opt_tables(conn); c=conn.cursor()
+        c.execute("SELECT run_id,started_at,finished_at,start_date,end_date,status,detail FROM spark_flame_optimizer_runs ORDER BY started_at DESC LIMIT 1")
+        row=c.fetchone()
+        if not row:
+            return {"latest":None}
+        c.execute("""SELECT bot,entry_et,otm,width,trades,pnl,avg_trade,win_rate,worst_trade,guard_rate
+                     FROM spark_flame_optimizer_results WHERE run_id=%s
+                     ORDER BY bot,avg_trade DESC""",(row[0],))
+        results=[{"bot":x[0],"entry_et":x[1],"otm":float(x[2]),"width":float(x[3]),"trades":x[4],
+                  "pnl":float(x[5]),"avg_trade":float(x[6]),"win_rate":float(x[7]),
+                  "worst":float(x[8]) if x[8] is not None else None,"guard_rate":float(x[9])} for x in c.fetchall()]
+        return {"latest":{"run_id":row[0],"started_at":str(row[1]),"finished_at":str(row[2]) if row[2] else None,
+                          "start":str(row[3]),"end":str(row[4]),"status":row[5],"detail":row[6],
+                          "results":results[:20]}}
+    finally:
+        conn.close()
