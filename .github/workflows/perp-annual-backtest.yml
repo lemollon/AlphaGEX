@@ -10,6 +10,7 @@ on:
       - backtest/perp_chop_regime_study.py
       - backtest/perp_dynamic_v2.py
       - backtest/perp_shared_portfolio.py
+      - backtest/perp_portfolio_walkforward.py
       - .github/workflows/perp-annual-backtest.yml
   pull_request:
     branches:
@@ -48,6 +49,9 @@ jobs:
         run: |
           python backtest/perp_shared_portfolio.py             --days 365             --out artifacts/perp_shared_portfolio_all
           python backtest/perp_shared_portfolio.py             --days 365             --exclude-eth             --out artifacts/perp_shared_portfolio_no_eth
+      - name: Run portfolio walk-forward optimization
+        run: |
+          python backtest/perp_portfolio_walkforward.py             --days 365             --out artifacts/perp_portfolio_walkforward
       - name: Show annual profile report
         run: cat artifacts/perp_coin_profile_search_365d/report.md
       - name: Show chop/regime report
@@ -58,6 +62,8 @@ jobs:
         run: |
           cat artifacts/perp_shared_portfolio_all/report.md
           cat artifacts/perp_shared_portfolio_no_eth/report.md
+      - name: Show portfolio walk-forward report
+        run: cat artifacts/perp_portfolio_walkforward/report.md
       - uses: actions/upload-artifact@v4
         with:
           name: perp-annual-backtest
@@ -68,5 +74,6 @@ jobs:
             artifacts/perp_dynamic_v2/
             artifacts/perp_shared_portfolio_all/
             artifacts/perp_shared_portfolio_no_eth/
+            artifacts/perp_portfolio_walkforward/
           if-no-files-found: error
           retention-days: 30
