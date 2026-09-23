@@ -84,7 +84,7 @@ async def start_active_trading_scheduler():
     # replay used overlapping horizon buckets and uncached paid downloads.
     # Research must never prevent the trading API from starting.
     try:
-        from scripts.valor_contract_research_v2 import launch_if_enabled
+        from scripts.valor_exit_specialists_v3 import launch_if_enabled
         launch_if_enabled()
     except Exception:
         import logging
