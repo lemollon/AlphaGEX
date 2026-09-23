@@ -1,7 +1,7 @@
 """
-AGAPE Perpetuals/Futures aggregated trade history.
+AGAPE active perpetuals aggregated trade history.
 
-Single endpoint that fans out across all 10 perp/futures bots, merges
+Single endpoint that fans out across the six active perpetual bots, merges
 their closed trades by close_time DESC, and paginates with a stable
 keyset cursor on (close_time, bot_id, position_id).
 
@@ -146,7 +146,7 @@ def _parse_bots_param(bots: str) -> List[str]:
 
 @router.get("/trades")
 async def get_aggregated_trades(
-    bots: str = Query(..., description="Comma-separated bot ids, or '*' for all 10"),
+    bots: str = Query(..., description="Comma-separated bot ids, or '*' for all active perpetuals"),
     since: Optional[str] = Query(None, description="ISO-8601 lower bound on close_time"),
     until: Optional[str] = Query(None, description="ISO-8601 upper bound on close_time"),
     before: Optional[str] = Query(None, description="Opaque keyset cursor from a prior response"),

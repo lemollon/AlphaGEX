@@ -1,76 +1,29 @@
-# Route modules for AlphaGEX API
-#
-# These modules are extracted from the monolithic main.py to improve maintainability.
-# Each module handles a specific domain of the API.
+"""Active AlphaGEX API routes.
 
-from . import vix_routes
-from . import spx_routes
-from . import system_routes
-from . import core_routes
-from . import trader_routes
-from . import backtest_routes
-from . import database_routes
-from . import gex_routes
-from . import gamma_routes
-from . import optimizer_routes
-from . import ai_routes
-from . import probability_routes
-from . import notification_routes
-from . import misc_routes
-from . import alerts_routes
-from . import setups_routes
-from . import scanner_routes
-from . import autonomous_routes
-from . import psychology_routes
-from . import ai_intelligence_routes
-from . import wheel_routes
-from . import export_routes
-from . import ml_routes
-from . import spx_backtest_routes
-from . import fortress_routes
-from . import solomon_routes
-from . import anchor_routes
-from . import daily_manna_routes
-from . import bot_reports_routes
+AlphaGEX runtime is intentionally limited to VALOR and active crypto perpetuals.
+SpreadWorks and IronForge are separate protected projects and are not imported here.
+"""
+
 from . import tastytrade_routes
 from . import valor_routes
-from . import dashboard_batch_routes
-from . import reconciliation_routes
-from . import ember_routes
+from . import agape_eth_perp_routes
+from . import agape_sol_perp_routes
+from . import agape_avax_perp_routes
+from . import agape_btc_perp_routes
+from . import agape_xrp_perp_routes
+from . import agape_doge_perp_routes
+from . import agape_perpetuals_trades_routes
+from . import perp_exit_optimizer_routes
 
 __all__ = [
-    'vix_routes',
-    'spx_routes',
-    'system_routes',
-    'core_routes',
-    'trader_routes',
-    'backtest_routes',
-    'database_routes',
-    'gex_routes',
-    'gamma_routes',
-    'optimizer_routes',
-    'ai_routes',
-    'probability_routes',
-    'notification_routes',
-    'misc_routes',
-    'alerts_routes',
-    'setups_routes',
-    'scanner_routes',
-    'autonomous_routes',
-    'psychology_routes',
-    'ai_intelligence_routes',
-    'wheel_routes',
-    'export_routes',
-    'ml_routes',
-    'spx_backtest_routes',
-    'fortress_routes',
-    'solomon_routes',
-    'anchor_routes',
-    'daily_manna_routes',
-    'bot_reports_routes',
-    'tastytrade_routes',
-    'valor_routes',
-    'dashboard_batch_routes',
-    'reconciliation_routes',
-    'ember_routes',
+    "tastytrade_routes",
+    "valor_routes",
+    "agape_eth_perp_routes",
+    "agape_sol_perp_routes",
+    "agape_avax_perp_routes",
+    "agape_btc_perp_routes",
+    "agape_xrp_perp_routes",
+    "agape_doge_perp_routes",
+    "agape_perpetuals_trades_routes",
+    "perp_exit_optimizer_routes",
 ]
