@@ -7,6 +7,7 @@ import asyncio
 import os
 from datetime import datetime, timezone
 import httpx
+from fastapi import FastAPI
 
 SOURCE = os.getenv("TTP_SIGNAL_SOURCE", "https://ttp-flex-bot-v1.onrender.com/signals").strip()
 WEBHOOK = os.getenv("TTP_DISCORD_WEBHOOK_URL", "").strip()
@@ -14,6 +15,8 @@ POLL = max(15, int(os.getenv("TTP_DISCORD_POLL_SECONDS", "30")))
 PINK = 0xFF4FA3
 
 seen = set()
+app = FastAPI(title="TTP Discord Relay")
+task = None
 
 async def post_signal(client, s):
     key = f"{s.get('symbol')}:{s.get('bar_time')}"
@@ -64,5 +67,18 @@ async def loop():
                 print(f"[ttp-discord] {type(exc).__name__}: {exc}", flush=True)
             await asyncio.sleep(POLL)
 
-if __name__ == "__main__":
-    asyncio.run(loop())
+@app.on_event("startup")
+async def startup():
+    global task
+    task = asyncio.create_task(loop())
+
+@app.on_event("shutdown")
+async def shutdown():
+    global task
+    if task:
+        task.cancel()
+        task = None
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "source": SOURCE, "webhook_configured": bool(WEBHOOK), "seen": len(seen)}
