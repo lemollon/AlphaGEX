@@ -32,6 +32,20 @@ def _snap(d:date, hms:str)->list[dict[str,str]]:
     y=d.strftime("%Y%m%d")
     return _csv("/v3/option/history/quote",{"symbol":"SPY","expiration":y,"strike":"*","right":"both","date":y,"interval":"1m","start_time":hms,"end_time":hms})
 
+def _guard_window(d:date)->dict[str,list[dict[str,str]]]:
+    y=d.strftime("%Y%m%d")
+    rows=_csv("/v3/option/history/quote",{
+        "symbol":"SPY","expiration":y,"strike":"*","right":"both","date":y,
+        "interval":"1m","start_time":"15:57:00","end_time":"15:59:00"
+    })
+    out={t:[] for t in _guard_times}
+    for row in rows:
+        raw=str(row.get("timestamp",""))
+        hms=raw.split("T")[-1][:8] if "T" in raw else raw[-8:]
+        if hms in out:
+            out[hms].append(row)
+    return out
+
 def _n(v:Any)->float|None:
     try:
         x=float(v); return x if math.isfinite(x) else None
@@ -86,7 +100,7 @@ def _vix_ratio(series:dict[date,float], d:date)->float|None:
     mx=max(series[x] for x in ds[-21:-1])
     return prior/mx if mx>0 else None
 
-def _one_day(d:date, bot:str, vixs)->dict:
+def _one_day(d:date, bot:str, vixs, guard_by_time:dict[str,list[dict[str,str]]])->dict:
     cfg=BOT[bot]; ratio=_vix_ratio(vixs,d)
     base={"bot":bot,"trade_date":d,"status":"skip","vix_ratio":ratio}
     if ratio is None:return {**base,"reason":"vix_unknown"}
@@ -100,14 +114,14 @@ def _one_day(d:date, bot:str, vixs)->dict:
     row={**base,"entry_spot":spot,"short_strike":short,"long_strike":long,"short_bid":sq[0],"long_ask":lq[1],"entry_credit":credit}
     if credit<cfg["min_credit"]:return {**row,"reason":"credit_low"}
     for gt in _guard_times:
-        g=_snap(d,gt); gspot=_parity(g)
+        g=guard_by_time.get(gt,[]); gspot=_parity(g)
         if gspot is None: continue
         if gspot<=short+_guard_buffer:
             qs,ql=_put(g,short),_put(g,long)
             if qs and ql:
                 debit=max(0.0,qs[1]-ql[0])
                 return {**row,"status":"trade","reason":"assignment_guard","guard_time":gt,"guard_spot":gspot,"close_debit":debit,"settle_spot":None,"pnl_per_lot":(credit-debit)*100}
-    final=_snap(d,"15:59:00"); settle=_parity(final)
+    final=guard_by_time.get("15:59:00",[]); settle=_parity(final)
     if settle is None:return {**row,"reason":"missing_settle_spot"}
     value=min(max(short-settle,0.0),cfg["width"])
     return {**row,"status":"trade","reason":"settled","settle_spot":settle,"pnl_per_lot":(credit-value)*100}
@@ -118,13 +132,21 @@ def _run(start:date,end:date):
     conn=get_connection()
     try:
         _tables(conn); c=conn.cursor()
-        c.execute("INSERT INTO spark_flame_intraday_research_runs(run_id,start_date,end_date,status,detail) VALUES(%s,%s,%s,'running','1m NBBO, production-matched entry/VIX/assignment guard')",(run_id,start,end)); conn.commit()
+        c.execute("UPDATE spark_flame_intraday_research_runs SET finished_at=NOW(),status='interrupted',detail='superseded by new process/run' WHERE status='running' AND finished_at IS NULL")
+        c.execute("INSERT INTO spark_flame_intraday_research_runs(run_id,start_date,end_date,status,detail) VALUES(%s,%s,%s,'running','1m NBBO, production-matched entry/VIX/assignment guard; shared 15:57-15:59 window')",(run_id,start,end)); conn.commit()
         vixs=_vix_series(conn); d=start
         while d<=end:
             if d.weekday()<5:
-                # One failed market/holiday day is recorded as a skip, not fatal.
+                try:
+                    guard_by_time=_guard_window(d)
+                    guard_error=None
+                except Exception as e:
+                    guard_by_time={}
+                    guard_error=type(e).__name__
+                # One failed market/holiday day is recorded as an error; regular sessions share one guard-window request.
                 for bot in ("spark","flame"):
-                    try: rec=_one_day(d,bot,vixs)
+                    try:
+                        rec={"bot":bot,"trade_date":d,"status":"error","reason":guard_error} if guard_error else _one_day(d,bot,vixs,guard_by_time)
                     except Exception as e:
                         rec={"bot":bot,"trade_date":d,"status":"error","reason":type(e).__name__}
                     c.execute("""INSERT INTO spark_flame_intraday_research_trades
