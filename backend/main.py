@@ -26,6 +26,7 @@ from backend.api.routes import (
     agape_btc_perp_routes,
     agape_xrp_perp_routes,
     agape_doge_perp_routes,
+    agape_shib_perp_routes,
     agape_perpetuals_trades_routes,
     perp_exit_optimizer_routes,
     unified_metrics_routes,
@@ -68,6 +69,7 @@ app.include_router(agape_avax_perp_routes.router)
 app.include_router(agape_btc_perp_routes.router)
 app.include_router(agape_xrp_perp_routes.router)
 app.include_router(agape_doge_perp_routes.router)
+app.include_router(agape_shib_perp_routes.router)
 app.include_router(agape_perpetuals_trades_routes.router)
 app.include_router(perp_exit_optimizer_routes.router)
 app.include_router(unified_metrics_routes.router)
@@ -142,5 +144,6 @@ async def health():
             "AGAPE-AVAX-PERP",
             "AGAPE-XRP-PERP",
             "AGAPE-DOGE-PERP",
+            "AGAPE-SHIB-PERP",
         ],
     }

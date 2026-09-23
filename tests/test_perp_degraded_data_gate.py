@@ -24,6 +24,7 @@ CASES = [
     ("trading.agape_avax_perp.models", "AgapeAvaxPerpConfig", "trading.agape_avax_perp.signals", "AgapeAvaxPerpSignalGenerator"),
     ("trading.agape_xrp_perp.models", "AgapeXrpPerpConfig", "trading.agape_xrp_perp.signals", "AgapeXrpPerpSignalGenerator"),
     ("trading.agape_doge_perp.models", "AgapeDogePerpConfig", "trading.agape_doge_perp.signals", "AgapeDogePerpSignalGenerator"),
+    ("trading.agape_shib_perp.models", "AgapeShibPerpConfig", "trading.agape_shib_perp.signals", "AgapeShibPerpSignalGenerator"),
 ]
 
 DEGRADED_MARKET_DATA = {

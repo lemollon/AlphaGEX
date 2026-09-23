@@ -2,7 +2,7 @@
 
 Active systems only:
 - VALOR (micro futures)
-- AGAPE crypto perpetuals: BTC, ETH, SOL, AVAX, XRP, DOGE
+- AGAPE crypto perpetuals: BTC, ETH, SOL, AVAX, XRP, DOGE, SHIB (paper only)
 
 SpreadWorks and IronForge are separate protected projects and are intentionally
 not imported or scheduled here.
@@ -26,6 +26,7 @@ from trading.agape_sol_perp.trader import create_agape_sol_perp_trader
 from trading.agape_avax_perp.trader import create_agape_avax_perp_trader
 from trading.agape_xrp_perp.trader import create_agape_xrp_perp_trader
 from trading.agape_doge_perp.trader import create_agape_doge_perp_trader
+from trading.agape_shib_perp.trader import create_agape_shib_perp_trader
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 logger = logging.getLogger("alphagex.scheduler")
@@ -37,6 +38,7 @@ PERP_FACTORIES = {
     "AGAPE-AVAX-PERP": create_agape_avax_perp_trader,
     "AGAPE-XRP-PERP": create_agape_xrp_perp_trader,
     "AGAPE-DOGE-PERP": create_agape_doge_perp_trader,
+    "AGAPE-SHIB-PERP": create_agape_shib_perp_trader,
 }
 
 

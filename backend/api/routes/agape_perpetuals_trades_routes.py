@@ -1,7 +1,7 @@
 """
 AGAPE active perpetuals aggregated trade history.
 
-Single endpoint that fans out across the six active perpetual bots, merges
+Single endpoint that fans out across the active perpetual bots, merges
 their closed trades by close_time DESC, and paginates with a stable
 keyset cursor on (close_time, bot_id, position_id).
 
@@ -66,6 +66,7 @@ _BOT_REGISTRY: Dict[str, Dict] = {
     "btc":          {"label": "BTC-PERP",  "factory": _db_factory("trading.agape_btc_perp.db",      "AgapeBtcPerpDatabase")},
     "xrp":          {"label": "XRP-PERP",  "factory": _db_factory("trading.agape_xrp_perp.db",      "AgapeXrpPerpDatabase")},
     "doge":         {"label": "DOGE-PERP", "factory": _db_factory("trading.agape_doge_perp.db",     "AgapeDogePerpDatabase")},
+    "shib":         {"label": "SHIB-PERP", "factory": _db_factory("trading.agape_shib_perp.db",     "AgapeShibPerpDatabase")},
     "shib_futures": {"label": "SHIB-FUT",  "factory": _db_factory("trading.agape_shib_futures.db",  "AgapeShibFuturesDatabase")},
     "link_futures": {"label": "LINK-FUT",  "factory": _db_factory("trading.agape_link_futures.db",  "AgapeLinkFuturesDatabase")},
     "ltc_futures":  {"label": "LTC-FUT",   "factory": _db_factory("trading.agape_ltc_futures.db",   "AgapeLtcFuturesDatabase")},
