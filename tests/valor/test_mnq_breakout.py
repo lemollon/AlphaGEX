@@ -17,8 +17,8 @@ from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
-for name in ('trading', 'trading.valor'):
-    module = ModuleType(name); module.__path__ = [str(ROOT / name.replace('.', '/'))]
+for name in ('_mnqtest', '_mnqtest.valor'):
+    module = ModuleType(name); module.__path__ = [str(ROOT / name.replace('_mnqtest', 'trading').replace('.', '/'))]
     sys.modules[name] = module
 
 def load(name, path):
@@ -27,16 +27,16 @@ def load(name, path):
     spec.loader.exec_module(module)
     return module
 
-s = load('trading.valor.mnq_breakout', 'trading/valor/mnq_breakout.py')
-m = load('trading.valor.models', 'trading/valor/models.py')
-fake_integrity = ModuleType('trading.valor.integrity')
+s = load('_mnqtest.valor.mnq_breakout', 'trading/valor/mnq_breakout.py')
+m = load('_mnqtest.valor.models', 'trading/valor/models.py')
+fake_integrity = ModuleType('_mnqtest.valor.integrity')
 fake_integrity.serialized = lambda fn: fn
 sys.modules[fake_integrity.__name__] = fake_integrity
-fake_db = ModuleType('trading.valor.db')
+fake_db = ModuleType('_mnqtest.valor.db')
 def forbidden_connection(): raise AssertionError('No real database in tests')
 fake_db.db_connection = forbidden_connection
 sys.modules[fake_db.__name__] = fake_db
-adapter = load('trading.valor.mnq_breakout_trader', 'trading/valor/mnq_breakout_trader.py')
+adapter = load('_mnqtest.valor.mnq_breakout_trader', 'trading/valor/mnq_breakout_trader.py')
 CT = ZoneInfo('America/Chicago')
 NOW = datetime(2026, 9, 23, 9, 0, 10, tzinfo=CT)
 SYMBOL = '/MNQZ6'
@@ -79,7 +79,7 @@ def method_class(path, class_name, methods):
         node.decorator_list=[];bodies.append(node)
     minimal=ast.Module(body=[ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0),
         ast.ClassDef(name='ActualMethods', bases=[], keywords=[], body=bodies, decorator_list=[])], type_ignores=[])
-    space=dict(vars(m), __name__='trading.valor.tests', __package__='trading.valor', logger=logging.getLogger('test'))
+    space=dict(vars(m), __name__='_mnqtest.valor.tests', __package__='_mnqtest.valor', logger=logging.getLogger('test'))
     exec(compile(ast.fix_missing_locations(minimal), str(path), 'exec'), space)
     return space['ActualMethods'], space
 
