@@ -136,6 +136,19 @@ class AgapeShibPerpTrader:
                 result["outcome"] = f"NO_SIGNAL_{signal.reasoning if signal else 'NONE'}"
                 self._log_scan(result, scan_ctx, signal=signal)
                 return result
+            try:
+                from trading.perp_regime_filter import is_signal_blocked
+                blocked, reason = is_signal_blocked(
+                    "AGAPE_SHIB_PERP",
+                    signal.action.value,
+                    (market_data or {}).get("funding_regime"),
+                )
+                if blocked:
+                    result["outcome"] = f"REGIME_FILTER_{reason}"
+                    self._log_scan(result, scan_ctx, signal=signal)
+                    return result
+            except ImportError:
+                pass
             position = self.executor.execute_trade(signal)
             if position:
                 # Stamp entry-time regime so the exit path can choose its profile.

@@ -43,7 +43,7 @@ BOT_DISPLAY_NAMES: dict[str, str] = {
     "AGAPE_BTC_PERP":   "AGAPE-BTC-PERP",     # BTC Perpetual Contract
     "AGAPE_XRP_PERP":   "AGAPE-XRP-PERP",     # XRP Perpetual Contract
     "AGAPE_DOGE_PERP":  "AGAPE-DOGE-PERP",    # DOGE Perpetual Contract
-    "AGAPE_SHIB_PERP":  "AGAPE-SHIB-PERP",    # SHIB Perpetual Contract (RETIRED 2026-05-03; replaced by AGAPE-SHIB-FUTURES)
+    "AGAPE_SHIB_PERP":  "AGAPE-SHIB-PERP",    # SHIB Perpetual Contract (restored 2026-09-23, PAPER only)
     "AGAPE_SHIB_FUTURES": "AGAPE-SHIB-FUTURES", # 1000SHIB Monthly Futures Contract (Coinbase Derivatives FCM)
     "AGAPE_LINK_FUTURES": "AGAPE-LINK-FUTURES", # LINK Monthly Futures Contract (Coinbase Derivatives FCM)
     "AGAPE_LTC_FUTURES": "AGAPE-LTC-FUTURES",   # LTC Monthly Futures Contract (Coinbase Derivatives FCM)
