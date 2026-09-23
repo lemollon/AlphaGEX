@@ -63,7 +63,7 @@ class AgapeSolPerpConfig:
 
     # Risk management
     starting_capital: float = 5000.0     # $5,000 starting capital (smaller pilot allocation)
-    risk_per_trade_pct: float = 5.0      # 5% risk per trade ($250 on $5K)
+    risk_per_trade_pct: float = 1.0      # 5% risk per trade ($250 on $5K)
     default_quantity: float = 5.0        # 5 SOL default quantity (Coinbase SOL perp contract size)
     min_quantity: float = 1.0            # Minimum tradeable quantity (Coinbase increment)
     max_quantity: float = 500.0          # Maximum quantity per position
@@ -88,7 +88,7 @@ class AgapeSolPerpConfig:
     no_loss_profit_target_pct: float = 0.0
 
     # Stop-and-Reverse (SAR) Strategy
-    use_sar: bool = True
+    use_sar: bool = False
     sar_trigger_pct: float = 1.5
     sar_mfe_threshold_pct: float = 0.3
 
@@ -106,7 +106,9 @@ class AgapeSolPerpConfig:
     force_exit: str = ""
 
     # Signal thresholds - AGGRESSIVE
-    min_confidence: str = "LOW"
+    min_confidence: str = "MEDIUM"
+    allow_range_bound_entries: bool = False
+    allow_wait_fallback_entries: bool = False
     min_funding_rate_signal: float = 0.001
     min_ls_ratio_extreme: float = 1.1
     min_liquidation_proximity_pct: float = 5.0
@@ -131,7 +133,7 @@ class AgapeSolPerpConfig:
     def load_from_db(cls, db) -> "AgapeSolPerpConfig":
         """Load config from database, falling back to defaults."""
         config = cls()
-        code_controlled_keys = {"cooldown_minutes", "max_open_positions"}
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries"}
         try:
             db_config = db.load_config()
             if db_config:

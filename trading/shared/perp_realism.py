@@ -16,9 +16,12 @@ strategy code.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import random
+import time
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence
 
@@ -71,6 +74,8 @@ class FillEstimate:
     slippage_usd: float
     slippage_bps: float
     used_executable_quote: bool
+    execution_style: str = "taker"
+    fill_fraction: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -238,7 +243,149 @@ def simulate_taker_fill(
         slippage_usd=slippage_usd,
         slippage_bps=slippage_bps,
         used_executable_quote=use_book,
+        execution_style="taker",
+        fill_fraction=1.0,
     )
+
+
+
+def _selective_maker_rng(symbol: str, side: str, quantity: float, fallback_price: float, seed_key: Optional[str] = None):
+    """Deterministic-within-a-minute RNG for paper fill simulation."""
+    if seed_key is None:
+        minute_bucket = int(time.time() // 60)
+        seed_key = f"{symbol}|{side}|{quantity:.12g}|{fallback_price:.12g}|{minute_bucket}"
+    digest = hashlib.sha256(seed_key.encode("utf-8")).digest()
+    return random.Random(int.from_bytes(digest[:8], "big"))
+
+
+def simulate_selective_reference_fill(
+    symbol: str,
+    side: str,
+    quantity: float,
+    fallback_price: float,
+    *,
+    default_leverage: float,
+    max_leverage: float,
+    fallback_maintenance_margin_rate: float,
+    funding_interval_hours: float = 8.0,
+    prefer_maker: bool = True,
+    seed_key: Optional[str] = None,
+):
+    """Simulate the validated selective-maker paper entry policy.
+
+    This remains PAPER/SHADOW only and never places a real order.
+
+    Defaults mirror the execution-cost study:
+      - maker attempt probability: 80%
+      - maker partial fill: 90%
+      - remaining quantity falls back to taker 20% of the time
+      - maker adverse-selection penalty: 0.35 bps
+      - fallback taker extra slippage: 0.5 bps
+
+    Maker simulation is only allowed when a valid L2 quote exists and the
+    observed spread is not wider than PERP_MAKER_MAX_SPREAD_BPS (default 8).
+    Otherwise execution falls back to the existing conservative taker model.
+    """
+    rules = get_rules(
+        symbol,
+        default_leverage=default_leverage,
+        max_leverage=max_leverage,
+        fallback_maintenance_margin_rate=fallback_maintenance_margin_rate,
+        funding_interval_hours=funding_interval_hours,
+    )
+    market = get_reference_market(symbol)
+    if market is not None:
+        rules = PerpVenueRules(
+            symbol=rules.symbol,
+            default_leverage=min(rules.default_leverage, market.max_leverage),
+            max_leverage=market.max_leverage,
+            taker_fee_bps=rules.taker_fee_bps,
+            maker_fee_bps=rules.maker_fee_bps,
+            funding_interval_hours=1.0,
+            fallback_maintenance_margin_rate=rules.fallback_maintenance_margin_rate,
+            impact_bps=rules.impact_bps,
+            fallback_slippage_bps=rules.fallback_slippage_bps,
+            tiers=market.tiers or rules.tiers,
+        )
+
+    if market is None:
+        fill = simulate_taker_fill(side, quantity, rules, fallback_price=fallback_price)
+        return fill, None, rules
+
+    bid = float(market.quote.bid or 0.0)
+    ask = float(market.quote.ask or 0.0)
+    mark = float(market.quote.mark or 0.0)
+    valid_book = bid > 0 and ask > 0 and ask >= bid
+    mid = (bid + ask) / 2.0 if valid_book else (mark or float(fallback_price))
+    spread_bps = ((ask - bid) / mid * 10000.0) if valid_book and mid > 0 else float("inf")
+    max_spread_bps = _env_float("PERP_MAKER_MAX_SPREAD_BPS", 8.0)
+
+    if not prefer_maker or not valid_book or spread_bps > max_spread_bps:
+        fill = simulate_taker_fill(
+            side, quantity, rules,
+            bid=bid or None, ask=ask or None, mark=mark or None,
+            fallback_price=fallback_price,
+        )
+        return fill, market, rules
+
+    rng = _selective_maker_rng(symbol, side, quantity, fallback_price, seed_key)
+    maker_prob = _env_float("PERP_MAKER_FILL_PROBABILITY", 0.80)
+    maker_fill_fraction = min(1.0, max(0.0, _env_float("PERP_MAKER_PARTIAL_FILL_FRACTION", 0.90)))
+    fallback_prob = _env_float("PERP_MAKER_FALLBACK_PROBABILITY", 0.20)
+    adverse_bps = _env_float("PERP_MAKER_ADVERSE_SELECTION_BPS", 0.35)
+    fallback_extra_bps = _env_float("PERP_MAKER_FALLBACK_EXTRA_BPS", 0.50)
+
+    if rng.random() >= maker_prob:
+        fill = simulate_taker_fill(
+            side, quantity, rules,
+            bid=bid, ask=ask, mark=mark or None, fallback_price=fallback_price,
+        )
+        return fill, market, rules
+
+    s = side.lower()
+    qty = abs(float(quantity))
+    passive_ref = bid if s == "long" else ask
+    adverse = adverse_bps / 10000.0
+    maker_price = passive_ref * (1.0 + adverse if s == "long" else 1.0 - adverse)
+    maker_qty = qty * maker_fill_fraction
+    maker_notional = maker_price * maker_qty
+    fee = maker_notional * rules.maker_fee_bps / 10000.0
+    filled_qty = maker_qty
+    weighted_value = maker_price * maker_qty
+    style = "maker"
+
+    remaining_qty = max(0.0, qty - maker_qty)
+    if remaining_qty > 0 and rng.random() < fallback_prob:
+        slip = (rules.impact_bps + fallback_extra_bps) / 10000.0
+        taker_ref = ask if s == "long" else bid
+        taker_price = taker_ref * (1.0 + slip if s == "long" else 1.0 - slip)
+        taker_notional = taker_price * remaining_qty
+        fee += taker_notional * rules.taker_fee_bps / 10000.0
+        weighted_value += taker_price * remaining_qty
+        filled_qty += remaining_qty
+        style = "maker_partial_taker"
+
+    if filled_qty <= 0:
+        fill = simulate_taker_fill(
+            side, quantity, rules,
+            bid=bid, ask=ask, mark=mark or None, fallback_price=fallback_price,
+        )
+        return fill, market, rules
+
+    fill_price = weighted_value / filled_qty
+    baseline = mark if mark > 0 else mid
+    slippage_usd = abs(fill_price - baseline) * filled_qty
+    slippage_bps = abs(fill_price - baseline) / baseline * 10000.0 if baseline > 0 else 0.0
+    return FillEstimate(
+        fill_price=fill_price,
+        reference_price=passive_ref,
+        fee_usd=fee,
+        slippage_usd=slippage_usd,
+        slippage_bps=slippage_bps,
+        used_executable_quote=True,
+        execution_style=style,
+        fill_fraction=filled_qty / qty,
+    ), market, rules
 
 
 def funding_cashflow(
