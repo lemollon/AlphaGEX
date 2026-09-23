@@ -10,6 +10,7 @@ Results live in `perp_exit_optimizer_runs` (auto-created on first POST).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
@@ -243,7 +244,7 @@ async def apply_config(req: ApplyRequest):
     written: dict[str, Any] = {}
     failed: dict[str, str] = {}
     for k, v in req.config.items():
-        if _upsert_config(prefix, k, v):
+        if await asyncio.to_thread(_upsert_config, prefix, k, v):
             written[k] = v
         else:
             failed[k] = "upsert failed"
@@ -303,7 +304,7 @@ async def signal_histogram(bot: str, since: Optional[str] = None):
         )
     if get_connection is None:
         raise HTTPException(status_code=500, detail="db unavailable")
-    conn = get_connection()
+    conn = await asyncio.to_thread(get_connection)
     if not conn:
         raise HTTPException(status_code=500, detail="db unavailable")
     try:
@@ -313,7 +314,8 @@ async def signal_histogram(bot: str, since: Optional[str] = None):
         if since:
             where += " AND timestamp >= %s"
             params.append(since)
-        cur.execute(
+        await asyncio.to_thread(
+            cur.execute,
             f"""
             SELECT
                 COALESCE(combined_signal, '<none>'),
@@ -373,13 +375,15 @@ async def get_applied(bot: str):
         raise HTTPException(status_code=400, detail=f"unknown bot {bot}")
     if get_connection is None:
         raise HTTPException(status_code=500, detail="db unavailable")
-    conn = get_connection()
+    conn = await asyncio.to_thread(get_connection)
     if not conn:
         raise HTTPException(status_code=500, detail="db unavailable")
     try:
         cur = conn.cursor()
         like = f"{prefix}%"
-        cur.execute("SELECT key, value FROM autonomous_config WHERE key LIKE %s ORDER BY key", (like,))
+        await asyncio.to_thread(
+            cur.execute, "SELECT key, value FROM autonomous_config WHERE key LIKE %s ORDER BY key", (like,)
+        )
         rows = cur.fetchall()
         cur.close()
         applied = {row[0].replace(prefix, ""): row[1] for row in rows}
@@ -399,7 +403,7 @@ async def run_optimizer(req: RunRequest, background: BackgroundTasks):
         raise HTTPException(status_code=500, detail="optimizer module not available")
     if req.grid not in ("coarse", "fine"):
         raise HTTPException(status_code=400, detail="grid must be 'coarse' or 'fine'")
-    run_id = _insert_run(req.grid, req.bot)
+    run_id = await asyncio.to_thread(_insert_run, req.grid, req.bot)
     if run_id is None:
         raise HTTPException(status_code=500, detail="could not create run record")
     background.add_task(_do_run, run_id, req.grid, req.bot)
@@ -415,15 +419,16 @@ async def run_optimizer(req: RunRequest, background: BackgroundTasks):
 
 @router.get("/runs")
 async def list_runs(limit: int = Query(default=20, le=100)):
-    _ensure_table()
+    await asyncio.to_thread(_ensure_table)
     if get_connection is None:
         raise HTTPException(status_code=500, detail="db unavailable")
-    conn = get_connection()
+    conn = await asyncio.to_thread(get_connection)
     if not conn:
         raise HTTPException(status_code=500, detail="db unavailable")
     try:
         cur = conn.cursor()
-        cur.execute(
+        await asyncio.to_thread(
+            cur.execute,
             "SELECT id, started_at, finished_at, grid, bot_filter, status, error FROM perp_exit_optimizer_runs ORDER BY id DESC LIMIT %s",
             (limit,),
         )
@@ -449,21 +454,23 @@ async def list_runs(limit: int = Query(default=20, le=100)):
 
 @router.get("/result")
 async def get_result(run_id: Optional[int] = None):
-    _ensure_table()
+    await asyncio.to_thread(_ensure_table)
     if get_connection is None:
         raise HTTPException(status_code=500, detail="db unavailable")
-    conn = get_connection()
+    conn = await asyncio.to_thread(get_connection)
     if not conn:
         raise HTTPException(status_code=500, detail="db unavailable")
     try:
         cur = conn.cursor()
         if run_id is not None:
-            cur.execute(
+            await asyncio.to_thread(
+                cur.execute,
                 "SELECT id, started_at, finished_at, grid, bot_filter, status, error, result FROM perp_exit_optimizer_runs WHERE id = %s",
                 (run_id,),
             )
         else:
-            cur.execute(
+            await asyncio.to_thread(
+                cur.execute,
                 "SELECT id, started_at, finished_at, grid, bot_filter, status, error, result FROM perp_exit_optimizer_runs WHERE status = 'done' ORDER BY id DESC LIMIT 1"
             )
         r = cur.fetchone()
