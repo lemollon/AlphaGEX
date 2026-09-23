@@ -66,7 +66,7 @@ class AgapeBtcPerpExecutor:
             bot_name="AGAPE_BTC_PERP",
             symbol="BTC-PERP",
             side=signal.side or "long",
-            quantity=signal.quantity * fill.fill_fraction,
+            quantity=signal.quantity,
             entry_price=signal.entry_price or signal.spot_price,
             strict=is_live,
         )
@@ -119,7 +119,7 @@ class AgapeBtcPerpExecutor:
             position = AgapeBtcPerpPosition(
                 position_id=position_id,
                 side=PositionSide.LONG if signal.side == "long" else PositionSide.SHORT,
-                quantity=signal.quantity,
+                quantity=signal.quantity * fill.fill_fraction,
                 entry_price=round(fill_price, 2),
                 stop_loss=signal.stop_loss,
                 take_profit=signal.take_profit,
