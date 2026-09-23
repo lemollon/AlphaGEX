@@ -40,6 +40,7 @@ import json
 import math
 import statistics
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
@@ -116,15 +117,37 @@ class Result:
 
 
 def post_json(payload: dict, timeout: int = 20):
+    """POST to Hyperliquid with bounded retry/backoff for public API throttling."""
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        INFO_URL,
-        data=data,
-        headers={"Content-Type": "application/json", "User-Agent": "AlphaGEX-backtest/1.0"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    last_exc = None
+    for attempt in range(7):
+        req = urllib.request.Request(
+            INFO_URL,
+            data=data,
+            headers={"Content-Type": "application/json", "User-Agent": "AlphaGEX-backtest/1.0"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            last_exc = exc
+            if exc.code not in (429, 500, 502, 503, 504):
+                raise
+            retry_after = exc.headers.get("Retry-After") if exc.headers else None
+            try:
+                delay = float(retry_after) if retry_after else min(30.0, 1.5 * (2 ** attempt))
+            except (TypeError, ValueError):
+                delay = min(30.0, 1.5 * (2 ** attempt))
+            time.sleep(delay)
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= 6:
+                raise
+            time.sleep(min(20.0, 1.0 * (2 ** attempt)))
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Hyperliquid request failed without an exception")
 
 
 def fetch_candles(coin: str, start_ms: int, end_ms: int) -> List[dict]:
