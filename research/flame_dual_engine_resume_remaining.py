@@ -1,8 +1,8 @@
-"""Resume only the unfinished frozen dual-engine Flame validation.
-Completed prior chunks are intentionally NOT rerun.
-A3: 2026-01-16..2026-04-28
-Apr 29 was reconciled separately.
-B1/B2: 2026-04-30..2026-08-31
+"""Resume only unfinished frozen dual-engine Flame validation.
+A1/A2/A3 and Apr 29 are complete and intentionally NOT rerun.
+Remaining:
+B1: 2026-04-30..2026-06-30
+B2: 2026-07-01..2026-08-31
 Trading logic is imported unchanged from flame_dual_engine_extended_cluster.
 Research only; no live/customer writes.
 """
@@ -11,9 +11,7 @@ from http.server import HTTPServer
 import flame_dual_engine_extended_cluster as x
 
 CHUNKS = [
-    ("A3","2026-01-16","2026-04-28",70,
-     ["2026-01-19","2026-02-16","2026-04-03"]),
-    ("B1","2026-04-30","2026-06-30",41,
+    ("B1","2026-04-30","2026-06-30",42,
      ["2026-05-25","2026-06-19"]),
     ("B2","2026-07-01","2026-08-31",43,
      ["2026-07-03"]),
@@ -27,7 +25,7 @@ def run():
             "expected_sessions":expected,
             "max_requests":600,
             "deadline_seconds":3600,
-            "scope":f"resume unfinished frozen dual-engine validation {name}; prior completed chunks excluded",
+            "scope":f"resume unfinished frozen dual-engine validation {name}; completed chunks excluded",
             "no_saved_price_inputs":True,
             "no_previous_trade_inputs":True,
         })
