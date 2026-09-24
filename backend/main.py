@@ -133,6 +133,8 @@ async def start_active_trading_scheduler():
         launch_mes_v21()
         from scripts.valor_mes_v22_event_driven import launch_if_enabled as launch_mes_v22
         launch_mes_v22()
+        from scripts.valor_mes_v23_loss_clusters import launch_if_enabled as launch_mes_v23
+        launch_mes_v23()
     except Exception:
         import logging
         logging.getLogger(__name__).exception(
