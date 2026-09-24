@@ -1,1 +1,4 @@
-"""Isolated research entrypoint; no live strategy or broker-order imports."""\nimport runpy\nif __name__ == "__main__":\n    runpy.run_module("flame_dual_engine_resume_remaining", run_name="__main__")\n
+"""Isolated research entrypoint; no live strategy or broker-order imports."""
+import runpy
+if __name__ == "__main__":
+    runpy.run_module("flame_dual_engine_resume_remaining", run_name="__main__")
