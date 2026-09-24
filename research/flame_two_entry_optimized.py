@@ -37,7 +37,10 @@ def full_stock_rows(rows,day):
   if m==core.SPEC["flat_et_minute"]: continue
   if not 570<=m<core.SPEC["flat_et_minute"]: raise core.DataError("stock_outside_rth:"+day+":"+str(m))
   if r.get("symbol","SPY")!="SPY" or m in out: raise core.DataError("stock_identity_or_duplicate")
-  v={k:D(str(r[k]))*U for k in ["open","high","low","close"]}; vol=D(str(r["volume"]))
+  try:
+   v={k:D(str(r[k]))*U for k in ["open","high","low","close"]}; vol=D(str(r["volume"]))
+  except Exception as e:
+   raise core.DataError("stock_numeric:"+day+":"+str(m)+":"+repr({k:r.get(k) for k in ["open","high","low","close","volume"]})) from e
   if not all(x.is_finite() and x>0 for x in v.values()) or not vol.is_finite() or vol<0: raise core.DataError("stock_invalid")
   eps=D("0.000001"); top=max(v["open"],v["close"]); bot=min(v["open"],v["close"])
   if v["low"]-bot>eps or top-v["high"]>eps: raise core.DataError("stock_invalid_ohlc")
@@ -72,8 +75,8 @@ def parse_snapshot(rows,day,decision):
   if r.get("expiration","")[:10].replace("-","")!=day.replace("-",""): raise core.DataError("wrong_expiration")
   m=core.minute(r["timestamp"],day)
   if m!=decision: raise core.DataError("wrong_snapshot_minute")
-  k=core.units(r["strike"])
   try:
+   k=core.units(r["strike"])
    bid,ask=core.units(r["bid"]),core.units(r["ask"]); bs,az=D(str(r["bid_size"])),D(str(r["ask_size"]))
    if not bs.is_finite() or not az.is_finite() or bid<0 or ask<=0 or bid>ask or bs<1 or az<1: continue
   except Exception: continue
@@ -95,9 +98,10 @@ def parse_leg(rows,day,k):
  out={}
  for r in rows:
   if r.get("symbol")!="SPY": raise core.DataError("wrong_leg_symbol")
-  if core.units(r["strike"])!=k: raise core.DataError("wrong_leg_strike")
   m=core.minute(r["timestamp"],day)
   try:
+   parsed_k=core.units(r["strike"])
+   if parsed_k!=k: raise core.DataError("wrong_leg_strike")
    bid,ask=core.units(r["bid"]),core.units(r["ask"]); bs,az=D(str(r["bid_size"])),D(str(r["ask_size"]))
    if not bs.is_finite() or not az.is_finite() or bid<0 or ask<=0 or bid>ask or bs<1 or az<1: continue
   except Exception: continue
