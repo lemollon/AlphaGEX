@@ -2007,6 +2007,15 @@ except Exception as _calls_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] Call-history routes failed to load: %r", _calls_exc)
 
+# Live market-structure engine (fresh VIX-family + self-calculated gamma maps)
+# Kept separate from the backtested daily SQUEEZE signal.
+try:
+    from .market_structure import router as market_structure_router
+    app.include_router(market_structure_router)
+except Exception as _market_structure_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] market-structure router failed: %r", _market_structure_exc)
+
 # Squeeze signal (net dealer gamma, backend/bots/gamma_regime.py) — read-only
 # current verdict + history for the chart. Import-guarded; advisory only.
 try:
