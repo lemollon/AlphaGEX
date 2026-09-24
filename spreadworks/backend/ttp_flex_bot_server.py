@@ -41,7 +41,7 @@ MAX_STOP_PCT = float(os.getenv("TTP_MAX_STOP_PCT", "1.5"))
 MIN_SCORE = float(os.getenv("TTP_MIN_TV_SCORE", "0"))
 POLL_SECONDS = max(30, int(os.getenv("TTP_POLL_SECONDS", "60")))
 ENTRY_START_ET = time(9, 35)
-ENTRY_END_ET = time(11, 30)
+ENTRY_END_ET = time(15, 30)
 FORCE_FLAT_ET = time(15, 45)
 
 app = FastAPI(title="TTP FLEX Bot V1", version="1.0")
@@ -319,7 +319,7 @@ async def _cycle() -> None:
             proposal = _proposal_from_bars(symbol, bars, item, now_et)
             if proposal is None:
                 continue
-            key = f"{proposal.symbol}:{proposal.bar_time}"
+            key = proposal.symbol
             if key in _seen_today:
                 continue
             _seen_today.add(key)
