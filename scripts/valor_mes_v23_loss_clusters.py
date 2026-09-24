@@ -41,8 +41,9 @@ def feature(row, order):
         side=side,
         atr=a,
         or_width=width,
-        vwap_distance_atr=((ref-float(row.vwap))/a if a and a>0 and np.isfinite(row.vwap) else None),
-        or_location=((ref-float(row.or_low))/width if width and width>0 else None),
+        vwap_distance_atr=(side*(ref-float(row.vwap))/a if a and a>0 and np.isfinite(row.vwap) else None),
+        or_location=(((ref-float(row.or_low))/width) if side>0 else
+                     ((float(row.or_high)-ref)/width) if width and width>0 else None),
         distance_or_edge_atr=None,
     )
     if a and a>0 and width and width>0:
