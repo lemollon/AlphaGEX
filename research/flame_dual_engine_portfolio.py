@@ -101,17 +101,10 @@ def ebb_trade(df,vix_info):
  k=int(short_dollars*U); lk=k-EBB_WIDTH*U
  # Production structure is fixed by spot; historical execution uses next-minute natural leg quotes.
  start=EBB_DECISION+1
- # EBB needs only the executable entry quote at 14:06 ET; it settles from SPY close.
- # Fetch exactly that minute instead of downloading each leg through 15:45.
- def one_minute_leg(strike_units):
-  p={"symbol":"SPY","date":df.day,"expiration":df.day,"right":"put",
-     "strike":str(D(strike_units)/U),"interval":"1m",
-     "start_time":base.hhmm(start),"end_time":base.hhmm(start)}
-  fp=df.feed.get("/v3/option/history/quote",p)
-  with fp.open() as fh:
-   return base.parse_leg(csv.DictReader(fh),df.day,strike_units)
- sh=one_minute_leg(k); lo=one_minute_leg(lk)
- a=sh.get(start); b=lo.get(start)
+ # EBB needs only the executable 14:06 ET quote. One exact-minute chain snapshot
+ # supplies both fixed strikes and is equivalent to two separate leg requests.
+ q=df.snapshot(start)
+ a=q.get(k); b=q.get(lk)
  if a is None or b is None:return None,{"reason":"no_entry_quote",**vix_info}
  credit=a[0]-b[1]
  if credit < int(EBB_MIN_CREDIT*U):return None,{"reason":"min_credit","credit":float(D(credit)/U),**vix_info}
