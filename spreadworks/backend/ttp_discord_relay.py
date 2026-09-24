@@ -79,7 +79,10 @@ async def loop():
                 r = await client.get(SOURCE, timeout=15)
                 r.raise_for_status()
                 payload = r.json()
-                for s in reversed(payload.get("signals") or []):
+                sigs = payload.get("signals") or []
+                latest = sigs[0] if sigs and isinstance(sigs[0], dict) else None
+                print(f"[ttp-discord] poll count={len(sigs)} latest={latest}", flush=True)
+                for s in reversed(sigs):
                     if isinstance(s, dict):
                         await post_signal(client, s)
             except Exception as exc:
