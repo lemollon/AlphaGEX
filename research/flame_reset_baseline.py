@@ -233,7 +233,7 @@ class Feed:
    if self.n>=SPEC['max_requests'] or time.monotonic()-self.start>SPEC['deadline_seconds']:raise DataError('research_budget_exhausted')
    self.n+=1;fp=self.root/f'{self.n:03d}.csv';count=0;h=hashlib.sha256();err=None
    try:
-    with requests.get(BASE+path,params=p,headers={'Cache-Control':'no-cache, no-store','Pragma':'no-cache'},timeout=(8,90),stream=True,allow_redirects=False) as r:
+    with requests.get(BASE+path,params=p,headers={'Cache-Control':'no-cache, no-store','Pragma':'no-cache'},timeout=(8,20),stream=True,allow_redirects=False) as r:
      r.raise_for_status()
      if r.status_code!=200 or r.headers.get('X-Market-Data-Provider')!='thetadata':raise DataError('wrong_provider')
      if path.endswith('/ohlc') and r.headers.get('X-Bar-Timestamp')!='interval-start':raise DataError('unknown_bar_semantics')
