@@ -44,31 +44,35 @@ COOLDOWN_MINUTES = 5
 
 
 def full_stock_rows(rows, day):
+    # Preserve source stock precision exactly; only options use the 0.0001 grid.
     out = {}
     for r in rows:
         m = core.minute(r["timestamp"], day)
         if m == core.SPEC["flat_et_minute"]:
-            continue  # endpoint is inclusive; terminal timestamp is not a completed minute bar we use
+            continue
         if not 570 <= m < core.SPEC["flat_et_minute"]:
             raise core.DataError("stock_outside_rth:" + day + ":" + str(m))
-        if r.get("symbol", "SPY") != "SPY" or m in out:
+        if r.get("symbol","SPY") != "SPY" or m in out:
             raise core.DataError("stock_identity_or_duplicate")
         try:
-            v = {k: core.units(r[k]) for k in ["open","high","low","close"]}
-            vol = D(r["volume"])
+            v = {k: D(str(r[k])) * U for k in ["open","high","low","close"]}
+            vol = D(str(r["volume"]))
         except Exception as e:
-            raise core.DataError("stock_numeric:" + day + ":" + str(m)) from e
-        if min(v.values()) <= 0 or not vol.is_finite() or vol < 0:
-            raise core.DataError("bad_stock_bar")
-        if v["low"] > min(v["open"],v["close"]) or v["high"] < max(v["open"],v["close"]):
-            raise core.DataError("bad_stock_ohlc")
-        out[m] = v
-    expected = list(range(570, core.SPEC["flat_et_minute"]))
+            raise core.DataError("stock_numeric:" + day + ":" + str(m) + ":" + repr({k:r.get(k) for k in ["open","high","low","close","volume","count"]})) from e
+        if not all(x.is_finite() and x > 0 for x in v.values()) or not vol.is_finite() or vol < 0:
+            raise core.DataError("stock_invalid_value:" + day + ":" + str(m))
+        epsilon=D("0.000001")  # scaled units = 1e-10 dollars
+        top=max(v["open"],v["close"]); bottom=min(v["open"],v["close"])
+        if v["low"]-bottom > epsilon or top-v["high"] > epsilon:
+            raise core.DataError("stock_invalid_ohlc:" + day + ":" + str(m))
+        if v["low"] > bottom: v["low"]=bottom
+        if v["high"] < top: v["high"]=top
+        out[m]=v
+    expected=list(range(570,core.SPEC["flat_et_minute"]))
     if sorted(out) != expected:
-        missing = sorted(set(expected) - set(out))
+        missing=sorted(set(expected)-set(out))
         raise core.DataError("missing_stock_minutes:" + day + ":" + repr(missing[:10]))
     return out
-
 
 def completed_5m(stock, decision):
     # Build 5m bars ending strictly before decision. Stock timestamps are interval-start.
