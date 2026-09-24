@@ -47,6 +47,8 @@ def full_stock_rows(rows, day):
     out = {}
     for r in rows:
         m = core.minute(r["timestamp"], day)
+        if m == core.SPEC["flat_et_minute"]:
+            continue  # endpoint is inclusive; terminal timestamp is not a completed minute bar we use
         if not 570 <= m < core.SPEC["flat_et_minute"]:
             raise core.DataError("stock_outside_rth:" + day + ":" + str(m))
         if r.get("symbol", "SPY") != "SPY" or m in out:
