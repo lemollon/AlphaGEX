@@ -198,6 +198,85 @@ def stats(trades:list[Trade]) -> dict[str,Any]:
         "eod":sum(t.exit_reason=="EOD" for t in trades),
     }
 
+
+def cluster_analysis(trades:list[Trade]) -> dict[str,Any]:
+    if not trades:
+        return {}
+    def hour_bucket(t:Trade)->str:
+        dt=datetime.fromisoformat(t.entry_time)
+        h=dt.hour
+        m=dt.minute
+        mins=h*60+m
+        if mins < 10*60: return "09:35-09:59"
+        if mins < 11*60: return "10:00-10:59"
+        if mins < 12*60: return "11:00-11:59"
+        if mins < 13*60: return "12:00-12:59"
+        if mins < 14*60: return "13:00-13:59"
+        if mins < 15*60: return "14:00-14:59"
+        return "15:00-15:30"
+
+    def stop_pct(t:Trade)->float:
+        return ((t.entry-t.stop)/t.entry)*100 if t.entry else 0
+
+    time_stats={}
+    for b in ["09:35-09:59","10:00-10:59","11:00-11:59","12:00-12:59","13:00-13:59","14:00-14:59","15:00-15:30"]:
+        ts=[t for t in trades if hour_bucket(t)==b]
+        if ts: time_stats[b]=stats(ts)
+
+    engine_symbol={}
+    keys=sorted({(t.engine,t.symbol) for t in trades})
+    for e,s in keys:
+        ts=[t for t in trades if t.engine==e and t.symbol==s]
+        if len(ts)>=3:
+            engine_symbol[f"{e}:{s}"]=stats(ts)
+
+    stop_buckets={"<=0.4%":[],"0.4-0.8%":[],"0.8-1.2%":[],">1.2%":[]}
+    for t in trades:
+        p=stop_pct(t)
+        if p<=0.4: stop_buckets["<=0.4%"].append(t)
+        elif p<=0.8: stop_buckets["0.4-0.8%"].append(t)
+        elif p<=1.2: stop_buckets["0.8-1.2%"].append(t)
+        else: stop_buckets[">1.2%"].append(t)
+    stop_stats={k:stats(v) for k,v in stop_buckets.items() if v}
+
+    # Consecutive loss streaks in portfolio order.
+    ordered=sorted(trades,key=lambda t:t.entry_time)
+    streaks=[]; cur=[]
+    for t in ordered:
+        if t.net_pnl<=0:
+            cur.append(t)
+        else:
+            if cur: streaks.append(cur); cur=[]
+    if cur: streaks.append(cur)
+    streaks.sort(key=len,reverse=True)
+    worst_streaks=[]
+    for st in streaks[:10]:
+        worst_streaks.append({
+            "length":len(st),
+            "net_pnl":round(sum(t.net_pnl for t in st),2),
+            "start":st[0].entry_time,
+            "end":st[-1].entry_time,
+            "symbols":[t.symbol for t in st],
+            "engines":[t.engine for t in st],
+        })
+
+    weekday={}
+    for n in range(5):
+        ts=[t for t in trades if datetime.fromisoformat(t.entry_time).weekday()==n]
+        if ts: weekday[["Mon","Tue","Wed","Thu","Fri"][n]]=stats(ts)
+
+    winners=[t for t in trades if t.net_pnl>0]
+    losers=[t for t in trades if t.net_pnl<=0]
+    return {
+        "by_time_of_day":time_stats,
+        "by_stop_width":stop_stats,
+        "by_weekday":weekday,
+        "engine_symbol_combos":engine_symbol,
+        "worst_loss_streaks":worst_streaks,
+        "avg_quality_winners":round(statistics.mean(t.quality for t in winners),2) if winners else None,
+        "avg_quality_losers":round(statistics.mean(t.quality for t in losers),2) if losers else None,
+    }
+
 async def run_backtest():
     global RESULT
     RESULT={"status":"running","started_at":datetime.now(UTC).isoformat()}
@@ -248,6 +327,7 @@ async def run_backtest():
         "overall":stats(selected),
         "by_engine":engine_stats,
         "by_symbol":symbol_stats,
+        "clusters":cluster_analysis(selected),
         "sample_trades":[asdict(t) for t in selected[-20:]],
     }
     print("[ttp-backtest] RESULT "+json.dumps(RESULT,separators=(",",":")),flush=True)
