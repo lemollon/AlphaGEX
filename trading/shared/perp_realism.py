@@ -484,6 +484,39 @@ def net_realized_pnl(
 
 
 
+def simulate_close_fill(
+    symbol: str,
+    position_side: str,
+    quantity: float,
+    fallback_price: float,
+    *,
+    default_leverage: float,
+    max_leverage: float,
+    fallback_maintenance_margin_rate: float,
+    funding_interval_hours: float = 8.0,
+):
+    """Simulate a taker close fill that crosses the spread on the closing side.
+
+    A real exchange never lets you exit at mid/last: closing a long crosses
+    the bid (sell-to-close), closing a short crosses the ask (buy-to-close).
+    Reuses ``simulate_reference_fill`` (conservative taker-only, no maker
+    simulation on forced/managed exits) so paper closes pay the same
+    spread-crossing + taker-fee cost a live Hyperliquid close would.
+    PAPER/SHADOW only — never places a real order.
+    """
+    closing_side = "short" if position_side.lower() == "long" else "long"
+    return simulate_reference_fill(
+        symbol,
+        closing_side,
+        quantity,
+        fallback_price,
+        default_leverage=default_leverage,
+        max_leverage=max_leverage,
+        fallback_maintenance_margin_rate=fallback_maintenance_margin_rate,
+        funding_interval_hours=funding_interval_hours,
+    )
+
+
 def get_reference_market(symbol: str):
     """Return read-only reference market data when configured.
 

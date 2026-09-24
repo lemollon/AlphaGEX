@@ -43,6 +43,10 @@ class AgapeBtcPerpExecutor:
     def __init__(self, config: AgapeBtcPerpConfig, db=None):
         self.config = config
         self.db = db
+        # Last failure reason so the trader can surface WHY a trade was
+        # rejected (margin/free-margin block or execution exception)
+        # in scan activity instead of a bare EXECUTION_FAILED.
+        self.last_failure_reason = None
         self._crypto_provider = None
 
         # Initialize crypto data provider for price quotes
@@ -56,22 +60,45 @@ class AgapeBtcPerpExecutor:
             logger.warning(f"AGAPE-BTC-PERP Executor: CryptoDataProvider init failed: {e}")
 
     def execute_trade(self, signal: AgapeBtcPerpSignal) -> Optional[AgapeBtcPerpPosition]:
+        self.last_failure_reason = None
         if not signal.is_valid:
+            self.last_failure_reason = "invalid_signal"
             return None
 
         # Pre-trade margin check - strict only in LIVE mode.
         from trading.margin.pre_trade_check import check_margin_before_trade
-        is_live = self.config.mode == TradingMode.LIVE
         approved, reason = check_margin_before_trade(
             bot_name="AGAPE_BTC_PERP",
             symbol="BTC-PERP",
             side=signal.side or "long",
             quantity=signal.quantity,
             entry_price=signal.entry_price or signal.spot_price,
-            strict=is_live,
+            # Paper accounts must behave like a real Hyperliquid account: fail
+            # CLOSED (block the trade) on any margin-system error, not just in LIVE.
+            strict=True,
         )
         if not approved:
+            self.last_failure_reason = f"margin_rejected: {reason}"
             logger.warning(f"AGAPE-BTC-PERP: Trade BLOCKED by margin check: {reason}")
+            return None
+
+        # Free-margin + leverage-cap check. Paper accounts must never be able
+        # to open a position they couldn't actually afford on a real cross-margin
+        # Hyperliquid account. Fails CLOSED on any computation error.
+        from trading.margin.pre_trade_check import check_free_margin_for_perp
+        margin_ok, margin_reason = check_free_margin_for_perp(
+            db=self.db,
+            config=self.config,
+            signal_side=signal.side or "long",
+            signal_quantity=signal.quantity,
+            signal_entry_price=signal.entry_price or signal.spot_price,
+            current_price=self.get_current_price(),
+        )
+        if not margin_ok:
+            self.last_failure_reason = f"free_margin_rejected: {margin_reason}"
+            logger.warning(
+                f"AGAPE-BTC-PERP: Trade BLOCKED by free-margin check: {margin_reason}"
+            )
             return None
 
         if self.config.mode == TradingMode.LIVE:
@@ -150,6 +177,7 @@ class AgapeBtcPerpExecutor:
             )
             return position
         except Exception as e:
+            self.last_failure_reason = f"paper_exception: {type(e).__name__}: {e}"
             logger.error(f"AGAPE-BTC-PERP Executor: Paper execution failed: {e}")
             return None
 

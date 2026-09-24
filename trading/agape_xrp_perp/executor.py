@@ -50,14 +50,15 @@ class AgapeXrpPerpExecutor:
 
         # Pre-trade margin check - strict only in LIVE mode.
         from trading.margin.pre_trade_check import check_margin_before_trade
-        is_live = self.config.mode == TradingMode.LIVE
         approved, reason = check_margin_before_trade(
             bot_name="AGAPE_XRP_PERP",
             symbol="XRP-PERP",
             side=signal.side or "long",
             quantity=signal.quantity,
             entry_price=signal.entry_price or signal.spot_price,
-            strict=is_live,
+            # Paper accounts must behave like a real Hyperliquid account: fail
+            # CLOSED (block the trade) on any margin-system error, not just in LIVE.
+            strict=True,
         )
         if not approved:
             self.last_failure_reason = f"margin_rejected: {reason}"
@@ -65,6 +66,25 @@ class AgapeXrpPerpExecutor:
                 f"AGAPE-XRP-PERP: Trade BLOCKED by margin check: {reason} "
                 f"(side={signal.side}, qty={signal.quantity:.2f}, "
                 f"price=${signal.entry_price or signal.spot_price:.4f})"
+            )
+            return None
+
+        # Free-margin + leverage-cap check. Paper accounts must never be able
+        # to open a position they couldn't actually afford on a real cross-margin
+        # Hyperliquid account. Fails CLOSED on any computation error.
+        from trading.margin.pre_trade_check import check_free_margin_for_perp
+        margin_ok, margin_reason = check_free_margin_for_perp(
+            db=self.db,
+            config=self.config,
+            signal_side=signal.side or "long",
+            signal_quantity=signal.quantity,
+            signal_entry_price=signal.entry_price or signal.spot_price,
+            current_price=self.get_current_price(),
+        )
+        if not margin_ok:
+            self.last_failure_reason = f"free_margin_rejected: {margin_reason}"
+            logger.warning(
+                f"AGAPE-XRP-PERP: Trade BLOCKED by free-margin check: {margin_reason}"
             )
             return None
 
