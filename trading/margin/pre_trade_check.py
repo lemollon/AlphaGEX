@@ -126,6 +126,97 @@ def check_margin_before_trade(
         return True, f"margin_check_error: {e}"
 
 
+def check_free_margin_for_perp(
+    *,
+    db,
+    config,
+    signal_side: str,
+    signal_quantity: float,
+    signal_entry_price: float,
+    current_price: Optional[float] = None,
+) -> Tuple[bool, str]:
+    """Fail-closed free-margin + leverage-cap check for a crypto perp paper account.
+
+    Computes account equity (starting capital + realized P&L, which already
+    carries closed-trade fees/funding, plus mark-to-market unrealized P&L and
+    funding accrued so far on still-open positions) and the margin already
+    committed to those open positions, then verifies the new position's
+    initial margin (notional / leverage) fits inside what's left. Also
+    refuses to trade above the instrument's max_leverage.
+
+    This mirrors check_margin_before_trade's strict-mode contract: any
+    failure to compute (missing spec, DB error, bad quote) BLOCKS the trade
+    rather than approving it, because a leveraged paper account that trades
+    without a margin check can go negative just like a real one.
+
+    Returns (approved, reason).
+    """
+    try:
+        from trading.shared.margin_config import PERPETUAL_MARGIN_SPECS
+        from trading.shared.perp_realism import estimate_margin, get_rules
+
+        spec = PERPETUAL_MARGIN_SPECS.get(config.instrument, {})
+        if not spec:
+            return False, f"no_margin_spec_for_{config.instrument}"
+
+        leverage = float(spec.get("default_leverage", 5) or 5)
+        max_leverage = float(spec.get("max_leverage", 20) or 20)
+        if leverage > max_leverage:
+            return False, f"LEVERAGE_EXCEEDS_MAX_{leverage}x_gt_{max_leverage}x"
+
+        rules = get_rules(
+            config.instrument,
+            default_leverage=leverage,
+            max_leverage=max_leverage,
+            fallback_maintenance_margin_rate=float(
+                spec.get("maintenance_margin_rate", 0.01) or 0.01
+            ),
+            funding_interval_hours=float(spec.get("funding_interval_hours", 8) or 8),
+        )
+
+        open_positions = db.get_open_positions() or []
+        closed = db.get_closed_trades(limit=10000) or []
+        realized = sum(float(t.get("realized_pnl", 0) or 0) for t in closed)
+
+        unrealized = 0.0
+        margin_in_use = 0.0
+        for pos in open_positions:
+            entry = float(pos.get("entry_price") or 0)
+            qty = abs(float(pos.get("quantity") or 0))
+            side = pos.get("side", "long")
+            mark = float(current_price or entry)
+            if entry <= 0 or qty <= 0 or mark <= 0:
+                continue
+            direction = 1 if side == "long" else -1
+            unrealized += (mark - entry) * qty * direction
+            unrealized += float(pos.get("accrued_funding_usd", 0) or 0)
+            try:
+                est = estimate_margin(
+                    side=side, entry_price=entry, mark_price=mark,
+                    quantity=qty, leverage=leverage, rules=rules,
+                )
+                margin_in_use += est.initial_margin
+            except Exception:
+                margin_in_use += (entry * qty) / max(leverage, 1.0)
+
+        equity = float(config.starting_capital) + realized + unrealized
+        free_margin = equity - margin_in_use
+
+        notional = abs(float(signal_entry_price) * float(signal_quantity))
+        if notional <= 0:
+            return False, "invalid_notional"
+        required_margin = notional / max(leverage, 1.0)
+
+        if required_margin > free_margin:
+            return False, (
+                f"INSUFFICIENT_FREE_MARGIN_need_${required_margin:.2f}_free_${free_margin:.2f}"
+            )
+        return True, "ok"
+    except Exception as e:
+        logger.error(f"Free-margin check failed for {getattr(config, 'bot_name', '?')}: {e}")
+        return False, f"free_margin_check_error: {e}"
+
+
 def get_position_liquidation_price(
     bot_name: str,
     side: str,

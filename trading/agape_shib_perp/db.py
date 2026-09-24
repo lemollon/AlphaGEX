@@ -161,6 +161,8 @@ class AgapeShibPerpDatabase:
                 "ALTER TABLE agape_shib_perp_scan_activity ADD COLUMN IF NOT EXISTS ls_long_pct FLOAT",
                 "ALTER TABLE agape_shib_perp_scan_activity ADD COLUMN IF NOT EXISTS taker_buy_ratio FLOAT",
                 "ALTER TABLE agape_shib_perp_positions ADD COLUMN IF NOT EXISTS regime_at_entry VARCHAR(20)",
+                "ALTER TABLE agape_shib_perp_positions ADD COLUMN IF NOT EXISTS accrued_funding_usd FLOAT DEFAULT 0",
+                "ALTER TABLE agape_shib_perp_positions ADD COLUMN IF NOT EXISTS last_funding_accrual TIMESTAMP WITH TIME ZONE DEFAULT NOW()",
             ]:
                 try:
                     cursor.execute(col_sql)
@@ -315,7 +317,8 @@ class AgapeShibPerpDatabase:
                        signal_action, signal_confidence, signal_reasoning,
                        status, open_time, high_water_mark,
                        COALESCE(trailing_active, FALSE), current_stop,
-                       regime_at_entry
+                       regime_at_entry,
+                       COALESCE(accrued_funding_usd, 0), last_funding_accrual
                 FROM agape_shib_perp_positions
                 WHERE status = 'open'
                 ORDER BY open_time DESC
@@ -348,6 +351,8 @@ class AgapeShibPerpDatabase:
                     "trailing_active": bool(row[25]),
                     "current_stop": float(row[26]) if row[26] else None,
                     "regime_at_entry": row[27],
+                    "accrued_funding_usd": float(row[28]) if row[28] is not None else 0.0,
+                    "last_funding_accrual": row[29].isoformat() if row[29] else None,
                 })
             return positions
         except Exception as e:
@@ -435,6 +440,35 @@ class AgapeShibPerpDatabase:
             return cursor.fetchone()[0]
         except Exception:
             return 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    def accrue_funding(self, position_id: str, delta_usd: float, now=None) -> bool:
+        """Add a signed funding cashflow to a still-open position.
+
+        Positive delta_usd = account received funding; negative = account
+        paid funding. Hyperliquid pays hourly, so the trader calls this
+        every scan cycle prorated by elapsed time since the position's
+        last accrual (see AgapeXxxPerpTrader._accrue_funding).
+        """
+        conn = self._get_conn()
+        if not conn:
+            return False
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE agape_shib_perp_positions
+                SET accrued_funding_usd = COALESCE(accrued_funding_usd, 0) + %s,
+                    last_funding_accrual = %s
+                WHERE position_id = %s AND status = 'open'
+            """, (delta_usd, now or _now_ct(), position_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"AGAPE-SHIB-PERP DB: Failed to accrue funding for {position_id}: {e}")
+            conn.rollback()
+            return False
         finally:
             cursor.close()
             conn.close()

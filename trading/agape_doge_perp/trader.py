@@ -128,6 +128,7 @@ class AgapeDogePerpTrader:
             skip = self._check_entry_conditions(now)
             if skip:
                 result["outcome"] = skip
+                result["error"] = skip
                 self._log_scan(result, scan_ctx)
                 return result
             signal = self.signals.generate_signal(prophet_data=prophet_data)
@@ -163,7 +164,9 @@ class AgapeDogePerpTrader:
                     f"{signal.side.upper()} {signal.quantity} DOGE-PERP @ ${position.entry_price:.6f}",
                     details=signal.to_dict())
             else:
-                result["outcome"] = "EXECUTION_FAILED"
+                failure_reason = getattr(self.executor, "last_failure_reason", None) or "unknown"
+                result["outcome"] = f"EXECUTION_FAILED_{failure_reason}"
+                result["error"] = failure_reason
             self._log_scan(result, scan_ctx, signal=signal)
             return result
         except Exception as e:
@@ -182,26 +185,30 @@ class AgapeDogePerpTrader:
             current_price = market_data.get("spot_price")
         if not current_price:
             return (len(open_positions), 0)
-        # Margin liquidation check - like a real exchange
+        # Funding accrual - Hyperliquid pays hourly; prorate by elapsed time.
+        self._accrue_funding(open_positions, market_data, datetime.now(CENTRAL_TZ))
+        # Real liquidation - Hyperliquid-style account-level cross margin:
+        # liquidate everything once equity can no longer cover the SUM of each
+        # open position's maintenance margin (not a flat % of starting capital).
         equity = self._get_available_balance(open_positions)
-        maintenance_margin = self.config.starting_capital * 0.05
-        if equity <= maintenance_margin:
-            logger.warning(f"AGAPE-DOGE-PERP: MARGIN LIQUIDATION - equity ${equity:.2f} <= maintenance ${maintenance_margin:.2f}")
+        maintenance_required = self._total_maintenance_margin(open_positions, current_price)
+        if equity <= maintenance_required:
+            logger.warning(f"{self.config.bot_name}: LIQUIDATION - equity ${equity:.2f} <= maintenance ${maintenance_required:.2f}")
             liq_closed = 0
             for pos in open_positions:
-                if self._close_position(pos, current_price, "MARGIN_LIQUIDATION"):
+                if self._close_position(pos, current_price, "LIQUIDATION"):
                     liq_closed += 1
             if self.config.mode == TradingMode.PAPER:
                 self._enabled = False
                 self._liquidated = True
                 self._liquidation_recovery_at = datetime.now(CENTRAL_TZ) + timedelta(hours=1)
-                self.db.log("WARNING", "MARGIN_LIQUIDATION_PAPER",
+                self.db.log("WARNING", "LIQUIDATION_PAPER",
                     f"Paper account liquidated at equity ${equity:.2f}. "
                     f"{liq_closed} positions closed. Will auto-recover in 1 hour.")
             else:
                 self._enabled = False
                 self._liquidated = True
-                self.db.log("CRITICAL", "MARGIN_LIQUIDATION",
+                self.db.log("CRITICAL", "LIQUIDATION",
                     f"Account liquidated at equity ${equity:.2f}. {liq_closed} positions closed. Bot disabled.")
             return (len(open_positions), liq_closed)
         # Paper mode liquidation recovery: re-enable after cooldown
@@ -417,8 +424,13 @@ class AgapeDogePerpTrader:
     def _close_position(self, pos, current_price, reason):
         pid = pos["position_id"]
         direction = 1 if pos["side"] == "long" else -1
-        pnl = round((current_price - pos["entry_price"]) * pos.get("quantity", self.config.default_quantity) * direction, 2)
-        success = self.db.expire_position(pid, pnl, current_price) if reason == "MAX_HOLD_TIME" else self.db.close_position(pid, current_price, pnl, reason)
+        quantity = pos.get("quantity", self.config.default_quantity)
+        # Cross the spread to close - like a real Hyperliquid taker close -
+        # instead of marking the exit at the raw current/mark price.
+        close_price, exit_fee = self._simulate_close_fill(pos["side"], quantity, current_price)
+        accrued_funding = float(pos.get("accrued_funding_usd", 0) or 0)
+        pnl = round((close_price - pos["entry_price"]) * quantity * direction - exit_fee + accrued_funding, 2)
+        success = self.db.expire_position(pid, pnl, close_price) if reason == "MAX_HOLD_TIME" else self.db.close_position(pid, close_price, pnl, reason)
         if success:
             won = pnl > 0
             if won:
@@ -451,9 +463,112 @@ class AgapeDogePerpTrader:
                     d = 1 if p["side"] == "long" else -1
                     qty = p.get("quantity", self.config.default_quantity)
                     unrealized += (cp - p["entry_price"]) * qty * d
+                    unrealized += float(p.get("accrued_funding_usd", 0) or 0)
             return self.config.starting_capital + realized + unrealized
         except Exception:
             return self.config.starting_capital
+
+    def _accrue_funding(self, open_positions, market_data, now):
+        """Accrue funding on open positions since their last accrual.
+
+        Hyperliquid pays funding hourly, so this prorates by elapsed hours
+        since the position's last accrual (or open_time on the very first
+        cycle). Longs pay when the funding rate is positive; shorts
+        receive. Persisted per position via db.accrue_funding so it flows
+        into equity, the liquidation check, and realized P&L at close.
+        """
+        if not open_positions:
+            return
+        funding_rate = (market_data or {}).get("funding_rate")
+        if funding_rate is None:
+            return
+        current_price = self.executor.get_current_price()
+        if not current_price:
+            return
+        from trading.shared.perp_realism import funding_cashflow
+        for pos in open_positions:
+            try:
+                last = pos.get("last_funding_accrual") or pos.get("open_time")
+                if not last:
+                    continue
+                last_dt = datetime.fromisoformat(last) if isinstance(last, str) else last
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=CENTRAL_TZ)
+                elapsed_hours = (now - last_dt).total_seconds() / 3600.0
+                if elapsed_hours <= 0:
+                    continue
+                quantity = pos.get("quantity", self.config.default_quantity)
+                notional = current_price * quantity
+                cashflow = funding_cashflow(
+                    notional=notional, side=pos["side"], funding_rate=funding_rate,
+                    intervals=elapsed_hours,
+                )
+                self.db.accrue_funding(pos["position_id"], cashflow, now)
+            except Exception as e:
+                logger.debug(f"{self.config.bot_name}: funding accrual failed for {pos.get('position_id')}: {e}")
+
+    def _total_maintenance_margin(self, open_positions, mark_price):
+        """Sum of each open position's maintenance margin at the current mark.
+
+        Mirrors Hyperliquid's account-level cross-margin liquidation: the
+        whole account gets liquidated once equity can no longer cover the
+        combined maintenance requirement of every open position, not a
+        flat percentage of starting capital.
+        """
+        if not open_positions or not mark_price:
+            return 0.0
+        try:
+            from trading.shared.margin_config import PERPETUAL_MARGIN_SPECS
+            from trading.shared.perp_realism import estimate_margin, get_rules
+            spec = PERPETUAL_MARGIN_SPECS.get(self.config.instrument, {})
+            leverage = float(spec.get("default_leverage", 5) or 5)
+            mmr_fallback = float(spec.get("maintenance_margin_rate", 0.01) or 0.01)
+            rules = get_rules(
+                self.config.instrument,
+                default_leverage=leverage,
+                max_leverage=float(spec.get("max_leverage", 20) or 20),
+                fallback_maintenance_margin_rate=mmr_fallback,
+                funding_interval_hours=float(spec.get("funding_interval_hours", 8) or 8),
+            )
+            total = 0.0
+            for pos in open_positions:
+                quantity = pos.get("quantity", self.config.default_quantity)
+                try:
+                    est = estimate_margin(
+                        side=pos["side"], entry_price=pos["entry_price"], mark_price=mark_price,
+                        quantity=quantity, leverage=leverage, rules=rules,
+                    )
+                    total += est.maintenance_margin
+                except Exception:
+                    total += mark_price * quantity * mmr_fallback
+            return total
+        except Exception as e:
+            logger.warning(f"{self.config.bot_name}: maintenance margin calc failed, falling back to 5% of starting capital: {e}")
+            return self.config.starting_capital * 0.05
+
+    def _simulate_close_fill(self, side, quantity, fallback_price):
+        """Cross the spread to close, like a real Hyperliquid taker close.
+
+        Sell-to-close at the bid for a long, buy-to-close at the ask for a
+        short, plus the taker fee - never marks the close at mid/last.
+        Falls back to the raw mark price with zero fee if the fill
+        simulator errors, so a data hiccup never blocks a required exit.
+        """
+        try:
+            from trading.shared.margin_config import PERPETUAL_MARGIN_SPECS
+            from trading.shared.perp_realism import simulate_close_fill
+            spec = PERPETUAL_MARGIN_SPECS.get(self.config.instrument, {})
+            fill, _, _ = simulate_close_fill(
+                self.config.instrument, side, quantity, fallback_price,
+                default_leverage=float(spec.get("default_leverage", 5) or 5),
+                max_leverage=float(spec.get("max_leverage", 20) or 20),
+                fallback_maintenance_margin_rate=float(spec.get("maintenance_margin_rate", 0.01) or 0.01),
+                funding_interval_hours=float(spec.get("funding_interval_hours", 8) or 8),
+            )
+            return fill.fill_price, fill.fee_usd
+        except Exception as e:
+            logger.warning(f"{self.config.bot_name}: close fill simulation failed, using mark price: {e}")
+            return fallback_price, 0.0
 
     def _check_entry_conditions(self, now):
         """Check entry conditions. Perpetual contracts trade 24/7/365.
@@ -465,6 +580,11 @@ class AgapeDogePerpTrader:
         if not self._enabled:
             return "BOT_DISABLED"
         open_pos = self.db.get_open_positions()
+        open_count = len(open_pos)
+        if open_count >= self.config.max_open_positions:
+            logger.warning(f"{self.config.bot_name}: position cap reached {open_count}/{self.config.max_open_positions}")
+            return f"BLOCKED_MAX_POSITIONS_{open_count}/{self.config.max_open_positions}"
+
         balance = self._get_available_balance(open_pos)
         min_required = self.config.starting_capital * (self.config.risk_per_trade_pct / 100)
         if balance <= min_required:
@@ -483,9 +603,7 @@ class AgapeDogePerpTrader:
                 cur_price = self.executor.get_current_price()
             except Exception:
                 cur_price = None
-            closed = self.db.get_closed_trades(limit=10000) or []
-            realized = sum(float(t.get("realized_pnl", 0) or 0) for t in closed)
-            equity = self.config.starting_capital + realized
+            equity = self._get_available_balance(open_pos)
             blocked, usage = is_margin_over_threshold(
                 bot_name="AGAPE_DOGE_PERP",
                 perp_symbol="DOGE-PERP",
