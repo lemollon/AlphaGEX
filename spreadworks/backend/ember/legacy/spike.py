@@ -188,6 +188,55 @@ def time_stop_due(entry_date: str | date, today: date, max_sessions: int) -> boo
     return sessions_held(entry_date, today) >= max_sessions
 
 
+# ---------------------------------------------------------------- FOMC-week entry stand-down (pure)
+# Pre-registered 2026-09-24. FOMC decision dates below (the SECOND day of each
+# 2-day meeting) were verified live against
+# https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm on
+# 2026-09-24 -- every 2026 date matches that page's own published calendar
+# exactly. The Fed had NOT yet published any 2027 meeting dates as of that
+# check (the page's own header spans "2021-2027" but lists no 2027 rows) --
+# no 2027 date is guessed here. FOMC_COVERAGE_END is the fail-closed boundary:
+# an entry date beyond it means "the Fed hasn't published that far forward
+# yet", which this bot treats the same as any other unknown -- stand down,
+# never assume no FOMC week. Update FOMC_DATES and FOMC_COVERAGE_END together
+# once the Fed publishes 2027 (typically mid-to-late the preceding year).
+FOMC_DATES: list[date] = [
+    date(2026, 1, 28), date(2026, 3, 18), date(2026, 4, 29), date(2026, 6, 17),
+    date(2026, 7, 29), date(2026, 9, 16), date(2026, 10, 28), date(2026, 12, 9),
+]
+FOMC_COVERAGE_END = date(2026, 12, 31)
+
+
+def fomc_week(entry_date: date, fomc_dates: list[date] = FOMC_DATES) -> bool | None:
+    """Exact port of CLUSTER_squeeze_short.py's own fomc_week(): True if
+    `entry_date` is within [-4, +2] days of a listed FOMC decision date (i.e.
+    `decision_date - entry_date` in that inclusive range). Every listed
+    decision date is a Wednesday, so this window is exactly the Monday-Sunday
+    calendar week containing it. Returns None (never guessed) if `entry_date`
+    is past FOMC_COVERAGE_END -- the Fed hasn't published that far out, so
+    this can NOT be computed, and the caller must fail closed."""
+    if entry_date > FOMC_COVERAGE_END:
+        return None
+    for d in fomc_dates:
+        diff = (d - entry_date).days
+        if -4 <= diff <= 2:
+            return True
+    return False
+
+
+def fomc_standdown_check(entry_date: date) -> tuple[bool, str]:
+    """Pure: (stand_down, reason). Fails CLOSED, same convention as every
+    other guard in this file -- an entry_date beyond FOMC_COVERAGE_END always
+    stands down rather than assuming no FOMC week. Never touches exits,
+    time-stops, or open positions -- new entries only."""
+    hit = fomc_week(entry_date)
+    if hit is None:
+        return True, f"STANDDOWN_FOMC_WEEK unknown (no FOMC calendar past {FOMC_COVERAGE_END.isoformat()})"
+    if hit:
+        return True, "STANDDOWN_FOMC_WEEK"
+    return False, "not an FOMC week"
+
+
 # ---------------------------------------------------------------- config
 @dataclass
 class Cfg:
@@ -1502,6 +1551,24 @@ def run_enter(now: datetime, cfg: Cfg, *, dry_run_cli: bool = False) -> int:
     # 14:45 CT MANAGE run.
     pending = pending_positions(positions)
     needing_tp = positions_needing_tp_order(positions)
+
+    # FOMC-week entry stand-down (pre-registered 2026-09-24, exact port of
+    # CLUSTER_squeeze_short.py's own fomc_week()): skip NEW entries only --
+    # pending-fill reconciliation and TP-order maintenance above still run
+    # every tick regardless, since neither one opens a new position.
+    fomc_standdown, fomc_reason = fomc_standdown_check(today)
+    if fomc_standdown:
+        line = f"{ts} CT | SPIKE | ENTER | {fomc_reason} -- no new entries this tick"
+        _log(line)
+        notify(tone_for(header), header)
+        notify("good", line)
+        if not pending and not needing_tp:
+            return 0
+        sig = build_enter_signal(now, cfg, [], [], state, [])
+        if dry_run_cli:
+            print(json.dumps(sig, indent=2))
+            return 0
+        return _invoke_agent("ENTER", sig, cfg)
 
     universe, history_by_symbol = load_enter_market_data(today)
     accepted: list[dict] = []

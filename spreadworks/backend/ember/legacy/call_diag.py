@@ -105,11 +105,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
 import subprocess
 import sys
+import urllib.parse
+import urllib.request
 import uuid
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
@@ -154,6 +157,17 @@ ITM_GUARD_USD = 1.00            # front call ITM by more than this -> early-assi
 BACK_EXPIRY_SEARCH_DAYS = 10    # search back_dte_min .. back_dte_min+10 for a listed back strike
 COLLATERAL_TOLERANCE_USD = 5.0  # reported collateral may exceed width*100+net_debit by this much
 BP_COLLATERAL_MULT = 1.5        # buying power must be >= this x reported collateral
+
+# ---- IWM trailing-RV5 entry stand-down (pre-registered, 2026-09-24) --------
+# Frozen rule from ironforge-data/out/clusters/CLUSTER_calldiag_iwm.py: stand
+# down the IWM leg's own entry when the trailing 5-day annualized realized
+# vol is AT OR BELOW this floor (low-vol trades in that study's first-half
+# discovery half showed both worse mean pnl and a higher loss-cluster rate,
+# frozen at the first-half median and confirmed on the held-out second
+# half). Exits/open positions are never touched by this rule -- ENTRY only,
+# and only the IWM ticker (the only enabled leg as of this build).
+IWM_RV5_STANDDOWN_DEFAULT = 0.1781   # 17.81%, DIAG_IWM_RV5_STANDDOWN overrides
+IWM_RV5_LOOKBACK = 5                 # 5 daily returns -> 6 trailing closes needed
 
 READ_TOOLS = [
     "Read", "Write", "Edit",
@@ -294,6 +308,7 @@ class Cfg:
                                      # the broker by RECONCILE's get_option_positions pull),
                                      # never free buying power. See diag_envelope_usage()/
                                      # diag_envelope_fit_check()/envelope_usd_from_pct() below.
+    iwm_rv5_standdown: float = IWM_RV5_STANDDOWN_DEFAULT  # DIAG_IWM_RV5_STANDDOWN override
 
     @property
     def legs(self) -> list[Leg]:
@@ -320,6 +335,7 @@ def load_cfg(env_file: Path = ENV_FILE) -> Cfg:
         fee_per_contract=float(env.get("DIAG_FEE_PER_CONTRACT", str(FEE_PER_CONTRACT_DEFAULT))),
         claude_bin=env.get("DIAG_CLAUDE_BIN", "claude"),
         envelope_pct=float(env.get("DIAG_ENVELOPE_PCT", "22")),
+        iwm_rv5_standdown=float(env.get("DIAG_IWM_RV5_STANDDOWN", str(IWM_RV5_STANDDOWN_DEFAULT))),
     )
 
 
@@ -456,6 +472,88 @@ def expiry_day_open_risk(today: date, front_expiry: date) -> bool:
     SAFETY mode's trigger to close immediately at 08:31, no matter how it got
     here (EXIT/the ITM guard should have already closed it the day before)."""
     return today >= front_expiry
+
+
+# ---------------------------------------------------------------- IWM RV5 stand-down (pure)
+def iwm_rv5(prior_closes: list[float]) -> float | None:
+    """Trailing 5-day annualized realized vol from DAILY CLOSES, computed to
+    match ironforge-data/out/clusters/CLUSTER_calldiag_iwm.py's own rv5_pct
+    column EXACTLY (just without its final *100.0 -- this threshold is a
+    fraction, 0.1781, not 17.81): that script builds `ret = spot.pct_change()`
+    (simple, not log, returns) then `rv5_pct = ret.shift(1).rolling(5).std() *
+    sqrt(252) * 100`, i.e. for the row dated `d` it is the stdev of the 5
+    returns ending at `d-1` -- so `prior_closes` here must be the last 6
+    CLOSES strictly before today, oldest-first, ending at the PRIOR trading
+    session's close (never today's own -- ENTRY runs intraday, before today's
+    close exists). `.std()` matches pandas' own default: sample stdev, ddof=1.
+    Returns None (never guessed) if fewer than 6 closes are supplied."""
+    if len(prior_closes) < IWM_RV5_LOOKBACK + 1:
+        return None
+    closes = prior_closes[-(IWM_RV5_LOOKBACK + 1):]
+    rets = [(closes[i] / closes[i - 1]) - 1.0 for i in range(1, len(closes))]
+    mean = sum(rets) / len(rets)
+    var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)
+    return math.sqrt(var) * math.sqrt(252)
+
+
+def iwm_standdown_check(prior_closes: list[float] | None,
+                         threshold: float = IWM_RV5_STANDDOWN_DEFAULT) -> tuple[bool, str]:
+    """Pure: (stand_down, reason). Fails CLOSED -- missing or insufficient
+    closes always stands down (never guessed, never trades blind), same
+    convention as every other guard in this file. `stand_down` is True (skip
+    the entry) when rv5 <= threshold, per the frozen CLUSTER_calldiag_iwm.py
+    rule (stand down on LOW realized vol, not high). Never touches exits or
+    open positions -- ENTRY only."""
+    if not prior_closes:
+        return True, "STANDDOWN_IWM_RV5 unknown (no closes)"
+    rv5 = iwm_rv5(prior_closes)
+    if rv5 is None:
+        return True, "STANDDOWN_IWM_RV5 unknown (fewer than 6 trailing closes)"
+    if rv5 <= threshold:
+        return True, f"STANDDOWN_IWM_RV5 {rv5:.4f}"
+    return False, f"rv5 {rv5:.4f} > {threshold:.4f} (ok)"
+
+
+def fetch_iwm_prior_closes(today: date, lookback: int = IWM_RV5_LOOKBACK + 1) -> list[float] | None:
+    """Live daily closes for IWM strictly before `today`, oldest-first, via
+    Tradier's `/v1/markets/history` (same TRADIER_TOKEN env var and request
+    shape as tv_scanner.py's own `_tradier_json()` -- the existing Render
+    fallback for market data in this repo). Returns None (fail closed, never
+    guessed) on a missing token, a network/parse error, or fewer than
+    `lookback` usable rows -- the caller must stand down, never trade blind
+    on a data gap."""
+    token = os.getenv("TRADIER_TOKEN", "").strip()
+    if not token:
+        return None
+    start = today - timedelta(days=lookback * 3 + 10)  # generous window for weekends/holidays
+    end = today - timedelta(days=1)
+    query = urllib.parse.urlencode({"symbol": "IWM", "interval": "daily",
+                                     "start": start.isoformat(), "end": end.isoformat()})
+    req = urllib.request.Request(
+        f"https://api.tradier.com/v1/markets/history?{query}",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+    days = ((payload or {}).get("history") or {}).get("day") or []
+    if isinstance(days, dict):
+        days = [days]
+    today_iso = today.isoformat()
+    try:
+        rows = sorted(
+            ((d.get("date"), float(d["close"])) for d in days
+             if d.get("date") and d.get("close") is not None and d["date"] < today_iso),
+            key=lambda r: r[0],
+        )
+    except (TypeError, ValueError):
+        return None
+    closes = [c for _, c in rows]
+    if len(closes) < lookback:
+        return None
+    return closes[-lookback:]
 
 
 # ---------------------------------------------------------------- collateral guard (pure)
@@ -1051,11 +1149,26 @@ def tick(now: datetime, cfg: Cfg, *, dry_run_cli: bool = False, forced_mode: str
             env_usage_running = diag_envelope_usage(positions)
             envelope_usd = (envelope_usd_from_pct(cfg.envelope_pct, total_value)
                              if total_value is not None else None)
+            iwm_prior_closes = None
+            iwm_prior_closes_fetched = False
             for leg in cfg.legs:
                 sc = legs_state[leg.leg_id]["session_count"]
                 leg_halted = is_leg_halted(order_state, leg.leg_id)
                 due, reason = leg_entry_due(leg, sc, positions, leg_halted=leg_halted,
                                              global_halted=global_halted)
+                # IWM RV5 stand-down (pre-registered 2026-09-24, CLUSTER_calldiag_iwm.py):
+                # checked right after schedule/capacity, before the envelope check --
+                # a market-state gate, never touching exits or open positions. Only
+                # fetches the live closes once per tick, and only if an IWM leg is
+                # actually otherwise due (never spends a network call for nothing).
+                if due and leg.ticker == "IWM":
+                    if not iwm_prior_closes_fetched:
+                        iwm_prior_closes = fetch_iwm_prior_closes(now.date())
+                        iwm_prior_closes_fetched = True
+                    standdown, sd_reason = iwm_standdown_check(iwm_prior_closes, cfg.iwm_rv5_standdown)
+                    if standdown:
+                        due = False
+                        reason = sd_reason
                 if due:
                     env_needed = round(leg.width * 100.0, 2)
                     if envelope_usd is None:
@@ -1074,7 +1187,7 @@ def tick(now: datetime, cfg: Cfg, *, dry_run_cli: bool = False, forced_mode: str
                     due_ids.append(leg.leg_id)
                 else:
                     entry_day[leg.leg_id] = {"done": True, "state": "skipped", "skipped": reason}
-                    if reason.startswith("ENVELOPE:"):
+                    if reason.startswith("ENVELOPE:") or reason.startswith("STANDDOWN_IWM_RV5"):
                         line = (f"{now.isoformat(timespec='seconds')} CT | ENTRY | NO-OP: "
                                  f"{reason} (leg={leg.leg_id}); refusing entry, never calls "
                                  f"the agent for this leg")
@@ -1456,6 +1569,35 @@ def _unit_tests() -> int:
     assert row["pnl_fill_to_fill"] == position_pnl(1.05, -0.30, 1, 0.04)
     assert round((0.30 - 1.05) * 100 - 0.04 * 4, 2) == row["pnl_fill_to_fill"]
     assert ledger_row({"state": "open"}) is None
+
+    # ---- IWM RV5 stand-down: threshold boundary, prior-close-only, missing data ----
+    flat = [100.0, 100.0, 100.0, 100.0, 100.0, 100.0]   # zero vol -> rv5 == 0.0
+    assert iwm_rv5(flat) == 0.0
+    assert iwm_rv5([100.0] * 5) is None                 # only 5 closes -> 4 returns, insufficient
+    up = [100.0, 101.0, 100.0, 101.0, 100.0, 101.0]      # alternating +1%/-0.99%, nonzero rv5
+    rv5_up = iwm_rv5(up)
+    assert rv5_up is not None and rv5_up > 0.0
+    # boundary: rv5 <= threshold stands down, rv5 > threshold does not (spec's own "<=")
+    standdown_at, reason_at = iwm_standdown_check(flat, threshold=0.0)
+    assert standdown_at is True and reason_at == "STANDDOWN_IWM_RV5 0.0000"
+    standdown_below, _ = iwm_standdown_check(flat, threshold=0.01)
+    assert standdown_below is True                       # 0.0 <= 0.01
+    standdown_above, reason_above = iwm_standdown_check(up, threshold=0.0001)
+    assert standdown_above is False and "ok" in reason_above   # rv5_up > tiny threshold
+    # prior-close-only: only the LAST 6 elements of a longer list matter -- extra
+    # leading closes (which would represent same-day/extra data) must never change
+    # the result, since the caller is contracted to hand over exactly the closes
+    # ending at the prior session (never today's own).
+    padded = [999.0, 999.0] + up
+    assert iwm_rv5(padded) == rv5_up
+    # missing data always fails closed -- never trades blind
+    assert iwm_standdown_check(None) == (True, "STANDDOWN_IWM_RV5 unknown (no closes)")
+    assert iwm_standdown_check([]) == (True, "STANDDOWN_IWM_RV5 unknown (no closes)")
+    assert iwm_standdown_check([100.0] * 5)[0] is True   # too few closes -> stand down
+    assert "fewer than 6" in iwm_standdown_check([100.0] * 5)[1]
+    # default threshold: rv5 exactly at 0.1781 stands down, just above does not
+    at_default, _ = iwm_standdown_check(flat, threshold=IWM_RV5_STANDDOWN_DEFAULT)
+    assert at_default is True
 
     print("unit tests: OK")
     return 0
