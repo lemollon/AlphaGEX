@@ -104,7 +104,10 @@ function ctDateTime(iso?: string | null): string {
 }
 
 // Human copy for close_reason codes like "MAX_LOSS_2.0pct" / "PROFIT_TARGET_+2.7pct".
-// The raw code is kept in the DOM title attribute so support can still grep the constant.
+// Also tolerates the malformed signed variants some bots emit — a stray space
+// instead of an underscore ("TRAIL STOP +-0.2pct") and a doubled "+-" sign
+// ("TRAIL_STOP_+-0.3pct", meaning "negative 0.3", not "positive negative").
+// The raw code is kept in the DOM title attribute so support can still grep it.
 const REASON_BASE_LABEL: Record<string, string> = {
   MAX_LOSS: 'Stop loss hit',
   PROFIT_TARGET: 'Profit target hit',
@@ -112,17 +115,19 @@ const REASON_BASE_LABEL: Record<string, string> = {
 }
 function humanCloseReason(raw?: string | null): { label: string; title: string } {
   if (!raw) return { label: '—', title: '' }
-  const m = raw.match(/^([A-Z_]+)_([+-]?[\d.]+)pct$/)
+  const normalized = raw.trim().replace(/\s+/g, '_')
+  const m = normalized.match(/^([A-Z_]+?)_([+-]{0,2})([\d.]+)pct$/)
   if (m) {
-    const [, base, numRaw] = m
+    const [, base, signPart, numRaw] = m
     const label = REASON_BASE_LABEL[base]
     if (label) {
-      const n = Math.abs(parseFloat(numRaw))
-      const sign = base === 'MAX_LOSS' ? '−' : '+'
+      const n = parseFloat(numRaw)
+      const negative = base === 'MAX_LOSS' || signPart.includes('-')
+      const sign = negative ? '−' : '+'
       return { label: `${label} (${sign}${n}%)`, title: raw }
     }
   }
-  if (raw === 'MAX_HOLD_TIME') return { label: 'Held to max time', title: raw }
+  if (normalized === 'MAX_HOLD_TIME') return { label: 'Held to max time', title: raw }
   return { label: raw.replace(/_/g, ' '), title: raw }
 }
 
@@ -316,7 +321,21 @@ function EquityChart({ points, start, animKey }: { points: number[]; start: numb
 // labels on the y-axis, a dashed line at starting capital, a hover tooltip
 // and a marker on the most recent point. Built on the site's existing chart
 // lib (recharts) rather than the bare inline SVG used by the per-coin tab.
-type EquityPoint = { date: string; equity: number }
+// `ts` (epoch ms) drives the axis so recharts spaces ticks by real elapsed
+// time instead of by category index — with a category axis, a day's worth
+// of trades all collapse onto the same "Sep 24" label.
+type EquityPoint = { date: string; ts: number; equity: number }
+
+// Under a 2-day span, dates all look identical ("Sep 24" x12) — show clock
+// time instead. Above that, dates are the useful unit.
+function equityTickFormat(ts: number, spanMs: number): string {
+  try {
+    if (spanMs < 2 * 24 * 60 * 60 * 1000) {
+      return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(ts))
+    }
+    return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' }).format(new Date(ts))
+  } catch { return '' }
+}
 
 function EquityTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null
@@ -336,6 +355,7 @@ function EquityTooltip({ active, payload, label }: any) {
 function CombinedEquityChart({ series, start }: { series: EquityPoint[]; start: number }) {
   if (series.length < 2) return <div className="h-full flex items-center justify-center text-sm text-[#9ca3af]">Equity will appear after trades close</div>
   const last = series[series.length - 1]
+  const spanMs = Math.max(1, last.ts - series[0].ts)
   const endColor = pnlColor(last.equity - start)
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -348,15 +368,16 @@ function CombinedEquityChart({ series, start }: { series: EquityPoint[]; start: 
         </defs>
         <CartesianGrid stroke="#1c2233" strokeDasharray="3 3" vertical={false} />
         <XAxis
-          dataKey="date"
+          dataKey="ts"
+          type="number"
+          scale="time"
+          domain={['dataMin', 'dataMax']}
           stroke="#9ca3af"
           fontSize={12}
           tickMargin={8}
-          minTickGap={48}
-          tickFormatter={(v: string) => {
-            try { return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' }).format(new Date(v)) }
-            catch { return v }
-          }}
+          tickCount={6}
+          minTickGap={64}
+          tickFormatter={(v: number) => equityTickFormat(v, spanMs)}
         />
         <YAxis
           stroke="#9ca3af"
@@ -374,7 +395,7 @@ function CombinedEquityChart({ series, start }: { series: EquityPoint[]; start: 
           label={{ value: `start ${money(start)}`, position: 'insideTopRight', fill: '#9ca3af', fontSize: 12 }}
         />
         <Area type="monotone" dataKey="equity" stroke="#eab308" strokeWidth={2} fill="url(#ag-equity-fill)" isAnimationActive={false} />
-        <ReferenceDot x={last.date} y={last.equity} r={5} fill={endColor} stroke="#0a0e16" strokeWidth={2} isFront />
+        <ReferenceDot x={last.ts} y={last.equity} r={5} fill={endColor} stroke="#0a0e16" strokeWidth={2} isFront />
       </AreaChart>
     </ResponsiveContainer>
   )
@@ -526,9 +547,14 @@ export default function PerpetualsCryptoContent() {
     let eq = totalStart + realized - closed.reduce((a, t) => a + (t.realized_pnl || 0), 0)
     const pts: EquityPoint[] = []
     const firstDate = closed[0]?.close_time ? new Date(closed[0].close_time) : new Date()
-    pts.push({ date: firstDate.toISOString(), equity: eq })
-    for (const t of closed) { eq += t.realized_pnl || 0; pts.push({ date: t.close_time as string, equity: eq }) }
-    pts.push({ date: new Date().toISOString(), equity: eq + unreal })
+    pts.push({ date: firstDate.toISOString(), ts: firstDate.getTime(), equity: eq })
+    for (const t of closed) {
+      eq += t.realized_pnl || 0
+      const d = new Date(t.close_time as string)
+      pts.push({ date: t.close_time as string, ts: d.getTime(), equity: eq })
+    }
+    const nowDate = new Date()
+    pts.push({ date: nowDate.toISOString(), ts: nowDate.getTime(), equity: eq + unreal })
     return pts
   }, [trades, totalStart, realized, unreal])
 
@@ -537,8 +563,11 @@ export default function PerpetualsCryptoContent() {
     [trades]
   )
 
-  // Won/lost split per bot, from the same range-windowed trade fetch that
-  // powers the equity curve and recent-trades feed above.
+  // Won/lost split per bot, range-windowed — used only as a fallback for the
+  // Bots table when a bot's /performance call hasn't returned wins/losses
+  // yet. The table itself prefers the bot's own all-time totals (see
+  // botRow below) so W+L always equals the bot's full closed-trade count,
+  // not just what's in the currently selected date range.
   const wonLostByCoin = useMemo(() => {
     const map: Record<Coin, { won: number; lost: number }> = Object.fromEntries(COINS.map(c => [c, { won: 0, lost: 0 }])) as any
     for (const t of trades) {
@@ -611,11 +640,26 @@ export default function PerpetualsCryptoContent() {
     ]
   }, [cur.mapping])
 
-  const primaryLastScan = bots.btc.status?.heartbeat?.last_scan_iso || bots.btc.status?.last_scan_iso
-    || list.map(b => b.status?.heartbeat?.last_scan_iso || b.status?.last_scan_iso).find(Boolean)
-  const lastScan = isCoinView
-    ? (cur.status?.heartbeat?.last_scan_iso || cur.status?.last_scan_iso || primaryLastScan)
-    : primaryLastScan
+  // Bot /status responses don't actually carry a heartbeat/last_scan_iso field
+  // (checked trader.get_status() across all 7 bots — it isn't there), so the
+  // header was permanently stuck on "—:—". The data-health endpoint reads the
+  // real last scan straight out of each bot's own scan_activity table — use
+  // that instead. Overview shows the most recent scan across all bots; a
+  // coin's own page prefers that bot's scan if health has reported one yet.
+  const healthByBot = useMemo(() => {
+    const map: Partial<Record<Coin, string>> = {}
+    for (const hb of health?.bots || []) {
+      const c = COIN_OF_BOT_ID[hb.bot_id]
+      if (c && hb.last_scan) map[c] = hb.last_scan
+    }
+    return map
+  }, [health])
+  const latestHealthScan = useMemo(() => {
+    const times = Object.values(healthByBot).filter(Boolean) as string[]
+    if (!times.length) return null
+    return times.reduce((latest, t) => (new Date(t).getTime() > new Date(latest).getTime() ? t : latest))
+  }, [healthByBot])
+  const lastScan = isCoinView ? (healthByBot[curCoin] || latestHealthScan) : latestHealthScan
   const secsToScan = lastScan ? Math.max(0, 300 - Math.floor((now - new Date(lastScan).getTime()) / 1000) % 300) : null
   const nextScanLabel = secsToScan != null ? `${Math.floor(secsToScan / 60)}:${String(secsToScan % 60).padStart(2, '0')}` : '—:—'
 
@@ -649,9 +693,16 @@ export default function PerpetualsCryptoContent() {
 
   const botRow = (c: Coin) => {
     const st = S[c], m = META[c], b = bots[c]
-    const wl = wonLostByCoin[c]
-    const closedTotal = wl.won + wl.lost
-    const winPct = closedTotal ? (wl.won / closedTotal) * 100 : null
+    // Prefer the bot's own /performance totals (all-time wins/losses) so
+    // W+L equals its full closed-trade count. Only fall back to the
+    // range-windowed trades feed if a bot hasn't returned perf data yet —
+    // that's what was making ETH show "—" (0 trades in the last 30D window
+    // despite 35 closed all-time) and BTC show "3 / 0" instead of 40 total.
+    const fallback = wonLostByCoin[c]
+    const won = b.perf?.wins ?? fallback.won
+    const lost = b.perf?.losses ?? fallback.lost
+    const closedTotal = won + lost
+    const winPct = closedTotal ? (won / closedTotal) * 100 : null
     const isCheck = winPct === 100 && closedTotal >= 20
     const overLimit = b.positions.length > STACK_LIMIT
     const status = b.dataIssue ? 'Data issue' : overLimit ? 'Over limit' : (b.status?.status || 'IDLE')
@@ -662,7 +713,7 @@ export default function PerpetualsCryptoContent() {
       capRaw: m.cap, capStr: money(m.cap),
       pnlRaw: b.dataIssue ? -Infinity : st.tot, pnlStr: b.dataIssue ? '—' : money(st.tot, true), pnlColor: b.dataIssue ? SUB : pnlColor(st.tot),
       retRaw: b.dataIssue ? -Infinity : st.tot / m.cap * 100, retStr: b.dataIssue ? '—' : pct(st.tot / m.cap * 100),
-      won: wl.won, lost: wl.lost, closedTotal, winPct, isCheck,
+      won, lost, closedTotal, winPct, isCheck,
       open: b.positions.length, overLimit,
       status, statusColor,
       dataIssue: b.dataIssue,
