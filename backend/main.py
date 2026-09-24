@@ -115,6 +115,8 @@ async def start_active_trading_scheduler():
         launch_mes_chopguard_v12()
         from scripts.valor_mes_chopguard_v13 import launch_if_enabled as launch_mes_chopguard_v13
         launch_mes_chopguard_v13()
+        from scripts.valor_mes_chopguard_v14 import launch_if_enabled as launch_mes_chopguard_v14
+        launch_mes_chopguard_v14()
     except Exception:
         import logging
         logging.getLogger(__name__).exception(
