@@ -2,4 +2,4 @@
 import runpy
 
 if __name__ == "__main__":
-    runpy.run_module("flame_loss_cluster_102d", run_name="__main__")
+    runpy.run_module("flame_two_entry_102d", run_name="__main__")
