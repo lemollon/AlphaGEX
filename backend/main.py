@@ -139,6 +139,8 @@ async def start_active_trading_scheduler():
         launch_mes_v24()
         from scripts.valor_mes_v25_rolling_edge_router import launch_if_enabled as launch_mes_v25
         launch_mes_v25()
+        from scripts.valor_mes_v26_first_loss_breaker import launch_if_enabled as launch_mes_v26
+        launch_mes_v26()
     except Exception:
         import logging
         logging.getLogger(__name__).exception(
