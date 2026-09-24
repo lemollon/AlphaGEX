@@ -19,7 +19,7 @@ core.SPEC.update({
  "deadline_seconds":1800,
  "scope":"full frozen dual-engine rerun; independent days parallelized; bounded transport retries; no saved-data fallback",
 })
-WORKERS=6
+WORKERS=12
 
 def retryable(exc):
  s=str(exc)
