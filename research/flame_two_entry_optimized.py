@@ -21,7 +21,7 @@ core.SPEC.update({
  "closures":["2025-01-01","2025-01-09","2025-01-20","2025-02-17","2025-04-18","2025-05-26"],
  "expected_sessions":102,"widths_dollars":[2],"profiles_units":{"natural":0},
  "decision_et_minute":720,"flat_et_minute":945,"max_requests":500,"deadline_seconds":3600,
- "scope":"retrospective sequential-entry comparison, optimized fresh acquisition, not unseen validation",
+ "scope":"retrospective sequential-entry comparison, direct 5m underlying and fresh option quotes, not unseen validation",
  "no_saved_price_inputs":True,"no_previous_trade_inputs":True,
 })
 MIN_EFF=D("0.30"); LATEST_SECOND_DECISION=900; COOLDOWN_MINUTES=5
@@ -31,11 +31,13 @@ def hhmm(m):
  return f"{h:02d}:{mm:02d}:00"
 
 def full_stock_rows(rows,day):
+ # Direct 5-minute bars. Timestamp is interval-start; bars at decision time are not yet complete.
  out={}
  for r in rows:
   m=core.minute(r["timestamp"],day)
   if m==core.SPEC["flat_et_minute"]: continue
-  if not 570<=m<core.SPEC["flat_et_minute"]: raise core.DataError("stock_outside_rth:"+day+":"+str(m))
+  if not 570<=m<core.SPEC["flat_et_minute"] or (m-570)%5!=0:
+   raise core.DataError("stock_outside_5m_grid:"+day+":"+str(m))
   if r.get("symbol","SPY")!="SPY" or m in out: raise core.DataError("stock_identity_or_duplicate")
   try:
    v={k:D(str(r[k]))*U for k in ["open","high","low","close"]}; vol=D(str(r["volume"]))
@@ -47,17 +49,12 @@ def full_stock_rows(rows,day):
   if v["low"]>bot:v["low"]=bot
   if v["high"]<top:v["high"]=top
   out[m]=v
- exp=list(range(570,core.SPEC["flat_et_minute"]))
- if sorted(out)!=exp: raise core.DataError("missing_stock_minutes:"+day)
+ exp=list(range(570,core.SPEC["flat_et_minute"],5))
+ if sorted(out)!=exp: raise core.DataError("missing_stock_5m:"+day+":"+repr(sorted(set(exp)-set(out))[:10]))
  return out
 
 def bars5(stock,decision):
- b=[]
- for m in range(570,decision,5):
-  if m+5>decision:break
-  xs=[stock[j] for j in range(m,m+5)]
-  b.append({"open":xs[0]["open"],"close":xs[-1]["close"],"high":max(x["high"] for x in xs),"low":min(x["low"] for x in xs)})
- return b
+ return [stock[m] for m in range(570,decision,5)]
 
 def efficiency_at(stock,decision):
  b=bars5(stock,decision)
@@ -66,7 +63,7 @@ def efficiency_at(stock,decision):
  travel=sum(abs(y-x) for x,y in zip(c[-13:-1],c[-12:]))
  return D(abs(diff))/D(travel) if travel else D(0)
 
-def spot_at(stock,decision): return stock[decision-1]["close"]
+def spot_at(stock,decision): return stock[decision-5]["close"]
 
 def parse_snapshot(rows,day,decision):
  q={}
@@ -205,7 +202,7 @@ def execute():
  core.emit("two_entry_opt_spec",configuration=core.SPEC,extra=extra,sha256=hashlib.sha256(json.dumps({"spec":core.SPEC,"extra":extra},sort_keys=True).encode()).hexdigest())
  try:
   for day in days:
-   p={"symbol":"SPY","date":day,"interval":"1m","start_time":"09:30:00","end_time":"15:45:00","venue":"utp_cta"}
+   p={"symbol":"SPY","date":day,"interval":"5m","start_time":"09:30:00","end_time":"15:45:00","venue":"utp_cta"}
    fp=feed.get("/v3/stock/history/ohlc",p)
    with fp.open() as f:stock=full_stock_rows(csv.DictReader(f),day)
    df=DayFeed(feed,day,stock);first,m1=candidate(df,720);r,m2=second(df,first,"recheck");a,m3=second(df,first,"rearm")
