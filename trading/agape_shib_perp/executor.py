@@ -27,9 +27,17 @@ class AgapeShibPerpExecutor:
     Very low price (~$0.00001), very large quantities (millions).
     """
 
+    # A real SHIB move of more than this fraction in a single scan cycle is
+    # not physically plausible for a meme-coin perp - it means the upstream
+    # quote is corrupt (stale JSON, truncated string, API hiccup), not that
+    # the market crashed. Reject it and hold the last known-good price
+    # instead of feeding a garbage tick into exits/stops/trailing logic.
+    MAX_TICK_DEVIATION_PCT = 0.50
+
     def __init__(self, config: AgapeShibPerpConfig, db=None):
         self.config = config
         self.db = db
+        self._last_good_price: Optional[float] = None
 
     def execute_trade(self, signal: AgapeShibPerpSignal) -> Optional[AgapeShibPerpPosition]:
         if not signal.is_valid:
@@ -120,11 +128,37 @@ class AgapeShibPerpExecutor:
             return None
 
     def get_current_price(self) -> Optional[float]:
-        """Get current SHIB price from CryptoDataProvider."""
+        """Get current SHIB price from CryptoDataProvider.
+
+        Root-cause guard for the near-zero exit bug (2026-09-24): a
+        corrupt/stale upstream tick that is still numerically > 0 (e.g.
+        0.00000001) used to pass straight through to trailing-stop and
+        close logic, booking a fake ~5000% profit on a "price crash" that
+        never happened. Reject any single-cycle move bigger than
+        MAX_TICK_DEVIATION_PCT from the last known-good price and reuse
+        the last good price instead - SHIB does not move 50%+ between two
+        scan cycles on a real market event.
+        """
         try:
             from data.crypto_data_provider import get_crypto_data_provider
             provider = get_crypto_data_provider()
             snapshot = provider.get_snapshot("SHIB")
-            return snapshot.spot_price if snapshot else None
+            price = snapshot.spot_price if snapshot else None
         except Exception:
-            return None
+            price = None
+
+        if price is None or price <= 0:
+            return self._last_good_price
+
+        if self._last_good_price:
+            deviation = abs(price - self._last_good_price) / self._last_good_price
+            if deviation > self.MAX_TICK_DEVIATION_PCT:
+                logger.error(
+                    "AGAPE-SHIB-PERP: rejecting corrupt price tick $%.10f "
+                    "(%.0f%% away from last good $%.10f) - holding last good price",
+                    price, deviation * 100, self._last_good_price,
+                )
+                return self._last_good_price
+
+        self._last_good_price = price
+        return price
