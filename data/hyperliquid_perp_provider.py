@@ -20,6 +20,13 @@ logger = logging.getLogger(__name__)
 INFO_URL = "https://api.hyperliquid.xyz/info"
 SYMBOL_ALIASES = {"SHIB": "kSHIB"}
 
+# Hyperliquid quotes some sub-cent tokens in "k"-prefixed contracts priced
+# per 1000 base units (e.g. kSHIB = price of 1000 SHIB). Callers (paper fill
+# simulation, margin checks) all work in per-base-unit prices to match the
+# spot price from CryptoDataProvider, so any "k"-aliased quote must be
+# divided by this factor before it leaves this module.
+SYMBOL_UNIT_MULTIPLIERS = {"SHIB": 1000.0}
+
 
 @dataclass(frozen=True)
 class HyperliquidMarket:
@@ -149,6 +156,16 @@ class HyperliquidPerpProvider:
 
         if mark <= 0 or bid <= 0 or ask <= 0:
             return None
+
+        # Normalize "k"-contract quotes (priced per 1000 base units) back to
+        # a per-base-unit price so callers never mix units with the raw spot
+        # price from CryptoDataProvider.
+        unit_multiplier = SYMBOL_UNIT_MULTIPLIERS.get(symbol.upper(), 1.0)
+        if unit_multiplier != 1.0:
+            mark /= unit_multiplier
+            oracle /= unit_multiplier
+            bid /= unit_multiplier
+            ask /= unit_multiplier
 
         tiers = self._find_margin_table(meta, asset)
         max_leverage = float(asset.get("maxLeverage", 1) or 1)
