@@ -18,6 +18,7 @@ x.core.SPEC.update({
     "scope":"clean segment A for frozen dual-engine reconciliation",
 })
 if __name__=="__main__":
-    if os.getenv("FLAME_FRESH_MODE")=="dual-engine-segment-a":
-        threading.Thread(target=x.execute,daemon=True).start()
+    # This isolated research runner always executes Segment A on boot.
+    # No environment gate: prevents a healthy service from idling with no research job.
+    threading.Thread(target=x.execute,daemon=True).start()
     HTTPServer(("0.0.0.0",int(os.getenv("PORT","10000"))),x.core.Handler).serve_forever()
