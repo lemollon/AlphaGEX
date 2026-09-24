@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { usePathname } from 'next/navigation'
 import { Send, X, Minimize2, Maximize2, Image, Trash2, User, Loader2, Bot, Download, Volume2, VolumeX, Sparkles, Terminal, AlertTriangle, Wrench, CheckCircle, XCircle } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
@@ -187,6 +188,10 @@ function playNotificationSound() {
 }
 
 export default function FloatingChatbot() {
+  // Crypto Perps redesign shrinks the widget so it never covers the bots /
+  // recent-trades tables on that page. Every other page keeps its normal size.
+  const pathname = usePathname()
+  const isCompactPage = !!pathname?.startsWith('/perpetuals-crypto')
   const [isOpen, setIsOpen] = useState(false)
   const [isMinimized, setIsMinimized] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
@@ -749,7 +754,7 @@ export default function FloatingChatbot() {
     return (
       <button
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-6 right-6 z-50 w-16 h-16 rounded-full shadow-2xl flex items-center justify-center transition-all duration-300 hover:scale-110 group overflow-hidden"
+        className={`fixed bottom-6 right-6 z-50 rounded-full shadow-2xl flex items-center justify-center transition-all duration-300 hover:scale-110 group overflow-hidden ${isCompactPage ? 'w-12 h-12' : 'w-16 h-16'}`}
         style={{
           background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #06b6d4 100%)',
           boxShadow: '0 0 30px rgba(99, 102, 241, 0.5), 0 0 60px rgba(139, 92, 246, 0.3)'
@@ -762,7 +767,7 @@ export default function FloatingChatbot() {
 
         {/* Icon */}
         <div className="relative z-10 flex items-center justify-center">
-          <Bot className="w-7 h-7 text-white drop-shadow-lg" />
+          <Bot className={`text-white drop-shadow-lg ${isCompactPage ? 'w-5 h-5' : 'w-7 h-7'}`} />
         </div>
 
         {/* Alert badge */}
@@ -818,7 +823,7 @@ export default function FloatingChatbot() {
   // Full chat window
   return (
     <div
-      className="fixed bottom-0 right-0 sm:bottom-6 sm:right-6 z-50 w-full sm:w-96 h-[100dvh] sm:h-[520px] max-w-full bg-background-card border border-border sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+      className={`fixed bottom-0 right-0 sm:bottom-6 sm:right-6 z-50 w-full h-[100dvh] max-w-full bg-background-card border border-border sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden ${isCompactPage ? 'sm:w-80 sm:h-[440px]' : 'sm:w-96 sm:h-[520px]'}`}
       style={{ boxShadow: '0 0 40px rgba(99, 102, 241, 0.2), 0 25px 50px -12px rgba(0, 0, 0, 0.5)' }}
       onDrop={handleDrop}
       onDragOver={handleDragOver}

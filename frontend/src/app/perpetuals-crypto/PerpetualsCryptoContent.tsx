@@ -4,14 +4,20 @@
 // Route: /perpetuals-crypto?coin=btc|eth|xrp|sol|doge|avax|shib&tab=overview|market|activity|history|config
 // Replaces the old "ALL coins dashboard" (PerpetualsCryptoContent) and the
 // six-bot /agape-perps hub (AgapePerpsContent) with a single overview +
-// coin-detail view, per the Crypto Perps design handoff.
+// coin-detail view, per the Crypto Perps design handoff (redesigned again per
+// the full-width / data-health mockup, Sep 2026).
 
 import { useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, ReferenceLine, ReferenceDot,
+} from 'recharts'
 import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { LoadingState } from '@/components/trader'
 import { useAgapePerpTrades, type RangePreset, type Trade } from '@/lib/hooks/useAgapePerpTrades'
+import { useAgapeDataHealth } from '@/lib/hooks/useAgapeDataHealth'
 import {
   useAGAPEBtcPerpStatus, useAGAPEBtcPerpPerformance, useAGAPEBtcPerpPositions, useAGAPEBtcPerpScanActivity, useAGAPEBtcPerpSnapshot, useAGAPEBtcPerpGexMapping,
   useAGAPEEthPerpStatus, useAGAPEEthPerpPerformance, useAGAPEEthPerpPositions, useAGAPEEthPerpScanActivity, useAGAPEEthPerpSnapshot, useAGAPEEthPerpGexMapping,
@@ -26,6 +32,11 @@ const G = '#10b981'
 const R = '#ef4444'
 const REFRESH_MS = 15000
 const MONO = "font-[Geist_Mono,monospace]"
+const SUB = '#9ca3af' // brighter secondary-text color (was #6b7280 — too dim per redesign)
+
+// A coin whose bot is carrying more open lots than this is flagged as
+// "stacked" — a warning surface only, it never changes trading behavior.
+const STACK_LIMIT = 5
 
 type Coin = 'btc' | 'eth' | 'xrp' | 'sol' | 'doge' | 'avax' | 'shib'
 
@@ -75,12 +86,65 @@ const sigColor = (s?: string) =>
 const riskColor = (r?: string) => (r === 'HIGH' ? R : r === 'ELEVATED' ? '#f97316' : G)
 const priceOf = (coin: Coin, obj: any): number | null => obj?.[`current_${coin}_price`] ?? obj?.[`${coin}_price`] ?? obj?.current_price ?? obj?.spot_price ?? null
 
+// Central Time formatting — every timestamp on this page is CT, never local browser time.
+function ctHHMM(iso?: string | null): string {
+  if (!iso) return '—:—'
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(iso))
+  } catch { return '—:—' }
+}
+function ctDateTime(iso?: string | null): string {
+  if (!iso) return '—'
+  try {
+    const d = new Date(iso)
+    const date = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' }).format(d)
+    const time = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit', hour12: true }).format(d)
+    return `${date}, ${time}`
+  } catch { return '—' }
+}
+
+// Human copy for close_reason codes like "MAX_LOSS_2.0pct" / "PROFIT_TARGET_+2.7pct".
+// The raw code is kept in the DOM title attribute so support can still grep the constant.
+const REASON_BASE_LABEL: Record<string, string> = {
+  MAX_LOSS: 'Stop loss hit',
+  PROFIT_TARGET: 'Profit target hit',
+  TRAIL_STOP: 'Trailing stop',
+}
+function humanCloseReason(raw?: string | null): { label: string; title: string } {
+  if (!raw) return { label: '—', title: '' }
+  const m = raw.match(/^([A-Z_]+)_([+-]?[\d.]+)pct$/)
+  if (m) {
+    const [, base, numRaw] = m
+    const label = REASON_BASE_LABEL[base]
+    if (label) {
+      const n = Math.abs(parseFloat(numRaw))
+      const sign = base === 'MAX_LOSS' ? '−' : '+'
+      return { label: `${label} (${sign}${n}%)`, title: raw }
+    }
+  }
+  if (raw === 'MAX_HOLD_TIME') return { label: 'Held to max time', title: raw }
+  return { label: raw.replace(/_/g, ' '), title: raw }
+}
+
+// Net-direction copy for the exposure panel: "Net long 5 · 8L / 3S", "Net short 16",
+// or "Flat · 3L / 3S" when the book is balanced.
+function exposureLabel(longs: number, shorts: number): string {
+  if (longs === 0 && shorts === 0) return 'Flat'
+  if (longs === shorts) return `Flat · ${longs}L / ${shorts}S`
+  if (longs === 0) return `Net short ${shorts}`
+  if (shorts === 0) return `Net long ${longs}`
+  const dir = longs > shorts ? 'long' : 'short'
+  const net = Math.abs(longs - shorts)
+  return `Net ${dir} ${net} · ${longs}L / ${shorts}S`
+}
+
 // ------------------------------------------------------------------ bot data hook
 
 interface BotData {
   coin: Coin
   status: any
   loading: boolean
+  dataIssue: boolean
   perf: any
   positions: any[]
   scans: any[]
@@ -105,10 +169,16 @@ function useBot(coin: Coin, opts: { snapshot: boolean; mapping: boolean }): BotD
   const scans = useScans(60, { enabled: true, refreshInterval: REFRESH_MS })
   const snapshot = useSnapshot({ enabled: opts.snapshot, refreshInterval: REFRESH_MS })
   const mapping = useMapping({ enabled: opts.mapping })
+  // A bot "has a data issue" once its /status call has settled and either
+  // errored outright or came back with success:false (trader not
+  // initialized, DB unreachable, etc). Never mark it as an issue while the
+  // very first fetch is still in flight — that's just loading.
+  const dataIssue = !status.isLoading && (!!status.error || status.data?.success === false)
   return {
     coin,
     status: status.data?.data,
     loading: status.isLoading && !status.data,
+    dataIssue,
     perf: perf.data?.data,
     positions: (positions.data?.data || []) as any[],
     scans: (scans.data?.data || []) as any[],
@@ -157,18 +227,18 @@ const Row = ({ label, value, color }: { label: string; value: React.ReactNode; c
 function StatCell({ label, value, color, size = 20 }: { label: string; value: React.ReactNode; color?: string; size?: number }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-xs text-[#6b7280]">{label}</span>
+      <span className="text-xs text-[#9ca3af]">{label}</span>
       <span className={`${MONO} font-semibold`} style={{ color: color || '#f3f4f6', fontSize: size }}>{value}</span>
     </div>
   )
 }
 function MarketTile({ l, v, c }: { l: string; v: string; c?: string }) {
-  return <Card className="p-[14px_16px] flex flex-col gap-1.5"><span className="text-xs text-[#6b7280]">{l}</span><span className="text-[15px] font-semibold" style={{ color: c || '#f3f4f6' }}>{v}</span></Card>
+  return <Card className="p-[14px_16px] flex flex-col gap-1.5"><span className="text-xs text-[#9ca3af]">{l}</span><span className="text-[15px] font-semibold" style={{ color: c || '#f3f4f6' }}>{v}</span></Card>
 }
 function MarketCard({ title, sub, rows }: { title: string; sub: string; rows: { l: string; v: React.ReactNode; c?: string }[] }) {
   return (
     <Card className="p-[18px_20px] flex flex-col gap-3">
-      <div className="flex flex-col gap-0.5"><span className="text-[15px] font-semibold">{title}</span><span className="text-xs text-[#6b7280]">{sub}</span></div>
+      <div className="flex flex-col gap-0.5"><span className="text-[15px] font-semibold">{title}</span><span className="text-xs text-[#9ca3af]">{sub}</span></div>
       {rows.map(r => <Row key={r.l} label={r.l} value={r.v} color={r.c} />)}
     </Card>
   )
@@ -190,7 +260,7 @@ function barsFromScans(coin: Coin, scans: any[], max = 48): Bar[] {
 }
 
 function CandleChart({ bars, sl, ll, flip, price, d }: { bars: Bar[]; sl?: number | null; ll?: number | null; flip?: number | null; price?: number | null; d: number }) {
-  if (bars.length < 2) return <div className="h-[320px] flex items-center justify-center text-sm text-[#6b7280]">Waiting for scan prices to build bars…</div>
+  if (bars.length < 2) return <div className="h-[320px] flex items-center justify-center text-sm text-[#9ca3af]">Waiting for scan prices to build bars…</div>
   const W = 700, H = 320, R0 = 80
   const lv = [sl, ll, flip].filter((v): v is number => !!v)
   let lo = Math.min(...bars.map(b => b.l), ...lv), hi = Math.max(...bars.map(b => b.h), ...lv)
@@ -203,12 +273,12 @@ function CandleChart({ bars, sl, ll, flip, price, d }: { bars: Bar[]; sl?: numbe
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto block">
       {[0, 1, 2, 3, 4].map(i => { const v = lo + (hi - lo) * (i + 0.5) / 5; return (
-        <g key={i}><line x1={0} x2={W - R0} y1={y(v)} y2={y(v)} stroke="#161b28" /><text x={W - R0 + 8} y={y(v) + 4} fill="#6b7280" fontSize={11} className="font-[Geist_Mono,monospace]">{px(v, d)}</text></g>
+        <g key={i}><line x1={0} x2={W - R0} y1={y(v)} y2={y(v)} stroke="#161b28" /><text x={W - R0 + 8} y={y(v) + 4} fill="#9ca3af" fontSize={12} className="font-[Geist_Mono,monospace]">{px(v, d)}</text></g>
       ) })}
       {lines.map(([l, v, col, dash]) => v ? (
         <g key={l}>
           <line x1={0} x2={W - R0} y1={y(v)} y2={y(v)} stroke={col} strokeWidth={1.5} strokeDasharray={dash} />
-          <text x={8} y={y(v) - 8} fill={col} fontSize={10} fontWeight={600} letterSpacing={0.8}>{l}  {px(v, d)}</text>
+          <text x={8} y={y(v) - 8} fill={col} fontSize={11} fontWeight={600} letterSpacing={0.8}>{l}  {px(v, d)}</text>
         </g>
       ) : null)}
       {bars.map((b, i) => { const x = i * cw + cw / 2, col = b.c >= b.o ? G : R; return (
@@ -227,7 +297,7 @@ function CandleChart({ bars, sl, ll, flip, price, d }: { bars: Bar[]; sl?: numbe
 
 // Dashed baseline sits at starting capital (design token #4b5563).
 function EquityChart({ points, start, animKey }: { points: number[]; start: number; animKey: string }) {
-  if (points.length < 2) return <div className="h-full flex items-center justify-center text-sm text-[#6b7280]">Equity will appear after trades close</div>
+  if (points.length < 2) return <div className="h-full flex items-center justify-center text-sm text-[#9ca3af]">Equity will appear after trades close</div>
   const mn = Math.min(start, ...points), mx = Math.max(start, ...points), pad = (mx - mn) * 0.12 || 50
   const y = (v: number) => 200 - ((v - mn + pad) / (mx - mn + 2 * pad)) * 200
   const line = points.map((v, i) => `${i ? 'L' : 'M'}${(i / (points.length - 1) * 1000).toFixed(1)} ${y(v).toFixed(1)}`).join(' ')
@@ -239,6 +309,74 @@ function EquityChart({ points, start, animKey }: { points: number[]; start: numb
         <path d={line} pathLength={1} strokeDasharray={1} fill="none" stroke="#eab308" strokeWidth={2} vectorEffect="non-scaling-stroke" className="ag-draw" />
       </svg>
     </div>
+  )
+}
+
+// Combined equity curve for the overview page — real dates on the x-axis, $
+// labels on the y-axis, a dashed line at starting capital, a hover tooltip
+// and a marker on the most recent point. Built on the site's existing chart
+// lib (recharts) rather than the bare inline SVG used by the per-coin tab.
+type EquityPoint = { date: string; equity: number }
+
+function EquityTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null
+  const v = payload[0].value as number
+  let when = ''
+  try {
+    when = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(label))
+  } catch { when = String(label) }
+  return (
+    <div className="bg-[#0a0e16] border border-[#2c3648] rounded-md px-3 py-2 shadow-xl">
+      <div className="text-xs text-[#9ca3af] mb-1">{when} CT</div>
+      <div className={`${MONO} text-sm font-semibold text-[#f3f4f6]`}>{money(v)}</div>
+    </div>
+  )
+}
+
+function CombinedEquityChart({ series, start }: { series: EquityPoint[]; start: number }) {
+  if (series.length < 2) return <div className="h-full flex items-center justify-center text-sm text-[#9ca3af]">Equity will appear after trades close</div>
+  const last = series[series.length - 1]
+  const endColor = pnlColor(last.equity - start)
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={series} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+        <defs>
+          <linearGradient id="ag-equity-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="#eab308" stopOpacity={0.22} />
+            <stop offset="95%" stopColor="#eab308" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid stroke="#1c2233" strokeDasharray="3 3" vertical={false} />
+        <XAxis
+          dataKey="date"
+          stroke="#9ca3af"
+          fontSize={12}
+          tickMargin={8}
+          minTickGap={48}
+          tickFormatter={(v: string) => {
+            try { return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' }).format(new Date(v)) }
+            catch { return v }
+          }}
+        />
+        <YAxis
+          stroke="#9ca3af"
+          fontSize={12}
+          width={76}
+          tickMargin={8}
+          domain={['auto', 'auto']}
+          tickFormatter={(v: number) => `$${Math.round(v).toLocaleString()}`}
+        />
+        <Tooltip content={<EquityTooltip />} />
+        <ReferenceLine
+          y={start}
+          stroke="#5a6477"
+          strokeDasharray="4 4"
+          label={{ value: `start ${money(start)}`, position: 'insideTopRight', fill: '#9ca3af', fontSize: 12 }}
+        />
+        <Area type="monotone" dataKey="equity" stroke="#eab308" strokeWidth={2} fill="url(#ag-equity-fill)" isAnimationActive={false} />
+        <ReferenceDot x={last.date} y={last.equity} r={5} fill={endColor} stroke="#0a0e16" strokeWidth={2} isFront />
+      </AreaChart>
+    </ResponsiveContainer>
   )
 }
 
@@ -255,6 +393,8 @@ function CoinChip({ coin, active, price, chg, onClick }: { coin: Coin; active: b
 
 // ------------------------------------------------------------------ page
 
+type SortCol = 'bot' | 'price' | 'capital' | 'pnl' | 'return' | 'closed' | 'open' | 'status'
+
 export default function PerpetualsCryptoContent() {
   const sidebarPadding = useSidebarPadding()
   const router = useRouter()
@@ -269,6 +409,8 @@ export default function PerpetualsCryptoContent() {
   const [range, setRange] = useState<RangePreset>('30d')
   const [openGroup, setOpenGroup] = useState<Coin | null>(null)
   const [now, setNow] = useState(Date.now())
+  const [sortCol, setSortCol] = useState<SortCol>('return')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   const isCoinView = view !== 'overview'
   const curCoin: Coin = isCoinView ? (view as Coin) : 'btc'
@@ -286,6 +428,22 @@ export default function PerpetualsCryptoContent() {
     setTab(t)
     if (isCoinView) router.replace(`?coin=${curCoin}&tab=${t}`, { scroll: false })
   }
+  const toggleSort = (col: SortCol) => {
+    if (sortCol === col) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    else { setSortCol(col); setSortDir('desc') }
+  }
+  const sortHeader = (col: SortCol, label: string, align: 'left' | 'right' = 'left') => {
+    const active = sortCol === col
+    return (
+      <button
+        onClick={() => toggleSort(col)}
+        className={`flex items-center gap-1 bg-transparent border-0 p-0 cursor-pointer font-semibold text-xs uppercase tracking-[0.08em] ${align === 'right' ? 'justify-end w-full' : ''}`}
+        style={{ color: active ? '#eab308' : SUB }}
+      >
+        {label}<span className="text-xs">{active ? (sortDir === 'asc' ? '▲' : '▼') : ''}</span>
+      </button>
+    )
+  }
 
   // Only fetch the heavier per-coin endpoints (snapshot / GEX mapping) for
   // whichever bot is actually on screen.
@@ -301,6 +459,8 @@ export default function PerpetualsCryptoContent() {
   const { trades, hasMore, loadMore, isLoading: tradesLoading } = useAgapePerpTrades({
     bots: COINS.map(c => BOT_ID[c]), range,
   })
+
+  const { health } = useAgapeDataHealth()
 
   useMemo(() => {
     const id = setInterval(() => setNow(Date.now()), 1000)
@@ -326,6 +486,20 @@ export default function PerpetualsCryptoContent() {
   const totTrades = list.reduce((a, b) => a + S[b.coin].trades, 0)
   const wAvg = totTrades ? list.reduce((a, b) => a + (S[b.coin].wr ?? 0) * S[b.coin].trades, 0) / totTrades : 0
   const allPositions = list.flatMap(b => b.positions.map(p => ({ ...p, coin: b.coin })))
+  const overLimitCoins = COINS.filter(c => bots[c].positions.length > STACK_LIMIT)
+
+  // Which coin is carrying the biggest share of the combined open loss —
+  // powers the "BTC is 100% of the open loss" tile sub-label.
+  const openLossLeader = useMemo(() => {
+    const negByCoin = COINS
+      .map(c => ({ coin: c, upl: S[c].unreal }))
+      .filter(g => g.upl < 0)
+    if (!negByCoin.length) return null
+    const totalNeg = negByCoin.reduce((a, g) => a + g.upl, 0)
+    const worst = negByCoin.reduce((a, g) => (g.upl < a.upl ? g : a), negByCoin[0])
+    return { coin: worst.coin, share: totalNeg !== 0 ? (worst.upl / totalNeg) * 100 : 0 }
+  }, [S])
+
   // One summary row per bot; individual lots shown only when expanded.
   const positionGroups = list
     .filter(b => b.positions.length > 0)
@@ -344,13 +518,17 @@ export default function PerpetualsCryptoContent() {
         upl: ps.reduce((a: number, p: any) => a + (Number(p.unrealized_pnl) || 0), 0),
       }
     })
+    .sort((a, b) => (b.positions.length > STACK_LIMIT ? 1 : 0) - (a.positions.length > STACK_LIMIT ? 1 : 0) || b.positions.length - a.positions.length)
 
-  // Overview: combined equity curve + last 12 closed trades across all bots.
-  const equityPoints = useMemo(() => {
+  // Overview: combined equity curve (dated points) + last 12 closed trades across all bots.
+  const equitySeries: EquityPoint[] = useMemo(() => {
     const closed = [...trades].filter(t => t.close_time).sort((a, b) => new Date(a.close_time!).getTime() - new Date(b.close_time!).getTime())
     let eq = totalStart + realized - closed.reduce((a, t) => a + (t.realized_pnl || 0), 0)
-    const pts = [eq]; for (const t of closed) { eq += t.realized_pnl || 0; pts.push(eq) }
-    pts.push(eq + unreal)
+    const pts: EquityPoint[] = []
+    const firstDate = closed[0]?.close_time ? new Date(closed[0].close_time) : new Date()
+    pts.push({ date: firstDate.toISOString(), equity: eq })
+    for (const t of closed) { eq += t.realized_pnl || 0; pts.push({ date: t.close_time as string, equity: eq }) }
+    pts.push({ date: new Date().toISOString(), equity: eq + unreal })
     return pts
   }, [trades, totalStart, realized, unreal])
 
@@ -358,6 +536,19 @@ export default function PerpetualsCryptoContent() {
     () => [...trades].filter(t => t.close_time).sort((a, b) => new Date(b.close_time!).getTime() - new Date(a.close_time!).getTime()).slice(0, 12),
     [trades]
   )
+
+  // Won/lost split per bot, from the same range-windowed trade fetch that
+  // powers the equity curve and recent-trades feed above.
+  const wonLostByCoin = useMemo(() => {
+    const map: Record<Coin, { won: number; lost: number }> = Object.fromEntries(COINS.map(c => [c, { won: 0, lost: 0 }])) as any
+    for (const t of trades) {
+      const c = COIN_OF_BOT_ID[t.bot_id]
+      if (!c || !t.close_time) continue
+      if (t.realized_pnl > 0) map[c].won++
+      else map[c].lost++
+    }
+    return map
+  }, [trades])
 
   // Coin view: this bot's trades only, from the same shared fetch/range.
   const coinTradesList = useMemo(() => trades.filter(t => t.bot_id === BOT_ID[curCoin]), [trades, curCoin])
@@ -398,8 +589,8 @@ export default function PerpetualsCryptoContent() {
     return [
       { l: 'Mode', v: (cur.status?.mode || 'paper').toUpperCase(), c: '#eab308' },
       { l: 'Capital', v: money(META[curCoin].cap) },
-      { l: 'No-loss trailing', v: aggr.use_no_loss_trailing ? 'ACTIVE' : 'OFF', c: aggr.use_no_loss_trailing ? G : '#6b7280' },
-      { l: 'Stop-and-reverse', v: aggr.use_sar ? 'ACTIVE' : 'OFF', c: aggr.use_sar ? G : '#6b7280' },
+      { l: 'No-loss trailing', v: aggr.use_no_loss_trailing ? 'ACTIVE' : 'OFF', c: aggr.use_no_loss_trailing ? G : SUB },
+      { l: 'Stop-and-reverse', v: aggr.use_sar ? 'ACTIVE' : 'OFF', c: aggr.use_sar ? G : SUB },
       { l: 'Loss-streak pause', v: 'after 3 consecutive losses' },
       { l: 'Consecutive losses', v: aggr.consecutive_losses ?? 0, c: (aggr.consecutive_losses || 0) >= 3 ? R : undefined },
       { l: 'Scan interval', v: `${cur.status?.scan_interval_minutes ?? 5} min` },
@@ -442,33 +633,66 @@ export default function PerpetualsCryptoContent() {
   const tradeRow = (t: Trade) => {
     const c = COIN_OF_BOT_ID[t.bot_id] || 'btc'
     const m = META[c]
+    const reason = humanCloseReason(t.close_reason)
     return {
       id: `${t.bot_id}-${t.position_id}`,
-      time: t.close_time ? new Date(t.close_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—',
+      time: ctDateTime(t.close_time),
       sym: m.sym, dot: m.color,
       side: (t.side || '').toUpperCase(), sideColor: t.side === 'long' ? G : R,
       qty: t.quantity,
       entry: px(t.entry_price, m.d), close: px(t.close_price, m.d),
       pnl: money(t.realized_pnl, true), pnlColor: pnlColor(t.realized_pnl),
       pctv: t.realized_pnl_pct != null ? pct(t.realized_pnl_pct) : '—',
-      reason: t.close_reason || '—',
+      reason,
     }
   }
 
   const botRow = (c: Coin) => {
     const st = S[c], m = META[c], b = bots[c]
+    const wl = wonLostByCoin[c]
+    const closedTotal = wl.won + wl.lost
+    const winPct = closedTotal ? (wl.won / closedTotal) * 100 : null
+    const isCheck = winPct === 100 && closedTotal >= 20
+    const overLimit = b.positions.length > STACK_LIMIT
+    const status = b.dataIssue ? 'Data issue' : overLimit ? 'Over limit' : (b.status?.status || 'IDLE')
+    const statusColor = b.dataIssue || overLimit ? '#f0a53a' : (b.status?.status === 'ACTIVE' ? G : '#9ca3af')
     return {
-      coin: c, sym: m.sym, name: m.name, dot: m.color,
-      price: px(st.price, m.d), cap: money(m.cap),
-      pnl: money(st.tot, true), pnlColor: pnlColor(st.tot),
-      ret: pct(st.tot / m.cap * 100),
-      wr: st.wr == null ? '—' : `${Number(st.wr).toFixed(1)}%`,
-      trades: st.trades, open: b.positions.length,
-      status: b.status?.status || 'IDLE', statusColor: b.status?.status === 'ACTIVE' ? G : '#6b7280',
+      coin: c, sym: m.sym, name: m.name, dot: b.dataIssue ? '#6b7280' : m.color,
+      priceRaw: st.price, priceStr: px(st.price, m.d),
+      capRaw: m.cap, capStr: money(m.cap),
+      pnlRaw: b.dataIssue ? -Infinity : st.tot, pnlStr: b.dataIssue ? '—' : money(st.tot, true), pnlColor: b.dataIssue ? SUB : pnlColor(st.tot),
+      retRaw: b.dataIssue ? -Infinity : st.tot / m.cap * 100, retStr: b.dataIssue ? '—' : pct(st.tot / m.cap * 100),
+      won: wl.won, lost: wl.lost, closedTotal, winPct, isCheck,
+      open: b.positions.length, overLimit,
+      status, statusColor,
+      dataIssue: b.dataIssue,
     }
   }
+  type BotRow = ReturnType<typeof botRow>
 
-  const BOT_ROW_COLS = 'minmax(200px,1.6fr) repeat(6,minmax(84px,1fr)) 56px 84px'
+  const botRows: BotRow[] = PERP_COINS.map(botRow)
+  const SORTERS: Record<SortCol, (r: BotRow) => number | string> = {
+    bot: r => r.sym,
+    price: r => r.priceRaw ?? -Infinity,
+    capital: r => r.capRaw,
+    pnl: r => r.pnlRaw,
+    return: r => r.retRaw,
+    closed: r => r.closedTotal,
+    open: r => r.open,
+    status: r => r.status,
+  }
+  const sortedBotRows = [...botRows].sort((a, b) => {
+    const av = SORTERS[sortCol](a), bv = SORTERS[sortCol](b)
+    const cmp = typeof av === 'string' ? av.localeCompare(bv as string) : (av as number) - (bv as number)
+    return sortDir === 'asc' ? cmp : -cmp
+  })
+
+  const BOT_ROW_COLS = 'minmax(200px,1.6fr) minmax(84px,1fr) minmax(84px,1fr) minmax(84px,1fr) minmax(84px,1fr) minmax(150px,1.4fr) 64px 100px'
+
+  // Data-health bar copy: prioritize "feed degraded" (funding_regime UNKNOWN)
+  // over plain staleness — that's the CoinGlass-equivalent failure mode.
+  const unhealthyBots = health?.bots.filter(b => !b.healthy) || []
+  const showDataHealthBar = !!health && !health.healthy
 
   return (
     <>
@@ -485,22 +709,43 @@ export default function PerpetualsCryptoContent() {
         className={`min-h-screen bg-[#0a0e1a] text-[#f3f4f6] pt-16 transition-all duration-300 ${sidebarPadding}`}
         style={{ fontFamily: "'Geist', system-ui, sans-serif" }}
       >
-        <div className="max-w-[1280px] mx-auto flex flex-col gap-6" style={{ padding: '28px 24px 72px' }}>
+        <div className="w-full max-w-[1800px] mx-auto flex flex-col gap-6 px-4 sm:px-6 lg:px-8" style={{ paddingTop: 28, paddingBottom: 72 }}>
 
           {/* PAGE HEADER */}
           <div className="flex flex-wrap justify-between items-end gap-4">
             <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2 text-[13px] text-[#6b7280]">
+              <div className="flex items-center gap-2 text-[13px] text-[#9ca3af]">
                 <span className="cursor-pointer text-[#9ca3af] hover:text-[#f3f4f6]" onClick={goOverview}>Crypto Perps</span>
                 {isCoinView && <><span>/</span><span className="text-[#f3f4f6]">{META[curCoin].instrument}</span></>}
               </div>
               <h1 className="m-0 text-[26px] font-semibold tracking-[-0.02em]">AGAPE Derivatives</h1>
             </div>
             <div className="flex items-center gap-4 text-[13px] text-[#9ca3af]">
-              <span className="flex items-center gap-2 text-[#10b981]"><span className="w-[7px] h-[7px] rounded-full bg-[#10b981]" />24/7 · next scan {nextScanLabel}</span>
+              <span className={`flex items-center gap-2 ${MONO}`} style={{ color: showDataHealthBar ? '#f0a53a' : '#10b981' }}>
+                <span className="w-[7px] h-[7px] rounded-full" style={{ background: showDataHealthBar ? '#f0a53a' : '#10b981' }} />
+                Last scan {ctHHMM(lastScan)} CT · next in {nextScanLabel}
+              </span>
               <span className="text-[#eab308] border border-[rgba(234,179,8,0.35)] rounded-md px-2 py-[3px] text-xs font-semibold">PAPER</span>
             </div>
           </div>
+
+          {/* DATA HEALTH BAR — amber, only shown while CoinGlass-equivalent data is degraded */}
+          {showDataHealthBar && (
+            <div className="flex flex-wrap items-center gap-3.5 px-4 py-3 rounded-lg text-sm" style={{ background: '#2a1f08', border: '1px solid #5c4410', color: '#f5d27a' }}>
+              <Dot color="#f0a53a" size={8} />
+              <span>
+                <b style={{ color: '#ffe3a1' }}>
+                  {health!.unknown_count > 0
+                    ? `Funding-rate feed degraded for ${health!.unknown_count} bot${health!.unknown_count === 1 ? '' : 's'}.`
+                    : `${health!.stale_count} bot${health!.stale_count === 1 ? '' : 's'} haven't reported a scan recently.`}
+                </b>{' '}
+                {health!.unknown_count > 0
+                  ? 'They’re trading on backup signals (price momentum only); those trades are tagged out of win-rate stats.'
+                  : 'Data on this page may be stale until they catch up.'}
+                {unhealthyBots.length > 0 && <span className="text-[#f5d27a]"> ({unhealthyBots.map(b => b.label).join(', ')})</span>}
+              </span>
+            </div>
+          )}
 
           {/* COIN STRIP */}
           <div className="flex items-stretch gap-1 bg-[#0c1019] border border-[#1c2233] rounded-xl p-1 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
@@ -513,58 +758,88 @@ export default function PerpetualsCryptoContent() {
           {!isCoinView && (
             <div className="flex flex-col gap-6">
 
-              {/* Summary row */}
-              <div className="flex flex-wrap justify-between items-end gap-6">
-                <div className="flex flex-col gap-2.5">
-                  <span className="text-[13px] text-[#9ca3af]">Combined equity · {COINS.length} bots</span>
-                  <span className={`${MONO} text-[52px] font-semibold tracking-[-0.03em] leading-none`}>{money(totalStart + realized + unreal)}</span>
-                  <span className={`flex flex-wrap gap-4 ${MONO} text-sm`}>
-                    <span className="font-semibold" style={{ color: pnlColor(realized) }}>{money(realized, true)} realized</span>
-                    <span style={{ color: pnlColor(unreal) }}>{money(unreal, true)} open</span>
-                    <span className="text-[#6b7280]">from {money(totalStart)}</span>
+              {/* Summary tiles */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                <Card className="p-[18px_20px] flex flex-col gap-1.5">
+                  <span className="text-[13px] text-[#9ca3af]">Combined equity</span>
+                  <span className={`${MONO} text-[26px] font-bold tracking-[-0.01em]`}>{money(totalStart + realized + unreal)}</span>
+                  <span className="text-[13px] text-[#9ca3af]">from {money(totalStart)} start</span>
+                </Card>
+                <Card className="p-[18px_20px] flex flex-col gap-1.5">
+                  <span className="text-[13px] text-[#9ca3af]">Return</span>
+                  <span className={`${MONO} text-[26px] font-bold tracking-[-0.01em]`} style={{ color: pnlColor(realized + unreal) }}>{pct((realized + unreal) / (totalStart || 1) * 100)}</span>
+                  <span className="text-[13px] text-[#9ca3af]">{money(realized + unreal, true)} all-time</span>
+                </Card>
+                <Card className="p-[18px_20px] flex flex-col gap-1.5">
+                  <span className="text-[13px] text-[#9ca3af]">Realized · Open</span>
+                  <span className={`${MONO} text-[20px] font-bold pt-1.5`}>
+                    <span style={{ color: pnlColor(realized) }}>{money(realized, true)}</span>
+                    <span style={{ color: '#5a6477' }}> · </span>
+                    <span style={{ color: pnlColor(unreal) }}>{money(unreal, true)}</span>
                   </span>
-                </div>
-                <div className="flex flex-wrap gap-8">
-                  <StatCell label="Return" value={pct((realized + unreal) / (totalStart || 1) * 100)} color={pnlColor(realized + unreal)} />
-                  <StatCell label="Win rate" value={totTrades ? `${wAvg.toFixed(1)}%` : '—'} />
-                  <StatCell label="Trades" value={totTrades} />
-                  <StatCell label="Open" value={allPositions.length} />
-                </div>
+                  <span className="text-[13px] text-[#9ca3af]">
+                    {openLossLeader ? `${META[openLossLeader.coin].sym} is ${Math.round(openLossLeader.share)}% of the open loss` : 'No open losses'}
+                  </span>
+                </Card>
+                <Card className="p-[18px_20px] flex flex-col gap-1.5">
+                  <span className="text-[13px] text-[#9ca3af]">Win rate</span>
+                  <span className={`${MONO} text-[26px] font-bold tracking-[-0.01em]`}>{totTrades ? `${wAvg.toFixed(1)}%` : '—'}</span>
+                  <span className="text-[13px] text-[#9ca3af]">{totTrades} closed trades</span>
+                </Card>
+                <Card className="p-[18px_20px] flex flex-col gap-1.5" style={overLimitCoins.length ? { borderColor: '#5c4410' } : undefined}>
+                  <span className="text-[13px] text-[#9ca3af]">Open positions</span>
+                  <span className={`${MONO} text-[26px] font-bold tracking-[-0.01em]`}>{allPositions.length}</span>
+                  <span className="text-[13px] font-semibold" style={{ color: overLimitCoins.length ? '#f0a53a' : SUB }}>
+                    {overLimitCoins.length ? `${overLimitCoins.length} bot${overLimitCoins.length === 1 ? '' : 's'} over the stack limit` : 'All bots within the stack limit'}
+                  </span>
+                </Card>
               </div>
 
-              {/* Equity curve + Open positions */}
-              <div className="grid gap-5 items-start" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))' }}>
-                <Card className="p-[18px_20px] flex flex-col gap-3.5">
+              {/* 12-col grid: Equity curve (8) + Exposure by coin (4) */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+                <Card className="lg:col-span-8 p-[18px_20px] flex flex-col gap-3.5">
                   <div className="flex justify-between items-center gap-3">
                     <span className="text-[15px] font-semibold">Equity curve</span>
                     <Pills items={RANGES} value={range} onChange={setRange} />
                   </div>
-                  <div className="h-[200px]"><EquityChart points={equityPoints} start={totalStart} animKey={range} /></div>
+                  <div className="h-[280px]"><CombinedEquityChart series={equitySeries} start={totalStart} /></div>
                 </Card>
-                <Card className="flex flex-col">
+
+                <Card className="lg:col-span-4 flex flex-col">
                   <div className="flex justify-between items-baseline px-5 pt-[18px] pb-3.5">
-                    <span className="text-[15px] font-semibold">Open positions</span>
-                    <span className="text-xs text-[#6b7280]">{allPositions.length} open · {positionGroups.length} bots</span>
+                    <span className="text-[15px] font-semibold">Exposure by coin</span>
+                    <span className="text-xs text-[#9ca3af]">{allPositions.length} open</span>
                   </div>
-                  {positionGroups.length === 0 && <div className="px-5 py-5 border-t border-[#1c2233] text-sm text-[#6b7280]">No open positions. The bots are scanning.</div>}
+                  {positionGroups.length === 0 && <div className="px-5 py-5 border-t border-[#1c2233] text-sm text-[#9ca3af]">No open positions. The bots are scanning.</div>}
                   {positionGroups.map(g => {
                     const m = META[g.coin]
                     const expanded = openGroup === g.coin
+                    const stacked = g.positions.length > STACK_LIMIT
+                    const issue = bots[g.coin].dataIssue
+                    const uplDisplay = issue ? '—' : money(g.upl, true)
+                    const label = exposureLabel(g.longs, g.shorts)
                     return (
                       <div key={g.coin} className="border-t border-[#1c2233]">
-                        <div onClick={() => setOpenGroup(expanded ? null : g.coin)} className="flex justify-between items-center gap-3 px-5 py-3.5 cursor-pointer hover:bg-[#1a1f2e]">
-                          <div className="flex flex-col gap-1">
-                            <span className="flex items-center gap-2 text-sm font-semibold">
-                              <span className="text-[10px] text-[#6b7280] w-2.5">{expanded ? '▾' : '▸'}</span>
-                              <Dot color={m.color} size={7} />{m.sym}
-                              <span className="text-xs font-medium text-[#9ca3af]">{g.positions.length} open</span>
-                              {g.longs > 0 && <span className="text-xs" style={{ color: G }}>{g.longs}L</span>}
-                              {g.shorts > 0 && <span className="text-xs" style={{ color: R }}>{g.shorts}S</span>}
-                              {g.trailing > 0 && <span className="text-[11px] text-[#eab308] font-medium">{g.trailing} trailing</span>}
-                            </span>
-                            <span className={`${MONO} text-xs text-[#6b7280]`}>avg {px(g.avgEntry, m.d)} → {px(S[g.coin].price, m.d)}</span>
+                        <div
+                          onClick={() => setOpenGroup(expanded ? null : g.coin)}
+                          className={`flex flex-col gap-1.5 px-5 py-3.5 cursor-pointer transition-colors ${stacked ? 'bg-[#2a1414] hover:bg-[#331919]' : 'hover:bg-[#1a1f2e]'}`}
+                        >
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            <span className="text-xs text-[#9ca3af] w-2.5">{expanded ? '▾' : '▸'}</span>
+                            <Dot color={m.color} size={8} />
+                            <b className="text-sm">{m.sym}</b>
+                            {stacked && (
+                              <span className="text-xs font-semibold px-2 py-0.5 rounded-full text-white" style={{ background: '#ef5b5b' }}>
+                                {g.positions.length} stacked · limit {STACK_LIMIT}
+                              </span>
+                            )}
+                            {!stacked && g.trailing > 0 && <span className="text-xs text-[#eab308] font-medium">{g.trailing} trailing</span>}
+                            <div className="flex-grow" />
+                            <span className={`${MONO} text-[15px] font-bold`} style={{ color: issue ? SUB : pnlColor(g.upl) }}>{uplDisplay}</span>
                           </div>
-                          <span className={`${MONO} text-[15px] font-semibold`} style={{ color: pnlColor(g.upl) }}>{money(g.upl, true)}</span>
+                          <span className={`${MONO} text-xs`} style={{ color: stacked ? '#d9b3b3' : SUB }}>
+                            {label}{g.avgEntry != null && !issue ? ` · avg ${px(g.avgEntry, m.d)} → ${px(S[g.coin].price, m.d)} now` : ''}
+                          </span>
                         </div>
                         {expanded && (
                           <div className="bg-[#0c1019] max-h-[280px] overflow-y-auto">
@@ -572,8 +847,8 @@ export default function PerpetualsCryptoContent() {
                               <div key={`${g.coin}-${p.position_id}`} onClick={() => goCoin(g.coin)} className="flex justify-between items-center gap-3 pl-11 pr-5 py-2 border-t border-[#161b28] cursor-pointer hover:bg-[#1a1f2e]">
                                 <span className="flex items-center gap-2 text-xs">
                                   <span style={{ color: p.side === 'long' ? G : R }}>{(p.side || '').toUpperCase()} × {p.quantity}</span>
-                                  <span className={`${MONO} text-[#6b7280]`}>{px(p.entry_price, m.d)}</span>
-                                  {p.trailing_active && <span className="text-[11px] text-[#eab308]">TRAIL @ {px(p.current_stop, m.d)}</span>}
+                                  <span className={`${MONO} text-[#9ca3af]`}>{px(p.entry_price, m.d)}</span>
+                                  {p.trailing_active && <span className="text-xs text-[#eab308]">TRAIL @ {px(p.current_stop, m.d)}</span>}
                                 </span>
                                 <span className={`${MONO} text-[13px] font-semibold`} style={{ color: pnlColor(p.unrealized_pnl || 0) }}>{money(p.unrealized_pnl || 0, true)}</span>
                               </div>
@@ -590,29 +865,46 @@ export default function PerpetualsCryptoContent() {
               <Card className="overflow-hidden">
                 <div className="flex justify-between items-baseline px-5 pt-[18px] pb-3.5">
                   <span className="text-[15px] font-semibold">Bots</span>
-                  <span className="text-xs text-[#6b7280]">Select a bot for detail</span>
+                  <span className="text-xs text-[#9ca3af]">Click a column to sort · click a row for detail</span>
                 </div>
                 <div className="overflow-x-auto"><div className="min-w-[960px]">
-                  <div className="grid gap-3.5 px-5 py-2.5 text-[11px] uppercase tracking-[0.08em] text-[#6b7280] border-t border-[#1c2233]" style={{ gridTemplateColumns: BOT_ROW_COLS }}>
-                    <span>Bot</span><span className="text-right">Price</span><span className="text-right">Capital</span><span className="text-right">P&amp;L</span><span className="text-right">Return</span><span className="text-right">Win rate</span><span className="text-right">Trades</span><span className="text-right">Open</span><span className="text-right">Status</span>
+                  <div className="grid gap-3.5 px-5 py-2.5 border-t border-[#1c2233]" style={{ gridTemplateColumns: BOT_ROW_COLS }}>
+                    {sortHeader('bot', 'Bot')}
+                    {sortHeader('price', 'Price', 'right')}
+                    {sortHeader('capital', 'Capital', 'right')}
+                    {sortHeader('pnl', 'P&L', 'right')}
+                    {sortHeader('return', 'Return', 'right')}
+                    {sortHeader('closed', 'Closed (won / lost)')}
+                    {sortHeader('open', 'Open', 'right')}
+                    {sortHeader('status', 'Status', 'right')}
                   </div>
-                  <div className="px-5 py-2 bg-[#0c1019] border-t border-[#1c2233] text-[11px] font-semibold tracking-[0.12em] text-[#9ca3af]">PERPETUALS</div>
-                  {PERP_COINS.map(c => {
-                    const row = botRow(c)
-                    return (
-                      <div key={c} onClick={() => goCoin(c)} className="grid gap-3.5 items-center px-5 py-3 border-t border-[#1c2233] text-sm cursor-pointer hover:bg-[#1a1f2e]" style={{ gridTemplateColumns: BOT_ROW_COLS }}>
-                        <span className="flex items-center gap-2.5"><Dot color={row.dot} /><span className="font-semibold">{row.sym}</span><span className="text-[13px] text-[#6b7280]">{row.name}</span></span>
-                        <span className={`${MONO} text-right`}>{row.price}</span>
-                        <span className={`${MONO} text-right text-[#9ca3af]`}>{row.cap}</span>
-                        <span className={`${MONO} text-right font-semibold`} style={{ color: row.pnlColor }}>{row.pnl}</span>
-                        <span className={`${MONO} text-right`} style={{ color: row.pnlColor }}>{row.ret}</span>
-                        <span className={`${MONO} text-right`}>{row.wr}</span>
-                        <span className={`${MONO} text-right text-[#9ca3af]`}>{row.trades}</span>
-                        <span className={`${MONO} text-right text-[#9ca3af]`}>{row.open}</span>
-                        <span className="text-right text-[11px] font-semibold tracking-[0.06em]" style={{ color: row.statusColor }}>{row.status}</span>
-                      </div>
-                    )
-                  })}
+                  {sortedBotRows.map(row => (
+                    <div
+                      key={row.coin}
+                      onClick={() => !row.dataIssue && goCoin(row.coin)}
+                      className={`grid gap-3.5 items-center px-5 py-3 border-t border-[#1c2233] text-sm ${row.dataIssue ? 'opacity-60' : 'cursor-pointer hover:bg-[#1a1f2e]'}`}
+                      style={{ gridTemplateColumns: BOT_ROW_COLS }}
+                    >
+                      <span className="flex items-center gap-2.5"><Dot color={row.dot} /><span className="font-semibold">{row.sym}</span><span className="text-[13px] text-[#9ca3af]">{row.name}</span></span>
+                      <span className={`${MONO} text-right`}>{row.priceStr}</span>
+                      <span className={`${MONO} text-right text-[#9ca3af]`}>{row.capStr}</span>
+                      <span className={`${MONO} text-right font-semibold`} style={{ color: row.pnlColor }}>{row.pnlStr}</span>
+                      <span className={`${MONO} text-right`} style={{ color: row.pnlColor }}>{row.retStr}</span>
+                      {row.dataIssue ? (
+                        <span className="text-xs text-[#f0a53a]">Data unavailable</span>
+                      ) : (
+                        <span className="flex items-center gap-2 flex-wrap">
+                          <span className="flex w-[100px] h-1.5 rounded-full overflow-hidden shrink-0" style={{ background: '#7f1d1d' }}>
+                            <span className="h-full block" style={{ width: `${row.winPct ?? 0}%`, background: G }} />
+                          </span>
+                          <span className="text-xs text-[#9ca3af]">{row.closedTotal ? `${row.won} / ${row.lost}` : '—'}</span>
+                          {row.isCheck && <span className="text-xs font-semibold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(240,165,58,0.15)', color: '#f0a53a' }}>check</span>}
+                        </span>
+                      )}
+                      <span className={`${MONO} text-right`} style={{ color: row.overLimit ? '#ef5b5b' : '#9ca3af', fontWeight: row.overLimit ? 700 : 400 }}>{row.open}</span>
+                      <span className="text-right text-xs font-semibold tracking-[0.06em]" style={{ color: row.statusColor }}>{row.status}</span>
+                    </div>
+                  ))}
                 </div></div>
               </Card>
 
@@ -620,15 +912,15 @@ export default function PerpetualsCryptoContent() {
               <Card className="overflow-hidden">
                 <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-4">
                   <span className="text-[15px] font-semibold">Recent trades</span>
-                  <Pills items={RANGES} value={range} onChange={setRange} />
+                  <span className="text-xs text-[#9ca3af]">Times in CT · % is of margin used</span>
                 </div>
-                <div className="overflow-x-auto"><div className="min-w-[840px]">
-                  <div className="grid gap-3 px-5 py-2.5 text-[11px] uppercase tracking-[0.08em] text-[#6b7280] border-t border-[#1c2233]" style={{ gridTemplateColumns: '130px 80px 70px minmax(90px,1fr) minmax(90px,1fr) 110px 80px 130px' }}>
-                    <span>Closed</span><span>Bot</span><span>Side</span><span className="text-right">Entry</span><span className="text-right">Exit</span><span className="text-right">P&amp;L</span><span className="text-right">%</span><span>Reason</span>
+                <div className="overflow-x-auto"><div className="min-w-[900px]">
+                  <div className="grid gap-3 px-5 py-2.5 text-xs uppercase tracking-[0.08em] text-[#9ca3af] border-t border-[#1c2233]" style={{ gridTemplateColumns: '150px 80px 70px minmax(90px,1fr) minmax(90px,1fr) 110px 90px 160px' }}>
+                    <span>Closed</span><span>Bot</span><span>Side</span><span className="text-right">Entry</span><span className="text-right">Exit</span><span className="text-right">P&amp;L</span><span className="text-right">% margin</span><span>Why it closed</span>
                   </div>
-                  {recentTrades.length === 0 && <div className="px-5 py-[22px] border-t border-[#1c2233] text-sm text-[#6b7280]">No closed trades in this range.</div>}
+                  {recentTrades.length === 0 && <div className="px-5 py-[22px] border-t border-[#1c2233] text-sm text-[#9ca3af]">No closed trades in this range.</div>}
                   {recentTrades.map(tradeRow).map(t => (
-                    <div key={t.id} className="grid gap-3 items-center px-5 py-[11px] border-t border-[#1c2233] text-sm" style={{ gridTemplateColumns: '130px 80px 70px minmax(90px,1fr) minmax(90px,1fr) 110px 80px 130px' }}>
+                    <div key={t.id} className="grid gap-3 items-center px-5 py-[11px] border-t border-[#1c2233] text-sm" style={{ gridTemplateColumns: '150px 80px 70px minmax(90px,1fr) minmax(90px,1fr) 110px 90px 160px' }}>
                       <span className={`${MONO} text-[13px] text-[#9ca3af]`}>{t.time}</span>
                       <span className="flex items-center gap-2 font-semibold"><Dot color={t.dot} size={7} />{t.sym}</span>
                       <span className="text-xs font-semibold" style={{ color: t.sideColor }}>{t.side}</span>
@@ -636,7 +928,7 @@ export default function PerpetualsCryptoContent() {
                       <span className={`${MONO} text-right`}>{t.close}</span>
                       <span className={`${MONO} text-right font-semibold`} style={{ color: t.pnlColor }}>{t.pnl}</span>
                       <span className={`${MONO} text-right text-[13px]`} style={{ color: t.pnlColor }}>{t.pctv}</span>
-                      <span className="text-xs text-[#9ca3af]">{t.reason}</span>
+                      <span className="text-xs text-[#9ca3af]" title={t.reason.title}>{t.reason.label}</span>
                     </div>
                   ))}
                 </div></div>
@@ -654,8 +946,8 @@ export default function PerpetualsCryptoContent() {
                   <div className="flex items-center gap-2.5 flex-wrap">
                     <span className="w-[10px] h-[10px] rounded-full" style={{ background: META[curCoin].color }} />
                     <span className="text-xl font-semibold">{META[curCoin].instrument}</span>
-                    <span className="text-sm text-[#6b7280]">{META[curCoin].name} · {META[curCoin].type === 'PERP' ? 'Perpetual' : 'Monthly future'}</span>
-                    <span className="text-[11px] font-semibold tracking-[0.06em] border border-[#1c2233] rounded-md px-2 py-[3px]" style={{ color: cur.status?.status === 'ACTIVE' ? G : '#6b7280' }}>{cur.status?.status || 'IDLE'}</span>
+                    <span className="text-sm text-[#9ca3af]">{META[curCoin].name} · {META[curCoin].type === 'PERP' ? 'Perpetual' : 'Monthly future'}</span>
+                    <span className="text-xs font-semibold tracking-[0.06em] border border-[#1c2233] rounded-md px-2 py-[3px]" style={{ color: cur.dataIssue ? '#f0a53a' : cur.status?.status === 'ACTIVE' ? G : '#9ca3af' }}>{cur.dataIssue ? 'DATA ISSUE' : (cur.status?.status || 'IDLE')}</span>
                   </div>
                   <div className="flex items-baseline gap-3.5">
                     <span className={`${MONO} text-[44px] font-semibold tracking-[-0.03em] leading-none`}>{curPrice == null ? '—' : `$${px(curPrice, META[curCoin].d)}`}</span>
@@ -696,7 +988,7 @@ export default function PerpetualsCryptoContent() {
                     <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-3.5 border-b border-[#1c2233]">
                       <div className="flex items-baseline gap-3">
                         <span className="text-[15px] font-semibold">Price · 5m</span>
-                        <span className="text-xs text-[#6b7280]">built from bot scan prices</span>
+                        <span className="text-xs text-[#9ca3af]">built from bot scan prices</span>
                       </div>
                       <div className="flex flex-wrap gap-3.5 text-xs font-semibold">
                         <span style={{ color: '#3b82f6' }}>— Short liq</span>
@@ -713,18 +1005,18 @@ export default function PerpetualsCryptoContent() {
                         <div className="text-[13px] font-semibold mb-1.5">Liquidation clusters</div>
                         {(() => {
                           const cl: any[] = (snap?.liquidations?.top_clusters || []).slice(0, 12)
-                          if (!cl.length) return <div className="text-xs text-[#6b7280]">No cluster data yet</div>
+                          if (!cl.length) return <div className="text-xs text-[#9ca3af]">No cluster data yet</div>
                           const p = curPrice || 0
                           const w = (c: any) => c.intensity === 'HIGH' ? 100 : c.intensity === 'ELEVATED' ? 66 : 33
                           return [...cl].sort((a, b) => b.price - a.price).map((c, i) => (
                             <div key={i} className="grid items-center gap-1.5 h-[24px]" style={{ gridTemplateColumns: '84px 1fr 48px' }}>
-                              <span className={`${MONO} text-[11px] text-[#9ca3af]`}>{px(c.price, META[curCoin].d)}</span>
+                              <span className={`${MONO} text-xs text-[#9ca3af]`}>{px(c.price, META[curCoin].d)}</span>
                               <span className="h-2.5 rounded-sm" style={{ width: `${w(c)}%`, background: c.price > p ? '#3b82f6' : '#8b5cf6' }} />
-                              <span className={`${MONO} text-[10px] text-[#6b7280] text-right`}>{c.distance_pct}%</span>
+                              <span className={`${MONO} text-xs text-[#9ca3af] text-right`}>{c.distance_pct}%</span>
                             </div>
                           ))
                         })()}
-                        <div className="text-[11px] text-[#6b7280] mt-1.5 leading-snug">Blue: shorts liquidated above price. Violet: longs below.</div>
+                        <div className="text-xs text-[#9ca3af] mt-1.5 leading-snug">Blue: shorts liquidated above price. Violet: longs below.</div>
                       </div>
                     </div>
                   </Card>
@@ -732,13 +1024,13 @@ export default function PerpetualsCryptoContent() {
                   <div className="grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))' }}>
                     <Card className="flex flex-col">
                       <span className="px-5 pt-[18px] pb-3.5 text-[15px] font-semibold">Open position</span>
-                      {cur.positions.length === 0 && <div className="px-5 py-5 border-t border-[#1c2233] text-sm text-[#6b7280]">Flat. Scanning every 5 minutes.</div>}
+                      {cur.positions.length === 0 && <div className="px-5 py-5 border-t border-[#1c2233] text-sm text-[#9ca3af]">Flat. Scanning every 5 minutes.</div>}
                       {cur.positions.map((p: any) => (
                         <div key={p.position_id} className="grid gap-4 px-5 py-4 border-t border-[#1c2233]" style={{ gridTemplateColumns: 'repeat(2, minmax(0,1fr))' }}>
-                          <div className="flex flex-col gap-1"><span className="text-xs text-[#6b7280]">Side</span><span className="text-[15px] font-semibold" style={{ color: p.side === 'long' ? G : R }}>{(p.side || '').toUpperCase()} × {p.quantity}</span></div>
-                          <div className="flex flex-col gap-1"><span className="text-xs text-[#6b7280]">Unrealized</span><span className={`${MONO} text-[15px] font-semibold`} style={{ color: pnlColor(p.unrealized_pnl || 0) }}>{money(p.unrealized_pnl || 0, true)}</span></div>
-                          <div className="flex flex-col gap-1"><span className="text-xs text-[#6b7280]">Entry</span><span className={`${MONO} text-[15px]`}>{px(p.entry_price, META[curCoin].d)}</span></div>
-                          <div className="flex flex-col gap-1"><span className="text-xs text-[#6b7280]">Stop</span><span className={`${MONO} text-[15px] text-[#eab308]`}>{p.current_stop != null ? px(p.current_stop, META[curCoin].d) : '—'}</span></div>
+                          <div className="flex flex-col gap-1"><span className="text-xs text-[#9ca3af]">Side</span><span className="text-[15px] font-semibold" style={{ color: p.side === 'long' ? G : R }}>{(p.side || '').toUpperCase()} × {p.quantity}</span></div>
+                          <div className="flex flex-col gap-1"><span className="text-xs text-[#9ca3af]">Unrealized</span><span className={`${MONO} text-[15px] font-semibold`} style={{ color: pnlColor(p.unrealized_pnl || 0) }}>{money(p.unrealized_pnl || 0, true)}</span></div>
+                          <div className="flex flex-col gap-1"><span className="text-xs text-[#9ca3af]">Entry</span><span className={`${MONO} text-[15px]`}>{px(p.entry_price, META[curCoin].d)}</span></div>
+                          <div className="flex flex-col gap-1"><span className="text-xs text-[#9ca3af]">Stop</span><span className={`${MONO} text-[15px] text-[#eab308]`}>{p.current_stop != null ? px(p.current_stop, META[curCoin].d) : '—'}</span></div>
                         </div>
                       ))}
                     </Card>
@@ -759,7 +1051,7 @@ export default function PerpetualsCryptoContent() {
 
               {/* Market tab */}
               {tab === 'market' && (
-                !snap ? <Card className="p-10 text-center text-sm text-[#6b7280]">Waiting for crypto market data</Card> : (
+                !snap ? <Card className="p-10 text-center text-sm text-[#9ca3af]">Waiting for crypto market data</Card> : (
                   <div className="flex flex-col gap-5">
                     <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px,1fr))' }}>
                       <MarketTile l="Combined signal" v={snap.signals?.combined_signal ? `${snap.signals.combined_signal}${snap.signals.combined_confidence ? ' · ' + snap.signals.combined_confidence : ''}` : '—'} c={sigColor(snap.signals?.combined_signal)} />
@@ -802,10 +1094,10 @@ export default function PerpetualsCryptoContent() {
                 <Card className="overflow-hidden">
                   <div className="px-5 py-4 text-[15px] font-semibold border-b border-[#1c2233]">Scan activity</div>
                   <div className="overflow-x-auto"><div className="min-w-[680px]">
-                    <div className="grid gap-3 px-5 py-2.5 text-[11px] uppercase tracking-[0.08em] text-[#6b7280] border-t border-[#1c2233]" style={{ gridTemplateColumns: '90px 120px 170px minmax(140px,1fr) 150px' }}>
+                    <div className="grid gap-3 px-5 py-2.5 text-xs uppercase tracking-[0.08em] text-[#9ca3af] border-t border-[#1c2233]" style={{ gridTemplateColumns: '90px 120px 170px minmax(140px,1fr) 150px' }}>
                       <span>Time</span><span className="text-right">Price</span><span>Funding</span><span>Signal</span><span>Outcome</span>
                     </div>
-                    {cur.scans.length === 0 && <div className="px-5 py-[22px] border-t border-[#1c2233] text-sm text-[#6b7280]">No scan activity yet</div>}
+                    {cur.scans.length === 0 && <div className="px-5 py-[22px] border-t border-[#1c2233] text-sm text-[#9ca3af]">No scan activity yet</div>}
                     {cur.scans.slice(0, 150).map((s: any, i: number) => {
                       const oc: string = s.outcome || ''
                       return (
@@ -814,7 +1106,7 @@ export default function PerpetualsCryptoContent() {
                           <span className={`${MONO} text-right`}>{px(priceOf(curCoin, s), META[curCoin].d)}</span>
                           <span className="text-xs text-[#9ca3af]">{s.funding_regime || '—'}</span>
                           <span className="text-xs font-semibold" style={{ color: sigColor(s.combined_signal) }}>{s.combined_signal || '—'}{s.combined_confidence ? ` (${s.combined_confidence})` : ''}</span>
-                          <span><span className="text-[11px] font-semibold tracking-[0.04em] px-2 py-[3px] rounded-md" style={{ background: oc === 'TRADED' ? 'rgba(234,179,8,0.15)' : '#1c2233', color: oc === 'TRADED' ? '#eab308' : '#9ca3af' }}>{oc || '—'}</span></span>
+                          <span><span className="text-xs font-semibold tracking-[0.04em] px-2 py-[3px] rounded-md" style={{ background: oc === 'TRADED' ? 'rgba(234,179,8,0.15)' : '#1c2233', color: oc === 'TRADED' ? '#eab308' : '#9ca3af' }}>{oc || '—'}</span></span>
                         </div>
                       )
                     })}
@@ -829,24 +1121,27 @@ export default function PerpetualsCryptoContent() {
                     <span className="text-[15px] font-semibold">Closed trades</span>
                     <Pills items={RANGES} value={range} onChange={setRange} />
                   </div>
-                  <div className="overflow-x-auto"><div className="min-w-[820px]">
-                    <div className="grid gap-3 px-5 py-2.5 text-[11px] uppercase tracking-[0.08em] text-[#6b7280] border-t border-[#1c2233]" style={{ gridTemplateColumns: '130px 70px 90px minmax(90px,1fr) minmax(90px,1fr) 110px 80px 130px' }}>
-                      <span>Closed</span><span>Side</span><span className="text-right">Qty</span><span className="text-right">Entry</span><span className="text-right">Exit</span><span className="text-right">P&amp;L</span><span className="text-right">%</span><span>Reason</span>
+                  <div className="overflow-x-auto"><div className="min-w-[860px]">
+                    <div className="grid gap-3 px-5 py-2.5 text-xs uppercase tracking-[0.08em] text-[#9ca3af] border-t border-[#1c2233]" style={{ gridTemplateColumns: '150px 70px 90px minmax(90px,1fr) minmax(90px,1fr) 110px 80px 150px' }}>
+                      <span>Closed</span><span>Side</span><span className="text-right">Qty</span><span className="text-right">Entry</span><span className="text-right">Exit</span><span className="text-right">P&amp;L</span><span className="text-right">%</span><span>Why it closed</span>
                     </div>
-                    {tradesLoading && <div className="px-5 py-5 border-t border-[#1c2233] text-sm text-[#6b7280]">Loading trades…</div>}
-                    {!tradesLoading && coinTradesList.length === 0 && <div className="px-5 py-[22px] border-t border-[#1c2233] text-sm text-[#6b7280]">No closed trades in this range.</div>}
-                    {[...coinTradesList].sort((a, b) => new Date(b.close_time || 0).getTime() - new Date(a.close_time || 0).getTime()).map(t => (
-                      <div key={`${t.bot_id}-${t.position_id}`} className="grid gap-3 items-center px-5 py-2.5 border-t border-[#1c2233] text-sm" style={{ gridTemplateColumns: '130px 70px 90px minmax(90px,1fr) minmax(90px,1fr) 110px 80px 130px' }}>
-                        <span className={`${MONO} text-[13px] text-[#9ca3af]`}>{t.close_time ? new Date(t.close_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
-                        <span className="text-xs font-semibold" style={{ color: t.side === 'long' ? G : R }}>{(t.side || '').toUpperCase()}</span>
-                        <span className={`${MONO} text-right`}>{t.quantity}</span>
-                        <span className={`${MONO} text-right`}>{px(t.entry_price, META[curCoin].d)}</span>
-                        <span className={`${MONO} text-right`}>{px(t.close_price, META[curCoin].d)}</span>
-                        <span className={`${MONO} text-right font-semibold`} style={{ color: pnlColor(t.realized_pnl) }}>{money(t.realized_pnl, true)}</span>
-                        <span className={`${MONO} text-right text-[13px]`} style={{ color: pnlColor(t.realized_pnl) }}>{t.realized_pnl_pct != null ? pct(t.realized_pnl_pct) : '—'}</span>
-                        <span className="text-xs text-[#9ca3af]">{t.close_reason || '—'}</span>
-                      </div>
-                    ))}
+                    {tradesLoading && <div className="px-5 py-5 border-t border-[#1c2233] text-sm text-[#9ca3af]">Loading trades…</div>}
+                    {!tradesLoading && coinTradesList.length === 0 && <div className="px-5 py-[22px] border-t border-[#1c2233] text-sm text-[#9ca3af]">No closed trades in this range.</div>}
+                    {[...coinTradesList].sort((a, b) => new Date(b.close_time || 0).getTime() - new Date(a.close_time || 0).getTime()).map(t => {
+                      const reason = humanCloseReason(t.close_reason)
+                      return (
+                        <div key={`${t.bot_id}-${t.position_id}`} className="grid gap-3 items-center px-5 py-2.5 border-t border-[#1c2233] text-sm" style={{ gridTemplateColumns: '150px 70px 90px minmax(90px,1fr) minmax(90px,1fr) 110px 80px 150px' }}>
+                          <span className={`${MONO} text-[13px] text-[#9ca3af]`}>{ctDateTime(t.close_time)}</span>
+                          <span className="text-xs font-semibold" style={{ color: t.side === 'long' ? G : R }}>{(t.side || '').toUpperCase()}</span>
+                          <span className={`${MONO} text-right`}>{t.quantity}</span>
+                          <span className={`${MONO} text-right`}>{px(t.entry_price, META[curCoin].d)}</span>
+                          <span className={`${MONO} text-right`}>{px(t.close_price, META[curCoin].d)}</span>
+                          <span className={`${MONO} text-right font-semibold`} style={{ color: pnlColor(t.realized_pnl) }}>{money(t.realized_pnl, true)}</span>
+                          <span className={`${MONO} text-right text-[13px]`} style={{ color: pnlColor(t.realized_pnl) }}>{t.realized_pnl_pct != null ? pct(t.realized_pnl_pct) : '—'}</span>
+                          <span className="text-xs text-[#9ca3af]" title={reason.title}>{reason.label}</span>
+                        </div>
+                      )
+                    })}
                     {hasMore && <button onClick={loadMore} className="w-full py-3 border-t border-[#1c2233] text-sm text-[#eab308] hover:bg-[#1a1f2e]">Load more</button>}
                   </div></div>
                 </Card>
@@ -860,10 +1155,10 @@ export default function PerpetualsCryptoContent() {
                     {riskRows.map(r => <Row key={r.l} label={r.l} value={r.v} color={r.c} />)}
                   </Card>
                   <Card className="p-[18px_20px] flex flex-col gap-3">
-                    <div className="flex flex-col gap-0.5"><span className="text-[15px] font-semibold">GEX → crypto signal mapping</span><span className="text-xs text-[#6b7280]">How options-market concepts translate for this bot</span></div>
+                    <div className="flex flex-col gap-0.5"><span className="text-[15px] font-semibold">GEX → crypto signal mapping</span><span className="text-xs text-[#9ca3af]">How options-market concepts translate for this bot</span></div>
                     {mapRows.map((r: { a: string; b: string }, i: number) => (
                       <div key={i} className="grid gap-2 items-center pt-3 border-t border-[#1c2233]" style={{ gridTemplateColumns: 'minmax(0,1fr) 20px minmax(0,1fr)' }}>
-                        <span className="text-sm text-[#9ca3af]">{r.a}</span><span className="text-[#6b7280] text-center">→</span><span className="text-sm">{r.b}</span>
+                        <span className="text-sm text-[#9ca3af]">{r.a}</span><span className="text-[#9ca3af] text-center">→</span><span className="text-sm">{r.b}</span>
                       </div>
                     ))}
                   </Card>
