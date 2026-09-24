@@ -1,7 +1,7 @@
 'use client'
 
-// Crypto Perps — one consolidated hub for the six AGAPE perpetual bots.
-// Route: /perpetuals-crypto?coin=btc|eth|xrp|sol|doge|avax&tab=overview|market|activity|history|config
+// Crypto Perps — one consolidated hub for the seven AGAPE perpetual bots.
+// Route: /perpetuals-crypto?coin=btc|eth|xrp|sol|doge|avax|shib&tab=overview|market|activity|history|config
 // Replaces the old "ALL coins dashboard" (PerpetualsCryptoContent) and the
 // six-bot /agape-perps hub (AgapePerpsContent) with a single overview +
 // coin-detail view, per the Crypto Perps design handoff.
@@ -19,6 +19,7 @@ import {
   useAGAPESolPerpStatus, useAGAPESolPerpPerformance, useAGAPESolPerpPositions, useAGAPESolPerpScanActivity, useAGAPESolPerpSnapshot, useAGAPESolPerpGexMapping,
   useAGAPEDogePerpStatus, useAGAPEDogePerpPerformance, useAGAPEDogePerpPositions, useAGAPEDogePerpScanActivity, useAGAPEDogePerpSnapshot, useAGAPEDogePerpGexMapping,
   useAGAPEAvaxPerpStatus, useAGAPEAvaxPerpPerformance, useAGAPEAvaxPerpPositions, useAGAPEAvaxPerpScanActivity, useAGAPEAvaxPerpSnapshot, useAGAPEAvaxPerpGexMapping,
+  useAGAPEShibPerpStatus, useAGAPEShibPerpPerformance, useAGAPEShibPerpPositions, useAGAPEShibPerpScanActivity, useAGAPEShibPerpSnapshot, useAGAPEShibPerpGexMapping,
 } from '@/lib/hooks/useMarketData'
 
 const G = '#10b981'
@@ -26,9 +27,9 @@ const R = '#ef4444'
 const REFRESH_MS = 15000
 const MONO = "font-[Geist_Mono,monospace]"
 
-type Coin = 'btc' | 'eth' | 'xrp' | 'sol' | 'doge' | 'avax'
+type Coin = 'btc' | 'eth' | 'xrp' | 'sol' | 'doge' | 'avax' | 'shib'
 
-const PERP_COINS: Coin[] = ['btc', 'eth', 'xrp', 'sol', 'doge', 'avax']
+const PERP_COINS: Coin[] = ['btc', 'eth', 'xrp', 'sol', 'doge', 'avax', 'shib']
 const COINS: Coin[] = [...PERP_COINS]
 
 const META: Record<Coin, { sym: string; name: string; color: string; d: number; type: 'PERP' | 'FUT'; instrument: string; cap: number }> = {
@@ -38,11 +39,12 @@ const META: Record<Coin, { sym: string; name: string; color: string; d: number; 
   sol:  { sym: 'SOL',  name: 'Solana',       color: '#9945FF', d: 2, type: 'PERP', instrument: 'SOL-PERP',     cap: 5000 },
   doge: { sym: 'DOGE', name: 'Dogecoin',     color: '#C2A633', d: 5, type: 'PERP', instrument: 'DOGE-PERP',    cap: 2500 },
   avax: { sym: 'AVAX', name: 'Avalanche',    color: '#E84142', d: 3, type: 'PERP', instrument: 'AVAX-PERP',    cap: 2500 },
+  shib: { sym: 'SHIB', name: 'Shiba Inu',    color: '#F43F5E', d: 8, type: 'PERP', instrument: 'SHIB-PERP',    cap: 1000 },
 }
 
 // bot_id slug used by /api/agape-perpetuals/trades
 const BOT_ID: Record<Coin, string> = {
-  btc: 'btc', eth: 'eth', xrp: 'xrp', sol: 'sol', doge: 'doge', avax: 'avax',
+  btc: 'btc', eth: 'eth', xrp: 'xrp', sol: 'sol', doge: 'doge', avax: 'avax', shib: 'shib',
 }
 const COIN_OF_BOT_ID: Record<string, Coin> = Object.fromEntries(COINS.map(c => [BOT_ID[c], c])) as Record<string, Coin>
 
@@ -94,6 +96,7 @@ function useBot(coin: Coin, opts: { snapshot: boolean; mapping: boolean }): BotD
     sol:  [useAGAPESolPerpStatus, useAGAPESolPerpPerformance, useAGAPESolPerpPositions, useAGAPESolPerpScanActivity, useAGAPESolPerpSnapshot, useAGAPESolPerpGexMapping],
     doge: [useAGAPEDogePerpStatus, useAGAPEDogePerpPerformance, useAGAPEDogePerpPositions, useAGAPEDogePerpScanActivity, useAGAPEDogePerpSnapshot, useAGAPEDogePerpGexMapping],
     avax: [useAGAPEAvaxPerpStatus, useAGAPEAvaxPerpPerformance, useAGAPEAvaxPerpPositions, useAGAPEAvaxPerpScanActivity, useAGAPEAvaxPerpSnapshot, useAGAPEAvaxPerpGexMapping],
+    shib: [useAGAPEShibPerpStatus, useAGAPEShibPerpPerformance, useAGAPEShibPerpPositions, useAGAPEShibPerpScanActivity, useAGAPEShibPerpSnapshot, useAGAPEShibPerpGexMapping],
   }[coin] as any[]
   const [useStatus, usePerf, usePositions, useScans, useSnapshot, useMapping] = H
   const status = useStatus({ refreshInterval: REFRESH_MS })
@@ -290,6 +293,7 @@ export default function PerpetualsCryptoContent() {
   const bots: Record<Coin, BotData> = {
     btc: useBot('btc', o('btc')), eth: useBot('eth', o('eth')), xrp: useBot('xrp', o('xrp')),
     sol: useBot('sol', o('sol')), doge: useBot('doge', o('doge')), avax: useBot('avax', o('avax')),
+    shib: useBot('shib', o('shib')),
   }
   const list = COINS.map(c => bots[c])
   const cur = bots[curCoin]
