@@ -13,6 +13,7 @@ SOURCE = os.getenv("TTP_SIGNAL_SOURCE", "https://ttp-flex-bot-v1.onrender.com/si
 WEBHOOK = os.getenv("TTP_DISCORD_WEBHOOK_URL", "").strip()
 POLL = max(15, int(os.getenv("TTP_DISCORD_POLL_SECONDS", "30")))
 PINK = 0xFF4FA3
+SMOKE_ON_START = os.getenv("TTP_DISCORD_SMOKE_ON_START", "").strip().lower() in {"1","true","yes","on"}
 
 seen = set()
 app = FastAPI(title="TTP Discord Relay")
@@ -51,10 +52,28 @@ async def post_signal(client, s):
     r = await client.post(WEBHOOK, json={"username": "TTP FLEX Bot", "embeds": [embed]}, timeout=15)
     r.raise_for_status()
 
+async def send_smoke_test(client):
+    embed = {
+        "title": "🌸 TTP FLEX SMOKE TEST — PASS",
+        "description": "Discord alert path is live. No trade was placed.",
+        "color": PINK,
+        "fields": [
+            {"name": "CHECK", "value": "Render → Discord webhook", "inline": True},
+            {"name": "STATUS", "value": "LIVE", "inline": True},
+            {"name": "NOTE", "value": "Real alerts will include BUY / STOP / TAKE PROFIT.", "inline": False},
+        ],
+        "footer": {"text": "Trade The Pool FLEX25 • smoke test only"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    r = await client.post(WEBHOOK, json={"username": "TTP FLEX Bot", "embeds": [embed]}, timeout=15)
+    r.raise_for_status()
+
 async def loop():
     if not WEBHOOK:
         raise RuntimeError("TTP_DISCORD_WEBHOOK_URL is required")
     async with httpx.AsyncClient() as client:
+        if SMOKE_ON_START:
+            await send_smoke_test(client)
         while True:
             try:
                 r = await client.get(SOURCE, timeout=15)
