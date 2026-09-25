@@ -270,29 +270,84 @@ def _claude_request(prompt: str) -> dict[str, Any]:
         raise RuntimeError("ANTHROPIC_API_KEY is not configured")
     import anthropic
 
-    client = anthropic.Anthropic(api_key=api_key, timeout=120.0, max_retries=1)
-    messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+    timeout = float(os.getenv("MORNING_OPTIONS_MODEL_TIMEOUT_SECONDS", "45"))
+    client = anthropic.Anthropic(api_key=api_key, timeout=timeout, max_retries=0)
+    model = os.getenv("MORNING_OPTIONS_MODEL", "claude-sonnet-4-6")
     text = ""
-    for _ in range(4):
-        response = client.messages.create(
-            model=os.getenv("MORNING_OPTIONS_MODEL", "claude-sonnet-4-6"),
-            max_tokens=8000,
-            tools=[{"type": "web_search_20260209", "name": "web_search"}],
-            messages=messages,
-        )
-        for block in response.content:
-            if getattr(block, "type", None) == "text" and getattr(block, "text", None):
-                text = block.text.strip()
-        if response.stop_reason == "pause_turn":
-            messages = [
-                {"role": "user", "content": prompt},
-                {"role": "assistant", "content": response.content},
-            ]
-            continue
-        break
-    if not text:
-        raise RuntimeError("Claude returned no final text")
-    return _extract_json(text)
+
+    # First try the richer request with web search. Some provider/model
+    # combinations reject the web-search tool schema, so fall back immediately
+    # to a plain JSON request instead of failing the entire morning report.
+    attempts = (
+        {"tools": [{"type": "web_search_20260209", "name": "web_search"}]},
+        {},
+    )
+    last_exc: Exception | None = None
+    for extra in attempts:
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=5000,
+                messages=[{"role": "user", "content": prompt}],
+                **extra,
+            )
+            for block in response.content:
+                if getattr(block, "type", None) == "text" and getattr(block, "text", None):
+                    text = block.text.strip()
+            if text:
+                return _extract_json(text)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            logger.warning(
+                "[MorningOptions] model enrichment attempt failed: %s",
+                type(exc).__name__,
+            )
+    raise RuntimeError(
+        f"model enrichment unavailable ({type(last_exc).__name__ if last_exc else 'empty_response'})"
+    )
+
+
+def _deterministic_research(tv: dict[str, Any],
+                            evidence: dict[str, dict[str, Any]],
+                            reason: str) -> dict[str, Any]:
+    """Fresh-data-only fallback when optional model enrichment is unavailable."""
+    fresh = [
+        (symbol, item) for symbol, item in evidence.items()
+        if item.get("usable_for_actionable_levels")
+    ]
+    spy = evidence.get("SPY") or {}
+    qqq = evidence.get("QQQ") or {}
+    watch = []
+    if reason:
+        watch.append(f"Model enrichment unavailable: {reason}")
+    if not fresh:
+        regime = "DATA UNAVAILABLE — no symbol passed the fresh quote/bar gate"
+        confidence = 0
+        best = "No Trade"
+    else:
+        regime = "Fresh market evidence available; directional conviction deferred to opening-range confirmation"
+        confidence = 50
+        best = "Use objective fresh session-range triggers; no model-ranked setup"
+    if not tv.get("available"):
+        watch.append(f"Trading Volatility unavailable: {tv.get('reason') or 'worker context unavailable'}")
+    return {
+        "market_regime": regime,
+        "confidence": confidence,
+        "spy_bias": "conditional" if spy.get("usable_for_actionable_levels") else "unavailable",
+        "qqq_bias": "conditional" if qqq.get("usable_for_actionable_levels") else "unavailable",
+        "vix_regime": "unavailable unless current-session VIX passed freshness validation",
+        "gamma_regime": "unavailable in deterministic fallback",
+        "overnight_change": "Use attached fresh Tradier market_evidence; no model inference applied.",
+        "flow_and_iv": "unavailable in deterministic fallback",
+        "best_setup": best,
+        "what_changes_my_mind": [
+            "A confirmed break/hold of the fresh premarket range with current data.",
+            "Loss of quote or completed-bar freshness.",
+        ],
+        "recommendations": [],
+        "watch_only": watch,
+        "news_sources": [],
+    }
 
 
 async def _generate_research(now: datetime, tv: dict[str, Any],
@@ -704,7 +759,19 @@ async def run_morning_options_report(app: Any, *, now: datetime | None = None,
         requested = list(dict.fromkeys(["SPY", "QQQ", "IWM", "XSP", "VIX", *candidates]))
         evidence = await _collect_market_evidence(app, requested, started)
         trimmed_tv = _trim_tv_context(tv, candidates)
-        research = await _generate_research(started, trimmed_tv, evidence)
+        try:
+            research = await _generate_research(started, trimmed_tv, evidence)
+            research["generation_mode"] = "model_enriched"
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[MorningOptions] using deterministic fresh-data fallback: %s",
+                type(exc).__name__,
+            )
+            research = _deterministic_research(
+                trimmed_tv, evidence,
+                f"{type(exc).__name__}: optional enrichment failed",
+            )
+            research["generation_mode"] = "deterministic_fresh_data"
         symbols, setups, rejected = _normalize_plan(research, evidence, trading_date, started)
         report = _report_markdown(
             started, research, symbols, setups, rejected, universe_source, trimmed_tv,
@@ -727,6 +794,7 @@ async def run_morning_options_report(app: Any, *, now: datetime | None = None,
             "best_setup": research.get("best_setup"),
             "market_regime": research.get("market_regime"),
             "confidence": research.get("confidence"),
+            "generation_mode": research.get("generation_mode"),
             "universe_source": universe_source,
             "trading_volatility": trimmed_tv,
             "market_evidence": evidence,
