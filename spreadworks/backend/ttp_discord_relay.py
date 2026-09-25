@@ -15,6 +15,7 @@ POLL = max(15, int(os.getenv("TTP_DISCORD_POLL_SECONDS", "30")))
 MAX_SIGNAL_AGE_SECONDS = max(60, int(os.getenv("TTP_DISCORD_MAX_SIGNAL_AGE_SECONDS", "300")))
 PINK = 0xFF4FA3
 SMOKE_ON_START = os.getenv("TTP_DISCORD_SMOKE_ON_START", "").strip().lower() in {"1","true","yes","on"}
+SAMPLE_ALERTS_ON_START = os.getenv("TTP_DISCORD_SAMPLE_ALERTS_ON_START", "").strip().lower() in {"1","true","yes","on"}
 
 seen = set()
 app = FastAPI(title="TTP Discord Relay")
@@ -68,6 +69,19 @@ async def post_signal(client, s):
     r.raise_for_status()
     seen.add(key)
 
+async def send_sample_alerts(client):
+    now = datetime.now(timezone.utc).isoformat()
+    samples = [
+        {"symbol":"AMD","engine":"VWAP_RECLAIM","quality":8.4,"shares":44,"entry":162.40,"stop":161.75,"target1":163.05,"target2":163.38,"risk_dollars":28.60,"position_value":7145.60,"bar_time":now,
+         "profit_protection":{"hard_target":163.38,"force_flat_by_et":"15:45"}},
+        {"symbol":"NVDA","engine":"HOD_BREAKOUT","quality":8.7,"shares":35,"entry":224.90,"stop":224.10,"target1":225.70,"target2":226.10,"risk_dollars":28.00,"position_value":7871.50,"bar_time":now,
+         "profit_protection":{"hard_target":226.10,"force_flat_by_et":"15:45"}},
+        {"symbol":"RIVN","engine":"MOMENTUM_RVOL","quality":8.1,"shares":300,"entry":15.60,"stop":15.52,"target1":15.68,"target2":15.72,"risk_dollars":24.00,"position_value":4680.00,"bar_time":now,
+         "profit_protection":{"hard_target":15.72,"force_flat_by_et":"15:45"}},
+    ]
+    for s in samples:
+        await post_signal(client, s)
+
 async def send_smoke_test(client):
     embed = {
         "title": "🌸 TTP FLEX SMOKE TEST — PASS",
@@ -90,6 +104,8 @@ async def loop():
     async with httpx.AsyncClient() as client:
         if SMOKE_ON_START:
             await send_smoke_test(client)
+        if SAMPLE_ALERTS_ON_START:
+            await send_sample_alerts(client)
         # A Render restart must not repost the scanner's recent signal history.
         # Wait for a successful snapshot before sending anything from this process.
         while True:
