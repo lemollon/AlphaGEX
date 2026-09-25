@@ -1,0 +1,21 @@
+# Isolated one-shot MES v31 research runner.
+# This Blueprint deliberately does not manage any production service or database.
+services:
+  - type: web
+    name: valor-mes-v31-research
+    runtime: python
+    plan: free
+    region: oregon
+    branch: research/mes-edge-map-v31-20260925
+    autoDeployTrigger: off
+    buildCommand: pip install --no-cache-dir -r requirements-render.txt
+    startCommand: >-
+      python -m scripts.valor_mes_v31_edge_map &&
+      mkdir -p /tmp/valor-mes-v31-empty &&
+      python -m http.server $PORT --bind 0.0.0.0
+      --directory /tmp/valor-mes-v31-empty
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: alphagex-db
+          property: connectionString
