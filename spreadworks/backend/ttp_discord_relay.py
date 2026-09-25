@@ -44,21 +44,24 @@ async def post_signal(client, s):
     t2 = float(s.get("target2") or 0)
     risk = float(s.get("risk_dollars") or 0)
     value = float(s.get("position_value") or 0)
-    rank = s.get("tv_rank")
-    score = s.get("tv_score")
-    bias = s.get("tv_bias") or "bullish"
+    engine = str(s.get("engine") or "SETUP")
+    quality = s.get("quality")
+    protection = s.get("profit_protection") or {}
+    hard_target = float(protection.get("hard_target") or t2)
+    force_flat = protection.get("force_flat_by_et") or "15:45"
     embed = {
         "title": f"🌸 TTP FLEX TRADE ALERT — {symbol}",
-        "description": "Signal-only. Place manually in Trader Evolution using a bracket/OCO order.",
+        "description": "Day-trade only. Place manually in Trader Evolution using a bracket/OCO order.",
         "color": PINK,
         "fields": [
-            {"name": "ENTRY LIMIT", "value": f"BUY {shares} {symbol} @ ${entry:.2f} LIMIT", "inline": False},
-            {"name": "ATTACHED OCO EXIT", "value": f"🛑 STOP SELL {shares} @ ${stop:.2f}\n🎯 TAKE PROFIT SELL {shares} @ ${t2:.2f}", "inline": False},
-            {"name": "RISK", "value": f"Approx risk: ${risk:.2f}\nPosition value: ${value:,.2f}", "inline": True},
-            {"name": "TV CONTEXT", "value": f"Rank: {rank if rank is not None else 'n/a'}\nScore: {score if score is not None else 'n/a'}\nBias: {bias}", "inline": True},
-            {"name": "REFERENCE", "value": f"+1R: ${t1:.2f}\n+2R: ${t2:.2f}", "inline": True},
+            {"name": "SETUP", "value": f"{engine} • Quality {quality if quality is not None else 'n/a'}/10", "inline": False},
+            {"name": "BUY", "value": f"{shares} shares @ ${entry:.2f} LIMIT", "inline": False},
+            {"name": "SET THIS OCO EXIT", "value": f"🛑 STOP LOSS: ${stop:.2f}\n🎯 TAKE PROFIT: ${hard_target:.2f}", "inline": False},
+            {"name": "PROTECT THE WINNER", "value": f"At +1R (${t1:.2f}), move the stop to at least breakeven. Do not let a winner turn into a loser.", "inline": False},
+            {"name": "RISK", "value": f"About ${risk:.2f}\nPosition size: ${value:,.2f}", "inline": True},
+            {"name": "DAY-TRADE RULE", "value": f"Close any remaining position by {force_flat} ET.", "inline": True},
         ],
-        "footer": {"text": "Trade The Pool FLEX25 • AlphaGEX signal engine"},
+        "footer": {"text": "Trade The Pool FLEX25 • AlphaGEX profit-protection alerts"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     r = await client.post(WEBHOOK, json={"username": "TTP FLEX Bot", "embeds": [embed]}, timeout=15)
