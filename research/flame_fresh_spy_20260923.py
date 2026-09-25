@@ -1,21 +1,29 @@
-"""Isolated research status server.
+"""Isolated Flame research dispatcher.
 
-Completed research is not auto-run on web-service restart. Historical runs are
-triggered explicitly so Render restarts cannot replay completed work.
+No completed historical study auto-runs unless FLAME_FRESH_MODE explicitly names it.
+No broker or production trading imports live in this entrypoint.
 """
 import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        body=b'{"status":"idle","research_autorun":false,"live_changed":false}'
-        self.send_response(200)
-        self.send_header("Content-Type","application/json")
-        self.send_header("Content-Length",str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-    def log_message(self, fmt, *args):
-        return
+MODE = os.getenv("FLAME_FRESH_MODE", "").strip()
 
-if __name__ == "__main__":
-    HTTPServer(("0.0.0.0", int(os.getenv("PORT","10000"))), Handler).serve_forever()
+if MODE == "research-exit-repair-v1":
+    from flame_research_exit_repair import execute, core
+    import threading
+    threading.Thread(target=execute, daemon=True).start()
+    HTTPServer(("0.0.0.0", int(os.getenv("PORT", "10000"))), core.Handler).serve_forever()
+else:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body=b'{"status":"idle","research_autorun":false,"live_changed":false}'
+            self.send_response(200)
+            self.send_header("Content-Type","application/json")
+            self.send_header("Content-Length",str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, fmt, *args):
+            return
+
+    if __name__ == "__main__":
+        HTTPServer(("0.0.0.0", int(os.getenv("PORT", "10000"))), Handler).serve_forever()
