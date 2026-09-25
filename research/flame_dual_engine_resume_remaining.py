@@ -37,5 +37,6 @@ def run():
         time.sleep(1)
 
 if __name__=="__main__":
-    threading.Thread(target=run,daemon=True).start()
+    if os.getenv("FLAME_RESUME_ENABLED","1") == "1":
+        threading.Thread(target=run,daemon=True).start()
     HTTPServer(("0.0.0.0",int(os.getenv("PORT","10000"))),x.core.Handler).serve_forever()
