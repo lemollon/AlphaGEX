@@ -29,8 +29,6 @@ class FakeApp:
         return lambda fn: fn
 
 
-sys.modules.setdefault("httpx", types.SimpleNamespace(AsyncClient=FakeClient))
-sys.modules.setdefault("fastapi", types.SimpleNamespace(FastAPI=FakeApp))
 BACKEND = Path(__file__).resolve().parents[1] / "backend"
 
 
@@ -38,7 +36,11 @@ def load(name):
     spec = importlib.util.spec_from_file_location(name, BACKEND / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
-    spec.loader.exec_module(module)
+    with patch.dict(sys.modules, {
+        "httpx": types.SimpleNamespace(AsyncClient=FakeClient),
+        "fastapi": types.SimpleNamespace(FastAPI=FakeApp),
+    }):
+        spec.loader.exec_module(module)
     return module
 
 
