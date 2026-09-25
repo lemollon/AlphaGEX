@@ -28,20 +28,21 @@ STATUS_URL = os.getenv(
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 
 RISK_DOLLARS = float(os.getenv("TTP_RISK_DOLLARS", "50"))
-SIGNAL_COOLDOWN_MINUTES = max(1, int(os.getenv("TTP_SIGNAL_COOLDOWN_MINUTES", "30")))
+SIGNAL_COOLDOWN_MINUTES = max(1, int(os.getenv("TTP_SIGNAL_COOLDOWN_MINUTES", "90")))
+GLOBAL_SIGNAL_COOLDOWN_MINUTES = max(1, int(os.getenv("TTP_GLOBAL_SIGNAL_COOLDOWN_MINUTES", "10")))
+MIN_STOP_PCT = float(os.getenv("TTP_MIN_STOP_PCT", "0.30"))
+QUALITY_FLOOR = float(os.getenv("TTP_QUALITY_FLOOR", "7.5"))
 MAX_BAR_AGE_SECONDS = max(60, int(os.getenv("TTP_MAX_BAR_AGE_SECONDS", "180")))
 MAX_POSITION_VALUE = float(os.getenv("TTP_MAX_POSITION_VALUE", "10000"))
 MAX_STOP_PCT = float(os.getenv("TTP_MAX_STOP_PCT", "1.5"))
 POLL_SECONDS = max(30, int(os.getenv("TTP_POLL_SECONDS", "60")))
 ENTRY_START_ET = time(9, 35)
-ENTRY_END_ET = time(15, 30)
+ENTRY_END_ET = time(14, 30)
 FORCE_FLAT_ET = time(15, 45)
 
-DEFAULT_UNIVERSE = [
-    "AAPL","AMD","AMZN","BAC","CCL","CLSK","COIN","F","GOOGL","HOOD",
-    "INTC","IONQ","MARA","META","MSFT","MU","NFLX","NIO","NVDA","PLTR",
-    "RIVN","RKLB","SMCI","SNAP","SOFI","T","TSLA","UBER","WBD","XOM",
-]
+# 60-day screening winners / near-winners. Keep the live alert stream focused
+# on the symbols that actually showed positive expectancy in the first pass.
+DEFAULT_UNIVERSE = ["AMD","AMZN","BAC","NVDA","RIVN","SOFI"]
 STATIC_UNIVERSE = [
     s.strip().upper()
     for s in os.getenv("TTP_STOCK_UNIVERSE", ",".join(DEFAULT_UNIVERSE)).split(",")
@@ -88,6 +89,9 @@ _STATE: dict[str, Any] = {
     "account": "TTP 25K FLEX",
     "risk_dollars": RISK_DOLLARS,
     "signal_cooldown_minutes": SIGNAL_COOLDOWN_MINUTES,
+    "global_signal_cooldown_minutes": GLOBAL_SIGNAL_COOLDOWN_MINUTES,
+    "quality_floor": QUALITY_FLOOR,
+    "min_stop_pct": MIN_STOP_PCT,
     "last_cycle_at": None,
     "last_error": None,
     "scan_count": 0,
@@ -97,7 +101,8 @@ _STATE: dict[str, Any] = {
     "signals": [],
     "engines": ["MOMENTUM_RVOL", "GAP_GO", "ORB", "VWAP_RECLAIM", "HOD_BREAKOUT"],
 }
-_last_signal: dict[tuple[str, str], datetime] = {}
+_last_signal: dict[str, datetime] = {}
+_last_global_signal: datetime | None = None
 _seen_date = None
 _task: asyncio.Task | None = None
 
@@ -107,6 +112,8 @@ def _reset_day(now_et: datetime) -> None:
     if _seen_date != now_et.date():
         _seen_date = now_et.date()
         _last_signal.clear()
+        global _last_global_signal
+        _last_global_signal = None
         _STATE["proposals_today"] = []
         _STATE["signals"] = []
 
@@ -242,12 +249,19 @@ def _proposal(symbol: str, bars: list[Bar], prevclose: float | None, now_et: dat
     # Discord and Trader Evolution use cent prices. Size from the exact prices
     # shown on the card, and reject targets too narrow to count under TTP rules.
     entry = round(last.close, 2)
-    stop = round(stop, 2)
-    dist = entry - stop
+    structural_dist = max(0.0, entry - round(stop, 2))
+    recent_ranges = [max(0.0, x.high - x.low) for x in m["bars"][-20:] if x.high >= x.low]
+    noise_floor = 1.25 * statistics.median(recent_ranges) if recent_ranges else 0.0
+    min_dist = max(entry * (MIN_STOP_PCT / 100.0), noise_floor)
+    dist = max(structural_dist, min_dist)
     if dist <= 0 or (dist / entry) * 100 > MAX_STOP_PCT:
         return None
+    stop = round(entry - dist, 2)
+    dist = entry - stop
     target1 = round(entry + dist, 2)
-    target2 = round(entry + 2 * dist, 2)
+    # Take profit sooner than the old 2R-only bracket; the card also tells the
+    # user to protect the trade once +1R is reached.
+    target2 = round(entry + 1.5 * dist, 2)
     if target2 - entry < 0.10 - 1e-9:
         return None
     # TTP limits a new position to 5% of the previous one-minute candle.
@@ -266,6 +280,7 @@ def _proposal(symbol: str, bars: list[Bar], prevclose: float | None, now_et: dat
 
 
 async def _cycle() -> None:
+    global _last_global_signal
     now_et = datetime.now(ET)
     _reset_day(now_et)
     _STATE["last_cycle_at"] = datetime.now(UTC).isoformat()
@@ -276,7 +291,9 @@ async def _cycle() -> None:
 
     async with httpx.AsyncClient() as client:
         tv_symbols = await _fetch_tv_symbols(client)
-        universe = list(dict.fromkeys(STATIC_UNIVERSE + tv_symbols))[:MAX_UNIVERSE]
+        # Trading Volatility is supplemental context only; do not let it expand
+        # the live universe beyond the validated profit-cluster whitelist.
+        universe = list(dict.fromkeys(STATIC_UNIVERSE))[:MAX_UNIVERSE]
         _STATE["universe"] = universe
 
         sem = asyncio.Semaphore(8)
@@ -294,18 +311,29 @@ async def _cycle() -> None:
         _STATE["candidates"] = [asdict(p) for p in candidates[:10]]
 
         for p in candidates:
-            if p.quality < 7.2:
+            if p.quality < QUALITY_FLOOR:
                 continue
             bar_time = datetime.fromisoformat(p.bar_time)
-            key = (p.symbol, p.engine)
-            previous = _last_signal.get(key)
+            previous = _last_signal.get(p.symbol)
             if previous is not None and (bar_time - previous).total_seconds() < SIGNAL_COOLDOWN_MINUTES * 60:
                 continue
-            _last_signal[key] = bar_time
+            if _last_global_signal is not None and (bar_time - _last_global_signal).total_seconds() < GLOBAL_SIGNAL_COOLDOWN_MINUTES * 60:
+                continue
+            _last_signal[p.symbol] = bar_time
+            _last_global_signal = bar_time
             data = asdict(p)
+            data["profit_protection"] = {
+                "at_1R": round(p.target1, 2),
+                "action": "Once price reaches +1R, move the stop to at least breakeven; do not let a winner turn into a loser.",
+                "hard_target": round(p.target2, 2),
+                "day_trade_only": True,
+                "no_new_entries_after_et": ENTRY_END_ET.isoformat(timespec="minutes"),
+                "force_flat_by_et": FORCE_FLAT_ET.isoformat(timespec="minutes"),
+            }
             _STATE["proposals_today"].append(data)
             _STATE["signals"].insert(0, data)
             _STATE["signals"] = _STATE["signals"][:200]
+            break
 
 
 async def _loop() -> None:
