@@ -10,10 +10,10 @@ services:
     autoDeployTrigger: off
     buildCommand: pip install --no-cache-dir -r requirements-render.txt
     startCommand: >-
-      python -m scripts.valor_mes_v31_edge_map &&
-      mkdir -p /tmp/valor-mes-v31-empty &&
+      python -m scripts.valor_mes_v32_regime_router &&
+      mkdir -p /tmp/valor-mes-v32-empty &&
       python -m http.server $PORT --bind 0.0.0.0
-      --directory /tmp/valor-mes-v31-empty
+      --directory /tmp/valor-mes-v32-empty
     envVars:
       - key: DATABASE_URL
         fromDatabase:
