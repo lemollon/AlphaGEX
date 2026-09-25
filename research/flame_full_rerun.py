@@ -28,7 +28,7 @@ def patched(source):
     patches = [
         ('def units(value):', CANONICAL+'def units(value):'),
         ('try: d = Decimal(str(value))', "try: d = canonical_price(value, 'option')"),
-        ("vals={k:float(row[k]) for k in ['open','high','low','close','volume']}", "vals={k:(float(row[k]) if k=='volume' else float(canonical_price(row[k], 'stock_'+k))) for k in ['open','high','low','close','volume']}"),
+        ("vals={k:float(row[k]) for k in ['open','high','low','close','volume']}", "try:\n                    vals={k:(float(row[k]) if k=='volume' else float(canonical_price(row[k], 'stock_'+k))) for k in ['open','high','low','close','volume']}\n                except (InvalidOperation, ValueError, TypeError, KeyError) as exc:\n                    emit('invalid_stock_numeric', day=day, minute=m, kind=type(exc).__name__, raw={k:row.get(k) for k in ['open','high','low','close','volume']})\n                    continue"),
         ("raise DataError('invalid stock OHLC')", "raise DataError('invalid stock OHLC: '+str(dict(day=day,minute=m,values=vals,raw=row)))"),
         ("'rerun-v1-exact'", "'rerun-v2-exact-source-tail-normalization'"),
         ("    end=stamp(day+'T15:39:00') if False else None\n", ''),
