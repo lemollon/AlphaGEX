@@ -15,6 +15,7 @@ import json
 import os
 import threading
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal as D
 from http.server import HTTPServer
 
@@ -247,25 +248,46 @@ def execute():
             live_changed=False,
         )
         errors=[]
-        for i, day in enumerate(days, 1):
+        workers=max(1,min(int(os.getenv("FLAME_REPAIR_WORKERS","6")),8))
+        request_lock=threading.Lock()
+        feeds=[]
+
+        def run_day(day):
+            local_feed=core.Feed()
+            with request_lock:
+                feeds.append(local_feed)
             try:
-                stock = old.get_stock(feed, day)
-                df = base.DayFeed(feed, day, stock)
-                eff = old.research_eff(stock, 720)
-                row = {"day": day, "eff": float(eff), "variants": {}}
-                if eff >= D("0.30"):
-                    q = df.snapshot(720)
-                    k = base.choose_snapshot(q, old.spot(stock, 720), 2)
+                stock=old.get_stock(local_feed,day)
+                df=base.DayFeed(local_feed,day,stock)
+                eff=old.research_eff(stock,720)
+                row={"day":day,"eff":float(eff),"variants":{}}
+                if eff>=D("0.30"):
+                    q=df.snapshot(720)
+                    k=base.choose_snapshot(q,old.spot(stock,720),2)
                     if k is not None:
-                        for name, cfg in VARIANTS.items():
-                            row["variants"][name] = replay_variant(df, k, 2, 720, **cfg)
-                rows.append(row)
+                        for name,cfg in VARIANTS.items():
+                            row["variants"][name]=replay_variant(df,k,2,720,**cfg)
+                return row,None
             except Exception as day_exc:
-                errors.append({"day":day,"kind":type(day_exc).__name__,"reason":str(day_exc)[:240]})
-                rows.append({"day":day,"eff":None,"variants":{},"error":errors[-1]})
-                core.emit("exit_repair_day_error", **errors[-1])
-            if i % 10 == 0 or i == len(days):
-                core.emit("exit_repair_progress", completed=i, total=len(days), day=day, provider_requests=feed.n, errors=len(errors))
+                err={"day":day,"kind":type(day_exc).__name__,"reason":str(day_exc)[:240]}
+                return {"day":day,"eff":None,"variants":{},"error":err},err
+
+        done=0
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            future_map={pool.submit(run_day,day):day for day in days}
+            for fut in as_completed(future_map):
+                row,err=fut.result()
+                rows.append(row)
+                if err:
+                    errors.append(err)
+                    core.emit("exit_repair_day_error",**err)
+                done+=1
+                if done%10==0 or done==len(days):
+                    total_requests=sum(x.n for x in feeds)
+                    core.emit("exit_repair_progress",completed=done,total=len(days),day=row["day"],provider_requests=total_requests,errors=len(errors),workers=workers)
+
+        rows.sort(key=lambda x:x["day"])
+        feed.n=sum(x.n for x in feeds)
 
         dev = {name: summarize(rows, name, core.SPEC["start"], DEV_END) for name in VARIANTS}
         ext = {name: summarize(rows, name, EXT_START, core.SPEC["end"]) for name in VARIANTS}
