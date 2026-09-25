@@ -11,6 +11,13 @@ from starlette.concurrency import run_in_threadpool
 
 router = APIRouter(prefix='/api/valor/research/databento', tags=['valor-research'])
 
+MES_MICRODATA_DATASET = 'GLBX.MDP3'
+MES_MICRODATA_SYMBOL = 'MES.FUT'
+MES_MICRODATA_STYPE_IN = 'parent'
+MES_MICRODATA_START = '2023-01-01'
+MES_MICRODATA_END = '2026-01-01'
+MES_MICRODATA_SCHEMAS = ('trades', 'mbp-1')
+
 
 @router.get('/status')
 async def databento_status():
@@ -38,6 +45,54 @@ def _estimate(start: str, end: str):
             'downloads_started':False}
 
 
+@lru_cache(maxsize=1)
+def _estimate_mes_microdata_cost():
+    """Fetch fixed provider metadata without initiating a data request."""
+    import databento as db
+
+    client = db.Historical(os.environ['DATABENTO_API_KEY'])
+    estimates = []
+    for schema in MES_MICRODATA_SCHEMAS:
+        parameters = {
+            'dataset': MES_MICRODATA_DATASET,
+            'symbols': MES_MICRODATA_SYMBOL,
+            'stype_in': MES_MICRODATA_STYPE_IN,
+            'schema': schema,
+            'start': MES_MICRODATA_START,
+            'end': MES_MICRODATA_END,
+        }
+        cost = float(client.metadata.get_cost(**parameters))
+        billable_size = int(client.metadata.get_billable_size(**parameters))
+        estimates.append({
+            'schema': schema,
+            'estimated_cost_usd': cost,
+            'billable_size_bytes': billable_size,
+        })
+    return {
+        'endpoint': '/api/valor/research/databento/mes-microdata-cost',
+        'provider_methods': ['metadata.get_cost', 'metadata.get_billable_size'],
+        'metadata_only': True,
+        'downloads_started': False,
+        'spend_authorized': False,
+        'research_only': True,
+        'parameters': {
+            'dataset': MES_MICRODATA_DATASET,
+            'symbol': MES_MICRODATA_SYMBOL,
+            'stype_in': MES_MICRODATA_STYPE_IN,
+            'start': MES_MICRODATA_START,
+            'end_exclusive': MES_MICRODATA_END,
+            'schemas': list(MES_MICRODATA_SCHEMAS),
+        },
+        'estimates': estimates,
+        'total_estimate_usd': sum(row['estimated_cost_usd'] for row in estimates),
+        'total_billable_size_bytes': sum(row['billable_size_bytes'] for row in estimates),
+        'provider_note': (
+            'The estimate respects provider plan discounts; actual billed bytes '
+            'govern any future separately approved request.'
+        ),
+    }
+
+
 @router.get('/cost')
 async def databento_cost(start: str='2023-01-01', end: str='2026-01-01'):
     try:
@@ -48,6 +103,15 @@ async def databento_cost(start: str='2023-01-01', end: str='2026-01-01'):
         raise HTTPException(400,'Use dates within 2023-01-01 to 2026-01-01 exclusive.') from exc
     try:
         return await run_in_threadpool(_estimate,start,end)
+    except Exception as exc:
+        # Do not echo provider credentials or account details to a public route.
+        raise HTTPException(502,'Cost metadata unavailable; no download started.') from exc
+
+
+@router.get('/mes-microdata-cost')
+async def mes_microdata_cost():
+    try:
+        return await run_in_threadpool(_estimate_mes_microdata_cost)
     except Exception as exc:
         # Do not echo provider credentials or account details to a public route.
         raise HTTPException(502,'Cost metadata unavailable; no download started.') from exc
