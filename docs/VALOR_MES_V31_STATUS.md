@@ -7,8 +7,9 @@
   none survived fees in all three years and none survived the one-tick planning
   case in all three years.
 - **Current blocker:** broker execution calibration contains 118 quote changes, zero historical fee rows, and no calibrated slippage; 1 tick/side is therefore an unverified planning proxy
-- **Next action:** run the frozen v32 ATR regime-router audit on the four
-  raw-gross survivors; keep 2026 and production untouched
+- **Next action:** v32 completed without a viable candidate; stop OHLCV-only
+  iteration, keep 2026 and production untouched, and obtain the new execution
+  and microstructure data listed in the v32 status
 
 ## Completed v31 decision
 
