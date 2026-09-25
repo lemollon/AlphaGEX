@@ -253,24 +253,35 @@ def execute():
         feeds=[]
 
         def run_day(day):
-            local_feed=core.Feed()
-            with request_lock:
-                feeds.append(local_feed)
-            try:
-                stock=old.get_stock(local_feed,day)
-                df=base.DayFeed(local_feed,day,stock)
-                eff=old.research_eff(stock,720)
-                row={"day":day,"eff":float(eff),"variants":{}}
-                if eff>=D("0.30"):
-                    q=df.snapshot(720)
-                    k=base.choose_snapshot(q,old.spot(stock,720),2)
-                    if k is not None:
-                        for name,cfg in VARIANTS.items():
-                            row["variants"][name]=replay_variant(df,k,2,720,**cfg)
-                return row,None
-            except Exception as day_exc:
-                err={"day":day,"kind":type(day_exc).__name__,"reason":str(day_exc)[:240]}
-                return {"day":day,"eff":None,"variants":{},"error":err},err
+            import time
+            last_exc=None
+            for attempt in range(1, 5):
+                local_feed=core.Feed()
+                with request_lock:
+                    feeds.append(local_feed)
+                try:
+                    stock=old.get_stock(local_feed,day)
+                    df=base.DayFeed(local_feed,day,stock)
+                    eff=old.research_eff(stock,720)
+                    row={"day":day,"eff":float(eff),"variants":{}}
+                    if eff>=D("0.30"):
+                        q=df.snapshot(720)
+                        k=base.choose_snapshot(q,old.spot(stock,720),2)
+                        if k is not None:
+                            for name,cfg in VARIANTS.items():
+                                row["variants"][name]=replay_variant(df,k,2,720,**cfg)
+                    if attempt > 1:
+                        core.emit("exit_repair_day_recovered", day=day, attempt=attempt)
+                    return row,None
+                except Exception as day_exc:
+                    last_exc=day_exc
+                    reason=str(day_exc)
+                    if "transport_failed" not in reason or attempt == 4:
+                        break
+                    core.emit("exit_repair_day_retry", day=day, attempt=attempt, reason=reason[:240])
+                    time.sleep(attempt * 2)
+            err={"day":day,"kind":type(last_exc).__name__,"reason":str(last_exc)[:240]}
+            return {"day":day,"eff":None,"variants":{},"error":err},err
 
         done=0
         with ThreadPoolExecutor(max_workers=workers) as pool:
