@@ -239,17 +239,26 @@ def _proposal(symbol: str, bars: list[Bar], prevclose: float | None, now_et: dat
         return None
     engine, quality, stop = found
     last = m["last"]
-    entry = last.close
+    # Discord and Trader Evolution use cent prices. Size from the exact prices
+    # shown on the card, and reject targets too narrow to count under TTP rules.
+    entry = round(last.close, 2)
+    stop = round(stop, 2)
     dist = entry - stop
     if dist <= 0 or (dist / entry) * 100 > MAX_STOP_PCT:
         return None
-    shares = min(math.floor(RISK_DOLLARS / dist), math.floor(MAX_POSITION_VALUE / entry))
+    target1 = round(entry + dist, 2)
+    target2 = round(entry + 2 * dist, 2)
+    if target2 - entry < 0.10 - 1e-9:
+        return None
+    # TTP limits a new position to 5% of the previous one-minute candle.
+    shares = min(math.floor(RISK_DOLLARS / dist), math.floor(MAX_POSITION_VALUE / entry),
+                 math.floor(m["prev"].volume * 0.05))
     if shares < 1:
         return None
     return Proposal(
         symbol=symbol, side="BUY", engine=engine, quality=round(quality,1),
-        entry=round(entry,4), stop=round(stop,4),
-        target1=round(entry+dist,4), target2=round(entry+2*dist,4),
+        entry=entry, stop=stop,
+        target1=target1, target2=target2,
         shares=shares, risk_dollars=round(shares*dist,2),
         position_value=round(shares*entry,2), bar_time=last.ts.isoformat(),
         day_change_pct=round(m["day_change"],2), relative_bar_volume=round(m["rvol"],2),

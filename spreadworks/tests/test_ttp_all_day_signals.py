@@ -45,6 +45,22 @@ def load(name):
 
 
 class SignalContinuityTests(unittest.TestCase):
+    def test_proposal_has_countable_target_and_volume_cap(self):
+        scanner = load("ttp_multi_engine")
+        now = datetime.now(ZoneInfo("America/New_York"))
+        last = scanner.Bar(now, 10, 10.2, 9.9, 10, 5000)
+        prev = scanner.Bar(now - timedelta(minutes=1), 10, 10.1, 9.8, 9.95, 1000)
+        metrics = {"last": last, "prev": prev, "day_change": 1, "rvol": 2}
+        with patch.object(scanner, "_metrics", return_value=metrics), \
+             patch.object(scanner, "_engine", return_value=("ORB", 8, 9.96)):
+            self.assertIsNone(scanner._proposal("AAA", [], 9, now))
+        with patch.object(scanner, "_metrics", return_value=metrics), \
+             patch.object(scanner, "_engine", return_value=("ORB", 8, 9.90)):
+            proposal = scanner._proposal("AAA", [], 9, now)
+        self.assertEqual(proposal.shares, 50)
+        self.assertGreaterEqual(round(proposal.target2 - proposal.entry, 2), 0.10)
+        self.assertEqual(proposal.risk_dollars, 5)
+
     def test_more_than_three_and_cooldown_allows_new_setup(self):
         scanner = load("ttp_multi_engine")
         now = datetime.now(ZoneInfo("America/New_York")).replace(second=0, microsecond=0)
