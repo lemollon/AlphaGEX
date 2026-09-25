@@ -110,6 +110,40 @@ class SignalContinuityTests(unittest.TestCase):
             asyncio.run(relay.post_signal(client, signal))
             self.assertEqual(client.calls, 2)
 
+    def test_relay_bootstrap_does_not_replay_existing_signal(self):
+        relay = load("ttp_discord_relay")
+        signal = {"symbol": "AAA", "engine": "ORB", "bar_time": datetime.now(timezone.utc).isoformat()}
+
+        class Response:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"signals": [signal]}
+
+        class Client(FakeClient):
+            def __init__(self):
+                self.posts = 0
+
+            async def get(self, *args, **kwargs):
+                return Response()
+
+            async def post(self, *args, **kwargs):
+                self.posts += 1
+
+        client = Client()
+
+        async def stop_after_poll(_):
+            raise KeyboardInterrupt()
+
+        with patch.object(relay.httpx, "AsyncClient", return_value=client), \
+             patch.object(relay.asyncio, "sleep", stop_after_poll), \
+             patch.object(relay, "WEBHOOK", "https://example.invalid/webhook"):
+            with self.assertRaises(KeyboardInterrupt):
+                asyncio.run(relay.loop())
+        self.assertEqual(client.posts, 0)
+        self.assertIn(relay.signal_key(signal), relay.seen)
+
 
 if __name__ == "__main__":
     unittest.main()

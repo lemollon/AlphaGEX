@@ -20,8 +20,11 @@ seen = set()
 app = FastAPI(title="TTP Discord Relay")
 task = None
 
+def signal_key(s):
+    return f"{s.get('symbol')}:{s.get('engine')}:{s.get('bar_time')}"
+
 async def post_signal(client, s):
-    key = f"{s.get('symbol')}:{s.get('engine')}:{s.get('bar_time')}"
+    key = signal_key(s)
     if key in seen:
         return
     try:
@@ -84,6 +87,17 @@ async def loop():
     async with httpx.AsyncClient() as client:
         if SMOKE_ON_START:
             await send_smoke_test(client)
+        # A Render restart must not repost the scanner's recent signal history.
+        # Wait for a successful snapshot before sending anything from this process.
+        while True:
+            try:
+                r = await client.get(SOURCE, timeout=15)
+                r.raise_for_status()
+                seen.update(signal_key(s) for s in (r.json().get("signals") or []) if isinstance(s, dict))
+                break
+            except Exception as exc:
+                print(f"[ttp-discord] bootstrap {type(exc).__name__}: {exc}", flush=True)
+                await asyncio.sleep(POLL)
         while True:
             try:
                 r = await client.get(SOURCE, timeout=15)
