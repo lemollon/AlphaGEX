@@ -2,7 +2,7 @@
 
 Signal-only. No broker order routing.
 Scans a liquid stock universe every minute during the regular session and
-emits at most three qualified manual trade proposals per day.
+emits qualified manual trade proposals throughout the entry window.
 """
 from __future__ import annotations
 
@@ -28,7 +28,8 @@ STATUS_URL = os.getenv(
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 
 RISK_DOLLARS = float(os.getenv("TTP_RISK_DOLLARS", "50"))
-MAX_TRADES_PER_DAY = int(os.getenv("TTP_MAX_TRADES_PER_DAY", "3"))
+SIGNAL_COOLDOWN_MINUTES = max(1, int(os.getenv("TTP_SIGNAL_COOLDOWN_MINUTES", "30")))
+MAX_BAR_AGE_SECONDS = max(60, int(os.getenv("TTP_MAX_BAR_AGE_SECONDS", "180")))
 MAX_POSITION_VALUE = float(os.getenv("TTP_MAX_POSITION_VALUE", "10000"))
 MAX_STOP_PCT = float(os.getenv("TTP_MAX_STOP_PCT", "1.5"))
 POLL_SECONDS = max(30, int(os.getenv("TTP_POLL_SECONDS", "60")))
@@ -86,7 +87,7 @@ _STATE: dict[str, Any] = {
     "live_execution": False,
     "account": "TTP 25K FLEX",
     "risk_dollars": RISK_DOLLARS,
-    "max_trades_per_day": MAX_TRADES_PER_DAY,
+    "signal_cooldown_minutes": SIGNAL_COOLDOWN_MINUTES,
     "last_cycle_at": None,
     "last_error": None,
     "scan_count": 0,
@@ -96,7 +97,7 @@ _STATE: dict[str, Any] = {
     "signals": [],
     "engines": ["MOMENTUM_RVOL", "GAP_GO", "ORB", "VWAP_RECLAIM", "HOD_BREAKOUT"],
 }
-_seen_today: set[str] = set()
+_last_signal: dict[tuple[str, str], datetime] = {}
 _seen_date = None
 _task: asyncio.Task | None = None
 
@@ -105,7 +106,7 @@ def _reset_day(now_et: datetime) -> None:
     global _seen_date
     if _seen_date != now_et.date():
         _seen_date = now_et.date()
-        _seen_today.clear()
+        _last_signal.clear()
         _STATE["proposals_today"] = []
         _STATE["signals"] = []
 
@@ -178,6 +179,8 @@ def _metrics(bars: list[Bar], now_et: datetime, prevclose: float | None) -> dict
     if len(opening) < 5:
         return None
     last, prev = b[-1], b[-2]
+    if not 0 <= (now_et - last.ts).total_seconds() <= MAX_BAR_AGE_SECONDS:
+        return None
     cumv = sum(x.volume for x in b)
     if last.close < 2 or cumv < 100_000:
         return None
@@ -259,7 +262,7 @@ async def _cycle() -> None:
     _STATE["last_cycle_at"] = datetime.now(UTC).isoformat()
     _STATE["last_error"] = None
     _STATE["scan_count"] += 1
-    if not _window_open(now_et) or len(_STATE["proposals_today"]) >= MAX_TRADES_PER_DAY:
+    if not _window_open(now_et):
         return
 
     async with httpx.AsyncClient() as client:
@@ -277,20 +280,23 @@ async def _cycle() -> None:
                     return None
 
         results = await asyncio.gather(*(scan(s) for s in universe))
-        candidates = [p for p in results if p and p.symbol not in _seen_today]
+        candidates = [p for p in results if p]
         candidates.sort(key=lambda p: (p.quality, p.relative_bar_volume), reverse=True)
         _STATE["candidates"] = [asdict(p) for p in candidates[:10]]
 
         for p in candidates:
-            if len(_STATE["proposals_today"]) >= MAX_TRADES_PER_DAY:
-                break
             if p.quality < 7.2:
                 continue
-            _seen_today.add(p.symbol)
+            bar_time = datetime.fromisoformat(p.bar_time)
+            key = (p.symbol, p.engine)
+            previous = _last_signal.get(key)
+            if previous is not None and (bar_time - previous).total_seconds() < SIGNAL_COOLDOWN_MINUTES * 60:
+                continue
+            _last_signal[key] = bar_time
             data = asdict(p)
             _STATE["proposals_today"].append(data)
             _STATE["signals"].insert(0, data)
-            _STATE["signals"] = _STATE["signals"][:25]
+            _STATE["signals"] = _STATE["signals"][:200]
 
 
 async def _loop() -> None:

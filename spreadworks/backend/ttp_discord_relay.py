@@ -12,6 +12,7 @@ from fastapi import FastAPI
 SOURCE = os.getenv("TTP_SIGNAL_SOURCE", "https://ttp-flex-bot-v1.onrender.com/signals").strip()
 WEBHOOK = os.getenv("TTP_DISCORD_WEBHOOK_URL", "").strip()
 POLL = max(15, int(os.getenv("TTP_DISCORD_POLL_SECONDS", "30")))
+MAX_SIGNAL_AGE_SECONDS = max(60, int(os.getenv("TTP_DISCORD_MAX_SIGNAL_AGE_SECONDS", "300")))
 PINK = 0xFF4FA3
 SMOKE_ON_START = os.getenv("TTP_DISCORD_SMOKE_ON_START", "").strip().lower() in {"1","true","yes","on"}
 
@@ -20,10 +21,18 @@ app = FastAPI(title="TTP Discord Relay")
 task = None
 
 async def post_signal(client, s):
-    key = f"{s.get('symbol')}:{s.get('bar_time')}"
+    key = f"{s.get('symbol')}:{s.get('engine')}:{s.get('bar_time')}"
     if key in seen:
         return
-    seen.add(key)
+    try:
+        bar_time = datetime.fromisoformat(str(s["bar_time"]))
+        if bar_time.tzinfo is None:
+            return
+        age = (datetime.now(timezone.utc) - bar_time.astimezone(timezone.utc)).total_seconds()
+        if not 0 <= age <= MAX_SIGNAL_AGE_SECONDS:
+            return
+    except (KeyError, TypeError, ValueError):
+        return
     shares = int(s.get("shares") or 0)
     symbol = str(s.get("symbol") or "").upper()
     entry = float(s.get("entry") or 0)
@@ -51,6 +60,7 @@ async def post_signal(client, s):
     }
     r = await client.post(WEBHOOK, json={"username": "TTP FLEX Bot", "embeds": [embed]}, timeout=15)
     r.raise_for_status()
+    seen.add(key)
 
 async def send_smoke_test(client):
     embed = {
