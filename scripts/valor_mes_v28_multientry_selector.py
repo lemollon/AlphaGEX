@@ -182,5 +182,117 @@ def launch_if_enabled():
         env=env,stdin=subprocess.DEVNULL,close_fds=True)
     return True
 
+
+V29_STUDY="valor-mes-v29-inverse-events-20260925"
+V29_LOCK=669202609
+
+def run_inverse_events():
+    """Test whether v22 event timing has edge with the opposite direction."""
+    import io
+    import pandas as pd
+    import psycopg2
+    from psycopg2.extras import Json
+    from scripts import valor_mes_rebuild_v4 as core
+    from scripts import valor_mes_v22_event_driven as v22
+
+    conn=psycopg2.connect(os.environ["DATABASE_URL"],connect_timeout=15)
+    conn.autocommit=True
+    cur=conn.cursor()
+    cur.execute("SELECT pg_try_advisory_lock(%s)",(V29_LOCK,))
+    if not cur.fetchone()[0]:
+        conn.close()
+        return
+
+    sh=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    try:
+        cur.execute("""CREATE TABLE IF NOT EXISTS valor_mes_v29_state(
+          study_id text PRIMARY KEY,status text NOT NULL,detail jsonb,updated_at timestamptz DEFAULT now());
+          CREATE TABLE IF NOT EXISTS valor_mes_v29_results(
+          study_id text PRIMARY KEY,summary jsonb NOT NULL,created_at timestamptz DEFAULT now());""")
+        cur.execute("""INSERT INTO valor_mes_v29_state(study_id,status,detail) VALUES(%s,'running',%s)
+          ON CONFLICT(study_id) DO UPDATE SET status='running',detail=excluded.detail,updated_at=now()""",
+          (V29_STUDY,Json(dict(source_sha256=sh,research_only=True,production_changed=False))))
+
+        out=[]
+        for year in YEARS:
+            cur.execute("SELECT sha256,parquet_zstd FROM valor_research_bar_cache WHERE cache_key=%s",
+                        (f"GLBX.MDP3:ohlcv-1m:MES.v.0:{year}",))
+            row=cur.fetchone()
+            if not row:
+                raise ValueError(f"missing MES cache {year}")
+            body=bytes(row[1])
+            dig=hashlib.sha256(body).hexdigest()
+            expected=v22.HASHES[year]
+            if dig!=row[0] or dig!=expected:
+                raise ValueError(f"cache checksum mismatch {year}")
+
+            d=core.prepare(pd.read_parquet(io.BytesIO(body)))
+            signals=v22.candidates(d)
+
+            for name,horizon in v22.SPECS.items():
+                inv=[]
+                for o in signals[name]:
+                    x=dict(o)
+                    ref=float(x["reference"])
+                    side=-int(x["side"])
+                    risk=float(x["risk"])
+                    reward=abs(float(x["target"])-ref)
+                    x["side"]=side
+                    x["stop"]=ref-side*risk
+                    x["target"]=ref+side*reward
+                    x["risk"]=risk
+                    inv.append(x)
+
+                trades,censored,rejected=core.replay(d,inv,horizon)
+                for ticks in (2,4):
+                    r=core.summarize(trades,censored,rejected,f"inverse_{name}",ticks)
+                    r={k:v for k,v in r.items() if k not in ("trade_ledger","censored_ledger")}
+                    r.update(candidate=f"inverse_{name}",year=year,
+                             raw_candidates=len(inv),research_only=True,
+                             production_changed=False,live_ready=False)
+                    out.append(r)
+
+        viable=[]
+        for name in ("or_breakout_retest","vwap_reclaim","compression_breakout"):
+            label=f"inverse_{name}"
+            rs=[r for r in out if r["candidate"]==label and r["cost_ticks_each_side"]==4]
+            if len(rs)==3 and all(
+                r["trades"]>=100 and r["net_dollars"]>0 and
+                r["profit_factor"] is not None and r["profit_factor"]>=1.10 and
+                r["avg_trade"] is not None and r["avg_trade"]>=5 and
+                r["censored_fraction"]<=.02
+                for r in rs
+            ):
+                viable.append(dict(
+                    candidate=label,
+                    total_net=round(sum(r["net_dollars"] for r in rs),6),
+                    min_trades=min(r["trades"] for r in rs),
+                    worst_pf=min(r["profit_factor"] for r in rs),
+                    worst_net=min(r["net_dollars"] for r in rs)
+                ))
+
+        cur.execute("""INSERT INTO valor_mes_v29_results(study_id,summary) VALUES(%s,%s)
+          ON CONFLICT(study_id) DO UPDATE SET summary=excluded.summary,created_at=now()""",
+          (V29_STUDY,Json(out)))
+        cur.execute("""UPDATE valor_mes_v29_state SET status='completed',detail=%s,updated_at=now()
+          WHERE study_id=%s""",
+          (Json(dict(source_sha256=sh,research_only=True,production_changed=False,
+                     test="exact opposite direction of v22 event families",
+                     minimum_activity_rule=">=100 trades/year for broad engines",
+                     viable=viable,untouched_next_year=2026)),V29_STUDY))
+    except Exception as e:
+        cur.execute("""INSERT INTO valor_mes_v29_state(study_id,status,detail) VALUES(%s,'failed',%s)
+          ON CONFLICT(study_id) DO UPDATE SET status='failed',detail=excluded.detail,updated_at=now()""",
+          (V29_STUDY,Json(dict(source_sha256=sh,error_type=type(e).__name__,
+                              message=str(e)[:500],research_only=True,
+                              production_changed=False))))
+        raise
+    finally:
+        try:
+            cur.execute("SELECT pg_advisory_unlock(%s)",(V29_LOCK,))
+        finally:
+            conn.close()
+
 if __name__=="__main__":
     run()
+    run_inverse_events()
