@@ -30,12 +30,28 @@ CLOSURES = [
     "2025-12-24","2025-12-25","2026-01-01","2026-01-19","2026-02-16","2026-04-03",
     "2026-05-25","2026-06-19","2026-07-03",
 ]
+RUN_START = os.getenv("FLAME_REPAIR_START", "2025-01-01")
+RUN_END = os.getenv("FLAME_REPAIR_END", "2026-08-31")
+
+def _expected_sessions(start, end, closures):
+    from datetime import date, timedelta
+    d=date.fromisoformat(start); last=date.fromisoformat(end); n=0
+    closed=set(closures)
+    while d<=last:
+        if d.weekday()<5 and d.isoformat() not in closed:
+            n+=1
+        d+=timedelta(days=1)
+    return n
+
+RUN_CLOSURES=[d for d in CLOSURES if RUN_START <= d <= RUN_END]
+RUN_EXPECTED=_expected_sessions(RUN_START,RUN_END,RUN_CLOSURES)
+
 core.SPEC.update({
-    "id": "flame-research-exit-repair-v1-20260925",
-    "start": "2025-01-01",
-    "end": "2026-08-31",
-    "closures": CLOSURES,
-    "expected_sessions": 413,
+    "id": "flame-research-exit-repair-v2-20260925",
+    "start": RUN_START,
+    "end": RUN_END,
+    "closures": RUN_CLOSURES,
+    "expected_sessions": RUN_EXPECTED,
     "flat_et_minute": 945,
     "max_requests": 1200,
     "deadline_seconds": 7200,
@@ -230,20 +246,26 @@ def execute():
             ebb_changed=False,
             live_changed=False,
         )
+        errors=[]
         for i, day in enumerate(days, 1):
-            stock = old.get_stock(feed, day)
-            df = base.DayFeed(feed, day, stock)
-            eff = old.research_eff(stock, 720)
-            row = {"day": day, "eff": float(eff), "variants": {}}
-            if eff >= D("0.30"):
-                q = df.snapshot(720)
-                k = base.choose_snapshot(q, old.spot(stock, 720), 2)
-                if k is not None:
-                    for name, cfg in VARIANTS.items():
-                        row["variants"][name] = replay_variant(df, k, 2, 720, **cfg)
-            rows.append(row)
-            if i % 25 == 0:
-                core.emit("exit_repair_progress", completed=i, total=len(days), day=day, provider_requests=feed.n)
+            try:
+                stock = old.get_stock(feed, day)
+                df = base.DayFeed(feed, day, stock)
+                eff = old.research_eff(stock, 720)
+                row = {"day": day, "eff": float(eff), "variants": {}}
+                if eff >= D("0.30"):
+                    q = df.snapshot(720)
+                    k = base.choose_snapshot(q, old.spot(stock, 720), 2)
+                    if k is not None:
+                        for name, cfg in VARIANTS.items():
+                            row["variants"][name] = replay_variant(df, k, 2, 720, **cfg)
+                rows.append(row)
+            except Exception as day_exc:
+                errors.append({"day":day,"kind":type(day_exc).__name__,"reason":str(day_exc)[:240]})
+                rows.append({"day":day,"eff":None,"variants":{},"error":errors[-1]})
+                core.emit("exit_repair_day_error", **errors[-1])
+            if i % 10 == 0 or i == len(days):
+                core.emit("exit_repair_progress", completed=i, total=len(days), day=day, provider_requests=feed.n, errors=len(errors))
 
         dev = {name: summarize(rows, name, core.SPEC["start"], DEV_END) for name in VARIANTS}
         ext = {name: summarize(rows, name, EXT_START, core.SPEC["end"]) for name in VARIANTS}
@@ -254,7 +276,7 @@ def execute():
         v = verdict(dev, ext)
         core.STATE["stage"] = "complete"
         core.emit("exit_repair_verdict", **v)
-        core.emit("exit_repair_complete", sessions=len(days), provider_requests=feed.n, prior_inputs=0, ebb_changed=False, live_changed=False)
+        core.emit("exit_repair_complete", sessions=len(days), provider_requests=feed.n, errors=errors, prior_inputs=0, ebb_changed=False, live_changed=False)
     except Exception as exc:
         core.STATE["stage"] = "failed"
         core.emit("exit_repair_failed", kind=type(exc).__name__, reason=str(exc)[:500], completed=len(rows), provider_requests=feed.n)
