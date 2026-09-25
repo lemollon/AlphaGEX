@@ -297,8 +297,27 @@ def execute():
                     total_requests=sum(x.n for x in feeds)
                     core.emit("exit_repair_progress",completed=done,total=len(days),day=row["day"],provider_requests=total_requests,errors=len(errors),workers=workers)
 
+        # Repair any provider-timeout days sequentially so the final comparison
+        # never silently drops sessions. Each retry uses a fresh Feed.
+        for repair_round in range(1,4):
+            failed_days=[r["day"] for r in rows if r.get("error")]
+            if not failed_days:
+                break
+            core.emit("exit_repair_retry_round",round=repair_round,failed_days=len(failed_days))
+            repaired={}
+            for day in failed_days:
+                local_feed=core.Feed()
+                feeds.append(local_feed)
+                row,err=run_day(day)
+                repaired[day]=row
+                if err:
+                    core.emit("exit_repair_retry_error",round=repair_round,**err)
+            rows=[repaired.get(r["day"],r) for r in rows]
         rows.sort(key=lambda x:x["day"])
+        errors=[r["error"] for r in rows if r.get("error")]
         feed.n=sum(x.n for x in feeds)
+        if errors:
+            raise RuntimeError("unrecovered_research_days:"+json.dumps(errors[:20],sort_keys=True))
 
         dev = {name: summarize(rows, name, core.SPEC["start"], DEV_END) for name in VARIANTS}
         ext = {name: summarize(rows, name, EXT_START, core.SPEC["end"]) for name in VARIANTS}
