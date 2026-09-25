@@ -1,11 +1,21 @@
-"""Isolated Flame research worker in safe disabled state.
-No research run starts automatically and no live/customer trading code is imported.
+"""Isolated research status server.
+
+Completed research is not auto-run on web-service restart. Historical runs are
+triggered explicitly so Render restarts cannot replay completed work.
 """
 import os
-from http.server import HTTPServer
-import flame_reset_baseline as core
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-core.STATE["stage"] = "disabled"
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body=b'{"status":"idle","research_autorun":false,"live_changed":false}'
+        self.send_response(200)
+        self.send_header("Content-Type","application/json")
+        self.send_header("Content-Length",str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, fmt, *args):
+        return
 
 if __name__ == "__main__":
-    HTTPServer(("0.0.0.0", int(os.getenv("PORT", "10000"))), core.Handler).serve_forever()
+    HTTPServer(("0.0.0.0", int(os.getenv("PORT","10000"))), Handler).serve_forever()
