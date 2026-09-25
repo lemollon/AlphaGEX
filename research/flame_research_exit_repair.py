@@ -62,13 +62,15 @@ core.SPEC.update({
 })
 
 VARIANTS = {
-    "baseline_tp50_stop2x": {"target_capture_pct": 50, "stop_mult": D("2.0")},
+    "tp10_stop2x": {"target_capture_pct": 10, "stop_mult": D("2.0")},
+    "tp15_stop2x": {"target_capture_pct": 15, "stop_mult": D("2.0")},
+    "tp20_stop2x": {"target_capture_pct": 20, "stop_mult": D("2.0")},
     "tp25_stop2x": {"target_capture_pct": 25, "stop_mult": D("2.0")},
-    "tp50_stop1_5x": {"target_capture_pct": 50, "stop_mult": D("1.5")},
-    "tp25_stop1_5x": {"target_capture_pct": 25, "stop_mult": D("1.5")},
-    "tp50_no_stop_diag": {"target_capture_pct": 50, "stop_mult": None},
+    "tp30_stop2x": {"target_capture_pct": 30, "stop_mult": D("2.0")},
+    "tp35_stop2x": {"target_capture_pct": 35, "stop_mult": D("2.0")},
+    "tp40_stop2x": {"target_capture_pct": 40, "stop_mult": D("2.0")},
+    "baseline_tp50_stop2x": {"target_capture_pct": 50, "stop_mult": D("2.0")},
 }
-
 DEV_END = "2025-05-30"
 EXT_START = "2025-06-02"
 
