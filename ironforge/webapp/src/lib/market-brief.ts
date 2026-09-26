@@ -36,7 +36,9 @@
  */
 import { dbQuery, dbExecute, num, botTable, dteMode } from './db'
 import { getRawQuotes, isConfigured as isTradierConfigured } from './tradier'
-import { fetchGexSnapshot } from './blaze/gex-client'
+import { fetchGexLevels, regimeFromNetGex } from './gex-levels'
+import { getTvMarketStructure } from './gex/trading-volatility-client'
+import { computeDailyExpectedMove } from './gex/derive'
 import { formatVolRegime, type AdvisorReport } from './volatility'
 
 const ALPHAGEX_API_BASE = (process.env.ALPHAGEX_API_BASE || 'https://alphagex-api.onrender.com').replace(/\/$/, '')
@@ -232,38 +234,48 @@ function regimeKind(regime: string | null): GexState['regime_kind'] {
 }
 
 /**
- * Fetch the SPY GEX profile. Uses a generous 30-min freshness window (vs the
- * live trader's strict 90s) because a brief only needs a recent-ish picture,
- * not a tick-accurate one. Any fetch/stale/parse error degrades gracefully to
- * an "unavailable" GexState so the brief still generates.
+ * Fetch the SPY GEX profile from data IronForge already has (no more
+ * alphagex-api dependency — that route was deleted in a964d310):
+ *   - net/call/put gamma + call/put wall: computed from the live Tradier
+ *     option chain (see lib/gex-levels.ts)
+ *   - gamma flip point: TradingVolatility client (null if no API key /
+ *     unreachable — never fabricated or backfilled from a stale value)
+ *   - 1-day 1-sigma move: derived from spot + VIX (lib/gex/derive.ts)
+ * Any fetch error or missing field degrades gracefully to null on that
+ * field so the brief still generates; total failure returns emptyGexState().
  */
-async function gatherGexState(): Promise<GexState> {
-  try {
-    const s = await fetchGexSnapshot('SPY', 1800)
-    const spot = Number.isFinite(s.spot) && s.spot > 0 ? s.spot : null
-    const callWall = Number.isFinite(s.call_wall) && s.call_wall > 0 ? s.call_wall : null
-    const putWall = Number.isFinite(s.put_wall) && s.put_wall > 0 ? s.put_wall : null
-    const flip = Number.isFinite(s.flip_point) && s.flip_point > 0 ? s.flip_point : null
-    const pctToCall = spot && callWall ? Math.round(((callWall - spot) / spot) * 10000) / 100 : null
-    const pctToPut = spot && putWall ? Math.round(((spot - putWall) / spot) * 10000) / 100 : null
-    const spotVsFlip: GexState['spot_vs_flip'] =
-      spot && flip ? (spot > flip * 1.0005 ? 'above' : spot < flip * 0.9995 ? 'below' : 'at') : 'unknown'
-    return {
-      available: true,
-      spot,
-      net_gex: Number.isFinite(s.net_gex) ? s.net_gex : null,
-      flip_point: flip,
-      call_wall: callWall,
-      put_wall: putWall,
-      regime: s.regime || null,
-      regime_kind: regimeKind(s.regime),
-      sigma_1d: Number.isFinite(s.sigma_1d_band_width) && s.sigma_1d_band_width > 0 ? s.sigma_1d_band_width : null,
-      pct_to_call_wall: pctToCall,
-      pct_to_put_wall: pctToPut,
-      spot_vs_flip: spotVsFlip,
-    }
-  } catch {
+async function gatherGexState(vix: number | null): Promise<GexState> {
+  const [levels, tv] = await Promise.all([
+    fetchGexLevels('SPY', 45).catch(() => null),
+    getTvMarketStructure('SPY').catch(() => null),
+  ])
+  if (!levels || (levels.net_gex == null && levels.call_wall == null && levels.put_wall == null)) {
     return emptyGexState()
+  }
+  const spot = levels.spot && levels.spot > 0 ? levels.spot : null
+  const callWall = levels.call_wall
+  const putWall = levels.put_wall
+  const netGex = levels.net_gex
+  const flip = tv?.gammaFlipPrice && tv.gammaFlipPrice > 0 ? tv.gammaFlipPrice : null
+  const regime = netGex != null ? regimeFromNetGex(netGex) : null
+  const pctToCall = spot && callWall ? Math.round(((callWall - spot) / spot) * 10000) / 100 : null
+  const pctToPut = spot && putWall ? Math.round(((spot - putWall) / spot) * 10000) / 100 : null
+  const spotVsFlip: GexState['spot_vs_flip'] =
+    spot && flip ? (spot > flip * 1.0005 ? 'above' : spot < flip * 0.9995 ? 'below' : 'at') : 'unknown'
+  const { move } = computeDailyExpectedMove(spot ?? 0, vix)
+  return {
+    available: true,
+    spot,
+    net_gex: netGex,
+    flip_point: flip,
+    call_wall: callWall,
+    put_wall: putWall,
+    regime,
+    regime_kind: regimeKind(regime),
+    sigma_1d: move > 0 ? move : null,
+    pct_to_call_wall: pctToCall,
+    pct_to_put_wall: pctToPut,
+    spot_vs_flip: spotVsFlip,
   }
 }
 
@@ -469,7 +481,7 @@ async function gatherRecentTrades(bot: string): Promise<RecentTrade[]> {
 
 export async function gatherInputs(bot: string, briefType: BriefType): Promise<BriefInputs> {
   const marketState = await gatherMarketState()
-  const gexState = await gatherGexState()
+  const gexState = await gatherGexState(marketState.vix)
   // Best-effort vol-regime advisory line (never throws; null → omitted).
   marketState.vol_regime = (await gatherVolRegime(marketState).catch(() => null)) ?? undefined
   // GEX carries a fresher spot than Tradier's last when SPY quote is stale/null.
@@ -617,7 +629,7 @@ WATCH_NEXT_HOUR:
 Keep the whole thing under 320 words. Plain text only.`
 }
 
-function formatInputsForPrompt(bot: string, i: BriefInputs): string {
+export function formatInputsForPrompt(bot: string, i: BriefInputs): string {
   const profile = botProfile(bot)
   const directional = profile.kind === 'debit_spread'
   const structureLabel = directional
