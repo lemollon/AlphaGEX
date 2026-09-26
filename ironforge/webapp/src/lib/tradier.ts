@@ -2270,18 +2270,21 @@ export async function placeIcOrderAllAccounts(
         } else {
           acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, prodCeiling)
         }
-      } else if (botName && ebbSizing.isEbbLadderBot(botName) && ebbSizing.ebbCustomerLadderMode() === 'profit') {
-        // PROFIT LADDER for EBB customer accounts (Leron, 2026-09-26, main
-        // conversation: "customer accounts use a PROFIT LADDER for EBB").
-        // contracts = floor(floor_amount / rung) + floor(peak_profit / rung),
-        // where floor_amount is THIS account's own FLINT floor
-        // (flint_account_floor, seeded once — the same floor
+      } else if (botName === 'flame' && ebbSizing.ebbCustomerLadderMode() === 'profit') {
+        // PROFIT LADDER for FLAME's customer accounts ONLY (Leron, 2026-09-26,
+        // scope-corrected same day: "the profit ladder for FLAME's customer
+        // accounts only... SPARK customer sizing must stay exactly as before
+        // regardless of the flag"). contracts = floor(floor_amount / rung) +
+        // floor(peak_profit / rung), where floor_amount is THIS account's own
+        // FLINT floor (flint_account_floor, seeded once — the same floor
         // EBB_FAVORABLE_UPSIZE's own sandbox cushion check already reads via
         // getFlintSandboxLedger) and peak_profit is this account's high-water
-        // equity minus that floor. Gated by EBB_CUSTOMER_LADDER=profit only —
-        // unset/'equity' never reaches this branch, so every sandbox account
-        // stays on the pre-2026-09-26 mirror below. FLAME's own production
-        // account is type='production' and never reaches here either.
+        // equity minus that floor. Gated by botName === 'flame' AND
+        // EBB_CUSTOMER_LADDER=profit — a SPARK customer account NEVER reaches
+        // this branch regardless of the flag, and unset/'equity' leaves every
+        // sandbox account (FLAME or SPARK) on the pre-2026-09-26 mirror below.
+        // FLAME's own production account is type='production' and never
+        // reaches here either.
         const ledger = await getFlintSandboxLedger(acct.name, accountId)
         if (ledger.floor == null || ledger.equity == null) {
           console.warn(

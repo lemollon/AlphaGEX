@@ -369,7 +369,7 @@ describe('EBB_FAVORABLE_UPSIZE — favorable-VIX-day +1 contract (Leron, 2026-09
   })
 })
 
-describe('EBB_CUSTOMER_LADDER — customer (sandbox) PROFIT ladder (Leron, 2026-09-26)', () => {
+describe('EBB_CUSTOMER_LADDER — FLAME customer (sandbox) PROFIT ladder ONLY (Leron, 2026-09-26)', () => {
   const ORIG_ENV = process.env.EBB_CUSTOMER_LADDER
 
   afterEach(() => {
@@ -403,7 +403,7 @@ describe('EBB_CUSTOMER_LADDER — customer (sandbox) PROFIT ladder (Leron, 2026-
     expect(ebbProfitLadderContracts('flame', 4242, 1500)).toBe(3)
   })
 
-  it('SPARK rung is $5,000 — same formula, different denominator', () => {
+  it('the shared math takes a SPARK rung too ($5,000) — the function is generic; tradier.ts is what restricts it to FLAME only (see wiring below)', () => {
     expect(ebbProfitLadderContracts('spark', 12000, 0)).toBe(2)
     expect(ebbProfitLadderContracts('spark', 12000, 5000)).toBe(3)
   })
@@ -436,14 +436,30 @@ describe('EBB_CUSTOMER_LADDER — customer (sandbox) PROFIT ladder (Leron, 2026-
     expect(ebbProfitLadderContracts('flame', 3000, 0)).toBe(2)
   })
 
-  describe('wiring: tradier.ts sandbox branch — profit ladder gated per-bot, per-flag; production untouched', () => {
+  describe('wiring: tradier.ts sandbox branch — FLAME-only profit ladder; SPARK and production untouched', () => {
     const lib = join(__dirname, '..')
     const tradier = readFileSync(join(lib, 'tradier.ts'), 'utf8')
 
-    it('the sandbox branch only reaches the profit ladder when the bot is an EBB ladder bot AND the flag is "profit"', () => {
+    it('the sandbox branch only reaches the profit ladder when the bot is FLAME AND the flag is "profit" — SPARK never, regardless of the flag', () => {
       expect(tradier).toMatch(
+        /\}\s*else if \(botName === 'flame' && ebbSizing\.ebbCustomerLadderMode\(\) === 'profit'\) \{/,
+      )
+      // The gate is a literal bot-name check, not isEbbLadderBot (which would
+      // also admit SPARK) — scope-corrected 2026-09-26: "SPARK customer sizing
+      // must stay exactly as before regardless of the flag."
+      expect(tradier).not.toMatch(
         /\}\s*else if \(botName && ebbSizing\.isEbbLadderBot\(botName\) && ebbSizing\.ebbCustomerLadderMode\(\) === 'profit'\) \{/,
       )
+    })
+
+    it('a SPARK customer account falls through to the unchanged paperContracts mirror even when EBB_CUSTOMER_LADDER=profit', () => {
+      // botName === 'flame' is false for spark, so the `else if` above is
+      // skipped entirely and control falls to the final `else` — the same
+      // branch SPARK has always used, untouched by this flag.
+      const startsFlame = tradier.indexOf(`else if (botName === 'flame' && ebbSizing.ebbCustomerLadderMode() === 'profit') {`)
+      const startsFinalElse = tradier.indexOf('acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, paperContracts)')
+      expect(startsFlame).toBeGreaterThan(-1)
+      expect(startsFinalElse).toBeGreaterThan(startsFlame)
     })
 
     it('floor comes from getFlintSandboxLedger (flint_account_floor), never a second divergent floor', () => {

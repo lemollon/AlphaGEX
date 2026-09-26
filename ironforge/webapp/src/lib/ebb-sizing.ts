@@ -241,22 +241,28 @@ export function evaluateEbbUpsizeCushion(
 
 /**
  * EBB_CUSTOMER_LADDER — equity|profit, unset = equity (Leron, 2026-09-26,
- * approved in the main conversation): "customer accounts use a PROFIT
- * LADDER for EBB." Applies ONLY to non-FLAME customer (sandbox mirror)
- * accounts — FLAME's own production account (6YB71371) keeps today's
- * equity ladder (ebbLadderContracts/ebbLadderCapital above) no matter what
- * this flag says; tradier.ts's production branch never reads it. Unset or
- * any unrecognized value resolves to 'equity', which leaves every sandbox
- * account on the pre-2026-09-26 mirror (paperContracts, capped by that
- * account's own BP) — byte-for-byte unchanged.
+ * approved in the main conversation, then scope-corrected same day: "the
+ * profit ladder for FLAME's customer accounts only... SPARK customer sizing
+ * must stay exactly as before regardless of the flag"). Applies ONLY to
+ * FLAME's customer (sandbox mirror) accounts — tradier.ts gates the branch
+ * on a literal `botName === 'flame'` check, so a SPARK sandbox account
+ * NEVER reaches the profit ladder no matter what this flag says. FLAME's
+ * own PRODUCTION account (6YB71371) also keeps today's equity ladder
+ * (ebbLadderContracts/ebbLadderCapital above) regardless of this flag —
+ * tradier.ts's production branch never reads it either. Unset or any
+ * unrecognized value resolves to 'equity', which leaves every sandbox
+ * account (FLAME or SPARK) on the pre-2026-09-26 mirror (paperContracts,
+ * capped by that account's own BP) — byte-for-byte unchanged.
  */
 export function ebbCustomerLadderMode(): 'equity' | 'profit' {
   return (process.env.EBB_CUSTOMER_LADDER ?? '').trim().toLowerCase() === 'profit' ? 'profit' : 'equity'
 }
 
 /**
- * The PROFIT LADDER contract count for a customer (sandbox) account under
- * EBB_CUSTOMER_LADDER=profit:
+ * The PROFIT LADDER contract count under EBB_CUSTOMER_LADDER=profit for a
+ * FLAME customer (sandbox) account — the math is generic (bot-parameterized
+ * rung), but tradier.ts calls it for FLAME only; see ebbCustomerLadderMode
+ * above for the scope restriction:
  *
  *   contracts = floor(floor_amount / rung) + floor(peak_profit / rung)
  *
