@@ -214,7 +214,18 @@ import {
   type IcMtmResult,
   getOptionQuote,
   getDailyHistory,
+  getCallSpreadEntryCredit,
+  placeCallSpreadOrderAllAccounts,
 } from './tradier'
+import {
+  getCallSleeveMode,
+  getCallSleeveMaxContracts,
+  getCallSleeveGuardBuffer,
+  computeCallStrikes,
+  meetsCallCreditFloor,
+  isCallSleeveDayEligible,
+  isCallGuardTriggered,
+} from './flame-call-sleeve'
 import { BOT_STARTING_CAPITAL } from './bot-capital'
 import { getTvMarketStructure, type TvMarketStructure } from './gex/trading-volatility-client'
 import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, classifySignalState, notifyDecision, type SignalStreak } from './volAlerts'
@@ -4205,6 +4216,298 @@ async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
 }
 
 /* ------------------------------------------------------------------ */
+/*  FLAME-CALL SLEEVE — SPY 0DTE call credit spread, days FLAME's VIX  */
+/*  gate skips. Own table, own arm switch, own production path. Never  */
+/*  reads or writes flame_positions / flame_paper_account.             */
+/* ------------------------------------------------------------------ */
+
+const FLAME_CALL_SLEEVE_TABLE = 'flame_call_sleeve_positions'
+let _callSleeveTableReady = false
+
+async function ensureCallSleeveTable(): Promise<void> {
+  if (_callSleeveTableReady) return
+  await dbExecute(
+    `CREATE TABLE IF NOT EXISTS ${FLAME_CALL_SLEEVE_TABLE} (
+       id SERIAL PRIMARY KEY,
+       position_id TEXT UNIQUE NOT NULL,
+       ticker TEXT NOT NULL DEFAULT 'SPY',
+       expiration DATE NOT NULL,
+       call_short_strike NUMERIC NOT NULL,
+       call_long_strike NUMERIC NOT NULL,
+       contracts INTEGER NOT NULL,
+       entry_credit NUMERIC NOT NULL,
+       collateral_required NUMERIC NOT NULL,
+       underlying_at_entry NUMERIC,
+       close_price NUMERIC,
+       realized_pnl NUMERIC,
+       status TEXT NOT NULL DEFAULT 'open',
+       close_reason TEXT,
+       account_type TEXT NOT NULL DEFAULT 'paper',
+       mode TEXT NOT NULL,
+       sandbox_order_id TEXT,
+       open_time TIMESTAMP NOT NULL DEFAULT NOW(),
+       close_time TIMESTAMP,
+       open_date DATE NOT NULL,
+       created_at TIMESTAMP NOT NULL DEFAULT NOW()
+     )`,
+  )
+  _callSleeveTableReady = true
+}
+
+/**
+ * Entry. Called every scan cycle for FLAME only (see scanBot); internally a
+ * no-op unless ALL of: mode != off, inside FLAME's own 13:05-13:10 CT entry
+ * window (isInEntryWindow reused byte-for-byte, not re-derived), FLAME's VIX
+ * gate ratio is ABOVE its ceiling (the day filter — the same ratio FLAME's
+ * own gate computed, re-applied through isCallSleeveDayEligible), and this
+ * sleeve has not already traded today. One trade per day, fixed size — no
+ * ladder, no stand-down, no liquidity cap; this is a single 1-lot sleeve.
+ */
+async function tryOpenFlameCallSleeve(bot: BotDef, ct: Date): Promise<string> {
+  const mode = getCallSleeveMode()
+  if (mode === 'off') return ''
+  if (!isConfigured()) return ''
+  if (!isInEntryWindow(ct, bot)) return ''
+
+  await ensureCallSleeveTable()
+
+  // Day filter — reuses FLAME's own ratio computation (vixDecayCheck / VIX_DECAY_CEILING.flame).
+  // Trades ONLY the days FLAME's gate skips; never re-derives the ratio itself.
+  const asofDate = ct.toISOString().slice(0, 10)
+  const flameVix = await vixDecayCheck(asofDate, VIX_DECAY_CEILING.flame)
+  if (!isCallSleeveDayEligible(flameVix.ratio, VIX_DECAY_CEILING.flame)) {
+    return '' // FLAME's gate did not skip today (or the ratio is unknown) — sleeve sits out
+  }
+
+  const todayRows = await query(
+    `SELECT COUNT(*) AS cnt FROM ${FLAME_CALL_SLEEVE_TABLE}
+     WHERE (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY} AND account_type = 'paper'`,
+  )
+  if (int(todayRows[0]?.cnt) >= 1) return 'FLAME-CALL: no_trade | traded_today'
+
+  const q = await getQuote('SPY')
+  const spot = q?.last ?? 0
+  if (!(spot > 0)) {
+    console.log('[scanner] FLAME-CALL: no_trade | skip:no_quote')
+    return 'FLAME-CALL: no_trade | skip:no_quote'
+  }
+
+  const expiration = getTargetExpiration(0) // 0DTE, same-day — independent of FLAME's own 2DTE
+  const { short: callShort, long: callLong } = computeCallStrikes(spot)
+
+  const credit = await getCallSpreadEntryCredit('SPY', expiration, callShort, callLong)
+  if (!credit) {
+    console.log('[scanner] FLAME-CALL: no_trade | skip:no_quotes')
+    return 'FLAME-CALL: no_trade | skip:no_quotes'
+  }
+  if (!meetsCallCreditFloor(credit.callCredit)) {
+    console.log(`[scanner] FLAME-CALL: no_trade | skip:call_credit_too_low($${credit.callCredit.toFixed(2)})`)
+    return 'FLAME-CALL: no_trade | skip:call_credit_too_low'
+  }
+
+  const contracts = getCallSleeveMaxContracts()
+  const width = callLong - callShort
+  const collateral = Math.max(0, (width - credit.callCredit) * 100) * contracts
+  const positionId =
+    `FLAME-CALL-SPY-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+
+  await query(
+    `INSERT INTO ${FLAME_CALL_SLEEVE_TABLE} (
+       position_id, ticker, expiration, call_short_strike, call_long_strike,
+       contracts, entry_credit, collateral_required, underlying_at_entry,
+       status, account_type, mode, open_time, open_date
+     ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open','paper',$9, NOW(), ${CT_TODAY})`,
+    [positionId, expiration, callShort, callLong, contracts, credit.callCredit, collateral, spot, mode],
+  )
+  console.log(
+    `[scanner] FLAME-CALL SPY: ${contracts}x ${callShort}/${callLong}C exp ${expiration} ` +
+    `@ $${credit.callCredit.toFixed(2)} (spot ${spot.toFixed(2)}, ratio=${flameVix.ratio!.toFixed(3)}) mode=${mode}`,
+  )
+
+  if (mode !== 'live') return `FLAME-CALL: traded@${credit.callCredit.toFixed(2)}`
+
+  if (!canPlaceLiveOrders('flame')) {
+    console.log(`[scanner] FLAME-CALL: live:disarmed(${describeLiveGate('flame')})`)
+    return `FLAME-CALL: traded@${credit.callCredit.toFixed(2)} live:disarmed(${describeLiveGate('flame')})`
+  }
+
+  try {
+    const live = await placeCallSpreadOrderAllAccounts(
+      'SPY', expiration, callShort, callLong, contracts, credit.callCredit, positionId,
+    )
+    const fills = Object.entries(live)
+    if (fills.length === 0) {
+      console.log('[scanner] FLAME-CALL: live:no_fill')
+      return `FLAME-CALL: traded@${credit.callCredit.toFixed(2)} live:no_fill`
+    }
+    for (const [key, info] of fills) {
+      const hasFill = info.fill_price != null && info.fill_price > 0
+      const pCredit = hasFill ? info.fill_price! : credit.callCredit
+      const pContracts = info.contracts
+      const pCollateral = Math.max(0, (width - pCredit) * 100) * pContracts
+      const pPerson = key.split(':')[0] || 'PRODUCTION'
+      const pId = `${positionId}-prod-${pPerson.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+      await query(
+        `INSERT INTO ${FLAME_CALL_SLEEVE_TABLE} (
+           position_id, ticker, expiration, call_short_strike, call_long_strike,
+           contracts, entry_credit, collateral_required, underlying_at_entry,
+           status, account_type, mode, sandbox_order_id, open_time, open_date
+         ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open','production',$9,$10, NOW(), ${CT_TODAY})`,
+        [pId, expiration, callShort, callLong, pContracts, pCredit, pCollateral, spot, mode, String(info.order_id)],
+      )
+    }
+  } catch (e: unknown) {
+    console.error(`[scanner] FLAME-CALL live placement failed: ${e instanceof Error ? e.message : String(e)}`)
+  }
+
+  return `FLAME-CALL: traded@${credit.callCredit.toFixed(2)}`
+}
+
+/**
+ * Assignment guard for the call sleeve — mirrors closeAtRiskBeforeBell's
+ * 14:57-15:00 CT window and buffer semantics (spot within, or above, the
+ * buffer of the short strike), but against flame_call_sleeve_positions only,
+ * with its OWN buffer (CALL_SLEEVE_GUARD_BUFFER, default $0.25 — narrower
+ * than FLAME's put-side $0.50, per spec). A buffer of 0 (env set to '' or
+ * '0') disables the guard: the position then holds to expiry unguarded,
+ * deliberately, same fail-safe direction as the rest of this file — no quote
+ * closes nothing.
+ */
+async function closeCallSleeveAtRiskBeforeBell(ct: Date): Promise<string> {
+  if (getCallSleeveMode() === 'off') return ''
+  const hhmm = ctHHMM(ct)
+  if (hhmm < ASSIGNMENT_GUARD_HHMM || hhmm >= ASSIGNMENT_GUARD_END_HHMM) return ''
+
+  const buffer = getCallSleeveGuardBuffer()
+  if (!(buffer > 0)) return ''
+
+  const todayStr = ct.toISOString().slice(0, 10)
+  const rows = await query(
+    `SELECT position_id, expiration, call_short_strike, call_long_strike, contracts,
+            entry_credit, account_type, mode
+       FROM ${FLAME_CALL_SLEEVE_TABLE}
+      WHERE status = 'open' AND expiration = $1`,
+    [todayStr],
+  )
+  if (rows.length === 0) return ''
+
+  const q = await getQuote('SPY')
+  const spot = q?.last ?? 0
+  if (!(spot > 0)) {
+    console.warn(`[scanner] FLAME-CALL ASSIGNMENT GUARD NO QUOTE: no SPY price at ${hhmm} CT — holds to settlement unguarded.`)
+    return 'FLAME-CALL guard:no_quote'
+  }
+
+  const out: string[] = []
+  for (const p of rows) {
+    const shortStrike = num(p.call_short_strike)
+    if (!isCallGuardTriggered(spot, shortStrike, buffer)) {
+      out.push(`${p.position_id}=clear@${spot.toFixed(2)}`)
+      continue
+    }
+
+    const longStrike = num(p.call_long_strike)
+    const contracts = int(p.contracts)
+    const entryCredit = num(p.entry_credit)
+    const width = longStrike - shortStrike
+    const expiration = p.expiration?.toISOString?.()?.slice(0, 10) || String(p.expiration).slice(0, 10)
+
+    // Cost to close, worst-realistic-fill NBBO: buy back the short at its ASK,
+    // sell the long at its BID. No quote fails safe to the theoretical max
+    // (the full wing) rather than guessing a cheaper close.
+    let costToClose = width
+    try {
+      const [csQ, clQ] = await Promise.all([
+        getOptionQuote(buildOccSymbol('SPY', expiration, shortStrike, 'C')),
+        getOptionQuote(buildOccSymbol('SPY', expiration, longStrike, 'C')),
+      ])
+      if (csQ && clQ) costToClose = Math.min(Math.max(0, csQ.ask - clQ.bid), width)
+    } catch { /* keep the fail-safe worst case */ }
+
+    const realizedPnl = Math.round((entryCredit - costToClose) * 100 * contracts * 100) / 100
+
+    await query(
+      `UPDATE ${FLAME_CALL_SLEEVE_TABLE}
+         SET status = 'closed', close_reason = 'assignment_guard', close_price = $1,
+             realized_pnl = $2, close_time = NOW()
+       WHERE position_id = $3 AND status = 'open'`,
+      [costToClose, realizedPnl, p.position_id],
+    )
+    console.log(
+      `[scanner] FLAME-CALL ASSIGNMENT GUARD CLOSED ${p.position_id} spot=${spot.toFixed(2)} ` +
+      `short ${shortStrike}C buffer=$${buffer.toFixed(2)} cost=$${costToClose.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,
+    )
+
+    if (p.account_type === 'production' && p.mode === 'live') {
+      try {
+        await placeCallSpreadOrderAllAccounts(
+          'SPY', expiration, shortStrike, longStrike, contracts, costToClose, String(p.position_id),
+          { close: true },
+        )
+      } catch (e: unknown) {
+        console.error(`[scanner] FLAME-CALL LIVE GUARD CLOSE FAILED ${p.position_id}: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+    out.push(`${p.position_id}=guarded@${spot.toFixed(2)}`)
+  }
+  return out.length ? `FLAME-CALL guard[${out.join(' ')}]` : ''
+}
+
+/**
+ * Settlement at expiry — hold to close, no stop, no take-profit (spec). Books
+ * intrinsic value of the call spread against SPY's close, clamped to the
+ * wing width, the same convention FLAME's own put side settles with. Only
+ * ever touches rows whose expiration has been reached; a missing close price
+ * fails safe to the full wing (worst case) rather than guessing.
+ */
+async function settleCallSleeveExpired(ct: Date): Promise<string> {
+  if (getCallSleeveMode() === 'off') return ''
+  const hhmm = ctHHMM(ct)
+  if (hhmm < ASSIGNMENT_GUARD_END_HHMM) return '' // same 15:00 CT boundary as the put side
+
+  const todayStr = ct.toISOString().slice(0, 10)
+  const rows = await query(
+    `SELECT position_id, expiration, call_short_strike, call_long_strike, contracts, entry_credit
+       FROM ${FLAME_CALL_SLEEVE_TABLE}
+      WHERE status = 'open' AND expiration <= $1`,
+    [todayStr],
+  )
+  if (rows.length === 0) return ''
+
+  const q = await getQuote('SPY')
+  const closePx = q?.last ?? null
+
+  const out: string[] = []
+  for (const p of rows) {
+    const shortStrike = num(p.call_short_strike)
+    const longStrike = num(p.call_long_strike)
+    const contracts = int(p.contracts)
+    const entryCredit = num(p.entry_credit)
+    const width = longStrike - shortStrike
+
+    const intrinsic = closePx != null && closePx > 0
+      ? Math.min(Math.max(0, closePx - shortStrike), width)
+      : width // no close price: fail safe to worst case, same convention as the guard above
+
+    const realizedPnl = Math.round((entryCredit - intrinsic) * 100 * contracts * 100) / 100
+
+    await query(
+      `UPDATE ${FLAME_CALL_SLEEVE_TABLE}
+         SET status = 'expired', close_reason = 'settled_at_expiry', close_price = $1,
+             realized_pnl = $2, close_time = NOW()
+       WHERE position_id = $3 AND status = 'open'`,
+      [intrinsic, realizedPnl, p.position_id],
+    )
+    console.log(
+      `[scanner] FLAME-CALL SETTLED ${p.position_id}: close=${closePx != null ? '$' + closePx.toFixed(2) : 'unknown'} ` +
+      `short ${shortStrike}C intrinsic=$${intrinsic.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,
+    )
+    out.push(`${p.position_id}=settled`)
+  }
+  return out.length ? `FLAME-CALL settle[${out.join(' ')}]` : ''
+}
+
+/* ------------------------------------------------------------------ */
 /*  THE EXPIRED-POSITION WATCHDOG — a backstop that FIXES, not an alarm */
 /* ------------------------------------------------------------------ */
 
@@ -7953,6 +8256,34 @@ async function scanBot(bot: BotDef): Promise<void> {
       if (settled) reason += settled
     } catch (e) {
       console.error(`[scanner] ${botName} settlement failed:`, e)
+    }
+
+    // FLAME-CALL SLEEVE — SPY 0DTE call credit spread, days FLAME's VIX gate
+    // skips (FLAME_CALL_SLEEVE_MODE, default off). Entirely separate table and
+    // arm switch from FLAME's put side; scoped to bot.name === 'flame' only so
+    // SPARK/INFERNO/FORGE/KINDLE never reach this code. Guard and settle run
+    // every cycle (they no-op most minutes); entry only fires inside its own
+    // window check. Wrapped like every other guard/settle above: a failure
+    // here must never take FLAME's own put-side cycle down.
+    if (bot.name === 'flame') {
+      try {
+        const callGuarded = await closeCallSleeveAtRiskBeforeBell(ct)
+        if (callGuarded) console.log(`[scanner] ${callGuarded}`)
+      } catch (e) {
+        console.error('[scanner] FLAME-CALL assignment guard failed:', e)
+      }
+      try {
+        const callSettled = await settleCallSleeveExpired(ct)
+        if (callSettled) console.log(`[scanner] ${callSettled}`)
+      } catch (e) {
+        console.error('[scanner] FLAME-CALL settlement failed:', e)
+      }
+      try {
+        const callTraded = await tryOpenFlameCallSleeve(bot, ct)
+        if (callTraded) console.log(`[scanner] ${callTraded}`)
+      } catch (e) {
+        console.error('[scanner] FLAME-CALL entry failed:', e)
+      }
     }
 
     // BACKSTOP. The pass above owns the normal case; this one owns everything else.
