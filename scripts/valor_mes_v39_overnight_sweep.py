@@ -27,9 +27,9 @@ from scripts import valor_mes_v33_crossmarket as v33
 from scripts import valor_mes_v36_overnight_inventory as v36
 
 
-SCHEMA_VERSION = "valor-mes-v39-result/1.0.0"
+SCHEMA_VERSION = "valor-mes-v39-result/1.0.1"
 STRATEGY_VERSION = "v39"
-STUDY_ID = "valor-mes-v39-overnight-sweep-20260926"
+STUDY_ID = "valor-mes-v39-overnight-sweep-20260926-r1"
 ALLOWED_YEARS = (2023, 2024, 2025)
 DEPTHS = (0.10, 0.20)
 TARGET_RS = (1.5, 2.0)
@@ -617,6 +617,17 @@ def _selection_rank(summary: dict) -> tuple:
             float(metrics["average_trade"] or -math.inf), -cell_index)
 
 
+def _diagnostic_cell(cells: list[dict]) -> dict | None:
+    """Choose a cluster-audit cell with enough observations to test a rule."""
+    if not cells:
+        return None
+    cluster_eligible = [
+        cell for cell in cells
+        if cell["cost_views"]["selection_2t"]["trade_count"] >= 40
+    ]
+    return max(cluster_eligible or cells, key=_selection_rank)
+
+
 def evaluate_year(sessions: list[SessionContext], events: list[dict], year: int,
                   parameters: dict | None = None) -> tuple[list[dict], dict | None, list[dict]]:
     cells: list[dict] = []
@@ -638,7 +649,7 @@ def evaluate_year(sessions: list[SessionContext], events: list[dict], year: int,
         return cells, cells[0], trades_by_cell[next(iter(trades_by_cell))]
     qualified = [cell for cell in cells if cell["passed"]]
     selected = max(qualified, key=_selection_rank) if qualified else None
-    diagnostic = max(cells, key=_selection_rank) if cells else None
+    diagnostic = _diagnostic_cell(cells)
     chosen = selected or diagnostic
     ledger = trades_by_cell[(
         float(chosen["parameters"]["depth_atr_threshold"]),
@@ -880,7 +891,7 @@ def run_study(loader: Callable[[str, int], pd.DataFrame],
     load(2023)
     sessions, events, session_exclusions, event_exclusions = prepared()
     cells, selected, diagnostic_ledger = evaluate_year(sessions, events, 2023)
-    diagnostic_cell = max(cells, key=_selection_rank) if cells else None
+    diagnostic_cell = _diagnostic_cell(cells)
     audit = cluster_audit(diagnostic_ledger, bootstrap_resamples)
     result["discovery_2023"] = {
         "cells": cells, "selected": selected, "diagnostic_cell": diagnostic_cell,
