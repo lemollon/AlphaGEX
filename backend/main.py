@@ -19,6 +19,7 @@ from backend.api.routes import (
     tastytrade_routes,
     valor_routes,
     valor_research_routes,
+    valor_microstructure_routes,
     spark_flame_research_routes,
     agape_eth_perp_routes,
     agape_sol_perp_routes,
@@ -63,6 +64,7 @@ app.add_middleware(
 app.include_router(tastytrade_routes.router)
 app.include_router(valor_routes.router)
 app.include_router(valor_research_routes.router)
+app.include_router(valor_microstructure_routes.router)
 app.include_router(spark_flame_research_routes.router)
 app.include_router(agape_eth_perp_routes.router)
 app.include_router(agape_sol_perp_routes.router)

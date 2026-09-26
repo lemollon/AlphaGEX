@@ -20,6 +20,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from trading.valor import ValorConfig, ValorTrader, TradingMode as ValorTradingMode
+from trading.valor.mes_microstructure_collector import MESMicrostructureCollector
 from trading.agape_btc_perp.trader import create_agape_btc_perp_trader
 from trading.agape_eth_perp.trader import create_agape_eth_perp_trader
 from trading.agape_sol_perp.trader import create_agape_sol_perp_trader
@@ -52,6 +53,7 @@ class AutonomousTraderScheduler:
 
         self.valor_trader = None
         self.perp_traders = {}
+        self.mes_microstructure_collector = MESMicrostructureCollector.from_env()
 
         self._initialize_traders()
 
@@ -200,12 +202,17 @@ class AutonomousTraderScheduler:
         self.scheduler.start()
         self.is_running = True
 
+        collector_started = self.mes_microstructure_collector.start()
+
         logger.info(
-            "AlphaGEX scheduler started: VALOR + %s perpetual bots",
+            "AlphaGEX scheduler started: VALOR + %s perpetual bots; "
+            "MES read-only collector=%s",
             len(PERP_FACTORIES),
+            "running" if collector_started else "disabled_or_unavailable",
         )
 
     def stop(self):
+        self.mes_microstructure_collector.stop()
         if self.scheduler.running:
             self.scheduler.shutdown(wait=False)
         self.is_running = False
@@ -218,6 +225,11 @@ class AutonomousTraderScheduler:
             "is_running": self.is_running,
             "scheduler_healthy": self.is_scheduler_healthy(),
             "scope": ["VALOR", "crypto_perpetuals"],
+            "mes_microstructure_collector": {
+                "enabled": self.mes_microstructure_collector.enabled,
+                "read_only": True,
+                "alive": self.mes_microstructure_collector.is_alive(),
+            },
             "valor": {
                 "initialized": self.valor_trader is not None,
                 "last_check": self.last_valor_check.isoformat() if self.last_valor_check else None,
