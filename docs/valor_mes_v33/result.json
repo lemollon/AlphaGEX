@@ -1,0 +1,3321 @@
+{
+  "bootstrap": {
+    "resamples": 10000,
+    "seed": 330033
+  },
+  "calendar_year_2026_sealed": true,
+  "discovery_2023": {
+    "cells": [
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -2.603535,
+              "gross_loss": 23611.5,
+              "gross_profit": 15879.0,
+              "maximum_drawdown": 7840.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -27.75,
+                "2023-04": -659.0,
+                "2023-05": -1033.0,
+                "2023-06": -540.75,
+                "2023-07": -572.5,
+                "2023-08": -1135.75,
+                "2023-09": -912.0,
+                "2023-10": -1306.0,
+                "2023-11": -678.5,
+                "2023-12": -867.25
+              },
+              "net_dollars": -7732.5,
+              "profit_factor": 0.672511,
+              "profit_factor_infinite": false,
+              "trade_count": 2970
+            },
+            "planning_1t": {
+              "average_trade": -5.103535,
+              "gross_loss": 28146.75,
+              "gross_profit": 12989.25,
+              "maximum_drawdown": 15186.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -60.25,
+                "2023-04": -1254.0,
+                "2023-05": -2048.0,
+                "2023-06": -1200.75,
+                "2023-07": -1222.5,
+                "2023-08": -2208.25,
+                "2023-09": -1772.0,
+                "2023-10": -2561.0,
+                "2023-11": -1196.0,
+                "2023-12": -1634.75
+              },
+              "net_dollars": -15157.5,
+              "profit_factor": 0.461483,
+              "profit_factor_infinite": false,
+              "trade_count": 2970
+            },
+            "raw_gross": {
+              "average_trade": 0.396465,
+              "gross_loss": 18800.0,
+              "gross_profit": 19977.5,
+              "maximum_drawdown": 456.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 11.25,
+                "2023-04": 55.0,
+                "2023-05": 185.0,
+                "2023-06": 251.25,
+                "2023-07": 207.5,
+                "2023-08": 151.25,
+                "2023-09": 120.0,
+                "2023-10": 200.0,
+                "2023-11": -57.5,
+                "2023-12": 53.75
+              },
+              "net_dollars": 1177.5,
+              "profit_factor": 1.062633,
+              "profit_factor_infinite": false,
+              "trade_count": 2970
+            },
+            "selection_2t": {
+              "average_trade": -7.603535,
+              "gross_loss": 33158.25,
+              "gross_profit": 10575.75,
+              "maximum_drawdown": 22582.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -92.75,
+                "2023-04": -1849.0,
+                "2023-05": -3063.0,
+                "2023-06": -1860.75,
+                "2023-07": -1872.5,
+                "2023-08": -3280.75,
+                "2023-09": -2632.0,
+                "2023-10": -3816.0,
+                "2023-11": -1713.5,
+                "2023-12": -2402.25
+              },
+              "net_dollars": -22582.5,
+              "profit_factor": 0.318948,
+              "profit_factor_infinite": false,
+              "trade_count": 2970
+            },
+            "stress_4t": {
+              "average_trade": -12.603535,
+              "gross_loss": 44341.5,
+              "gross_profit": 6909.0,
+              "maximum_drawdown": 37432.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -157.75,
+                "2023-04": -3039.0,
+                "2023-05": -5093.0,
+                "2023-06": -3180.75,
+                "2023-07": -3172.5,
+                "2023-08": -5425.75,
+                "2023-09": -4352.0,
+                "2023-10": -6326.0,
+                "2023-11": -2748.5,
+                "2023-12": -3937.25
+              },
+              "net_dollars": -37432.5,
+              "profit_factor": 0.155813,
+              "profit_factor_infinite": false,
+              "trade_count": 2970
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 5,
+          "lookback_minutes": 5,
+          "threshold_z": 1.5
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -4.192077,
+              "gross_loss": 23351.75,
+              "gross_profit": 16024.0,
+              "maximum_drawdown": 7397.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -61.0,
+                "2023-04": -492.5,
+                "2023-05": -695.75,
+                "2023-06": -472.0,
+                "2023-07": -762.25,
+                "2023-08": -1261.75,
+                "2023-09": -655.5,
+                "2023-10": -1193.0,
+                "2023-11": -685.0,
+                "2023-12": -1049.0
+              },
+              "net_dollars": -7327.75,
+              "profit_factor": 0.686201,
+              "profit_factor_infinite": false,
+              "trade_count": 1748
+            },
+            "planning_1t": {
+              "average_trade": -6.692077,
+              "gross_loss": 25867.5,
+              "gross_profit": 14169.75,
+              "maximum_drawdown": 11738.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -91.0,
+                "2023-04": -842.5,
+                "2023-05": -1280.75,
+                "2023-06": -869.5,
+                "2023-07": -1167.25,
+                "2023-08": -1876.75,
+                "2023-09": -1158.0,
+                "2023-10": -1895.5,
+                "2023-11": -1022.5,
+                "2023-12": -1494.0
+              },
+              "net_dollars": -11697.75,
+              "profit_factor": 0.547782,
+              "profit_factor_infinite": false,
+              "trade_count": 1748
+            },
+            "raw_gross": {
+              "average_trade": -1.192077,
+              "gross_loss": 20531.25,
+              "gross_profit": 18447.5,
+              "maximum_drawdown": 2317.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -25.0,
+                "2023-04": -72.5,
+                "2023-05": 6.25,
+                "2023-06": 5.0,
+                "2023-07": -276.25,
+                "2023-08": -523.75,
+                "2023-09": -52.5,
+                "2023-10": -350.0,
+                "2023-11": -280.0,
+                "2023-12": -515.0
+              },
+              "net_dollars": -2083.75,
+              "profit_factor": 0.898508,
+              "profit_factor_infinite": false,
+              "trade_count": 1748
+            },
+            "selection_2t": {
+              "average_trade": -9.192077,
+              "gross_loss": 28538.25,
+              "gross_profit": 12470.5,
+              "maximum_drawdown": 16090.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -121.0,
+                "2023-04": -1192.5,
+                "2023-05": -1865.75,
+                "2023-06": -1267.0,
+                "2023-07": -1572.25,
+                "2023-08": -2491.75,
+                "2023-09": -1660.5,
+                "2023-10": -2598.0,
+                "2023-11": -1360.0,
+                "2023-12": -1939.0
+              },
+              "net_dollars": -16067.75,
+              "profit_factor": 0.436975,
+              "profit_factor_infinite": false,
+              "trade_count": 1748
+            },
+            "stress_4t": {
+              "average_trade": -14.192077,
+              "gross_loss": 34404.25,
+              "gross_profit": 9596.5,
+              "maximum_drawdown": 24807.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -181.0,
+                "2023-04": -1892.5,
+                "2023-05": -3035.75,
+                "2023-06": -2062.0,
+                "2023-07": -2382.25,
+                "2023-08": -3721.75,
+                "2023-09": -2665.5,
+                "2023-10": -4003.0,
+                "2023-11": -2035.0,
+                "2023-12": -2829.0
+              },
+              "net_dollars": -24807.75,
+              "profit_factor": 0.278934,
+              "profit_factor_infinite": false,
+              "trade_count": 1748
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 15,
+          "lookback_minutes": 5,
+          "threshold_z": 1.5
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -4.282866,
+              "gross_loss": 19305.0,
+              "gross_profit": 14418.25,
+              "maximum_drawdown": 5095.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -25.25,
+                "2023-04": -321.0,
+                "2023-05": -755.0,
+                "2023-06": -443.5,
+                "2023-07": -366.5,
+                "2023-08": -511.25,
+                "2023-09": -1005.0,
+                "2023-10": -444.25,
+                "2023-11": -228.5,
+                "2023-12": -786.5
+              },
+              "net_dollars": -4886.75,
+              "profit_factor": 0.746866,
+              "profit_factor_infinite": false,
+              "trade_count": 1141
+            },
+            "planning_1t": {
+              "average_trade": -6.782866,
+              "gross_loss": 20962.0,
+              "gross_profit": 13222.75,
+              "maximum_drawdown": 7874.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -45.25,
+                "2023-04": -551.0,
+                "2023-05": -1130.0,
+                "2023-06": -723.5,
+                "2023-07": -636.5,
+                "2023-08": -898.75,
+                "2023-09": -1317.5,
+                "2023-10": -896.75,
+                "2023-11": -458.5,
+                "2023-12": -1081.5
+              },
+              "net_dollars": -7739.25,
+              "profit_factor": 0.630796,
+              "profit_factor_infinite": false,
+              "trade_count": 1141
+            },
+            "raw_gross": {
+              "average_trade": -1.282866,
+              "gross_loss": 17438.75,
+              "gross_profit": 15975.0,
+              "maximum_drawdown": 2253.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -1.25,
+                "2023-04": -45.0,
+                "2023-05": -305.0,
+                "2023-06": -107.5,
+                "2023-07": -42.5,
+                "2023-08": -46.25,
+                "2023-09": -630.0,
+                "2023-10": 98.75,
+                "2023-11": 47.5,
+                "2023-12": -432.5
+              },
+              "net_dollars": -1463.75,
+              "profit_factor": 0.916063,
+              "profit_factor_infinite": false,
+              "trade_count": 1141
+            },
+            "selection_2t": {
+              "average_trade": -9.282866,
+              "gross_loss": 22691.0,
+              "gross_profit": 12099.25,
+              "maximum_drawdown": 10664.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -65.25,
+                "2023-04": -781.0,
+                "2023-05": -1505.0,
+                "2023-06": -1003.5,
+                "2023-07": -906.5,
+                "2023-08": -1286.25,
+                "2023-09": -1630.0,
+                "2023-10": -1349.25,
+                "2023-11": -688.5,
+                "2023-12": -1376.5
+              },
+              "net_dollars": -10591.75,
+              "profit_factor": 0.533218,
+              "profit_factor_infinite": false,
+              "trade_count": 1141
+            },
+            "stress_4t": {
+              "average_trade": -14.282866,
+              "gross_loss": 26375.5,
+              "gross_profit": 10078.75,
+              "maximum_drawdown": 16332.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -105.25,
+                "2023-04": -1241.0,
+                "2023-05": -2255.0,
+                "2023-06": -1563.5,
+                "2023-07": -1446.5,
+                "2023-08": -2061.25,
+                "2023-09": -2255.0,
+                "2023-10": -2254.25,
+                "2023-11": -1148.5,
+                "2023-12": -1966.5
+              },
+              "net_dollars": -16296.75,
+              "profit_factor": 0.382125,
+              "profit_factor_infinite": false,
+              "trade_count": 1141
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 30,
+          "lookback_minutes": 5,
+          "threshold_z": 1.5
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -3.875179,
+              "gross_loss": 15480.75,
+              "gross_profit": 12779.75,
+              "maximum_drawdown": 3540.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -63.0,
+                "2023-04": 92.25,
+                "2023-05": -191.25,
+                "2023-06": -348.75,
+                "2023-07": -399.0,
+                "2023-08": 99.5,
+                "2023-09": -810.75,
+                "2023-10": -563.25,
+                "2023-11": -223.0,
+                "2023-12": -293.75
+              },
+              "net_dollars": -2701.0,
+              "profit_factor": 0.825525,
+              "profit_factor_infinite": false,
+              "trade_count": 697
+            },
+            "planning_1t": {
+              "average_trade": -6.375179,
+              "gross_loss": 16418.0,
+              "gross_profit": 11974.5,
+              "maximum_drawdown": 5125.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -78.0,
+                "2023-04": -52.75,
+                "2023-05": -416.25,
+                "2023-06": -523.75,
+                "2023-07": -569.0,
+                "2023-08": -128.0,
+                "2023-09": -995.75,
+                "2023-10": -823.25,
+                "2023-11": -375.5,
+                "2023-12": -481.25
+              },
+              "net_dollars": -4443.5,
+              "profit_factor": 0.729352,
+              "profit_factor_infinite": false,
+              "trade_count": 697
+            },
+            "raw_gross": {
+              "average_trade": -0.875179,
+              "gross_loss": 14402.5,
+              "gross_profit": 13792.5,
+              "maximum_drawdown": 1638.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -45.0,
+                "2023-04": 266.25,
+                "2023-05": 78.75,
+                "2023-06": -138.75,
+                "2023-07": -195.0,
+                "2023-08": 372.5,
+                "2023-09": -588.75,
+                "2023-10": -251.25,
+                "2023-11": -40.0,
+                "2023-12": -68.75
+              },
+              "net_dollars": -610.0,
+              "profit_factor": 0.957646,
+              "profit_factor_infinite": false,
+              "trade_count": 697
+            },
+            "selection_2t": {
+              "average_trade": -8.875179,
+              "gross_loss": 17388.0,
+              "gross_profit": 11202.0,
+              "maximum_drawdown": 6710.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -93.0,
+                "2023-04": -197.75,
+                "2023-05": -641.25,
+                "2023-06": -698.75,
+                "2023-07": -739.0,
+                "2023-08": -355.5,
+                "2023-09": -1180.75,
+                "2023-10": -1083.25,
+                "2023-11": -528.0,
+                "2023-12": -668.75
+              },
+              "net_dollars": -6186.0,
+              "profit_factor": 0.644237,
+              "profit_factor_infinite": false,
+              "trade_count": 697
+            },
+            "stress_4t": {
+              "average_trade": -13.875179,
+              "gross_loss": 19448.0,
+              "gross_profit": 9777.0,
+              "maximum_drawdown": 9880.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -123.0,
+                "2023-04": -487.75,
+                "2023-05": -1091.25,
+                "2023-06": -1048.75,
+                "2023-07": -1079.0,
+                "2023-08": -810.5,
+                "2023-09": -1550.75,
+                "2023-10": -1603.25,
+                "2023-11": -833.0,
+                "2023-12": -1043.75
+              },
+              "net_dollars": -9671.0,
+              "profit_factor": 0.502725,
+              "profit_factor_infinite": false,
+              "trade_count": 697
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 60,
+          "lookback_minutes": 5,
+          "threshold_z": 1.5
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -2.903127,
+              "gross_loss": 12630.75,
+              "gross_profit": 8360.25,
+              "maximum_drawdown": 4458.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -1.5,
+                "2023-04": 71.75,
+                "2023-05": -819.75,
+                "2023-06": -396.25,
+                "2023-07": -266.5,
+                "2023-08": -264.5,
+                "2023-09": -693.25,
+                "2023-10": -1054.25,
+                "2023-11": -396.25,
+                "2023-12": -450.0
+              },
+              "net_dollars": -4270.5,
+              "profit_factor": 0.661897,
+              "profit_factor_infinite": false,
+              "trade_count": 1471
+            },
+            "planning_1t": {
+              "average_trade": -5.403127,
+              "gross_loss": 14835.25,
+              "gross_profit": 6887.25,
+              "maximum_drawdown": 8006.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -9.0,
+                "2023-04": -238.25,
+                "2023-05": -1362.25,
+                "2023-06": -721.25,
+                "2023-07": -561.5,
+                "2023-08": -749.5,
+                "2023-09": -1165.75,
+                "2023-10": -1694.25,
+                "2023-11": -608.75,
+                "2023-12": -837.5
+              },
+              "net_dollars": -7948.0,
+              "profit_factor": 0.464249,
+              "profit_factor_infinite": false,
+              "trade_count": 1471
+            },
+            "raw_gross": {
+              "average_trade": 0.096873,
+              "gross_loss": 10265.0,
+              "gross_profit": 10407.5,
+              "maximum_drawdown": 903.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 7.5,
+                "2023-04": 443.75,
+                "2023-05": -168.75,
+                "2023-06": -6.25,
+                "2023-07": 87.5,
+                "2023-08": 317.5,
+                "2023-09": -126.25,
+                "2023-10": -286.25,
+                "2023-11": -141.25,
+                "2023-12": 15.0
+              },
+              "net_dollars": 142.5,
+              "profit_factor": 1.013882,
+              "profit_factor_infinite": false,
+              "trade_count": 1471
+            },
+            "selection_2t": {
+              "average_trade": -7.903127,
+              "gross_loss": 17258.25,
+              "gross_profit": 5632.75,
+              "maximum_drawdown": 11649.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -16.5,
+                "2023-04": -548.25,
+                "2023-05": -1904.75,
+                "2023-06": -1046.25,
+                "2023-07": -856.5,
+                "2023-08": -1234.5,
+                "2023-09": -1638.25,
+                "2023-10": -2334.25,
+                "2023-11": -821.25,
+                "2023-12": -1225.0
+              },
+              "net_dollars": -11625.5,
+              "profit_factor": 0.32638,
+              "profit_factor_infinite": false,
+              "trade_count": 1471
+            },
+            "stress_4t": {
+              "average_trade": -12.903127,
+              "gross_loss": 22694.0,
+              "gross_profit": 3713.5,
+              "maximum_drawdown": 18980.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -31.5,
+                "2023-04": -1168.25,
+                "2023-05": -2989.75,
+                "2023-06": -1696.25,
+                "2023-07": -1446.5,
+                "2023-08": -2204.5,
+                "2023-09": -2583.25,
+                "2023-10": -3614.25,
+                "2023-11": -1246.25,
+                "2023-12": -2000.0
+              },
+              "net_dollars": -18980.5,
+              "profit_factor": 0.163634,
+              "profit_factor_infinite": false,
+              "trade_count": 1471
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 5,
+          "lookback_minutes": 5,
+          "threshold_z": 2.0
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -4.631799,
+              "gross_loss": 13874.0,
+              "gross_profit": 9446.0,
+              "maximum_drawdown": 4788.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -10.25,
+                "2023-04": 63.0,
+                "2023-05": -516.75,
+                "2023-06": -552.75,
+                "2023-07": -322.0,
+                "2023-08": -1018.5,
+                "2023-09": -645.0,
+                "2023-10": -969.75,
+                "2023-11": -319.5,
+                "2023-12": -136.5
+              },
+              "net_dollars": -4428.0,
+              "profit_factor": 0.680842,
+              "profit_factor_infinite": false,
+              "trade_count": 956
+            },
+            "planning_1t": {
+              "average_trade": -7.131799,
+              "gross_loss": 15270.5,
+              "gross_profit": 8452.5,
+              "maximum_drawdown": 7016.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -17.75,
+                "2023-04": -134.5,
+                "2023-05": -856.75,
+                "2023-06": -760.25,
+                "2023-07": -507.0,
+                "2023-08": -1336.0,
+                "2023-09": -945.0,
+                "2023-10": -1399.75,
+                "2023-11": -479.5,
+                "2023-12": -381.5
+              },
+              "net_dollars": -6818.0,
+              "profit_factor": 0.553518,
+              "profit_factor_infinite": false,
+              "trade_count": 956
+            },
+            "raw_gross": {
+              "average_trade": -1.631799,
+              "gross_loss": 12315.0,
+              "gross_profit": 10755.0,
+              "maximum_drawdown": 2266.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -1.25,
+                "2023-04": 300.0,
+                "2023-05": -108.75,
+                "2023-06": -303.75,
+                "2023-07": -100.0,
+                "2023-08": -637.5,
+                "2023-09": -285.0,
+                "2023-10": -453.75,
+                "2023-11": -127.5,
+                "2023-12": 157.5
+              },
+              "net_dollars": -1560.0,
+              "profit_factor": 0.873325,
+              "profit_factor_infinite": false,
+              "trade_count": 956
+            },
+            "selection_2t": {
+              "average_trade": -9.631799,
+              "gross_loss": 16748.75,
+              "gross_profit": 7540.75,
+              "maximum_drawdown": 9305.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -25.25,
+                "2023-04": -332.0,
+                "2023-05": -1196.75,
+                "2023-06": -967.75,
+                "2023-07": -692.0,
+                "2023-08": -1653.5,
+                "2023-09": -1245.0,
+                "2023-10": -1829.75,
+                "2023-11": -639.5,
+                "2023-12": -626.5
+              },
+              "net_dollars": -9208.0,
+              "profit_factor": 0.450228,
+              "profit_factor_infinite": false,
+              "trade_count": 956
+            },
+            "stress_4t": {
+              "average_trade": -14.631799,
+              "gross_loss": 19925.25,
+              "gross_profit": 5937.25,
+              "maximum_drawdown": 13988.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -40.25,
+                "2023-04": -727.0,
+                "2023-05": -1876.75,
+                "2023-06": -1382.75,
+                "2023-07": -1062.0,
+                "2023-08": -2288.5,
+                "2023-09": -1845.0,
+                "2023-10": -2689.75,
+                "2023-11": -959.5,
+                "2023-12": -1116.5
+              },
+              "net_dollars": -13988.0,
+              "profit_factor": 0.297976,
+              "profit_factor_infinite": false,
+              "trade_count": 956
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 15,
+          "lookback_minutes": 5,
+          "threshold_z": 2.0
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -6.396539,
+              "gross_loss": 12738.25,
+              "gross_profit": 8395.0,
+              "maximum_drawdown": 4541.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 35.25,
+                "2023-04": -443.0,
+                "2023-05": -1004.25,
+                "2023-06": -509.25,
+                "2023-07": -339.25,
+                "2023-08": -781.5,
+                "2023-09": -460.5,
+                "2023-10": -220.5,
+                "2023-11": -305.75,
+                "2023-12": -314.5
+              },
+              "net_dollars": -4343.25,
+              "profit_factor": 0.659039,
+              "profit_factor_infinite": false,
+              "trade_count": 679
+            },
+            "planning_1t": {
+              "average_trade": -8.896539,
+              "gross_loss": 13720.25,
+              "gross_profit": 7679.5,
+              "maximum_drawdown": 6199.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 30.25,
+                "2023-04": -570.5,
+                "2023-05": -1244.25,
+                "2023-06": -649.25,
+                "2023-07": -479.25,
+                "2023-08": -1014.0,
+                "2023-09": -675.5,
+                "2023-10": -523.0,
+                "2023-11": -428.25,
+                "2023-12": -487.0
+              },
+              "net_dollars": -6040.75,
+              "profit_factor": 0.55972,
+              "profit_factor_infinite": false,
+              "trade_count": 679
+            },
+            "raw_gross": {
+              "average_trade": -3.396539,
+              "gross_loss": 11623.75,
+              "gross_profit": 9317.5,
+              "maximum_drawdown": 2565.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 41.25,
+                "2023-04": -290.0,
+                "2023-05": -716.25,
+                "2023-06": -341.25,
+                "2023-07": -171.25,
+                "2023-08": -502.5,
+                "2023-09": -202.5,
+                "2023-10": 142.5,
+                "2023-11": -158.75,
+                "2023-12": -107.5
+              },
+              "net_dollars": -2306.25,
+              "profit_factor": 0.801592,
+              "profit_factor_infinite": false,
+              "trade_count": 679
+            },
+            "selection_2t": {
+              "average_trade": -11.396539,
+              "gross_loss": 14749.75,
+              "gross_profit": 7011.5,
+              "maximum_drawdown": 7856.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 25.25,
+                "2023-04": -698.0,
+                "2023-05": -1484.25,
+                "2023-06": -789.25,
+                "2023-07": -619.25,
+                "2023-08": -1246.5,
+                "2023-09": -890.5,
+                "2023-10": -825.5,
+                "2023-11": -550.75,
+                "2023-12": -659.5
+              },
+              "net_dollars": -7738.25,
+              "profit_factor": 0.475364,
+              "profit_factor_infinite": false,
+              "trade_count": 679
+            },
+            "stress_4t": {
+              "average_trade": -16.396539,
+              "gross_loss": 16952.0,
+              "gross_profit": 5818.75,
+              "maximum_drawdown": 11178.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 15.25,
+                "2023-04": -953.0,
+                "2023-05": -1964.25,
+                "2023-06": -1069.25,
+                "2023-07": -899.25,
+                "2023-08": -1711.5,
+                "2023-09": -1320.5,
+                "2023-10": -1430.5,
+                "2023-11": -795.75,
+                "2023-12": -1004.5
+              },
+              "net_dollars": -11133.25,
+              "profit_factor": 0.343249,
+              "profit_factor_infinite": false,
+              "trade_count": 679
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 30,
+          "lookback_minutes": 5,
+          "threshold_z": 2.0
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -3.663978,
+              "gross_loss": 10773.75,
+              "gross_profit": 9070.0,
+              "maximum_drawdown": 2411.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 22.75,
+                "2023-04": -24.25,
+                "2023-05": -284.75,
+                "2023-06": -89.25,
+                "2023-07": -130.25,
+                "2023-08": -562.25,
+                "2023-09": -131.5,
+                "2023-10": -534.25,
+                "2023-11": -3.0,
+                "2023-12": 33.0
+              },
+              "net_dollars": -1703.75,
+              "profit_factor": 0.841861,
+              "profit_factor_infinite": false,
+              "trade_count": 465
+            },
+            "planning_1t": {
+              "average_trade": -6.163978,
+              "gross_loss": 11393.5,
+              "gross_profit": 8527.25,
+              "maximum_drawdown": 3453.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 17.75,
+                "2023-04": -114.25,
+                "2023-05": -439.75,
+                "2023-06": -191.75,
+                "2023-07": -225.25,
+                "2023-08": -717.25,
+                "2023-09": -276.5,
+                "2023-10": -736.75,
+                "2023-11": -93.0,
+                "2023-12": -89.5
+              },
+              "net_dollars": -2866.25,
+              "profit_factor": 0.748431,
+              "profit_factor_infinite": false,
+              "trade_count": 465
+            },
+            "raw_gross": {
+              "average_trade": -0.663978,
+              "gross_loss": 10051.25,
+              "gross_profit": 9742.5,
+              "maximum_drawdown": 1341.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 28.75,
+                "2023-04": 83.75,
+                "2023-05": -98.75,
+                "2023-06": 33.75,
+                "2023-07": -16.25,
+                "2023-08": -376.25,
+                "2023-09": 42.5,
+                "2023-10": -291.25,
+                "2023-11": 105.0,
+                "2023-12": 180.0
+              },
+              "net_dollars": -308.75,
+              "profit_factor": 0.969282,
+              "profit_factor_infinite": false,
+              "trade_count": 465
+            },
+            "selection_2t": {
+              "average_trade": -8.663978,
+              "gross_loss": 12036.75,
+              "gross_profit": 8008.0,
+              "maximum_drawdown": 4496.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 12.75,
+                "2023-04": -204.25,
+                "2023-05": -594.75,
+                "2023-06": -294.25,
+                "2023-07": -320.25,
+                "2023-08": -872.25,
+                "2023-09": -421.5,
+                "2023-10": -939.25,
+                "2023-11": -183.0,
+                "2023-12": -212.0
+              },
+              "net_dollars": -4028.75,
+              "profit_factor": 0.665296,
+              "profit_factor_infinite": false,
+              "trade_count": 465
+            },
+            "stress_4t": {
+              "average_trade": -13.663978,
+              "gross_loss": 13397.75,
+              "gross_profit": 7044.0,
+              "maximum_drawdown": 6645.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 2.75,
+                "2023-04": -384.25,
+                "2023-05": -904.75,
+                "2023-06": -499.25,
+                "2023-07": -510.25,
+                "2023-08": -1182.25,
+                "2023-09": -711.5,
+                "2023-10": -1344.25,
+                "2023-11": -363.0,
+                "2023-12": -457.0
+              },
+              "net_dollars": -6353.75,
+              "profit_factor": 0.52576,
+              "profit_factor_infinite": false,
+              "trade_count": 465
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 60,
+          "lookback_minutes": 5,
+          "threshold_z": 2.0
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -2.9576,
+              "gross_loss": 18783.0,
+              "gross_profit": 11894.75,
+              "maximum_drawdown": 6914.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -17.25,
+                "2023-04": -533.25,
+                "2023-05": -1224.5,
+                "2023-06": -501.75,
+                "2023-07": -472.25,
+                "2023-08": -1030.25,
+                "2023-09": -671.25,
+                "2023-10": -1166.25,
+                "2023-11": -654.75,
+                "2023-12": -616.75
+              },
+              "net_dollars": -6888.25,
+              "profit_factor": 0.633272,
+              "profit_factor_infinite": false,
+              "trade_count": 2329
+            },
+            "planning_1t": {
+              "average_trade": -5.4576,
+              "gross_loss": 22391.25,
+              "gross_profit": 9680.5,
+              "maximum_drawdown": 12720.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -34.75,
+                "2023-04": -1018.25,
+                "2023-05": -1984.5,
+                "2023-06": -1054.25,
+                "2023-07": -1002.25,
+                "2023-08": -1850.25,
+                "2023-09": -1383.75,
+                "2023-10": -2066.25,
+                "2023-11": -1122.25,
+                "2023-12": -1194.25
+              },
+              "net_dollars": -12710.75,
+              "profit_factor": 0.432334,
+              "profit_factor_infinite": false,
+              "trade_count": 2329
+            },
+            "raw_gross": {
+              "average_trade": 0.0424,
+              "gross_loss": 14938.75,
+              "gross_profit": 15037.5,
+              "maximum_drawdown": 725.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 3.75,
+                "2023-04": 48.75,
+                "2023-05": -312.5,
+                "2023-06": 161.25,
+                "2023-07": 163.75,
+                "2023-08": -46.25,
+                "2023-09": 183.75,
+                "2023-10": -86.25,
+                "2023-11": -93.75,
+                "2023-12": 76.25
+              },
+              "net_dollars": 98.75,
+              "profit_factor": 1.00661,
+              "profit_factor_infinite": false,
+              "trade_count": 2329
+            },
+            "selection_2t": {
+              "average_trade": -7.9576,
+              "gross_loss": 26365.25,
+              "gross_profit": 7832.0,
+              "maximum_drawdown": 18533.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -52.25,
+                "2023-04": -1503.25,
+                "2023-05": -2744.5,
+                "2023-06": -1606.75,
+                "2023-07": -1532.25,
+                "2023-08": -2670.25,
+                "2023-09": -2096.25,
+                "2023-10": -2966.25,
+                "2023-11": -1589.75,
+                "2023-12": -1771.75
+              },
+              "net_dollars": -18533.25,
+              "profit_factor": 0.297058,
+              "profit_factor_infinite": false,
+              "trade_count": 2329
+            },
+            "stress_4t": {
+              "average_trade": -12.9576,
+              "gross_loss": 35215.0,
+              "gross_profit": 5036.75,
+              "maximum_drawdown": 30178.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -87.25,
+                "2023-04": -2473.25,
+                "2023-05": -4264.5,
+                "2023-06": -2711.75,
+                "2023-07": -2592.25,
+                "2023-08": -4310.25,
+                "2023-09": -3521.25,
+                "2023-10": -4766.25,
+                "2023-11": -2524.75,
+                "2023-12": -2926.75
+              },
+              "net_dollars": -30178.25,
+              "profit_factor": 0.143029,
+              "profit_factor_infinite": false,
+              "trade_count": 2329
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 5,
+          "lookback_minutes": 15,
+          "threshold_z": 1.5
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -2.433532,
+              "gross_loss": 15542.25,
+              "gross_profit": 12476.0,
+              "maximum_drawdown": 3181.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -65.75,
+                "2023-04": -374.25,
+                "2023-05": -948.0,
+                "2023-06": -2.5,
+                "2023-07": -225.75,
+                "2023-08": -323.0,
+                "2023-09": -256.0,
+                "2023-10": -597.0,
+                "2023-11": -160.75,
+                "2023-12": -113.25
+              },
+              "net_dollars": -3066.25,
+              "profit_factor": 0.802715,
+              "profit_factor_infinite": false,
+              "trade_count": 1260
+            },
+            "planning_1t": {
+              "average_trade": -4.933532,
+              "gross_loss": 17355.25,
+              "gross_profit": 11139.0,
+              "maximum_drawdown": 6261.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -75.75,
+                "2023-04": -651.75,
+                "2023-05": -1363.0,
+                "2023-06": -302.5,
+                "2023-07": -510.75,
+                "2023-08": -738.0,
+                "2023-09": -623.5,
+                "2023-10": -1082.0,
+                "2023-11": -433.25,
+                "2023-12": -435.75
+              },
+              "net_dollars": -6216.25,
+              "profit_factor": 0.641823,
+              "profit_factor_infinite": false,
+              "trade_count": 1260
+            },
+            "raw_gross": {
+              "average_trade": 0.566468,
+              "gross_loss": 13541.25,
+              "gross_profit": 14255.0,
+              "maximum_drawdown": 760.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -53.75,
+                "2023-04": -41.25,
+                "2023-05": -450.0,
+                "2023-06": 357.5,
+                "2023-07": 116.25,
+                "2023-08": 175.0,
+                "2023-09": 185.0,
+                "2023-10": -15.0,
+                "2023-11": 166.25,
+                "2023-12": 273.75
+              },
+              "net_dollars": 713.75,
+              "profit_factor": 1.052709,
+              "profit_factor_infinite": false,
+              "trade_count": 1260
+            },
+            "selection_2t": {
+              "average_trade": -7.433532,
+              "gross_loss": 19286.75,
+              "gross_profit": 9920.5,
+              "maximum_drawdown": 9366.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -85.75,
+                "2023-04": -929.25,
+                "2023-05": -1778.0,
+                "2023-06": -602.5,
+                "2023-07": -795.75,
+                "2023-08": -1153.0,
+                "2023-09": -991.0,
+                "2023-10": -1567.0,
+                "2023-11": -705.75,
+                "2023-12": -758.25
+              },
+              "net_dollars": -9366.25,
+              "profit_factor": 0.514369,
+              "profit_factor_infinite": false,
+              "trade_count": 1260
+            },
+            "stress_4t": {
+              "average_trade": -12.433532,
+              "gross_loss": 23501.75,
+              "gross_profit": 7835.5,
+              "maximum_drawdown": 15666.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -105.75,
+                "2023-04": -1484.25,
+                "2023-05": -2608.0,
+                "2023-06": -1202.5,
+                "2023-07": -1365.75,
+                "2023-08": -1983.0,
+                "2023-09": -1726.0,
+                "2023-10": -2537.0,
+                "2023-11": -1250.75,
+                "2023-12": -1403.25
+              },
+              "net_dollars": -15666.25,
+              "profit_factor": 0.333401,
+              "profit_factor_infinite": false,
+              "trade_count": 1260
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 15,
+          "lookback_minutes": 15,
+          "threshold_z": 1.5
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -4.660045,
+              "gross_loss": 15208.25,
+              "gross_profit": 11102.75,
+              "maximum_drawdown": 4308.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -26.5,
+                "2023-04": -586.0,
+                "2023-05": -1346.5,
+                "2023-06": 133.5,
+                "2023-07": -416.25,
+                "2023-08": 210.25,
+                "2023-09": 228.75,
+                "2023-10": -1298.5,
+                "2023-11": -534.25,
+                "2023-12": -470.0
+              },
+              "net_dollars": -4105.5,
+              "profit_factor": 0.730048,
+              "profit_factor_infinite": false,
+              "trade_count": 881
+            },
+            "planning_1t": {
+              "average_trade": -7.160045,
+              "gross_loss": 16471.25,
+              "gross_profit": 10163.25,
+              "maximum_drawdown": 6473.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -34.0,
+                "2023-04": -778.5,
+                "2023-05": -1629.0,
+                "2023-06": -86.5,
+                "2023-07": -616.25,
+                "2023-08": -82.25,
+                "2023-09": -21.25,
+                "2023-10": -1641.0,
+                "2023-11": -736.75,
+                "2023-12": -682.5
+              },
+              "net_dollars": -6308.0,
+              "profit_factor": 0.61703,
+              "profit_factor_infinite": false,
+              "trade_count": 881
+            },
+            "raw_gross": {
+              "average_trade": -1.660045,
+              "gross_loss": 13773.75,
+              "gross_profit": 12311.25,
+              "maximum_drawdown": 1750.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -17.5,
+                "2023-04": -355.0,
+                "2023-05": -1007.5,
+                "2023-06": 397.5,
+                "2023-07": -176.25,
+                "2023-08": 561.25,
+                "2023-09": 528.75,
+                "2023-10": -887.5,
+                "2023-11": -291.25,
+                "2023-12": -215.0
+              },
+              "net_dollars": -1462.5,
+              "profit_factor": 0.89382,
+              "profit_factor_infinite": false,
+              "trade_count": 881
+            },
+            "selection_2t": {
+              "average_trade": -9.660045,
+              "gross_loss": 17804.5,
+              "gross_profit": 9294.0,
+              "maximum_drawdown": 8641.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -41.5,
+                "2023-04": -971.0,
+                "2023-05": -1911.5,
+                "2023-06": -306.5,
+                "2023-07": -816.25,
+                "2023-08": -374.75,
+                "2023-09": -271.25,
+                "2023-10": -1983.5,
+                "2023-11": -939.25,
+                "2023-12": -895.0
+              },
+              "net_dollars": -8510.5,
+              "profit_factor": 0.522003,
+              "profit_factor_infinite": false,
+              "trade_count": 881
+            },
+            "stress_4t": {
+              "average_trade": -14.660045,
+              "gross_loss": 20649.75,
+              "gross_profit": 7734.25,
+              "maximum_drawdown": 12981.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -56.5,
+                "2023-04": -1356.0,
+                "2023-05": -2476.5,
+                "2023-06": -746.5,
+                "2023-07": -1216.25,
+                "2023-08": -959.75,
+                "2023-09": -771.25,
+                "2023-10": -2668.5,
+                "2023-11": -1344.25,
+                "2023-12": -1320.0
+              },
+              "net_dollars": -12915.5,
+              "profit_factor": 0.374544,
+              "profit_factor_infinite": false,
+              "trade_count": 881
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 30,
+          "lookback_minutes": 15,
+          "threshold_z": 1.5
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -5.078261,
+              "gross_loss": 13053.25,
+              "gross_profit": 10133.25,
+              "maximum_drawdown": 3370.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -61.0,
+                "2023-04": -198.5,
+                "2023-05": -1117.75,
+                "2023-06": 614.5,
+                "2023-07": -670.75,
+                "2023-08": 101.5,
+                "2023-09": -215.75,
+                "2023-10": -404.25,
+                "2023-11": -460.25,
+                "2023-12": -507.75
+              },
+              "net_dollars": -2920.0,
+              "profit_factor": 0.776301,
+              "profit_factor_infinite": false,
+              "trade_count": 575
+            },
+            "planning_1t": {
+              "average_trade": -7.578261,
+              "gross_loss": 13854.25,
+              "gross_profit": 9496.75,
+              "maximum_drawdown": 4699.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -66.0,
+                "2023-04": -328.5,
+                "2023-05": -1300.25,
+                "2023-06": 462.0,
+                "2023-07": -805.75,
+                "2023-08": -91.0,
+                "2023-09": -363.25,
+                "2023-10": -619.25,
+                "2023-11": -592.75,
+                "2023-12": -652.75
+              },
+              "net_dollars": -4357.5,
+              "profit_factor": 0.685476,
+              "profit_factor_infinite": false,
+              "trade_count": 575
+            },
+            "raw_gross": {
+              "average_trade": -2.078261,
+              "gross_loss": 12136.25,
+              "gross_profit": 10941.25,
+              "maximum_drawdown": 1777.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -55.0,
+                "2023-04": -42.5,
+                "2023-05": -898.75,
+                "2023-06": 797.5,
+                "2023-07": -508.75,
+                "2023-08": 332.5,
+                "2023-09": -38.75,
+                "2023-10": -146.25,
+                "2023-11": -301.25,
+                "2023-12": -333.75
+              },
+              "net_dollars": -1195.0,
+              "profit_factor": 0.901535,
+              "profit_factor_infinite": false,
+              "trade_count": 575
+            },
+            "selection_2t": {
+              "average_trade": -10.078261,
+              "gross_loss": 14696.0,
+              "gross_profit": 8901.0,
+              "maximum_drawdown": 6029.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -71.0,
+                "2023-04": -458.5,
+                "2023-05": -1482.75,
+                "2023-06": 309.5,
+                "2023-07": -940.75,
+                "2023-08": -283.5,
+                "2023-09": -510.75,
+                "2023-10": -834.25,
+                "2023-11": -725.25,
+                "2023-12": -797.75
+              },
+              "net_dollars": -5795.0,
+              "profit_factor": 0.605675,
+              "profit_factor_infinite": false,
+              "trade_count": 575
+            },
+            "stress_4t": {
+              "average_trade": -15.078261,
+              "gross_loss": 16466.0,
+              "gross_profit": 7796.0,
+              "maximum_drawdown": 8776.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -81.0,
+                "2023-04": -718.5,
+                "2023-05": -1847.75,
+                "2023-06": 4.5,
+                "2023-07": -1210.75,
+                "2023-08": -668.5,
+                "2023-09": -805.75,
+                "2023-10": -1264.25,
+                "2023-11": -990.25,
+                "2023-12": -1087.75
+              },
+              "net_dollars": -8670.0,
+              "profit_factor": 0.47346,
+              "profit_factor_infinite": false,
+              "trade_count": 575
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 60,
+          "lookback_minutes": 15,
+          "threshold_z": 1.5
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -2.243534,
+              "gross_loss": 9486.25,
+              "gross_profit": 6883.75,
+              "maximum_drawdown": 2686.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 0.25,
+                "2023-04": -233.25,
+                "2023-05": -598.5,
+                "2023-06": -85.25,
+                "2023-07": -276.5,
+                "2023-08": -521.25,
+                "2023-09": -178.0,
+                "2023-10": -434.5,
+                "2023-11": -139.25,
+                "2023-12": -136.25
+              },
+              "net_dollars": -2602.5,
+              "profit_factor": 0.725656,
+              "profit_factor_infinite": false,
+              "trade_count": 1160
+            },
+            "planning_1t": {
+              "average_trade": -4.743534,
+              "gross_loss": 11235.0,
+              "gross_profit": 5732.5,
+              "maximum_drawdown": 5531.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -4.75,
+                "2023-04": -480.75,
+                "2023-05": -1003.5,
+                "2023-06": -342.75,
+                "2023-07": -534.0,
+                "2023-08": -933.75,
+                "2023-09": -543.0,
+                "2023-10": -932.0,
+                "2023-11": -304.25,
+                "2023-12": -423.75
+              },
+              "net_dollars": -5502.5,
+              "profit_factor": 0.510236,
+              "profit_factor_infinite": false,
+              "trade_count": 1160
+            },
+            "raw_gross": {
+              "average_trade": 0.756466,
+              "gross_loss": 7630.0,
+              "gross_profit": 8507.5,
+              "maximum_drawdown": 380.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 6.25,
+                "2023-04": 63.75,
+                "2023-05": -112.5,
+                "2023-06": 223.75,
+                "2023-07": 32.5,
+                "2023-08": -26.25,
+                "2023-09": 260.0,
+                "2023-10": 162.5,
+                "2023-11": 58.75,
+                "2023-12": 208.75
+              },
+              "net_dollars": 877.5,
+              "profit_factor": 1.115007,
+              "profit_factor_infinite": false,
+              "trade_count": 1160
+            },
+            "selection_2t": {
+              "average_trade": -7.243534,
+              "gross_loss": 13139.75,
+              "gross_profit": 4737.25,
+              "maximum_drawdown": 8410.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -9.75,
+                "2023-04": -728.25,
+                "2023-05": -1408.5,
+                "2023-06": -600.25,
+                "2023-07": -791.5,
+                "2023-08": -1346.25,
+                "2023-09": -908.0,
+                "2023-10": -1429.5,
+                "2023-11": -469.25,
+                "2023-12": -711.25
+              },
+              "net_dollars": -8402.5,
+              "profit_factor": 0.360528,
+              "profit_factor_infinite": false,
+              "trade_count": 1160
+            },
+            "stress_4t": {
+              "average_trade": -12.243534,
+              "gross_loss": 17380.0,
+              "gross_profit": 3177.5,
+              "maximum_drawdown": 14202.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -19.75,
+                "2023-04": -1223.25,
+                "2023-05": -2218.5,
+                "2023-06": -1115.25,
+                "2023-07": -1306.5,
+                "2023-08": -2171.25,
+                "2023-09": -1638.0,
+                "2023-10": -2424.5,
+                "2023-11": -799.25,
+                "2023-12": -1286.25
+              },
+              "net_dollars": -14202.5,
+              "profit_factor": 0.182825,
+              "profit_factor_infinite": false,
+              "trade_count": 1160
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 5,
+          "lookback_minutes": 15,
+          "threshold_z": 2.0
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -2.24134,
+              "gross_loss": 8663.25,
+              "gross_profit": 7175.0,
+              "maximum_drawdown": 1766.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -24.75,
+                "2023-04": -127.5,
+                "2023-05": -697.75,
+                "2023-06": -156.25,
+                "2023-07": -150.75,
+                "2023-08": -220.25,
+                "2023-09": 112.5,
+                "2023-10": -67.25,
+                "2023-11": -75.75,
+                "2023-12": -80.5
+              },
+              "net_dollars": -1488.25,
+              "profit_factor": 0.828211,
+              "profit_factor_infinite": false,
+              "trade_count": 664
+            },
+            "planning_1t": {
+              "average_trade": -4.74134,
+              "gross_loss": 9577.25,
+              "gross_profit": 6429.0,
+              "maximum_drawdown": 3249.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -29.75,
+                "2023-04": -265.0,
+                "2023-05": -942.75,
+                "2023-06": -293.75,
+                "2023-07": -298.25,
+                "2023-08": -440.25,
+                "2023-09": -100.0,
+                "2023-10": -359.75,
+                "2023-11": -173.25,
+                "2023-12": -245.5
+              },
+              "net_dollars": -3148.25,
+              "profit_factor": 0.671278,
+              "profit_factor_infinite": false,
+              "trade_count": 664
+            },
+            "raw_gross": {
+              "average_trade": 0.75866,
+              "gross_loss": 7648.75,
+              "gross_profit": 8152.5,
+              "maximum_drawdown": 681.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -18.75,
+                "2023-04": 37.5,
+                "2023-05": -403.75,
+                "2023-06": 8.75,
+                "2023-07": 26.25,
+                "2023-08": 43.75,
+                "2023-09": 367.5,
+                "2023-10": 283.75,
+                "2023-11": 41.25,
+                "2023-12": 117.5
+              },
+              "net_dollars": 503.75,
+              "profit_factor": 1.06586,
+              "profit_factor_infinite": false,
+              "trade_count": 664
+            },
+            "selection_2t": {
+              "average_trade": -7.24134,
+              "gross_loss": 10567.25,
+              "gross_profit": 5759.0,
+              "maximum_drawdown": 4869.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -34.75,
+                "2023-04": -402.5,
+                "2023-05": -1187.75,
+                "2023-06": -431.25,
+                "2023-07": -445.75,
+                "2023-08": -660.25,
+                "2023-09": -312.5,
+                "2023-10": -652.25,
+                "2023-11": -270.75,
+                "2023-12": -410.5
+              },
+              "net_dollars": -4808.25,
+              "profit_factor": 0.544986,
+              "profit_factor_infinite": false,
+              "trade_count": 664
+            },
+            "stress_4t": {
+              "average_trade": -12.24134,
+              "gross_loss": 12733.75,
+              "gross_profit": 4605.5,
+              "maximum_drawdown": 8141.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -44.75,
+                "2023-04": -677.5,
+                "2023-05": -1677.75,
+                "2023-06": -706.25,
+                "2023-07": -740.75,
+                "2023-08": -1100.25,
+                "2023-09": -737.5,
+                "2023-10": -1237.25,
+                "2023-11": -465.75,
+                "2023-12": -740.5
+              },
+              "net_dollars": -8128.25,
+              "profit_factor": 0.361677,
+              "profit_factor_infinite": false,
+              "trade_count": 664
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 15,
+          "lookback_minutes": 15,
+          "threshold_z": 2.0
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -2.052885,
+              "gross_loss": 9098.5,
+              "gross_profit": 8031.0,
+              "maximum_drawdown": 1502.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 0.75,
+                "2023-04": -303.5,
+                "2023-05": -1044.75,
+                "2023-06": 132.25,
+                "2023-07": 0.0,
+                "2023-08": 195.75,
+                "2023-09": 365.75,
+                "2023-10": -195.0,
+                "2023-11": -132.5,
+                "2023-12": -86.25
+              },
+              "net_dollars": -1067.5,
+              "profit_factor": 0.882673,
+              "profit_factor_infinite": false,
+              "trade_count": 520
+            },
+            "planning_1t": {
+              "average_trade": -4.552885,
+              "gross_loss": 9788.75,
+              "gross_profit": 7421.25,
+              "maximum_drawdown": 2500.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -1.75,
+                "2023-04": -408.5,
+                "2023-05": -1224.75,
+                "2023-06": 12.25,
+                "2023-07": -112.5,
+                "2023-08": 18.25,
+                "2023-09": 200.75,
+                "2023-10": -420.0,
+                "2023-11": -220.0,
+                "2023-12": -211.25
+              },
+              "net_dollars": -2367.5,
+              "profit_factor": 0.758141,
+              "profit_factor_infinite": false,
+              "trade_count": 520
+            },
+            "raw_gross": {
+              "average_trade": 0.947115,
+              "gross_loss": 8328.75,
+              "gross_profit": 8821.25,
+              "maximum_drawdown": 1166.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 3.75,
+                "2023-04": -177.5,
+                "2023-05": -828.75,
+                "2023-06": 276.25,
+                "2023-07": 135.0,
+                "2023-08": 408.75,
+                "2023-09": 563.75,
+                "2023-10": 75.0,
+                "2023-11": -27.5,
+                "2023-12": 63.75
+              },
+              "net_dollars": 492.5,
+              "profit_factor": 1.059133,
+              "profit_factor_infinite": false,
+              "trade_count": 520
+            },
+            "selection_2t": {
+              "average_trade": -7.052885,
+              "gross_loss": 10514.5,
+              "gross_profit": 6847.0,
+              "maximum_drawdown": 3748.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -4.25,
+                "2023-04": -513.5,
+                "2023-05": -1404.75,
+                "2023-06": -107.75,
+                "2023-07": -225.0,
+                "2023-08": -159.25,
+                "2023-09": 35.75,
+                "2023-10": -645.0,
+                "2023-11": -307.5,
+                "2023-12": -336.25
+              },
+              "net_dollars": -3667.5,
+              "profit_factor": 0.651196,
+              "profit_factor_infinite": false,
+              "trade_count": 520
+            },
+            "stress_4t": {
+              "average_trade": -12.052885,
+              "gross_loss": 12079.75,
+              "gross_profit": 5812.25,
+              "maximum_drawdown": 6280.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -9.25,
+                "2023-04": -723.5,
+                "2023-05": -1764.75,
+                "2023-06": -347.75,
+                "2023-07": -450.0,
+                "2023-08": -514.25,
+                "2023-09": -294.25,
+                "2023-10": -1095.0,
+                "2023-11": -482.5,
+                "2023-12": -586.25
+              },
+              "net_dollars": -6267.5,
+              "profit_factor": 0.481156,
+              "profit_factor_infinite": false,
+              "trade_count": 520
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 30,
+          "lookback_minutes": 15,
+          "threshold_z": 2.0
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -1.931941,
+              "gross_loss": 8285.75,
+              "gross_profit": 7569.0,
+              "maximum_drawdown": 1328.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -14.25,
+                "2023-04": -27.5,
+                "2023-05": -948.25,
+                "2023-06": 469.75,
+                "2023-07": -249.0,
+                "2023-08": 272.5,
+                "2023-09": 128.0,
+                "2023-10": -43.25,
+                "2023-11": -70.25,
+                "2023-12": -234.5
+              },
+              "net_dollars": -716.75,
+              "profit_factor": 0.913496,
+              "profit_factor_infinite": false,
+              "trade_count": 371
+            },
+            "planning_1t": {
+              "average_trade": -4.431941,
+              "gross_loss": 8784.75,
+              "gross_profit": 7140.5,
+              "maximum_drawdown": 1937.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -16.75,
+                "2023-04": -102.5,
+                "2023-05": -1070.75,
+                "2023-06": 374.75,
+                "2023-07": -331.5,
+                "2023-08": 160.0,
+                "2023-09": 18.0,
+                "2023-10": -203.25,
+                "2023-11": -140.25,
+                "2023-12": -332.0
+              },
+              "net_dollars": -1644.25,
+              "profit_factor": 0.812829,
+              "profit_factor_infinite": false,
+              "trade_count": 371
+            },
+            "raw_gross": {
+              "average_trade": 1.068059,
+              "gross_loss": 7725.0,
+              "gross_profit": 8121.25,
+              "maximum_drawdown": 1142.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -11.25,
+                "2023-04": 62.5,
+                "2023-05": -801.25,
+                "2023-06": 583.75,
+                "2023-07": -150.0,
+                "2023-08": 407.5,
+                "2023-09": 260.0,
+                "2023-10": 148.75,
+                "2023-11": 13.75,
+                "2023-12": -117.5
+              },
+              "net_dollars": 396.25,
+              "profit_factor": 1.051294,
+              "profit_factor_infinite": false,
+              "trade_count": 371
+            },
+            "selection_2t": {
+              "average_trade": -6.931941,
+              "gross_loss": 9312.5,
+              "gross_profit": 6740.75,
+              "maximum_drawdown": 2820.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -19.25,
+                "2023-04": -177.5,
+                "2023-05": -1193.25,
+                "2023-06": 279.75,
+                "2023-07": -414.0,
+                "2023-08": 47.5,
+                "2023-09": -92.0,
+                "2023-10": -363.25,
+                "2023-11": -210.25,
+                "2023-12": -429.5
+              },
+              "net_dollars": -2571.75,
+              "profit_factor": 0.723839,
+              "profit_factor_infinite": false,
+              "trade_count": 371
+            },
+            "stress_4t": {
+              "average_trade": -11.931941,
+              "gross_loss": 10414.5,
+              "gross_profit": 5987.75,
+              "maximum_drawdown": 4597.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -24.25,
+                "2023-04": -327.5,
+                "2023-05": -1438.25,
+                "2023-06": 89.75,
+                "2023-07": -579.0,
+                "2023-08": -177.5,
+                "2023-09": -312.0,
+                "2023-10": -683.25,
+                "2023-11": -350.25,
+                "2023-12": -624.5
+              },
+              "net_dollars": -4426.75,
+              "profit_factor": 0.574944,
+              "profit_factor_infinite": false,
+              "trade_count": 371
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 60,
+          "lookback_minutes": 15,
+          "threshold_z": 2.0
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -3.357397,
+              "gross_loss": 17579.5,
+              "gross_profit": 10498.75,
+              "maximum_drawdown": 7192.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 28.25,
+                "2023-04": -741.25,
+                "2023-05": -1272.0,
+                "2023-06": -562.5,
+                "2023-07": -533.0,
+                "2023-08": -504.25,
+                "2023-09": -643.75,
+                "2023-10": -1341.25,
+                "2023-11": -749.5,
+                "2023-12": -761.5
+              },
+              "net_dollars": -7080.75,
+              "profit_factor": 0.597216,
+              "profit_factor_infinite": false,
+              "trade_count": 2109
+            },
+            "planning_1t": {
+              "average_trade": -5.857397,
+              "gross_loss": 20898.25,
+              "gross_profit": 8545.0,
+              "maximum_drawdown": 12403.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 13.25,
+                "2023-04": -1178.75,
+                "2023-05": -1969.5,
+                "2023-06": -1050.0,
+                "2023-07": -998.0,
+                "2023-08": -1294.25,
+                "2023-09": -1281.25,
+                "2023-10": -2178.75,
+                "2023-11": -1159.5,
+                "2023-12": -1256.5
+              },
+              "net_dollars": -12353.25,
+              "profit_factor": 0.408886,
+              "profit_factor_infinite": false,
+              "trade_count": 2109
+            },
+            "raw_gross": {
+              "average_trade": -0.357397,
+              "gross_loss": 14032.5,
+              "gross_profit": 13278.75,
+              "maximum_drawdown": 1015.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 46.25,
+                "2023-04": -216.25,
+                "2023-05": -435.0,
+                "2023-06": 22.5,
+                "2023-07": 25.0,
+                "2023-08": 443.75,
+                "2023-09": 121.25,
+                "2023-10": -336.25,
+                "2023-11": -257.5,
+                "2023-12": -167.5
+              },
+              "net_dollars": -753.75,
+              "profit_factor": 0.946285,
+              "profit_factor_infinite": false,
+              "trade_count": 2109
+            },
+            "selection_2t": {
+              "average_trade": -8.357397,
+              "gross_loss": 24522.25,
+              "gross_profit": 6896.5,
+              "maximum_drawdown": 17651.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -1.75,
+                "2023-04": -1616.25,
+                "2023-05": -2667.0,
+                "2023-06": -1537.5,
+                "2023-07": -1463.0,
+                "2023-08": -2084.25,
+                "2023-09": -1918.75,
+                "2023-10": -3016.25,
+                "2023-11": -1569.5,
+                "2023-12": -1751.5
+              },
+              "net_dollars": -17625.75,
+              "profit_factor": 0.281234,
+              "profit_factor_infinite": false,
+              "trade_count": 2109
+            },
+            "stress_4t": {
+              "average_trade": -13.357397,
+              "gross_loss": 32596.75,
+              "gross_profit": 4426.0,
+              "maximum_drawdown": 28176.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -31.75,
+                "2023-04": -2491.25,
+                "2023-05": -4062.0,
+                "2023-06": -2512.5,
+                "2023-07": -2393.0,
+                "2023-08": -3664.25,
+                "2023-09": -3193.75,
+                "2023-10": -4691.25,
+                "2023-11": -2389.5,
+                "2023-12": -2741.5
+              },
+              "net_dollars": -28170.75,
+              "profit_factor": 0.13578,
+              "profit_factor_infinite": false,
+              "trade_count": 2109
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 5,
+          "lookback_minutes": 30,
+          "threshold_z": 1.5
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -3.562072,
+              "gross_loss": 13062.75,
+              "gross_profit": 9418.75,
+              "maximum_drawdown": 3901.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 46.0,
+                "2023-04": -523.75,
+                "2023-05": -1150.5,
+                "2023-06": -64.0,
+                "2023-07": -117.0,
+                "2023-08": 59.25,
+                "2023-09": 136.75,
+                "2023-10": -1022.0,
+                "2023-11": -468.5,
+                "2023-12": -540.25
+              },
+              "net_dollars": -3644.0,
+              "profit_factor": 0.721039,
+              "profit_factor_infinite": false,
+              "trade_count": 1023
+            },
+            "planning_1t": {
+              "average_trade": -6.062072,
+              "gross_loss": 14568.25,
+              "gross_profit": 8366.75,
+              "maximum_drawdown": 6409.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 38.5,
+                "2023-04": -748.75,
+                "2023-05": -1503.0,
+                "2023-06": -296.5,
+                "2023-07": -339.5,
+                "2023-08": -313.25,
+                "2023-09": -173.25,
+                "2023-10": -1419.5,
+                "2023-11": -648.5,
+                "2023-12": -797.75
+              },
+              "net_dollars": -6201.5,
+              "profit_factor": 0.574314,
+              "profit_factor_infinite": false,
+              "trade_count": 1023
+            },
+            "raw_gross": {
+              "average_trade": -0.562072,
+              "gross_loss": 11412.5,
+              "gross_profit": 10837.5,
+              "maximum_drawdown": 1322.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 55.0,
+                "2023-04": -253.75,
+                "2023-05": -727.5,
+                "2023-06": 215.0,
+                "2023-07": 150.0,
+                "2023-08": 506.25,
+                "2023-09": 508.75,
+                "2023-10": -545.0,
+                "2023-11": -252.5,
+                "2023-12": -231.25
+              },
+              "net_dollars": -575.0,
+              "profit_factor": 0.949617,
+              "profit_factor_infinite": false,
+              "trade_count": 1023
+            },
+            "selection_2t": {
+              "average_trade": -8.562072,
+              "gross_loss": 16171.5,
+              "gross_profit": 7412.5,
+              "maximum_drawdown": 8918.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 31.0,
+                "2023-04": -973.75,
+                "2023-05": -1855.5,
+                "2023-06": -529.0,
+                "2023-07": -562.0,
+                "2023-08": -685.75,
+                "2023-09": -483.25,
+                "2023-10": -1817.0,
+                "2023-11": -828.5,
+                "2023-12": -1055.25
+              },
+              "net_dollars": -8759.0,
+              "profit_factor": 0.458368,
+              "profit_factor_infinite": false,
+              "trade_count": 1023
+            },
+            "stress_4t": {
+              "average_trade": -13.562072,
+              "gross_loss": 19627.75,
+              "gross_profit": 5753.75,
+              "maximum_drawdown": 13957.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 16.0,
+                "2023-04": -1423.75,
+                "2023-05": -2560.5,
+                "2023-06": -994.0,
+                "2023-07": -1007.0,
+                "2023-08": -1430.75,
+                "2023-09": -1103.25,
+                "2023-10": -2612.0,
+                "2023-11": -1188.5,
+                "2023-12": -1570.25
+              },
+              "net_dollars": -13874.0,
+              "profit_factor": 0.293144,
+              "profit_factor_infinite": false,
+              "trade_count": 1023
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 15,
+          "lookback_minutes": 30,
+          "threshold_z": 1.5
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -3.672515,
+              "gross_loss": 11712.5,
+              "gross_profit": 9200.5,
+              "maximum_drawdown": 2791.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 44.0,
+                "2023-04": -530.5,
+                "2023-05": -994.75,
+                "2023-06": 100.25,
+                "2023-07": 126.5,
+                "2023-08": 94.25,
+                "2023-09": 382.25,
+                "2023-10": -815.0,
+                "2023-11": -633.5,
+                "2023-12": -285.5
+              },
+              "net_dollars": -2512.0,
+              "profit_factor": 0.785528,
+              "profit_factor_infinite": false,
+              "trade_count": 684
+            },
+            "planning_1t": {
+              "average_trade": -6.172515,
+              "gross_loss": 12629.75,
+              "gross_profit": 8407.75,
+              "maximum_drawdown": 4444.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 39.0,
+                "2023-04": -683.0,
+                "2023-05": -1224.75,
+                "2023-06": -54.75,
+                "2023-07": -28.5,
+                "2023-08": -153.25,
+                "2023-09": 174.75,
+                "2023-10": -1090.0,
+                "2023-11": -751.0,
+                "2023-12": -450.5
+              },
+              "net_dollars": -4222.0,
+              "profit_factor": 0.66571,
+              "profit_factor_infinite": false,
+              "trade_count": 684
+            },
+            "raw_gross": {
+              "average_trade": -0.672515,
+              "gross_loss": 10671.25,
+              "gross_profit": 10211.25,
+              "maximum_drawdown": 1360.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 50.0,
+                "2023-04": -347.5,
+                "2023-05": -718.75,
+                "2023-06": 286.25,
+                "2023-07": 312.5,
+                "2023-08": 391.25,
+                "2023-09": 631.25,
+                "2023-10": -485.0,
+                "2023-11": -492.5,
+                "2023-12": -87.5
+              },
+              "net_dollars": -460.0,
+              "profit_factor": 0.956894,
+              "profit_factor_infinite": false,
+              "trade_count": 684
+            },
+            "selection_2t": {
+              "average_trade": -8.672515,
+              "gross_loss": 13601.25,
+              "gross_profit": 7669.25,
+              "maximum_drawdown": 6101.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 34.0,
+                "2023-04": -835.5,
+                "2023-05": -1454.75,
+                "2023-06": -209.75,
+                "2023-07": -183.5,
+                "2023-08": -400.75,
+                "2023-09": -32.75,
+                "2023-10": -1365.0,
+                "2023-11": -868.5,
+                "2023-12": -615.5
+              },
+              "net_dollars": -5932.0,
+              "profit_factor": 0.563864,
+              "profit_factor_infinite": false,
+              "trade_count": 684
+            },
+            "stress_4t": {
+              "average_trade": -13.672515,
+              "gross_loss": 15706.5,
+              "gross_profit": 6354.5,
+              "maximum_drawdown": 9451.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 24.0,
+                "2023-04": -1140.5,
+                "2023-05": -1914.75,
+                "2023-06": -519.75,
+                "2023-07": -493.5,
+                "2023-08": -895.75,
+                "2023-09": -447.75,
+                "2023-10": -1915.0,
+                "2023-11": -1103.5,
+                "2023-12": -945.5
+              },
+              "net_dollars": -9352.0,
+              "profit_factor": 0.404578,
+              "profit_factor_infinite": false,
+              "trade_count": 684
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 30,
+          "lookback_minutes": 30,
+          "threshold_z": 1.5
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -1.684783,
+              "gross_loss": 10433.5,
+              "gross_profit": 9658.5,
+              "maximum_drawdown": 1588.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -3.5,
+                "2023-04": 48.75,
+                "2023-05": -748.5,
+                "2023-06": 354.25,
+                "2023-07": -62.5,
+                "2023-08": 137.25,
+                "2023-09": -5.25,
+                "2023-10": -196.75,
+                "2023-11": -608.0,
+                "2023-12": 309.25
+              },
+              "net_dollars": -775.0,
+              "profit_factor": 0.92572,
+              "profit_factor_infinite": false,
+              "trade_count": 460
+            },
+            "planning_1t": {
+              "average_trade": -4.184783,
+              "gross_loss": 11035.5,
+              "gross_profit": 9110.5,
+              "maximum_drawdown": 2644.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -8.5,
+                "2023-04": -51.25,
+                "2023-05": -903.5,
+                "2023-06": 244.25,
+                "2023-07": -162.5,
+                "2023-08": -20.25,
+                "2023-09": -137.75,
+                "2023-10": -374.25,
+                "2023-11": -698.0,
+                "2023-12": 186.75
+              },
+              "net_dollars": -1925.0,
+              "profit_factor": 0.825563,
+              "profit_factor_infinite": false,
+              "trade_count": 460
+            },
+            "raw_gross": {
+              "average_trade": 1.315217,
+              "gross_loss": 9732.5,
+              "gross_profit": 10337.5,
+              "maximum_drawdown": 1061.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 2.5,
+                "2023-04": 168.75,
+                "2023-05": -562.5,
+                "2023-06": 486.25,
+                "2023-07": 57.5,
+                "2023-08": 326.25,
+                "2023-09": 153.75,
+                "2023-10": 16.25,
+                "2023-11": -500.0,
+                "2023-12": 456.25
+              },
+              "net_dollars": 605.0,
+              "profit_factor": 1.062163,
+              "profit_factor_infinite": false,
+              "trade_count": 460
+            },
+            "selection_2t": {
+              "average_trade": -6.684783,
+              "gross_loss": 11656.0,
+              "gross_profit": 8581.0,
+              "maximum_drawdown": 3701.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -13.5,
+                "2023-04": -151.25,
+                "2023-05": -1058.5,
+                "2023-06": 134.25,
+                "2023-07": -262.5,
+                "2023-08": -177.75,
+                "2023-09": -270.25,
+                "2023-10": -551.75,
+                "2023-11": -788.0,
+                "2023-12": 64.25
+              },
+              "net_dollars": -3075.0,
+              "profit_factor": 0.736187,
+              "profit_factor_infinite": false,
+              "trade_count": 460
+            },
+            "stress_4t": {
+              "average_trade": -11.684783,
+              "gross_loss": 12963.5,
+              "gross_profit": 7588.5,
+              "maximum_drawdown": 5817.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -23.5,
+                "2023-04": -351.25,
+                "2023-05": -1368.5,
+                "2023-06": -85.75,
+                "2023-07": -462.5,
+                "2023-08": -492.75,
+                "2023-09": -535.25,
+                "2023-10": -906.75,
+                "2023-11": -968.0,
+                "2023-12": -180.75
+              },
+              "net_dollars": -5375.0,
+              "profit_factor": 0.585374,
+              "profit_factor_infinite": false,
+              "trade_count": 460
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 60,
+          "lookback_minutes": 30,
+          "threshold_z": 1.5
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -3.88285,
+              "gross_loss": 9324.75,
+              "gross_profit": 5306.0,
+              "maximum_drawdown": 4093.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 26.5,
+                "2023-04": -367.75,
+                "2023-05": -945.25,
+                "2023-06": -429.5,
+                "2023-07": -459.0,
+                "2023-08": -178.5,
+                "2023-09": -272.0,
+                "2023-10": -601.25,
+                "2023-11": -305.0,
+                "2023-12": -487.0
+              },
+              "net_dollars": -4018.75,
+              "profit_factor": 0.569023,
+              "profit_factor_infinite": false,
+              "trade_count": 1035
+            },
+            "planning_1t": {
+              "average_trade": -6.38285,
+              "gross_loss": 10988.75,
+              "gross_profit": 4382.5,
+              "maximum_drawdown": 6638.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 21.5,
+                "2023-04": -587.75,
+                "2023-05": -1315.25,
+                "2023-06": -702.0,
+                "2023-07": -704.0,
+                "2023-08": -533.5,
+                "2023-09": -557.0,
+                "2023-10": -1013.75,
+                "2023-11": -492.5,
+                "2023-12": -722.0
+              },
+              "net_dollars": -6606.25,
+              "profit_factor": 0.398817,
+              "profit_factor_infinite": false,
+              "trade_count": 1035
+            },
+            "raw_gross": {
+              "average_trade": -0.88285,
+              "gross_loss": 7547.5,
+              "gross_profit": 6633.75,
+              "maximum_drawdown": 1071.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 32.5,
+                "2023-04": -103.75,
+                "2023-05": -501.25,
+                "2023-06": -102.5,
+                "2023-07": -165.0,
+                "2023-08": 247.5,
+                "2023-09": 70.0,
+                "2023-10": -106.25,
+                "2023-11": -80.0,
+                "2023-12": -205.0
+              },
+              "net_dollars": -913.75,
+              "profit_factor": 0.878933,
+              "profit_factor_infinite": false,
+              "trade_count": 1035
+            },
+            "selection_2t": {
+              "average_trade": -8.88285,
+              "gross_loss": 12806.5,
+              "gross_profit": 3612.75,
+              "maximum_drawdown": 9217.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 16.5,
+                "2023-04": -807.75,
+                "2023-05": -1685.25,
+                "2023-06": -974.5,
+                "2023-07": -949.0,
+                "2023-08": -888.5,
+                "2023-09": -842.0,
+                "2023-10": -1426.25,
+                "2023-11": -680.0,
+                "2023-12": -957.0
+              },
+              "net_dollars": -9193.75,
+              "profit_factor": 0.282103,
+              "profit_factor_infinite": false,
+              "trade_count": 1035
+            },
+            "stress_4t": {
+              "average_trade": -13.88285,
+              "gross_loss": 16784.0,
+              "gross_profit": 2415.25,
+              "maximum_drawdown": 14387.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 6.5,
+                "2023-04": -1247.75,
+                "2023-05": -2425.25,
+                "2023-06": -1519.5,
+                "2023-07": -1439.0,
+                "2023-08": -1598.5,
+                "2023-09": -1412.0,
+                "2023-10": -2251.25,
+                "2023-11": -1055.0,
+                "2023-12": -1427.0
+              },
+              "net_dollars": -14368.75,
+              "profit_factor": 0.143902,
+              "profit_factor_infinite": false,
+              "trade_count": 1035
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 5,
+          "lookback_minutes": 30,
+          "threshold_z": 2.0
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -3.072702,
+              "gross_loss": 7326.25,
+              "gross_profit": 5688.5,
+              "maximum_drawdown": 1697.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -13.5,
+                "2023-04": -258.5,
+                "2023-05": -806.75,
+                "2023-06": -98.75,
+                "2023-07": -193.25,
+                "2023-08": 327.25,
+                "2023-09": 159.0,
+                "2023-10": 0.75,
+                "2023-11": -371.0,
+                "2023-12": -383.0
+              },
+              "net_dollars": -1637.75,
+              "profit_factor": 0.776455,
+              "profit_factor_infinite": false,
+              "trade_count": 533
+            },
+            "planning_1t": {
+              "average_trade": -5.572702,
+              "gross_loss": 8068.0,
+              "gross_profit": 5097.75,
+              "maximum_drawdown": 3006.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -18.5,
+                "2023-04": -376.0,
+                "2023-05": -996.75,
+                "2023-06": -236.25,
+                "2023-07": -303.25,
+                "2023-08": 144.75,
+                "2023-09": 16.5,
+                "2023-10": -226.75,
+                "2023-11": -463.5,
+                "2023-12": -510.5
+              },
+              "net_dollars": -2970.25,
+              "profit_factor": 0.631848,
+              "profit_factor_infinite": false,
+              "trade_count": 533
+            },
+            "raw_gross": {
+              "average_trade": -0.072702,
+              "gross_loss": 6510.0,
+              "gross_profit": 6471.25,
+              "maximum_drawdown": 966.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -7.5,
+                "2023-04": -117.5,
+                "2023-05": -578.75,
+                "2023-06": 66.25,
+                "2023-07": -61.25,
+                "2023-08": 546.25,
+                "2023-09": 330.0,
+                "2023-10": 273.75,
+                "2023-11": -260.0,
+                "2023-12": -230.0
+              },
+              "net_dollars": -38.75,
+              "profit_factor": 0.994048,
+              "profit_factor_infinite": false,
+              "trade_count": 533
+            },
+            "selection_2t": {
+              "average_trade": -8.072702,
+              "gross_loss": 8859.25,
+              "gross_profit": 4556.5,
+              "maximum_drawdown": 4321.75,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -23.5,
+                "2023-04": -493.5,
+                "2023-05": -1186.75,
+                "2023-06": -373.75,
+                "2023-07": -413.25,
+                "2023-08": -37.75,
+                "2023-09": -126.0,
+                "2023-10": -454.25,
+                "2023-11": -556.0,
+                "2023-12": -638.0
+              },
+              "net_dollars": -4302.75,
+              "profit_factor": 0.514321,
+              "profit_factor_infinite": false,
+              "trade_count": 533
+            },
+            "stress_4t": {
+              "average_trade": -13.072702,
+              "gross_loss": 10616.0,
+              "gross_profit": 3648.25,
+              "maximum_drawdown": 6968.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -33.5,
+                "2023-04": -728.5,
+                "2023-05": -1566.75,
+                "2023-06": -648.75,
+                "2023-07": -633.25,
+                "2023-08": -402.75,
+                "2023-09": -411.0,
+                "2023-10": -909.25,
+                "2023-11": -741.0,
+                "2023-12": -893.0
+              },
+              "net_dollars": -6967.75,
+              "profit_factor": 0.343656,
+              "profit_factor_infinite": false,
+              "trade_count": 533
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 15,
+          "lookback_minutes": 30,
+          "threshold_z": 2.0
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -7.609375,
+              "gross_loss": 7687.25,
+              "gross_profit": 4765.25,
+              "maximum_drawdown": 2943.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -22.25,
+                "2023-04": -301.25,
+                "2023-05": -768.75,
+                "2023-06": -178.75,
+                "2023-07": -166.25,
+                "2023-08": -233.5,
+                "2023-09": 183.75,
+                "2023-10": -694.0,
+                "2023-11": -423.75,
+                "2023-12": -317.25
+              },
+              "net_dollars": -2922.0,
+              "profit_factor": 0.61989,
+              "profit_factor_infinite": false,
+              "trade_count": 384
+            },
+            "planning_1t": {
+              "average_trade": -10.109375,
+              "gross_loss": 8251.25,
+              "gross_profit": 4369.25,
+              "maximum_drawdown": 3899.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -27.25,
+                "2023-04": -388.75,
+                "2023-05": -893.75,
+                "2023-06": -278.75,
+                "2023-07": -241.25,
+                "2023-08": -363.5,
+                "2023-09": 71.25,
+                "2023-10": -864.0,
+                "2023-11": -486.25,
+                "2023-12": -409.75
+              },
+              "net_dollars": -3882.0,
+              "profit_factor": 0.529526,
+              "profit_factor_infinite": false,
+              "trade_count": 384
+            },
+            "raw_gross": {
+              "average_trade": -4.609375,
+              "gross_loss": 7041.25,
+              "gross_profit": 5271.25,
+              "maximum_drawdown": 1850.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -16.25,
+                "2023-04": -196.25,
+                "2023-05": -618.75,
+                "2023-06": -58.75,
+                "2023-07": -76.25,
+                "2023-08": -77.5,
+                "2023-09": 318.75,
+                "2023-10": -490.0,
+                "2023-11": -348.75,
+                "2023-12": -206.25
+              },
+              "net_dollars": -1770.0,
+              "profit_factor": 0.748624,
+              "profit_factor_infinite": false,
+              "trade_count": 384
+            },
+            "selection_2t": {
+              "average_trade": -12.609375,
+              "gross_loss": 8839.75,
+              "gross_profit": 3997.75,
+              "maximum_drawdown": 4856.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -32.25,
+                "2023-04": -476.25,
+                "2023-05": -1018.75,
+                "2023-06": -378.75,
+                "2023-07": -316.25,
+                "2023-08": -493.5,
+                "2023-09": -41.25,
+                "2023-10": -1034.0,
+                "2023-11": -548.75,
+                "2023-12": -502.25
+              },
+              "net_dollars": -4842.0,
+              "profit_factor": 0.452247,
+              "profit_factor_infinite": false,
+              "trade_count": 384
+            },
+            "stress_4t": {
+              "average_trade": -17.609375,
+              "gross_loss": 10106.0,
+              "gross_profit": 3344.0,
+              "maximum_drawdown": 6771.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": -42.25,
+                "2023-04": -651.25,
+                "2023-05": -1268.75,
+                "2023-06": -578.75,
+                "2023-07": -466.25,
+                "2023-08": -753.5,
+                "2023-09": -266.25,
+                "2023-10": -1374.0,
+                "2023-11": -673.75,
+                "2023-12": -687.25
+              },
+              "net_dollars": -6762.0,
+              "profit_factor": 0.330893,
+              "profit_factor_infinite": false,
+              "trade_count": 384
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 30,
+          "lookback_minutes": 30,
+          "threshold_z": 2.0
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      },
+      {
+        "eligible": false,
+        "metrics": {
+          "cost_views": {
+            "fee_0t": {
+              "average_trade": -5.873264,
+              "gross_loss": 7676.0,
+              "gross_profit": 5984.5,
+              "maximum_drawdown": 2093.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 14.5,
+                "2023-04": 56.0,
+                "2023-05": -598.75,
+                "2023-06": 160.75,
+                "2023-07": -302.5,
+                "2023-08": 179.5,
+                "2023-09": -2.75,
+                "2023-10": -727.75,
+                "2023-11": -337.75,
+                "2023-12": -132.75
+              },
+              "net_dollars": -1691.5,
+              "profit_factor": 0.779638,
+              "profit_factor_infinite": false,
+              "trade_count": 288
+            },
+            "planning_1t": {
+              "average_trade": -8.373264,
+              "gross_loss": 8080.0,
+              "gross_profit": 5668.5,
+              "maximum_drawdown": 2736.0,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 12.0,
+                "2023-04": -14.0,
+                "2023-05": -686.25,
+                "2023-06": 83.25,
+                "2023-07": -365.0,
+                "2023-08": 89.5,
+                "2023-09": -85.25,
+                "2023-10": -847.75,
+                "2023-11": -395.25,
+                "2023-12": -202.75
+              },
+              "net_dollars": -2411.5,
+              "profit_factor": 0.701547,
+              "profit_factor_infinite": false,
+              "trade_count": 288
+            },
+            "raw_gross": {
+              "average_trade": -2.873264,
+              "gross_loss": 7213.75,
+              "gross_profit": 6386.25,
+              "maximum_drawdown": 1432.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 17.5,
+                "2023-04": 140.0,
+                "2023-05": -493.75,
+                "2023-06": 253.75,
+                "2023-07": -227.5,
+                "2023-08": 287.5,
+                "2023-09": 96.25,
+                "2023-10": -583.75,
+                "2023-11": -268.75,
+                "2023-12": -48.75
+              },
+              "net_dollars": -827.5,
+              "profit_factor": 0.885289,
+              "profit_factor_infinite": false,
+              "trade_count": 288
+            },
+            "selection_2t": {
+              "average_trade": -10.873264,
+              "gross_loss": 8498.25,
+              "gross_profit": 5366.75,
+              "maximum_drawdown": 3381.25,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 9.5,
+                "2023-04": -84.0,
+                "2023-05": -773.75,
+                "2023-06": 5.75,
+                "2023-07": -427.5,
+                "2023-08": -0.5,
+                "2023-09": -167.75,
+                "2023-10": -967.75,
+                "2023-11": -452.75,
+                "2023-12": -272.75
+              },
+              "net_dollars": -3131.5,
+              "profit_factor": 0.631512,
+              "profit_factor_infinite": false,
+              "trade_count": 288
+            },
+            "stress_4t": {
+              "average_trade": -15.873264,
+              "gross_loss": 9365.5,
+              "gross_profit": 4794.0,
+              "maximum_drawdown": 4710.5,
+              "monthly_pnl": {
+                "2023-01": 0.0,
+                "2023-02": 0.0,
+                "2023-03": 4.5,
+                "2023-04": -224.0,
+                "2023-05": -948.75,
+                "2023-06": -149.25,
+                "2023-07": -552.5,
+                "2023-08": -180.5,
+                "2023-09": -332.75,
+                "2023-10": -1207.75,
+                "2023-11": -567.75,
+                "2023-12": -412.75
+              },
+              "net_dollars": -4571.5,
+              "profit_factor": 0.511879,
+              "profit_factor_infinite": false,
+              "trade_count": 288
+            }
+          },
+          "fill_convention": "next-minute MES open to exact hold-minute MES close; trade-print proxy",
+          "year": 2023
+        },
+        "parameters": {
+          "hold_minutes": 60,
+          "lookback_minutes": 30,
+          "threshold_z": 2.0
+        },
+        "selection_net_to_drawdown": null,
+        "selection_net_to_drawdown_infinite": false
+      }
+    ],
+    "selected": null
+  },
+  "estimation": {
+    "beta": "prior 60 complete sessions, minimum 40, no-intercept OLS",
+    "minimum_scale_observations": 500,
+    "scale": "sample standard deviation of residuals from prior 20 complete sessions"
+  },
+  "execution": {
+    "adverse_ticks_each_side": [
+      0,
+      1,
+      2,
+      4
+    ],
+    "evidence": "trade-print proxy; executable bid/ask and latency not verified",
+    "fill_convention": "next-minute MES open to exact hold-minute MES close",
+    "round_trip_fee": 3.0
+  },
+  "family": {
+    "cells": 24,
+    "holds_minutes": [
+      5,
+      15,
+      30,
+      60
+    ],
+    "lookbacks_minutes": [
+      5,
+      15,
+      30
+    ],
+    "thresholds_z": [
+      1.5,
+      2.0
+    ]
+  },
+  "firewall": "2024 and 2025 unopened because no 2023 cell qualified",
+  "live_ready": false,
+  "production_changed": false,
+  "research_only": true,
+  "schema_version": "valor-mes-v33-result/1.0.0",
+  "strategy_version": "v33",
+  "study_id": "valor-mes-v33-crossmarket-20260925",
+  "verdict": "FAMILY_FAIL_DISCOVERY",
+  "years_loaded": [
+    2023
+  ]
+}
