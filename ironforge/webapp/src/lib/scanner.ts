@@ -219,17 +219,21 @@ import {
   getGammaExposureComponents,
 } from './tradier'
 import {
-  getCallSleeveMode,
-  getCallSleeveMaxContracts,
-  getCallSleeveGuardBuffer,
-  computeCallStrikes,
-  meetsCallCreditFloor,
-  isCallSleeveDayEligible,
-  isCallGuardTriggered,
-  buildCallSleeveDailyContextRow,
-  UNAVAILABLE_GAMMA_CONTEXT,
-  type CallSleeveGammaContext,
-} from './flame-call-sleeve'
+  getFlintMode,
+  getFlintMaxContracts,
+  getFlintGuardBuffer,
+  getFlintOtmOffset,
+  getFlintMinCredit,
+  computeFlintStrikes,
+  meetsFlintCreditFloor,
+  isFlintDayEligible,
+  isFlintGuardTriggered,
+  flintMaxLoss,
+  evaluateFlintProfitGate,
+  buildFlintDailyContextRow,
+  UNAVAILABLE_FLINT_GAMMA_CONTEXT,
+  type FlintGammaContext,
+} from './flint'
 import { BOT_STARTING_CAPITAL } from './bot-capital'
 import { getTvMarketStructure, type TvMarketStructure } from './gex/trading-volatility-client'
 import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, classifySignalState, notifyDecision, type SignalStreak } from './volAlerts'
@@ -4220,18 +4224,21 @@ async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
 }
 
 /* ------------------------------------------------------------------ */
-/*  FLAME-CALL SLEEVE — SPY 0DTE call credit spread, days FLAME's VIX  */
-/*  gate skips. Own table, own arm switch, own production path. Never  */
-/*  reads or writes flame_positions / flame_paper_account.             */
+/*  FLINT — SPY 0DTE call credit spread, EVERY trading day, on FLAME's */
+/*  own paper ledger and production account(s). Own table, own arm     */
+/*  switch, own production path. Never reads or writes flame_positions */
+/*  / flame_paper_account, EXCEPT to read (never write) FLAME's own    */
+/*  per-account funded/high-water ledger and same-day put collateral   */
+/*  for FLINT's own profit gate (rule R1) and buying-power check.      */
 /* ------------------------------------------------------------------ */
 
-const FLAME_CALL_SLEEVE_TABLE = 'flame_call_sleeve_positions'
-let _callSleeveTableReady = false
+const FLINT_TABLE = 'flint_positions'
+let _flintTableReady = false
 
-async function ensureCallSleeveTable(): Promise<void> {
-  if (_callSleeveTableReady) return
+async function ensureFlintTable(): Promise<void> {
+  if (_flintTableReady) return
   await dbExecute(
-    `CREATE TABLE IF NOT EXISTS ${FLAME_CALL_SLEEVE_TABLE} (
+    `CREATE TABLE IF NOT EXISTS ${FLINT_TABLE} (
        id SERIAL PRIMARY KEY,
        position_id TEXT UNIQUE NOT NULL,
        ticker TEXT NOT NULL DEFAULT 'SPY',
@@ -4247,6 +4254,7 @@ async function ensureCallSleeveTable(): Promise<void> {
        status TEXT NOT NULL DEFAULT 'open',
        close_reason TEXT,
        account_type TEXT NOT NULL DEFAULT 'paper',
+       person TEXT,
        mode TEXT NOT NULL,
        sandbox_order_id TEXT,
        open_time TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -4255,11 +4263,11 @@ async function ensureCallSleeveTable(): Promise<void> {
        created_at TIMESTAMP NOT NULL DEFAULT NOW()
      )`,
   )
-  _callSleeveTableReady = true
+  _flintTableReady = true
 }
 
 /* ------------------------------------------------------------------ */
-/*  FLAME-CALL forward-logging — daily dealer-gamma context.           */
+/*  FLINT forward-logging — daily dealer-gamma context.                 */
 /*                                                                      */
 /*  Not statistically confirmed: a sizing study found this sleeve      */
 /*  loses on days call-side dealer gamma (igex_call in the backtest    */
@@ -4269,16 +4277,16 @@ async function ensureCallSleeveTable(): Promise<void> {
 /*  sessions are computed OFFLINE, never in this file. One row per     */
 /*  evaluated day; NEVER gates, sizes, or otherwise touches a trade —  */
 /*  every write is wrapped so a logging failure cannot reach the       */
-/*  trading path (see logCallSleeveDailyContext below).                */
+/*  trading path (see logFlintDailyContext below).                     */
 /* ------------------------------------------------------------------ */
 
-const FLAME_CALL_SLEEVE_CONTEXT_TABLE = 'flame_call_sleeve_daily_context'
-let _callSleeveContextTableReady = false
+const FLINT_CONTEXT_TABLE = 'flint_daily_context'
+let _flintContextTableReady = false
 
-async function ensureCallSleeveContextTable(): Promise<void> {
-  if (_callSleeveContextTableReady) return
+async function ensureFlintContextTable(): Promise<void> {
+  if (_flintContextTableReady) return
   await dbExecute(
-    `CREATE TABLE IF NOT EXISTS ${FLAME_CALL_SLEEVE_CONTEXT_TABLE} (
+    `CREATE TABLE IF NOT EXISTS ${FLINT_CONTEXT_TABLE} (
        id SERIAL PRIMARY KEY,
        trade_date DATE UNIQUE NOT NULL,
        evaluated_at TIMESTAMP NOT NULL,
@@ -4298,7 +4306,7 @@ async function ensureCallSleeveContextTable(): Promise<void> {
        created_at TIMESTAMP NOT NULL DEFAULT NOW()
      )`,
   )
-  _callSleeveContextTableReady = true
+  _flintContextTableReady = true
 }
 
 /**
@@ -4307,7 +4315,7 @@ async function ensureCallSleeveContextTable(): Promise<void> {
  * daily, so re-reading the chain every scan cycle inside the 5-minute
  * entry window buys nothing and just burns Tradier/TV calls. Never
  * throws: any failure anywhere in this function resolves to
- * UNAVAILABLE_GAMMA_CONTEXT rather than propagating.
+ * UNAVAILABLE_FLINT_GAMMA_CONTEXT rather than propagating.
  *
  * put_wall/call_wall are always null — no LIVE source in this codebase
  * currently reports dealer wall price levels (the old alphagex-api
@@ -4317,13 +4325,13 @@ async function ensureCallSleeveContextTable(): Promise<void> {
  * fabricated wall would violate "never fabricate," so these stay null
  * until a real source exists.
  */
-let _callSleeveGammaContextCache: { day: string; value: CallSleeveGammaContext } | null = null
-async function getCallSleeveGammaContextCached(ct: Date, spot: number | null): Promise<CallSleeveGammaContext> {
+let _flintGammaContextCache: { day: string; value: FlintGammaContext } | null = null
+async function getFlintGammaContextCached(ct: Date, spot: number | null): Promise<FlintGammaContext> {
   const day = ct.toISOString().slice(0, 10)
-  if (_callSleeveGammaContextCache && _callSleeveGammaContextCache.day === day) {
-    return _callSleeveGammaContextCache.value
+  if (_flintGammaContextCache && _flintGammaContextCache.day === day) {
+    return _flintGammaContextCache.value
   }
-  let value: CallSleeveGammaContext = UNAVAILABLE_GAMMA_CONTEXT
+  let value: FlintGammaContext = UNAVAILABLE_FLINT_GAMMA_CONTEXT
   try {
     if (spot && spot > 0) {
       const comps = await getGammaExposureComponents('SPY', spot, 60)
@@ -4345,24 +4353,24 @@ async function getCallSleeveGammaContextCached(ct: Date, spot: number | null): P
       }
     }
   } catch {
-    value = UNAVAILABLE_GAMMA_CONTEXT
+    value = UNAVAILABLE_FLINT_GAMMA_CONTEXT
   }
-  _callSleeveGammaContextCache = { day, value }
+  _flintGammaContextCache = { day, value }
   return value
 }
 
 /**
  * Writes one row of forward-logging context per evaluated day. Called from
- * every terminal branch of tryOpenFlameCallSleeve EXCEPT the "already
- * traded today" short-circuit (that branch re-checks existing state, it
- * doesn't make a fresh evaluation, and re-logging it would clobber the
- * good row already written when the trade actually happened).
+ * every terminal branch of tryOpenFlint EXCEPT the "already traded today"
+ * short-circuit (that branch re-checks existing state, it doesn't make a
+ * fresh evaluation, and re-logging it would clobber the good row already
+ * written when the trade actually happened).
  *
  * 🚨 Must NEVER throw into the trading path — this is pure observability.
  * Every failure (gamma read, DB write, anything) is caught here and only
  * ever produces a console.warn.
  */
-async function logCallSleeveDailyContext(params: {
+async function logFlintDailyContext(params: {
   ct: Date
   decision: string
   vixRatio: number | null
@@ -4372,7 +4380,7 @@ async function logCallSleeveDailyContext(params: {
   entryCredit: number | null
 }): Promise<void> {
   try {
-    await ensureCallSleeveContextTable()
+    await ensureFlintContextTable()
 
     let spot = params.spot
     if (!(spot && spot > 0)) {
@@ -4382,8 +4390,8 @@ async function logCallSleeveDailyContext(params: {
       } catch { spot = null }
     }
 
-    const gamma = await getCallSleeveGammaContextCached(params.ct, spot)
-    const row = buildCallSleeveDailyContextRow({
+    const gamma = await getFlintGammaContextCached(params.ct, spot)
+    const row = buildFlintDailyContextRow({
       tradeDate: params.ct.toISOString().slice(0, 10),
       evaluatedAt: params.ct,
       spot,
@@ -4396,7 +4404,7 @@ async function logCallSleeveDailyContext(params: {
     })
 
     await query(
-      `INSERT INTO ${FLAME_CALL_SLEEVE_CONTEXT_TABLE} (
+      `INSERT INTO ${FLINT_CONTEXT_TABLE} (
          trade_date, evaluated_at, spot, vix_ratio,
          call_short_strike_considered, call_long_strike_considered, entry_credit_seen,
          decision, call_gamma, put_gamma, net_gamma, gamma_flip, put_wall, call_wall, gamma_source
@@ -4424,118 +4432,168 @@ async function logCallSleeveDailyContext(params: {
       ],
     )
   } catch (e: unknown) {
-    console.warn(`[scanner] FLAME-CALL context logging failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+    console.warn(`[scanner] FLINT context logging failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
+/**
+ * FLINT's own paper ledger read — FLAME's paper (sandbox) account, the same
+ * row the EBB put-side ladder reads for `bot.dte`. floor = starting_capital
+ * (the funded seed); equity = current_balance (starting + realized P&L). Not
+ * FLINT's own table — FLINT never gets its own ledger, per spec, it trades
+ * "(FLAME account)" and is gated on FLAME's account state. null on any read
+ * failure or missing row — the caller must skip, never guess.
+ */
+async function getFlintPaperLedger(bot: BotDef): Promise<{ floor: number | null; equity: number | null }> {
+  try {
+    const rows = await query(
+      `SELECT starting_capital, current_balance FROM ${botTable(bot.name, 'paper_account')}
+       WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+       ORDER BY id DESC LIMIT 1`,
+      [bot.dte],
+    )
+    if (rows.length === 0) return { floor: null, equity: null }
+    const floor = num(rows[0].starting_capital)
+    const equity = num(rows[0].current_balance)
+    return {
+      floor: Number.isFinite(floor) && floor > 0 ? floor : null,
+      equity: Number.isFinite(equity) ? equity : null,
+    }
+  } catch (e: unknown) {
+    console.warn(`[scanner] FLINT: paper ledger read failed: ${e instanceof Error ? e.message : String(e)}`)
+    return { floor: null, equity: null }
   }
 }
 
 /**
  * Entry. Called every scan cycle for FLAME only (see scanBot); internally a
- * no-op unless ALL of: mode != off, inside FLAME's own 13:05-13:10 CT entry
- * window (isInEntryWindow reused byte-for-byte, not re-derived), FLAME's VIX
- * gate ratio is ABOVE its ceiling (the day filter — the same ratio FLAME's
- * own gate computed, re-applied through isCallSleeveDayEligible), and this
- * sleeve has not already traded today. One trade per day, fixed size — no
- * ladder, no stand-down, no liquidity cap; this is a single 1-lot sleeve.
+ * no-op unless mode != off and inside FLAME's own 13:05-13:10 CT entry
+ * window (isInEntryWindow reused byte-for-byte, not re-derived). Unlike the
+ * old FLAME-CALL sleeve, FLINT trades EVERY day — FLAME's own VIX decay gate
+ * ratio is recorded (for flint_daily_context research only) but no longer
+ * gates entry (isFlintDayEligible is a documented no-op; see flint.ts).
+ *
+ * The paper book and each production account are gated INDEPENDENTLY by
+ * rule R1 (evaluateFlintProfitGate) — one account's outcome never affects
+ * another's. The paper book's decision is evaluated here directly; each
+ * production account's R1 gate + buying-power check run inside
+ * placeCallSpreadOrderAllAccounts (tradier.ts), so an account already
+ * traded today, or gated out on cushion or BP, simply never appears in that
+ * call's result and gets no row here. One trade per account per day, fixed
+ * size — no ladder, no stand-down, no liquidity cap; this is a 1-lot sleeve.
  */
-async function tryOpenFlameCallSleeve(bot: BotDef, ct: Date): Promise<string> {
-  const mode = getCallSleeveMode()
+async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
+  const mode = getFlintMode()
   if (mode === 'off') return ''
   if (!isConfigured()) return ''
   if (!isInEntryWindow(ct, bot)) return ''
 
-  await ensureCallSleeveTable()
+  await ensureFlintTable()
 
-  // Day filter — reuses FLAME's own ratio computation (vixDecayCheck / VIX_DECAY_CEILING.flame).
-  // Trades ONLY the days FLAME's gate skips; never re-derives the ratio itself.
+  // Ratio is recorded for research (flint_daily_context) — it never gates
+  // entry any more. isFlintDayEligible is called (and its result ignored)
+  // purely so a future accidental re-introduction of a ratio gate shows up
+  // as a diff to that function, not a silent behavior change here.
   const asofDate = ct.toISOString().slice(0, 10)
   const flameVix = await vixDecayCheck(asofDate, VIX_DECAY_CEILING.flame)
-  if (!isCallSleeveDayEligible(flameVix.ratio, VIX_DECAY_CEILING.flame)) {
-    await logCallSleeveDailyContext({
-      ct, decision: 'skip:day_not_eligible', vixRatio: flameVix.ratio,
-      spot: null, shortStrike: null, longStrike: null, entryCredit: null,
-    }).catch(() => { /* forward-logging must never touch the trading path */ })
-    return '' // FLAME's gate did not skip today (or the ratio is unknown) — sleeve sits out
-  }
-
-  const todayRows = await query(
-    `SELECT COUNT(*) AS cnt FROM ${FLAME_CALL_SLEEVE_TABLE}
-     WHERE (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY} AND account_type = 'paper'`,
-  )
-  // No context log here — this branch re-checks EXISTING state, it isn't a
-  // fresh evaluation, and logging it would clobber the good row already
-  // written on the cycle the trade actually happened.
-  if (int(todayRows[0]?.cnt) >= 1) return 'FLAME-CALL: no_trade | traded_today'
+  void isFlintDayEligible(flameVix.ratio)
 
   const q = await getQuote('SPY')
   const spot = q?.last ?? 0
   if (!(spot > 0)) {
-    console.log('[scanner] FLAME-CALL: no_trade | skip:no_quote')
-    await logCallSleeveDailyContext({
+    console.log('[scanner] FLINT: no_trade | skip:no_quote')
+    await logFlintDailyContext({
       ct, decision: 'skip:no_quote', vixRatio: flameVix.ratio,
       spot: null, shortStrike: null, longStrike: null, entryCredit: null,
     }).catch(() => { /* forward-logging must never touch the trading path */ })
-    return 'FLAME-CALL: no_trade | skip:no_quote'
+    return 'FLINT: no_trade | skip:no_quote'
   }
 
   const expiration = getTargetExpiration(0) // 0DTE, same-day — independent of FLAME's own 2DTE
-  const { short: callShort, long: callLong } = computeCallStrikes(spot)
+  const { short: callShort, long: callLong } = computeFlintStrikes(spot, getFlintOtmOffset())
 
   const credit = await getCallSpreadEntryCredit('SPY', expiration, callShort, callLong)
   if (!credit) {
-    console.log('[scanner] FLAME-CALL: no_trade | skip:no_quotes')
-    await logCallSleeveDailyContext({
+    console.log('[scanner] FLINT: no_trade | skip:no_quotes')
+    await logFlintDailyContext({
       ct, decision: 'skip:no_quotes', vixRatio: flameVix.ratio,
       spot, shortStrike: callShort, longStrike: callLong, entryCredit: null,
     }).catch(() => { /* forward-logging must never touch the trading path */ })
-    return 'FLAME-CALL: no_trade | skip:no_quotes'
+    return 'FLINT: no_trade | skip:no_quotes'
   }
-  if (!meetsCallCreditFloor(credit.callCredit)) {
-    console.log(`[scanner] FLAME-CALL: no_trade | skip:call_credit_too_low($${credit.callCredit.toFixed(2)})`)
-    await logCallSleeveDailyContext({
+  const minCredit = getFlintMinCredit()
+  if (!meetsFlintCreditFloor(credit.callCredit, minCredit)) {
+    console.log(`[scanner] FLINT: no_trade | skip:call_credit_too_low($${credit.callCredit.toFixed(2)})`)
+    await logFlintDailyContext({
       ct, decision: 'skip:call_credit_too_low', vixRatio: flameVix.ratio,
       spot, shortStrike: callShort, longStrike: callLong, entryCredit: credit.callCredit,
     }).catch(() => { /* forward-logging must never touch the trading path */ })
-    return 'FLAME-CALL: no_trade | skip:call_credit_too_low'
+    return 'FLINT: no_trade | skip:call_credit_too_low'
   }
 
-  const contracts = getCallSleeveMaxContracts()
+  const contracts = getFlintMaxContracts()
   const width = callLong - callShort
   const collateral = Math.max(0, (width - credit.callCredit) * 100) * contracts
+  const maxLoss = flintMaxLoss(callShort, callLong, credit.callCredit, contracts)
   const positionId =
-    `FLAME-CALL-SPY-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+    `FLINT-SPY-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
 
-  await query(
-    `INSERT INTO ${FLAME_CALL_SLEEVE_TABLE} (
-       position_id, ticker, expiration, call_short_strike, call_long_strike,
-       contracts, entry_credit, collateral_required, underlying_at_entry,
-       status, account_type, mode, open_time, open_date
-     ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open','paper',$9, NOW(), ${CT_TODAY})`,
-    [positionId, expiration, callShort, callLong, contracts, credit.callCredit, collateral, spot, mode],
+  // ---- PAPER BOOK — rule R1 against FLAME's own paper ledger ----
+  let paperDecision: string
+  const paperToday = await query(
+    `SELECT COUNT(*) AS cnt FROM ${FLINT_TABLE}
+     WHERE open_date = ${CT_TODAY} AND account_type = 'paper'`,
   )
-  console.log(
-    `[scanner] FLAME-CALL SPY: ${contracts}x ${callShort}/${callLong}C exp ${expiration} ` +
-    `@ $${credit.callCredit.toFixed(2)} (spot ${spot.toFixed(2)}, ratio=${flameVix.ratio!.toFixed(3)}) mode=${mode}`,
-  )
-  await logCallSleeveDailyContext({
-    ct, decision: 'traded', vixRatio: flameVix.ratio,
+  if (int(paperToday[0]?.cnt) >= 1) {
+    paperDecision = 'skip:already_traded_today'
+    console.log('[scanner] FLINT: no_trade | paper skip:already_traded_today')
+  } else {
+    const paperLedger = await getFlintPaperLedger(bot)
+    const gate = evaluateFlintProfitGate(paperLedger.equity, paperLedger.floor, maxLoss)
+    if (!gate.eligible) {
+      paperDecision = gate.reason ?? 'skip:flint_profit_cushion(unreadable)'
+      console.log(`[scanner] FLINT: no_trade | paper ${paperDecision}`)
+    } else {
+      await query(
+        `INSERT INTO ${FLINT_TABLE} (
+           position_id, ticker, expiration, call_short_strike, call_long_strike,
+           contracts, entry_credit, collateral_required, underlying_at_entry,
+           status, account_type, person, mode, open_time, open_date
+         ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open','paper',NULL,$9, NOW(), ${CT_TODAY})`,
+        [positionId, expiration, callShort, callLong, contracts, credit.callCredit, collateral, spot, mode],
+      )
+      console.log(
+        `[scanner] FLINT SPY: ${contracts}x ${callShort}/${callLong}C exp ${expiration} ` +
+        `@ $${credit.callCredit.toFixed(2)} (spot ${spot.toFixed(2)}, cushion=$${gate.cushion?.toFixed(2) ?? 'n/a'}) mode=${mode}`,
+      )
+      paperDecision = 'traded'
+    }
+  }
+
+  await logFlintDailyContext({
+    ct, decision: paperDecision, vixRatio: flameVix.ratio,
     spot, shortStrike: callShort, longStrike: callLong, entryCredit: credit.callCredit,
   }).catch(() => { /* forward-logging must never touch the trading path */ })
 
-  if (mode !== 'live') return `FLAME-CALL: traded@${credit.callCredit.toFixed(2)}`
+  if (mode !== 'live') return `FLINT: paper=${paperDecision}`
 
   if (!canPlaceLiveOrders('flame')) {
-    console.log(`[scanner] FLAME-CALL: live:disarmed(${describeLiveGate('flame')})`)
-    return `FLAME-CALL: traded@${credit.callCredit.toFixed(2)} live:disarmed(${describeLiveGate('flame')})`
+    console.log(`[scanner] FLINT: live:disarmed(${describeLiveGate('flame')})`)
+    return `FLINT: paper=${paperDecision} live:disarmed(${describeLiveGate('flame')})`
   }
 
+  // ---- PRODUCTION ACCOUNT(S) — each gated INDEPENDENTLY of the paper book ----
+  // rule R1 + the buying-power check both run per-account inside
+  // placeCallSpreadOrderAllAccounts; an account that already traded today, or
+  // is gated out on cushion or BP, is simply absent from `live` below.
   try {
     const live = await placeCallSpreadOrderAllAccounts(
       'SPY', expiration, callShort, callLong, contracts, credit.callCredit, positionId,
     )
     const fills = Object.entries(live)
     if (fills.length === 0) {
-      console.log('[scanner] FLAME-CALL: live:no_fill')
-      return `FLAME-CALL: traded@${credit.callCredit.toFixed(2)} live:no_fill`
+      console.log('[scanner] FLINT: live:no_fill')
+      return `FLINT: paper=${paperDecision} live:no_fill`
     }
     for (const [key, info] of fills) {
       const hasFill = info.fill_price != null && info.fill_price > 0
@@ -4545,44 +4603,44 @@ async function tryOpenFlameCallSleeve(bot: BotDef, ct: Date): Promise<string> {
       const pPerson = key.split(':')[0] || 'PRODUCTION'
       const pId = `${positionId}-prod-${pPerson.toLowerCase().replace(/[^a-z0-9]/g, '')}`
       await query(
-        `INSERT INTO ${FLAME_CALL_SLEEVE_TABLE} (
+        `INSERT INTO ${FLINT_TABLE} (
            position_id, ticker, expiration, call_short_strike, call_long_strike,
            contracts, entry_credit, collateral_required, underlying_at_entry,
-           status, account_type, mode, sandbox_order_id, open_time, open_date
-         ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open','production',$9,$10, NOW(), ${CT_TODAY})`,
-        [pId, expiration, callShort, callLong, pContracts, pCredit, pCollateral, spot, mode, String(info.order_id)],
+           status, account_type, person, mode, sandbox_order_id, open_time, open_date
+         ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open','production',$9,$10,$11, NOW(), ${CT_TODAY})`,
+        [pId, expiration, callShort, callLong, pContracts, pCredit, pCollateral, spot, pPerson, mode, String(info.order_id)],
       )
+      console.log(`[scanner] FLINT LIVE FILL [${pPerson}]: ${pId} ${pContracts}x @ $${pCredit.toFixed(4)}`)
     }
   } catch (e: unknown) {
-    console.error(`[scanner] FLAME-CALL live placement failed: ${e instanceof Error ? e.message : String(e)}`)
+    console.error(`[scanner] FLINT live placement failed: ${e instanceof Error ? e.message : String(e)}`)
   }
 
-  return `FLAME-CALL: traded@${credit.callCredit.toFixed(2)}`
+  return `FLINT: paper=${paperDecision}`
 }
 
 /**
- * Assignment guard for the call sleeve — mirrors closeAtRiskBeforeBell's
- * 14:57-15:00 CT window and buffer semantics (spot within, or above, the
- * buffer of the short strike), but against flame_call_sleeve_positions only,
- * with its OWN buffer (CALL_SLEEVE_GUARD_BUFFER, default $0.25 — narrower
- * than FLAME's put-side $0.50, per spec). A buffer of 0 (env set to '' or
- * '0') disables the guard: the position then holds to expiry unguarded,
- * deliberately, same fail-safe direction as the rest of this file — no quote
- * closes nothing.
+ * Assignment guard for FLINT — mirrors closeAtRiskBeforeBell's 14:57-15:00 CT
+ * window and buffer semantics (spot within, or above, the buffer of the
+ * short strike), but against flint_positions only, with its OWN buffer
+ * (FLINT_GUARD_BUFFER, default $0.25 — narrower than FLAME's put-side
+ * $0.50, per spec). A buffer of 0 (env set to '' or '0') disables the
+ * guard: the position then holds to expiry unguarded, deliberately, same
+ * fail-safe direction as the rest of this file — no quote closes nothing.
  */
-async function closeCallSleeveAtRiskBeforeBell(ct: Date): Promise<string> {
-  if (getCallSleeveMode() === 'off') return ''
+async function closeFlintAtRiskBeforeBell(ct: Date): Promise<string> {
+  if (getFlintMode() === 'off') return ''
   const hhmm = ctHHMM(ct)
   if (hhmm < ASSIGNMENT_GUARD_HHMM || hhmm >= ASSIGNMENT_GUARD_END_HHMM) return ''
 
-  const buffer = getCallSleeveGuardBuffer()
+  const buffer = getFlintGuardBuffer()
   if (!(buffer > 0)) return ''
 
   const todayStr = ct.toISOString().slice(0, 10)
   const rows = await query(
     `SELECT position_id, expiration, call_short_strike, call_long_strike, contracts,
             entry_credit, account_type, mode
-       FROM ${FLAME_CALL_SLEEVE_TABLE}
+       FROM ${FLINT_TABLE}
       WHERE status = 'open' AND expiration = $1`,
     [todayStr],
   )
@@ -4591,14 +4649,14 @@ async function closeCallSleeveAtRiskBeforeBell(ct: Date): Promise<string> {
   const q = await getQuote('SPY')
   const spot = q?.last ?? 0
   if (!(spot > 0)) {
-    console.warn(`[scanner] FLAME-CALL ASSIGNMENT GUARD NO QUOTE: no SPY price at ${hhmm} CT — holds to settlement unguarded.`)
-    return 'FLAME-CALL guard:no_quote'
+    console.warn(`[scanner] FLINT ASSIGNMENT GUARD NO QUOTE: no SPY price at ${hhmm} CT — holds to settlement unguarded.`)
+    return 'FLINT guard:no_quote'
   }
 
   const out: string[] = []
   for (const p of rows) {
     const shortStrike = num(p.call_short_strike)
-    if (!isCallGuardTriggered(spot, shortStrike, buffer)) {
+    if (!isFlintGuardTriggered(spot, shortStrike, buffer)) {
       out.push(`${p.position_id}=clear@${spot.toFixed(2)}`)
       continue
     }
@@ -4624,14 +4682,14 @@ async function closeCallSleeveAtRiskBeforeBell(ct: Date): Promise<string> {
     const realizedPnl = Math.round((entryCredit - costToClose) * 100 * contracts * 100) / 100
 
     await query(
-      `UPDATE ${FLAME_CALL_SLEEVE_TABLE}
+      `UPDATE ${FLINT_TABLE}
          SET status = 'closed', close_reason = 'assignment_guard', close_price = $1,
              realized_pnl = $2, close_time = NOW()
        WHERE position_id = $3 AND status = 'open'`,
       [costToClose, realizedPnl, p.position_id],
     )
     console.log(
-      `[scanner] FLAME-CALL ASSIGNMENT GUARD CLOSED ${p.position_id} spot=${spot.toFixed(2)} ` +
+      `[scanner] FLINT GUARD CLOSED ${p.position_id} spot=${spot.toFixed(2)} ` +
       `short ${shortStrike}C buffer=$${buffer.toFixed(2)} cost=$${costToClose.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,
     )
 
@@ -4642,12 +4700,12 @@ async function closeCallSleeveAtRiskBeforeBell(ct: Date): Promise<string> {
           { close: true },
         )
       } catch (e: unknown) {
-        console.error(`[scanner] FLAME-CALL LIVE GUARD CLOSE FAILED ${p.position_id}: ${e instanceof Error ? e.message : String(e)}`)
+        console.error(`[scanner] FLINT LIVE GUARD CLOSE FAILED ${p.position_id}: ${e instanceof Error ? e.message : String(e)}`)
       }
     }
     out.push(`${p.position_id}=guarded@${spot.toFixed(2)}`)
   }
-  return out.length ? `FLAME-CALL guard[${out.join(' ')}]` : ''
+  return out.length ? `FLINT guard[${out.join(' ')}]` : ''
 }
 
 /**
@@ -4657,15 +4715,15 @@ async function closeCallSleeveAtRiskBeforeBell(ct: Date): Promise<string> {
  * ever touches rows whose expiration has been reached; a missing close price
  * fails safe to the full wing (worst case) rather than guessing.
  */
-async function settleCallSleeveExpired(ct: Date): Promise<string> {
-  if (getCallSleeveMode() === 'off') return ''
+async function settleFlintExpired(ct: Date): Promise<string> {
+  if (getFlintMode() === 'off') return ''
   const hhmm = ctHHMM(ct)
   if (hhmm < ASSIGNMENT_GUARD_END_HHMM) return '' // same 15:00 CT boundary as the put side
 
   const todayStr = ct.toISOString().slice(0, 10)
   const rows = await query(
     `SELECT position_id, expiration, call_short_strike, call_long_strike, contracts, entry_credit
-       FROM ${FLAME_CALL_SLEEVE_TABLE}
+       FROM ${FLINT_TABLE}
       WHERE status = 'open' AND expiration <= $1`,
     [todayStr],
   )
@@ -4689,19 +4747,19 @@ async function settleCallSleeveExpired(ct: Date): Promise<string> {
     const realizedPnl = Math.round((entryCredit - intrinsic) * 100 * contracts * 100) / 100
 
     await query(
-      `UPDATE ${FLAME_CALL_SLEEVE_TABLE}
+      `UPDATE ${FLINT_TABLE}
          SET status = 'expired', close_reason = 'settled_at_expiry', close_price = $1,
              realized_pnl = $2, close_time = NOW()
        WHERE position_id = $3 AND status = 'open'`,
       [intrinsic, realizedPnl, p.position_id],
     )
     console.log(
-      `[scanner] FLAME-CALL SETTLED ${p.position_id}: close=${closePx != null ? '$' + closePx.toFixed(2) : 'unknown'} ` +
+      `[scanner] FLINT SETTLED ${p.position_id}: close=${closePx != null ? '$' + closePx.toFixed(2) : 'unknown'} ` +
       `short ${shortStrike}C intrinsic=$${intrinsic.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,
     )
     out.push(`${p.position_id}=settled`)
   }
-  return out.length ? `FLAME-CALL settle[${out.join(' ')}]` : ''
+  return out.length ? `FLINT settle[${out.join(' ')}]` : ''
 }
 
 /* ------------------------------------------------------------------ */
@@ -8455,31 +8513,31 @@ async function scanBot(bot: BotDef): Promise<void> {
       console.error(`[scanner] ${botName} settlement failed:`, e)
     }
 
-    // FLAME-CALL SLEEVE — SPY 0DTE call credit spread, days FLAME's VIX gate
-    // skips (FLAME_CALL_SLEEVE_MODE, default off). Entirely separate table and
-    // arm switch from FLAME's put side; scoped to bot.name === 'flame' only so
-    // SPARK/INFERNO/FORGE/KINDLE never reach this code. Guard and settle run
-    // every cycle (they no-op most minutes); entry only fires inside its own
-    // window check. Wrapped like every other guard/settle above: a failure
-    // here must never take FLAME's own put-side cycle down.
+    // FLINT — SPY 0DTE call credit spread, EVERY trading day (FLINT_MODE,
+    // default off). Entirely separate table and arm switch from FLAME's put
+    // side; scoped to bot.name === 'flame' only so SPARK/INFERNO/FORGE/KINDLE
+    // never reach this code. Guard and settle run every cycle (they no-op
+    // most minutes); entry only fires inside its own window check. Wrapped
+    // like every other guard/settle above: a failure here must never take
+    // FLAME's own put-side cycle down.
     if (bot.name === 'flame') {
       try {
-        const callGuarded = await closeCallSleeveAtRiskBeforeBell(ct)
+        const callGuarded = await closeFlintAtRiskBeforeBell(ct)
         if (callGuarded) console.log(`[scanner] ${callGuarded}`)
       } catch (e) {
-        console.error('[scanner] FLAME-CALL assignment guard failed:', e)
+        console.error('[scanner] FLINT assignment guard failed:', e)
       }
       try {
-        const callSettled = await settleCallSleeveExpired(ct)
+        const callSettled = await settleFlintExpired(ct)
         if (callSettled) console.log(`[scanner] ${callSettled}`)
       } catch (e) {
-        console.error('[scanner] FLAME-CALL settlement failed:', e)
+        console.error('[scanner] FLINT settlement failed:', e)
       }
       try {
-        const callTraded = await tryOpenFlameCallSleeve(bot, ct)
+        const callTraded = await tryOpenFlint(bot, ct)
         if (callTraded) console.log(`[scanner] ${callTraded}`)
       } catch (e) {
-        console.error('[scanner] FLAME-CALL entry failed:', e)
+        console.error('[scanner] FLINT entry failed:', e)
       }
     }
 
@@ -10016,9 +10074,9 @@ export const _testing = {
   vixDecayCheck,
   vixDecayBlock,
   VIX_DECAY_CEILING,
-  logCallSleeveDailyContext,
-  getCallSleeveGammaContextCached,
-  FLAME_CALL_SLEEVE_CONTEXT_TABLE,
+  logFlintDailyContext,
+  getFlintGammaContextCached,
+  FLINT_CONTEXT_TABLE,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },
   get _scanStartedAt() { return _scanStartedAt },

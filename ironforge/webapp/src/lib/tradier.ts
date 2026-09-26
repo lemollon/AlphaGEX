@@ -2715,7 +2715,7 @@ export async function getNetGex(
 }
 
 /**
- * FLAME-CALL forward-logging only — call/put decomposed $-gamma exposure,
+ * FLINT forward-logging only — call/put decomposed $-gamma exposure,
  * dollar-scaled the same way the (now-retired) alphagex-api /api/gex route
  * and the ironforge-data backtest warehouse build it:
  *
@@ -4340,8 +4340,8 @@ export async function getPutSpreadMarkToMarket(
 }
 
 /**
- * NBBO credit for a 2-leg SPY 0DTE CALL credit spread — the FLAME-CALL sleeve
- * (scanner.ts, gated by FLAME_CALL_SLEEVE_MODE). Mirrors getPutSpreadEntryCredit
+ * NBBO credit for a 2-leg SPY 0DTE CALL credit spread — FLINT (scanner.ts,
+ * gated by FLINT_MODE). Mirrors getPutSpreadEntryCredit
  * exactly, mirrored to the other side of the chain: sell the short call at its
  * BID, buy the long call at its ASK — the same conservative, "worst realistic
  * fill" convention every other paper price in this file uses. Falls back to
@@ -4377,21 +4377,88 @@ export async function getCallSpreadEntryCredit(
 }
 
 /**
- * Places (or closes) the FLAME-CALL sleeve's 2-leg call spread on FLAME's own
- * production account(s) — the SAME account(s) resolveEligibleAccounts('flame')
- * hands the put spread, via the SAME real-money gates: canPlaceLiveOrders
- * ('flame') == isFlameLiveArmed(), the production kill-switch
- * (getProductionPauseState) and the per-owner pause (getOwnerPauseState).
+ * How many flint_positions rows already exist today for this production
+ * account — the "one trade per account per day" check, run BEFORE the
+ * profit gate and BP read so a second scan cycle inside the entry window
+ * cannot double-enter an account that already traded. Fails OPEN on a read
+ * error (returns 0, letting the downstream gates be the real backstop) —
+ * this is a convenience de-dup, not the primary real-money control.
+ */
+async function getFlintTradedTodayCount(person: string): Promise<number> {
+  try {
+    const { query: dbq, CT_TODAY: ctToday } = await import('./db')
+    const rows = await dbq(
+      `SELECT COUNT(*) AS cnt FROM flint_positions
+        WHERE account_type = 'production' AND person = $1 AND open_date = ${ctToday}`,
+      [person],
+    )
+    return Number(rows[0]?.cnt) || 0
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getFlintTradedTodayCount('${person}') failed: ${msg}`)
+    return 0
+  }
+}
+
+/**
+ * Sum of collateral_required across FLAME's own put-spread positions opened
+ * TODAY in this production account, still open. FLINT's buying-power check
+ * adds this on top of its own $200/contract floor so a same-day FLAME put
+ * fill can never be double-spent against FLINT's own margin requirement —
+ * see placeCallSpreadOrderAllAccounts. Fails to 0 on a read error (never
+ * fabricates a number, but also never blocks FLINT on an unrelated table
+ * being briefly unreadable — the BP read itself is the real backstop).
+ */
+async function getFlamePutMarginToday(person: string): Promise<number> {
+  try {
+    const { query: dbq, CT_TODAY: ctToday } = await import('./db')
+    const rows = await dbq(
+      `SELECT COALESCE(SUM(collateral_required), 0) AS m FROM flame_positions
+        WHERE account_type = 'production' AND person = $1 AND status = 'open' AND open_date = ${ctToday}`,
+      [person],
+    )
+    const n = Number(rows[0]?.m)
+    return Number.isFinite(n) && n > 0 ? n : 0
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getFlamePutMarginToday('${person}') failed: ${msg}`)
+    return 0
+  }
+}
+
+/**
+ * Places (or closes) FLINT's 2-leg call spread on FLAME's own production
+ * account(s) — the SAME account(s) resolveEligibleAccounts('flame') hands the
+ * put spread, via the SAME real-money gates: canPlaceLiveOrders('flame') ==
+ * isFlameLiveArmed(), the production kill-switch (getProductionPauseState)
+ * and the per-owner pause (getOwnerPauseState).
  *
  * Deliberately a SEPARATE, simpler function from placeIcOrderAllAccounts
  * rather than a generalization of it: this sleeve is fixed at
- * CALL_SLEEVE_MAX_CONTRACTS contracts (never the EBB ladder), so none of the
+ * FLINT_MAX_CONTRACTS contracts (never the EBB ladder), so none of the
  * ladder/liquidity sizing in placeIcOrderAllAccounts applies, and reusing it
  * would have required threading a call-only mode through 300+ lines that put
  * strikes at 0 assume are always real legs. `buildLegs` (leg-symbol/side/qty
  * only, no put/call awareness) is reused as-is by passing the call symbols in
  * the put-leg slots — it does not care which side of the chain a symbol is
  * from.
+ *
+ * On OPEN only (opts.close !== true), each production account is gated
+ * INDEPENDENTLY, in order, before its order is placed:
+ *   1. one FLINT trade per account per day (flint_positions row for today)
+ *   2. rule R1 — the per-account profit gate: cushion (that account's
+ *      current equity minus its funded floor) must clear this trade's max
+ *      loss (evaluateFlintProfitGate, flint.ts). Leron, 2026-09-26: "a loss
+ *      eats into the total account profits" only, per account.
+ *   3. buying power: option BP must clear $200/contract (FLINT_BP_FLOOR_PER_
+ *      CONTRACT) PLUS whatever collateral FLAME's own put spread is holding
+ *      in that SAME account today — the two sleeves share one broker BP pool
+ *      even though they never share a table or a ledger.
+ * An account that fails any of these is skipped — logged, never thrown — and
+ * is simply absent from the returned map; every OTHER account still gets its
+ * own independent shot. `opts.close` (assignment-guard buy-back — the only
+ * caller that passes it) skips all three checks: a buy-back must never be
+ * blocked by a gate meant for new risk.
  *
  * `opts.close` flips the leg sides to buy_to_close/sell_to_close for the
  * assignment-guard buy-back; omitted (default) opens sell_to_open/buy_to_open.
@@ -4421,7 +4488,7 @@ export async function placeCallSpreadOrderAllAccounts(
     const pause = await getProductionPauseState('flame')
     if (pause.paused) {
       console.warn(
-        `[tradier] FLAME-CALL production trading PAUSED (reason=${pause.paused_reason ?? 'n/a'}) — ` +
+        `[tradier] FLINT production trading PAUSED (reason=${pause.paused_reason ?? 'n/a'}) — ` +
         `removing ${productionAccts.length} production account(s).`,
       )
       productionAccts = []
@@ -4446,8 +4513,14 @@ export async function placeCallSpreadOrderAllAccounts(
     : { shortSide: 'sell_to_open', longSide: 'buy_to_open' }
   const width = callLong - callShort
 
+  // Rule R1 input — the worst-case loss this trade can take, same number for
+  // every account (fixed size, shared strikes/credit). Only needed on OPEN;
+  // computed once here rather than per-account inside the loop below.
+  const { flintMaxLoss, evaluateFlintProfitGate, FLINT_BP_FLOOR_PER_CONTRACT } = await import('./flint')
+  const maxLoss = closing ? 0 : flintMaxLoss(callShort, callLong, entryCredit, contracts)
+
   for (const acct of productionAccts) {
-    const label = `PRODUCTION [${acct.name}] FLAME-CALL`
+    const label = `PRODUCTION [${acct.name}] FLINT`
     try {
       const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
       if (!accountId) {
@@ -4456,15 +4529,43 @@ export async function placeCallSpreadOrderAllAccounts(
       }
 
       if (!closing) {
+        // 1. One FLINT trade per account per day — checked BEFORE any read so
+        // a second scan cycle inside the entry window can't double-enter an
+        // account that already has a row for today.
+        const alreadyToday = await getFlintTradedTodayCount(acct.name)
+        if (alreadyToday >= 1) {
+          console.log(`${label}: skip:already_traded_today`)
+          continue
+        }
+
+        // 2. Rule R1 — the per-account profit gate. Leron, 2026-09-26: a loss
+        // eats only into THIS account's own profit above its funded floor.
+        const ladderCap = await getProductionLadderCapital('flame', acct.name)
+        const floor = ladderCap?.starting ?? null
+        const allocated = await getAllocatedCapitalForAccount(acct.name, 'production')
+        const equity = allocated?.equity ?? null
+        const gate = evaluateFlintProfitGate(equity, floor, maxLoss)
+        if (!gate.eligible) {
+          console.warn(`${label}: ${gate.reason ?? 'skip:flint_profit_cushion(unreadable)'}`)
+          continue
+        }
+
+        // 3. Buying power: $200/contract for FLINT itself, PLUS whatever
+        // collateral FLAME's own put spread is holding in this SAME account
+        // TODAY — the two sleeves share one broker BP pool.
         const bp = await readOptionBuyingPowerWithRetry(acct.apiKey, accountId, acct.baseUrl, label)
-        const marginNeeded = width * 100 * contracts
         if (bp == null) {
           console.error(`${label}: optionBP UNREADABLE after retries — SKIPPING order. This is NOT an insufficient-funds decision.`)
           await reportProductionBpUnreadable('flame', acct.name)
           continue
         }
-        if (bp < marginNeeded) {
-          console.warn(`${label}: optionBP=$${bp.toFixed(0)} insufficient (need $${marginNeeded.toFixed(0)} for ${contracts} contract(s))`)
+        const putMarginToday = await getFlamePutMarginToday(acct.name)
+        const requiredBp = FLINT_BP_FLOOR_PER_CONTRACT * contracts + putMarginToday
+        if (bp < requiredBp) {
+          console.warn(
+            `${label}: skip:flint_insufficient_bp(bp=$${bp.toFixed(0)}<need=$${requiredBp.toFixed(0)}, ` +
+            `put_margin_today=$${putMarginToday.toFixed(0)})`,
+          )
           continue
         }
       }
@@ -4475,7 +4576,7 @@ export async function placeCallSpreadOrderAllAccounts(
         type: 'market',
         duration: 'day',
         ...buildLegs(occCs, occCl, '', '', contracts, sides, true),
-        tag: `FLAMECALL-${positionId}`.slice(0, 255),
+        tag: `FLINT-${positionId}`.slice(0, 255),
       }
 
       const result = await sandboxPost(`/accounts/${accountId}/orders`, orderBody, acct.apiKey, acct.baseUrl)
@@ -4522,7 +4623,7 @@ export async function placeCallSpreadOrderAllAccounts(
         account_type: 'production',
       }
       console.log(
-        `[tradier] FLAME-CALL ${closing ? 'LIVE GUARD CLOSE' : 'LIVE FILL'} [${acct.name}]: ` +
+        `[tradier] FLINT ${closing ? 'LIVE GUARD CLOSE' : 'LIVE FILL'} [${acct.name}]: ` +
         `${contracts}x order ${result.order.id} fill=${fillPrice != null ? '$' + fillPrice.toFixed(4) : 'unknown'}`,
       )
     } catch (err: unknown) {
