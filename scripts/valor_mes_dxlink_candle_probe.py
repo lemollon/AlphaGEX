@@ -80,8 +80,16 @@ def validate_symbols(contract_symbol: str, streamer_symbol: str) -> None:
 def candle_identity(event: Any, spec: "ProbeSpec") -> tuple[datetime, int]:
     """Return provider identity fields, including for removal tombstones."""
     event_symbol = str(getattr(event, "event_symbol", ""))
-    expected_prefix = f"{spec.streamer_symbol}{{={spec.interval}"
-    if not event_symbol.startswith(expected_prefix):
+    # dxFeed normalizes a one-minute period from the requested ``1m`` to ``m``
+    # in returned Candle event symbols.  Keep identity validation exact while
+    # accepting only those two provider-equivalent spellings.
+    periods = {spec.interval}
+    if spec.interval == "1m":
+        periods.add("m")
+    expected_symbols = {
+        f"{spec.streamer_symbol}{{={period}}}" for period in periods
+    }
+    if event_symbol not in expected_symbols:
         raise ValueError("unexpected candle symbol")
     timestamp_ms = int(getattr(event, "time"))
     event_time = datetime.fromtimestamp(timestamp_ms / 1000.0, UTC)
