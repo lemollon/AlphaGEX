@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from zoneinfo import ZoneInfo
 
+from trading.agape_perp_stats import scored_win_rate
 from trading.agape_eth_perp.models import (
     AgapeEthPerpConfig, AgapeEthPerpSignal, AgapeEthPerpPosition,
     PositionSide, PositionStatus, SignalAction, TradingMode,
@@ -718,7 +719,7 @@ class AgapeEthPerpTrader:
         if ret < -90:
             logger.warning(f"AGAPE-ETH-PERP: Return is {ret:.1f}% — approaching or past liquidation threshold")
         wins = [t for t in closed if (t.get("realized_pnl") or 0) > 0] if closed else []
-        wr = round(len(wins) / len(closed) * 100, 1) if closed else None
+        wr, scored_trades, degraded_trades = scored_win_rate(closed)
         status = "LIQUIDATED" if self._liquidated else ("ACTIVE" if self._enabled else "DISABLED")
         return {
             "bot_name": "AGAPE_ETH_PERP", "status": status,
@@ -738,7 +739,7 @@ class AgapeEthPerpTrader:
                 "starting_capital": self.config.starting_capital,
                 "current_balance": round(balance, 2), "cumulative_pnl": round(total_pnl, 2),
                 "realized_pnl": round(realized, 2), "unrealized_pnl": round(total_unr, 2),
-                "return_pct": round(ret, 2), "total_trades": len(closed) if closed else 0, "win_rate": wr,
+                "return_pct": round(ret, 2), "total_trades": len(closed) if closed else 0, "win_rate": wr, "win_rate_trades": scored_trades, "degraded_trades": degraded_trades,
             },
             "aggressive_features": {
                 "use_no_loss_trailing": self.config.use_no_loss_trailing,
@@ -768,6 +769,7 @@ class AgapeEthPerpTrader:
                     "return_pct": round(ret_pct, 2)}
         wins = [t for t in closed if (t.get("realized_pnl") or 0) > 0]
         losses = [t for t in closed if (t.get("realized_pnl") or 0) <= 0]
+        perf_wr, perf_scored, perf_degraded = scored_win_rate(closed)
         realized = sum(t.get("realized_pnl", 0) for t in closed)
         tw = sum(t.get("realized_pnl", 0) for t in wins) if wins else 0
         tl = abs(sum(t.get("realized_pnl", 0) for t in losses)) if losses else 0
@@ -776,7 +778,7 @@ class AgapeEthPerpTrader:
         return {
             "total_trades": len(closed), "open_positions": len(open_pos),
             "wins": len(wins), "losses": len(losses),
-            "win_rate": round(len(wins) / len(closed) * 100, 1),
+            "win_rate": perf_wr, "win_rate_trades": perf_scored, "degraded_trades": perf_degraded,
             "total_pnl": round(total_pnl, 2), "realized_pnl": round(realized, 2),
             "unrealized_pnl": round(unr, 2),
             "avg_win": round(tw / len(wins), 2) if wins else 0,

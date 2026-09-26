@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 from zoneinfo import ZoneInfo
 
+from trading.agape_perp_stats import scored_win_rate
 from trading.agape_btc_perp.models import (
     AgapeBtcPerpConfig,
     AgapeBtcPerpSignal,
@@ -853,7 +854,7 @@ class AgapeBtcPerpTrader:
         if return_pct < -90:
             logger.warning(f"AGAPE-BTC-PERP: Return is {return_pct:.1f}% — approaching or past liquidation threshold")
         wins = [t for t in closed_trades if (t.get("realized_pnl") or 0) > 0] if closed_trades else []
-        win_rate = round(len(wins) / len(closed_trades) * 100, 1) if closed_trades else None
+        win_rate, scored_trades, degraded_trades = scored_win_rate(closed_trades)
 
         market_status = self.get_market_status(now)
         status = "LIQUIDATED" if self._liquidated else ("ACTIVE" if self._enabled else "DISABLED")
@@ -881,7 +882,7 @@ class AgapeBtcPerpTrader:
                 "unrealized_pnl": round(total_unrealized, 2),
                 "return_pct": round(return_pct, 2),
                 "total_trades": len(closed_trades) if closed_trades else 0,
-                "win_rate": win_rate,
+                "win_rate": win_rate, "win_rate_trades": scored_trades, "degraded_trades": degraded_trades,
             },
             "aggressive_features": {
                 "use_no_loss_trailing": self.config.use_no_loss_trailing,
@@ -919,6 +920,7 @@ class AgapeBtcPerpTrader:
 
         wins = [t for t in closed_trades if (t.get("realized_pnl") or 0) > 0]
         losses = [t for t in closed_trades if (t.get("realized_pnl") or 0) <= 0]
+        perf_wr, perf_scored, perf_degraded = scored_win_rate(closed_trades)
         realized_pnl = sum(t.get("realized_pnl", 0) for t in closed_trades)
         total_pnl = realized_pnl + unrealized_pnl
         total_wins = sum(t.get("realized_pnl", 0) for t in wins) if wins else 0
@@ -928,7 +930,7 @@ class AgapeBtcPerpTrader:
         return {
             "total_trades": len(closed_trades), "open_positions": len(open_positions),
             "wins": len(wins), "losses": len(losses),
-            "win_rate": round(len(wins) / len(closed_trades) * 100, 1) if closed_trades else None,
+            "win_rate": perf_wr, "win_rate_trades": perf_scored, "degraded_trades": perf_degraded,
             "total_pnl": round(total_pnl, 2), "realized_pnl": round(realized_pnl, 2),
             "unrealized_pnl": round(unrealized_pnl, 2),
             "avg_win": round(total_wins / len(wins), 2) if wins else 0,

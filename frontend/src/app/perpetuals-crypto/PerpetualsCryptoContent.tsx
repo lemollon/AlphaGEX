@@ -496,6 +496,10 @@ export default function PerpetualsCryptoContent() {
       realized, unreal, tot: realized + unreal,
       wr: (b.perf?.win_rate ?? b.status?.paper_account?.win_rate ?? null) as number | null,
       trades: (b.perf?.total_trades ?? b.status?.paper_account?.total_trades ?? 0) as number,
+      // Win rate is computed over non-degraded trades only; weight by that count.
+      scored: (b.perf?.win_rate_trades ?? b.status?.paper_account?.win_rate_trades
+        ?? b.perf?.total_trades ?? b.status?.paper_account?.total_trades ?? 0) as number,
+      degraded: (b.perf?.degraded_trades ?? b.status?.paper_account?.degraded_trades ?? 0) as number,
       price, chg: first && price ? (price / first - 1) * 100 : null,
     }
   }
@@ -505,7 +509,9 @@ export default function PerpetualsCryptoContent() {
   const realized = list.reduce((a, b) => a + S[b.coin].realized, 0)
   const unreal = list.reduce((a, b) => a + S[b.coin].unreal, 0)
   const totTrades = list.reduce((a, b) => a + S[b.coin].trades, 0)
-  const wAvg = totTrades ? list.reduce((a, b) => a + (S[b.coin].wr ?? 0) * S[b.coin].trades, 0) / totTrades : 0
+  const totScored = list.reduce((a, b) => a + (S[b.coin].wr == null ? 0 : S[b.coin].scored), 0)
+  const totDegraded = list.reduce((a, b) => a + S[b.coin].degraded, 0)
+  const wAvg = totScored ? list.reduce((a, b) => a + (S[b.coin].wr ?? 0) * (S[b.coin].wr == null ? 0 : S[b.coin].scored), 0) / totScored : 0
   const allPositions = list.flatMap(b => b.positions.map(p => ({ ...p, coin: b.coin })))
   const overLimitCoins = COINS.filter(c => bots[c].positions.length > STACK_LIMIT)
 
@@ -834,8 +840,8 @@ export default function PerpetualsCryptoContent() {
                 </Card>
                 <Card className="p-[18px_20px] flex flex-col gap-1.5">
                   <span className="text-[13px] text-[#9ca3af]">Win rate</span>
-                  <span className={`${MONO} text-[26px] font-bold tracking-[-0.01em]`}>{totTrades ? `${wAvg.toFixed(1)}%` : '—'}</span>
-                  <span className="text-[13px] text-[#9ca3af]">{totTrades} closed trades</span>
+                  <span className={`${MONO} text-[26px] font-bold tracking-[-0.01em]`}>{totScored ? `${wAvg.toFixed(1)}%` : '—'}</span>
+                  <span className="text-[13px] text-[#9ca3af]">{totTrades} closed trades{totDegraded > 0 ? ` · ${totDegraded} backup-signal excluded` : ''}</span>
                 </Card>
                 <Card className="p-[18px_20px] flex flex-col gap-1.5" style={overLimitCoins.length ? { borderColor: '#5c4410' } : undefined}>
                   <span className="text-[13px] text-[#9ca3af]">Open positions</span>
