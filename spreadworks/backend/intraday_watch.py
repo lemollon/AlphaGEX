@@ -19,6 +19,7 @@ from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Header, HTTPException, Request
+from sqlalchemy import text as sa_text
 from sqlalchemy.exc import IntegrityError
 
 from .db import SessionLocal
@@ -833,6 +834,64 @@ def _db_required():
     return SessionLocal()
 
 
+def lock_intraday_plan(db, trading_date: date) -> None:
+    """Serialize same-day plan replacements and manual additions in Postgres."""
+    bind = db.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        db.execute(
+            sa_text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": 1_947_000_000 + trading_date.toordinal()},
+        )
+
+
+def _merge_preserved_manual_setups(
+    symbols: list[str],
+    setups: list[dict[str, Any]],
+    manual_setups: list[dict[str, Any]],
+) -> tuple[list[str], list[dict[str, Any]], int]:
+    """Keep operator-pasted watches when the 07:00 plan refreshes.
+
+    Manual symbols take the finite eight-symbol non-core budget first. Morning
+    recommendations keep their rank order and are trimmed only when that hard
+    budget is already occupied.
+    """
+    if not manual_setups:
+        return symbols, setups, 0
+    combined: list[dict[str, Any]] = []
+    identities: set[tuple[str, str]] = set()
+    selected: list[str] = []
+    core = set(CORE_SYMBOLS) | set(CONFIRMATION_SYMBOLS)
+    for item in manual_setups:
+        identity = (item["symbol"], item["strategy"])
+        if identity in identities:
+            continue
+        combined.append(item)
+        identities.add(identity)
+        if item["symbol"] not in core and item["symbol"] not in selected:
+            selected.append(item["symbol"])
+    if len(selected) > 8:
+        raise HTTPException(
+            status_code=422,
+            detail="manual watches exceed the 8-symbol non-core limit",
+        )
+    dropped = 0
+    for item in setups:
+        identity = (item["symbol"], item["strategy"])
+        if identity in identities:
+            dropped += 1
+            continue
+        symbol = item["symbol"]
+        if symbol not in core and symbol not in selected:
+            if len(selected) >= 8:
+                dropped += 1
+                continue
+            selected.append(symbol)
+        combined.append(item)
+        identities.add(identity)
+    validate_plan_parity(selected, combined)
+    return selected, combined, dropped
+
+
 def store_watchlist(trading_date: date, symbols: list[str]) -> None:
     db = _db_required()
     try:
@@ -892,18 +951,43 @@ def store_plan(trading_date: date, payload: dict[str, Any]) -> None:
 def store_morning_plan_atomic(trading_date: date, symbols: list[str],
                               setups: list[dict[str, Any]],
                               payload: dict[str, Any],
-                              *, ingested_at: datetime | None = None) -> dict[str, Any]:
+                              *, ingested_at: datetime | None = None,
+                              preserve_manual: bool = False) -> dict[str, Any]:
     """Persist the plan, exact watchlist, and setups in one transaction."""
     parity = validate_plan_parity(symbols, setups)
     digest = plan_hash(trading_date, symbols, setups)
     ingested = (ingested_at or datetime.now(UTC)).astimezone(UTC)
     normalized = dict(payload)
-    normalized.update(
-        trading_date=trading_date.isoformat(), symbols=symbols, setups=setups,
-        plan_hash=digest, ingested_at=ingested.isoformat(), parity=parity,
-    )
     db = _db_required()
     try:
+        lock_intraday_plan(db, trading_date)
+        preserved_manual: list[dict[str, Any]] = []
+        dropped_incoming = 0
+        if preserve_manual:
+            for row in db.query(IntradaySetup).filter(
+                IntradaySetup.trading_date == trading_date,
+                IntradaySetup.active == 1,
+            ).all():
+                try:
+                    item = json.loads(row.payload_json)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if ((item.get("source_metadata") or {}).get("origin")
+                        == "paste_to_watch"):
+                    preserved_manual.append(item)
+            symbols, setups, dropped_incoming = _merge_preserved_manual_setups(
+                symbols,
+                setups,
+                preserved_manual,
+            )
+            parity = validate_plan_parity(symbols, setups)
+            digest = plan_hash(trading_date, symbols, setups)
+        normalized.update(
+            trading_date=trading_date.isoformat(), symbols=symbols, setups=setups,
+            plan_hash=digest, ingested_at=ingested.isoformat(), parity=parity,
+            preserved_manual_setup_count=len(preserved_manual),
+            dropped_incoming_setup_count=dropped_incoming,
+        )
         db.query(IntradayTradePlan).filter(
             IntradayTradePlan.trading_date < trading_date
         ).update({"active": 0})
@@ -964,6 +1048,10 @@ def store_morning_plan_atomic(trading_date: date, symbols: list[str],
         "registered_total_symbol_count": len(set(CORE_SYMBOLS) | set(symbols)),
         "plan_hash": digest, "ingested_at": ingested.isoformat(),
         "parity": parity,
+        "preserved_manual_setup_count": len(preserved_manual),
+        "dropped_incoming_setup_count": dropped_incoming,
+        "stored_symbols": symbols,
+        "stored_setups": setups,
     }
 
 

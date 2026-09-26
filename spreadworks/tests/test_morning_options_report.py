@@ -109,7 +109,8 @@ async def test_cloud_run_persists_one_atomic_plan_and_posts_digest(monkeypatch):
     async def generate(_now, _tv, _evidence_by_symbol):
         return _research()
 
-    def store(trading_date, symbols, setups, payload, *, ingested_at):
+    def store(trading_date, symbols, setups, payload, *, ingested_at, preserve_manual):
+        assert preserve_manual is True
         stored.update(
             trading_date=trading_date, symbols=symbols, setups=setups,
             payload=payload, ingested_at=ingested_at,
@@ -123,6 +124,10 @@ async def test_cloud_run_persists_one_atomic_plan_and_posts_digest(monkeypatch):
             "plan_hash": "a" * 64,
             "ingested_at": ingested_at.isoformat(),
             "parity": {"valid": True},
+            "preserved_manual_setup_count": 0,
+            "dropped_incoming_setup_count": 0,
+            "stored_symbols": symbols,
+            "stored_setups": setups,
         }
 
     monkeypatch.setattr(report, "_collect_market_evidence", collect)
@@ -162,13 +167,18 @@ async def test_generation_error_publishes_empty_failed_closed_plan(monkeypatch):
     async def fail(*_args):
         raise RuntimeError("provider unavailable")
 
-    def store(trading_date, symbols, setups, payload, *, ingested_at):
+    def store(trading_date, symbols, setups, payload, *, ingested_at, preserve_manual):
+        assert preserve_manual is True
         stored.update(symbols=symbols, setups=setups, payload=payload)
         return {
             "trading_date": trading_date.isoformat(), "persisted": True,
             "registered_symbol_count": 0, "registered_setup_count": 0,
             "registered_total_symbol_count": 4, "plan_hash": "b" * 64,
             "ingested_at": ingested_at.isoformat(), "parity": {"valid": True},
+            "preserved_manual_setup_count": 0,
+            "dropped_incoming_setup_count": 0,
+            "stored_symbols": symbols,
+            "stored_setups": setups,
         }
 
     monkeypatch.setattr(report, "_collect_market_evidence", collect)
