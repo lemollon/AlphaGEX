@@ -18,7 +18,7 @@ plotly>=5.17.0
 yfinance>=0.2.52  # REQUIRED: Used for VIX data fetching (free, no API key needed)
 
 # Tastytrade SDK for HERACLES futures trading (DXLinkStreamer for real-time quotes)
-tastytrade>=11.0.0
+tastytrade>=12.4.3,<13
 
 # Coinbase Advanced Trade SDK for AGAPE 24/7 spot crypto trading
 coinbase-advanced-py>=1.6.0
