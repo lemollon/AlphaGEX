@@ -114,6 +114,8 @@ export const OPERATOR_API_PREFIXES: readonly string[] = [
   '/api/kindle-reopen',
   '/api/kindle-sync',
   '/api/sms-test',
+  // Research instrument, not a customer feature — see lib/afternoon-spread-tracker.ts.
+  '/api/afternoon-spread',
   '/api/sandbox/',
   '/api/diagnose/',
   '/api/scanner/',

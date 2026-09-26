@@ -347,7 +347,7 @@ function isNoStopBot(name: string): boolean {
  * two that can disagree — but it does mean IronForge blocks if SpreadWorks stops
  * writing. Blocking is the safe direction.
  */
-const VIX_DECAY_CEILING = { spark: 0.90, flame: 0.80 } as const
+export const VIX_DECAY_CEILING = { spark: 0.90, flame: 0.80 } as const
 const VIX_DECAY_WINDOW = 20
 const VIX_DECAY_MIN_HISTORY = VIX_DECAY_WINDOW + 1
 
@@ -413,14 +413,14 @@ async function ensureVixHistory(asofDate: string): Promise<void> {
  *  to re-run the query. `ratio`/`prior`/`windowMax` are null whenever `reason`
  *  came from a data problem (unavailable/unknown/bad window) rather than the
  *  ratio itself clearing or missing the ceiling. */
-type VixDecayCheck = {
+export type VixDecayCheck = {
   reason: string | null
   ratio: number | null
   prior: number | null
   windowMax: number | null
 }
 
-async function vixDecayCheck(asofDate: string, ceiling: number): Promise<VixDecayCheck> {
+export async function vixDecayCheck(asofDate: string, ceiling: number): Promise<VixDecayCheck> {
   await ensureVixHistory(asofDate)
   let rows: Array<Record<string, unknown>>
   try {
@@ -7953,6 +7953,25 @@ async function scanBot(bot: BotDef): Promise<void> {
       if (settled) reason += settled
     } catch (e) {
       console.error(`[scanner] ${botName} settlement failed:`, e)
+    }
+
+    // AFTERNOON-SPREAD PAPER TRACKER (Leron, 2026-09-26: "Put on paper to
+    // track it") — the "dynamic hedge V2" research lead. PAPER-ONLY: reads
+    // quotes and writes to its own table, never places an order (see
+    // lib/afternoon-spread-tracker.ts's header). Disarmed unless
+    // AFTERNOON_SPREAD_PAPER=on; both calls no-op immediately when it isn't.
+    // Scoped to bot.name === 'flame' because it needs FLAME's own EBB put
+    // strike and VIX gate ratio, evaluated once per cycle, not once per bot.
+    if (bot.name === 'flame') {
+      try {
+        const { runAfternoonSpreadTick, settleAfternoonSpreadExpired } = await import('./afternoon-spread-tracker')
+        const spreadSettled = await settleAfternoonSpreadExpired(ct)
+        if (spreadSettled) console.log(`[scanner] ${spreadSettled}`)
+        const spreadTick = await runAfternoonSpreadTick(ct)
+        if (spreadTick) console.log(`[scanner] ${spreadTick}`)
+      } catch (e) {
+        console.error('[scanner] afternoon-spread paper tracker failed:', e)
+      }
     }
 
     // BACKSTOP. The pass above owns the normal case; this one owns everything else.
