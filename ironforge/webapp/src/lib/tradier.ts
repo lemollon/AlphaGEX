@@ -2714,6 +2714,80 @@ export async function getNetGex(
   return sawData ? net : null
 }
 
+/**
+ * FLAME-CALL forward-logging only — call/put decomposed $-gamma exposure,
+ * dollar-scaled the same way the (now-retired) alphagex-api /api/gex route
+ * and the ironforge-data backtest warehouse build it:
+ *
+ *   strike_gex = gamma * open_interest * 100 (contract multiplier) * spot^2 * 0.01
+ *
+ * i.e. dealer dollar-gamma per 1% move, summed separately over calls and
+ * puts. This is the SAME Tradier chain fetch + greeks.gamma + open_interest
+ * getNetGex() above already reads — no new external API, no new vendor.
+ * It is NOT byte-identical to the backtest's `igex_call` feature (see
+ * ironforge-data/ingest/build_intraday_gex.py): that pipeline recomputes
+ * gamma per-strike from Black-Scholes at each minute over a dte 0-60 chain,
+ * this reads Tradier's own quoted greeks.gamma over the same dte 0-60
+ * window. Same construction (call $-gamma, put $-gamma, net = call − put,
+ * same dollar-per-1%-move scale), different gamma source — directionally
+ * and order-of-magnitude comparable, not a guaranteed exact match.
+ *
+ * Never throws — a vendor/data failure returns null, same fail-open
+ * convention as getNetGex. Read-only forward logging; must never gate,
+ * size, or otherwise alter a trade.
+ */
+export async function getGammaExposureComponents(
+  symbol: string,
+  spot: number,
+  maxDte = 60,
+): Promise<{ callGex: number; putGex: number; netGex: number } | null> {
+  try {
+    if (!(spot > 0)) return null
+    await ensureQuoteApiKey()
+    if (!_tradierApiKey) return null
+    const expirations = await getOptionExpirations(symbol)
+    if (!expirations || expirations.length === 0) return null
+
+    const now = Date.now()
+    const within = expirations.filter((e) => {
+      const dte = (new Date(e + 'T00:00:00').getTime() - now) / 86_400_000
+      return dte >= 0 && dte <= maxDte
+    })
+    if (within.length === 0) return null
+
+    const dollarScale = 100 * spot * spot * 0.01
+    let callGex = 0
+    let putGex = 0
+    let sawData = false
+    for (const exp of within) {
+      const data = await tradierGet('/markets/options/chains', {
+        symbol,
+        expiration: exp,
+        greeks: 'true',
+      })
+      let opts = data?.options?.option
+      if (!opts) continue
+      if (!Array.isArray(opts)) opts = [opts]
+      for (const o of opts) {
+        const gRaw = o?.greeks?.gamma
+        const oiRaw = o?.open_interest
+        if (gRaw == null || oiRaw == null) continue
+        const gamma = typeof gRaw === 'number' ? gRaw : parseFloat(String(gRaw))
+        const oi = typeof oiRaw === 'number' ? oiRaw : parseFloat(String(oiRaw))
+        if (!Number.isFinite(gamma) || !Number.isFinite(oi)) continue
+        const contrib = gamma * oi * dollarScale
+        if (String(o.option_type || '').toLowerCase() === 'call') callGex += contrib
+        else putGex += contrib
+        sawData = true
+      }
+    }
+    if (!sawData) return null
+    return { callGex, putGex, netGex: callGex - putGex }
+  } catch {
+    return null
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Sandbox account positions (for per-account P&L)                    */
 /* ------------------------------------------------------------------ */

@@ -216,6 +216,7 @@ import {
   getDailyHistory,
   getCallSpreadEntryCredit,
   placeCallSpreadOrderAllAccounts,
+  getGammaExposureComponents,
 } from './tradier'
 import {
   getCallSleeveMode,
@@ -225,6 +226,9 @@ import {
   meetsCallCreditFloor,
   isCallSleeveDayEligible,
   isCallGuardTriggered,
+  buildCallSleeveDailyContextRow,
+  UNAVAILABLE_GAMMA_CONTEXT,
+  type CallSleeveGammaContext,
 } from './flame-call-sleeve'
 import { BOT_STARTING_CAPITAL } from './bot-capital'
 import { getTvMarketStructure, type TvMarketStructure } from './gex/trading-volatility-client'
@@ -4254,6 +4258,176 @@ async function ensureCallSleeveTable(): Promise<void> {
   _callSleeveTableReady = true
 }
 
+/* ------------------------------------------------------------------ */
+/*  FLAME-CALL forward-logging — daily dealer-gamma context.           */
+/*                                                                      */
+/*  Not statistically confirmed: a sizing study found this sleeve      */
+/*  loses on days call-side dealer gamma (igex_call in the backtest    */
+/*  warehouse) is low at the 13:05 CT entry, and wins big when it is   */
+/*  high. Recorded here, RAW, so the hypothesis can be re-tested later */
+/*  once enough live days accumulate — tiers vs. the trailing 20       */
+/*  sessions are computed OFFLINE, never in this file. One row per     */
+/*  evaluated day; NEVER gates, sizes, or otherwise touches a trade —  */
+/*  every write is wrapped so a logging failure cannot reach the       */
+/*  trading path (see logCallSleeveDailyContext below).                */
+/* ------------------------------------------------------------------ */
+
+const FLAME_CALL_SLEEVE_CONTEXT_TABLE = 'flame_call_sleeve_daily_context'
+let _callSleeveContextTableReady = false
+
+async function ensureCallSleeveContextTable(): Promise<void> {
+  if (_callSleeveContextTableReady) return
+  await dbExecute(
+    `CREATE TABLE IF NOT EXISTS ${FLAME_CALL_SLEEVE_CONTEXT_TABLE} (
+       id SERIAL PRIMARY KEY,
+       trade_date DATE UNIQUE NOT NULL,
+       evaluated_at TIMESTAMP NOT NULL,
+       spot NUMERIC,
+       vix_ratio NUMERIC,
+       call_short_strike_considered NUMERIC,
+       call_long_strike_considered NUMERIC,
+       entry_credit_seen NUMERIC,
+       decision TEXT NOT NULL,
+       call_gamma NUMERIC,
+       put_gamma NUMERIC,
+       net_gamma NUMERIC,
+       gamma_flip NUMERIC,
+       put_wall NUMERIC,
+       call_wall NUMERIC,
+       gamma_source TEXT NOT NULL,
+       created_at TIMESTAMP NOT NULL DEFAULT NOW()
+     )`,
+  )
+  _callSleeveContextTableReady = true
+}
+
+/**
+ * Dealer-gamma read for the day, cached once per CT day — mirrors
+ * getNetGexCached()/getTvMarketStructureCached() above: OI updates once
+ * daily, so re-reading the chain every scan cycle inside the 5-minute
+ * entry window buys nothing and just burns Tradier/TV calls. Never
+ * throws: any failure anywhere in this function resolves to
+ * UNAVAILABLE_GAMMA_CONTEXT rather than propagating.
+ *
+ * put_wall/call_wall are always null — no LIVE source in this codebase
+ * currently reports dealer wall price levels (the old alphagex-api
+ * /api/gex/{symbol} route that used to is gone — confirmed 404 as of
+ * 2026-09-26 — and the Trading Volatility market-structure client used
+ * here only exposes the flip price, not wall strikes). Storing a
+ * fabricated wall would violate "never fabricate," so these stay null
+ * until a real source exists.
+ */
+let _callSleeveGammaContextCache: { day: string; value: CallSleeveGammaContext } | null = null
+async function getCallSleeveGammaContextCached(ct: Date, spot: number | null): Promise<CallSleeveGammaContext> {
+  const day = ct.toISOString().slice(0, 10)
+  if (_callSleeveGammaContextCache && _callSleeveGammaContextCache.day === day) {
+    return _callSleeveGammaContextCache.value
+  }
+  let value: CallSleeveGammaContext = UNAVAILABLE_GAMMA_CONTEXT
+  try {
+    if (spot && spot > 0) {
+      const comps = await getGammaExposureComponents('SPY', spot, 60)
+      if (comps) {
+        let gammaFlip: number | null = null
+        try {
+          const tv = await getTvMarketStructure('SPY')
+          gammaFlip = tv && tv.gammaFlipPrice > 0 ? tv.gammaFlipPrice : null
+        } catch { gammaFlip = null }
+        value = {
+          callGamma: comps.callGex,
+          putGamma: comps.putGex,
+          netGamma: comps.netGex,
+          gammaFlip,
+          putWall: null,
+          callWall: null,
+          gammaSource: 'tradier_chain_dollar_gex_dte0-60',
+        }
+      }
+    }
+  } catch {
+    value = UNAVAILABLE_GAMMA_CONTEXT
+  }
+  _callSleeveGammaContextCache = { day, value }
+  return value
+}
+
+/**
+ * Writes one row of forward-logging context per evaluated day. Called from
+ * every terminal branch of tryOpenFlameCallSleeve EXCEPT the "already
+ * traded today" short-circuit (that branch re-checks existing state, it
+ * doesn't make a fresh evaluation, and re-logging it would clobber the
+ * good row already written when the trade actually happened).
+ *
+ * 🚨 Must NEVER throw into the trading path — this is pure observability.
+ * Every failure (gamma read, DB write, anything) is caught here and only
+ * ever produces a console.warn.
+ */
+async function logCallSleeveDailyContext(params: {
+  ct: Date
+  decision: string
+  vixRatio: number | null
+  spot: number | null
+  shortStrike: number | null
+  longStrike: number | null
+  entryCredit: number | null
+}): Promise<void> {
+  try {
+    await ensureCallSleeveContextTable()
+
+    let spot = params.spot
+    if (!(spot && spot > 0)) {
+      try {
+        const q = await getQuote('SPY')
+        spot = q?.last ?? null
+      } catch { spot = null }
+    }
+
+    const gamma = await getCallSleeveGammaContextCached(params.ct, spot)
+    const row = buildCallSleeveDailyContextRow({
+      tradeDate: params.ct.toISOString().slice(0, 10),
+      evaluatedAt: params.ct,
+      spot,
+      vixRatio: params.vixRatio,
+      shortStrike: params.shortStrike,
+      longStrike: params.longStrike,
+      entryCredit: params.entryCredit,
+      decision: params.decision,
+      gamma,
+    })
+
+    await query(
+      `INSERT INTO ${FLAME_CALL_SLEEVE_CONTEXT_TABLE} (
+         trade_date, evaluated_at, spot, vix_ratio,
+         call_short_strike_considered, call_long_strike_considered, entry_credit_seen,
+         decision, call_gamma, put_gamma, net_gamma, gamma_flip, put_wall, call_wall, gamma_source
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       ON CONFLICT (trade_date) DO UPDATE SET
+         evaluated_at = EXCLUDED.evaluated_at,
+         spot = EXCLUDED.spot,
+         vix_ratio = EXCLUDED.vix_ratio,
+         call_short_strike_considered = EXCLUDED.call_short_strike_considered,
+         call_long_strike_considered = EXCLUDED.call_long_strike_considered,
+         entry_credit_seen = EXCLUDED.entry_credit_seen,
+         decision = EXCLUDED.decision,
+         call_gamma = EXCLUDED.call_gamma,
+         put_gamma = EXCLUDED.put_gamma,
+         net_gamma = EXCLUDED.net_gamma,
+         gamma_flip = EXCLUDED.gamma_flip,
+         put_wall = EXCLUDED.put_wall,
+         call_wall = EXCLUDED.call_wall,
+         gamma_source = EXCLUDED.gamma_source`,
+      [
+        row.trade_date, row.evaluated_at, row.spot, row.vix_ratio,
+        row.call_short_strike_considered, row.call_long_strike_considered, row.entry_credit_seen,
+        row.decision, row.call_gamma, row.put_gamma, row.net_gamma, row.gamma_flip, row.put_wall,
+        row.call_wall, row.gamma_source,
+      ],
+    )
+  } catch (e: unknown) {
+    console.warn(`[scanner] FLAME-CALL context logging failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
 /**
  * Entry. Called every scan cycle for FLAME only (see scanBot); internally a
  * no-op unless ALL of: mode != off, inside FLAME's own 13:05-13:10 CT entry
@@ -4276,6 +4450,10 @@ async function tryOpenFlameCallSleeve(bot: BotDef, ct: Date): Promise<string> {
   const asofDate = ct.toISOString().slice(0, 10)
   const flameVix = await vixDecayCheck(asofDate, VIX_DECAY_CEILING.flame)
   if (!isCallSleeveDayEligible(flameVix.ratio, VIX_DECAY_CEILING.flame)) {
+    await logCallSleeveDailyContext({
+      ct, decision: 'skip:day_not_eligible', vixRatio: flameVix.ratio,
+      spot: null, shortStrike: null, longStrike: null, entryCredit: null,
+    }).catch(() => { /* forward-logging must never touch the trading path */ })
     return '' // FLAME's gate did not skip today (or the ratio is unknown) — sleeve sits out
   }
 
@@ -4283,12 +4461,19 @@ async function tryOpenFlameCallSleeve(bot: BotDef, ct: Date): Promise<string> {
     `SELECT COUNT(*) AS cnt FROM ${FLAME_CALL_SLEEVE_TABLE}
      WHERE (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY} AND account_type = 'paper'`,
   )
+  // No context log here — this branch re-checks EXISTING state, it isn't a
+  // fresh evaluation, and logging it would clobber the good row already
+  // written on the cycle the trade actually happened.
   if (int(todayRows[0]?.cnt) >= 1) return 'FLAME-CALL: no_trade | traded_today'
 
   const q = await getQuote('SPY')
   const spot = q?.last ?? 0
   if (!(spot > 0)) {
     console.log('[scanner] FLAME-CALL: no_trade | skip:no_quote')
+    await logCallSleeveDailyContext({
+      ct, decision: 'skip:no_quote', vixRatio: flameVix.ratio,
+      spot: null, shortStrike: null, longStrike: null, entryCredit: null,
+    }).catch(() => { /* forward-logging must never touch the trading path */ })
     return 'FLAME-CALL: no_trade | skip:no_quote'
   }
 
@@ -4298,10 +4483,18 @@ async function tryOpenFlameCallSleeve(bot: BotDef, ct: Date): Promise<string> {
   const credit = await getCallSpreadEntryCredit('SPY', expiration, callShort, callLong)
   if (!credit) {
     console.log('[scanner] FLAME-CALL: no_trade | skip:no_quotes')
+    await logCallSleeveDailyContext({
+      ct, decision: 'skip:no_quotes', vixRatio: flameVix.ratio,
+      spot, shortStrike: callShort, longStrike: callLong, entryCredit: null,
+    }).catch(() => { /* forward-logging must never touch the trading path */ })
     return 'FLAME-CALL: no_trade | skip:no_quotes'
   }
   if (!meetsCallCreditFloor(credit.callCredit)) {
     console.log(`[scanner] FLAME-CALL: no_trade | skip:call_credit_too_low($${credit.callCredit.toFixed(2)})`)
+    await logCallSleeveDailyContext({
+      ct, decision: 'skip:call_credit_too_low', vixRatio: flameVix.ratio,
+      spot, shortStrike: callShort, longStrike: callLong, entryCredit: credit.callCredit,
+    }).catch(() => { /* forward-logging must never touch the trading path */ })
     return 'FLAME-CALL: no_trade | skip:call_credit_too_low'
   }
 
@@ -4323,6 +4516,10 @@ async function tryOpenFlameCallSleeve(bot: BotDef, ct: Date): Promise<string> {
     `[scanner] FLAME-CALL SPY: ${contracts}x ${callShort}/${callLong}C exp ${expiration} ` +
     `@ $${credit.callCredit.toFixed(2)} (spot ${spot.toFixed(2)}, ratio=${flameVix.ratio!.toFixed(3)}) mode=${mode}`,
   )
+  await logCallSleeveDailyContext({
+    ct, decision: 'traded', vixRatio: flameVix.ratio,
+    spot, shortStrike: callShort, longStrike: callLong, entryCredit: credit.callCredit,
+  }).catch(() => { /* forward-logging must never touch the trading path */ })
 
   if (mode !== 'live') return `FLAME-CALL: traded@${credit.callCredit.toFixed(2)}`
 
@@ -9819,6 +10016,9 @@ export const _testing = {
   vixDecayCheck,
   vixDecayBlock,
   VIX_DECAY_CEILING,
+  logCallSleeveDailyContext,
+  getCallSleeveGammaContextCached,
+  FLAME_CALL_SLEEVE_CONTEXT_TABLE,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },
   get _scanStartedAt() { return _scanStartedAt },

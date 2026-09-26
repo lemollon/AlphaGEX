@@ -19,6 +19,9 @@ import {
   isCallSleeveDayEligible,
   meetsCallCreditFloor,
   isCallGuardTriggered,
+  buildCallSleeveDailyContextRow,
+  UNAVAILABLE_GAMMA_CONTEXT,
+  type CallSleeveGammaContext,
 } from '../flame-call-sleeve'
 
 const ENV_KEYS = ['FLAME_CALL_SLEEVE_MODE', 'CALL_SLEEVE_MAX_CONTRACTS', 'CALL_SLEEVE_GUARD_BUFFER'] as const
@@ -168,5 +171,121 @@ describe('FLAME-CALL guard trigger math', () => {
   })
   it('negative buffer never triggers (treated as disabled)', () => {
     expect(isCallGuardTriggered(9999, SHORT, -1)).toBe(false)
+  })
+})
+
+describe('FLAME-CALL daily-context row builder (forward-logging, pure — no DB/network)', () => {
+  const EVALUATED_AT = new Date('2026-09-26T13:07:00.000Z')
+  const FULL_GAMMA: CallSleeveGammaContext = {
+    callGamma: 2.3e10,
+    putGamma: 1.7e10,
+    netGamma: 6.0e9,
+    gammaFlip: 780,
+    putWall: null,
+    callWall: null,
+    gammaSource: 'tradier_chain_dollar_gex_dte0-60',
+  }
+
+  it('carries every field through verbatim when a trade is placed', () => {
+    const row = buildCallSleeveDailyContextRow({
+      tradeDate: '2026-09-26',
+      evaluatedAt: EVALUATED_AT,
+      spot: 768.05,
+      vixRatio: 0.83,
+      shortStrike: 771,
+      longStrike: 773,
+      entryCredit: 0.22,
+      decision: 'traded',
+      gamma: FULL_GAMMA,
+    })
+    expect(row).toEqual({
+      trade_date: '2026-09-26',
+      evaluated_at: EVALUATED_AT.toISOString(),
+      spot: 768.05,
+      vix_ratio: 0.83,
+      call_short_strike_considered: 771,
+      call_long_strike_considered: 773,
+      entry_credit_seen: 0.22,
+      decision: 'traded',
+      call_gamma: 2.3e10,
+      put_gamma: 1.7e10,
+      net_gamma: 6.0e9,
+      gamma_flip: 780,
+      put_wall: null,
+      call_wall: null,
+      gamma_source: 'tradier_chain_dollar_gex_dte0-60',
+    })
+  })
+
+  it('writes every gamma field NULL with gammaSource "unavailable" when gamma is explicitly UNAVAILABLE_GAMMA_CONTEXT', () => {
+    const row = buildCallSleeveDailyContextRow({
+      tradeDate: '2026-09-26',
+      evaluatedAt: EVALUATED_AT,
+      spot: 768.05,
+      vixRatio: 0.83,
+      shortStrike: 771,
+      longStrike: 773,
+      entryCredit: 0.22,
+      decision: 'traded',
+      gamma: UNAVAILABLE_GAMMA_CONTEXT,
+    })
+    expect(row.call_gamma).toBeNull()
+    expect(row.put_gamma).toBeNull()
+    expect(row.net_gamma).toBeNull()
+    expect(row.gamma_flip).toBeNull()
+    expect(row.put_wall).toBeNull()
+    expect(row.call_wall).toBeNull()
+    expect(row.gamma_source).toBe('unavailable')
+  })
+
+  it('never fabricates a gamma reading when `gamma` itself is null — same null+"unavailable" result', () => {
+    const row = buildCallSleeveDailyContextRow({
+      tradeDate: '2026-09-26',
+      evaluatedAt: EVALUATED_AT,
+      spot: null,
+      vixRatio: 0.83,
+      shortStrike: null,
+      longStrike: null,
+      entryCredit: null,
+      decision: 'skip:day_not_eligible',
+      gamma: null,
+    })
+    expect(row.call_gamma).toBeNull()
+    expect(row.put_gamma).toBeNull()
+    expect(row.net_gamma).toBeNull()
+    expect(row.gamma_source).toBe('unavailable')
+    expect(row.spot).toBeNull()
+    expect(row.call_short_strike_considered).toBeNull()
+    expect(row.entry_credit_seen).toBeNull()
+    expect(row.decision).toBe('skip:day_not_eligible')
+  })
+
+  it('a partial gamma read (call/put/net known, flip/walls not) is stored as-is, no backfilling', () => {
+    const partial: CallSleeveGammaContext = {
+      callGamma: 1.0e10,
+      putGamma: 0.9e10,
+      netGamma: 1.0e9,
+      gammaFlip: null,
+      putWall: null,
+      callWall: null,
+      gammaSource: 'tradier_chain_dollar_gex_dte0-60',
+    }
+    const row = buildCallSleeveDailyContextRow({
+      tradeDate: '2026-09-26',
+      evaluatedAt: EVALUATED_AT,
+      spot: 768.05,
+      vixRatio: 0.90,
+      shortStrike: 771,
+      longStrike: 773,
+      entryCredit: 0.05,
+      decision: 'skip:call_credit_too_low',
+      gamma: partial,
+    })
+    expect(row.call_gamma).toBe(1.0e10)
+    expect(row.put_gamma).toBe(0.9e10)
+    expect(row.net_gamma).toBe(1.0e9)
+    expect(row.gamma_flip).toBeNull()
+    expect(row.put_wall).toBeNull()
+    expect(row.call_wall).toBeNull()
   })
 })

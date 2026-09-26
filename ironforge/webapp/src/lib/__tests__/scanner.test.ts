@@ -37,6 +37,7 @@ vi.mock('../tradier', () => ({
     { name: 'User', apiKey: 'test-key-user' },
   ]),
   getSandboxAccountPositions: vi.fn().mockResolvedValue([]),
+  getGammaExposureComponents: vi.fn().mockResolvedValue(null),
   SandboxOrderInfo: {},
   SandboxCloseInfo: {},
 }))
@@ -60,6 +61,9 @@ const {
   MAX_CONSECUTIVE_MTM_FAILURES,
   _botConfig,
   _mtmFailureCounts,
+  logCallSleeveDailyContext,
+  getCallSleeveGammaContextCached,
+  FLAME_CALL_SLEEVE_CONTEXT_TABLE,
 } = _testing
 
 /* ------------------------------------------------------------------ */
@@ -1173,5 +1177,95 @@ describe('Config loading resilience', () => {
   it('syncPaperAccountCapital exists and has error handling', () => {
     expect(src).toMatch(/syncPaperAccountCapital/)
     expect(src).toMatch(/capital sync error/i)
+  })
+})
+
+/* ================================================================== */
+/*  FLAME-CALL forward-logging — daily dealer-gamma context            */
+/* ================================================================== */
+describe('FLAME-CALL daily context logging never throws into the trading path', () => {
+  it('swallows a table-create (dbExecute) failure and resolves normally', async () => {
+    const db = await import('../db')
+    ;(db.dbExecute as any).mockRejectedValueOnce(new Error('CREATE TABLE boom'))
+
+    await expect(logCallSleeveDailyContext({
+      ct: new Date(Date.UTC(2026, 8, 21, 13, 5)),
+      decision: 'skip:day_not_eligible',
+      vixRatio: 0.55,
+      spot: null,
+      shortStrike: null,
+      longStrike: null,
+      entryCredit: null,
+    })).resolves.toBeUndefined()
+  })
+
+  it('swallows an INSERT (query) failure and resolves normally', async () => {
+    const db = await import('../db')
+    ;(db.dbExecute as any).mockResolvedValueOnce(1) // table create succeeds this time
+    ;(db.query as any).mockRejectedValueOnce(new Error('INSERT boom'))
+
+    await expect(logCallSleeveDailyContext({
+      ct: new Date(Date.UTC(2026, 8, 22, 13, 6)),
+      decision: 'traded',
+      vixRatio: 0.90,
+      spot: 768.05,
+      shortStrike: 771,
+      longStrike: 773,
+      entryCredit: 0.22,
+    })).resolves.toBeUndefined()
+  })
+
+  it('a gamma-fetch failure (getGammaExposureComponents rejects) still writes a row, with gamma_source "unavailable" — never fabricated', async () => {
+    const tradier = await import('../tradier')
+    ;(tradier.getGammaExposureComponents as any).mockRejectedValueOnce(new Error('tradier chain boom'))
+    const db = await import('../db')
+    ;(db.query as any).mockClear()
+    ;(db.query as any).mockResolvedValueOnce([])
+
+    await logCallSleeveDailyContext({
+      ct: new Date(Date.UTC(2026, 8, 23, 13, 7)),
+      decision: 'traded',
+      vixRatio: 0.95,
+      spot: 770,
+      shortStrike: 772,
+      longStrike: 774,
+      entryCredit: 0.30,
+    })
+
+    expect(db.query).toHaveBeenCalled()
+    const [sql, params] = (db.query as any).mock.calls[(db.query as any).mock.calls.length - 1]
+    // INSERT column order: trade_date, evaluated_at, spot, vix_ratio,
+    // call_short_strike_considered, call_long_strike_considered, entry_credit_seen,
+    // decision, call_gamma, put_gamma, net_gamma, gamma_flip, put_wall, call_wall, gamma_source
+    expect(sql).toContain(FLAME_CALL_SLEEVE_CONTEXT_TABLE)
+    expect(params).toHaveLength(15)
+    expect(params[8]).toBeNull() // call_gamma
+    expect(params[9]).toBeNull() // put_gamma
+    expect(params[14]).toBe('unavailable') // gamma_source
+  })
+
+  it('getCallSleeveGammaContextCached never throws and falls back to "unavailable" with no spot', async () => {
+    const value = await getCallSleeveGammaContextCached(new Date(Date.UTC(2026, 8, 24, 13, 5)), null)
+    expect(value.gammaSource).toBe('unavailable')
+    expect(value.callGamma).toBeNull()
+    expect(value.putGamma).toBeNull()
+    expect(value.putWall).toBeNull()
+    expect(value.callWall).toBeNull()
+  })
+
+  it('caches the gamma read per CT day — a second call the same day does not re-fetch', async () => {
+    const tradier = await import('../tradier')
+    ;(tradier.getGammaExposureComponents as any).mockClear()
+    ;(tradier.getGammaExposureComponents as any).mockResolvedValueOnce({ callGex: 1e10, putGex: 0.8e10, netGex: 0.2e10 })
+
+    const day = new Date(Date.UTC(2026, 8, 25, 13, 5))
+    const first = await getCallSleeveGammaContextCached(day, 771.00)
+    expect(first.callGamma).toBe(1e10)
+    expect(tradier.getGammaExposureComponents).toHaveBeenCalledTimes(1)
+
+    const secondSameDay = new Date(Date.UTC(2026, 8, 25, 13, 9))
+    const second = await getCallSleeveGammaContextCached(secondSameDay, 771.00)
+    expect(second).toEqual(first)
+    expect(tradier.getGammaExposureComponents).toHaveBeenCalledTimes(1) // not called again
   })
 })

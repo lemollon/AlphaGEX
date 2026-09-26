@@ -109,3 +109,99 @@ export function isCallGuardTriggered(spot: number, shortStrike: number, buffer: 
   if (!(buffer > 0)) return false
   return spot >= shortStrike - buffer
 }
+
+/* ------------------------------------------------------------------ */
+/*  FORWARD-LOGGING ONLY — daily dealer-gamma context. Not statistically */
+/*  confirmed; recorded so a sizing hypothesis (this sleeve loses on low */
+/*  call-side dealer gamma at entry, wins big on high) can be re-tested  */
+/*  later against the backtest's `igex_call` feature. Stores RAW values  */
+/*  ONLY — tiers vs the trailing 20 sessions are computed OFFLINE, never */
+/*  here. Never gates, sizes, or otherwise touches a trade. See          */
+/*  scanner.ts logCallSleeveDailyContext / getGammaExposureComponents    */
+/*  (tradier.ts) for how these numbers are actually sourced.            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Live dealer-gamma read for one day's context row. Every field is nullable
+ * because a vendor/data outage must never block or alter the sleeve — see
+ * getGammaExposureComponents (tradier.ts) and getTvMarketStructure
+ * (gex/trading-volatility-client.ts), both of which fail closed to null.
+ * `gammaSource` names exactly where the non-null fields came from, or
+ * 'unavailable' when nothing could be read.
+ */
+export interface CallSleeveGammaContext {
+  callGamma: number | null
+  putGamma: number | null
+  netGamma: number | null
+  gammaFlip: number | null
+  putWall: number | null
+  callWall: number | null
+  gammaSource: string
+}
+
+/** A gamma context with every field null and an explicit 'unavailable' source. */
+export const UNAVAILABLE_GAMMA_CONTEXT: CallSleeveGammaContext = {
+  callGamma: null,
+  putGamma: null,
+  netGamma: null,
+  gammaFlip: null,
+  putWall: null,
+  callWall: null,
+  gammaSource: 'unavailable',
+}
+
+/** One row of `flame_call_sleeve_daily_context`. */
+export interface CallSleeveDailyContextRow {
+  trade_date: string
+  evaluated_at: string
+  spot: number | null
+  vix_ratio: number | null
+  call_short_strike_considered: number | null
+  call_long_strike_considered: number | null
+  entry_credit_seen: number | null
+  decision: string
+  call_gamma: number | null
+  put_gamma: number | null
+  net_gamma: number | null
+  gamma_flip: number | null
+  put_wall: number | null
+  call_wall: number | null
+  gamma_source: string
+}
+
+/**
+ * Pure row builder — no DB, no network, so this is unit-testable in
+ * isolation (see flame-call-sleeve.test.ts). `gamma` may be null (vendor
+ * outage before a gamma read was even attempted); every gamma field then
+ * writes NULL with gammaSource 'unavailable', never a fabricated number.
+ */
+export function buildCallSleeveDailyContextRow(input: {
+  tradeDate: string
+  evaluatedAt: Date
+  spot: number | null
+  vixRatio: number | null
+  shortStrike: number | null
+  longStrike: number | null
+  entryCredit: number | null
+  decision: string
+  gamma: CallSleeveGammaContext | null
+}): CallSleeveDailyContextRow {
+  const g = input.gamma ?? UNAVAILABLE_GAMMA_CONTEXT
+  return {
+    trade_date: input.tradeDate,
+    evaluated_at: input.evaluatedAt.toISOString(),
+    spot: input.spot,
+    vix_ratio: input.vixRatio,
+    call_short_strike_considered: input.shortStrike,
+    call_long_strike_considered: input.longStrike,
+    entry_credit_seen: input.entryCredit,
+    decision: input.decision,
+    call_gamma: g.callGamma,
+    put_gamma: g.putGamma,
+    net_gamma: g.netGamma,
+    gamma_flip: g.gammaFlip,
+    put_wall: g.putWall,
+    call_wall: g.callWall,
+    gamma_source: g.gammaSource,
+  }
+}
