@@ -19,6 +19,7 @@ from backend.api.routes import (
     tastytrade_routes,
     valor_routes,
     valor_research_routes,
+    valor_microstructure_routes,
     spark_flame_research_routes,
     agape_eth_perp_routes,
     agape_sol_perp_routes,
@@ -63,6 +64,7 @@ app.add_middleware(
 app.include_router(tastytrade_routes.router)
 app.include_router(valor_routes.router)
 app.include_router(valor_research_routes.router)
+app.include_router(valor_microstructure_routes.router)
 app.include_router(spark_flame_research_routes.router)
 app.include_router(agape_eth_perp_routes.router)
 app.include_router(agape_sol_perp_routes.router)
@@ -143,6 +145,10 @@ async def start_active_trading_scheduler():
         launch_mes_v26()
         from scripts.valor_mes_v28_multientry_selector import launch_if_enabled as launch_mes_v28
         launch_mes_v28()
+        from scripts.valor_mes_dxlink_candle_probe import launch_if_enabled as launch_mes_candle_probe
+        launch_mes_candle_probe()
+        from scripts.valor_mes_v31_edge_map import launch_if_enabled as launch_mes_v31
+        launch_mes_v31()
     except Exception:
         import logging
         logging.getLogger(__name__).exception(

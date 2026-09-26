@@ -48,6 +48,8 @@ services:
         sync: false
       - key: TASTYTRADE_REFRESH_TOKEN
         sync: false
+      - key: MES_MICROSTRUCTURE_COLLECTOR_ENABLED
+        value: "true"
       - key: ALLOWED_ORIGINS
         value: https://alphagex-frontend.vercel.app,https://*.vercel.app,http://localhost:3000,http://localhost:5173
       - key: DATABASE_URL

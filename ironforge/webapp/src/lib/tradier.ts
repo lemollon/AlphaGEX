@@ -2858,6 +2858,62 @@ export async function getGammaExposureComponents(
   }
 }
 
+export interface GexChainOption {
+  strike: number
+  type: 'call' | 'put'
+  gamma: number
+  oi: number
+}
+
+/**
+ * Flat per-option chain (strike, type, gamma, OI) across all expirations
+ * within `maxDte`, greeks included. Mirrors the expiration-loop in
+ * getNetGex() above but returns the raw rows instead of a single summed
+ * number — used by gex-levels.ts to build per-strike wall/dollar-gamma
+ * profiles. Never throws; returns [] on any fetch/config failure.
+ */
+export async function getOptionChainForGex(
+  symbol: string,
+  maxDte = 45,
+): Promise<GexChainOption[]> {
+  await ensureQuoteApiKey()
+  if (!_tradierApiKey) return []
+  const expirations = await getOptionExpirations(symbol)
+  if (!expirations || expirations.length === 0) return []
+
+  const now = Date.now()
+  const within = expirations.filter((e) => {
+    const dte = (new Date(e + 'T00:00:00').getTime() - now) / 86_400_000
+    return dte >= 0 && dte <= maxDte
+  })
+  if (within.length === 0) return []
+
+  const rows: GexChainOption[] = []
+  for (const exp of within) {
+    const data = await tradierGet('/markets/options/chains', {
+      symbol,
+      expiration: exp,
+      greeks: 'true',
+    })
+    let opts = data?.options?.option
+    if (!opts) continue
+    if (!Array.isArray(opts)) opts = [opts]
+    for (const o of opts) {
+      const strikeRaw = o?.strike
+      const gRaw = o?.greeks?.gamma
+      const oiRaw = o?.open_interest
+      if (strikeRaw == null || gRaw == null || oiRaw == null) continue
+      const strike = typeof strikeRaw === 'number' ? strikeRaw : parseFloat(String(strikeRaw))
+      const gamma = typeof gRaw === 'number' ? gRaw : parseFloat(String(gRaw))
+      const oi = typeof oiRaw === 'number' ? oiRaw : parseFloat(String(oiRaw))
+      if (!Number.isFinite(strike) || !Number.isFinite(gamma) || !Number.isFinite(oi)) continue
+      const type: 'call' | 'put' = String(o.option_type || '').toLowerCase() === 'call' ? 'call' : 'put'
+      rows.push({ strike, type, gamma, oi })
+    }
+  }
+  return rows
+}
+
 /* ------------------------------------------------------------------ */
 /*  Sandbox account positions (for per-account P&L)                    */
 /* ------------------------------------------------------------------ */
