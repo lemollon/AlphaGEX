@@ -145,6 +145,8 @@ async def start_active_trading_scheduler():
         launch_mes_v26()
         from scripts.valor_mes_v28_multientry_selector import launch_if_enabled as launch_mes_v28
         launch_mes_v28()
+        from scripts.valor_mes_dxlink_candle_probe import launch_if_enabled as launch_mes_candle_probe
+        launch_mes_candle_probe()
         from scripts.valor_mes_v31_edge_map import launch_if_enabled as launch_mes_v31
         launch_mes_v31()
     except Exception:
