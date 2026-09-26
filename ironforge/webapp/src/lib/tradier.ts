@@ -2270,6 +2270,45 @@ export async function placeIcOrderAllAccounts(
         } else {
           acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, prodCeiling)
         }
+      } else if (botName && ebbSizing.isEbbLadderBot(botName) && ebbSizing.ebbCustomerLadderMode() === 'profit') {
+        // PROFIT LADDER for EBB customer accounts (Leron, 2026-09-26, main
+        // conversation: "customer accounts use a PROFIT LADDER for EBB").
+        // contracts = floor(floor_amount / rung) + floor(peak_profit / rung),
+        // where floor_amount is THIS account's own FLINT floor
+        // (flint_account_floor, seeded once — the same floor
+        // EBB_FAVORABLE_UPSIZE's own sandbox cushion check already reads via
+        // getFlintSandboxLedger) and peak_profit is this account's high-water
+        // equity minus that floor. Gated by EBB_CUSTOMER_LADDER=profit only —
+        // unset/'equity' never reaches this branch, so every sandbox account
+        // stays on the pre-2026-09-26 mirror below. FLAME's own production
+        // account is type='production' and never reaches here either.
+        const ledger = await getFlintSandboxLedger(acct.name, accountId)
+        if (ledger.floor == null || ledger.equity == null) {
+          console.warn(
+            `Sandbox [${acct.name}]: EBB profit ladder unreadable ` +
+            `(floor=${ledger.floor === null ? 'NONE' : '$' + ledger.floor.toFixed(0)}, ` +
+            `equity=${ledger.equity === null ? 'NONE' : '$' + ledger.equity.toFixed(0)}). SKIPPING.`,
+          )
+          return
+        }
+        const highWater = await getOrRatchetCustomerHighWater(acct.name, 'sandbox', ledger.equity)
+        if (highWater == null) {
+          console.warn(`Sandbox [${acct.name}]: EBB profit ladder high-water unreadable. SKIPPING.`)
+          return
+        }
+        const peakProfit = Math.max(0, highWater - ledger.floor)
+        const ladder = ebbSizing.ebbProfitLadderContracts(botName, ledger.floor, peakProfit)
+        if (ladder < 1) {
+          console.warn(
+            `Sandbox [${acct.name}]: ${botName.toUpperCase()} profit ladder = 0 lots ` +
+            `(floor=$${ledger.floor.toFixed(0)}, high_water=$${highWater.toFixed(0)}, ` +
+            `peak_profit=$${peakProfit.toFixed(0)}). SKIPPING — never falls back to the paper mirror.`,
+          )
+          return
+        }
+        acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, ladder)
+        ladderDetail = `floor=$${ledger.floor.toFixed(0)}, high_water=$${highWater.toFixed(0)}, ` +
+          `peak_profit=$${peakProfit.toFixed(0)}, profit_ladder=${ladder}, `
       } else {
         acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, paperContracts)
       }
@@ -2278,7 +2317,7 @@ export async function placeIcOrderAllAccounts(
       const sizeLabel = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
       const capsDetail = acct.type === 'production'
         ? `${ladderDetail}bp_calc=${bpContracts}, prodMax=${prodMaxContracts > 0 ? prodMaxContracts : '∞'}, hardCap=${SANDBOX_MAX_CONTRACTS}`
-        : `bp_calc=${bpContracts}, paperCap=${paperContracts}, hardCap=${SANDBOX_MAX_CONTRACTS}`
+        : `${ladderDetail}bp_calc=${bpContracts}, paperCap=${paperContracts}, hardCap=${SANDBOX_MAX_CONTRACTS}`
       console.log(
         `${sizeLabel}: optionBP=$${bp.toFixed(0)}, bp_pct=${(bpPct * 100).toFixed(1)}%, ` +
         `usable=$${usableBP.toFixed(0)} (${(bpPct * 100).toFixed(1)}% × ${(botShare * 100).toFixed(0)}%), ` +
@@ -4603,6 +4642,52 @@ async function getFlintSandboxLedger(person: string, accountId: string | null): 
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`[tradier] getFlintSandboxLedger('${person}') failed: ${msg}`)
     return { floor: null, equity: null }
+  }
+}
+
+/**
+ * EBB_CUSTOMER_LADDER=profit's high-water equity ratchet, per (person,
+ * account_type). No sandbox account had a high-water anywhere before this:
+ * flint_account_floor's floor_amount is seeded ONCE and never moves, and
+ * `{bot}_paper_account.high_water_balance` has no per-sandbox-person row —
+ * sandbox mirrors are real (fake-money) Tradier accounts read live via
+ * getAllocatedCapitalForAccount, not a bookkeeping ledger row. This table is
+ * the one place that peak lives: GREATEST()ed on every read inside the same
+ * INSERT ... ON CONFLICT statement, so it can only ratchet up — the same
+ * discipline as FLAME's own production high_water_balance. null on any read
+ * failure — the caller must SKIP, never trade off a guessed peak.
+ */
+async function getOrRatchetCustomerHighWater(
+  person: string,
+  accountType: 'sandbox' | 'production',
+  currentEquity: number | null,
+): Promise<number | null> {
+  if (currentEquity == null || !Number.isFinite(currentEquity) || currentEquity <= 0) return null
+  try {
+    const { query: dbq, dbExecute: dbx } = await import('./db')
+    await dbx(
+      `CREATE TABLE IF NOT EXISTS ebb_customer_high_water (
+         person TEXT NOT NULL,
+         account_type TEXT NOT NULL,
+         high_water NUMERIC NOT NULL,
+         updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+         PRIMARY KEY (person, account_type)
+       )`,
+    )
+    const rows = await dbq(
+      `INSERT INTO ebb_customer_high_water (person, account_type, high_water, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (person, account_type)
+       DO UPDATE SET high_water = GREATEST(ebb_customer_high_water.high_water, $3), updated_at = NOW()
+       RETURNING high_water`,
+      [person, accountType, currentEquity],
+    )
+    const n = Number(rows[0]?.high_water)
+    return Number.isFinite(n) ? n : currentEquity
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getOrRatchetCustomerHighWater('${person}', '${accountType}') failed: ${msg}`)
+    return null
   }
 }
 

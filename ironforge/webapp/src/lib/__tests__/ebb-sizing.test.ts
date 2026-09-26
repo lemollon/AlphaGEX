@@ -31,6 +31,8 @@ import {
   EBB_UPSIZE_VIX_RATIO_CEILING,
   ebbUpsizeExtraContractMaxLoss,
   evaluateEbbUpsizeCushion,
+  ebbCustomerLadderMode,
+  ebbProfitLadderContracts,
 } from '../ebb-sizing'
 
 describe('EBB count ladder — rungs (2026-08-27 survivor rule, unchanged by ADR 0013)', () => {
@@ -364,5 +366,119 @@ describe('EBB_FAVORABLE_UPSIZE — favorable-VIX-day +1 contract (Leron, 2026-09
     // exactly what the ladder + liquidity check produced — byte-for-byte.
     expect(scanner).toMatch(/let finalContracts = contracts/)
     expect(tradier).toMatch(/acctContracts = Math\.min\(SANDBOX_MAX_CONTRACTS, liq\.lots\)/)
+  })
+})
+
+describe('EBB_CUSTOMER_LADDER — customer (sandbox) PROFIT ladder (Leron, 2026-09-26)', () => {
+  const ORIG_ENV = process.env.EBB_CUSTOMER_LADDER
+
+  afterEach(() => {
+    if (ORIG_ENV === undefined) delete process.env.EBB_CUSTOMER_LADDER
+    else process.env.EBB_CUSTOMER_LADDER = ORIG_ENV
+  })
+
+  it('unset, empty, or any unrecognized value resolves to "equity" — today\'s mirror, unchanged', () => {
+    delete process.env.EBB_CUSTOMER_LADDER
+    expect(ebbCustomerLadderMode()).toBe('equity')
+    for (const v of ['', 'EQUITY', 'off', 'PROFIT ', 'profitable', ' profit yes']) {
+      process.env.EBB_CUSTOMER_LADDER = v
+      expect(ebbCustomerLadderMode()).toBe(v.trim().toLowerCase() === 'profit' ? 'profit' : 'equity')
+    }
+  })
+
+  it('"profit" (any case/whitespace) turns the customer ladder on', () => {
+    for (const v of ['profit', 'PROFIT', ' Profit ']) {
+      process.env.EBB_CUSTOMER_LADDER = v
+      expect(ebbCustomerLadderMode()).toBe('profit')
+    }
+  })
+
+  it('contracts = floor(floor_amount / rung) + floor(peak_profit / rung), FLAME rung $1,500', () => {
+    // $4,242 floor / $4,500 equity, no profit above the floor's own high-water
+    // yet (peak_profit = $258) -> 2, NOT 3 (3 is what a plain equity/$1,500
+    // ladder on $4,500 would have given).
+    expect(ebbProfitLadderContracts('flame', 4242, 258)).toBe(2)
+    expect(ebbLadderContracts('flame', ebbLadderCapital(4500, null))).toBe(3) // the "not 3" ladder it replaces
+    // Same floor, $1,500 peak profit -> +1 lot -> 3.
+    expect(ebbProfitLadderContracts('flame', 4242, 1500)).toBe(3)
+  })
+
+  it('SPARK rung is $5,000 — same formula, different denominator', () => {
+    expect(ebbProfitLadderContracts('spark', 12000, 0)).toBe(2)
+    expect(ebbProfitLadderContracts('spark', 12000, 5000)).toBe(3)
+  })
+
+  it('below one rung of floor with zero peak profit is 0 lots, never 1', () => {
+    expect(ebbProfitLadderContracts('flame', 1000, 0)).toBe(0)
+    expect(ebbProfitLadderContracts('spark', 4000, 0)).toBe(0)
+  })
+
+  it('a missing/invalid floor is 0 lots regardless of peak profit — never guesses', () => {
+    expect(ebbProfitLadderContracts('flame', null, 10_000)).toBe(0)
+    expect(ebbProfitLadderContracts('flame', undefined, 10_000)).toBe(0)
+    expect(ebbProfitLadderContracts('flame', 0, 10_000)).toBe(0)
+    expect(ebbProfitLadderContracts('flame', NaN, 10_000)).toBe(0)
+  })
+
+  it('a negative or non-finite peak profit contributes zero lots, not a negative count', () => {
+    expect(ebbProfitLadderContracts('flame', 4242, -500)).toBe(2)
+    expect(ebbProfitLadderContracts('flame', 4242, NaN)).toBe(2)
+    expect(ebbProfitLadderContracts('flame', 4242, undefined)).toBe(2)
+  })
+
+  it('same static cap of 100 as the production ladder', () => {
+    expect(ebbProfitLadderContracts('flame', 1_000_000, 1_000_000)).toBe(100)
+    expect(ebbProfitLadderContracts('spark', 1_000_000, 1_000_000)).toBe(100)
+  })
+
+  it('rounds down, never up', () => {
+    expect(ebbProfitLadderContracts('flame', 2999, 0)).toBe(1)
+    expect(ebbProfitLadderContracts('flame', 3000, 0)).toBe(2)
+  })
+
+  describe('wiring: tradier.ts sandbox branch — profit ladder gated per-bot, per-flag; production untouched', () => {
+    const lib = join(__dirname, '..')
+    const tradier = readFileSync(join(lib, 'tradier.ts'), 'utf8')
+
+    it('the sandbox branch only reaches the profit ladder when the bot is an EBB ladder bot AND the flag is "profit"', () => {
+      expect(tradier).toMatch(
+        /\}\s*else if \(botName && ebbSizing\.isEbbLadderBot\(botName\) && ebbSizing\.ebbCustomerLadderMode\(\) === 'profit'\) \{/,
+      )
+    })
+
+    it('floor comes from getFlintSandboxLedger (flint_account_floor), never a second divergent floor', () => {
+      expect(tradier).toMatch(/const ledger = await getFlintSandboxLedger\(acct\.name, accountId\)/)
+    })
+
+    it('peak_profit is high-water minus floor, floored at 0 — never a drawdown-driven negative count', () => {
+      expect(tradier).toMatch(/const peakProfit = Math\.max\(0, highWater - ledger\.floor\)/)
+    })
+
+    it('the high-water read is its own ratchet, GREATEST()ed, never the account\'s live equity directly', () => {
+      expect(tradier).toMatch(/const highWater = await getOrRatchetCustomerHighWater\(acct\.name, 'sandbox', ledger\.equity\)/)
+      expect(tradier).toMatch(/DO UPDATE SET high_water = GREATEST\(ebb_customer_high_water\.high_water, \$3\)/)
+    })
+
+    it('the final count is capped by this account\'s own broker BP and the hard safety ceiling, same as every other path', () => {
+      expect(tradier).toMatch(/acctContracts = Math\.min\(SANDBOX_MAX_CONTRACTS, bpContracts, ladder\)/)
+    })
+
+    it('a 0-lot profit ladder SKIPS the account — it never falls back to the paper mirror', () => {
+      expect(tradier).toMatch(/if \(ladder < 1\) \{[\s\S]*?SKIPPING — never falls back to the paper mirror/)
+    })
+
+    it('the flag-unset fallback (paperContracts mirror) is still the LAST else — byte-for-byte unchanged', () => {
+      expect(tradier).toMatch(
+        /\} else \{\s*acctContracts = Math\.min\(SANDBOX_MAX_CONTRACTS, bpContracts, paperContracts\)\s*\}/,
+      )
+    })
+
+    it('FLAME\'s own production account never reaches the customer branch — it is gated on acct.type earlier, untouched', () => {
+      // The production ladder branch (isEbbLadderBot(botName) under acct.type
+      // === 'production') is a completely separate `if` above this `else if`
+      // chain; the customer profit ladder is added only to the sandbox side.
+      expect(tradier).toMatch(/if \(acct\.type === 'production'\) \{[\s\S]*?if \(ebbSizing\.isEbbLadderBot\(botName\)\) \{/)
+      expect(tradier).toMatch(/const ladder = ebbSizing\.ebbLadderContracts\(botName, ebbSizing\.ebbLadderCapital\(funded, highWater\)\)/)
+    })
   })
 })

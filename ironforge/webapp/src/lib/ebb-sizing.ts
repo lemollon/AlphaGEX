@@ -239,6 +239,51 @@ export function evaluateEbbUpsizeCushion(
   return { eligible: true, cushion, reason: null }
 }
 
+/**
+ * EBB_CUSTOMER_LADDER — equity|profit, unset = equity (Leron, 2026-09-26,
+ * approved in the main conversation): "customer accounts use a PROFIT
+ * LADDER for EBB." Applies ONLY to non-FLAME customer (sandbox mirror)
+ * accounts — FLAME's own production account (6YB71371) keeps today's
+ * equity ladder (ebbLadderContracts/ebbLadderCapital above) no matter what
+ * this flag says; tradier.ts's production branch never reads it. Unset or
+ * any unrecognized value resolves to 'equity', which leaves every sandbox
+ * account on the pre-2026-09-26 mirror (paperContracts, capped by that
+ * account's own BP) — byte-for-byte unchanged.
+ */
+export function ebbCustomerLadderMode(): 'equity' | 'profit' {
+  return (process.env.EBB_CUSTOMER_LADDER ?? '').trim().toLowerCase() === 'profit' ? 'profit' : 'equity'
+}
+
+/**
+ * The PROFIT LADDER contract count for a customer (sandbox) account under
+ * EBB_CUSTOMER_LADDER=profit:
+ *
+ *   contracts = floor(floor_amount / rung) + floor(peak_profit / rung)
+ *
+ * `floor_amount` is THIS account's own FLINT floor (flint_account_floor,
+ * seeded once from its first-read equity, never moved — see
+ * getOrSeedFlintAccountFloor in tradier.ts) and `peak_profit` is
+ * max(0, high-water equity − floor_amount): profit banked ABOVE the floor,
+ * at the account's own running peak, never its live/current equity (a
+ * drawdown must not shrink the lot count — the same ratchet discipline as
+ * ebbLadderCapital's high-water). `rung` is per-bot (ebbRungUsd): $1,500
+ * for FLAME, $5,000 for SPARK. Same static cap (EBB_LADDER_CAP=100) and the
+ * same floor()-never-round rule as the production ladder. A missing/invalid
+ * floor is 0 lots — the caller must skip, never guess.
+ */
+export function ebbProfitLadderContracts(
+  bot: EbbBot,
+  floorAmount: number | null | undefined,
+  peakProfit: number | null | undefined,
+): number {
+  const f = positiveOrNull(floorAmount)
+  if (f === null) return 0
+  const p = typeof peakProfit === 'number' && Number.isFinite(peakProfit) && peakProfit > 0 ? peakProfit : 0
+  const rung = ebbRungUsd(bot)
+  const lots = Math.floor(f / rung) + Math.floor(p / rung)
+  return Math.max(0, Math.min(EBB_LADDER_CAP, lots))
+}
+
 /** One-line audit of a sizing decision — both money paths print this. */
 export function formatEbbSizingLine(args: {
   funded: number | null
