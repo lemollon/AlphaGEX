@@ -15,6 +15,9 @@ historical candles as executable fills.
 - Intervals: one-minute and fifteen-minute, extended-hours included.
 - Preserved fields: event time, OHLC, total volume, VWAP, bid volume, ask
   volume, provider count/index/sequence/flags, and exact symbol identity.
+- One-minute responses may use DXFeed's documented normalized period token
+  `{=m}` even when the request used `{=1m}`; those two exact forms are treated
+  as equivalent, while other symbols and periods remain rejected.
 - Invalid, nonfinite, off-tick, negative-volume, wrong-symbol, and impossible
   candles are rejected rather than repaired.
 - The provider response is classified as complete, partial, or cap-truncated.

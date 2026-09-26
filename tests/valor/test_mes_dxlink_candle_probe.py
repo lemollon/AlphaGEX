@@ -43,6 +43,20 @@ def test_removal_tombstone_identity_does_not_require_ohlc():
     assert flags & 2
 
 
+@pytest.mark.parametrize("event_symbol", [
+    "/MESZ23:XCME{=1m}",
+    "/MESZ23:XCME{=m}",
+])
+def test_one_minute_identity_accepts_dxfeed_period_normalization(event_symbol):
+    row = probe.candle_to_row(event(event_symbol=event_symbol), spec())
+    assert row["interval"] == "1m"
+
+
+def test_identity_rejects_a_different_candle_period():
+    with pytest.raises(ValueError, match="unexpected candle symbol"):
+        probe.candle_to_row(event(event_symbol="/MESZ23:XCME{=5m}"), spec())
+
+
 @pytest.mark.parametrize("bad", [
     {"event_symbol": "/ESZ23:XCME{=1m}"},
     {"close": 4501.10},
