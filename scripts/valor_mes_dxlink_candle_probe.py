@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 UTC = timezone.utc
 SOURCE = "TASTYTRADE_DXLINK_CANDLE"
 TICK_SIZE = 0.25
-ALLOWED_INTERVALS = {"1m": 1, "5m": 5, "15m": 15}
+ALLOWED_INTERVALS = {"1m": 1, "5m": 5, "15m": 15, "1h": 60}
 TERMINAL_STATES = {"COMPLETE", "CAP_TRUNCATED"}
 DEFAULT_CONTRACT = "/MESZ3"
 DEFAULT_STREAMER = "/MESZ23:XCME"
@@ -67,8 +67,12 @@ def _tick_valid(value: float) -> bool:
 
 
 def validate_symbols(contract_symbol: str, streamer_symbol: str) -> None:
+    if (contract_symbol, streamer_symbol) == ("/MES", "/MES:XCME"):
+        return
     if not re.fullmatch(r"/MES[HMUZ]\d", contract_symbol or ""):
-        raise InvalidProbeConfiguration("exact quarterly MES contract required")
+        raise InvalidProbeConfiguration(
+            "exact quarterly or continuous MES contract required"
+        )
     if not re.fullmatch(r"/MES[HMUZ]\d{2}:XCME", streamer_symbol or ""):
         raise InvalidProbeConfiguration("exact XCME DXLink symbol required")
     if contract_symbol[:5] != streamer_symbol[:5]:
@@ -86,6 +90,8 @@ def candle_identity(event: Any, spec: "ProbeSpec") -> tuple[datetime, int]:
     periods = {spec.interval}
     if spec.interval == "1m":
         periods.add("m")
+    elif spec.interval == "1h":
+        periods.add("h")
     expected_symbols = {
         f"{spec.streamer_symbol}{{={period}}}" for period in periods
     }
@@ -234,7 +240,7 @@ class MESCandleProbeStore:
                 CREATE TABLE IF NOT EXISTS valor_mes_dxlink_candles (
                     contract_symbol TEXT NOT NULL,
                     streamer_symbol TEXT NOT NULL,
-                    interval TEXT NOT NULL CHECK (interval IN ('1m','5m','15m')),
+                    interval TEXT NOT NULL CHECK (interval IN ('1m','5m','15m','1h')),
                     extended_hours BOOLEAN NOT NULL,
                     event_time TIMESTAMPTZ NOT NULL,
                     open DOUBLE PRECISION NOT NULL,
@@ -253,6 +259,15 @@ class MESCandleProbeStore:
                     recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (streamer_symbol, interval, extended_hours, event_time)
                 )
+            """)
+            cursor.execute("""
+                ALTER TABLE valor_mes_dxlink_candles
+                DROP CONSTRAINT IF EXISTS valor_mes_dxlink_candles_interval_check
+            """)
+            cursor.execute("""
+                ALTER TABLE valor_mes_dxlink_candles
+                ADD CONSTRAINT valor_mes_dxlink_candles_interval_check
+                CHECK (interval IN ('1m','5m','15m','1h'))
             """)
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_valor_mes_dxlink_candles_time

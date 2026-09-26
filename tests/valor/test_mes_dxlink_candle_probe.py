@@ -15,6 +15,10 @@ def spec(interval="1m"):
     return probe.ProbeSpec("/MESZ3", "/MESZ23:XCME", interval, START)
 
 
+def continuous_spec(interval="1h"):
+    return probe.ProbeSpec("/MES", "/MES:XCME", interval, START)
+
+
 def event(**overrides):
     values = dict(
         event_symbol="/MESZ23:XCME{=1m}",
@@ -50,6 +54,31 @@ def test_removal_tombstone_identity_does_not_require_ohlc():
 def test_one_minute_identity_accepts_dxfeed_period_normalization(event_symbol):
     row = probe.candle_to_row(event(event_symbol=event_symbol), spec())
     assert row["interval"] == "1m"
+
+
+@pytest.mark.parametrize("event_symbol", [
+    "/MES:XCME{=1h}",
+    "/MES:XCME{=h}",
+])
+def test_hourly_continuous_identity_accepts_dxfeed_normalization(event_symbol):
+    row = probe.candle_to_row(
+        event(event_symbol=event_symbol), continuous_spec()
+    )
+    assert row["contract_symbol"] == "/MES"
+    assert row["streamer_symbol"] == "/MES:XCME"
+    assert row["interval"] == "1h"
+
+
+@pytest.mark.parametrize(("contract", "streamer"), [
+    ("/MES", "/MESZ23:XCME"),
+    ("/MESZ3", "/MES:XCME"),
+    ("/ES", "/ES:XCME"),
+])
+def test_continuous_symbol_validation_rejects_mixed_or_wrong_products(
+    contract, streamer
+):
+    with pytest.raises(probe.InvalidProbeConfiguration):
+        probe.ProbeSpec(contract, streamer, "1h", START)
 
 
 def test_identity_rejects_a_different_candle_period():
@@ -98,3 +127,4 @@ def test_module_has_no_order_or_account_imports():
     assert "tastytrade.account" not in source
     assert "tastytrade.order" not in source
     assert "trading.valor.executor" not in source
+    assert "CHECK (interval IN ('1m','5m','15m','1h'))" in source
