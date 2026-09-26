@@ -4710,6 +4710,17 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
  * $0.50, per spec). A buffer of 0 (env set to '' or '0') disables the
  * guard: the position then holds to expiry unguarded, deliberately, same
  * fail-safe direction as the rest of this file — no quote closes nothing.
+ *
+ * The DB row is always closed here (status/close_price/realized_pnl), for
+ * EVERY account_type, the moment the buffer trips — that bookkeeping never
+ * depended on the broker call below. The broker-side buy-back runs for
+ * BOTH 'production' and 'sandbox' rows with mode='live' (real Tradier
+ * orders on both, per Leron 2026-09-26 — a sandbox mirror's guard used to
+ * close only in the DB and hold open on the broker), and is routed by
+ * `flint_positions.person` to that ONE account — see
+ * placeCallSpreadOrderAllAccounts's targetPerson doc. Never "close every
+ * eligible account of this type": with more than one account of the same
+ * type, that would buy back a DIFFERENT customer's position.
  */
 async function closeFlintAtRiskBeforeBell(ct: Date): Promise<string> {
   if (getFlintMode() === 'off') return ''
@@ -4722,7 +4733,7 @@ async function closeFlintAtRiskBeforeBell(ct: Date): Promise<string> {
   const todayStr = ct.toISOString().slice(0, 10)
   const rows = await query(
     `SELECT position_id, expiration, call_short_strike, call_long_strike, contracts,
-            entry_credit, account_type, mode
+            entry_credit, account_type, mode, person
        FROM ${FLINT_TABLE}
       WHERE status = 'open' AND expiration = $1`,
     [todayStr],
@@ -4776,14 +4787,21 @@ async function closeFlintAtRiskBeforeBell(ct: Date): Promise<string> {
       `short ${shortStrike}C buffer=$${buffer.toFixed(2)} cost=$${costToClose.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,
     )
 
-    if (p.account_type === 'production' && p.mode === 'live') {
-      try {
-        await placeCallSpreadOrderAllAccounts(
-          'SPY', expiration, shortStrike, longStrike, contracts, costToClose, String(p.position_id),
-          { close: true },
+    if ((p.account_type === 'production' || p.account_type === 'sandbox') && p.mode === 'live') {
+      if (!p.person) {
+        console.error(
+          `[scanner] FLINT LIVE GUARD CLOSE SKIPPED ${p.position_id}: no person on a ${p.account_type} row — ` +
+          `refusing to guess which account to close.`,
         )
-      } catch (e: unknown) {
-        console.error(`[scanner] FLINT LIVE GUARD CLOSE FAILED ${p.position_id}: ${e instanceof Error ? e.message : String(e)}`)
+      } else {
+        try {
+          await placeCallSpreadOrderAllAccounts(
+            'SPY', expiration, shortStrike, longStrike, contracts, costToClose, String(p.position_id),
+            { close: true, targetPerson: p.person },
+          )
+        } catch (e: unknown) {
+          console.error(`[scanner] FLINT LIVE GUARD CLOSE FAILED ${p.position_id}: ${e instanceof Error ? e.message : String(e)}`)
+        }
       }
     }
     out.push(`${p.position_id}=guarded@${spot.toFixed(2)}`)
@@ -10197,6 +10215,7 @@ export const _testing = {
   logFlintDailyContext,
   getFlintGammaContextCached,
   FLINT_CONTEXT_TABLE,
+  closeFlintAtRiskBeforeBell,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },
   get _scanStartedAt() { return _scanStartedAt },

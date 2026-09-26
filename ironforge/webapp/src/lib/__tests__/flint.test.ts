@@ -525,3 +525,47 @@ describe('decideFlintContractsForCushion — rule R1 with a favorable-day step-d
     expect(decideFlintContractsForCushion(2, 1, 1700, null, short, long, credit).contracts).toBe(0)
   })
 })
+
+/**
+ * FLINT_MODE unset (-> 'off') must place zero orders ANYWHERE — sandbox or
+ * production, entry or guard-close — not just resolve the mode string.
+ * tryOpenFlint and closeFlintAtRiskBeforeBell are module-private in
+ * scanner.ts (same reason assignment-guard-must-close.test.ts uses
+ * source-level assertions for closeAtRiskBeforeBell/closePosition): pin the
+ * gate structurally, so a future refactor that moves work ABOVE the 'off'
+ * check shows up as a diff here. The runtime half of this invariant — the
+ * guard placing zero orders when mode is off, exercised end-to-end against
+ * mocked DB/Tradier rows — is pinned in scanner.test.ts.
+ */
+describe('FLINT_MODE off places zero orders anywhere (sandbox or production) — structural', () => {
+  const scanner = readFileSync(join(__dirname, '..', 'scanner.ts'), 'utf8')
+
+  function fnBody(name: string): string {
+    const start = scanner.indexOf(`async function ${name}(`)
+    expect(start, `${name} must exist`).toBeGreaterThan(-1)
+    const rest = scanner.slice(start + 1)
+    const end = rest.search(/\n(?:async )?function \w+\(/)
+    return end === -1 ? rest : rest.slice(0, end)
+  }
+
+  it("tryOpenFlint's very first statement is the mode==='off' bail, before any table/DB touch or account loop", () => {
+    const body = fnBody('tryOpenFlint')
+    const modeIdx = body.indexOf("if (mode === 'off') return ''")
+    expect(modeIdx, 'the off-gate must exist').toBeGreaterThan(-1)
+    // Nothing above it but the mode read itself.
+    expect(body.slice(0, modeIdx)).not.toMatch(/query\(|ensureFlintTable|placeCallSpreadOrderAllAccounts/)
+    // Every path to a real order (paper ledger insert, sandbox/production
+    // fill loop) sits strictly AFTER the gate.
+    const placeIdx = body.indexOf('placeCallSpreadOrderAllAccounts(')
+    expect(placeIdx).toBeGreaterThan(modeIdx)
+  })
+
+  it("closeFlintAtRiskBeforeBell's very first statement is the same mode==='off' bail, before reading flint_positions", () => {
+    const body = fnBody('closeFlintAtRiskBeforeBell')
+    const modeIdx = body.indexOf("if (getFlintMode() === 'off') return ''")
+    expect(modeIdx, 'the off-gate must exist').toBeGreaterThan(-1)
+    expect(body.slice(0, modeIdx)).not.toMatch(/query\(|placeCallSpreadOrderAllAccounts/)
+    const selectIdx = body.indexOf('FROM ${FLINT_TABLE}')
+    expect(selectIdx).toBeGreaterThan(modeIdx)
+  })
+})

@@ -4469,23 +4469,136 @@ async function getFlamePutMarginToday(person: string, accountType: 'production' 
 }
 
 /**
+ * flint_account_floor — the PER-ACCOUNT profit-gate floor (Leron,
+ * 2026-09-26, in-conversation follow-up: "ironforge will have a lot of
+ * accounts" — profit protection is enforced PER ACCOUNT, and customer
+ * accounts get FLINT too). Before this table, every sandbox mirror (User,
+ * Matt, Logan...) shared ONE floor: FLAME's own shared sandbox paper-ledger
+ * row (flame_paper_account, account_type='sandbox', no person), via
+ * getFlintPaperLedger — so Matt's cushion could be gated (or cleared) by
+ * User's money, and any sandbox customer added later would silently
+ * inherit that same shared number. This table gives each (person,
+ * account_type) its OWN floor, seeded once and never moved again.
+ *
+ * Seeding rule, evaluated at most ONCE per (person, account_type), in order:
+ *   1. A configured funded/starting amount for this account, if the schema
+ *      carries one. Checked here against ironforge_accounts (person, type)
+ *      — as of 2026-09-26 that table has no such column (only capital_pct,
+ *      a throttle %, not a dollar floor), so this branch is a documented
+ *      no-op today, wired for the day a funded-amount column is added
+ *      there so the seed logic never has to be revisited.
+ *   2. Otherwise, `currentEquity` — this account's OWN equity the FIRST
+ *      time FLINT ever evaluates it: "FLINT waits until this customer
+ *      earns profit above where they started" (Leron, 2026-09-26). Returns
+ *      null (never fabricates a seed) if equity itself is unreadable — the
+ *      caller must skip, same as every other unreadable-floor path here.
+ *
+ * Once a row exists it is READ-ONLY: this function never raises OR lowers
+ * floor_amount on a later call, even if a configured amount later appears
+ * where there was none — silently moving a real-money floor after seeding
+ * is exactly what rule R1 exists to prevent. `accountId` is stored for
+ * audit only; it is never part of the (person, account_type) uniqueness, so
+ * a person keeps the same floor even if their linked account number ever
+ * changes.
+ *
+ * This is also the floor source EBB_FAVORABLE_UPSIZE's OWN cushion check
+ * must use for a sandbox-type account. Today EBB's upsize only evaluates
+ * cushion for FLAME's production ladder (getProductionLadderCapital,
+ * unchanged by this table — already per-person) and for the single shared
+ * bot-level paper ledger (getFlintPaperLedger, also unchanged — one
+ * bookkeeping row, not a customer account); neither is a per-customer
+ * sandbox mirror, so there is no second call site to migrate today. If
+ * EBB's ladder is ever extended to real per-customer sandbox accounts, it
+ * must read floors from this same table — never a second, divergent floor
+ * for the same account.
+ */
+async function getOrSeedFlintAccountFloor(
+  person: string,
+  accountType: 'sandbox' | 'production',
+  accountId: string | null,
+  currentEquity: number | null,
+): Promise<number | null> {
+  try {
+    const { query: dbq, dbExecute: dbx } = await import('./db')
+    await dbx(
+      `CREATE TABLE IF NOT EXISTS flint_account_floor (
+         id SERIAL PRIMARY KEY,
+         person TEXT NOT NULL,
+         account_type TEXT NOT NULL,
+         account_id TEXT,
+         floor_amount NUMERIC NOT NULL,
+         source TEXT NOT NULL,
+         set_at TIMESTAMP NOT NULL DEFAULT NOW(),
+         UNIQUE (person, account_type)
+       )`,
+    )
+
+    const existing = await dbq(
+      `SELECT floor_amount FROM flint_account_floor WHERE person = $1 AND account_type = $2`,
+      [person, accountType],
+    )
+    if (existing.length > 0) {
+      const n = Number(existing[0].floor_amount)
+      return Number.isFinite(n) ? n : null
+    }
+
+    // 1. A configured funded/starting amount, if the schema ever carries
+    // one. Wrapped: querying a column that doesn't exist yet aborts THIS
+    // statement only (a fresh client/connection per query() call), never
+    // the caller — expected on every deploy until such a column ships.
+    let configured: number | null = null
+    try {
+      const rows = await dbq(
+        `SELECT funded_amount FROM ironforge_accounts WHERE person = $1 AND type = $2 AND is_active = TRUE LIMIT 1`,
+        [person, accountType],
+      )
+      const n = Number(rows[0]?.funded_amount)
+      configured = Number.isFinite(n) && n > 0 ? n : null
+    } catch {
+      configured = null
+    }
+
+    const seedAmount = configured ?? currentEquity
+    if (seedAmount == null || !Number.isFinite(seedAmount) || seedAmount <= 0) return null
+
+    const source = configured != null ? 'configured_funded_amount' : 'first_evaluated_equity'
+    await dbq(
+      `INSERT INTO flint_account_floor (person, account_type, account_id, floor_amount, source, set_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (person, account_type) DO NOTHING`,
+      [person, accountType, accountId, seedAmount, source],
+    )
+    console.log(`[tradier] FLINT floor SEEDED for ${person}:${accountType} = $${seedAmount.toFixed(2)} (source=${source})`)
+
+    // Re-read rather than trust seedAmount: a concurrent scan tick may have
+    // won the ON CONFLICT DO NOTHING race and seeded a different equity
+    // snapshot first — the DB row is the single truth from here on.
+    const after = await dbq(
+      `SELECT floor_amount FROM flint_account_floor WHERE person = $1 AND account_type = $2`,
+      [person, accountType],
+    )
+    const n = Number(after[0]?.floor_amount)
+    return Number.isFinite(n) ? n : seedAmount
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getOrSeedFlintAccountFloor('${person}', '${accountType}') failed: ${msg}`)
+    return null
+  }
+}
+
+/**
  * FLINT's R1 inputs for a SANDBOX mirror account (User/Matt/Logan) — floor
- * is FLAME's own shared sandbox paper ledger's starting_capital (the one
- * bookkeeping row EBB's paper path reads via getFlintPaperLedger; there is
- * no per-person starting_capital row for a Tradier SANDBOX account in this
- * schema, so the shared ledger's funded seed is the most honest floor
- * available — documented here rather than silently reusing a production
- * concept that doesn't exist for sandbox). `equity` IS per-account: this
+ * comes from flint_account_floor (see getOrSeedFlintAccountFloor above),
+ * seeded once per account and never moved. `equity` IS per-account: this
  * account's own real (fake-money) Tradier total_equity, read the same way
  * production's is. null on any read failure — the caller must skip.
  */
-async function getFlintSandboxLedger(person: string): Promise<{ floor: number | null; equity: number | null }> {
+async function getFlintSandboxLedger(person: string, accountId: string | null): Promise<{ floor: number | null; equity: number | null }> {
   try {
-    const { getFlintPaperLedger, BOTS } = await import('./scanner')
-    const flameBot = BOTS.find((b) => b.name === 'flame')
-    const floor = flameBot ? (await getFlintPaperLedger(flameBot)).floor : null
     const allocated = await getAllocatedCapitalForAccount(person, 'sandbox')
-    return { floor, equity: allocated?.equity ?? null }
+    const equity = allocated?.equity ?? null
+    const floor = await getOrSeedFlintAccountFloor(person, 'sandbox', accountId, equity)
+    return { floor, equity }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`[tradier] getFlintSandboxLedger('${person}') failed: ${msg}`)
@@ -4538,13 +4651,23 @@ async function getFlintSandboxLedger(person: string): Promise<{ floor: number | 
  *      does if only the extra lot is what breaks it.
  * An account that fails any of these is skipped — logged, never thrown — and
  * is simply absent from the returned map; every OTHER account still gets its
- * own independent shot. `opts.close` (assignment-guard buy-back — the only
- * caller that passes it, and only ever for a production row) skips all
+ * own independent shot. `opts.close` (assignment-guard buy-back) skips all
  * three checks: a buy-back must never be blocked by a gate meant for new
- * risk, and is restricted to production accounts (see closeFlintAtRiskBeforeBell
- * — a single flint_positions row has no per-mirror routing, so closing is
- * intentionally NOT extended to sandbox; a triggered sandbox row still
- * closes correctly in the DB, it simply holds to settlement on the broker).
+ * risk.
+ *
+ * `opts.close` REQUIRES `opts.targetPerson` — the flint_positions row's own
+ * `person` column (closeFlintAtRiskBeforeBell, scanner.ts) — and closes
+ * EXACTLY that one account, sandbox or production, never "every eligible
+ * account of this type." Before 2026-09-26 this used ALL eligible production
+ * accounts on every close call; with a single Flame production account that
+ * was invisible, but "ironforge will have a lot of accounts" (Leron,
+ * 2026-09-26) makes it a real bug the moment a second production account
+ * exists — a guard triggered on Account A's position would buy back Account
+ * B's too. A close call with no `targetPerson` fails CLOSED (zero accounts,
+ * logged) rather than guessing. Sandbox rows are no longer skipped either —
+ * a triggered sandbox mirror gets its own real buy-back order on ITS OWN
+ * sandbox credentials, the same as production, instead of closing correctly
+ * in the DB while silently holding open on the broker.
  *
  * `opts.close` flips the leg sides to buy_to_close/sell_to_close for the
  * assignment-guard buy-back; omitted (default) opens sell_to_open/buy_to_open.
@@ -4564,7 +4687,7 @@ export async function placeCallSpreadOrderAllAccounts(
   contracts: number,
   entryCredit: number,
   positionId: string,
-  opts?: { close?: boolean; baseContracts?: number },
+  opts?: { close?: boolean; baseContracts?: number; targetPerson?: string },
 ): Promise<Record<string, SandboxOrderInfo>> {
   const results: Record<string, SandboxOrderInfo> = {}
   const closing = opts?.close === true
@@ -4605,11 +4728,18 @@ export async function placeCallSpreadOrderAllAccounts(
     }
   }
 
-  // Closing (the assignment-guard buy-back) is only ever invoked for a
-  // production row — see the doc comment above. Sandbox never enters the
-  // close loop, so it can never be asked to buy back a position it never
-  // held.
-  const allAccts = closing ? productionAccts : [...sandboxAccts, ...productionAccts]
+  // Closing (the assignment-guard buy-back) is routed to EXACTLY the one
+  // account named by opts.targetPerson — see the doc comment above. No
+  // targetPerson on a close call is a caller bug, not an ambiguous "close
+  // everyone eligible": fail closed, log it, touch zero accounts.
+  let allAccts = [...sandboxAccts, ...productionAccts]
+  if (closing) {
+    if (!opts?.targetPerson) {
+      console.error('[tradier] FLINT guard close called with no targetPerson — refusing to close ANY account.')
+      return results
+    }
+    allAccts = allAccts.filter((a) => a.name === opts.targetPerson)
+  }
   if (allAccts.length === 0) return results
 
   const occCs = buildOccSymbol(ticker, expiration, callShort, 'C')
@@ -4658,7 +4788,7 @@ export async function placeCallSpreadOrderAllAccounts(
               const allocated = await getAllocatedCapitalForAccount(acct.name, 'production')
               return { floor: ladderCap?.starting ?? null, equity: allocated?.equity ?? null }
             })()
-          : await getFlintSandboxLedger(acct.name)
+          : await getFlintSandboxLedger(acct.name, accountId)
 
         const r1 = decideFlintContractsForCushion(contracts, baseContracts, equity, floor, callShort, callLong, entryCredit)
         if (r1.contracts < 1) {

@@ -1,6 +1,9 @@
 /**
  * FLINT ON EVERY ACCOUNT EBB PLACES ON (Leron, 2026-09-26: "I want it live
- * on customer account too.").
+ * on customer account too."), plus the 2026-09-26 follow-up: profit
+ * protection is enforced PER ACCOUNT ("ironforge will have a lot of
+ * accounts"), and the assignment guard's buy-back must route to that same
+ * one account, never "every eligible account of this type."
  *
  * placeCallSpreadOrderAllAccounts now loops resolveEligibleAccounts('flame')
  * in full — the sandbox mirrors (User/Matt) EBB's put spread already places
@@ -13,6 +16,13 @@
  *   2. one account passes rule R1, another fails, on the SAME call — each
  *      account's cushion decision is fully independent.
  *   3. a paused owner is skipped — production drops, sandbox is unaffected.
+ *   4. flint_account_floor is a PER-ACCOUNT floor, independent of equity —
+ *      two accounts with the SAME equity but DIFFERENT floors clear R1
+ *      differently — and it is seeded exactly once, from equity, never
+ *      moved on a later call even as that account's equity changes.
+ *   5. opts.close routes the buy-back to EXACTLY opts.targetPerson, never
+ *      to any other otherwise-eligible account, and fails closed (zero
+ *      accounts) when targetPerson is omitted.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
@@ -43,16 +53,21 @@ const ARMED = {
 } as const
 
 // Per-account broker state the fetch mock serves, keyed by API key.
-// floor (funded seed) for every account in these tests is $1,500 (see the
-// flame_paper_account mock below) — cushion = equity - 1500.
 const BROKER: Record<string, { accountId: string; equity: number; obp: number }> = {
-  'sb-user-key': { accountId: 'SBUSER1', equity: 2000, obp: 5000 },   // cushion $500 -> clears
-  'sb-matt-key': { accountId: 'SBMATT1', equity: 1550, obp: 5000 },   // cushion $50 -> fails R1
+  'sb-user-key': { accountId: 'SBUSER1', equity: 2000, obp: 5000 },   // cushion $500 vs $1,500 floor -> clears
+  'sb-matt-key': { accountId: 'SBMATT1', equity: 1550, obp: 5000 },   // cushion $50 vs $1,500 floor -> fails R1
   'flame-live-key': { accountId: 'FLAMEPROD1', equity: 2000, obp: 5000 }, // cushion $500 -> clears
 }
 
 let ownerPauseRows: Array<{ person: string }> = []
 let productionPausedRow: Array<Record<string, unknown>> = []
+
+// flint_account_floor, in-memory — the per-account floor store under test.
+// Pre-seeded with the OLD shared-ledger value ($1,500) for both sandbox
+// mirrors by default, so every pre-existing test's cushion arithmetic below
+// is unchanged; tests that exercise the floor store itself (independence,
+// seed-once) override/clear this explicitly.
+let floorStore: Record<string, number> = {}
 
 function jsonResponse(body: any, ok = true) {
   return {
@@ -68,6 +83,7 @@ beforeEach(() => {
   for (const k of ENV_KEYS) delete process.env[k]
   ownerPauseRows = []
   productionPausedRow = []
+  floorStore = { 'User:sandbox': 1500, 'Matt:sandbox': 1500 }
 
   mockDbQuery.mockReset()
   mockDbQuery.mockImplementation(async (sql: string, params: any[] = []) => {
@@ -102,13 +118,23 @@ beforeEach(() => {
     if (sql.includes('FROM flint_positions')) return [{ cnt: 0 }]
     if (sql.includes('FROM flame_positions')) return [{ m: 0 }]
 
-    // ---- floors: production ladder + FLAME's shared sandbox paper ledger ----
+    // ---- floor: production ladder (unchanged, per-person, own table) ----
     if (sql.includes("FROM flame_paper_account") && sql.includes("account_type = 'production'")) {
       return [{ starting_capital: 1500, high_water_balance: 1500 }]
     }
-    if (sql.includes('FROM flame_paper_account')) {
-      // getFlintPaperLedger (scanner.ts) — FLAME's shared sandbox floor/equity row.
-      return [{ starting_capital: 1500, current_balance: 1500 }]
+
+    // ---- floor: flint_account_floor — the per-account store under test ----
+    if (sql.includes('SELECT floor_amount FROM flint_account_floor')) {
+      const key = `${params[0]}:${params[1]}`
+      return floorStore[key] != null ? [{ floor_amount: floorStore[key] }] : []
+    }
+    if (sql.includes('SELECT funded_amount FROM ironforge_accounts')) {
+      return [] // no configured funded amount in this schema — seeding falls through to equity
+    }
+    if (sql.includes('INSERT INTO flint_account_floor')) {
+      const key = `${params[0]}:${params[1]}`
+      if (floorStore[key] == null) floorStore[key] = params[3] // ON CONFLICT DO NOTHING semantics
+      return []
     }
 
     return []
@@ -221,5 +247,92 @@ describe('placeCallSpreadOrderAllAccounts — every eligible account, independen
     BROKER['sb-matt-key'].equity = 1550
     expect(result['User:sandbox'].contracts).toBe(2)
     expect(result['Matt:sandbox'].contracts).toBe(1)
+  })
+})
+
+describe('flint_account_floor — the per-account profit-gate floor', () => {
+  it('is independent PER ACCOUNT — same equity, different floors, only the low-floor account clears R1', async () => {
+    Object.assign(process.env, ARMED)
+    // Same equity for both — isolates the floor as the only variable.
+    BROKER['sb-user-key'].equity = 2000
+    BROKER['sb-matt-key'].equity = 2000
+    floorStore = { 'User:sandbox': 1000, 'Matt:sandbox': 3000 } // User cushion $1,000; Matt cushion -$1,000
+
+    const result = await placeCallSpreadOrderAllAccounts('SPY', '2026-09-26', 770, 772, 1, 0.30, 'FLINT-FLOOR-1')
+
+    BROKER['sb-matt-key'].equity = 1550 // restore
+    expect(Object.keys(result)).toContain('User:sandbox')
+    expect(Object.keys(result)).not.toContain('Matt:sandbox')
+  })
+
+  it('seeds once, from equity — a fresh account with no configured funded amount floors at its OWN first-read equity', async () => {
+    Object.assign(process.env, ARMED)
+    floorStore = {} // no pre-existing row for either sandbox account
+    BROKER['sb-user-key'].equity = 1000
+    BROKER['sb-matt-key'].equity = 1000
+
+    await placeCallSpreadOrderAllAccounts('SPY', '2026-09-26', 770, 772, 1, 0.30, 'FLINT-FLOOR-2')
+
+    expect(floorStore['User:sandbox']).toBe(1000)
+    expect(floorStore['Matt:sandbox']).toBe(1000)
+    BROKER['sb-user-key'].equity = 2000 // restore
+    BROKER['sb-matt-key'].equity = 1550
+  })
+
+  it('never moves once seeded — a later call with MUCH higher equity does not re-seed the floor', async () => {
+    Object.assign(process.env, ARMED)
+    floorStore = {} // fresh account, no floor yet
+    BROKER['sb-user-key'].equity = 1000 // "day 1" — floor seeds here
+
+    const day1 = await placeCallSpreadOrderAllAccounts('SPY', '2026-09-26', 770, 772, 1, 0.30, 'FLINT-FLOOR-3A')
+    expect(floorStore['User:sandbox']).toBe(1000)
+    // Cushion is $0 on day 1 (equity === floor) — R1 fails, no fill.
+    expect(Object.keys(day1)).not.toContain('User:sandbox')
+
+    BROKER['sb-user-key'].equity = 5000 // "day 2" — a big profit
+    const day2 = await placeCallSpreadOrderAllAccounts('SPY', '2026-09-26', 770, 772, 1, 0.30, 'FLINT-FLOOR-3B')
+    // The floor MUST still be $1,000, not silently re-seeded to $5,000 —
+    // that is what makes the $4,000 cushion below real.
+    expect(floorStore['User:sandbox']).toBe(1000)
+    expect(Object.keys(day2)).toContain('User:sandbox')
+
+    BROKER['sb-user-key'].equity = 2000 // restore
+  })
+
+  it('production keeps its existing starting_capital floor — untouched by flint_account_floor', async () => {
+    Object.assign(process.env, ARMED)
+    floorStore = {} // even with sandbox floors wiped, production is unaffected
+    const result = await placeCallSpreadOrderAllAccounts('SPY', '2026-09-26', 770, 772, 1, 0.30, 'FLINT-FLOOR-4')
+    expect(Object.keys(result)).toContain('Flame:production') // still reads flame_paper_account, cushion $500
+    expect(floorStore).not.toHaveProperty('Flame:production')
+  })
+})
+
+describe('opts.close (assignment-guard buy-back) routes to targetPerson only', () => {
+  it('closes EXACTLY targetPerson — never a different, otherwise-eligible account', async () => {
+    Object.assign(process.env, ARMED)
+    // User, Matt, and Flame are ALL otherwise fully eligible/resolvable —
+    // proving the close call reaches only the one named account, not
+    // "every eligible account of this type."
+    const result = await placeCallSpreadOrderAllAccounts(
+      'SPY', '2026-09-26', 770, 772, 1, 0.30, 'FLINT-CLOSE-1', { close: true, targetPerson: 'User' },
+    )
+    expect(Object.keys(result)).toEqual(['User:sandbox'])
+  })
+
+  it('closes the named PRODUCTION account only, ignoring sandbox mirrors entirely', async () => {
+    Object.assign(process.env, ARMED)
+    const result = await placeCallSpreadOrderAllAccounts(
+      'SPY', '2026-09-26', 770, 772, 1, 0.30, 'FLINT-CLOSE-2', { close: true, targetPerson: 'Flame' },
+    )
+    expect(Object.keys(result)).toEqual(['Flame:production'])
+  })
+
+  it('a close call with no targetPerson fails CLOSED — touches zero accounts', async () => {
+    Object.assign(process.env, ARMED)
+    const result = await placeCallSpreadOrderAllAccounts(
+      'SPY', '2026-09-26', 770, 772, 1, 0.30, 'FLINT-CLOSE-3', { close: true },
+    )
+    expect(Object.keys(result)).toEqual([])
   })
 })
