@@ -200,6 +200,131 @@ export function evaluateFlintProfitGate(
   return { eligible: true, cushion, reason: null }
 }
 
+export interface FlintContractsDecision {
+  /** 0 means neither size cleared rule R1 — the caller must skip entirely. */
+  contracts: number
+  /** The gate result for the chosen size (or, when contracts is 0, for `base` — the last one tried). */
+  gate: FlintProfitGateResult
+}
+
+/**
+ * Rule R1, applied to a favorable-day TARGET size with a fallback: tries
+ * `desired` first, stepping down to `base` if only the extra lot(s) break
+ * the cushion — Leron, 2026-09-26: "if cushion covers 1 but not 2, trade
+ * 1." When `desired === base` (upsize off, or not eligible today) this is
+ * exactly ONE evaluation of evaluateFlintProfitGate — byte-for-byte the
+ * pre-upsize single-size gate. Shared, pure logic for both money paths
+ * (scanner.ts's paper ledger and tradier.ts's per-account production/
+ * sandbox loop) so the step-down rule lives in exactly one place.
+ */
+export function decideFlintContractsForCushion(
+  desired: number,
+  base: number,
+  equity: number | null,
+  floor: number | null,
+  shortStrike: number,
+  longStrike: number,
+  credit: number,
+): FlintContractsDecision {
+  const candidates = desired > base ? [desired, base] : [desired]
+  let gate: FlintProfitGateResult = { eligible: false, cushion: null, reason: 'skip:flint_profit_cushion(unreadable)' }
+  for (const c of candidates) {
+    const loss = flintMaxLoss(shortStrike, longStrike, credit, c)
+    gate = evaluateFlintProfitGate(equity, floor, loss)
+    if (gate.eligible) return { contracts: c, gate }
+  }
+  return { contracts: 0, gate }
+}
+
+/**
+ * FLINT_FAVORABLE_UPSIZE — off|on, unset = off (Leron, 2026-09-26: "Yes" to
+ * "Build both into the bots, with FLINT's size-up switching itself on at
+ * day 20?"). At the 13:05 CT entry, +1 contract (base stays
+ * FLINT_MAX_CONTRACTS_DEFAULT = 1; the upsize path's effective ceiling is
+ * 2) when today's call-side dealer gamma is in the top third of the
+ * trailing 20 LOGGED sessions (see evaluateFlintGammaUpsize below) — the
+ * hypothesis flint_daily_context.call_gamma was collected to test. SELF-
+ * ACTIVATES once 20 qualifying sessions exist; before that it is inactive,
+ * not skipped-for-cushion — a different log line so an operator can tell
+ * "still warming up" apart from "gated by real money." Fails CLOSED on any
+ * unrecognized value.
+ */
+export function getFlintFavorableUpsizeMode(): boolean {
+  return (process.env.FLINT_FAVORABLE_UPSIZE ?? '').trim().toLowerCase() === 'on'
+}
+
+/** Minimum trailing LOGGED sessions (same gamma_source as today) before the gamma upsize can activate at all. */
+export const FLINT_GAMMA_UPSIZE_MIN_SESSIONS = 20
+
+/** 67th percentile — "top third" of the trailing sample. */
+export const FLINT_GAMMA_UPSIZE_PERCENTILE = 0.67
+
+/**
+ * Linear-interpolated percentile of `values` (numpy's default method) —
+ * pure, no DB. Non-finite entries are dropped before ranking. null on an
+ * empty sample; the caller must skip, never guess.
+ */
+export function percentileOf(values: number[], p: number): number | null {
+  const finite = values.filter((v) => Number.isFinite(v))
+  if (finite.length === 0) return null
+  const sorted = [...finite].sort((a, b) => a - b)
+  const idx = p * (sorted.length - 1)
+  const lo = Math.floor(idx)
+  const hi = Math.ceil(idx)
+  if (lo === hi) return sorted[lo]
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo)
+}
+
+export interface FlintGammaUpsizeResult {
+  eligible: boolean
+  /** null when eligible; otherwise the exact skip/inactive reason to log. */
+  reason: string | null
+  /** The 67th-percentile threshold today's call_gamma was compared against. null before day 20. */
+  threshold: number | null
+  /** How many trailing LOGGED sessions (matching today's gamma_source) fed the threshold. */
+  sessionsUsed: number
+}
+
+/**
+ * The gamma upsize decision — a MARKET-WIDE signal (dealer call-side gamma),
+ * evaluated ONCE per scan tick and shared by every account (the paper book
+ * and each production account independently apply their OWN cushion/BP
+ * check against the resulting contract count; this function decides only
+ * whether 2 is even the target). `trailingCallGamma` must already be
+ * filtered by the caller to rows with a non-null call_gamma and the SAME
+ * gamma_source as `todayCallGamma` — mixing sources would compare numbers
+ * from different vendors/methodologies.
+ *
+ * `n < FLINT_GAMMA_UPSIZE_MIN_SESSIONS` -> INACTIVE (self-activation not
+ * reached yet), never a cushion skip — distinct log line so "still warming
+ * up" cannot be mistaken for "gated by real money."
+ */
+export function evaluateFlintGammaUpsize(
+  todayCallGamma: number | null,
+  trailingCallGamma: number[],
+  minSessions: number = FLINT_GAMMA_UPSIZE_MIN_SESSIONS,
+  percentile: number = FLINT_GAMMA_UPSIZE_PERCENTILE,
+): FlintGammaUpsizeResult {
+  const n = trailingCallGamma.length
+  if (n < minSessions) {
+    return { eligible: false, reason: `inactive: n=${n}/${minSessions} sessions logged`, threshold: null, sessionsUsed: n }
+  }
+  if (todayCallGamma == null || !Number.isFinite(todayCallGamma)) {
+    return { eligible: false, reason: 'skip:flint_gamma_upsize(today_call_gamma_unreadable)', threshold: null, sessionsUsed: n }
+  }
+  const threshold = percentileOf(trailingCallGamma, percentile)
+  if (threshold == null) {
+    return { eligible: false, reason: 'skip:flint_gamma_upsize(threshold_unreadable)', threshold: null, sessionsUsed: n }
+  }
+  const eligible = todayCallGamma >= threshold
+  return {
+    eligible,
+    reason: eligible ? null : `skip:flint_gamma_upsize(today=${todayCallGamma}<p67=${threshold.toFixed(4)})`,
+    threshold,
+    sessionsUsed: n,
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*  FORWARD-LOGGING ONLY — daily dealer-gamma context. Not statistically */
 /*  confirmed; recorded so a sizing hypothesis (this sleeve loses on low */

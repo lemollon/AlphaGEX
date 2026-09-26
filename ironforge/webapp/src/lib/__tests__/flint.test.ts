@@ -9,6 +9,8 @@
  * only pins THIS sleeve's own switch.
  */
 import { describe, it, expect, afterEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   FLINT_MIN_CREDIT_DEFAULT,
   FLINT_MAX_CONTRACTS_DEFAULT,
@@ -27,13 +29,20 @@ import {
   isFlintGuardTriggered,
   flintMaxLoss,
   evaluateFlintProfitGate,
+  decideFlintContractsForCushion,
   buildFlintDailyContextRow,
   UNAVAILABLE_FLINT_GAMMA_CONTEXT,
+  getFlintFavorableUpsizeMode,
+  percentileOf,
+  evaluateFlintGammaUpsize,
+  FLINT_GAMMA_UPSIZE_MIN_SESSIONS,
+  FLINT_GAMMA_UPSIZE_PERCENTILE,
   type FlintGammaContext,
 } from '../flint'
 
 const ENV_KEYS = [
   'FLINT_MODE', 'FLINT_MAX_CONTRACTS', 'FLINT_GUARD_BUFFER', 'FLINT_OTM_OFFSET', 'FLINT_MIN_CREDIT',
+  'FLINT_FAVORABLE_UPSIZE',
 ] as const
 
 afterEach(() => {
@@ -386,5 +395,133 @@ describe('FLINT daily-context row builder (forward-logging, pure — no DB/netwo
     expect(row.gamma_flip).toBeNull()
     expect(row.put_wall).toBeNull()
     expect(row.call_wall).toBeNull()
+  })
+})
+
+describe('FLINT_FAVORABLE_UPSIZE env resolution', () => {
+  it('unset, empty, or any unrecognized value is OFF', () => {
+    delete process.env.FLINT_FAVORABLE_UPSIZE
+    expect(getFlintFavorableUpsizeMode()).toBe(false)
+    for (const v of ['', 'off', 'true', '1', 'yes']) {
+      process.env.FLINT_FAVORABLE_UPSIZE = v
+      expect(getFlintFavorableUpsizeMode()).toBe(false)
+    }
+  })
+  it('"on" (any case/whitespace) is ON', () => {
+    for (const v of ['on', 'ON', ' On ']) {
+      process.env.FLINT_FAVORABLE_UPSIZE = v
+      expect(getFlintFavorableUpsizeMode()).toBe(true)
+    }
+  })
+})
+
+describe('percentileOf — linear-interpolated percentile (numpy default)', () => {
+  it('matches hand-computed interpolation for 1..20 at the 67th percentile', () => {
+    const values = Array.from({ length: 20 }, (_, i) => i + 1) // 1..20
+    // idx = 0.67 * 19 = 12.73 -> sorted[12]=13, sorted[13]=14, frac .73 -> 13.73
+    expect(percentileOf(values, 0.67)).toBeCloseTo(13.73, 5)
+  })
+  it('is order-independent (sorts internally)', () => {
+    const shuffled = [14, 2, 20, 7, 1, 19, 3, 13, 6, 18, 4, 17, 5, 16, 8, 15, 9, 12, 10, 11]
+    expect(percentileOf(shuffled, 0.67)).toBeCloseTo(13.73, 5)
+  })
+  it('drops non-finite entries before ranking', () => {
+    const values = [1, 2, 3, NaN, Infinity, -Infinity]
+    expect(percentileOf(values, 0.5)).toBe(2)
+  })
+  it('empty (or all non-finite) sample is null', () => {
+    expect(percentileOf([], 0.67)).toBeNull()
+    expect(percentileOf([NaN, Infinity], 0.67)).toBeNull()
+  })
+  it('the exact rank (idx is a whole number) is a direct lookup', () => {
+    expect(percentileOf([10, 20, 30], 0.5)).toBe(20)
+  })
+})
+
+describe('evaluateFlintGammaUpsize — day-20 self-activation + top-third gamma gate', () => {
+  const trailing20 = Array.from({ length: 20 }, (_, i) => i + 1) // 1..20, p67 = 13.73
+  it('FLINT_GAMMA_UPSIZE_MIN_SESSIONS is 20, percentile is 0.67', () => {
+    expect(FLINT_GAMMA_UPSIZE_MIN_SESSIONS).toBe(20)
+    expect(FLINT_GAMMA_UPSIZE_PERCENTILE).toBe(0.67)
+  })
+  it('n=19 -> INACTIVE (self-activation not reached), never a cushion skip', () => {
+    const trailing19 = trailing20.slice(0, 19)
+    const r = evaluateFlintGammaUpsize(50, trailing19)
+    expect(r.eligible).toBe(false)
+    expect(r.sessionsUsed).toBe(19)
+    expect(r.threshold).toBeNull()
+    expect(r.reason).toBe('inactive: n=19/20 sessions logged')
+  })
+  it('n=20, today in the top third (>= p67) -> ELIGIBLE (the +1 contract fires)', () => {
+    const r = evaluateFlintGammaUpsize(14, trailing20)
+    expect(r.eligible).toBe(true)
+    expect(r.sessionsUsed).toBe(20)
+    expect(r.threshold).toBeCloseTo(13.73, 5)
+    expect(r.reason).toBeNull()
+  })
+  it('n=20, today BELOW the top third -> not eligible, base size only', () => {
+    const r = evaluateFlintGammaUpsize(5, trailing20)
+    expect(r.eligible).toBe(false)
+    expect(r.sessionsUsed).toBe(20)
+    expect(r.reason).toContain('skip:flint_gamma_upsize')
+  })
+  it('exactly at the threshold is eligible (>=, not >)', () => {
+    const r = evaluateFlintGammaUpsize(13.73, trailing20)
+    expect(r.eligible).toBe(true)
+  })
+  it('a null/non-finite today reading is never eligible, even at n>=20', () => {
+    expect(evaluateFlintGammaUpsize(null, trailing20).eligible).toBe(false)
+    expect(evaluateFlintGammaUpsize(NaN, trailing20).eligible).toBe(false)
+  })
+  it('more than 20 trailing sessions still works (caller caps at 20, but this function does not require it)', () => {
+    const trailing25 = Array.from({ length: 25 }, (_, i) => i + 1)
+    const r = evaluateFlintGammaUpsize(25, trailing25)
+    expect(r.eligible).toBe(true)
+    expect(r.sessionsUsed).toBe(25)
+  })
+})
+
+describe('scanner.ts sources the trailing call_gamma from the SAME gamma_source as today, non-null only', () => {
+  it('the trailing-gamma query filters call_gamma IS NOT NULL and gamma_source = $1', () => {
+    const scanner = readFileSync(join(__dirname, '..', 'scanner.ts'), 'utf8')
+    expect(scanner).toMatch(/WHERE call_gamma IS NOT NULL AND gamma_source = \$1 AND trade_date < \$2/)
+    expect(scanner).toMatch(/async function getFlintTrailingCallGamma\(/)
+  })
+})
+
+describe('decideFlintContractsForCushion — rule R1 with a favorable-day step-down', () => {
+  const short = 770, long = 772, credit = 0.30 // maxLoss @1ct = (2-0.30)*100+1.40 = $171.40; @2ct = $342.80
+
+  it('desired === base (upsize off/inactive) is exactly ONE gate evaluation, byte-for-byte evaluateFlintProfitGate', () => {
+    const loss = flintMaxLoss(short, long, credit, 1)
+    const direct = evaluateFlintProfitGate(1700, 1500, loss)
+    const viaDecision = decideFlintContractsForCushion(1, 1, 1700, 1500, short, long, credit)
+    expect(viaDecision.contracts).toBe(direct.eligible ? 1 : 0)
+    expect(viaDecision.gate).toEqual(direct)
+  })
+
+  it('cushion covers 2 -> total contracts is 2', () => {
+    // maxLoss@2 = 342.80; cushion must clear it.
+    const d = decideFlintContractsForCushion(2, 1, 1500 + 342.80, 1500, short, long, credit)
+    expect(d.contracts).toBe(2)
+    expect(d.gate.eligible).toBe(true)
+  })
+
+  it('cushion covers only 1, not 2 -> steps down to 1 ("if cushion covers 1 but not 2, trade 1")', () => {
+    // Equity clears the 1-contract loss ($171.40) but not the 2-contract loss ($342.80).
+    const d = decideFlintContractsForCushion(2, 1, 1500 + 200, 1500, short, long, credit)
+    expect(d.contracts).toBe(1)
+    expect(d.gate.eligible).toBe(true)
+  })
+
+  it('cushion covers neither -> contracts is 0, caller must skip entirely', () => {
+    const d = decideFlintContractsForCushion(2, 1, 1500 + 50, 1500, short, long, credit)
+    expect(d.contracts).toBe(0)
+    expect(d.gate.eligible).toBe(false)
+  })
+
+  it('unreadable equity/floor fails CLOSED at every candidate size', () => {
+    expect(decideFlintContractsForCushion(2, 1, null, 1500, short, long, credit).contracts).toBe(0)
+    expect(decideFlintContractsForCushion(2, 1, 1700, null, short, long, credit).contracts).toBe(0)
   })
 })

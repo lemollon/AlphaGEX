@@ -228,10 +228,12 @@ import {
   meetsFlintCreditFloor,
   isFlintDayEligible,
   isFlintGuardTriggered,
-  flintMaxLoss,
-  evaluateFlintProfitGate,
+  decideFlintContractsForCushion,
   buildFlintDailyContextRow,
   UNAVAILABLE_FLINT_GAMMA_CONTEXT,
+  getFlintFavorableUpsizeMode,
+  evaluateFlintGammaUpsize,
+  FLINT_GAMMA_UPSIZE_MIN_SESSIONS,
   type FlintGammaContext,
 } from './flint'
 import { BOT_STARTING_CAPITAL } from './bot-capital'
@@ -286,7 +288,10 @@ const PRODUCTION_BOT_DTE = '1DTE' // Matches BOTS[] entry for PRODUCTION_BOT
 // in tradier.ts. These were two hand-copied pairs kept in sync by comment; they decide
 // how much real money enters a trade.
 import { SPARK_BP_CAP_POS, SPARK_BP_CAP_NEG } from './spark-sizing'
-import { ebbLadderCapital, ebbLadderContracts, ebbRungUsd, formatEbbSizingLine, isEbbLadderBot, liquidityCappedLots } from './ebb-sizing'
+import {
+  ebbLadderCapital, ebbLadderContracts, ebbRungUsd, formatEbbSizingLine, isEbbLadderBot, liquidityCappedLots,
+  EBB_LADDER_CAP, isEbbFavorableUpsizeMode, isEbbFavorableVixDay, ebbUpsizeExtraContractMaxLoss, evaluateEbbUpsizeCushion,
+} from './ebb-sizing'
 
 function isSparkV2Sizing(name: string): boolean {
   return name === 'spark'
@@ -474,6 +479,20 @@ async function vixDecayBlock(asofDate: string, ceiling: number): Promise<string 
 }
 
 /**
+ * The SAME ratio FLAME's own VIX decay gate computes (prior VIX close / max
+ * VIX close of the 20 sessions before), exposed so tradier.ts's production
+ * ladder can evaluate the EBB favorable-day upsize (EBB_FAVORABLE_UPSIZE)
+ * for TODAY without re-deriving the gate math. Pure re-read of the already-
+ * synced sw_vix_daily table — same inputs, same ceiling, so this returns the
+ * identical number the paper path's tryOpenFlamePutSpread just computed on
+ * this same scan tick.
+ */
+export async function getFlameVixRatioForUpsize(): Promise<number | null> {
+  const asofDate = getCentralTime().toISOString().slice(0, 10)
+  return (await vixDecayCheck(asofDate, VIX_DECAY_CEILING.flame)).ratio
+}
+
+/**
  * Bots that route through the real-money PRODUCTION order path (open, fill-check,
  * reconcile, EOD). Allowlist: SPARK (existing live account) + KINDLE ($500 account
  * via TRADIER_KINDLE_* env). For 'spark' this returns true exactly where the old
@@ -553,7 +572,7 @@ const _lastSandboxPlacedAt: Record<string, number> = {}
 // MUST be mirrored in dteMode() in lib/db.ts — when the two disagree the API
 // reads one row while the scanner runs off another, which is exactly how FLAME
 // ended up silently running DEFAULT_CONFIG.
-const BOTS = [
+export const BOTS = [
   { name: 'flame', dte: '0DTE', minDte: 0 },
   // SPARK moved 1 DTE -> 5 DTE on 2026-08-10. The 1DTE condor had no edge on real
   // fills (972-cell sweep: best-on-train -$5.13/ct out-of-sample, 37% of cells
@@ -4444,7 +4463,7 @@ async function logFlintDailyContext(params: {
  * "(FLAME account)" and is gated on FLAME's account state. null on any read
  * failure or missing row — the caller must skip, never guess.
  */
-async function getFlintPaperLedger(bot: BotDef): Promise<{ floor: number | null; equity: number | null }> {
+export async function getFlintPaperLedger(bot: BotDef): Promise<{ floor: number | null; equity: number | null }> {
   try {
     const rows = await query(
       `SELECT starting_capital, current_balance FROM ${botTable(bot.name, 'paper_account')}
@@ -4462,6 +4481,31 @@ async function getFlintPaperLedger(bot: BotDef): Promise<{ floor: number | null;
   } catch (e: unknown) {
     console.warn(`[scanner] FLINT: paper ledger read failed: ${e instanceof Error ? e.message : String(e)}`)
     return { floor: null, equity: null }
+  }
+}
+
+/**
+ * Trailing LOGGED call_gamma for FLINT_FAVORABLE_UPSIZE's day-20 self-
+ * activation — every flint_daily_context row strictly BEFORE `beforeDate`
+ * with a non-null call_gamma and the SAME gamma_source as today's live
+ * read (mixing sources would compare numbers from different vendors), most
+ * recent first, capped at `limit` sessions. Empty on any read failure or a
+ * pre-migration deploy — the caller's evaluateFlintGammaUpsize then reports
+ * n=0/20 (inactive), never a guess.
+ */
+async function getFlintTrailingCallGamma(gammaSource: string, beforeDate: string, limit: number): Promise<number[]> {
+  try {
+    await ensureFlintContextTable()
+    const rows = await query(
+      `SELECT call_gamma FROM ${FLINT_CONTEXT_TABLE}
+       WHERE call_gamma IS NOT NULL AND gamma_source = $1 AND trade_date < $2
+       ORDER BY trade_date DESC LIMIT $3`,
+      [gammaSource, beforeDate, limit],
+    )
+    return rows.map((r) => num(r.call_gamma)).filter((v) => Number.isFinite(v))
+  } catch (e: unknown) {
+    console.warn(`[scanner] FLINT: trailing call_gamma read failed: ${e instanceof Error ? e.message : String(e)}`)
+    return []
   }
 }
 
@@ -4531,14 +4575,42 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
     return 'FLINT: no_trade | skip:call_credit_too_low'
   }
 
-  const contracts = getFlintMaxContracts()
+  const baseContracts = getFlintMaxContracts()
   const width = callLong - callShort
-  const collateral = Math.max(0, (width - credit.callCredit) * 100) * contracts
-  const maxLoss = flintMaxLoss(callShort, callLong, credit.callCredit, contracts)
+
+  // FLINT_FAVORABLE_UPSIZE (Leron, 2026-09-26, "Yes" to "FLINT's size-up
+  // switching itself on at day 20"): +1 contract when today's call-side
+  // dealer gamma is in the top third (67th percentile) of the trailing 20
+  // LOGGED sessions with the same gamma_source. A MARKET-WIDE decision made
+  // ONCE here and shared by the paper book and every production/sandbox
+  // account below — each of THOSE still applies its own R1/BP step-down
+  // independently (see evaluateFlintGammaUpsize, flint.ts). Self-activates
+  // at day 20; before that, `inactive`, never a cushion skip.
+  let desiredContracts = baseContracts
+  if (getFlintFavorableUpsizeMode()) {
+    const gammaCtx = await getFlintGammaContextCached(ct, spot)
+    const trailing = await getFlintTrailingCallGamma(gammaCtx.gammaSource, asofDate, FLINT_GAMMA_UPSIZE_MIN_SESSIONS)
+    const gammaEval = evaluateFlintGammaUpsize(gammaCtx.callGamma, trailing)
+    if (gammaEval.sessionsUsed < FLINT_GAMMA_UPSIZE_MIN_SESSIONS) {
+      console.log(`[scanner] FLINT upsize inactive: ${gammaEval.reason}`)
+    } else if (gammaEval.eligible) {
+      desiredContracts = baseContracts + 1
+      console.log(
+        `[scanner] FLINT upsize +1 (call_gamma=${gammaCtx.callGamma}, p67=${gammaEval.threshold?.toFixed(4) ?? 'n/a'}, n=${gammaEval.sessionsUsed})`,
+      )
+    } else {
+      console.log(`[scanner] FLINT upsize skip: ${gammaEval.reason}`)
+    }
+  }
+
   const positionId =
     `FLINT-SPY-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
 
-  // ---- PAPER BOOK — rule R1 against FLAME's own paper ledger ----
+  // ---- PAPER BOOK — rule R1 against FLAME's own paper ledger, tried at
+  // desiredContracts first and stepped down to baseContracts if only the
+  // extra lot breaks the cushion ("if cushion covers 1 but not 2, trade 1").
+  // When the upsize is off/inactive, desiredContracts === baseContracts, so
+  // this is exactly ONE evaluation — byte-for-byte the old single-size gate.
   let paperDecision: string
   const paperToday = await query(
     `SELECT COUNT(*) AS cnt FROM ${FLINT_TABLE}
@@ -4549,11 +4621,16 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
     console.log('[scanner] FLINT: no_trade | paper skip:already_traded_today')
   } else {
     const paperLedger = await getFlintPaperLedger(bot)
-    const gate = evaluateFlintProfitGate(paperLedger.equity, paperLedger.floor, maxLoss)
-    if (!gate.eligible) {
+    const decision = decideFlintContractsForCushion(
+      desiredContracts, baseContracts, paperLedger.equity, paperLedger.floor, callShort, callLong, credit.callCredit,
+    )
+    const gate = decision.gate
+    if (decision.contracts < 1) {
       paperDecision = gate.reason ?? 'skip:flint_profit_cushion(unreadable)'
       console.log(`[scanner] FLINT: no_trade | paper ${paperDecision}`)
     } else {
+      const contracts = decision.contracts
+      const collateral = Math.max(0, (width - credit.callCredit) * 100) * contracts
       await query(
         `INSERT INTO ${FLINT_TABLE} (
            position_id, ticker, expiration, call_short_strike, call_long_strike,
@@ -4577,23 +4654,26 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
 
   if (mode !== 'live') return `FLINT: paper=${paperDecision}`
 
-  if (!canPlaceLiveOrders('flame')) {
-    console.log(`[scanner] FLINT: live:disarmed(${describeLiveGate('flame')})`)
-    return `FLINT: paper=${paperDecision} live:disarmed(${describeLiveGate('flame')})`
-  }
-
-  // ---- PRODUCTION ACCOUNT(S) — each gated INDEPENDENTLY of the paper book ----
-  // rule R1 + the buying-power check both run per-account inside
-  // placeCallSpreadOrderAllAccounts; an account that already traded today, or
-  // is gated out on cushion or BP, is simply absent from `live` below.
+  // ---- SANDBOX + PRODUCTION ACCOUNT(S) — every account EBB's own put
+  // spread places on (resolveEligibleAccounts('flame')), each gated
+  // INDEPENDENTLY of the paper book and of every other account.
+  // canPlaceLiveOrders('flame') / describeLiveGate are no longer checked
+  // here as a blanket early-return: a disarmed FLAME must still let its
+  // SANDBOX mirrors trade — placeCallSpreadOrderAllAccounts applies the arm
+  // gate to PRODUCTION only, internally. Rule R1 + the buying-power check
+  // both run per-account inside that call (with its own upsize step-down
+  // from desiredContracts to baseContracts); an account that already traded
+  // today, or is gated out on cushion or BP, is simply absent from `live`.
   try {
     const live = await placeCallSpreadOrderAllAccounts(
-      'SPY', expiration, callShort, callLong, contracts, credit.callCredit, positionId,
+      'SPY', expiration, callShort, callLong, desiredContracts, credit.callCredit, positionId,
+      { baseContracts },
     )
     const fills = Object.entries(live)
     if (fills.length === 0) {
-      console.log('[scanner] FLINT: live:no_fill')
-      return `FLINT: paper=${paperDecision} live:no_fill`
+      const armNote = canPlaceLiveOrders('flame') ? '' : ` (production:disarmed(${describeLiveGate('flame')}))`
+      console.log(`[scanner] FLINT: live:no_fill${armNote}`)
+      return `FLINT: paper=${paperDecision} live:no_fill${armNote}`
     }
     for (const [key, info] of fills) {
       const hasFill = info.fill_price != null && info.fill_price > 0
@@ -4601,16 +4681,19 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
       const pContracts = info.contracts
       const pCollateral = Math.max(0, (width - pCredit) * 100) * pContracts
       const pPerson = key.split(':')[0] || 'PRODUCTION'
-      const pId = `${positionId}-prod-${pPerson.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+      const pAccountType = info.account_type === 'production' ? 'production' : 'sandbox'
+      const pId = `${positionId}-${pAccountType}-${pPerson.toLowerCase().replace(/[^a-z0-9]/g, '')}`
       await query(
         `INSERT INTO ${FLINT_TABLE} (
            position_id, ticker, expiration, call_short_strike, call_long_strike,
            contracts, entry_credit, collateral_required, underlying_at_entry,
            status, account_type, person, mode, sandbox_order_id, open_time, open_date
-         ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open','production',$9,$10,$11, NOW(), ${CT_TODAY})`,
-        [pId, expiration, callShort, callLong, pContracts, pCredit, pCollateral, spot, pPerson, mode, String(info.order_id)],
+         ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open',$9,$10,$11,$12, NOW(), ${CT_TODAY})`,
+        [pId, expiration, callShort, callLong, pContracts, pCredit, pCollateral, spot, pAccountType, pPerson, mode, String(info.order_id)],
       )
-      console.log(`[scanner] FLINT LIVE FILL [${pPerson}]: ${pId} ${pContracts}x @ $${pCredit.toFixed(4)}`)
+      console.log(
+        `[scanner] FLINT ${pAccountType === 'production' ? 'LIVE' : 'SANDBOX'} FILL [${pPerson}]: ${pId} ${pContracts}x @ $${pCredit.toFixed(4)}`,
+      )
     }
   } catch (e: unknown) {
     console.error(`[scanner] FLINT live placement failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -5219,12 +5302,17 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   // $656 ungated, worst trade -$181, $5k ladder 9.8%/mo full / 5.6%/mo 2026,
   // max drawdown 19% vs 69%. 0.85 and 0.90 both fail for FLAME — see the
   // VIX_DECAY_CEILING doc comment above.
+  // Hoisted to function scope (not just the flame branch below) so the EBB
+  // favorable-day upsize (EBB_FAVORABLE_UPSIZE) can reuse the SAME ratio
+  // FLAME's own VIX decay gate just computed, rather than re-querying it.
+  let flameVixRatioForUpsize: number | null = null
   if (bot.name === 'spark') {
     const vixBlock = await vixDecayBlock(getCentralTime().toISOString().slice(0, 10), VIX_DECAY_CEILING.spark)
     if (vixBlock) return `skip:${vixBlock}`
   } else if (bot.name === 'flame') {
     const asofDate = getCentralTime().toISOString().slice(0, 10)
     const flameVix = await vixDecayCheck(asofDate, VIX_DECAY_CEILING.flame)
+    flameVixRatioForUpsize = flameVix.ratio
     if (flameVix.reason) {
       if (flameVix.ratio !== null && flameVix.prior !== null && flameVix.windowMax !== null) {
         console.log(
@@ -5275,7 +5363,10 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   // capital — max(starting_capital, high_water_balance), the ratchet that only
   // moves up — never from the floating balance — see lib/ebb-sizing.ts.
   // 0 lots means the ledger is below one rung: skip, never fall back to 1.
-  const ledger = { funded, highWater }
+  // `equity` and `vixRatio` ride along on `ledger` ONLY for the EBB
+  // favorable-day upsize gate (evaluateEbbUpsizeCushion) — the ladder sizing
+  // itself still keys on funded/highWater alone, unchanged.
+  const ledger = { funded, highWater, equity: balance, vixRatio: flameVixRatioForUpsize }
   const perTrade = flameContracts(bot.name, ebbLadderCapital(funded, highWater))
   if (perTrade < 1) {
     return `skip:below_ladder_rung(funded=$${funded.toFixed(0)} high_water=${highWater === null ? 'NONE' : '$' + highWater.toFixed(0)})`
@@ -5295,7 +5386,7 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
 async function tryOpenFlameBook(
   bot: BotDef, botCfg: BotConfig, ticker: string,
   otmAbs: number, width: number, perBook: number, perTrade: number,
-  ledger: { funded: number | null; highWater: number | null },
+  ledger: { funded: number | null; highWater: number | null; equity?: number | null; vixRatio?: number | null },
   opts: { force?: boolean } = {},
 ): Promise<string> {
   const todayRows = await query(
@@ -5395,11 +5486,40 @@ async function tryOpenFlameBook(
     console.warn(`[scanner] ${bot.name.toUpperCase()} ${ticker}: LIQUIDITY check = 0 lots, skipping (${sizingLine})`)
     return `skip:liquidity(displayed_size=${liq?.displayedSize ?? 'UNKNOWN'} max=${liq?.maxLots ?? 'n/a'} ladder=${perTrade})`
   }
-  if ((perBook - committed) < maxLossPer * contracts) {
+
+  // EBB_FAVORABLE_UPSIZE (Leron, 2026-09-26): +1 contract on top of the
+  // ladder's `contracts` on a favorable-VIX day, gated by the SAME
+  // per-account house-money rule as FLINT's R1 — the extra lot's max loss
+  // must fit inside this account's cushion (equity above its funded
+  // floor). Off by default (isEbbFavorableUpsizeMode() reads unset -> off),
+  // so with the flag unset `finalContracts` is always `contracts` and every
+  // downstream number below is byte-for-byte the pre-upsize value. FLAME
+  // only — SPARK's own VIX gate ratio is a different ceiling and this spec
+  // is scoped to "FLAME's VIX gate" ratio specifically.
+  let finalContracts = contracts
+  if (bot.name === 'flame' && isEbbFavorableUpsizeMode()) {
+    const upsizeCap = Math.min(EBB_LADDER_CAP, liq?.maxLots ?? contracts + 1)
+    if (contracts + 1 <= upsizeCap) {
+      if (isEbbFavorableVixDay(ledger.vixRatio ?? null)) {
+        const extraMaxLoss = ebbUpsizeExtraContractMaxLoss(width, entryCredit)
+        const gate = evaluateEbbUpsizeCushion(ledger.equity ?? null, ledger.funded, extraMaxLoss)
+        if (gate.eligible) {
+          finalContracts = contracts + 1
+          console.log(
+            `[scanner] EBB upsize +1 (vix_ratio=${ledger.vixRatio?.toFixed(3) ?? 'n/a'}, cushion=$${gate.cushion?.toFixed(2) ?? 'n/a'})`,
+          )
+        } else {
+          console.log(`[scanner] EBB upsize skipped: ${gate.reason}`)
+        }
+      }
+    }
+  }
+
+  if ((perBook - committed) < maxLossPer * finalContracts) {
     return `no_room($${(perBook - committed).toFixed(0)})`
   }
 
-  const collateral = maxLossPer * contracts
+  const collateral = maxLossPer * finalContracts
   // SPARK shares this code path, so the prefix must come from the BOT, not be
   // hardcoded -- SPARK's live positions were being written as 'FLAME-SPY-...'.
   const positionId = `${bot.name.toUpperCase()}-${ticker}-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
@@ -5415,15 +5535,15 @@ async function tryOpenFlameBook(
      ) VALUES ($1,$2,$3,$4,$5,$6,$15,$16,$17,$7,$8,$18,$9,$10,$11,$12,$13,
                'open', NOW(), ${CT_TODAY}, $14, 'sandbox')`,
     [positionId, ticker, expiration, putShort, putLong, putCreditVal,
-     contracts, width, collateral,
-     Math.round(entryCredit * 100 * contracts * 100) / 100,
+     finalContracts, width, collateral,
+     Math.round(entryCredit * 100 * finalContracts * 100) / 100,
      collateral, spot, em, bot.dte,
      callShort, callLong,
      callCreditVal,
      entryCredit],
   )
   console.log(
-    `[scanner] ${bot.name.toUpperCase()} ${ticker}: ${contracts}x ${putLong}/${putShort}P ` +
+    `[scanner] ${bot.name.toUpperCase()} ${ticker}: ${finalContracts}x ${putLong}/${putShort}P ` +
     `exp ${expiration} @ $${entryCredit.toFixed(2)} ` +
     `(spot ${spot.toFixed(2)}, otm $${otmAbs}, wing $${width}, EM ${em.toFixed(2)}) ` +
     `sizing: ${sizingLine}`,
@@ -5477,7 +5597,7 @@ async function tryOpenFlameBook(
         const live = await placeIcOrderAllAccounts(
           ticker, expiration,
           putShort, putLong, callShort, callLong,
-          contracts, entryCredit, positionId, bot.name,
+          finalContracts, entryCredit, positionId, bot.name,
           { productionOnly: true },
         )
         const prodFills = Object.entries(live).filter(([, i]) => i.account_type === 'production')

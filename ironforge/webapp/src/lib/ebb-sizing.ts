@@ -166,6 +166,79 @@ export function liquidityCappedLots(
   }
 }
 
+/**
+ * EBB_FAVORABLE_UPSIZE — off|on, unset = off (Leron, 2026-09-26, "Yes" to
+ * "Build both into the bots..."). On a day EBB trades FLAME, add +1
+ * contract on top of the count ladder's contracts for that account when
+ * the prior session's VIX ratio (the SAME ratio FLAME's own VIX decay gate
+ * computes — prior VIX close / max VIX close of the 20 sessions before) is
+ * <= EBB_UPSIZE_VIX_RATIO_CEILING. Gated per-account by
+ * evaluateEbbUpsizeCushion below — a loss on the extra lot may only eat
+ * into profit already banked, never the funded floor. Fails CLOSED on any
+ * unrecognized value; the two money paths (scanner.ts paper ledger,
+ * tradier.ts production ladder) each call this and apply the gate
+ * INDEPENDENTLY per account.
+ */
+export function isEbbFavorableUpsizeMode(): boolean {
+  return (process.env.EBB_FAVORABLE_UPSIZE ?? '').trim().toLowerCase() === 'on'
+}
+
+/** Prior-session VIX ratio ceiling for the EBB favorable-day upsize — <=, not <. */
+export const EBB_UPSIZE_VIX_RATIO_CEILING = 0.70
+
+/** True when `ratio` clears the favorable-day ceiling. A null/non-finite ratio is never favorable. */
+export function isEbbFavorableVixDay(
+  ratio: number | null,
+  ceiling: number = EBB_UPSIZE_VIX_RATIO_CEILING,
+): boolean {
+  return ratio != null && Number.isFinite(ratio) && ratio <= ceiling
+}
+
+/** Round-trip commission for the extra 2-leg spread contract — $0.70/leg, matching FLINT_COMMISSION_PER_CONTRACT. */
+export const EBB_UPSIZE_COMMISSION_PER_CONTRACT = 1.40
+
+/** Worst-case dollar loss of the ONE extra contract the favorable-day upsize would add. */
+export function ebbUpsizeExtraContractMaxLoss(width: number, credit: number): number {
+  return (width - credit) * 100 + EBB_UPSIZE_COMMISSION_PER_CONTRACT
+}
+
+export interface EbbUpsizeGateResult {
+  eligible: boolean
+  /** equity - floor, rounded to cents. null when equity or floor could not be read. */
+  cushion: number | null
+  /** null when eligible; otherwise the exact skip-reason string to log. */
+  reason: string | null
+}
+
+/**
+ * House-money gate for the EBB favorable-day extra contract — the extra lot
+ * fires only if `equity - floor` (that account's profit above its funded
+ * seed) covers the extra lot's own max loss. Same shape as FLINT's rule R1
+ * (evaluateFlintProfitGate in flint.ts), reimplemented here rather than
+ * imported so ebb-sizing.ts never depends on flint.ts (flint.ts documents
+ * itself as never reading FLAME's put-side state; importing it from here
+ * would be the same coupling from the other direction). `equity`/`floor`
+ * unreadable (null) fails CLOSED — never guesses on a real-money gate.
+ */
+export function evaluateEbbUpsizeCushion(
+  equity: number | null,
+  floor: number | null,
+  extraMaxLoss: number,
+): EbbUpsizeGateResult {
+  if (equity == null || floor == null) {
+    return { eligible: false, cushion: null, reason: 'skip:ebb_upsize_cushion(unreadable)' }
+  }
+  const cushion = Math.round((equity - floor) * 100) / 100
+  if (cushion < extraMaxLoss) {
+    return {
+      eligible: false,
+      cushion,
+      reason: `skip:ebb_upsize_cushion(cushion=$${cushion.toFixed(2)}<maxloss=$${extraMaxLoss.toFixed(2)})`,
+    }
+  }
+  return { eligible: true, cushion, reason: null }
+}
+
 /** One-line audit of a sizing decision — both money paths print this. */
 export function formatEbbSizingLine(args: {
   funded: number | null

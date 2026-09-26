@@ -11,7 +11,7 @@
  * either money path from current_balance, or writes a balance without
  * ratcheting high_water_balance.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -26,6 +26,11 @@ import {
   isEbbLadderBot,
   liquidityCappedLots,
   EBB_UNKNOWN_LIQUIDITY_LOTS,
+  isEbbFavorableUpsizeMode,
+  isEbbFavorableVixDay,
+  EBB_UPSIZE_VIX_RATIO_CEILING,
+  ebbUpsizeExtraContractMaxLoss,
+  evaluateEbbUpsizeCushion,
 } from '../ebb-sizing'
 
 describe('EBB count ladder — rungs (2026-08-27 survivor rule, unchanged by ADR 0013)', () => {
@@ -284,5 +289,80 @@ describe('EBB count ladder — both money paths are wired to the ratchet and the
     }
     expect(writes).toBeGreaterThanOrEqual(25)
     expect(misses).toEqual([])
+  })
+})
+
+describe('EBB_FAVORABLE_UPSIZE — favorable-VIX-day +1 contract (Leron, 2026-09-26)', () => {
+  const ORIG_ENV = process.env.EBB_FAVORABLE_UPSIZE
+
+  afterEach(() => {
+    if (ORIG_ENV === undefined) delete process.env.EBB_FAVORABLE_UPSIZE
+    else process.env.EBB_FAVORABLE_UPSIZE = ORIG_ENV
+  })
+
+  it('unset, empty, or any unrecognized value resolves to OFF', () => {
+    delete process.env.EBB_FAVORABLE_UPSIZE
+    expect(isEbbFavorableUpsizeMode()).toBe(false)
+    for (const v of ['', 'off', 'true', '1', 'ON ', 'yes']) {
+      process.env.EBB_FAVORABLE_UPSIZE = v
+      expect(isEbbFavorableUpsizeMode()).toBe(v.trim().toLowerCase() === 'on')
+    }
+  })
+
+  it('"on" (any case/whitespace) is ON', () => {
+    for (const v of ['on', 'ON', ' On ']) {
+      process.env.EBB_FAVORABLE_UPSIZE = v
+      expect(isEbbFavorableUpsizeMode()).toBe(true)
+    }
+  })
+
+  it('the ratio ceiling is 0.70, and the comparison is <=, not <', () => {
+    expect(EBB_UPSIZE_VIX_RATIO_CEILING).toBe(0.70)
+    expect(isEbbFavorableVixDay(0.70)).toBe(true)
+    expect(isEbbFavorableVixDay(0.71)).toBe(false)
+    expect(isEbbFavorableVixDay(0.69)).toBe(true)
+  })
+
+  it('null or non-finite ratio is never favorable', () => {
+    expect(isEbbFavorableVixDay(null)).toBe(false)
+    expect(isEbbFavorableVixDay(NaN)).toBe(false)
+  })
+
+  it('extra-contract max loss matches the wing-width-minus-credit, plus $1.40 commission', () => {
+    expect(ebbUpsizeExtraContractMaxLoss(2, 0.30)).toBeCloseTo((2 - 0.30) * 100 + 1.40, 5)
+  })
+
+  it('cushion gate: eligible when equity minus floor clears the extra loss', () => {
+    const maxLoss = 170 + 1.40 // $2 wing, $0.30 credit
+    const gate = evaluateEbbUpsizeCushion(1671.40, 1500, maxLoss)
+    expect(gate.eligible).toBe(true)
+    expect(gate.cushion).toBeCloseTo(171.40, 2)
+  })
+
+  it('cushion gate: ineligible and reports cushion<maxloss when the extra loss does not fit', () => {
+    const maxLoss = 171.40
+    const gate = evaluateEbbUpsizeCushion(1600, 1500, maxLoss)
+    expect(gate.eligible).toBe(false)
+    expect(gate.cushion).toBeCloseTo(100, 2)
+    expect(gate.reason).toBe('skip:ebb_upsize_cushion(cushion=$100.00<maxloss=$171.40)')
+  })
+
+  it('cushion gate: unreadable equity or floor fails CLOSED, never guesses', () => {
+    expect(evaluateEbbUpsizeCushion(null, 1500, 100).eligible).toBe(false)
+    expect(evaluateEbbUpsizeCushion(1600, null, 100).eligible).toBe(false)
+    expect(evaluateEbbUpsizeCushion(null, 1500, 100).reason).toBe('skip:ebb_upsize_cushion(unreadable)')
+  })
+
+  it('both money paths (scanner.ts paper ledger, tradier.ts production ladder) call the upsize with FLAME only', () => {
+    const lib = join(__dirname, '..')
+    const scanner = readFileSync(join(lib, 'scanner.ts'), 'utf8')
+    const tradier = readFileSync(join(lib, 'tradier.ts'), 'utf8')
+    expect(scanner).toMatch(/bot\.name === 'flame' && isEbbFavorableUpsizeMode\(\)/)
+    expect(tradier).toMatch(/botName === 'flame' && ebbSizing\.isEbbFavorableUpsizeMode\(\)/)
+    // With the flag unset, isEbbFavorableUpsizeMode() is false, so the whole
+    // upsize block never executes and `finalContracts`/`acctContracts` stay
+    // exactly what the ladder + liquidity check produced — byte-for-byte.
+    expect(scanner).toMatch(/let finalContracts = contracts/)
+    expect(tradier).toMatch(/acctContracts = Math\.min\(SANDBOX_MAX_CONTRACTS, liq\.lots\)/)
   })
 })
