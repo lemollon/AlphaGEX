@@ -19,6 +19,10 @@ def continuous_spec(interval="1h"):
     return probe.ProbeSpec("/MES", "/MES:XCME", interval, START)
 
 
+def es_continuous_spec(interval="1h"):
+    return probe.ProbeSpec("/ES", "/ES:XCME", interval, START)
+
+
 def event(**overrides):
     values = dict(
         event_symbol="/MESZ23:XCME{=1m}",
@@ -69,10 +73,26 @@ def test_hourly_continuous_identity_accepts_dxfeed_normalization(event_symbol):
     assert row["interval"] == "1h"
 
 
+@pytest.mark.parametrize("event_symbol", [
+    "/ES:XCME{=1h}",
+    "/ES:XCME{=h}",
+])
+def test_hourly_es_leader_identity_accepts_only_exact_continuous_pair(event_symbol):
+    row = probe.candle_to_row(
+        event(event_symbol=event_symbol), es_continuous_spec()
+    )
+    assert row["contract_symbol"] == "/ES"
+    assert row["streamer_symbol"] == "/ES:XCME"
+    assert row["interval"] == "1h"
+
+
 @pytest.mark.parametrize(("contract", "streamer"), [
     ("/MES", "/MESZ23:XCME"),
     ("/MESZ3", "/MES:XCME"),
-    ("/ES", "/ES:XCME"),
+    ("/ES", "/MES:XCME"),
+    ("/MES", "/ES:XCME"),
+    ("/ESZ3", "/ESZ23:XCME"),
+    ("/NQ", "/NQ:XCME"),
 ])
 def test_continuous_symbol_validation_rejects_mixed_or_wrong_products(
     contract, streamer
