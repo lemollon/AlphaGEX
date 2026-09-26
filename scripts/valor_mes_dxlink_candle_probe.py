@@ -1,9 +1,11 @@
-"""Opt-in, read-only MES historical-candle coverage probe.
+"""Opt-in, read-only MES/ES historical-candle coverage probe.
 
 The probe authenticates only to Tastytrade's DXLink market-data streamer.  It
 does not import any account, position, or order module.  Validated candles are
 written to dedicated research tables so we can measure the provider's actual
-history window before preregistering another MES strategy.
+history window before preregistering another MES strategy.  The approved ES
+continuous product is data-only: it may serve as a lead-market signal for MES,
+but it cannot change the traded instrument or the paper-only boundary.
 """
 
 from __future__ import annotations
@@ -67,11 +69,14 @@ def _tick_valid(value: float) -> bool:
 
 
 def validate_symbols(contract_symbol: str, streamer_symbol: str) -> None:
-    if (contract_symbol, streamer_symbol) == ("/MES", "/MES:XCME"):
+    if (contract_symbol, streamer_symbol) in {
+        ("/MES", "/MES:XCME"),
+        ("/ES", "/ES:XCME"),
+    }:
         return
     if not re.fullmatch(r"/MES[HMUZ]\d", contract_symbol or ""):
         raise InvalidProbeConfiguration(
-            "exact quarterly or continuous MES contract required"
+            "exact quarterly MES or approved continuous MES/ES contract required"
         )
     if not re.fullmatch(r"/MES[HMUZ]\d{2}:XCME", streamer_symbol or ""):
         raise InvalidProbeConfiguration("exact XCME DXLink symbol required")
@@ -141,7 +146,7 @@ def candle_to_row(event: Any, spec: ProbeSpec) -> dict[str, Any]:
     if not low <= min(open_, close) <= max(open_, close) <= high:
         raise ValueError("invalid candle geometry")
     if not all(_tick_valid(value) for value in (open_, high, low, close)):
-        raise ValueError("off-tick MES candle")
+        raise ValueError("off-tick CME equity-index candle")
     for name in ("volume", "bid_volume", "ask_volume"):
         if values[name] is not None and values[name] < 0:
             raise ValueError(f"negative {name}")
