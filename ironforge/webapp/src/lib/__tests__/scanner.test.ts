@@ -37,6 +37,10 @@ vi.mock('../tradier', () => ({
     { name: 'User', apiKey: 'test-key-user' },
   ]),
   getSandboxAccountPositions: vi.fn().mockResolvedValue([]),
+  getGammaExposureComponents: vi.fn().mockResolvedValue(null),
+  getOptionQuote: vi.fn().mockResolvedValue(null),
+  buildOccSymbol: vi.fn((ticker: string, exp: string, strike: number, side: string) => `${ticker}${exp}${side}${strike}`),
+  placeCallSpreadOrderAllAccounts: vi.fn().mockResolvedValue({}),
   SandboxOrderInfo: {},
   SandboxCloseInfo: {},
 }))
@@ -60,6 +64,10 @@ const {
   MAX_CONSECUTIVE_MTM_FAILURES,
   _botConfig,
   _mtmFailureCounts,
+  logFlintDailyContext,
+  getFlintGammaContextCached,
+  FLINT_CONTEXT_TABLE,
+  closeFlintAtRiskBeforeBell,
 } = _testing
 
 /* ------------------------------------------------------------------ */
@@ -1173,5 +1181,183 @@ describe('Config loading resilience', () => {
   it('syncPaperAccountCapital exists and has error handling', () => {
     expect(src).toMatch(/syncPaperAccountCapital/)
     expect(src).toMatch(/capital sync error/i)
+  })
+})
+
+/* ================================================================== */
+/*  FLINT forward-logging — daily dealer-gamma context                  */
+/* ================================================================== */
+describe('FLINT daily context logging never throws into the trading path', () => {
+  it('swallows a table-create (dbExecute) failure and resolves normally', async () => {
+    const db = await import('../db')
+    ;(db.dbExecute as any).mockRejectedValueOnce(new Error('CREATE TABLE boom'))
+
+    await expect(logFlintDailyContext({
+      ct: new Date(Date.UTC(2026, 8, 21, 13, 5)),
+      decision: 'skip:no_quote',
+      vixRatio: 0.55,
+      spot: null,
+      shortStrike: null,
+      longStrike: null,
+      entryCredit: null,
+    })).resolves.toBeUndefined()
+  })
+
+  it('swallows an INSERT (query) failure and resolves normally', async () => {
+    const db = await import('../db')
+    ;(db.dbExecute as any).mockResolvedValueOnce(1) // table create succeeds this time
+    ;(db.query as any).mockRejectedValueOnce(new Error('INSERT boom'))
+
+    await expect(logFlintDailyContext({
+      ct: new Date(Date.UTC(2026, 8, 22, 13, 6)),
+      decision: 'traded',
+      vixRatio: 0.90,
+      spot: 768.05,
+      shortStrike: 770,
+      longStrike: 772,
+      entryCredit: 0.22,
+    })).resolves.toBeUndefined()
+  })
+
+  it('a gamma-fetch failure (getGammaExposureComponents rejects) still writes a row, with gamma_source "unavailable" — never fabricated', async () => {
+    const tradier = await import('../tradier')
+    ;(tradier.getGammaExposureComponents as any).mockRejectedValueOnce(new Error('tradier chain boom'))
+    const db = await import('../db')
+    ;(db.query as any).mockClear()
+    ;(db.query as any).mockResolvedValueOnce([])
+
+    await logFlintDailyContext({
+      ct: new Date(Date.UTC(2026, 8, 23, 13, 7)),
+      decision: 'traded',
+      vixRatio: 0.95,
+      spot: 770,
+      shortStrike: 772,
+      longStrike: 774,
+      entryCredit: 0.30,
+    })
+
+    expect(db.query).toHaveBeenCalled()
+    const [sql, params] = (db.query as any).mock.calls[(db.query as any).mock.calls.length - 1]
+    // INSERT column order: trade_date, evaluated_at, spot, vix_ratio,
+    // call_short_strike_considered, call_long_strike_considered, entry_credit_seen,
+    // decision, call_gamma, put_gamma, net_gamma, gamma_flip, put_wall, call_wall, gamma_source
+    expect(sql).toContain(FLINT_CONTEXT_TABLE)
+    expect(params).toHaveLength(15)
+    expect(params[8]).toBeNull() // call_gamma
+    expect(params[9]).toBeNull() // put_gamma
+    expect(params[14]).toBe('unavailable') // gamma_source
+  })
+
+  it('getFlintGammaContextCached never throws and falls back to "unavailable" with no spot', async () => {
+    const value = await getFlintGammaContextCached(new Date(Date.UTC(2026, 8, 24, 13, 5)), null)
+    expect(value.gammaSource).toBe('unavailable')
+    expect(value.callGamma).toBeNull()
+    expect(value.putGamma).toBeNull()
+    expect(value.putWall).toBeNull()
+    expect(value.callWall).toBeNull()
+  })
+
+  it('caches the gamma read per CT day — a second call the same day does not re-fetch', async () => {
+    const tradier = await import('../tradier')
+    ;(tradier.getGammaExposureComponents as any).mockClear()
+    ;(tradier.getGammaExposureComponents as any).mockResolvedValueOnce({ callGex: 1e10, putGex: 0.8e10, netGex: 0.2e10 })
+
+    const day = new Date(Date.UTC(2026, 8, 25, 13, 5))
+    const first = await getFlintGammaContextCached(day, 771.00)
+    expect(first.callGamma).toBe(1e10)
+    expect(tradier.getGammaExposureComponents).toHaveBeenCalledTimes(1)
+
+    const secondSameDay = new Date(Date.UTC(2026, 8, 25, 13, 9))
+    const second = await getFlintGammaContextCached(secondSameDay, 771.00)
+    expect(second).toEqual(first)
+    expect(tradier.getGammaExposureComponents).toHaveBeenCalledTimes(1) // not called again
+  })
+})
+
+/**
+ * FLINT assignment guard — per-account routing (Leron, 2026-09-26,
+ * follow-up: "ironforge will have a lot of accounts", profit protection
+ * and the guard both enforced PER ACCOUNT). Before this fix, closing ran
+ * against every eligible PRODUCTION account and never touched sandbox at
+ * all — with more than one account of a type, a guard triggered on one
+ * customer's position would have bought back a DIFFERENT customer's too.
+ */
+describe('FLINT assignment guard — closeFlintAtRiskBeforeBell routes per account', () => {
+  const queryMock = vi.mocked(query)
+  const CT_IN_GUARD_WINDOW = new Date(2026, 8, 26, 14, 58, 0) // 14:58 CT, inside [14:57, 15:00)
+
+  beforeEach(async () => {
+    queryMock.mockReset()
+    queryMock.mockResolvedValue([])
+    const tradier = await import('../tradier')
+    ;(tradier.placeCallSpreadOrderAllAccounts as any).mockReset()
+    ;(tradier.placeCallSpreadOrderAllAccounts as any).mockResolvedValue({})
+    delete process.env.FLINT_MODE
+    delete process.env.FLINT_GUARD_BUFFER
+  })
+  afterEach(() => {
+    delete process.env.FLINT_MODE
+    delete process.env.FLINT_GUARD_BUFFER
+  })
+
+  it("FLINT_MODE unset places zero orders — closes nothing on the broker even with an at-risk row in the DB", async () => {
+    const tradier = await import('../tradier')
+    // getFlintMode() unset -> 'off': the guard must bail before even reading flint_positions.
+    queryMock.mockResolvedValueOnce([
+      { position_id: 'FLINT-USER', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30, account_type: 'sandbox', mode: 'live', person: 'User' },
+    ])
+    const result = await closeFlintAtRiskBeforeBell(CT_IN_GUARD_WINDOW)
+    expect(result).toBe('')
+    expect(queryMock).not.toHaveBeenCalled()
+    expect(tradier.placeCallSpreadOrderAllAccounts).not.toHaveBeenCalled()
+  })
+
+  it("two accounts hold positions, only one is at risk — the buy-back targets ONLY that account, never the other customer's", async () => {
+    process.env.FLINT_MODE = 'live'
+    const tradier = await import('../tradier')
+    queryMock.mockResolvedValueOnce([
+      // User: short strike AT spot (585.50, the getQuote mock's last) -> triggers the $0.25 buffer.
+      { position_id: 'FLINT-USER', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30, account_type: 'sandbox', mode: 'live', person: 'User' },
+      // Matt: short strike far OTM -> clear, never at risk.
+      { position_id: 'FLINT-MATT', expiration: '2026-09-26', call_short_strike: 600, call_long_strike: 602,
+        contracts: 1, entry_credit: 0.30, account_type: 'sandbox', mode: 'live', person: 'Matt' },
+    ])
+
+    const result = await closeFlintAtRiskBeforeBell(CT_IN_GUARD_WINDOW)
+
+    expect(result).toContain('FLINT-USER=guarded')
+    expect(result).toContain('FLINT-MATT=clear')
+    // Exactly one buy-back order, and it is routed to User — never to Matt,
+    // who was never even at risk.
+    expect(tradier.placeCallSpreadOrderAllAccounts).toHaveBeenCalledTimes(1)
+    const call = (tradier.placeCallSpreadOrderAllAccounts as any).mock.calls[0]
+    expect(call[7]).toMatchObject({ close: true, targetPerson: 'User' })
+  })
+
+  it('a production row with mode=live is also routed by its own person, not "every production account"', async () => {
+    process.env.FLINT_MODE = 'live'
+    const tradier = await import('../tradier')
+    queryMock.mockResolvedValueOnce([
+      { position_id: 'FLINT-FLAME', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30, account_type: 'production', mode: 'live', person: 'Flame' },
+    ])
+    await closeFlintAtRiskBeforeBell(CT_IN_GUARD_WINDOW)
+    expect(tradier.placeCallSpreadOrderAllAccounts).toHaveBeenCalledTimes(1)
+    const call = (tradier.placeCallSpreadOrderAllAccounts as any).mock.calls[0]
+    expect(call[7]).toMatchObject({ close: true, targetPerson: 'Flame' })
+  })
+
+  it('a paper row (no person) is closed in the DB but never sent to the broker', async () => {
+    process.env.FLINT_MODE = 'live'
+    const tradier = await import('../tradier')
+    queryMock.mockResolvedValueOnce([
+      { position_id: 'FLINT-PAPER', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30, account_type: 'paper', mode: 'live', person: null },
+    ])
+    const result = await closeFlintAtRiskBeforeBell(CT_IN_GUARD_WINDOW)
+    expect(result).toContain('FLINT-PAPER=guarded')
+    expect(tradier.placeCallSpreadOrderAllAccounts).not.toHaveBeenCalled()
   })
 })

@@ -11,7 +11,7 @@
  * either money path from current_balance, or writes a balance without
  * ratcheting high_water_balance.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -26,6 +26,13 @@ import {
   isEbbLadderBot,
   liquidityCappedLots,
   EBB_UNKNOWN_LIQUIDITY_LOTS,
+  isEbbFavorableUpsizeMode,
+  isEbbFavorableVixDay,
+  EBB_UPSIZE_VIX_RATIO_CEILING,
+  ebbUpsizeExtraContractMaxLoss,
+  evaluateEbbUpsizeCushion,
+  ebbCustomerLadderMode,
+  ebbProfitLadderContracts,
 } from '../ebb-sizing'
 
 describe('EBB count ladder — rungs (2026-08-27 survivor rule, unchanged by ADR 0013)', () => {
@@ -284,5 +291,210 @@ describe('EBB count ladder — both money paths are wired to the ratchet and the
     }
     expect(writes).toBeGreaterThanOrEqual(25)
     expect(misses).toEqual([])
+  })
+})
+
+describe('EBB_FAVORABLE_UPSIZE — favorable-VIX-day +1 contract (Leron, 2026-09-26)', () => {
+  const ORIG_ENV = process.env.EBB_FAVORABLE_UPSIZE
+
+  afterEach(() => {
+    if (ORIG_ENV === undefined) delete process.env.EBB_FAVORABLE_UPSIZE
+    else process.env.EBB_FAVORABLE_UPSIZE = ORIG_ENV
+  })
+
+  it('unset, empty, or any unrecognized value resolves to OFF', () => {
+    delete process.env.EBB_FAVORABLE_UPSIZE
+    expect(isEbbFavorableUpsizeMode()).toBe(false)
+    for (const v of ['', 'off', 'true', '1', 'ON ', 'yes']) {
+      process.env.EBB_FAVORABLE_UPSIZE = v
+      expect(isEbbFavorableUpsizeMode()).toBe(v.trim().toLowerCase() === 'on')
+    }
+  })
+
+  it('"on" (any case/whitespace) is ON', () => {
+    for (const v of ['on', 'ON', ' On ']) {
+      process.env.EBB_FAVORABLE_UPSIZE = v
+      expect(isEbbFavorableUpsizeMode()).toBe(true)
+    }
+  })
+
+  it('the ratio ceiling is 0.70, and the comparison is <=, not <', () => {
+    expect(EBB_UPSIZE_VIX_RATIO_CEILING).toBe(0.70)
+    expect(isEbbFavorableVixDay(0.70)).toBe(true)
+    expect(isEbbFavorableVixDay(0.71)).toBe(false)
+    expect(isEbbFavorableVixDay(0.69)).toBe(true)
+  })
+
+  it('null or non-finite ratio is never favorable', () => {
+    expect(isEbbFavorableVixDay(null)).toBe(false)
+    expect(isEbbFavorableVixDay(NaN)).toBe(false)
+  })
+
+  it('extra-contract max loss matches the wing-width-minus-credit, plus $1.40 commission', () => {
+    expect(ebbUpsizeExtraContractMaxLoss(2, 0.30)).toBeCloseTo((2 - 0.30) * 100 + 1.40, 5)
+  })
+
+  it('cushion gate: eligible when equity minus floor clears the extra loss', () => {
+    const maxLoss = 170 + 1.40 // $2 wing, $0.30 credit
+    const gate = evaluateEbbUpsizeCushion(1671.40, 1500, maxLoss)
+    expect(gate.eligible).toBe(true)
+    expect(gate.cushion).toBeCloseTo(171.40, 2)
+  })
+
+  it('cushion gate: ineligible and reports cushion<maxloss when the extra loss does not fit', () => {
+    const maxLoss = 171.40
+    const gate = evaluateEbbUpsizeCushion(1600, 1500, maxLoss)
+    expect(gate.eligible).toBe(false)
+    expect(gate.cushion).toBeCloseTo(100, 2)
+    expect(gate.reason).toBe('skip:ebb_upsize_cushion(cushion=$100.00<maxloss=$171.40)')
+  })
+
+  it('cushion gate: unreadable equity or floor fails CLOSED, never guesses', () => {
+    expect(evaluateEbbUpsizeCushion(null, 1500, 100).eligible).toBe(false)
+    expect(evaluateEbbUpsizeCushion(1600, null, 100).eligible).toBe(false)
+    expect(evaluateEbbUpsizeCushion(null, 1500, 100).reason).toBe('skip:ebb_upsize_cushion(unreadable)')
+  })
+
+  it('both money paths (scanner.ts paper ledger, tradier.ts production ladder) call the upsize with FLAME only', () => {
+    const lib = join(__dirname, '..')
+    const scanner = readFileSync(join(lib, 'scanner.ts'), 'utf8')
+    const tradier = readFileSync(join(lib, 'tradier.ts'), 'utf8')
+    expect(scanner).toMatch(/bot\.name === 'flame' && isEbbFavorableUpsizeMode\(\)/)
+    expect(tradier).toMatch(/botName === 'flame' && ebbSizing\.isEbbFavorableUpsizeMode\(\)/)
+    // With the flag unset, isEbbFavorableUpsizeMode() is false, so the whole
+    // upsize block never executes and `finalContracts`/`acctContracts` stay
+    // exactly what the ladder + liquidity check produced — byte-for-byte.
+    expect(scanner).toMatch(/let finalContracts = contracts/)
+    expect(tradier).toMatch(/acctContracts = Math\.min\(SANDBOX_MAX_CONTRACTS, liq\.lots\)/)
+  })
+})
+
+describe('EBB_CUSTOMER_LADDER — FLAME customer (sandbox) PROFIT ladder ONLY (Leron, 2026-09-26)', () => {
+  const ORIG_ENV = process.env.EBB_CUSTOMER_LADDER
+
+  afterEach(() => {
+    if (ORIG_ENV === undefined) delete process.env.EBB_CUSTOMER_LADDER
+    else process.env.EBB_CUSTOMER_LADDER = ORIG_ENV
+  })
+
+  it('unset, empty, or any unrecognized value resolves to "equity" — today\'s mirror, unchanged', () => {
+    delete process.env.EBB_CUSTOMER_LADDER
+    expect(ebbCustomerLadderMode()).toBe('equity')
+    for (const v of ['', 'EQUITY', 'off', 'PROFIT ', 'profitable', ' profit yes']) {
+      process.env.EBB_CUSTOMER_LADDER = v
+      expect(ebbCustomerLadderMode()).toBe(v.trim().toLowerCase() === 'profit' ? 'profit' : 'equity')
+    }
+  })
+
+  it('"profit" (any case/whitespace) turns the customer ladder on', () => {
+    for (const v of ['profit', 'PROFIT', ' Profit ']) {
+      process.env.EBB_CUSTOMER_LADDER = v
+      expect(ebbCustomerLadderMode()).toBe('profit')
+    }
+  })
+
+  it('contracts = floor(floor_amount / rung) + floor(peak_profit / rung), FLAME rung $1,500', () => {
+    // $4,242 floor / $4,500 equity, no profit above the floor's own high-water
+    // yet (peak_profit = $258) -> 2, NOT 3 (3 is what a plain equity/$1,500
+    // ladder on $4,500 would have given).
+    expect(ebbProfitLadderContracts('flame', 4242, 258)).toBe(2)
+    expect(ebbLadderContracts('flame', ebbLadderCapital(4500, null))).toBe(3) // the "not 3" ladder it replaces
+    // Same floor, $1,500 peak profit -> +1 lot -> 3.
+    expect(ebbProfitLadderContracts('flame', 4242, 1500)).toBe(3)
+  })
+
+  it('the shared math takes a SPARK rung too ($5,000) — the function is generic; tradier.ts is what restricts it to FLAME only (see wiring below)', () => {
+    expect(ebbProfitLadderContracts('spark', 12000, 0)).toBe(2)
+    expect(ebbProfitLadderContracts('spark', 12000, 5000)).toBe(3)
+  })
+
+  it('below one rung of floor with zero peak profit is 0 lots, never 1', () => {
+    expect(ebbProfitLadderContracts('flame', 1000, 0)).toBe(0)
+    expect(ebbProfitLadderContracts('spark', 4000, 0)).toBe(0)
+  })
+
+  it('a missing/invalid floor is 0 lots regardless of peak profit — never guesses', () => {
+    expect(ebbProfitLadderContracts('flame', null, 10_000)).toBe(0)
+    expect(ebbProfitLadderContracts('flame', undefined, 10_000)).toBe(0)
+    expect(ebbProfitLadderContracts('flame', 0, 10_000)).toBe(0)
+    expect(ebbProfitLadderContracts('flame', NaN, 10_000)).toBe(0)
+  })
+
+  it('a negative or non-finite peak profit contributes zero lots, not a negative count', () => {
+    expect(ebbProfitLadderContracts('flame', 4242, -500)).toBe(2)
+    expect(ebbProfitLadderContracts('flame', 4242, NaN)).toBe(2)
+    expect(ebbProfitLadderContracts('flame', 4242, undefined)).toBe(2)
+  })
+
+  it('same static cap of 100 as the production ladder', () => {
+    expect(ebbProfitLadderContracts('flame', 1_000_000, 1_000_000)).toBe(100)
+    expect(ebbProfitLadderContracts('spark', 1_000_000, 1_000_000)).toBe(100)
+  })
+
+  it('rounds down, never up', () => {
+    expect(ebbProfitLadderContracts('flame', 2999, 0)).toBe(1)
+    expect(ebbProfitLadderContracts('flame', 3000, 0)).toBe(2)
+  })
+
+  describe('wiring: tradier.ts sandbox branch — FLAME-only profit ladder; SPARK and production untouched', () => {
+    const lib = join(__dirname, '..')
+    const tradier = readFileSync(join(lib, 'tradier.ts'), 'utf8')
+
+    it('the sandbox branch only reaches the profit ladder when the bot is FLAME AND the flag is "profit" — SPARK never, regardless of the flag', () => {
+      expect(tradier).toMatch(
+        /\}\s*else if \(botName === 'flame' && ebbSizing\.ebbCustomerLadderMode\(\) === 'profit'\) \{/,
+      )
+      // The gate is a literal bot-name check, not isEbbLadderBot (which would
+      // also admit SPARK) — scope-corrected 2026-09-26: "SPARK customer sizing
+      // must stay exactly as before regardless of the flag."
+      expect(tradier).not.toMatch(
+        /\}\s*else if \(botName && ebbSizing\.isEbbLadderBot\(botName\) && ebbSizing\.ebbCustomerLadderMode\(\) === 'profit'\) \{/,
+      )
+    })
+
+    it('a SPARK customer account falls through to the unchanged paperContracts mirror even when EBB_CUSTOMER_LADDER=profit', () => {
+      // botName === 'flame' is false for spark, so the `else if` above is
+      // skipped entirely and control falls to the final `else` — the same
+      // branch SPARK has always used, untouched by this flag.
+      const startsFlame = tradier.indexOf(`else if (botName === 'flame' && ebbSizing.ebbCustomerLadderMode() === 'profit') {`)
+      const startsFinalElse = tradier.indexOf('acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, paperContracts)')
+      expect(startsFlame).toBeGreaterThan(-1)
+      expect(startsFinalElse).toBeGreaterThan(startsFlame)
+    })
+
+    it('floor comes from getFlintSandboxLedger (flint_account_floor), never a second divergent floor', () => {
+      expect(tradier).toMatch(/const ledger = await getFlintSandboxLedger\(acct\.name, accountId\)/)
+    })
+
+    it('peak_profit is high-water minus floor, floored at 0 — never a drawdown-driven negative count', () => {
+      expect(tradier).toMatch(/const peakProfit = Math\.max\(0, highWater - ledger\.floor\)/)
+    })
+
+    it('the high-water read is its own ratchet, GREATEST()ed, never the account\'s live equity directly', () => {
+      expect(tradier).toMatch(/const highWater = await getOrRatchetCustomerHighWater\(acct\.name, 'sandbox', ledger\.equity\)/)
+      expect(tradier).toMatch(/DO UPDATE SET high_water = GREATEST\(ebb_customer_high_water\.high_water, \$3\)/)
+    })
+
+    it('the final count is capped by this account\'s own broker BP and the hard safety ceiling, same as every other path', () => {
+      expect(tradier).toMatch(/acctContracts = Math\.min\(SANDBOX_MAX_CONTRACTS, bpContracts, ladder\)/)
+    })
+
+    it('a 0-lot profit ladder SKIPS the account — it never falls back to the paper mirror', () => {
+      expect(tradier).toMatch(/if \(ladder < 1\) \{[\s\S]*?SKIPPING — never falls back to the paper mirror/)
+    })
+
+    it('the flag-unset fallback (paperContracts mirror) is still the LAST else — byte-for-byte unchanged', () => {
+      expect(tradier).toMatch(
+        /\} else \{\s*acctContracts = Math\.min\(SANDBOX_MAX_CONTRACTS, bpContracts, paperContracts\)\s*\}/,
+      )
+    })
+
+    it('FLAME\'s own production account never reaches the customer branch — it is gated on acct.type earlier, untouched', () => {
+      // The production ladder branch (isEbbLadderBot(botName) under acct.type
+      // === 'production') is a completely separate `if` above this `else if`
+      // chain; the customer profit ladder is added only to the sandbox side.
+      expect(tradier).toMatch(/if \(acct\.type === 'production'\) \{[\s\S]*?if \(ebbSizing\.isEbbLadderBot\(botName\)\) \{/)
+      expect(tradier).toMatch(/const ladder = ebbSizing\.ebbLadderContracts\(botName, ebbSizing\.ebbLadderCapital\(funded, highWater\)\)/)
+    })
   })
 })
