@@ -3893,7 +3893,7 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
   const rows = await query(
     `SELECT position_id, ticker, expiration, put_short_strike, put_long_strike,
             call_short_strike, call_long_strike, contracts, total_credit,
-            collateral_required, spread_width
+            collateral_required, spread_width, account_type
        FROM ${botTable(bot.name, 'positions')}
       WHERE status = 'open' AND dte_mode = $1 AND expiration <= $2`,
     [bot.dte, todayStr],
@@ -3999,6 +3999,18 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
       } catch { /* logging must never take the settle loop down */ }
       out.push(`${p.position_id}=settle_declined`)
       continue
+    }
+    // EDGE-DECAY (EBB, notify-only, never pauses): flame_positions production
+    // + sandbox rows only, per the RESULT file's data table — this is the
+    // strategy's primary close path (holds to expiry). No-ops with zero DB
+    // access when EDGE_DECAY_MODE is unset.
+    if (bot.name === 'flame' && (p.account_type === 'production' || p.account_type === 'sandbox')) {
+      try {
+        const { recordEdgeDecayClose } = await import('./edge-decay')
+        await recordEdgeDecayClose('ebb', pnl / Math.max(1, contracts))
+      } catch (e) {
+        console.warn(`[edge-decay] EBB settle hook failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+      }
     }
     console.log(
       `[scanner] ${bot.name.toUpperCase()} SETTLED ${p.position_id} ` +
@@ -4673,6 +4685,23 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
 
   if (mode !== 'live') return `FLINT: paper=${paperDecision}`
 
+  // EDGE-DECAY PAUSE (real accounts only). Blocks SANDBOX + PRODUCTION entries
+  // while FLINT is paused on a CUSUM alarm (EDGE_DECAY_MODE=enforce); the paper
+  // book above is deliberately NOT gated — it already runs unconditionally,
+  // independent of the live arm switch, and its continued zero-capital-risk
+  // closes ARE the 10-trade shadow block the resume rule scores (see
+  // lib/edge-decay.ts's header). No-ops false with zero DB access unless mode
+  // is exactly 'enforce'.
+  try {
+    const { isEdgeDecayPaused } = await import('./edge-decay')
+    if (await isEdgeDecayPaused('flint')) {
+      console.log('[scanner] FLINT: live entries paused by edge-decay alarm — paper book continues as the shadow block')
+      return `FLINT: paper=${paperDecision} live:paused(edge_decay)`
+    }
+  } catch (e) {
+    console.warn(`[edge-decay] FLINT pause check failed (non-fatal, trading continues): ${e instanceof Error ? e.message : String(e)}`)
+  }
+
   // ---- SANDBOX + PRODUCTION ACCOUNT(S) — every account EBB's own put
   // spread places on (resolveEligibleAccounts('flame')), each gated
   // INDEPENDENTLY of the paper book and of every other account.
@@ -4801,6 +4830,15 @@ async function closeFlintAtRiskBeforeBell(ct: Date): Promise<string> {
        WHERE position_id = $3 AND status = 'open'`,
       [costToClose, realizedPnl, p.position_id],
     )
+    // EDGE-DECAY: feed this closed trade's per-contract pnl into FLINT's own
+    // CUSUM. No-ops with zero DB access when EDGE_DECAY_MODE is unset — see
+    // lib/edge-decay.ts. Never allowed to affect the trading path.
+    try {
+      const { recordEdgeDecayClose } = await import('./edge-decay')
+      await recordEdgeDecayClose('flint', realizedPnl / Math.max(1, contracts))
+    } catch (e) {
+      console.warn(`[edge-decay] FLINT guard-close hook failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+    }
     console.log(
       `[scanner] FLINT GUARD CLOSED ${p.position_id} spot=${spot.toFixed(2)} ` +
       `short ${shortStrike}C buffer=$${buffer.toFixed(2)} cost=$${costToClose.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,
@@ -4873,6 +4911,15 @@ async function settleFlintExpired(ct: Date): Promise<string> {
        WHERE position_id = $3 AND status = 'open'`,
       [intrinsic, realizedPnl, p.position_id],
     )
+    // EDGE-DECAY: this is FLINT's primary close path (holds to expiry) — see
+    // the assignment-guard hook above for the other one. No-ops with zero DB
+    // access when EDGE_DECAY_MODE is unset.
+    try {
+      const { recordEdgeDecayClose } = await import('./edge-decay')
+      await recordEdgeDecayClose('flint', realizedPnl / Math.max(1, contracts))
+    } catch (e) {
+      console.warn(`[edge-decay] FLINT settle hook failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+    }
     console.log(
       `[scanner] FLINT SETTLED ${p.position_id}: close=${closePx != null ? '$' + closePx.toFixed(2) : 'unknown'} ` +
       `short ${shortStrike}C intrinsic=$${intrinsic.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,

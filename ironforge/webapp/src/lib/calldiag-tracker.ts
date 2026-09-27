@@ -246,6 +246,32 @@ export async function runCallDiagEntryTick(ct: Date): Promise<string> {
   }
   const trade = market.trade
 
+  // EDGE-DECAY PAUSE. Blocks every real (account-tagged) entry below while
+  // CallDiag is paused on a CUSUM alarm (EDGE_DECAY_MODE=enforce). CallDiag
+  // has no separate always-on paper book to reuse as the shadow stream the
+  // way FLINT does (every calldiag_positions row here is already virtual —
+  // "PAPER ONLY IN THIS PR", see this file's header — but pausing them is
+  // still the correct test of "would this have helped," per the RESULT
+  // file's own measurement), so instead of writing the real per-account
+  // rows, ONE hypothetical shadow trade is recorded for today into
+  // edge_decay_shadow_trades — settled by settleCallDiagEdgeDecayShadow
+  // above using the exact same market data already resolved for `trade`.
+  // No-ops false with zero DB access unless mode is exactly 'enforce'.
+  try {
+    const { isEdgeDecayPaused, recordEdgeDecayShadowEntry } = await import('./edge-decay')
+    if (await isEdgeDecayPaused('calldiag')) {
+      await recordEdgeDecayShadowEntry('calldiag', {
+        tradeDate, ticker: TICKER, frontExpiry: trade.front, backExpiry: trade.back,
+        shortStrike: trade.shortStrike, longStrike: trade.longStrike,
+        shortBidEntry: trade.shortBid, longAskEntry: trade.longAsk, contracts: CALLDIAG_MAX_CONTRACTS,
+      })
+      await logDecision(tradeDate, 'skip:edge_decay_paused', { rv5Pct: market.rv5Pct, spot: trade.spot })
+      return 'calldiag:paused(edge_decay)'
+    }
+  } catch (e) {
+    console.warn(`[edge-decay] CallDiag pause check failed (non-fatal, trading continues): ${e instanceof Error ? e.message : String(e)}`)
+  }
+
   const accounts = await resolveEligibleAccounts('flame')
   const out: string[] = []
   for (const acct of accounts) {
@@ -328,7 +354,6 @@ export async function runCallDiagExitTick(ct: Date): Promise<string> {
   }>(`SELECT id, person, account_type, front_expiry, back_expiry, short_strike, long_strike,
              short_bid_entry, long_ask_entry, open_date
         FROM ${POSITIONS_TABLE} WHERE status = 'open'`)
-  if (open.length === 0) return ''
 
   let calendar: string[] | null = null
   const out: string[] = []
@@ -367,10 +392,55 @@ export async function runCallDiagExitTick(ct: Date): Promise<string> {
       [today, shortQ.ask, longQ.bid, pnl, p.id],
     )
     await logDecision(today, 'closed', { person: p.person, accountType: p.account_type })
+    // EDGE-DECAY: feed this closed trade's per-contract pnl into CallDiag's own
+    // CUSUM. No-ops with zero DB access when EDGE_DECAY_MODE is unset — see
+    // lib/edge-decay.ts. Never allowed to affect the trading path.
+    try {
+      const { recordEdgeDecayClose } = await import('./edge-decay')
+      await recordEdgeDecayClose('calldiag', pnl / Math.max(1, CALLDIAG_MAX_CONTRACTS))
+    } catch (e) {
+      console.warn(`[edge-decay] CallDiag exit hook failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+    }
     out.push(`${p.person}:closed@${pnl.toFixed(2)}`)
   }
 
+  await settleCallDiagEdgeDecayShadow(today)
+
   return out.length ? `calldiag exit[${out.join(' ')}]` : ''
+}
+
+/**
+ * EDGE-DECAY SHADOW SETTLEMENT — closes any open `edge_decay_shadow_trades`
+ * rows for CallDiag using the SAME real-market quote-based pnl calc as the
+ * real exit tick above. These rows only exist while CallDiag is paused on a
+ * CUSUM alarm (see runCallDiagEntryTick) — they are hypothetical (no real
+ * account, no capital at risk) and exist solely to score the 10-trade resume
+ * block the RESULT file's rule calls for. Simplification, disclosed: settles
+ * at/after front_expiry rather than replicating pickCallDiagExitDate's
+ * day-before-expiry calendar walk — a real position's exit timing precision
+ * does not matter for a trade that was never actually placed.
+ */
+async function settleCallDiagEdgeDecayShadow(today: string): Promise<void> {
+  try {
+    const { getEdgeDecayMode, getOpenEdgeDecayShadowTrades, settleEdgeDecayShadowTrade } = await import('./edge-decay')
+    if (getEdgeDecayMode() === 'off') return // zero DB access — byte-for-byte unchanged when unset
+    const open = await getOpenEdgeDecayShadowTrades('calldiag')
+    for (const s of open) {
+      const frontExpiry = s.front_expiry
+      if (frontExpiry > today) continue
+      const [shortQ, longQ] = await Promise.all([
+        getOptionQuote(buildOccSymbol(TICKER, frontExpiry, Number(s.short_strike), 'C')),
+        getOptionQuote(buildOccSymbol(TICKER, s.back_expiry, Number(s.long_strike), 'C')),
+      ])
+      if (!shortQ || !longQ) continue
+      const pnl = computeCallDiagExitPnl(Number(s.short_bid_entry), Number(s.long_ask_entry), shortQ.ask, longQ.bid)
+      await settleEdgeDecayShadowTrade(s.id, 'calldiag', {
+        shortAskExit: shortQ.ask, longBidExit: longQ.bid, realizedPnl: pnl, contracts: Number(s.contracts) || 1,
+      })
+    }
+  } catch (e) {
+    console.warn(`[edge-decay] CallDiag shadow settlement failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+  }
 }
 
 /* ------------------------------------------------------------------ */
