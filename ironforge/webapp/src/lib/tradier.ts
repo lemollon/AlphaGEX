@@ -2136,14 +2136,29 @@ export async function placeIcOrderAllAccounts(
 
   async function placeForAccount(acct: SandboxAccount) {
     try {
+      const label = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
+
+      // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now"). FLAME only —
+      // botName is checked, never the account, so SPARK/KINDLE production
+      // orders are never touched even if the env var is set. Unset env =
+      // isFlameSkipWeekday() always false = this block never fires; the rest
+      // of the function is byte-for-byte the prior behavior.
+      if (botName?.toLowerCase() === 'flame') {
+        const flameSkip = await import('./flame-skip')
+        const now = new Date()
+        if (flameSkip.shouldSkipAccountForWeekday(acct.type, flameSkip.isFlameSkipWeekday(now))) {
+          console.log(`${label}: ${flameSkip.weekdaySkipLogTag(flameSkip.centralWeekdayAbbrev(now))}`)
+          return
+        }
+      }
+
       const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
       if (!accountId) {
-        const label = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
         console.error(`${label}: getAccountIdForKey returned null — API key invalid or Tradier unreachable. SKIPPING order.`)
         return
       }
 
-      const bpLabel = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
+      const bpLabel = label
 
       // Query this account's OPTION buying power (not stock/day-trade BP)
       const bp = await readOptionBuyingPowerWithRetry(acct.apiKey, accountId, acct.baseUrl, bpLabel)
@@ -2379,7 +2394,6 @@ export async function placeIcOrderAllAccounts(
       }
       if (tag) orderBody.tag = tag.slice(0, 255)
 
-      const label = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
       const result = await sandboxPost(
         `/accounts/${accountId}/orders`,
         orderBody,
@@ -4933,11 +4947,25 @@ export async function placeCallSpreadOrderAllAccounts(
     : { shortSide: 'sell_to_open', longSide: 'buy_to_open' }
 
   const { decideFlintContractsForCushion, FLINT_BP_FLOOR_PER_CONTRACT } = await import('./flint')
+  const flameSkip = await import('./flame-skip')
 
   for (const acct of allAccts) {
     const isProd = acct.type === 'production'
     const label = `${isProd ? 'PRODUCTION' : 'SANDBOX'} [${acct.name}] FLINT`
     try {
+      // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now"). FLINT is
+      // FLAME-exclusive already, so no botName gate is needed. Never applies
+      // to the assignment-guard buy-back (`closing`) — only new entries.
+      // Unset env = shouldSkipAccountForWeekday() always false = byte-for-byte
+      // the prior behavior.
+      if (!closing) {
+        const now = new Date()
+        if (flameSkip.shouldSkipAccountForWeekday(acct.type, flameSkip.isFlameSkipWeekday(now))) {
+          console.log(`${label}: ${flameSkip.weekdaySkipLogTag(flameSkip.centralWeekdayAbbrev(now))}`)
+          continue
+        }
+      }
+
       const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
       if (!accountId) {
         console.error(`${label}: getAccountIdForKey returned null — API key invalid or Tradier unreachable. SKIPPING.`)

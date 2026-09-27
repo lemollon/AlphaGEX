@@ -236,6 +236,12 @@ import {
   FLINT_GAMMA_UPSIZE_MIN_SESSIONS,
   type FlintGammaContext,
 } from './flint'
+import {
+  getFlameSkipWeekdays,
+  isWeekdayInSkipSet,
+  weekdayAbbrevFromDow,
+  weekdaySkipLogTag,
+} from './flame-skip'
 import { BOT_STARTING_CAPITAL } from './bot-capital'
 import { getTvMarketStructure, type TvMarketStructure } from './gex/trading-volatility-client'
 import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, classifySignalState, notifyDecision, type SignalStreak } from './volAlerts'
@@ -4611,39 +4617,52 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
   // extra lot breaks the cushion ("if cushion covers 1 but not 2, trade 1").
   // When the upsize is off/inactive, desiredContracts === baseContracts, so
   // this is exactly ONE evaluation — byte-for-byte the old single-size gate.
+  // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now"): the bot's OWN
+  // paper book is a "customer" account under FLAME_SKIP_SCOPE's default —
+  // skipped whenever today's weekday matches, independent of scope (scope
+  // only decides whether the PRODUCTION account below is also skipped; see
+  // placeCallSpreadOrderAllAccounts in tradier.ts). Unset env = the skip set
+  // is always empty = this branch never fires; byte-for-byte prior behavior.
   let paperDecision: string
-  const paperToday = await query(
-    `SELECT COUNT(*) AS cnt FROM ${FLINT_TABLE}
-     WHERE open_date = ${CT_TODAY} AND account_type = 'paper'`,
-  )
-  if (int(paperToday[0]?.cnt) >= 1) {
-    paperDecision = 'skip:already_traded_today'
-    console.log('[scanner] FLINT: no_trade | paper skip:already_traded_today')
+  const weekdaySkipSet = getFlameSkipWeekdays()
+  const todayAbbrev = weekdayAbbrevFromDow(ct.getDay())
+  if (isWeekdayInSkipSet(todayAbbrev, weekdaySkipSet)) {
+    paperDecision = weekdaySkipLogTag(todayAbbrev)
+    console.log(`[scanner] FLINT: no_trade | paper ${paperDecision}`)
   } else {
-    const paperLedger = await getFlintPaperLedger(bot)
-    const decision = decideFlintContractsForCushion(
-      desiredContracts, baseContracts, paperLedger.equity, paperLedger.floor, callShort, callLong, credit.callCredit,
+    const paperToday = await query(
+      `SELECT COUNT(*) AS cnt FROM ${FLINT_TABLE}
+       WHERE open_date = ${CT_TODAY} AND account_type = 'paper'`,
     )
-    const gate = decision.gate
-    if (decision.contracts < 1) {
-      paperDecision = gate.reason ?? 'skip:flint_profit_cushion(unreadable)'
-      console.log(`[scanner] FLINT: no_trade | paper ${paperDecision}`)
+    if (int(paperToday[0]?.cnt) >= 1) {
+      paperDecision = 'skip:already_traded_today'
+      console.log('[scanner] FLINT: no_trade | paper skip:already_traded_today')
     } else {
-      const contracts = decision.contracts
-      const collateral = Math.max(0, (width - credit.callCredit) * 100) * contracts
-      await query(
-        `INSERT INTO ${FLINT_TABLE} (
-           position_id, ticker, expiration, call_short_strike, call_long_strike,
-           contracts, entry_credit, collateral_required, underlying_at_entry,
-           status, account_type, person, mode, open_time, open_date
-         ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open','paper',NULL,$9, NOW(), ${CT_TODAY})`,
-        [positionId, expiration, callShort, callLong, contracts, credit.callCredit, collateral, spot, mode],
+      const paperLedger = await getFlintPaperLedger(bot)
+      const decision = decideFlintContractsForCushion(
+        desiredContracts, baseContracts, paperLedger.equity, paperLedger.floor, callShort, callLong, credit.callCredit,
       )
-      console.log(
-        `[scanner] FLINT SPY: ${contracts}x ${callShort}/${callLong}C exp ${expiration} ` +
-        `@ $${credit.callCredit.toFixed(2)} (spot ${spot.toFixed(2)}, cushion=$${gate.cushion?.toFixed(2) ?? 'n/a'}) mode=${mode}`,
-      )
-      paperDecision = 'traded'
+      const gate = decision.gate
+      if (decision.contracts < 1) {
+        paperDecision = gate.reason ?? 'skip:flint_profit_cushion(unreadable)'
+        console.log(`[scanner] FLINT: no_trade | paper ${paperDecision}`)
+      } else {
+        const contracts = decision.contracts
+        const collateral = Math.max(0, (width - credit.callCredit) * 100) * contracts
+        await query(
+          `INSERT INTO ${FLINT_TABLE} (
+             position_id, ticker, expiration, call_short_strike, call_long_strike,
+             contracts, entry_credit, collateral_required, underlying_at_entry,
+             status, account_type, person, mode, open_time, open_date
+           ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open','paper',NULL,$9, NOW(), ${CT_TODAY})`,
+          [positionId, expiration, callShort, callLong, contracts, credit.callCredit, collateral, spot, mode],
+        )
+        console.log(
+          `[scanner] FLINT SPY: ${contracts}x ${callShort}/${callLong}C exp ${expiration} ` +
+          `@ $${credit.callCredit.toFixed(2)} (spot ${spot.toFixed(2)}, cushion=$${gate.cushion?.toFixed(2) ?? 'n/a'}) mode=${mode}`,
+        )
+        paperDecision = 'traded'
+      }
     }
   }
 
@@ -5542,40 +5561,56 @@ async function tryOpenFlameBook(
   // hardcoded -- SPARK's live positions were being written as 'FLAME-SPY-...'.
   const positionId = `${bot.name.toUpperCase()}-${ticker}-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
 
-  await query(
-    `INSERT INTO ${botTable(bot.name, 'positions')} (
-       position_id, ticker, expiration,
-       put_short_strike, put_long_strike, put_credit,
-       call_short_strike, call_long_strike, call_credit,
-       contracts, spread_width, total_credit, max_loss, max_profit,
-       collateral_required, underlying_at_entry, expected_move,
-       status, open_time, open_date, dte_mode, account_type
-     ) VALUES ($1,$2,$3,$4,$5,$6,$15,$16,$17,$7,$8,$18,$9,$10,$11,$12,$13,
-               'open', NOW(), ${CT_TODAY}, $14, 'sandbox')`,
-    [positionId, ticker, expiration, putShort, putLong, putCreditVal,
-     finalContracts, width, collateral,
-     Math.round(entryCredit * 100 * finalContracts * 100) / 100,
-     collateral, spot, em, bot.dte,
-     callShort, callLong,
-     callCreditVal,
-     entryCredit],
-  )
-  console.log(
-    `[scanner] ${bot.name.toUpperCase()} ${ticker}: ${finalContracts}x ${putLong}/${putShort}P ` +
-    `exp ${expiration} @ $${entryCredit.toFixed(2)} ` +
-    `(spot ${spot.toFixed(2)}, otm $${otmAbs}, wing $${width}, EM ${em.toFixed(2)}) ` +
-    `sizing: ${sizingLine}`,
-  )
+  // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now"): this "sandbox"
+  // row IS FLAME's customer/paper side of EBB (SPARK writes the same
+  // account_type='sandbox' tag through this shared function, so the FLAME
+  // check is explicit — SPARK is out of scope for this env var). Skipped
+  // whenever today's weekday matches, independent of FLAME_SKIP_SCOPE —
+  // scope only decides whether the PRODUCTION leg below is ALSO skipped
+  // (placeIcOrderAllAccounts in tradier.ts). Unset env = the skip set is
+  // always empty = skipCustomerSide is always false = byte-for-byte prior
+  // behavior below.
+  const todayAbbrev = weekdayAbbrevFromDow(getCentralTime().getDay())
+  const skipCustomerSide = bot.name === 'flame' && isWeekdayInSkipSet(todayAbbrev, getFlameSkipWeekdays())
 
-  // Customer push (UAT #7): fire-and-forget, never throws into the trade path —
-  // notifyTradeOpened catches everything internally.
-  void mirrorOpenToCustomers({
-    botName: bot.name, positionId, ticker, expiration,
-    putShort, putLong, callShort, callLong,
-    spreadWidth: width, credit: entryCredit,
-  })
+  if (skipCustomerSide) {
+    console.log(`[scanner] FLAME ${ticker}: ${weekdaySkipLogTag(todayAbbrev)} (customer/paper side)`)
+  } else {
+    await query(
+      `INSERT INTO ${botTable(bot.name, 'positions')} (
+         position_id, ticker, expiration,
+         put_short_strike, put_long_strike, put_credit,
+         call_short_strike, call_long_strike, call_credit,
+         contracts, spread_width, total_credit, max_loss, max_profit,
+         collateral_required, underlying_at_entry, expected_move,
+         status, open_time, open_date, dte_mode, account_type
+       ) VALUES ($1,$2,$3,$4,$5,$6,$15,$16,$17,$7,$8,$18,$9,$10,$11,$12,$13,
+                 'open', NOW(), ${CT_TODAY}, $14, 'sandbox')`,
+      [positionId, ticker, expiration, putShort, putLong, putCreditVal,
+       finalContracts, width, collateral,
+       Math.round(entryCredit * 100 * finalContracts * 100) / 100,
+       collateral, spot, em, bot.dte,
+       callShort, callLong,
+       callCreditVal,
+       entryCredit],
+    )
+    console.log(
+      `[scanner] ${bot.name.toUpperCase()} ${ticker}: ${finalContracts}x ${putLong}/${putShort}P ` +
+      `exp ${expiration} @ $${entryCredit.toFixed(2)} ` +
+      `(spot ${spot.toFixed(2)}, otm $${otmAbs}, wing $${width}, EM ${em.toFixed(2)}) ` +
+      `sizing: ${sizingLine}`,
+    )
 
-  void notifyTradeOpened(bot.name, positionId)
+    // Customer push (UAT #7): fire-and-forget, never throws into the trade path —
+    // notifyTradeOpened catches everything internally.
+    void mirrorOpenToCustomers({
+      botName: bot.name, positionId, ticker, expiration,
+      putShort, putLong, callShort, callLong,
+      spreadWidth: width, credit: entryCredit,
+    })
+
+    void notifyTradeOpened(bot.name, positionId)
+  }
 
   // ────────────────────────────────────────────────────────────────────────
   // LIVE ORDER — everything above this line is paper and always runs.
@@ -5670,6 +5705,9 @@ async function tryOpenFlameBook(
     }
   }
 
+  if (skipCustomerSide) {
+    return `${weekdaySkipLogTag(todayAbbrev)}${liveNote}`
+  }
   return `traded@${entryCredit.toFixed(2)}${liveNote}`
 }
 
