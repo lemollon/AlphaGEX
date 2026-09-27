@@ -231,6 +231,8 @@ class AgapeXrpPerpSignalGenerator:
                     spot_price=spot, timestamp=now, action=SignalAction.WAIT,
                     reasoning=f"BLOCKED_ORACLE_{oracle_advice}", oracle_advice=oracle_advice,
                 )
+        if getattr(self.config, "strategy_mode", "combined_signal") == "weekly_breakout":
+            return self._weekly_breakout_signal(now, spot, market_data, prophet_data)
         combined_signal = market_data.get("combined_signal", "WAIT")
         combined_confidence = market_data.get("combined_confidence", "LOW")
         action, side, reasoning = self._determine_action(combined_signal, combined_confidence, market_data)
@@ -268,6 +270,34 @@ class AgapeXrpPerpSignalGenerator:
             oracle_top_factors=prophet_data.get("top_factors", []),
             side=side, entry_price=spot, stop_loss=stop_loss,
             take_profit=take_profit, quantity=quantity, max_risk_usd=max_risk,
+        )
+
+    def _weekly_breakout_signal(self, now, spot, market_data, prophet_data):
+        """168h breakout entry, Asia/EU session only (trading/perp_strategies/weekly_breakout.py)."""
+        from trading.perp_strategies import weekly_breakout as wb
+
+        base = dict(
+            spot_price=spot, timestamp=now,
+            funding_rate=market_data.get("funding_rate", 0),
+            funding_regime=market_data.get("funding_regime", "UNKNOWN"),
+            oracle_advice=prophet_data.get("advice", "UNAVAILABLE"),
+            oracle_win_probability=prophet_data.get("win_probability", 0.5),
+        )
+        d = wb.decide_entry(self.config, self.config.ticker, self)
+        if d["direction"] == 0:
+            return AgapeXrpPerpSignal(**base, action=SignalAction.WAIT, reasoning=d["reason"])
+        sig = d["signal"]
+        side = "long" if d["direction"] == 1 else "short"
+        stop_loss = round(wb.initial_stop(spot, d["direction"], d["atr"], self.config.wb_stop_atr), 4)
+        quantity, max_risk = self._calculate_position_size(spot, stop_distance=abs(spot - stop_loss))
+        reasoning = (f"{d['reason']} close={sig.close:.4f} range=[{sig.lower:.4f},{sig.upper:.4f}] "
+                     f"atr={sig.atr:.4f} funding={market_data.get('funding_regime', 'UNKNOWN')}")
+        return AgapeXrpPerpSignal(
+            **base,
+            action=SignalAction.LONG if d["direction"] == 1 else SignalAction.SHORT,
+            confidence="MEDIUM", reasoning=reasoning,
+            side=side, entry_price=spot, stop_loss=stop_loss, take_profit=None,
+            quantity=quantity, max_risk_usd=max_risk,
         )
 
     @staticmethod
@@ -463,7 +493,7 @@ class AgapeXrpPerpSignalGenerator:
             parts.append(f"max_pain_dist={((mp - spot) / spot) * 100:+.1f}%")
         return " | ".join(parts)
 
-    def _calculate_position_size(self, spot_price: float) -> Tuple[float, float]:
+    def _calculate_position_size(self, spot_price: float, stop_distance: Optional[float] = None) -> Tuple[float, float]:
         """Calculate position size as XRP quantity (float) and max risk in USD.
 
         Returns:
@@ -472,8 +502,9 @@ class AgapeXrpPerpSignalGenerator:
         capital = self.config.starting_capital
         max_risk_usd = capital * (self.config.risk_per_trade_pct / 100)
 
-        # Stop distance based on 2% of spot * stop_loss_pct scaling
-        stop_distance = spot_price * 0.02 * (self.config.stop_loss_pct / 100)
+        # Stop distance: caller-supplied (e.g. ATR stop) or 2% of spot * stop_loss_pct scaling
+        if stop_distance is None:
+            stop_distance = spot_price * 0.02 * (self.config.stop_loss_pct / 100)
 
         if stop_distance <= 0:
             return (self.config.default_quantity, max_risk_usd)

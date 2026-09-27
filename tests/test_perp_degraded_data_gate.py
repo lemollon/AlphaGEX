@@ -56,6 +56,10 @@ def _make_generator(model_mod, config_name, signal_mod, generator_name, **cfg_ov
     models = importlib.import_module(model_mod)
     config_cls = getattr(models, config_name)
     generator_cls = getattr(importlib.import_module(signal_mod), generator_name)
+    # These tests exercise the legacy combined-signal path; XRP now defaults
+    # to the weekly-breakout engine, so pin the mode where the config has it.
+    if "strategy_mode" in getattr(config_cls, "__dataclass_fields__", {}):
+        cfg_overrides.setdefault("strategy_mode", "combined_signal")
     cfg = config_cls(**cfg_overrides)
     return cfg, generator_cls(cfg), models.TradingMode
 

@@ -62,7 +62,8 @@ class AgapeShibPerpConfig:
     starting_capital: float = 1000.0    # $1K starting capital (meme coin allocation)
     risk_per_trade_pct: float = 1.0     # 5% risk per trade
     max_quantity: float = 100000000.0   # Max SHIB per trade (100M)
-    max_open_positions: int = 2         # Conservative for meme coin
+    # One position at a time: the weekly-breakout backtest never stacks.
+    max_open_positions: int = 1
 
     # Position sizing - Perpetual contract specs (quantity-based)
     default_quantity: float = 1000000.0  # 1,000,000 SHIB default trade size
@@ -91,6 +92,18 @@ class AgapeShibPerpConfig:
 
     # Regime-aware exits feature flag (default off — current behaviour preserved).
     use_regime_aware_exits: bool = False
+
+    # Entry/exit engine: 168h breakout + ATR stop/trail, Asia/EU session only
+    # (trading/perp_strategies/weekly_breakout.py). Unfiltered SHIB breakouts
+    # are ~flat; the 22:00-09:59 UTC session filter gave PF 1.55 / 1.57 on
+    # the older/newer halves of 400d of hourly data. "combined_signal" = legacy.
+    strategy_mode: str = "weekly_breakout"
+    wb_lookback_hours: int = 168
+    wb_stop_atr: float = 2.5
+    wb_trail_atr: float = 2.0
+    wb_max_hold_hours: int = 72
+    wb_session_start_utc: int = 22
+    wb_session_hours: int = 12
     # Optional per-regime profile overrides; stored as JSON strings in
     # autonomous_config and parsed by get_chop_profile/get_trend_profile below.
     exit_profile_chop_json: Optional[str] = None
@@ -138,7 +151,7 @@ class AgapeShibPerpConfig:
     def load_from_db(cls, db) -> "AgapeShibPerpConfig":
         """Load config from database, falling back to defaults."""
         config = cls()
-        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries", "allow_degraded_data_trades"}
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries", "allow_degraded_data_trades", "strategy_mode", "wb_lookback_hours", "wb_stop_atr", "wb_trail_atr", "wb_max_hold_hours", "wb_session_start_utc", "wb_session_hours"}
         try:
             db_config = db.load_config()
             if db_config:
