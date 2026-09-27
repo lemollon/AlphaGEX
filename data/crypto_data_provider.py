@@ -23,6 +23,8 @@ from typing import Optional, Dict, List, Any, Tuple
 from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
 
+from data.free_funding import get_free_funding_rate
+
 logger = logging.getLogger(__name__)
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
@@ -1042,6 +1044,12 @@ class CryptoDataProvider:
                         shorts_above, key=lambda x: x.short_liquidation_usd
                     ).price_level
 
+        if snapshot.funding_rate is None:
+            # CoinGlass unavailable (plan lapsed / key missing): funding is
+            # public on every perp venue, so read it free rather than trading
+            # blind on funding_regime UNKNOWN.
+            snapshot.funding_rate = get_free_funding_rate(symbol)
+
         # Only query Deribit options for currencies Deribit actually lists.
         # Calling get_options_chain_data on unsupported symbols (XRP, DOGE,
         # SHIB, AVAX, LINK, LTC, BCH) returns HTTP 400 and spams logs; the
@@ -1079,10 +1087,12 @@ class CryptoDataProvider:
         return snapshot
 
     def get_funding_rate(self, symbol: str = "ETH") -> Optional[FundingRate]:
-        """Get current funding rate."""
+        """Get current funding rate (CoinGlass, else free exchange APIs)."""
         if self._coinglass:
-            return self._coinglass.get_funding_rate(symbol)
-        return None
+            rate = self._coinglass.get_funding_rate(symbol)
+            if rate is not None:
+                return rate
+        return get_free_funding_rate(symbol)
 
     def get_liquidations(self, symbol: str = "ETH") -> List[LiquidationCluster]:
         """Get liquidation cluster data."""
