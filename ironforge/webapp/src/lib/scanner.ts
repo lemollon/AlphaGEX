@@ -8698,6 +8698,27 @@ async function scanBot(bot: BotDef): Promise<void> {
       }
     }
 
+    // CALLDIAG — IWM 10d/20d call diagonal, PAPER sleeve unlocked per-account
+    // at CALLDIAG_MIN_EQUITY (default $7,500, env CALLDIAG_MODE=off by
+    // default). Entry at 09:35 ET, exit at 15:59 ET of the last session
+    // before front expiry; both no-op every other minute. See
+    // lib/calldiag-tracker.ts's header — never places a real order in this
+    // PR under any mode. Scoped to bot.name === 'flame' since this sleeve
+    // rides FLAME's own account list (resolveEligibleAccounts('flame')) and
+    // FLINT's floor infrastructure; wrapped so a failure here never takes
+    // FLAME's own put-side cycle down.
+    if (bot.name === 'flame') {
+      try {
+        const { runCallDiagEntryTick, runCallDiagExitTick } = await import('./calldiag-tracker')
+        const cdExit = await runCallDiagExitTick(ct)
+        if (cdExit) console.log(`[scanner] ${cdExit}`)
+        const cdEntry = await runCallDiagEntryTick(ct)
+        if (cdEntry) console.log(`[scanner] ${cdEntry}`)
+      } catch (e) {
+        console.error('[scanner] CALLDIAG paper tracker failed:', e)
+      }
+    }
+
     // BACKSTOP. The pass above owns the normal case; this one owns everything else.
     // An expired contract that is still `status = 'open'` is ALWAYS wrong, whatever
     // the cause, and it blocks every entry until a human notices — SPARK lost three

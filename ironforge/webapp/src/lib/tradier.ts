@@ -650,6 +650,46 @@ export async function getOptionExpirations(
   return Array.isArray(dates) ? dates : [dates]
 }
 
+/**
+ * Full NBBO chain (every strike, both rights) for ONE expiration — used by
+ * CallDiag (calldiag-tracker.ts) to build the front chain's implied spot/ATM
+ * straddle and to locate its short/long strikes. Distinct from
+ * getOptionChainForGex (which returns only gamma/OI, no bid/ask, across
+ * MULTIPLE expirations) and getOptionQuote (a single already-known strike).
+ * Never throws; returns [] on any fetch failure or an empty chain.
+ */
+export interface OptionChainQuoteRow {
+  strike: number
+  cp: 'C' | 'P'
+  bid: number
+  ask: number
+}
+
+export async function getOptionChainQuotes(
+  symbol: string,
+  expiration: string,
+): Promise<OptionChainQuoteRow[]> {
+  const data = await tradierGet('/markets/options/chains', { symbol, expiration })
+  if (!data) return []
+  let opts = data.options?.option
+  if (!opts) return []
+  if (!Array.isArray(opts)) opts = [opts]
+  const rows: OptionChainQuoteRow[] = []
+  for (const o of opts) {
+    const strikeRaw = o?.strike
+    const bidRaw = o?.bid
+    const askRaw = o?.ask
+    if (strikeRaw == null || bidRaw == null || askRaw == null) continue
+    const strike = typeof strikeRaw === 'number' ? strikeRaw : parseFloat(String(strikeRaw))
+    const bid = typeof bidRaw === 'number' ? bidRaw : parseFloat(String(bidRaw))
+    const ask = typeof askRaw === 'number' ? askRaw : parseFloat(String(askRaw))
+    if (!Number.isFinite(strike) || !Number.isFinite(bid) || !Number.isFinite(ask)) continue
+    const cp: 'C' | 'P' = String(o.option_type || '').toLowerCase() === 'call' ? 'C' : 'P'
+    rows.push({ strike, cp, bid, ask })
+  }
+  return rows
+}
+
 /* ------------------------------------------------------------------ */
 /*  Regime hedge — SPY put-debit-spread placement (Phase 3)            */
 /*  Reuses the live IC multileg path (sandboxPost). The CALLER owns    */
@@ -4610,7 +4650,7 @@ async function getFlamePutMarginToday(person: string, accountType: 'production' 
  * must read floors from this same table — never a second, divergent floor
  * for the same account.
  */
-async function getOrSeedFlintAccountFloor(
+export async function getOrSeedFlintAccountFloor(
   person: string,
   accountType: 'sandbox' | 'production',
   accountId: string | null,
