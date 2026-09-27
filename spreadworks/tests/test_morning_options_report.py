@@ -146,7 +146,7 @@ async def test_cloud_run_persists_one_atomic_plan_and_posts_digest(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_generation_error_publishes_empty_failed_closed_plan(monkeypatch):
+async def test_generation_error_publishes_deterministic_fallback_plan(monkeypatch):
     now = datetime(2026, 9, 22, 12, 0, 5, tzinfo=UTC)
     stored: dict = {}
 
@@ -179,8 +179,10 @@ async def test_generation_error_publishes_empty_failed_closed_plan(monkeypatch):
 
     result = await report.run_morning_options_report(SimpleNamespace(), now=now)
 
-    assert result["run_status"] == "FAILED_CLOSED"
-    assert stored["symbols"] == []
+    # Since #3068 a model failure publishes a fresh-data-only plan with no
+    # actionable setups instead of failing closed.
+    assert result["run_status"] == "SUCCESS"
+    assert stored["payload"]["generation_mode"] == "deterministic_fresh_data"
     assert stored["setups"] == []
     assert "provider unavailable" not in stored["payload"]["reason"]
 
@@ -206,3 +208,175 @@ def test_register_arms_exact_central_time_schedule(monkeypatch):
     assert cron[2]["minute"] == "0,10,20"
     assert cron[2]["day_of_week"] == "mon-fri"
     assert cron[2]["max_instances"] == 1
+
+
+# ---- model-call hardening -------------------------------------------------
+
+class _Block(SimpleNamespace):
+    pass
+
+
+class _FakeStream:
+    def __init__(self, message):
+        self._message = message
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def get_final_message(self):
+        if isinstance(self._message, Exception):
+            raise self._message
+        return self._message
+
+
+class _FakeClient:
+    def __init__(self, responses, calls, init_kwargs=None):
+        self._responses = responses
+        self.calls = calls
+        self.init_kwargs = init_kwargs or {}
+        self.messages = self
+
+    def with_options(self, **kwargs):
+        self.calls.append(("options", kwargs))
+        return self
+
+    def stream(self, **kwargs):
+        self.calls.append(("stream", kwargs))
+        return _FakeStream(self._responses.pop(0))
+
+
+def _install_fake_anthropic(monkeypatch, responses):
+    import sys
+    calls: list = []
+    holder: dict = {}
+
+    def factory(**kwargs):
+        holder["client"] = _FakeClient(responses, calls, kwargs)
+        return holder["client"]
+
+    monkeypatch.setitem(sys.modules, "anthropic", SimpleNamespace(Anthropic=factory))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    return calls, holder
+
+
+def _msg(stop_reason, *texts):
+    return SimpleNamespace(
+        stop_reason=stop_reason,
+        content=[_Block(type="text", text=t) for t in texts],
+    )
+
+
+def test_claude_request_streams_with_retries_and_long_timeout(monkeypatch):
+    calls, holder = _install_fake_anthropic(monkeypatch, [_msg("end_turn", '{"confidence": 60}')])
+    monkeypatch.delenv("MORNING_OPTIONS_MODEL_TIMEOUT_SECONDS", raising=False)
+
+    assert report._claude_request("p") == {"confidence": 60}
+    assert holder["client"].init_kwargs["max_retries"] == 2
+    assert holder["client"].init_kwargs["timeout"] >= 240
+    stream_kwargs = [c[1] for c in calls if c[0] == "stream"][0]
+    assert stream_kwargs["tools"][0]["name"] == "web_search"
+
+
+def test_claude_request_resumes_pause_turn(monkeypatch):
+    paused = _msg("pause_turn", "searching...")
+    calls, _ = _install_fake_anthropic(monkeypatch, [paused, _msg("end_turn", '{"confidence": 70}')])
+
+    assert report._claude_request("p") == {"confidence": 70}
+    streams = [c[1] for c in calls if c[0] == "stream"]
+    assert len(streams) == 2
+    assert streams[1]["messages"][1] == {"role": "assistant", "content": paused.content}
+
+
+def test_claude_request_falls_back_to_plain_request(monkeypatch):
+    calls, _ = _install_fake_anthropic(
+        monkeypatch, [RuntimeError("tool rejected"), _msg("end_turn", '{"confidence": 55}')],
+    )
+    assert report._claude_request("p") == {"confidence": 55}
+    streams = [c[1] for c in calls if c[0] == "stream"]
+    assert "tools" in streams[0] and "tools" not in streams[1]
+
+
+def test_claude_request_stops_at_deadline(monkeypatch):
+    calls, _ = _install_fake_anthropic(monkeypatch, [])
+    monkeypatch.setenv("MORNING_OPTIONS_MODEL_DEADLINE_SECONDS", "0")
+    with pytest.raises(RuntimeError, match="TimeoutError"):
+        report._claude_request("p")
+    assert not [c for c in calls if c[0] == "stream"]
+
+
+def _patch_run(monkeypatch, existing, research):
+    stored: dict = {}
+    posted: list = []
+    monkeypatch.setattr(report, "is_market_holiday", lambda _day: False)
+    monkeypatch.setattr(report, "_latest_plan_payload", lambda _day: existing)
+    monkeypatch.setattr(report, "_load_trading_volatility_context", lambda _now: {
+        "available": False, "top_setups": [],
+    })
+
+    async def collect(_app, symbols, _now):
+        return {symbol: _evidence(symbol) for symbol in symbols}
+
+    def store(trading_date, symbols, setups, payload, *, ingested_at):
+        stored.update(symbols=symbols, setups=setups, payload=payload)
+        return {
+            "trading_date": trading_date.isoformat(), "persisted": True,
+            "registered_symbol_count": 0, "registered_setup_count": 0,
+            "registered_total_symbol_count": 4, "plan_hash": "c" * 64,
+            "ingested_at": ingested_at.isoformat(), "parity": {"valid": True},
+        }
+
+    monkeypatch.setattr(report, "_collect_market_evidence", collect)
+    monkeypatch.setattr(report, "_generate_research", research)
+    monkeypatch.setattr(report, "store_morning_plan_atomic", store)
+    monkeypatch.setattr(report, "_send_discord", lambda payload: posted.append(payload) or False)
+    monkeypatch.setattr(report, "_update_delivery", lambda *_args, **_kwargs: None)
+    return stored, posted
+
+
+_FALLBACK_PLAN = {
+    "generated_by": report.GENERATOR_ID, "run_status": "SUCCESS",
+    "generation_mode": "deterministic_fresh_data", "attempt": 1,
+    "symbols": [], "setups": [], "plan_hash": "a" * 64,
+}
+
+
+async def test_retry_tick_upgrades_fallback_plan_when_model_answers(monkeypatch):
+    now = datetime(2026, 9, 22, 12, 10, 5, tzinfo=timezone.utc)
+
+    async def ok(*_args):
+        return report._deterministic_research({"available": False}, {}, "")
+
+    stored, _ = _patch_run(monkeypatch, dict(_FALLBACK_PLAN), ok)
+    result = await report.run_morning_options_report(SimpleNamespace(), now=now)
+
+    assert not result.get("skipped")
+    assert stored["payload"]["generation_mode"] == "model_enriched"
+    assert stored["payload"]["attempt"] == 2
+
+
+async def test_retry_tick_keeps_fallback_plan_when_model_fails_again(monkeypatch):
+    now = datetime(2026, 9, 22, 12, 10, 5, tzinfo=timezone.utc)
+
+    async def fail(*_args):
+        raise RuntimeError("still down")
+
+    stored, posted = _patch_run(monkeypatch, dict(_FALLBACK_PLAN), fail)
+    result = await report.run_morning_options_report(SimpleNamespace(), now=now)
+
+    assert result["skipped"] is True
+    assert stored == {} and posted == []
+
+
+async def test_model_enriched_plan_still_blocks_retry_ticks(monkeypatch):
+    now = datetime(2026, 9, 22, 12, 10, 5, tzinfo=timezone.utc)
+    existing = dict(_FALLBACK_PLAN, generation_mode="model_enriched")
+
+    async def never(*_args):
+        raise AssertionError("should not regenerate")
+
+    stored, _ = _patch_run(monkeypatch, existing, never)
+    result = await report.run_morning_options_report(SimpleNamespace(), now=now)
+    assert result["skipped"] is True and stored == {}
