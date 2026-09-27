@@ -66,7 +66,8 @@ class AgapeXrpPerpConfig:
     default_quantity: float = 100.0     # 100 XRP per trade
     min_quantity: float = 1.0           # Minimum 1 XRP
     max_quantity: float = 50000.0       # Maximum 50,000 XRP
-    max_open_positions: int = 3
+    # One position at a time: the weekly-breakout backtest never stacks.
+    max_open_positions: int = 1
 
     # Perpetual contract specs
     tick_size: float = 0.0001           # Minimum price increment
@@ -92,6 +93,15 @@ class AgapeXrpPerpConfig:
 
     # Regime-aware exits feature flag (default off — current behaviour preserved).
     use_regime_aware_exits: bool = False
+
+    # Entry/exit engine. "weekly_breakout" = 168h Donchian breakout with ATR
+    # stop + ATR trail (trading/perp_strategies/weekly_breakout.py), chosen by
+    # walk-forward search; "combined_signal" = legacy GEX/funding path.
+    strategy_mode: str = "weekly_breakout"
+    wb_lookback_hours: int = 168
+    wb_stop_atr: float = 2.5
+    wb_trail_atr: float = 2.0
+    wb_max_hold_hours: int = 72
     # Optional per-regime profile overrides; stored as JSON strings in
     # autonomous_config and parsed by get_chop_profile/get_trend_profile below.
     exit_profile_chop_json: Optional[str] = None
@@ -140,7 +150,7 @@ class AgapeXrpPerpConfig:
     def load_from_db(cls, db) -> "AgapeXrpPerpConfig":
         """Load config from database, falling back to defaults."""
         config = cls()
-        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries", "allow_degraded_data_trades"}
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries", "allow_degraded_data_trades", "strategy_mode", "wb_lookback_hours", "wb_stop_atr", "wb_trail_atr", "wb_max_hold_hours"}
         try:
             db_config = db.load_config()
             if db_config:
