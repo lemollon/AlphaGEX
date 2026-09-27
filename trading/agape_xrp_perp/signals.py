@@ -273,11 +273,7 @@ class AgapeXrpPerpSignalGenerator:
         )
 
     def _weekly_breakout_signal(self, now, spot, market_data, prophet_data):
-        """168h breakout entry (see trading/perp_strategies/weekly_breakout.py).
-
-        Acts at most once per closed hourly candle; the stop is set from ATR so
-        sizing risks risk_per_trade_pct of capital at the stop.
-        """
+        """168h breakout entry, Asia/EU session only (trading/perp_strategies/weekly_breakout.py)."""
         from trading.perp_strategies import weekly_breakout as wb
 
         base = dict(
@@ -287,26 +283,18 @@ class AgapeXrpPerpSignalGenerator:
             oracle_advice=prophet_data.get("advice", "UNAVAILABLE"),
             oracle_win_probability=prophet_data.get("win_probability", 0.5),
         )
-        try:
-            candles = wb.fetch_hourly_candles(self.config.ticker)
-        except Exception as e:  # noqa: BLE001
-            return AgapeXrpPerpSignal(**base, action=SignalAction.WAIT, reasoning=f"WB_CANDLES_UNAVAILABLE_{type(e).__name__}")
-        sig = wb.evaluate(candles, lookback=self.config.wb_lookback_hours)
-        if sig.direction == 0:
-            return AgapeXrpPerpSignal(**base, action=SignalAction.WAIT, reasoning=f"WB_{sig.reason}")
-        if sig.candle_ts == getattr(self, "_wb_last_candle_ts", None):
-            return AgapeXrpPerpSignal(**base, action=SignalAction.WAIT, reasoning="WB_ALREADY_ACTED_THIS_CANDLE")
-        self._wb_last_candle_ts = sig.candle_ts
-
-        side = "long" if sig.direction == 1 else "short"
-        stop_loss = round(wb.initial_stop(spot, sig.direction, sig.atr, self.config.wb_stop_atr), 4)
+        d = wb.decide_entry(self.config, self.config.ticker, self)
+        if d["direction"] == 0:
+            return AgapeXrpPerpSignal(**base, action=SignalAction.WAIT, reasoning=d["reason"])
+        sig = d["signal"]
+        side = "long" if d["direction"] == 1 else "short"
+        stop_loss = round(wb.initial_stop(spot, d["direction"], d["atr"], self.config.wb_stop_atr), 4)
         quantity, max_risk = self._calculate_position_size(spot, stop_distance=abs(spot - stop_loss))
-        reasoning = (f"WEEKLY_BREAKOUT_{sig.reason} close={sig.close:.4f} "
-                     f"range=[{sig.lower:.4f},{sig.upper:.4f}] atr={sig.atr:.4f} "
-                     f"funding={market_data.get('funding_regime', 'UNKNOWN')}")
+        reasoning = (f"{d['reason']} close={sig.close:.4f} range=[{sig.lower:.4f},{sig.upper:.4f}] "
+                     f"atr={sig.atr:.4f} funding={market_data.get('funding_regime', 'UNKNOWN')}")
         return AgapeXrpPerpSignal(
             **base,
-            action=SignalAction.LONG if sig.direction == 1 else SignalAction.SHORT,
+            action=SignalAction.LONG if d["direction"] == 1 else SignalAction.SHORT,
             confidence="MEDIUM", reasoning=reasoning,
             side=side, entry_price=spot, stop_loss=stop_loss, take_profit=None,
             quantity=quantity, max_risk_usd=max_risk,

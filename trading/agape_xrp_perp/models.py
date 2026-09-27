@@ -102,6 +102,10 @@ class AgapeXrpPerpConfig:
     wb_stop_atr: float = 2.5
     wb_trail_atr: float = 2.0
     wb_max_hold_hours: int = 72
+    # Only enter on breakouts whose candle starts 22:00-09:59 UTC (Asia/EU);
+    # US-hours breakouts carried the losses in the 400d study.
+    wb_session_start_utc: int = 22
+    wb_session_hours: int = 12
     # Optional per-regime profile overrides; stored as JSON strings in
     # autonomous_config and parsed by get_chop_profile/get_trend_profile below.
     exit_profile_chop_json: Optional[str] = None
@@ -150,7 +154,7 @@ class AgapeXrpPerpConfig:
     def load_from_db(cls, db) -> "AgapeXrpPerpConfig":
         """Load config from database, falling back to defaults."""
         config = cls()
-        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries", "allow_degraded_data_trades", "strategy_mode", "wb_lookback_hours", "wb_stop_atr", "wb_trail_atr", "wb_max_hold_hours"}
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries", "allow_degraded_data_trades", "strategy_mode", "wb_lookback_hours", "wb_stop_atr", "wb_trail_atr", "wb_max_hold_hours", "wb_session_start_utc", "wb_session_hours"}
         try:
             db_config = db.load_config()
             if db_config:

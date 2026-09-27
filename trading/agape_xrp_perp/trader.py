@@ -279,37 +279,7 @@ class AgapeXrpPerpTrader:
     def _manage_weekly_breakout(self, pos, current_price, now):
         """ATR stop + ATR trailing stop + time exit for weekly-breakout entries."""
         from trading.perp_strategies import weekly_breakout as wb
-
-        entry = pos["entry_price"]
-        best = pos.get("high_water_mark") or entry
-        if pos["side"] == "long":
-            best = max(best, current_price)
-        else:
-            best = min(best, current_price)
-        should_close, reason, new_stop = wb.exit_decision(
-            side=pos["side"], entry=entry, stop_loss=pos["stop_loss"],
-            current_stop=pos.get("current_stop"), best_price=best, price=current_price,
-            stop_atr=self.config.wb_stop_atr, trail_atr=self.config.wb_trail_atr,
-        )
-        if should_close:
-            return self._close_position(pos, current_price, reason)
-        if new_stop != pos.get("current_stop"):
-            self.db._execute(
-                "UPDATE agape_xrp_perp_positions SET trailing_active = TRUE, current_stop = %s "
-                "WHERE position_id = %s AND status = 'open'",
-                (round(new_stop, 4), pos["position_id"]),
-            )
-        open_time = pos.get("open_time")
-        if open_time:
-            try:
-                ot = datetime.fromisoformat(open_time) if isinstance(open_time, str) else open_time
-                if ot.tzinfo is None:
-                    ot = ot.replace(tzinfo=CENTRAL_TZ)
-                if (now - ot).total_seconds() / 3600 >= self.config.wb_max_hold_hours:
-                    return self._close_position(pos, current_price, "MAX_HOLD_TIME")
-            except (ValueError, TypeError):
-                pass
-        return False
+        return wb.manage_open_position(self, "agape_xrp_perp_positions", pos, current_price, now, CENTRAL_TZ)
 
     def _manage_no_loss_trailing(self, pos, current_price, now):
         if getattr(self.config, "use_regime_aware_exits", False):

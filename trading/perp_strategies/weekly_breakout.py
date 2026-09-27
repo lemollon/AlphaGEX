@@ -130,3 +130,126 @@ def exit_decision(side: str, entry: float, stop_loss: float, current_stop: Optio
         reason = "WB_TRAIL_STOP" if locked_profit else "WB_STOP"
         return True, reason, stop
     return False, "", stop
+
+
+# ---------------------------------------------------------------------------
+# Session filter
+#
+# Loss clustering (400d OKX hourly, 168h breakout, 2.5/2.0 ATR):
+#   XRP  breakouts starting 22:00-09:59 UTC: PF 3.14 older 60% / 2.42 newer 40%
+#        breakouts starting 10:00-21:59 UTC: ~break-even, carried the losses
+#   SHIB same window: PF 1.55 / 1.57 (unfiltered SHIB is ~flat)
+# Any 12h window starting 21:00-00:00 UTC holds on both halves; windows
+# starting >=01:00 fail on the older half. 22:00 is the middle of the plateau.
+# Replayed with the live module + shadowing (see decide_entry):
+#   XRP  46 trades, PF 2.60 (older 3.19 / newer 2.05) vs unfiltered 1.56 / 1.72
+#   SHIB 41 trades, PF 1.48 (older 1.42 / newer 1.57) vs unfiltered 1.13 / 1.18
+# ---------------------------------------------------------------------------
+
+def in_session(candle_ts: int, start_hour_utc: int, hours: int) -> bool:
+    """True when the candle's UTC start hour lies in [start, start+hours)."""
+    if hours >= 24:
+        return True
+    hour = (int(candle_ts) // HOUR) % 24
+    return (hour - start_hour_utc) % 24 < hours
+
+
+def _advance_shadow(shadow: Dict, candles: List[Dict], config) -> bool:
+    """Walk an out-of-session "shadow" breakout forward over closed candles.
+
+    Returns True while the shadow is still open. Same bar-level rules as the
+    backtest: adverse extreme checked first, then best price and trail update,
+    then the time exit.
+    """
+    side = shadow["side"]
+    direction = 1 if side == "long" else -1
+    for k in candles:
+        if k["ts"] <= shadow["last_ts"]:
+            continue
+        worst = k["l"] if direction == 1 else k["h"]
+        closed, _, shadow["stop"] = exit_decision(
+            side, shadow["entry"], shadow["stop_loss"], shadow["stop"], shadow["best"], worst,
+            config.wb_stop_atr, config.wb_trail_atr)
+        if closed:
+            return False
+        shadow["best"] = max(shadow["best"], k["h"]) if direction == 1 else min(shadow["best"], k["l"])
+        _, _, shadow["stop"] = exit_decision(
+            side, shadow["entry"], shadow["stop_loss"], shadow["stop"], shadow["best"], k["c"],
+            config.wb_stop_atr, config.wb_trail_atr)
+        shadow["last_ts"] = k["ts"]
+        if (k["ts"] - shadow["entry_ts"]) / HOUR >= config.wb_max_hold_hours:
+            return False
+    return True
+
+
+def decide_entry(config, ticker: str, holder) -> Dict:
+    """Full entry decision for a bot config carrying wb_* settings.
+
+    Session filter with shadowing: a breakout outside the session is not
+    traded, but it is tracked as a shadow position and blocks new entries
+    until it would have exited. Simply skipping it frees the slot for later,
+    weaker breakouts (replay: XRP PF 2.11, SHIB 1.09), while shadowing keeps
+    the measured edge (XRP PF 2.60, SHIB 1.48; both halves better than
+    unfiltered).
+
+    `holder` keeps state: `_wb_last_candle_ts` (act once per candle) and
+    `_wb_shadow` (in-memory; a restart simply drops it).
+    """
+    try:
+        candles = fetch_hourly_candles(ticker)
+    except Exception as e:  # noqa: BLE001
+        return {"direction": 0, "reason": f"WB_CANDLES_UNAVAILABLE_{type(e).__name__}"}
+    shadow = getattr(holder, "_wb_shadow", None)
+    if shadow:
+        if _advance_shadow(shadow, candles, config):
+            return {"direction": 0, "reason": "WB_SHADOW_ACTIVE"}
+        holder._wb_shadow = None
+    sig = evaluate(candles, lookback=config.wb_lookback_hours)
+    if sig.direction == 0:
+        return {"direction": 0, "reason": f"WB_{sig.reason}", "signal": sig}
+    if sig.candle_ts == getattr(holder, "_wb_last_candle_ts", None):
+        return {"direction": 0, "reason": "WB_ALREADY_ACTED_THIS_CANDLE", "signal": sig}
+    holder._wb_last_candle_ts = sig.candle_ts
+    if not in_session(sig.candle_ts, config.wb_session_start_utc, config.wb_session_hours):
+        stop = initial_stop(sig.close, sig.direction, sig.atr, config.wb_stop_atr)
+        holder._wb_shadow = {
+            "side": "long" if sig.direction == 1 else "short", "entry": sig.close,
+            "stop_loss": stop, "stop": None, "best": sig.close,
+            "entry_ts": sig.candle_ts, "last_ts": sig.candle_ts,
+        }
+        return {"direction": 0, "reason": "WB_OUTSIDE_SESSION_SHADOWED", "signal": sig}
+    return {"direction": sig.direction, "reason": f"WEEKLY_BREAKOUT_{sig.reason}", "atr": sig.atr, "signal": sig}
+
+
+def manage_open_position(trader, table: str, pos: Dict, price: float, now, tz) -> bool:
+    """ATR stop + trailing stop + time exit. Returns True when closed."""
+    from datetime import datetime
+
+    cfg = trader.config
+    entry = pos["entry_price"]
+    best = pos.get("high_water_mark") or entry
+    best = max(best, price) if pos["side"] == "long" else min(best, price)
+    should_close, reason, new_stop = exit_decision(
+        side=pos["side"], entry=entry, stop_loss=pos["stop_loss"],
+        current_stop=pos.get("current_stop"), best_price=best, price=price,
+        stop_atr=cfg.wb_stop_atr, trail_atr=cfg.wb_trail_atr,
+    )
+    if should_close:
+        return trader._close_position(pos, price, reason)
+    if new_stop != pos.get("current_stop"):
+        trader.db._execute(
+            f"UPDATE {table} SET trailing_active = TRUE, current_stop = %s "
+            "WHERE position_id = %s AND status = 'open'",
+            (float(new_stop), pos["position_id"]),
+        )
+    open_time = pos.get("open_time")
+    if open_time:
+        try:
+            ot = datetime.fromisoformat(open_time) if isinstance(open_time, str) else open_time
+            if ot.tzinfo is None:
+                ot = ot.replace(tzinfo=tz)
+            if (now - ot).total_seconds() / 3600 >= cfg.wb_max_hold_hours:
+                return trader._close_position(pos, price, "MAX_HOLD_TIME")
+        except (ValueError, TypeError):
+            pass
+    return False
