@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import re
+import time as time_mod
 from datetime import date, datetime, time, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -264,16 +265,34 @@ def _extract_json(text: str) -> dict[str, Any]:
     return parsed
 
 
+def _final_text(message: Any) -> str:
+    """Last non-empty text block of a response (the JSON answer comes last)."""
+    text = ""
+    for block in getattr(message, "content", None) or []:
+        if getattr(block, "type", None) == "text" and getattr(block, "text", None):
+            text = block.text.strip()
+    return text
+
+
 def _claude_request(prompt: str) -> dict[str, Any]:
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is not configured")
     import anthropic
 
-    timeout = float(os.getenv("MORNING_OPTIONS_MODEL_TIMEOUT_SECONDS", "45"))
-    client = anthropic.Anthropic(api_key=api_key, timeout=timeout, max_retries=0)
+    # Web-search requests routinely run past a minute, so the old 45s
+    # non-streaming, no-retry call timed out most mornings. Stream the
+    # response (no idle-connection cutoffs), let the SDK retry transient
+    # 408/409/429/5xx/connection errors, and bound the whole enrichment by a
+    # wall-clock deadline so the report still lands well before the open.
+    timeout = float(os.getenv("MORNING_OPTIONS_MODEL_TIMEOUT_SECONDS", "240"))
+    max_retries = int(os.getenv("MORNING_OPTIONS_MODEL_MAX_RETRIES", "2"))
+    deadline = time_mod.monotonic() + float(
+        os.getenv("MORNING_OPTIONS_MODEL_DEADLINE_SECONDS", "600")
+    )
+    max_continuations = 4
+    client = anthropic.Anthropic(api_key=api_key, timeout=timeout, max_retries=max_retries)
     model = os.getenv("MORNING_OPTIONS_MODEL", "claude-sonnet-4-6")
-    text = ""
 
     # First try the richer request with web search. Some provider/model
     # combinations reject the web-search tool schema, so fall back immediately
@@ -284,24 +303,39 @@ def _claude_request(prompt: str) -> dict[str, Any]:
     )
     last_exc: Exception | None = None
     for extra in attempts:
+        messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
         try:
-            response = client.messages.create(
-                model=model,
-                max_tokens=5000,
-                messages=[{"role": "user", "content": prompt}],
-                **extra,
-            )
-            for block in response.content:
-                if getattr(block, "type", None) == "text" and getattr(block, "text", None):
-                    text = block.text.strip()
-            if text:
-                return _extract_json(text)
+            for _ in range(max_continuations + 1):
+                remaining = deadline - time_mod.monotonic()
+                if remaining < 15:
+                    raise TimeoutError("model enrichment deadline reached")
+                with client.with_options(timeout=min(timeout, remaining)).messages.stream(
+                    model=model,
+                    max_tokens=16000,
+                    messages=messages,
+                    **extra,
+                ) as stream:
+                    response = stream.get_final_message()
+                if response.stop_reason == "pause_turn":
+                    # Server-side web search paused a long turn; resume it.
+                    messages = [
+                        {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": response.content},
+                    ]
+                    continue
+                text = _final_text(response)
+                if text:
+                    return _extract_json(text)
+                raise ValueError(f"empty model response (stop_reason={response.stop_reason})")
+            raise TimeoutError("model enrichment exceeded pause_turn continuations")
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
             logger.warning(
                 "[MorningOptions] model enrichment attempt failed: %s",
                 type(exc).__name__,
             )
+            if isinstance(exc, TimeoutError):
+                break  # deadline spent; don't start the plain-JSON attempt
     raise RuntimeError(
         f"model enrichment unavailable ({type(last_exc).__name__ if last_exc else 'empty_response'})"
     )
@@ -721,7 +755,10 @@ async def run_morning_options_report(app: Any, *, now: datetime | None = None,
     )
     existing = await asyncio.to_thread(_latest_plan_payload, trading_date)
     if (not force and existing and existing.get("generated_by") == GENERATOR_ID
-            and existing.get("run_status") in {"SUCCESS", "SKIPPED_MARKET_CLOSED"}):
+            and existing.get("run_status") in {"SUCCESS", "SKIPPED_MARKET_CLOSED"}
+            and existing.get("generation_mode") != "deterministic_fresh_data"):
+        # A deterministic fallback plan is not final: the 07:10/07:20 ticks
+        # retry model enrichment and replace it if the model answers.
         result = {"skipped": True, "reason": "cloud morning plan already completed", **existing}
         _LAST_RUN.update(
             finished_at=datetime.now(UTC).isoformat(), run_status=existing.get("run_status"),
@@ -772,6 +809,19 @@ async def run_morning_options_report(app: Any, *, now: datetime | None = None,
                 f"{type(exc).__name__}: optional enrichment failed",
             )
             research["generation_mode"] = "deterministic_fresh_data"
+            if (existing and existing.get("generated_by") == GENERATOR_ID
+                    and existing.get("run_status") == "SUCCESS"
+                    and existing.get("generation_mode") == "deterministic_fresh_data"):
+                # Retry tick fell back again: keep the plan already published
+                # instead of re-storing it and re-posting Discord.
+                _LAST_RUN.update(
+                    finished_at=datetime.now(UTC).isoformat(), run_status="SUCCESS",
+                    reason="model enrichment retry failed; kept existing fallback plan",
+                    plan_hash=existing.get("plan_hash"),
+                )
+                return {"skipped": True,
+                        "reason": "model enrichment retry failed; kept existing fallback plan",
+                        **existing}
         symbols, setups, rejected = _normalize_plan(research, evidence, trading_date, started)
         report = _report_markdown(
             started, research, symbols, setups, rejected, universe_source, trimmed_tv,
