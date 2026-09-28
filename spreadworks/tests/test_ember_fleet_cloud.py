@@ -194,7 +194,85 @@ def test_all_enabled_jobs_are_registered(monkeypatch):
     assert {
         "ember_call_diag_cycle", "ember_night_shift_cycle", "ember_divhike_cycle",
         "ember_tv_book_cycle", "ember_spike_enter_cycle", "ember_spike_manage_cycle",
+        "ember_tv_book_daily_curves_cycle",
     }.issubset(ids)
+    daily_curves_kwargs = next(
+        kwargs for _, _, kwargs in scheduler.jobs if kwargs["id"] == "ember_tv_book_daily_curves_cycle"
+    )
+    assert daily_curves_kwargs["hour"] == "7" and daily_curves_kwargs["minute"] == "55"
+
+
+def test_tv_book_daily_curves_job_is_gated_on_tv_book_enabled(monkeypatch):
+    """The daily-curves job has no enabled flag of its own -- it exists only to serve tv_book's
+    own intraday ticks, so it must be registered iff tv_book itself is enabled (2026-09-28
+    daily-cache redesign: fixes the job-name-to-spec-name mapping in register() to route
+    "tv_book_daily_curves" -> SPECS["tv_book"], the same way "spike_enter"/"spike_manage"
+    already route to SPECS["spike"])."""
+    for spec in fleet.SPECS.values():
+        monkeypatch.setenv(spec.enabled_env, "1")
+    monkeypatch.setenv(fleet.SPECS["tv_book"].enabled_env, "0")
+
+    class Scheduler:
+        def __init__(self):
+            self.jobs = []
+
+        def add_job(self, func, trigger, **kwargs):
+            self.jobs.append((func, trigger, kwargs))
+
+    scheduler = Scheduler()
+    fleet.register(scheduler)
+    ids = {kwargs["id"] for _, _, kwargs in scheduler.jobs}
+    assert "ember_tv_book_cycle" not in ids
+    assert "ember_tv_book_daily_curves_cycle" not in ids
+
+
+def test_tv_book_daily_curves_uses_its_own_lock_not_run(monkeypatch):
+    """Unlike every other scheduled cycle, run_tv_book_daily_curves() must NOT go through
+    _run() (no tv_book state hydration, no live validation, no agent-runtime broker lock, no
+    spec.runner() order-placing call -- this warms a cache, it doesn't trade) and must take a
+    lock distinct from "tv_book" itself, so a slow daily pass can never contend with tv_book's
+    own regular tick for the same advisory lock."""
+    monkeypatch.setenv(fleet.SPECS["tv_book"].enabled_env, "1")
+    run_calls = []
+    monkeypatch.setattr(fleet, "_run", lambda *a, **k: run_calls.append((a, k)))
+    lock_calls = []
+    monkeypatch.setattr(fleet, "_acquire_lock", lambda name, **k: lock_calls.append(name) or object())
+    monkeypatch.setattr(fleet, "_release_lock", lambda db, name: None)
+    scanner_calls = []
+    monkeypatch.setattr(fleet, "_run_tv_scanner_daily_curves", lambda: scanner_calls.append(True))
+
+    fleet.run_tv_book_daily_curves()
+
+    assert run_calls == []
+    assert lock_calls == ["tv_book_daily_curves"]
+    assert scanner_calls == [True]
+
+
+def test_tv_book_daily_curves_disabled_is_a_noop(monkeypatch):
+    monkeypatch.setenv(fleet.SPECS["tv_book"].enabled_env, "0")
+    lock_calls = []
+    monkeypatch.setattr(fleet, "_acquire_lock", lambda name, **k: lock_calls.append(name) or object())
+    fleet.run_tv_book_daily_curves()
+    assert lock_calls == []
+
+
+def test_run_tv_scanner_daily_curves_uses_its_own_flag_and_timeout(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["timeout"] = kwargs["timeout"]
+
+        class Result:
+            returncode = 0
+        return Result()
+
+    monkeypatch.setattr(fleet.subprocess, "run", fake_run)
+    monkeypatch.setattr(fleet.tv_book, "HERE", tmp_path)
+    fleet._run_tv_scanner_daily_curves()
+    assert captured["cmd"][-1] == "--daily-curves"
+    assert captured["timeout"] == fleet.TV_DAILY_CURVES_TIMEOUT_SECONDS
+    assert captured["timeout"] != 25 * 60  # its own budget, not the intraday scan's
 
 
 def test_scheduled_fleet_cycles_wait_for_the_shared_broker(monkeypatch):

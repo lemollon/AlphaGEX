@@ -30,7 +30,6 @@ environment difference (and the subprocess/git dependency) entirely.
 from __future__ import annotations
 
 import datetime as dt
-import io
 import json
 import sys
 import urllib.error
@@ -39,8 +38,9 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]  # .../AlphaGEX-wt-tvbook
-LEGACY_DIR = REPO_ROOT / "spreadworks" / "backend" / "ember" / "legacy"
+from tests._scanner_harness import FakeResponse, build_pkg
+
+LEGACY_DIR = Path(__file__).resolve().parents[2] / "spreadworks" / "backend" / "ember" / "legacy"
 OLD_SCANNER_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "ember" / "tv_scanner_97a7aa08.py.txt"
 OLD_COMMIT = "97a7aa08"  # main tip immediately before this session's concurrency redesign; provenance only
 
@@ -68,26 +68,6 @@ def _strip_volatile(obj):
     if isinstance(obj, tuple):
         return [_strip_volatile(v) for v in obj]
     return obj
-
-
-def _build_pkg(tmp_path: Path, name: str, tv_scanner_src: str) -> str:
-    """A throwaway package: <tmp>/<name>/pkgroot/ember/legacy/{tv_scanner,ember_lock,
-    rate_limiter}.py with empty __init__.py files at every level, so `from . import
-    ember_lock, rate_limiter` resolves without importing the real backend package. Returns
-    the dotted module path to import."""
-    root = tmp_path / name
-    pkg = root / "pkgroot" / "ember" / "legacy"
-    pkg.mkdir(parents=True)
-    (root / "pkgroot" / "__init__.py").write_text("")
-    (root / "pkgroot" / "ember" / "__init__.py").write_text("")
-    (pkg / "__init__.py").write_text("")
-    (pkg / "tv_scanner.py").write_text(tv_scanner_src)
-    (pkg / "ember_lock.py").write_text((LEGACY_DIR / "ember_lock.py").read_text())
-    rate_limiter_src = LEGACY_DIR / "rate_limiter.py"
-    if rate_limiter_src.exists():
-        (pkg / "rate_limiter.py").write_text(rate_limiter_src.read_text())
-    sys.path.insert(0, str(root))
-    return "pkgroot.ember.legacy.tv_scanner"
 
 
 # ---- fixture candidates -----------------------------------------------------------------
@@ -196,19 +176,6 @@ def _populate_cache(cache_dir: Path) -> None:
 
 
 # ---- transport mock -----------------------------------------------------------------------
-class _FakeResponse(io.BytesIO):
-    def __init__(self, data: bytes, status: int = 200):
-        super().__init__(data)
-        self.status = status
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
-        return False
-
-
 _EXPIRATIONS_CSV = "expiration\r\n" + (dt.date.today() + dt.timedelta(days=32)).strftime("%Y%m%d") + \
     "\r\n" + (dt.date.today() + dt.timedelta(days=40)).strftime("%Y%m%d") + "\r\n"
 
@@ -227,9 +194,9 @@ def _fake_urlopen(request, timeout=None, *a, **k):
         if "/health" in url:
             raise urllib.error.HTTPError(url, 410, "Gone", {}, None)
         if "list/expirations" in url:
-            return _FakeResponse(_EXPIRATIONS_CSV.encode())
+            return FakeResponse(_EXPIRATIONS_CSV.encode())
         if "history/quote" in url:
-            return _FakeResponse(_quote_csv().encode())
+            return FakeResponse(_quote_csv().encode())
         if "history/eod" in url:
             raise urllib.error.HTTPError(url, 478, "no data outside hours", {}, None)
     raise AssertionError(f"tv_scanner equivalence test: unexpected network call to {url!r}")
@@ -237,7 +204,7 @@ def _fake_urlopen(request, timeout=None, *a, **k):
 
 # ---- the test -------------------------------------------------------------------------------
 def _run(tmp_path: Path, name: str, tv_scanner_src: str, cache_dir: Path, monkeypatch) -> dict:
-    module_name = _build_pkg(tmp_path, name, tv_scanner_src)
+    module_name = build_pkg(tmp_path, name, tv_scanner_src)
     monkeypatch.setattr(sys, "argv", ["tv_scanner.py", "--cached"])
     monkeypatch.setenv("EMBER_TVSCAN_DATA_DIR", str(cache_dir.parents[1]))
     monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)

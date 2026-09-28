@@ -444,6 +444,67 @@ def _run_tv_scanner() -> None:
         )
 
 
+TV_DAILY_CURVES_TIMEOUT_SECONDS = 35 * 60
+# 2026-09-28 daily-cache + intraday-shortlist redesign (tv_scanner.py section B): pre-warms
+# the per-name GEX curve cache for the FULL tv_book universe (~150 names) once a trading day,
+# ahead of the 08:30 CT open, so the regular every-30-min --live ticks only have to pay
+# TradingVolatility's 5-expensive-calls/min cap for a small shortlist of names actually near a
+# setup (shortlist.py) instead of the whole universe every tick. Its own ~35-min timeout is
+# deliberately NOT _run_tv_scanner()'s 25-min intraday one above (that timeout stays 25*60,
+# unchanged) -- a full-universe curve warm-up is expected to take close to 30 minutes by
+# construction (see tv_scanner.py's module docstring); that is normal here, not a hang.
+def _run_tv_scanner_daily_curves() -> None:
+    output = tv_book.HERE / "scanner-output.log"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [sys.executable, "-m", "backend.ember.legacy.tv_scanner", "--daily-curves"]
+    with output.open("a", encoding="utf-8") as stream:
+        result = subprocess.run(
+            cmd,
+            cwd=str(Path(__file__).resolve().parents[2]),
+            stdout=stream,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=TV_DAILY_CURVES_TIMEOUT_SECONDS,
+            check=False,
+        )
+    if result.returncode:
+        logger.error(
+            "[EMBER:tv_book_daily_curves] scanner exited %s -- intraday ticks fail closed "
+            "on their own (see tv_scanner.py section B) until the next scheduled attempt",
+            result.returncode,
+        )
+
+
+def run_tv_book_daily_curves() -> None:
+    """Scheduled ~07:55 CT, before tv_book's first regular 08:05 tick (register() below).
+    Deliberately NOT routed through _run(): this warms a cache, it doesn't hydrate tv_book's
+    trading state, doesn't validate live/armed status, doesn't touch the shared
+    "agent-runtime" broker lock, and never calls spec.runner() (the actual order-placing
+    strategy tick) -- none of that applies to a run that prices nothing and trades nothing.
+    Uses its own advisory lock name ("tv_book_daily_curves", distinct from "tv_book") so a
+    slow daily pass and a regular tv_book tick can never contend for the SAME lock and
+    deadlock each other; the thing that actually must not overlap two TradingVolatility-
+    calling processes at once is tv_scanner.py's own EMBER_LOCK (ember_lock.py), which both
+    --live and --daily-curves now take (see tv_scanner.py) -- that is what keeps their shared,
+    per-PROCESS rate limiters from jointly exceeding TV's real per-account cap if this job runs
+    long enough to overlap the first intraday tick."""
+    if not _env_bool(SPECS["tv_book"].enabled_env):
+        return
+    lock_db = _acquire_lock("tv_book_daily_curves")
+    if lock_db is None:
+        logger.info("[EMBER:tv_book_daily_curves] skipped overlapping cycle")
+        return
+    try:
+        _run_tv_scanner_daily_curves()
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "[EMBER:tv_book_daily_curves] cycle failed: %s: %s",
+            type(exc).__name__, _redact(str(exc)),
+        )
+    finally:
+        _release_lock(lock_db, "tv_book_daily_curves")
+
+
 def _broker_preflight(name: str, account: str, output: Path) -> int:
     """Verify Claude+Robinhood connectivity without supplying any order tool."""
     home = xsp_runtime._prepare_claude_home()
@@ -675,9 +736,20 @@ def register(scheduler: Any) -> None:
         ("call_diag", run_call_diag, {"hour": "8-15", "minute": "*", "second": "20"}),
         ("divhike", run_divhike, {"hour": "8,15", "minute": "10,33,55-59", "second": "30"}),
         ("tv_book", run_tv_book, {"hour": "8-16", "minute": "5,35", "second": "40"}),
+        # 2026-09-28: daily GEX-curve cache warm-up, ~07:55 CT -- ahead of tv_book's first
+        # regular tick (08:05, from "hour": "8-16", "minute": "5,35" above) and the 08:30 open.
+        # Gated on the SAME tv_book.enabled_env below (see the spec_name mapping just under
+        # this list) -- no separate enable flag, since this only exists to serve tv_book's own
+        # intraday ticks.
+        ("tv_book_daily_curves", run_tv_book_daily_curves, {"hour": "7", "minute": "55", "second": "0"}),
     ]
     for job_name, func, cron in jobs:
-        spec_name = "spike" if job_name.startswith("spike_") else job_name
+        if job_name.startswith("spike_"):
+            spec_name = "spike"
+        elif job_name.startswith("tv_book_"):
+            spec_name = "tv_book"
+        else:
+            spec_name = job_name
         if not _env_bool(SPECS[spec_name].enabled_env):
             continue
         scheduler.add_job(
