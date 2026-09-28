@@ -35,7 +35,20 @@ from .legacy import call_diag, divhike, night_shift, spike, tv_book
 
 logger = logging.getLogger("spreadworks.ember.fleet")
 CT = ZoneInfo("America/Chicago")
-BROKER_LOCK_WAIT_SECONDS = 10 * 60
+# 2026-09-28 root-cause note: night_shift, astra3-live, call_diag, and the
+# XSP flow are each scheduled roughly once a minute during market hours and
+# all serialize on the single "ember-fleet:agent-runtime" advisory lock
+# (tv_book's scanner subprocess runs BEFORE it takes this lock, so it was
+# ruled out). Each of those cycles' own Claude/MCP broker call is allowed to
+# run up to 540-600s (xsp_flow_live.AGENT_TIMEOUT_SECONDS, call_diag/
+# night_shift's own subprocess timeout=600) before it releases the lock. A
+# 600s wait budget is not enough headroom if two of those cycles stack
+# back-to-back (up to ~1200s) during a slow patch (MCP/broker latency),
+# which is what produced the "shared broker runner busy; lock wait expired"
+# cluster on 9/25 13:42Z. Raised to give a two-deep queue room to clear
+# without weakening fail-closed behavior -- a genuine extended outage still
+# times out and reports BLOCKED, just after longer, more realistic patience.
+BROKER_LOCK_WAIT_SECONDS = 25 * 60
 
 
 @dataclass(frozen=True)
