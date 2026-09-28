@@ -91,7 +91,7 @@ import { forgeBriefingsTick } from './forgeBriefings/tick'
 import { isCustomersDbConfigured } from './customers-db'
 import { getCTNow } from './pt-tiers'
 import { runTrialDayClose, marketDateKey, isAfterTrialCloseTime } from './enrollment/trial-close'
-import { mirrorOpenToCustomers, mirrorCloseToCustomers, retryFailedCustomerCloses } from './customer-executor/executor'
+import { mirrorOpenToCustomers, mirrorFlintOpenToCustomers, mirrorCloseToCustomers, retryFailedCustomerCloses } from './customer-executor/executor'
 import { buildTradeOpenedEvent, buildTradeClosedEvent } from './push/trade-events'
 import { dispatchToCustomers } from './push/dispatch'
 import type { LiveBot } from './live/bots'
@@ -4701,6 +4701,17 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
           `@ $${credit.callCredit.toFixed(2)} (spot ${spot.toFixed(2)}, cushion=$${gate.cushion?.toFixed(2) ?? 'n/a'}) mode=${mode}`,
         )
         paperDecision = 'traded'
+
+        // CUSTOMER_FLINT (2026-09-28): mirror to activated customers. Fire-and-forget,
+        // never throws into the trading path — mirrorFlintOpenToCustomers catches
+        // everything internally. No-ops with zero DB/broker calls unless BOTH
+        // CUSTOMER_EXECUTOR_ENABLED and CUSTOMER_FLINT are set. width/positionId reuse
+        // the exact values just written to the paper ledger above (same trade, same day).
+        void mirrorFlintOpenToCustomers({
+          botName, positionId, ticker: 'SPY', expiration,
+          callShort, callLong, spreadWidth: width, credit: credit.callCredit,
+          tradeDate: asofDate,
+        })
       }
     }
   }
@@ -4873,6 +4884,11 @@ async function closeFlintAtRiskBeforeBell(ct: Date): Promise<string> {
       `short ${shortStrike}C buffer=$${buffer.toFixed(2)} cost=$${costToClose.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,
     )
 
+    // CUSTOMER_FLINT: close every customer mirror of this FLINT position (fire-and-forget,
+    // never throws). Keyed by source_position_id — a never-mirrored position_id simply
+    // matches zero customer_positions rows.
+    void mirrorCloseToCustomers((p.bot as string | undefined) ?? 'flame', String(p.position_id), 'assignment_guard')
+
     if ((p.account_type === 'production' || p.account_type === 'sandbox') && p.mode === 'live') {
       if (!p.person) {
         console.error(
@@ -4909,7 +4925,7 @@ async function settleFlintExpired(ct: Date): Promise<string> {
 
   const todayStr = ct.toISOString().slice(0, 10)
   const rows = await query(
-    `SELECT position_id, expiration, call_short_strike, call_long_strike, contracts, entry_credit
+    `SELECT position_id, expiration, call_short_strike, call_long_strike, contracts, entry_credit, bot
        FROM ${FLINT_TABLE}
       WHERE status = 'open' AND expiration <= $1`,
     [todayStr],
@@ -4953,6 +4969,12 @@ async function settleFlintExpired(ct: Date): Promise<string> {
       `[scanner] FLINT SETTLED ${p.position_id}: close=${closePx != null ? '$' + closePx.toFixed(2) : 'unknown'} ` +
       `short ${shortStrike}C intrinsic=$${intrinsic.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,
     )
+
+    // CUSTOMER_FLINT: close every customer mirror of this FLINT position (fire-and-forget,
+    // never throws). This is FLINT's primary close path (holds to expiry) — see the
+    // assignment-guard hook above for the other one.
+    void mirrorCloseToCustomers((p.bot as string | undefined) ?? 'flame', String(p.position_id), 'settled_at_expiry')
+
     out.push(`${p.position_id}=settled`)
   }
   return out.length ? `FLINT settle[${out.join(' ')}]` : ''
@@ -5683,6 +5705,7 @@ async function tryOpenFlameBook(
       botName: bot.name, positionId, ticker, expiration,
       putShort, putLong, callShort, callLong,
       spreadWidth: width, credit: entryCredit,
+      vixRatio: ledger.vixRatio ?? null,
     })
 
     void notifyTradeOpened(bot.name, positionId)
@@ -7392,6 +7415,19 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   console.log(`[scanner] ${botName} OPENED ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${effectiveContracts} @ $${effectiveCredit.toFixed(4)} [sandbox:${JSON.stringify(sandboxOrderIds)}]${isProductionFillOnly ? ' [Tradier-fill-only]' : ''}`)
 
+  // CUSTOMER_CALM_UPSIZE (2026-09-28): the mirror needs today's VIX-decay ratio — the
+  // SAME signal FLINT's own day-eligibility already reads (vixDecayCheck), computed
+  // fresh here since this path (unlike tryOpenFlameBook's `ledger.vixRatio`) doesn't
+  // already carry one. vixDecayCheck never throws (fails to ratio:null internally);
+  // the extra try/catch only guards ensureVixHistory. Never allowed to affect the
+  // trade already placed above — a failure here just means calm-upsize skips today.
+  let calmVixRatio: number | null = null
+  try {
+    const asofDateForCalm = getCentralTime().toISOString().slice(0, 10)
+    const calmCeiling = VIX_DECAY_CEILING[bot.name as keyof typeof VIX_DECAY_CEILING] ?? VIX_DECAY_CEILING.flame
+    calmVixRatio = (await vixDecayCheck(asofDateForCalm, calmCeiling)).ratio
+  } catch { /* calmVixRatio stays null -> calm-day upsize simply skips today */ }
+
   // Phase B: mirror to activated customers (fire-and-forget, never throws, gated
   // inside on CUSTOMER_EXECUTOR_ENABLED + kill switch + per-customer state).
   void mirrorOpenToCustomers({
@@ -7399,6 +7435,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     putShort: strikes.putShort, putLong: strikes.putLong,
     callShort: strikes.callShort, callLong: strikes.callLong,
     spreadWidth, credit: effectiveCredit,
+    vixRatio: calmVixRatio,
   })
 
   // Customer push (UAT #7): fire-and-forget, never throws into the trade path —

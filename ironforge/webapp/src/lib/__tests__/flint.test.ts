@@ -569,3 +569,48 @@ describe('FLINT_MODE off places zero orders anywhere (sandbox or production) —
     expect(selectIdx).toBeGreaterThan(modeIdx)
   })
 })
+
+/**
+ * CUSTOMER_FLINT wiring (2026-09-28) — pins that every FLINT open AND close path
+ * actually calls into the customer-executor, structurally (source-level), since
+ * these hooks are fire-and-forget `void` calls with no return value the caller
+ * checks — an accidental deletion would compile fine and fail silently in prod.
+ * `RESULT_customer_protection.md` P3 previously found exactly this gap: FLINT
+ * opens were never mirrored to customers at all.
+ */
+describe('CUSTOMER_FLINT wiring — every FLINT open/close path calls the customer-executor', () => {
+  const scanner = readFileSync(join(__dirname, '..', 'scanner.ts'), 'utf8')
+
+  function fnBody(name: string): string {
+    const start = scanner.indexOf(`async function ${name}(`)
+    expect(start, `${name} must exist`).toBeGreaterThan(-1)
+    const rest = scanner.slice(start + 1)
+    const end = rest.search(/\n(?:async )?function \w+\(/)
+    return end === -1 ? rest : rest.slice(0, end)
+  }
+
+  it('imports mirrorFlintOpenToCustomers alongside the existing mirrorOpenToCustomers/mirrorCloseToCustomers', () => {
+    expect(scanner).toMatch(/import \{[^}]*mirrorFlintOpenToCustomers[^}]*\} from '\.\/customer-executor\/executor'/)
+  })
+
+  it("tryOpenFlint's paper-traded branch mirrors the open to customers", () => {
+    const body = fnBody('tryOpenFlint')
+    const tradedIdx = body.indexOf(`paperDecision = 'traded'`)
+    expect(tradedIdx).toBeGreaterThan(-1)
+    const mirrorIdx = body.indexOf('void mirrorFlintOpenToCustomers(')
+    expect(mirrorIdx, 'tryOpenFlint must mirror the FLINT open to customers').toBeGreaterThan(-1)
+    expect(mirrorIdx).toBeGreaterThan(tradedIdx)
+  })
+
+  it('closeFlintAtRiskBeforeBell (the $0.25 assignment guard) mirrors the close to customers', () => {
+    const body = fnBody('closeFlintAtRiskBeforeBell')
+    expect(body).toMatch(/void mirrorCloseToCustomers\(.*'assignment_guard'\)/)
+  })
+
+  it('settleFlintExpired (hold-to-expiry, the primary close path) mirrors the close to customers', () => {
+    const body = fnBody('settleFlintExpired')
+    expect(body).toMatch(/void mirrorCloseToCustomers\(.*'settled_at_expiry'\)/)
+    // The mirror needs to know WHICH bot (flame/spark) — the SELECT must carry it.
+    expect(body).toMatch(/SELECT position_id, expiration, call_short_strike, call_long_strike, contracts, entry_credit, bot/)
+  })
+})
