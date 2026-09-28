@@ -241,7 +241,7 @@ describe('CUSTOMER_FLINT host-leg netting — "FLINT is dropped first" (ROUND 8,
       .mockResolvedValueOnce([customer]) // eligibleCustomers for FLINT
       .mockResolvedValueOnce([{ deposit_cents: 200_000, triggered: false, peak_equity_cents: null }]) // floor-state read (floor on)
       // main-leg lookup: $1,700 already committed today (leaves only $100 of the $200 total cushion)
-      .mockResolvedValueOnce([{ collateral_cents: 170_000 }])
+      .mockResolvedValueOnce([{ total_cents: 170_000 }])
     // equity $2,200 -> cushion $200 = 20_000c. FLINT alone needs maxLoss(17_140)+margin(5_000)=22_140 -- already fails standalone!
     // Use a bigger cushion so the STANDALONE check passes but the NETTED one does not:
     // equity $2,400 -> cushion 40_000c >= 22_140 (standalone eligible), but netted needs
@@ -277,7 +277,7 @@ describe('CUSTOMER_FLINT host-leg netting — "FLINT is dropped first" (ROUND 8,
     customerQueryMock
       .mockResolvedValueOnce([customer])
       // no floor-state read at all (floor is off) — next call is the host-committed lookup
-      .mockResolvedValueOnce([{ collateral_cents: 170_000 }]) // host leg already committed $1,700 today
+      .mockResolvedValueOnce([{ total_cents: 170_000 }]) // host leg already committed $1,700 today
       // never reached: netted cushion (40_000-170_000-17_140-5_000 < 0) fails before any claim/SELECT id
     getUserAccountBalanceMock.mockResolvedValueOnce({ data: [{ buying_power: 2400 }] })
 
@@ -304,5 +304,35 @@ describe('CUSTOMER_FLINT host-leg netting — "FLINT is dropped first" (ROUND 8,
     await mirrorFlintOpenToCustomers(FLINT_MASTER)
 
     expect(placeMlegOrderMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('a main leg opened YESTERDAY but still status=open (FLAME is 2DTE) is still netted — no opened_at date filter', async () => {
+    // Regression: the host-leg lookup used to filter `opened_at::date = $3::date`
+    // (today). FLAME's own EBB host leg is a 2DTE hold, opened Friday and still
+    // status='open' on Monday/Tuesday -- that date filter returned ZERO rows on
+    // every day but the one it opened, silently reading "no host collateral
+    // committed" while the position was still holding real buying power on this
+    // SAME account. The fix drops the date predicate and sums ALL open 'main'
+    // rows regardless of when they opened.
+    const customer = makeCustomer({ buying_power_cents: 200_000 })
+    customerQueryMock
+      .mockResolvedValueOnce([customer]) // eligibleCustomers for FLINT
+      .mockResolvedValueOnce([{ deposit_cents: 200_000, triggered: false, peak_equity_cents: null }]) // floor-state read
+      // main-leg lookup: $1,700 committed by a position opened a PRIOR day, still open today.
+      .mockResolvedValueOnce([{ total_cents: 170_000 }])
+    getUserAccountBalanceMock.mockResolvedValueOnce({ data: [{ buying_power: 2400 }] }) // same numbers as the "already committed" case above
+
+    const { mirrorFlintOpenToCustomers } = await import('../executor')
+    await mirrorFlintOpenToCustomers(FLINT_MASTER)
+
+    // The netted check must have seen the $1,700 and dropped FLINT — proving the
+    // host-leg lookup reached and used a row, not "no rows because of a date miss".
+    expect(placeMlegOrderMock).not.toHaveBeenCalled()
+    const hostLegCall = customerQueryMock.mock.calls.find((c) => String(c[0]).includes("strategy = 'main'"))
+    expect(hostLegCall, 'host-leg lookup must run').toBeDefined()
+    const sql = String(hostLegCall?.[0])
+    expect(sql).not.toContain('opened_at::date')
+    // Only 2 bound params now (user_id, agent_code) -- no 3rd tradeDate param.
+    expect(hostLegCall?.[1]).toHaveLength(2)
   })
 })
