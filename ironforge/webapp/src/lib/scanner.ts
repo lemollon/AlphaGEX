@@ -3161,7 +3161,21 @@ async function closePosition(
   // Mirror close to Tradier — FLAME requires close to succeed (1:1 sync).
   // SPARK + INFERNO: paper-only, no Tradier positions to close.
   let sandboxCloseInfo: Record<string, SandboxCloseInfo> = {}
-  const isProductionBotClose = isProductionBot(bot.name)
+  // 🚨 canPlaceLiveOrders IS THE SECOND PREDICATE ON PURPOSE — same fix as the
+  // 2026-08-31 production-only catch-up path (line ~6041 in this file). The
+  // local isProductionBot() above is SPARK + KINDLE only, so on its own this
+  // NEVER opened the broker-close branch for FLAME, despite the comment above
+  // (and the assignment guard, closeAtRiskBeforeBell) assuming it did: the
+  // guard's `closePosition(..., ASSIGNMENT_GUARD_REASON, ..., mustCloseNow)`
+  // call would book the DB row closed and skip the real Tradier buy-back
+  // entirely, leaving FLAME's live spread open into settlement — assignment
+  // risk unmitigated on every account (2026-09-27, Leron: guard ON for every
+  // FLAME account). canPlaceLiveOrders('spark') is false (paper-only since
+  // 2026-08-16) so SPARK's routing is unchanged; for FLAME it is
+  // isFlameLiveArmed(), so this widens the broker-close path to exactly the
+  // bot that places live orders today — sandbox or production alike, since
+  // shouldCloseSandbox below still routes by the position's own account_type.
+  const isProductionBotClose = isProductionBot(bot.name) || canPlaceLiveOrders(bot.name)
 
   // 🚨 AN EXPIRED CONTRACT HAS NO MARKET, SO IT CAN NEVER PRODUCE A FILL PRICE.
   // Tradier rejects every close order against one — "There is no price. Security
