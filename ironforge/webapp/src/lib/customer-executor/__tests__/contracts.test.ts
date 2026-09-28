@@ -13,6 +13,7 @@ import {
   evaluateDepositFloorCap,
   evaluateFastStartUpsize,
   evaluateCalmUpsize,
+  estimatePlannedHostRiskCents,
   type MirrorGateInput,
 } from '../contracts'
 
@@ -136,6 +137,39 @@ describe('sizeContracts', () => {
 
   it('a negative ceiling never sizes a position', () => {
     expect(sizeContracts({ ...base, buyingPowerCents: 1_000_00, maxDeploymentCents: -1 }).contracts).toBe(0)
+  })
+})
+
+describe('estimatePlannedHostRiskCents (FLINT same-day host-leg netting plan)', () => {
+  const okInputs = { vixCandidateDay: true, equityCents: 300_000, maxDeploymentPct: 20, possibleUpsize: false }
+
+  it('0 when the host leg cannot trade today (VIX gate already failed) — never a guessed positive number', () => {
+    expect(estimatePlannedHostRiskCents({ ...okInputs, vixCandidateDay: false })).toBe(0)
+  })
+
+  it('0 on unreadable equity or a bad/missing deployment pct — fails closed, not a guess', () => {
+    expect(estimatePlannedHostRiskCents({ ...okInputs, equityCents: null })).toBe(0)
+    expect(estimatePlannedHostRiskCents({ ...okInputs, equityCents: 0 })).toBe(0)
+    expect(estimatePlannedHostRiskCents({ ...okInputs, maxDeploymentPct: null })).toBe(0)
+    expect(estimatePlannedHostRiskCents({ ...okInputs, maxDeploymentPct: 0 })).toBe(0)
+    expect(estimatePlannedHostRiskCents({ ...okInputs, maxDeploymentPct: 150 })).toBe(0)
+  })
+
+  it('sizes off the $2-wide/$0.10-credit conservative estimate — 3 contracts at $2,250 deployment budget', () => {
+    // equity $3,000, pct 20% -> maxDeployment $600 = 60_000c. Collateral/contract at
+    // width=2,credit=0.10 is (2-0.10)*100*100=19_000c. floor(60_000/19_000)=3.
+    const cents = estimatePlannedHostRiskCents(okInputs)
+    expect(cents).toBe(3 * 19_000)
+  })
+
+  it('adds exactly one extra contract worth of risk when an upsize is possible', () => {
+    const withUpsize = estimatePlannedHostRiskCents({ ...okInputs, possibleUpsize: true })
+    const without = estimatePlannedHostRiskCents({ ...okInputs, possibleUpsize: false })
+    expect(withUpsize - without).toBe(19_000)
+  })
+
+  it('0 when the conservative sizing itself floors to below 1 contract', () => {
+    expect(estimatePlannedHostRiskCents({ ...okInputs, equityCents: 50_00, maxDeploymentPct: 20 })).toBe(0)
   })
 })
 

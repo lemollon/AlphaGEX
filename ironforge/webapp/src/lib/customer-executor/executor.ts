@@ -38,6 +38,7 @@ import {
   evaluateDepositFloorCap,
   evaluateFastStartUpsize,
   evaluateFlintCushion,
+  estimatePlannedHostRiskCents,
   sizeContracts,
   spreadCloseLegs,
   spreadOpenLegs,
@@ -839,6 +840,44 @@ async function mirrorOneFlintOpen(c: EligibleRow, m: FlintMasterOpen, agent: str
     await logSkip('host_committed_unreadable', equityCents, depositCents, null)
     return
   }
+
+  // SAME-DAY gap the query above cannot see: scanner.ts's tryOpenFlint (which leads
+  // here) ALWAYS runs before the host leg's own entry (tryOpenTrade) in the SAME scan
+  // tick, so on the day the host leg is opening FRESH (no prior-day holdover),
+  // customer_positions has no 'main' row yet when this function runs — the query
+  // above correctly, but incompletely, reads $0. Mirrors tradier.ts's
+  // FLAME_FAST_START planning block: PLAN what the host leg's own sizing WILL decide
+  // today (VIX-decay gate off the prior close, this customer's own
+  // max_deployment_pct against the SAME live balance read above, whether either
+  // upsize flag could add a contract) instead of reading a row that may not exist
+  // yet. Take whichever of {actual rows, planned} is LARGER, so neither the
+  // prior-day holdover case (#3098) nor this same-day case is silently dropped.
+  let plannedHostRiskCents = 0
+  try {
+    const { vixDecayCheck, VIX_DECAY_CEILING } = await import('../scanner')
+    const ceiling = VIX_DECAY_CEILING[agent as keyof typeof VIX_DECAY_CEILING] ?? VIX_DECAY_CEILING.flame
+    const vixResult = await vixDecayCheck(m.tradeDate, ceiling)
+    const vixCandidateDay = vixResult.reason === null
+
+    const hostCfg = (c.config_json ?? {}) as { max_deployment_pct?: number }
+    const maxDeploymentPct = Number(hostCfg.max_deployment_pct)
+    const possibleUpsize = isCustomerFastStartEnabled() || isCustomerCalmUpsizeEnabled()
+
+    plannedHostRiskCents = estimatePlannedHostRiskCents({
+      vixCandidateDay,
+      equityCents,
+      maxDeploymentPct: Number.isFinite(maxDeploymentPct) ? maxDeploymentPct : null,
+      possibleUpsize,
+    })
+  } catch (e) {
+    // "If the plan can't be computed, skip FLINT" (fail closed) — FLINT is a bonus
+    // leg; the host leg is never touched by this failure, same as the actual-rows
+    // read above.
+    console.error(`[customer-executor] FLINT: host-leg PLAN unreadable for user ${c.user_id} — dropping FLINT:`, e instanceof Error ? e.message : e)
+    await logSkip('host_plan_unreadable', equityCents, depositCents, null)
+    return
+  }
+  hostCommittedCents = Math.max(hostCommittedCents, plannedHostRiskCents)
 
   const cushion = evaluateFlintCushion({
     equityCents, protectLevelCents, hostCommittedCents, maxLossCents, marginCents: FLINT_CUSHION_MARGIN_CENTS,

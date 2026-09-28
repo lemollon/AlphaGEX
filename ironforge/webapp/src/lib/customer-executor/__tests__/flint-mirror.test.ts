@@ -57,6 +57,25 @@ vi.mock('../bot-account-registry', () => ({
   getKnownBotTradedTradierAccountNumbers: () => knownBotAccountsMock(),
 }))
 
+// vixDecayCheck (the host leg's OWN VIX-decay candidacy gate) — mocked so the
+// same-day host-netting plan can be tested deterministically for BOTH a
+// candidate day and a gate-fail day, instead of hitting the real DB pool
+// scanner.ts uses (which vixDecayCheck itself already fails closed against —
+// see the default below, matching that same "blocked" outcome so every
+// EXISTING test in this file, which predates the same-day netting fix, keeps
+// its exact prior behavior: planned host risk = 0 unless a test opts in).
+const vixDecayCheckMock = vi.fn(async (..._args: unknown[]) => (
+  { reason: 'vix_elevated(default-blocked-in-tests)', ratio: null, prior: null, windowMax: null }
+))
+// NOTE: this path is resolved relative to THIS test file (__tests__/), not to
+// executor.ts's own '../scanner' import (which is relative to executor.ts,
+// one directory shallower) — so it must be '../../scanner' here to intercept
+// the SAME resolved module executor.ts's dynamic import reaches.
+vi.mock('../../scanner', () => ({
+  vixDecayCheck: (...args: unknown[]) => vixDecayCheckMock(...args),
+  VIX_DECAY_CEILING: { spark: 0.90, flame: 0.80 },
+}))
+
 function makeCustomer(overrides: Record<string, unknown> = {}) {
   return {
     activation_id: 'act-1',
@@ -82,6 +101,9 @@ beforeEach(() => {
   getUserAccountBalanceMock.mockReset()
   placeMlegOrderMock.mockReset().mockResolvedValue({ data: { brokerage_order_id: 'order-123' } })
   knownBotAccountsMock.mockReset().mockReturnValue([])
+  vixDecayCheckMock.mockReset().mockResolvedValue(
+    { reason: 'vix_elevated(default-blocked-in-tests)', ratio: null, prior: null, windowMax: null },
+  )
   process.env.SNAPTRADE_CLIENT_ID = 'x'
   process.env.SNAPTRADE_CONSUMER_KEY = 'y'
 })
@@ -234,6 +256,80 @@ describe('CUSTOMER_FLINT open mirror — mocked end-to-end', () => {
     expect(placeMlegOrderMock).not.toHaveBeenCalled()
     const decisionCall = customerExecuteMock.mock.calls.find((c) => String(c[0]).includes('flint_customer_decisions'))
     expect(decisionCall?.[1]).toEqual(expect.arrayContaining([false, 'subscription']))
+  })
+})
+
+/**
+ * 2026-09-29 correction: scanner.ts's tryOpenFlint (which leads to
+ * mirrorFlintOpenToCustomers) ALWAYS runs before the host leg's own entry in
+ * the same scan tick, so on the very day the host leg opens FRESH (no
+ * prior-day holdover), customer_positions has no 'main' row yet when FLINT's
+ * host-leg lookup runs — the actual-rows query alone reads $0 and misses it.
+ * FLINT now additionally PLANS the host leg's likely risk off the same
+ * deterministic inputs the real host-leg sizing will use (the VIX-decay
+ * gate, this customer's own max_deployment_pct against the live balance) and
+ * nets whichever of {actual rows, planned} is larger.
+ */
+describe('CUSTOMER_FLINT same-day host-leg netting (2026-09-29)', () => {
+  beforeEach(() => {
+    process.env.CUSTOMER_FLINT = 'on'
+    process.env.CUSTOMER_EXECUTOR_ENABLED = 'true'
+  })
+
+  it('EBB-candidate day: FLINT reserves the planned host risk and is dropped, even though the standalone check (no host rows yet) would have passed', async () => {
+    const customer = makeCustomer({ buying_power_cents: 200_000 }) // deposit $2,000
+    customerQueryMock
+      .mockResolvedValueOnce([customer]) // eligibleCustomers
+      .mockResolvedValueOnce([]) // host-leg committed-risk lookup — no ACTUAL row yet today
+    // equity $2,250 -> standalone cushion (equity-deposit) = $250 = 25_000c, which
+    // alone clears maxLoss(17_140)+margin(5_000)=22_140 -- the OLD, pre-fix
+    // behavior would have placed this order.
+    getUserAccountBalanceMock.mockResolvedValueOnce({ data: [{ buying_power: 2250 }] })
+    // Host leg IS a candidate today (VIX gate passes) -> planned risk is real:
+    // maxDeployment = 2250*100*0.20 = 45_000c; collateral/contract @ $2/$0.10 =
+    // 19_000c; floor(45_000/19_000)=2 contracts -> planned=38_000c ($380).
+    // Required with netting: 38_000 + 17_140 + 5_000 = 60_140c > cushion 25_000c.
+    vixDecayCheckMock.mockResolvedValueOnce({ reason: null, ratio: 0.5, prior: 10, windowMax: 20 })
+
+    const { mirrorFlintOpenToCustomers } = await import('../executor')
+    await mirrorFlintOpenToCustomers(FLINT_MASTER)
+
+    expect(placeMlegOrderMock).not.toHaveBeenCalled()
+    const decisionCall = customerExecuteMock.mock.calls.find((c) => String(c[0]).includes('flint_customer_decisions'))
+    expect(decisionCall?.[1]).toEqual(expect.arrayContaining([false]))
+  })
+
+  it('EBB gate-fail day: the host leg cannot trade today, so FLINT sizes normally off the actual (zero) rows, unaffected by the netting', async () => {
+    const customer = makeCustomer({ buying_power_cents: 200_000 })
+    customerQueryMock
+      .mockResolvedValueOnce([customer])
+      .mockResolvedValueOnce([]) // still no actual host row today
+      .mockResolvedValueOnce([{ id: 'row-1' }]) // SELECT id after claim
+    getUserAccountBalanceMock.mockResolvedValueOnce({ data: [{ buying_power: 2500 }] }) // same numbers as the base "eligible" test
+    vixDecayCheckMock.mockResolvedValueOnce({ reason: 'vix_elevated(0.90>0.80)', ratio: 0.90, prior: 18, windowMax: 20 })
+
+    const { mirrorFlintOpenToCustomers } = await import('../executor')
+    await mirrorFlintOpenToCustomers(FLINT_MASTER)
+
+    expect(placeMlegOrderMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('a prior-day still-open host row (#3098) is netted even when the VIX gate blocks a NEW entry today — actual rows still win the max()', async () => {
+    const customer = makeCustomer({ buying_power_cents: 200_000 })
+    customerQueryMock
+      .mockResolvedValueOnce([customer])
+      // actual host row: a 2DTE FLAME hold still open from a prior day, $1,700 committed.
+      .mockResolvedValueOnce([{ total_cents: 170_000 }])
+    getUserAccountBalanceMock.mockResolvedValueOnce({ data: [{ buying_power: 2400 }] })
+    // Gate-fail today (no NEW entry possible) -> planned=0, but actual=170_000 still nets.
+    vixDecayCheckMock.mockResolvedValueOnce({ reason: 'vix_elevated(test)', ratio: 0.95, prior: 19, windowMax: 20 })
+
+    const { mirrorFlintOpenToCustomers } = await import('../executor')
+    await mirrorFlintOpenToCustomers(FLINT_MASTER)
+
+    // equity $2,400 -> cushion (2400-2000)=$400=40_000c; required = 170_000(actual) +
+    // 17_140 + 5_000 = 192_140c > 40_000c -> dropped, same verdict #3098 itself pins.
+    expect(placeMlegOrderMock).not.toHaveBeenCalled()
   })
 })
 
