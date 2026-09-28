@@ -2271,6 +2271,13 @@ export async function placeIcOrderAllAccounts(
     try {
       const label = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
 
+      // ONE_STRATEGY (Leron, 2026-09-28: "1 strategy for all the versions of
+      // FLAME and SPARK"). Read once per account so every branch below (EBB
+      // sizing further down, this same function) can gate on it without a
+      // repeated dynamic import. Default off — see one-strategy.ts's header.
+      const oneStrategy = await import('./one-strategy')
+      const oneStrategyOn = oneStrategy.isOneStrategyMode()
+
       // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now"). FLAME only —
       // botName is checked, never the account, so SPARK/KINDLE production
       // orders are never touched even if the env var is set. Unset env =
@@ -2380,7 +2387,49 @@ export async function placeIcOrderAllAccounts(
       let ladderDetail = ''
       if (acct.type === 'production') {
         const prodCeiling = prodMaxContracts > 0 ? prodMaxContracts : Number.POSITIVE_INFINITY
-        if (ebbSizing.isEbbLadderBot(botName)) {
+        if (oneStrategyOn && ebbSizing.isEbbLadderBot(botName)) {
+          // ONE_STRATEGY: this production account sizes EBB through the SAME
+          // shared customer-package module (one-strategy.ts) app customers
+          // already run, using ITS OWN deposit (getProductionLadderCapital's
+          // `starting` — the same funded-capital seed the pre-existing ladder
+          // used) and live equity (this account's own option buying power,
+          // `bp`, already read above). REPLACES the count ladder,
+          // FLAME_FAST_START, and EBB_FAVORABLE_UPSIZE entirely while this
+          // flag is on — see one-strategy.ts and the PR description for why
+          // those three are subsumed by evaluateOneStrategyHostSizing.
+          const ladderCap = await getProductionLadderCapital(botName, acct.name)
+          const depositDollars = ladderCap?.starting ?? null
+          if (depositDollars == null) {
+            console.warn(`${label}: ONE_STRATEGY skip:deposit_unknown — SKIPPING (never falls back to a stale ladder)`)
+            return
+          }
+          let vixRatio: number | null = null
+          try {
+            const { getFlameVixRatioForUpsize } = await import('./scanner')
+            vixRatio = await getFlameVixRatioForUpsize()
+          } catch { vixRatio = null }
+          const result = await oneStrategy.applyOneStrategyHostFloor({
+            person: acct.name, accountType: 'production', botName,
+            depositCents: Math.round(depositDollars * 100),
+            equityCents: Math.round(bp * 100),
+            maxLossCentsPerContract: Math.round(collateralPer * 100),
+            vixRatio,
+          })
+          if (!result.dataOk) {
+            console.warn(`${label}: ONE_STRATEGY data unreadable (${result.reason ?? 'unknown'}) — SKIPPING`)
+            return
+          }
+          const liq = ebbSizing.liquidityCappedLots(result.contracts, shortPutBidSize)
+          acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, liq.lots)
+          if (acctContracts < 1) {
+            console.warn(`${label}: ONE_STRATEGY sizing = 0 contracts after liquidity/BP caps (host wanted ${result.contracts}). SKIPPING.`)
+            return
+          }
+          ladderDetail =
+            `one_strategy=on deposit=$${depositDollars.toFixed(0)} triggered=${result.triggeredForSizing} ` +
+            `fast_start=${result.fastStartApplied} calm_upsize=${result.calmUpsizeApplied} ` +
+            `host=${result.contracts} post_caps=${acctContracts}, `
+        } else if (ebbSizing.isEbbLadderBot(botName)) {
           // COUNT LADDER (2026-09-04, ADR 0012/0013). SPARK / FLAME size from
           // the owner's ledger: lots = floor(max(starting_capital,
           // high_water_balance) / rung) — the high-water RATCHET, never
@@ -2534,6 +2583,46 @@ export async function placeIcOrderAllAccounts(
         } else {
           acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, prodCeiling)
         }
+      } else if (oneStrategyOn && ebbSizing.isEbbLadderBot(botName)) {
+        // ONE_STRATEGY: this sandbox mirror sizes EBB/SPARK through the SAME
+        // shared module as the production branch above and app customers —
+        // deposit from flint_account_floor (getFlintSandboxLedger's own
+        // seeding, the sandbox equivalent of getProductionLadderCapital),
+        // live equity from this account's own option buying power (`bp`).
+        // REPLACES EBB_CUSTOMER_LADDER, SPARK_FAST_START,
+        // SPARK_FAVORABLE_UPSIZE, and SPARK_FLINT's main-leg sizing input
+        // entirely while this flag is on — see one-strategy.ts.
+        const ledger = await getFlintSandboxLedger(acct.name, accountId)
+        const depositDollars = ledger.floor
+        if (depositDollars == null) {
+          console.warn(`${label}: ONE_STRATEGY skip:deposit_unknown — SKIPPING (never falls back to a stale mirror)`)
+          return
+        }
+        let vixRatio: number | null = null
+        try {
+          const { getFlameVixRatioForUpsize } = await import('./scanner')
+          vixRatio = await getFlameVixRatioForUpsize()
+        } catch { vixRatio = null }
+        const result = await oneStrategy.applyOneStrategyHostFloor({
+          person: acct.name, accountType: 'sandbox', botName,
+          depositCents: Math.round(depositDollars * 100),
+          equityCents: Math.round(bp * 100),
+          maxLossCentsPerContract: Math.round(collateralPer * 100),
+          vixRatio,
+        })
+        if (!result.dataOk) {
+          console.warn(`${label}: ONE_STRATEGY data unreadable (${result.reason ?? 'unknown'}) — SKIPPING`)
+          return
+        }
+        acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, result.contracts)
+        if (acctContracts < 1) {
+          console.warn(`${label}: ONE_STRATEGY sizing = 0 contracts after BP cap (host wanted ${result.contracts}). SKIPPING.`)
+          return
+        }
+        ladderDetail =
+          `one_strategy=on deposit=$${depositDollars.toFixed(0)} triggered=${result.triggeredForSizing} ` +
+          `fast_start=${result.fastStartApplied} calm_upsize=${result.calmUpsizeApplied} ` +
+          `host=${result.contracts} post_caps=${acctContracts}, `
       } else if (botName === 'spark' && (await import('./fast-start-sizing')).isFastStartMode('SPARK_FAST_START')) {
         // SPARK_FAST_START (+ SPARK_FAVORABLE_UPSIZE) for SPARK's customer
         // (sandbox mirror) accounts ONLY — Leron, 2026-09-27, "build it...
@@ -5428,6 +5517,11 @@ export async function placeCallSpreadOrderAllAccounts(
     const isProd = acct.type === 'production'
     const label = `${isProd ? 'PRODUCTION' : 'SANDBOX'} [${acct.name}] FLINT${botName !== 'flame' ? '/' + botName.toUpperCase() : ''}`
     try {
+      // ONE_STRATEGY — see placeIcOrderAllAccounts's own copy of this read
+      // for the full rationale. Read once per account here too.
+      const oneStrategy = await import('./one-strategy')
+      const oneStrategyOn = oneStrategy.isOneStrategyMode()
+
       // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now") is a FLAME-only
       // operator decision — gated on botName === 'flame' now that FLINT also
       // runs for SPARK (2026-09-27/29, SPARK_FLINT), so SPARK's own FLINT
@@ -5464,6 +5558,65 @@ export async function placeCallSpreadOrderAllAccounts(
           continue
         }
 
+      if (oneStrategyOn) {
+        // ONE_STRATEGY: FLINT's cushion check nets against the host leg's
+        // OWN ONE_STRATEGY sizing — PLANNED, not read back, because FLINT's
+        // entry always runs BEFORE the host leg's real entry in this SAME
+        // scan tick (the same reason the FLAME_FAST_START planning block
+        // below, which this branch replaces, exists at all — see that
+        // block's own doc comment for the "plan, don't wait" rationale).
+        // Deposit/equity are this account's own — the SAME sources the host
+        // leg's own ONE_STRATEGY branch in placeIcOrderAllAccounts uses.
+        // REPLACES rule R1, FLAME_FAST_START's FLINT planning, and
+        // SPARK_FLINT's separate-budget safety net entirely while this flag
+        // is on — see one-strategy.ts.
+        const { floor, equity } = isProd
+          ? await (async () => {
+              const ladderCap = await getProductionLadderCapital(botName, acct.name)
+              const allocated = await getAllocatedCapitalForAccount(acct.name, 'production')
+              return { floor: ladderCap?.starting ?? null, equity: allocated?.equity ?? null }
+            })()
+          : await getFlintSandboxLedger(acct.name, accountId)
+        if (floor == null || equity == null) {
+          console.warn(`${label}: ONE_STRATEGY FLINT skip:deposit_or_equity_unreadable — SKIPPING`)
+          continue
+        }
+        const depositCents = Math.round(floor * 100)
+        const equityCents = Math.round(equity * 100)
+        // Conservative (largest-plausible) host-leg max-loss-per-contract
+        // estimate — FLINT has no live host quote at its own entry time.
+        // Same $2 wing / $0.10 minimum-credit-floor estimate the
+        // FLAME_FAST_START planning block below already established.
+        const hostMaxLossCentsPerContract = Math.round(ebbSizing.ebbUpsizeExtraContractMaxLoss(2, 0.10) * 100)
+        let vixRatio: number | null = null
+        try {
+          const { getFlameVixRatioForUpsize } = await import('./scanner')
+          vixRatio = await getFlameVixRatioForUpsize()
+        } catch { vixRatio = null }
+        const planned = await oneStrategy.planOneStrategyHostContracts({
+          person: acct.name, accountType: isProd ? 'production' : 'sandbox', botName,
+          depositCents, equityCents, maxLossCentsPerContract: hostMaxLossCentsPerContract, vixRatio,
+        })
+        if (planned == null) {
+          console.warn(`${label}: ONE_STRATEGY FLINT skip:host_plan_unreadable — SKIPPING (never assumes zero host risk)`)
+          continue
+        }
+        const decision = oneStrategy.decideOneStrategyFlintContracts({
+          desired: contracts, base: baseContracts,
+          equityCents, protectLevelCents: planned.floorLevelCents,
+          hostContracts: planned.contracts, hostMaxLossCentsPerContract,
+          shortStrike: callShort, longStrike: callLong, credit: entryCredit,
+          flintMaxLossFn: flintMaxLoss,
+        })
+        if (decision.contracts < 1) {
+          console.warn(`${label}: ONE_STRATEGY FLINT skip:${decision.reason ?? 'cushion_insufficient'} (planned_host=${planned.contracts})`)
+          continue
+        }
+        if (decision.contracts < contracts) {
+          console.log(`${label}: ONE_STRATEGY FLINT upsize stepped down ${contracts}->${decision.contracts} (netted cushion covers ${decision.contracts} only)`)
+        }
+        acctContracts = decision.contracts
+      } else {
         // 2. Rule R1 — the per-account profit gate. Leron, 2026-09-26: a loss
         // eats only into THIS account's own profit above its funded floor.
         // Tried at the target count first, stepped down to baseContracts if
@@ -5661,6 +5814,7 @@ export async function placeCallSpreadOrderAllAccounts(
             console.error(`${label}: SPARK_FLINT safety-net evaluation failed — falling back to R1's own count:`, e)
           }
         }
+      }
 
         if (acctContracts < 1) {
           console.log(`${label}: skip:zero_contracts_after_sizing`)

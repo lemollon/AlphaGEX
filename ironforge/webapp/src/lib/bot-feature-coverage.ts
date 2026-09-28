@@ -70,7 +70,9 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
     envVars: ['FLAME_FAST_START'],
     description:
       "FLAME customer-account fast-start sizing + hard profit floor (fast-start-sizing.ts, guarded v3). " +
-      "Kill switch: unset/off = byte-for-byte unchanged.",
+      "Kill switch: unset/off = byte-for-byte unchanged. DEPRECATED (2026-09-28) pending ONE_STRATEGY=on, " +
+      "which replaces this branch's role in production/sandbox sizing entirely — see that entry. Code kept " +
+      "in place as the ONE_STRATEGY=off fallback.",
     coverage: {
       production: {
         status: 'covered',
@@ -95,7 +97,8 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
     envVars: ['SPARK_FAST_START'],
     description:
       "SPARK's own fast-start rung — same frozen engine as FLAME_FAST_START (fast-start-sizing.ts is bot-parameterized " +
-      "via the envVar argument), byte-for-byte isolated from FLAME's.",
+      "via the envVar argument), byte-for-byte isolated from FLAME's. DEPRECATED (2026-09-28) pending " +
+      "ONE_STRATEGY=on — see that entry. Code kept in place as the ONE_STRATEGY=off fallback.",
     coverage: {
       production: {
         status: 'n/a',
@@ -115,7 +118,10 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
   {
     flag: 'SPARK_FAVORABLE_UPSIZE',
     envVars: ['SPARK_FAVORABLE_UPSIZE'],
-    description: "+1 SPARK contract, house-money-gated, on a favorable-VIX day (spark-favorable-upsize.ts).",
+    description:
+      "+1 SPARK contract, house-money-gated, on a favorable-VIX day (spark-favorable-upsize.ts). " +
+      "DEPRECATED (2026-09-28) pending ONE_STRATEGY=on — see that entry. Code kept in place as the " +
+      "ONE_STRATEGY=off fallback.",
     coverage: {
       production: { status: 'n/a', note: "SPARK never places a production/live order." },
       sandbox: {
@@ -134,7 +140,9 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
     envVars: ['SPARK_FLINT'],
     description:
       "FLINT (SPY 0DTE call credit spread) traded on SPARK accounts with its own separate, profits-only budget " +
-      "(spark-flint-separate.ts). Frozen by held-out backtest, 2026-09-27.",
+      "(spark-flint-separate.ts). Frozen by held-out backtest, 2026-09-27. DEPRECATED (2026-09-28) pending " +
+      "ONE_STRATEGY=on, which nets FLINT against the host leg's committed risk for every account (see that " +
+      "entry) rather than a separate budget. Code kept in place as the ONE_STRATEGY=off fallback.",
     coverage: {
       production: { status: 'n/a', note: "SPARK never places a production/live order." },
       sandbox: {
@@ -178,7 +186,10 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
   {
     flag: 'EBB_FAVORABLE_UPSIZE',
     envVars: ['EBB_FAVORABLE_UPSIZE'],
-    description: "+1 EBB contract on a favorable VIX-decay day, FLAME only (ebb-sizing.ts).",
+    description:
+      "+1 EBB contract on a favorable VIX-decay day, FLAME only (ebb-sizing.ts). DEPRECATED (2026-09-28) " +
+      "pending ONE_STRATEGY=on, whose own B1/calm-upsize add-ons replace this role in main-leg sizing — see " +
+      "that entry. Code kept in place as the ONE_STRATEGY=off fallback.",
     coverage: {
       production: {
         status: 'covered',
@@ -203,7 +214,9 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
     envVars: ['FLINT_FAVORABLE_UPSIZE'],
     description:
       "+1 FLINT contract when call-side dealer gamma is in the top third of the trailing 20 sessions " +
-      "(flint.ts evaluateFlintGammaUpsize). Market-wide decision, shared by paper book and every production/sandbox account.",
+      "(flint.ts evaluateFlintGammaUpsize). Market-wide decision, shared by paper book and every production/sandbox account. " +
+      "DEPRECATED (2026-09-28) pending ONE_STRATEGY=on, which nets FLINT against the host leg's planned committed " +
+      "risk without this upsize — see that entry. Code kept in place as the ONE_STRATEGY=off fallback.",
     coverage: {
       production: {
         status: 'covered',
@@ -222,7 +235,9 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
     envVars: ['EBB_CUSTOMER_LADDER'],
     description:
       "equity|profit ladder mode for FLAME's SANDBOX MIRROR accounts (User/Matt/Logan) — NOT app customers, " +
-      "despite the name (ebb-sizing.ts ebbCustomerLadderMode).",
+      "despite the name (ebb-sizing.ts ebbCustomerLadderMode). DEPRECATED (2026-09-28) pending ONE_STRATEGY=on, " +
+      "which replaces this ladder's role in sandbox sizing entirely — see that entry. Code kept in place as " +
+      "the ONE_STRATEGY=off fallback.",
     coverage: {
       production: {
         status: 'excluded',
@@ -464,6 +479,49 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
           "mirrorOneOpen reads XSP_SWAP (via isXspSwapMode()) and attempts a SnapTrade XSP order " +
           "for min(contracts,2); a SnapTrade failure (including an unsupported broker/symbol) is " +
           "caught, logged, and every contract falls back to the existing SPY mirror path.",
+      },
+    },
+  },
+  {
+    flag: 'ONE_STRATEGY',
+    envVars: ['ONE_STRATEGY'],
+    description:
+      "\"1 strategy for all the versions of FLAME and SPARK\" (Leron, 2026-09-28). Off|on, default off. " +
+      "On: production ('Flame', 6YB71371) and sandbox (User/Matt/Logan) accounts size EBB/SPARK/FLINT/XSP " +
+      "through the SAME shared module (lib/one-strategy.ts) that already governs app customers — 20% sizing, " +
+      "the deposit floor (K=0.1, variant G, N=3), B1 pre-cushion calm+1, house-money calm+1 post-cushion " +
+      "(deposit>=$4,000), and FLINT profits-only netted against the host leg's committed risk — using that " +
+      "account's OWN deposit (getProductionLadderCapital('flame'|'spark', person).starting for production; " +
+      "flint_account_floor via getFlintSandboxLedger for sandbox) and live equity. REPLACES, while on: the " +
+      "$1,500 count ladder (EBB_CUSTOMER_LADDER), FLAME_FAST_START v3, SPARK_FAST_START/SPARK_FAVORABLE_UPSIZE/" +
+      "SPARK_FLINT, and EBB_FAVORABLE_UPSIZE/FLINT_FAVORABLE_UPSIZE's role in main-leg sizing. Their code stays " +
+      "in place, unreachable, as the off-flag fallback (see bot-feature-coverage.ts's own entries for each, " +
+      "now noted deprecated pending ONE_STRATEGY). Kill switch: unset/off = every account sizes byte-for-byte " +
+      "as before.",
+    coverage: {
+      production: {
+        status: 'covered',
+        note:
+          "tradier.ts placeIcOrderAllAccounts's production branch and placeCallSpreadOrderAllAccounts's FLINT " +
+          "branch both read isOneStrategyMode() (via the dynamic './one-strategy' import) and route sizing " +
+          "through applyOneStrategyHostFloor/planOneStrategyHostContracts + decideOneStrategyFlintContracts for " +
+          "FLAME's production account 6YB71371.",
+      },
+      sandbox: {
+        status: 'covered',
+        note:
+          "Same isOneStrategyMode() gate in both functions' sandbox branches, for every sandbox mirror account " +
+          "(User/Matt/Logan, both FLAME and SPARK).",
+      },
+      customer: {
+        status: 'covered',
+        note:
+          "App customers are NOT gated by this flag — customer-executor/executor.ts already runs this exact " +
+          "package (sizeContracts + evaluateDepositFloorCap + evaluateFastStartUpsize/evaluateCalmUpsize + " +
+          "evaluateFlintCushion) unconditionally, shipped in #3093 and its follow-ups; lib/one-strategy.ts wraps " +
+          "those SAME contracts.ts functions for production/sandbox rather than the reverse. See executor.ts's " +
+          "own module-header paragraph on ONE_STRATEGY for the explicit cross-reference this guard's " +
+          "reachability scan finds.",
       },
     },
   },
