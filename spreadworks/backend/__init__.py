@@ -1902,6 +1902,18 @@ async def lifespan(app: FastAPI):
     except Exception as _ga_exc:  # noqa: BLE001
         logger.warning("[SpreadWorks] gamma alerts failed to register: %r", _ga_exc)
 
+    # Canonical live market structure: persist fresh Tradier VIX-family data
+    # and ORATS+Tradier gamma maps every minute. Durable captures let report
+    # consumers recover through Postgres if the public Render URL is blocked.
+    try:
+        from .market_structure import register as register_market_structure
+        register_market_structure(scheduler, app)
+    except Exception as _market_structure_sched_exc:  # noqa: BLE001
+        logger.warning(
+            "[SpreadWorks] market-structure capture failed to register: %r",
+            _market_structure_sched_exc,
+        )
+
     # EMBER owns the live Robinhood sleeves.  The module is disabled unless
     # EMBER_XSP_ENABLED is explicitly set, and its own live flag and durable
     # state checks still fail closed before any order tool is exposed.
