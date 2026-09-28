@@ -12,9 +12,9 @@ A. CANDIDATE SOURCES (all TV lists, not just /top-setups). Universe widened 2026
    2. /top-setups/screener/{name}?limit=50&price_min=15&price_max=300 for the 7 named presets
       (bottoming_reversal, capitulation_reversal, highvol_breakdown, momentum_breakout,
       range_premium_seller, topping_reversal, trend_pullback) -- source tag = preset name.
-      Same item schema as /top-setups. EXPENSIVE (5/min) -- rate-limited together with the
-      GEX curve by EXPENSIVE_LIMITER (see section B); 429 -> sleep 20 and retry (tv_get's
-      existing behaviour). A 404/error preset logs one line and is skipped, never fails the run.
+      Same item schema as /top-setups. EXPENSIVE (5/min) -- paced with CURVE_PACE_S like the
+      GEX curve; 429 -> sleep 20 and retry (tv_get's existing behaviour). A 404/error preset
+      logs one line and is skipped, never fails the run.
    3. /income-setups?limit=50   source tag "income". Filtered client-side to 15<=price<=300
       (the endpoint has no price params). Income items carry NO direction: direction="long"
       only if the ticker's /tickers payload shows price above its gamma flip (positive-gamma
@@ -35,25 +35,10 @@ B. PER-NAME TTL CACHE (so a tick stays inside 30 min even with ~150 unique names
    twice inside one hour reuses the payload instead of refetching. List endpoints (A1-A3) and
    /options/volume always fetch fresh each tick (they keep the per-run HHMM cache key).
    --cached replays everything from disk with no network regardless of TTL.
-   CONCURRENCY (2026-09-28, replacing the old one-name-at-a-time loop that PR #3104 found
-   spending ~13s/name x ~150 names, fully sequential, no concurrency): candidates run on a
-   bounded thread pool (SCAN_WORKERS=8, process_candidate()) instead of one at a time. Every
-   TradingVolatility call still funnels through tv_get(), which now gates on two shared,
-   thread-safe sliding-window limiters (rate_limiter.RateLimiter) instead of a flat per-call
-   sleep: GENERAL_LIMITER caps ALL TV calls at 60/min, EXPENSIVE_LIMITER additionally caps the
-   screener-preset and GEX-curve calls at 5/min -- TV's documented per-account ceilings,
-   enforced across every worker thread at once, not per-thread. This does not raise TV
-   throughput above what the old code already respected; it removes the dead time the old
-   loop spent doing non-TV work (ThetaData quote pricing, RSI, row building) serially between
-   TV pacing sleeps, so that work now overlaps the next candidate's TV wait instead of adding
-   to it. The per-candidate math is unchanged line for line -- see process_candidate().
-   Wall-clock guard: once the run passes 22 minutes, no new names are dispatched to the pool --
-   whatever hasn't been scored yet is dropped, one line prints "TRUNCATED: N names not
-   evaluated", and the tables/ledger/notify still run for what was done. Candidates are
-   evaluated in opportunity_score-desc order first, so truncation drops the weakest names (a
-   candidate already in flight when the deadline passes may still finish, or self-truncate at
-   its own pre-theta-pricing check -- see the dispatch-loop comment above BUCKETS for the exact
-   contract and the one edge-case difference from strict sequential truncation).
+   Wall-clock guard: once the run passes 22 minutes, no new names are evaluated -- whatever
+   hasn't been scored yet is dropped, one line prints "TRUNCATED: N names not evaluated", and
+   the tables/ledger/notify still run for what was done. Candidates are evaluated in
+   opportunity_score-desc order first, so truncation drops the weakest names.
 
 For each candidate: pull /tickers/{t} (implied move by horizon: 1d/1w/30d, gamma flip,
 max-gamma strike, positioning, IV rank, speculative-flow score) and
@@ -123,9 +108,7 @@ for >=1:1 rows (setups + marginal, both strategies), capped near 30 calls/run.
 Every setup/marginal row (RR and BOUNCE alike, plus rows that fail the liquidity gate below)
 -> tools/ember_ledger.jsonl (scored by tools/ember_score.py, grouped by strategy).
 Rate limits: 60 calls/min, 5 expensive/min (screener presets + the GEX curve are expensive)
--> enforced by GENERAL_LIMITER/EXPENSIVE_LIMITER in tv_get() (section B), shared across every
-concurrent candidate worker; volume calls (/options/volume) go through the same 60/min
-GENERAL_LIMITER as every other non-expensive call, no separate pacing.
+-> paced; volume calls paced 1.1s apart when not served from cache.
 
 E. LIQUIDITY GATE (Leron 2026-09-16 -- so a setup can actually be entered/exited at a decent
    spread; applies to BOTH strategies, >=2:1 setups only): every leg of the chosen structure
@@ -225,11 +208,10 @@ Every non---cached run appends one line to tools/ember_runs.log (see the --cache
   <scan_time> live=<bool> setups=<n> marginal=<n> new=<n> bounce_setups=<n> bounce_marginal=<n>
   bounce_new=<n> notified=<bool>
 """
-import atexit, json, os, sys, csv, io, time, math, threading, datetime as dt, urllib.request, urllib.error, urllib.parse
-from concurrent.futures import ThreadPoolExecutor
+import atexit, json, os, sys, csv, io, time, math, datetime as dt, urllib.request, urllib.error, urllib.parse
 from pathlib import Path
 import pandas as pd
-from . import ember_lock, rate_limiter
+from . import ember_lock
 
 CODE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.getenv("EMBER_TVSCAN_DATA_DIR", str(CODE_DIR))).expanduser().resolve()
@@ -240,17 +222,7 @@ LEDGER = ROOT / "ember_ledger.jsonl"
 THETA = os.getenv("THETADATA_BASE_URL", "http://127.0.0.1:25503").strip().rstrip("/")
 if THETA and "://" not in THETA:
     THETA = f"http://{THETA}"
-BUF = 0.005
-# 2026-09-28 (concurrency redesign, PR follows #3104): candidate evaluation now runs on
-# a bounded thread pool (SCAN_WORKERS) instead of one name at a time -- see
-# process_candidate() / the dispatch loop below the candidate build. The flat
-# CURVE_PACE_S=13s-per-call sleep that used to gate the whole thread after every
-# expensive call is gone; tv_get() now gates every TV call on these two shared,
-# thread-safe sliding-window limiters instead, so the real per-account caps below
-# are enforced across ALL worker threads at once, not per-thread:
-EXPENSIVE_LIMITER = rate_limiter.RateLimiter(5, 60.0)    # screener presets + GEX curve: TV's documented 5/min
-GENERAL_LIMITER = rate_limiter.RateLimiter(58, 60.0)     # every TV call (cheap + expensive): TV's documented 60/min, 2 calls of headroom
-SCAN_WORKERS = 8   # concurrent candidates in flight; the limiters above (not this number) set the real TV throughput ceiling
+BUF, CURVE_PACE_S = 0.005, 13.0     # 13s between expensive calls = <5/min
 LIQ_SPREAD_MAX = 15.0               # max per-leg (ask-bid)/mid*100 for a structure to be "liquid" (Leron 2026-09-16)
 LIQ_OI_MIN, LIQ_VOL_MIN = 5000, 500 # soft floor on name-level combined call+put OI / volume; below either = not liquid
 MAX_CONTRACT = float(sys.argv[sys.argv.index("--cap") + 1]) if "--cap" in sys.argv else 2.00   # $/share; 2.00 = $200 = 40% of $500 (Leron 2026-09-16: cap raised from $150; --cap 5.0 = whole account)
@@ -303,16 +275,11 @@ def tv_get(path, cache_name, expensive=False, ttl_s=None, force_daily=False):
     if "--cached" in sys.argv: return None
     for attempt in range(6):
         try:
-            # 2026-09-28: gate on the shared limiters right before the request goes out
-            # (not after, like the old flat post-call sleep) so concurrent worker
-            # threads queue for a slot instead of each sleeping independently -- the
-            # real per-account caps hold across the whole pool, not per-thread.
-            GENERAL_LIMITER.acquire()
-            if expensive: EXPENSIVE_LIMITER.acquire()
             req = urllib.request.Request(f"https://stocks.tradingvolatility.net/api/v2{path}", headers={"Authorization": f"Bearer {KEY}"})
             with urllib.request.urlopen(req, timeout=30) as r: d = json.load(r)
             if "error" in d and d["error"].get("code") == "rate_limited": time.sleep(20); continue
             p.write_text(json.dumps(d))
+            if expensive: time.sleep(CURVE_PACE_S)
             return d
         except urllib.error.HTTPError as e:
             if e.code == 429: time.sleep(20); continue
@@ -614,10 +581,8 @@ def volume_flow(t, side, price, target, stop, exp, cached):
         was_cached = p.exists()
         if cached and not was_cached:
             return dict(flow_exp=exp_str, flow_with=0, flow_against=0, flow_tilt=None, flow_note="not cached")
-        # 2026-09-28: the old flat time.sleep(1.1) here (was_cached-gated) is gone -- tv_get()
-        # already paces every non-cached call through GENERAL_LIMITER (58/min), which now
-        # covers this call too and, unlike a per-call sleep, holds under concurrency.
         d = tv_get(f"/tickers/{t}/options/volume?exp={exp_str}", cache_name, expensive=False)
+        if not was_cached: time.sleep(1.1)
         if not d or "error" in d: return dict(flow_exp=exp_str, flow_with=0, flow_against=0, flow_tilt=None, flow_note="no volume data")
         data = d.get("data", d)
         pts = data.get("points") or []
@@ -856,38 +821,11 @@ deadline = SCAN_START + dt.timedelta(seconds=TRUNCATE_S)
 truncated_n = 0
 vol_reported_n, vol_zero_n = 0, 0     # Fix 1: names with a reported call_vol+put_vol field, and how many are 0
 theta_priced_n, theta_missing_n = 0, 0  # Fix 2: names where an option-leg price was attempted via ThetaData, and how many came back quote_missing
-
-# 2026-09-28 (concurrency redesign, PR follows #3104): candidates are now evaluated on a
-# bounded thread pool (SCAN_WORKERS) instead of one name at a time. process_candidate() is
-# the SAME per-name logic the old sequential loop ran, unchanged line for line -- the only
-# thing concurrency changes is WHEN it runs relative to other names; every TradingVolatility
-# call inside it still funnels through tv_get()'s shared rate limiters (module top), so the
-# real per-account throughput cap is identical to the old flow, just no longer paid to
-# a single thread sitting idle in a sleep(). Each candidate returns an "outcome" dict instead
-# of mutating shared lists/counters directly (those aren't thread-safe); the dispatch loop
-# below merges outcomes into setups/marginal/.../theta_missing_n on the main thread, in
-# candidate (submission) order, so the merge itself is single-threaded and deterministic.
-# Deadline semantics: the original code's `break` on a stale/stuck candidate stopped the
-# WHOLE sequential loop immediately (that candidate's own row, and every later candidate,
-# never evaluated). Here, stop_dispatch is set the instant any candidate (or the dispatcher
-# itself) sees the deadline has passed; the dispatch loop stops SUBMITTING new candidates the
-# moment it's set, and a candidate whose own top-of-function or pre-theta-pricing check trips
-# the deadline returns immediately with truncated=True and no row for that candidate (same as
-# the old break -- the row is never built past that point). Because several candidates can be
-# in flight at once, a few more names right at the 22-minute boundary may finish evaluating
-# than would have under strict one-at-a-time processing (or vice versa) -- the boundary itself
-# is a wall-clock artifact in both the old and new code, not a function of the input data, so
-# this does not affect per-candidate signal equivalence away from that boundary.
-stop_dispatch = threading.Event()
-
-def process_candidate(cand):
-    outcome = dict(nodata_entry=None, rr_bucket=None, rr_row=None, bounce_bucket=None, bounce_row=None,
-                    vol_reported=0, vol_zero=0, theta_priced=0, theta_missing=0, bounce_signal=0, truncated=False)
-    if dt.datetime.now() >= deadline:
-        stop_dispatch.set(); outcome["truncated"] = True; return outcome
+for i, cand in enumerate(candidates):
+    if dt.datetime.now() >= deadline: truncated_n = len(candidates) - i; break
     t = cand["ticker"]
     st = tv_get(f"/tickers/{t}", f"ticker_{t}", ttl_s=TICKER_TTL_S, force_daily=True)
-    if not st or "error" in st: outcome["nodata_entry"] = (t, "no /tickers payload"); return outcome
+    if not st or "error" in st: nodata.append((t, "no /tickers payload")); continue
     d = st.get("data", st); price = float(d["underlying"]["price"])
     flip = (d.get("gamma", {}).get("flip") or {}).get("price")
     em = d["expected_move"]; m1d, m1w = price * em["expected_move_pct_1d"] / 100, price * em["expected_move_pct_1w"] / 100
@@ -915,8 +853,8 @@ def process_candidate(cand):
     # Fix 1: TV's intraday put_call.pcr_volume is 0 for every name -- a reported 0 is UNKNOWN,
     # not "thin"; the LIQ_VOL_MIN floor applies only when opt_vol is a positive number.
     vol_unknown = opt_vol_reported is not None and opt_vol_reported == 0
-    if opt_vol_reported is not None: outcome["vol_reported"] += 1
-    if vol_unknown: outcome["vol_zero"] += 1
+    if opt_vol_reported is not None: vol_reported_n += 1
+    if vol_unknown: vol_zero_n += 1
     opt_vol = None if vol_unknown else opt_vol_reported
     liq_note_name = "thin OI" if (opt_oi is not None and opt_oi < LIQ_OI_MIN) else \
                      ("thin vol" if (opt_vol is not None and opt_vol < LIQ_VOL_MIN) else
@@ -927,8 +865,8 @@ def process_candidate(cand):
     side = cand["direction"]
     if side is None:
         if cand["has_income"] and flip is not None and price > flip: side = "long"
-        elif cand["has_income"]: outcome["nodata_entry"] = (t, "income: below flip")
-        else: outcome["nodata_entry"] = (t, "no direction")
+        elif cand["has_income"]: nodata.append((t, "income: below flip"))
+        else: nodata.append((t, "no direction"))
 
     if side is not None:
         if side == "long":
@@ -941,7 +879,7 @@ def process_candidate(cand):
             stop_src = "call wall" if cw and min(stop_c) == cw else "1d band"; targ_src = "put wall" if pw and max(targ_c) == pw else "1w band"
         risk, reward = abs(price - stop), abs(target - price)
         if risk <= 0 or reward <= 0:
-            outcome["nodata_entry"] = (t, "degenerate levels")
+            nodata.append((t, "degenerate levels"))
         else:
             rr = reward / risk
             row = dict(ticker=t, schema_version=2, score=cand["score"], dir=side, source=cand["source"], n_sources=cand["n_sources"],
@@ -954,40 +892,42 @@ def process_candidate(cand):
                        tv_structure=",".join((cand["best_item"].get("trade_setup") or {}).get("structures", [])),
                        tv_asof=asof, scan_date=str(sess), scan_time=SCAN_TIME_ISO)
             if rr >= 2.0:
-                # 2026-09-28: the top-of-function deadline check only fires before a
-                # candidate starts -- it never protected against a single name's own
-                # ThetaData quote calls (pick_expiry + option_structures, each up to 6
-                # retries x 30s timeout) running long and pushing the whole scan past
-                # fleet_runtime's 1500s subprocess.run timeout (TimeoutExpired kills the
-                # process and loses every row from the run, not just the slow name's).
-                # Re-check right before the theta-heavy work so a stuck name degrades the
-                # same way an out-of-time candidate already does (TRUNCATED, dropped, no
-                # row for this candidate) instead of blowing the external timeout.
+                # 2026-09-28: the top-of-loop deadline check only fires
+                # BETWEEN candidates -- it never protected against a single
+                # name's own ThetaData quote calls (pick_expiry +
+                # option_structures, each up to 6 retries x 30s timeout)
+                # running long and pushing the whole scan past fleet_runtime's
+                # 1500s subprocess.run timeout (TimeoutExpired kills the
+                # process and loses every row from the run, not just the
+                # slow name's). Re-check right before the theta-heavy work so
+                # a stuck name degrades the same way an out-of-time candidate
+                # already does (TRUNCATED, dropped) instead of blowing the
+                # external timeout.
                 if dt.datetime.now() >= deadline:
-                    stop_dispatch.set(); outcome["truncated"] = True; return outcome
+                    truncated_n = len(candidates) - i
+                    break
                 e = pick_expiry(t, sess)
                 row.update(option_structures(t, side, price, target, stop, sess, e, iv_rank))
                 row.update(volume_flow(t, side, price, target, stop, e, "--cached" in sys.argv))
                 quote_missing = row.get("structure") is None
-                outcome["theta_priced"] += 1
-                if quote_missing: outcome["theta_missing"] += 1
+                theta_priced_n += 1
+                if quote_missing: theta_missing_n += 1
                 row["liquid"] = bool(row.get("struct_liquid")) and not liq_gate_fail_name and not quote_missing
                 row["liq_note"] = liq_note_name if liq_note_name else ("no quote" if quote_missing or row.get("spread_pct") is None else None)
-                outcome["rr_bucket"] = "setups" if row["liquid"] else "illiquid"
-                outcome["rr_row"] = row
+                (setups if row["liquid"] else illiquid).append(row)
             elif rr >= 1.0:
                 e = pick_expiry(t, sess)
                 row.update(volume_flow(t, side, price, target, stop, e, "--cached" in sys.argv))
                 row["spread_pct"], row["liquid"], row["liq_note"] = None, None, liq_note_name
-                outcome["rr_bucket"] = "marginal"; outcome["rr_row"] = row
+                marginal.append(row)
             else:
                 row["spread_pct"], row["liquid"], row["liq_note"] = None, None, liq_note_name
-                outcome["rr_bucket"] = "hidden"; outcome["rr_row"] = row
+                hidden.append(row)
 
     # ---- BOUNCE strategy, strategy="bounce" ----
     bounce_hit = rsi14 is not None and rsi14 < 30 and pw is not None and pw * 0.97 <= price <= pw * 1.03
     if bounce_hit:
-        outcome["bounce_signal"] = 1
+        bounce_signal_n += 1
         b_stop = price * (1 - 0.01) if price < pw else pw * (1 - BUF)
         b_targ_c = [x for x in (cw, price + m1w) if x]
         b_target = min(b_targ_c) if b_targ_c else None
@@ -1009,11 +949,10 @@ def process_candidate(cand):
             if b_rr >= 1.0:
                 # Same wall-clock re-check as the RR >= 2.0 branch above --
                 # bounce_term_structure() makes its own sequence of theta-heavy
-                # calls (up to 3 expiries) independent of the RR branch. Any
-                # nodata_entry/rr_* already set on `outcome` above this point stands --
-                # only the bounce row itself is dropped on truncation here.
+                # calls (up to 3 expiries) independent of the RR branch.
                 if dt.datetime.now() >= deadline:
-                    stop_dispatch.set(); outcome["truncated"] = True; return outcome
+                    truncated_n = len(candidates) - i
+                    break
                 term = bounce_term_structure(t, price, sess)
                 if term:
                     cheapest = min(term, key=lambda x: x["metric"]); richest = max(term, key=lambda x: x["metric"])
@@ -1046,14 +985,16 @@ def process_candidate(cand):
                     spread_pct, struct_liquid, quote_missing = b_row.get("call_spread_pct"), b_row.get("call_struct_liquid"), b_row.get("call_debit") is None
                 else:
                     spread_pct, struct_liquid, quote_missing = None, False, True
-                outcome["theta_priced"] += 1
-                if quote_missing: outcome["theta_missing"] += 1
+                theta_priced_n += 1
+                if quote_missing: theta_missing_n += 1
                 b_row["spread_pct"] = spread_pct
                 b_row["liquid"] = bool(struct_liquid) and not liq_gate_fail_name and not quote_missing
                 b_row["liq_note"] = liq_note_name if liq_note_name else ("no quote" if quote_missing or spread_pct is None else None)
                 b_row["tier"] = "setup" if b_rr >= 2.0 else "marginal"
-                outcome["bounce_bucket"] = "bounce_illiquid" if (b_row["tier"] == "setup" and not b_row["liquid"]) else "bounce_rows"
-                outcome["bounce_row"] = b_row
+                if b_row["tier"] == "setup" and not b_row["liquid"]:
+                    bounce_illiquid.append(b_row)
+                else:
+                    bounce_rows.append(b_row)
             else:
                 b_row.update(term_slope=None, call_exp=None, pcs_exp=None, exp=None, structure=None,
                              earnings_inside_exp=None, pcs_credit=None, pcs_width=None, pcs_short=None,
@@ -1061,37 +1002,7 @@ def process_candidate(cand):
                              call_cost_usd=None, call_rr_floor=None, call_rr_7d=None, call_note=None,
                              flow_exp=None, flow_with=0, flow_against=0, flow_tilt=None, flow_note=None,
                              spread_pct=None, liquid=None, liq_note=liq_note_name, tier="hidden")
-                outcome["bounce_bucket"] = "bounce_hidden"; outcome["bounce_row"] = b_row
-    return outcome
-
-BUCKETS = dict(setups=setups, illiquid=illiquid, marginal=marginal, hidden=hidden,
-               bounce_rows=bounce_rows, bounce_illiquid=bounce_illiquid, bounce_hidden=bounce_hidden)
-n_submitted = len(candidates)
-with ThreadPoolExecutor(max_workers=SCAN_WORKERS) as pool:
-    futures = []
-    for i, cand in enumerate(candidates):
-        if stop_dispatch.is_set() or dt.datetime.now() >= deadline:
-            n_submitted = i
-            break
-        futures.append(pool.submit(process_candidate, cand))
-    outcomes = [fut.result() for fut in futures]
-
-# Merge on the main thread, in candidate order -- single-threaded, so no lock needed.
-# process_candidate() returns immediately at whichever checkpoint trips the deadline, so a
-# truncated outcome's rr_*/bounce_* fields past that point are always None -- but an EARLIER
-# side effect on the same candidate (e.g. a "degenerate levels" nodata_entry set before a
-# later bounce-branch truncation) is still on the outcome and merges normally; that mirrors
-# the old sequential code, where such a nodata.append() already ran before the later break.
-self_truncated = 0
-for outcome in outcomes:
-    if outcome["truncated"]: self_truncated += 1
-    if outcome["nodata_entry"] is not None: nodata.append(outcome["nodata_entry"])
-    if outcome["rr_bucket"] is not None: BUCKETS[outcome["rr_bucket"]].append(outcome["rr_row"])
-    if outcome["bounce_bucket"] is not None: BUCKETS[outcome["bounce_bucket"]].append(outcome["bounce_row"])
-    vol_reported_n += outcome["vol_reported"]; vol_zero_n += outcome["vol_zero"]
-    theta_priced_n += outcome["theta_priced"]; theta_missing_n += outcome["theta_missing"]
-    bounce_signal_n += outcome["bounce_signal"]
-truncated_n = (len(candidates) - n_submitted) + self_truncated
+                bounce_hidden.append(b_row)
 
 def show(rows, title, cols, key=None):
     if rows:
