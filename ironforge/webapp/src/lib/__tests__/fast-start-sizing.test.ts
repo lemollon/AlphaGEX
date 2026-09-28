@@ -9,6 +9,8 @@ import {
   decideFastStartSizing,
   seedFastStartState,
   isFastStartMode,
+  sizeFlintGivenEbbOutcome,
+  evaluateFastStartTrigger,
   FAST_START_STYLE_MULT,
   FAST_START_X,
   FAST_START_N,
@@ -308,5 +310,106 @@ describe('new account with no history', () => {
   it('seeds phase 1 at the given deposit', () => {
     const s = seedFastStartState(7500)
     expect(s).toEqual({ phase: 1, deposit: 7500 })
+  })
+})
+
+describe('evaluateFastStartTrigger — standalone, shared by intraday (skipped) and EOD (authoritative)', () => {
+  it('fires when cushion clears N x combined_ml_ladder', () => {
+    // ladder=2, ebb_ml=170 -> combined=340 (ebb candidate, flint not). trigger=8*340=2720.
+    const r = evaluateFastStartTrigger(2720, 2, true, 170, false, null)
+    expect(r.triggered).toBe(true)
+    expect(r.triggerLevel).toBe(2720)
+  })
+  it('does not fire one dollar short', () => {
+    const r = evaluateFastStartTrigger(2719.99, 2, true, 170, false, null)
+    expect(r.triggered).toBe(false)
+  })
+  it('includes FLINT only when it is a candidate today', () => {
+    const withFlint = evaluateFastStartTrigger(100000, 2, true, 170, true, 190)
+    const withoutFlint = evaluateFastStartTrigger(100000, 2, true, 170, false, 190)
+    expect(withFlint.combinedMlLadder).toBe(2 * 170 + 190)
+    expect(withoutFlint.combinedMlLadder).toBe(2 * 170)
+  })
+  it('never fires on a day neither leg is a candidate', () => {
+    const r = evaluateFastStartTrigger(1_000_000, 5, false, null, false, null)
+    expect(r.triggered).toBe(false)
+    expect(r.combinedMlLadder).toBe(0)
+  })
+})
+
+describe('decideFastStartSizing opts.skipTriggerCheck — the EOD-only phase gate', () => {
+  it('intraday (skipTriggerCheck=true): a cushion that WOULD trigger does NOT advance the phase', () => {
+    process.env.FLAME_FAST_START = 'on'
+    const state: FastStartAccountState = { phase: 1, deposit: 2000 }
+    // cushion=100000 trivially clears any trigger threshold.
+    const { decision, nextState } = decideFastStartSizing(
+      state,
+      baseInputs({ equity: 102000, normalEbbLadder: 1, ebbMaxLossPerLot: 170, flintMaxLossPerContract: 190 }),
+      { skipTriggerCheck: true },
+    )
+    expect(decision.phase).toBe(1)
+    expect(decision.triggeredToday).toBe(false)
+    expect(nextState.phase).toBe(1)
+  })
+
+  it('intraday (skipTriggerCheck=true) still sizes Phase 1 normally — only the transition is suppressed', () => {
+    process.env.FLAME_FAST_START = 'on'
+    const state: FastStartAccountState = { phase: 1, deposit: 4242 }
+    const { decision } = decideFastStartSizing(
+      state,
+      baseInputs({ equity: 4242, normalEbbLadder: 2, ebbMaxLossPerLot: 170 }),
+      { skipTriggerCheck: true },
+    )
+    expect(decision.ebbContracts).toBe(4) // same as the non-opts Phase-1 test above
+  })
+
+  it('default (no opts / opts omitted) behaves exactly as before — the parity test relies on this', () => {
+    process.env.FLAME_FAST_START = 'on'
+    const state: FastStartAccountState = { phase: 1, deposit: 2000 }
+    const inputs = baseInputs({ equity: 102000, normalEbbLadder: 1, ebbMaxLossPerLot: 170, flintMaxLossPerContract: 190 })
+    const withOpts = decideFastStartSizing(state, inputs, {})
+    const withoutOpts = decideFastStartSizing(state, inputs)
+    expect(withOpts.decision).toEqual(withoutOpts.decision)
+    expect(withoutOpts.decision.triggeredToday).toBe(true) // sanity: this scenario DOES trigger when not skipped
+  })
+})
+
+describe('sizeFlintGivenEbbOutcome — the ordering-gap helper (FLINT runs before EBB in the live scanner)', () => {
+  it('phase 1: FLINT gets the budget EBB left behind, using EBB\'s REAL committed contracts', () => {
+    // deposit=4242, X budget=848.4. EBB already committed 4 lots @ $170 = $680. remaining=$168.4 >= flint_ml(150) -> 1.
+    const { flintContracts } = sizeFlintGivenEbbOutcome(1, 4242, 4242 + 300, 300, 4, 170, true, 150)
+    expect(flintContracts).toBe(1)
+  })
+
+  it('phase 1: EBB already used the whole budget -> FLINT gets 0', () => {
+    const { flintContracts } = sizeFlintGivenEbbOutcome(1, 4242, 4242 + 300, 300, 5, 170, true, 190)
+    expect(flintContracts).toBe(0)
+  })
+
+  it('phase 1: FLINT still needs its OWN standing cushion check even if budget remains', () => {
+    // cushion=equity-deposit=0 here -> flint fails its own standing rule regardless of remaining budget.
+    const { flintContracts } = sizeFlintGivenEbbOutcome(1, 4242, 4242, 0, 0, null, true, 150)
+    expect(flintContracts).toBe(0)
+  })
+
+  it('phase 2: ebbMin inferred from ebbContractsToday >= 1; flint gated sequentially after it', () => {
+    // cushion=equity-deposit=1000. EBB committed >=1 lot @ $170 -> remaining_deposit_cushion=830 >= flint_ml(190) -> 1.
+    const { flintContracts } = sizeFlintGivenEbbOutcome(2, 4242, 5242, 1000, 3, 170, true, 190)
+    expect(flintContracts).toBe(1)
+  })
+
+  it('phase 2: ebbContractsToday=0 -> ebbMin=0, flint gated only by its own cushion', () => {
+    const { flintContracts } = sizeFlintGivenEbbOutcome(2, 4242, 4242 + 100, 5000, 0, null, true, 90)
+    expect(flintContracts).toBe(1) // cushion=100 >= flint_ml(90)
+  })
+
+  it('not a flint candidate day -> 0 regardless of phase or budget', () => {
+    const { flintContracts } = sizeFlintGivenEbbOutcome(1, 4242, 10000, 5000, 0, null, false, 150)
+    expect(flintContracts).toBe(0)
+  })
+
+  it('missing flint max-loss -> 0, never guesses', () => {
+    const { flintContracts } = sizeFlintGivenEbbOutcome(2, 4242, 10000, 5000, 1, 170, true, null)
+    expect(flintContracts).toBe(0)
   })
 })

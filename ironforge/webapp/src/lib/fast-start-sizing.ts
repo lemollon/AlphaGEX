@@ -5,11 +5,18 @@
  * want to add it"). Frozen parameters: **2x ladder / X=20% / N=8 / K=0.25 /
  * variant G**.
  *
- * SCOPE: FLAME customer (sandbox mirror) accounts ONLY — same scope as
- * EBB_CUSTOMER_LADDER (see ebbCustomerLadderMode in ebb-sizing.ts). FLAME's
- * own production account and every SPARK account are UNTOUCHED by this file;
- * the caller in tradier.ts gates on the same `botName === 'flame'` +
- * account-type checks the profit ladder already uses.
+ * SCOPE (widened 2026-09-27, Leron: wants the account on Tradier 6YB71371 —
+ * his own live FLAME account, ~$4,242 — covered too): every FLAME customer
+ * (sandbox mirror) account under EBB_CUSTOMER_LADDER=profit, PLUS FLAME's own
+ * production account (person='Flame', account_type='production', 6YB71371).
+ * Every SPARK account is UNTOUCHED regardless of this flag — the caller in
+ * tradier.ts gates on `botName === 'flame'` before ever reaching this file.
+ * "Deposit" for the production account is `getProductionLadderCapital('flame',
+ * 'Flame').starting` (the SAME funded-capital figure EBB's own production
+ * ladder already keys on) rather than flint_account_floor (which is
+ * sandbox-only); "peak_profit" is that same call's `highWater` minus that
+ * starting figure — both already-ratcheted, already-read-elsewhere values,
+ * never a new ratchet mechanism invented for this file.
  *
  * THIS FILE IS PURE — no DB, no network — so it is unit-testable without
  * mocking Postgres/Tradier, matching ebb-sizing.ts and flint.ts. Per-account
@@ -150,9 +157,49 @@ function isPositiveFinite(n: number | null | undefined): n is number {
  *  - Phase 1 cap smaller than 1 lot's max loss -> 0 EBB contracts, logged
  *    (not a fallback to 1 — never risk more than the cap allows).
  */
+export interface FastStartSizingOpts {
+  /**
+   * Skip the Phase 1 -> 2 trigger check entirely and size under
+   * `state.phase` AS GIVEN (never advances it). Set by the caller for
+   * every INTRADAY sizing call — phase/peak_profit/floor are updated ONLY
+   * once per day, at EOD, from that day's CLOSING equity (see
+   * evaluateFastStartTrigger + fast-start-db.ts's updateFastStartEodState),
+   * so intraday unrealized marks can never flip the phase or ratchet the
+   * floor mid-day. Live/intraday equity is still used for the (equity -
+   * floor) budget/cushion arithmetic within sizing itself — only the
+   * TRANSITION decision and the peak_profit/floor ratchet are EOD-gated.
+   */
+  skipTriggerCheck?: boolean
+}
+
+/**
+ * The Phase 1 -> 2 trigger check, standalone — shared by decideFastStartSizing
+ * (intraday, phase-check normally skipped per FastStartSizingOpts) and the
+ * EOD-only ratchet (fast-start-db.ts's updateFastStartEodState, which calls
+ * this directly with that day's CLOSING equity/cushion). One implementation,
+ * never duplicated.
+ */
+export function evaluateFastStartTrigger(
+  cushion: number,
+  normalLadder: number,
+  ebbCandidateDay: boolean,
+  ebbMaxLossPerLot: number | null,
+  flintCandidateDay: boolean,
+  flintMaxLossPerContract: number | null,
+): { triggered: boolean; triggerLevel: number; combinedMlLadder: number } {
+  const ebbMlRaw = isPositiveFinite(ebbMaxLossPerLot) ? ebbMaxLossPerLot : 0
+  const flintMlRaw = isPositiveFinite(flintMaxLossPerContract) ? flintMaxLossPerContract : 0
+  const combinedMlLadder = (ebbCandidateDay ? Math.max(0, Math.floor(normalLadder)) * ebbMlRaw : 0) + (flintCandidateDay ? flintMlRaw : 0)
+  const candToday = ebbCandidateDay || flintCandidateDay
+  const triggerLevel = FAST_START_N * combinedMlLadder
+  const triggered = candToday && combinedMlLadder > 0 && cushion >= triggerLevel
+  return { triggered, triggerLevel, combinedMlLadder }
+}
+
 export function decideFastStartSizing(
   state: FastStartAccountState,
   inputs: FastStartDayInputs,
+  opts?: FastStartSizingOpts,
 ): FastStartResult {
   if (!isFastStartMode()) {
     return {
@@ -189,23 +236,18 @@ export function decideFastStartSizing(
   let triggeredToday = false
   let triggerNote = ''
 
-  if (state.phase === 1) {
-    // combined_ml_ladder = (normalLadder x EBB max loss, if EBB is a
-    // candidate today) + (FLINT max loss, if FLINT is a candidate today),
-    // using the UN-multiplied normal ladder and each leg's RAW max loss (0
-    // when unreadable) — gated by CANDIDACY, never by whether that leg
-    // actually ends up trading today.
-    const ebbMlRaw = ebbMl ?? 0
-    const flintMlRaw = flintMl ?? 0
-    const combinedMlLadder =
-      (inputs.ebbCandidateDay ? normalLadder * ebbMlRaw : 0) + (inputs.flintCandidateDay ? flintMlRaw : 0)
-    const candToday = inputs.ebbCandidateDay || inputs.flintCandidateDay
-    triggerLevel = FAST_START_N * combinedMlLadder
-    if (candToday && combinedMlLadder > 0 && cushion >= triggerLevel) {
+  if (state.phase === 1 && !opts?.skipTriggerCheck) {
+    const check = evaluateFastStartTrigger(
+      cushion, normalLadder, inputs.ebbCandidateDay, ebbMl, inputs.flintCandidateDay, flintMl,
+    )
+    triggerLevel = check.triggerLevel
+    if (check.triggered) {
       triggeredToday = true
       effectivePhase = 2
       triggerNote = ` -> TRIGGER phase1->phase2 (cushion=$${cushion.toFixed(2)} >= $${triggerLevel.toFixed(2)})`
     }
+  } else if (state.phase === 1 && opts?.skipTriggerCheck) {
+    triggerNote = ' (intraday: trigger check skipped, EOD-only per FastStartSizingOpts)'
   }
 
   const sized = effectivePhase === 1 ? sizePhase1(inputs, common) : sizePhase2(inputs, common)
@@ -344,5 +386,76 @@ function sizePhase2(inputs: FastStartDayInputs, c: Common): Sized {
     budget,
     phase1CapBudget: null,
     reason,
+  }
+}
+
+/**
+ * FLINT-SIDE-ONLY sizing, given EBB's ALREADY-KNOWN outcome for today.
+ *
+ * WHY THIS EXISTS (live-vs-sim ordering gap, see tradier.ts call sites and
+ * the PR description for the full writeup): the sim allocates EBB FIRST,
+ * then gives FLINT whatever budget/cushion is left — a pure function of
+ * "how much did EBB use." In the live scanner, FLINT's own entry
+ * (tryOpenFlint) always runs BEFORE FLAME's EBB entry logic in the SAME
+ * scan tick (scanBot('flame') calls FLINT's guard/settle/entry, THEN EBB's),
+ * so FLINT cannot ask "what did EBB decide THIS SAME TICK" — it can only
+ * see EBB's outcome from an EARLIER tick today, or none yet.
+ *
+ * The caller (tradier.ts) is responsible for resolving `ebbContractsToday`
+ * and `ebbMaxLossPerLot` from EBB's own today position row when one exists.
+ * When EBB HAS NOT YET traded today (no row exists and EBB's own entry
+ * window has not yet closed), the caller must NOT call this function at
+ * all — it must size FLINT to 0 for this tick and retry next tick (see
+ * the caller's own "defer until EBB is observable" comment). This function
+ * always assumes `ebbContractsToday`/`ebbMaxLossPerLot` ARE the real,
+ * final numbers for today — it never guesses.
+ *
+ * Phase 1: remaining budget = X% of deposit − ebbContractsToday ×
+ * ebbMaxLossPerLot (EBB's REAL committed risk, not a re-derived target).
+ * Phase 2: ebbMin is inferred as 1 iff ebbContractsToday >= 1 — valid
+ * because floor_level >= deposit always, so budget_K <= budget_dep
+ * (cushion), meaning EBB's "extra" layer can only be nonzero when its
+ * minimum layer already fired (worked through in fast_start_floor_sim.py's
+ * phase2_alloc: n_min_ebb's own gate is strictly looser than what extra_ebb
+ * needs to be positive).
+ */
+export function sizeFlintGivenEbbOutcome(
+  phase: FastStartPhase,
+  deposit: number,
+  equity: number,
+  peakProfit: number,
+  ebbContractsToday: number,
+  ebbMaxLossPerLot: number | null,
+  flintCandidateDay: boolean,
+  flintMaxLossPerContract: number | null,
+): { flintContracts: number; reason: string } {
+  const cushion = equity - deposit
+  const flintMl = isPositiveFinite(flintMaxLossPerContract) ? flintMaxLossPerContract : null
+  const ebbMl = isPositiveFinite(ebbMaxLossPerLot) ? ebbMaxLossPerLot : 0
+  const ebbCommitted = Math.max(0, ebbContractsToday) * ebbMl
+
+  if (!flintCandidateDay || flintMl === null) {
+    return { flintContracts: 0, reason: 'flint not a candidate today or max-loss unreadable' }
+  }
+
+  if (phase === 1) {
+    const phase1CapBudget = FAST_START_X * deposit
+    const remaining = phase1CapBudget - ebbCommitted
+    const flintContracts = cushion >= flintMl ? Math.max(0, Math.min(1, Math.floor(remaining / flintMl))) : 0
+    return {
+      flintContracts,
+      reason: `phase1 (ebb-given) cap_budget=$${phase1CapBudget.toFixed(2)} ebb_committed=$${ebbCommitted.toFixed(2)} ` +
+        `remaining=$${remaining.toFixed(2)} flint=${flintContracts}`,
+    }
+  }
+
+  // Phase 2: minimum layer only, sequential AFTER ebb's own minimum commitment.
+  const ebbMin = ebbContractsToday >= 1 ? 1 : 0
+  const remainingDepositCushion = cushion - ebbMin * ebbMl
+  const flintContracts = flintMl <= remainingDepositCushion ? 1 : 0
+  return {
+    flintContracts,
+    reason: `phase2 (ebb-given) ebb_min=${ebbMin} cushion=$${cushion.toFixed(2)} ` +
+      `remaining_deposit_cushion=$${remainingDepositCushion.toFixed(2)} flint=${flintContracts}`,
   }
 }
