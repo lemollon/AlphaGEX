@@ -434,6 +434,39 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
       },
     },
   },
+  {
+    flag: 'XSP_SWAP',
+    envVars: ['XSP_SWAP'],
+    description:
+      "R4 XSP-for-SPY host-leg swap (xsp-swap.ts): the first min(n,2) EBB/SPARK put-spread " +
+      "contracts move to a same-moneyness XSP 0DTE credit spread — cash-settled, no assignment " +
+      "guard, held to settlement — whenever XSP's real credit clears SPY's real credit by no " +
+      "more than $0.05/share and the XSP touch depth covers it; otherwise 100% stays on SPY. " +
+      "If the XSP order itself fails to fill, every contract falls back to SPY — the trade is " +
+      "never skipped. Kill switch: unset/off = byte-for-byte unchanged.",
+    coverage: {
+      production: {
+        status: 'covered',
+        note:
+          "tradier.ts placeIcOrderAllAccounts calls attemptXspHostSwap (reads XSP_SWAP via " +
+          "isXspSwapMode()) for FLAME's production account (6YB71371) on the two-leg (host) " +
+          "path only — never for a 4-leg condor or FLINT's call spread.",
+      },
+      sandbox: {
+        status: 'covered',
+        note: "Same attemptXspHostSwap call runs for every sandbox account (User/Matt/Logan and SPARK's sandbox mirrors) — placeForAccount does not distinguish account type.",
+      },
+      customer: {
+        status: 'covered',
+        note:
+          "scanner.ts's tryOpenFlameBook computes the master's own XSP eligibility and passes it " +
+          "as MasterOpen.xspSwap into mirrorOpenToCustomers; customer-executor/executor.ts " +
+          "mirrorOneOpen reads XSP_SWAP (via isXspSwapMode()) and attempts a SnapTrade XSP order " +
+          "for min(contracts,2); a SnapTrade failure (including an unsupported broker/symbol) is " +
+          "caught, logged, and every contract falls back to the existing SPY mirror path.",
+      },
+    },
+  },
 ]
 
 /** Fast lookup by any of a feature's env vars. */

@@ -94,6 +94,8 @@ import { runTrialDayClose, marketDateKey, isAfterTrialCloseTime } from './enroll
 import { mirrorOpenToCustomers, mirrorFlintOpenToCustomers, mirrorCloseToCustomers, retryFailedCustomerCloses } from './customer-executor/executor'
 import { buildTradeOpenedEvent, buildTradeClosedEvent } from './push/trade-events'
 import { dispatchToCustomers } from './push/dispatch'
+import { isXspTicker, isXspSwapMode, decideXspSwap, XSP_TICKER } from './xsp-swap'
+import { settleXspSwapLegsForBot } from './xsp-swap-db'
 import type { LiveBot } from './live/bots'
 import { PROTECTIVE_REASON_PREFIXES } from './live/riskProtection'
 
@@ -4149,6 +4151,17 @@ async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
     const positionId = String(p.position_id)
     const ticker = String(p.ticker || 'SPY')
 
+    // XSP_SWAP (R4): XSP is cash-settled, European-style, no early assignment —
+    // it must NEVER be guard-closed. By construction an XSP leg is never
+    // inserted into this table (see xsp-swap-db.ts's header — it lives in its
+    // own `xsp_swap_legs` table instead), so this is defense in depth, not the
+    // only thing stopping it: a row that somehow carries ticker='XSP' skips the
+    // guard outright and holds to settlement, same as the design intends.
+    if (isXspTicker(ticker)) {
+      out.push(`${positionId}=xsp_guard_exempt`)
+      continue
+    }
+
     const q = await getQuote(ticker)
     const spot = q?.last ?? 0
     if (!(spot > 0)) {
@@ -5721,6 +5734,31 @@ async function tryOpenFlameBook(
       `sizing: ${sizingLine}`,
     )
 
+    // XSP_SWAP (R4) — the SAME go/no-go signal the internal production/sandbox
+    // order path (tradier.ts placeIcOrderAllAccounts -> attemptXspHostSwap)
+    // computes for itself independently, at its own quote pull. Customers
+    // mirror THIS eligibility rather than pricing their own XSP quote (the
+    // customer-executor path has no direct Tradier market-data access) — see
+    // customer-executor/executor.ts mirrorOneOpen. Only meaningful for the
+    // put-spread host leg on SPY; off (default) or not the SPY host leg =
+    // zero extra network calls, xspSwapForCustomers stays undefined, and
+    // MasterOpen is byte-for-byte the prior shape.
+    let xspSwapForCustomers: { eligible: boolean; xspCreditPerContract: number | null } | undefined
+    if (ticker === 'SPY' && callShort === 0 && isXspSwapMode()) {
+      try {
+        const xspQuote = await getPutSpreadEntryCredit(XSP_TICKER, expiration, putShort, putLong)
+        const decision = decideXspSwap({
+          nHost: finalContracts,
+          spyCreditPerContract: entryCredit,
+          xspCreditPerContract: xspQuote?.putCredit ?? null,
+          xspShortBidSize: xspQuote?.shortBidSize ?? null,
+        })
+        xspSwapForCustomers = { eligible: decision.usedXsp, xspCreditPerContract: decision.xspCreditPerContract }
+      } catch (e) {
+        console.warn(`[scanner] ${bot.name.toUpperCase()} XSP_SWAP customer-eligibility quote failed:`, e)
+      }
+    }
+
     // Customer push (UAT #7): fire-and-forget, never throws into the trade path —
     // notifyTradeOpened catches everything internally.
     void mirrorOpenToCustomers({
@@ -5728,6 +5766,7 @@ async function tryOpenFlameBook(
       putShort, putLong, callShort, callLong,
       spreadWidth: width, credit: entryCredit,
       vixRatio: ledger.vixRatio ?? null,
+      xspSwap: xspSwapForCustomers,
     })
 
     void notifyTradeOpened(bot.name, positionId)
@@ -8822,6 +8861,26 @@ async function scanBot(bot: BotDef): Promise<void> {
       if (settled) reason += settled
     } catch (e) {
       console.error(`[scanner] ${botName} settlement failed:`, e)
+    }
+
+    // XSP_SWAP (R4) settlement: any XSP host-leg contracts opened via the
+    // XSP_SWAP flag live in their own `xsp_swap_legs` table (never in
+    // `{bot}_positions` — see xsp-swap-db.ts's header), so they need their
+    // own settle pass. A no-op query when the flag has never been on (no
+    // rows exist). Settles from the OFFICIAL SPX close ÷ 10 — the same
+    // "daily bar for the expiration date" source settleExpiredPositions uses
+    // for SPY, just pointed at the index ticker — never inventing a price.
+    try {
+      const xspSettled = await settleXspSwapLegsForBot(bot.name, ct.toISOString().slice(0, 10), async (exp) => {
+        const hist = await getDailyHistory('SPX', 30)
+        const c = hist.find((h) => h.date === exp)?.close
+        return typeof c === 'number' && c > 0 ? c : null
+      })
+      if (xspSettled.settled > 0 || xspSettled.unsettled > 0) {
+        reason += ` xsp_settle:${xspSettled.settled}ok/${xspSettled.unsettled}pending`
+      }
+    } catch (e) {
+      console.error(`[scanner] ${botName} XSP_SWAP settlement failed:`, e)
     }
 
     // FLINT — SPY 0DTE call credit spread, EVERY trading day (FLINT_MODE,

@@ -335,4 +335,33 @@ describe('CUSTOMER_FLINT host-leg netting — "FLINT is dropped first" (ROUND 8,
     // Only 2 bound params now (user_id, agent_code) -- no 3rd tradeDate param.
     expect(hostLegCall?.[1]).toHaveLength(2)
   })
+
+  it('XSP_SWAP (R4): host-leg netting sums main AND xsp committed collateral, not main alone', async () => {
+    // Coordinator note (post-#3093/#3098): an XSP_SWAP contract is real committed
+    // risk on this same account (same max loss/contract as its SPY sibling —
+    // xsp-swap.ts's header), booked under strategy='xsp'. If FLINT's netting only
+    // read 'main', it would under-count by the XSP portion and could over-size
+    // FLINT into a fully committed account. This proves the query now reaches BOTH
+    // strategies and that the combined figure it returns is what FLINT nets against.
+    const customer = makeCustomer({ buying_power_cents: 200_000 })
+    customerQueryMock
+      .mockResolvedValueOnce([customer]) // eligibleCustomers for FLINT
+      .mockResolvedValueOnce([{ deposit_cents: 200_000, triggered: false, peak_equity_cents: null }]) // floor-state read
+      // main ($1,700) + xsp ($200) combined = $1,900 committed, still open (no date filter).
+      .mockResolvedValueOnce([{ total_cents: 190_000 }])
+    // equity $2,400 -> cushion 40_000c. Netted: 190_000 + 17_140 + 5_000 = 212_140 > 40_000 -> dropped.
+    // (Same cushion that WOULD pass FLINT's standalone check, same as the sibling test above —
+    // the only thing under test here is that the query reaches the XSP leg too.)
+    getUserAccountBalanceMock.mockResolvedValueOnce({ data: [{ buying_power: 2400 }] })
+
+    const { mirrorFlintOpenToCustomers } = await import('../executor')
+    await mirrorFlintOpenToCustomers(FLINT_MASTER)
+
+    expect(placeMlegOrderMock).not.toHaveBeenCalled()
+    const hostLegQuery = customerQueryMock.mock.calls.find((c) => String(c[0]).includes('FROM customer_positions') && String(c[0]).includes("strategy = 'main'"))
+    expect(hostLegQuery, 'the host-committed lookup must run').toBeTruthy()
+    expect(String(hostLegQuery?.[0])).toContain("strategy = 'xsp'")
+    expect(String(hostLegQuery?.[0])).not.toContain('opened_at::date')
+    expect(hostLegQuery?.[1]).toHaveLength(2)
+  })
 })
