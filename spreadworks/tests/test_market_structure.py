@@ -123,3 +123,66 @@ def test_capture_all_parallel_persists_failed_snapshots(monkeypatch):
     assert set(out["gamma"]) == set(market_structure.SYMBOLS)
     assert len(persisted) == len(market_structure.SYMBOLS)
     assert any(item["reason"] == "ORATS_API_TOKEN missing" for item in persisted)
+
+
+
+def test_tradier_spy_fallback_is_explicit_and_has_no_fake_walls(monkeypatch):
+    now = datetime(2026, 9, 28, 15, 4, tzinfo=timezone.utc)
+    market_structure._TRADIER_FALLBACK_CACHE["captured_at"] = None
+    market_structure._TRADIER_FALLBACK_CACHE["payload"] = None
+
+    monkeypatch.setattr(
+        market_structure,
+        "fetch_spot",
+        lambda symbol, when: {
+            "price": 764.25, "fresh": True, "age_seconds": 0.5,
+            "source_timestamp": datetime(2026, 9, 28, 15, 3, 59, tzinfo=timezone.utc),
+        },
+    )
+
+    class FakeClient:
+        pass
+
+    import backend.bots.gamma_regime as gamma_regime
+    import backend.bots.routes_helpers as routes_helpers
+    monkeypatch.setattr(routes_helpers, "build_live_chain_provider", lambda: FakeClient())
+    monkeypatch.setattr(
+        gamma_regime, "fetch_net_gex",
+        lambda client, symbol: {
+            "net_gex": -4_000_000_000.0, "spot": 764.25,
+            "n_contracts": 1234, "reason": None,
+        },
+    )
+
+    out = market_structure.build_tradier_spy_gamma_fallback(now)
+    assert out["available"] is True
+    assert out["provider"] == "Tradier"
+    assert out["confidence"] == "MEDIUM"
+    assert out["net_gex_b"] == -4.0
+    assert out["gamma_regime"] == "negative"
+    assert out["gamma_flip"] is None
+    assert out["call_wall"] is None
+    assert out["put_wall"] is None
+    assert out["buckets"] == {}
+    assert "net gamma only" in out["reason"]
+
+
+def test_register_arms_hourly_tradier_fallback_when_orats_missing(monkeypatch):
+    jobs = []
+
+    class Scheduler:
+        def add_job(self, func, trigger, **kwargs):
+            jobs.append((func, trigger, kwargs))
+
+    monkeypatch.delenv("ORATS_API_TOKEN", raising=False)
+    monkeypatch.delenv("ORATS_TOKEN", raising=False)
+    monkeypatch.setattr(market_structure, "ensure_tables", lambda: None)
+
+    assert market_structure.register(Scheduler()) is True
+    ids = [kwargs["id"] for _, _, kwargs in jobs]
+    assert "market_structure_capture" in ids
+    assert "market_structure_tradier_spy_fallback" in ids
+    fallback = next(kwargs for _, _, kwargs in jobs
+                    if kwargs["id"] == "market_structure_tradier_spy_fallback")
+    assert fallback["hour"] == "9-14"
+    assert fallback["minute"] == "4"
