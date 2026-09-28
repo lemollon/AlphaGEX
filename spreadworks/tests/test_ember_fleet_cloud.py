@@ -338,35 +338,13 @@ def test_divhike_entry_eligibility_requires_today_bar(monkeypatch):
     assert metrics["trailing_dolvol_median"] == 5_000_000.0
 
 
-def test_spike_cloud_snapshot_stays_on_curated_universe(monkeypatch):
-    monkeypatch.setenv("POLYGON_API_KEY", "not-a-real-key")
-    monkeypatch.setenv("SPIKE_UNIVERSE", "AAA,BBB")
+# 2026-09-28 (later same day): Leron dropped Polygon entirely for SPIKE --
+# ThetaData is now the ONLY live market-data source (this account's Polygon
+# plan could never rescue a live gap anyway, see spike-data-fix-result-9-28.md).
+# `_load_polygon_enter_market_data`/`_load_cloud_history` no longer exist.
 
-    class Response:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"tickers": [
-                {"ticker": "AAA", "lastTrade": {"p": 0.5}, "day": {"v": 1_000_000},
-                 "prevDay": {"c": 0.4}},
-                {"ticker": "OUTSIDE", "lastTrade": {"p": 0.6}, "day": {"v": 2_000_000},
-                 "prevDay": {"c": 0.5}},
-            ]}
-
-    import requests
-    monkeypatch.setattr(requests, "get", lambda *a, **k: Response())
-    monkeypatch.setattr(spike, "_load_cloud_history", lambda symbols, today: {
-        symbol: ([], "broker") for symbol in symbols
-    })
-    universe, history = spike._load_polygon_enter_market_data()
-    assert [row["symbol"] for row in universe] == ["AAA"]
-    assert set(history) == {"AAA", "BBB"}
-
-
-def test_spike_cloud_prefers_complete_theta_feed(monkeypatch):
+def test_spike_cloud_uses_theta_universe_as_is(monkeypatch):
     monkeypatch.setenv("THETADATA_BASE_URL", "thetadata-proxy:10000")
-    monkeypatch.setenv("POLYGON_API_KEY", "polygon-fallback")
     monkeypatch.setenv("SPIKE_UNIVERSE", "AAA,BBB")
     theta_rows = [
         {"symbol": "AAA", "price": 1.0, "vol": 2_000_000, "provider": "theta"},
@@ -380,44 +358,21 @@ def test_spike_cloud_prefers_complete_theta_feed(monkeypatch):
         spike, "_load_theta_enter_market_data",
         lambda today, symbols: (theta_rows, theta_history),
     )
-    monkeypatch.setattr(
-        spike, "_load_polygon_enter_market_data",
-        lambda *args, **kwargs: pytest.fail("Polygon must not run when Theta covers the universe"),
-    )
 
     universe, history = spike._load_cloud_enter_market_data(date(2026, 9, 21))
     assert {row["provider"] for row in universe} == {"theta"}
     assert set(history) == {"AAA", "BBB"}
 
 
-def test_spike_cloud_uses_polygon_only_for_theta_gaps(monkeypatch):
-    monkeypatch.setenv("THETADATA_BASE_URL", "http://thetadata-proxy:10000")
-    monkeypatch.setenv("POLYGON_API_KEY", "polygon-fallback")
-    monkeypatch.setenv("SPIKE_UNIVERSE", "AAA,BBB")
-    monkeypatch.setattr(
-        spike, "_load_theta_enter_market_data",
-        lambda today, symbols: (
-            [{"symbol": "AAA", "price": 1.0, "vol": 2_000_000, "provider": "theta"}],
-            {"AAA": ([], "broker"), "BBB": ([], "broker")},
-        ),
-    )
-
-    def polygon(symbols=None, today=None):
-        assert symbols == ["BBB"]
-        return ([{"symbol": "BBB", "price": 2.0, "vol": 3_000_000,
-                  "provider": "polygon"}], {"BBB": ([], "broker")})
-
-    monkeypatch.setattr(spike, "_load_polygon_enter_market_data", polygon)
-    universe, _ = spike._load_cloud_enter_market_data(date(2026, 9, 21))
-    assert {row["symbol"]: row["provider"] for row in universe} == {
-        "AAA": "theta", "BBB": "polygon",
-    }
-
-
-def test_spike_dependency_accepts_theta_without_polygon(monkeypatch):
-    monkeypatch.delenv("POLYGON_API_KEY", raising=False)
-    monkeypatch.setenv("THETADATA_BASE_URL", "thetadata-proxy:10000")
+def test_spike_dependency_requires_thetadata_polygon_is_not_a_substitute(monkeypatch):
+    """POLYGON_API_KEY can no longer satisfy SPIKE's data-source dependency --
+    THETADATA_BASE_URL is the only thing that counts now."""
+    monkeypatch.setenv("POLYGON_API_KEY", "still-set-but-irrelevant")
+    monkeypatch.delenv("THETADATA_BASE_URL", raising=False)
     monkeypatch.setenv("SPIKE_UNIVERSE", "AAA")
+    assert fleet._dependency_gaps(fleet.SPECS["spike"]) == ["THETADATA_BASE_URL"]
+
+    monkeypatch.setenv("THETADATA_BASE_URL", "thetadata-proxy:10000")
     assert fleet._dependency_gaps(fleet.SPECS["spike"]) == []
 
 
@@ -521,3 +476,149 @@ def test_xsp_run_uses_fleet_lock_wait_budget(monkeypatch):
     monkeypatch.setattr(xsp_runtime, "_acquire_cycle_lock", fake_acquire_cycle_lock)
     xsp_runtime._run(None)
     assert captured["wait_seconds"] == fleet.BROKER_LOCK_WAIT_SECONDS
+
+
+# ---------------------------------------------------------------- 2026-09-28 SPIKE data-outage fix
+# See C:\Users\lemol\.claude\handoff\spike-data-fix-result-9-28.md for the root-cause writeup.
+
+def test_theta_csv_retries_transient_failure_then_succeeds(monkeypatch):
+    import requests
+
+    monkeypatch.setenv("THETADATA_BASE_URL", "http://thetadata-proxy:10000")
+    monkeypatch.setattr(spike, "_sleep", lambda _seconds: None)
+    calls = {"n": 0}
+
+    class Response:
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, params=None, timeout=None, headers=None):
+        calls["n"] += 1
+        assert headers == {"Connection": "close"}
+        if calls["n"] == 1:
+            raise requests.exceptions.ConnectionError("wedged")
+        return Response("symbol,close,volume\nAAA,1.0,100\n")
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    rows = spike._theta_csv("/v3/stock/snapshot/ohlc", {"symbol": "AAA", "venue": "nqb"})
+    assert calls["n"] == 2
+    assert rows == [{"symbol": "AAA", "close": "1.0", "volume": "100"}]
+
+
+def test_theta_csv_raises_last_exception_after_retries_exhausted(monkeypatch):
+    import requests
+
+    monkeypatch.setenv("THETADATA_BASE_URL", "http://thetadata-proxy:10000")
+    monkeypatch.setattr(spike, "_sleep", lambda _seconds: None)
+    calls = {"n": 0}
+
+    def fake_get(url, params=None, timeout=None, headers=None):
+        calls["n"] += 1
+        raise requests.exceptions.Timeout("still wedged")
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    with pytest.raises(requests.exceptions.Timeout):
+        spike._theta_csv("/v3/stock/snapshot/ohlc", {"symbol": "AAA", "venue": "nqb"},
+                          max_retries=2, backoff_seconds=0)
+    assert calls["n"] == 3
+
+
+def test_theta_snapshot_rows_falls_back_per_symbol_on_batch_failure(monkeypatch):
+    """A batch call that chokes (e.g. on one delisted/bad symbol) must not
+    blank the whole universe -- the good symbols still come back, only the
+    genuinely bad one is dropped."""
+    calls = []
+
+    def fake_theta_csv(path, params, timeout=60, max_retries=spike.THETA_SNAPSHOT_MAX_RETRIES,
+                        backoff_seconds=spike.THETA_SNAPSHOT_BACKOFF_SECONDS):
+        calls.append(params["symbol"])
+        if "," in params["symbol"]:
+            raise RuntimeError("batch call choked on one bad symbol")
+        if params["symbol"] == "BAD":
+            raise RuntimeError("BAD not found")
+        return [{"symbol": params["symbol"], "close": "1.0", "volume": "100",
+                  "timestamp": "2026-09-25T10:01:00"}]
+
+    monkeypatch.setattr(spike, "_theta_csv", fake_theta_csv)
+    rows, dropped = spike._theta_snapshot_rows(["AAA", "BAD", "CCC"])
+    assert calls[0] == "AAA,BAD,CCC"
+    assert dropped == ["BAD"]
+    assert {r["symbol"] for r in rows} == {"AAA", "CCC"}
+
+
+def test_theta_snapshot_rows_circuit_breaker_stops_after_consecutive_failures(monkeypatch):
+    """A genuine full outage (every per-symbol probe fails) must fail FAST,
+    not serially burn the per-symbol timeout budget across all ~38 names."""
+    monkeypatch.setattr(spike, "THETA_PER_SYMBOL_CIRCUIT_BREAKER", 2)
+    probed = []
+
+    def fake_theta_csv(path, params, timeout=60, max_retries=0, backoff_seconds=0):
+        symbol = params["symbol"]
+        if "," in symbol:
+            raise RuntimeError("full outage")
+        probed.append(symbol)
+        raise RuntimeError("still down")
+
+    monkeypatch.setattr(spike, "_theta_csv", fake_theta_csv)
+    rows, dropped = spike._theta_snapshot_rows(["AAA", "BBB", "CCC", "DDD"])
+    assert rows == []
+    assert probed == ["AAA", "BBB"]                    # circuit trips after 2 consecutive failures
+    assert dropped == ["AAA", "BBB", "CCC", "DDD"]      # rest assumed the same outage, not probed
+
+
+# 2026-09-28 (later same day): Polygon dropped entirely -- ThetaData is
+# SPIKE's ONLY live market-data source now. No second provider to top up a
+# gap or leak a secret through, so the RuntimeError/partial-universe tests
+# below only need to prove ThetaData's own failure/success paths.
+
+def test_cloud_market_data_raises_closed_when_theta_is_configured_but_errors(monkeypatch):
+    """The final RuntimeError must say WHY (symbol count, whether ThetaData
+    was even configured, the error type) so the next block is diagnosable
+    from the log line alone -- and must never carry the raw exception text
+    (defense in depth: nothing in this path should ever print a secret)."""
+    monkeypatch.setenv("SPIKE_UNIVERSE", "AAA,BBB")
+    monkeypatch.setattr(spike, "_theta_base_url", lambda: "http://thetadata-proxy:10000")
+    monkeypatch.setattr(
+        spike, "_load_theta_enter_market_data",
+        lambda today, symbols: (_ for _ in ()).throw(RuntimeError("theta proxy wedged, session=SECRETTOKEN")),
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        spike._load_cloud_enter_market_data(date(2026, 9, 25))
+
+    message = str(excinfo.value)
+    assert "no fresh ThetaData SPIKE market data" in message
+    assert "theta_error=RuntimeError" in message
+    assert "SECRETTOKEN" not in message
+
+
+def test_cloud_market_data_raises_closed_when_thetadata_base_url_missing(monkeypatch):
+    """No ThetaData configured at all is the same fail-closed outcome as a
+    live failure -- SPIKE has no other data source to fall back to."""
+    monkeypatch.setenv("SPIKE_UNIVERSE", "AAA")
+    monkeypatch.setattr(spike, "_theta_base_url", lambda: "")
+
+    with pytest.raises(RuntimeError, match="no fresh ThetaData SPIKE market data"):
+        spike._load_cloud_enter_market_data(date(2026, 9, 25))
+
+
+def test_cloud_market_data_returns_a_non_empty_partial_universe_without_raising(monkeypatch):
+    """ThetaData covering PART of the universe must still produce a usable
+    (smaller) cycle instead of blocking entirely -- fail-closed only kicks in
+    when there is truly NOTHING fresh to trade on."""
+    monkeypatch.setenv("SPIKE_UNIVERSE", "AAA,BBB")
+    monkeypatch.setattr(spike, "_theta_base_url", lambda: "http://thetadata-proxy:10000")
+    monkeypatch.setattr(
+        spike, "_load_theta_enter_market_data",
+        lambda today, symbols: (
+            [{"symbol": "AAA", "price": 1.0, "vol": 1_000_000, "provider": "theta"}],
+            {"AAA": ([], "broker"), "BBB": ([], "broker")},
+        ),
+    )
+
+    universe, history = spike._load_cloud_enter_market_data(date(2026, 9, 25))
+    assert [row["symbol"] for row in universe] == ["AAA"]
+    assert set(history) == {"AAA", "BBB"}
