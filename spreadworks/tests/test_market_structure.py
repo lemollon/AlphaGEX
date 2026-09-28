@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+import backend.market_structure as market_structure
 from backend.market_structure import compute_gamma_map, _confidence
 
 
@@ -53,3 +54,36 @@ def test_confidence_requires_fresh_spot():
     confidence, _, reason = _confidence(now, now, 500, False)
     assert confidence == "LOW"
     assert reason == "stale_or_missing_spot"
+
+
+
+def test_register_arms_minute_capture_and_initializes_tables(monkeypatch):
+    calls = []
+    jobs = []
+
+    class Scheduler:
+        def add_job(self, func, trigger, **kwargs):
+            jobs.append((func, trigger, kwargs))
+
+    monkeypatch.setattr(market_structure, "ensure_tables", lambda: calls.append("tables"))
+    monkeypatch.setattr(
+        market_structure,
+        "capture_all",
+        lambda: {"captured": True, "volatility": {"available": True},
+                 "gamma": {"SPY": {"available": True}}},
+    )
+
+    assert market_structure.register(Scheduler()) is True
+    assert calls == ["tables"]
+    assert len(jobs) == 1
+    func, trigger, kwargs = jobs[0]
+    assert trigger == "cron"
+    assert kwargs["id"] == "market_structure_capture"
+    assert kwargs["day_of_week"] == "mon-fri"
+    assert kwargs["hour"] == "8-15"
+    assert kwargs["minute"] == "*"
+    assert kwargs["max_instances"] == 1
+    assert kwargs["coalesce"] is True
+    assert kwargs["next_run_time"] is not None
+
+    func()
