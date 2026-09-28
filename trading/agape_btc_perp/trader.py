@@ -945,7 +945,7 @@ class AgapeBtcPerpTrader:
             "avg_loss": round(total_losses / len(losses), 2) if losses else 0,
             "best_trade": max((t.get("realized_pnl", 0) for t in closed_trades), default=0),
             "worst_trade": min((t.get("realized_pnl", 0) for t in closed_trades), default=0),
-            "profit_factor": round(total_wins / total_losses, 2) if total_losses > 0 else float("inf"),
+            "profit_factor": round(total_wins / total_losses, 2) if total_losses > 0 else None,
             "return_pct": round(ret_pct, 2),
         }
 

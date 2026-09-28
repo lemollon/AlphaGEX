@@ -813,7 +813,7 @@ class AgapeXrpPerpTrader:
             "avg_loss": round(tl / len(losses), 2) if losses else 0,
             "best_trade": max((t.get("realized_pnl", 0) for t in closed), default=0),
             "worst_trade": min((t.get("realized_pnl", 0) for t in closed), default=0),
-            "profit_factor": round(tw / tl, 2) if tl > 0 else float("inf"),
+            "profit_factor": round(tw / tl, 2) if tl > 0 else None,
             "return_pct": round(ret_pct, 2),
         }
 
