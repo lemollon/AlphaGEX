@@ -54,8 +54,13 @@ const FLAG_TOKEN_RE =
  */
 const KNOWN_NON_FLAG_TOKENS = new Set<string>([
   'CUSTOMER_AGENTS', // Set<string> of bot names eligible for customer mirroring (executor.ts)
+  'CUSTOMER_FLINT_ORDER_PLACED', // audit_events event_type string literal (executor.ts)
   'CUSTOMER_ORDER_CLOSED', // audit_events event_type string literal (executor.ts)
   'CUSTOMER_ORDER_PLACED', // audit_events event_type string literal (executor.ts)
+  'CUSTOMER_PROFIT_FLOOR', // NOT an env var — referenced only in a docstring ("CUSTOMER_DEPOSIT_FLOOR
+                            // (CUSTOMER_PROFIT_FLOOR in spirit...)", contracts.ts) explaining the flag's
+                            // real name is CUSTOMER_DEPOSIT_FLOOR; no process.env read anywhere uses this string
+  'FLINT_CUSHION_MARGIN_CENTS', // numeric constant = 5000 ($50/contract), not an env var (executor.ts)
   'EBB_LADDER_CAP', // numeric ladder-cap constant (ebb-sizing.ts)
   'EBB_LIQUIDITY_SHARE', // numeric constant (ebb-sizing.ts)
   'EBB_MIN_CREDIT_FLOOR_ESTIMATE', // numeric constant (ebb-sizing.ts)
