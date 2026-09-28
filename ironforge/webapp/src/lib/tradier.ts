@@ -2319,6 +2319,82 @@ export async function placeIcOrderAllAccounts(
             }
           }
 
+          // FLAME_FAST_START (Leron, 2026-09-27: "yes i want to add it",
+          // widened same day to also cover his own live account 6YB71371).
+          // Scope: botName==='flame' AND this production account is 'Flame'
+          // — no other production account is touched. Binds AFTER the
+          // favorable upsize above (acctContracts already reflects it),
+          // per the approved spec ("if the sim assumed no favorable
+          // upsizes, bind after") — fast-start's own cap/floor math then
+          // bounds the (possibly upsized) count, so the 20%-of-deposit cap
+          // (Phase 1) and the CPPI floor guarantee (Phase 2) still hold
+          // even including the upsize.
+          //
+          // INTRADAY, PHASE/PEAK_PROFIT/FLOOR ARE READ-ONLY (2026-09-29
+          // correction): `state.peakProfit` is the STORED, EOD-ratcheted
+          // value (updateFastStartEodState in fast-start-db.ts, called from
+          // FLAME's own EOD hook in scanner.ts) — never recomputed from
+          // live high-water here, so an intraday unrealized mark can't
+          // ratchet the floor or flip the phase mid-day. `skipTriggerCheck:
+          // true` makes this call size under `state.phase` AS-IS; LIVE
+          // equity is still used for the (equity - floor) budget/cushion
+          // arithmetic within sizing itself, per spec.
+          if (botName === 'flame' && acct.name === 'Flame') {
+            const fastStart = await import('./fast-start-sizing')
+            if (fastStart.isFastStartMode()) {
+              try {
+                const fastStartDb = await import('./fast-start-db')
+                const deposit = funded
+                if (deposit == null) {
+                  console.warn(`PRODUCTION [Flame]: FLAME_FAST_START skip:deposit_unknown — falling back to today's sizing`)
+                } else {
+                  const allocatedNow = await getAllocatedCapitalForAccount(acct.name, 'production')
+                  const equityNow = allocatedNow?.equity ?? null
+                  if (equityNow == null) {
+                    console.warn(`PRODUCTION [Flame]: FLAME_FAST_START skip:equity_unreadable — falling back to today's sizing (never sizing up on missing data)`)
+                  } else {
+                    const state = await fastStartDb.getOrSeedFastStartState('Flame', 'production', deposit, equityNow)
+                    if (state == null) {
+                      console.warn(`PRODUCTION [Flame]: FLAME_FAST_START skip:state_unreadable — falling back to today's sizing`)
+                    } else {
+                      const tradeDateCt = new Date().toISOString().slice(0, 10)
+                      const flintToday = await fastStartDb.readFlintTodayCandidacy(tradeDateCt)
+                      const ebbMaxLossToday = ebbSizing.ebbUpsizeExtraContractMaxLoss(spreadWidth, totalCredit)
+                      const { decision } = fastStart.decideFastStartSizing(state, {
+                        ebbCandidateDay: true,
+                        flintCandidateDay: flintToday.candidateDay,
+                        ebbMaxLossPerLot: ebbMaxLossToday,
+                        flintMaxLossPerContract: flintToday.maxLossPerContract,
+                        normalEbbLadder: acctContracts, // post-upsize, per the "bind after" spec
+                        equity: equityNow,
+                        peakProfit: state.peakProfit, // STORED, EOD-only — never recomputed intraday
+                      }, { skipTriggerCheck: true })
+                      await fastStartDb.logFastStartDecision({
+                        person: 'Flame', accountType: 'production', tradeDate: tradeDateCt, leg: 'ebb',
+                        phase: decision.phase, triggeredToday: decision.triggeredToday, normalLadder: acctContracts,
+                        ebbContracts: decision.ebbContracts, flintContracts: decision.flintContracts,
+                        deposit, equity: equityNow, cushion: decision.cushion, floor: decision.floor,
+                        budget: decision.budget, phase1CapBudget: decision.phase1CapBudget,
+                        triggerLevel: decision.triggerLevel, reason: decision.reason,
+                      })
+                      // Re-apply the SAME liquidity check against fast-start's own count —
+                      // the ladder-based liq.lots above was computed for the PRE-fast-start
+                      // count and must not silently become the wrong ceiling.
+                      const liqFs = ebbSizing.liquidityCappedLots(decision.ebbContracts, shortPutBidSize)
+                      acctContracts = liqFs.lots
+                      console.log(
+                        `PRODUCTION [Flame]: FLAME_FAST_START phase=${decision.phase} ` +
+                        `ebb=${decision.ebbContracts} (post-liquidity=${acctContracts}) ${decision.reason}`,
+                      )
+                    }
+                  }
+                }
+              } catch (e) {
+                console.error('PRODUCTION [Flame]: FLAME_FAST_START evaluation failed — falling back to today\'s sizing:', e)
+              }
+            }
+          }
+
           ladderDetail = ebbSizing.formatEbbSizingLine({
             funded, highWater, rung, ladderLots: ladder, liq, finalLots: acctContracts,
           }) + ', '
@@ -2364,9 +2440,60 @@ export async function placeIcOrderAllAccounts(
           )
           return
         }
-        acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, ladder)
+        let ebbFinalLots = ladder
+
+        // FLAME_FAST_START (Leron, 2026-09-27). Scope: this branch already
+        // requires botName==='flame' && EBB_CUSTOMER_LADDER=profit, i.e.
+        // exactly the customer/sandbox accounts fast-start targets. No
+        // favorable-upsize exists on this branch, so `ladder` here already
+        // IS the "normal ladder" fast-start's own cap/floor binds against —
+        // nothing to bind "after" on this path.
+        //
+        // INTRADAY, PHASE/PEAK_PROFIT/FLOOR ARE READ-ONLY (2026-09-29
+        // correction) — see the matching comment on the production branch
+        // above: `state.peakProfit` is the STORED, EOD-ratcheted value,
+        // never recomputed from live high-water here; `skipTriggerCheck:
+        // true` sizes under `state.phase` as-is. LIVE equity (`ledger.
+        // equity`) still feeds the budget/cushion arithmetic inside sizing.
+        const fastStart = await import('./fast-start-sizing')
+        if (fastStart.isFastStartMode()) {
+          try {
+            const fastStartDb = await import('./fast-start-db')
+            const state = await fastStartDb.getOrSeedFastStartState(acct.name, 'sandbox', ledger.floor, ledger.equity)
+            if (state == null) {
+              console.warn(`Sandbox [${acct.name}]: FLAME_FAST_START skip:state_unreadable — falling back to today's sizing`)
+            } else {
+              const tradeDateCt = new Date().toISOString().slice(0, 10)
+              const flintToday = await fastStartDb.readFlintTodayCandidacy(tradeDateCt)
+              const ebbMaxLossToday = ebbSizing.ebbUpsizeExtraContractMaxLoss(spreadWidth, totalCredit)
+              const { decision } = fastStart.decideFastStartSizing(state, {
+                ebbCandidateDay: true,
+                flintCandidateDay: flintToday.candidateDay,
+                ebbMaxLossPerLot: ebbMaxLossToday,
+                flintMaxLossPerContract: flintToday.maxLossPerContract,
+                normalEbbLadder: ladder,
+                equity: ledger.equity,
+                peakProfit: state.peakProfit, // STORED, EOD-only — never recomputed intraday
+              }, { skipTriggerCheck: true })
+              await fastStartDb.logFastStartDecision({
+                person: acct.name, accountType: 'sandbox', tradeDate: tradeDateCt, leg: 'ebb',
+                phase: decision.phase, triggeredToday: decision.triggeredToday, normalLadder: ladder,
+                ebbContracts: decision.ebbContracts, flintContracts: decision.flintContracts,
+                deposit: ledger.floor, equity: ledger.equity, cushion: decision.cushion, floor: decision.floor,
+                budget: decision.budget, phase1CapBudget: decision.phase1CapBudget,
+                triggerLevel: decision.triggerLevel, reason: decision.reason,
+              })
+              ebbFinalLots = decision.ebbContracts
+              console.log(`Sandbox [${acct.name}]: FLAME_FAST_START phase=${decision.phase} ebb=${decision.ebbContracts} ${decision.reason}`)
+            }
+          } catch (e) {
+            console.error(`Sandbox [${acct.name}]: FLAME_FAST_START evaluation failed — falling back to today's sizing:`, e)
+          }
+        }
+
+        acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, ebbFinalLots)
         ladderDetail = `floor=$${ledger.floor.toFixed(0)}, high_water=$${highWater.toFixed(0)}, ` +
-          `peak_profit=$${peakProfit.toFixed(0)}, profit_ladder=${ladder}, `
+          `peak_profit=$${peakProfit.toFixed(0)}, profit_ladder=${ladder}, fast_start_ebb=${ebbFinalLots}, `
       } else {
         acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, paperContracts)
       }
@@ -4946,8 +5073,23 @@ export async function placeCallSpreadOrderAllAccounts(
     ? { shortSide: 'buy_to_close', longSide: 'sell_to_close' }
     : { shortSide: 'sell_to_open', longSide: 'buy_to_open' }
 
-  const { decideFlintContractsForCushion, FLINT_BP_FLOOR_PER_CONTRACT } = await import('./flint')
+  const { decideFlintContractsForCushion, FLINT_BP_FLOOR_PER_CONTRACT, flintMaxLoss } = await import('./flint')
   const flameSkip = await import('./flame-skip')
+  const ebbSizing = await import('./ebb-sizing')
+
+  // Central-Time "today" (YYYY-MM-DD), for the FLAME_FAST_START planning
+  // block below — scanner.ts's own getCentralTime() isn't exported, so
+  // this duplicates its same Intl.DateTimeFormat approach rather than
+  // reaching into a private function.
+  const centralDateNow = (): string => {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(new Date())
+    const y = parts.find((p) => p.type === 'year')?.value ?? '1970'
+    const mo = parts.find((p) => p.type === 'month')?.value ?? '01'
+    const d = parts.find((p) => p.type === 'day')?.value ?? '01'
+    return `${y}-${mo}-${d}`
+  }
 
   for (const acct of allAccts) {
     const isProd = acct.type === 'production'
@@ -5011,6 +5153,132 @@ export async function placeCallSpreadOrderAllAccounts(
           console.log(`${label}: FLINT upsize stepped down ${contracts}->${r1.contracts} (cushion covers ${r1.contracts} only)`)
         }
         acctContracts = r1.contracts
+
+        // FLAME_FAST_START (Leron, 2026-09-27). Scope: every account
+        // reaching this function is already a FLAME account (User/Matt/
+        // Logan sandbox mirrors, or FLAME's own production account 'Flame'
+        // — 6YB71371), per resolveEligibleAccounts('flame') above, so no
+        // extra bot-name gate is needed here (unlike EBB's own call site,
+        // which is shared by SPARK too).
+        //
+        // ORDERING GAP, FIXED BY PLANNING (2026-09-29 correction — the
+        // original "defer until EBB is observable" design broke FLINT's
+        // own tested entry time on any day EBB's VIX gate fails, which is
+        // about half of FLINT's days: EBB never trades those days, so "EBB
+        // observable" never becomes true until FLAME_EOD_CUTOFF_HHMM_CT,
+        // hours after FLINT's normal ~13:05 CT entry). FLINT's entry
+        // (this function) ALWAYS runs BEFORE FLAME's own EBB put-side
+        // entry in the SAME scan tick, so it can never see a SAME-TICK EBB
+        // decision — but EBB's CANDIDACY is deterministic ahead of time:
+        // the SAME VIX-decay gate (prior close / prior-20-session max, see
+        // vixDecayCheck in scanner.ts) EBB's own entry itself gates on, no
+        // live quote required. So instead of waiting to observe EBB's real
+        // outcome, this PLANS it: computes what EBB's OWN Phase-1/Phase-2
+        // sizing formula would produce today, using EBB's real candidacy
+        // (the VIX gate) and a WORST-CASE (conservative — reserves MORE of
+        // the shared budget, never less) per-lot max-loss ESTIMATE, since
+        // EBB's exact strike-derived credit needs a live quote FLINT
+        // doesn't have. `decideFastStartSizing` itself is reused (with
+        // flintCandidateDay=false to isolate EBB's own side) rather than
+        // duplicating its Phase-1/Phase-2 math a second time. The estimate
+        // is intentionally conservative in EBB's favor (fixed $2 wing at
+        // EBB's own $0.10 minimum credit floor — the worst realistic
+        // credit, hence the LARGEST plausible max loss) so FLINT never
+        // over-claims budget EBB might actually need.
+        //
+        // Only if candidacy/estimate genuinely cannot be computed (a DB
+        // failure surfaces as an exception, caught below) does this fall
+        // back to TODAY's already-decided FLINT sizing (rule R1's own
+        // acctContracts, set above) — never to 0 by default.
+        const fastStart = await import('./fast-start-sizing')
+        if (fastStart.isFastStartMode()) {
+          try {
+            const fastStartDb = await import('./fast-start-db')
+            if (floor == null) {
+              console.warn(`${label}: FLAME_FAST_START skip:deposit_unknown — falling back to today's sizing`)
+            } else if (equity == null) {
+              console.warn(`${label}: FLAME_FAST_START skip:equity_unreadable — falling back to today's sizing (never sizing up on missing data)`)
+            } else {
+              const state = await fastStartDb.getOrSeedFastStartState(acct.name, isProd ? 'production' : 'sandbox', floor, equity)
+              if (state == null) {
+                console.warn(`${label}: FLAME_FAST_START skip:state_unreadable — falling back to today's sizing`)
+              } else {
+                // STORED, EOD-ratcheted peak_profit (2026-09-29 correction)
+                // — the SAME value EBB's own intraday call reads, never a
+                // live high-water recompute here. `ebbNormalLadder` is
+                // therefore also computed from that stored figure, matching
+                // exactly what EBB's own real call would use as its
+                // `normalEbbLadder` input today.
+                let ebbNormalLadder = 0
+                if (isProd) {
+                  ebbNormalLadder = ebbSizing.ebbLadderContracts('flame', ebbSizing.ebbLadderCapital(floor, floor + state.peakProfit))
+                } else {
+                  ebbNormalLadder = ebbSizing.ebbProfitLadderContracts('flame', floor, state.peakProfit)
+                }
+                const tradeDateCt = centralDateNow()
+
+                // EBB's candidacy — the SAME deterministic VIX-decay gate
+                // (prior close / prior-20-session max) EBB's own entry uses.
+                // reason===null -> gate passes -> EBB is a candidate today.
+                const { vixDecayCheck, VIX_DECAY_CEILING } = await import('./scanner')
+                const flameVixForPlan = await vixDecayCheck(tradeDateCt, VIX_DECAY_CEILING.flame)
+                const ebbCandidateDayPlanned = flameVixForPlan.reason === null
+
+                // Worst-case (largest plausible) per-lot max loss: EBB's
+                // fixed $2 wing at its own $0.10 minimum credit floor — a
+                // real quote would almost always be a BETTER (smaller-loss)
+                // credit than this, so reserving against this figure never
+                // under-claims budget EBB might actually need.
+                const EBB_WING_WIDTH_ESTIMATE = 2
+                const EBB_MIN_CREDIT_FLOOR_ESTIMATE = 0.10
+                const ebbMaxLossEstimate = ebbSizing.ebbUpsizeExtraContractMaxLoss(EBB_WING_WIDTH_ESTIMATE, EBB_MIN_CREDIT_FLOOR_ESTIMATE)
+
+                // skipTriggerCheck: true — this LOCAL, transient "what would
+                // EBB do" computation must use the SAME `state.phase` as-is
+                // that EBB's own real intraday call uses (phase only ever
+                // advances at EOD); otherwise this planning call could
+                // locally "trigger" on live intraday equity while the real,
+                // persisted phase (and EBB's own real sizing) stays at
+                // Phase 1 — an inconsistency between FLINT's plan and EBB's
+                // real behavior today.
+                const planned = fastStart.decideFastStartSizing(state, {
+                  ebbCandidateDay: ebbCandidateDayPlanned,
+                  flintCandidateDay: false,
+                  ebbMaxLossPerLot: ebbMaxLossEstimate,
+                  flintMaxLossPerContract: null,
+                  normalEbbLadder: ebbNormalLadder,
+                  equity,
+                  peakProfit: state.peakProfit,
+                }, { skipTriggerCheck: true })
+
+                const flintMlToday = flintMaxLoss(callShort, callLong, entryCredit, 1)
+                const { flintContracts, reason } = fastStart.sizeFlintGivenEbbOutcome(
+                  state.phase, floor, equity, state.peakProfit, planned.decision.ebbContracts, ebbMaxLossEstimate, true, flintMlToday,
+                )
+                await fastStartDb.logFastStartDecision({
+                  person: acct.name, accountType: isProd ? 'production' : 'sandbox', tradeDate: tradeDateCt,
+                  leg: 'flint', phase: state.phase, triggeredToday: false, normalLadder: ebbNormalLadder,
+                  ebbContracts: planned.decision.ebbContracts, flintContracts, deposit: floor, equity,
+                  cushion: equity - floor, floor: null, budget: null, phase1CapBudget: null, triggerLevel: null,
+                  reason: `planned_ebb(candidate=${ebbCandidateDayPlanned}, vix_reason=${flameVixForPlan.reason ?? 'ok'}, ` +
+                    `est_maxloss=$${ebbMaxLossEstimate.toFixed(2)}) ${reason}`,
+                })
+                acctContracts = flintContracts
+                console.log(
+                  `${label}: FLAME_FAST_START phase=${state.phase} flint=${flintContracts} ` +
+                  `(planned ebb=${planned.decision.ebbContracts}, ebb_candidate=${ebbCandidateDayPlanned}) ${reason}`,
+                )
+              }
+            }
+          } catch (e) {
+            console.error(`${label}: FLAME_FAST_START evaluation failed — falling back to today's sizing:`, e)
+          }
+        }
+
+        if (acctContracts < 1) {
+          console.log(`${label}: skip:zero_contracts_after_sizing`)
+          continue
+        }
 
         // 3. Buying power: $200/contract for FLINT itself, PLUS whatever
         // collateral FLAME's own put spread is holding in this SAME account

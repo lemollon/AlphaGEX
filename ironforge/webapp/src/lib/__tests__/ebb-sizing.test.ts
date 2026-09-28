@@ -476,7 +476,12 @@ describe('EBB_CUSTOMER_LADDER — FLAME customer (sandbox) PROFIT ladder ONLY (L
     })
 
     it('the final count is capped by this account\'s own broker BP and the hard safety ceiling, same as every other path', () => {
-      expect(tradier).toMatch(/acctContracts = Math\.min\(SANDBOX_MAX_CONTRACTS, bpContracts, ladder\)/)
+      // ebbFinalLots defaults to `ladder` (byte-identical when FLAME_FAST_START
+      // is off/unset) and is only ever overridden by the fast-start block above
+      // this line when the flag is on — the BP/hard-ceiling cap still applies
+      // to WHATEVER count is in play, unconditionally.
+      expect(tradier).toMatch(/let ebbFinalLots = ladder/)
+      expect(tradier).toMatch(/acctContracts = Math\.min\(SANDBOX_MAX_CONTRACTS, bpContracts, ebbFinalLots\)/)
     })
 
     it('a 0-lot profit ladder SKIPS the account — it never falls back to the paper mirror', () => {

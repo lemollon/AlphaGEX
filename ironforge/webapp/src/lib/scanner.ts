@@ -8764,6 +8764,71 @@ async function scanBot(bot: BotDef): Promise<void> {
       }
     }
 
+    // FLAME_FAST_START EOD hook (2026-09-29 correction: phase, peak_profit
+    // and the CPPI floor update ONCE PER DAY, here, from that day's CLOSING
+    // equity — never intraday from a live unrealized mark. See
+    // fast-start-db.ts's updateFastStartEodState header for the full
+    // rationale). Runs on every remaining tick once time >= FLAME's own
+    // eod_cutoff_hhmm_ct; updateFastStartEodState's own `last_eod_date`
+    // guard makes every tick AFTER the first one that day a no-op, so this
+    // is safe to leave unconditional here rather than adding a second,
+    // separate "have I run today" flag.
+    if (bot.name === 'flame' && isAfterEodCutoff(ct, bot)) {
+      try {
+        const fastStart = await import('./fast-start-sizing')
+        if (fastStart.isFastStartMode()) {
+          const fastStartDb = await import('./fast-start-db')
+          const ebbSizing = await import('./ebb-sizing')
+          const tradier = await import('./tradier')
+          const tradeDateCt = ct.toISOString().slice(0, 10)
+
+          const flintToday = await fastStartDb.readFlintTodayCandidacy(tradeDateCt)
+
+          const eligible = await tradier.resolveEligibleAccounts('flame')
+          for (const acct of eligible) {
+            const accountType: 'sandbox' | 'production' = acct.type === 'production' ? 'production' : 'sandbox'
+            try {
+              const allocated = await tradier.getAllocatedCapitalForAccount(acct.name, accountType)
+              const closingEquity = allocated?.equity ?? null
+              let deposit: number | null = null
+              if (accountType === 'production') {
+                const cap = await tradier.getProductionLadderCapital('flame', acct.name)
+                deposit = cap?.starting ?? null
+              } else {
+                deposit = await tradier.getOrSeedFlintAccountFloor(acct.name, 'sandbox', null, closingEquity)
+              }
+              if (deposit == null || closingEquity == null) {
+                console.warn(`[scanner] FLAME_FAST_START EOD [${acct.name}:${accountType}]: skip:deposit_or_equity_unreadable`)
+                continue
+              }
+              const state = await fastStartDb.getOrSeedFastStartState(acct.name, accountType, deposit, closingEquity)
+              if (state == null) continue
+              const normalLadder = accountType === 'production'
+                ? ebbSizing.ebbLadderContracts('flame', ebbSizing.ebbLadderCapital(deposit, deposit + state.peakProfit))
+                : ebbSizing.ebbProfitLadderContracts('flame', deposit, state.peakProfit)
+
+              const ebbToday = await fastStartDb.readEbbTodayOutcome('flame', acct.name, accountType, tradeDateCt, true)
+              const result = await fastStartDb.updateFastStartEodState(
+                acct.name, accountType, tradeDateCt, closingEquity, normalLadder,
+                ebbToday.contracts >= 1, ebbToday.maxLossPerLot,
+                flintToday.candidateDay, flintToday.maxLossPerContract,
+              )
+              if (result.updated) {
+                console.log(
+                  `[scanner] FLAME_FAST_START EOD [${acct.name}:${accountType}]: phase=${result.phase} ` +
+                  `peak_profit=$${result.peakProfit?.toFixed(2)} triggered_today=${result.triggeredToday}`,
+                )
+              }
+            } catch (e) {
+              console.error(`[scanner] FLAME_FAST_START EOD [${acct.name}:${accountType}] failed:`, e)
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[scanner] FLAME_FAST_START EOD hook failed:', e)
+      }
+    }
+
     // AFTERNOON-SPREAD PAPER TRACKER (Leron, 2026-09-26: "Put on paper to
     // track it") — the "dynamic hedge V2" research lead. PAPER-ONLY: reads
     // quotes and writes to its own table, never places an order (see
