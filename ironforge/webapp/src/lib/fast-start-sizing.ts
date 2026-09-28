@@ -71,9 +71,16 @@
  * cannot change sizing.
  */
 
-/** off|on, unset = off. FLAME customer accounts only — see file header. */
-export function isFastStartMode(): boolean {
-  return (process.env.FLAME_FAST_START ?? '').trim().toLowerCase() === 'on'
+/**
+ * off|on, unset = off. Defaults to FLAME_FAST_START (FLAME customer accounts
+ * — see file header) so every pre-existing call site (and FLAME's own unit/
+ * parity/wiring tests, which call this with no argument) is byte-for-byte
+ * unchanged. `envVar` generalizes this to other bots sharing this engine —
+ * SPARK's customer sizing (tradier.ts) passes 'SPARK_FAST_START' explicitly
+ * (2026-09-27/29, SPARK_FAST_START — same frozen rule, SPARK's own rung).
+ */
+export function isFastStartMode(envVar: string = 'FLAME_FAST_START'): boolean {
+  return (process.env[envVar] ?? '').trim().toLowerCase() === 'on'
 }
 
 export const FAST_START_STYLE_MULT = 2
@@ -170,6 +177,13 @@ export interface FastStartSizingOpts {
    * TRANSITION decision and the peak_profit/floor ratchet are EOD-gated.
    */
   skipTriggerCheck?: boolean
+  /**
+   * Which env var gates this call (default 'FLAME_FAST_START') — see
+   * isFastStartMode's own doc. SPARK's customer sizing passes
+   * 'SPARK_FAST_START'; every pre-existing call site (no 3rd arg, or no
+   * `envVar` key) is byte-for-byte unchanged.
+   */
+  envVar?: string
 }
 
 /**
@@ -201,7 +215,8 @@ export function decideFastStartSizing(
   inputs: FastStartDayInputs,
   opts?: FastStartSizingOpts,
 ): FastStartResult {
-  if (!isFastStartMode()) {
+  const envVar = opts?.envVar ?? 'FLAME_FAST_START'
+  if (!isFastStartMode(envVar)) {
     return {
       decision: {
         phase: state.phase,
@@ -213,7 +228,7 @@ export function decideFastStartSizing(
         cushion: inputs.equity - state.deposit,
         triggerLevel: null,
         triggeredToday: false,
-        reason: 'off:FLAME_FAST_START — unchanged normal-ladder sizing (FLINT R1 not evaluated here)',
+        reason: `off:${envVar} — unchanged normal-ladder sizing (FLINT R1 not evaluated here)`,
       },
       nextState: state,
     }

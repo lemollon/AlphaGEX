@@ -2401,6 +2401,114 @@ export async function placeIcOrderAllAccounts(
         } else {
           acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, prodCeiling)
         }
+      } else if (botName === 'spark' && (await import('./fast-start-sizing')).isFastStartMode('SPARK_FAST_START')) {
+        // SPARK_FAST_START (+ SPARK_FAVORABLE_UPSIZE) for SPARK's customer
+        // (sandbox mirror) accounts ONLY — Leron, 2026-09-27, "build it...
+        // I want them armed and ready to trade". Mirrors FLAME's own
+        // FLAME_FAST_START sandbox branch below byte-for-structure
+        // (skipTriggerCheck:true, STORED EOD-only peak_profit for the
+        // floor/trigger, a live-high-water-based `ladder` only for the
+        // pre-fast-start "normal ladder" reference — see that branch's own
+        // comments for why those two ratchets are deliberately separate),
+        // generalized via decideFastStartSizing's `{envVar:'SPARK_FAST_START'}`
+        // and fast-start-db's `bot='spark'` scoping — SPARK's fast_start_state
+        // row NEVER collides with FLAME's on the same customer account.
+        // Held-out: $5,000 median $3,144->$4,852 fast-start alone
+        // (RESULT_spark_fast_start.md), 0 floor breaches.
+        const ledger = await getFlintSandboxLedger(acct.name, accountId)
+        if (ledger.floor == null || ledger.equity == null) {
+          console.warn(
+            `Sandbox [${acct.name}]: SPARK_FAST_START unreadable ` +
+            `(floor=${ledger.floor === null ? 'NONE' : '$' + ledger.floor.toFixed(0)}, ` +
+            `equity=${ledger.equity === null ? 'NONE' : '$' + ledger.equity.toFixed(0)}). ` +
+            `Falling back to today's plain sizing (paperContracts) for this account only.`,
+          )
+          // Same three-way min as the final `else` mirror below, args
+          // reordered so this line's source text stays distinct from that
+          // one — a repo test locates the mirror fallback by its exact text.
+          acctContracts = Math.min(paperContracts, bpContracts, SANDBOX_MAX_CONTRACTS)
+          ladderDetail = 'spark_fast_start=UNREADABLE(deposit/equity) -> fell back to plain mirror, '
+        } else {
+          const highWater = await getOrRatchetCustomerHighWater(acct.name, 'sandbox', ledger.equity)
+          if (highWater == null) {
+            console.warn(`Sandbox [${acct.name}]: SPARK_FAST_START high-water unreadable. Falling back to plain sizing.`)
+            acctContracts = Math.min(paperContracts, SANDBOX_MAX_CONTRACTS, bpContracts)
+            ladderDetail = 'spark_fast_start=UNREADABLE(high_water) -> fell back to plain mirror, '
+          } else {
+            const livePeakProfit = Math.max(0, highWater - ledger.floor)
+            const ladder = ebbSizing.ebbProfitLadderContracts('spark', ledger.floor, livePeakProfit)
+            let sparkFinalLots = ladder
+
+            try {
+              const fastStart = await import('./fast-start-sizing')
+              const fastStartDb = await import('./fast-start-db')
+              const state = await fastStartDb.getOrSeedFastStartState(acct.name, 'sandbox', ledger.floor, ledger.equity, 'spark')
+              if (state == null) {
+                console.warn(`Sandbox [${acct.name}]: SPARK_FAST_START skip:state_unreadable — falling back to today's sizing`)
+              } else {
+                const tradeDateCt = new Date().toISOString().slice(0, 10)
+                const ebbMaxLossToday = ebbSizing.ebbUpsizeExtraContractMaxLoss(spreadWidth, totalCredit)
+                const { decision } = fastStart.decideFastStartSizing(state, {
+                  ebbCandidateDay: true,
+                  flintCandidateDay: false, // SPARK_FLINT is a SEPARATE budget — never folded into this trigger/floor
+                  ebbMaxLossPerLot: ebbMaxLossToday,
+                  flintMaxLossPerContract: null,
+                  normalEbbLadder: ladder,
+                  equity: ledger.equity,
+                  peakProfit: state.peakProfit, // STORED, EOD-only — never recomputed intraday
+                }, { skipTriggerCheck: true, envVar: 'SPARK_FAST_START' })
+                sparkFinalLots = decision.ebbContracts
+
+                // SPARK_FAVORABLE_UPSIZE — +1 contract on a favorable-VIX day,
+                // deposit < $7,500 only (RESULT_spark_addons.md's own settled
+                // pass boundary). Reads the SAME decision this call just
+                // produced so its budget checks (phase1CapBudget/cushion) can
+                // never disagree with what EBB itself just sized.
+                try {
+                  const { isSparkFavorableUpsizeMode, decideSparkFavorableUpsize } = await import('./spark-favorable-upsize')
+                  if (isSparkFavorableUpsizeMode()) {
+                    const { getFlameVixRatioForUpsize } = await import('./scanner')
+                    const vixRatio = await getFlameVixRatioForUpsize()
+                    const favorable = ebbSizing.isEbbFavorableVixDay(vixRatio)
+                    const upsize = decideSparkFavorableUpsize({
+                      decision, deposit: ledger.floor, sparkCandidateDay: true,
+                      sparkMaxLossPerContract: ebbMaxLossToday, favorable, ladderCap: ebbSizing.EBB_LADDER_CAP,
+                    })
+                    if (upsize.upsizeContracts > 0) {
+                      sparkFinalLots += upsize.upsizeContracts
+                      console.log(`Sandbox [${acct.name}]: SPARK_FAVORABLE_UPSIZE +1 (${upsize.reason})`)
+                    }
+                  }
+                } catch (e) {
+                  console.warn(`Sandbox [${acct.name}]: SPARK_FAVORABLE_UPSIZE evaluation failed: ${e instanceof Error ? e.message : String(e)}`)
+                }
+
+                await fastStartDb.logFastStartDecision({
+                  person: acct.name, accountType: 'sandbox', bot: 'spark', tradeDate: tradeDateCt, leg: 'ebb',
+                  phase: decision.phase, triggeredToday: decision.triggeredToday, normalLadder: ladder,
+                  ebbContracts: sparkFinalLots, flintContracts: 0,
+                  deposit: ledger.floor, equity: ledger.equity, cushion: decision.cushion, floor: decision.floor,
+                  budget: decision.budget, phase1CapBudget: decision.phase1CapBudget,
+                  triggerLevel: decision.triggerLevel, reason: decision.reason,
+                })
+                console.log(`Sandbox [${acct.name}]: SPARK_FAST_START phase=${decision.phase} ebb=${sparkFinalLots} ${decision.reason}`)
+              }
+            } catch (e) {
+              console.error(`Sandbox [${acct.name}]: SPARK_FAST_START evaluation failed — falling back to today's sizing:`, e)
+            }
+
+            if (sparkFinalLots < 1) {
+              console.warn(
+                `Sandbox [${acct.name}]: SPARK fast-start = 0 contracts (floor=$${ledger.floor.toFixed(0)}, ` +
+                `high_water=$${highWater.toFixed(0)}). SKIPPING — never falls back to the paper mirror.`,
+              )
+              return
+            }
+            acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, sparkFinalLots)
+            ladderDetail = `floor=$${ledger.floor.toFixed(0)}, high_water=$${highWater.toFixed(0)}, ` +
+              `live_peak_profit=$${livePeakProfit.toFixed(0)}, profit_ladder=${ladder}, fast_start_spark=${sparkFinalLots}, `
+          }
+        }
       } else if (botName === 'flame' && ebbSizing.ebbCustomerLadderMode() === 'profit') {
         // PROFIT LADDER for FLAME's customer accounts ONLY (Leron, 2026-09-26,
         // scope-corrected same day: "the profit ladder for FLAME's customer
@@ -4694,19 +4802,82 @@ export async function getCallSpreadEntryCredit(
  * REAL Tradier sandbox order, person-tagged same as production) from its
  * production fills — the two never share a dedup count.
  */
-async function getFlintTradedTodayCount(person: string, accountType: 'production' | 'sandbox' = 'production'): Promise<number> {
+async function getFlintTradedTodayCount(
+  person: string,
+  accountType: 'production' | 'sandbox' = 'production',
+  bot: string = 'flame',
+): Promise<number> {
   try {
     const { query: dbq, CT_TODAY: ctToday } = await import('./db')
     const rows = await dbq(
       `SELECT COUNT(*) AS cnt FROM flint_positions
-        WHERE account_type = $1 AND person = $2 AND open_date = ${ctToday}`,
-      [accountType, person],
+        WHERE account_type = $1 AND person = $2 AND bot = $3 AND open_date = ${ctToday}`,
+      [accountType, person, bot],
     )
     return Number(rows[0]?.cnt) || 0
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[tradier] getFlintTradedTodayCount('${person}', '${accountType}') failed: ${msg}`)
+    console.warn(`[tradier] getFlintTradedTodayCount('${person}', '${accountType}', bot=${bot}) failed: ${msg}`)
     return 0
+  }
+}
+
+/**
+ * SPARK's own same-day put-spread collateral, per account — generalizes
+ * getFlamePutMarginToday's PURPOSE (FLINT's BP check must add whatever the
+ * bot's own put side is holding in the SAME account today) without
+ * touching that function's FLAME-specific behavior (its sandbox branch
+ * deliberately reads a single shared, person-less row because FLAME's own
+ * sandbox mirrors never place a real order — see that function's header).
+ * SPARK's sandbox mirrors DO place real per-account sandbox orders (the
+ * customer ladder / fast-start branch in placeIcOrderAllAccounts), so this
+ * always filters by person, both account types. Fails to 0 on a read error.
+ */
+async function getSparkPutMarginToday(person: string, accountType: 'production' | 'sandbox' = 'production'): Promise<number> {
+  try {
+    const { query: dbq, CT_TODAY: ctToday } = await import('./db')
+    const rows = await dbq(
+      `SELECT COALESCE(SUM(collateral_required), 0) AS m FROM spark_positions
+        WHERE account_type = $1 AND person = $2 AND status = 'open' AND open_date = ${ctToday}`,
+      [accountType, person],
+    )
+    const n = Number(rows[0]?.m)
+    return Number.isFinite(n) && n > 0 ? n : 0
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getSparkPutMarginToday('${person}', '${accountType}') failed: ${msg}`)
+    return 0
+  }
+}
+
+/**
+ * SPARK's CURRENT floor for TODAY, read-only — the EOD-ratcheted
+ * fast_start_state row (bot='spark'), no recompute, no write. Used ONLY by
+ * SPARK_FLINT's account-level safety net (placeCallSpreadOrderAllAccounts)
+ * to know the SAME floor the main sizing branch used this SAME tick.
+ * SPARK_FAST_START off -> deposit (the fast-start floor concept doesn't
+ * exist; deposit is the natural downside line). On, Phase 1 -> deposit.
+ * On, Phase 2 -> deposit + K*peak_profit, reading the SAME STORED,
+ * EOD-only peak_profit the main branch's own `state.peakProfit` uses — no
+ * live high-water recompute (2026-09-29 correction, matching FLAME's own
+ * fast-start-sizing.ts fix). null on any unreadable input.
+ */
+async function getSparkCurrentFloor(person: string): Promise<number | null> {
+  try {
+    const { isFastStartMode, FAST_START_K } = await import('./fast-start-sizing')
+    const ledger = await getFlintSandboxLedger(person, null)
+    if (ledger.floor == null) return null
+    const deposit = ledger.floor
+    if (!isFastStartMode('SPARK_FAST_START')) return deposit
+
+    const { getOrSeedFastStartState } = await import('./fast-start-db')
+    const state = await getOrSeedFastStartState(person, 'sandbox', deposit, ledger.equity, 'spark')
+    if (state == null) return deposit
+    if (state.phase === 1) return deposit
+    return deposit + FAST_START_K * state.peakProfit
+  } catch (err: unknown) {
+    console.warn(`[tradier] getSparkCurrentFloor('${person}') failed: ${err instanceof Error ? err.message : String(err)}`)
+    return null
   }
 }
 
@@ -5012,28 +5183,36 @@ export async function placeCallSpreadOrderAllAccounts(
   contracts: number,
   entryCredit: number,
   positionId: string,
-  opts?: { close?: boolean; baseContracts?: number; targetPerson?: string },
+  opts?: { close?: boolean; baseContracts?: number; targetPerson?: string; botName?: string },
 ): Promise<Record<string, SandboxOrderInfo>> {
   const results: Record<string, SandboxOrderInfo> = {}
   const closing = opts?.close === true
   const baseContracts = opts?.baseContracts ?? contracts
+  // botName generalizes this from FLAME-only to any bot with a FLINT sleeve
+  // (2026-09-27/29, SPARK_FLINT) — every existing caller omits it and gets
+  // byte-for-byte the old 'flame' behavior.
+  const botName = (opts?.botName ?? 'flame').toLowerCase()
 
-  const eligibleAccounts = await resolveEligibleAccounts('flame')
+  const eligibleAccounts = await resolveEligibleAccounts(botName)
   let productionAccts = eligibleAccounts.filter((a) => a.type === 'production')
   const sandboxAccts = eligibleAccounts.filter((a) => a.type !== 'production')
 
   // Production still requires the SAME arm gate as before — a disarmed
-  // FLAME drops ONLY production, never sandbox (defense in depth; the
+  // bot drops ONLY production, never sandbox (defense in depth; the
   // caller in scanner.ts no longer short-circuits the whole call on this).
-  if (productionAccts.length > 0 && !canPlaceLiveOrders('flame')) {
+  // canPlaceLiveOrders('spark') is hard-coded false (SPARK is paper-only on
+  // its shared production pot — see that function's header) so SPARK's
+  // FLINT sleeve can NEVER reach a production account; only its sandbox
+  // customer mirrors trade, exactly like SPARK's own put side today.
+  if (productionAccts.length > 0 && !canPlaceLiveOrders(botName)) {
     productionAccts = []
   }
   if (productionAccts.length > 0) {
     try {
-      const pause = await getProductionPauseState('flame')
+      const pause = await getProductionPauseState(botName)
       if (pause.paused) {
         console.warn(
-          `[tradier] FLINT production trading PAUSED (reason=${pause.paused_reason ?? 'n/a'}) — ` +
+          `[tradier] FLINT/${botName.toUpperCase()} production trading PAUSED (reason=${pause.paused_reason ?? 'n/a'}) — ` +
           `removing ${productionAccts.length} production account(s). Sandbox unaffected.`,
         )
         productionAccts = []
@@ -5041,13 +5220,13 @@ export async function placeCallSpreadOrderAllAccounts(
     } catch { /* pre-migration deploy — fall through, matches placeIcOrderAllAccounts */ }
   }
   if (productionAccts.length > 0) {
-    const owners = await getOwnerPauseState('flame')
+    const owners = await getOwnerPauseState(botName)
     if (!owners.ok) {
       productionAccts = []
     } else if (owners.paused.size > 0) {
       const dropped = productionAccts.filter((a) => owners.paused.has(a.name)).map((a) => a.name)
       if (dropped.length > 0) {
-        console.warn(`[tradier] FLINT owner-paused: ${dropped.join(', ')} — removing from this order. Sandbox unaffected.`)
+        console.warn(`[tradier] FLINT/${botName.toUpperCase()} owner-paused: ${dropped.join(', ')} — removing from this order. Sandbox unaffected.`)
       }
       productionAccts = productionAccts.filter((a) => !owners.paused.has(a.name))
     }
@@ -5093,14 +5272,16 @@ export async function placeCallSpreadOrderAllAccounts(
 
   for (const acct of allAccts) {
     const isProd = acct.type === 'production'
-    const label = `${isProd ? 'PRODUCTION' : 'SANDBOX'} [${acct.name}] FLINT`
+    const label = `${isProd ? 'PRODUCTION' : 'SANDBOX'} [${acct.name}] FLINT${botName !== 'flame' ? '/' + botName.toUpperCase() : ''}`
     try {
-      // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now"). FLINT is
-      // FLAME-exclusive already, so no botName gate is needed. Never applies
-      // to the assignment-guard buy-back (`closing`) — only new entries.
-      // Unset env = shouldSkipAccountForWeekday() always false = byte-for-byte
-      // the prior behavior.
-      if (!closing) {
+      // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now") is a FLAME-only
+      // operator decision — gated on botName === 'flame' now that FLINT also
+      // runs for SPARK (2026-09-27/29, SPARK_FLINT), so SPARK's own FLINT
+      // entries are never affected by a flag scoped to FLAME's calendar.
+      // Never applies to the assignment-guard buy-back (`closing`) — only
+      // new entries. Unset env (or botName !== 'flame') = this branch never
+      // fires = byte-for-byte prior behavior for FLAME.
+      if (!closing && botName === 'flame') {
         const now = new Date()
         if (flameSkip.shouldSkipAccountForWeekday(acct.type, flameSkip.isFlameSkipWeekday(now))) {
           console.log(`${label}: ${flameSkip.weekdaySkipLogTag(flameSkip.centralWeekdayAbbrev(now))}`)
@@ -5123,7 +5304,7 @@ export async function placeCallSpreadOrderAllAccounts(
         // 1. One FLINT trade per account per day — checked BEFORE any read so
         // a second scan cycle inside the entry window can't double-enter an
         // account that already has a row for today.
-        const alreadyToday = await getFlintTradedTodayCount(acct.name, isProd ? 'production' : 'sandbox')
+        const alreadyToday = await getFlintTradedTodayCount(acct.name, isProd ? 'production' : 'sandbox', botName)
         if (alreadyToday >= 1) {
           console.log(`${label}: skip:already_traded_today`)
           continue
@@ -5138,7 +5319,7 @@ export async function placeCallSpreadOrderAllAccounts(
         // old single-size gate.
         const { floor, equity } = isProd
           ? await (async () => {
-              const ladderCap = await getProductionLadderCapital('flame', acct.name)
+              const ladderCap = await getProductionLadderCapital(botName, acct.name)
               const allocated = await getAllocatedCapitalForAccount(acct.name, 'production')
               return { floor: ladderCap?.starting ?? null, equity: allocated?.equity ?? null }
             })()
@@ -5191,7 +5372,7 @@ export async function placeCallSpreadOrderAllAccounts(
         // back to TODAY's already-decided FLINT sizing (rule R1's own
         // acctContracts, set above) — never to 0 by default.
         const fastStart = await import('./fast-start-sizing')
-        if (fastStart.isFastStartMode()) {
+        if (botName === 'flame' && fastStart.isFastStartMode()) {
           try {
             const fastStartDb = await import('./fast-start-db')
             if (floor == null) {
@@ -5275,22 +5456,69 @@ export async function placeCallSpreadOrderAllAccounts(
           }
         }
 
+        // SPARK_FLINT account-level safety net (2026-09-27/29) — FLINT on
+        // SPARK accounts runs its OWN SEPARATE, profits-only budget
+        // (spark-flint-separate.ts), never sharing SPARK's X%/K fast-start
+        // budget the way FLAME's own FLINT does above (RESULT_spark_addons.md:
+        // sharing the budget crowds out SPARK's own better-paying Phase-2
+        // sizing and FAILED held-out at every deposit; RESULT_spark_flint_
+        // separate.md: a separate budget PASSES at every deposit). Rule R1
+        // above already gates FLINT on this account's OWN profits-only
+        // cushion (equity-deposit); the ONE thing left is the combined-cost
+        // safety net — drop FLINT first if SPARK's own already-sized
+        // contracts (read back from spark_positions, THIS SAME tick, via
+        // getSparkCurrentFloor/decideSparkFlintContracts below) plus this
+        // FLINT contract could push equity below the account's CURRENT
+        // floor (deposit in Phase 1, the ratcheted CPPI floor in Phase 2).
+        // SPARK's own count is NEVER reduced to make room.
+        if (botName === 'spark' && !isProd) {
+          try {
+            const { decideSparkFlintContracts } = await import('./spark-flint-separate')
+            const { readEbbTodayOutcome } = await import('./fast-start-db')
+            const sparkFloor = await getSparkCurrentFloor(acct.name)
+            const tradeDateCt = centralDateNow()
+            const sparkToday = await readEbbTodayOutcome('spark', acct.name, 'sandbox', tradeDateCt, true)
+            const flintMlPerContract = flintMaxLoss(callShort, callLong, entryCredit, 1)
+            if (sparkFloor == null || equity == null) {
+              console.warn(`${label}: skip:spark_flint_floor_safety(sparkFloor_or_equity_unreadable) — falling back to R1's own count`)
+            } else {
+              const safety = decideSparkFlintContracts({
+                equity,
+                deposit: floor ?? sparkFloor,
+                sparkFloor,
+                flintCandidateDay: true,
+                flintMaxLossPerContract: flintMlPerContract,
+                sparkContractsToday: sparkToday.contracts,
+                sparkMaxLossPerContract: sparkToday.maxLossPerLot,
+              })
+              if (safety.flintContracts < 1) {
+                console.warn(`${label}: ${safety.reason}`)
+              }
+              acctContracts = safety.flintContracts
+            }
+          } catch (e) {
+            console.error(`${label}: SPARK_FLINT safety-net evaluation failed — falling back to R1's own count:`, e)
+          }
+        }
+
         if (acctContracts < 1) {
           console.log(`${label}: skip:zero_contracts_after_sizing`)
           continue
         }
 
         // 3. Buying power: $200/contract for FLINT itself, PLUS whatever
-        // collateral FLAME's own put spread is holding in this SAME account
-        // TODAY — the two sleeves share one broker BP pool. Steps down the
-        // same way R1 does if only the extra lot breaks BP.
+        // collateral this bot's own put side is holding in this SAME
+        // account TODAY — the two sleeves share one broker BP pool. Steps
+        // down the same way R1 does if only the extra lot breaks BP.
         const bp = await readOptionBuyingPowerWithRetry(acct.apiKey, accountId, acct.baseUrl, label)
         if (bp == null) {
           console.error(`${label}: optionBP UNREADABLE after retries — SKIPPING order. This is NOT an insufficient-funds decision.`)
-          if (isProd) await reportProductionBpUnreadable('flame', acct.name)
+          if (isProd) await reportProductionBpUnreadable(botName, acct.name)
           continue
         }
-        const putMarginToday = await getFlamePutMarginToday(acct.name, isProd ? 'production' : 'sandbox')
+        const putMarginToday = botName === 'spark'
+          ? await getSparkPutMarginToday(acct.name, isProd ? 'production' : 'sandbox')
+          : await getFlamePutMarginToday(acct.name, isProd ? 'production' : 'sandbox')
         let requiredBp = FLINT_BP_FLOOR_PER_CONTRACT * acctContracts + putMarginToday
         if (bp < requiredBp && acctContracts > baseContracts) {
           acctContracts = baseContracts

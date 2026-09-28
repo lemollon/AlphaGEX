@@ -4294,12 +4294,19 @@ async function ensureFlintTable(): Promise<void> {
        person TEXT,
        mode TEXT NOT NULL,
        sandbox_order_id TEXT,
+       bot TEXT NOT NULL DEFAULT 'flame',
        open_time TIMESTAMP NOT NULL DEFAULT NOW(),
        close_time TIMESTAMP,
        open_date DATE NOT NULL,
        created_at TIMESTAMP NOT NULL DEFAULT NOW()
      )`,
   )
+  // Defensive migration (2026-09-27, SPARK_FLINT): a table created before
+  // this column existed has no `bot` column — add it so FLINT-on-SPARK's
+  // own daily-dedup and rows never collide with FLAME's on the same
+  // customer sandbox account. Every pre-existing row backfills to 'flame',
+  // which is correct (FLINT was FLAME-exclusive until this change).
+  await dbExecute(`ALTER TABLE ${FLINT_TABLE} ADD COLUMN IF NOT EXISTS bot TEXT NOT NULL DEFAULT 'flame'`)
   _flintTableReady = true
 }
 
@@ -4557,7 +4564,12 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
   // purely so a future accidental re-introduction of a ratio gate shows up
   // as a diff to that function, not a silent behavior change here.
   const asofDate = ct.toISOString().slice(0, 10)
-  const flameVix = await vixDecayCheck(asofDate, VIX_DECAY_CEILING.flame)
+  // botCeiling generalizes this from FLAME-only to SPARK too (2026-09-27,
+  // SPARK_FLINT) — the ratio itself is a market-wide VIX signal; only the
+  // "gated" boolean this function ALSO returns differs by ceiling, and that
+  // field is unused here (isFlintDayEligible below is a no-op by design).
+  const botCeiling = VIX_DECAY_CEILING[bot.name as keyof typeof VIX_DECAY_CEILING] ?? VIX_DECAY_CEILING.flame
+  const flameVix = await vixDecayCheck(asofDate, botCeiling)
   void isFlintDayEligible(flameVix.ratio)
 
   const q = await getQuote('SPY')
@@ -4621,34 +4633,35 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
     }
   }
 
+  const botName = bot.name.toLowerCase()
   const positionId =
-    `FLINT-SPY-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+    `FLINT-${botName !== 'flame' ? botName.toUpperCase() + '-' : ''}SPY-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
 
-  // ---- PAPER BOOK — rule R1 against FLAME's own paper ledger, tried at
+  // ---- PAPER BOOK — rule R1 against this bot's OWN paper ledger, tried at
   // desiredContracts first and stepped down to baseContracts if only the
   // extra lot breaks the cushion ("if cushion covers 1 but not 2, trade 1").
   // When the upsize is off/inactive, desiredContracts === baseContracts, so
   // this is exactly ONE evaluation — byte-for-byte the old single-size gate.
-  // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now"): the bot's OWN
-  // paper book is a "customer" account under FLAME_SKIP_SCOPE's default —
-  // skipped whenever today's weekday matches, independent of scope (scope
-  // only decides whether the PRODUCTION account below is also skipped; see
-  // placeCallSpreadOrderAllAccounts in tradier.ts). Unset env = the skip set
-  // is always empty = this branch never fires; byte-for-byte prior behavior.
+  // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now") is a FLAME-only
+  // operator decision, gated on botName === 'flame' now that FLINT also
+  // runs for SPARK — unset env (or botName !== 'flame') = this branch never
+  // fires = byte-for-byte prior behavior for FLAME, and SPARK's own paper
+  // book is never affected by a flag scoped to FLAME's calendar.
   let paperDecision: string
   const weekdaySkipSet = getFlameSkipWeekdays()
   const todayAbbrev = weekdayAbbrevFromDow(ct.getDay())
-  if (isWeekdayInSkipSet(todayAbbrev, weekdaySkipSet)) {
+  if (botName === 'flame' && isWeekdayInSkipSet(todayAbbrev, weekdaySkipSet)) {
     paperDecision = weekdaySkipLogTag(todayAbbrev)
-    console.log(`[scanner] FLINT: no_trade | paper ${paperDecision}`)
+    console.log(`[scanner] FLINT/${botName.toUpperCase()}: no_trade | paper ${paperDecision}`)
   } else {
     const paperToday = await query(
       `SELECT COUNT(*) AS cnt FROM ${FLINT_TABLE}
-       WHERE open_date = ${CT_TODAY} AND account_type = 'paper'`,
+       WHERE open_date = ${CT_TODAY} AND account_type = 'paper' AND bot = $1`,
+      [botName],
     )
     if (int(paperToday[0]?.cnt) >= 1) {
       paperDecision = 'skip:already_traded_today'
-      console.log('[scanner] FLINT: no_trade | paper skip:already_traded_today')
+      console.log(`[scanner] FLINT/${botName.toUpperCase()}: no_trade | paper skip:already_traded_today`)
     } else {
       const paperLedger = await getFlintPaperLedger(bot)
       const decision = decideFlintContractsForCushion(
@@ -4657,7 +4670,7 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
       const gate = decision.gate
       if (decision.contracts < 1) {
         paperDecision = gate.reason ?? 'skip:flint_profit_cushion(unreadable)'
-        console.log(`[scanner] FLINT: no_trade | paper ${paperDecision}`)
+        console.log(`[scanner] FLINT/${botName.toUpperCase()}: no_trade | paper ${paperDecision}`)
       } else {
         const contracts = decision.contracts
         const collateral = Math.max(0, (width - credit.callCredit) * 100) * contracts
@@ -4665,12 +4678,12 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
           `INSERT INTO ${FLINT_TABLE} (
              position_id, ticker, expiration, call_short_strike, call_long_strike,
              contracts, entry_credit, collateral_required, underlying_at_entry,
-             status, account_type, person, mode, open_time, open_date
-           ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open','paper',NULL,$9, NOW(), ${CT_TODAY})`,
-          [positionId, expiration, callShort, callLong, contracts, credit.callCredit, collateral, spot, mode],
+             status, account_type, person, mode, bot, open_time, open_date
+           ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open','paper',NULL,$9,$10, NOW(), ${CT_TODAY})`,
+          [positionId, expiration, callShort, callLong, contracts, credit.callCredit, collateral, spot, mode, botName],
         )
         console.log(
-          `[scanner] FLINT SPY: ${contracts}x ${callShort}/${callLong}C exp ${expiration} ` +
+          `[scanner] FLINT/${botName.toUpperCase()} SPY: ${contracts}x ${callShort}/${callLong}C exp ${expiration} ` +
           `@ $${credit.callCredit.toFixed(2)} (spot ${spot.toFixed(2)}, cushion=$${gate.cushion?.toFixed(2) ?? 'n/a'}) mode=${mode}`,
         )
         paperDecision = 'traded'
@@ -4702,25 +4715,27 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
     console.warn(`[edge-decay] FLINT pause check failed (non-fatal, trading continues): ${e instanceof Error ? e.message : String(e)}`)
   }
 
-  // ---- SANDBOX + PRODUCTION ACCOUNT(S) — every account EBB's own put
-  // spread places on (resolveEligibleAccounts('flame')), each gated
+  // ---- SANDBOX + PRODUCTION ACCOUNT(S) — every account this bot's own put
+  // spread places on (resolveEligibleAccounts(botName)), each gated
   // INDEPENDENTLY of the paper book and of every other account.
-  // canPlaceLiveOrders('flame') / describeLiveGate are no longer checked
-  // here as a blanket early-return: a disarmed FLAME must still let its
+  // canPlaceLiveOrders(botName) / describeLiveGate are no longer checked
+  // here as a blanket early-return: a disarmed bot must still let its
   // SANDBOX mirrors trade — placeCallSpreadOrderAllAccounts applies the arm
-  // gate to PRODUCTION only, internally. Rule R1 + the buying-power check
-  // both run per-account inside that call (with its own upsize step-down
-  // from desiredContracts to baseContracts); an account that already traded
-  // today, or is gated out on cushion or BP, is simply absent from `live`.
+  // gate to PRODUCTION only, internally (canPlaceLiveOrders('spark') is
+  // hard-coded false, so SPARK's FLINT sleeve only ever reaches sandbox).
+  // Rule R1 + the buying-power check both run per-account inside that call
+  // (with its own upsize step-down from desiredContracts to baseContracts);
+  // an account that already traded today, or is gated out on cushion or
+  // BP, is simply absent from `live`.
   try {
     const live = await placeCallSpreadOrderAllAccounts(
       'SPY', expiration, callShort, callLong, desiredContracts, credit.callCredit, positionId,
-      { baseContracts },
+      { baseContracts, botName },
     )
     const fills = Object.entries(live)
     if (fills.length === 0) {
-      const armNote = canPlaceLiveOrders('flame') ? '' : ` (production:disarmed(${describeLiveGate('flame')}))`
-      console.log(`[scanner] FLINT: live:no_fill${armNote}`)
+      const armNote = canPlaceLiveOrders(botName) ? '' : ` (production:disarmed(${describeLiveGate(botName)}))`
+      console.log(`[scanner] FLINT/${botName.toUpperCase()}: live:no_fill${armNote}`)
       return `FLINT: paper=${paperDecision} live:no_fill${armNote}`
     }
     for (const [key, info] of fills) {
@@ -4735,12 +4750,12 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
         `INSERT INTO ${FLINT_TABLE} (
            position_id, ticker, expiration, call_short_strike, call_long_strike,
            contracts, entry_credit, collateral_required, underlying_at_entry,
-           status, account_type, person, mode, sandbox_order_id, open_time, open_date
-         ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open',$9,$10,$11,$12, NOW(), ${CT_TODAY})`,
-        [pId, expiration, callShort, callLong, pContracts, pCredit, pCollateral, spot, pAccountType, pPerson, mode, String(info.order_id)],
+           status, account_type, person, mode, bot, sandbox_order_id, open_time, open_date
+         ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open',$9,$10,$11,$12,$13, NOW(), ${CT_TODAY})`,
+        [pId, expiration, callShort, callLong, pContracts, pCredit, pCollateral, spot, pAccountType, pPerson, mode, botName, String(info.order_id)],
       )
       console.log(
-        `[scanner] FLINT ${pAccountType === 'production' ? 'LIVE' : 'SANDBOX'} FILL [${pPerson}]: ${pId} ${pContracts}x @ $${pCredit.toFixed(4)}`,
+        `[scanner] FLINT/${botName.toUpperCase()} ${pAccountType === 'production' ? 'LIVE' : 'SANDBOX'} FILL [${pPerson}]: ${pId} ${pContracts}x @ $${pCredit.toFixed(4)}`,
       )
     }
   } catch (e: unknown) {
@@ -4781,7 +4796,7 @@ async function closeFlintAtRiskBeforeBell(ct: Date): Promise<string> {
   const todayStr = ct.toISOString().slice(0, 10)
   const rows = await query(
     `SELECT position_id, expiration, call_short_strike, call_long_strike, contracts,
-            entry_credit, account_type, mode, person
+            entry_credit, account_type, mode, person, bot
        FROM ${FLINT_TABLE}
       WHERE status = 'open' AND expiration = $1`,
     [todayStr],
@@ -4854,7 +4869,7 @@ async function closeFlintAtRiskBeforeBell(ct: Date): Promise<string> {
         try {
           await placeCallSpreadOrderAllAccounts(
             'SPY', expiration, shortStrike, longStrike, contracts, costToClose, String(p.position_id),
-            { close: true, targetPerson: p.person },
+            { close: true, targetPerson: p.person, botName: (p.bot as string | undefined) ?? 'flame' },
           )
         } catch (e: unknown) {
           console.error(`[scanner] FLINT LIVE GUARD CLOSE FAILED ${p.position_id}: ${e instanceof Error ? e.message : String(e)}`)
@@ -8764,6 +8779,32 @@ async function scanBot(bot: BotDef): Promise<void> {
       }
     }
 
+    // SPARK_FLINT (2026-09-27) — FLINT on SPARK customer accounts, its own
+    // separate profits-only budget (spark-flint-separate.ts / SPARK_FLINT).
+    // Guard + settle run every cycle here (they no-op most minutes, and are
+    // bot-agnostic — they act on ANY open flint_positions row regardless of
+    // which bot opened it), same as FLAME's block above. ENTRY is
+    // deliberately NOT here — it fires further down, AFTER this SAME
+    // scanBot() call's own SPARK put-spread entry (tryOpenTrade, below) has
+    // already run and persisted this account's contracts for today, so
+    // FLINT's account-level safety net (decideSparkFlintContracts,
+    // tradier.ts) can read back the REAL sized SPARK cost instead of
+    // guessing at it out of order.
+    if (bot.name === 'spark') {
+      try {
+        const callGuarded = await closeFlintAtRiskBeforeBell(ct)
+        if (callGuarded) console.log(`[scanner] ${callGuarded}`)
+      } catch (e) {
+        console.error('[scanner] FLINT/SPARK assignment guard failed:', e)
+      }
+      try {
+        const callSettled = await settleFlintExpired(ct)
+        if (callSettled) console.log(`[scanner] ${callSettled}`)
+      } catch (e) {
+        console.error('[scanner] FLINT/SPARK settlement failed:', e)
+      }
+    }
+
     // FLAME_FAST_START EOD hook (2026-09-29 correction: phase, peak_profit
     // and the CPPI floor update ONCE PER DAY, here, from that day's CLOSING
     // equity — never intraday from a live unrealized mark. See
@@ -8826,6 +8867,66 @@ async function scanBot(bot: BotDef): Promise<void> {
         }
       } catch (e) {
         console.error('[scanner] FLAME_FAST_START EOD hook failed:', e)
+      }
+    }
+
+    // SPARK_FAST_START EOD hook — mirrors FLAME's own EOD hook above
+    // exactly (same rationale: phase/peak_profit/floor update ONCE PER DAY,
+    // from that day's CLOSING equity, never intraday), scoped to bot='spark'
+    // via fast-start-db's `bot` parameter so this NEVER collides with
+    // FLAME's own fast_start_state row on a shared customer account.
+    // readEbbTodayOutcome('spark', ...) reads SPARK's own {bot}_positions
+    // (spark_positions) — generic, already bot-parameterized.
+    // flintCandidateToday/flintMaxLossToday pass false/null here (never
+    // true) because SPARK_FLINT is a SEPARATE, independent budget
+    // (spark-flint-separate.ts) that is NEVER folded into SPARK's own
+    // Phase-1->2 trigger or CPPI floor — passing FLINT's real candidacy here
+    // would re-introduce exactly the shared-budget trigger-crowding effect
+    // RESULT_spark_addons.md proved kills SPARK's own performance.
+    if (bot.name === 'spark' && isAfterEodCutoff(ct, bot)) {
+      try {
+        const fastStart = await import('./fast-start-sizing')
+        if (fastStart.isFastStartMode('SPARK_FAST_START')) {
+          const fastStartDb = await import('./fast-start-db')
+          const ebbSizing = await import('./ebb-sizing')
+          const tradier = await import('./tradier')
+          const tradeDateCt = ct.toISOString().slice(0, 10)
+
+          const eligible = await tradier.resolveEligibleAccounts('spark')
+          for (const acct of eligible) {
+            if (acct.type === 'production') continue // SPARK's production pot never runs fast-start (canPlaceLiveOrders('spark') is hard-coded false) — sandbox customer accounts only
+            const accountType: 'sandbox' | 'production' = 'sandbox'
+            try {
+              const allocated = await tradier.getAllocatedCapitalForAccount(acct.name, accountType)
+              const closingEquity = allocated?.equity ?? null
+              const deposit = await tradier.getOrSeedFlintAccountFloor(acct.name, 'sandbox', null, closingEquity)
+              if (deposit == null || closingEquity == null) {
+                console.warn(`[scanner] SPARK_FAST_START EOD [${acct.name}:${accountType}]: skip:deposit_or_equity_unreadable`)
+                continue
+              }
+              const state = await fastStartDb.getOrSeedFastStartState(acct.name, accountType, deposit, closingEquity, 'spark')
+              if (state == null) continue
+              const normalLadder = ebbSizing.ebbProfitLadderContracts('spark', deposit, state.peakProfit)
+
+              const sparkToday = await fastStartDb.readEbbTodayOutcome('spark', acct.name, accountType, tradeDateCt, true)
+              const result = await fastStartDb.updateFastStartEodState(
+                acct.name, accountType, tradeDateCt, closingEquity, normalLadder,
+                sparkToday.contracts >= 1, sparkToday.maxLossPerLot,
+                false, null, 'spark',
+              )
+              if (result.updated) {
+                console.log(
+                  `[scanner] SPARK_FAST_START EOD [${acct.name}:${accountType}]: phase=${result.phase} ` +
+                  `peak_profit=$${result.peakProfit?.toFixed(2)} triggered_today=${result.triggeredToday}`,
+                )
+              }
+            } catch (e) {
+              console.error(`[scanner] SPARK_FAST_START EOD [${acct.name}:${accountType}] failed:`, e)
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[scanner] SPARK_FAST_START EOD hook failed:', e)
       }
     }
 
@@ -9186,6 +9287,35 @@ async function scanBot(bot: BotDef): Promise<void> {
       reason = hhmmNow < entryStart
         ? `Before entry open (${clock}, opens ${entryStart})`
         : `Past entry cutoff (${clock}, cutoff ${botCfg.entry_end})`
+    }
+
+    // SPARK_FLINT entry (2026-09-27) — deliberately placed AFTER the block
+    // above, not alongside FLAME's FLINT block near the top of scanBot: by
+    // this point SPARK's own put-spread attempt for THIS tick (tryOpenTrade,
+    // just above) has already run, so spark_positions reflects today's real
+    // contract count (or its absence) BEFORE FLINT's account-level safety
+    // net (decideSparkFlintContracts, tradier.ts) reads it back via
+    // readEbbTodayOutcome('spark', ...). isInEntryWindow(ct, bot) inside
+    // tryOpenFlint reuses SPARK's OWN window (10:05-10:20 CT via `bot`),
+    // independent of FLAME's 13:05 window. One low-probability, accepted
+    // race: if SPARK's own entry is delayed to a LATER tick within the
+    // window (a transient quote/BP miss) after FLINT has ALREADY traded
+    // THIS tick assuming sparkCost=0, the safety net cannot retroactively
+    // re-check — the same per-tick-snapshot limitation every other gate in
+    // this scanner already has (BP, liquidity). Never fires unless BOTH
+    // FLINT_MODE != off AND SPARK_FLINT=on (isSparkFlintMode,
+    // spark-flint-separate.ts) — off/unset means this whole block is
+    // skipped, zero extra DB reads.
+    if (bot.name === 'spark') {
+      try {
+        const { isSparkFlintMode } = await import('./spark-flint-separate')
+        if (isSparkFlintMode()) {
+          const flintTraded = await tryOpenFlint(bot, ct)
+          if (flintTraded) console.log(`[scanner] ${flintTraded}`)
+        }
+      } catch (e) {
+        console.error('[scanner] FLINT/SPARK entry failed:', e)
+      }
     }
 
     // Take equity snapshot every cycle — save SEPARATE snapshots for sandbox and production.
