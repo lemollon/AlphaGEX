@@ -230,6 +230,11 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import pandas as pd
 from . import ember_lock, rate_limiter
+from .. import tv_call_log
+try:
+    from ...db import engine as _TV_CALL_LOG_ENGINE   # spreadworks/backend/db.py
+except Exception:      # pragma: no cover - import-time only, logging degrades to no-op
+    _TV_CALL_LOG_ENGINE = None
 
 CODE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.getenv("EMBER_TVSCAN_DATA_DIR", str(CODE_DIR))).expanduser().resolve()
@@ -810,6 +815,23 @@ idea_items, asof = fetch_idea()
 preset_items = fetch_presets()
 income_items = fetch_income()
 
+# Forward call log (2026-09-28, Leron): a point-in-time snapshot of every TV
+# list item this scan pulled, independent of whether it ever becomes a
+# candidate, gets an RR/BOUNCE setup, or EMBER is even armed to trade it --
+# see tv_call_log.py. Reuses the items already fetched above; no extra TV
+# calls. Never raises -- logs and continues on any DB failure.
+try:
+    tv_call_log.log_source_items(_TV_CALL_LOG_ENGINE, run_id=SCAN_TIME_ISO, scan_date=TODAY,
+                                  endpoint="top-setups", items=idea_items)
+    for _preset_name in PRESETS:
+        tv_call_log.log_source_items(_TV_CALL_LOG_ENGINE, run_id=SCAN_TIME_ISO, scan_date=TODAY,
+                                      endpoint=_preset_name,
+                                      items=[it for it in preset_items if it.get("_source") == _preset_name])
+    tv_call_log.log_source_items(_TV_CALL_LOG_ENGINE, run_id=SCAN_TIME_ISO, scan_date=TODAY,
+                                  endpoint="income-setups", items=income_items)
+except Exception as _tv_call_log_exc:
+    print(f"tv_call_log: source logging failed ({_tv_call_log_exc}) -- not fatal")
+
 by_ticker = {}
 for it in idea_items + preset_items + income_items: by_ticker.setdefault(it["ticker"], []).append(it)
 
@@ -882,7 +904,8 @@ stop_dispatch = threading.Event()
 
 def process_candidate(cand):
     outcome = dict(nodata_entry=None, rr_bucket=None, rr_row=None, bounce_bucket=None, bounce_row=None,
-                    vol_reported=0, vol_zero=0, theta_priced=0, theta_missing=0, bounce_signal=0, truncated=False)
+                    vol_reported=0, vol_zero=0, theta_priced=0, theta_missing=0, bounce_signal=0, truncated=False,
+                    context=None)
     if dt.datetime.now() >= deadline:
         stop_dispatch.set(); outcome["truncated"] = True; return outcome
     t = cand["ticker"]
@@ -922,6 +945,17 @@ def process_candidate(cand):
                      ("thin vol" if (opt_vol is not None and opt_vol < LIQ_VOL_MIN) else
                       ("vol unknown" if vol_unknown else None))
     liq_gate_fail_name = liq_note_name in ("thin OI", "thin vol")   # "vol unknown" is informational only, never gates
+
+    # Forward call log context (2026-09-28, Leron): the /tickers + curve fields
+    # this candidate was actually evaluated against, off the SAME payload
+    # already fetched above -- no extra TV call. Captured here (not inside the
+    # RR/BOUNCE blocks below) so it is present even for a candidate with no
+    # direction and no bounce signal, where neither strategy builds a row.
+    outcome["context"] = dict(price=price, flip=flip, put_wall=pw, call_wall=cw, max_gamma_strike=maxg,
+                               dist_to_flip_pct=dist_to_flip_pct, em_1d_pct=round(em["expected_move_pct_1d"], 2),
+                               em_1w_pct=round(em["expected_move_pct_1w"], 2), iv_rank=iv_rank, pcr_vol=pcr_vol,
+                               pcr_oi=pcr_oi, pcr_oi_d30=pcr_oi_d30, spec_score=spec_score, rsi14=rsi14,
+                               opt_oi=opt_oi, opt_vol=opt_vol)
 
     # ---- RR (geometry) strategy, strategy="rr" ----
     side = cand["direction"]
@@ -1083,7 +1117,7 @@ with ThreadPoolExecutor(max_workers=SCAN_WORKERS) as pool:
 # later bounce-branch truncation) is still on the outcome and merges normally; that mirrors
 # the old sequential code, where such a nodata.append() already ran before the later break.
 self_truncated = 0
-for outcome in outcomes:
+for cand, outcome in zip(candidates, outcomes):
     if outcome["truncated"]: self_truncated += 1
     if outcome["nodata_entry"] is not None: nodata.append(outcome["nodata_entry"])
     if outcome["rr_bucket"] is not None: BUCKETS[outcome["rr_bucket"]].append(outcome["rr_row"])
@@ -1091,6 +1125,21 @@ for outcome in outcomes:
     vol_reported_n += outcome["vol_reported"]; vol_zero_n += outcome["vol_zero"]
     theta_priced_n += outcome["theta_priced"]; theta_missing_n += outcome["theta_missing"]
     bounce_signal_n += outcome["bounce_signal"]
+    # Forward call log (2026-09-28, Leron): would RR/BOUNCE have produced a
+    # setup for this candidate, off the payload already fetched this run --
+    # skipped only for a candidate the wall-clock guard truncated before any
+    # evaluation happened (nothing to record; it is picked up on a later
+    # tick). Never raises -- logs and continues on any DB failure.
+    if not outcome["truncated"]:
+        try:
+            tv_call_log.log_evaluation(
+                _TV_CALL_LOG_ENGINE, run_id=SCAN_TIME_ISO, scan_date=sess, ticker=cand["ticker"],
+                context=outcome["context"], rr_row=outcome["rr_row"], rr_bucket=outcome["rr_bucket"],
+                bounce_row=outcome["bounce_row"], bounce_bucket=outcome["bounce_bucket"],
+                nodata_reason=(outcome["nodata_entry"][1] if outcome["nodata_entry"] else None),
+            )
+        except Exception as _tv_call_log_exc:
+            print(f"tv_call_log: evaluation logging failed for {cand['ticker']} ({_tv_call_log_exc}) -- not fatal")
 truncated_n = (len(candidates) - n_submitted) + self_truncated
 
 def show(rows, title, cols, key=None):
