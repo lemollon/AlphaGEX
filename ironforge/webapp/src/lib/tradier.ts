@@ -5383,6 +5383,13 @@ export async function placeCallSpreadOrderAllAccounts(
               const state = await fastStartDb.getOrSeedFastStartState(acct.name, isProd ? 'production' : 'sandbox', floor, equity)
               if (state == null) {
                 console.warn(`${label}: FLAME_FAST_START skip:state_unreadable — falling back to today's sizing`)
+              } else if (floor >= fastStart.FAST_START_DEPOSIT_CAP) {
+                // v3 deposit cap: this account trades plain BASE for its
+                // entire life — FLINT's own standing R1 gate (computed above,
+                // acctContracts already holds it) already IS BASE's own FLINT
+                // rule (cushion >= flint_maxloss), so there is nothing to
+                // override; leave acctContracts exactly as rule R1 set it.
+                console.log(`${label}: FLAME_FAST_START skip:deposit_cap (deposit=$${floor.toFixed(2)} >= $${fastStart.FAST_START_DEPOSIT_CAP.toFixed(2)}) — plain BASE, today's sizing unchanged`)
               } else {
                 // STORED, EOD-ratcheted peak_profit (2026-09-29 correction)
                 // — the SAME value EBB's own intraday call reads, never a

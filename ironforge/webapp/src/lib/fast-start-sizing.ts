@@ -88,6 +88,37 @@ export const FAST_START_X = 0.20
 export const FAST_START_N = 8
 export const FAST_START_K = 0.25
 
+/**
+ * v3 (2026-09-27/29, guarded-P&L re-validation, source: fast_start_floor_sim.py
+ * FROZEN_V3): any account with `deposit >= FAST_START_DEPOSIT_CAP` NEVER runs
+ * fast-start or the CPPI floor — it trades the plain standing BASE ladder for
+ * its entire life (byte-identical to `off`, see decideFastStartSizing's own
+ * early return). v3 grid-tested this at $5,000/$6,000 and fast-start LOST to
+ * plain BASE there — Leron tightened the cap from the sim file's own $7,500
+ * default down to $5,000 as a result. The parity fixture
+ * (fast_start_floor_fixtures_guarded_v3.json) never exercises this boundary
+ * directly (its paths are $2,000/$4,242, both well under either number), so
+ * a dedicated unit test pins $5,000 and $7,500 -> exact BASE instead.
+ */
+export const FAST_START_DEPOSIT_CAP = 5000
+
+/**
+ * v3: $/leg added to EBB max loss and to FLINT max loss, but ONLY inside
+ * Phase 2's CPPI budget checks (sizePhase2 below, and the phase-2 branch of
+ * sizeFlintGivenEbbOutcome) — never in Phase 1's 20% risk cap, never in the
+ * Phase 1->2 trigger (evaluateFastStartTrigger, unchanged). Real pnl is
+ * NEVER adjusted by this — only the cost figure a budget check compares
+ * against. Reason (fast_start_floor_sim.py "V3 RULE"): the guarded P&L has
+ * days where a guard-fire buyback's REALIZED loss exceeds the stated max
+ * loss by up to $47.70 (FLINT) — the never-below-deposit GUARANTEE is
+ * produced entirely by Phase 2's budget check (there is no floor yet in
+ * Phase 1, so margining Phase 1 or the trigger buys no extra safety, only
+ * costs money — confirmed by v2's own p10 loss at $2,000 with no
+ * guarantee-strength benefit). $50 comfortably covers the observed $47.70
+ * worst case.
+ */
+export const FAST_START_PHASE2_MARGIN = 50
+
 export type FastStartPhase = 1 | 2
 
 export interface FastStartAccountState {
@@ -234,6 +265,46 @@ export function decideFastStartSizing(
     }
   }
 
+  // v3 is a FLAME-ONLY correction (this module is SHARED with SPARK_FAST_START
+  // — see FastStartSizingOpts.envVar — and SPARK's own rule/parity was
+  // already validated and shipped independently, at deposits ($5,000/
+  // $7,500/$10,000) that would otherwise collide with FLAME's own v3
+  // deposit cap below). Gate both v3 additions (deposit cap here, and the
+  // $50 Phase-2 margin in sizePhase2/sizeFlintGivenEbbOutcome) on
+  // envVar==='FLAME_FAST_START' so a SPARK_FAST_START call is BYTE-FOR-BYTE
+  // unaffected by anything in this section.
+  const isFlameV3 = envVar === 'FLAME_FAST_START'
+
+  // v3 deposit cap: >= $5,000 NEVER runs fast-start/the floor — trades the
+  // plain standing BASE ladder for its ENTIRE life (fast_start_floor_sim.py's
+  // `_simulate_base_as_v2_trace`), reproduced EXACTLY including FLINT's own
+  // standing rule here (unlike the `off` branch above, which deliberately
+  // leaves FLINT to the caller's separate R1 gate) — deposit_cap's whole
+  // point is "byte-identical to BASE," and BASE's own FLINT leg IS this
+  // formula (cushion >= flint_maxloss), so it is decided here rather than
+  // split across two code paths the way `off` is.
+  if (isFlameV3 && state.deposit >= FAST_START_DEPOSIT_CAP) {
+    const cushionCap = inputs.equity - state.deposit
+    const baseEbb = inputs.ebbCandidateDay ? Math.max(0, Math.floor(inputs.normalEbbLadder)) : 0
+    const baseFlintMl = isPositiveFinite(inputs.flintMaxLossPerContract) ? inputs.flintMaxLossPerContract : null
+    const baseFlint = inputs.flintCandidateDay && baseFlintMl !== null && cushionCap >= baseFlintMl ? 1 : 0
+    return {
+      decision: {
+        phase: state.phase,
+        ebbContracts: baseEbb,
+        flintContracts: baseFlint,
+        floor: null,
+        budget: null,
+        phase1CapBudget: null,
+        cushion: cushionCap,
+        triggerLevel: null,
+        triggeredToday: false,
+        reason: `deposit_cap: deposit=$${state.deposit.toFixed(2)} >= $${FAST_START_DEPOSIT_CAP.toFixed(2)} — plain BASE ladder, never fast-start (ebb=${baseEbb} flint=${baseFlint})`,
+      },
+      nextState: state,
+    }
+  }
+
   const deposit = state.deposit
   const cushion = inputs.equity - deposit
   const normalLadder = Math.max(0, Math.floor(inputs.normalEbbLadder))
@@ -265,7 +336,7 @@ export function decideFastStartSizing(
     triggerNote = ' (intraday: trigger check skipped, EOD-only per FastStartSizingOpts)'
   }
 
-  const sized = effectivePhase === 1 ? sizePhase1(inputs, common) : sizePhase2(inputs, common)
+  const sized = effectivePhase === 1 ? sizePhase1(inputs, common) : sizePhase2(inputs, common, isFlameV3)
 
   return {
     decision: {
@@ -349,11 +420,23 @@ function sizePhase1(inputs: FastStartDayInputs, c: Common): Sized {
   }
 }
 
-function sizePhase2(inputs: FastStartDayInputs, c: Common): Sized {
+function sizePhase2(inputs: FastStartDayInputs, c: Common, applyV3Margin: boolean): Sized {
   const { deposit, cushion, normalLadder, ebbMl, flintMl } = c
 
   const floor = deposit + FAST_START_K * inputs.peakProfit
   const budget = inputs.equity - floor
+
+  // v3: $50/leg margin, ONLY here in Phase 2's budget checks (never in
+  // Phase 1 or the trigger — see FAST_START_PHASE2_MARGIN's own doc), and
+  // ONLY for FLAME (`applyV3Margin`, resolved by the caller from
+  // envVar==='FLAME_FAST_START' — SPARK_FAST_START's own, separately
+  // shipped/validated Phase-2 math is untouched). Added to the COST figure
+  // every gate below compares against; the real max-loss values (ebbMl/
+  // flintMl) are never mutated, so `combined_maxloss`/pnl logging elsewhere
+  // stays the account's real risk, not the margined one.
+  const marginPerLeg = applyV3Margin ? FAST_START_PHASE2_MARGIN : 0
+  const ebbMlEff = ebbMl !== null ? ebbMl + marginPerLeg : null
+  const flintMlEff = flintMl !== null ? flintMl + marginPerLeg : null
 
   // Grandfather (minimum) layer — sequential, EBB then FLINT, gated ONLY
   // against the deposit cushion (never the K-floor budget) so this layer
@@ -362,23 +445,23 @@ function sizePhase2(inputs: FastStartDayInputs, c: Common): Sized {
   const flintMinTarget = inputs.flintCandidateDay ? 1 : 0
 
   let ebbMin = 0
-  if (ebbMinTarget > 0 && ebbMl !== null && ebbMinTarget * ebbMl <= cushion) {
+  if (ebbMinTarget > 0 && ebbMlEff !== null && ebbMinTarget * ebbMlEff <= cushion) {
     ebbMin = ebbMinTarget
   }
-  const remainingDepositCushion = cushion - ebbMin * (ebbMl ?? 0)
+  const remainingDepositCushion = cushion - ebbMin * (ebbMlEff ?? 0)
 
   let flintMin = 0
-  if (flintMinTarget > 0 && flintMl !== null && flintMinTarget * flintMl <= remainingDepositCushion) {
+  if (flintMinTarget > 0 && flintMlEff !== null && flintMinTarget * flintMlEff <= remainingDepositCushion) {
     flintMin = flintMinTarget
   }
 
-  const minimumCommitted = ebbMin * (ebbMl ?? 0) + flintMin * (flintMl ?? 0)
+  const minimumCommitted = ebbMin * (ebbMlEff ?? 0) + flintMin * (flintMlEff ?? 0)
   const remainingKBudget = budget - minimumCommitted
 
   const extraTarget = inputs.ebbCandidateDay ? Math.max(0, normalLadder - ebbMin) : 0
   let extraEbb = 0
-  if (extraTarget > 0 && ebbMl !== null && remainingKBudget > 0) {
-    extraEbb = Math.max(0, Math.min(extraTarget, Math.floor(remainingKBudget / ebbMl)))
+  if (extraTarget > 0 && ebbMlEff !== null && remainingKBudget > 0) {
+    extraEbb = Math.max(0, Math.min(extraTarget, Math.floor(remainingKBudget / ebbMlEff)))
   }
 
   const ebbContracts = ebbMin + extraEbb
@@ -386,7 +469,8 @@ function sizePhase2(inputs: FastStartDayInputs, c: Common): Sized {
 
   let reason =
     `phase2 deposit=$${deposit.toFixed(2)} floor=$${floor.toFixed(2)} budget=$${budget.toFixed(2)} ` +
-    `cushion=$${cushion.toFixed(2)} ebb_min=${ebbMin} flint_min=${flintMin} extra_ebb=${extraEbb} ` +
+    `cushion=$${cushion.toFixed(2)} margin=$${marginPerLeg.toFixed(2)}/leg ` +
+    `ebb_min=${ebbMin} flint_min=${flintMin} extra_ebb=${extraEbb} ` +
     `ebb=${ebbContracts} flint=${flintContracts}`
 
   if (inputs.ebbCandidateDay && ebbMl === null) reason += ' (ebb max-loss unreadable -> 0)'
@@ -433,6 +517,15 @@ function sizePhase2(inputs: FastStartDayInputs, c: Common): Sized {
  * minimum layer already fired (worked through in fast_start_floor_sim.py's
  * phase2_alloc: n_min_ebb's own gate is strictly looser than what extra_ebb
  * needs to be positive).
+ *
+ * FLAME-ONLY (v3, 2026-09-29): the Phase-2 branch unconditionally adds the
+ * $50/leg margin (FAST_START_PHASE2_MARGIN) — safe today because the ONLY
+ * caller is FLAME's own FLINT wiring in tradier.ts (`botName === 'flame'`
+ * gates it before this is ever reached). SPARK has its OWN, separately
+ * shipped/validated FLINT budget (spark-flint-separate.ts) and never calls
+ * this function. If a future caller ever wants to reuse this for another
+ * bot, it MUST add an explicit opt-out for this margin first — do not
+ * assume it's safe by default.
  */
 export function sizeFlintGivenEbbOutcome(
   phase: FastStartPhase,
@@ -464,13 +557,18 @@ export function sizeFlintGivenEbbOutcome(
     }
   }
 
-  // Phase 2: minimum layer only, sequential AFTER ebb's own minimum commitment.
+  // Phase 2: minimum layer only, sequential AFTER ebb's own minimum
+  // commitment. v3: $50/leg margin here too (matching sizePhase2's own
+  // Phase-2-only margin) — ebbMl/flintMl below are ONLY the cost figures
+  // these gates compare against, never the real risk.
+  const ebbMlEff = ebbMl + FAST_START_PHASE2_MARGIN
+  const flintMlEff = flintMl + FAST_START_PHASE2_MARGIN
   const ebbMin = ebbContractsToday >= 1 ? 1 : 0
-  const remainingDepositCushion = cushion - ebbMin * ebbMl
-  const flintContracts = flintMl <= remainingDepositCushion ? 1 : 0
+  const remainingDepositCushion = cushion - ebbMin * ebbMlEff
+  const flintContracts = flintMlEff <= remainingDepositCushion ? 1 : 0
   return {
     flintContracts,
-    reason: `phase2 (ebb-given) ebb_min=${ebbMin} cushion=$${cushion.toFixed(2)} ` +
+    reason: `phase2 (ebb-given) margin=$${FAST_START_PHASE2_MARGIN.toFixed(2)}/leg ebb_min=${ebbMin} cushion=$${cushion.toFixed(2)} ` +
       `remaining_deposit_cushion=$${remainingDepositCushion.toFixed(2)} flint=${flintContracts}`,
   }
 }
