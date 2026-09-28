@@ -45,6 +45,9 @@ import {
 } from './contracts'
 import { checkBotTradedAccount, type BotAccountGuardVerdict } from './bot-account-guard'
 import { getKnownBotTradedTradierAccountNumbers } from './bot-account-registry'
+// XSP_SWAP (R4): the customer path mirrors the master's own go/no-go decision
+// (MasterOpen.xspSwap) rather than pricing its own XSP quote — see mirrorOneOpen.
+import { isXspSwapMode, XSP_TICKER, XSP_SWAP_MAX_CONTRACTS } from '@/lib/xsp-swap'
 
 /** 0.70 — the frozen "calm" VIX-decay-ratio threshold shared by B1 and the house-money calm-upsize. */
 const CALM_VIX_CEILING = 0.70
@@ -77,6 +80,16 @@ export interface MasterOpen {
    * their flags being off) — see resolveLegKind's doc for the same back-compat pattern.
    */
   vixRatio?: number | null
+  /**
+   * XSP_SWAP (R4) — the master's OWN go/no-go decision (tradier.ts
+   * attemptXspHostSwap), computed at scanner.ts's own quote pull
+   * (getPutSpreadEntryCredit('XSP', ...)) for the SAME strikes as this
+   * MasterOpen. Customers mirror this eligibility rather than pricing their
+   * own XSP quote — see mirrorOneOpen's XSP_SWAP block. Optional/null-safe:
+   * every pre-existing call site omits it, and `undefined`/`eligible: false`
+   * both mean "no XSP swap for this open", byte-identical to today.
+   */
+  xspSwap?: { eligible: boolean; xspCreditPerContract: number | null }
 }
 
 export function resolveLegKind(m: Pick<MasterOpen, 'legKind' | 'callShort'>): 'condor' | 'put_spread' | 'call_spread' {
@@ -458,11 +471,86 @@ async function mirrorOneOpen(
     }
   }
 
+  // XSP_SWAP (R4) — mirrors the MASTER's own go/no-go decision (m.xspSwap,
+  // computed by scanner.ts from tradier.ts's own XSP quote pull — customers
+  // have no direct Tradier market-data access, so they never price their own
+  // XSP quote). Only ever applies to the put-spread host leg (EBB/SPARK),
+  // never a condor or FLINT's call spread. Off (default), not eligible, or
+  // not a put spread: mainContracts stays finalContracts, byte-identical to
+  // today. "If XSP doesn't fill, fall back to SPY for that contract. Never
+  // skip the trade because XSP failed" — any SnapTrade failure (including an
+  // unsupported broker/symbol lookup) is caught, logged, and every contract
+  // stays on SPY.
+  let mainContracts = finalContracts
+  let xspContracts = 0
+  let xspOrderId: string | null = null
+  if (legKind === 'put_spread' && m.xspSwap?.eligible && isXspSwapMode()) {
+    const nXsp = Math.min(finalContracts, XSP_SWAP_MAX_CONTRACTS)
+    if (nXsp > 0) {
+      try {
+        const xspLegs = spreadOpenLegs({ ticker: XSP_TICKER, expiration: m.expiration, short: m.putShort, long: m.putLong, right: 'P' }, nXsp)
+        const xspPlaced = await snaptrade.trading.placeMlegOrder({
+          userId: creds.snaptradeUserId,
+          userSecret: creds.userSecret,
+          accountId,
+          order_type: 'MARKET',
+          time_in_force: 'Day',
+          legs: toSdkLegs(xspLegs),
+        })
+        xspOrderId = (xspPlaced.data as { brokerage_order_id?: string })?.brokerage_order_id ?? null
+        xspContracts = nXsp
+        mainContracts = finalContracts - nXsp
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        console.warn(
+          `[customer-executor] XSP_SWAP fallback for user ${c.user_id.slice(0, 8)}: SnapTrade XSP order ` +
+          `failed (${msg.slice(0, 200)}) — routing all ${finalContracts}x to SPY instead. Broker/account: ` +
+          `${c.brokerage_slug ?? 'unknown'}.`,
+        )
+        xspContracts = 0
+        mainContracts = finalContracts // never skip the trade
+      }
+    }
+  }
+
+  if (xspContracts > 0) {
+    // The XSP leg gets its OWN customer_positions row, with its OWN
+    // source_position_id (`${m.positionId}-XSP`) so mirrorCloseToCustomers
+    // (keyed by m.positionId, fired by the master's guard-close) can never
+    // touch it — XSP holds to cash settlement, no guard, no active close.
+    // Same isolation as the internal book's xsp_swap_legs table.
+    await customerExecute(
+      `INSERT INTO customer_positions
+         (user_id, activation_id, config_id, agent_code, source_position_id, broker_account_id,
+          ticker, expiration, put_short, put_long, call_short, call_long, status, leg_kind, strategy,
+          contracts, collateral_cents, open_order_id, opened_at, updated_at, detail_json)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,0,'open','put_spread','xsp',
+               $11,$12,$13,now(),now(),$14)
+       ON CONFLICT (source_position_id, user_id) DO NOTHING`,
+      [c.user_id, c.activation_id, c.config_id, agent, `${m.positionId}-XSP`, c.broker_account_id,
+       XSP_TICKER, m.expiration, m.putShort, m.putLong,
+       xspContracts, sizing.collateralPerSpreadCents * xspContracts, xspOrderId,
+       JSON.stringify({ bp_cents: bpCents, bp_source: bpSource, master_xsp_credit: m.xspSwap?.xspCreditPerContract ?? null })],
+    ).catch((e) => console.error(`[customer-executor] XSP leg filled but DB record FAILED (order ${xspOrderId}): ${e instanceof Error ? e.message : e} — reconcile by hand.`))
+    void notifyOps(
+      `IronForge: ${agent.toUpperCase()} XSP_SWAP mirrored`,
+      `${xspContracts}x XSP for customer ${c.user_id.slice(0, 8)} (order ${xspOrderId ?? 'n/a'}), ${mainContracts}x SPY remains`,
+    )
+  }
+
+  if (mainContracts <= 0) {
+    // 100% of this customer's size moved to XSP — no SPY order to place.
+    // Mark the CLAIMED main-leg row consumed rather than leaving it stuck
+    // in 'claimed' forever (which would look like a lost order on reconcile).
+    await markSkipped(rowId, 'xsp_swap_full')
+    return
+  }
+
   const legs = legKind === 'call_spread'
-    ? spreadOpenLegs({ ticker: m.ticker, expiration: m.expiration, short: m.callShort, long: m.callLong, right: 'C' }, finalContracts)
+    ? spreadOpenLegs({ ticker: m.ticker, expiration: m.expiration, short: m.callShort, long: m.callLong, right: 'C' }, mainContracts)
     : legKind === 'condor'
-      ? condorOpenLegs({ ticker: m.ticker, expiration: m.expiration, putShort: m.putShort, putLong: m.putLong, callShort: m.callShort, callLong: m.callLong }, finalContracts)
-      : spreadOpenLegs({ ticker: m.ticker, expiration: m.expiration, short: m.putShort, long: m.putLong, right: 'P' }, finalContracts)
+      ? condorOpenLegs({ ticker: m.ticker, expiration: m.expiration, putShort: m.putShort, putLong: m.putLong, callShort: m.callShort, callLong: m.callLong }, mainContracts)
+      : spreadOpenLegs({ ticker: m.ticker, expiration: m.expiration, short: m.putShort, long: m.putLong, right: 'P' }, mainContracts)
 
   // MARKET + Day mirrors the master's own production placement (multileg market orders).
   const placed = await snaptrade.trading.placeMlegOrder({
@@ -480,16 +568,16 @@ async function mirrorOneOpen(
         SET status = 'open', contracts = $2, collateral_cents = $3, open_order_id = $4,
             opened_at = now(), updated_at = now(), detail_json = $5
       WHERE id = $1`,
-    [rowId, finalContracts, sizing.collateralPerSpreadCents * finalContracts, orderId,
-     JSON.stringify({ bp_cents: bpCents, bp_source: bpSource, max_deployment_pct: pct, master_credit: m.credit, deposit_floor: depositFloorNote })],
+    [rowId, mainContracts, sizing.collateralPerSpreadCents * mainContracts, orderId,
+     JSON.stringify({ bp_cents: bpCents, bp_source: bpSource, max_deployment_pct: pct, master_credit: m.credit, deposit_floor: depositFloorNote, xsp_swap_contracts: xspContracts })],
   )
   await customerExecute(
     `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'CUSTOMER_ORDER_PLACED', $2)`,
-    [c.user_id, JSON.stringify({ source_position_id: m.positionId, agent, contracts: finalContracts, order_id: orderId })],
+    [c.user_id, JSON.stringify({ source_position_id: m.positionId, agent, contracts: mainContracts, order_id: orderId })],
   ).catch(() => {})
   void notifyOps(
     `IronForge: ${agent.toUpperCase()} mirrored`,
-    `${finalContracts}x ${m.ticker} for customer ${c.user_id.slice(0, 8)} (order ${orderId ?? 'n/a'}, BP ${bpSource})`,
+    `${mainContracts}x ${m.ticker} for customer ${c.user_id.slice(0, 8)} (order ${orderId ?? 'n/a'}, BP ${bpSource})`,
   )
 }
 
@@ -715,9 +803,17 @@ async function mirrorOneFlintOpen(c: EligibleRow, m: FlintMasterOpen, agent: str
     // currently open 'main' row counts, regardless of when it opened, summed
     // in case more than one is ever open concurrently (rather than the most
     // recent only).
+    //
+    // XSP_SWAP (R4): a host-leg contract moved to XSP carries the SAME max loss
+    // per contract as its SPY sibling (same strikes/width — see xsp-swap.ts's
+    // header) and is real committed risk on this same account, just booked
+    // under strategy='xsp' instead of 'main' (see mirrorOneOpen's XSP block).
+    // Netting only 'main' would UNDER-count a customer's true committed risk
+    // by exactly the XSP portion whenever a swap applied — sum 'main' OR 'xsp'
+    // together, same as the 2DTE fix above, no date filter on either.
     const mainRows = await customerQuery<{ total_cents: string | number | null }>(
       `SELECT COALESCE(SUM(collateral_cents), 0) AS total_cents FROM customer_positions
-        WHERE user_id = $1 AND agent_code = $2 AND strategy = 'main' AND status = 'open'`,
+        WHERE user_id = $1 AND agent_code = $2 AND (strategy = 'main' OR strategy = 'xsp') AND status = 'open'`,
       [c.user_id, agent],
     )
     hostCommittedCents = mainRows[0]?.total_cents != null ? Math.floor(Number(mainRows[0].total_cents)) : 0

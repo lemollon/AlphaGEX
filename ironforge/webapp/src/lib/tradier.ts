@@ -1906,6 +1906,139 @@ export async function getProductionLadderCapital(botName: string, person: string
   }
 }
 
+/**
+ * XSP_SWAP (R4) — attempt to move this account's first min(n,2) host-leg
+ * contracts from SPY to a same-moneyness XSP 0DTE put credit spread, held
+ * to cash settlement with NO assignment guard. See xsp-swap.ts for the pure
+ * decision engine and xsp-swap-db.ts for the (deliberately separate)
+ * persistence table.
+ *
+ * Reads XSP_SWAP (default off; see isXspSwapMode() in lib/xsp-swap.ts) — off
+ * makes this ENTIRE function a same-inputs no-op with zero extra network
+ * calls (the caller checks the flag before calling at all — see
+ * placeIcOrderAllAccounts below — so this is defense in depth, not the only
+ * gate). Only ever called for the two-leg (put-spread-only) host path — EBB
+ * for FLAME, SPARK's put spread — never for a 4-leg iron condor or a call
+ * spread (FLINT), matching the task's literal scope.
+ *
+ * "If XSP doesn't fill, fall back to SPY for that contract. Never skip the
+ * trade because XSP failed": on ANY failure to place/fill the XSP leg —
+ * quote unavailable, price gate, thin touch, broker rejection, no order id —
+ * this returns the account's FULL original contract count for the (unchanged,
+ * existing) SPY order path below. The trade is never skipped; only its venue
+ * split changes.
+ */
+export async function attemptXspHostSwap(params: {
+  botName: string
+  ticker: string
+  expiration: string
+  putShort: number
+  putLong: number
+  acctContracts: number
+  spyCreditPerContract: number
+  acct: SandboxAccount
+  accountId: string
+  hostPositionId: string
+}): Promise<{ nSpy: number; reason: string }> {
+  const { acctContracts, ticker, acct, accountId, hostPositionId } = params
+  // The swap only ever applies to the SPY host leg — never to a different
+  // ticker some future caller might route through this same order path.
+  if (ticker.toUpperCase() !== 'SPY' || acctContracts <= 0) {
+    return { nSpy: acctContracts, reason: 'not_applicable' }
+  }
+
+  const xspSwap = await import('./xsp-swap')
+  if (!xspSwap.isXspSwapMode()) return { nSpy: acctContracts, reason: 'xsp_swap_disabled' }
+
+  let xspQuote: { putCredit: number; shortBidSize: number | null } | null = null
+  try {
+    xspQuote = await getPutSpreadEntryCredit(xspSwap.XSP_TICKER, params.expiration, params.putShort, params.putLong)
+  } catch (err: unknown) {
+    console.warn(`[tradier] XSP_SWAP quote fetch failed for ${hostPositionId}: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  let decision = xspSwap.decideXspSwap({
+    nHost: acctContracts,
+    spyCreditPerContract: params.spyCreditPerContract,
+    xspCreditPerContract: xspQuote?.putCredit ?? null,
+    xspShortBidSize: xspQuote?.shortBidSize ?? null,
+  })
+
+  if (!decision.usedXsp) {
+    console.log(
+      `[tradier] XSP_SWAP skip (${decision.reason}) for ${hostPositionId} — ` +
+      `spy_credit=$${decision.spyCreditPerContract.toFixed(4)} xsp_credit=${decision.xspCreditPerContract ?? 'n/a'}`,
+    )
+    return { nSpy: acctContracts, reason: decision.reason }
+  }
+
+  const label = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
+  const occXspPs = buildOccSymbol(xspSwap.XSP_TICKER, params.expiration, params.putShort, 'P')
+  const occXspPl = buildOccSymbol(xspSwap.XSP_TICKER, params.expiration, params.putLong, 'P')
+  const orderBody: Record<string, string> = {
+    class: 'multileg',
+    symbol: xspSwap.XSP_TICKER,
+    type: 'market',
+    duration: 'day',
+    ...buildLegs(occXspPs, occXspPl, '', '', decision.nXsp, { shortSide: 'sell_to_open', longSide: 'buy_to_open' }, true),
+    tag: `xsp-swap-${hostPositionId}`.slice(0, 255),
+  }
+
+  let filled = false
+  let orderId: number | null = null
+  let fillPrice: number | null = null
+  try {
+    const result = await sandboxPost(`/accounts/${accountId}/orders`, orderBody, acct.apiKey, acct.baseUrl)
+    if (result && !result.errors && result.order?.id) {
+      orderId = result.order.id
+      const pollTimeout = acct.type === 'production' ? 0 : 90_000
+      try {
+        fillPrice = await getOrderFillPrice(acct.apiKey, accountId, orderId as number, pollTimeout, acct.baseUrl)
+      } catch { /* handled by the null check below — an unread fill is not a broker rejection */ }
+      filled = true
+    } else {
+      console.warn(`${label}: XSP_SWAP order REJECTED or returned no id: ${JSON.stringify(result?.errors ?? result).slice(0, 300)}`)
+    }
+  } catch (err: unknown) {
+    console.error(`${label}: XSP_SWAP order FAILED: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  if (!filled) {
+    decision = xspSwap.applyXspFillFallback(decision, false)
+    console.warn(
+      `${label}: XSP_SWAP fallback — XSP leg did not fill for ${hostPositionId}, ` +
+      `routing all ${acctContracts} contract(s) to SPY instead (trade never skipped).`,
+    )
+    return { nSpy: decision.nSpy, reason: 'xsp_order_failed' }
+  }
+
+  try {
+    const xspSwapDb = await import('./xsp-swap-db')
+    await xspSwapDb.insertXspSwapLeg({
+      bot: params.botName,
+      hostPositionId,
+      accountType: acct.type === 'production' ? 'production' : 'sandbox',
+      accountName: acct.name,
+      expiration: params.expiration,
+      putShortStrike: params.putShort,
+      putLongStrike: params.putLong,
+      contracts: decision.nXsp,
+      creditPerContract: fillPrice ?? decision.xspCreditPerContract ?? decision.spyCreditPerContract,
+      orderId: orderId != null ? String(orderId) : null,
+      fillPrice,
+    })
+  } catch (err: unknown) {
+    console.error(`${label}: XSP_SWAP leg filled but DB record FAILED (order ${orderId}): ${err instanceof Error ? err.message : String(err)} — reconcile by hand.`)
+  }
+
+  console.log(
+    `${label}: XSP_SWAP applied — ${decision.nXsp}x XSP ${occXspPl}/${occXspPs} ` +
+    `@ $${(fillPrice ?? decision.xspCreditPerContract ?? 0).toFixed(4)} (order ${orderId}), ` +
+    `${decision.nSpy}x remain on SPY.`,
+  )
+  return { nSpy: decision.nSpy, reason: 'xsp_swap_applied' }
+}
+
 export async function placeIcOrderAllAccounts(
   ticker: string,
   expiration: string,
@@ -2604,6 +2737,27 @@ export async function placeIcOrderAllAccounts(
           `peak_profit=$${peakProfit.toFixed(0)}, profit_ladder=${ladder}, fast_start_ebb=${ebbFinalLots}, `
       } else {
         acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, paperContracts)
+      }
+
+      // XSP_SWAP (R4): only ever the two-leg (put-spread-only) host path — EBB for
+      // FLAME, SPARK's put spread — never a 4-leg iron condor or FLINT's call spread.
+      // Off (default) or not applicable: attemptXspHostSwap returns acctContracts
+      // unchanged and the rest of this function is byte-for-byte the prior behavior.
+      if (twoLeg && acctContracts > 0) {
+        const hostPositionId = tag || `${botName ?? 'unknown'}-${ticker}-${expiration}-${accountId}`
+        const swap = await attemptXspHostSwap({
+          botName: botName ?? 'unknown',
+          ticker,
+          expiration,
+          putShort,
+          putLong,
+          acctContracts,
+          spyCreditPerContract: totalCredit,
+          acct,
+          accountId,
+          hostPositionId,
+        })
+        acctContracts = swap.nSpy
       }
 
       const totalMargin = acctContracts * brokerMarginPer
