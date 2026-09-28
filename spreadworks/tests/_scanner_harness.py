@@ -40,7 +40,10 @@ def build_pkg(tmp_path: Path, name: str, tv_scanner_src: str | None = None) -> s
     instead of re-running anything, which would make any test comparing two build_pkg()
     results (e.g. old vs new tv_scanner.py, or two different fixture scenarios in the same
     test session) compare a module against itself and pass for the wrong reason."""
-    pkg_name = f"pkg_{re.sub(r'\\W', '_', name)}_{next(_counter)}"
+    safe_name = re.sub(r"\W", "_", name)  # a Python identifier -- computed outside the
+    # f-string below on purpose: f-string expressions may not contain a backslash before
+    # Python 3.12 (this repo's CI runs 3.11), and re.sub's pattern needs one (\W).
+    pkg_name = f"pkg_{safe_name}_{next(_counter)}"
     root = tmp_path / pkg_name
     pkg = root / pkg_name / "ember" / "legacy"
     pkg.mkdir(parents=True)
