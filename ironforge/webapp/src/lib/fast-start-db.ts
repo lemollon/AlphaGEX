@@ -28,6 +28,7 @@ async function ensureFastStartStateTable(): Promise<void> {
        id SERIAL PRIMARY KEY,
        person TEXT NOT NULL,
        account_type TEXT NOT NULL,
+       bot TEXT NOT NULL DEFAULT 'flame',
        phase SMALLINT NOT NULL DEFAULT 1,
        deposit NUMERIC NOT NULL,
        peak_profit NUMERIC NOT NULL DEFAULT 0,
@@ -44,6 +45,20 @@ async function ensureFastStartStateTable(): Promise<void> {
   // equity, never intraday from a live unrealized mark).
   await dbExecute(`ALTER TABLE fast_start_state ADD COLUMN IF NOT EXISTS peak_profit NUMERIC NOT NULL DEFAULT 0`)
   await dbExecute(`ALTER TABLE fast_start_state ADD COLUMN IF NOT EXISTS last_eod_date DATE`)
+  // Defensive migration (2026-09-27/29, SPARK_FAST_START): a table created
+  // by FLAME's original PR has no `bot` column and a UNIQUE(person,
+  // account_type) constraint — widen both so SPARK's rows never collide
+  // with FLAME's on the same customer sandbox account (a customer can run
+  // BOTH bots' fast-start engines independently on one physical account).
+  await dbExecute(`ALTER TABLE fast_start_state ADD COLUMN IF NOT EXISTS bot TEXT NOT NULL DEFAULT 'flame'`)
+  await dbExecute(
+    `DO $$ BEGIN
+       ALTER TABLE fast_start_state DROP CONSTRAINT IF EXISTS fast_start_state_person_account_type_key;
+       ALTER TABLE fast_start_state DROP CONSTRAINT IF EXISTS fast_start_state_person_account_type_bot_key;
+       ALTER TABLE fast_start_state ADD CONSTRAINT fast_start_state_person_account_type_bot_key
+         UNIQUE (person, account_type, bot);
+     EXCEPTION WHEN duplicate_table THEN NULL; WHEN duplicate_object THEN NULL; END $$`,
+  )
 }
 
 async function ensureFastStartDecisionLogTable(): Promise<void> {
@@ -52,6 +67,7 @@ async function ensureFastStartDecisionLogTable(): Promise<void> {
        id BIGSERIAL PRIMARY KEY,
        person TEXT NOT NULL,
        account_type TEXT NOT NULL,
+       bot TEXT NOT NULL DEFAULT 'flame',
        trade_date DATE NOT NULL,
        leg TEXT NOT NULL DEFAULT 'ebb',
        evaluated_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -74,9 +90,10 @@ async function ensureFastStartDecisionLogTable(): Promise<void> {
   // `leg` column (one decision-log row per account per LEG per day, per the
   // approved spec) — Postgres 9.6+ supports this directly.
   await dbExecute(`ALTER TABLE fast_start_decision_log ADD COLUMN IF NOT EXISTS leg TEXT NOT NULL DEFAULT 'ebb'`)
+  await dbExecute(`ALTER TABLE fast_start_decision_log ADD COLUMN IF NOT EXISTS bot TEXT NOT NULL DEFAULT 'flame'`)
   await dbExecute(
     `CREATE INDEX IF NOT EXISTS fast_start_decision_log_person_date_idx
-       ON fast_start_decision_log (person, account_type, trade_date, leg)`,
+       ON fast_start_decision_log (person, account_type, bot, trade_date, leg)`,
   )
 }
 
@@ -111,12 +128,13 @@ export async function getOrSeedFastStartState(
   accountType: 'sandbox' | 'production',
   deposit: number,
   currentEquityForSeed: number | null = null,
+  bot: string = 'flame',
 ): Promise<FastStartStateRow | null> {
   try {
     await ensureFastStartStateTable()
     const existing = await query(
-      `SELECT phase, deposit, peak_profit FROM fast_start_state WHERE person = $1 AND account_type = $2`,
-      [person, accountType],
+      `SELECT phase, deposit, peak_profit FROM fast_start_state WHERE person = $1 AND account_type = $2 AND bot = $3`,
+      [person, accountType, bot],
     )
     if (existing.length > 0) {
       const phase = Number(existing[0].phase)
@@ -129,17 +147,21 @@ export async function getOrSeedFastStartState(
     const seedPeakProfit = currentEquityForSeed != null && Number.isFinite(currentEquityForSeed)
       ? Math.max(0, currentEquityForSeed - deposit)
       : 0
+    // `bot` is APPENDED as the last column/param (not inserted mid-list) so
+    // every pre-existing positional index (deposit=$3, peak_profit=$4) is
+    // byte-for-byte unchanged for FLAME's own tests/callers that index into
+    // this INSERT's params array.
     await query(
-      `INSERT INTO fast_start_state (person, account_type, phase, deposit, peak_profit, created_at, updated_at)
-       VALUES ($1, $2, 1, $3, $4, NOW(), NOW())
-       ON CONFLICT (person, account_type) DO NOTHING`,
-      [person, accountType, deposit, seedPeakProfit],
+      `INSERT INTO fast_start_state (person, account_type, phase, deposit, peak_profit, bot, created_at, updated_at)
+       VALUES ($1, $2, 1, $3, $4, $5, NOW(), NOW())
+       ON CONFLICT (person, account_type, bot) DO NOTHING`,
+      [person, accountType, deposit, seedPeakProfit, bot],
     )
     // Re-read rather than trust the just-inserted values: a concurrent scan
     // tick may have won the ON CONFLICT DO NOTHING race first.
     const after = await query(
-      `SELECT phase, deposit, peak_profit FROM fast_start_state WHERE person = $1 AND account_type = $2`,
-      [person, accountType],
+      `SELECT phase, deposit, peak_profit FROM fast_start_state WHERE person = $1 AND account_type = $2 AND bot = $3`,
+      [person, accountType, bot],
     )
     if (after.length === 0) return null
     const phase = Number(after[0].phase)
@@ -149,7 +171,7 @@ export async function getOrSeedFastStartState(
     return { phase: phase as 1 | 2, deposit: dep, peakProfit: Number.isFinite(peakProfit) ? peakProfit : 0 }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[fast-start-db] getOrSeedFastStartState('${person}','${accountType}') failed: ${msg}`)
+    console.warn(`[fast-start-db] getOrSeedFastStartState('${person}','${accountType}',bot=${bot}) failed: ${msg}`)
     return null
   }
 }
@@ -164,18 +186,19 @@ export async function getOrSeedFastStartState(
 export async function persistFastStartPhaseAdvance(
   person: string,
   accountType: 'sandbox' | 'production',
+  bot: string = 'flame',
 ): Promise<void> {
   try {
     await ensureFastStartStateTable()
     await query(
       `UPDATE fast_start_state
          SET phase = 2, triggered_at = COALESCE(triggered_at, NOW()), updated_at = NOW()
-       WHERE person = $1 AND account_type = $2 AND phase = 1`,
-      [person, accountType],
+       WHERE person = $1 AND account_type = $2 AND bot = $3 AND phase = 1`,
+      [person, accountType, bot],
     )
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[fast-start-db] persistFastStartPhaseAdvance('${person}','${accountType}') failed: ${msg}`)
+    console.warn(`[fast-start-db] persistFastStartPhaseAdvance('${person}','${accountType}',bot=${bot}) failed: ${msg}`)
   }
 }
 
@@ -219,12 +242,13 @@ export async function updateFastStartEodState(
   ebbMaxLossToday: number | null,
   flintCandidateToday: boolean,
   flintMaxLossToday: number | null,
+  bot: string = 'flame',
 ): Promise<FastStartEodUpdateResult> {
   try {
     await ensureFastStartStateTable()
     const rows = await query(
-      `SELECT phase, deposit, peak_profit, last_eod_date FROM fast_start_state WHERE person = $1 AND account_type = $2`,
-      [person, accountType],
+      `SELECT phase, deposit, peak_profit, last_eod_date FROM fast_start_state WHERE person = $1 AND account_type = $2 AND bot = $3`,
+      [person, accountType, bot],
     )
     if (rows.length === 0) return { updated: false, reason: 'no_state_row_yet' }
     const phase = Number(rows[0].phase) as 1 | 2
@@ -258,13 +282,13 @@ export async function updateFastStartEodState(
          SET peak_profit = $3, phase = $4, last_eod_date = $5,
              triggered_at = CASE WHEN $4 = 2 AND phase = 1 THEN NOW() ELSE triggered_at END,
              updated_at = NOW()
-       WHERE person = $1 AND account_type = $2`,
-      [person, accountType, newPeakProfit, nextPhase, tradeDateCt],
+       WHERE person = $1 AND account_type = $2 AND bot = $6`,
+      [person, accountType, newPeakProfit, nextPhase, tradeDateCt, bot],
     )
     return { updated: true, reason: 'ok', phase: nextPhase, peakProfit: newPeakProfit, triggeredToday }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[fast-start-db] updateFastStartEodState('${person}','${accountType}') failed: ${msg}`)
+    console.warn(`[fast-start-db] updateFastStartEodState('${person}','${accountType}',bot=${bot}) failed: ${msg}`)
     return { updated: false, reason: `error:${msg}` }
   }
 }
@@ -272,6 +296,8 @@ export async function updateFastStartEodState(
 export interface FastStartDecisionLogEntry {
   person: string
   accountType: 'sandbox' | 'production'
+  /** Defaults to 'flame' — every pre-existing call site is unaffected. */
+  bot?: string
   tradeDate: string // YYYY-MM-DD
   /** Which leg this row's own sizing decision is for — one row per leg per day. */
   leg: 'ebb' | 'flint'
@@ -297,23 +323,40 @@ export interface FastStartDecisionLogEntry {
  * failure must not block or alter a sizing decision that already happened.
  */
 export async function logFastStartDecision(entry: FastStartDecisionLogEntry): Promise<void> {
+  const bot = entry.bot ?? 'flame'
   try {
     await ensureFastStartDecisionLogTable()
-    await query(
-      `INSERT INTO fast_start_decision_log
-         (person, account_type, trade_date, leg, phase, triggered_today, normal_ladder,
-          ebb_contracts, flint_contracts, deposit, equity, cushion, floor_amount, budget,
-          phase1_cap_budget, trigger_level, reason)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
-      [
-        entry.person, entry.accountType, entry.tradeDate, entry.leg, entry.phase, entry.triggeredToday,
-        entry.normalLadder, entry.ebbContracts, entry.flintContracts, entry.deposit, entry.equity, entry.cushion,
-        entry.floor, entry.budget, entry.phase1CapBudget, entry.triggerLevel, entry.reason,
-      ],
-    )
+    const baseCols =
+      `person, account_type, trade_date, leg, phase, triggered_today, normal_ladder,
+       ebb_contracts, flint_contracts, deposit, equity, cushion, floor_amount, budget,
+       phase1_cap_budget, trigger_level, reason`
+    const baseParams = [
+      entry.person, entry.accountType, entry.tradeDate, entry.leg, entry.phase, entry.triggeredToday,
+      entry.normalLadder, entry.ebbContracts, entry.flintContracts, entry.deposit, entry.equity, entry.cushion,
+      entry.floor, entry.budget, entry.phase1CapBudget, entry.triggerLevel, entry.reason,
+    ]
+    // Default ('flame', or omitted) keeps the ORIGINAL 17-column INSERT text
+    // and param order byte-for-byte — FLAME's own wiring tests read this
+    // call's params by fixed position (leg=index 3, flint_contracts=index
+    // 8, reason=the LAST element), so nothing about that shape may move.
+    // A non-default bot (SPARK) gets `bot` appended as an 18th column/param
+    // — a brand-new call site with no positional assumptions to preserve.
+    if (bot === 'flame') {
+      await query(
+        `INSERT INTO fast_start_decision_log (${baseCols})
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+        baseParams,
+      )
+    } else {
+      await query(
+        `INSERT INTO fast_start_decision_log (${baseCols}, bot)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+        [...baseParams, bot],
+      )
+    }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[fast-start-db] logFastStartDecision('${entry.person}','${entry.accountType}') failed: ${msg}`)
+    console.warn(`[fast-start-db] logFastStartDecision('${entry.person}','${entry.accountType}',bot=${bot}) failed: ${msg}`)
   }
 }
 
