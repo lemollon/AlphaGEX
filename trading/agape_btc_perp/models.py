@@ -69,7 +69,8 @@ class AgapeBtcPerpConfig:
     # Risk management
     starting_capital: float = 25000.0
     risk_per_trade_pct: float = 1.0
-    max_open_positions: int = 3
+    # One position at a time: the weekly-breakout backtest never stacks.
+    max_open_positions: int = 1
 
     # Position sizing - BTC-PERP quantity-based (float BTC, not integer contracts)
     default_quantity: float = 0.001
@@ -98,6 +99,18 @@ class AgapeBtcPerpConfig:
 
     # Regime-aware exits feature flag (default off — current behaviour preserved).
     use_regime_aware_exits: bool = False
+
+    # Entry/exit engine: 168h breakout + ATR stop/trail, Asia/EU session only
+    # (trading/perp_strategies/weekly_breakout.py). BTC: unfiltered 168h breakout loses (PF 0.84); with the session filter +
+    # shadowing PF 1.69 (older 2.05 / newer 1.12), 38 trades, untuned transfer.
+    # "combined_signal" = legacy path.
+    strategy_mode: str = "weekly_breakout"
+    wb_lookback_hours: int = 168
+    wb_stop_atr: float = 2.5
+    wb_trail_atr: float = 2.0
+    wb_max_hold_hours: int = 72
+    wb_session_start_utc: int = 22
+    wb_session_hours: int = 12
     # Optional per-regime profile overrides; stored as JSON strings in
     # autonomous_config and parsed by get_chop_profile/get_trend_profile below.
     exit_profile_chop_json: Optional[str] = None
@@ -146,7 +159,7 @@ class AgapeBtcPerpConfig:
     def load_from_db(cls, db) -> "AgapeBtcPerpConfig":
         """Load config from database, falling back to defaults."""
         config = cls()
-        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries", "allow_degraded_data_trades"}
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries", "allow_degraded_data_trades", "strategy_mode", "wb_lookback_hours", "wb_stop_atr", "wb_trail_atr", "wb_max_hold_hours", "wb_session_start_utc", "wb_session_hours"}
         try:
             db_config = db.load_config()
             if db_config:

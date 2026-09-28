@@ -266,7 +266,10 @@ class AgapeBtcPerpTrader:
         now = datetime.now(CENTRAL_TZ)
         for pos_dict in open_positions:
             try:
-                if self.config.use_no_loss_trailing:
+                if (getattr(self.config, "strategy_mode", "") == "weekly_breakout"
+                        and pos_dict.get("stop_loss")):
+                    did_close = self._manage_weekly_breakout(pos_dict, current_price, now)
+                elif self.config.use_no_loss_trailing:
                     did_close = self._manage_position_no_loss_trailing(pos_dict, current_price, now)
                 else:
                     should_close, reason = self._check_exit_conditions(pos_dict, current_price, now)
@@ -280,6 +283,11 @@ class AgapeBtcPerpTrader:
             except Exception as e:
                 logger.error(f"AGAPE-BTC-PERP Trader: Position management error: {e}")
         return (len(open_positions), closed)
+
+    def _manage_weekly_breakout(self, pos, current_price, now):
+        """ATR stop + ATR trailing stop + time exit for weekly-breakout entries."""
+        from trading.perp_strategies import weekly_breakout as wb
+        return wb.manage_open_position(self, "agape_btc_perp_positions", pos, current_price, now, CENTRAL_TZ)
 
     def _manage_position_no_loss_trailing(self, pos, current_price, now):
         if getattr(self.config, "use_regime_aware_exits", False):

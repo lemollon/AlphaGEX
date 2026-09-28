@@ -144,3 +144,26 @@ def test_manage_open_position_closes_on_stop_and_updates_trail():
     pos["current_stop"] = updates[-1][0]
     assert wb.manage_open_position(trader, "t", pos, 1.02, now, timezone.utc) is True
     assert closed == ["WB_TRAIL_STOP"]
+
+
+import pytest
+
+
+@pytest.mark.parametrize("coin,price", [("btc", 84000.0), ("doge", 0.21)])
+def test_btc_doge_use_breakout(coin, price):
+    import importlib
+    models = importlib.import_module(f"trading.agape_{coin}_perp.models")
+    signals = importlib.import_module(f"trading.agape_{coin}_perp.signals")
+    cfg_cls = next(getattr(models, n) for n in dir(models) if n.startswith("Agape") and n.endswith("PerpConfig"))
+    gen_cls = next(getattr(signals, n) for n in dir(signals) if n.endswith("SignalGenerator"))
+    cfg = cfg_cls()
+    assert cfg.strategy_mode == "weekly_breakout" and cfg.max_open_positions == 1
+    gen = gen_cls.__new__(gen_cls)
+    gen.config = cfg
+    candles = _flat(200, price=price, rng=price * 0.005) + [
+        {"ts": 200 * 3600, "o": price, "h": price * 1.05, "l": price, "c": price * 1.04}]
+    with patch.object(gen, "get_market_data", return_value={"spot_price": price * 1.04}), \
+         patch("trading.perp_strategies.weekly_breakout.fetch_hourly_candles", return_value=candles):
+        s = gen.generate_signal(prophet_data={})
+    assert s.action == models.SignalAction.LONG and s.is_valid
+    assert 0 < s.stop_loss < price * 1.04 and s.quantity > 0
