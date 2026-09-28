@@ -185,12 +185,30 @@ describe('canOpenForCustomer', () => {
   })
 })
 
-describe('evaluateFlintCushion (CUSTOMER_FLINT profits-only gate, ported from customer_protection_sim.py P3)', () => {
-  const base = { equityCents: 220_000, protectLevelCents: 200_000, maxLossCents: 18_000, marginCents: 0 }
+describe('evaluateFlintCushion (CUSTOMER_FLINT profits-only gate, ported from customer_protection_sim.py P3, netted per ROUND 8 finalK.py)', () => {
+  const base = { equityCents: 220_000, protectLevelCents: 200_000, hostCommittedCents: 0, maxLossCents: 18_000, marginCents: 0 }
 
-  it('cushion strictly covers max loss (no margin) -> eligible, matches the sim exactly', () => {
+  it('cushion strictly covers max loss (no margin, no host commitment) -> eligible, matches the ORIGINAL P3 sim exactly', () => {
     // equity-deposit = 20_000 >= maxLoss 18_000
     expect(evaluateFlintCushion(base)).toEqual({ eligible: true, cushionCents: 20_000 })
+  })
+
+  it('ROUND 8 netting: a host leg that already committed most of the cushion drops FLINT even though the standalone check would pass', () => {
+    // Cushion (equity-protectLevel) = 20_000 >= maxLoss 18_000 in isolation, but the host
+    // leg already committed 15_000 of that same cushion today -> only 5_000 left, < 18_000.
+    const r = evaluateFlintCushion({ ...base, hostCommittedCents: 15_000 })
+    expect(r.eligible).toBe(false)
+    expect(r.reason).toBe('cushion_insufficient')
+    expect(r.cushionCents).toBe(5_000) // 20_000 - 15_000
+  })
+
+  it('zero host commitment is a true no-op — identical to the un-netted result', () => {
+    expect(evaluateFlintCushion({ ...base, hostCommittedCents: 0 })).toEqual(evaluateFlintCushion(base))
+  })
+
+  it('rejects a negative or non-finite host-committed amount as bad inputs — never guessed', () => {
+    expect(evaluateFlintCushion({ ...base, hostCommittedCents: -1 }).reason).toBe('bad_inputs')
+    expect(evaluateFlintCushion({ ...base, hostCommittedCents: NaN }).reason).toBe('bad_inputs')
   })
 
   it('cushion exactly equals max loss -> eligible (inclusive floor, matches sim ">=")', () => {
@@ -252,18 +270,21 @@ describe('evaluateFlintCushion (CUSTOMER_FLINT profits-only gate, ported from cu
   })
 })
 
-describe('evaluateDepositFloorCap (CUSTOMER_DEPOSIT_FLOOR, ported from customer_protection_sim.py ROUND 3: K=0, N=3, variant S)', () => {
+describe('evaluateDepositFloorCap (CUSTOMER_DEPOSIT_FLOOR, ROUND 8 shipped rule: K=0.1, N=3, variant G)', () => {
   const base = {
-    equityCents: 200_000, depositCents: 200_000, maxLossCentsPerContract: 18_000,
-    marginCents: 5_000, pct: 20, desiredContracts: 2, triggered: false, triggerN: 3,
+    equityCents: 200_000, depositCents: 200_000, peakEquityCents: null as number | null, maxLossCentsPerContract: 18_000,
+    marginCents: 5_000, pct: 20, desiredContracts: 2, triggered: false, triggerN: 3, floorK: 0.1,
   }
 
   it('pre-trigger: passes desiredContracts through UNCHANGED — byte-identical to BASE', () => {
     const r = evaluateDepositFloorCap({ ...base, equityCents: 205_000 }) // cushion 5_000, nowhere near 3x a full position's max loss
-    expect(r).toEqual({ contracts: 2, triggeredNow: false, capped: false, dataOk: true, triggeredForSizing: false })
+    expect(r).toEqual({
+      contracts: 2, triggeredNow: false, capped: false, dataOk: true, triggeredForSizing: false,
+      floorLevelCents: 200_000, nextPeakEquityCents: 205_000,
+    })
   })
 
-  it('trigger fires the instant cushion >= N * (desired_count(deposit,pct,ml) * ml)', () => {
+  it('trigger fires the instant cushion >= N * (desired_count(deposit,pct,ml) * ml) — unchanged since ROUND 3', () => {
     // deposit 200_000c @ pct=20 -> dcount_ref = floor(200_000*0.2/18_000) = floor(2.22)=2; combined_ml=36_000
     // N=3 -> threshold cushion = 108_000c. Equity = deposit+108_000 exactly triggers (>=).
     const r = evaluateDepositFloorCap({ ...base, equityCents: base.depositCents + 108_000 })
@@ -273,16 +294,34 @@ describe('evaluateDepositFloorCap (CUSTOMER_DEPOSIT_FLOOR, ported from customer_
     expect(r2.triggeredNow).toBe(false)
   })
 
-  it('post-trigger sizing caps to floor((equity-deposit)/(ml+margin)), never above desiredContracts', () => {
-    // equity-deposit = 40_000c, ml+margin = 18_000+5_000=23_000 -> floor(40_000/23_000)=1, below desired=2
+  it('post-trigger, no accumulated peak profit yet: G-variant nMin=1 (gated on deposit) + extra=0 (gated on the stricter floor budget)', () => {
+    // equity-deposit = 40_000c (budgetDep), ml+margin = 18_000+5_000=23_000 (mlEff).
+    // nMin = 1 (40_000 >= 23_000). floorLevelCents = deposit (no peak profit recorded
+    // yet — peakEquityCents defaults to deposit). budgetAfterMin = 40_000-23_000=17_000,
+    // extra = floor(17_000/23_000) = 0. n = 1.
     const r = evaluateDepositFloorCap({ ...base, triggered: true, equityCents: base.depositCents + 40_000 })
-    expect(r).toEqual({ contracts: 1, triggeredNow: false, capped: true, dataOk: true, triggeredForSizing: true })
+    expect(r).toEqual({
+      contracts: 1, triggeredNow: false, capped: true, dataOk: true, triggeredForSizing: true,
+      floorLevelCents: 200_000, nextPeakEquityCents: 240_000,
+    })
   })
 
   it('post-trigger, ample cushion: cap never exceeds desiredContracts even when the budget allows more', () => {
     const r = evaluateDepositFloorCap({ ...base, triggered: true, equityCents: base.depositCents + 10_000_000 })
     expect(r.contracts).toBe(2) // desiredContracts, not the (much larger) budget-implied count
     expect(r.capped).toBe(false)
+  })
+
+  it('a ratcheted peak profit RAISES the floor above deposit, which can reduce the extra-layer budget', () => {
+    // Peak equity of deposit+200_000 (a prior high-water mark) -> peakProfit=200_000,
+    // floorLevelCents = deposit + 0.1*200_000 = deposit+20_000 = 220_000.
+    // Equity has since fallen to deposit+40_000 = 240_000 (still above the floor).
+    // budgetDep = 40_000 -> nMin=1. budgetAfterMin = (240_000-220_000)-23_000 = -3_000 -> extra=0.
+    const r = evaluateDepositFloorCap({
+      ...base, triggered: true, peakEquityCents: base.depositCents + 200_000, equityCents: base.depositCents + 40_000,
+    })
+    expect(r.floorLevelCents).toBe(220_000)
+    expect(r.contracts).toBe(1) // nMin only — the higher floor left no room for the extra layer
   })
 
   it('equity at or below deposit + maxLoss(+margin already spent): floors to 0 contracts, never negative', () => {
@@ -297,8 +336,14 @@ describe('evaluateDepositFloorCap (CUSTOMER_DEPOSIT_FLOOR, ported from customer_
   })
 
   it('fails OPEN (not closed) on missing/bad data — returns desiredContracts unmodified, dataOk=false', () => {
-    expect(evaluateDepositFloorCap({ ...base, equityCents: null })).toEqual({ contracts: 2, triggeredNow: false, capped: false, dataOk: false, triggeredForSizing: false })
-    expect(evaluateDepositFloorCap({ ...base, depositCents: null })).toEqual({ contracts: 2, triggeredNow: false, capped: false, dataOk: false, triggeredForSizing: false })
+    expect(evaluateDepositFloorCap({ ...base, equityCents: null })).toEqual({
+      contracts: 2, triggeredNow: false, capped: false, dataOk: false, triggeredForSizing: false,
+      floorLevelCents: 200_000, nextPeakEquityCents: 200_000,
+    })
+    expect(evaluateDepositFloorCap({ ...base, depositCents: null })).toEqual({
+      contracts: 2, triggeredNow: false, capped: false, dataOk: false, triggeredForSizing: false,
+      floorLevelCents: 0, nextPeakEquityCents: 0,
+    })
     expect(evaluateDepositFloorCap({ ...base, maxLossCentsPerContract: 0 }).dataOk).toBe(false)
     expect(evaluateDepositFloorCap({ ...base, pct: 0 }).dataOk).toBe(false)
     expect(evaluateDepositFloorCap({ ...base, desiredContracts: -1 }).dataOk).toBe(false)
@@ -309,59 +354,8 @@ describe('evaluateDepositFloorCap (CUSTOMER_DEPOSIT_FLOOR, ported from customer_
     const r = evaluateDepositFloorCap({ ...base, triggered: true, equityCents: base.depositCents + 10_000 })
     expect(r.triggeredNow).toBe(false) // it did not trigger JUST NOW
     expect(r.dataOk).toBe(true)
-    // but sizing still runs the post-trigger (capped) branch, not the pass-through branch:
-    const budget = 10_000
-    const expectedCap = Math.floor(budget / (base.maxLossCentsPerContract + base.marginCents))
-    expect(r.contracts).toBe(Math.min(base.desiredContracts, expectedCap))
+    expect(r.contracts).toBe(0) // budgetDep=10_000 < mlEff=23_000 -> nMin=0, extra=0
   })
-})
-
-describe('evaluateDepositFloorCap parity vs customer_protection_sim.py ROUND 3 (K=0/N=3/S) — sequential, stateful', () => {
-  const fixturePath = join(__dirname, 'fixtures', 'deposit-floor-parity.json')
-  const fixture = JSON.parse(readFileSync(fixturePath, 'utf8')) as Record<string, {
-    deposit: number
-    trigger_day: number | null
-    days: Array<{
-      day_index: number
-      equity_cents: number
-      deposit_cents: number
-      ml_cents: number
-      pct: number
-      triggered_before: boolean
-      desired_contracts: number
-      expected_contracts: number
-      expected_triggered_after: boolean
-    }>
-  }>
-
-  for (const [label, cell] of Object.entries(fixture)) {
-    it(`${label}: every day's (contracts, triggered-after) matches the sim exactly, carrying state day-to-day`, () => {
-      let triggered = false
-      expect(cell.days.length).toBeGreaterThan(20)
-      for (const day of cell.days) {
-        // Sanity: our own carried `triggered` state must match the fixture's own trace
-        // (both derived from the same sequential rule) before asserting the output.
-        expect(triggered, `day_index=${day.day_index} triggered-before mismatch`).toBe(day.triggered_before)
-
-        const r = evaluateDepositFloorCap({
-          equityCents: day.equity_cents,
-          depositCents: day.deposit_cents,
-          maxLossCentsPerContract: day.ml_cents,
-          marginCents: 5_000,
-          pct: day.pct,
-          desiredContracts: day.desired_contracts,
-          triggered,
-          triggerN: 3,
-        })
-
-        expect(r.dataOk, `day_index=${day.day_index}`).toBe(true)
-        expect(r.contracts, `day_index=${day.day_index}`).toBe(day.expected_contracts)
-
-        triggered = triggered || r.triggeredNow
-        expect(triggered, `day_index=${day.day_index} triggered-after mismatch`).toBe(day.expected_triggered_after)
-      }
-    })
-  }
 })
 
 describe('evaluateFastStartUpsize (CUSTOMER_FAST_START / B1, ported from customer_protection_fastcushion.py "B1 calm+1")', () => {
@@ -400,9 +394,26 @@ describe('evaluateFastStartUpsize (CUSTOMER_FAST_START / B1, ported from custome
 
 describe('evaluateCalmUpsize (CUSTOMER_CALM_UPSIZE, house-money post-cushion, ported from customer_protection_calmday.py)', () => {
   const base = {
-    equityCents: 500_000, depositCents: 424_200, baseContracts: 2, maxLossCentsPerContract: 18_000,
+    // protectLevelCents == depositCents here (no accumulated peak profit yet — the
+    // floor has just triggered) so every pre-existing $ calculation in this describe
+    // block's comments stays numerically valid under the new protectLevelCents field.
+    equityCents: 500_000, depositCents: 424_200, protectLevelCents: 424_200, baseContracts: 2, maxLossCentsPerContract: 18_000,
     marginCents: 5_000, vixRatio: 0.5, vixCeiling: 0.70, minDepositCentsForUpsize: 400_000,
   }
+
+  it('protect_level (floor_level, not raw deposit) drives the netting once K>0 has ratcheted the floor above deposit', () => {
+    // Same equity/deposit as base, but the floor has ratcheted to 450_000 (peak profit
+    // accrued). remaining_after_base = (500_000-450_000) - 2*18_000 = 50_000-36_000=14_000
+    // < 23_000 required -> NOT eligible, even though netting against raw deposit
+    // (424_200) would have shown ample room (39_800 >= 23_000, as the base case does).
+    const r = evaluateCalmUpsize({ ...base, protectLevelCents: 450_000 })
+    expect(r).toEqual({ extraContract: false, reason: 'insufficient_house_money' })
+  })
+
+  it('null protect_level fails closed, never guessed', () => {
+    const r = evaluateCalmUpsize({ ...base, protectLevelCents: null })
+    expect(r).toEqual({ extraContract: false, reason: 'protect_level_unknown' })
+  })
 
   it('deposit >= $4,000, calm, ample remaining house money: adds the +1', () => {
     // remaining_after_base = (500_000-424_200) - 2*18_000 = 75_800-36_000=39_800 >= 18_000+5_000=23_000

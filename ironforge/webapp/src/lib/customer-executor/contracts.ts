@@ -165,20 +165,31 @@ export function canOpenForCustomer(g: MirrorGateInput): MirrorGateVerdict {
 /**
  * FLINT customer mirroring (CUSTOMER_FLINT) — the "profits-only" cushion gate.
  *
- * Ported from `customer_protection_sim.py`'s P3 arm (RESULT_customer_protection.md,
- * section P3, frozen 2026-09-28): a customer's FLINT mirror trades ONLY when its own
- * max loss is fully covered by cushion ALREADY BUILT — `equity - protectLevel >=
- * maxLossCents`. By construction FLINT can never, on its own, be the trade that pushes
- * the account below its protected level. `protectLevel` is `depositCents` under today's
- * live system (no profit-floor/ratchet exists for customers yet — that's the sim's P1/P2
- * arm, not shipped) — pass `depositCents` as `protectLevelCents` until a floor exists.
+ * Ported from `customer_protection_sim.py`'s P3 arm, then corrected in ROUND 8
+ * (`customer_protection_finalK.py`, frozen 2026-09-28 — see the file doc there for the
+ * exact bug write-up): a customer's FLINT mirror trades ONLY when its own max loss is
+ * fully covered by cushion ALREADY BUILT, NET of what the host leg's own `n` contracts
+ * already committed that SAME day —
+ *   remaining = equity - protectLevel - hostCommittedCents
+ *   eligible  = remaining >= maxLossCents + marginCents
+ * By construction FLINT can never, on its own OR combined with the host leg's worst
+ * case, be the trade(s) that push the account below its protected level.
+ * `hostCommittedCents` = that day's host `n * maxLossPerContract` (0 when the host
+ * didn't trade, or when CUSTOMER_DEPOSIT_FLOOR is off and there's no tracked floor —
+ * pass 0, never omit it: ROUND 8 found the un-netted check breaches 0.5-1.1% of paths
+ * once the floor tightens (K>0), a flaw invisible at K=0's looser budget). This netting
+ * runs UNCONDITIONALLY, independent of whether the deposit floor is engaged — see
+ * executor.ts's mirrorOneFlintOpen for how `hostCommittedCents` and `protectLevelCents`
+ * are sourced when the floor is off vs on.
+ *
+ * `protectLevel` is `depositCents` when the floor hasn't triggered (or is off), and the
+ * floor's own `floorLevelCents` (see evaluateDepositFloorCap) once triggered.
  *
  * ONE DELIBERATE DIFFERENCE FROM THE SIM, per Leron's explicit instruction (not present
- * in the sim's P3 formula, which has no margin term): `marginCents` pads the required
- * cushion, mirroring the $50/contract margin the sim's OWN post-trigger P1/P2 budget
- * check uses elsewhere (MARGIN=50 in customer_protection_sim.py) — "never size up on
- * missing data" extends here to "never gate exactly on the wire." Pass `marginCents: 0`
- * to reproduce the sim's literal P3 rule (see the parity test against sim fixtures).
+ * in the sim's ORIGINAL P3 formula, which had no margin term at all — ROUND 8's finalK.py
+ * DOES add a $50 margin to FLINT's own threshold, confirming this instruction converged
+ * with the sim's own later correction): `marginCents` pads the required cushion. Pass
+ * `marginCents: 0` to reproduce the ORIGINAL P3 rule exactly (see the parity test).
  *
  * FAILS CLOSED: a null/unreadable equity or deposit reading is never treated as
  * "cushion covers it" — it skips, the same invariant as sizeContracts/canOpenForCustomer.
@@ -186,11 +197,13 @@ export function canOpenForCustomer(g: MirrorGateInput): MirrorGateVerdict {
 export interface FlintCushionInput {
   /** Live account equity read at mirror time, in cents. NULL = broker read failed. */
   equityCents: number | null
-  /** The customer's protected level, in cents (today: their captured baseline / "deposit"). NULL = unknown. */
+  /** The customer's protected level, in cents (deposit, or floorLevelCents once triggered). NULL = unknown. */
   protectLevelCents: number | null
+  /** The host leg's own committed max loss TODAY (n_host * maxLossPerContract), in cents. 0 when none. */
+  hostCommittedCents: number
   /** FLINT's own worst-case max loss for exactly 1 contract, in cents. */
   maxLossCents: number
-  /** Extra required cushion beyond raw max loss, in cents (live-only; sim's exact P3 rule uses 0). */
+  /** Extra required cushion beyond raw max loss, in cents (live-only; the ORIGINAL P3 rule uses 0). */
   marginCents: number
 }
 
@@ -201,37 +214,52 @@ export interface FlintCushionResult {
 }
 
 /**
- * CUSTOMER_DEPOSIT_FLOOR — the deposit-only protection floor, ported from
- * customer_protection_sim.py's ROUND 3 winning arm: K=0, N=3, variant S (frozen
- * 2026-09-28, RESULT_customer_protection.md "ROUND 3"). At K=0 the floor never
- * moves off `deposit` (floor_level = deposit forever, once it exists), so this is
- * simpler than the general P1/P2 arm: "once triggered, cap sizing so the account can
- * never trade itself back below deposit."
+ * CUSTOMER_DEPOSIT_FLOOR (CUSTOMER_PROFIT_FLOOR in spirit — flag name kept for
+ * continuity) — the profit-protection floor, ROUND 8's shipped rule:
+ * K=0.1, N=3, variant G (`customer_protection_finalK.py`, frozen 2026-09-28,
+ * `customer_package_fixtures_K.json`). This REPLACES the ROUND 3/K=0/variant-S rule:
+ * Leron's actual requirement, restated precisely in finalK.py's own docstring —
+ * "the customer never loses ALL profits after a win streak; they may lose some but
+ * not all, keeping them in the green." K=0 only protected the deposit (100% of
+ * profit could still be given back); K=0.1 protects 10% of peak profit too.
  *
+ * Floor level (ratchets up only, once triggered):
+ *   peakProfit = max(peakEquity - deposit, 0)     // peakEquity = the running max of
+ *                                                  // ACTUAL equity ever observed,
+ *                                                  // ratcheted once per day (the one
+ *                                                  // trade-decision point) from a live
+ *                                                  // broker read — "EOD only", never
+ *                                                  // recomputed from an intraday value
+ *   floorLevel = max(deposit, deposit + K * peakProfit)   // = deposit + K*peakProfit, K>=0
  * Trigger (one-way, sticky — `triggered` never resets once true): the FIRST day
  * `equity - deposit >= N * (desired_count(deposit, pct, ml) * ml)` — "3x one day's
  * own max loss AT THE CUSTOMER'S NORMAL SIZING, referenced off the FIXED deposit
- * (never off the moving equity)" — same fixed-yardstick fix as evaluateFlintCushion's
- * sibling logic in the P1/P2 arm (equity-referenced would make the trigger scale with
- * itself and become unreachable for some N/pct combinations).
+ * (never off the moving equity)" — unchanged from ROUND 3.
  *
- * Post-trigger sizing (variant S, "sit out below budget"):
- *   n = max(0, min(desiredContracts, floor((equity - deposit) / (maxLossCentsPerContract + marginCents))))
- * Pre-trigger: `desiredContracts` passes through UNCHANGED — byte-identical to BASE.
+ * Post-trigger sizing, variant G ("minimum layer gated on DEPOSIT only, extra layer
+ * gated on the stricter floor budget" — can give back down to deposit on a thin day,
+ * never down to floorLevel, for the FIRST contract only):
+ *   mlEff = maxLossCentsPerContract + marginCents
+ *   nMin  = 1 if (equity - deposit) >= mlEff else 0
+ *   budgetAfterMin = (equity - floorLevel) - nMin*mlEff
+ *   extra = clamp(desiredContracts - nMin, 0, floor(max(budgetAfterMin,0) / mlEff))
+ *   n = nMin + extra
+ * Pre-trigger: `desiredContracts` passes through UNCHANGED — byte-identical to BASE
+ * (B1/CUSTOMER_FAST_START may still add +1 on top — see evaluateFastStartUpsize).
  *
  * FAILS OPEN on missing data, unlike every other gate in this file: the spec (Leron,
  * "Missing data -> today's sizing, logged") is deliberate here, because this is a
  * PROTECTIVE cap on the customer's PRIMARY leg — an unreadable equity/deposit means
  * "cannot evaluate the floor," and the least-surprising fallback is today's normal
- * sizing (continuity with the CUSTOMER_DEPOSIT_FLOOR=off behavior for that one day),
- * not blocking the trade. The caller MUST log `dataOk: false` (see the decision log
- * in executor.ts) — silent is not allowed even though the trade proceeds.
+ * sizing, not blocking the trade. The caller MUST log `dataOk: false`.
  */
 export interface DepositFloorInput {
   /** Live equity/buying-power at decision time (reuse the SAME read sizeContracts uses — no extra broker call). */
   equityCents: number | null
   /** Fixed baseline, in cents (today: broker_accounts.buying_power_cents captured at connect — same proxy as FLINT's). */
   depositCents: number | null
+  /** Persisted running max of actual equity ever observed for this customer+bot, PRE this call's update. Null/first-sight -> treated as depositCents (no peak yet). */
+  peakEquityCents: number | null
   /** Today's max loss per contract, in cents (reuse sizing.collateralPerSpreadCents — a defined-risk credit spread's max loss equals its collateral). */
   maxLossCentsPerContract: number
   /** $50/contract margin in the post-trigger budget check only (matches the sim's MARGIN=50). */
@@ -242,8 +270,10 @@ export interface DepositFloorInput {
   desiredContracts: number
   /** Persisted sticky state from customer_deposit_floor_state. */
   triggered: boolean
-  /** N in the trigger formula — 3, the frozen ROUND 3 winner. */
+  /** N in the trigger formula — 3, frozen since ROUND 3. */
   triggerN: number
+  /** K in the floor formula — 0.1, the ROUND 8 shipped winner. */
+  floorK: number
 }
 
 export interface DepositFloorResult {
@@ -259,10 +289,34 @@ export interface DepositFloorResult {
    * True iff THIS evaluation used the post-trigger (capped) branch — i.e. `triggered ||
    * triggeredNow`. Callers use this to decide which calm-day add-on applies: B1
    * (evaluateFastStartUpsize) when false, the house-money calm-upsize
-   * (evaluateCalmUpsize) when true — the two are mutually exclusive by construction
-   * (customer_protection_final_package.py's if/else), never both on the same day.
+   * (evaluateCalmUpsize) when true — the two are mutually exclusive by construction,
+   * never both on the same day.
    */
   triggeredForSizing: boolean
+  /**
+   * The protect_level to use for FLINT's netted cushion check and for
+   * evaluateCalmUpsize THIS day: `depositCents` pre-trigger, `deposit + K*peakProfit`
+   * once triggered. Always populated when dataOk (falls back to depositCents, or 0
+   * when even that is unknown, when !dataOk — callers must check dataOk first).
+   */
+  floorLevelCents: number
+  /** The updated peak-equity ratchet to persist for NEXT time (max(peakEquityCents, equityCents)). Only meaningful when dataOk. */
+  nextPeakEquityCents: number
+}
+
+/**
+ * The floor level RIGHT NOW, given persisted state — `depositCents` pre-trigger,
+ * `depositCents + floorK * max(peakEquityCents - depositCents, 0)` once triggered.
+ * Exposed so FLINT's mirror (a separate function, evaluated later in the day than the
+ * host leg) can derive today's protect_level from the SAME persisted
+ * customer_deposit_floor_state row the host leg's own call already ratcheted, without
+ * re-running the full sizing/trigger logic (FLINT doesn't size the host leg).
+ */
+export function currentFloorLevelCents(depositCents: number, peakEquityCents: number | null, triggered: boolean, floorK: number): number {
+  if (!triggered) return depositCents
+  const peak = peakEquityCents ?? depositCents
+  const peakProfit = Math.max(peak - depositCents, 0)
+  return depositCents + floorK * peakProfit
 }
 
 export function evaluateDepositFloorCap(i: DepositFloorInput): DepositFloorResult {
@@ -273,7 +327,10 @@ export function evaluateDepositFloorCap(i: DepositFloorInput): DepositFloorResul
     !Number.isFinite(i.pct) || i.pct <= 0 ||
     !Number.isFinite(i.desiredContracts) || i.desiredContracts < 0
   ) {
-    return { contracts: Math.max(0, i.desiredContracts || 0), triggeredNow: false, capped: false, dataOk: false, triggeredForSizing: i.triggered }
+    return {
+      contracts: Math.max(0, i.desiredContracts || 0), triggeredNow: false, capped: false, dataOk: false,
+      triggeredForSizing: i.triggered, floorLevelCents: i.depositCents ?? 0, nextPeakEquityCents: i.peakEquityCents ?? i.depositCents ?? 0,
+    }
   }
 
   let triggered = i.triggered
@@ -288,14 +345,32 @@ export function evaluateDepositFloorCap(i: DepositFloorInput): DepositFloorResul
     }
   }
 
+  // Ratchet uses the PRIOR peak (before today's equity) — matches the sim computing
+  // peak_profit from `peak_equity` before adding today's pnl. The caller persists
+  // nextPeakEquityCents for tomorrow's call.
+  const priorPeak = i.peakEquityCents ?? i.depositCents
+  const nextPeakEquityCents = Math.max(priorPeak, i.equityCents)
+
   if (!triggered) {
-    return { contracts: i.desiredContracts, triggeredNow: false, capped: false, dataOk: true, triggeredForSizing: false }
+    return {
+      contracts: i.desiredContracts, triggeredNow: false, capped: false, dataOk: true,
+      triggeredForSizing: false, floorLevelCents: i.depositCents, nextPeakEquityCents,
+    }
   }
 
-  const budget = i.equityCents - i.depositCents // floor_level === deposit forever at K=0
-  const capped = budget > 0 ? Math.floor(budget / (i.maxLossCentsPerContract + i.marginCents)) : 0
-  const n = Math.max(0, Math.min(i.desiredContracts, capped))
-  return { contracts: n, triggeredNow, capped: n < i.desiredContracts, dataOk: true, triggeredForSizing: true }
+  const floorLevelCents = currentFloorLevelCents(i.depositCents, priorPeak, true, i.floorK)
+  const mlEff = i.maxLossCentsPerContract + i.marginCents
+
+  const budgetDep = i.equityCents - i.depositCents
+  const nMin = budgetDep >= mlEff ? 1 : 0
+  const budgetAfterMin = (i.equityCents - floorLevelCents) - nMin * mlEff
+  const extra = Math.max(0, Math.min(Math.max(i.desiredContracts - nMin, 0), Math.floor(Math.max(budgetAfterMin, 0) / mlEff)))
+  const n = nMin + extra
+
+  return {
+    contracts: n, triggeredNow, capped: n < i.desiredContracts, dataOk: true,
+    triggeredForSizing: true, floorLevelCents, nextPeakEquityCents,
+  }
 }
 
 /**
@@ -336,35 +411,37 @@ export function evaluateFastStartUpsize(i: FastStartUpsizeInput): FastStartUpsiz
 /**
  * CUSTOMER_CALM_UPSIZE — house-money-only +1 contract on the EBB/SPARK host leg on a
  * calm day (VIX-decay ratio <= 0.70), ported from `customer_protection_calmday.py`
- * ROUND 4 (frozen 2026-09-28, RESULT_customer_protection.md "ROUND 4"). Deposit >=
- * $4,000 only: Round 4 found FLAME $2,000 nets NEGATIVE on both median and p10 (the
- * thin deposit means calm-day upsizing eats into the same cushion the floor is
- * protecting), while $4,242/$5,000/$7,500 all add money at 0% fallback-after-trigger.
+ * ROUND 4, still exactly this formula in ROUND 8's `customer_protection_finalK.py`
+ * (frozen 2026-09-28). Deposit >= $4,000 only: Round 4 found FLAME $2,000 nets
+ * NEGATIVE on both median and p10 (the thin deposit means calm-day upsizing eats into
+ * the same cushion the floor is protecting), while $4,242/$5,000/$7,500 all add money.
  *
  * Gate (the sim's OWN, exact formula — it shipped with a caught bug, fixed before
  * reporting: the +1 is not an independent bet, it shares the SAME day's per-contract
  * loss as the base position, so its risk is ADDITIVE, not separate):
- *   remainingAfterBase = (equity - deposit) - baseContracts * maxLossCentsPerContract
+ *   remainingAfterBase = (equity - protectLevel) - baseContracts * maxLossCentsPerContract
  *   eligible = remainingAfterBase >= (maxLossCentsPerContract + marginCents)
- * `deposit` here IS `protect_level` in the sim's general form (`floor_level` once
- * triggered else `deposit`) — but the shipping floor is K=0, where `floor_level`
- * never moves off `deposit`, so `protect_level === deposit` unconditionally, exactly
- * like evaluateFlintCushion's own protect_level. One NOTE on the source: the
- * coordinator's own restatement of this rule nets the base contracts at
- * `(maxLoss + margin)` per contract rather than the sim's `maxLoss` per contract —
- * this function follows the SIM's literal code (`customer_protection_calmday.py`
- * lines 74-80), which is the frozen, tested, reported rule; the coordinator's
- * paraphrase was imprecise, not a second intended design. Documented per the
- * standing instruction to resolve ambiguity from the sim, not a restatement of it.
+ * `protectLevel` = `floorLevelCents` from evaluateDepositFloorCap (this arm only runs
+ * post-trigger, so the floor has always engaged by the time this is checked) — NOT
+ * the raw deposit once K>0 (ROUND 8 raised K from 0 to 0.1, so protectLevel now grows
+ * with peak profit; passing raw deposit here after ROUND 8 would UNDER-protect).
+ * `depositCents` is used ONLY for the $4,000 eligibility threshold below, a separate
+ * concept from protectLevel. One NOTE on the source: the coordinator's own restatement
+ * of the netting formula uses `(maxLoss + margin)` per base contract rather than the
+ * sim's `maxLoss` per contract — this function follows the SIM's literal code
+ * (`customer_protection_calmday.py` lines 74-80, confirmed unchanged in finalK.py),
+ * the frozen, tested, reported rule; the coordinator's paraphrase was imprecise.
  *
- * `baseContracts` MUST be the count AFTER any deposit-floor cap (evaluateDepositFloorCap)
+ * `baseContracts` MUST be the count AFTER the deposit-floor cap (evaluateDepositFloorCap)
  * has already run — the sim computes calm-day eligibility using that same day's final
  * (floor-capped) `n`, not the pre-floor desired count.
  */
 export interface CalmUpsizeInput {
   equityCents: number | null
-  /** The customer's deposit baseline — same proxy as everywhere else in this file. */
+  /** The customer's deposit baseline — used ONLY for the $4,000 threshold check, never the netting formula. */
   depositCents: number | null
+  /** protect_level for the netting formula — floorLevelCents from evaluateDepositFloorCap (NOT raw deposit once K>0). */
+  protectLevelCents: number | null
   /** Today's FINAL base contract count (post deposit-floor cap). No add-on if <= 0. */
   baseContracts: number
   maxLossCentsPerContract: number
@@ -381,7 +458,7 @@ export interface CalmUpsizeResult {
   extraContract: boolean
   reason:
     | 'added' | 'base_zero' | 'vix_unavailable' | 'not_calm'
-    | 'deposit_unknown' | 'deposit_below_threshold' | 'equity_unreadable'
+    | 'deposit_unknown' | 'deposit_below_threshold' | 'protect_level_unknown' | 'equity_unreadable'
     | 'bad_inputs' | 'insufficient_house_money'
 }
 
@@ -391,18 +468,23 @@ export function evaluateCalmUpsize(i: CalmUpsizeInput): CalmUpsizeResult {
   if (!(i.vixRatio <= i.vixCeiling)) return { extraContract: false, reason: 'not_calm' }
   if (i.depositCents == null || !Number.isFinite(i.depositCents)) return { extraContract: false, reason: 'deposit_unknown' }
   if (i.depositCents < i.minDepositCentsForUpsize) return { extraContract: false, reason: 'deposit_below_threshold' }
+  if (i.protectLevelCents == null || !Number.isFinite(i.protectLevelCents)) return { extraContract: false, reason: 'protect_level_unknown' }
   if (i.equityCents == null || !Number.isFinite(i.equityCents)) return { extraContract: false, reason: 'equity_unreadable' }
   if (!Number.isFinite(i.maxLossCentsPerContract) || i.maxLossCentsPerContract <= 0 || !Number.isFinite(i.marginCents) || i.marginCents < 0) {
     return { extraContract: false, reason: 'bad_inputs' }
   }
-  const remainingAfterBase = (i.equityCents - i.depositCents) - i.baseContracts * i.maxLossCentsPerContract
+  const remainingAfterBase = (i.equityCents - i.protectLevelCents) - i.baseContracts * i.maxLossCentsPerContract
   const required = i.maxLossCentsPerContract + i.marginCents
   if (remainingAfterBase >= required) return { extraContract: true, reason: 'added' }
   return { extraContract: false, reason: 'insufficient_house_money' }
 }
 
 export function evaluateFlintCushion(i: FlintCushionInput): FlintCushionResult {
-  if (!Number.isFinite(i.maxLossCents) || i.maxLossCents <= 0 || !Number.isFinite(i.marginCents) || i.marginCents < 0) {
+  if (
+    !Number.isFinite(i.maxLossCents) || i.maxLossCents <= 0 ||
+    !Number.isFinite(i.marginCents) || i.marginCents < 0 ||
+    !Number.isFinite(i.hostCommittedCents) || i.hostCommittedCents < 0
+  ) {
     return { eligible: false, cushionCents: null, reason: 'bad_inputs' }
   }
   if (i.equityCents == null || !Number.isFinite(i.equityCents)) {
@@ -411,7 +493,7 @@ export function evaluateFlintCushion(i: FlintCushionInput): FlintCushionResult {
   if (i.protectLevelCents == null || !Number.isFinite(i.protectLevelCents)) {
     return { eligible: false, cushionCents: null, reason: 'deposit_unknown' }
   }
-  const cushion = i.equityCents - i.protectLevelCents
+  const cushion = i.equityCents - i.protectLevelCents - i.hostCommittedCents
   const required = i.maxLossCents + i.marginCents
   if (cushion < required) return { eligible: false, cushionCents: cushion, reason: 'cushion_insufficient' }
   return { eligible: true, cushionCents: cushion }

@@ -33,6 +33,7 @@ import {
   canOpenForCustomer,
   condorCloseLegs,
   condorOpenLegs,
+  currentFloorLevelCents,
   evaluateCalmUpsize,
   evaluateDepositFloorCap,
   evaluateFastStartUpsize,
@@ -149,21 +150,25 @@ export function isCustomerCalmUpsizeEnabled(): boolean {
   return String(process.env.CUSTOMER_CALM_UPSIZE ?? '').trim().toLowerCase() === 'on'
 }
 
-const DEPOSIT_FLOOR_N = 3 // frozen ROUND 3 winner (K=0, N=3, variant S) — see contracts.ts evaluateDepositFloorCap
+const DEPOSIT_FLOOR_N = 3 // frozen since ROUND 3 — see contracts.ts evaluateDepositFloorCap
+/** ROUND 8 shipped winner (customer_protection_finalK.py / customer_package_fixtures_K.json): K=0.1, variant G. Replaces ROUND 3-7's K=0/variant S. */
+const DEPOSIT_FLOOR_K = 0.1
 /** $50/contract, matching customer_protection_sim.py's MARGIN constant — shared with FLINT's own margin. */
 const DEPOSIT_FLOOR_MARGIN_CENTS = 5000
 
 interface DepositFloorStateRow {
   deposit_cents: string | number
   triggered: boolean
+  peak_equity_cents: string | number | null
 }
 
 /**
  * Reads/creates the sticky per-(customer, bot) floor state, applies evaluateDepositFloorCap,
- * and persists any trigger transition + a fresh equity snapshot. FAILS OPEN on any read/write
- * problem (see contracts.ts's doc comment on evaluateDepositFloorCap for why): the caller gets
- * `dataOk: false` and MUST use `desiredContracts` unmodified, logging that the floor could not
- * be evaluated rather than silently skipping the trade.
+ * and persists any trigger transition + the peak-equity ratchet + a fresh equity snapshot.
+ * FAILS OPEN on any read/write problem (see contracts.ts's doc comment on
+ * evaluateDepositFloorCap for why): the caller gets `dataOk: false` and MUST use
+ * `desiredContracts` unmodified, logging that the floor could not be evaluated rather
+ * than silently skipping the trade.
  */
 async function applyDepositFloor(args: {
   userId: string
@@ -174,35 +179,41 @@ async function applyDepositFloor(args: {
   maxLossCentsPerContract: number
   desiredContracts: number
 }): Promise<ReturnType<typeof evaluateDepositFloorCap>> {
-  const fallback = { contracts: Math.max(0, args.desiredContracts), triggeredNow: false, capped: false, dataOk: false, triggeredForSizing: false }
+  const fallback = {
+    contracts: Math.max(0, args.desiredContracts), triggeredNow: false, capped: false, dataOk: false,
+    triggeredForSizing: false, floorLevelCents: args.depositCents ?? 0, nextPeakEquityCents: args.depositCents ?? 0,
+  }
   if (args.depositCents == null) {
     console.warn(`[customer-executor] deposit floor: no deposit baseline for user ${args.userId}/${args.agent} — using today's normal sizing (logged, per spec)`)
     return fallback
   }
   try {
     let state = (await customerQuery<DepositFloorStateRow>(
-      `SELECT deposit_cents, triggered FROM customer_deposit_floor_state WHERE user_id = $1 AND agent_code = $2`,
+      `SELECT deposit_cents, triggered, peak_equity_cents FROM customer_deposit_floor_state WHERE user_id = $1 AND agent_code = $2`,
       [args.userId, args.agent],
     ))[0]
     if (!state) {
       await customerExecute(
-        `INSERT INTO customer_deposit_floor_state (user_id, agent_code, deposit_cents, triggered)
-         VALUES ($1, $2, $3, FALSE)
+        `INSERT INTO customer_deposit_floor_state (user_id, agent_code, deposit_cents, triggered, peak_equity_cents)
+         VALUES ($1, $2, $3, FALSE, $3)
          ON CONFLICT (user_id, agent_code) DO NOTHING`,
         [args.userId, args.agent, Math.round(args.depositCents)],
       )
-      state = { deposit_cents: Math.round(args.depositCents), triggered: false }
+      state = { deposit_cents: Math.round(args.depositCents), triggered: false, peak_equity_cents: Math.round(args.depositCents) }
     }
     const depositCents = Math.floor(Number(state.deposit_cents))
+    const peakEquityCents = state.peak_equity_cents != null ? Math.floor(Number(state.peak_equity_cents)) : null
     const result = evaluateDepositFloorCap({
       equityCents: args.equityCents,
       depositCents,
+      peakEquityCents,
       maxLossCentsPerContract: args.maxLossCentsPerContract,
       marginCents: DEPOSIT_FLOOR_MARGIN_CENTS,
       pct: args.pct,
       desiredContracts: args.desiredContracts,
       triggered: state.triggered,
       triggerN: DEPOSIT_FLOOR_N,
+      floorK: DEPOSIT_FLOOR_K,
     })
     if (!result.dataOk) {
       console.warn(`[customer-executor] deposit floor: bad inputs for user ${args.userId}/${args.agent} — using today's normal sizing (logged, per spec)`)
@@ -211,9 +222,9 @@ async function applyDepositFloor(args: {
     await customerExecute(
       `UPDATE customer_deposit_floor_state
           SET triggered = triggered OR $3, trigger_date = COALESCE(trigger_date, CASE WHEN $3 THEN CURRENT_DATE END),
-              last_equity_cents = $4, last_equity_at = now(), updated_at = now()
+              peak_equity_cents = $5, last_equity_cents = $4, last_equity_at = now(), updated_at = now()
         WHERE user_id = $1 AND agent_code = $2`,
-      [args.userId, args.agent, result.triggeredNow, args.equityCents],
+      [args.userId, args.agent, result.triggeredNow, args.equityCents, result.nextPeakEquityCents],
     )
     return result
   } catch (e) {
@@ -438,7 +449,7 @@ async function mirrorOneOpen(
       depositFloorNote.fast_start = { applied: b1.extraContract, reason: b1.reason }
     } else if (floorResult.dataOk && floorResult.triggeredForSizing && isCustomerCalmUpsizeEnabled()) {
       const calm = evaluateCalmUpsize({
-        equityCents: bpCents, depositCents, baseContracts: finalContracts,
+        equityCents: bpCents, depositCents, protectLevelCents: floorResult.floorLevelCents, baseContracts: finalContracts,
         maxLossCentsPerContract: sizing.collateralPerSpreadCents, marginCents: FLINT_CUSHION_MARGIN_CENTS,
         vixRatio: m.vixRatio ?? null, vixCeiling: CALM_VIX_CEILING, minDepositCentsForUpsize: CALM_UPSIZE_MIN_DEPOSIT_CENTS,
       })
@@ -660,44 +671,61 @@ async function mirrorOneFlintOpen(c: EligibleRow, m: FlintMasterOpen, agent: str
     if (live != null && Number.isFinite(Number(live))) equityCents = Math.floor(Number(live) * 100)
   } catch { /* equityCents stays null -> evaluateFlintCushion fails closed below */ }
 
-  const cushion = evaluateFlintCushion({
-    equityCents, protectLevelCents: depositCents, maxLossCents, marginCents: FLINT_CUSHION_MARGIN_CENTS,
-  })
-  if (!cushion.eligible) { await logSkip(cushion.reason ?? 'cushion_insufficient', equityCents, depositCents, cushion.cushionCents); return }
-
-  // CUSTOMER_DEPOSIT_FLOOR combined check ("FLINT is dropped first", Leron's explicit
-  // instruction): the standalone cushion check above only looks at FLINT's own max loss
-  // in isolation. When the deposit floor is on, the main leg (FLAME/SPARK) may ALSO have
-  // already committed real collateral against this SAME account TODAY — two independent
-  // legs sharing one real brokerage account's buying power, unlike the sim's single
-  // combined equity stream. Combined: equity - deposit must cover BOTH legs' worst case
-  // + margin. The main leg's sizing (mirrorOneOpen/applyDepositFloor) is NEVER reduced to
-  // make room for FLINT — FLINT alone is dropped if the combined check fails.
-  if (isCustomerDepositFloorEnabled()) {
-    let mainLegCommittedCents = 0
+  // protect_level: raw deposit while the profit floor is off or not yet triggered;
+  // the floor's own ratcheted level (currentFloorLevelCents) once triggered. Read from
+  // the SAME customer_deposit_floor_state row the host leg's own mirror (mirrorOneOpen/
+  // applyDepositFloor) already ratcheted earlier today — FLINT never re-runs the
+  // trigger/sizing logic itself, it only reads the resulting level.
+  let protectLevelCents = depositCents
+  if (isCustomerDepositFloorEnabled() && depositCents != null) {
     try {
-      const mainRows = await customerQuery<{ collateral_cents: string | number | null }>(
-        `SELECT collateral_cents FROM customer_positions
-          WHERE user_id = $1 AND agent_code = $2 AND strategy = 'main' AND status = 'open'
-            AND opened_at::date = $3::date
-          ORDER BY opened_at DESC LIMIT 1`,
-        [c.user_id, agent, m.tradeDate],
+      const floorRows = await customerQuery<DepositFloorStateRow>(
+        `SELECT deposit_cents, triggered, peak_equity_cents FROM customer_deposit_floor_state WHERE user_id = $1 AND agent_code = $2`,
+        [c.user_id, agent],
       )
-      mainLegCommittedCents = mainRows[0]?.collateral_cents != null ? Math.floor(Number(mainRows[0].collateral_cents)) : 0
+      const fr = floorRows[0]
+      if (fr) {
+        const frDeposit = Math.floor(Number(fr.deposit_cents))
+        const frPeak = fr.peak_equity_cents != null ? Math.floor(Number(fr.peak_equity_cents)) : null
+        protectLevelCents = currentFloorLevelCents(frDeposit, frPeak, fr.triggered, DEPOSIT_FLOOR_K)
+      }
     } catch (e) {
-      // Never guess the main leg's committed risk on a read failure — drop FLINT (it is
-      // always safe to skip; the main leg is untouched either way).
-      console.error(`[customer-executor] deposit-floor combined check: main-leg read failed for user ${c.user_id} — dropping FLINT:`, e instanceof Error ? e.message : e)
-      await logSkip('deposit_floor_combined_unreadable', equityCents, depositCents, cushion.cushionCents)
-      return
-    }
-    const combinedRequired = mainLegCommittedCents + maxLossCents + FLINT_CUSHION_MARGIN_CENTS
-    const combinedCushion = (equityCents as number) - (depositCents as number) // both non-null: cushion.eligible already proved it
-    if (combinedCushion < combinedRequired) {
-      await logSkip('deposit_floor_combined_insufficient', equityCents, depositCents, combinedCushion)
-      return
+      // Fails OPEN to protectLevelCents=depositCents (already set above) — consistent
+      // with the floor's own fail-open convention: an unreadable floor state must not
+      // block FLINT any tighter than "no floor" would.
+      console.warn(`[customer-executor] FLINT: floor-state read failed for user ${c.user_id}, using deposit as protect_level:`, e instanceof Error ? e.message : e)
     }
   }
+
+  // ROUND 8 correction (customer_protection_finalK.py): FLINT's gate must NET the host
+  // leg's OWN same-day committed risk (n_host * maxLossPerContract, no margin — the sim's
+  // literal formula) before checking FLINT's own max loss + margin. This is UNCONDITIONAL
+  // (independent of CUSTOMER_DEPOSIT_FLOOR) — two sleeves sharing ONE real account's
+  // buying power is a real-money fact regardless of whether the profit-floor feature is
+  // on. "FLINT is dropped first": the host leg's own sizing (already placed earlier
+  // today) is never touched to make room for FLINT.
+  let hostCommittedCents = 0
+  try {
+    const mainRows = await customerQuery<{ collateral_cents: string | number | null }>(
+      `SELECT collateral_cents FROM customer_positions
+        WHERE user_id = $1 AND agent_code = $2 AND strategy = 'main' AND status = 'open'
+          AND opened_at::date = $3::date
+        ORDER BY opened_at DESC LIMIT 1`,
+      [c.user_id, agent, m.tradeDate],
+    )
+    hostCommittedCents = mainRows[0]?.collateral_cents != null ? Math.floor(Number(mainRows[0].collateral_cents)) : 0
+  } catch (e) {
+    // Never guess the host leg's committed risk on a read failure — drop FLINT (it is
+    // always safe to skip; the host leg itself is untouched either way).
+    console.error(`[customer-executor] FLINT: host-leg committed-risk read failed for user ${c.user_id} — dropping FLINT:`, e instanceof Error ? e.message : e)
+    await logSkip('host_committed_unreadable', equityCents, depositCents, null)
+    return
+  }
+
+  const cushion = evaluateFlintCushion({
+    equityCents, protectLevelCents, hostCommittedCents, maxLossCents, marginCents: FLINT_CUSHION_MARGIN_CENTS,
+  })
+  if (!cushion.eligible) { await logSkip(cushion.reason ?? 'cushion_insufficient', equityCents, depositCents, cushion.cushionCents); return }
 
   // Eligible — claim + place exactly 1 contract. Same restart-proof idempotency guard
   // as the main leg (unique index on source_position_id, user_id).

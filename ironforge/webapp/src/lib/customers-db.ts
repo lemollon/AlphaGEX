@@ -612,23 +612,31 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_flint_customer_decisions_day
   ON flint_customer_decisions (trade_date, user_id, agent_code);
 CREATE INDEX IF NOT EXISTS idx_flint_customer_decisions_user ON flint_customer_decisions(user_id);
 
--- CUSTOMER_DEPOSIT_FLOOR (2026-09-28) — sticky per-customer-per-bot state for the
--- deposit-only protection floor (customer_protection_sim.py ROUND 3, K=0/N=3/S).
--- Keyed per (user_id, agent_code) because FLAME and SPARK are separate books/deposits
--- in the sim (and can be separate broker_account_id's per agent_config here) — a
--- customer enrolled in both gets independent trigger state for each.
+-- CUSTOMER_DEPOSIT_FLOOR (2026-09-28, ROUND 8 rule: K=0.1/N=3/variant G, see
+-- contracts.ts evaluateDepositFloorCap) — sticky per-customer-per-bot state for the
+-- profit-protection floor. Keyed per (user_id, agent_code) because FLAME and SPARK
+-- are separate books/deposits in the sim (and can be separate broker_account_id's per
+-- agent_config here) — a customer enrolled in both gets independent state for each.
 -- 'triggered' is one-way: once true, NEVER reset back to false by this app.
+-- 'peak_equity_cents' is the running max of ACTUAL equity ever observed, ratcheted
+-- once per day (the one trade-decision point) from a live broker read — ROUND 8's
+-- floor level (deposit + K*peak_profit) is derived from this, never persisted
+-- separately, since deposit + K*max(peak_equity-deposit,0) is already monotonically
+-- non-decreasing as long as peak_equity itself only grows.
 CREATE TABLE IF NOT EXISTS customer_deposit_floor_state (
   user_id UUID NOT NULL REFERENCES users(id),
   agent_code TEXT NOT NULL,                          -- flame | spark
   deposit_cents BIGINT NOT NULL,                      -- fixed baseline, set once, never rewritten
   triggered BOOLEAN NOT NULL DEFAULT FALSE,
   trigger_date DATE,
+  peak_equity_cents BIGINT,
   last_equity_cents BIGINT,
   last_equity_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, agent_code)
 );
+-- Additive for DBs where this table already existed pre-ROUND-8 (K=0/S rows have no peak yet).
+ALTER TABLE customer_deposit_floor_state ADD COLUMN IF NOT EXISTS peak_equity_cents BIGINT;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- CRM outbox (lib/crm). Every lifecycle event destined for Attio lands here first

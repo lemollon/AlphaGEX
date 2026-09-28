@@ -154,6 +154,7 @@ describe('CUSTOMER_FLINT open mirror — mocked end-to-end', () => {
     const customer = makeCustomer({ buying_power_cents: 200_000 }) // deposit $2,000
     customerQueryMock
       .mockResolvedValueOnce([customer]) // eligibleCustomers
+      .mockResolvedValueOnce([]) // host-leg committed-risk lookup (ROUND 8, unconditional) — no main-leg row today
       .mockResolvedValueOnce([{ id: 'row-1' }]) // SELECT id after claim
     // equity $2,500 -> cushion $500 = 50_000 cents, well above maxLoss 17_140 + margin 5_000
     getUserAccountBalanceMock.mockResolvedValueOnce({ data: [{ buying_power: 2500 }] })
@@ -295,6 +296,7 @@ describe('evaluateFlintCushion parity vs customer_protection_sim.py P3 (FLAME $2
       const r = evaluateFlintCushion({
         equityCents: day.equity_cents,
         protectLevelCents: day.deposit_cents,
+        hostCommittedCents: 0, // this fixture is the ORIGINAL P3-only rule, no host leg in the picture
         maxLossCents: day.flint_max_loss_cents,
         marginCents: 0,
       })
@@ -305,7 +307,7 @@ describe('evaluateFlintCushion parity vs customer_protection_sim.py P3 (FLAME $2
   it('adding the live $50 margin can only ever turn a sim-eligible day ineligible, never the reverse (documented, deliberate tightening)', () => {
     for (const day of fixture.days) {
       const withMargin = evaluateFlintCushion({
-        equityCents: day.equity_cents, protectLevelCents: day.deposit_cents,
+        equityCents: day.equity_cents, protectLevelCents: day.deposit_cents, hostCommittedCents: 0,
         maxLossCents: day.flint_max_loss_cents, marginCents: 5_000,
       })
       if (day.sim_eligible === false) expect(withMargin.eligible).toBe(false)

@@ -148,6 +148,30 @@ describe('CUSTOMER_DEPOSIT_FLOOR main-leg sizing — mocked end-to-end', () => {
     expect(skipCall?.[1]).toEqual(expect.arrayContaining(['deposit_floor_capped_to_zero']))
   })
 
+  it('ROUND 8 variant G: a ratcheted peak profit raises the floor, but the minimum layer (gated on DEPOSIT, not the floor) still saves 1 contract that variant S would have zeroed out', async () => {
+    const customer = makeCustomer({ buying_power_cents: 200_000 }) // deposit $2,000
+    customerQueryMock
+      .mockResolvedValueOnce([customer])
+      .mockResolvedValueOnce([{ id: 'row-1' }])
+      // Persisted state: triggered, with a prior peak equity of $4,000 (a $2,000 peak
+      // profit) -> floorLevel = 200_000 + 0.1*200_000 = 220_000. Equity has since fallen
+      // to $2,500 -> budgetK (equity-floor) = 30_000 < mlEff(43_000), so the EXTRA layer
+      // alone would give 0 — but budgetDep (equity-deposit) = 50_000 >= mlEff, so the
+      // minimum layer (nMin) still fires: n=1, not 0.
+      .mockResolvedValueOnce([{ deposit_cents: 200_000, triggered: true, peak_equity_cents: 400_000 }])
+    getUserAccountBalanceMock.mockResolvedValueOnce({ data: [{ buying_power: 2500 }] })
+
+    const { mirrorOpenToCustomers } = await import('../executor')
+    await mirrorOpenToCustomers(MAIN_MASTER)
+
+    expect(placeMlegOrderMock).toHaveBeenCalledTimes(1)
+    const call = placeMlegOrderMock.mock.calls[0][0] as { legs: Array<{ units: number }> }
+    expect(call.legs[0].units).toBe(1)
+    // The persisted peak ratchet must not move backwards (equity 250_000 < peak 400_000).
+    const updateCall = customerExecuteMock.mock.calls.find((c) => String(c[0]).includes('UPDATE customer_deposit_floor_state'))
+    expect(updateCall?.[1]).toEqual(expect.arrayContaining([400_000]))
+  })
+
   it('equity <= deposit + max loss (a real drawdown day, post-trigger): exactly 0 contracts, never negative, never sized up', async () => {
     const customer = makeCustomer({ buying_power_cents: 200_000 })
     customerQueryMock
@@ -200,7 +224,7 @@ describe('CUSTOMER_DEPOSIT_FLOOR main-leg sizing — mocked end-to-end', () => {
   })
 })
 
-describe('CUSTOMER_FLINT + CUSTOMER_DEPOSIT_FLOOR combined check — "FLINT is dropped first"', () => {
+describe('CUSTOMER_FLINT host-leg netting — "FLINT is dropped first" (ROUND 8, unconditional — independent of CUSTOMER_DEPOSIT_FLOOR)', () => {
   const FLINT_MASTER = {
     botName: 'flame', positionId: 'FLINT-SPY-20260928-ABC', ticker: 'SPY', expiration: '2026-09-28',
     callShort: 770, callLong: 772, spreadWidth: 2, credit: 0.30, tradeDate: '2026-09-28',
@@ -215,12 +239,13 @@ describe('CUSTOMER_FLINT + CUSTOMER_DEPOSIT_FLOOR combined check — "FLINT is d
     const customer = makeCustomer({ buying_power_cents: 200_000 }) // deposit $2,000
     customerQueryMock
       .mockResolvedValueOnce([customer]) // eligibleCustomers for FLINT
+      .mockResolvedValueOnce([{ deposit_cents: 200_000, triggered: false, peak_equity_cents: null }]) // floor-state read (floor on)
       // main-leg lookup: $1,700 already committed today (leaves only $100 of the $200 total cushion)
       .mockResolvedValueOnce([{ collateral_cents: 170_000 }])
     // equity $2,200 -> cushion $200 = 20_000c. FLINT alone needs maxLoss(17_140)+margin(5_000)=22_140 -- already fails standalone!
-    // Use a bigger cushion so the STANDALONE check passes but the COMBINED one does not:
-    // equity $2,400 -> cushion 40_000c >= 22_140 (standalone eligible), but combined needs
-    // 170_000 + 17_140 + 5_000 = 192_140 > 40_000 (combined fails) -> FLINT dropped.
+    // Use a bigger cushion so the STANDALONE check passes but the NETTED one does not:
+    // equity $2,400 -> cushion 40_000c >= 22_140 (standalone eligible), but netted needs
+    // 170_000 + 17_140 + 5_000 = 192_140 > 40_000 (netted fails) -> FLINT dropped.
     getUserAccountBalanceMock.mockResolvedValueOnce({ data: [{ buying_power: 2400 }] })
 
     const { mirrorFlintOpenToCustomers } = await import('../executor')
@@ -228,13 +253,14 @@ describe('CUSTOMER_FLINT + CUSTOMER_DEPOSIT_FLOOR combined check — "FLINT is d
 
     expect(placeMlegOrderMock).not.toHaveBeenCalled()
     const decisionCall = customerExecuteMock.mock.calls.find((c) => String(c[0]).includes('flint_customer_decisions'))
-    expect(decisionCall?.[1]).toEqual(expect.arrayContaining([false, 'deposit_floor_combined_insufficient']))
+    expect(decisionCall?.[1]).toEqual(expect.arrayContaining([false, 'cushion_insufficient']))
   })
 
-  it('no main-leg position today: combined check reduces to the standalone check (FLINT trades normally)', async () => {
+  it('no main-leg position today: netted check reduces to the standalone check (FLINT trades normally)', async () => {
     const customer = makeCustomer({ buying_power_cents: 200_000 })
     customerQueryMock
       .mockResolvedValueOnce([customer])
+      .mockResolvedValueOnce([{ deposit_cents: 200_000, triggered: false, peak_equity_cents: null }]) // floor-state read
       .mockResolvedValueOnce([]) // no main-leg row today
       .mockResolvedValueOnce([{ id: 'row-1' }]) // SELECT id after FLINT's own claim
     getUserAccountBalanceMock.mockResolvedValueOnce({ data: [{ buying_power: 2500 }] }) // cushion 50_000c >= 17_140+5_000
@@ -245,19 +271,38 @@ describe('CUSTOMER_FLINT + CUSTOMER_DEPOSIT_FLOOR combined check — "FLINT is d
     expect(placeMlegOrderMock).toHaveBeenCalledTimes(1)
   })
 
-  it('CUSTOMER_DEPOSIT_FLOOR off: FLINT ignores the main leg entirely (today\'s existing, unmodified behavior)', async () => {
+  it('CUSTOMER_DEPOSIT_FLOOR off: protect_level stays raw deposit, but the host-leg netting STILL runs (ROUND 8 — unconditional)', async () => {
     delete process.env.CUSTOMER_DEPOSIT_FLOOR
     const customer = makeCustomer({ buying_power_cents: 200_000 })
     customerQueryMock
       .mockResolvedValueOnce([customer])
-      .mockResolvedValueOnce([{ id: 'row-1' }]) // SELECT id after FLINT's own claim (no main-leg lookup at all)
+      // no floor-state read at all (floor is off) — next call is the host-committed lookup
+      .mockResolvedValueOnce([{ collateral_cents: 170_000 }]) // host leg already committed $1,700 today
+      // never reached: netted cushion (40_000-170_000-17_140-5_000 < 0) fails before any claim/SELECT id
+    getUserAccountBalanceMock.mockResolvedValueOnce({ data: [{ buying_power: 2400 }] })
+
+    const { mirrorFlintOpenToCustomers } = await import('../executor')
+    await mirrorFlintOpenToCustomers(FLINT_MASTER)
+
+    expect(placeMlegOrderMock).not.toHaveBeenCalled()
+    const touchedFloorState = customerQueryMock.mock.calls.some((c) => String(c[0]).includes('customer_deposit_floor_state'))
+    expect(touchedFloorState, 'floor is off — must never read floor state').toBe(false)
+    const touchedMainLeg = customerQueryMock.mock.calls.some((c) => String(c[0]).includes("strategy = 'main'"))
+    expect(touchedMainLeg, 'host-leg netting is unconditional, even with the floor off').toBe(true)
+  })
+
+  it('CUSTOMER_DEPOSIT_FLOOR off AND no host commitment today: FLINT trades normally off the ORIGINAL P3 rule', async () => {
+    delete process.env.CUSTOMER_DEPOSIT_FLOOR
+    const customer = makeCustomer({ buying_power_cents: 200_000 })
+    customerQueryMock
+      .mockResolvedValueOnce([customer])
+      .mockResolvedValueOnce([]) // host-leg lookup: no main-leg position today
+      .mockResolvedValueOnce([{ id: 'row-1' }]) // SELECT id after FLINT's own claim
     getUserAccountBalanceMock.mockResolvedValueOnce({ data: [{ buying_power: 2500 }] })
 
     const { mirrorFlintOpenToCustomers } = await import('../executor')
     await mirrorFlintOpenToCustomers(FLINT_MASTER)
 
     expect(placeMlegOrderMock).toHaveBeenCalledTimes(1)
-    const touchedMainLeg = customerQueryMock.mock.calls.some((c) => String(c[0]).includes("strategy = 'main'"))
-    expect(touchedMainLeg).toBe(false)
   })
 })
