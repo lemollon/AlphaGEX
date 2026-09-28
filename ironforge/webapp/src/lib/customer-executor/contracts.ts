@@ -123,6 +123,79 @@ export function sizeContracts(s: SizingInput): SizingResult {
   return { contracts, collateralPerSpreadCents: collateral }
 }
 
+/**
+ * SAME conservative wing/credit assumption tradier.ts's FLAME_FAST_START
+ * planning block uses for the internal path ($2 wing at EBB's own $0.10
+ * minimum credit floor — the worst plausible, hence largest, per-contract
+ * loss a real quote would produce). Exported here, not just local, so the
+ * planning function below and its tests share the exact same numbers the
+ * internal path already ships with.
+ */
+export const HOST_LEG_PLAN_WING_WIDTH_ESTIMATE = 2
+export const HOST_LEG_PLAN_MIN_CREDIT_FLOOR_ESTIMATE = 0.10
+
+export interface PlannedHostRiskInputs {
+  /** True only when the host leg's OWN VIX-decay gate (the same deterministic,
+   *  prior-close-based check the real EBB/SPARK entry uses) has already
+   *  passed for today. False (host leg cannot trade today) or the gate
+   *  itself being unreadable must both resolve to 0 here, never a guess. */
+  vixCandidateDay: boolean
+  /** Fresh live balance — the SAME read FLINT's own cushion check already
+   *  performs; never a second broker call. */
+  equityCents: number | null
+  /** This customer's own max_deployment_pct (config_json) — the SAME pct
+   *  the real host-leg sizeContracts() call will use today. */
+  maxDeploymentPct: number | null
+  /** True when EITHER CUSTOMER_FAST_START or CUSTOMER_CALM_UPSIZE is armed.
+   *  Deliberately NOT narrowed to which VIX-ratio/trigger regime actually
+   *  applies today — FLINT's own inputs don't cleanly expose the host
+   *  leg's VIX ratio. Treating the upsize as "always possible" whenever
+   *  either flag is on is the safe-direction approximation: it can only
+   *  make this an OVERESTIMATE of risk, never an underestimate. */
+  possibleUpsize: boolean
+}
+
+/**
+ * WORST-CASE dollar estimate (in cents) of what the customer's own main leg
+ * (EBB/SPARK put spread) could commit TODAY — computed WITHOUT reading
+ * customer_positions, because scanner.ts's tryOpenFlint (which leads to
+ * FLINT's customer mirror) always runs BEFORE the host leg's own entry
+ * (tryOpenTrade) in the same scan tick. A real DB read sees nothing yet on
+ * the exact day this estimate matters most: the host leg's first entry of
+ * a fresh hold, with no prior-day row to find.
+ *
+ * Mirrors tradier.ts's FLAME_FAST_START planning block in spirit (same
+ * conservative assumption, same "0 when the host leg simply cannot trade
+ * today" short-circuit, same never-under-claim philosophy) without sharing
+ * its literal code — the internal ladder and this buying-power sizing
+ * compute contract count in fundamentally different ways.
+ *
+ * Deliberately ignores the deposit floor's own downward cap: a cap can
+ * only SHRINK the real contract count, so ignoring it keeps this an upper
+ * bound, which is the safe direction for a risk-netting check.
+ *
+ * XSP_SWAP extension point: when the XSP leg-swap lands, the fixed SPY
+ * wing/credit assumption above will need an XSP-priced variant. No such
+ * input exists on main as of this function; not plumbed here.
+ */
+export function estimatePlannedHostRiskCents(inputs: PlannedHostRiskInputs): number {
+  if (!inputs.vixCandidateDay) return 0
+  const { equityCents, maxDeploymentPct } = inputs
+  if (equityCents == null || !Number.isFinite(equityCents) || equityCents <= 0) return 0
+  if (maxDeploymentPct == null || !Number.isFinite(maxDeploymentPct) || maxDeploymentPct <= 0 || maxDeploymentPct > 100) return 0
+
+  const maxDeploymentCents = Math.floor((equityCents * maxDeploymentPct) / 100)
+  const sizing = sizeContracts({
+    buyingPowerCents: equityCents,
+    maxDeploymentCents,
+    spreadWidth: HOST_LEG_PLAN_WING_WIDTH_ESTIMATE,
+    creditPerSpread: HOST_LEG_PLAN_MIN_CREDIT_FLOOR_ESTIMATE,
+  })
+  if (sizing.contracts < 1) return 0
+  const contracts = sizing.contracts + (inputs.possibleUpsize ? 1 : 0)
+  return contracts * sizing.collateralPerSpreadCents
+}
+
 export interface MirrorGateInput {
   /** Executor master switch (env CUSTOMER_EXECUTOR_ENABLED === 'true'). Ships DISARMED. */
   executorArmed: boolean
