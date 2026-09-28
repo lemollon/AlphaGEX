@@ -398,9 +398,16 @@ describe('sizeFlintGivenEbbOutcome — the ordering-gap helper (FLINT runs befor
     expect(flintContracts).toBe(1)
   })
 
-  it('phase 2: ebbContractsToday=0 -> ebbMin=0, flint gated only by its own cushion', () => {
+  it('phase 2: ebbContractsToday=0 -> ebbMin=0, flint gated only by its own cushion (v3: +$50 margin)', () => {
+    // cushion=200 >= flint_ml_eff(90+50=140) -> 1.
+    const { flintContracts } = sizeFlintGivenEbbOutcome(2, 4242, 4242 + 200, 5000, 0, null, true, 90)
+    expect(flintContracts).toBe(1)
+  })
+
+  it('phase 2: the v3 $50 margin can flip a would-clear cushion to 0', () => {
+    // cushion=100 >= raw flint_ml(90) but < flint_ml_eff(140) -> 0.
     const { flintContracts } = sizeFlintGivenEbbOutcome(2, 4242, 4242 + 100, 5000, 0, null, true, 90)
-    expect(flintContracts).toBe(1) // cushion=100 >= flint_ml(90)
+    expect(flintContracts).toBe(0)
   })
 
   it('not a flint candidate day -> 0 regardless of phase or budget', () => {
@@ -411,5 +418,107 @@ describe('sizeFlintGivenEbbOutcome — the ordering-gap helper (FLINT runs befor
   it('missing flint max-loss -> 0, never guesses', () => {
     const { flintContracts } = sizeFlintGivenEbbOutcome(2, 4242, 10000, 5000, 1, 170, true, null)
     expect(flintContracts).toBe(0)
+  })
+})
+
+describe('v3 deposit cap (FAST_START_DEPOSIT_CAP=$5,000) — >= cap gets EXACT BASE, never fast-start', () => {
+  it('deposit=$5,000 (== cap): EBB gets the plain (un-multiplied) ladder, no 2x, no floor', () => {
+    process.env.FLAME_FAST_START = 'on'
+    const state: FastStartAccountState = { phase: 1, deposit: 5000 }
+    const { decision, nextState } = decideFastStartSizing(
+      state,
+      baseInputs({ equity: 5000, normalEbbLadder: 3, ebbMaxLossPerLot: 170, flintMaxLossPerContract: 190 }),
+    )
+    expect(decision.ebbContracts).toBe(3) // NOT 6 (2x) — plain BASE ladder
+    expect(decision.floor).toBeNull()
+    expect(decision.reason).toContain('deposit_cap')
+    expect(nextState).toEqual(state) // never advances phase, never seeds a floor
+  })
+
+  it('deposit=$7,500 (> cap): same — exact BASE, both legs', () => {
+    process.env.FLAME_FAST_START = 'on'
+    const state: FastStartAccountState = { phase: 1, deposit: 7500 }
+    // cushion = 7800-7500=300 >= flint_ml(190) -> BASE's own flint rule fires too.
+    const { decision } = decideFastStartSizing(
+      state,
+      baseInputs({ equity: 7800, normalEbbLadder: 5, ebbMaxLossPerLot: 170, flintMaxLossPerContract: 190 }),
+    )
+    expect(decision.ebbContracts).toBe(5)
+    expect(decision.flintContracts).toBe(1)
+  })
+
+  it('deposit=$4,999.99 (just under cap): fast-start still applies (2x)', () => {
+    process.env.FLAME_FAST_START = 'on'
+    const state: FastStartAccountState = { phase: 1, deposit: 4999.99 }
+    const { decision } = decideFastStartSizing(
+      state,
+      baseInputs({ equity: 4999.99, normalEbbLadder: 3, ebbMaxLossPerLot: 100 }),
+    )
+    expect(decision.reason).not.toContain('deposit_cap')
+    expect(decision.ebbContracts).toBeGreaterThan(3) // 2x-style sizing, not plain ladder
+  })
+
+  it('capped account in phase 2 (already advanced before v3 shipped): still exact BASE, ignores phase entirely', () => {
+    process.env.FLAME_FAST_START = 'on'
+    const state: FastStartAccountState = { phase: 2, deposit: 6000 }
+    const { decision } = decideFastStartSizing(
+      state,
+      baseInputs({ equity: 6000, normalEbbLadder: 4, peakProfit: 50000, ebbMaxLossPerLot: 170 }),
+    )
+    expect(decision.ebbContracts).toBe(4) // plain ladder, not the G-floor's extra-layer math
+    expect(decision.floor).toBeNull()
+  })
+
+  it('capped, equity below deposit: BASE flint rule also correctly returns 0 (cushion negative)', () => {
+    process.env.FLAME_FAST_START = 'on'
+    const state: FastStartAccountState = { phase: 1, deposit: 5000 }
+    const { decision } = decideFastStartSizing(
+      state,
+      baseInputs({ equity: 4800, normalEbbLadder: 3, flintMaxLossPerContract: 190 }),
+    )
+    expect(decision.flintContracts).toBe(0)
+  })
+})
+
+describe('v3 Phase-2-only $50/leg margin — never in Phase 1, never in the trigger', () => {
+  const phase2State: FastStartAccountState = { phase: 2, deposit: 2000 }
+
+  it('Phase 1 sizing is UNAFFECTED by the margin (raw max loss)', () => {
+    process.env.FLAME_FAST_START = 'on'
+    const state: FastStartAccountState = { phase: 1, deposit: 4242 }
+    // Identical to the un-margined Phase-1 test above: ebb=4 (X budget=848.4, ebb_ml=170, no +50).
+    const { decision } = decideFastStartSizing(state, baseInputs({ normalEbbLadder: 2, ebbMaxLossPerLot: 170 }))
+    expect(decision.ebbContracts).toBe(4)
+  })
+
+  it('the trigger is UNAFFECTED by the margin (raw max loss)', () => {
+    process.env.FLAME_FAST_START = 'on'
+    // Same trigger math as the un-margined test above: ladder=1, ebb_ml=170, flint_ml=190
+    // (both candidates) -> combined=360, trigger=2880 — no +50 anywhere in this call.
+    const r = evaluateFastStartTrigger(2880, 1, true, 170, true, 190)
+    expect(r.triggered).toBe(true)
+    expect(r.triggerLevel).toBe(2880)
+  })
+
+  it('Phase 2 minimum layer requires cushion to cover maxloss+$50, not just maxloss', () => {
+    process.env.FLAME_FAST_START = 'on'
+    // cushion=2170: covers raw ebb_ml(170*1=170)? way more. But the point is the
+    // THRESHOLD itself is now 220 (170+50), still comfortably covered here —
+    // use a TIGHT cushion instead to show the margin actually binds.
+    const { decision } = decideFastStartSizing(
+      phase2State,
+      baseInputs({ equity: 2000 + 200, normalEbbLadder: 1, ebbMaxLossPerLot: 170, peakProfit: 0 }),
+    )
+    // cushion=200 >= raw 170 (would pass un-margined) but < 170+50=220 -> 0.
+    expect(decision.ebbContracts).toBe(0)
+  })
+
+  it('Phase 2 minimum layer fires once cushion clears maxloss+$50', () => {
+    process.env.FLAME_FAST_START = 'on'
+    const { decision } = decideFastStartSizing(
+      phase2State,
+      baseInputs({ equity: 2000 + 221, normalEbbLadder: 1, ebbMaxLossPerLot: 170, peakProfit: 0 }),
+    )
+    expect(decision.ebbContracts).toBeGreaterThanOrEqual(1)
   })
 })
