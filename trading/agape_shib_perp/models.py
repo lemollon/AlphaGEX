@@ -60,7 +60,7 @@ class AgapeShibPerpConfig:
 
     # Risk management
     starting_capital: float = 1000.0    # $1K starting capital (meme coin allocation)
-    risk_per_trade_pct: float = 1.0     # 5% risk per trade
+    risk_per_trade_pct: float = 2.0     # 5% risk per trade
     max_quantity: float = 100000000.0   # Max SHIB per trade (100M)
     # One position at a time: the weekly-breakout backtest never stacks.
     max_open_positions: int = 1
