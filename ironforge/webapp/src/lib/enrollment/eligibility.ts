@@ -13,6 +13,7 @@
  *
  * Pure: no I/O. The caller fetches from the broker; this only judges.
  */
+import { checkBotTradedAccount } from '@/lib/customer-executor/bot-account-guard'
 
 /** Level 3 is the usual floor for SPREADS, which is what Spark and Flame trade. */
 export const MIN_OPTIONS_LEVEL = 3
@@ -45,6 +46,7 @@ export type IneligibleCode =
   | 'ACCOUNT_STATUS'
   | 'BUYING_POWER'
   | 'BROKER_LIMITATION'
+  | 'BOT_TRADED_ACCOUNT'
   | 'UNKNOWN'
 
 export interface BrokerAccountFacts {
@@ -63,6 +65,18 @@ export interface BrokerAccountFacts {
    * integrations (Tradier OAuth), which report a real options level.
    */
   brokerSlug?: string | null
+  /**
+   * Masked display value for this account, used only as a fallback for the
+   * bot-account guard below when externalRef could not be resolved to a real
+   * account number (connect-time flows normally have the full number).
+   */
+  displayMask?: string | null
+  /**
+   * Full Tradier account numbers the bots trade directly (6YB71371 double-trade
+   * guard — see customer-executor/bot-account-registry.ts). Passed in by the
+   * caller so this module stays pure/no-I/O. Omit or pass [] to skip the check.
+   */
+  knownBotAccountNumbers?: string[]
 }
 
 export interface EligibilityVerdict {
@@ -85,6 +99,27 @@ function isTradeableType(raw: string): boolean {
 
 export function evaluateAccountEligibility(a: Partial<BrokerAccountFacts>): EligibilityVerdict {
   const slug = a.brokerSlug ? String(a.brokerSlug).toUpperCase() : null
+
+  // Bot-account guard beats everything else, including the broker-level block below:
+  // an account the bots already trade directly must never be connectable for
+  // mirroring, no matter what else is true about it (6YB71371 double-trade guard).
+  if (a.knownBotAccountNumbers && a.knownBotAccountNumbers.length > 0) {
+    const guard = checkBotTradedAccount({
+      decryptedAccountRef: a.externalRef ?? null,
+      displayMask: a.displayMask ?? null,
+      brokerSlug: slug,
+      knownBotAccountNumbers: a.knownBotAccountNumbers,
+    })
+    if (guard.blocked) {
+      return {
+        eligible: false,
+        code: 'BOT_TRADED_ACCOUNT',
+        reason: guard.reason === 'unverifiable'
+          ? 'We could not verify this account. Please try reconnecting your brokerage.'
+          : 'This account is already traded directly by an IronForge bot and cannot be linked here.',
+      }
+    }
+  }
 
   // A broker-level block beats everything else — no amount of customer action fixes it.
   // SnapTrade data-only brokers (Robinhood) are exactly this: readable, never tradable.
