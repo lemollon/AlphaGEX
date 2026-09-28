@@ -87,3 +87,39 @@ def test_register_arms_minute_capture_and_initializes_tables(monkeypatch):
     assert kwargs["next_run_time"] is not None
 
     func()
+
+
+
+def test_capture_all_parallel_persists_failed_snapshots(monkeypatch):
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(market_structure, "fetch_vol_indices",
+                        lambda current: {"available": True, "indices": {}})
+    monkeypatch.setattr(market_structure, "persist_vol", lambda vol, current: None)
+
+    def fake_snapshot(symbol, current):
+        return {
+            "symbol": symbol,
+            "available": symbol == "SPY",
+            "confidence": "HIGH" if symbol == "SPY" else "LOW",
+            "reason": None if symbol == "SPY" else "ORATS_API_TOKEN missing",
+            "captured_at": current.isoformat(),
+            "net_gex_b": 1.0 if symbol == "SPY" else None,
+        }
+
+    persisted = []
+    monkeypatch.setattr(market_structure, "build_gamma_snapshot", fake_snapshot)
+    monkeypatch.setattr(market_structure, "persist_snapshot",
+                        lambda snapshot: persisted.append(snapshot))
+
+    # Force market-hours regardless of the actual test clock.
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz):
+            return datetime(2026, 9, 28, 15, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(market_structure, "datetime", FixedDateTime)
+    out = market_structure.capture_all()
+    assert out["captured"] is True
+    assert set(out["gamma"]) == set(market_structure.SYMBOLS)
+    assert len(persisted) == len(market_structure.SYMBOLS)
+    assert any(item["reason"] == "ORATS_API_TOKEN missing" for item in persisted)
