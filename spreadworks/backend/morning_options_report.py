@@ -232,6 +232,34 @@ async def _collect_market_evidence(app: Any, symbols: list[str], now: datetime) 
 
 def _trim_tv_context(tv: dict[str, Any], symbols: list[str]) -> dict[str, Any]:
     wanted = set(symbols)
+
+    # A fresh worker heartbeat proves the discovery service is alive; it does
+    # NOT make an older vendor gamma snapshot current. Never expose stale
+    # flip/wall/expected-move values to the research model.
+    raw_context = tv.get("symbol_context")
+    symbol_context = None
+    if isinstance(raw_context, dict):
+        try:
+            context_age = float(raw_context.get("age_seconds"))
+        except (TypeError, ValueError):
+            context_age = None
+        context_fresh = (
+            bool(raw_context.get("fresh"))
+            and context_age is not None
+            and context_age <= 90.0
+        )
+        if context_fresh:
+            symbol_context = raw_context
+        else:
+            symbol_context = {
+                "symbol": raw_context.get("symbol"),
+                "fresh": False,
+                "covered": False,
+                "age_seconds": context_age,
+                "vendor_timestamp": raw_context.get("vendor_timestamp"),
+                "reason": "stale_positioning_context_excluded",
+            }
+
     return {
         "available": bool(tv.get("available")),
         "source": tv.get("source"),
@@ -240,14 +268,13 @@ def _trim_tv_context(tv: dict[str, Any], symbols: list[str]) -> dict[str, Any]:
         "worker_heartbeat_at": tv.get("worker_heartbeat_at"),
         "worker_heartbeat_age_seconds": tv.get("worker_heartbeat_age_seconds"),
         "universe_count": tv.get("universe_count"),
-        "symbol_context": tv.get("symbol_context"),
+        "symbol_context": symbol_context,
         "top_setups": [
             item for item in (tv.get("top_setups") or [])
             if isinstance(item, dict) and item.get("ticker") in wanted
         ],
         "reason": tv.get("reason") or tv.get("last_error"),
     }
-
 
 def _extract_json(text: str) -> dict[str, Any]:
     cleaned = text.strip()
