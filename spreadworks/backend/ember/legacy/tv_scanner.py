@@ -55,6 +55,40 @@ B. PER-NAME TTL CACHE (so a tick stays inside 30 min even with ~150 unique names
    its own pre-theta-pricing check -- see the dispatch-loop comment above BUCKETS for the exact
    contract and the one edge-case difference from strict sequential truncation).
 
+   DAILY CACHE + INTRADAY SHORTLIST (2026-09-28, on top of the concurrency work above):
+   concurrency and the shared rate limiters remove WASTED time on top of TradingVolatility's
+   real 5-expensive-calls/min cap, but that cap is still a hard floor of roughly (unique names
+   needing a fresh curve) x 12s -- for the full ~150-name universe, ~30 minutes, regardless of
+   concurrency. Two runs solve this without ever exceeding the real rate limit:
+   - `--daily-curves`: a separate scheduled run, once a trading day ~07:55 CT (before the 08:30
+     open), its own ~35-min timeout in fleet_runtime.py (run_tv_book_daily_curves -- NOT the
+     25-min intraday timeout), no broker/agent-runtime lock. Builds the SAME candidate list as
+     a normal scan, fetches ONLY the per-name GEX curve for every candidate (no /tickers, no
+     series/RSI, no ThetaData pricing -- nothing else needed to warm the cache), and writes
+     DAILY_MARKER (`{TODAY}_daily_curves_complete.json`) with an ok/failed manifest. Uses the
+     SAME EMBER_LOCK as --live (extended below) so the two can never run TV calls concurrently
+     from two OS processes at once -- important because the shared rate limiters are per
+     PROCESS, not per account; two simultaneous processes could jointly exceed TV's real limit
+     even though each respects it alone. Exits right after the candidate-list build, before
+     the run ever reaches theta_probe() -- this mode prices nothing.
+   - `--live` intraday ticks (every 30 min, unchanged schedule): reuse today's daily-warmed
+     curve for MOST names (ttl_s=None -- any age counts as fresh once cached today, since the
+     cache filename is already date-stamped so a stale prior-day file is structurally
+     impossible to misread) and only pay the expensive curve endpoint again for a SHORTLIST of
+     names actually near a setup (shortlist.py owns the selection rule -- ledger-derived
+     >=1:1 RR names today, or opportunity_score order on the first tick of the day -- capped
+     at SHORTLIST_MAX=15 so a shortlist-only tick's curve refetches stay inside 2-4 minutes).
+     FAIL-CLOSED: if DAILY_MARKER is missing (the daily pass hasn't run or didn't complete),
+     non-shortlist names get NO curve fetch at all this tick -- cache_only=True with no file
+     returns None immediately, never a live network fallback for the full universe (that would
+     reintroduce the original 30-minute problem) and never a silent reuse of a prior day's
+     data (impossible by construction). One line logs the daily-cache state and shortlist size
+     every tick; walls degrade gracefully to the existing max_gamma_strike/em-band fallback for
+     any name with curve=None, exactly as an ordinary transient curve-fetch failure already
+     does today. --cached replays and a plain foreground run are UNCHANGED by any of this --
+     the shortlist/daily-cache branch only activates under real --live (see the curve fetch
+     inside process_candidate and the block right above it, right after the theta_probe check).
+
 For each candidate: pull /tickers/{t} (implied move by horizon: 1d/1w/30d, gamma flip,
 max-gamma strike, positioning, IV rank, speculative-flow score) and
 /tickers/{t}/curves/gex_by_strike (put wall / call wall = largest negative / positive GEX
@@ -192,19 +226,25 @@ F. BOUNCE STRATEGY (strategy="bounce"; RR above is unchanged and always strategy
    BOUNCE new-setup detection can't collide on the same ticker/day.
    TODO: peer-oversold confirmation (e.g. RCL for CCL) -- TV has no peer list; not built.
 
-Usage: python tools/ember.py [--cached] [--live] [--cap N]
+Usage: python tools/ember.py [--cached] [--live] [--daily-curves] [--cap N]
        --cached = reuse last lists and any cached per-ticker payloads from today (cache key
        TODAY_name.json for everything, including per-name TTL entries); a list with nothing
        cached yet is treated as empty (one line printed), never a failure. --live = intended
        for the every-30-min scheduled run during market hours: list-endpoint cache keys become
        TODAY_HHMM_name.json (HHMM = this run's start time, computed once at startup) so every
        --live tick fetches fresh lists, while per-name /tickers + curve + series calls stay on
-       the daily key with the 60-minute TTL described in section B above. Without --live, cache
+       the daily key with the 60-minute TTL described in section B above -- EXCEPT the GEX
+       curve, which under --live follows the DAILY CACHE + INTRADAY SHORTLIST rule in section B
+       instead (shortlist names fresh every tick, everyone else reuses today's daily-warmed
+       cache or gets no curve at all if the daily pass hasn't completed). Without --live, cache
        behaviour is unchanged (TODAY_name.json); --cached always reads the daily key regardless
        of --live. --cached never writes tools/ember_ledger.jsonl or tools/ember_runs.log (a
        --cached replay would otherwise duplicate the live tick's rows) -- it prints
        "--cached: ledger/runs log not written" in their place. Notify is still skipped entirely
-       under --cached (unchanged).
+       under --cached (unchanged). --daily-curves = the once-a-day cache warm-up run (section B)
+       -- prices nothing, trades nothing, exits after writing the curve cache + DAILY_MARKER;
+       mutually exclusive in practice with --live/--cached (a --daily-curves invocation ignores
+       them).
 
 NEW SINCE LAST SCAN: before appending to the ledger, the existing ledger is loaded and
 keyed on (ticker, scan_date, dir, strategy) for today's scan_date; the >=2:1 LIQUID setups
@@ -229,7 +269,7 @@ import atexit, json, os, sys, csv, io, time, math, threading, datetime as dt, ur
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import pandas as pd
-from . import ember_lock, rate_limiter
+from . import ember_lock, rate_limiter, shortlist as shortlist_mod
 
 CODE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.getenv("EMBER_TVSCAN_DATA_DIR", str(CODE_DIR))).expanduser().resolve()
@@ -264,19 +304,21 @@ NOTIFY_TOKEN = os.getenv("KVB_NOTIFY_TOKEN") or next(
 )
 TODAY = str(dt.date.today())
 LIVE = "--live" in sys.argv
+DAILY_CURVES = "--daily-curves" in sys.argv    # 2026-09-28: scheduled ~07:55 CT cache warm-up, see section B
 SCAN_START = dt.datetime.now()          # computed once at startup (local time)
 RUN_HHMM = SCAN_START.strftime("%H%M")
 SCAN_TIME_ISO = SCAN_START.isoformat()
 RUNS_LOG = ROOT / "ember_runs.log"
 
 # Fix 3: overlap guard. run-hidden.vbs does not wait for the previous scheduled run to exit, so
-# Task Scheduler's single-instance policy is not real without this. Only under --live (the
-# scheduled every-30-min tick) -- a manual --cached/foreground run never takes the lock. This
-# script has no __main__ guard (it is flat top-level code, always has been), so atexit stands in
-# for a try/finally wrapping the whole program -- it fires on a normal exit, sys.exit(), and an
-# uncaught exception alike, which is the same guarantee a finally around main() would give.
+# Task Scheduler's single-instance policy is not real without this. Under --live (the scheduled
+# every-30-min tick) or --daily-curves (the scheduled once-a-day cache warm-up, 2026-09-28) -- a
+# manual --cached/foreground run never takes the lock. This script has no __main__ guard (it is
+# flat top-level code, always has been), so atexit stands in for a try/finally wrapping the
+# whole program -- it fires on a normal exit, sys.exit(), and an uncaught exception alike, which
+# is the same guarantee a finally around main() would give.
 EMBER_LOCK = TOOLS / "ember.lock"
-if LIVE and "--cached" not in sys.argv:
+if (LIVE or DAILY_CURVES) and "--cached" not in sys.argv:
     if not ember_lock.acquire_lock(EMBER_LOCK):
         sys.exit(0)
     atexit.register(ember_lock.release_lock, EMBER_LOCK)
@@ -285,6 +327,8 @@ PRESETS = ["bottoming_reversal", "capitulation_reversal", "highvol_breakdown", "
            "range_premium_seller", "topping_reversal", "trend_pullback"]
 TRUNCATE_S = 22 * 60     # wall-clock guard: stop evaluating new names past 22 min into the run
 TICKER_TTL_S = 3600      # per-name /tickers + curve + series cache TTL under --live
+SHORTLIST_MAX = 15       # 2026-09-28: intraday curve-refresh shortlist cap, see section B/shortlist.py
+DAILY_MARKER = CACHE_DIR / f"{TODAY}_daily_curves_complete.json"   # written by --daily-curves on success
 
 def cache_key(cache_name, force_daily=False):
     """TODAY_name for --cached/non-live runs and for force_daily callers (per-name /tickers +
@@ -293,14 +337,19 @@ def cache_key(cache_name, force_daily=False):
     if force_daily or "--cached" in sys.argv or not LIVE: return f"{TODAY}_{cache_name}"
     return f"{TODAY}_{RUN_HHMM}_{cache_name}"
 
-def tv_get(path, cache_name, expensive=False, ttl_s=None, force_daily=False):
+def tv_get(path, cache_name, expensive=False, ttl_s=None, force_daily=False, cache_only=False):
+    """cache_only=True (2026-09-28): return the cached payload if today's file exists (any
+    age -- same as ttl_s=None), else None immediately, WITHOUT ever touching the network or
+    the rate limiters below -- the fail-closed half of the intraday curve-refresh shortlist
+    (section B): a non-shortlist name whose curve isn't already cached today never silently
+    triggers a live fetch outside the shortlist budget."""
     p = CACHE_DIR / f"{cache_key(cache_name, force_daily)}.json"
     if p.exists():
         fresh = True
         if ttl_s is not None and LIVE and "--cached" not in sys.argv:
             fresh = (time.time() - p.stat().st_mtime) < ttl_s
         if fresh: return json.loads(p.read_text())
-    if "--cached" in sys.argv: return None
+    if cache_only or "--cached" in sys.argv: return None
     for attempt in range(6):
         try:
             # 2026-09-28: gate on the shared limiters right before the request goes out
@@ -833,6 +882,37 @@ for t, group in by_ticker.items():
                             source="|".join(sources), n_sources=len(sources), dir_conflict=dir_conflict, best_item=best))
 candidates.sort(key=lambda r: -r["score"])   # opportunity_score desc so truncation drops the weakest
 
+# ---- DAILY FULL PASS (--daily-curves, 2026-09-28) ----
+# Scheduled once a trading day, ~07:55 CT, ahead of the 08:30 open (fleet_runtime.py:
+# run_tv_book_daily_curves, its own ~35-min subprocess timeout, no broker/agent-runtime lock --
+# see that function's docstring). Pre-warms the per-name GEX curve cache for the FULL universe
+# so intraday --live ticks (below) don't each have to pay the 5-calls/min expensive curve
+# endpoint for every one of ~150 names, only for a shortlist near a setup (shortlist.py).
+# Candidate-list build above is identical to a normal scan (same sources, same universe, same
+# dedup) -- only what happens next differs: no /tickers, no series/RSI, no ThetaData pricing,
+# nothing bounce- or RR-related, just the curve fetch and a completion marker, then exit. Never
+# needs theta_probe() -- this mode prices nothing. ttl_s=None (not 0): a same-day retry of this
+# job (e.g. after an earlier partial failure) reuses whatever it already cached today instead
+# of re-paying for every name again.
+if DAILY_CURVES:
+    print(f"DAILY CURVES: start {SCAN_TIME_ISO} | {len(candidates)} candidates")
+    ok, failed = [], []
+    for cand in candidates:
+        t = cand["ticker"]
+        curve = tv_get(f"/tickers/{t}/curves/gex_by_strike?exp=combined", f"gex_{t}",
+                        expensive=True, ttl_s=None, force_daily=True)
+        (ok if curve else failed).append(t)
+    DAILY_MARKER.write_text(json.dumps(dict(
+        date=TODAY, completed_at=dt.datetime.now().isoformat(),
+        candidates=len(candidates), ok=len(ok), failed=failed,
+    )))
+    elapsed = (dt.datetime.now() - SCAN_START).total_seconds()
+    print(f"DAILY CURVES: done {dt.datetime.now().isoformat()} | ok={len(ok)} failed={len(failed)} "
+          f"elapsed={elapsed:.0f}s")
+    if failed:
+        print(f"DAILY CURVES: failed tickers: {', '.join(failed)}")
+    sys.exit(0)
+
 # ---- run ----
 sess = dt.date.today()
 cloud_quotes = os.getenv("EMBER_OPTION_QUOTE_SOURCE", "").strip().lower() == "tradier" or \
@@ -848,6 +928,40 @@ if not theta_probe():
         with open(RUNS_LOG, "a") as f:
             f.write(f"{SCAN_TIME_ISO} live={LIVE} theta_down=True setups=NA\n")
     sys.exit(3)
+
+# ---- intraday curve-refresh shortlist (2026-09-28) ----
+# Only meaningful for a real --live tick -- the scheduled path this feature targets. A manual
+# --cached replay or a plain foreground run keeps the old uniform per-name TTL cache
+# unconditionally (see the curve fetch inside process_candidate below); this block and
+# daily_cache_ok are computed either way (cheap) but only USED under LIVE. shortlist.py owns
+# the selection rule itself (its own module docstring has the full spec); this is just the
+# glue that reads today's ledger and calls it. DAILY_MARKER existing = the --daily-curves job
+# (fleet_runtime.py: run_tv_book_daily_curves, ~07:55 CT) completed today -- fail-closed on a
+# missing/incomplete daily pass: non-shortlist names get NO curve fetch at all this tick (not
+# a live network fallback), so a broken daily pass degrades gracefully (fewer walls, same as
+# any transient curve-fetch failure the code already tolerates) instead of either silently
+# reusing a prior day's file (structurally impossible -- the cache filename is date-stamped)
+# or blowing the tick's time budget re-fetching the full universe live.
+SHORTLIST = set()
+daily_cache_ok = False
+if LIVE and not DAILY_CURVES:
+    ledger_rows = []
+    if LEDGER.exists():
+        with open(LEDGER) as f:
+            for line in f:
+                try: ledger_rows.append(json.loads(line))
+                except Exception: pass
+    SHORTLIST = shortlist_mod.build_shortlist(
+        ledger_rows, str(sess), [c["ticker"] for c in candidates], SHORTLIST_MAX)
+    daily_cache_ok = DAILY_MARKER.exists()
+    if daily_cache_ok:
+        age_min = (time.time() - DAILY_MARKER.stat().st_mtime) / 60.0
+        print(f"TV CURVES: daily cache OK (age {age_min:.0f}m) | shortlist={len(SHORTLIST)} refreshed fresh, "
+              f"{max(len(candidates) - len(SHORTLIST), 0)} reuse today's cache")
+    else:
+        print(f"TV CURVES: DAILY CACHE MISSING for {TODAY} -- daily pass did not complete; "
+              f"falling back to shortlist-only this tick (shortlist={len(SHORTLIST)} get a curve, "
+              f"{max(len(candidates) - len(SHORTLIST), 0)} skip curve/wall context)")
 
 setups, marginal, hidden, nodata, illiquid = [], [], [], [], []
 bounce_rows, bounce_hidden, bounce_illiquid = [], [], []
@@ -892,7 +1006,22 @@ def process_candidate(cand):
     flip = (d.get("gamma", {}).get("flip") or {}).get("price")
     em = d["expected_move"]; m1d, m1w = price * em["expected_move_pct_1d"] / 100, price * em["expected_move_pct_1w"] / 100
     maxg = (d.get("gamma", {}).get("structure") or {}).get("max_gamma_strike")
-    curve = tv_get(f"/tickers/{t}/curves/gex_by_strike?exp=combined", f"gex_{t}", expensive=True, ttl_s=TICKER_TTL_S, force_daily=True)
+    if LIVE and not DAILY_CURVES:
+        # Shortlist name: fresh curve every tick (ttl_s=0 -- any cached age counts as stale).
+        # Non-shortlist name: reuse today's daily-warmed cache regardless of age (ttl_s=None)
+        # if the daily pass completed; otherwise no fetch at all (cache_only=True with no file
+        # -> None, never a live fallback) -- see the shortlist block above theta_probe().
+        if t in SHORTLIST:
+            curve = tv_get(f"/tickers/{t}/curves/gex_by_strike?exp=combined", f"gex_{t}",
+                            expensive=True, ttl_s=0, force_daily=True)
+        elif daily_cache_ok:
+            curve = tv_get(f"/tickers/{t}/curves/gex_by_strike?exp=combined", f"gex_{t}",
+                            expensive=True, ttl_s=None, force_daily=True, cache_only=True)
+        else:
+            curve = None
+    else:
+        # --cached replay or a plain foreground run: unchanged, existing per-name 60-min TTL.
+        curve = tv_get(f"/tickers/{t}/curves/gex_by_strike?exp=combined", f"gex_{t}", expensive=True, ttl_s=TICKER_TTL_S, force_daily=True)
     pw, cw = walls_from_curve(curve, price)
     if pw is None and maxg and maxg < price: pw = maxg
     if cw is None and maxg and maxg > price: cw = maxg
@@ -1101,6 +1230,9 @@ def show(rows, title, cols, key=None):
 if truncated_n: print(f"TRUNCATED: {truncated_n} names not evaluated")
 print(f"TV candidates as of {asof} | {len(candidates)} unique tickers (idea={len(idea_items)} preset={len(preset_items)} income={len(income_items)}) | "
       f"setups >=2:1: {len(setups)} (illiquid: {len(illiquid)}) | marginal: {len(marginal)} | <1:1 hidden: {len(hidden)} | no data: {len(nodata)}")
+if LIVE and not DAILY_CURVES:
+    print(f"TV CURVES: tick wall-clock {(dt.datetime.now() - SCAN_START).total_seconds():.0f}s | "
+          f"shortlist={len(SHORTLIST)} daily_cache={'ok' if daily_cache_ok else 'MISSING'}")
 
 # Fix 1: scan-level zero-volume line (TV intraday put_call volume reads 0 for every name some days)
 vol_floor_off = vol_reported_n > 0 and (vol_zero_n / vol_reported_n) >= 0.9
