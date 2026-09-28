@@ -145,7 +145,6 @@ LOCK_FILE = HERE / "run_spike.lock"          # ember_lock.py reused unmodified, 
 # read_only=True) / read_parquet(). SPIKE never writes a byte to either.
 SQUEEZE_DB = Path(os.getenv("EMBER_SPIKE_DB", str(HERE / "squeeze.duckdb")))
 POP_PARQUET = Path(os.getenv("EMBER_SPIKE_POP_PARQUET", str(HERE / "bars_pop.parquet")))
-POLYGON_BASE = os.getenv("POLYGON_BASE_URL", "https://api.polygon.io").rstrip("/")
 
 ACCOUNT = "570892331"          # same Robinhood "Agentic" account every other bot in this
                                 # folder/repo shares -- never point this bot at any other account.
@@ -162,14 +161,16 @@ HISTORY_MAX_STALE_TRADING_DAYS = 3   # a local table's newest row must be within
 # 15:01Z/10:01 CT on 2026-09-25) because the ONE batched ThetaData snapshot
 # call for the whole curated universe is atomic -- any single failure
 # (a wedged proxy-side session, a transient timeout, or one bad/delisted
-# symbol the ThetaData client chokes on) blanked EVERY symbol at once, and
-# Polygon's fallback is structurally unable to rescue it (this plan's
-# snapshot/current-minute endpoint returns HTTP 403 -- prior-day aggs only,
-# confirmed 2026-09-28). THETA_SNAPSHOT_MAX_RETRIES retries the batched call
-# itself (transient wedge/timeout); THETA_PER_SYMBOL_CIRCUIT_BREAKER bounds
-# the per-symbol fallback below it (see _theta_snapshot_rows()) so a real
-# full-outage still fails fast/closed instead of serially burning the
-# per-symbol timeout budget across the whole ~38-name universe.
+# symbol the ThetaData client chokes on) blanked EVERY symbol at once.
+# Polygon was the coded fallback at the time but was structurally unable to
+# rescue it (that plan's snapshot/current-minute endpoint returns HTTP 403 --
+# prior-day aggs only) and was dropped entirely the same day (operator
+# decision: ThetaData is SPIKE's ONLY live market-data source now -- see
+# _load_cloud_enter_market_data()). THETA_SNAPSHOT_MAX_RETRIES retries the
+# batched call itself (transient wedge/timeout); THETA_PER_SYMBOL_CIRCUIT_
+# BREAKER bounds the per-symbol fallback below it (see _theta_snapshot_
+# rows()) so a real full-outage still fails fast/closed instead of serially
+# burning the per-symbol timeout budget across the whole ~38-name universe.
 THETA_SNAPSHOT_MAX_RETRIES = 1
 THETA_SNAPSHOT_BACKOFF_SECONDS = 2.0
 THETA_PER_SYMBOL_TIMEOUT_SECONDS = 15
@@ -186,10 +187,10 @@ def is_trading_day(d: date) -> bool:
 
 # 08:30 CT -- see module docstring / DEPLOY-SPIKE.md's stated RTH window.
 # The ENTER cron (fleet_runtime.py) fires as early as 08:00 CT; before the
-# open there is no fresh ThetaData/Polygon snapshot for today by
-# construction, so market_is_open() below lets ENTER log a plain pre-open
-# IDLE line instead of asking the data loader for a snapshot that cannot
-# exist yet and having that read as a data-outage BLOCKED cycle (2026-09-28).
+# open there is no fresh ThetaData snapshot for today by construction, so
+# market_is_open() below lets ENTER log a plain pre-open IDLE line instead
+# of asking the data loader for a snapshot that cannot exist yet and having
+# that read as a data-outage BLOCKED cycle (2026-09-28).
 MARKET_OPEN_CT = time(8, 30)
 
 
@@ -1080,9 +1081,7 @@ def load_enter_market_data(today: date, db_path: Path = SQUEEZE_DB, pop_path: Pa
     get_equity_historicals instead of skipping it.
     """
     source = os.getenv("SPIKE_DATA_SOURCE", "").strip().lower()
-    if os.getenv("RENDER", "").strip().lower() == "true" or source in {"theta", "polygon"}:
-        if source == "polygon":
-            return _load_polygon_enter_market_data(today=today)
+    if os.getenv("RENDER", "").strip().lower() == "true" or source == "theta":
         return _load_cloud_enter_market_data(today)
 
     import duckdb
@@ -1324,154 +1323,40 @@ def _load_theta_enter_market_data(today: date, symbols: list[str] | None = None
 
 def _load_cloud_enter_market_data(today: date
                                   ) -> tuple[list[dict], dict[str, tuple[list[dict], str]]]:
-    """ThetaData first, Polygon only for missing names or provider failure.
-
-    NOTE (2026-09-28): this account's Polygon plan returns HTTP 403 on the
-    live snapshot/current-minute endpoint (prior-day aggs only) -- confirmed
-    against the 2026-09-25 in-market block. Polygon can therefore NEVER
-    actually rescue a live ThetaData gap on this plan; it is kept as the
-    coded fallback (so it starts working for free the day the plan changes)
-    but must never be treated as a real second data source in the interim,
-    and its own failure is never logged with the raw exception text (which
-    can carry the API key in the request URL) -- only the exception type and
-    symbol counts, same redaction posture as the RuntimeError below (which
-    fleet_runtime._redact()'s does strip any api_key= substring from, but a
-    bare print() here does not)."""
+    """ThetaData is SPIKE's ONLY live market-data source (2026-09-28: Polygon
+    dropped entirely per operator decision -- see spike-data-fix-result-9-28.md.
+    This account's Polygon plan 403s on the live snapshot/current-minute
+    endpoint, so it could never actually rescue a ThetaData gap; keeping it
+    around only added a guaranteed-failing extra hop and a second place to
+    (mis)handle a secret in an error message. ThetaData already gets its own
+    resilience -- retry+backoff, per-symbol fallback, circuit breaker, see
+    _theta_snapshot_rows() -- so if it's STILL empty after all of that, this
+    fails closed with a clear diagnostic line rather than ever fabricating a
+    price/volume row."""
     symbols = _configured_spike_symbols()
-    theta_universe: list[dict] = []
-    theta_history: dict[str, tuple[list[dict], str]] = {}
+    universe: list[dict] = []
+    history: dict[str, tuple[list[dict], str]] = {}
     theta_error_type: str | None = None
     if _theta_base_url():
         try:
-            theta_universe, theta_history = _load_theta_enter_market_data(today, symbols)
-        except Exception as exc:  # noqa: BLE001 - audited failover, never a trade signal
+            universe, history = _load_theta_enter_market_data(today, symbols)
+        except Exception as exc:  # noqa: BLE001 - fails closed below, never a trade signal
             theta_error_type = type(exc).__name__
-            print(f"SPIKE market data fallback theta->polygon error_type={theta_error_type} "
+            print(f"SPIKE market data theta failed error_type={theta_error_type} "
                   f"n_symbols={len(symbols)}")
 
-    covered = {row["symbol"] for row in theta_universe}
-    missing = [symbol for symbol in symbols if symbol not in covered]
-    polygon_universe: list[dict] = []
-    polygon_history: dict[str, tuple[list[dict], str]] = {}
-    polygon_error_type: str | None = None
-    if missing:
-        try:
-            polygon_universe, polygon_history = _load_polygon_enter_market_data(
-                symbols=missing, today=today,
-            )
-        except Exception as exc:  # noqa: BLE001 - Theta rows can still be usable
-            polygon_error_type = type(exc).__name__
-            print(f"SPIKE market data fallback polygon unavailable error_type={polygon_error_type} "
-                  f"n_missing={len(missing)} note=polygon_plan_403_no_live_data_confirmed_2026-09-28")
-            if not theta_universe:
-                raise RuntimeError(
-                    "no fresh ThetaData or Polygon SPIKE market data "
-                    f"(symbols={len(symbols)} theta_fresh=0 theta_error={theta_error_type} "
-                    f"polygon_error={polygon_error_type})"
-                ) from exc
+    if not universe:
+        raise RuntimeError(
+            "no fresh ThetaData SPIKE market data "
+            f"(symbols={len(symbols)} theta_configured={bool(_theta_base_url())} "
+            f"theta_error={theta_error_type})"
+        )
 
-    universe = theta_universe + polygon_universe
-    universe.sort(key=lambda row: float(row["price"]) * float(row["vol"]), reverse=True)
-    history = {**polygon_history, **theta_history}
     for symbol in symbols:
         history.setdefault(symbol, ([], "broker"))
     print(f"SPIKE market data cycle summary symbols={len(symbols)} "
-          f"theta_fresh={len(theta_universe)} polygon_fresh={len(polygon_universe)} "
-          f"still_missing={len(symbols) - len(universe)} theta_error={theta_error_type} "
-          f"polygon_error={polygon_error_type}")
+          f"theta_fresh={len(universe)} still_missing={len(symbols) - len(universe)}")
     return universe, history
-
-
-def _load_polygon_enter_market_data(symbols: list[str] | None = None, today: date | None = None
-                                    ) -> tuple[list[dict], dict[str, tuple[list[dict], str]]]:
-    """Cloud-native SPIKE tape.
-
-    Polygon supplies current price and cumulative day volume for the same
-    curated universe the workstation used.  yfinance supplies completed daily
-    bars for the 20-session median tests.  Both the price trigger and the
-    volume-first trigger therefore retain their original Python gates without
-    a workstation database.
-    """
-    import requests
-
-    api_key = os.getenv("POLYGON_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("POLYGON_API_KEY is not configured")
-    symbols = symbols or _configured_spike_symbols()
-    response = requests.get(
-        f"{POLYGON_BASE}/v2/snapshot/locale/us/markets/stocks/tickers",
-        params={"apiKey": api_key, "tickers": ",".join(symbols)}, timeout=60,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    tickers = payload.get("tickers") or []
-    if not isinstance(tickers, list):
-        raise RuntimeError("Polygon snapshot tickers is not a list")
-    universe: list[dict] = []
-    for item in tickers:
-        if not isinstance(item, dict):
-            continue
-        symbol = item.get("ticker")
-        if str(symbol).upper() not in symbols:
-            continue
-        day = item.get("day") or {}
-        previous = item.get("prevDay") or {}
-        trade = item.get("lastTrade") or {}
-        minute = item.get("min") or {}
-        price = trade.get("p") or minute.get("c") or day.get("c")
-        prior_close = previous.get("c")
-        volume = day.get("v")
-        try:
-            price_f, prior_f, volume_f = float(price), float(prior_close), float(volume)
-        except (TypeError, ValueError):
-            continue
-        if prior_f <= 0:
-            continue
-        universe.append({
-            "symbol": str(symbol), "price": price_f, "vol": volume_f,
-            "prior_close": prior_f, "provider": "polygon",
-        })
-    universe.sort(key=lambda row: float(row["price"]) * float(row["vol"]), reverse=True)
-    history = _load_cloud_history(symbols, today or date.today())
-    return universe, history
-
-
-def _load_cloud_history(symbols: list[str], today: date) -> dict[str, tuple[list[dict], str]]:
-    """Fetch completed daily bars once per day; fail individual names to broker fallback."""
-    import yfinance as yf
-
-    cache = HERE / f"cloud_history_{today.isoformat()}.json"
-    if cache.exists():
-        try:
-            payload = json.loads(cache.read_text(encoding="utf-8"))
-            if isinstance(payload, dict) and set(symbols).issubset(payload):
-                return {symbol: (payload.get(symbol) or [], "cloud")
-                        if sessions_available_and_fresh(payload.get(symbol) or [], today)
-                        else ([], "broker") for symbol in symbols}
-        except (OSError, json.JSONDecodeError):
-            pass
-    result: dict[str, tuple[list[dict], str]] = {}
-    cache_payload: dict[str, list[dict]] = {}
-    for symbol in symbols:
-        rows: list[dict] = []
-        try:
-            frame = yf.Ticker(symbol).history(period="3mo", interval="1d", auto_adjust=False)
-            for stamp, row in frame.iterrows():
-                bar_date = stamp.date()
-                if bar_date >= today:
-                    continue
-                close = row.get("Close")
-                volume = row.get("Volume")
-                if close is None or volume is None:
-                    continue
-                rows.append({"symbol": symbol, "date": bar_date.isoformat(),
-                             "close": float(close), "volume": float(volume)})
-        except Exception:  # noqa: BLE001
-            rows = []
-        cache_payload[symbol] = rows
-        result[symbol] = (rows, "cloud") if sessions_available_and_fresh(rows, today) else ([], "broker")
-    save_json(cache, cache_payload)
-    return result
 
 
 # ---------------------------------------------------------------- signal + prompt + agent (same shape as EMBER)
@@ -1692,8 +1577,8 @@ def run_enter(now: datetime, cfg: Cfg, *, dry_run_cli: bool = False) -> int:
     needing_tp = positions_needing_tp_order(positions)
 
     # Pre-open stand-down: the cron fires as early as 08:00 CT, 30 minutes
-    # before the 08:30 CT open, and no fresh intraday ThetaData/Polygon
-    # snapshot exists for today until the open. Skip NEW entries only --
+    # before the 08:30 CT open, and no fresh intraday ThetaData snapshot
+    # exists for today until the open. Skip NEW entries only --
     # pending-fill reconciliation and TP-order maintenance above still run
     # every tick regardless, same shape as the FOMC stand-down below.
     if not market_is_open(now):

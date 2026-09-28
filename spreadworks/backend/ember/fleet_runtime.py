@@ -136,7 +136,12 @@ SPECS: dict[str, StrategySpec] = {
         "spike", "SPIKE", spike.STATE_FILE, spike.LOG_TXT,
         {"positions": [], "seen": {}, "shadow": [], "tape_prev": {}},
         _spike_runner, spike.load_cfg,
-        required_any=(("THETADATA_BASE_URL", "POLYGON_API_KEY"), ("SPIKE_UNIVERSE",)),
+        # ThetaData is SPIKE's ONLY live market-data source (2026-09-28 --
+        # Polygon's fallback dropped entirely, see spike-data-fix-result-9-28.md:
+        # this account's plan 403s on live snapshot/current-minute data, so it
+        # could never actually cover a ThetaData gap). POLYGON_API_KEY is no
+        # longer a substitute here -- do not add it back to this tuple.
+        required_any=(("THETADATA_BASE_URL",), ("SPIKE_UNIVERSE",)),
     ),
 }
 
