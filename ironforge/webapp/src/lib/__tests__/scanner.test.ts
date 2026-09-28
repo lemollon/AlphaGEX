@@ -45,6 +45,18 @@ vi.mock('../tradier', () => ({
   SandboxCloseInfo: {},
 }))
 
+// Mock the customer-executor module — real customer mirroring is heavy (real
+// DB queries against customer_positions/broker_accounts) and out of scope for
+// scanner-level tests; mocked here so tests can assert WHETHER/WHEN scanner.ts
+// reaches it, matching the fire-and-forget `void mirrorCloseToCustomers(...)`
+// call sites in closeFlintAtRiskBeforeBell/settleFlintExpired.
+vi.mock('../customer-executor/executor', () => ({
+  mirrorOpenToCustomers: vi.fn().mockResolvedValue(undefined),
+  mirrorFlintOpenToCustomers: vi.fn().mockResolvedValue(undefined),
+  mirrorCloseToCustomers: vi.fn().mockResolvedValue(undefined),
+  retryFailedCustomerCloses: vi.fn().mockResolvedValue(undefined),
+}))
+
 import { _testing } from '../scanner'
 import { query } from '../db'
 
@@ -69,6 +81,7 @@ const {
   FLINT_CONTEXT_TABLE,
   closeFlintAtRiskBeforeBell,
   settleFlintExpired,
+  assignmentGuardWindow,
 } = _testing
 
 /* ------------------------------------------------------------------ */
@@ -1455,5 +1468,91 @@ describe('FLINT guard/settle — idempotent under overlapping scan cycles', () =
     const result = await settleFlintExpired(CT_AFTER_CLOSE)
 
     expect(result).toContain('FLINT-SETTLE-SOLO=settled')
+  })
+})
+
+/**
+ * The assignment guard's window used to be hardcoded 14:57-15:00 CT
+ * (ASSIGNMENT_GUARD_HHMM/END_HHMM), which assumes a normal 3:00 PM CT close
+ * every day. On a half day (day-after-Thanksgiving, Christmas Eve — NYSE
+ * closes 12:00 PM CT, per market-calendar.ts's EARLY_CLOSES), the real close
+ * is three hours earlier: the old hardcoded window fired at 14:57-15:00,
+ * long after a same-day 0DTE contract already had no market, and never fired
+ * at the ACTUAL at-risk window (11:57-12:00). assignmentGuardWindow(ct) now
+ * derives both boundaries from marketCloseMinuteCT(ct) instead.
+ */
+describe('assignmentGuardWindow — derives from the real close, not a hardcoded 15:00', () => {
+  it('normal trading day: window is 14:57-15:00 CT, same as before', () => {
+    const normalDay = new Date(2026, 8, 21, 12, 0, 0) // Monday 2026-09-21, no holiday/early-close
+    expect(assignmentGuardWindow(normalDay)).toEqual({ startHHMM: 1457, endHHMM: 1500 })
+  })
+
+  it('half day (day after Thanksgiving 2026-11-27): window is 11:57-12:00 CT, not 14:57-15:00', () => {
+    const halfDay = new Date(2026, 10, 27, 12, 0, 0) // Friday 2026-11-27 — EARLY_CLOSES
+    expect(assignmentGuardWindow(halfDay)).toEqual({ startHHMM: 1157, endHHMM: 1200 })
+  })
+
+  it('half day (Christmas Eve 2026-12-24): window is 11:57-12:00 CT', () => {
+    const halfDay = new Date(2026, 11, 24, 12, 0, 0) // Thursday 2026-12-24 — EARLY_CLOSES
+    expect(assignmentGuardWindow(halfDay)).toEqual({ startHHMM: 1157, endHHMM: 1200 })
+  })
+})
+
+/**
+ * End-to-end proof that the early-close window actually gates the real
+ * function, not just the pure helper — AND (2026-09-29 correction, per
+ * review) that it still gates correctly now that #3094 added its own
+ * dbExecute-rowCount idempotency claim in front of the broker call. The
+ * "fires" case must mock dbExecute to resolve a nonzero rowCount, or the
+ * claim step would swallow the row before the time-window assertion below
+ * ever gets exercised.
+ */
+describe('FLINT guard is early-close aware end to end (2026-11-27 half day)', () => {
+  const queryMock = vi.mocked(query)
+  // Same at-risk row on both timestamps below — only the clock differs.
+  const AT_RISK_ROW = [
+    { position_id: 'FLINT-HALFDAY', expiration: '2026-11-27', call_short_strike: 585.50, call_long_strike: 587.50,
+      contracts: 1, entry_credit: 0.30, account_type: 'sandbox', mode: 'live', person: 'User' },
+  ]
+
+  beforeEach(async () => {
+    queryMock.mockReset()
+    queryMock.mockResolvedValue([])
+    const db = await import('../db')
+    ;(db.dbExecute as any).mockReset()
+    ;(db.dbExecute as any).mockResolvedValue(1) // this cycle claims the row unless a test overrides it
+    const tradier = await import('../tradier')
+    ;(tradier.placeCallSpreadOrderAllAccounts as any).mockReset()
+    ;(tradier.placeCallSpreadOrderAllAccounts as any).mockResolvedValue({})
+    const customerExecutor = await import('../customer-executor/executor')
+    ;(customerExecutor.mirrorCloseToCustomers as any).mockReset()
+    ;(customerExecutor.mirrorCloseToCustomers as any).mockResolvedValue(undefined)
+    process.env.FLINT_MODE = 'live'
+  })
+  afterEach(() => {
+    delete process.env.FLINT_MODE
+  })
+
+  it('fires in the REAL 11:57-12:00 CT window on the half day, AND reaches customer mirroring', async () => {
+    queryMock.mockResolvedValueOnce(AT_RISK_ROW)
+    const customerExecutor = await import('../customer-executor/executor')
+    const result = await closeFlintAtRiskBeforeBell(new Date(2026, 10, 27, 11, 58, 0))
+    expect(result).toContain('FLINT-HALFDAY=guarded')
+    // The early-close fix must not just close on the broker — the customer
+    // mirror close (void mirrorCloseToCustomers(...) inside this same guard)
+    // is on the SAME gated code path, so it must fire too, at the REAL window,
+    // not the old 14:57-15:00 slot.
+    expect(customerExecutor.mirrorCloseToCustomers).toHaveBeenCalledWith(
+      'flame', 'FLINT-HALFDAY', 'assignment_guard',
+    )
+  })
+
+  it('does NOT fire at the OLD hardcoded 14:58 CT slot — market has been closed 3 hours, and customer mirroring is NOT reached either', async () => {
+    queryMock.mockResolvedValueOnce(AT_RISK_ROW)
+    const customerExecutor = await import('../customer-executor/executor')
+    const result = await closeFlintAtRiskBeforeBell(new Date(2026, 10, 27, 14, 58, 0))
+    expect(result).toBe('')
+    expect(queryMock).not.toHaveBeenCalled() // bails before even reading flint_positions
+    expect(customerExecutor.mirrorCloseToCustomers).not.toHaveBeenCalled()
   })
 })

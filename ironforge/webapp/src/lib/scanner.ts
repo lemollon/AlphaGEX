@@ -3927,8 +3927,11 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
     // Eight other sites in this file already use this exact defensive idiom;
     // this was the one that did not.
     const exp = p.expiration?.toISOString?.()?.slice(0, 10) || String(p.expiration).slice(0, 10)
-    // Same-day: wait for the actual close. Past expiry: settle immediately.
-    if (exp === todayStr && ctHHMM(ct) < 1500) continue
+    // Same-day: wait for the actual close (marketCloseMinuteCT — 1500 normally,
+    // 1200 on a half day; NOT a hardcoded 1500, or a same-day position on an
+    // early-close day would sit open for 3 extra hours past the real close
+    // waiting for a boundary that already passed). Past expiry: settle immediately.
+    if (exp === todayStr && ctHHMM(ct) < marketCloseMinuteCT(ct)) continue
 
     const ticker = String(p.ticker)
     let settlePx = 0
@@ -4095,10 +4098,35 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
  * contract is a rounding error of time value; the cost of missing the window is
  * an assignment. Those are not symmetric, so the window is not symmetric either.
  */
-const ASSIGNMENT_GUARD_HHMM = 1457        // 2:57 PM CT = 3:57 PM ET
-const ASSIGNMENT_GUARD_END_HHMM = 1500    // hand off to settleExpiredPositions
+const ASSIGNMENT_GUARD_HHMM = 1457        // 2:57 PM CT = 3:57 PM ET — NORMAL DAY ONLY, see assignmentGuardWindow()
+const ASSIGNMENT_GUARD_END_HHMM = 1500    // hand off to settleExpiredPositions — NORMAL DAY ONLY, see assignmentGuardWindow()
 const ASSIGNMENT_GUARD_REASON = 'assignment_guard'
 const ASSIGNMENT_GUARD_DEFAULT_BUFFER = 0.50
+
+/**
+ * The guard's end boundary is the REAL market close for the day
+ * (marketCloseMinuteCT: 1500 normally, 1200 on a half day per market-calendar.ts)
+ * — not the hardcoded 1500/ASSIGNMENT_GUARD_END_HHMM above. Before this fix, a
+ * half day (day-after-Thanksgiving, Christmas Eve) still ran the guard window
+ * and the settle handoff at the hardcoded 14:57-15:00 CT slot, three hours
+ * AFTER the market actually closed at 12:00 CT: a same-day contract has no
+ * market by then, so the guard's own "no quote -> holds unguarded" fail-safe
+ * fired for the wrong reason, and settleExpiredPositions withheld settling a
+ * same-day position until the fictitious 15:00 boundary instead of the real
+ * noon close.
+ *
+ * Start is always exactly 3 minutes before that close (see the docblock two
+ * screens up for why 3, not 1), computed in real minutes-since-midnight — NOT
+ * by subtracting from the HHMM integer directly (1500 - 3 = 1497 is not a
+ * valid HHMM; 14:57 is, because HHMM is base-60-in-the-last-two-digits, not a
+ * continuous integer).
+ */
+function assignmentGuardWindow(ct: Date): { startHHMM: number; endHHMM: number } {
+  const endHHMM = marketCloseMinuteCT(ct)
+  const totalMin = Math.floor(endHHMM / 100) * 60 + (endHHMM % 100) - 3
+  const startHHMM = Math.floor(totalMin / 60) * 100 + (totalMin % 60)
+  return { startHHMM, endHHMM }
+}
 
 function assignmentGuardBuffer(): number {
   const raw = Number(process.env.IRONFORGE_ASSIGNMENT_GUARD_BUFFER)
@@ -4120,7 +4148,8 @@ async function logGuard(bot: BotDef, level: string, message: string, details: ob
 async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
   if (!isSettleAtExpiryBot(bot.name)) return ''
   const hhmm = ctHHMM(ct)
-  if (hhmm < ASSIGNMENT_GUARD_HHMM || hhmm >= ASSIGNMENT_GUARD_END_HHMM) return ''
+  const { startHHMM, endHHMM } = assignmentGuardWindow(ct)
+  if (hhmm < startHHMM || hhmm >= endHHMM) return ''
 
   const todayStr = ct.toISOString().slice(0, 10)
   const rows = await query(
@@ -4813,7 +4842,8 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
 async function closeFlintAtRiskBeforeBell(ct: Date): Promise<string> {
   if (getFlintMode() === 'off') return ''
   const hhmm = ctHHMM(ct)
-  if (hhmm < ASSIGNMENT_GUARD_HHMM || hhmm >= ASSIGNMENT_GUARD_END_HHMM) return ''
+  const { startHHMM, endHHMM } = assignmentGuardWindow(ct)
+  if (hhmm < startHHMM || hhmm >= endHHMM) return ''
 
   const buffer = getFlintGuardBuffer()
   if (!(buffer > 0)) return ''
@@ -4934,7 +4964,7 @@ async function closeFlintAtRiskBeforeBell(ct: Date): Promise<string> {
 async function settleFlintExpired(ct: Date): Promise<string> {
   if (getFlintMode() === 'off') return ''
   const hhmm = ctHHMM(ct)
-  if (hhmm < ASSIGNMENT_GUARD_END_HHMM) return '' // same 15:00 CT boundary as the put side
+  if (hhmm < assignmentGuardWindow(ct).endHHMM) return '' // same close-of-day boundary as the put side, early-close aware
 
   const todayStr = ct.toISOString().slice(0, 10)
   const rows = await query(
@@ -10610,6 +10640,7 @@ export const _testing = {
   FLINT_CONTEXT_TABLE,
   closeFlintAtRiskBeforeBell,
   settleFlintExpired,
+  assignmentGuardWindow,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },
   get _scanStartedAt() { return _scanStartedAt },
