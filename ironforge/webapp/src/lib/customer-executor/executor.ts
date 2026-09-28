@@ -28,10 +28,16 @@ import { loadSnapTradeCreds } from '@/lib/brokerage/snaptrade-user'
 import { decryptSecret } from '@/lib/crypto/secret-box'
 import { getProductionPauseState } from '@/lib/tradier'
 import { normalizeInstitutionSlug } from '@/lib/enrollment/eligibility'
+import { flintMaxLoss } from '@/lib/flint'
 import {
   canOpenForCustomer,
   condorCloseLegs,
   condorOpenLegs,
+  currentFloorLevelCents,
+  evaluateCalmUpsize,
+  evaluateDepositFloorCap,
+  evaluateFastStartUpsize,
+  evaluateFlintCushion,
   sizeContracts,
   spreadCloseLegs,
   spreadOpenLegs,
@@ -39,6 +45,11 @@ import {
 } from './contracts'
 import { checkBotTradedAccount, type BotAccountGuardVerdict } from './bot-account-guard'
 import { getKnownBotTradedTradierAccountNumbers } from './bot-account-registry'
+
+/** 0.70 — the frozen "calm" VIX-decay-ratio threshold shared by B1 and the house-money calm-upsize. */
+const CALM_VIX_CEILING = 0.70
+/** $4,000 in cents — the frozen minimum deposit for the house-money calm-upsize (Round 4). */
+const CALM_UPSIZE_MIN_DEPOSIT_CENTS = 400_000
 
 export interface MasterOpen {
   botName: string
@@ -51,6 +62,26 @@ export interface MasterOpen {
   callLong: number
   spreadWidth: number
   credit: number
+  /**
+   * Explicit leg-shape override. Optional and back-compat: every pre-existing call site
+   * omits it, so the inference below (`callShort > 0` → condor, else put spread) stays
+   * byte-for-byte unchanged for FLAME/SPARK's main leg. FLINT's mirror sets this to
+   * 'call_spread' explicitly — inferring it from strikes alone would be ambiguous/wrong,
+   * since a call spread also has callShort > 0 but putShort/putLong are 0 (not a condor).
+   */
+  legKind?: 'condor' | 'put_spread' | 'call_spread'
+  /**
+   * Today's VIX-decay ratio (same signal FLINT's day-eligibility reads), for
+   * CUSTOMER_FAST_START (B1) and CUSTOMER_CALM_UPSIZE. Optional/null-safe: every
+   * pre-existing call site can omit it (both features simply never fire, same as
+   * their flags being off) — see resolveLegKind's doc for the same back-compat pattern.
+   */
+  vixRatio?: number | null
+}
+
+export function resolveLegKind(m: Pick<MasterOpen, 'legKind' | 'callShort'>): 'condor' | 'put_spread' | 'call_spread' {
+  if (m.legKind) return m.legKind
+  return m.callShort > 0 ? 'condor' : 'put_spread'
 }
 
 interface EligibleRow {
@@ -71,9 +102,135 @@ interface EligibleRow {
 
 const CUSTOMER_AGENTS = new Set(['spark', 'flame'])
 const MAX_CLOSE_ATTEMPTS = 3
+/** $50/contract, matching customer_protection_sim.py's MARGIN constant — see contracts.ts evaluateFlintCushion. */
+const FLINT_CUSHION_MARGIN_CENTS = 5000
 
 export function isExecutorArmed(): boolean {
   return process.env.CUSTOMER_EXECUTOR_ENABLED === 'true'
+}
+
+/**
+ * FLINT customer mirroring master switch. Default OFF (unset/anything but the exact
+ * string 'on' reads as off — fails closed, same convention as FLINT_MODE in flint.ts).
+ * This gates ONLY the FLINT sleeve; it is layered on TOP of isExecutorArmed() below,
+ * never a replacement for it — both must be true for a FLINT customer order to place.
+ */
+export function isCustomerFlintEnabled(): boolean {
+  return String(process.env.CUSTOMER_FLINT ?? '').trim().toLowerCase() === 'on'
+}
+
+/**
+ * CUSTOMER_DEPOSIT_FLOOR master switch. Default OFF, fails closed on any value other
+ * than the exact string 'on' — same convention as isCustomerFlintEnabled(). Independent
+ * of both isExecutorArmed() and isCustomerFlintEnabled(); it caps the MAIN leg's sizing
+ * (mirrorOneOpen) and, when on, additionally tightens FLINT's own cushion check.
+ */
+export function isCustomerDepositFloorEnabled(): boolean {
+  return String(process.env.CUSTOMER_DEPOSIT_FLOOR ?? '').trim().toLowerCase() === 'on'
+}
+
+/**
+ * CUSTOMER_FAST_START (B1) master switch. Default OFF, fails closed on any value
+ * other than 'on'. Requires CUSTOMER_DEPOSIT_FLOOR to ALSO be on — B1 is defined in
+ * terms of "before the floor triggers," which is meaningless without the floor's own
+ * triggered-state tracking running (see mirrorOneOpen).
+ */
+export function isCustomerFastStartEnabled(): boolean {
+  return String(process.env.CUSTOMER_FAST_START ?? '').trim().toLowerCase() === 'on'
+}
+
+/**
+ * CUSTOMER_CALM_UPSIZE master switch. Default OFF, fails closed on any value other
+ * than 'on'. This is the house-money, POST-trigger calm add-on (Round 4); it does NOT
+ * require CUSTOMER_DEPOSIT_FLOOR to be on for its OWN gate math (protect_level is
+ * always `deposit`), but in mirrorOneOpen it only ever gets a chance to fire when the
+ * floor is on and triggered — see the doc there.
+ */
+export function isCustomerCalmUpsizeEnabled(): boolean {
+  return String(process.env.CUSTOMER_CALM_UPSIZE ?? '').trim().toLowerCase() === 'on'
+}
+
+const DEPOSIT_FLOOR_N = 3 // frozen since ROUND 3 — see contracts.ts evaluateDepositFloorCap
+/** ROUND 8 shipped winner (customer_protection_finalK.py / customer_package_fixtures_K.json): K=0.1, variant G. Replaces ROUND 3-7's K=0/variant S. */
+const DEPOSIT_FLOOR_K = 0.1
+/** $50/contract, matching customer_protection_sim.py's MARGIN constant — shared with FLINT's own margin. */
+const DEPOSIT_FLOOR_MARGIN_CENTS = 5000
+
+interface DepositFloorStateRow {
+  deposit_cents: string | number
+  triggered: boolean
+  peak_equity_cents: string | number | null
+}
+
+/**
+ * Reads/creates the sticky per-(customer, bot) floor state, applies evaluateDepositFloorCap,
+ * and persists any trigger transition + the peak-equity ratchet + a fresh equity snapshot.
+ * FAILS OPEN on any read/write problem (see contracts.ts's doc comment on
+ * evaluateDepositFloorCap for why): the caller gets `dataOk: false` and MUST use
+ * `desiredContracts` unmodified, logging that the floor could not be evaluated rather
+ * than silently skipping the trade.
+ */
+async function applyDepositFloor(args: {
+  userId: string
+  agent: string
+  depositCents: number | null // the SAME "deposit" proxy FLINT uses (broker_accounts.buying_power_cents at connect)
+  equityCents: number | null
+  pct: number
+  maxLossCentsPerContract: number
+  desiredContracts: number
+}): Promise<ReturnType<typeof evaluateDepositFloorCap>> {
+  const fallback = {
+    contracts: Math.max(0, args.desiredContracts), triggeredNow: false, capped: false, dataOk: false,
+    triggeredForSizing: false, floorLevelCents: args.depositCents ?? 0, nextPeakEquityCents: args.depositCents ?? 0,
+  }
+  if (args.depositCents == null) {
+    console.warn(`[customer-executor] deposit floor: no deposit baseline for user ${args.userId}/${args.agent} — using today's normal sizing (logged, per spec)`)
+    return fallback
+  }
+  try {
+    let state = (await customerQuery<DepositFloorStateRow>(
+      `SELECT deposit_cents, triggered, peak_equity_cents FROM customer_deposit_floor_state WHERE user_id = $1 AND agent_code = $2`,
+      [args.userId, args.agent],
+    ))[0]
+    if (!state) {
+      await customerExecute(
+        `INSERT INTO customer_deposit_floor_state (user_id, agent_code, deposit_cents, triggered, peak_equity_cents)
+         VALUES ($1, $2, $3, FALSE, $3)
+         ON CONFLICT (user_id, agent_code) DO NOTHING`,
+        [args.userId, args.agent, Math.round(args.depositCents)],
+      )
+      state = { deposit_cents: Math.round(args.depositCents), triggered: false, peak_equity_cents: Math.round(args.depositCents) }
+    }
+    const depositCents = Math.floor(Number(state.deposit_cents))
+    const peakEquityCents = state.peak_equity_cents != null ? Math.floor(Number(state.peak_equity_cents)) : null
+    const result = evaluateDepositFloorCap({
+      equityCents: args.equityCents,
+      depositCents,
+      peakEquityCents,
+      maxLossCentsPerContract: args.maxLossCentsPerContract,
+      marginCents: DEPOSIT_FLOOR_MARGIN_CENTS,
+      pct: args.pct,
+      desiredContracts: args.desiredContracts,
+      triggered: state.triggered,
+      triggerN: DEPOSIT_FLOOR_N,
+      floorK: DEPOSIT_FLOOR_K,
+    })
+    if (!result.dataOk) {
+      console.warn(`[customer-executor] deposit floor: bad inputs for user ${args.userId}/${args.agent} — using today's normal sizing (logged, per spec)`)
+      return result
+    }
+    await customerExecute(
+      `UPDATE customer_deposit_floor_state
+          SET triggered = triggered OR $3, trigger_date = COALESCE(trigger_date, CASE WHEN $3 THEN CURRENT_DATE END),
+              peak_equity_cents = $5, last_equity_cents = $4, last_equity_at = now(), updated_at = now()
+        WHERE user_id = $1 AND agent_code = $2`,
+      [args.userId, args.agent, result.triggeredNow, args.equityCents, result.nextPeakEquityCents],
+    )
+    return result
+  } catch (e) {
+    console.error(`[customer-executor] deposit floor evaluation failed for user ${args.userId}/${args.agent} (fails OPEN, today's normal sizing used):`, e instanceof Error ? e.message : e)
+    return fallback
+  }
 }
 
 /** Ops push for fills and (urgently) failures. Best-effort; the DB row is the record. */
@@ -151,7 +308,10 @@ function describeBotAccountBlock(v: BotAccountGuardVerdict): string {
 /**
  * 6YB71371 double-trade guard: is this customer's broker account one the bots
  * already trade directly (SPARK/FLAME production, or another env-listed account)?
- * Checked before EVERY open and close mirror — see bot-account-guard.ts.
+ * Checked before EVERY open and close mirror — see bot-account-guard.ts. This
+ * includes FLINT's own open (mirrorOneFlintOpen) and every FLINT close, not just
+ * the main leg — a bot-traded account must never receive ANY customer-mirrored
+ * order, regardless of which sleeve it came from.
  */
 function checkCustomerAgainstBotAccounts(row: {
   external_account_ref_ciphertext: string | null
@@ -166,17 +326,20 @@ function checkCustomerAgainstBotAccounts(row: {
   })
 }
 
-async function mirrorOneOpen(c: EligibleRow, m: MasterOpen, agent: string, killSwitchEngaged: boolean): Promise<void> {
+async function mirrorOneOpen(
+  c: EligibleRow, m: MasterOpen, agent: string, killSwitchEngaged: boolean, strategy: 'main' | 'flint' = 'main',
+): Promise<void> {
+  const legKind = resolveLegKind(m)
   // Claim FIRST: the (source_position_id, user_id) unique index is the restart-proof
   // double-place guard. rowCount 0 = another process/cycle already handled this pair.
   const claimed = await customerExecute(
     `INSERT INTO customer_positions
        (user_id, activation_id, config_id, agent_code, source_position_id, broker_account_id,
-        ticker, expiration, put_short, put_long, call_short, call_long, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'claimed')
+        ticker, expiration, put_short, put_long, call_short, call_long, status, leg_kind, strategy)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'claimed', $13, $14)
      ON CONFLICT (source_position_id, user_id) DO NOTHING`,
     [c.user_id, c.activation_id, c.config_id, agent, m.positionId, c.broker_account_id,
-     m.ticker, m.expiration, m.putShort, m.putLong, m.callShort, m.callLong],
+     m.ticker, m.expiration, m.putShort, m.putLong, m.callShort, m.callLong, legKind, strategy],
   )
   if (claimed === 0) return
 
@@ -250,9 +413,56 @@ async function mirrorOneOpen(c: EligibleRow, m: MasterOpen, agent: string, killS
   })
   if (sizing.contracts < 1) { await markSkipped(rowId, sizing.reason ?? 'below_one_contract'); return }
 
-  const legs = m.callShort > 0
-    ? condorOpenLegs({ ticker: m.ticker, expiration: m.expiration, putShort: m.putShort, putLong: m.putLong, callShort: m.callShort, callLong: m.callLong }, sizing.contracts)
-    : spreadOpenLegs({ ticker: m.ticker, expiration: m.expiration, short: m.putShort, long: m.putLong, right: 'P' }, sizing.contracts)
+  // CUSTOMER_DEPOSIT_FLOOR (2026-09-28): caps sizing.contracts DOWN, never up, once a
+  // customer's own cushion has crossed the trigger — see contracts.ts evaluateDepositFloorCap.
+  // Off (default) or any evaluation failure: contracts stays exactly sizing.contracts,
+  // byte-identical to today. `bpCents` doubles as "equity" here — the same live read
+  // sizing already used, no extra broker call.
+  let finalContracts = sizing.contracts
+  let depositFloorNote: Record<string, unknown> | null = null
+  if (isCustomerDepositFloorEnabled()) {
+    const depositCents = c.buying_power_cents != null ? Math.floor(Number(c.buying_power_cents)) : null
+    const floorResult = await applyDepositFloor({
+      userId: c.user_id, agent, depositCents,
+      equityCents: bpCents, pct, maxLossCentsPerContract: sizing.collateralPerSpreadCents, desiredContracts: sizing.contracts,
+    })
+    finalContracts = floorResult.contracts
+    depositFloorNote = {
+      data_ok: floorResult.dataOk, triggered_now: floorResult.triggeredNow, capped: floorResult.capped,
+      triggered_for_sizing: floorResult.triggeredForSizing, desired_contracts: sizing.contracts, final_contracts: finalContracts,
+    }
+    if (finalContracts < 1) {
+      await markSkipped(rowId, floorResult.dataOk ? 'deposit_floor_capped_to_zero' : 'below_one_contract')
+      return
+    }
+
+    // CUSTOMER_FAST_START (B1, pre-trigger) and CUSTOMER_CALM_UPSIZE (house-money,
+    // post-trigger) are mutually exclusive per day — customer_protection_final_package.py's
+    // if/else — decided by floorResult.triggeredForSizing. Only meaningful when
+    // dataOk (an unreadable floor evaluation has no well-defined pre/post regime).
+    if (floorResult.dataOk && !floorResult.triggeredForSizing && isCustomerFastStartEnabled()) {
+      const b1 = evaluateFastStartUpsize({
+        triggeredForSizing: floorResult.triggeredForSizing, baseContracts: finalContracts,
+        vixRatio: m.vixRatio ?? null, vixCeiling: CALM_VIX_CEILING,
+      })
+      if (b1.extraContract) finalContracts += 1
+      depositFloorNote.fast_start = { applied: b1.extraContract, reason: b1.reason }
+    } else if (floorResult.dataOk && floorResult.triggeredForSizing && isCustomerCalmUpsizeEnabled()) {
+      const calm = evaluateCalmUpsize({
+        equityCents: bpCents, depositCents, protectLevelCents: floorResult.floorLevelCents, baseContracts: finalContracts,
+        maxLossCentsPerContract: sizing.collateralPerSpreadCents, marginCents: FLINT_CUSHION_MARGIN_CENTS,
+        vixRatio: m.vixRatio ?? null, vixCeiling: CALM_VIX_CEILING, minDepositCentsForUpsize: CALM_UPSIZE_MIN_DEPOSIT_CENTS,
+      })
+      if (calm.extraContract) finalContracts += 1
+      depositFloorNote.calm_upsize = { applied: calm.extraContract, reason: calm.reason }
+    }
+  }
+
+  const legs = legKind === 'call_spread'
+    ? spreadOpenLegs({ ticker: m.ticker, expiration: m.expiration, short: m.callShort, long: m.callLong, right: 'C' }, finalContracts)
+    : legKind === 'condor'
+      ? condorOpenLegs({ ticker: m.ticker, expiration: m.expiration, putShort: m.putShort, putLong: m.putLong, callShort: m.callShort, callLong: m.callLong }, finalContracts)
+      : spreadOpenLegs({ ticker: m.ticker, expiration: m.expiration, short: m.putShort, long: m.putLong, right: 'P' }, finalContracts)
 
   // MARKET + Day mirrors the master's own production placement (multileg market orders).
   const placed = await snaptrade.trading.placeMlegOrder({
@@ -270,16 +480,16 @@ async function mirrorOneOpen(c: EligibleRow, m: MasterOpen, agent: string, killS
         SET status = 'open', contracts = $2, collateral_cents = $3, open_order_id = $4,
             opened_at = now(), updated_at = now(), detail_json = $5
       WHERE id = $1`,
-    [rowId, sizing.contracts, sizing.collateralPerSpreadCents * sizing.contracts, orderId,
-     JSON.stringify({ bp_cents: bpCents, bp_source: bpSource, max_deployment_pct: pct, master_credit: m.credit })],
+    [rowId, finalContracts, sizing.collateralPerSpreadCents * finalContracts, orderId,
+     JSON.stringify({ bp_cents: bpCents, bp_source: bpSource, max_deployment_pct: pct, master_credit: m.credit, deposit_floor: depositFloorNote })],
   )
   await customerExecute(
     `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'CUSTOMER_ORDER_PLACED', $2)`,
-    [c.user_id, JSON.stringify({ source_position_id: m.positionId, agent, contracts: sizing.contracts, order_id: orderId })],
+    [c.user_id, JSON.stringify({ source_position_id: m.positionId, agent, contracts: finalContracts, order_id: orderId })],
   ).catch(() => {})
   void notifyOps(
     `IronForge: ${agent.toUpperCase()} mirrored`,
-    `${sizing.contracts}x ${m.ticker} for customer ${c.user_id.slice(0, 8)} (order ${orderId ?? 'n/a'}, BP ${bpSource})`,
+    `${finalContracts}x ${m.ticker} for customer ${c.user_id.slice(0, 8)} (order ${orderId ?? 'n/a'}, BP ${bpSource})`,
   )
 }
 
@@ -319,6 +529,299 @@ export async function mirrorOpenToCustomers(m: MasterOpen): Promise<void> {
   }
 }
 
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ * FLINT customer mirroring (CUSTOMER_FLINT) — profits-only, 1 contract.
+ *
+ * Ships DISARMED behind isCustomerFlintEnabled() (CUSTOMER_FLINT === 'on'),
+ * layered on top of the base executor arm (isExecutorArmed()) — both must be
+ * true. Off = zero DB/broker calls from this block, byte-identical to today.
+ *
+ * Eligibility ports customer_protection_sim.py's P3 arm (see contracts.ts
+ * evaluateFlintCushion for the full citation): a customer's FLINT mirror
+ * fires ONLY when equity - protectLevel already covers FLINT's own max loss
+ * (+ a $50/contract margin, Leron's explicit instruction — the sim's exact
+ * P3 formula has no margin term; see the parity test for the margin-free
+ * comparison against sim fixtures). protectLevel is the customer's deposit —
+ * no profit-floor/ratchet exists for customers yet (that's the sim's
+ * unshipped P1/P2 arm), so protectLevel === depositCents unconditionally.
+ *
+ * "Deposit" and "equity" data-source note (there is no funded-account ledger
+ * for customers — they link an EXISTING brokerage account via SnapTrade):
+ *   - depositCents = broker_accounts.buying_power_cents, captured ONCE at
+ *     connect/sync time (before any bot activity) — see customers-db.ts's
+ *     comment on that column ("Captured at sync"). It is never re-written
+ *     after connect, so it is a stable baseline, exactly like the sim's
+ *     fixed `deposit`.
+ *   - equityCents = a FRESH live SnapTrade balance read at mirror time (the
+ *     same buying-power-or-cash call the main leg already uses for sizing
+ *     in mirrorOneOpen above) — never the stale connect-time snapshot.
+ * This is a documented approximation (buying power, not true net-liq — no
+ * net-liq field is tracked anywhere in this codebase today); flagged as a
+ * sim-vs-live difference, not silently assumed.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export interface FlintMasterOpen {
+  botName: string // 'flame' | 'spark'
+  positionId: string
+  ticker: string
+  expiration: string // YYYY-MM-DD
+  callShort: number
+  callLong: number
+  spreadWidth: number
+  credit: number
+  /** YYYY-MM-DD trading day this decision belongs to (one row per customer per day). */
+  tradeDate: string
+}
+
+interface FlintDecisionRow {
+  tradeDate: string
+  userId: string
+  agentCode: string
+  sourcePositionId: string
+  eligible: boolean
+  reason: string
+  equityCents: number | null
+  depositCents: number | null
+  cushionCents: number | null
+  maxLossCents: number
+  marginCents: number
+  contracts: number
+}
+
+/** Best-effort audit row. Never throws into the trading path — logging failures are silent. */
+async function logFlintDecision(r: FlintDecisionRow): Promise<void> {
+  try {
+    await customerExecute(
+      `INSERT INTO flint_customer_decisions
+         (trade_date, user_id, agent_code, source_position_id, eligible, reason,
+          equity_cents, deposit_cents, cushion_cents, flint_max_loss_cents, margin_cents, contracts)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       ON CONFLICT (trade_date, user_id, agent_code) DO UPDATE SET
+         source_position_id = EXCLUDED.source_position_id, eligible = EXCLUDED.eligible,
+         reason = EXCLUDED.reason, equity_cents = EXCLUDED.equity_cents, deposit_cents = EXCLUDED.deposit_cents,
+         cushion_cents = EXCLUDED.cushion_cents, flint_max_loss_cents = EXCLUDED.flint_max_loss_cents,
+         margin_cents = EXCLUDED.margin_cents, contracts = EXCLUDED.contracts, created_at = now()`,
+      [r.tradeDate, r.userId, r.agentCode, r.sourcePositionId, r.eligible, r.reason,
+       r.equityCents, r.depositCents, r.cushionCents, r.maxLossCents, r.marginCents, r.contracts],
+    )
+  } catch (e) {
+    console.error('[customer-executor] flint decision log failed (non-fatal):', e instanceof Error ? e.message : e)
+  }
+}
+
+async function mirrorOneFlintOpen(c: EligibleRow, m: FlintMasterOpen, agent: string, killSwitchEngaged: boolean): Promise<void> {
+  // 1 contract, worst-case max loss including commission — the SAME formula the house
+  // account's own rule R1 uses (lib/flint.ts flintMaxLoss), never re-derived independently.
+  const maxLossCents = Math.round(flintMaxLoss(m.callShort, m.callLong, m.credit, 1) * 100)
+
+  const logSkip = (reason: string, equityCents: number | null = null, depositCents: number | null = null, cushionCents: number | null = null) =>
+    logFlintDecision({
+      tradeDate: m.tradeDate, userId: c.user_id, agentCode: agent, sourcePositionId: m.positionId,
+      eligible: false, reason, equityCents, depositCents, cushionCents,
+      maxLossCents, marginCents: FLINT_CUSHION_MARGIN_CENTS, contracts: 0,
+    })
+
+  // Hard invariant, checked FIRST and independent of every other gate below — same
+  // rule, same order, as mirrorOneOpen: never mirror a FLINT open into an account the
+  // bots already trade directly (6YB71371 double-trade guard). FAILS CLOSED.
+  const botGuard = checkCustomerAgainstBotAccounts(c)
+  if (botGuard.blocked) {
+    const detail = describeBotAccountBlock(botGuard)
+    await logSkip(`bot_account_guard:${botGuard.reason}`)
+    console.error(`[customer-executor] FLINT OPEN BLOCKED for user ${c.user_id.slice(0, 8)}: ${detail}`)
+    void notifyOps(
+      'IronForge: customer FLINT OPEN blocked (bot account guard)',
+      `${agent.toUpperCase()} ${m.positionId} → user ${c.user_id.slice(0, 8)}: ${detail}`,
+      true,
+    )
+    return
+  }
+
+  const gate = canOpenForCustomer({
+    executorArmed: isExecutorArmed(),
+    killSwitchEngaged,
+    subscriptionStatus: c.subscription_status,
+    customerPaused: c.activation_status === 'paused',
+    activationActive: c.activation_status === 'active' || c.activation_status === 'paused',
+    connectionActive: c.connection_status === 'active',
+  })
+  if (!gate.allow) { await logSkip(gate.reason); return }
+  if (c.provider !== 'snaptrade') { await logSkip('unsupported_provider'); return }
+  if (!c.external_account_ref_ciphertext) { await logSkip('no_account_ref'); return }
+
+  const creds = await loadSnapTradeCreds(c.user_id)
+  if (!creds) { await logSkip('no_broker_credentials'); return }
+  const accountId = decryptSecret(c.external_account_ref_ciphertext)
+  const snaptrade = getSnapTrade()
+
+  // Deposit baseline — see the module doc comment above for why this column is the
+  // right proxy. Never guessed: a missing baseline skips, same fail-closed convention
+  // as everything else in this file.
+  const depositCents: number | null = c.buying_power_cents != null ? Math.floor(Number(c.buying_power_cents)) : null
+
+  // Live equity read (fresh, not the stored/stale connect-time snapshot).
+  let equityCents: number | null = null
+  try {
+    const bal = await snaptrade.accountInformation.getUserAccountBalance({
+      userId: creds.snaptradeUserId, userSecret: creds.userSecret, accountId,
+    })
+    const balRows = Array.isArray(bal.data) ? (bal.data as Array<{ buying_power?: number | null; cash?: number | null }>) : []
+    const live = balRows[0]?.buying_power ?? balRows[0]?.cash ?? null
+    if (live != null && Number.isFinite(Number(live))) equityCents = Math.floor(Number(live) * 100)
+  } catch { /* equityCents stays null -> evaluateFlintCushion fails closed below */ }
+
+  // protect_level: raw deposit while the profit floor is off or not yet triggered;
+  // the floor's own ratcheted level (currentFloorLevelCents) once triggered. Read from
+  // the SAME customer_deposit_floor_state row the host leg's own mirror (mirrorOneOpen/
+  // applyDepositFloor) already ratcheted earlier today — FLINT never re-runs the
+  // trigger/sizing logic itself, it only reads the resulting level.
+  let protectLevelCents = depositCents
+  if (isCustomerDepositFloorEnabled() && depositCents != null) {
+    try {
+      const floorRows = await customerQuery<DepositFloorStateRow>(
+        `SELECT deposit_cents, triggered, peak_equity_cents FROM customer_deposit_floor_state WHERE user_id = $1 AND agent_code = $2`,
+        [c.user_id, agent],
+      )
+      const fr = floorRows[0]
+      if (fr) {
+        const frDeposit = Math.floor(Number(fr.deposit_cents))
+        const frPeak = fr.peak_equity_cents != null ? Math.floor(Number(fr.peak_equity_cents)) : null
+        protectLevelCents = currentFloorLevelCents(frDeposit, frPeak, fr.triggered, DEPOSIT_FLOOR_K)
+      }
+    } catch (e) {
+      // Fails OPEN to protectLevelCents=depositCents (already set above) — consistent
+      // with the floor's own fail-open convention: an unreadable floor state must not
+      // block FLINT any tighter than "no floor" would.
+      console.warn(`[customer-executor] FLINT: floor-state read failed for user ${c.user_id}, using deposit as protect_level:`, e instanceof Error ? e.message : e)
+    }
+  }
+
+  // ROUND 8 correction (customer_protection_finalK.py): FLINT's gate must NET the host
+  // leg's OWN same-day committed risk (n_host * maxLossPerContract, no margin — the sim's
+  // literal formula) before checking FLINT's own max loss + margin. This is UNCONDITIONAL
+  // (independent of CUSTOMER_DEPOSIT_FLOOR) — two sleeves sharing ONE real account's
+  // buying power is a real-money fact regardless of whether the profit-floor feature is
+  // on. "FLINT is dropped first": the host leg's own sizing (already placed earlier
+  // today) is never touched to make room for FLINT.
+  let hostCommittedCents = 0
+  try {
+    const mainRows = await customerQuery<{ collateral_cents: string | number | null }>(
+      `SELECT collateral_cents FROM customer_positions
+        WHERE user_id = $1 AND agent_code = $2 AND strategy = 'main' AND status = 'open'
+          AND opened_at::date = $3::date
+        ORDER BY opened_at DESC LIMIT 1`,
+      [c.user_id, agent, m.tradeDate],
+    )
+    hostCommittedCents = mainRows[0]?.collateral_cents != null ? Math.floor(Number(mainRows[0].collateral_cents)) : 0
+  } catch (e) {
+    // Never guess the host leg's committed risk on a read failure — drop FLINT (it is
+    // always safe to skip; the host leg itself is untouched either way).
+    console.error(`[customer-executor] FLINT: host-leg committed-risk read failed for user ${c.user_id} — dropping FLINT:`, e instanceof Error ? e.message : e)
+    await logSkip('host_committed_unreadable', equityCents, depositCents, null)
+    return
+  }
+
+  const cushion = evaluateFlintCushion({
+    equityCents, protectLevelCents, hostCommittedCents, maxLossCents, marginCents: FLINT_CUSHION_MARGIN_CENTS,
+  })
+  if (!cushion.eligible) { await logSkip(cushion.reason ?? 'cushion_insufficient', equityCents, depositCents, cushion.cushionCents); return }
+
+  // Eligible — claim + place exactly 1 contract. Same restart-proof idempotency guard
+  // as the main leg (unique index on source_position_id, user_id).
+  const claimed = await customerExecute(
+    `INSERT INTO customer_positions
+       (user_id, activation_id, config_id, agent_code, source_position_id, broker_account_id,
+        ticker, expiration, put_short, put_long, call_short, call_long, status, leg_kind, strategy)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,0,$9,$10,'claimed','call_spread','flint')
+     ON CONFLICT (source_position_id, user_id) DO NOTHING`,
+    [c.user_id, c.activation_id, c.config_id, agent, m.positionId, c.broker_account_id,
+     m.ticker, m.expiration, m.callShort, m.callLong],
+  )
+  if (claimed === 0) return // another cycle already placed/claimed this exact (position, customer) pair
+
+  const rows = await customerQuery<{ id: string }>(
+    `SELECT id FROM customer_positions WHERE source_position_id = $1 AND user_id = $2 LIMIT 1`,
+    [m.positionId, c.user_id],
+  )
+  const rowId = rows[0]?.id
+  if (!rowId) return
+
+  const legs = spreadOpenLegs({ ticker: m.ticker, expiration: m.expiration, short: m.callShort, long: m.callLong, right: 'C' }, 1)
+  const placed = await snaptrade.trading.placeMlegOrder({
+    userId: creds.snaptradeUserId,
+    userSecret: creds.userSecret,
+    accountId,
+    order_type: 'MARKET',
+    time_in_force: 'Day',
+    legs: toSdkLegs(legs),
+  })
+  const orderId = (placed.data as { brokerage_order_id?: string })?.brokerage_order_id ?? null
+
+  await customerExecute(
+    `UPDATE customer_positions
+        SET status = 'open', contracts = 1, collateral_cents = $2, open_order_id = $3,
+            opened_at = now(), updated_at = now(), detail_json = $4
+      WHERE id = $1`,
+    [rowId, maxLossCents, orderId,
+     JSON.stringify({ equity_cents: equityCents, deposit_cents: depositCents, cushion_cents: cushion.cushionCents, master_credit: m.credit, margin_cents: FLINT_CUSHION_MARGIN_CENTS })],
+  )
+  await customerExecute(
+    `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'CUSTOMER_FLINT_ORDER_PLACED', $2)`,
+    [c.user_id, JSON.stringify({ source_position_id: m.positionId, agent, order_id: orderId })],
+  ).catch(() => {})
+  void notifyOps(
+    `IronForge: ${agent.toUpperCase()} FLINT mirrored`,
+    `1x ${m.ticker} call spread for customer ${c.user_id.slice(0, 8)} (order ${orderId ?? 'n/a'})`,
+  )
+
+  await logFlintDecision({
+    tradeDate: m.tradeDate, userId: c.user_id, agentCode: agent, sourcePositionId: m.positionId,
+    eligible: true, reason: 'placed', equityCents, depositCents, cushionCents: cushion.cushionCents,
+    maxLossCents, marginCents: FLINT_CUSHION_MARGIN_CENTS, contracts: 1,
+  })
+}
+
+/**
+ * Mirror a just-opened FLINT master position to every eligible customer. Fire-and-forget
+ * from tryOpenFlint (`void mirrorFlintOpenToCustomers(...)`); never throws.
+ */
+export async function mirrorFlintOpenToCustomers(m: FlintMasterOpen): Promise<void> {
+  try {
+    if (!isExecutorArmed() || !isCustomerFlintEnabled()) return
+    if (!isCustomersDbConfigured() || !isSnapTradeConfigured()) return
+    const agent = m.botName.toLowerCase()
+    if (!CUSTOMER_AGENTS.has(agent)) return
+
+    let killSwitchEngaged = true
+    try { killSwitchEngaged = (await getProductionPauseState(agent)).paused } catch { killSwitchEngaged = true }
+
+    const customers = await eligibleCustomers(agent)
+    for (const c of customers) {
+      try {
+        await mirrorOneFlintOpen(c, m, agent, killSwitchEngaged)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        console.error(`[customer-executor] FLINT open mirror failed for user ${c.user_id}: ${msg}`)
+        await customerExecute(
+          `UPDATE customer_positions SET status = 'error', error = $3, updated_at = now()
+            WHERE source_position_id = $1 AND user_id = $2 AND status = 'claimed'`,
+          [m.positionId, c.user_id, msg.slice(0, 500)],
+        ).catch(() => {})
+        await logFlintDecision({
+          tradeDate: m.tradeDate, userId: c.user_id, agentCode: agent, sourcePositionId: m.positionId,
+          eligible: false, reason: 'error', equityCents: null, depositCents: null, cushionCents: null,
+          maxLossCents: Math.round(flintMaxLoss(m.callShort, m.callLong, m.credit, 1) * 100),
+          marginCents: FLINT_CUSHION_MARGIN_CENTS, contracts: 0,
+        })
+        void notifyOps('IronForge: customer FLINT OPEN failed', `${agent.toUpperCase()} ${m.positionId} → user ${c.user_id.slice(0, 8)}: ${msg.slice(0, 180)}`, true)
+      }
+    }
+  } catch (e) {
+    console.error('[customer-executor] mirrorFlintOpenToCustomers sweep failed:', e instanceof Error ? e.message : e)
+  }
+}
+
 interface OpenCustomerPosition {
   id: string
   user_id: string
@@ -331,6 +834,17 @@ interface OpenCustomerPosition {
   call_long: string | number
   contracts: number
   close_attempts: number
+  /**
+   * 'condor' | 'put_spread' | 'call_spread' | null. Persisted at open time (see
+   * mirrorOneOpen/mirrorOneFlintOpen) precisely so CLOSE never has to re-infer the leg
+   * shape from strikes alone — inferring from `call_short > 0` is ambiguous for a call
+   * spread row (put_short/put_long are legitimately 0/0 there, same as a put-only row
+   * with callShort=0 legitimately has no calls; only the explicit tag disambiguates).
+   * NULL only for rows opened before this column existed — falls back to the OLD
+   * (put-spread/condor-only) inference, which is safe there because no call_spread row
+   * can predate this feature.
+   */
+  leg_kind: string | null
 }
 
 async function closeOne(p: OpenCustomerPosition, reason: string): Promise<void> {
@@ -394,9 +908,12 @@ async function closeOne(p: OpenCustomerPosition, reason: string): Promise<void> 
 
   const exp = typeof p.expiration === 'string' ? p.expiration.slice(0, 10) : String(p.expiration).slice(0, 10)
   const callShort = Number(p.call_short)
-  const legs = callShort > 0
-    ? condorCloseLegs({ ticker: p.ticker, expiration: exp, putShort: Number(p.put_short), putLong: Number(p.put_long), callShort, callLong: Number(p.call_long) }, p.contracts)
-    : spreadCloseLegs({ ticker: p.ticker, expiration: exp, short: Number(p.put_short), long: Number(p.put_long), right: 'P' }, p.contracts)
+  const legKind = p.leg_kind ?? (callShort > 0 ? 'condor' : 'put_spread') // pre-leg_kind rows: old inference is safe (see OpenCustomerPosition doc)
+  const legs = legKind === 'call_spread'
+    ? spreadCloseLegs({ ticker: p.ticker, expiration: exp, short: callShort, long: Number(p.call_long), right: 'C' }, p.contracts)
+    : legKind === 'condor'
+      ? condorCloseLegs({ ticker: p.ticker, expiration: exp, putShort: Number(p.put_short), putLong: Number(p.put_long), callShort, callLong: Number(p.call_long) }, p.contracts)
+      : spreadCloseLegs({ ticker: p.ticker, expiration: exp, short: Number(p.put_short), long: Number(p.put_long), right: 'P' }, p.contracts)
 
   const snaptrade = getSnapTrade()
   let lastErr = ''
@@ -451,7 +968,7 @@ export async function mirrorCloseToCustomers(botName: string, sourcePositionId: 
     if (!CUSTOMER_AGENTS.has(botName.toLowerCase())) return
     const open = await customerQuery<OpenCustomerPosition>(
       `SELECT id, user_id, agent_code, ticker, expiration::text AS expiration,
-              put_short, put_long, call_short, call_long, contracts, close_attempts
+              put_short, put_long, call_short, call_long, contracts, close_attempts, leg_kind
          FROM customer_positions
         WHERE source_position_id = $1 AND status = 'open'`,
       [sourcePositionId],
@@ -493,7 +1010,7 @@ export function retryFailedCustomerCloses(): void {
     // rejected by the broker rather than opening new risk.
     const stuck = await customerQuery<OpenCustomerPosition & { close_reason: string | null }>(
       `SELECT id, user_id, agent_code, ticker, expiration::text AS expiration,
-              put_short, put_long, call_short, call_long, contracts, close_attempts, close_reason
+              put_short, put_long, call_short, call_long, contracts, close_attempts, close_reason, leg_kind
          FROM customer_positions
         WHERE status = 'close_failed'
            OR (status = 'close_pending' AND updated_at < now() - interval '15 minutes')`,

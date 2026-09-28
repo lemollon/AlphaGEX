@@ -1,0 +1,296 @@
+{
+ "bot": "FLAME",
+ "deposit": 2000.0,
+ "pct": 20.0,
+ "start": 700,
+ "length": 80,
+ "days": [
+  {
+   "day_index": 2,
+   "equity_cents": 202060,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 16000,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 4,
+   "equity_cents": 212120,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 18700,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 5,
+   "equity_cents": 216180,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 18800,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 8,
+   "equity_cents": 225640,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 18700,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 16,
+   "equity_cents": 226170,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 14200,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 20,
+   "equity_cents": 231900,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 17600,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 22,
+   "equity_cents": 234230,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 18200,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 25,
+   "equity_cents": 227760,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 18000,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 28,
+   "equity_cents": 210890,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 17300,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 32,
+   "equity_cents": 210890,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 19000,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 33,
+   "equity_cents": 210890,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 17200,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 34,
+   "equity_cents": 210890,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 18900,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 35,
+   "equity_cents": 210890,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 17700,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 36,
+   "equity_cents": 210890,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 15100,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 37,
+   "equity_cents": 210890,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 15500,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 38,
+   "equity_cents": 210890,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 15300,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 41,
+   "equity_cents": 212950,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 17100,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 46,
+   "equity_cents": 227190,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 14300,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 47,
+   "equity_cents": 251810,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 17600,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 48,
+   "equity_cents": 219130,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 16400,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 50,
+   "equity_cents": 236380,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 18200,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 52,
+   "equity_cents": 207160,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 16300,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 53,
+   "equity_cents": 186220,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 17700,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 55,
+   "equity_cents": 197540,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 18500,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 56,
+   "equity_cents": 201400,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 18300,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 57,
+   "equity_cents": 209260,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 16600,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 58,
+   "equity_cents": 218720,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 17600,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 59,
+   "equity_cents": 218310,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 16300,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 60,
+   "equity_cents": 221940,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 15600,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 61,
+   "equity_cents": 226270,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 15100,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 62,
+   "equity_cents": 231100,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 12700,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 63,
+   "equity_cents": 238330,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 15300,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 64,
+   "equity_cents": 242960,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 18800,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 65,
+   "equity_cents": 244090,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 18800,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 66,
+   "equity_cents": 241380,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 18700,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 69,
+   "equity_cents": 217130,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 18100,
+   "sim_eligible": false
+  },
+  {
+   "day_index": 75,
+   "equity_cents": 232890,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 16400,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 76,
+   "equity_cents": 248910,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 18400,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 77,
+   "equity_cents": 255900,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 17800,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 78,
+   "equity_cents": 262690,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 18900,
+   "sim_eligible": true
+  },
+  {
+   "day_index": 79,
+   "equity_cents": 266980,
+   "deposit_cents": 200000,
+   "flint_max_loss_cents": 17400,
+   "sim_eligible": true
+  }
+ ]
+}
