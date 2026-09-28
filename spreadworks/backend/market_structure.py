@@ -47,6 +47,10 @@ STALE_SECONDS = int(os.getenv("MARKET_STRUCTURE_STALE_SECONDS", "90"))
 GAMMA_TABLE = "sw_live_gamma"
 VOL_TABLE = "sw_live_vol_indices"
 
+TRADIER_FALLBACK_SYMBOL = "SPY"
+TRADIER_FALLBACK_CACHE_SECONDS = int(os.getenv("MARKET_STRUCTURE_TRADIER_FALLBACK_CACHE_SECONDS", "60"))
+_TRADIER_FALLBACK_CACHE: dict[str, Any] = {"captured_at": None, "payload": None}
+
 _GAMMA_DDL = f"""
 CREATE TABLE IF NOT EXISTS {GAMMA_TABLE} (
   symbol TEXT NOT NULL,
@@ -375,6 +379,95 @@ def _confidence(chain_ts: datetime | None, now: datetime, n_rows: int,
     return "LOW", age, "stale_or_thin_chain"
 
 
+def build_tradier_spy_gamma_fallback(now: datetime | None = None) -> dict[str, Any]:
+    """Fresh SPY net-gamma fallback when ORATS is unavailable.
+
+    This deliberately does NOT fabricate gamma flip, call wall, put wall, or
+    tenor buckets. The legacy Tradier path provides one aggregate net-gamma
+    estimate from current option-chain Greeks. It is useful context, but it is
+    a different methodology from ORATS and is labeled as such.
+    """
+    now = now or datetime.now(UTC)
+    now_ct = now.astimezone(CT)
+    if now_ct.weekday() >= 5 or not (dtime(8, 30) <= now_ct.time() < dtime(15, 0)):
+        return {
+            "symbol": TRADIER_FALLBACK_SYMBOL, "available": False,
+            "confidence": "LOW", "reason": "market_closed",
+            "captured_at": now.isoformat(),
+        }
+
+    cached_at = _TRADIER_FALLBACK_CACHE.get("captured_at")
+    cached = _TRADIER_FALLBACK_CACHE.get("payload")
+    if isinstance(cached_at, datetime) and cached:
+        age = (now - cached_at).total_seconds()
+        if 0 <= age <= TRADIER_FALLBACK_CACHE_SECONDS:
+            return dict(cached)
+
+    spot = fetch_spot(TRADIER_FALLBACK_SYMBOL, now)
+    if not spot.get("fresh"):
+        return {
+            "symbol": TRADIER_FALLBACK_SYMBOL, "available": False,
+            "confidence": "LOW", "reason": spot.get("reason") or "stale_or_missing_spot",
+            "captured_at": now.isoformat(), "spot": spot.get("price"),
+        }
+
+    try:
+        from .bots.gamma_regime import fetch_net_gex
+        from .bots.routes_helpers import build_live_chain_provider
+
+        client = build_live_chain_provider()
+        out = fetch_net_gex(client, TRADIER_FALLBACK_SYMBOL)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[MarketStructure] Tradier SPY gamma fallback failed: %r", exc)
+        return {
+            "symbol": TRADIER_FALLBACK_SYMBOL, "available": False,
+            "confidence": "LOW",
+            "reason": f"tradier_gamma_fallback:{type(exc).__name__}",
+            "captured_at": now.isoformat(), "spot": spot.get("price"),
+        }
+
+    net = out.get("net_gex")
+    if net is None:
+        return {
+            "symbol": TRADIER_FALLBACK_SYMBOL, "available": False,
+            "confidence": "LOW",
+            "reason": out.get("reason") or "tradier_gamma_missing",
+            "captured_at": now.isoformat(), "spot": spot.get("price"),
+        }
+
+    source_ts = spot.get("source_timestamp")
+    if isinstance(source_ts, datetime):
+        source_ts = source_ts.isoformat()
+    payload = {
+        "symbol": TRADIER_FALLBACK_SYMBOL,
+        "available": True,
+        "captured_at": now.isoformat(),
+        "retrieval_timestamp": now.isoformat(),
+        "spot": float(spot["price"]),
+        "spot_age_seconds": round(float(spot.get("age_seconds") or 0.0), 1),
+        "spot_source_timestamp": source_ts,
+        "source_timestamp": source_ts,
+        "chain_timestamp": None,
+        "chain_age_seconds": None,
+        "source": "Tradier option-chain Greeks + Tradier spot (fallback)",
+        "provider": "Tradier",
+        "methodology": "aggregate gamma*OI; fallback net gamma only",
+        "confidence": "MEDIUM",
+        "reason": "ORATS unavailable; Tradier fallback supplies net gamma only; flip/walls/tenor buckets unavailable",
+        "net_gex_b": float(net) / 1e9,
+        "gamma_regime": "positive" if float(net) > 0 else "negative" if float(net) < 0 else "flat",
+        "gamma_flip": None,
+        "call_wall": None,
+        "put_wall": None,
+        "buckets": {},
+        "walls": {},
+        "n_rows": int(out.get("n_contracts") or 0),
+    }
+    _TRADIER_FALLBACK_CACHE["captured_at"] = now
+    _TRADIER_FALLBACK_CACHE["payload"] = dict(payload)
+    return payload
+
+
 def build_gamma_snapshot(symbol: str, now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     symbol = symbol.upper()
@@ -417,8 +510,8 @@ def persist_snapshot(snapshot: dict[str, Any]) -> None:
     """
     ensure_tables()
     captured = datetime.fromisoformat(snapshot["captured_at"].replace("Z", "+00:00"))
-    chain_ts = (_parse_ts(snapshot.get("chain_timestamp"))
-                if snapshot.get("chain_timestamp") else None)
+    raw_source_ts = snapshot.get("source_timestamp") or snapshot.get("chain_timestamp")
+    chain_ts = _parse_ts(raw_source_ts) if raw_source_ts else None
     params = {
         "symbol": snapshot["symbol"], "captured": captured.replace(tzinfo=None),
         "date": captured.astimezone(CT).date(), "spot": snapshot.get("spot"),
@@ -513,6 +606,14 @@ def _latest_gamma(symbol: str) -> dict[str, Any] | None:
     return d
 
 
+def capture_tradier_spy_fallback() -> dict[str, Any]:
+    """Persist a fresh Tradier SPY net-gamma point for hourly report fallback."""
+    now = datetime.now(UTC)
+    snap = build_tradier_spy_gamma_fallback(now)
+    persist_snapshot(snap)
+    return snap
+
+
 def register(scheduler: Any, app: Any | None = None) -> bool:
     """Persist canonical live market structure once a minute on market days.
 
@@ -548,6 +649,21 @@ def register(scheduler: Any, app: Any | None = None) -> bool:
         coalesce=True, max_instances=1, misfire_grace_time=90,
         next_run_time=datetime.now(UTC),
     )
+    # When ORATS is not configured, prime a fresh SPY net-gamma fallback one
+    # minute before each scheduled hourly report. This costs ~40 Tradier chain
+    # requests per run, so it is intentionally hourly, not every minute.
+    if not (_token("ORATS_API_TOKEN") or _token("ORATS_TOKEN")):
+        scheduler.add_job(
+            capture_tradier_spy_fallback, "cron", day_of_week="mon-fri",
+            hour="9-14", minute="4", timezone=CT,
+            id="market_structure_tradier_spy_fallback",
+            replace_existing=True, coalesce=True, max_instances=1,
+            misfire_grace_time=90,
+        )
+        logger.warning(
+            "[MarketStructure] ORATS missing; armed hourly Tradier SPY net-gamma fallback"
+        )
+
     logger.info(
         "[MarketStructure] registered minute captures 08:00-15:59 CT; "
         "capture_all enforces the 08:30-15:05 market window"
@@ -561,6 +677,12 @@ def live_market_structure():
     now = datetime.now(UTC)
     vol = fetch_vol_indices(now)
     gamma = {s: build_gamma_snapshot(s, now) for s in SYMBOLS}
+    spy = gamma.get("SPY") or {}
+    if (not spy.get("available")
+            and spy.get("reason") == "ORATS_API_TOKEN missing"):
+        fallback = build_tradier_spy_gamma_fallback(now)
+        if fallback.get("available"):
+            gamma["SPY"] = fallback
     return {"captured_at": now.isoformat(), "freshness_limit_seconds": STALE_SECONDS,
             "volatility": vol, "gamma": gamma,
             "dealer_position_note": "Estimated from public OI/Greeks; dealer inventory is not directly observable.",
@@ -578,7 +700,14 @@ def gamma_symbol(symbol: str):
     if symbol not in SYMBOLS:
         return {"available": False, "reason": f"unsupported symbol {symbol}",
                 "supported": SYMBOLS}
-    return build_gamma_snapshot(symbol, datetime.now(UTC))
+    now = datetime.now(UTC)
+    snap = build_gamma_snapshot(symbol, now)
+    if (symbol == "SPY" and not snap.get("available")
+            and snap.get("reason") == "ORATS_API_TOKEN missing"):
+        fallback = build_tradier_spy_gamma_fallback(now)
+        if fallback.get("available"):
+            return fallback
+    return snap
 
 
 @router.get("/latest/{symbol}")
