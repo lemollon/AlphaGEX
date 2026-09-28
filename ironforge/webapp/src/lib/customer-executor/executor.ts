@@ -397,10 +397,16 @@ async function mirrorOneOpen(
   const accountId = decryptSecret(c.external_account_ref_ciphertext)
   const snaptrade = getSnapTrade()
 
-  // Live buying power for sizing; stored value (from connect/preview) as fallback.
-  // sizeContracts fails to zero if both are unknown — never guess a position size.
-  let bpCents: number | null = c.buying_power_cents != null ? Math.floor(Number(c.buying_power_cents)) : null
-  let bpSource = 'stored'
+  // Live buying power for sizing — NEVER the connect-time stored value (2026-09-29
+  // correction). c.buying_power_cents is captured ONCE at connect/sync and never
+  // rewritten; a customer who has since traded it down (or up) would size an OPEN
+  // against buying power they may no longer have. A live-fetch failure on an OPEN
+  // must therefore fail CLOSED — skip this customer for today and log why — rather
+  // than silently falling back to a number that could be stale in either direction.
+  // Closes are NOT gated by this: mirrorOneClose/closeOne never read bpCents at all,
+  // an open position must always be closeable regardless of a broken balance read.
+  let bpCents: number | null = null
+  const bpSource = 'live'
   try {
     const bal = await snaptrade.accountInformation.getUserAccountBalance({
       userId: creds.snaptradeUserId, userSecret: creds.userSecret, accountId,
@@ -409,9 +415,18 @@ async function mirrorOneOpen(
     const live = balRows[0]?.buying_power ?? balRows[0]?.cash ?? null
     if (live != null && Number.isFinite(Number(live))) {
       bpCents = Math.floor(Number(live) * 100)
-      bpSource = 'live'
     }
-  } catch { /* stored fallback */ }
+  } catch (e) {
+    console.error(`[customer-executor] OPEN: live buying-power fetch failed for user ${c.user_id} — skipping (never sizing off the stale connect-time value):`, e instanceof Error ? e.message : e)
+    await markSkipped(rowId, 'buying_power_fetch_failed')
+    return
+  }
+  if (bpCents == null) {
+    // The call succeeded but returned no usable number (e.g. an empty balances
+    // array) — same fail-closed outcome as an exception, a distinct log reason.
+    await markSkipped(rowId, 'buying_power_unavailable')
+    return
+  }
 
   const cfg = (c.config_json ?? {}) as { max_deployment_pct?: number }
   const pct = Number(cfg.max_deployment_pct)
