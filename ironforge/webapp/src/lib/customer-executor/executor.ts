@@ -21,6 +21,19 @@
  * Consent basis: enrollment v2 activation = standing authorization (TRADING_AUTH legal
  * doc + preview-hash consent + acknowledgments). The per-trade approval contract in
  * lib/brokerage/approval.ts continues to govern only the legacy v1 surface.
+ *
+ * ONE_STRATEGY (Leron, 2026-09-28, "1 strategy for all the versions of FLAME and
+ * SPARK"): this file's own sizing sequence — sizeContracts -> evaluateDepositFloorCap
+ * -> evaluateFastStartUpsize/evaluateCalmUpsize -> evaluateFlintCushion, all below —
+ * IS the rule set that flag turns on for the PRODUCTION ('Flame', Tradier 6YB71371)
+ * and SANDBOX (User/Matt/Logan) accounts too, via lib/one-strategy.ts, which wraps
+ * these SAME contracts.ts functions for those two account types. App customers are
+ * NOT gated by ONE_STRATEGY — this file already runs this exact package
+ * unconditionally (shipped in #3093 and its follow-ups); the flag only changes what
+ * production/sandbox do, closing the gap those two account types used to size
+ * through separate, non-identical logic (the count ladder, FLAME_FAST_START,
+ * SPARK_FAST_START/SPARK_FAVORABLE_UPSIZE/SPARK_FLINT). See lib/one-strategy.ts and
+ * bot-feature-coverage.ts's ONE_STRATEGY entry.
  */
 import { customerQuery, customerExecute, isCustomersDbConfigured } from '@/lib/customers-db'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
