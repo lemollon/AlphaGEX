@@ -27,6 +27,7 @@ import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { loadSnapTradeCreds } from '@/lib/brokerage/snaptrade-user'
 import { decryptSecret } from '@/lib/crypto/secret-box'
 import { getProductionPauseState } from '@/lib/tradier'
+import { normalizeInstitutionSlug } from '@/lib/enrollment/eligibility'
 import {
   canOpenForCustomer,
   condorCloseLegs,
@@ -36,6 +37,8 @@ import {
   spreadOpenLegs,
   type MlegLegSpec,
 } from './contracts'
+import { checkBotTradedAccount, type BotAccountGuardVerdict } from './bot-account-guard'
+import { getKnownBotTradedTradierAccountNumbers } from './bot-account-registry'
 
 export interface MasterOpen {
   botName: string
@@ -58,6 +61,8 @@ interface EligibleRow {
   config_json: Record<string, unknown> | null
   broker_account_id: string
   external_account_ref_ciphertext: string | null
+  display_mask: string | null
+  brokerage_slug: string | null
   buying_power_cents: string | number | null
   connection_status: string | null
   provider: string | null
@@ -103,6 +108,7 @@ async function eligibleCustomers(agent: string): Promise<EligibleRow[]> {
             a.id AS activation_id, a.status AS activation_status,
             ac.id AS config_id, ac.user_id, ac.config_json,
             ba.id AS broker_account_id, ba.external_account_ref_ciphertext, ba.buying_power_cents,
+            ba.display_mask, bc.brokerage_slug,
             bc.status AS connection_status, bc.provider,
             s.status AS subscription_status
        FROM activations a
@@ -122,6 +128,42 @@ async function markSkipped(rowId: string, reason: string): Promise<void> {
     `UPDATE customer_positions SET status = 'skipped', skip_reason = $2, updated_at = now() WHERE id = $1`,
     [rowId, reason],
   )
+}
+
+/** Decrypt for the bot-account guard only. A malformed/foreign ciphertext must read
+ *  as "unknown", never throw — the guard's fail-closed behavior handles unknown. */
+function safeDecryptAccountRef(ciphertext: string | null | undefined): string | null {
+  if (!ciphertext) return null
+  try {
+    return decryptSecret(ciphertext)
+  } catch {
+    return null
+  }
+}
+
+/** One human-readable line for logs/alerts. Never includes the full account number. */
+function describeBotAccountBlock(v: BotAccountGuardVerdict): string {
+  if (!v.blocked) return 'not blocked'
+  if (v.reason === 'unverifiable') return 'unverifiable account — skipped'
+  return `bot-traded account (${v.reason}, ****${v.matchedLast4}) — skipped`
+}
+
+/**
+ * 6YB71371 double-trade guard: is this customer's broker account one the bots
+ * already trade directly (SPARK/FLAME production, or another env-listed account)?
+ * Checked before EVERY open and close mirror — see bot-account-guard.ts.
+ */
+function checkCustomerAgainstBotAccounts(row: {
+  external_account_ref_ciphertext: string | null
+  display_mask: string | null
+  brokerage_slug: string | null
+}): BotAccountGuardVerdict {
+  return checkBotTradedAccount({
+    decryptedAccountRef: safeDecryptAccountRef(row.external_account_ref_ciphertext),
+    displayMask: row.display_mask,
+    brokerSlug: normalizeInstitutionSlug(row.brokerage_slug),
+    knownBotAccountNumbers: getKnownBotTradedTradierAccountNumbers(),
+  })
 }
 
 async function mirrorOneOpen(c: EligibleRow, m: MasterOpen, agent: string, killSwitchEngaged: boolean): Promise<void> {
@@ -144,6 +186,23 @@ async function mirrorOneOpen(c: EligibleRow, m: MasterOpen, agent: string, killS
   )
   const rowId = rows[0]?.id
   if (!rowId) return
+
+  // Hard invariant, checked FIRST and independent of every other gate below: never
+  // mirror an open into an account the bots already trade directly (6YB71371
+  // double-trade guard). FAILS CLOSED — an account we cannot verify is treated the
+  // same as a confirmed match.
+  const botGuard = checkCustomerAgainstBotAccounts(c)
+  if (botGuard.blocked) {
+    const detail = describeBotAccountBlock(botGuard)
+    await markSkipped(rowId, `bot_account_guard:${botGuard.reason}`)
+    console.error(`[customer-executor] OPEN BLOCKED for user ${c.user_id.slice(0, 8)}: ${detail}`)
+    void notifyOps(
+      'IronForge: customer OPEN blocked (bot account guard)',
+      `${agent.toUpperCase()} ${m.positionId} → user ${c.user_id.slice(0, 8)}: ${detail}`,
+      true,
+    )
+    return
+  }
 
   const gate = canOpenForCustomer({
     executorArmed: isExecutorArmed(),
@@ -288,13 +347,41 @@ async function closeOne(p: OpenCustomerPosition, reason: string): Promise<void> 
   if (claimed === 0) return
 
   const creds = await loadSnapTradeCreds(p.user_id)
-  const refRows = await customerQuery<{ external_account_ref_ciphertext: string | null }>(
-    `SELECT ba.external_account_ref_ciphertext
-       FROM customer_positions cp JOIN broker_accounts ba ON ba.id = cp.broker_account_id
+  const refRows = await customerQuery<{
+    external_account_ref_ciphertext: string | null
+    display_mask: string | null
+    brokerage_slug: string | null
+  }>(
+    `SELECT ba.external_account_ref_ciphertext, ba.display_mask, bc.brokerage_slug
+       FROM customer_positions cp
+       JOIN broker_accounts ba ON ba.id = cp.broker_account_id
+       JOIN brokerage_connections bc ON bc.id = ba.connection_id
       WHERE cp.id = $1`,
     [p.id],
   )
-  const enc = refRows[0]?.external_account_ref_ciphertext
+  const refRow = refRows[0] ?? { external_account_ref_ciphertext: null, display_mask: null, brokerage_slug: null }
+  const enc = refRow.external_account_ref_ciphertext
+
+  // Same hard invariant as the open path, checked before any close order too: a
+  // stray mirrored position sitting in a bot-traded account must never receive a
+  // second, uncoordinated close order. FAILS CLOSED and needs a human, not a retry.
+  const botGuard = checkCustomerAgainstBotAccounts(refRow)
+  if (botGuard.blocked) {
+    const detail = describeBotAccountBlock(botGuard)
+    await customerExecute(
+      `UPDATE customer_positions SET status = 'close_failed', error = $2, updated_at = now() WHERE id = $1`,
+      [p.id, `bot_account_guard:${botGuard.reason}`.slice(0, 500)],
+    )
+    console.error(`[customer-executor] CLOSE BLOCKED for position ${p.id} (user ${p.user_id.slice(0, 8)}): ${detail}`)
+    void notifyOps(
+      'IronForge: customer CLOSE BLOCKED (bot account guard)',
+      `Position ${p.id} (user ${p.user_id.slice(0, 8)}) targets a bot-traded account: ${detail}. ` +
+      `No order sent — needs MANUAL review.`,
+      true,
+    )
+    return
+  }
+
   if (!creds || !enc) {
     await customerExecute(
       `UPDATE customer_positions SET status = 'close_failed', error = 'missing broker credentials at close', updated_at = now() WHERE id = $1`,

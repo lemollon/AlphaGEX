@@ -9,6 +9,7 @@ import {
 import { consumeOAuthState } from '@/lib/enrollment/oauth-state'
 import { billingReturn } from '@/lib/mobile/deep-link'
 import { evaluateAccountEligibility, maskAccountNumber } from '@/lib/enrollment/eligibility'
+import { getKnownBotTradedTradierAccountNumbers } from '@/lib/customer-executor/bot-account-registry'
 import { encryptSecret } from '@/lib/crypto/secret-box'
 import { isCustomersDbConfigured, customerQuery, customerExecute, customerTransaction } from '@/lib/customers-db'
 import { syncBrokerageConnectionToAttio } from '@/lib/attio'
@@ -144,6 +145,9 @@ export async function GET(req: NextRequest) {
           optionsLevel: a.option_level ?? null,
           status: a.status ?? 'active',
           buyingPower: balances.get(a.account_id) ?? null,
+          brokerSlug: 'TRADIER',
+          displayMask: maskAccountNumber(a.account_id),
+          knownBotAccountNumbers: getKnownBotTradedTradierAccountNumbers(),
         })
         await run(
           `INSERT INTO broker_accounts

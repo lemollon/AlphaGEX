@@ -6,6 +6,7 @@ import { billingReturn } from '@/lib/mobile/deep-link'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { decryptSecret, encryptSecret } from '@/lib/crypto/secret-box'
 import { evaluateAccountEligibility, maskAccountNumber, normalizeInstitutionSlug } from '@/lib/enrollment/eligibility'
+import { getKnownBotTradedTradierAccountNumbers } from '@/lib/customer-executor/bot-account-registry'
 import { isCustomersDbConfigured, customerQuery, customerExecute, customerTransaction } from '@/lib/customers-db'
 import { syncBrokerageConnectionToAttio } from '@/lib/attio'
 import { enqueueCrmEvent, recurringEventId } from '@/lib/crm/outbox'
@@ -222,6 +223,8 @@ export async function GET(req: NextRequest) {
           status: meta.status ?? 'active',
           buyingPower: bp,
           brokerSlug: normalizeInstitutionSlug(a.institution_name),
+          displayMask: maskAccountNumber(acctRef),
+          knownBotAccountNumbers: getKnownBotTradedTradierAccountNumbers(),
         })
         await run(
           `INSERT INTO broker_accounts

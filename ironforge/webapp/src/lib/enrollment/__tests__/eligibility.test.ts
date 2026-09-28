@@ -110,6 +110,47 @@ describe('SnapTrade slug-aware gates (7/30 tastytrade lane)', () => {
   })
 })
 
+describe('bot-account guard at connection time (6YB71371 double-trade guard)', () => {
+  const KNOWN = ['6YB712345']
+
+  it('rejects connecting the exact account the bots already trade directly', () => {
+    const v = evaluateAccountEligibility({ ...OK, knownBotAccountNumbers: KNOWN })
+    expect(v).toEqual({
+      eligible: false,
+      code: 'BOT_TRADED_ACCOUNT',
+      reason: 'This account is already traded directly by an IronForge bot and cannot be linked here.',
+    })
+  })
+
+  it('beats every other check, including a broker-level block', () => {
+    const v = evaluateAccountEligibility({ ...OK, brokerBlocked: true, knownBotAccountNumbers: KNOWN })
+    expect(v.code).toBe('BOT_TRADED_ACCOUNT')
+  })
+
+  it('a normal customer account with a different number activates normally', () => {
+    const v = evaluateAccountEligibility({ ...OK, knownBotAccountNumbers: ['6YB79999'] })
+    expect(v.eligible).toBe(true)
+  })
+
+  it('omitting the registry (or passing []) skips the check entirely — existing behavior unchanged', () => {
+    expect(evaluateAccountEligibility(OK).eligible).toBe(true)
+    expect(evaluateAccountEligibility({ ...OK, knownBotAccountNumbers: [] }).eligible).toBe(true)
+  })
+
+  it('an unverifiable account (no usable number, no mask, unknown institution) is also rejected, fail-closed', () => {
+    const v = evaluateAccountEligibility({
+      ...OK,
+      externalRef: '',
+      displayMask: null,
+      brokerSlug: null,
+      knownBotAccountNumbers: KNOWN,
+    })
+    expect(v.eligible).toBe(false)
+    expect(v.code).toBe('BOT_TRADED_ACCOUNT')
+    expect(v.reason).toMatch(/could not verify/i)
+  })
+})
+
 describe('account masking (§3 BROKER-02, §8 no full numbers in logs/UI)', () => {
   it('shows only the last four', () => {
     expect(maskAccountNumber('6YB712345')).toBe('••••2345')
