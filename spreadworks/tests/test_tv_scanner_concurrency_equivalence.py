@@ -8,23 +8,30 @@ in tv_scanner.py), instead of one name at a time with a flat post-call sleep.
 tv_scanner.py has no __main__ guard -- it runs its scan top-level on import by design (see
 PR #3104's own test notes). Importing the REAL `backend.ember.legacy.tv_scanner` package here
 would also drag in the full FastAPI app via backend/__init__.py (2000+ lines, DB engine,
-69 route modules). This test avoids both problems: it copies the OLD (pre-redesign, from git)
-and NEW (this worktree's) tv_scanner.py + ember_lock.py + rate_limiter.py into two disposable
-synthetic packages with empty __init__.py files (so `from . import ember_lock` resolves
-without touching the real `backend` package), mocks urllib.request.urlopen to serve IDENTICAL
-canned TradingVolatility-list / ThetaData-quote responses to both, runs each with --cached
-against the same pre-populated per-name cache fixtures (so neither run touches a real network
-socket, the real TradingVolatility account, or the shared local ThetaData Terminal), and
-asserts the resulting setups/marginal/hidden/illiquid/nodata/bounce_* rows are IDENTICAL
-between old and new. That proves the concurrency refactor changed WHEN the I/O happens, not
-WHAT gets computed from it -- same candidate list, same signals, same decisions.
+69 route modules). This test avoids both problems: it copies the OLD (pre-redesign, vendored
+as a static fixture file -- see below) and NEW (this worktree's) tv_scanner.py + ember_lock.py
++ rate_limiter.py into two disposable synthetic packages with empty __init__.py files (so
+`from . import ember_lock` resolves without touching the real `backend` package), mocks
+urllib.request.urlopen to serve IDENTICAL canned TradingVolatility-list / ThetaData-quote
+responses to both, runs each with --cached against the same pre-populated per-name cache
+fixtures (so neither run touches a real network socket, the real TradingVolatility account,
+or the shared local ThetaData Terminal), and asserts the resulting setups/marginal/hidden/
+illiquid/nodata/bounce_* rows are IDENTICAL between old and new. That proves the concurrency
+refactor changed WHEN the I/O happens, not WHAT gets computed from it -- same candidate list,
+same signals, same decisions.
+
+The OLD source is vendored as a static text fixture (fixtures/ember/tv_scanner_97a7aa08.py.txt,
+an exact `git show 97a7aa08:...` snapshot) rather than fetched via `git show` at test time --
+CI's checkout is shallow (actions/checkout@v4 default fetch-depth), so an ancestor commit SHA
+that predates the PR branch's tip is not present locally and `git show <sha>` fails with exit
+128 there even though it works in a full local clone. Vendoring removes that CI/local
+environment difference (and the subprocess/git dependency) entirely.
 """
 from __future__ import annotations
 
 import datetime as dt
 import io
 import json
-import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -34,7 +41,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]  # .../AlphaGEX-wt-tvbook
 LEGACY_DIR = REPO_ROOT / "spreadworks" / "backend" / "ember" / "legacy"
-OLD_COMMIT = "97a7aa08"  # main tip immediately before this session's concurrency redesign
+OLD_SCANNER_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "ember" / "tv_scanner_97a7aa08.py.txt"
+OLD_COMMIT = "97a7aa08"  # main tip immediately before this session's concurrency redesign; provenance only
 
 TODAY = dt.date.today().isoformat()
 
@@ -49,11 +57,7 @@ VOLATILE_FIELDS = {"scan_time"}
 
 
 def _old_tv_scanner_source() -> str:
-    out = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "show", f"{OLD_COMMIT}:spreadworks/backend/ember/legacy/tv_scanner.py"],
-        capture_output=True, text=True, check=True,
-    )
-    return out.stdout
+    return OLD_SCANNER_FIXTURE.read_text()
 
 
 def _strip_volatile(obj):

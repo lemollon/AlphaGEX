@@ -23,21 +23,28 @@ class RateLimiter:
     """At most `max_calls` acquisitions in any trailing `period_s` window. acquire()
     blocks the calling thread until a slot is free, then reserves it -- the
     reservation (append under lock) happens before the lock releases, so two threads
-    racing for the last slot can never both succeed for the same window. Never raises."""
+    racing for the last slot can never both succeed for the same window. Never raises.
 
-    def __init__(self, max_calls: int, period_s: float):
+    `clock`/`sleep` default to time.monotonic/time.sleep (real production behaviour,
+    unchanged); tests inject a fake clock/sleep pair so window-boundary assertions are
+    exact and instant instead of depending on real wall-clock sleeps, which is what
+    every production caller (tv_get() in tv_scanner.py) still gets by default."""
+
+    def __init__(self, max_calls: int, period_s: float, *, clock=time.monotonic, sleep=time.sleep):
         self.max_calls = max_calls
         self.period_s = period_s
         self._times: list[float] = []
         self._lock = threading.Lock()
+        self._clock = clock
+        self._sleep = sleep
 
     def acquire(self) -> None:
         while True:
             with self._lock:
-                now = time.monotonic()
+                now = self._clock()
                 self._times = [t for t in self._times if now - t < self.period_s]
                 if len(self._times) < self.max_calls:
                     self._times.append(now)
                     return
                 wait = self.period_s - (now - self._times[0])
-            time.sleep(max(wait, 0.01))
+            self._sleep(max(wait, 0.01))
