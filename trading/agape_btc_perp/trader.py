@@ -262,7 +262,10 @@ class AgapeBtcPerpTrader:
             self._liquidation_recovery_at = None
             self.db.log("INFO", "LIQUIDATION_RECOVERY",
                 "Paper account recovered from liquidation. Bot re-enabled.")
-        closed = 0
+        # Legacy-strategy close + over-cap trim, before the normal exit loop.
+        total_open = len(open_positions)
+        from trading.perp_strategies.legacy_cleanup import close_legacy_and_overcap_positions
+        open_positions, closed = close_legacy_and_overcap_positions(self, open_positions, current_price)
         now = datetime.now(CENTRAL_TZ)
         for pos_dict in open_positions:
             try:
@@ -282,7 +285,7 @@ class AgapeBtcPerpTrader:
                     self._update_hwm(pos_dict, current_price)
             except Exception as e:
                 logger.error(f"AGAPE-BTC-PERP Trader: Position management error: {e}")
-        return (len(open_positions), closed)
+        return (total_open, closed)
 
     def _manage_weekly_breakout(self, pos, current_price, now):
         """ATR stop + ATR trailing stop + time exit for weekly-breakout entries."""
