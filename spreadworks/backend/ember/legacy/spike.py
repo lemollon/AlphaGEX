@@ -122,7 +122,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -163,6 +163,24 @@ HISTORY_MAX_STALE_TRADING_DAYS = 3   # a local table's newest row must be within
 # "count trading days; weekdays are fine as the approximation, note it."
 def is_trading_day(d: date) -> bool:
     return d.weekday() < 5
+
+
+# 08:30 CT -- see module docstring / DEPLOY-SPIKE.md's stated RTH window.
+# The ENTER cron (fleet_runtime.py) fires as early as 08:00 CT; before the
+# open there is no fresh ThetaData/Polygon snapshot for today by
+# construction, so market_is_open() below lets ENTER log a plain pre-open
+# IDLE line instead of asking the data loader for a snapshot that cannot
+# exist yet and having that read as a data-outage BLOCKED cycle (2026-09-28).
+MARKET_OPEN_CT = time(8, 30)
+
+
+def market_is_open(moment: datetime) -> bool:
+    """True once regular trading hours have started (08:30 CT). Never
+    raises -- an aware or naive `moment` both resolve to a CT wall-clock
+    time via astimezone()/replace() the same way the rest of this module
+    treats `now`."""
+    local = moment.astimezone(CT) if moment.tzinfo else moment.replace(tzinfo=CT)
+    return local.time() >= MARKET_OPEN_CT
 
 
 def trading_sessions_between(d1: date, d2: date) -> int:
@@ -1386,8 +1404,14 @@ def run_agent(sig: dict, cfg: Cfg) -> int:
     child_env = read_secret_environment()
     cmd = build_claude_command(exe, tools)
     with RUN_OUTPUT.open("a", encoding="utf-8") as out:
+        # slot_pct comes from cfg, not sig -- build_manage_signal() (MANAGE
+        # mode) never carries a "slot_pct" key (MANAGE doesn't size new
+        # entries), only build_enter_signal() does, and it copies the exact
+        # same cfg.slot_pct value. Reading it from cfg here keeps this log
+        # line correct for both modes without inventing a default (2026-09-28
+        # KeyError fix -- see ember-fix-result-9-28.md).
         out.write(f"===== {sig['mode']} run started {sig['now_ct']} armed={sig['armed']} "
-                  f"dry_run={sig['dry_run']} slot_pct={sig['slot_pct']} =====\n")
+                  f"dry_run={sig['dry_run']} slot_pct={cfg.slot_pct} =====\n")
         out.flush()
         try:
             rc = subprocess.run(cmd, cwd=str(HERE), input=prompt, stdout=out,
@@ -1551,6 +1575,24 @@ def run_enter(now: datetime, cfg: Cfg, *, dry_run_cli: bool = False) -> int:
     # 14:45 CT MANAGE run.
     pending = pending_positions(positions)
     needing_tp = positions_needing_tp_order(positions)
+
+    # Pre-open stand-down: the cron fires as early as 08:00 CT, 30 minutes
+    # before the 08:30 CT open, and no fresh intraday ThetaData/Polygon
+    # snapshot exists for today until the open. Skip NEW entries only --
+    # pending-fill reconciliation and TP-order maintenance above still run
+    # every tick regardless, same shape as the FOMC stand-down below.
+    if not market_is_open(now):
+        line = f"{ts} CT | SPIKE | ENTER | before {MARKET_OPEN_CT.strftime('%H:%M')} CT open -- IDLE, no new entries this tick"
+        _log(line)
+        notify(tone_for(header), header)
+        notify("good", line)
+        if not pending and not needing_tp:
+            return 0
+        sig = build_enter_signal(now, cfg, [], [], state, [])
+        if dry_run_cli:
+            print(json.dumps(sig, indent=2))
+            return 0
+        return _invoke_agent("ENTER", sig, cfg)
 
     # FOMC-week entry stand-down (pre-registered 2026-09-24, exact port of
     # CLUSTER_squeeze_short.py's own fomc_week()): skip NEW entries only --

@@ -419,3 +419,105 @@ def test_spike_dependency_accepts_theta_without_polygon(monkeypatch):
     monkeypatch.setenv("THETADATA_BASE_URL", "thetadata-proxy:10000")
     monkeypatch.setenv("SPIKE_UNIVERSE", "AAA")
     assert fleet._dependency_gaps(fleet.SPECS["spike"]) == []
+
+
+# ---------------------------------------------------------------- 2026-09-28 fixes
+# See C:\Users\lemol\.claude\handoff\ember-fix-result-9-28.md for the root-cause writeup.
+
+def test_market_is_open_boundary_is_0830_ct():
+    from datetime import datetime as dt_
+
+    assert spike.market_is_open(dt_(2026, 9, 28, 8, 29, tzinfo=spike.CT)) is False
+    assert spike.market_is_open(dt_(2026, 9, 28, 8, 30, tzinfo=spike.CT)) is True
+    assert spike.market_is_open(dt_(2026, 9, 28, 14, 0, tzinfo=spike.CT)) is True
+
+
+def test_spike_enter_preopen_is_idle_not_a_data_outage(monkeypatch, tmp_path):
+    """08:00/08:15 CT ENTER ticks fire before the 08:30 CT open (fleet_runtime's
+    cron), so no fresh ThetaData/Polygon snapshot can exist yet. Before the fix
+    this fell all the way into load_enter_market_data() and surfaced as
+    'RuntimeError: no fresh ThetaData or Polygon SPIKE market data' -- a
+    BLOCKED cycle for a perfectly normal pre-open gap. It must now log IDLE
+    and return cleanly without ever calling the data loader."""
+    monkeypatch.setattr(spike, "STATE_FILE", tmp_path / "state.json")
+    monkeypatch.setattr(spike, "LOG_TXT", tmp_path / "log.txt")
+    monkeypatch.setattr(spike, "notify", lambda tone, line: None)
+    monkeypatch.setattr(
+        spike, "load_enter_market_data",
+        lambda today: pytest.fail("pre-open ENTER must not fetch market data"),
+    )
+    cfg = spike.Cfg(armed=True, dry_run=False, slot_pct=5.0)
+    now = datetime(2026, 9, 28, 8, 5, tzinfo=spike.CT)  # Monday, 08:05 CT -- before 08:30 open
+    rc = spike.run_enter(now, cfg)
+    assert rc == 0
+    log = (tmp_path / "log.txt").read_text(encoding="utf-8")
+    assert "IDLE" in log
+    assert "08:30" in log
+
+
+def test_spike_enter_after_open_still_loads_market_data(monkeypatch, tmp_path):
+    """Same tick, 30 minutes later -- must NOT be gated as pre-open."""
+    monkeypatch.setattr(spike, "STATE_FILE", tmp_path / "state.json")
+    monkeypatch.setattr(spike, "LOG_TXT", tmp_path / "log.txt")
+    monkeypatch.setattr(spike, "notify", lambda tone, line: None)
+    called = {}
+
+    def fake_loader(today):
+        called["hit"] = True
+        return [], {}
+
+    monkeypatch.setattr(spike, "load_enter_market_data", fake_loader)
+    cfg = spike.Cfg(armed=True, dry_run=False, slot_pct=5.0)
+    now = datetime(2026, 9, 28, 8, 30, tzinfo=spike.CT)  # exactly the open
+    rc = spike.run_enter(now, cfg)
+    assert rc == 0
+    assert called.get("hit") is True
+
+
+def test_run_agent_manage_signal_does_not_raise_keyerror(monkeypatch, tmp_path):
+    """build_manage_signal() never carries a 'slot_pct' key (MANAGE doesn't
+    size new entries) -- run_agent()'s run-started header line used to read
+    sig['slot_pct'] directly and raised KeyError for every MANAGE tick (the
+    9/25 19:45Z / 14:45 CT spike_manage cron slot). It must read cfg.slot_pct
+    instead, the same source ENTER's signal copies it from."""
+    monkeypatch.setattr(spike, "RUN_OUTPUT", tmp_path / "run-output.log")
+    monkeypatch.setattr(
+        spike.subprocess, "run",
+        lambda *a, **k: type("Result", (), {"returncode": 0})(),
+    )
+    cfg = spike.Cfg(slot_pct=7.5)
+    sig = spike.build_manage_signal(
+        datetime(2026, 9, 28, 14, 45, tzinfo=spike.CT), cfg, {"positions": []},
+    )
+    assert "slot_pct" not in sig  # confirms MANAGE really omits the key
+
+    rc = spike.run_agent(sig, cfg)
+
+    assert rc == 0
+    header = (tmp_path / "run-output.log").read_text(encoding="utf-8")
+    assert "slot_pct=7.5" in header
+
+
+def test_broker_lock_wait_budget_raised_and_shared():
+    """2026-09-28 root cause: night_shift/astra3-live/call_diag/XSP all
+    contend on the single 'ember-fleet:agent-runtime' advisory lock roughly
+    once a minute during market hours, and each cycle's own Claude/MCP
+    broker call is allowed to run up to 540-600s before releasing it -- a
+    600s wait budget is not enough headroom if two of those cycles stack
+    back-to-back. astra_runtime and runtime.py must share fleet_runtime's
+    constant rather than carry their own copy that can drift out of sync."""
+    assert fleet.BROKER_LOCK_WAIT_SECONDS == 25 * 60
+    assert astra_runtime.BROKER_LOCK_WAIT_SECONDS is fleet.BROKER_LOCK_WAIT_SECONDS
+
+
+def test_xsp_run_uses_fleet_lock_wait_budget(monkeypatch):
+    monkeypatch.setenv("EMBER_XSP_ENABLED", "true")
+    captured: dict = {}
+
+    def fake_acquire_cycle_lock(*, wait_seconds=0):
+        captured["wait_seconds"] = wait_seconds
+        return None  # busy -- _run() must log-and-return, never touch SessionLocal
+
+    monkeypatch.setattr(xsp_runtime, "_acquire_cycle_lock", fake_acquire_cycle_lock)
+    xsp_runtime._run(None)
+    assert captured["wait_seconds"] == fleet.BROKER_LOCK_WAIT_SECONDS

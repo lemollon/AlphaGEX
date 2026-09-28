@@ -892,6 +892,20 @@ for i, cand in enumerate(candidates):
                        tv_structure=",".join((cand["best_item"].get("trade_setup") or {}).get("structures", [])),
                        tv_asof=asof, scan_date=str(sess), scan_time=SCAN_TIME_ISO)
             if rr >= 2.0:
+                # 2026-09-28: the top-of-loop deadline check only fires
+                # BETWEEN candidates -- it never protected against a single
+                # name's own ThetaData quote calls (pick_expiry +
+                # option_structures, each up to 6 retries x 30s timeout)
+                # running long and pushing the whole scan past fleet_runtime's
+                # 1500s subprocess.run timeout (TimeoutExpired kills the
+                # process and loses every row from the run, not just the
+                # slow name's). Re-check right before the theta-heavy work so
+                # a stuck name degrades the same way an out-of-time candidate
+                # already does (TRUNCATED, dropped) instead of blowing the
+                # external timeout.
+                if dt.datetime.now() >= deadline:
+                    truncated_n = len(candidates) - i
+                    break
                 e = pick_expiry(t, sess)
                 row.update(option_structures(t, side, price, target, stop, sess, e, iv_rank))
                 row.update(volume_flow(t, side, price, target, stop, e, "--cached" in sys.argv))
@@ -933,6 +947,12 @@ for i, cand in enumerate(candidates):
                          iv_rank=iv_rank, pcr_vol=pcr_vol, strategy="bounce",
                          opt_oi=opt_oi, opt_vol=opt_vol, scan_date=str(sess), scan_time=SCAN_TIME_ISO)
             if b_rr >= 1.0:
+                # Same wall-clock re-check as the RR >= 2.0 branch above --
+                # bounce_term_structure() makes its own sequence of theta-heavy
+                # calls (up to 3 expiries) independent of the RR branch.
+                if dt.datetime.now() >= deadline:
+                    truncated_n = len(candidates) - i
+                    break
                 term = bounce_term_structure(t, price, sess)
                 if term:
                     cheapest = min(term, key=lambda x: x["metric"]); richest = max(term, key=lambda x: x["metric"])

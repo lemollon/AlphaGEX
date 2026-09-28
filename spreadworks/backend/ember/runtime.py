@@ -286,7 +286,13 @@ def _mirror_state(mode: str, rc: int) -> None:
 def _run(mode: str | None) -> None:
     if not _env_bool("EMBER_XSP_ENABLED"):
         return
-    lock_db = _acquire_cycle_lock(wait_seconds=10 * 60)
+    # Deferred import: fleet_runtime imports this module at load time, so a
+    # top-level import here would be circular. By call time both modules are
+    # fully initialized. Shares fleet_runtime's BROKER_LOCK_WAIT_SECONDS so
+    # the XSP flow's wait budget for the same "agent-runtime" lock never
+    # drifts out of sync with the fleet strategies contending for it.
+    from .fleet_runtime import BROKER_LOCK_WAIT_SECONDS
+    lock_db = _acquire_cycle_lock(wait_seconds=BROKER_LOCK_WAIT_SECONDS)
     if lock_db is None:
         logger.info("[EMBER] skipped overlapping XSP cycle")
         return

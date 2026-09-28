@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from . import astra_live
 from . import runtime as xsp_runtime
-from .fleet_runtime import _acquire_lock, _release_lock
+from .fleet_runtime import BROKER_LOCK_WAIT_SECONDS, _acquire_lock, _release_lock
 
 
 logger = logging.getLogger("spreadworks.ember.astra")
@@ -115,7 +115,7 @@ def _run(mode: str, args: list[str]) -> None:
     try:
         _validate_live()
         source = _hydrate_state()
-        agent_lock = _acquire_lock("agent-runtime", wait_seconds=10 * 60)
+        agent_lock = _acquire_lock("agent-runtime", wait_seconds=BROKER_LOCK_WAIT_SECONDS)
         if agent_lock is None:
             raise xsp_runtime.EmberRuntimeError("shared broker runner busy; lock wait expired")
         rc = int(astra_live.main(args))
