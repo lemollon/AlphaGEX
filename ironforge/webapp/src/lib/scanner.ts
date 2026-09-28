@@ -4852,13 +4852,26 @@ async function closeFlintAtRiskBeforeBell(ct: Date): Promise<string> {
 
     const realizedPnl = Math.round((entryCredit - costToClose) * 100 * contracts * 100) / 100
 
-    await query(
+    // Idempotency claim (Fix 5's pattern, ported here): flint_positions is
+    // bot-agnostic and closeFlintAtRiskBeforeBell is invoked once per bot from
+    // scanBot() for BOTH 'flame' and 'spark', which run concurrently via
+    // Promise.allSettled — so two overlapping calls can both select the SAME
+    // open row in the 14:57-15:00 CT window (this is also the second caller a
+    // stuck-cycle watchdog reset can create). Whichever UPDATE actually flips
+    // status='open'->'closed' wins the row; a loser that doesn't check its own
+    // rowcount would still fall through and fire a SECOND real broker buy-back
+    // for a position that's already closed. dbExecute + rowCount, not query().
+    const claimed = await dbExecute(
       `UPDATE ${FLINT_TABLE}
          SET status = 'closed', close_reason = 'assignment_guard', close_price = $1,
              realized_pnl = $2, close_time = NOW()
        WHERE position_id = $3 AND status = 'open'`,
       [costToClose, realizedPnl, p.position_id],
     )
+    if (claimed === 0) {
+      out.push(`${p.position_id}=already_closed`)
+      continue
+    }
     // EDGE-DECAY: feed this closed trade's per-contract pnl into FLINT's own
     // CUSUM. No-ops with zero DB access when EDGE_DECAY_MODE is unset — see
     // lib/edge-decay.ts. Never allowed to affect the trading path.
@@ -4933,13 +4946,22 @@ async function settleFlintExpired(ct: Date): Promise<string> {
 
     const realizedPnl = Math.round((entryCredit - intrinsic) * 100 * contracts * 100) / 100
 
-    await query(
+    // Same idempotency claim as closeFlintAtRiskBeforeBell above: settleFlintExpired
+    // is also called for both 'flame' and 'spark' every cycle against this SAME
+    // bot-agnostic table, so two overlapping cycles can both select this row.
+    // rowCount === 0 means another cycle already settled it — skip the
+    // edge-decay double-count and the misleading duplicate "SETTLED" log line.
+    const claimed = await dbExecute(
       `UPDATE ${FLINT_TABLE}
          SET status = 'expired', close_reason = 'settled_at_expiry', close_price = $1,
              realized_pnl = $2, close_time = NOW()
        WHERE position_id = $3 AND status = 'open'`,
       [intrinsic, realizedPnl, p.position_id],
     )
+    if (claimed === 0) {
+      out.push(`${p.position_id}=already_settled`)
+      continue
+    }
     // EDGE-DECAY: this is FLINT's primary close path (holds to expiry) — see
     // the assignment-guard hook above for the other one. No-ops with zero DB
     // access when EDGE_DECAY_MODE is unset.
@@ -10550,6 +10572,7 @@ export const _testing = {
   getFlintGammaContextCached,
   FLINT_CONTEXT_TABLE,
   closeFlintAtRiskBeforeBell,
+  settleFlintExpired,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },
   get _scanStartedAt() { return _scanStartedAt },

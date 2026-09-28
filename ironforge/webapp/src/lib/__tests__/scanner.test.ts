@@ -68,6 +68,7 @@ const {
   getFlintGammaContextCached,
   FLINT_CONTEXT_TABLE,
   closeFlintAtRiskBeforeBell,
+  settleFlintExpired,
 } = _testing
 
 /* ------------------------------------------------------------------ */
@@ -1359,5 +1360,100 @@ describe('FLINT assignment guard — closeFlintAtRiskBeforeBell routes per accou
     const result = await closeFlintAtRiskBeforeBell(CT_IN_GUARD_WINDOW)
     expect(result).toContain('FLINT-PAPER=guarded')
     expect(tradier.placeCallSpreadOrderAllAccounts).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * flint_positions is bot-agnostic (no bot filter in the guard/settle SELECTs)
+ * and closeFlintAtRiskBeforeBell / settleFlintExpired are both invoked once
+ * per bot from scanBot() for 'flame' AND 'spark' every cycle — cycles that
+ * run concurrently via Promise.allSettled. Two overlapping invocations can
+ * both select the SAME open row before either one's UPDATE lands. Without a
+ * rowcount check, the loser would still compute a real closePrice/realizedPnl
+ * and fire a SECOND live broker buy-back for an already-closed position.
+ * This pins the idempotency claim: dbExecute's rowCount must gate the broker
+ * call and the edge-decay hook, not just be discarded.
+ */
+describe('FLINT guard/settle — idempotent under overlapping scan cycles', () => {
+  const queryMock = vi.mocked(query)
+  const CT_IN_GUARD_WINDOW = new Date(2026, 8, 26, 14, 58, 0) // 14:58 CT
+  const CT_AFTER_CLOSE = new Date(2026, 8, 26, 15, 5, 0) // 15:05 CT, past ASSIGNMENT_GUARD_END_HHMM
+
+  beforeEach(async () => {
+    queryMock.mockReset()
+    queryMock.mockResolvedValue([])
+    const db = await import('../db')
+    ;(db.dbExecute as any).mockReset()
+    const tradier = await import('../tradier')
+    ;(tradier.placeCallSpreadOrderAllAccounts as any).mockReset()
+    ;(tradier.placeCallSpreadOrderAllAccounts as any).mockResolvedValue({})
+    delete process.env.FLINT_MODE
+    delete process.env.FLINT_GUARD_BUFFER
+  })
+  afterEach(() => {
+    delete process.env.FLINT_MODE
+    delete process.env.FLINT_GUARD_BUFFER
+  })
+
+  it('closeFlintAtRiskBeforeBell: a row already claimed by another cycle (rowCount=0) is skipped, no second broker order', async () => {
+    process.env.FLINT_MODE = 'live'
+    const db = await import('../db')
+    const tradier = await import('../tradier')
+    queryMock.mockResolvedValueOnce([
+      { position_id: 'FLINT-RACE', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30, account_type: 'sandbox', mode: 'live', person: 'User' },
+    ])
+    // Simulate the other concurrent cycle having already flipped this row to
+    // 'closed' — this cycle's UPDATE ... WHERE status='open' matches 0 rows.
+    ;(db.dbExecute as any).mockResolvedValueOnce(0)
+
+    const result = await closeFlintAtRiskBeforeBell(CT_IN_GUARD_WINDOW)
+
+    expect(result).toContain('FLINT-RACE=already_closed')
+    expect(tradier.placeCallSpreadOrderAllAccounts).not.toHaveBeenCalled()
+  })
+
+  it('closeFlintAtRiskBeforeBell: a row this cycle actually claims (rowCount=1) still closes on the broker as before', async () => {
+    process.env.FLINT_MODE = 'live'
+    const db = await import('../db')
+    const tradier = await import('../tradier')
+    queryMock.mockResolvedValueOnce([
+      { position_id: 'FLINT-SOLO', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30, account_type: 'sandbox', mode: 'live', person: 'User' },
+    ])
+    ;(db.dbExecute as any).mockResolvedValueOnce(1)
+
+    const result = await closeFlintAtRiskBeforeBell(CT_IN_GUARD_WINDOW)
+
+    expect(result).toContain('FLINT-SOLO=guarded')
+    expect(tradier.placeCallSpreadOrderAllAccounts).toHaveBeenCalledTimes(1)
+  })
+
+  it('settleFlintExpired: a row already settled by another cycle (rowCount=0) is skipped, not double-logged', async () => {
+    process.env.FLINT_MODE = 'live'
+    const db = await import('../db')
+    queryMock.mockResolvedValueOnce([
+      { position_id: 'FLINT-SETTLE-RACE', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30 },
+    ])
+    ;(db.dbExecute as any).mockResolvedValueOnce(0)
+
+    const result = await settleFlintExpired(CT_AFTER_CLOSE)
+
+    expect(result).toContain('FLINT-SETTLE-RACE=already_settled')
+  })
+
+  it('settleFlintExpired: a row this cycle actually claims (rowCount=1) settles normally', async () => {
+    process.env.FLINT_MODE = 'live'
+    const db = await import('../db')
+    queryMock.mockResolvedValueOnce([
+      { position_id: 'FLINT-SETTLE-SOLO', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30 },
+    ])
+    ;(db.dbExecute as any).mockResolvedValueOnce(1)
+
+    const result = await settleFlintExpired(CT_AFTER_CLOSE)
+
+    expect(result).toContain('FLINT-SETTLE-SOLO=settled')
   })
 })
