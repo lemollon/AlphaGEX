@@ -490,6 +490,48 @@ def _latest_gamma(symbol: str) -> dict[str, Any] | None:
     return d
 
 
+def register(scheduler: Any, app: Any | None = None) -> bool:
+    """Persist canonical live market structure once a minute on market days.
+
+    The /live route remains an on-demand view, but durable minute captures are
+    required so downstream reports can recover through Render/Postgres when a
+    client cannot reach the public onrender.com URL.
+    """
+    if scheduler is None:
+        logger.error("[MarketStructure] scheduler unavailable; minute capture is not armed")
+        return False
+
+    ensure_tables()
+
+    def tick() -> None:
+        try:
+            result = capture_all()
+            if result.get("captured"):
+                available = sum(
+                    1 for item in (result.get("gamma") or {}).values()
+                    if item.get("available")
+                )
+                logger.info(
+                    "[MarketStructure] capture complete gamma_available=%d/%d vol_available=%s",
+                    available, len(SYMBOLS),
+                    bool((result.get("volatility") or {}).get("available")),
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("[MarketStructure] minute capture failed")
+
+    scheduler.add_job(
+        tick, "cron", day_of_week="mon-fri", hour="8-15", minute="*",
+        timezone=CT, id="market_structure_capture", replace_existing=True,
+        coalesce=True, max_instances=1, misfire_grace_time=90,
+        next_run_time=datetime.now(UTC),
+    )
+    logger.info(
+        "[MarketStructure] registered minute captures 08:00-15:59 CT; "
+        "capture_all enforces the 08:30-15:05 market window"
+    )
+    return True
+
+
 @router.get("/live")
 def live_market_structure():
     """Fresh report payload. It NEVER silently substitutes old public data."""
