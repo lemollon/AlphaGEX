@@ -69,11 +69,13 @@ vi.mock('@/lib/customers-db', () => ({
   customerTransaction: async () => { throw new Error('not used in these tests') },
 }))
 
+const getUserAccountBalanceMock = vi.fn(async () => ({ data: [{ buying_power: 100000, cash: 100000 }] }))
+
 vi.mock('@/lib/snaptrade', () => ({
   isSnapTradeConfigured: () => true,
   getSnapTrade: () => ({
     accountInformation: {
-      getUserAccountBalance: async () => ({ data: [{ buying_power: 100000, cash: 100000 }] }),
+      getUserAccountBalance: getUserAccountBalanceMock,
     },
     trading: {
       placeMlegOrder: async (args: { accountId: string }) => {
@@ -144,6 +146,8 @@ beforeEach(() => {
   state.refFacts = { external_account_ref_ciphertext: null, display_mask: null, brokerage_slug: null }
   execCalls.length = 0
   placedOrders.length = 0
+  getUserAccountBalanceMock.mockReset()
+  getUserAccountBalanceMock.mockResolvedValue({ data: [{ buying_power: 100000, cash: 100000 }] })
 })
 
 afterEach(() => {
@@ -253,5 +257,82 @@ describe('mirrorCloseToCustomers — bot-account guard', () => {
     await mirrorCloseToCustomers('flame', 'master-pos-1', 'profit_target')
     expect(placedOrders).toHaveLength(1)
     expect(placedOrders[0].accountId).toBe('CUSTOMER-ACCT-9')
+  })
+})
+
+/**
+ * 2026-09-29 correction: an OPEN used to fall back to c.buying_power_cents (the
+ * connect-time stored value, never refreshed since) on ANY live SnapTrade
+ * balance-fetch failure — a customer who has since traded that number down (or
+ * up) would size a real order against buying power they may no longer have.
+ * OPENS must now fail CLOSED on a fetch failure: skip that customer for today
+ * and log it, never size off the stale stored number. CLOSES are untouched —
+ * mirrorOneClose/closeOne never read buying power at all, so a broken balance
+ * read must never block closing an open position.
+ */
+describe('mirrorOpenToCustomers — live buying-power fetch failure fails CLOSED', () => {
+  it('a rejected balance fetch skips the OPEN and places no order — never sizes off the stored value', async () => {
+    getUserAccountBalanceMock.mockReset()
+    getUserAccountBalanceMock.mockRejectedValue(new Error('SnapTrade 503'))
+    const { mirrorOpenToCustomers } = await import('../executor')
+    state.eligible = [{
+      ...BASE_ROW,
+      buying_power_cents: 500_000, // a large stored value — must NEVER be used to size this order
+      external_account_ref_ciphertext: 'CUSTOMER-ACCT-9',
+      display_mask: '••••CT-9',
+      brokerage_slug: 'Tastytrade',
+    }]
+    await mirrorOpenToCustomers(MASTER_OPEN)
+    expect(placedOrders).toHaveLength(0)
+    expect(skipReasonsFor('user-1')).toContain('buying_power_fetch_failed')
+  })
+
+  it('a balance response with no usable buying_power/cash also skips the OPEN, distinctly from an exception', async () => {
+    getUserAccountBalanceMock.mockReset()
+    getUserAccountBalanceMock.mockResolvedValue({ data: [] })
+    const { mirrorOpenToCustomers } = await import('../executor')
+    state.eligible = [{
+      ...BASE_ROW,
+      buying_power_cents: 500_000,
+      external_account_ref_ciphertext: 'CUSTOMER-ACCT-9',
+      display_mask: '••••CT-9',
+      brokerage_slug: 'Tastytrade',
+    }]
+    await mirrorOpenToCustomers(MASTER_OPEN)
+    expect(placedOrders).toHaveLength(0)
+    expect(skipReasonsFor('user-1')).toContain('buying_power_unavailable')
+  })
+
+  it('a healthy live fetch still sizes and places normally — the fix only changes the FAILURE path', async () => {
+    getUserAccountBalanceMock.mockReset()
+    getUserAccountBalanceMock.mockResolvedValue({ data: [{ buying_power: 100000, cash: 100000 }] })
+    const { mirrorOpenToCustomers } = await import('../executor')
+    state.eligible = [{
+      ...BASE_ROW,
+      buying_power_cents: 1, // stored value irrelevant now — must not be what sizes this
+      external_account_ref_ciphertext: 'CUSTOMER-ACCT-9',
+      display_mask: '••••CT-9',
+      brokerage_slug: 'Tastytrade',
+    }]
+    await mirrorOpenToCustomers(MASTER_OPEN)
+    expect(placedOrders).toHaveLength(1)
+  })
+
+  it('CLOSES are unaffected by a broken balance read — a rejected fetch never blocks closing an open position', async () => {
+    getUserAccountBalanceMock.mockReset()
+    getUserAccountBalanceMock.mockRejectedValue(new Error('SnapTrade 503'))
+    const { mirrorCloseToCustomers } = await import('../executor')
+    state.openCustomerPositions = [{
+      id: 'cpos-1', user_id: 'user-1', agent_code: 'flame', ticker: 'SPY', expiration: '2026-10-01',
+      put_short: 630, put_long: 625, call_short: 0, call_long: 0, contracts: 1, close_attempts: 0,
+    }]
+    state.refFacts = {
+      external_account_ref_ciphertext: 'CUSTOMER-ACCT-9',
+      display_mask: '••••CT-9',
+      brokerage_slug: 'Tastytrade',
+    }
+    await mirrorCloseToCustomers('flame', 'master-pos-1', 'profit_target')
+    expect(placedOrders).toHaveLength(1)
+    expect(getUserAccountBalanceMock).not.toHaveBeenCalled()
   })
 })
