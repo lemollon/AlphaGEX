@@ -12,6 +12,7 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import date, timedelta
 from functools import lru_cache
 from typing import Any
@@ -29,6 +30,20 @@ CLIENT_LOCK = threading.RLock()
 HEALTH_LOCK = threading.Lock()
 HEALTH_TTL_SECONDS = 60.0
 _health_cache: tuple[float, dict[str, Any]] | None = None
+
+# 2026-09-28 fix (see spike-data-fix-result-9-28.md): the underlying
+# ThetaData client is a single long-lived, lru_cache'd connection reused for
+# every request. A wedged session there (the same class of issue as the
+# workstation ThetaData keep-alive wedge -- see the "ThetaData keep-alive
+# session wedges bulk calls" memory note) used to hang under CLIENT_LOCK
+# forever, blocking every OTHER symbol/endpoint behind it too -- turning one
+# bad connection into a total proxy outage. _CALL_EXECUTOR runs each call on
+# a bounded timeout so a wedge can never hang the lock past
+# THETA_CALL_TIMEOUT_SECONDS; _client.cache_clear() on that timeout (or any
+# other failure) evicts the stuck client so the NEXT call gets a fresh
+# connection instead of the same wedged one.
+_CALL_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="theta-call")
+THETA_CALL_TIMEOUT_SECONDS = float(os.getenv("THETADATA_CALL_TIMEOUT_SECONDS", "25"))
 
 app = FastAPI(title="ThetaData Private Proxy", docs_url=None, redoc_url=None)
 
@@ -88,12 +103,22 @@ def _csv(frame: Any) -> str:
 def _call(method: str, **kwargs: Any) -> str:
     try:
         with CLIENT_LOCK:
-            frame = getattr(_client(), method)(**kwargs)
+            future = _CALL_EXECUTOR.submit(lambda: getattr(_client(), method)(**kwargs))
+            try:
+                frame = future.result(timeout=THETA_CALL_TIMEOUT_SECONDS)
+            except FutureTimeoutError as exc:
+                LOGGER.error(
+                    "ThetaData request timed out method=%s timeout=%ss -- evicting cached client",
+                    method, THETA_CALL_TIMEOUT_SECONDS,
+                )
+                _client.cache_clear()
+                raise HTTPException(status_code=504, detail="ThetaData request timed out") from exc
         return _csv(frame)
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 - provider failures must become a closed 502
         LOGGER.error("ThetaData request failed method=%s error_type=%s", method, type(exc).__name__)
+        _client.cache_clear()   # never keep reusing a client that just errored (2026-09-28 fix)
         raise HTTPException(status_code=502, detail="ThetaData request failed") from exc
 
 

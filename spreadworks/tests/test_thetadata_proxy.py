@@ -1,7 +1,10 @@
 import csv
 import io
+import time as _time
 from datetime import datetime
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from thetadata_proxy import app as proxy
@@ -115,3 +118,52 @@ def test_private_proxy_rejects_unsafe_or_oversized_requests(monkeypatch):
         "symbol": "SPY", "expiration": "20260921", "date": "20260921",
         "interval": "2m",
     }).status_code == 422
+
+
+# ---------------------------------------------------------------- 2026-09-28 wedge/self-heal fix
+# See C:\Users\lemol\.claude\handoff\spike-data-fix-result-9-28.md for the root-cause writeup.
+
+def test_call_times_out_and_evicts_the_cached_client(monkeypatch):
+    """A wedged ThetaData session must be cut off at THETA_CALL_TIMEOUT_SECONDS
+    instead of hanging CLIENT_LOCK (and therefore every OTHER caller) forever,
+    and the cached client must be evicted so the NEXT call gets a fresh one."""
+    monkeypatch.setattr(proxy, "THETA_CALL_TIMEOUT_SECONDS", 0.05)
+
+    class WedgedClient:
+        def stock_snapshot_ohlc(self, **kwargs):
+            _time.sleep(1.0)
+            return None
+
+    def fake_client():
+        return WedgedClient()
+
+    cleared = {"n": 0}
+    fake_client.cache_clear = lambda: cleared.__setitem__("n", cleared["n"] + 1)
+    monkeypatch.setattr(proxy, "_client", fake_client)
+
+    with pytest.raises(HTTPException) as excinfo:
+        proxy._call("stock_snapshot_ohlc", symbol="AAA")
+    assert excinfo.value.status_code == 504
+    assert cleared["n"] == 1
+
+
+def test_call_failure_evicts_the_cached_client(monkeypatch):
+    """Any provider failure (not just a timeout) must evict the cached
+    client too -- never keep reusing a connection that just errored."""
+    monkeypatch.setattr(proxy, "THETA_CALL_TIMEOUT_SECONDS", 5)
+
+    class BrokenClient:
+        def stock_snapshot_ohlc(self, **kwargs):
+            raise RuntimeError("provider error")
+
+    def fake_client():
+        return BrokenClient()
+
+    cleared = {"n": 0}
+    fake_client.cache_clear = lambda: cleared.__setitem__("n", cleared["n"] + 1)
+    monkeypatch.setattr(proxy, "_client", fake_client)
+
+    with pytest.raises(HTTPException) as excinfo:
+        proxy._call("stock_snapshot_ohlc", symbol="AAA")
+    assert excinfo.value.status_code == 502
+    assert cleared["n"] == 1

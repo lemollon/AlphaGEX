@@ -124,6 +124,7 @@ import sys
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from time import sleep as _sleep   # `time` (the class) is already bound above via datetime.time
 from zoneinfo import ZoneInfo
 
 from . import ember_lock
@@ -155,6 +156,24 @@ BARS_HOLD_LOOKBACK = 20        # spec: need >= 20 prior sessions to compute med2
 HISTORY_MAX_STALE_TRADING_DAYS = 3   # a local table's newest row must be within this many
                                       # trading sessions of today to count as "fresh" --
                                       # otherwise fall through to the next history source
+
+# 2026-09-28 in-market data-outage fix (see spike-data-fix-result-9-28.md):
+# ENTER blocked in-market ("no fresh ThetaData or Polygon SPIKE market data",
+# 15:01Z/10:01 CT on 2026-09-25) because the ONE batched ThetaData snapshot
+# call for the whole curated universe is atomic -- any single failure
+# (a wedged proxy-side session, a transient timeout, or one bad/delisted
+# symbol the ThetaData client chokes on) blanked EVERY symbol at once, and
+# Polygon's fallback is structurally unable to rescue it (this plan's
+# snapshot/current-minute endpoint returns HTTP 403 -- prior-day aggs only,
+# confirmed 2026-09-28). THETA_SNAPSHOT_MAX_RETRIES retries the batched call
+# itself (transient wedge/timeout); THETA_PER_SYMBOL_CIRCUIT_BREAKER bounds
+# the per-symbol fallback below it (see _theta_snapshot_rows()) so a real
+# full-outage still fails fast/closed instead of serially burning the
+# per-symbol timeout budget across the whole ~38-name universe.
+THETA_SNAPSHOT_MAX_RETRIES = 1
+THETA_SNAPSHOT_BACKOFF_SECONDS = 2.0
+THETA_PER_SYMBOL_TIMEOUT_SECONDS = 15
+THETA_PER_SYMBOL_CIRCUIT_BREAKER = 3
 
 
 # ---------------------------------------------------------------- trading-day math (pure)
@@ -1113,15 +1132,36 @@ def _theta_base_url() -> str:
     return value
 
 
-def _theta_csv(path: str, params: dict[str, str], timeout: int = 60) -> list[dict]:
+def _theta_csv(path: str, params: dict[str, str], timeout: int = 60,
+                max_retries: int = THETA_SNAPSHOT_MAX_RETRIES,
+                backoff_seconds: float = THETA_SNAPSHOT_BACKOFF_SECONDS) -> list[dict]:
+    """GET one ThetaData proxy endpoint as parsed CSV rows. `Connection: close`
+    forces a fresh TCP connection per attempt instead of reusing a pooled one
+    that may be wedged on the proxy side (2026-09-28 fix -- see
+    THETA_SNAPSHOT_MAX_RETRIES's own comment); `max_retries` retries a
+    transient failure (timeout, connection error, 5xx) with a short backoff
+    before giving up -- a single blip in the proxy's own request must not
+    immediately blank the whole SPIKE universe. The LAST exception is always
+    re-raised (never swallowed) once retries are exhausted."""
     import requests
 
     base_url = _theta_base_url()
     if not base_url:
         raise RuntimeError("THETADATA_BASE_URL is not configured")
-    response = requests.get(f"{base_url}{path}", params=params, timeout=timeout)
-    response.raise_for_status()
-    return list(csv.DictReader(io.StringIO(response.text)))
+    url = f"{base_url}{path}"
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.get(url, params=params, timeout=timeout,
+                                     headers={"Connection": "close"})
+            response.raise_for_status()
+            return list(csv.DictReader(io.StringIO(response.text)))
+        except Exception as exc:  # noqa: BLE001 - retried below, re-raised once exhausted
+            last_exc = exc
+            if attempt < max_retries:
+                _sleep(backoff_seconds * (attempt + 1))
+    assert last_exc is not None
+    raise last_exc
 
 
 def _parse_theta_timestamp(raw: object) -> datetime | None:
@@ -1189,27 +1229,70 @@ def _load_theta_history(symbols: list[str], today: date
     return result
 
 
+def _theta_snapshot_rows(symbols: list[str]) -> tuple[list[dict], list[str]]:
+    """Fetch `/v3/stock/snapshot/ohlc` rows for `symbols`. Tries ONE batched
+    call first (already retried by _theta_csv's own backoff); if the WHOLE
+    batch still errors -- e.g. a wedged proxy session, or one bad/delisted
+    symbol the ThetaData client chokes on -- falls back to per-symbol calls
+    so a single bad name can never blank the entire universe (2026-09-28
+    fix). `THETA_PER_SYMBOL_CIRCUIT_BREAKER` consecutive per-symbol failures
+    aborts the rest of the fallback immediately (treats it as a real outage,
+    not a symbol-specific issue) instead of serially burning the per-symbol
+    timeout budget across the whole curated universe. Returns
+    (rows, dropped_symbols) -- `dropped_symbols` is every name this call
+    could not fetch at all (never guessed into a row); a caller still applies
+    its own freshness filter to whatever rows ARE returned."""
+    try:
+        return _theta_csv("/v3/stock/snapshot/ohlc",
+                           {"symbol": ",".join(symbols), "venue": "nqb"}), []
+    except Exception as exc:  # noqa: BLE001 - fall back to per-symbol below
+        print(f"SPIKE theta snapshot batch failed n_symbols={len(symbols)} "
+              f"error_type={type(exc).__name__} -- retrying per-symbol")
+
+    rows: list[dict] = []
+    dropped: list[str] = []
+    consecutive_failures = 0
+    for symbol in symbols:
+        if consecutive_failures >= THETA_PER_SYMBOL_CIRCUIT_BREAKER:
+            dropped.append(symbol)   # same outage as the ones just above -- don't keep probing
+            continue
+        try:
+            rows.extend(_theta_csv("/v3/stock/snapshot/ohlc", {"symbol": symbol, "venue": "nqb"},
+                                    timeout=THETA_PER_SYMBOL_TIMEOUT_SECONDS, max_retries=0))
+            consecutive_failures = 0
+        except Exception as exc:  # noqa: BLE001 - one bad symbol must not block the rest
+            dropped.append(symbol)
+            consecutive_failures += 1
+            print(f"SPIKE theta snapshot dropped symbol={symbol} error_type={type(exc).__name__}")
+    print(f"SPIKE theta snapshot per-symbol fallback n_symbols={len(symbols)} "
+          f"recovered={len(symbols) - len(dropped)} dropped={len(dropped)}")
+    return rows, dropped
+
+
 def _load_theta_enter_market_data(today: date, symbols: list[str] | None = None
                                   ) -> tuple[list[dict], dict[str, tuple[list[dict], str]]]:
     """Primary Render SPIKE tape from fresh ThetaData stock snapshots and EOD history."""
     symbols = symbols or _configured_spike_symbols()
     history = _load_theta_history(symbols, today)
-    rows = _theta_csv(
-        "/v3/stock/snapshot/ohlc",
-        {"symbol": ",".join(symbols), "venue": "nqb"},
-    )
+    rows, dropped_symbols = _theta_snapshot_rows(symbols)
     max_age_seconds = max(30, int(os.getenv("SPIKE_THETA_MAX_AGE_SECONDS", "300")))
     now = datetime.now(CT)
     universe: list[dict] = []
+    n_stale = 0
+    n_bad_row = 0
+    seen_symbols: set[str] = set()
     for row in rows:
         symbol = str(row.get("symbol") or "").upper()
         if symbol not in symbols:
             continue
+        seen_symbols.add(symbol)
         timestamp = _parse_theta_timestamp(row.get("timestamp"))
         if not timestamp or timestamp.date() != today:
+            n_stale += 1
             continue
         age_seconds = (now - timestamp).total_seconds()
         if age_seconds < -30 or age_seconds > max_age_seconds:
+            n_stale += 1
             continue
         prior_rows = history.get(symbol, ([], "broker"))[0]
         try:
@@ -1217,8 +1300,10 @@ def _load_theta_enter_market_data(today: date, symbols: list[str] | None = None
             volume = float(row.get("volume"))
             prior_close = float(prior_rows[-1]["close"]) if prior_rows else None
         except (TypeError, ValueError, KeyError, IndexError):
+            n_bad_row += 1
             continue
         if price <= 0 or volume < 0 or (prior_close is not None and prior_close <= 0):
+            n_bad_row += 1
             continue
         universe.append({
             "symbol": symbol,
@@ -1230,40 +1315,70 @@ def _load_theta_enter_market_data(today: date, symbols: list[str] | None = None
             "provider_age_seconds": round(age_seconds, 3),
         })
     universe.sort(key=lambda row: float(row["price"]) * float(row["vol"]), reverse=True)
+    n_missing = len(set(symbols) - seen_symbols)
+    print(f"SPIKE theta snapshot symbols={len(symbols)} fresh={len(universe)} "
+          f"stale={n_stale} bad_row={n_bad_row} missing={n_missing} "
+          f"dropped_by_fallback={len(dropped_symbols)} max_age_seconds={max_age_seconds}")
     return universe, history
 
 
 def _load_cloud_enter_market_data(today: date
                                   ) -> tuple[list[dict], dict[str, tuple[list[dict], str]]]:
-    """ThetaData first, Polygon only for missing names or provider failure."""
+    """ThetaData first, Polygon only for missing names or provider failure.
+
+    NOTE (2026-09-28): this account's Polygon plan returns HTTP 403 on the
+    live snapshot/current-minute endpoint (prior-day aggs only) -- confirmed
+    against the 2026-09-25 in-market block. Polygon can therefore NEVER
+    actually rescue a live ThetaData gap on this plan; it is kept as the
+    coded fallback (so it starts working for free the day the plan changes)
+    but must never be treated as a real second data source in the interim,
+    and its own failure is never logged with the raw exception text (which
+    can carry the API key in the request URL) -- only the exception type and
+    symbol counts, same redaction posture as the RuntimeError below (which
+    fleet_runtime._redact()'s does strip any api_key= substring from, but a
+    bare print() here does not)."""
     symbols = _configured_spike_symbols()
     theta_universe: list[dict] = []
     theta_history: dict[str, tuple[list[dict], str]] = {}
+    theta_error_type: str | None = None
     if _theta_base_url():
         try:
             theta_universe, theta_history = _load_theta_enter_market_data(today, symbols)
         except Exception as exc:  # noqa: BLE001 - audited failover, never a trade signal
-            print(f"SPIKE market data fallback theta->polygon error_type={type(exc).__name__}")
+            theta_error_type = type(exc).__name__
+            print(f"SPIKE market data fallback theta->polygon error_type={theta_error_type} "
+                  f"n_symbols={len(symbols)}")
 
     covered = {row["symbol"] for row in theta_universe}
     missing = [symbol for symbol in symbols if symbol not in covered]
     polygon_universe: list[dict] = []
     polygon_history: dict[str, tuple[list[dict], str]] = {}
+    polygon_error_type: str | None = None
     if missing:
         try:
             polygon_universe, polygon_history = _load_polygon_enter_market_data(
                 symbols=missing, today=today,
             )
         except Exception as exc:  # noqa: BLE001 - Theta rows can still be usable
-            print(f"SPIKE market data fallback polygon unavailable error_type={type(exc).__name__}")
+            polygon_error_type = type(exc).__name__
+            print(f"SPIKE market data fallback polygon unavailable error_type={polygon_error_type} "
+                  f"n_missing={len(missing)} note=polygon_plan_403_no_live_data_confirmed_2026-09-28")
             if not theta_universe:
-                raise RuntimeError("no fresh ThetaData or Polygon SPIKE market data") from exc
+                raise RuntimeError(
+                    "no fresh ThetaData or Polygon SPIKE market data "
+                    f"(symbols={len(symbols)} theta_fresh=0 theta_error={theta_error_type} "
+                    f"polygon_error={polygon_error_type})"
+                ) from exc
 
     universe = theta_universe + polygon_universe
     universe.sort(key=lambda row: float(row["price"]) * float(row["vol"]), reverse=True)
     history = {**polygon_history, **theta_history}
     for symbol in symbols:
         history.setdefault(symbol, ([], "broker"))
+    print(f"SPIKE market data cycle summary symbols={len(symbols)} "
+          f"theta_fresh={len(theta_universe)} polygon_fresh={len(polygon_universe)} "
+          f"still_missing={len(symbols) - len(universe)} theta_error={theta_error_type} "
+          f"polygon_error={polygon_error_type}")
     return universe, history
 
 
