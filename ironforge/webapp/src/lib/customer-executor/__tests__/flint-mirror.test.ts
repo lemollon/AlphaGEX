@@ -47,6 +47,16 @@ vi.mock('@/lib/tradier', () => ({
   getProductionPauseState: vi.fn(async () => ({ paused: false })),
 }))
 
+// 6YB71371 double-trade guard's account registry — empty by default (nothing blocked),
+// set per-test via knownBotAccountsMock.mockReturnValue([...]) to simulate a bot-traded
+// account. Mocked here (not the guard's own matching logic in bot-account-guard.ts,
+// which stays real) so the test proves the REAL checkBotTradedAccount logic actually
+// fires from mirrorOneFlintOpen/closeOne, not a stubbed verdict.
+const knownBotAccountsMock = vi.fn<() => string[]>(() => [])
+vi.mock('../bot-account-registry', () => ({
+  getKnownBotTradedTradierAccountNumbers: () => knownBotAccountsMock(),
+}))
+
 function makeCustomer(overrides: Record<string, unknown> = {}) {
   return {
     activation_id: 'act-1',
@@ -56,6 +66,8 @@ function makeCustomer(overrides: Record<string, unknown> = {}) {
     config_json: { max_deployment_pct: 20 },
     broker_account_id: 'ba-1',
     external_account_ref_ciphertext: 'enc-account-ref',
+    display_mask: '••••0000',
+    brokerage_slug: 'SNAPTRADE',
     buying_power_cents: 200_000, // "deposit" baseline captured at connect ($2,000)
     connection_status: 'active',
     provider: 'snaptrade',
@@ -69,6 +81,7 @@ beforeEach(() => {
   customerQueryMock.mockClear().mockResolvedValue([])
   getUserAccountBalanceMock.mockReset()
   placeMlegOrderMock.mockReset().mockResolvedValue({ data: { brokerage_order_id: 'order-123' } })
+  knownBotAccountsMock.mockReset().mockReturnValue([])
   process.env.SNAPTRADE_CLIENT_ID = 'x'
   process.env.SNAPTRADE_CONSUMER_KEY = 'y'
 })
@@ -297,5 +310,67 @@ describe('evaluateFlintCushion parity vs customer_protection_sim.py P3 (FLAME $2
       })
       if (day.sim_eligible === false) expect(withMargin.eligible).toBe(false)
     }
+  })
+})
+
+describe('6YB71371 double-trade guard — a bot-traded account gets no FLINT open or close', () => {
+  beforeEach(() => {
+    process.env.CUSTOMER_FLINT = 'on'
+    process.env.CUSTOMER_EXECUTOR_ENABLED = 'true'
+    // The default makeCustomer() ciphertext 'enc-account-ref' decrypts (via the
+    // module-level decryptSecret mock) to 'decrypted:enc-account-ref', which
+    // normalizeAccountNumber turns into 'DECRYPTEDENCACCOUNTREF' — list that exact
+    // normalized number as a known bot-traded account so the REAL checkBotTradedAccount
+    // matching logic (not a stub) reports a full-number match for this customer.
+    knownBotAccountsMock.mockReturnValue(['DECRYPTEDENCACCOUNTREF'])
+  })
+
+  it('FLINT open: blocked before any broker call, decision logged, main leg untouched', async () => {
+    const customer = makeCustomer()
+    customerQueryMock.mockResolvedValueOnce([customer]) // eligibleCustomers
+
+    const { mirrorFlintOpenToCustomers } = await import('../executor')
+    await mirrorFlintOpenToCustomers(FLINT_MASTER)
+
+    expect(getUserAccountBalanceMock).not.toHaveBeenCalled()
+    expect(placeMlegOrderMock).not.toHaveBeenCalled()
+    const decisionCall = customerExecuteMock.mock.calls.find((c) => String(c[0]).includes('flint_customer_decisions'))
+    expect(decisionCall, 'a decision row must still be logged even when blocked').toBeTruthy()
+    const params = decisionCall?.[1] as unknown[]
+    expect(params).toEqual(expect.arrayContaining([false]))
+    expect(String(params.find((p) => typeof p === 'string' && p.startsWith('bot_account_guard:')))).toContain('bot_account_guard:full_number_match')
+  })
+
+  it('FLINT close: a bot-traded account never receives a close order — marked close_failed for manual review, no retry loop', async () => {
+    const openRow = {
+      id: 'cp-1', user_id: 'user-1', agent_code: 'flame', ticker: 'SPY', expiration: '2026-09-28',
+      put_short: 0, put_long: 0, call_short: 770, call_long: 772, contracts: 1, close_attempts: 0,
+      leg_kind: 'call_spread',
+    }
+    customerQueryMock
+      .mockResolvedValueOnce([openRow]) // mirrorCloseToCustomers's own SELECT ... WHERE status='open'
+      .mockResolvedValueOnce([{ external_account_ref_ciphertext: 'enc-account-ref', display_mask: '••••0000', brokerage_slug: 'SNAPTRADE' }]) // closeOne's ref lookup
+
+    const { mirrorCloseToCustomers } = await import('../executor')
+    await mirrorCloseToCustomers('flame', 'FLINT-SPY-20260928-ABC123', 'settled_at_expiry')
+
+    expect(placeMlegOrderMock).not.toHaveBeenCalled()
+    const failCall = customerExecuteMock.mock.calls.find((c) => String(c[0]).includes("status = 'close_failed'"))
+    expect(failCall, 'must mark close_failed, never silently drop it').toBeTruthy()
+    const failParams = failCall?.[1] as unknown[]
+    expect(String(failParams[1])).toContain('bot_account_guard:full_number_match')
+  })
+
+  it('the guard is checked FIRST for FLINT open — before the live SnapTrade balance read', async () => {
+    const customer = makeCustomer()
+    customerQueryMock.mockResolvedValueOnce([customer])
+    getUserAccountBalanceMock.mockResolvedValueOnce({ data: [{ buying_power: 999999 }] }) // would otherwise clearly pass cushion
+
+    const { mirrorFlintOpenToCustomers } = await import('../executor')
+    await mirrorFlintOpenToCustomers(FLINT_MASTER)
+
+    // Even with an ample balance mocked and ready to return, the guard must have
+    // short-circuited before that call ever happened.
+    expect(getUserAccountBalanceMock).not.toHaveBeenCalled()
   })
 })

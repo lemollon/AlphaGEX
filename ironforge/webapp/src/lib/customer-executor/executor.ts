@@ -611,6 +611,22 @@ async function mirrorOneFlintOpen(c: EligibleRow, m: FlintMasterOpen, agent: str
       maxLossCents, marginCents: FLINT_CUSHION_MARGIN_CENTS, contracts: 0,
     })
 
+  // Hard invariant, checked FIRST and independent of every other gate below — same
+  // rule, same order, as mirrorOneOpen: never mirror a FLINT open into an account the
+  // bots already trade directly (6YB71371 double-trade guard). FAILS CLOSED.
+  const botGuard = checkCustomerAgainstBotAccounts(c)
+  if (botGuard.blocked) {
+    const detail = describeBotAccountBlock(botGuard)
+    await logSkip(`bot_account_guard:${botGuard.reason}`)
+    console.error(`[customer-executor] FLINT OPEN BLOCKED for user ${c.user_id.slice(0, 8)}: ${detail}`)
+    void notifyOps(
+      'IronForge: customer FLINT OPEN blocked (bot account guard)',
+      `${agent.toUpperCase()} ${m.positionId} → user ${c.user_id.slice(0, 8)}: ${detail}`,
+      true,
+    )
+    return
+  }
+
   const gate = canOpenForCustomer({
     executorArmed: isExecutorArmed(),
     killSwitchEngaged,
