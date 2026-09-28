@@ -129,3 +129,45 @@ describe('customer brokerage mirrors close independently of the broker-close gat
     expect(mirrorIdx).toBeGreaterThan(shouldCloseIdx)
   })
 })
+
+/**
+ * The early-close fix (assignmentGuardWindow, 2026-09-29) touched
+ * closeFlintAtRiskBeforeBell/settleFlintExpired directly, but this SAME guard
+ * — closeAtRiskBeforeBell, the EBB put-side assignment guard — must derive its
+ * window from the real close too, not the old hardcoded 14:57-15:00 CT slot.
+ * There is no SEPARATE time check anywhere in closePosition or
+ * mirrorCloseToCustomers (confirmed by the negative assertion below) — the
+ * guard's own window is the ONLY gate standing between "market already closed
+ * 3 hours ago on a half day" and a real broker order plus a real customer
+ * mirror close. Fix it once here and both inherit it for free; reintroduce a
+ * second, independent hardcoded check anywhere downstream and this file goes
+ * red.
+ */
+describe('the EBB guard’s window is early-close aware, and customer mirroring inherits it for free', () => {
+  it('closeAtRiskBeforeBell derives its window from assignmentGuardWindow(ct), not a bare 1457/1500 literal', () => {
+    const body = guardBody()
+    expect(body).toContain('const { startHHMM, endHHMM } = assignmentGuardWindow(ct)')
+    expect(body).toContain("if (hhmm < startHHMM || hhmm >= endHHMM) return ''")
+    // The bug this guards against: a literal 1457/1500 (or any other hardcoded
+    // HHMM) reintroduced directly in the window comparison, bypassing
+    // assignmentGuardWindow's early-close awareness.
+    expect(body).not.toMatch(/hhmm\s*[<>]=?\s*1[45]00\b/)
+  })
+
+  it('closePosition never re-checks ctHHMM itself before calling mirrorCloseToCustomers — no second, independent window for customer mirroring to fall behind on', () => {
+    // If this ever fails, someone added a second, real time-of-day CODE check
+    // (not just explanatory prose in a comment) between closePosition's own
+    // entry and its mirrorCloseToCustomers call — which means fixing
+    // assignmentGuardWindow alone would no longer be enough to make customer
+    // mirroring early-close aware, and THIS describe block's premise (fix it
+    // once, both inherit it) would be false. Scoped to the slice BEFORE the
+    // mirror call, and matched against a live `ctHHMM(` call (not prose),
+    // to avoid false-positives on this function's own doc comments, which
+    // reference ASSIGNMENT_GUARD_END_HHMM only to explain the CALLER's
+    // behavior, not anything closePosition itself checks.
+    const body = closePositionBody()
+    const mirrorIdx = body.indexOf('void mirrorCloseToCustomers(')
+    expect(mirrorIdx).toBeGreaterThan(-1)
+    expect(body.slice(0, mirrorIdx)).not.toMatch(/\bctHHMM\(/)
+  })
+})
