@@ -16,12 +16,16 @@ CASES = [
 # BTC/ETH trade RANGE_BOUND (operator decision 2026-09-23); alts stay off.
 RANGE_BOUND_ON = {"AgapeBtcPerpConfig", "AgapeEthPerpConfig"}
 
+# BTC/XRP/DOGE/SHIB raised to 2.0% risk/trade (operator decision 2026-09-28,
+# 400-day replay showed notional cap binds above ~2%); ETH/SOL/AVAX untouched.
+RISK_PCT_2_0 = {"AgapeBtcPerpConfig", "AgapeXrpPerpConfig", "AgapeDogePerpConfig", "AgapeShibPerpConfig"}
+
 
 @pytest.mark.parametrize("model_mod,config_name,signal_mod,generator_name", CASES)
 def test_hardened_defaults(model_mod, config_name, signal_mod, generator_name):
     config_cls = getattr(importlib.import_module(model_mod), config_name)
     cfg = config_cls()
-    assert cfg.risk_per_trade_pct == 1.0
+    assert cfg.risk_per_trade_pct == (2.0 if config_name in RISK_PCT_2_0 else 1.0)
     assert cfg.min_confidence == "MEDIUM"
     assert cfg.use_sar is False
     assert cfg.allow_range_bound_entries is (config_name in RANGE_BOUND_ON)

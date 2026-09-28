@@ -68,7 +68,7 @@ class AgapeBtcPerpConfig:
 
     # Risk management
     starting_capital: float = 25000.0
-    risk_per_trade_pct: float = 1.0
+    risk_per_trade_pct: float = 2.0
     # One position at a time: the weekly-breakout backtest never stacks.
     max_open_positions: int = 1
 

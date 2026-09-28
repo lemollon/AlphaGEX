@@ -62,7 +62,7 @@ class AgapeXrpPerpConfig:
 
     # Risk management
     starting_capital: float = 9000.0    # $9K starting capital
-    risk_per_trade_pct: float = 1.0     # 5% risk per trade ($450 on $9K)
+    risk_per_trade_pct: float = 2.0     # 5% risk per trade ($450 on $9K)
     default_quantity: float = 100.0     # 100 XRP per trade
     min_quantity: float = 1.0           # Minimum 1 XRP
     max_quantity: float = 50000.0       # Maximum 50,000 XRP
