@@ -706,14 +706,21 @@ async function mirrorOneFlintOpen(c: EligibleRow, m: FlintMasterOpen, agent: str
   // today) is never touched to make room for FLINT.
   let hostCommittedCents = 0
   try {
-    const mainRows = await customerQuery<{ collateral_cents: string | number | null }>(
-      `SELECT collateral_cents FROM customer_positions
-        WHERE user_id = $1 AND agent_code = $2 AND strategy = 'main' AND status = 'open'
-          AND opened_at::date = $3::date
-        ORDER BY opened_at DESC LIMIT 1`,
-      [c.user_id, agent, m.tradeDate],
+    // FLAME's own host leg (EBB) is 2DTE — a position opened Friday is still
+    // `status='open'` on Monday/Tuesday. A date filter here (`opened_at::date
+    // = today`) would return zero rows on every day but the one it opened,
+    // silently reading "no host collateral committed" while a real,
+    // still-open position is holding real buying power on this SAME account
+    // — exactly the double-commitment this check exists to prevent. So: ANY
+    // currently open 'main' row counts, regardless of when it opened, summed
+    // in case more than one is ever open concurrently (rather than the most
+    // recent only).
+    const mainRows = await customerQuery<{ total_cents: string | number | null }>(
+      `SELECT COALESCE(SUM(collateral_cents), 0) AS total_cents FROM customer_positions
+        WHERE user_id = $1 AND agent_code = $2 AND strategy = 'main' AND status = 'open'`,
+      [c.user_id, agent],
     )
-    hostCommittedCents = mainRows[0]?.collateral_cents != null ? Math.floor(Number(mainRows[0].collateral_cents)) : 0
+    hostCommittedCents = mainRows[0]?.total_cents != null ? Math.floor(Number(mainRows[0].total_cents)) : 0
   } catch (e) {
     // Never guess the host leg's committed risk on a read failure — drop FLINT (it is
     // always safe to skip; the host leg itself is untouched either way).
