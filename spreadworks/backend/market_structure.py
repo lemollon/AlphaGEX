@@ -20,6 +20,7 @@ import math
 import os
 import logging
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, time as dtime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -407,8 +408,13 @@ def build_gamma_snapshot(symbol: str, now: datetime | None = None) -> dict[str, 
 
 
 def persist_snapshot(snapshot: dict[str, Any]) -> None:
-    if snapshot.get("net_gex_b") is None:
-        return
+    """Persist both usable gamma maps and failed/LOW-confidence attempts.
+
+    Failure rows are intentional observability: downstream reports can tell the
+    difference between "capture never ran" and "ORATS/spot was unavailable".
+    Numeric gamma fields remain NULL on failure and therefore cannot be treated
+    as valid market structure.
+    """
     ensure_tables()
     captured = datetime.fromisoformat(snapshot["captured_at"].replace("Z", "+00:00"))
     chain_ts = (_parse_ts(snapshot.get("chain_timestamp"))
@@ -460,11 +466,28 @@ def capture_all() -> dict[str, Any]:
         return {"captured": False, "reason": "market_closed", "captured_at": now.isoformat()}
     vol = fetch_vol_indices(now)
     persist_vol(vol, now)
-    gamma = {}
-    for symbol in SYMBOLS:
-        snap = build_gamma_snapshot(symbol, now)
-        gamma[symbol] = snap
-        persist_snapshot(snap)
+    gamma: dict[str, Any] = {}
+    # Four sequential ORATS requests can consume 4 x the provider timeout and
+    # turn a nominal one-minute job into a multi-minute blocker. Fetch each
+    # independent symbol concurrently; each request still keeps its own strict
+    # timeout/freshness gate.
+    with ThreadPoolExecutor(max_workers=len(SYMBOLS), thread_name_prefix="market-structure") as pool:
+        futures = {pool.submit(build_gamma_snapshot, symbol, now): symbol for symbol in SYMBOLS}
+        for future in as_completed(futures):
+            symbol = futures[future]
+            try:
+                snap = future.result()
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("[MarketStructure] %s gamma capture crashed", symbol)
+                snap = {
+                    "symbol": symbol,
+                    "available": False,
+                    "confidence": "LOW",
+                    "reason": f"capture_exception:{type(exc).__name__}",
+                    "captured_at": now.isoformat(),
+                }
+            gamma[symbol] = snap
+            persist_snapshot(snap)
     return {"captured": True, "captured_at": now.isoformat(), "volatility": vol,
             "gamma": gamma}
 
