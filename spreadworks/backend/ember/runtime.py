@@ -23,6 +23,7 @@ from sqlalchemy import text as sa_text
 
 from ..db import SessionLocal
 from . import xsp_flow_live
+from . import xsp_paper_ledger
 
 
 logger = logging.getLogger("spreadworks.ember.runtime")
@@ -415,6 +416,11 @@ def register(scheduler: Any) -> None:
             int(_env_bool("EMBER_XSP_LIVE")),
             xsp_flow_live.ACCOUNT,
         )
+        # Paper ledger is a separate, lock-free instrumentation path: it
+        # never depends on EMBER_XSP_LIVE, never places an order, and never
+        # contends with the live/dry-run agent cycle's advisory locks above.
+        # It logs forward while the bot is paused so a sample builds up.
+        xsp_paper_ledger.register(scheduler)
     from .fleet_runtime import register as register_fleet
     register_fleet(scheduler)
     from .astra_runtime import register as register_astra
