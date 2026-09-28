@@ -374,15 +374,14 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
     flag: 'CUSTOMER_FLINT',
     envVars: ['CUSTOMER_FLINT'],
     description:
-      "IN-FLIGHT (not yet merged to main as of 2026-09-28). FLINT customer mirroring — profits-only, 1 contract, " +
+      "MERGED to main 2026-09-28 (PR #3093). FLINT customer mirroring — profits-only, 1 contract, " +
       "the app-customer counterpart to SPARK_FLINT. Ships disarmed behind CUSTOMER_EXECUTOR_ENABLED + CUSTOMER_FLINT both required.",
     coverage: {
       production: { status: 'n/a', note: "This flag has no meaning for the internal production account — it only ever gates a customer mirror." },
       sandbox: { status: 'n/a', note: "Same — no meaning for internal sandbox accounts." },
       customer: {
-        status: 'excluded',
-        reason: "In development on a separate branch, not yet merged to main. Pre-registered so the guard demands an explicit coverage decision the moment it lands.",
-        approvedBy: TRACKED_GAP,
+        status: 'covered',
+        note: "isCustomerFlintEnabled() reads this directly in customer-executor/executor.ts and gates mirrorFlintOpenToCustomers; mirrorCloseToCustomers's shared closeOne() also covers the FLINT close path. Ships default-off (CUSTOMER_FLINT unset).",
       },
     },
   },
@@ -390,17 +389,48 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
     flag: 'CUSTOMER_DEPOSIT_FLOOR',
     envVars: ['CUSTOMER_DEPOSIT_FLOOR'],
     description:
-      "IN-FLIGHT, NOT YET BUILT anywhere as of 2026-09-28. Intended as app-customers' own equivalent of " +
-      "FLAME_FAST_START's deposit floor/CPPI concept.",
+      "MERGED to main 2026-09-28 (PR #3093). App-customers' own equivalent of FLAME_FAST_START's deposit " +
+      "floor/CPPI concept — ratchets protect_level off customer_deposit_floor_state, caps the main-leg mirror's " +
+      "sizing, and tightens FLINT's own cushion check when both this and CUSTOMER_FLINT are on.",
     coverage: {
       production: { status: 'n/a', note: "This flag has no meaning for the internal production account." },
       sandbox: { status: 'n/a', note: "This flag has no meaning for internal sandbox accounts." },
       customer: {
-        status: 'excluded',
-        reason:
-          "Not yet built in any branch. Currently impossible without a customer-side floor table and MasterOpen " +
-          "carrying sizing data it doesn't carry today. Needs its own design before it can ship.",
-        approvedBy: TRACKED_GAP,
+        status: 'covered',
+        note: "isCustomerDepositFloorEnabled() reads this directly in customer-executor/executor.ts and gates mirrorOneOpen's floor-capped sizing plus FLINT's cushion check. Ships default-off (CUSTOMER_DEPOSIT_FLOOR unset).",
+      },
+    },
+  },
+  {
+    flag: 'CUSTOMER_FAST_START',
+    envVars: ['CUSTOMER_FAST_START'],
+    description:
+      "MERGED to main 2026-09-28 (PR #3093). Customer-side 'B1 calm+1': +1 contract on the main-leg mirror on a " +
+      "calm day (VIX-decay ratio <= 0.70), BEFORE the deposit floor has triggered. Requires CUSTOMER_DEPOSIT_FLOOR " +
+      "to also be on — B1 is defined in terms of 'before the floor triggers', meaningless without the floor's own " +
+      "triggered-state tracking running.",
+    coverage: {
+      production: { status: 'n/a', note: "This flag has no meaning for the internal production account — it only ever gates a customer mirror's sizing." },
+      sandbox: { status: 'n/a', note: "This flag has no meaning for internal sandbox accounts." },
+      customer: {
+        status: 'covered',
+        note: "isCustomerFastStartEnabled() reads this directly in customer-executor/executor.ts and gates evaluateFastStartUpsize's +1 in mirrorOneOpen. Ships default-off (CUSTOMER_FAST_START unset).",
+      },
+    },
+  },
+  {
+    flag: 'CUSTOMER_CALM_UPSIZE',
+    envVars: ['CUSTOMER_CALM_UPSIZE'],
+    description:
+      "MERGED to main 2026-09-28 (PR #3093). Customer-side house-money-only +1 contract on the EBB/SPARK host " +
+      "leg mirror on a calm day, POST-trigger (Round 4) — does not itself require CUSTOMER_DEPOSIT_FLOOR to be " +
+      "on, but in mirrorOneOpen only gets a chance to fire once the floor is on and triggered.",
+    coverage: {
+      production: { status: 'n/a', note: "This flag has no meaning for the internal production account — it only ever gates a customer mirror's sizing." },
+      sandbox: { status: 'n/a', note: "This flag has no meaning for internal sandbox accounts." },
+      customer: {
+        status: 'covered',
+        note: "isCustomerCalmUpsizeEnabled() reads this directly in customer-executor/executor.ts and gates the post-trigger +1 in mirrorOneOpen. Ships default-off (CUSTOMER_CALM_UPSIZE unset).",
       },
     },
   },
