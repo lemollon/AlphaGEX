@@ -15,6 +15,8 @@ const F = require(path.join(LIB, 'flint.ts'));
 const L = require(path.join(LIB, 'ebb-sizing.ts'));
 const X = require(path.join(LIB, 'xsp-swap.ts'));
 const FAST = require(path.join(LIB, 'fast-start-sizing.ts'));
+const GAMMA=require('./spark_flame_gamma_reconstruction.cjs');
+let reconstructGammaEnabled=true;
 let separateSrc=fs.readFileSync(path.join(LIB,'spark-flint-separate.ts'),'utf8').replace(/import\s*\{[^}]*\}\s*from\s*'\.\/flint'/,'');
 const S=new Function('evaluateFlintProfitGate',`${stripTypeScriptTypes(separateSrc).replace(/\bexport\s+/g,'')}; return {decideSparkFlintContracts};`)(F.evaluateFlintProfitGate);
 // Only the pure prefix; the persistence section is deliberately never loaded.
@@ -25,7 +27,7 @@ const oneJS = stripTypeScriptTypes(oneSrc).replace(/\bexport\s+/g, '');
 const O = new Function('deps', 'process', `const {currentFloorLevelCents,evaluateCalmUpsize,evaluateDepositFloorCap,evaluateFastStartUpsize,evaluateFlintCushion}=deps; ${oneJS}; return {evaluateOneStrategyHostSizing,decideOneStrategyFlintContracts};`)(C, process);
 
 const SPEC = {
-  id: 'spark-flame-current-3y-20260928-v1', sourceCommit: '3637fd18396b9ab532ee0d9bd42281338353a8a2',
+  id: 'spark-flame-current-3y-20260928-v2-reconstructed-gamma', sourceCommit: '3637fd18396b9ab532ee0d9bd42281338353a8a2',
   start: '2023-09-29', end: '2026-09-28', seeds: { flame: 2000, spark: 5000 },
   bots: { spark: { start: 665, end: 680, offset: 2, width: 5, vix: .90 }, flame: { start: 845, end: 850, offset: 1, width: 2, vix: .80 } },
   clock: 'America/New_York; CT clocks + 1 hour', creditFloor: .10,
@@ -38,7 +40,7 @@ const SPEC = {
   fillCases: { natural: 0, adverse3c: .03 },
   execution: 'minute snapshot sell-bid/buy-ask; quote size checked; no guaranteed fills; same-minute stock OPEN is spot proxy',
   settlement: 'ThetaData official SPY EOD close; XSP requires independent SPX close / 10',
-  gammaCoverage: 'Only authentic recorded Tradier-source context. Missing source -> no gamma add-on; not validation of historical gamma performance.',
+  gammaCoverage: 'Uniform reconstructed 0..60 DTE call/put dollar gamma: prior-close Theta quotes/IV, morning OI, 11:05 ET spot; 20 prior-session warmup. Modelled historical inputs, not identical Tradier observations.',
   xspCoverage: 'Enabled. Missing XSP quotes fall back per source; missing SPX settlement on an accepted swap makes that profile unresolved.',
   blackout: 'BLACKOUT_HALT_ENABLED=false in frozen source', weekdaySkips: [],
   dependencies: 'No external Node packages. Private ThetaData proxy for historical market data.',
@@ -129,10 +131,26 @@ async function histories() {
  // SPX settlement; accepted XSP swaps are flagged unresolved.
  try {
   const rr=await request('https://cdn.cboe.com/api/global/us_indices/daily_prices/SPX_History.csv');
-  for(const r of rr){const [m,d,y]=(r.date||'').split('/');if(y&&Number.isFinite(+r.close))SPX[`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`]=+r.close;}
+  for(const r of rr){const [m,d,y]=(r.date||'').split('/');if(y&&Number.isFinite(+(r.close||r.spx)))SPX[`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`]=+(r.close||r.spx);}
  } catch(e) {STATE.spxHistoryError=String(e.message);}
 }
 const SPX={};
+async function loadGammaDay(day,spot) {
+ const priorDay=Object.keys(eod).filter(d=>d<day).sort().at(-1);
+ if(!priorDay)throw Error('gamma_prior_spot_missing');
+ const closingChains=await feed('/v3/option/history/eod',{symbol:'SPY',date:priorDay,expiration:'*',max_dte:61});
+ const morningOI=await feed('/v3/option/history/open_interest',{symbol:'SPY',date:day,expiration:'*',max_dte:60});
+ const result=GAMMA.reconstruct({day,priorDay,minute:665,spot,priorSpot:eod[priorDay],closingChains,morningOI});
+ gamma[day]=result;fs.writeFileSync(path.join(OUT,'gamma-'+day+'.json'),JSON.stringify(result));
+ emit('gamma_reconstruction',{...result});return result;
+}
+async function warmGamma() {
+ gamma={};const warm=Object.keys(eod).filter(d=>d<SPEC.start).sort().slice(-20);
+ if(warm.length!==20)throw Error('gamma_warmup_history_short');
+ STATE.stage='warming_gamma';
+ for(const day of warm){STATE.currentDay=day;const rows=await feed('/v3/stock/history/ohlc',{symbol:'SPY',date:day,interval:'1m',start_time:'11:05:00',end_time:'11:06:00',venue:'utp_cta'});const r=rows.find(r=>minute(r.timestamp||r.datetime,day)===665);if(!(Number(r?.open)>0))throw Error('gamma_warmup_spot_missing');await loadGammaDay(day,Number(r.open));}
+}
+
 function usableQuote(r) {
  const bid=+r.bid,ask=+r.ask,bs=+r.bid_size,as=+r.ask_size;
  return Number.isFinite(bid)&&Number.isFinite(ask)&&bid>=0&&ask>0&&bid<=ask&&bs>=0&&as>=0;
@@ -146,7 +164,10 @@ class Quotes {
   // Reuse those fresh, same-run observations for entry retries; never fetch
   // the same contract's remaining path again at each scanner minute.
   if(previous&&previous.start<=start)return previous.quotes;
-  const rr=await feed('/v3/option/history/quote',{symbol,right,strike,expiration:this.day,date:this.day,interval:'1m',start_time:clock(start),end_time:clock(this.close)});
+  let rr;
+  try {rr=await feed('/v3/option/history/quote',{symbol,right,strike,expiration:this.day,date:this.day,interval:'1m',start_time:clock(start),end_time:clock(this.close)});}
+  catch(e){if(e.message==='http_404'){this.cache.set(key,{start,quotes:new Map()});this.gaps.push({day:this.day,symbol,right,strike,start,reason:'provider_explicit_no_observations'});return this.cache.get(key).quotes;}throw e;}
+
   const out=new Map();for(const r of rr){
    // Single-contract history responses may omit identity columns. Their
    // identity is then the explicitly requested API scope, never a guessed
@@ -247,6 +268,7 @@ async function replayDay(day) {
  const rr=await feed('/v3/stock/history/ohlc',{symbol:'SPY',date:day,interval:'1m',start_time:'09:30:00',end_time:clock(close),venue:'utp_cta'});
  const spots=new Map();for(const r of rr){const m=minute(r.timestamp||r.datetime,day);if(m>=close)continue;if(r.symbol?.trim()&&r.symbol.trim().toUpperCase()!=='SPY')throw Error('wrong_stock_identity');const b={open:+r.open,high:+r.high,low:+r.low,close:+r.close};if(Object.values(b).every(x=>x===0)&&+r.volume===0)continue;if(Object.values(b).some(x=>!Number.isFinite(x)||x<=0))throw Error('invalid_stock');spots.set(m,b);}
  if(!eod[day])throw Error('official_SPY_close_missing');
+ if(reconstructGammaEnabled){const spot=spots.get(665)?.open;if(!(spot>0))throw Error('gamma_current_spot_missing');await loadGammaDay(day,spot);}
  const dq=new Quotes(day,close), daily={day,vix:vg,close,accounts:[]};
  for(const bot of ['spark','flame']) {
   const cfg=SPEC.bots[bot], group=accounts.filter(a=>a.bot===bot), active=new Map(group.map(a=>[a,[]]));
@@ -318,7 +340,7 @@ async function replayDay(day) {
    a.days.push(row);daily.accounts.push({bot:a.bot,profile:a.profile,fillCase:a.fillCase,...row});
   }
  }
- return daily;
+ daily.quoteAbsences=dq.gaps;return daily;
 }
 function stats(a) {
  let peak=a.deposit/100,dd=0,ddPct=0,mtmDD=0,streak=0,longest=0;const months={};
@@ -332,10 +354,11 @@ function stats(a) {
  return {bot:a.bot,profile:a.profile,fillCase:a.fillCase,startingEquity:a.deposit/100,endingEquity:a.equity/100,pnl:money(pnl),returnPct:money(100*pnl/(a.deposit/100)),cagrPct:money(100*(Math.pow(Math.max(0,a.equity/a.deposit),1/3)-1)),trades:trades.length,hostTrades:trades.filter(t=>t.leg.startsWith('host')).length,flintTrades:trades.filter(t=>t.leg==='flint').length,winRatePct:trades.length?money(100*wins.length/trades.length):null,maxClosedDrawdown:money(dd),maxClosedDrawdownPct:money(ddPct*100),maxMarkedDrawdownObserved:money(mtmDD),markGapMinutes:a.days.reduce((s,d)=>s+d.markGaps,0),longestLosingDayStreak:longest,worstTrade:losses.length?Math.min(...losses.map(t=>t.pnl)):null,netAfterExternalSubscription:money(pnl-Object.keys(months).filter(m=>m!==SPEC.end.slice(0,7)).length*50),monthly,floorBreaches:a.floorBreaches,unresolved:a.unresolved,invalidFrom:a.invalidFrom||null,clusters:{month:aggregateBy('month'),weekday:aggregateBy('weekday'),leg:aggregateBy('leg'),worstTrades:losses.sort((a,b)=>a.pnl-b.pnl).slice(0,20)},complete:STATE.completed===STATE.total&&!STATE.dataErrors.length&&!a.unresolved.length};
 }
 function snapshot() {
- const result={spec:SPEC,status:{...STATE},summary:accounts.map(stats),sourceManifest:manifest,gammaCoverageDays:Object.keys(gamma).length,fullFeatureHistoricalValidationComplete:false,coverageLimits:['No three-year same-source historical dealer gamma; gamma add-on remains inactive where history unavailable.','XSP outcomes require authentic SPX settlement; unresolved swaps invalidate affected account paths.','Minute snapshots model fills; actual historical broker execution and assignment are not replayable from these inputs.']};
+ const result={spec:SPEC,status:{...STATE},summary:accounts.map(stats),sourceManifest:manifest,gammaCoverageDays:Object.keys(gamma).length,gammaReconstruction:gamma,gammaStudyCoverageDays:Object.keys(gamma).filter(d=>d>=SPEC.start&&d<=SPEC.end).length,fullFeatureHistoricalValidationComplete:false,coverageLimits:['Gamma add-on uses a consistent historical reconstruction, not recorded Tradier greeks; IV is held from the prior close and model assumptions are explicit.','XSP outcomes require authentic SPX settlement; unresolved swaps invalidate affected account paths.','Minute snapshots model fills; actual historical broker execution and assignment are not replayable from these inputs.']};
  fs.writeFileSync(path.join(OUT,'checkpoint.json'),JSON.stringify(result,null,2));return result;
 }
 function selfTest() {
+ GAMMA.selfTest();
  assert.deepEqual(csv('a,b\n"x,y","z"\n'),[{a:'x,y',b:'z'}]);
  assert.equal(minute('2024-06-03T15:05:00Z','2024-06-03'),665);
  assert(!sessions().includes('2025-01-09'));assert(halves.has('2024-12-24'));
@@ -356,7 +379,7 @@ async function execute() {
  const sourceHashes={};for(const file of ['customer-executor/contracts.ts','one-strategy.ts','ebb-sizing.ts','fast-start-sizing.ts','flint.ts','xsp-swap.ts'])sourceHashes[file]=sha(fs.readFileSync(path.join(LIB,file)));
  emit('frozen_spec',{spec:SPEC,sourceHashes,sessions:STATE.total});
  try {
-  await histories();STATE.stage='running';let consecutive=0;
+  await histories();if(reconstructGammaEnabled)await warmGamma();STATE.stage='running';let consecutive=0;
   for(const day of sessions()) {
    STATE.currentDay=day;
    const beforeAccounts=structuredClone(accounts);
@@ -388,4 +411,4 @@ if(require.main===module) {
  });
  server.listen(Number(process.env.PORT||10000),'0.0.0.0',()=>execute());
 }
-module.exports={selfTest,hostSize,flintSize,realizeSpread,sessions,stats,csv,SPEC,replayDay,accounts,setTestHistories: (data)=>{vix=data.vix;eod=data.eod;}};
+module.exports={selfTest,hostSize,flintSize,realizeSpread,sessions,stats,csv,SPEC,replayDay,accounts,setTestHistories: (data)=>{vix=data.vix;eod=data.eod;reconstructGammaEnabled=false;}};
