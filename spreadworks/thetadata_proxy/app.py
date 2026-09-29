@@ -181,6 +181,60 @@ def option_list_expirations(symbol: str = Query(...)) -> PlainTextResponse:
     return _csv_response(_call("option_list_expirations", symbol=_symbols(symbol)))
 
 
+@app.get("/v3/option/snapshot/greeks/all")
+def option_snapshot_greeks_all(
+    symbol: str = Query(...), expiration: str = Query("*"),
+    max_dte: int = Query(365, ge=0, le=365),
+    strike_range: int = Query(60, ge=1, le=150),
+) -> PlainTextResponse:
+    """Bounded live chain; source timestamps remain in ThetaData's CSV."""
+    expiry = "*" if expiration == "*" else _date(expiration, "expiration")
+    response = _csv_response(_call(
+        "option_snapshot_greeks_all", symbol=_symbol(symbol), expiration=expiry,
+        max_dte=max_dte, strike_range=strike_range,
+    ))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.get("/v3/option/snapshot/greeks/implied_volatility")
+def option_snapshot_implied_volatility(
+    symbol: str = Query(...), expiration: str = Query("*"),
+    max_dte: int = Query(365, ge=0, le=365),
+    strike_range: int = Query(60, ge=1, le=150),
+) -> PlainTextResponse:
+    """Standard-tier IV data for a local gamma calculation when Pro is absent."""
+    expiry = "*" if expiration == "*" else _date(expiration, "expiration")
+    response = _csv_response(_call(
+        "option_snapshot_greeks_implied_volatility", symbol=_symbol(symbol),
+        expiration=expiry, max_dte=max_dte, strike_range=strike_range,
+    ))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.get("/v3/option/snapshot/open_interest")
+def option_snapshot_open_interest(
+    symbol: str = Query(...), expiration: str = Query("*"),
+    max_dte: int = Query(365, ge=0, le=365),
+    strike_range: int = Query(60, ge=1, le=150),
+) -> PlainTextResponse:
+    expiry = "*" if expiration == "*" else _date(expiration, "expiration")
+    response = _csv_response(_call(
+        "option_snapshot_open_interest", symbol=_symbol(symbol), expiration=expiry,
+        max_dte=max_dte, strike_range=strike_range,
+    ))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.get("/v3/index/snapshot/price")
+def index_snapshot_price(symbol: str = Query(...)) -> PlainTextResponse:
+    response = _csv_response(_call("index_snapshot_price", symbol=_symbols(symbol)))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/v3/option/history/quote")
 def option_history_quote(
     symbol: str = Query(...),

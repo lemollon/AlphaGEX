@@ -69,6 +69,32 @@ class FakeThetaClient:
             "bid": 1.0, "ask": 1.1,
         }])
 
+    def option_snapshot_greeks_all(self, **kwargs):
+        self.calls.append(("option_snapshot_greeks_all", kwargs))
+        return Frame([{"symbol": "SPX", "expiration": "2026-09-29",
+                       "strike": 7700, "right": "call",
+                       "timestamp": "2026-09-29T10:00:00", "gamma": 0.002,
+                       "implied_vol": 0.18}])
+
+    def option_snapshot_open_interest(self, **kwargs):
+        self.calls.append(("option_snapshot_open_interest", kwargs))
+        return Frame([{"symbol": "SPX", "expiration": "2026-09-29",
+                       "strike": 7700, "right": "call",
+                       "timestamp": "2026-09-29T06:30:00",
+                       "open_interest": 500}])
+
+    def option_snapshot_greeks_implied_volatility(self, **kwargs):
+        self.calls.append(("option_snapshot_greeks_implied_volatility", kwargs))
+        return Frame([{"symbol": "SPX", "expiration": "2026-09-29",
+                       "strike": 7700, "right": "call",
+                       "timestamp": "2026-09-29T10:00:00",
+                       "underlying_price": 7700, "implied_vol": 0.18}])
+
+    def index_snapshot_price(self, **kwargs):
+        self.calls.append(("index_snapshot_price", kwargs))
+        return Frame([{"symbol": "SPX", "timestamp": "2026-09-29T10:00:00",
+                       "price": 7700}])
+
 
 def test_private_proxy_serves_compatible_stock_and_option_csv(monkeypatch):
     fake = FakeThetaClient()
@@ -117,6 +143,27 @@ def test_private_proxy_rejects_unsafe_or_oversized_requests(monkeypatch):
     assert client.get("/v3/option/history/quote", params={
         "symbol": "SPY", "expiration": "20260921", "date": "20260921",
         "interval": "2m",
+    }).status_code == 422
+
+
+def test_private_proxy_exposes_live_greeks_oi_and_index_prices(monkeypatch):
+    fake = FakeThetaClient()
+    monkeypatch.setattr(proxy, "_client", lambda: fake)
+    client = TestClient(proxy.app)
+    for path in ("/v3/option/snapshot/greeks/all",
+                 "/v3/option/snapshot/greeks/implied_volatility",
+                 "/v3/option/snapshot/open_interest"):
+        response = client.get(path, params={"symbol": "SPX", "expiration": "*",
+                                            "max_dte": 365, "strike_range": 60})
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert "2026-09-29" in response.text
+        assert fake.calls[-1][1]["expiration"] == "*"
+    index = client.get("/v3/index/snapshot/price", params={"symbol": "SPX,NDX"})
+    assert index.status_code == 200
+    assert fake.calls[-1] == ("index_snapshot_price", {"symbol": ["SPX", "NDX"]})
+    assert client.get("/v3/option/snapshot/greeks/all", params={
+        "symbol": "SPX", "strike_range": 500,
     }).status_code == 422
 
 
