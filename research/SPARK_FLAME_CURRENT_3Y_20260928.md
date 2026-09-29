@@ -89,9 +89,13 @@ results are pending; partial exports are not validated three-year returns.
 
 Service: https://dashboard.render.com/web/srv-dau3ni7lot8c739htsv0
 Execution branch: `research/spark-flame-current-3y-20260928`.
-Latest runner/test commit: `90a4f08965f9cbd9148fc09a21b59ebe35b85451`.
+Latest runner/test commit: `f93f8c0c8ff62f8571c7489c6535e61c6ba78d90`.
 
 A read-only observer polls authenticated status every 45 seconds and saves
 existing report/trade/daily exports every five minutes. Quotes retrieved
 within this run are reused for later scanner minutes of the same contract.
 The collector requests historical market data only and never sends orders.
+
+Regular-session stock bars exclude intervals starting at the market close.
+Expiry settlement uses the independently retrieved official daily close;
+empty post-close OHLC records do not invalidate prior session trades.
