@@ -214,3 +214,21 @@ def test_call_failure_evicts_the_cached_client(monkeypatch):
         proxy._call("stock_snapshot_ohlc", symbol="AAA")
     assert excinfo.value.status_code == 502
     assert cleared["n"] == 1
+
+
+def test_provider_permission_denied_is_reported_as_403(monkeypatch):
+    class Denied(Exception):
+        def code(self):
+            return "StatusCode.PERMISSION_DENIED"
+
+    class Client:
+        def index_snapshot_price(self, **kwargs):
+            raise Denied()
+
+    def fake_client():
+        return Client()
+    fake_client.cache_clear = lambda: None
+    monkeypatch.setattr(proxy, "_client", fake_client)
+    response = TestClient(proxy.app).get(
+        "/v3/index/snapshot/price", params={"symbol": "SPX"})
+    assert response.status_code == 403
