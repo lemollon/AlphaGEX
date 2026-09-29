@@ -35,12 +35,31 @@ long contributes zero sale proceeds at buyback; its zero bid size does not
 invalidate the short option's valid ask. Positive long bids require size. Fees are $1.40 per spread,
 with $50 monthly subscription reported externally over 36 billing cycles.
 
-Authentic Tradier-source gamma context is only available starting September
-28, 2026. The 20-session gamma-upsize gate executes, but historical add-on
-performance cannot be validated from the currently available records.
-No gamma values are fabricated or reconstructed with an incompatible source.
-The full-feature validation flag therefore remains false even when the
-covered-market-data replay completes.
+Historical gamma now uses a uniform reconstruction across the requested window,
+including 20 pre-window warmup sessions. Inputs are historical ThetaData closing
+chains from the prior session, morning OI (reported as the prior session's
+closing OI), and SPY spot at 11:05 ET. The once-per-day shared gamma context
+mirrors the scanner's morning Spark evaluation before Flame.
+
+For each 0..60 DTE contract, infer prior-close IV from quote mids using
+Black-Scholes (r=.045, q=.012), then recompute gamma at the entry time and spot.
+Apply gamma × OI × 100 × spot² × .01, summed separately over calls and puts.
+Missing/unusable contract IV is reconstructed from the same-expiry, same-side
+prior IV curve: interpolate variance between strikes and use flat endpoint IV
+outside its observed wings. Counts of interpolated/extrapolated contracts are
+reported. An entirely missing expiry surface fails the day; it is not guessed.
+Time-to-expiry uses actual half-day closes, with a five-minute lower bound.
+
+The native p67 / 20-session upsizing function compares this reconstruction
+against its own trailing values. No Tradier observations are spliced into the
+modelled series. This validates the modelled historical hypothesis; it does not
+prove exact agreement with historical Tradier Greeks or broker executions.
+The full-feature exact-validation flag remains false for that reason.
+
+The existing long net-gamma baseline lives in SpreadWorks; it is not used as a
+replacement for FLINT's call-side gamma input. XSP historical quotes are read
+per selected contract; settlement uses the CBOE SPX history CSV's SPX column /10.
+Explicit provider no-observation responses are recorded as quote absences.
 
 The event blackout master is disabled in frozen source. Historical NYSE
 closures include January 9, 2025, independently of the source's limited
@@ -89,7 +108,7 @@ results are pending; partial exports are not validated three-year returns.
 
 Service: https://dashboard.render.com/web/srv-dau3ni7lot8c739htsv0
 Execution branch: `research/spark-flame-current-3y-20260928`.
-Latest runner/test commit: `f93f8c0c8ff62f8571c7489c6535e61c6ba78d90`.
+Latest runner/test commit: `2172eacc0a4a2f7eca3781b9e69b5f9653a2305c`.
 
 A read-only observer polls authenticated status every 45 seconds and saves
 existing report/trade/daily exports every five minutes. Quotes retrieved
