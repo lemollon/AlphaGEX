@@ -122,7 +122,7 @@ async function histories() {
  vix=vr.map(r=>{const [m,d,y]=r.date.split('/');return {day:`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`,close:+r.close};}).filter(x=>Number.isFinite(x.close)&&x.close>0).sort((a,b)=>a.day.localeCompare(b.day));
  for(const y of [2023,2024,2025,2026]) {
   const rr=await feed('/v3/stock/history/eod',{symbol:'SPY',start_date:`${y}-01-01`,end_date:y===2026?SPEC.end:`${y}-12-31`});
-  for(const r of rr) {const d=(r.date||r.timestamp||r.trade_date||'').slice(0,10);const close=+r.close;if(d && Number.isFinite(close)&&close>0)eod[d]=close;}
+  for(const r of rr) {const d=(r.date||r.timestamp||r.trade_date||r.created||r.last_trade||'').slice(0,10);const close=+r.close;if(d && Number.isFinite(close)&&close>0)eod[d]=close;}
  }
  if(process.env.GAMMA_FILE)gamma=JSON.parse(fs.readFileSync(process.env.GAMMA_FILE,'utf8'));
  // Read-only public independent index source. If unavailable, do not invent
