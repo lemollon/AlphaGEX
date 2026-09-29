@@ -230,6 +230,8 @@ class AgapeShibPerpSignalGenerator:
                 )
         if getattr(self.config, "strategy_mode", "combined_signal") == "weekly_breakout":
             return self._weekly_breakout_signal(now, spot, market_data, prophet_data)
+        if getattr(self.config, "strategy_mode", "combined_signal") == "fade_lock_breaker":
+            return self._fade_lock_breaker_signal(now, spot, market_data, prophet_data)
         combined_signal = market_data.get("combined_signal", "WAIT")
         combined_confidence = market_data.get("combined_confidence", "LOW")
         action, side, reasoning = self._determine_action(combined_signal, combined_confidence, market_data)
@@ -295,6 +297,37 @@ class AgapeShibPerpSignalGenerator:
             action=SignalAction.LONG if d["direction"] == 1 else SignalAction.SHORT,
             confidence="MEDIUM", reasoning=reasoning,
             side=side, entry_price=spot, stop_loss=stop_loss, take_profit=None,
+            quantity=quantity, max_risk_usd=max_risk,
+        )
+
+    def _fade_lock_breaker_signal(self, now, spot, market_data, prophet_data):
+        """H=3 daily fade + trailing-lock target + rally circuit breaker
+        (trading/perp_strategies/fade_lock_breaker.py). PAPER research."""
+        from trading.perp_strategies import fade_lock_breaker as flb
+
+        base = dict(
+            spot_price=spot, timestamp=now,
+            funding_rate=market_data.get("funding_rate", 0),
+            funding_regime=market_data.get("funding_regime", "UNKNOWN"),
+            oracle_advice=prophet_data.get("advice", "UNAVAILABLE"),
+            oracle_win_probability=prophet_data.get("win_probability", 0.5),
+        )
+        d = flb.decide_entry(self.config, self.config.ticker, self)
+        if d["direction"] == 0:
+            return AgapeShibPerpSignal(**base, action=SignalAction.WAIT, reasoning=d["reason"])
+        sig = d["signal"]
+        side = "long" if d["direction"] == 1 else "short"
+        # SHIB trades ~1e-5: keep full precision (no 4-dp rounding).
+        stop_loss = flb.initial_stop(spot, d["direction"], sig.move)
+        take_profit = flb.compute_hard_target(spot, sig.sma3)
+        quantity, max_risk = self._calculate_position_size(spot, stop_distance=abs(spot - stop_loss))
+        reasoning = (f"{d['reason']} move={sig.move:.6f} sma3={sig.sma3:.10f} "
+                     f"target={take_profit:.10f} funding={market_data.get('funding_regime', 'UNKNOWN')}")
+        return AgapeShibPerpSignal(
+            **base,
+            action=SignalAction.LONG if d["direction"] == 1 else SignalAction.SHORT,
+            confidence="MEDIUM", reasoning=reasoning,
+            side=side, entry_price=spot, stop_loss=stop_loss, take_profit=take_profit,
             quantity=quantity, max_risk_usd=max_risk,
         )
 

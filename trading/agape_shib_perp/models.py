@@ -93,11 +93,16 @@ class AgapeShibPerpConfig:
     # Regime-aware exits feature flag (default off — current behaviour preserved).
     use_regime_aware_exits: bool = False
 
-    # Entry/exit engine: 168h breakout + ATR stop/trail, Asia/EU session only
-    # (trading/perp_strategies/weekly_breakout.py). Unfiltered SHIB breakouts
-    # are ~flat; the 22:00-09:59 UTC session filter gave PF 1.55 / 1.57 on
-    # the older/newer halves of 400d of hourly data. "combined_signal" = legacy.
-    strategy_mode: str = "weekly_breakout"
+    # Entry/exit engine: H=3 daily fade + trailing-lock target + rally
+    # circuit breaker (trading/perp_strategies/fade_lock_breaker.py), PAPER
+    # research per round9_lock_breaker Test B (PF 2.31/n=97 walk-forward
+    # 2022-07->2026-09; see that module's docstring for the full disclosed
+    # caveats -- post-hoc combination, thin lag margin, doesn't travel to
+    # alts). "weekly_breakout" (168h breakout + ATR stop/trail, Asia/EU
+    # session only) remains available and is still the default for every
+    # other AGAPE perp coin; unfiltered SHIB breakouts were ~flat there.
+    # "combined_signal" = legacy.
+    strategy_mode: str = "fade_lock_breaker"
     wb_lookback_hours: int = 168
     wb_stop_atr: float = 2.5
     wb_trail_atr: float = 2.0

@@ -233,6 +233,9 @@ class AgapeShibPerpTrader:
                 if (getattr(self.config, "strategy_mode", "") == "weekly_breakout"
                         and pos.get("stop_loss")):
                     did_close = self._manage_weekly_breakout(pos, current_price, now)
+                elif (getattr(self.config, "strategy_mode", "") == "fade_lock_breaker"
+                        and pos.get("stop_loss")):
+                    did_close = self._manage_fade_lock_breaker(pos, current_price, now)
                 elif self.config.use_no_loss_trailing:
                     did_close = self._manage_no_loss_trailing(pos, current_price, now)
                 else:
@@ -250,6 +253,11 @@ class AgapeShibPerpTrader:
         """ATR stop + ATR trailing stop + time exit for weekly-breakout entries."""
         from trading.perp_strategies import weekly_breakout as wb
         return wb.manage_open_position(self, "agape_shib_perp_positions", pos, current_price, now, CENTRAL_TZ)
+
+    def _manage_fade_lock_breaker(self, pos, current_price, now):
+        """Trailing-lock target (6b) + time stop for fade_lock_breaker entries."""
+        from trading.perp_strategies import fade_lock_breaker as flb
+        return flb.manage_open_position(self, "agape_shib_perp_positions", pos, current_price, now, CENTRAL_TZ)
 
     def _manage_no_loss_trailing(self, pos, current_price, now):
         if getattr(self.config, "use_regime_aware_exits", False):
