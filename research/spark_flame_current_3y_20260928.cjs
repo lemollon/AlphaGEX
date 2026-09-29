@@ -135,7 +135,7 @@ async function histories() {
 const SPX={};
 function usableQuote(r) {
  const bid=+r.bid,ask=+r.ask,bs=+r.bid_size,as=+r.ask_size;
- return Number.isFinite(bid)&&Number.isFinite(ask)&&bid>=0&&ask>0&&bid<=ask&&bs>0&&as>0;
+ return Number.isFinite(bid)&&Number.isFinite(ask)&&bid>=0&&ask>0&&bid<=ask&&bs>=0&&as>=0;
 }
 class Quotes {
  constructor(day,close){this.day=day;this.close=close;this.cache=new Map();this.gaps=[];}
@@ -160,7 +160,12 @@ class Quotes {
  }
  async spread(symbol,right,short,long,start) {
   const s=await this.leg(symbol,right,short,start),l=await this.leg(symbol,right,long,start);
-  const at=m=>{const a=s.get(m),b=l.get(m);return a&&b?{credit:money(a.bid-b.ask),debit:money(a.ask-b.bid),bidSize:a.bidSize,askSize:b.askSize}:null;};
+  const at=m=>{const a=s.get(m),b=l.get(m);return a&&b?{
+   credit:a.bidSize>0&&b.askSize>0?money(a.bid-b.ask):null,
+   // A zero-bid long is left worthless, with no invented sale proceeds.
+   // A positive long bid requires displayed size before netting proceeds.
+   debit:a.askSize>0&&(b.bid===0||b.bidSize>0)?money(a.ask-b.bid):null,
+   bidSize:a.bidSize,askSize:b.askSize}:null;};
   return {symbol,right,short,long,start,at};
  }
 }
@@ -230,7 +235,7 @@ function realizeSpread(spread,entry,credit,spots,close,settle,slip) {
  for(let m=close-3;m<close;m++) {
   const spot=spots.get(m)?.open; if(!Number.isFinite(spot))return {unresolved:'missing_guard_stock'};
   const hits=spread.right==='put'?spot<=spread.short+buffer:spot>=spread.short-buffer;
-  if(hits) {const q=spread.at(m);if(!q)return {unresolved:'guard_quote_missing'};return {pnl:money((credit-Math.max(0,q.debit+slip))*100-SPEC.feeDollarsPerSpread),exit:m,reason:'assignment_guard'};}
+  if(hits) {const q=spread.at(m);if(!q||!Number.isFinite(q.debit))return {unresolved:'guard_quote_missing'};return {pnl:money((credit-Math.max(0,q.debit+slip))*100-SPEC.feeDollarsPerSpread),exit:m,reason:'assignment_guard'};}
  }
  if(!Number.isFinite(settle))return {unresolved:'official_close_missing'};
  const width=Math.abs(spread.short-spread.long);
@@ -300,7 +305,7 @@ async function replayDay(day) {
    });
    for(let m=cfg.start;m<=close;m++) {
     let value=before,known=true;
-    for(const t of resolved){if(t.unresolved){known=false;continue;}if(m>=t.exit)value+=cents(t.pnl*t.n);else if(m>=t.entry){const q=t.spread.at(m);if(!q){known=false;continue;}value+=cents((t.credit-q.debit-SPEC.fillCases[a.fillCase])*100*t.n-SPEC.feeDollarsPerSpread*t.n);}}
+    for(const t of resolved){if(t.unresolved){known=false;continue;}if(m>=t.exit)value+=cents(t.pnl*t.n);else if(m>=t.entry){const q=t.spread.at(m);if(!q||!Number.isFinite(q.debit)){known=false;continue;}value+=cents((t.credit-q.debit-SPEC.fillCases[a.fillCase])*100*t.n-SPEC.feeDollarsPerSpread*t.n);}}
     if(known){mtmMin=Math.min(mtmMin,value);mtmPeak=Math.max(mtmPeak,value);markedDD=Math.max(markedDD,mtmPeak-value);}else markGaps++;
    }
    if(unresolved.length){a.unresolved.push({day,reasons:unresolved});a.invalidFrom??=day;}
