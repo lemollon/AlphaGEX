@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import requests
 
 import backend.market_structure as market_structure
 from backend.market_structure import compute_gamma_map, _confidence
@@ -56,6 +57,83 @@ def test_confidence_requires_fresh_spot():
     assert reason == "stale_or_missing_spot"
 
 
+def test_theta_chain_joins_by_contract_and_rejects_stale_greeks(monkeypatch):
+    now = datetime(2026, 9, 29, 14, 45, tzinfo=timezone.utc)
+    greeks = []
+    oi = []
+    for strike in range(720, 780):
+        for right in ("call", "put"):
+            contract = {"symbol": "SPY", "expiration": "2026-10-02",
+                        "strike": str(strike), "right": right}
+            greeks.append({**contract, "timestamp": "2026-09-29T10:44:30",
+                           "gamma": "0.02", "implied_vol": "0.20"})
+            oi.append({**contract, "timestamp": "2026-09-29T06:30:00",
+                       "open_interest": "100"})
+    greeks[0]["timestamp"] = "2026-09-29T10:40:00"
+    oi = list(reversed(oi))
+    monkeypatch.setattr(market_structure, "_OI_CACHE", {})
+    monkeypatch.setattr(market_structure, "_theta_rows",
+                        lambda path, params: greeks if "greeks" in path else oi)
+    result = market_structure.fetch_theta_chain("SPY", now)
+    assert result["reason"] is None
+    assert len(result["rows"]) == 119
+    assert result["rows"][0]["callOpenInterest"] == 0
+    assert result["rows"][0]["putOpenInterest"] == 100
+    assert result["source_timestamp"].isoformat() == "2026-09-29T14:44:30+00:00"
+    assert result["oi_timestamp"].isoformat() == "2026-09-29T10:30:00+00:00"
+
+
+def test_theta_chain_rejects_previous_day_oi(monkeypatch):
+    monkeypatch.setattr(market_structure, "_OI_CACHE", {})
+    monkeypatch.setattr(market_structure, "_theta_rows", lambda path, params: [
+        {"symbol": "XSP", "expiration": "2026-09-29", "strike": "765",
+         "right": "call", "timestamp": "2026-09-29T10:00:00", "gamma": "0.01"}
+    ] if "greeks" in path else [
+        {"symbol": "XSP", "expiration": "2026-09-29", "strike": "765",
+         "right": "call", "timestamp": "2026-09-28T06:30:00",
+         "open_interest": "100"}
+    ])
+    result = market_structure.fetch_theta_chain(
+        "XSP", datetime(2026, 9, 29, 14, 0, tzinfo=timezone.utc))
+    assert result["reason"] == "stale_or_missing_theta_open_interest"
+
+
+def test_theta_standard_iv_calculates_gamma_when_pro_unavailable(monkeypatch):
+    now = datetime(2026, 9, 29, 14, 45, tzinfo=timezone.utc)
+    monkeypatch.setattr(market_structure, "_OI_CACHE", {})
+    def rows(path, params):
+        if path.endswith("/all"):
+            raise requests.HTTPError("Pro entitlement unavailable")
+        items = []
+        for strike in range(720, 780):
+            for right in ("call", "put"):
+                row = {"expiration": "2026-10-02", "strike": str(strike),
+                       "right": right}
+                if "open_interest" in path:
+                    row.update(timestamp="2026-09-29T06:30:00",
+                               open_interest="100")
+                else:
+                    row.update(timestamp="2026-09-29T10:44:30",
+                               implied_vol="0.20", underlying_price="750")
+                items.append(row)
+        return items
+    monkeypatch.setattr(market_structure, "_theta_rows", rows)
+    result = market_structure.fetch_theta_chain("SPY", now)
+    assert result["reason"] is None
+    assert result["gamma_source"] == "ThetaData Standard IV, locally calculated gamma"
+    assert len(result["rows"]) == 120
+    assert all(row["gamma"] > 0 for row in result["rows"])
+
+
+def test_theta_index_timestamp_is_eastern(monkeypatch):
+    monkeypatch.setattr(market_structure, "_index_prices", lambda symbols: {
+        "SPX": {"timestamp": "2026-09-29T10:00:00", "price": "7700.5"}})
+    spot = market_structure.fetch_spot(
+        "SPX", datetime(2026, 9, 29, 14, 0, 10, tzinfo=timezone.utc))
+    assert spot["fresh"] is True
+    assert spot["age_seconds"] == 10
+
+
 
 def test_register_arms_minute_capture_and_initializes_tables(monkeypatch):
     calls = []
@@ -101,7 +179,7 @@ def test_capture_all_parallel_persists_failed_snapshots(monkeypatch):
             "symbol": symbol,
             "available": symbol == "SPY",
             "confidence": "HIGH" if symbol == "SPY" else "LOW",
-            "reason": None if symbol == "SPY" else "ORATS_API_TOKEN missing",
+            "reason": None if symbol == "SPY" else "ThetaData chain failure",
             "captured_at": current.isoformat(),
             "net_gex_b": 1.0 if symbol == "SPY" else None,
         }
@@ -122,4 +200,4 @@ def test_capture_all_parallel_persists_failed_snapshots(monkeypatch):
     assert out["captured"] is True
     assert set(out["gamma"]) == set(market_structure.SYMBOLS)
     assert len(persisted) == len(market_structure.SYMBOLS)
-    assert any(item["reason"] == "ORATS_API_TOKEN missing" for item in persisted)
+    assert any(item["reason"] == "ThetaData chain failure" for item in persisted)
