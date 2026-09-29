@@ -1,5 +1,6 @@
 """Fail-closed tests for the TradingVolatility watcher enrichment."""
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -7,6 +8,50 @@ from backend import trading_volatility_context as tv
 
 
 UTC = timezone.utc
+
+
+@pytest.mark.asyncio
+async def test_429_stops_extra_requests_and_respects_retry_after(monkeypatch) -> None:
+    monkeypatch.setenv("TRADING_VOLATILITY_API_TOKEN", "test-token")
+    monkeypatch.setattr(tv, "_CACHE", {
+        "checked_at": None, "last_success_at": None, "payload": None,
+        "retry_at": None, "rate_limit_strikes": 0,
+    })
+
+    class Client:
+        calls = 0
+
+        async def get(self, *_args, **_kwargs):
+            self.calls += 1
+            return SimpleNamespace(status_code=429, headers={"Retry-After": "900"})
+
+    client = Client()
+    start = datetime(2026, 9, 29, 14, 0, tzinfo=UTC)
+
+    async def context(at):
+        return await tv.get_trading_volatility_context(
+            client, symbol="QQQ", retrieved_at=at, refresh_seconds=300,
+            max_age_seconds=90, universe_limit=200,
+        )
+
+    first = await context(start)
+    assert first["available"] is False
+    assert first["next_retry_at"] == "2026-09-29T14:15:00+00:00"
+    assert client.calls == 1
+    second = await context(datetime(2026, 9, 29, 14, 10, tzinfo=UTC))
+    assert second["available"] is False
+    assert "cooldown" in second["last_error"]
+    assert client.calls == 1
+    await context(datetime(2026, 9, 29, 14, 15, tzinfo=UTC))
+    assert client.calls == 2
+    assert tv._CACHE["rate_limit_strikes"] == 2
+
+
+def test_retry_delay_parses_http_date_and_caps_wait() -> None:
+    now = datetime(2026, 9, 29, 14, 0, tzinfo=UTC)
+    assert tv._retry_delay("Tue, 29 Sep 2026 14:10:00 GMT", now, 1) == 600
+    assert tv._retry_delay(None, now, 2) == 600
+    assert tv._retry_delay("99999", now, 1) == 99999
 
 
 @pytest.mark.asyncio
