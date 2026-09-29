@@ -53,6 +53,14 @@ All systems use a dual-naming scheme defined in `backend/api/bot_names.py`:
 
 ---
 
+## IronForge customer and Spark/Flame scope
+
+IronForge, including the `ironforge-customer` Render service, lives in this
+repository under `ironforge/webapp`. Spark and Flame are separate from the
+AlphaGEX VALOR/perpetual runtime. Their current reference is
+[September 28, 2026](ironforge/SPARK_FLAME_CURRENT_STATE_2026-09-28.md); do not
+apply retired 1DTE/2DTE condor or Python/Databricks parameters to these products.
+
 ## Directory Structure
 
 ```

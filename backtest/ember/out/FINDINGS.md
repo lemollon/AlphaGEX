@@ -1,5 +1,12 @@
 # EMBER Phase 1 — Findings: SPARK 1DTE intraday exit study
 
+> **Historical document — superseded for Spark/Flame operations as of September 28, 2026.**
+> The SPARK 1DTE iron-condor baseline is the historical study baseline, not the September 28 live EBB strategy. Preserve these measured results; do not reuse them as evidence for the current product.
+> Use [Spark and Flame current state, September 28](../../../ironforge/SPARK_FLAME_CURRENT_STATE_2026-09-28.md) for the current 0DTE EBB rules, customer sizing, feature switches, and account boundaries.
+> Historical results and incident findings below retain their original scope; they are not current deployment verification.
+
+## Historical content
+
 **Date:** 2026-05-21
 **Sample:** 567 1DTE SPY trading days, 2023-01-03 → 2025-12-05 (`helios_options_intraday` minute bid/ask)
 **Method:** one representative iron condor per day (~16Δ shorts, $5 wings, 10:00 ET entry), swept against 101 exit policies (PT × SL × time-stop) + SPARK's live baseline. Walk-forward: train 2023–24, OOS 2025 held out. Engine: `backtest/ember/`.
