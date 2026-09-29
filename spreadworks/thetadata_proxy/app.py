@@ -117,6 +117,8 @@ def _call(method: str, **kwargs: Any) -> str:
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 - provider failures must become a closed 502
+        if type(exc).__name__ == "NoDataFoundError":
+            raise HTTPException(status_code=404, detail="ThetaData returned no historical observations") from exc
         LOGGER.error("ThetaData request failed method=%s error_type=%s grpc_code=%s",
                      method, type(exc).__name__,
                      str(exc.code()) if callable(getattr(exc, "code", None)) else "n/a")
@@ -308,3 +310,28 @@ def stock_history_ohlc(
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Bar-Timestamp"] = "interval-start"
     return response
+
+
+@app.get("/v3/option/history/eod")
+def option_history_eod_research(
+    symbol: str, date_value: str = Query(..., alias="date"),
+    expiration: str = "*", max_dte: int = Query(60, ge=0, le=61),
+):
+    """One session of closing chains for historical IV reconstruction."""
+    day = _date(date_value, "date")
+    expiry = "*" if expiration == "*" else _date(expiration, "expiration")
+    return _csv_response(_call("option_history_eod", symbol=_symbol(symbol),
+        expiration=expiry, start_date=day, end_date=day,
+        strike="*", right="both", max_dte=max_dte))
+
+
+@app.get("/v3/option/history/open_interest")
+def option_history_open_interest_research(
+    symbol: str, date_value: str = Query(..., alias="date"),
+    expiration: str = "*", max_dte: int = Query(60, ge=0, le=61),
+):
+    """Historical morning OI, representing the prior session's closing OI."""
+    day = _date(date_value, "date")
+    expiry = "*" if expiration == "*" else _date(expiration, "expiration")
+    return _csv_response(_call("option_history_open_interest", symbol=_symbol(symbol),
+        expiration=expiry, date=day, strike="*", right="both", max_dte=max_dte))
