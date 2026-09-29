@@ -1,0 +1,352 @@
+/* Isolated research. No broker SDK, credentials, trading DB or order endpoints.
+ * Base this branch on 3637fd18396b9ab532ee0d9bd42281338353a8a2.
+ * Native Node TypeScript stripping executes production PURE functions unchanged.
+ */
+const fs = require('node:fs');
+const path = require('node:path');
+const http = require('node:http');
+const crypto = require('node:crypto');
+const assert = require('node:assert/strict');
+const { stripTypeScriptTypes } = require('node:module');
+const ROOT = path.resolve(__dirname, '..');
+const LIB = path.join(ROOT, 'ironforge/webapp/src/lib');
+const C = require(path.join(LIB, 'customer-executor/contracts.ts'));
+const F = require(path.join(LIB, 'flint.ts'));
+const L = require(path.join(LIB, 'ebb-sizing.ts'));
+const X = require(path.join(LIB, 'xsp-swap.ts'));
+const FAST = require(path.join(LIB, 'fast-start-sizing.ts'));
+// Only the pure prefix; the persistence section is deliberately never loaded.
+let oneSrc = fs.readFileSync(path.join(LIB, 'one-strategy.ts'), 'utf8');
+oneSrc = oneSrc.slice(0, oneSrc.indexOf('// Persistence for INTERNAL'));
+oneSrc = oneSrc.replace(/import\s*\{[\s\S]*?\}\s*from\s*'\.\/customer-executor\/contracts'/, '');
+const oneJS = stripTypeScriptTypes(oneSrc).replace(/\bexport\s+/g, '');
+const O = new Function('deps', 'process', `const {currentFloorLevelCents,evaluateCalmUpsize,evaluateDepositFloorCap,evaluateFastStartUpsize,evaluateFlintCushion}=deps; ${oneJS}; return {evaluateOneStrategyHostSizing,decideOneStrategyFlintContracts};`)(C, process);
+
+const SPEC = {
+  id: 'spark-flame-current-3y-20260928-v1', sourceCommit: '3637fd18396b9ab532ee0d9bd42281338353a8a2',
+  start: '2023-09-29', end: '2026-09-28', seeds: { flame: 2000, spark: 5000 },
+  bots: { spark: { start: 665, end: 680, offset: 2, width: 5, vix: .90 }, flame: { start: 845, end: 850, offset: 1, width: 2, vix: .80 } },
+  clock: 'America/New_York; CT clocks + 1 hour', creditFloor: .10,
+  putGuardBuffer: .50, callGuardBuffer: .25, guardMinutesBeforeClose: 3,
+  profitTarget: null, stop: null, mainTradesPerDay: 1, flintTradesPerDay: 1,
+  customerPct: 20, floorN: 3, floorK: .10, floorMargin: 50, calmRatio: .70,
+  calmMinDeposit: 4000, flintBase: 1, flintGammaUpsize: true, xspSwap: true,
+  feeDollarsPerSpread: 1.40, monthlyFeeExternalDollars: 50,
+  profiles: ['current_customer_package', 'internal_one_strategy', 'legacy_highwater_ladder', 'legacy_profit_ladder_fast_start'],
+  fillCases: { natural: 0, adverse3c: .03 },
+  execution: 'minute snapshot sell-bid/buy-ask; quote size checked; no guaranteed fills; same-minute stock OPEN is spot proxy',
+  settlement: 'ThetaData official SPY EOD close; XSP requires independent SPX close / 10',
+  gammaCoverage: 'Only authentic recorded Tradier-source context. Missing source -> no gamma add-on; not validation of historical gamma performance.',
+  xspCoverage: 'Enabled. Missing XSP quotes fall back per source; missing SPX settlement on an accepted swap makes that profile unresolved.',
+  blackout: 'BLACKOUT_HALT_ENABLED=false in frozen source', weekdaySkips: [],
+  dependencies: 'No external Node packages. Private ThetaData proxy for historical market data.',
+};
+const OUT = process.env.RESEARCH_OUTPUT_DIR || '/tmp/spark-flame-current-3y';
+fs.mkdirSync(OUT, { recursive: true });
+const STATE = { stage: 'created', run: SPEC.id, completed: 0, total: 0, dataErrors: [], currentDay: null, requests: 0, startedAt: null };
+const rowsByDay = new Map();
+let report = null;
+const emit = (event, fields = {}) => console.log('SF3Y ' + JSON.stringify({ event, utc: new Date().toISOString(), ...fields }));
+const sha = x => crypto.createHash('sha256').update(x).digest('hex');
+const money = x => Math.round((x + Number.EPSILON) * 100) / 100;
+const cents = x => Math.round(x * 100);
+const iso = d => d.toISOString().slice(0, 10);
+const clock = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}:00`;
+const closures = new Set([
+ '2023-11-23','2023-12-25',
+ '2024-01-01','2024-01-15','2024-02-19','2024-03-29','2024-05-27','2024-06-19','2024-07-04','2024-09-02','2024-11-28','2024-12-25',
+ '2025-01-01','2025-01-09','2025-01-20','2025-02-17','2025-04-18','2025-05-26','2025-06-19','2025-07-04','2025-09-01','2025-11-27','2025-12-25',
+ '2026-01-01','2026-01-19','2026-02-16','2026-04-03','2026-05-25','2026-06-19','2026-07-03','2026-09-07',
+]);
+const halves = new Set(['2023-11-24','2024-07-03','2024-11-29','2024-12-24','2025-07-03','2025-11-28','2025-12-24']);
+function sessions() {
+ const out = [];
+ for (let d = new Date(SPEC.start+'T00:00:00Z'); iso(d) <= SPEC.end; d.setUTCDate(d.getUTCDate()+1)) {
+  if (![0,6].includes(d.getUTCDay()) && !closures.has(iso(d))) out.push(iso(d));
+ }
+ return out;
+}
+// RFC4180 CSV, including quoted commas and escaped quotes.
+function csv(body) {
+ const data = []; let row = [], field = '', quoted = false;
+ for (let i=0; i<body.length; i++) {
+  const c=body[i];
+  if (c==='"') { if (quoted && body[i+1]==='"') {field+='"';i++;} else quoted=!quoted; }
+  else if (c===',' && !quoted) {row.push(field);field='';}
+  else if (c==='\n' && !quoted) {row.push(field.replace(/\r$/, ''));if(row.some(Boolean))data.push(row);row=[];field='';}
+  else field+=c;
+ }
+ if (field || row.length) {row.push(field.replace(/\r$/, ''));data.push(row);}
+ const headers=(data.shift() || []).map((x,i)=>i===0?x.replace(/^\uFEFF/,''):x);
+ return data.map(r=>Object.fromEntries(headers.map((k,i)=>[k,r[i] ?? ''])));
+}
+function minute(timestamp, day) {
+ // Provider CSV history normally uses naive ET wall time. A timezone suffix
+ // is converted rather than silently treating UTC as exchange local time.
+ let s=String(timestamp); let d, h, m;
+ if (/Z$|[+-]\d\d:\d\d$/.test(s)) {
+  const parts = new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(s));
+  const p=Object.fromEntries(parts.map(x=>[x.type,x.value]));d=`${p.year}-${p.month}-${p.day}`;h=+p.hour;m=+p.minute;
+ } else {const match=s.match(/^(\d{4}-\d\d-\d\d)[ T](\d\d):(\d\d):/);if(!match)throw Error('invalid_timestamp');[,d,h,m]=match;}
+ if(d!==day)throw Error('wrong_timestamp_date');return +h*60 + +m;
+}
+const manifest=[];
+async function request(url, params={}, provider=false) {
+ let last;
+ for(let attempt=0;attempt<3;attempt++) {
+  STATE.requests++;const u=new URL(url);Object.entries(params).forEach(([k,v])=>u.searchParams.set(k,String(v)));
+  try {
+   const r=await fetch(u,{signal:AbortSignal.timeout(45000),headers:{'Cache-Control':'no-cache'}});
+   if(!r.ok)throw Error(`http_${r.status}`);
+   if(provider && r.headers.get('X-Market-Data-Provider')!=='thetadata')throw Error('unverified_provider');
+   const body=await r.text();if(!body.trim())throw Error('empty_response');
+   const entry={url:url.replace(/\/v3.*/, '/v3'),params,bytes:Buffer.byteLength(body),sha256:sha(body),fetchedAt:new Date().toISOString()};
+   manifest.push(entry);fs.writeFileSync(path.join(OUT,`${manifest.length}.csv`),body);return csv(body);
+  } catch(e) {last=e;if(attempt<2)await new Promise(resolve=>setTimeout(resolve,1000*(attempt+1)));}
+ }
+ throw last;
+}
+const BASE = process.env.THETADATA_BASE_URL || 'http://thetadata-proxy:10000';
+const feed = (endpoint, params) => request(BASE+endpoint, params, true);
+let vix=[], eod={}, gamma={'2026-09-28':{value:13643544500.438574,source:'tradier_chain_dollar_gex_dte0-60'}};
+function vixRatio(day) {
+ const p=vix.filter(x=>x.day<day);if(p.length<21)throw Error('vix_history_short');
+ const prior=p.at(-1), max=Math.max(...p.slice(-21,-1).map(x=>x.close));
+ return {ratio:prior.close/max,prior:prior.close,priorDay:prior.day,max};
+}
+async function histories() {
+ const vr=await request('https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv');
+ vix=vr.map(r=>{const [m,d,y]=r.DATE.split('/');return {day:`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`,close:+r.CLOSE};}).filter(x=>Number.isFinite(x.close)&&x.close>0).sort((a,b)=>a.day.localeCompare(b.day));
+ for(const y of [2023,2024,2025,2026]) {
+  const rr=await feed('/v3/stock/history/eod',{symbol:'SPY',start_date:`${y}-01-01`,end_date:y===2026?SPEC.end:`${y}-12-31`});
+  for(const r of rr) {const d=(r.date||r.timestamp||r.trade_date||'').slice(0,10);const close=+r.close;if(d && Number.isFinite(close)&&close>0)eod[d]=close;}
+ }
+ if(process.env.GAMMA_FILE)gamma=JSON.parse(fs.readFileSync(process.env.GAMMA_FILE,'utf8'));
+ // Read-only public independent index source. If unavailable, do not invent
+ // SPX settlement; accepted XSP swaps are flagged unresolved.
+ try {
+  const rr=await request('https://cdn.cboe.com/api/global/us_indices/daily_prices/SPX_History.csv');
+  for(const r of rr){const [m,d,y]=(r.DATE||'').split('/');if(y&&Number.isFinite(+r.CLOSE))SPX[`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`]=+r.CLOSE;}
+ } catch(e) {STATE.spxHistoryError=String(e.message);}
+}
+const SPX={};
+function usableQuote(r) {
+ const bid=+r.bid,ask=+r.ask,bs=+r.bid_size,as=+r.ask_size;
+ return Number.isFinite(bid)&&Number.isFinite(ask)&&bid>=0&&ask>0&&bid<=ask&&bs>0&&as>0;
+}
+class Quotes {
+ constructor(day,close){this.day=day;this.close=close;this.cache=new Map();this.gaps=[];}
+ async leg(symbol,right,strike,start) {
+  const key=`${symbol}:${right}:${strike}:${start}`;if(this.cache.has(key))return this.cache.get(key);
+  const rr=await feed('/v3/option/history/quote',{symbol,right,strike,expiration:this.day,date:this.day,interval:'1m',start_time:clock(start),end_time:clock(this.close)});
+  const out=new Map();for(const r of rr){if(r.symbol!==symbol||Math.abs(+r.strike-strike)>.001||!String(r.right).toLowerCase().startsWith(right[0]))throw Error('wrong_option_identity');
+   const exp=(r.expiration||'').slice(0,10).replace(/-/g,'');if(exp!==this.day.replace(/-/g,''))throw Error('wrong_option_expiration');
+   const m=minute(r.timestamp||r.datetime,this.day);if(usableQuote(r))out.set(m,{bid:+r.bid,ask:+r.ask,bidSize:+r.bid_size,askSize:+r.ask_size});}
+  this.cache.set(key,out);return out;
+ }
+ async spread(symbol,right,short,long,start) {
+  const s=await this.leg(symbol,right,short,start),l=await this.leg(symbol,right,long,start);
+  const at=m=>{const a=s.get(m),b=l.get(m);return a&&b?{credit:money(a.bid-b.ask),debit:money(a.ask-b.bid),bidSize:a.bidSize,askSize:b.askSize}:null;};
+  return {symbol,right,short,long,start,at};
+ }
+}
+function newAccount(bot,profile,fillCase) {
+ const deposit=cents(SPEC.seeds[bot]);return {bot,profile,fillCase,deposit,equity:deposit,peak:deposit,floorPeak:deposit,triggered:false,fast:FAST.seedFastStartState(deposit/100),trades:[],days:[],skips:{},unresolved:[],floorBreaches:0};
+}
+const accounts=[];
+for(const bot of ['flame','spark'])for(const p of SPEC.profiles)for(const fillCase of Object.keys(SPEC.fillCases))accounts.push(newAccount(bot,p,fillCase));
+function hostSize(a, credit, ratio, bidSize, buyingPower=a.equity) {
+ const cfg=SPEC.bots[a.bot], ml=cents((cfg.width-credit)*100);if(ml<=0)return {n:0,ml};
+ let n, result;
+ if(a.profile.startsWith('legacy')) {
+  const capital=a.peak/100;
+  n=a.profile==='legacy_profit_ladder_fast_start'?L.ebbProfitLadderContracts(a.bot,a.deposit/100,(a.peak-a.deposit)/100):L.ebbLadderContracts(a.bot,capital);
+  if(a.profile==='legacy_profit_ladder_fast_start') {
+   result=FAST.decideFastStartSizing(a.fast,{ebbCandidateDay:true,flintCandidateDay:false,ebbMaxLossPerLot:ml/100,flintMaxLossPerContract:null,normalEbbLadder:n,equity:a.equity/100,peakProfit:Math.max(0,a.peak-a.deposit)/100},{envVar:a.bot==='flame'?'FLAME_FAST_START':'SPARK_FAST_START'});
+   n=result.decision.ebbContracts;
+  } else if(ratio<=.70&&L.evaluateEbbUpsizeCushion(a.equity/100,a.deposit/100,L.ebbUpsizeExtraContractMaxLoss(cfg.width,credit)).eligible)n++;
+  n=L.liquidityCappedLots(n,bidSize).lots;
+ } else {
+  result=O.evaluateOneStrategyHostSizing({equityCents:a.equity,depositCents:a.deposit,maxLossCentsPerContract:ml,vixRatio:ratio,triggered:a.triggered,peakEquityCents:a.floorPeak});n=result.contracts;
+  if(a.profile==='internal_one_strategy')n=L.liquidityCappedLots(n,bidSize).lots;
+ }
+ // Natural-leg historical fill capacity; no unlimited NBBO size assumption.
+ n=Math.min(n,Math.floor(Math.max(0,buyingPower)/ml),Math.floor(bidSize));
+ return {n:Math.max(0,n),ml,result};
+}
+function persistHost(a,s) {
+ if(!s.result)return;
+ if(a.profile.startsWith('legacy'))a.fast=s.result.nextState;
+ else {a.floorPeak=s.result.nextPeakEquityCents;a.triggered=s.result.triggeredForSizing;}
+}
+function gammaDecision(day) {
+ const today=gamma[day];const trailing=Object.entries(gamma).filter(([d,g])=>d<day&&g.source===today?.source&&Number.isFinite(g.value)).sort((a,b)=>a[0].localeCompare(b[0])).slice(-20).map(x=>x[1].value);
+ return F.evaluateFlintGammaUpsize(today?.value??null,trailing);
+}
+function flintSize(a,credit,ratio,hostCandidate,host,nDepth,day) {
+ const ml=cents(F.flintMaxLoss(1,3,credit,1)), protection=C.currentFloorLevelCents(a.deposit,a.floorPeak,a.triggered,.10);
+ const desired=gammaDecision(day).eligible?2:1;
+ if(a.profile==='current_customer_package') {
+  const planned=C.estimatePlannedHostRiskCents({vixCandidateDay:hostCandidate,equityCents:a.equity,maxDeploymentPct:20,possibleUpsize:true});
+  const actual=(host?.n||0)*(host?.ml||0);
+  const eligible=C.evaluateFlintCushion({equityCents:a.equity,protectLevelCents:protection,hostCommittedCents:Math.max(planned,actual),maxLossCents:ml,marginCents:5000});
+  return {n:eligible.eligible?Math.min(1,nDepth):0,ml,reason:eligible.reason};
+ }
+ if(a.profile==='internal_one_strategy') {
+  // Literal current internal caller plans with $2/.10+commission EVEN when
+  // VIX blocks the host. This is intentionally not corrected by the replay.
+  const plan=O.evaluateOneStrategyHostSizing({equityCents:a.equity,depositCents:a.deposit,maxLossCentsPerContract:19140,vixRatio:ratio,triggered:a.triggered,peakEquityCents:a.floorPeak});
+  const decision=O.decideOneStrategyFlintContracts({desired,base:1,equityCents:a.equity,protectLevelCents:plan.floorLevelCents,hostContracts:plan.contracts,hostMaxLossCentsPerContract:19140,shortStrike:1,longStrike:3,credit,flintMaxLossFn:F.flintMaxLoss});
+  return {n:Math.min(decision.contracts,nDepth),ml,reason:decision.reason};
+ }
+ if(a.profile==='legacy_profit_ladder_fast_start') {
+  const dec=FAST.sizeFlintGivenEbbOutcome(a.fast.phase,a.deposit/100,a.equity/100,(a.peak-a.deposit)/100,host?.n||0,(host?.ml||0)/100,true,ml/100);
+  return {n:Math.min(dec.flintContracts,nDepth),ml,reason:dec.reason};
+ }
+ const dec=F.decideFlintContractsForCushion(desired,1,a.equity/100,a.deposit/100,1,3,credit);
+ return {n:Math.min(dec.contracts,nDepth),ml,reason:dec.gate.reason};
+}
+function realizeSpread(spread,entry,credit,spots,close,settle,slip) {
+ const buffer=spread.right==='put'?SPEC.putGuardBuffer:SPEC.callGuardBuffer;
+ for(let m=close-3;m<close;m++) {
+  const spot=spots.get(m)?.open; if(!Number.isFinite(spot))return {unresolved:'missing_guard_stock'};
+  const hits=spread.right==='put'?spot<=spread.short+buffer:spot>=spread.short-buffer;
+  if(hits) {const q=spread.at(m);if(!q)return {unresolved:'guard_quote_missing'};return {pnl:money((credit-Math.max(0,q.debit+slip))*100-SPEC.feeDollarsPerSpread),exit:m,reason:'assignment_guard'};}
+ }
+ if(!Number.isFinite(settle))return {unresolved:'official_close_missing'};
+ const width=Math.abs(spread.short-spread.long);
+ const intrinsic=spread.right==='put'?Math.min(width,Math.max(0,spread.short-settle)):Math.min(width,Math.max(0,settle-spread.short));
+ return {pnl:money((credit-intrinsic)*100-SPEC.feeDollarsPerSpread),exit:close,reason:'expiry'};
+}
+async function replayDay(day) {
+ const close=halves.has(day)?780:960, vg=vixRatio(day);
+ const rr=await feed('/v3/stock/history/ohlc',{symbol:'SPY',date:day,interval:'1m',start_time:'09:30:00',end_time:clock(close),venue:'utp_cta'});
+ const spots=new Map();for(const r of rr){const m=minute(r.timestamp||r.datetime,day);if(r.symbol!=='SPY')throw Error('wrong_stock_identity');const b={open:+r.open,high:+r.high,low:+r.low,close:+r.close};if(Object.values(b).some(x=>!Number.isFinite(x)||x<=0))throw Error('invalid_stock');spots.set(m,b);}
+ if(!eod[day])throw Error('official_SPY_close_missing');
+ const dq=new Quotes(day,close), daily={day,vix:vg,close,accounts:[]};
+ for(const bot of ['spark','flame']) {
+  const cfg=SPEC.bots[bot], group=accounts.filter(a=>a.bot===bot), active=new Map(group.map(a=>[a,[]]));
+  const hosts=new Map(), flints=new Set();
+  const candidate=vg.ratio<=cfg.vix;
+  for(let m=cfg.start;m<=Math.min(cfg.end,close-1);m++) {
+   const spot=spots.get(m)?.open;if(!Number.isFinite(spot))throw Error('entry_stock_missing');
+   let put=null,call=null,xsp=null;
+   if(candidate&&group.some(a=>!hosts.has(a))) {
+    const short=Math.floor(spot-cfg.offset+.5);put=await dq.spread('SPY','put',short,short-cfg.width,m);
+   }
+   if(group.some(a=>!flints.has(a))) {const k=F.computeFlintStrikes(spot);call=await dq.spread('SPY','call',k.short,k.long,m);}
+   for(const a of group) {
+   const slip=SPEC.fillCases[a.fillCase], p=put?.at(m), c=call?.at(m);
+    let host=hosts.get(a);let proposed=null;
+    if(!host&&p&&p.credit-slip>=.10)proposed=hostSize(a,p.credit-slip,vg.ratio,Math.min(p.bidSize,p.askSize),a.equity-active.get(a).reduce((s,t)=>s+t.risk,0));
+    // FLINT precedes the actual host entry, matching scanner order. Retry
+    // profits/credit/quote gates within the entry window until filled.
+    if(!flints.has(a)&&c&&c.credit-slip>=.10) {
+     const f=flintSize(a,c.credit-slip,vg.ratio,candidate,host||proposed,Math.floor(Math.min(c.bidSize,c.askSize)),day);
+     const available=a.equity-active.get(a).reduce((s,t)=>s+t.risk,0);
+     const n=Math.min(f.n,Math.floor(Math.max(0,available)/f.ml));
+     if(n>0) {active.get(a).push({spread:call,n,credit:c.credit-slip,entry:m,risk:f.ml*n,leg:'flint'});flints.add(a);}
+    }
+    if(!host&&proposed&&proposed.n>0) {
+     // Re-read buying power after FLINT reserved its collateral.
+     const available=a.equity-active.get(a).reduce((s,t)=>s+t.risk,0);proposed.n=Math.min(proposed.n,Math.floor(Math.max(0,available)/proposed.ml));
+     if(proposed.n<=0)continue;
+     persistHost(a,proposed);hosts.set(a,proposed);
+     let decision={nXsp:0,nSpy:proposed.n,reason:'xsp_quote_unavailable'};
+     if(SPEC.xspSwap) {
+      if(xsp===null) {try{xsp=await dq.spread('XSP','put',put.short,put.long,m);}catch(e){xsp=false;}}
+      const xq=xsp&&xsp.at(m);
+      decision=X.decideXspSwap({nHost:proposed.n,spyCreditPerContract:p.credit-slip,xspCreditPerContract:xq?xq.credit-slip:null,xspShortBidSize:xq?.bidSize??null});
+      if(decision.nXsp)active.get(a).push({spread:xsp,n:decision.nXsp,credit:xq.credit-slip,entry:m,risk:cents((cfg.width-xq.credit+slip)*100)*decision.nXsp,leg:'host_xsp'});
+     }
+     if(decision.nSpy)active.get(a).push({spread:put,n:decision.nSpy,credit:p.credit-slip,entry:m,risk:proposed.ml*decision.nSpy,leg:'host_spy'});
+     proposed.xspDecision=decision.reason;
+    }
+   }
+   if(group.every(a=>(hosts.has(a)||!candidate)&&flints.has(a)))break;
+   // Avoid querying all retry quotes when no account could possibly trade FLINT.
+   if(group.every(a=>a.equity<=a.deposit)&&(hosts.size===group.length||!candidate))break;
+  }
+  for(const a of group) {
+   const trades=active.get(a), before=a.equity;let net=0,mtmMin=before,markGaps=0,unresolved=[];
+   const resolved=trades.map(t=>{
+    const result=t.spread.symbol==='XSP'?(SPX[day]?{pnl:money((t.credit-Math.min(cfg.width,Math.max(0,t.spread.short-SPX[day]/10)))*100-SPEC.feeDollarsPerSpread),exit:close,reason:'cash_settlement'}:{unresolved:'SPX_settlement_missing'}):realizeSpread(t.spread,t.entry,t.credit,spots,close,eod[day],SPEC.fillCases[a.fillCase]);
+    if(result.unresolved)unresolved.push(result.unresolved);
+    return { ...t,...result };
+   });
+   for(let m=cfg.start;m<=close;m++) {
+    let value=before,known=true;
+    for(const t of resolved){if(t.unresolved){known=false;continue;}if(m>=t.exit)value+=cents(t.pnl*t.n);else if(m>=t.entry){const q=t.spread.at(m);if(!q){known=false;continue;}value+=cents((t.credit-q.debit-SPEC.fillCases[a.fillCase])*100*t.n-SPEC.feeDollarsPerSpread*t.n);}}
+    if(known)mtmMin=Math.min(mtmMin,value);else markGaps++;
+   }
+   if(unresolved.length){a.unresolved.push({day,reasons:unresolved});a.invalidFrom??=day;}
+   // No silently compounded missing-day returns. Once a path is unresolved,
+   // future outputs remain diagnostic and never become a complete result.
+   for(const t of resolved)if(!t.unresolved){const pnl=cents(t.pnl*t.n);net+=pnl;const tr={day,leg:t.leg,symbol:t.spread.symbol,short:t.spread.short,long:t.spread.long,entry:t.entry,exit:t.exit,n:t.n,credit:money(t.credit),pnl:money(pnl/100),reason:t.reason};a.trades.push(tr);}
+   a.equity+=net;a.peak=Math.max(a.peak,a.equity);
+   if(a.triggered&&a.equity<a.deposit)a.floorBreaches++;
+   const row={day,before:before/100,after:a.equity/100,pnl:net/100,markedMin:mtmMin/100,markGaps,hostN:hosts.get(a)?.n||0,flintN:resolved.filter(t=>t.leg==='flint').reduce((s,t)=>s+t.n,0),xsp:hosts.get(a)?.xspDecision||null,triggered:a.triggered,floor:C.currentFloorLevelCents(a.deposit,a.floorPeak,a.triggered,.10)/100,unresolved};
+   a.days.push(row);daily.accounts.push({bot:a.bot,profile:a.profile,fillCase:a.fillCase,...row});
+  }
+ }
+ return daily;
+}
+function stats(a) {
+ let peak=a.deposit/100,dd=0,ddPct=0,mtmDD=0,streak=0,longest=0;const months={};
+ for(const d of a.days){peak=Math.max(peak,d.after);dd=Math.max(dd,peak-d.after);ddPct=Math.max(ddPct,(peak-d.after)/peak);mtmDD=Math.max(mtmDD,peak-d.markedMin);months[d.day.slice(0,7)]=(months[d.day.slice(0,7)]||0)+d.pnl;streak=d.pnl<0?streak+1:0;longest=Math.max(longest,streak);}
+ const pnl=a.equity/100-a.deposit/100, trades=a.trades,losses=trades.filter(t=>t.pnl<0),wins=trades.filter(t=>t.pnl>0);
+ const monthly=Object.fromEntries(Object.entries(months).map(([m,p])=>[m,{tradingNet:money(p),netAfterExternalSubscription:money(p-50)}]));
+ const aggregateBy=field=>{const out={};for(const t of trades){const k=field==='month'?t.day.slice(0,7):field==='weekday'?new Date(t.day+'T00:00:00Z').getUTCDay():t[field];const g=out[k]??={trades:0,losses:0,pnl:0};g.trades++;g.losses+=t.pnl<0?1:0;g.pnl=money(g.pnl+t.pnl);}return out;};
+ return {bot:a.bot,profile:a.profile,fillCase:a.fillCase,startingEquity:a.deposit/100,endingEquity:a.equity/100,pnl:money(pnl),returnPct:money(100*pnl/(a.deposit/100)),cagrPct:money(100*(Math.pow(Math.max(0,a.equity/a.deposit),1/3)-1)),trades:trades.length,hostTrades:trades.filter(t=>t.leg.startsWith('host')).length,flintTrades:trades.filter(t=>t.leg==='flint').length,winRatePct:trades.length?money(100*wins.length/trades.length):null,maxClosedDrawdown:money(dd),maxClosedDrawdownPct:money(ddPct*100),maxMarkedDrawdownObserved:money(mtmDD),markGapMinutes:a.days.reduce((s,d)=>s+d.markGaps,0),longestLosingDayStreak:longest,worstTrade:losses.length?Math.min(...losses.map(t=>t.pnl)):null,netAfterExternalSubscription:money(pnl-Object.keys(months).length*50),monthly,floorBreaches:a.floorBreaches,unresolved:a.unresolved,invalidFrom:a.invalidFrom||null,clusters:{month:aggregateBy('month'),weekday:aggregateBy('weekday'),leg:aggregateBy('leg'),worstTrades:losses.sort((a,b)=>a.pnl-b.pnl).slice(0,20)},complete:STATE.completed===STATE.total&&!STATE.dataErrors.length&&!a.unresolved.length};
+}
+function snapshot() {
+ const result={spec:SPEC,status:{...STATE},summary:accounts.map(stats),sourceManifest:manifest,gammaCoverageDays:Object.keys(gamma).length};
+ fs.writeFileSync(path.join(OUT,'checkpoint.json'),JSON.stringify(result,null,2));return result;
+}
+function selfTest() {
+ assert.deepEqual(csv('a,b\n"x,y","z"\n'),[{a:'x,y',b:'z'}]);
+ assert.equal(minute('2024-06-03T15:05:00Z','2024-06-03'),665);
+ assert(!sessions().includes('2025-01-09'));assert(halves.has('2024-12-24'));
+ assert.deepEqual(F.computeFlintStrikes(500.1),{short:502,long:504});
+ const a=newAccount('spark','current_customer_package','natural');
+ assert.equal(hostSize(a,.30,.80,100).n,2);assert.equal(hostSize(a,.30,.65,100).n,3);
+ const b=newAccount('flame','current_customer_package','natural');assert.equal(hostSize(b,.20,.80,100).n,2);
+ assert.equal(flintSize(b,.20,.75,true,{n:2,ml:18000},100,'2024-06-03').n,0);
+ const p={right:'put',short:500,long:498,at:m=>({debit:.70})};const spots=new Map([[957,{open:500.4}],[958,{open:501}],[959,{open:501}]]);
+ assert.equal(realizeSpread(p,845,.2,spots,960,501,0).pnl,-51.4);
+ assert.equal(gammaDecision('2024-06-03').eligible,false);
+ const legacy=newAccount('flame','legacy_highwater_ladder','natural');legacy.equity+=100000;legacy.peak=legacy.equity;
+ assert.equal(flintSize(legacy,.2,.75,false,null,100,'2024-06-03').n,1);
+ emit('self_test',{passed:true,sessions:sessions().length,cases:'pure production sizing, calm add-on, netted cushion, guard costs, CSV, UTC conversion, holiday calendar, gamma fail-closed'});
+}
+async function execute() {
+ selfTest();STATE.startedAt=new Date().toISOString();STATE.stage='loading_history';STATE.total=sessions().length;
+ const sourceHashes={};for(const file of ['customer-executor/contracts.ts','one-strategy.ts','ebb-sizing.ts','fast-start-sizing.ts','flint.ts','xsp-swap.ts'])sourceHashes[file]=sha(fs.readFileSync(path.join(LIB,file)));
+ emit('frozen_spec',{spec:SPEC,sourceHashes,sessions:STATE.total});
+ try {
+  await histories();STATE.stage='running';let consecutive=0;
+  for(const day of sessions()) {
+   STATE.currentDay=day;
+   const beforeAccounts=structuredClone(accounts);
+   try {const row=await replayDay(day);rowsByDay.set(day,row);fs.writeFileSync(path.join(OUT,day+'.json'),JSON.stringify(row));emit('day',row);consecutive=0;}
+   catch(e){accounts.splice(0,accounts.length,...beforeAccounts);STATE.dataErrors.push({day,error:String(e.message)});emit('data_error',{day,error:String(e.message)});consecutive++;for(const a of accounts){a.invalidFrom??=day;a.unresolved.push({day,reasons:['data_error']});}}
+   STATE.completed++;if(STATE.completed%5===0){snapshot();emit('progress',{...STATE});}
+   if(consecutive>=3)throw Error('three_consecutive_data_errors; stopped rather than silently backtesting absent quotes');
+  }
+  STATE.stage=STATE.dataErrors.length?'incomplete':'completed_with_coverage_limits';report=snapshot();emit('finished',{stage:STATE.stage,summary:report.summary});
+ }catch(e){STATE.stage='blocked';STATE.error=String(e.message);report=snapshot();emit('blocked',{...STATE});}
+}
+if(require.main===module) {
+ process.env.FLAME_FAST_START='on';process.env.SPARK_FAST_START='on';
+ if(process.argv.includes('--self-test')) {selfTest();process.exit(0);}
+ const server=http.createServer((req,res)=>{
+  const url=new URL(req.url,'http://localhost');res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store');
+  if(url.pathname==='/status'||url.pathname==='/')res.end(JSON.stringify({...STATE,percent:STATE.total?money(100*STATE.completed/STATE.total):0}));
+  else if(url.pathname==='/report')res.end(JSON.stringify(report||snapshot()));
+  else if(url.pathname==='/trades')res.end(JSON.stringify(accounts.map(a=>({bot:a.bot,profile:a.profile,fillCase:a.fillCase,trades:a.trades}))));
+  else if(url.pathname==='/daily')res.end(JSON.stringify([...rowsByDay.values()]));
+  else {res.statusCode=404;res.end(JSON.stringify({error:'not_found'}));}
+ });
+ server.listen(Number(process.env.PORT||10000),'0.0.0.0',()=>execute());
+}
+module.exports={selfTest,hostSize,flintSize,realizeSpread,sessions,stats,csv,SPEC};
