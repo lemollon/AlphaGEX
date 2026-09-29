@@ -24,6 +24,7 @@ from sqlalchemy import text as sa_text
 from ..db import SessionLocal
 from . import xsp_flow_live
 from . import xsp_paper_ledger
+from . import xsp_vertical_leads_paper
 
 
 logger = logging.getLogger("spreadworks.ember.runtime")
@@ -421,6 +422,12 @@ def register(scheduler: Any) -> None:
         # contends with the live/dry-run agent cycle's advisory locks above.
         # It logs forward while the bot is paused so a sample builds up.
         xsp_paper_ledger.register(scheduler)
+    # Lead A/C2 forward logger (PREREG_XSP_OTM_VOL_PLAYS.md) is its own
+    # independent, lock-free instrumentation path: gated only on its own
+    # EMBER_XSP_VERTICAL_LEADS_ENABLED flag, never on EMBER_XSP_ENABLED or
+    # EMBER_XSP_LIVE, never places an order, never contends with any
+    # advisory lock above.
+    xsp_vertical_leads_paper.register(scheduler)
     from .fleet_runtime import register as register_fleet
     register_fleet(scheduler)
     from .astra_runtime import register as register_astra
