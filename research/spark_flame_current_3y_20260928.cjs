@@ -15,6 +15,8 @@ const F = require(path.join(LIB, 'flint.ts'));
 const L = require(path.join(LIB, 'ebb-sizing.ts'));
 const X = require(path.join(LIB, 'xsp-swap.ts'));
 const FAST = require(path.join(LIB, 'fast-start-sizing.ts'));
+let separateSrc=fs.readFileSync(path.join(LIB,'spark-flint-separate.ts'),'utf8').replace(/import\s*\{[^}]*\}\s*from\s*'\.\/flint'/,'');
+const S=new Function('evaluateFlintProfitGate',`${stripTypeScriptTypes(separateSrc).replace(/\bexport\s+/g,'')}; return {decideSparkFlintContracts};`)(F.evaluateFlintProfitGate);
 // Only the pure prefix; the persistence section is deliberately never loaded.
 let oneSrc = fs.readFileSync(path.join(LIB, 'one-strategy.ts'), 'utf8');
 oneSrc = oneSrc.slice(0, oneSrc.indexOf('// Persistence for INTERNAL'));
@@ -155,16 +157,16 @@ function newAccount(bot,profile,fillCase) {
 }
 const accounts=[];
 for(const bot of ['flame','spark'])for(const p of SPEC.profiles)for(const fillCase of Object.keys(SPEC.fillCases))accounts.push(newAccount(bot,p,fillCase));
-function hostSize(a, credit, ratio, bidSize, buyingPower=a.equity) {
+function hostSize(a, credit, ratio, bidSize, buyingPower=a.equity, callCredit=null) {
  const cfg=SPEC.bots[a.bot], ml=cents((cfg.width-credit)*100);if(ml<=0)return {n:0,ml};
  let n, result;
  if(a.profile.startsWith('legacy')) {
   const capital=a.peak/100;
   n=a.profile==='legacy_profit_ladder_fast_start'?L.ebbProfitLadderContracts(a.bot,a.deposit/100,(a.peak-a.deposit)/100):L.ebbLadderContracts(a.bot,capital);
   if(a.profile==='legacy_profit_ladder_fast_start') {
-   result=FAST.decideFastStartSizing(a.fast,{ebbCandidateDay:true,flintCandidateDay:false,ebbMaxLossPerLot:ml/100,flintMaxLossPerContract:null,normalEbbLadder:n,equity:a.equity/100,peakProfit:Math.max(0,a.peak-a.deposit)/100},{envVar:a.bot==='flame'?'FLAME_FAST_START':'SPARK_FAST_START'});
+   result=FAST.decideFastStartSizing(a.fast,{ebbCandidateDay:true,flintCandidateDay:a.bot==='flame'&&callCredit!==null,ebbMaxLossPerLot:ml/100,flintMaxLossPerContract:callCredit!==null?F.flintMaxLoss(1,3,callCredit,1):null,normalEbbLadder:n,equity:a.equity/100,peakProfit:Math.max(0,a.peak-a.deposit)/100},{envVar:a.bot==='flame'?'FLAME_FAST_START':'SPARK_FAST_START'});
    n=result.decision.ebbContracts;
-  } else if(ratio<=.70&&L.evaluateEbbUpsizeCushion(a.equity/100,a.deposit/100,L.ebbUpsizeExtraContractMaxLoss(cfg.width,credit)).eligible)n++;
+  } else if(a.bot==='flame'&&ratio<=.70&&L.evaluateEbbUpsizeCushion(a.equity/100,a.deposit/100,L.ebbUpsizeExtraContractMaxLoss(cfg.width,credit)).eligible)n++;
   n=L.liquidityCappedLots(n,bidSize).lots;
  } else {
   result=O.evaluateOneStrategyHostSizing({equityCents:a.equity,depositCents:a.deposit,maxLossCentsPerContract:ml,vixRatio:ratio,triggered:a.triggered,peakEquityCents:a.floorPeak});n=result.contracts;
@@ -200,6 +202,11 @@ function flintSize(a,credit,ratio,hostCandidate,host,nDepth,day) {
   return {n:Math.min(decision.contracts,nDepth),ml,reason:decision.reason};
  }
  if(a.profile==='legacy_profit_ladder_fast_start') {
+  if(a.bot==='spark') {
+   const sparkFloor=a.fast.phase===2?a.deposit+Math.max(0,a.peak-a.deposit)*.25:a.deposit;
+   const dec=S.decideSparkFlintContracts({equity:a.equity/100,deposit:a.deposit/100,sparkFloor:sparkFloor/100,flintCandidateDay:true,flintMaxLossPerContract:ml/100,sparkContractsToday:host?.n||0,sparkMaxLossPerContract:(host?.ml||0)/100});
+   return {n:Math.min(dec.flintContracts,nDepth),ml,reason:dec.reason};
+  }
   const dec=FAST.sizeFlintGivenEbbOutcome(a.fast.phase,a.deposit/100,a.equity/100,(a.peak-a.deposit)/100,host?.n||0,(host?.ml||0)/100,true,ml/100);
   return {n:Math.min(dec.flintContracts,nDepth),ml,reason:dec.reason};
  }
@@ -238,7 +245,9 @@ async function replayDay(day) {
    for(const a of group) {
    const slip=SPEC.fillCases[a.fillCase], p=put?.at(m), c=call?.at(m);
     let host=hosts.get(a);let proposed=null;
-    if(!host&&p&&p.credit-slip>=.10)proposed=hostSize(a,p.credit-slip,vg.ratio,Math.min(p.bidSize,p.askSize),a.equity-active.get(a).reduce((s,t)=>s+t.risk,0));
+    if(!host&&p&&p.credit-slip>=.10) {
+     proposed=hostSize(a,p.credit-slip,vg.ratio,Math.min(p.bidSize,p.askSize),a.equity-active.get(a).reduce((s,t)=>s+t.risk,0),c&&c.credit-slip>=.10?c.credit-slip:null);
+    }
     // FLINT precedes the actual host entry, matching scanner order. Retry
     // profits/credit/quote gates within the entry window until filled.
     if(!flints.has(a)&&c&&c.credit-slip>=.10) {
@@ -247,11 +256,14 @@ async function replayDay(day) {
      const n=Math.min(f.n,Math.floor(Math.max(0,available)/f.ml));
      if(n>0) {active.get(a).push({spread:call,n,credit:c.credit-slip,entry:m,risk:f.ml*n,leg:'flint'});flints.add(a);}
     }
+    // The real scanner evaluates FLINT first, then persists the host floor,
+    // including a floor-capped zero-sized host decision.
+    if(proposed)persistHost(a,proposed);
     if(!host&&proposed&&proposed.n>0) {
      // Re-read buying power after FLINT reserved its collateral.
      const available=a.equity-active.get(a).reduce((s,t)=>s+t.risk,0);proposed.n=Math.min(proposed.n,Math.floor(Math.max(0,available)/proposed.ml));
      if(proposed.n<=0)continue;
-     persistHost(a,proposed);hosts.set(a,proposed);
+     hosts.set(a,proposed);
      let decision={nXsp:0,nSpy:proposed.n,reason:'xsp_quote_unavailable'};
      if(SPEC.xspSwap) {
       if(xsp===null) {try{xsp=await dq.spread('XSP','put',put.short,put.long,m);}catch(e){xsp=false;}}
@@ -268,7 +280,7 @@ async function replayDay(day) {
    if(group.every(a=>a.equity<=a.deposit)&&(hosts.size===group.length||!candidate))break;
   }
   for(const a of group) {
-   const trades=active.get(a), before=a.equity;let net=0,mtmMin=before,markGaps=0,unresolved=[];
+   const trades=active.get(a), before=a.equity;let net=0,mtmMin=before,mtmPeak=before,markedDD=0,markGaps=0,unresolved=[];
    const resolved=trades.map(t=>{
     const result=t.spread.symbol==='XSP'?(SPX[day]?{pnl:money((t.credit-Math.min(cfg.width,Math.max(0,t.spread.short-SPX[day]/10)))*100-SPEC.feeDollarsPerSpread),exit:close,reason:'cash_settlement'}:{unresolved:'SPX_settlement_missing'}):realizeSpread(t.spread,t.entry,t.credit,spots,close,eod[day],SPEC.fillCases[a.fillCase]);
     if(result.unresolved)unresolved.push(result.unresolved);
@@ -277,7 +289,7 @@ async function replayDay(day) {
    for(let m=cfg.start;m<=close;m++) {
     let value=before,known=true;
     for(const t of resolved){if(t.unresolved){known=false;continue;}if(m>=t.exit)value+=cents(t.pnl*t.n);else if(m>=t.entry){const q=t.spread.at(m);if(!q){known=false;continue;}value+=cents((t.credit-q.debit-SPEC.fillCases[a.fillCase])*100*t.n-SPEC.feeDollarsPerSpread*t.n);}}
-    if(known)mtmMin=Math.min(mtmMin,value);else markGaps++;
+    if(known){mtmMin=Math.min(mtmMin,value);mtmPeak=Math.max(mtmPeak,value);markedDD=Math.max(markedDD,mtmPeak-value);}else markGaps++;
    }
    if(unresolved.length){a.unresolved.push({day,reasons:unresolved});a.invalidFrom??=day;}
    // No silently compounded missing-day returns. Once a path is unresolved,
@@ -285,7 +297,7 @@ async function replayDay(day) {
    for(const t of resolved)if(!t.unresolved){const pnl=cents(t.pnl*t.n);net+=pnl;const tr={day,leg:t.leg,symbol:t.spread.symbol,short:t.spread.short,long:t.spread.long,entry:t.entry,exit:t.exit,n:t.n,credit:money(t.credit),pnl:money(pnl/100),reason:t.reason};a.trades.push(tr);}
    a.equity+=net;a.peak=Math.max(a.peak,a.equity);
    if(a.triggered&&a.equity<a.deposit)a.floorBreaches++;
-   const row={day,before:before/100,after:a.equity/100,pnl:net/100,markedMin:mtmMin/100,markGaps,hostN:hosts.get(a)?.n||0,flintN:resolved.filter(t=>t.leg==='flint').reduce((s,t)=>s+t.n,0),xsp:hosts.get(a)?.xspDecision||null,triggered:a.triggered,floor:C.currentFloorLevelCents(a.deposit,a.floorPeak,a.triggered,.10)/100,unresolved};
+   const row={day,before:before/100,after:a.equity/100,pnl:net/100,markedMin:mtmMin/100,markedPeak:mtmPeak/100,markedDD:markedDD/100,markGaps,hostN:hosts.get(a)?.n||0,flintN:resolved.filter(t=>t.leg==='flint').reduce((s,t)=>s+t.n,0),xsp:hosts.get(a)?.xspDecision||null,triggered:a.triggered,floor:C.currentFloorLevelCents(a.deposit,a.floorPeak,a.triggered,.10)/100,unresolved};
    a.days.push(row);daily.accounts.push({bot:a.bot,profile:a.profile,fillCase:a.fillCase,...row});
   }
  }
@@ -293,14 +305,17 @@ async function replayDay(day) {
 }
 function stats(a) {
  let peak=a.deposit/100,dd=0,ddPct=0,mtmDD=0,streak=0,longest=0;const months={};
- for(const d of a.days){peak=Math.max(peak,d.after);dd=Math.max(dd,peak-d.after);ddPct=Math.max(ddPct,(peak-d.after)/peak);mtmDD=Math.max(mtmDD,peak-d.markedMin);months[d.day.slice(0,7)]=(months[d.day.slice(0,7)]||0)+d.pnl;streak=d.pnl<0?streak+1:0;longest=Math.max(longest,streak);}
+ let markedPeak=a.deposit/100;
+ for(const d of a.days){mtmDD=Math.max(mtmDD,markedPeak-d.markedMin,d.markedDD);markedPeak=Math.max(markedPeak,d.markedPeak);peak=Math.max(peak,d.after);dd=Math.max(dd,peak-d.after);ddPct=Math.max(ddPct,(peak-d.after)/peak);months[d.day.slice(0,7)]=(months[d.day.slice(0,7)]||0)+d.pnl;streak=d.pnl<0?streak+1:0;longest=Math.max(longest,streak);}
  const pnl=a.equity/100-a.deposit/100, trades=a.trades,losses=trades.filter(t=>t.pnl<0),wins=trades.filter(t=>t.pnl>0);
- const monthly=Object.fromEntries(Object.entries(months).map(([m,p])=>[m,{tradingNet:money(p),netAfterExternalSubscription:money(p-50)}]));
+ // 36 monthly billing cycles from Sep 29, 2023 through Sep 28, 2026;
+ // Sep 2026's next renewal lies OUTSIDE this window.
+ const monthly=Object.fromEntries(Object.entries(months).map(([m,p])=>[m,{tradingNet:money(p),netAfterExternalSubscription:money(p-(m===SPEC.end.slice(0,7)?0:50))}]));
  const aggregateBy=field=>{const out={};for(const t of trades){const k=field==='month'?t.day.slice(0,7):field==='weekday'?new Date(t.day+'T00:00:00Z').getUTCDay():t[field];const g=out[k]??={trades:0,losses:0,pnl:0};g.trades++;g.losses+=t.pnl<0?1:0;g.pnl=money(g.pnl+t.pnl);}return out;};
- return {bot:a.bot,profile:a.profile,fillCase:a.fillCase,startingEquity:a.deposit/100,endingEquity:a.equity/100,pnl:money(pnl),returnPct:money(100*pnl/(a.deposit/100)),cagrPct:money(100*(Math.pow(Math.max(0,a.equity/a.deposit),1/3)-1)),trades:trades.length,hostTrades:trades.filter(t=>t.leg.startsWith('host')).length,flintTrades:trades.filter(t=>t.leg==='flint').length,winRatePct:trades.length?money(100*wins.length/trades.length):null,maxClosedDrawdown:money(dd),maxClosedDrawdownPct:money(ddPct*100),maxMarkedDrawdownObserved:money(mtmDD),markGapMinutes:a.days.reduce((s,d)=>s+d.markGaps,0),longestLosingDayStreak:longest,worstTrade:losses.length?Math.min(...losses.map(t=>t.pnl)):null,netAfterExternalSubscription:money(pnl-Object.keys(months).length*50),monthly,floorBreaches:a.floorBreaches,unresolved:a.unresolved,invalidFrom:a.invalidFrom||null,clusters:{month:aggregateBy('month'),weekday:aggregateBy('weekday'),leg:aggregateBy('leg'),worstTrades:losses.sort((a,b)=>a.pnl-b.pnl).slice(0,20)},complete:STATE.completed===STATE.total&&!STATE.dataErrors.length&&!a.unresolved.length};
+ return {bot:a.bot,profile:a.profile,fillCase:a.fillCase,startingEquity:a.deposit/100,endingEquity:a.equity/100,pnl:money(pnl),returnPct:money(100*pnl/(a.deposit/100)),cagrPct:money(100*(Math.pow(Math.max(0,a.equity/a.deposit),1/3)-1)),trades:trades.length,hostTrades:trades.filter(t=>t.leg.startsWith('host')).length,flintTrades:trades.filter(t=>t.leg==='flint').length,winRatePct:trades.length?money(100*wins.length/trades.length):null,maxClosedDrawdown:money(dd),maxClosedDrawdownPct:money(ddPct*100),maxMarkedDrawdownObserved:money(mtmDD),markGapMinutes:a.days.reduce((s,d)=>s+d.markGaps,0),longestLosingDayStreak:longest,worstTrade:losses.length?Math.min(...losses.map(t=>t.pnl)):null,netAfterExternalSubscription:money(pnl-Object.keys(months).filter(m=>m!==SPEC.end.slice(0,7)).length*50),monthly,floorBreaches:a.floorBreaches,unresolved:a.unresolved,invalidFrom:a.invalidFrom||null,clusters:{month:aggregateBy('month'),weekday:aggregateBy('weekday'),leg:aggregateBy('leg'),worstTrades:losses.sort((a,b)=>a.pnl-b.pnl).slice(0,20)},complete:STATE.completed===STATE.total&&!STATE.dataErrors.length&&!a.unresolved.length};
 }
 function snapshot() {
- const result={spec:SPEC,status:{...STATE},summary:accounts.map(stats),sourceManifest:manifest,gammaCoverageDays:Object.keys(gamma).length};
+ const result={spec:SPEC,status:{...STATE},summary:accounts.map(stats),sourceManifest:manifest,gammaCoverageDays:Object.keys(gamma).length,fullFeatureHistoricalValidationComplete:false,coverageLimits:['No three-year same-source historical dealer gamma; gamma add-on remains inactive where history unavailable.','XSP outcomes require authentic SPX settlement; unresolved swaps invalidate affected account paths.','Minute snapshots model fills; actual historical broker execution and assignment are not replayable from these inputs.']};
  fs.writeFileSync(path.join(OUT,'checkpoint.json'),JSON.stringify(result,null,2));return result;
 }
 function selfTest() {
@@ -341,6 +356,9 @@ if(require.main===module) {
  if(process.argv.includes('--self-test')) {selfTest();process.exit(0);}
  const server=http.createServer((req,res)=>{
   const url=new URL(req.url,'http://localhost');res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store');
+  if(url.pathname==='/health'){res.end(JSON.stringify({ok:true}));return;}
+  const secret=process.env.RESEARCH_ACCESS_TOKEN;
+  if(!secret||req.headers.authorization!==`Bearer ${secret}`){res.statusCode=403;res.end(JSON.stringify({error:'private_research'}));return;}
   if(url.pathname==='/status'||url.pathname==='/')res.end(JSON.stringify({...STATE,percent:STATE.total?money(100*STATE.completed/STATE.total):0}));
   else if(url.pathname==='/report')res.end(JSON.stringify(report||snapshot()));
   else if(url.pathname==='/trades')res.end(JSON.stringify(accounts.map(a=>({bot:a.bot,profile:a.profile,fillCase:a.fillCase,trades:a.trades}))));
@@ -349,4 +367,4 @@ if(require.main===module) {
  });
  server.listen(Number(process.env.PORT||10000),'0.0.0.0',()=>execute());
 }
-module.exports={selfTest,hostSize,flintSize,realizeSpread,sessions,stats,csv,SPEC};
+module.exports={selfTest,hostSize,flintSize,realizeSpread,sessions,stats,csv,SPEC,replayDay,accounts,setTestHistories: (data)=>{vix=data.vix;eod=data.eod;}};
