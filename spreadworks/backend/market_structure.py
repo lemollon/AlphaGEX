@@ -48,7 +48,7 @@ BUCKETS = ((0, 0, "0dte"), (1, 5, "1_5dte"), (6, 20, "6_20dte"),
 STALE_SECONDS = int(os.getenv("MARKET_STRUCTURE_STALE_SECONDS", "90"))
 GAMMA_TABLE = "sw_live_gamma"
 VOL_TABLE = "sw_live_vol_indices"
-_OI_CACHE: dict[str, tuple[datetime, list[dict[str, Any]]]] = {}
+_OI_CACHE: dict[str, tuple[datetime, datetime, dict[tuple[str, float, str], float]]] = {}
 
 _GAMMA_DDL = f"""
 CREATE TABLE IF NOT EXISTS {GAMMA_TABLE} (
@@ -237,33 +237,37 @@ def fetch_theta_chain(symbol: str, now: datetime | None = None) -> dict[str, Any
             gamma_source = "ThetaData Standard IV, locally calculated gamma"
         cached = _OI_CACHE.get(symbol)
         if cached and cached[0].astimezone(ET).date() == now.astimezone(ET).date() and (now - cached[0]).total_seconds() < 3600:
-            oi_rows = cached[1]
+            oi_stamp, oi_by_contract = cached[1], cached[2]
         else:
             oi_rows = _theta_rows("/v3/option/snapshot/open_interest", params)
-            if oi_rows:
-                _OI_CACHE[symbol] = (now, oi_rows)
+            oi_stamps = [_theta_ts(row.get("timestamp")) for row in oi_rows]
+            oi_stamps = [stamp for stamp in oi_stamps if stamp]
+            if not oi_stamps:
+                return {"rows": [], "reason": "stale_or_missing_theta_open_interest",
+                        "source_timestamp": None}
+            oi_stamp = max(oi_stamps)
+            oi_by_contract = {}
+            for item in oi_rows:
+                strike = _f(item, "strike")
+                amount = _f(item, "open_interest")
+                if strike is not None and amount is not None and amount >= 0:
+                    oi_by_contract[(str(item.get("expiration")), strike,
+                                    str(item.get("right", "")).lower())] = amount
+            if oi_stamp.astimezone(ET).date() == now.astimezone(ET).date() and oi_by_contract:
+                # Keep only the join key and OI number, not full CSV dicts.
+                _OI_CACHE[symbol] = (now, oi_stamp, oi_by_contract)
     except Exception as exc:  # noqa: BLE001
         return {"rows": [], "reason": f"ThetaData chain failure: {type(exc).__name__}",
                 "source_timestamp": None}
-    if not greeks or not oi_rows:
+    if not greeks or not oi_by_contract:
         return {"rows": [], "reason": "missing_theta_greeks_or_open_interest",
                 "source_timestamp": None}
 
     # OI is an OPRA morning publication. Require today's snapshot, while the
     # Greeks carry the intraminute freshness requirement.
-    oi_stamps = [_theta_ts(row.get("timestamp")) for row in oi_rows]
-    oi_stamps = [stamp for stamp in oi_stamps if stamp]
-    if not oi_stamps or max(oi_stamps).astimezone(ET).date() != now.astimezone(ET).date():
+    if oi_stamp.astimezone(ET).date() != now.astimezone(ET).date():
         return {"rows": [], "reason": "stale_or_missing_theta_open_interest",
                 "source_timestamp": None}
-
-    oi_by_contract: dict[tuple[str, float, str], float] = {}
-    for item in oi_rows:
-        strike = _f(item, "strike")
-        amount = _f(item, "open_interest")
-        if strike is not None and amount is not None and amount >= 0:
-            oi_by_contract[(str(item.get("expiration")), strike,
-                            str(item.get("right", "")).lower())] = amount
 
     recent: list[tuple[dict[str, Any], datetime]] = []
     for item in greeks:
@@ -312,7 +316,7 @@ def fetch_theta_chain(symbol: str, now: datetime | None = None) -> dict[str, Any
                 "recent_greeks_rows": len(recent)}
     return {"rows": rows, "reason": None,
             "source_timestamp": min(row["timestamp"] for row in rows),
-            "oi_timestamp": max(oi_stamps), "matched_rows": len(rows),
+            "oi_timestamp": oi_stamp, "matched_rows": len(rows),
             "recent_greeks_rows": len(recent), "gamma_source": gamma_source}
 
 
@@ -564,7 +568,7 @@ def capture_all() -> dict[str, Any]:
     gamma: dict[str, Any] = {}
     # Fetch independent symbols concurrently; each ThetaData request retains
     # a bounded proxy timeout and each result must pass its freshness gate.
-    with ThreadPoolExecutor(max_workers=len(SYMBOLS), thread_name_prefix="market-structure") as pool:
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="market-structure") as pool:
         futures = {pool.submit(build_gamma_snapshot, symbol, now): symbol for symbol in SYMBOLS}
         for future in as_completed(futures):
             symbol = futures[future]
@@ -653,7 +657,7 @@ def live_market_structure():
     """Fresh report payload. It NEVER silently substitutes old public data."""
     now = datetime.now(UTC)
     vol = fetch_vol_indices(now)
-    with ThreadPoolExecutor(max_workers=len(SYMBOLS), thread_name_prefix="theta-live") as pool:
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="theta-live") as pool:
         futures = {pool.submit(build_gamma_snapshot, s, now): s for s in SYMBOLS}
         gamma = {}
         for future in as_completed(futures):
