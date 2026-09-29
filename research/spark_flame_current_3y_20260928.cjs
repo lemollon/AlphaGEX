@@ -79,7 +79,7 @@ function csv(body) {
   else field+=c;
  }
  if (field || row.length) {row.push(field.replace(/\r$/, ''));data.push(row);}
- const headers=(data.shift() || []).map((x,i)=>i===0?x.replace(/^\uFEFF/,''):x);
+ const headers=(data.shift() || []).map((x,i)=>(i===0?x.replace(/^\uFEFF/,''):x).trim().toLowerCase());
  return data.map(r=>Object.fromEntries(headers.map((k,i)=>[k,r[i] ?? ''])));
 }
 function minute(timestamp, day) {
@@ -99,12 +99,13 @@ async function request(url, params={}, provider=false) {
   STATE.requests++;const u=new URL(url);Object.entries(params).forEach(([k,v])=>u.searchParams.set(k,String(v)));
   try {
    const r=await fetch(u,{signal:AbortSignal.timeout(45000),headers:{'Cache-Control':'no-cache'}});
-   if(!r.ok)throw Error(`http_${r.status}`);
+   if(!r.ok){const e=Error(`http_${r.status}`);e.retryable=[429,500,502,503,504].includes(r.status);throw e;}
    if(provider && r.headers.get('X-Market-Data-Provider')!=='thetadata')throw Error('unverified_provider');
    const body=await r.text();if(!body.trim())throw Error('empty_response');
-   const entry={url:url.replace(/\/v3.*/, '/v3'),params,bytes:Buffer.byteLength(body),sha256:sha(body),fetchedAt:new Date().toISOString()};
-   manifest.push(entry);fs.writeFileSync(path.join(OUT,`${manifest.length}.csv`),body);return csv(body);
-  } catch(e) {last=e;if(attempt<2)await new Promise(resolve=>setTimeout(resolve,1000*(attempt+1)));}
+   const parsed=csv(body);
+   const entry={url,params,bytes:Buffer.byteLength(body),sha256:sha(body),fetchedAt:new Date().toISOString(),schema:Object.keys(parsed[0]||{}),sample:parsed[0]||null};
+   manifest.push(entry);fs.writeFileSync(path.join(OUT,`${manifest.length}.csv`),body);return parsed;
+  } catch(e) {last=e;if(e.retryable===false)break;if(attempt<2)await new Promise(resolve=>setTimeout(resolve,1000*(attempt+1)));}
  }
  throw last;
 }
@@ -118,7 +119,7 @@ function vixRatio(day) {
 }
 async function histories() {
  const vr=await request('https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv');
- vix=vr.map(r=>{const [m,d,y]=r.DATE.split('/');return {day:`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`,close:+r.CLOSE};}).filter(x=>Number.isFinite(x.close)&&x.close>0).sort((a,b)=>a.day.localeCompare(b.day));
+ vix=vr.map(r=>{const [m,d,y]=r.date.split('/');return {day:`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`,close:+r.close};}).filter(x=>Number.isFinite(x.close)&&x.close>0).sort((a,b)=>a.day.localeCompare(b.day));
  for(const y of [2023,2024,2025,2026]) {
   const rr=await feed('/v3/stock/history/eod',{symbol:'SPY',start_date:`${y}-01-01`,end_date:y===2026?SPEC.end:`${y}-12-31`});
   for(const r of rr) {const d=(r.date||r.timestamp||r.trade_date||'').slice(0,10);const close=+r.close;if(d && Number.isFinite(close)&&close>0)eod[d]=close;}
@@ -128,7 +129,7 @@ async function histories() {
  // SPX settlement; accepted XSP swaps are flagged unresolved.
  try {
   const rr=await request('https://cdn.cboe.com/api/global/us_indices/daily_prices/SPX_History.csv');
-  for(const r of rr){const [m,d,y]=(r.DATE||'').split('/');if(y&&Number.isFinite(+r.CLOSE))SPX[`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`]=+r.CLOSE;}
+  for(const r of rr){const [m,d,y]=(r.date||'').split('/');if(y&&Number.isFinite(+r.close))SPX[`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`]=+r.close;}
  } catch(e) {STATE.spxHistoryError=String(e.message);}
 }
 const SPX={};
@@ -141,8 +142,14 @@ class Quotes {
  async leg(symbol,right,strike,start) {
   const key=`${symbol}:${right}:${strike}:${start}`;if(this.cache.has(key))return this.cache.get(key);
   const rr=await feed('/v3/option/history/quote',{symbol,right,strike,expiration:this.day,date:this.day,interval:'1m',start_time:clock(start),end_time:clock(this.close)});
-  const out=new Map();for(const r of rr){if(r.symbol!==symbol||Math.abs(+r.strike-strike)>.001||!String(r.right).toLowerCase().startsWith(right[0]))throw Error('wrong_option_identity');
-   const exp=(r.expiration||'').slice(0,10).replace(/-/g,'');if(exp!==this.day.replace(/-/g,''))throw Error('wrong_option_expiration');
+  const out=new Map();for(const r of rr){
+   // Single-contract history responses may omit identity columns. Their
+   // identity is then the explicitly requested API scope, never a guessed
+   // contract. Any provided identity must agree with that scope.
+   if(r.symbol?.trim()&&r.symbol.trim().toUpperCase()!==symbol)throw Error('wrong_option_symbol');
+   if(r.strike?.trim()&&Math.abs(+r.strike-strike)>.001)throw Error('wrong_option_strike');
+   if(r.right?.trim()&&!r.right.trim().toLowerCase().startsWith(right[0]))throw Error('wrong_option_right');
+   const exp=(r.expiration||'').slice(0,10).replace(/-/g,'');if(exp&&exp!==this.day.replace(/-/g,''))throw Error('wrong_option_expiration');
    const m=minute(r.timestamp||r.datetime,this.day);if(usableQuote(r))out.set(m,{bid:+r.bid,ask:+r.ask,bidSize:+r.bid_size,askSize:+r.ask_size});}
   this.cache.set(key,out);return out;
  }
@@ -228,7 +235,7 @@ function realizeSpread(spread,entry,credit,spots,close,settle,slip) {
 async function replayDay(day) {
  const close=halves.has(day)?780:960, vg=vixRatio(day);
  const rr=await feed('/v3/stock/history/ohlc',{symbol:'SPY',date:day,interval:'1m',start_time:'09:30:00',end_time:clock(close),venue:'utp_cta'});
- const spots=new Map();for(const r of rr){const m=minute(r.timestamp||r.datetime,day);if(r.symbol!=='SPY')throw Error('wrong_stock_identity');const b={open:+r.open,high:+r.high,low:+r.low,close:+r.close};if(Object.values(b).some(x=>!Number.isFinite(x)||x<=0))throw Error('invalid_stock');spots.set(m,b);}
+ const spots=new Map();for(const r of rr){const m=minute(r.timestamp||r.datetime,day);if(r.symbol?.trim()&&r.symbol.trim().toUpperCase()!=='SPY')throw Error('wrong_stock_identity');const b={open:+r.open,high:+r.high,low:+r.low,close:+r.close};if(Object.values(b).every(x=>x===0)&&+r.volume===0)continue;if(Object.values(b).some(x=>!Number.isFinite(x)||x<=0))throw Error('invalid_stock');spots.set(m,b);}
  if(!eod[day])throw Error('official_SPY_close_missing');
  const dq=new Quotes(day,close), daily={day,vix:vg,close,accounts:[]};
  for(const bot of ['spark','flame']) {
@@ -363,6 +370,10 @@ if(require.main===module) {
   else if(url.pathname==='/report')res.end(JSON.stringify(report||snapshot()));
   else if(url.pathname==='/trades')res.end(JSON.stringify(accounts.map(a=>({bot:a.bot,profile:a.profile,fillCase:a.fillCase,trades:a.trades}))));
   else if(url.pathname==='/daily')res.end(JSON.stringify([...rowsByDay.values()]));
+  else if(url.pathname==='/source'){
+   const number=Number(url.searchParams.get('number'));if(!Number.isInteger(number)||number<1||number>manifest.length){res.statusCode=404;res.end(JSON.stringify({error:'source_not_found'}));return;}
+   res.setHeader('Content-Type','text/csv');res.end(fs.readFileSync(path.join(OUT,`${number}.csv`),'utf8'));
+  }
   else {res.statusCode=404;res.end(JSON.stringify({error:'not_found'}));}
  });
  server.listen(Number(process.env.PORT||10000),'0.0.0.0',()=>execute());
