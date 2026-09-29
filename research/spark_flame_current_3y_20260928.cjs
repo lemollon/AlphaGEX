@@ -245,7 +245,7 @@ function realizeSpread(spread,entry,credit,spots,close,settle,slip) {
 async function replayDay(day) {
  const close=halves.has(day)?780:960, vg=vixRatio(day);
  const rr=await feed('/v3/stock/history/ohlc',{symbol:'SPY',date:day,interval:'1m',start_time:'09:30:00',end_time:clock(close),venue:'utp_cta'});
- const spots=new Map();for(const r of rr){const m=minute(r.timestamp||r.datetime,day);if(r.symbol?.trim()&&r.symbol.trim().toUpperCase()!=='SPY')throw Error('wrong_stock_identity');const b={open:+r.open,high:+r.high,low:+r.low,close:+r.close};if(Object.values(b).every(x=>x===0)&&+r.volume===0)continue;if(Object.values(b).some(x=>!Number.isFinite(x)||x<=0))throw Error('invalid_stock');spots.set(m,b);}
+ const spots=new Map();for(const r of rr){const m=minute(r.timestamp||r.datetime,day);if(m>=close)continue;if(r.symbol?.trim()&&r.symbol.trim().toUpperCase()!=='SPY')throw Error('wrong_stock_identity');const b={open:+r.open,high:+r.high,low:+r.low,close:+r.close};if(Object.values(b).every(x=>x===0)&&+r.volume===0)continue;if(Object.values(b).some(x=>!Number.isFinite(x)||x<=0))throw Error('invalid_stock');spots.set(m,b);}
  if(!eod[day])throw Error('official_SPY_close_missing');
  const dq=new Quotes(day,close), daily={day,vix:vg,close,accounts:[]};
  for(const bot of ['spark','flame']) {
