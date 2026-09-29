@@ -72,8 +72,11 @@ def test_theta_chain_joins_by_contract_and_rejects_stale_greeks(monkeypatch):
     greeks[0]["timestamp"] = "2026-09-29T10:40:00"
     oi = list(reversed(oi))
     monkeypatch.setattr(market_structure, "_OI_CACHE", {})
-    monkeypatch.setattr(market_structure, "_theta_rows",
-                        lambda path, params: greeks if "greeks" in path else oi)
+    paths = []
+    def rows(path, params):
+        paths.append(path)
+        return greeks if "greeks" in path else oi
+    monkeypatch.setattr(market_structure, "_theta_rows", rows)
     result = market_structure.fetch_theta_chain("SPY", now)
     assert result["reason"] is None
     assert len(result["rows"]) == 119
@@ -81,6 +84,9 @@ def test_theta_chain_joins_by_contract_and_rejects_stale_greeks(monkeypatch):
     assert result["rows"][0]["putOpenInterest"] == 100
     assert result["source_timestamp"].isoformat() == "2026-09-29T14:44:30+00:00"
     assert result["oi_timestamp"].isoformat() == "2026-09-29T10:30:00+00:00"
+    again = market_structure.fetch_theta_chain("SPY", now)
+    assert again["reason"] is None
+    assert paths.count("/v3/option/snapshot/open_interest") == 1
 
 
 def test_theta_chain_rejects_previous_day_oi(monkeypatch):
