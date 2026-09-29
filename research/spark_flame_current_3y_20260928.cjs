@@ -6,6 +6,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
+const zlib=require('node:zlib');
+let checkpointPool=null;
+let checkpointKey=null;
 const assert = require('node:assert/strict');
 const { stripTypeScriptTypes } = require('node:module');
 const ROOT = path.resolve(__dirname, '..');
@@ -145,10 +148,10 @@ async function loadGammaDay(day,spot) {
  emit('gamma_reconstruction',{...result});return result;
 }
 async function warmGamma() {
- gamma={};const warm=Object.keys(eod).filter(d=>d<SPEC.start).sort().slice(-20);
+ if(!Object.values(gamma).some(g=>g.source===GAMMA.SOURCE))gamma={};const warm=Object.keys(eod).filter(d=>d<SPEC.start).sort().slice(-20);
  if(warm.length!==20)throw Error('gamma_warmup_history_short');
  STATE.stage='warming_gamma';
- for(const day of warm){STATE.currentDay=day;const rows=await feed('/v3/stock/history/ohlc',{symbol:'SPY',date:day,interval:'1m',start_time:'11:05:00',end_time:'11:06:00',venue:'utp_cta'});const r=rows.find(r=>minute(r.timestamp||r.datetime,day)===665);if(!(Number(r?.open)>0))throw Error('gamma_warmup_spot_missing');await loadGammaDay(day,Number(r.open));}
+ for(const day of warm){if(gamma[day]?.source===GAMMA.SOURCE)continue;STATE.currentDay=day;const rows=await feed('/v3/stock/history/ohlc',{symbol:'SPY',date:day,interval:'1m',start_time:'11:05:00',end_time:'11:06:00',venue:'utp_cta'});const r=rows.find(r=>minute(r.timestamp||r.datetime,day)===665);if(!(Number(r?.open)>0))throw Error('gamma_warmup_spot_missing');await loadGammaDay(day,Number(r.open));await saveCheckpoint();}
 }
 
 function usableQuote(r) {
@@ -374,22 +377,48 @@ function selfTest() {
  assert.equal(flintSize(legacy,.2,.75,false,null,100,'2024-06-03').n,1);
  emit('self_test',{passed:true,sessions:sessions().length,cases:'pure production sizing, calm add-on, netted cushion, guard costs, CSV, UTC conversion, holiday calendar, gamma fail-closed'});
 }
+async function initCheckpointStore() {
+ if(!process.env.RESEARCH_DATABASE_URL)throw Error('research_checkpoint_database_missing');
+ let pg;try{pg=require('/tmp/sf3y-pg/node_modules/pg');}catch{
+  require('node:child_process').execFileSync('npm',['install','--no-save','--no-package-lock','--prefix','/tmp/sf3y-pg','pg@8.16.3'],{stdio:'ignore'});
+  pg=require('/tmp/sf3y-pg/node_modules/pg');
+ }
+ checkpointPool=new pg.Pool({connectionString:process.env.RESEARCH_DATABASE_URL,max:1,connectionTimeoutMillis:10000,ssl:true});
+ const db=await checkpointPool.query('SELECT current_database() name');
+ if(db.rows[0].name!=='alphagex_backtest')throw Error('checkpoint_requires_isolated_backtest_database');
+ await checkpointPool.query('CREATE TABLE IF NOT EXISTS spark_flame_research_checkpoints (run_key TEXT PRIMARY KEY, status TEXT NOT NULL, completed INTEGER NOT NULL, checkpoint BYTEA NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
+ checkpointKey=SPEC.id+':'+sha(fs.readFileSync(__filename))+':'+sha(fs.readFileSync(path.join(__dirname,'spark_flame_gamma_reconstruction.cjs')));
+ const r=await checkpointPool.query('SELECT checkpoint FROM spark_flame_research_checkpoints WHERE run_key=$1',[checkpointKey]);
+ if(r.rows.length){
+  const saved=JSON.parse(zlib.gunzipSync(r.rows[0].checkpoint).toString());
+  Object.assign(STATE,saved.state);accounts.splice(0,accounts.length,...saved.accounts);gamma=saved.gamma;vix=saved.vix;eod=saved.eod;Object.assign(SPX,saved.spx);manifest.splice(0,manifest.length,...saved.manifest);for(const [k,v] of saved.daily)rowsByDay.set(k,v);
+  emit('resumed_current_run',{completed:STATE.completed,stage:STATE.stage});return true;
+ }
+ return false;
+}
+async function saveCheckpoint() {
+ if(!checkpointPool)return;
+ const body=zlib.gzipSync(JSON.stringify({state:STATE,accounts,gamma,vix,eod,spx:SPX,manifest,daily:[...rowsByDay]}));
+ await checkpointPool.query('INSERT INTO spark_flame_research_checkpoints(run_key,status,completed,checkpoint) VALUES($1,$2,$3,$4) ON CONFLICT(run_key) DO UPDATE SET status=EXCLUDED.status,completed=EXCLUDED.completed,checkpoint=EXCLUDED.checkpoint,updated_at=NOW()',[checkpointKey,STATE.stage,STATE.completed,body]);
+}
 async function execute() {
  selfTest();STATE.startedAt=new Date().toISOString();STATE.stage='loading_history';STATE.total=sessions().length;
  const sourceHashes={};for(const file of ['customer-executor/contracts.ts','one-strategy.ts','ebb-sizing.ts','fast-start-sizing.ts','flint.ts','xsp-swap.ts'])sourceHashes[file]=sha(fs.readFileSync(path.join(LIB,file)));
  emit('frozen_spec',{spec:SPEC,sourceHashes,sessions:STATE.total});
  try {
-  await histories();if(reconstructGammaEnabled)await warmGamma();STATE.stage='running';let consecutive=0;
-  for(const day of sessions()) {
+  const resumed=await initCheckpointStore();
+  if(resumed&&['completed_with_coverage_limits','blocked','incomplete'].includes(STATE.stage)){report=snapshot();return;}
+  if(!resumed)await histories();if(reconstructGammaEnabled)await warmGamma();STATE.stage='running';let consecutive=0;
+  for(const day of sessions().slice(STATE.completed)) {
    STATE.currentDay=day;
    const beforeAccounts=structuredClone(accounts);
    try {const row=await replayDay(day);rowsByDay.set(day,row);fs.writeFileSync(path.join(OUT,day+'.json'),JSON.stringify(row));emit('day',row);consecutive=0;}
    catch(e){accounts.splice(0,accounts.length,...beforeAccounts);STATE.dataErrors.push({day,error:String(e.message)});emit('data_error',{day,error:String(e.message)});consecutive++;for(const a of accounts){a.invalidFrom??=day;a.unresolved.push({day,reasons:['data_error']});}}
-   STATE.completed++;if(STATE.completed%5===0){snapshot();emit('progress',{...STATE});}
+   STATE.completed++;if(STATE.completed%5===0){snapshot();await saveCheckpoint();emit('progress',{...STATE});}
    if(consecutive>=3)throw Error('three_consecutive_data_errors; stopped rather than silently backtesting absent quotes');
   }
-  STATE.stage=STATE.dataErrors.length?'incomplete':'completed_with_coverage_limits';report=snapshot();emit('finished',{stage:STATE.stage,summary:report.summary});
- }catch(e){STATE.stage='blocked';STATE.error=String(e.message);report=snapshot();emit('blocked',{...STATE});}
+  STATE.stage=STATE.dataErrors.length?'incomplete':'completed_with_coverage_limits';report=snapshot();await saveCheckpoint();emit('finished',{stage:STATE.stage,summary:report.summary});
+ }catch(e){STATE.stage='blocked';STATE.error=String(e.message);report=snapshot();try{await saveCheckpoint();}catch{}emit('blocked',{...STATE});}
 }
 if(require.main===module) {
  process.env.FLAME_FAST_START='on';process.env.SPARK_FAST_START='on';
@@ -405,7 +434,7 @@ if(require.main===module) {
   else if(url.pathname==='/daily')res.end(JSON.stringify([...rowsByDay.values()]));
   else if(url.pathname==='/source'){
    const number=Number(url.searchParams.get('number'));if(!Number.isInteger(number)||number<1||number>manifest.length){res.statusCode=404;res.end(JSON.stringify({error:'source_not_found'}));return;}
-   res.setHeader('Content-Type','text/csv');res.end(fs.readFileSync(path.join(OUT,`${number}.csv`),'utf8'));
+   const file=path.join(OUT,`${number}.csv`);if(!fs.existsSync(file)){res.statusCode=404;res.end(JSON.stringify({error:'raw_source_evicted_on_restart',sha256:manifest[number-1].sha256}));return;}res.setHeader('Content-Type','text/csv');res.end(fs.readFileSync(file,'utf8'));
   }
   else {res.statusCode=404;res.end(JSON.stringify({error:'not_found'}));}
  });
