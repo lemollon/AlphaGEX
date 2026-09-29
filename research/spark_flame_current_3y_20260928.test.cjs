@@ -15,7 +15,7 @@ global.fetch=async raw=>{
  let rows=[];
  if(u.pathname.endsWith('/ohlc')){
   rows=[['symbol','timestamp','open','high','low','close','volume']];
-  for(let m=570;m<=960;m++){const spot=guardMode&&m>=957?498.4:500;rows.push(['SPY',timestamp(m),spot,spot+.1,spot-.1,spot,1000]);}
+  for(let m=570;m<=960;m++){if(m===960){rows.push(['SPY',timestamp(m),'','','','',20]);continue;}const spot=guardMode&&m>=957?498.4:500;rows.push(['SPY',timestamp(m),spot,spot+.1,spot-.1,spot,1000]);}
  }else if(u.pathname.endsWith('/quote')){
   const k=+u.searchParams.get('strike'),right=u.searchParams.get('right');
   const short=right==='call'?k===501:[498,499].includes(k);
