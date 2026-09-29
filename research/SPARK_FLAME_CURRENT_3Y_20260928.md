@@ -1,4 +1,4 @@
-# Three-year Spark and Flame replay — prepared, not yet running
+# Three-year Spark and Flame replay — running
 
 Baseline: AlphaGEX `3637fd18396b9ab532ee0d9bd42281338353a8a2` (September 28, 2026).
 Window: September 29, 2023–September 28, 2026; 751 regular or half-day sessions.
@@ -30,7 +30,9 @@ Source defaults are frozen; account-specific DB overrides are not applied.
 The private ThetaData proxy supplies SPY minute bars, official daily closes,
 and historical option bid/ask/depth. Stock minute OPEN is the contemporaneous
 spot proxy; quote snapshots are not verified broker executions. Spread prices
-use sell-bid/buy-ask with displayed size checks. Fees are $1.40 per spread,
+use sell-bid/buy-ask with checks on the required execution sides. A zero-bid
+long contributes zero sale proceeds at buyback; its zero bid size does not
+invalidate the short option's valid ask. Positive long bids require size. Fees are $1.40 per spread,
 with $50 monthly subscription reported externally over 36 billing cycles.
 
 Authentic Tradier-source gamma context is only available starting September
@@ -81,7 +83,15 @@ balances, credentials, kill switches, or production database schemas change.
 
 ## Current status
 
-Prepared and verified. No real historical replay has started.
-Automatic approval review rejected the initial public-facing service proposal.
-The revised runner authenticates all research endpoints; remote creation/
-execution is awaiting explicit user approval.
+User approved the authenticated free research service on September 29, 2026.
+The runner is deployed and processing real historical sessions. Performance
+results are pending; partial exports are not validated three-year returns.
+
+Service: https://dashboard.render.com/web/srv-dau3ni7lot8c739htsv0
+Execution branch: `research/spark-flame-current-3y-20260928`.
+Latest runner/test commit: `90a4f08965f9cbd9148fc09a21b59ebe35b85451`.
+
+A read-only observer polls authenticated status every 45 seconds and saves
+existing report/trade/daily exports every five minutes. Quotes retrieved
+within this run are reused for later scanner minutes of the same contract.
+The collector requests historical market data only and never sends orders.
