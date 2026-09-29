@@ -214,3 +214,30 @@ def test_call_failure_evicts_the_cached_client(monkeypatch):
         proxy._call("stock_snapshot_ohlc", symbol="AAA")
     assert excinfo.value.status_code == 502
     assert cleared["n"] == 1
+
+
+def test_historical_gamma_inputs_are_single_session_bounded(monkeypatch):
+    from datetime import date
+    fake = FakeThetaClient()
+    def eod(**kwargs):
+        fake.calls.append(("option_history_eod", kwargs))
+        return Frame([{"symbol":"SPY","expiration":"2023-10-06","strike":430,
+                      "right":"call","bid":1.0,"ask":1.1}])
+    def oi(**kwargs):
+        fake.calls.append(("option_history_open_interest", kwargs))
+        return Frame([{"symbol":"SPY","expiration":"2023-10-06","strike":430,
+                      "right":"call","open_interest":100}])
+    fake.option_history_eod=eod
+    fake.option_history_open_interest=oi
+    monkeypatch.setattr(proxy,"_client",lambda:fake)
+    client=TestClient(proxy.app)
+    for route,method in [("eod","option_history_eod"),("open_interest","option_history_open_interest")]:
+        r=client.get("/v3/option/history/"+route,params={"symbol":"SPY","date":"2023-09-29"})
+        assert r.status_code==200
+        assert r.headers["x-market-data-provider"]=="thetadata"
+        called,kw=fake.calls[-1];assert called==method
+        assert kw["expiration"]=="*" and kw["max_dte"]==60
+        assert kw["symbol"]=="SPY" and kw["right"]=="both"
+        assert kw.get("date",kw.get("start_date"))==date(2023,9,29)
+        assert client.get("/v3/option/history/"+route,params={"symbol":"SPY","date":"bad"}).status_code==422
+        assert client.get("/v3/option/history/"+route,params={"symbol":"SPY","date":"2023-09-29","max_dte":62}).status_code==422
