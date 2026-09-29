@@ -25,7 +25,9 @@ Do not delete, move, or refactor those directories as part of AlphaGEX pruning.
 - `alphagex-trader`: VALOR + perpetual scheduling/execution
 - PostgreSQL: shared AlphaGEX trading state
 - SpreadWorks retains its existing Render service definition
-- IronForge retains its separate deployment configuration
+- IronForge retains its separate deployment configuration. The `ironforge-customer`
+  Render service builds `ironforge/webapp` from this repository. Spark/Flame
+  use the [September 28 strategy reference](ironforge/SPARK_FLAME_CURRENT_STATE_2026-09-28.md).
 
 ## Local start
 

@@ -1,5 +1,12 @@
 # IronForge Forge Reports (Briefings) — Design
 
+> **Historical document — superseded for Spark/Flame operations as of September 28, 2026.**
+> This dated design/plan records its original implementation context. Its references to Spark/Flame strategy, account ownership, paper-only execution, or per-trade approval are historical. Current enrollment-v2 customer activation uses standing authorization; legacy-v1 approval is a separate path.
+> Use [Spark and Flame current state, September 28](../../../ironforge/SPARK_FLAME_CURRENT_STATE_2026-09-28.md) for the current 0DTE EBB rules, customer sizing, feature switches, and account boundaries.
+> Historical results and incident findings below retain their original scope; they are not current deployment verification.
+
+## Historical content
+
 **Date:** 2026-05-04
 **Author:** Claude (brainstormed with Optionist Prime)
 **Status:** Approved — proceeding to implementation plan

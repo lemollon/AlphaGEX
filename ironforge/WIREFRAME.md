@@ -1,4 +1,11 @@
-# IronForge System Wireframe
+# IronForge System Wireframe (historical reference)
+
+> **Historical document — superseded for Spark/Flame operations as of September 28, 2026.**
+> The old 1DTE/2DTE condors, Databricks/Python execution descriptions, paper-only claims, and historical PT/SL or sizing figures do not describe current Spark/Flame. Historical confidence conclusions do not certify the September release.
+> Use [Spark and Flame current state, September 28](SPARK_FLAME_CURRENT_STATE_2026-09-28.md) for the current 0DTE EBB rules, customer sizing, feature switches, and account boundaries.
+> Historical results and incident findings below retain their original scope; they are not current deployment verification.
+
+## Historical content
 
 Complete architecture documentation for the IronForge standalone SPY Iron Condor paper trading system.
 

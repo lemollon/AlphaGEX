@@ -1,4 +1,11 @@
-# IronForge System Validation & Accountability Framework
+# IronForge System Validation & Accountability Framework (historical reference)
+
+> **Historical document — superseded for Spark/Flame operations as of September 28, 2026.**
+> Databricks SQL, Vercel URLs, 1DTE/2DTE assumptions and FLAME-only mirroring invariants below are obsolete operational checks. Do not execute legacy mutation examples against the current runtime. Validate each current account scope independently.
+> Use [Spark and Flame current state, September 28](SPARK_FLAME_CURRENT_STATE_2026-09-28.md) for the current 0DTE EBB rules, customer sizing, feature switches, and account boundaries.
+> Historical results and incident findings below retain their original scope; they are not current deployment verification.
+
+## Historical content
 
 **PURPOSE**: This document defines what "working" means for IronForge, how to prove it, and how to hold Claude Code accountable for its claims. Every future session involving IronForge changes must reference this document.
 
