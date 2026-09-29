@@ -1,15 +1,15 @@
 """Live volatility-index + dealer-gamma market-structure engine.
 
 This module is intentionally separate from the backtested daily SQUEEZE signal.
-It provides intraday CONTEXT for reports using one canonical live chain source
-(ORATS one-minute chain) and fresh Tradier index quotes.
+It provides intraday CONTEXT using ThetaData option Greeks, open interest,
+and index prices. Tradier remains the ETF spot source.
 
 Key rules:
 - Never mix providers inside one gamma snapshot.
 - Never reuse stale quotes silently.
 - Gamma is estimated dealer exposure, not observed dealer inventory.
-- ORATS is primary for gamma because its live one-minute chain carries OI, IV,
-  gamma and timestamps. Tradier remains source of truth for underlying/index spot.
+- ThetaData Greeks and OI are joined by contract. Missing OI or stale Greeks
+  fail closed; OI's morning publication time is reported separately.
 """
 from __future__ import annotations
 
@@ -38,14 +38,17 @@ UTC = ZoneInfo("UTC")
 router = APIRouter(prefix="/api/spreadworks/market-structure",
                    tags=["Market Structure"])
 
-ORATS_URL = "https://api.orats.io/datav2/live/one-minute/strikes/chain"
 TRADIER_QUOTES = "https://api.tradier.com/v1/markets/quotes"
-SYMBOLS = ("SPY", "QQQ", "IWM", "XSP")
+SYMBOLS = ("SPY", "QQQ", "IWM", "XSP", "SPX", "NDX", "RUT")
+INDEX_SYMBOLS = frozenset(("XSP", "SPX", "NDX", "RUT"))
+VOL_SYMBOLS = ("VIX", "VIX9D", "VIX3M", "VVIX")
+ET = ZoneInfo("America/New_York")
 BUCKETS = ((0, 0, "0dte"), (1, 5, "1_5dte"), (6, 20, "6_20dte"),
            (21, 365, "21_365dte"))
 STALE_SECONDS = int(os.getenv("MARKET_STRUCTURE_STALE_SECONDS", "90"))
 GAMMA_TABLE = "sw_live_gamma"
 VOL_TABLE = "sw_live_vol_indices"
+_OI_CACHE: dict[str, tuple[datetime, list[dict[str, Any]]]] = {}
 
 _GAMMA_DDL = f"""
 CREATE TABLE IF NOT EXISTS {GAMMA_TABLE} (
@@ -106,6 +109,36 @@ def _parse_ts(value: Any) -> datetime | None:
     return dt.astimezone(UTC)
 
 
+def _theta_ts(value: Any) -> datetime | None:
+    """ThetaData v3 sends exchange-local naive timestamps (Eastern time)."""
+    if not value:
+        return None
+    try:
+        stamp = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (stamp.replace(tzinfo=ET) if stamp.tzinfo is None else stamp).astimezone(UTC)
+
+
+def _theta_base() -> str:
+    value = os.getenv("THETADATA_BASE_URL", "").strip().rstrip("/")
+    return f"http://{value}" if value and "://" not in value else value
+
+
+def _theta_rows(path: str, params: dict[str, Any], timeout: int = 35) -> list[dict[str, Any]]:
+    base = _theta_base()
+    if not base:
+        raise RuntimeError("THETADATA_BASE_URL missing")
+    response = requests.get(f"{base}{path}", params=params, timeout=timeout)
+    response.raise_for_status()
+    return list(csv.DictReader(io.StringIO(response.text))) if response.text.strip() else []
+
+
+def _index_prices(symbols: tuple[str, ...]) -> dict[str, dict[str, Any]]:
+    rows = _theta_rows("/v3/index/snapshot/price", {"symbol": ",".join(symbols)})
+    return {str(row.get("symbol", "")).upper(): row for row in rows}
+
+
 def _quote_timestamp(q: dict[str, Any]) -> datetime | None:
     # Tradier timestamps are epoch-ms when present.
     for key in ("trade_date", "bid_date", "ask_date"):
@@ -119,67 +152,52 @@ def _quote_timestamp(q: dict[str, Any]) -> datetime | None:
 
 
 def fetch_vol_indices(now: datetime | None = None) -> dict[str, Any]:
-    """Fetch VIX/VIX9D/VIX3M/VVIX from Tradier and enforce quote freshness.
-
-    No public-web fallback is allowed: missing means MISSING, stale means STALE.
-    Symbol aliases can be overridden without code via VOL_INDEX_SYMBOL_MAP JSON,
-    e.g. {"VIX9D":"$VIX9D"}.
-    """
+    """Fetch the subscribed ThetaData index feed with exchange timestamps."""
     now = now or datetime.now(UTC)
-    token = _token("TRADIER_TOKEN") or _token("TRADIER_API_KEY")
-    if not token:
-        return {"available": False, "reason": "TRADIER_TOKEN missing", "indices": {}}
-
-    mapping = {"VIX": "VIX", "VIX9D": "VIX9D", "VIX3M": "VIX3M", "VVIX": "VVIX"}
-    raw_map = os.getenv("VOL_INDEX_SYMBOL_MAP", "").strip()
-    if raw_map:
-        try:
-            mapping.update(json.loads(raw_map))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[MarketStructure] bad VOL_INDEX_SYMBOL_MAP: %r", exc)
-
-    symbols = ",".join(dict.fromkeys(mapping.values()))
     try:
-        r = requests.get(TRADIER_QUOTES,
-                         params={"symbols": symbols},
-                         headers={"Authorization": f"Bearer {token}",
-                                  "Accept": "application/json"},
-                         timeout=15)
-        r.raise_for_status()
-        rows = (r.json().get("quotes") or {}).get("quote") or []
-        if isinstance(rows, dict):
-            rows = [rows]
+        by_symbol = _index_prices(VOL_SYMBOLS)
     except Exception as exc:  # noqa: BLE001
-        return {"available": False, "reason": f"Tradier quote failure: {type(exc).__name__}",
+        return {"available": False, "reason": f"ThetaData index failure: {type(exc).__name__}",
                 "indices": {}}
-
-    by_symbol = {str(q.get("symbol", "")).upper(): q for q in rows}
     out: dict[str, Any] = {}
-    for canonical, vendor_symbol in mapping.items():
-        q = by_symbol.get(str(vendor_symbol).upper())
-        if not q or q.get("last") is None:
-            out[canonical] = {"symbol": canonical, "vendor_symbol": vendor_symbol,
+    for symbol in VOL_SYMBOLS:
+        row = by_symbol.get(symbol)
+        price = _f(row, "price") if row else None
+        if price is None:
+            out[symbol] = {"symbol": symbol,
                               "price": None, "fresh": False, "reason": "missing_quote"}
             continue
-        stamp = _quote_timestamp(q)
+        stamp = _theta_ts(row.get("timestamp"))
         age = (now - stamp).total_seconds() if stamp else None
-        fresh = age is not None and age <= STALE_SECONDS
-        out[canonical] = {
-            "symbol": canonical,
-            "vendor_symbol": vendor_symbol,
-            "price": float(q["last"]),
+        fresh = age is not None and 0 <= age <= STALE_SECONDS
+        out[symbol] = {
+            "symbol": symbol,
+            "price": price,
             "source_timestamp": stamp.isoformat() if stamp else None,
             "age_seconds": round(age, 1) if age is not None else None,
             "fresh": fresh,
             "reason": None if fresh else ("missing_timestamp" if stamp is None else "stale_quote"),
         }
     return {"available": any(v.get("fresh") for v in out.values()),
-            "source": "Tradier production consolidated feed",
+            "source": "ThetaData index snapshot price",
             "retrieved_at": now.isoformat(), "indices": out}
 
 
 def fetch_spot(symbol: str, now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
+    if symbol in INDEX_SYMBOLS:
+        try:
+            row = _index_prices((symbol,)).get(symbol)
+            price = _f(row, "price") if row else None
+            stamp = _theta_ts(row.get("timestamp")) if row else None
+            age = (now - stamp).total_seconds() if stamp else None
+            fresh = price is not None and age is not None and 0 <= age <= STALE_SECONDS
+            return {"price": price, "fresh": fresh, "source_timestamp": stamp,
+                    "age_seconds": age, "source": "ThetaData index snapshot price",
+                    "reason": None if fresh else "stale_or_missing_index_price"}
+        except Exception as exc:  # noqa: BLE001
+            return {"price": None, "fresh": False,
+                    "reason": f"ThetaData index failure: {type(exc).__name__}"}
     token = _token("TRADIER_TOKEN") or _token("TRADIER_API_KEY")
     if not token:
         return {"price": None, "fresh": False, "reason": "TRADIER_TOKEN missing"}
@@ -204,27 +222,98 @@ def fetch_spot(symbol: str, now: datetime | None = None) -> dict[str, Any]:
                 "reason": f"Tradier quote failure: {type(exc).__name__}"}
 
 
-def fetch_orats_chain(symbol: str) -> dict[str, Any]:
-    token = _token("ORATS_API_TOKEN") or _token("ORATS_TOKEN")
-    if not token:
-        return {"rows": [], "reason": "ORATS_API_TOKEN missing", "source_timestamp": None}
+def fetch_theta_chain(symbol: str, now: datetime | None = None) -> dict[str, Any]:
+    now = now or datetime.now(UTC)
+    params = {"symbol": symbol, "expiration": "*", "max_dte": 365,
+              "strike_range": 60}
     try:
-        r = requests.get(ORATS_URL, params={"token": token, "ticker": symbol},
-                         timeout=30)
-        r.raise_for_status()
-        text_body = r.text.strip()
-        if not text_body:
-            return {"rows": [], "reason": "empty ORATS response", "source_timestamp": None}
-        rows = list(csv.DictReader(io.StringIO(text_body)))
+        try:
+            greeks = _theta_rows("/v3/option/snapshot/greeks/all", params)
+            gamma_source = "ThetaData Pro Greeks"
+        except requests.HTTPError:
+            # ThetaData's all-Greeks route requires Pro. Standard exposes IV,
+            # from which gamma can be calculated without another vendor.
+            greeks = _theta_rows("/v3/option/snapshot/greeks/implied_volatility", params)
+            gamma_source = "ThetaData Standard IV, locally calculated gamma"
+        cached = _OI_CACHE.get(symbol)
+        if cached and cached[0].astimezone(ET).date() == now.astimezone(ET).date() and (now - cached[0]).total_seconds() < 3600:
+            oi_rows = cached[1]
+        else:
+            oi_rows = _theta_rows("/v3/option/snapshot/open_interest", params)
+            if oi_rows:
+                _OI_CACHE[symbol] = (now, oi_rows)
     except Exception as exc:  # noqa: BLE001
-        return {"rows": [], "reason": f"ORATS failure: {type(exc).__name__}",
+        return {"rows": [], "reason": f"ThetaData chain failure: {type(exc).__name__}",
+                "source_timestamp": None}
+    if not greeks or not oi_rows:
+        return {"rows": [], "reason": "missing_theta_greeks_or_open_interest",
                 "source_timestamp": None}
 
-    stamps = [_parse_ts(r.get("updatedAt") or r.get("quoteDate") or r.get("snapShotDate"))
-              for r in rows]
-    stamps = [s for s in stamps if s is not None]
+    # OI is an OPRA morning publication. Require today's snapshot, while the
+    # Greeks carry the intraminute freshness requirement.
+    oi_stamps = [_theta_ts(row.get("timestamp")) for row in oi_rows]
+    oi_stamps = [stamp for stamp in oi_stamps if stamp]
+    if not oi_stamps or max(oi_stamps).astimezone(ET).date() != now.astimezone(ET).date():
+        return {"rows": [], "reason": "stale_or_missing_theta_open_interest",
+                "source_timestamp": None}
+
+    oi_by_contract: dict[tuple[str, float, str], float] = {}
+    for item in oi_rows:
+        strike = _f(item, "strike")
+        amount = _f(item, "open_interest")
+        if strike is not None and amount is not None and amount >= 0:
+            oi_by_contract[(str(item.get("expiration")), strike,
+                            str(item.get("right", "")).lower())] = amount
+
+    recent: list[tuple[dict[str, Any], datetime]] = []
+    for item in greeks:
+        stamp = _theta_ts(item.get("timestamp"))
+        if stamp and 0 <= (now - stamp).total_seconds() <= STALE_SECONDS:
+            recent.append((item, stamp))
+    rows: list[dict[str, Any]] = []
+    for item, stamp in recent:
+        strike = _f(item, "strike")
+        right = str(item.get("right", "")).lower()
+        expiry = str(item.get("expiration", ""))
+        iv = _f(item, "implied_vol")
+        if strike is None or right not in ("call", "put"):
+            continue
+        oi = oi_by_contract.get((expiry, strike, right))
+        if oi is None:
+            continue
+        try:
+            dte = (datetime.fromisoformat(expiry).date() - now.astimezone(ET).date()).days
+        except ValueError:
+            continue
+        if not 0 <= dte <= 365:
+            continue
+        expiration_at = datetime.combine(datetime.fromisoformat(expiry).date(),
+                                         dtime(16, 0), ET)
+        tte_years = max(3600.0, (expiration_at - now.astimezone(ET)).total_seconds()) / (365 * 86400)
+        rate = float(os.getenv("MARKET_STRUCTURE_RISK_FREE_RATE", "0.05"))
+        row = {"strike": strike, "dte": dte,
+                     "callOpenInterest": oi if right == "call" else 0,
+                     "putOpenInterest": oi if right == "put" else 0,
+                     "callMidIv": iv if right == "call" else None,
+                     "putMidIv": iv if right == "put" else None,
+                     "residualRate": rate, "tte_years": tte_years,
+                     "timestamp": stamp}
+        gamma = _f(item, "gamma")
+        if gamma is None:
+            underlying = _f(item, "underlying_price")
+            gamma = _row_gamma(row, underlying or 0, right)
+        if gamma is None or gamma <= 0:
+            continue
+        row["gamma"] = gamma
+        rows.append(row)
+    if len(rows) < 50 or len(rows) < len(recent) * 0.7:
+        return {"rows": [], "reason": "thin_or_unmatched_theta_chain",
+                "source_timestamp": None, "matched_rows": len(rows),
+                "recent_greeks_rows": len(recent)}
     return {"rows": rows, "reason": None,
-            "source_timestamp": max(stamps) if stamps else None}
+            "source_timestamp": min(row["timestamp"] for row in rows),
+            "oi_timestamp": max(oi_stamps), "matched_rows": len(rows),
+            "recent_greeks_rows": len(recent), "gamma_source": gamma_source}
 
 
 def _f(row: dict[str, Any], name: str) -> float | None:
@@ -232,7 +321,8 @@ def _f(row: dict[str, Any], name: str) -> float | None:
     if raw in (None, "", "null", "None"):
         return None
     try:
-        return float(raw)
+        value = float(raw)
+        return value if math.isfinite(value) else None
     except (TypeError, ValueError):
         return None
 
@@ -247,9 +337,9 @@ def _row_gamma(row: dict[str, Any], spot: float, right: str) -> float | None:
     rate = _f(row, "residualRate") or 0.0
     if not strike or strike <= 0 or dte is None or dte < 0 or not iv or iv <= 0 or spot <= 0:
         return None
-    # ORATS dte is calendar days. On 0DTE, use a small non-zero time so gamma
-    # remains finite; this is a context map, not an execution Greek.
-    t = max(float(dte) / 365.0, 1.0 / (365.0 * 24.0))
+    # Calendar DTE is used for the approximate flip revaluation. ThetaData's
+    # own live gamma is used for net GEX at the observed spot.
+    t = _f(row, "tte_years") or max(float(dte) / 365.0, 1.0 / (365.0 * 24.0))
     sig_sqrt = iv * math.sqrt(t)
     if sig_sqrt <= 0:
         return None
@@ -311,36 +401,32 @@ def compute_gamma_map(rows: list[dict[str, Any]], spot: float) -> dict[str, Any]
     call_wall = max(call_above, key=lambda x: x[1])[0] if call_above else None
     put_wall = min(put_below, key=lambda x: x[1])[0] if put_below else None
 
-    # Re-solve across +/-8%. Adaptive step keeps SPY/QQQ granular and XSP useful.
+    # Re-solve across +/-8% using a bounded coarse grid and local bisection.
+    # Full-chain per-tick scanning would block the minute capture for indices.
     lo, hi = spot * 0.92, spot * 1.08
-    step = max(0.10, round(spot * 0.00035, 2))
-    grid = []
-    s = lo
-    while s <= hi + step / 2:
-        g = 0.0
-        for row in rows:
-            dte = _f(row, "dte")
-            if dte is None or dte > 365:
-                continue
-            cg, pg = _gex_for_row(row, s, revalue=True)
-            g += cg + pg
-        grid.append((s, g))
-        s += step
+    def gamma_at(candidate: float) -> float:
+        return sum(sum(_gex_for_row(row, candidate, revalue=True))
+                   for row in rows if (_f(row, "dte") or 0) <= 365)
 
     flip = None
-    if grid:
-        best = min(grid, key=lambda x: abs(x[1]))
+    iv_rows = [row for row in rows if (_f(row, "callMidIv") or _f(row, "putMidIv"))]
+    if len(iv_rows) >= max(50, usable * 0.7):
+        grid = [(lo + (hi - lo) * i / 60, 0.0) for i in range(61)]
+        grid = [(price, gamma_at(price)) for price, _ in grid]
         for a, b in zip(grid, grid[1:]):
             if a[1] == 0:
                 flip = a[0]
                 break
             if a[1] * b[1] < 0:
-                denom = abs(a[1]) + abs(b[1])
-                w = abs(a[1]) / denom if denom else 0.5
-                flip = a[0] + (b[0] - a[0]) * w
+                left, right = a, b
+                for _ in range(8):
+                    middle = ((left[0] + right[0]) / 2.0, gamma_at((left[0] + right[0]) / 2.0))
+                    if left[1] * middle[1] <= 0:
+                        right = middle
+                    else:
+                        left = middle
+                flip = (left[0] + right[0]) / 2.0
                 break
-        if flip is None and abs(best[1]) < max(abs(total) * 0.03, 1e7):
-            flip = best[0]
 
     walls = {
         "top_call": sorted(({"strike": s, "gex_b": v / 1e9}
@@ -368,9 +454,9 @@ def _confidence(chain_ts: datetime | None, now: datetime, n_rows: int,
         return "LOW", age, "stale_or_missing_spot"
     if chain_ts is None:
         return "LOW", None, "missing_chain_timestamp"
-    if age <= 30 and n_rows >= 100:
+    if age is not None and 0 <= age <= 30 and n_rows >= 100:
         return "HIGH", age, None
-    if age <= STALE_SECONDS and n_rows >= 50:
+    if age is not None and 0 <= age <= STALE_SECONDS and n_rows >= 50:
         return "MEDIUM", age, None
     return "LOW", age, "stale_or_thin_chain"
 
@@ -382,25 +468,34 @@ def build_gamma_snapshot(symbol: str, now: datetime | None = None) -> dict[str, 
     if not spot.get("fresh"):
         return {"symbol": symbol, "available": False, "confidence": "LOW",
                 "reason": spot.get("reason"), "captured_at": now.isoformat()}
-    chain = fetch_orats_chain(symbol)
+    chain = fetch_theta_chain(symbol, now)
+    completed_at = datetime.now(UTC)
     if not chain.get("rows"):
         return {"symbol": symbol, "available": False, "confidence": "LOW",
-                "reason": chain.get("reason"), "captured_at": now.isoformat(),
+                "reason": chain.get("reason"), "captured_at": completed_at.isoformat(),
                 "spot": spot.get("price")}
     calc = compute_gamma_map(chain["rows"], float(spot["price"]))
-    conf, chain_age, conf_reason = _confidence(chain.get("source_timestamp"), now,
-                                                int(calc.get("n_rows") or 0), True)
+    completed_at = datetime.now(UTC)
+    spot_stamp = spot.get("source_timestamp")
+    spot_age = (completed_at - spot_stamp).total_seconds() if spot_stamp else None
+    spot_fresh = spot_age is not None and 0 <= spot_age <= STALE_SECONDS
+    conf, chain_age, conf_reason = _confidence(chain.get("source_timestamp"), completed_at,
+                                                int(calc.get("n_rows") or 0), spot_fresh)
     available = calc.get("net_gex_b") is not None and conf != "LOW"
     return {
         "symbol": symbol,
         "available": available,
-        "captured_at": now.isoformat(),
+        "captured_at": completed_at.isoformat(),
         "spot": float(spot["price"]),
-        "spot_age_seconds": round(float(spot["age_seconds"]), 1),
+        "spot_age_seconds": round(spot_age, 1) if spot_age is not None else None,
         "chain_timestamp": (chain["source_timestamp"].isoformat()
                             if chain.get("source_timestamp") else None),
         "chain_age_seconds": round(chain_age, 1) if chain_age is not None else None,
-        "source": "ORATS live one-minute chain + Tradier spot",
+        "source": f"{chain.get('gamma_source', 'ThetaData options')} + OPRA OI + {spot.get('source', 'Tradier ETF spot')}",
+        "oi_timestamp": (chain["oi_timestamp"].isoformat()
+                         if chain.get("oi_timestamp") else None),
+        "oi_matched_rows": chain.get("matched_rows"),
+        "recent_greeks_rows": chain.get("recent_greeks_rows"),
         "confidence": conf,
         "reason": calc.get("reason") or conf_reason,
         **{k: v for k, v in calc.items() if k != "reason"},
@@ -411,7 +506,7 @@ def persist_snapshot(snapshot: dict[str, Any]) -> None:
     """Persist both usable gamma maps and failed/LOW-confidence attempts.
 
     Failure rows are intentional observability: downstream reports can tell the
-    difference between "capture never ran" and "ORATS/spot was unavailable".
+    difference between "capture never ran" and "ThetaData/spot was unavailable".
     Numeric gamma fields remain NULL on failure and therefore cannot be treated
     as valid market structure.
     """
@@ -453,7 +548,7 @@ def persist_vol(vol: dict[str, Any], now: datetime | None = None) -> None:
                 "(symbol,captured_at,price,source,source_timestamp,age_seconds,fresh,reason) "
                 "VALUES (:s,:c,:p,:src,:st,:a,:f,:r) ON CONFLICT(symbol,captured_at) DO NOTHING"),
                 {"s": symbol, "c": now.replace(tzinfo=None), "p": item.get("price"),
-                 "src": vol.get("source") or "Tradier",
+                 "src": vol.get("source") or "ThetaData",
                  "st": ts.replace(tzinfo=None) if ts else None,
                  "a": item.get("age_seconds"), "f": bool(item.get("fresh")),
                  "r": item.get("reason")})
@@ -467,10 +562,8 @@ def capture_all() -> dict[str, Any]:
     vol = fetch_vol_indices(now)
     persist_vol(vol, now)
     gamma: dict[str, Any] = {}
-    # Four sequential ORATS requests can consume 4 x the provider timeout and
-    # turn a nominal one-minute job into a multi-minute blocker. Fetch each
-    # independent symbol concurrently; each request still keeps its own strict
-    # timeout/freshness gate.
+    # Fetch independent symbols concurrently; each ThetaData request retains
+    # a bounded proxy timeout and each result must pass its freshness gate.
     with ThreadPoolExecutor(max_workers=len(SYMBOLS), thread_name_prefix="market-structure") as pool:
         futures = {pool.submit(build_gamma_snapshot, symbol, now): symbol for symbol in SYMBOLS}
         for future in as_completed(futures):
@@ -560,7 +653,18 @@ def live_market_structure():
     """Fresh report payload. It NEVER silently substitutes old public data."""
     now = datetime.now(UTC)
     vol = fetch_vol_indices(now)
-    gamma = {s: build_gamma_snapshot(s, now) for s in SYMBOLS}
+    with ThreadPoolExecutor(max_workers=len(SYMBOLS), thread_name_prefix="theta-live") as pool:
+        futures = {pool.submit(build_gamma_snapshot, s, now): s for s in SYMBOLS}
+        gamma = {}
+        for future in as_completed(futures):
+            symbol = futures[future]
+            try:
+                gamma[symbol] = future.result()
+            except Exception as exc:  # noqa: BLE001
+                gamma[symbol] = {"symbol": symbol, "available": False,
+                                 "confidence": "LOW",
+                                 "reason": f"capture_exception:{type(exc).__name__}",
+                                 "captured_at": now.isoformat()}
     return {"captured_at": now.isoformat(), "freshness_limit_seconds": STALE_SECONDS,
             "volatility": vol, "gamma": gamma,
             "dealer_position_note": "Estimated from public OI/Greeks; dealer inventory is not directly observable.",
