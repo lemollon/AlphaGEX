@@ -140,7 +140,7 @@ async function loadGammaDay(day,spot) {
  if(!priorDay)throw Error('gamma_prior_spot_missing');
  const closingChains=await feed('/v3/option/history/eod',{symbol:'SPY',date:priorDay,expiration:'*',max_dte:61});
  const morningOI=await feed('/v3/option/history/open_interest',{symbol:'SPY',date:day,expiration:'*',max_dte:60});
- const result=GAMMA.reconstruct({day,priorDay,minute:665,spot,priorSpot:eod[priorDay],closingChains,morningOI});
+ const result=GAMMA.reconstruct({day,priorDay,minute:665,spot,priorSpot:eod[priorDay],closingChains,morningOI,closeFor:d=>halves.has(d)?780:960});
  gamma[day]=result;fs.writeFileSync(path.join(OUT,'gamma-'+day+'.json'),JSON.stringify(result));
  emit('gamma_reconstruction',{...result});return result;
 }
