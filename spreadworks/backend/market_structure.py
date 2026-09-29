@@ -19,6 +19,7 @@ import json
 import math
 import os
 import logging
+import statistics
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, time as dtime
@@ -152,13 +153,48 @@ def _quote_timestamp(q: dict[str, Any]) -> datetime | None:
 
 
 def fetch_vol_indices(now: datetime | None = None) -> dict[str, Any]:
-    """Fetch the subscribed ThetaData index feed with exchange timestamps."""
+    """Fetch ThetaData indices, preserving a fresh Tradier VIX if it is denied."""
     now = now or datetime.now(UTC)
     try:
         by_symbol = _index_prices(VOL_SYMBOLS)
     except Exception as exc:  # noqa: BLE001
-        return {"available": False, "reason": f"ThetaData index failure: {type(exc).__name__}",
-                "indices": {}}
+        reason = "ThetaData index permission denied" if (
+            isinstance(exc, requests.HTTPError) and exc.response is not None
+            and exc.response.status_code == 403
+        ) else f"ThetaData index failure: {type(exc).__name__}"
+        # The independent Tradier VIX quote is still useful for spot-vol
+        # confirmation. Label it explicitly; do not substitute it for an
+        # index spot in the ThetaData option-gamma calculation.
+        token = _token("TRADIER_TOKEN") or _token("TRADIER_API_KEY")
+        if token:
+            try:
+                response = requests.get(
+                    TRADIER_QUOTES, params={"symbols": "VIX"},
+                    headers={"Authorization": f"Bearer {token}",
+                             "Accept": "application/json"}, timeout=15,
+                )
+                response.raise_for_status()
+                quote = (response.json().get("quotes") or {}).get("quote") or {}
+                if isinstance(quote, list):
+                    quote = quote[0] if quote else {}
+                stamp = _quote_timestamp(quote)
+                price = _f(quote, "last")
+                age = (now - stamp).total_seconds() if stamp else None
+                if price is not None and age is not None and 0 <= age <= STALE_SECONDS:
+                    return {
+                        "available": True, "source": "Tradier VIX quote",
+                        "provider_error": reason, "retrieved_at": now.isoformat(),
+                        "indices": {"VIX": {
+                            "symbol": "VIX", "price": price,
+                            "source_timestamp": stamp.isoformat(),
+                            "age_seconds": round(age, 1), "fresh": True,
+                            "reason": None,
+                        }},
+                    }
+            except Exception as fallback_exc:  # noqa: BLE001
+                logger.warning("[MarketStructure] Tradier VIX fallback failed: %s",
+                               type(fallback_exc).__name__)
+        return {"available": False, "reason": reason, "indices": {}}
     out: dict[str, Any] = {}
     for symbol in VOL_SYMBOLS:
         row = by_symbol.get(symbol)
@@ -196,8 +232,12 @@ def fetch_spot(symbol: str, now: datetime | None = None) -> dict[str, Any]:
                     "age_seconds": age, "source": "ThetaData index snapshot price",
                     "reason": None if fresh else "stale_or_missing_index_price"}
         except Exception as exc:  # noqa: BLE001
+            reason = "ThetaData index permission denied" if (
+                isinstance(exc, requests.HTTPError) and exc.response is not None
+                and exc.response.status_code == 403
+            ) else f"ThetaData index failure: {type(exc).__name__}"
             return {"price": None, "fresh": False,
-                    "reason": f"ThetaData index failure: {type(exc).__name__}"}
+                    "reason": reason}
     token = _token("TRADIER_TOKEN") or _token("TRADIER_API_KEY")
     if not token:
         return {"price": None, "fresh": False, "reason": "TRADIER_TOKEN missing"}
@@ -301,7 +341,8 @@ def fetch_theta_chain(symbol: str, now: datetime | None = None) -> dict[str, Any
                      "callMidIv": iv if right == "call" else None,
                      "putMidIv": iv if right == "put" else None,
                      "residualRate": rate, "tte_years": tte_years,
-                     "timestamp": stamp}
+                     "timestamp": stamp,
+                     "underlying_price": _f(item, "underlying_price")}
         gamma = _f(item, "gamma")
         if gamma is None:
             underlying = _f(item, "underlying_price")
@@ -465,14 +506,41 @@ def _confidence(chain_ts: datetime | None, now: datetime, n_rows: int,
     return "LOW", age, "stale_or_thin_chain"
 
 
+def _spot_from_theta_chain(chain: dict[str, Any], now: datetime) -> dict[str, Any] | None:
+    """Recover an index spot only from consistent, fresh Theta option rows."""
+    priced = [(row["underlying_price"], row["timestamp"])
+              for row in chain.get("rows") or []
+              if _f(row, "underlying_price") is not None
+              and _f(row, "underlying_price") > 0]
+    if len(priced) < 50:
+        return None
+    prices = [price for price, _ in priced]
+    middle = statistics.median(prices)
+    if max(prices) - min(prices) > middle * 0.01:
+        return None
+    stamp = min(ts for _, ts in priced)
+    age = (now - stamp).total_seconds()
+    if not 0 <= age <= STALE_SECONDS:
+        return None
+    return {"price": middle, "fresh": True, "source_timestamp": stamp,
+            "age_seconds": age, "source": "ThetaData option-chain underlying price"}
+
+
 def build_gamma_snapshot(symbol: str, now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     symbol = symbol.upper()
     spot = fetch_spot(symbol, now)
+    chain = None
+    if symbol in INDEX_SYMBOLS and not spot.get("fresh"):
+        chain = fetch_theta_chain(symbol, now)
+        chain_spot = _spot_from_theta_chain(chain, datetime.now(UTC))
+        if chain_spot:
+            spot = chain_spot
     if not spot.get("fresh"):
         return {"symbol": symbol, "available": False, "confidence": "LOW",
-                "reason": spot.get("reason"), "captured_at": now.isoformat()}
-    chain = fetch_theta_chain(symbol, now)
+                "reason": (chain or {}).get("reason") or spot.get("reason"),
+                "captured_at": datetime.now(UTC).isoformat()}
+    chain = chain if chain is not None else fetch_theta_chain(symbol, now)
     completed_at = datetime.now(UTC)
     if not chain.get("rows"):
         return {"symbol": symbol, "available": False, "confidence": "LOW",
@@ -491,6 +559,7 @@ def build_gamma_snapshot(symbol: str, now: datetime | None = None) -> dict[str, 
         "available": available,
         "captured_at": completed_at.isoformat(),
         "spot": float(spot["price"]),
+        "spot_source": spot.get("source") or "Tradier ETF quote",
         "spot_age_seconds": round(spot_age, 1) if spot_age is not None else None,
         "chain_timestamp": (chain["source_timestamp"].isoformat()
                             if chain.get("source_timestamp") else None),
