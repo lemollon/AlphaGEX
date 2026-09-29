@@ -82,7 +82,7 @@ coverage is incomplete.
 
 ## Execution
 
-Node 24.19.0. No external Node packages.
+Node 24.19.0. The isolated checkpoint store uses pinned pg 8.16.3; no broker SDK is loaded.
 
 ```sh
 node research/spark_flame_current_3y_20260928.cjs --self-test
@@ -95,9 +95,14 @@ same Render region/network. All status/result endpoints require the
 `RESEARCH_ACCESS_TOKEN` bearer token. Only `/health` is unauthenticated and
 contains no strategy, progress, or results.
 
-Results/checkpoints are research-process files and structured Render log
-records. They must be exported after execution; a free service filesystem is
-not durable across replacement/restarts. No live trading code, customer
+Checkpoints are gzip-compressed state in the isolated alphagex_backtest database,
+in spark_flame_research_checkpoints. The connection is an environment secret.
+The job verifies the database name before creating or writing that research table.
+Keys include the run ID and both research source hashes, so a changed version
+cannot reuse an old performance result. A restart resumes the same fresh run;
+completed results stay retrievable after an idle restart. Raw CSV files remain
+process-local; their scope, retrieval timestamp and SHA-256 hashes are retained.
+Reports and trades are also exported by the read-only observer. No live trading code, customer
 balances, credentials, kill switches, or production database schemas change.
 
 ## Current status
@@ -108,7 +113,7 @@ results are pending; partial exports are not validated three-year returns.
 
 Service: https://dashboard.render.com/web/srv-dau3ni7lot8c739htsv0
 Execution branch: `research/spark-flame-current-3y-20260928`.
-Latest runner/test commit: `2172eacc0a4a2f7eca3781b9e69b5f9653a2305c`.
+Latest runner/test commit: `acabd20863b48f119a1504f6dd13b94369e9a1c0`.
 
 A read-only observer polls authenticated status every 45 seconds and saves
 existing report/trade/daily exports every five minutes. Quotes retrieved
@@ -118,3 +123,7 @@ The collector requests historical market data only and never sends orders.
 Regular-session stock bars exclude intervals starting at the market close.
 Expiry settlement uses the independently retrieved official daily close;
 empty post-close OHLC records do not invalidate prior session trades.
+
+Verification: the independent CBOE SPX settlement series contains every one of
+this replay's 751 requested sessions. Contract-level XSP quote availability
+is checked during execution; missing observations follow the native SPY fallback.
