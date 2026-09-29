@@ -117,11 +117,12 @@ def _call(method: str, **kwargs: Any) -> str:
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 - provider failures must become a closed 502
+        code = str(exc.code()) if callable(getattr(exc, "code", None)) else "n/a"
         LOGGER.error("ThetaData request failed method=%s error_type=%s grpc_code=%s",
-                     method, type(exc).__name__,
-                     str(exc.code()) if callable(getattr(exc, "code", None)) else "n/a")
+                     method, type(exc).__name__, code)
         _client.cache_clear()   # never keep reusing a client that just errored (2026-09-28 fix)
-        raise HTTPException(status_code=502, detail="ThetaData request failed") from exc
+        status = 403 if code == "StatusCode.PERMISSION_DENIED" else 502
+        raise HTTPException(status_code=status, detail="ThetaData request failed") from exc
 
 
 def _csv_response(body: str) -> PlainTextResponse:
