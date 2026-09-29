@@ -140,7 +140,12 @@ function usableQuote(r) {
 class Quotes {
  constructor(day,close){this.day=day;this.close=close;this.cache=new Map();this.gaps=[];}
  async leg(symbol,right,strike,start) {
-  const key=`${symbol}:${right}:${strike}:${start}`;if(this.cache.has(key))return this.cache.get(key);
+  const key=`${symbol}:${right}:${strike}`;
+  const previous=this.cache.get(key);
+  // The first request already includes every later minute through expiry.
+  // Reuse those fresh, same-run observations for entry retries; never fetch
+  // the same contract's remaining path again at each scanner minute.
+  if(previous&&previous.start<=start)return previous.quotes;
   const rr=await feed('/v3/option/history/quote',{symbol,right,strike,expiration:this.day,date:this.day,interval:'1m',start_time:clock(start),end_time:clock(this.close)});
   const out=new Map();for(const r of rr){
    // Single-contract history responses may omit identity columns. Their
@@ -151,7 +156,7 @@ class Quotes {
    if(r.right?.trim()&&!r.right.trim().toLowerCase().startsWith(right[0]))throw Error('wrong_option_right');
    const exp=(r.expiration||'').slice(0,10).replace(/-/g,'');if(exp&&exp!==this.day.replace(/-/g,''))throw Error('wrong_option_expiration');
    const m=minute(r.timestamp||r.datetime,this.day);if(usableQuote(r))out.set(m,{bid:+r.bid,ask:+r.ask,bidSize:+r.bid_size,askSize:+r.ask_size});}
-  this.cache.set(key,out);return out;
+  this.cache.set(key,{start,quotes:out});return out;
  }
  async spread(symbol,right,short,long,start) {
   const s=await this.leg(symbol,right,short,start),l=await this.leg(symbol,right,long,start);
