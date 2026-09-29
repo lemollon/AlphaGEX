@@ -140,6 +140,57 @@ def test_theta_index_timestamp_is_eastern(monkeypatch):
     assert spot["age_seconds"] == 10
 
 
+def test_index_permission_denial_preserves_fresh_tradier_vix(monkeypatch):
+    now = datetime(2026, 9, 29, 18, 0, tzinfo=timezone.utc)
+    denied = requests.Response()
+    denied.status_code = 403
+    def forbidden(_symbols):
+        raise requests.HTTPError("forbidden", response=denied)
+    monkeypatch.setattr(market_structure, "_index_prices", forbidden)
+    monkeypatch.setattr(market_structure, "_token", lambda name: "test-token")
+
+    class QuoteResponse:
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {"quotes": {"quote": {"symbol": "VIX", "last": 16.2,
+                                          "trade_date": int(now.timestamp() * 1000)}}}
+
+    monkeypatch.setattr(market_structure.requests, "get",
+                        lambda *args, **kwargs: QuoteResponse())
+    result = market_structure.fetch_vol_indices(now)
+    assert result["available"] is True
+    assert result["source"] == "Tradier VIX quote"
+    assert result["provider_error"] == "ThetaData index permission denied"
+    assert result["indices"]["VIX"]["price"] == 16.2
+    assert "VIX9D" not in result["indices"]
+    assert market_structure.fetch_spot("SPX", now)["reason"] == (
+        "ThetaData index permission denied")
+
+
+def test_index_gamma_can_use_fresh_theta_option_underlying(monkeypatch):
+    now = datetime.now(timezone.utc)
+    rows = [{"underlying_price": 7700.0, "timestamp": now,
+             "strike": 7700.0, "dte": 0, "gamma": 0.01,
+             "callOpenInterest": 100, "putOpenInterest": 0}
+            for _ in range(100)]
+    chain = {"rows": rows, "source_timestamp": now, "oi_timestamp": now,
+             "matched_rows": 100, "recent_greeks_rows": 100,
+             "gamma_source": "ThetaData Standard IV, locally calculated gamma"}
+    monkeypatch.setattr(market_structure, "fetch_spot", lambda s, n: {
+        "fresh": False, "reason": "ThetaData index permission denied"})
+    monkeypatch.setattr(market_structure, "fetch_theta_chain", lambda s, n: chain)
+    result = market_structure.build_gamma_snapshot("SPX", now)
+    assert result["available"] is True
+    assert result["spot"] == 7700.0
+    assert result["spot_source"] == "ThetaData option-chain underlying price"
+
+    rows[0]["underlying_price"] = 8000.0
+    rejected = market_structure.build_gamma_snapshot("SPX", now)
+    assert rejected["available"] is False
+    assert rejected["reason"] == "ThetaData index permission denied"
+
+
 
 def test_register_arms_minute_capture_and_initializes_tables(monkeypatch):
     calls = []
