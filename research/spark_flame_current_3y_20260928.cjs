@@ -138,12 +138,30 @@ async function histories() {
  } catch(e) {STATE.spxHistoryError=String(e.message);}
 }
 const SPX={};
+function missingPriorExpiries(day,closingChains,morningOI) {
+ const present=new Set(closingChains.map(r=>String(r.expiration).slice(0,10)));
+ return [...new Set(morningOI.filter(r=>{
+  const exp=String(r.expiration).slice(0,10),dte=(Date.parse(exp)-Date.parse(day))/86400000;
+  return Number(r.open_interest)>0&&dte>=0&&dte<=60&&!present.has(exp);
+ }).map(r=>String(r.expiration).slice(0,10)))].sort();
+}
 async function loadGammaDay(day,spot) {
  const priorDay=Object.keys(eod).filter(d=>d<day).sort().at(-1);
  if(!priorDay)throw Error('gamma_prior_spot_missing');
  const closingChains=await feed('/v3/option/history/eod',{symbol:'SPY',date:priorDay,expiration:'*',max_dte:61});
  const morningOI=await feed('/v3/option/history/open_interest',{symbol:'SPY',date:day,expiration:'*',max_dte:60});
+ // Across weekends/holidays the prior-session 61-DTE bulk window is shorter
+ // than today's 60-DTE window. Fetch each omitted expiry explicitly. For an
+ // exact expiry max_dte=0 omits the SDK's optional DTE filter; it does not
+ // broaden this request to other expirations.
+ const supplementalExpiries=missingPriorExpiries(day,closingChains,morningOI);
+ for(const expiration of supplementalExpiries){
+  const rows=await feed('/v3/option/history/eod',{symbol:'SPY',date:priorDay,expiration,max_dte:0});
+  if(rows.some(r=>String(r.expiration).slice(0,10)!==expiration))throw Error('gamma_supplement_wrong_expiry');
+  closingChains.push(...rows);
+ }
  const result=GAMMA.reconstruct({day,priorDay,minute:665,spot,priorSpot:eod[priorDay],closingChains,morningOI,closeFor:d=>halves.has(d)?780:960});
+ result.supplementalPriorExpiries=supplementalExpiries;
  gamma[day]=result;fs.writeFileSync(path.join(OUT,'gamma-'+day+'.json'),JSON.stringify(result));
  emit('gamma_reconstruction',{...result});return result;
 }
@@ -365,6 +383,10 @@ function selfTest() {
  assert.deepEqual(csv('a,b\n"x,y","z"\n'),[{a:'x,y',b:'z'}]);
  assert.equal(minute('2024-06-03T15:05:00Z','2024-06-03'),665);
  assert(!sessions().includes('2025-01-09'));assert(halves.has('2024-12-24'));
+ assert.deepEqual(missingPriorExpiries('2023-09-18',[{expiration:'2023-11-10'}],[
+  {expiration:'2023-11-17',open_interest:100},{expiration:'2023-11-17',open_interest:200},
+  {expiration:'2023-11-10',open_interest:100},{expiration:'2023-11-18',open_interest:100},
+  {expiration:'2023-11-16',open_interest:0}]),['2023-11-17']);
  assert.deepEqual(F.computeFlintStrikes(500.1),{short:502,long:504});
  const a=newAccount('spark','current_customer_package','natural');
  assert.equal(hostSize(a,.30,.80,100).n,2);assert.equal(hostSize(a,.30,.65,100).n,3);
