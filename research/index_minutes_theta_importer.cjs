@@ -86,7 +86,7 @@ async function fetchBars(endpoint, symbol, startDate, endDate) {
 function normalize(rows) {
   return rows.map(row => {
     const rawTs = String(row.timestamp || row.ts || row.datetime || row.date_time || '');
-    const match = rawTs.match(/(\\d{4}-\\d{2}-\\d{2})[ T](\\d{2}:\\d{2}:\\d{2})/);
+    const match = rawTs.match(/(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/);
     const ts = match ? match[1] + ' ' + match[2] : '';
     const tradeDate = ts.slice(0, 10);
     const values = ['open', 'high', 'low', 'close', 'volume', 'count', 'vwap'].map(k => Number(row[k]));
