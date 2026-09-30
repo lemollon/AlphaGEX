@@ -179,11 +179,12 @@ def fetch_vol_indices(now: datetime | None = None) -> dict[str, Any]:
                     quote = quote[0] if quote else {}
                 stamp = _quote_timestamp(quote)
                 price = _f(quote, "last")
-                age = (now - stamp).total_seconds() if stamp else None
+                checked_at = datetime.now(UTC)
+                age = (checked_at - stamp).total_seconds() if stamp else None
                 if price is not None and age is not None and 0 <= age <= STALE_SECONDS:
                     return {
                         "available": True, "source": "Tradier VIX quote",
-                        "provider_error": reason, "retrieved_at": now.isoformat(),
+                        "provider_error": reason, "retrieved_at": checked_at.isoformat(),
                         "indices": {"VIX": {
                             "symbol": "VIX", "price": price,
                             "source_timestamp": stamp.isoformat(),
