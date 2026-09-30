@@ -117,14 +117,11 @@ def _call(method: str, **kwargs: Any) -> str:
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 - provider failures must become a closed 502
-        if type(exc).__name__ == "NoDataFoundError":
-            raise HTTPException(status_code=404, detail="ThetaData returned no historical observations") from exc
-        code = str(exc.code()) if callable(getattr(exc, "code", None)) else "n/a"
         LOGGER.error("ThetaData request failed method=%s error_type=%s grpc_code=%s",
-                     method, type(exc).__name__, code)
+                     method, type(exc).__name__,
+                     str(exc.code()) if callable(getattr(exc, "code", None)) else "n/a")
         _client.cache_clear()   # never keep reusing a client that just errored (2026-09-28 fix)
-        raise HTTPException(status_code=403 if code == "StatusCode.PERMISSION_DENIED" else 502,
-                            detail="ThetaData request failed") from exc
+        raise HTTPException(status_code=502, detail="ThetaData request failed") from exc
 
 
 def _csv_response(body: str) -> PlainTextResponse:
@@ -313,26 +310,38 @@ def stock_history_ohlc(
     return response
 
 
-@app.get("/v3/option/history/eod")
-def option_history_eod_research(
-    symbol: str, date_value: str = Query(..., alias="date"),
-    expiration: str = "*", max_dte: int = Query(60, ge=0, le=61),
-):
-    """One session of closing chains for historical IV reconstruction."""
-    day = _date(date_value, "date")
-    expiry = "*" if expiration == "*" else _date(expiration, "expiration")
-    return _csv_response(_call("option_history_eod", symbol=_symbol(symbol),
-        expiration=expiry, start_date=day, end_date=day,
-        strike="*", right="both", max_dte=max_dte))
+@app.get("/v3/index/history/ohlc")
+def index_history_ohlc(
+    symbol: str = Query(...),
+    date_value: str | None = Query(None, alias="date"),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    interval: str = Query("1m", pattern="^(1m|5m|10m|15m|30m|1h)$"),
+    start_time: str = "09:30:00",
+    end_time: str = "16:00:00",
+) -> PlainTextResponse:
+    """Bounded, read-only index intraday history; timestamps mark bar starts."""
+    from datetime import time as clock_time
 
-
-@app.get("/v3/option/history/open_interest")
-def option_history_open_interest_research(
-    symbol: str, date_value: str = Query(..., alias="date"),
-    expiration: str = "*", max_dte: int = Query(60, ge=0, le=61),
-):
-    """Historical morning OI, representing the prior session's closing OI."""
-    day = _date(date_value, "date")
-    expiry = "*" if expiration == "*" else _date(expiration, "expiration")
-    return _csv_response(_call("option_history_open_interest", symbol=_symbol(symbol),
-        expiration=expiry, date=day, strike="*", right="both", max_dte=max_dte))
+    try:
+        start_clock = clock_time.fromisoformat(start_time)
+        end_clock = clock_time.fromisoformat(end_time)
+        if start_clock.tzinfo or end_clock.tzinfo or end_clock < start_clock:
+            raise ValueError("invalid clock range")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="invalid time range") from exc
+    kwargs: dict[str, Any] = {
+        "symbol": _symbol(symbol), "interval": interval,
+        "start_time": start_time, "end_time": end_time,
+    }
+    if date_value:
+        kwargs["date"] = _date(date_value, "date")
+    elif start_date and end_date:
+        start, end = _date_range(start_date, end_date, max_days=30)
+        kwargs.update(start_date=start, end_date=end)
+    else:
+        raise HTTPException(status_code=422, detail="date or start_date/end_date required")
+    response = _csv_response(_call("index_history_ohlc", **kwargs))
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Bar-Timestamp"] = "interval-start"
+    return response
