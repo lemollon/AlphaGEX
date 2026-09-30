@@ -1,4 +1,8 @@
-if (process.env.RESEARCH_INDEX_MINUTE_IMPORT === '1') {
+const indexMinuteImportMode =
+  process.env.RESEARCH_INDEX_MINUTE_IMPORT === '1' &&
+  process.argv[1] && process.argv[1].endsWith('spark_flame_current_3y_20260928.cjs') &&
+  !process.argv.includes('--self-test');
+if (indexMinuteImportMode) {
   require('./index_minutes_theta_importer.cjs').main().catch(error => {
     console.error('INDEX_IMPORT_FATAL', error && error.stack ? error.stack : String(error));
     process.exitCode = 1;
