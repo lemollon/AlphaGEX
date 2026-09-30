@@ -137,6 +137,17 @@ export function isExecutorArmed(): boolean {
 }
 
 /**
+ * A Flame-only customer arm. The legacy customer switch controls both Spark
+ * and Flame; using it to activate a newly approved Flame rollout would also
+ * activate Spark. This preserves that switch while allowing Flame customers
+ * to mirror the same master entry rule independently. Unset remains off.
+ */
+export function isExecutorArmedForAgent(agent: string): boolean {
+  if (isExecutorArmed()) return true
+  return agent.toLowerCase() === 'flame' && process.env.FLAME_CUSTOMER_EXECUTOR_ENABLED === 'true'
+}
+
+/**
  * FLINT customer mirroring master switch. Default OFF (unset/anything but the exact
  * string 'on' reads as off — fails closed, same convention as FLINT_MODE in flint.ts).
  * This gates ONLY the FLINT sleeve; it is layered on TOP of isExecutorArmed() below,
@@ -616,7 +627,7 @@ async function mirrorOneOpen(
  */
 export async function mirrorOpenToCustomers(m: MasterOpen): Promise<void> {
   try {
-    if (!isExecutorArmed()) return
+    if (!isExecutorArmedForAgent(m.botName)) return
     if (!isCustomersDbConfigured() || !isSnapTradeConfigured()) return
     const agent = m.botName.toLowerCase()
     if (!CUSTOMER_AGENTS.has(agent)) return
