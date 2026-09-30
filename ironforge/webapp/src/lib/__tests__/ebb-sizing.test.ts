@@ -359,7 +359,7 @@ describe('EBB_FAVORABLE_UPSIZE — favorable-VIX-day +1 contract (Leron, 2026-09
     const lib = join(__dirname, '..')
     const scanner = readFileSync(join(lib, 'scanner.ts'), 'utf8')
     const tradier = readFileSync(join(lib, 'tradier.ts'), 'utf8')
-    expect(scanner).toMatch(/bot\.name === 'flame' && isEbbFavorableUpsizeMode\(\)/)
+    expect(scanner).toMatch(/bot\.name === 'flame' && !flameHeadlineAddedDay && isEbbFavorableUpsizeMode\(\)/)
     expect(tradier).toMatch(/botName === 'flame' && ebbSizing\.isEbbFavorableUpsizeMode\(\)/)
     // With the flag unset, isEbbFavorableUpsizeMode() is false, so the whole
     // upsize block never executes and `finalContracts`/`acctContracts` stay
