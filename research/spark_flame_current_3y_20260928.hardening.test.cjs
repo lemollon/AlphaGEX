@@ -33,7 +33,7 @@ function harness({fetch,pg,alterSource=false}={}){
   AbortSignal:{timeout:ms=>{timeouts.push(ms);return AbortSignal.timeout(5);}},
   setTimeout:(fn,ms)=>{timers.push(ms);queueMicrotask(fn);},
   fetch:fetch||(()=>{throw Error('network_forbidden');})};
- vm.runInNewContext(source+`\nmodule.exports.fault={request,Quotes,loadGammaDay,missingPriorExpiries,initCheckpointStore,saveCheckpoint,execute,gammaDecision,snapshot,realizeSpread,
+ vm.runInNewContext(source+`\nmodule.exports.fault={request,Quotes,loadGammaDay,missingPriorExpiries,initCheckpointStore,saveCheckpoint,execute,gammaDecision,snapshot,realizeSpread,recoverDataOperation,transientDataError,
  state:STATE,accounts,SPX,gammaSet:x=>{gamma=x;},historiesSet:x=>{vix=x.vix;eod=x.eod;reconstructGammaEnabled=false;},
  injectExecution:fn=>{selfTest=()=>{};initCheckpointStore=async()=>false;histories=async()=>{};warmGamma=async()=>{};replayDay=fn;}};`,context,{filename:engine});
  return {r:module.exports.fault,publicReplay:module.exports.replayDay,dir,timers,timeouts,cleanup:()=>fs.rmSync(dir,{recursive:true,force:true})};
@@ -177,9 +177,24 @@ test('changed engine hash cannot reuse an earlier performance checkpoint',async(
 test('corrupted checkpoint is rejected, never treated as a successful restart',async()=>{
  const db=memoryDB(),a=harness({pg:db.pg}),b=harness({pg:db.pg});try{await a.r.initCheckpointStore();await a.r.saveCheckpoint();const key=[...db.values.keys()][0];db.values.set(key,Buffer.from('corrupt'));await assert.rejects(b.r.initCheckpointStore());assert.equal(b.r.state.completed,0);}finally{a.cleanup();b.cleanup();}
 });
-test('three day failures restore mutated accounts and stop with invalid paths',async()=>{
+test('a permanent day failure restores accounts and stops without advancing the date',async()=>{
  const h=harness();try{h.r.injectExecution(async()=>{h.r.accounts[0].equity=0;h.r.accounts[0].trades.push({pnl:999});throw Error('injected_after_account_mutation');});await h.r.execute();
-  assert.equal(h.r.state.stage,'blocked');assert.equal(h.r.state.completed,3);assert.equal(h.r.state.dataErrors.length,3);assert.match(h.r.state.error,/three_consecutive/);
-  assert(h.r.accounts.every(a=>a.equity===a.deposit&&a.trades.length===0&&a.unresolved.length===3));assert(h.r.snapshot().summary.every(a=>!a.complete));
+  assert.equal(h.r.state.stage,'blocked');assert.equal(h.r.state.completed,0);assert.equal(h.r.state.dataErrors.length,1);assert.match(h.r.state.error,/injected_after_account_mutation/);
+  assert(h.r.accounts.every(a=>a.equity===a.deposit&&a.trades.length===0&&a.unresolved.length===1));assert(h.r.snapshot().summary.every(a=>!a.complete));
  }finally{h.cleanup();}
+});
+test('transient day failures restore all sizing state and retry the same date',async()=>{
+ const h=harness();try{let attempts=0;h.r.state.completed=195;h.r.state.currentDay='2024-06-21';const baseline=plain(h.r.accounts);
+  const result=await h.r.recoverDataOperation(async()=>{attempts++;assert.deepEqual(plain(h.r.accounts),baseline);
+   if(attempts<3){h.r.accounts[0].equity=0;h.r.accounts[0].triggered=true;h.r.accounts[0].fast.marker='bad';throw Error('fetch failed');}
+   return {day:h.r.state.currentDay};
+  },'day',()=>h.r.accounts.splice(0,h.r.accounts.length,...structuredClone(baseline)));
+  assert.equal(result.day,'2024-06-21');assert.equal(attempts,3);assert.equal(h.r.state.completed,195);assert.equal(h.r.state.dataErrors.length,0);assert.deepEqual(h.timers,[15000,30000]);assert.equal(h.r.state.dataRecoveries[0].attempts,2);
+ }finally{h.cleanup();}
+});
+test('unknown data and explicit absence are never retried as transient transport errors',()=>{
+ const h=harness();try{for(const message of ['http_404','invalid_stock','gamma_no_reconstructable_chain','gamma_invalid_oi'])assert.equal(h.r.transientDataError(Error(message)),false);for(const message of ['fetch failed','http_429','http_502','http_504'])assert.equal(h.r.transientDataError(Error(message)),true);}finally{h.cleanup();}
+});
+test('checkpoint during transport retry preserves the last completed session',async()=>{
+ const db=memoryDB(),a=harness({pg:db.pg}),b=harness({pg:db.pg});try{await a.r.initCheckpointStore();a.r.state.completed=195;a.r.state.stage='waiting_for_data';a.r.state.currentDay='2024-06-21';a.r.state.retryPhase='day';a.r.state.retryAttempt=2;await a.r.saveCheckpoint();assert.equal(await b.r.initCheckpointStore(),true);assert.equal(b.r.state.completed,195);assert.equal(b.r.state.currentDay,'2024-06-21');assert.equal(b.r.state.retryPhase,'day');assert.equal(b.r.state.dataErrors.length,0);}finally{a.cleanup();b.cleanup();}
 });
