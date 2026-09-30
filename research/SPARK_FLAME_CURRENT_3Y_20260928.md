@@ -47,7 +47,13 @@ Apply gamma × OI × 100 × spot² × .01, summed separately over calls and puts
 Missing/unusable contract IV is reconstructed from the same-expiry, same-side
 prior IV curve: interpolate variance between strikes and use flat endpoint IV
 outside its observed wings. Counts of interpolated/extrapolated contracts are
-reported. An entirely missing expiry surface fails the day; it is not guessed.
+reported. For an entirely missing same-side expiry, interpolate total variance
+between surrounding observed expirations at the same strike, or use nearest-expiry
+IV beyond the observed maturity range. Term interpolation/extrapolation counts
+and affected expiry/side pairs are reported explicitly. A day without any
+usable prior same-side surface still fails; missing positive OI is never dropped.
+The prior-close bulk lookup is supplemented with exact expirations omitted
+by weekend/holiday DTE shifts, before using any term surface estimates.
 Time-to-expiry uses actual half-day closes, with a five-minute lower bound.
 
 The native p67 / 20-session upsizing function compares this reconstruction
@@ -108,12 +114,16 @@ balances, credentials, kill switches, or production database schemas change.
 ## Current status
 
 User approved the authenticated free research service on September 29, 2026.
-The runner is deployed and processing real historical sessions. Performance
-results are pending; partial exports are not validated three-year returns.
+The earlier run stopped during gamma warmup on September 18, 2023, before
+any backtest sessions completed. The prior-close 61-DTE request omitted an
+expiry within Monday's 60-DTE band. Exact-expiry supplemental requests now
+correct the weekend/holiday mismatch. The updated runner also calculates and
+flags missing expiry surfaces from observed prior-session term variance.
+The corrected runner is deploying; performance results remain pending.
 
 Service: https://dashboard.render.com/web/srv-dau3ni7lot8c739htsv0
 Execution branch: `research/spark-flame-current-3y-20260928`.
-Latest runner/test commit: `acabd20863b48f119a1504f6dd13b94369e9a1c0`.
+Latest runner/test commit: `3aa2eb5961074f87c3629f1acbbe2fd4f7a486ab`.
 
 A read-only observer polls authenticated status every 45 seconds and saves
 existing report/trade/daily exports every five minutes. Quotes retrieved
