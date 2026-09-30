@@ -207,3 +207,46 @@ The gamma helper remains
 A fresh full replay starts under the new hash; no prior account results are
 reused. The September 28 production baseline and live strategies remain frozen.
 The final ZIP is withheld until all 751 sessions and all 16 paths pass audit.
+
+## Validated completion — September 30, 2026
+
+The corrected engine 75214ba4 completed at 04:22:39 AM CT on September 30.
+Final independent export reconciliation passed all 751 sessions, all 16 account
+paths, and 10,689 simulated trades. No unresolved paths or unpriced positive-OI
+gamma contracts remain. Gamma coverage is 771 sessions including the 20-session
+warmup, with all 751 study sessions covered. Export dates exactly match the
+frozen runner's exchange calendar. The obsolete ec9ce9ff and 3aa2eb5 paths are
+excluded from final delivery.
+
+Current customer results, after modeled spread fees and before the external
+subscription:
+
+| Bot | Fill | Ending balance | P&L | Return | Closed maximum drawdown | Host / FLINT trades | P&L after $1,800 subscription |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Flame ($2,000 seed) | Natural | $8,185.20 | $6,185.20 | 309.26% | $2,347.80 / 28.64% | 286 / 384 | $4,385.20 |
+| Flame ($2,000 seed) | Adverse3c | $2,116.80 | $116.80 | 5.84% | $828.80 / 28.14% | 60 / 37 | -$1,683.20 |
+| Spark ($5,000 seed) | Natural | $8,842.40 | $3,842.40 | 76.85% | $4,701.80 / 36.41% | 524 / 406 | $2,042.40 |
+| Spark ($5,000 seed) | Adverse3c | $4,322.40 | -$677.60 | -13.55% | $3,148.00 / 51.38% | 518 / 109 | -$2,477.60 |
+
+Natural means historical minute sell-bid/buy-ask snapshots. Adverse3c deducts
+three cents on entry and adds three cents on guard buyback. Sizing and eligibility
+are replayed separately, so later trade counts can differ sharply. Both adverse
+customer cases lose money after the external subscription. These are modeled
+historical paths, not proof of attainable broker profits.
+
+Observed intraday marked drawdowns: Flame natural $3,071.40 (7 missing mark
+minutes), Flame adverse $828.80 (0), Spark natural $4,965.20 (68), Spark adverse
+$3,316.20 (62). Mark gaps make these observed lower bounds. XSP was enabled and
+checked: Spark natural had three XSP trade records, adverse two; Flame customer
+paths had no accepted XSP swaps. All accepted XSP trades use independent SPX
+settlement. A valid 15:57:02 ET quote on November 24, 2025 resolved the formerly
+crossed FLINT exit and is explicitly recorded in quoteRepair.
+
+The complete report includes all 16 customer/internal/legacy path comparisons,
+trades and daily ledgers in JSON/CSV, manifests, validation and run identity.
+Saved deliverable: Spark_Flame_Three_Year_Replay.zip.
+ZIP SHA-256: 053ead6918c05196b9116303f6fa11f452e20d575991a05dfc292a46d83d6e61.
+Reconstructed gamma, prior-close IV assumptions, minute spot/fills and bounded
+one-second guard recovery remain modeled. Exact historical Tradier Greeks,
+broker fills and assignment are not independently validated; the
+fullFeatureHistoricalValidationComplete flag stays false.
