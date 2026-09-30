@@ -141,7 +141,7 @@ def test_theta_index_timestamp_is_eastern(monkeypatch):
 
 
 def test_index_permission_denial_preserves_fresh_tradier_vix(monkeypatch):
-    now = datetime(2026, 9, 29, 18, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
     denied = requests.Response()
     denied.status_code = 403
     def forbidden(_symbols):
