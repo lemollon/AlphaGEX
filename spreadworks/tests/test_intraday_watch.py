@@ -573,6 +573,40 @@ def test_missing_trading_volatility_watchlist_falls_back_to_core_only(sqlite_sto
     assert "no random fallback" in result["errors"][0].lower()
 
 
+def test_cycle_persists_numeric_quotes_without_gamma_and_caps_poll(sqlite_store, monkeypatch):
+    monkeypatch.setenv("INTRADAY_WATCH_POLL_SECONDS", "3600")
+    async def market(_app, symbol, now):
+        return {"symbol": symbol, "price": 16.2 if symbol == "VIX" else 280.1,
+                "price_basis": "last trade", "bars": [],
+                "source": "Tradier production consolidated feed", "session": "regular",
+                "exchange_timestamp": now.isoformat(), "retrieval_timestamp": now.isoformat(),
+                "quote_timestamp": now, "age_seconds": 0, "fresh": True}
+    monkeypatch.setattr(watch, "fetch_symbol_market", market)
+    asyncio.run(watch.run_intraday_cycle(object(), now=NOW))
+    db = sqlite_store()
+    try:
+        payload = json.loads(db.get(IntradayWatchRuntimeStatus, "intraday-watch").payload_json)
+        assert payload["poll_interval_seconds"] == 60
+        assert payload["data_freshness"]["VIX"]["price"] == 16.2
+        assert payload["data_freshness"]["IWM"]["price"] == 280.1
+        assert payload["data_freshness"]["IWM"]["exchange_timestamp"] == NOW.isoformat()
+    finally:
+        db.close()
+
+
+def test_quote_survives_timesales_outage(monkeypatch):
+    async def get(_app, path, params):
+        if path.endswith("timesales"):
+            raise RuntimeError("bars unavailable")
+        return {"quotes": {"quote": {"symbol": "VIX", "last": 16.2,
+                                    "trade_date": int(NOW.timestamp() * 1000)}}}
+    monkeypatch.setattr(watch, "_tradier_get", get)
+    result = asyncio.run(watch.fetch_symbol_market(object(), "VIX", NOW))
+    assert result["price"] == 16.2 and result["fresh"] is True
+    assert result["bars"] == []
+    assert result["bars_error"] == "bars unavailable"
+
+
 def test_missing_option_data_produces_strikes_pending(monkeypatch):
     async def fake_get(_app, path, _params):
         if path.endswith("expirations"):
