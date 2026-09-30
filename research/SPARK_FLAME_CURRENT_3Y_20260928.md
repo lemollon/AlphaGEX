@@ -84,6 +84,18 @@ coverage is incomplete.
   costs, CSV decoding, timezone conversion, holiday exclusions.
 - Synthetic integration: 16 account paths, scaled P&L and fees, adverse fills,
   XSP fallback, no orders. This is NOT a market-performance result.
+- 21 isolated fault-injection regressions: bounded provider retries/timeouts,
+  explicit no-data handling, provider/contract identity, weekend expiry supplements,
+  strike and term IV surface estimates, same-side missing surfaces, future-data
+  and mixed-source exclusion, early closes, independent XSP settlement, missing
+  marks/guard quotes, isolated DB enforcement, exact checkpoint restoration,
+  code-version mismatch, checkpoint corruption, and failed-day account rollback.
+- Mutation verification: deliberately removing retries, the weekend supplement,
+  or account restoration causes the suite to fail in each case.
+- The existing research test entrypoint requires the hardening suite, so the
+  configured Render build command runs it automatically on future deployments.
+  Fault tests use synthetic inputs and an in-memory database; they never contact
+  providers or a real database. Native self-tests run separately outside the VM.
 - Node syntax and whitespace checks.
 
 ## Execution
@@ -119,16 +131,25 @@ any backtest sessions completed. The prior-close 61-DTE request omitted an
 expiry within Monday's 60-DTE band. Exact-expiry supplemental requests now
 correct the weekend/holiday mismatch. The updated runner also calculates and
 flags missing expiry surfaces from observed prior-session term variance.
-The corrected runner is deploying; performance results remain pending.
+The corrected runner passed the blocked September 18, 2023 warmup date with
+all 2,324 positive-OI contracts included and zero unpriced contracts. As of
+September 29, 2026 at 8:48 PM CT, the live run had completed 145/751 study
+sessions with no data errors or unresolved account paths. Final results remain
+pending. Adding the reliability tests did not restart or change this run.
 
 Service: https://dashboard.render.com/web/srv-dau3ni7lot8c739htsv0
 Execution branch: `research/spark-flame-current-3y-20260928`.
-Latest runner/test commit: `3aa2eb5961074f87c3629f1acbbe2fd4f7a486ab`.
+Deployed runner commit: `3aa2eb5961074f87c3629f1acbbe2fd4f7a486ab`.
+Reliability test commit: `9fb6c9cb00f99db6520e4ae026ef4a7f79124727`.
 
 A read-only observer polls authenticated status every 45 seconds and saves
 existing report/trade/daily exports every five minutes. Quotes retrieved
 within this run are reused for later scanner minutes of the same contract.
 The collector requests historical market data only and never sends orders.
+The observer now keeps checking after blocked/incomplete states rather than
+exiting. It logs non-advancement after ten minutes, using stage, date, request
+count, completed count and run start time. It records failures; it cannot
+repair a new failure or deliver a proactive notification by itself.
 
 Regular-session stock bars exclude intervals starting at the market close.
 Expiry settlement uses the independently retrieved official daily close;
