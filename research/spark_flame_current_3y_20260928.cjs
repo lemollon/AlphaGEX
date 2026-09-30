@@ -515,7 +515,7 @@ if(require.main===module) {
    const number=Number(url.searchParams.get('number'));if(!Number.isInteger(number)||number<1||number>manifest.length){res.statusCode=404;res.end(JSON.stringify({error:'source_not_found'}));return;}
    const file=path.join(OUT,`${number}.csv`);if(!fs.existsSync(file)){res.statusCode=404;res.end(JSON.stringify({error:'raw_source_evicted_on_restart',sha256:manifest[number-1].sha256}));return;}res.setHeader('Content-Type','text/csv');res.end(fs.readFileSync(file,'utf8'));
   }
-  else if(url.pathname==='/research/import-index-minutes'){
+  else if(url.pathname==='/minute-import' || url.pathname==='/research/import-index-minutes'){
    if(req.method!=='POST'){res.statusCode=405;res.end(JSON.stringify({error:'post_required'}));return;}
    if(global.__indexMinuteImportRunning){res.statusCode=409;res.end(JSON.stringify({error:'already_running'}));return;}
    global.__indexMinuteImportRunning=true;
