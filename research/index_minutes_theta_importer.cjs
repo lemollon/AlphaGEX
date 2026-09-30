@@ -2,7 +2,26 @@
  * Uses only THETADATA_BASE_URL and RESEARCH_DATABASE_URL already configured
  * on the isolated Spark/Flame research service. Never reaches broker/order APIs.
  */
-const { Pool } = require('pg');
+const fs = require('node:fs');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+
+function loadPool() {
+  try { return require('pg').Pool; }
+  catch (firstError) {
+    // The research runner deliberately has no root package install. Keep this
+    // one-shot dependency outside the checkout and never alter production deps.
+    const prefix = '/tmp/index-minute-import-pg';
+    const target = path.join(prefix, 'node_modules', 'pg');
+    if (!fs.existsSync(target)) {
+      fs.mkdirSync(prefix, { recursive: true });
+      execFileSync('npm', ['install', '--prefix', prefix, '--no-save', '--ignore-scripts', 'pg@8.16.3'],
+        { stdio: 'inherit', timeout: 120000 });
+    }
+    return require(path.join(target)).Pool;
+  }
+}
+const Pool = loadPool();
 
 const START = '2023-10-02';
 const END = '2026-09-29';
