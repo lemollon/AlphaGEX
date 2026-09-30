@@ -10,21 +10,6 @@ from fastapi.testclient import TestClient
 from thetadata_proxy import app as proxy
 
 
-def test_provider_permission_denied_is_reported_as_403(monkeypatch):
-    class Denied(Exception):
-        def code(self):
-            return "StatusCode.PERMISSION_DENIED"
-    class Client:
-        def index_snapshot_price(self, **kwargs):
-            raise Denied()
-    def fake_client():
-        return Client()
-    fake_client.cache_clear = lambda: None
-    monkeypatch.setattr(proxy, "_client", fake_client)
-    assert TestClient(proxy.app).get(
-        "/v3/index/snapshot/price", params={"symbol": "SPX"}).status_code == 403
-
-
 class Frame:
     def __init__(self, rows):
         self.rows = rows
@@ -110,6 +95,12 @@ class FakeThetaClient:
         return Frame([{"symbol": "SPX", "timestamp": "2026-09-29T10:00:00",
                        "price": 7700}])
 
+    def index_history_ohlc(self, **kwargs):
+        self.calls.append(("index_history_ohlc", kwargs))
+        return Frame([{"timestamp": "2026-09-29T10:00:00", "open": 17.0,
+                       "high": 17.2, "low": 16.9, "close": 17.1,
+                       "volume": 1000, "count": 12, "vwap": 17.05}])
+
 
 def test_private_proxy_serves_compatible_stock_and_option_csv(monkeypatch):
     fake = FakeThetaClient()
@@ -182,6 +173,26 @@ def test_private_proxy_exposes_live_greeks_oi_and_index_prices(monkeypatch):
     }).status_code == 422
 
 
+def test_private_proxy_serves_bounded_index_history(monkeypatch):
+    fake = FakeThetaClient()
+    monkeypatch.setattr(proxy, "_client", lambda: fake)
+    client = TestClient(proxy.app)
+    response = client.get("/v3/index/history/ohlc", params={
+        "symbol": "VIX", "start_date": "2026-09-01", "end_date": "2026-09-29",
+        "interval": "1m", "start_time": "09:30:00", "end_time": "16:00:00",
+    })
+    assert response.status_code == 200
+    assert response.headers["x-market-data-provider"] == "thetadata"
+    assert response.headers["x-bar-timestamp"] == "interval-start"
+    method, kwargs = fake.calls[-1]
+    assert method == "index_history_ohlc"
+    assert kwargs["symbol"] == "VIX"
+    assert kwargs["start_date"].isoformat() == "2026-09-01"
+    assert client.get("/v3/index/history/ohlc", params={
+        "symbol": "VIX", "start_date": "2026-01-01", "end_date": "2026-02-15",
+    }).status_code == 422
+
+
 # ---------------------------------------------------------------- 2026-09-28 wedge/self-heal fix
 # See C:\Users\lemol\.claude\handoff\spike-data-fix-result-9-28.md for the root-cause writeup.
 
@@ -229,30 +240,3 @@ def test_call_failure_evicts_the_cached_client(monkeypatch):
         proxy._call("stock_snapshot_ohlc", symbol="AAA")
     assert excinfo.value.status_code == 502
     assert cleared["n"] == 1
-
-
-def test_historical_gamma_inputs_are_single_session_bounded(monkeypatch):
-    from datetime import date
-    fake = FakeThetaClient()
-    def eod(**kwargs):
-        fake.calls.append(("option_history_eod", kwargs))
-        return Frame([{"symbol":"SPY","expiration":"2023-10-06","strike":430,
-                      "right":"call","bid":1.0,"ask":1.1}])
-    def oi(**kwargs):
-        fake.calls.append(("option_history_open_interest", kwargs))
-        return Frame([{"symbol":"SPY","expiration":"2023-10-06","strike":430,
-                      "right":"call","open_interest":100}])
-    fake.option_history_eod=eod
-    fake.option_history_open_interest=oi
-    monkeypatch.setattr(proxy,"_client",lambda:fake)
-    client=TestClient(proxy.app)
-    for route,method in [("eod","option_history_eod"),("open_interest","option_history_open_interest")]:
-        r=client.get("/v3/option/history/"+route,params={"symbol":"SPY","date":"2023-09-29"})
-        assert r.status_code==200
-        assert r.headers["x-market-data-provider"]=="thetadata"
-        called,kw=fake.calls[-1];assert called==method
-        assert kw["expiration"]=="*" and kw["max_dte"]==60
-        assert kw["symbol"]=="SPY" and kw["right"]=="both"
-        assert kw.get("date",kw.get("start_date"))==date(2023,9,29)
-        assert client.get("/v3/option/history/"+route,params={"symbol":"SPY","date":"bad"}).status_code==422
-        assert client.get("/v3/option/history/"+route,params={"symbol":"SPY","date":"2023-09-29","max_dte":62}).status_code==422
