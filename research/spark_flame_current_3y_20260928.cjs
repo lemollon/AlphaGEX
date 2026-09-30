@@ -512,6 +512,16 @@ if(require.main===module) {
   else if(url.pathname==='/trades')res.end(JSON.stringify(accounts.map(a=>({bot:a.bot,profile:a.profile,fillCase:a.fillCase,trades:a.trades}))));
   else if(url.pathname==='/daily')res.end(JSON.stringify([...rowsByDay.values()]));
   else if(url.pathname==='/source'){
+   if(url.searchParams.get('import_index_minutes')==='1'){
+    if(req.method!=='POST'){res.statusCode=405;res.end(JSON.stringify({error:'post_required'}));return;}
+    if(global.__indexMinuteImportRunning){res.statusCode=409;res.end(JSON.stringify({error:'already_running'}));return;}
+    global.__indexMinuteImportRunning=true;res.statusCode=202;res.end(JSON.stringify({accepted:true,scope:'isolated_research_only'}));
+    require('./index_minutes_theta_importer.cjs').main()
+     .then(()=>console.log('INDEX_IMPORT_HTTP complete'))
+     .catch(error=>console.error('INDEX_IMPORT_HTTP failed',error&&error.stack?error.stack:String(error)))
+     .finally(()=>{global.__indexMinuteImportRunning=false;});
+    return;
+   }
    const number=Number(url.searchParams.get('number'));if(!Number.isInteger(number)||number<1||number>manifest.length){res.statusCode=404;res.end(JSON.stringify({error:'source_not_found'}));return;}
    const file=path.join(OUT,`${number}.csv`);if(!fs.existsSync(file)){res.statusCode=404;res.end(JSON.stringify({error:'raw_source_evicted_on_restart',sha256:manifest[number-1].sha256}));return;}res.setHeader('Content-Type','text/csv');res.end(fs.readFileSync(file,'utf8'));
   }
