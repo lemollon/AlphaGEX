@@ -406,7 +406,7 @@ async function mirrorOneOpen(
   }
 
   const gate = canOpenForCustomer({
-    executorArmed: isExecutorArmed(),
+    executorArmed: isExecutorArmedForAgent(agent),
     killSwitchEngaged,
     subscriptionStatus: c.subscription_status,
     customerPaused: c.activation_status === 'paused',
