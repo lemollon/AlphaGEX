@@ -45,4 +45,5 @@ global.fetch=async raw=>{
  }
  assert.equal(orders,0);
  console.log(JSON.stringify({passed:true,fixture:'SYNTHETIC — not performance results',cases:'16 account paths, caller wiring, contract scaling, commissions, adverse fills, XSP fallback, zero orders',requests}));
+ require('./spark_flame_current_3y_20260928.hardening.test.cjs');
 })().catch(e=>{console.error(e);process.exitCode=1;});
