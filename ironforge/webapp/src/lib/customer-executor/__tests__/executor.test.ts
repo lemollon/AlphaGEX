@@ -152,6 +152,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.CUSTOMER_EXECUTOR_ENABLED
+  delete process.env.FLAME_CUSTOMER_EXECUTOR_ENABLED
   vi.resetModules()
 })
 
@@ -160,6 +161,16 @@ function skipReasonsFor(userId: string): string[] {
     .filter((c) => c.sql.includes("status = 'skipped'") && c.params[0] === state.positionRowId)
     .map((c) => String(c.params[1]))
 }
+
+describe('Flame-only customer arm', () => {
+  it('can arm Flame without arming Spark or the legacy fleet switch', async () => {
+    delete process.env.CUSTOMER_EXECUTOR_ENABLED
+    process.env.FLAME_CUSTOMER_EXECUTOR_ENABLED = 'true'
+    const { isExecutorArmedForAgent } = await import('../executor')
+    expect(isExecutorArmedForAgent('flame')).toBe(true)
+    expect(isExecutorArmedForAgent('spark')).toBe(false)
+  })
+})
 
 describe('mirrorOpenToCustomers — bot-account guard', () => {
   it('never mirrors an OPEN into the production account the bots already trade (6YB71371)', async () => {
