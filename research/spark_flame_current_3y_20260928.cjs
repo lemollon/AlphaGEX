@@ -41,7 +41,7 @@ const SPEC = {
   feeDollarsPerSpread: 1.40, monthlyFeeExternalDollars: 50,
   profiles: ['current_customer_package', 'internal_one_strategy', 'legacy_highwater_ladder', 'legacy_profit_ladder_fast_start'],
   fillCases: { natural: 0, adverse3c: .03 },
-  execution: 'minute snapshot sell-bid/buy-ask; quote size checked; no guaranteed fills; same-minute stock OPEN is spot proxy',
+  execution: 'minute snapshot sell-bid/buy-ask; quote size checked; invalid guard snapshot scans first valid synchronized second within that minute; no guaranteed fills; same-minute stock OPEN is spot proxy',
   settlement: 'ThetaData official SPY EOD close; XSP requires independent SPX close / 10',
   gammaCoverage: 'Uniform reconstructed 0..60 DTE call/put dollar gamma: prior-close Theta quotes/IV, morning OI, 11:05 ET spot; 20 prior-session warmup. Modelled historical inputs, not identical Tradier observations.',
   xspCoverage: 'Enabled. Missing XSP quotes fall back per source; missing SPX settlement on an accepted swap makes that profile unresolved.',
@@ -179,7 +179,22 @@ function usableQuote(r) {
  return Number.isFinite(bid)&&Number.isFinite(ask)&&bid>=0&&ask>0&&bid<=ask&&bs>=0&&as>=0;
 }
 class Quotes {
- constructor(day,close){this.day=day;this.close=close;this.cache=new Map();this.gaps=[];}
+ constructor(day,close){this.day=day;this.close=close;this.cache=new Map();this.gaps=[];this.guardCache=new Map();}
+ async guardLeg(symbol,right,strike,m) {
+  const key=`${symbol}:${right}:${strike}:${m}`;if(this.guardCache.has(key))return this.guardCache.get(key);
+  let rows;try{rows=await feed('/v3/option/history/quote',{symbol,right,strike,expiration:this.day,date:this.day,interval:'1s',start_time:clock(m),end_time:clock(m).replace(/:00$/,':59')});}
+  catch(e){if(e.message==='http_404'){const empty=new Map();this.guardCache.set(key,empty);return empty;}throw e;}
+  const quotes=new Map();for(const r of rows){
+   if(r.symbol?.trim()&&r.symbol.trim().toUpperCase()!==symbol)throw Error('wrong_option_symbol');
+   if(r.strike?.trim()&&Math.abs(+r.strike-strike)>.001)throw Error('wrong_option_strike');
+   if(r.right?.trim()&&!r.right.trim().toLowerCase().startsWith(right[0]))throw Error('wrong_option_right');
+   const exp=(r.expiration||'').slice(0,10).replace(/-/g,'');if(exp&&exp!==this.day.replace(/-/g,''))throw Error('wrong_option_expiration');
+   const timestamp=r.timestamp||r.datetime;if(minute(timestamp,this.day)!==m)throw Error('guard_quote_outside_minute');
+   const match=String(timestamp).match(/[T ]\d\d:\d\d:(\d\d)(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)?$/);if(!match)throw Error('invalid_guard_quote_second');
+   if(usableQuote(r))quotes.set(+match[1],{bid:+r.bid,ask:+r.ask,bidSize:+r.bid_size,askSize:+r.ask_size,timestamp});
+  }
+  this.guardCache.set(key,quotes);return quotes;
+ }
  async leg(symbol,right,strike,start) {
   const key=`${symbol}:${right}:${strike}`;
   const previous=this.cache.get(key);
@@ -204,13 +219,24 @@ class Quotes {
  }
  async spread(symbol,right,short,long,start) {
   const s=await this.leg(symbol,right,short,start),l=await this.leg(symbol,right,long,start);
-  const at=m=>{const a=s.get(m),b=l.get(m);return a&&b?{
+  const repairs={};const corrected=new Map();
+  const at=m=>{if(corrected.has(m))return corrected.get(m);const a=s.get(m),b=l.get(m);return a&&b?{
    credit:a.bidSize>0&&b.askSize>0?money(a.bid-b.ask):null,
    // A zero-bid long is left worthless, with no invented sale proceeds.
    // A positive long bid requires displayed size before netting proceeds.
    debit:a.askSize>0&&(b.bid===0||b.bidSize>0)?money(a.ask-b.bid):null,
    bidSize:a.bidSize,askSize:b.askSize}:null;};
-  return {symbol,right,short,long,start,at};
+  const repairGuardQuote=async m=>{
+   if(Number.isFinite(at(m)?.debit))return true;
+   const a=await this.guardLeg(symbol,right,short,m),b=await this.guardLeg(symbol,right,long,m);
+   for(let second=0;second<60;second++){
+    const qs=a.get(second),ql=b.get(second);if(!qs||!ql||qs.askSize<=0||(ql.bid>0&&ql.bidSize<=0))continue;
+    corrected.set(m,{credit:null,debit:money(qs.ask-ql.bid),bidSize:qs.bidSize,askSize:ql.askSize});
+    repairs[m]={method:'first_valid_synchronized_second_within_guard_minute',second,timestamp:qs.timestamp,longTimestamp:ql.timestamp};return true;
+   }
+   return false;
+  };
+  return {symbol,right,short,long,start,at,repairGuardQuote,repairs};
  }
 }
 function newAccount(bot,profile,fillCase) {
@@ -328,7 +354,7 @@ async function replayDay(day) {
      hosts.set(a,proposed);
      let decision={nXsp:0,nSpy:proposed.n,reason:'xsp_quote_unavailable'};
      if(SPEC.xspSwap) {
-      if(xsp===null) {try{xsp=await dq.spread('XSP','put',put.short,put.long,m);}catch(e){xsp=false;}}
+      if(xsp===null)xsp=await dq.spread('XSP','put',put.short,put.long,m);
       const xq=xsp&&xsp.at(m);
       decision=X.decideXspSwap({nHost:proposed.n,spyCreditPerContract:p.credit-slip,xspCreditPerContract:xq?xq.credit-slip:null,xspShortBidSize:xq?.bidSize??null});
       if(decision.nXsp)active.get(a).push({spread:xsp,n:decision.nXsp,credit:xq.credit-slip,entry:m,risk:cents((cfg.width-xq.credit+slip)*100)*decision.nXsp,leg:'host_xsp'});
@@ -343,6 +369,14 @@ async function replayDay(day) {
   }
   for(const a of group) {
    const trades=active.get(a), before=a.equity;let net=0,mtmMin=before,mtmPeak=before,markedDD=0,markGaps=0,unresolved=[];
+   // Reject crossed minute snapshots. Scan contemporaneous one-second quotes
+   // in chronological order only inside the triggered guard minute. No future
+   // minute, stale quote, theoretical price or interpolation supplies an exit.
+   for(const t of trades)if(t.spread.symbol==='SPY')for(let m=close-3;m<close;m++){
+    const spot=spots.get(m)?.open;if(!Number.isFinite(spot))break;
+    const hit=t.spread.right==='put'?spot<=t.spread.short+SPEC.putGuardBuffer:spot>=t.spread.short-SPEC.callGuardBuffer;
+    if(hit){await t.spread.repairGuardQuote(m);break;}
+   }
    const resolved=trades.map(t=>{
     const result=t.spread.symbol==='XSP'?(SPX[day]?{pnl:money((t.credit-Math.min(cfg.width,Math.max(0,t.spread.short-SPX[day]/10)))*100-SPEC.feeDollarsPerSpread),exit:close,reason:'cash_settlement'}:{unresolved:'SPX_settlement_missing'}):realizeSpread(t.spread,t.entry,t.credit,spots,close,eod[day],SPEC.fillCases[a.fillCase]);
     if(result.unresolved)unresolved.push(result.unresolved);
@@ -356,7 +390,7 @@ async function replayDay(day) {
    if(unresolved.length){a.unresolved.push({day,reasons:unresolved});a.invalidFrom??=day;}
    // No silently compounded missing-day returns. Once a path is unresolved,
    // future outputs remain diagnostic and never become a complete result.
-   for(const t of resolved)if(!t.unresolved){const pnl=cents(t.pnl*t.n);net+=pnl;const tr={day,leg:t.leg,symbol:t.spread.symbol,short:t.spread.short,long:t.spread.long,entry:t.entry,exit:t.exit,n:t.n,credit:money(t.credit),pnl:money(pnl/100),reason:t.reason};a.trades.push(tr);}
+   for(const t of resolved)if(!t.unresolved){const pnl=cents(t.pnl*t.n);net+=pnl;const tr={day,leg:t.leg,symbol:t.spread.symbol,short:t.spread.short,long:t.spread.long,entry:t.entry,exit:t.exit,n:t.n,credit:money(t.credit),pnl:money(pnl/100),reason:t.reason};if(t.spread.repairs[t.exit])tr.quoteRepair=t.spread.repairs[t.exit];a.trades.push(tr);}
    a.equity+=net;a.peak=Math.max(a.peak,a.equity);
    if(a.triggered&&a.equity<a.deposit)a.floorBreaches++;
    const row={day,before:before/100,after:a.equity/100,pnl:net/100,markedMin:mtmMin/100,markedPeak:mtmPeak/100,markedDD:markedDD/100,markGaps,hostN:hosts.get(a)?.n||0,flintN:resolved.filter(t=>t.leg==='flint').reduce((s,t)=>s+t.n,0),xsp:hosts.get(a)?.xspDecision||null,triggered:a.triggered,floor:C.currentFloorLevelCents(a.deposit,a.floorPeak,a.triggered,.10)/100,unresolved};
@@ -377,7 +411,7 @@ function stats(a) {
  return {bot:a.bot,profile:a.profile,fillCase:a.fillCase,startingEquity:a.deposit/100,endingEquity:a.equity/100,pnl:money(pnl),returnPct:money(100*pnl/(a.deposit/100)),cagrPct:money(100*(Math.pow(Math.max(0,a.equity/a.deposit),1/3)-1)),trades:trades.length,hostTrades:trades.filter(t=>t.leg.startsWith('host')).length,flintTrades:trades.filter(t=>t.leg==='flint').length,winRatePct:trades.length?money(100*wins.length/trades.length):null,maxClosedDrawdown:money(dd),maxClosedDrawdownPct:money(ddPct*100),maxMarkedDrawdownObserved:money(mtmDD),markGapMinutes:a.days.reduce((s,d)=>s+d.markGaps,0),longestLosingDayStreak:longest,worstTrade:losses.length?Math.min(...losses.map(t=>t.pnl)):null,netAfterExternalSubscription:money(pnl-Object.keys(months).filter(m=>m!==SPEC.end.slice(0,7)).length*50),monthly,floorBreaches:a.floorBreaches,unresolved:a.unresolved,invalidFrom:a.invalidFrom||null,clusters:{month:aggregateBy('month'),weekday:aggregateBy('weekday'),leg:aggregateBy('leg'),worstTrades:losses.sort((a,b)=>a.pnl-b.pnl).slice(0,20)},complete:STATE.completed===STATE.total&&!STATE.dataErrors.length&&!a.unresolved.length};
 }
 function snapshot() {
- const result={spec:SPEC,status:{...STATE},summary:accounts.map(stats),sourceManifest:manifest,gammaCoverageDays:Object.keys(gamma).length,gammaReconstruction:gamma,gammaStudyCoverageDays:Object.keys(gamma).filter(d=>d>=SPEC.start&&d<=SPEC.end).length,fullFeatureHistoricalValidationComplete:false,coverageLimits:['Gamma add-on uses a consistent historical reconstruction, not recorded Tradier greeks; IV is held from the prior close and model assumptions are explicit.','XSP outcomes require authentic SPX settlement; unresolved swaps invalidate affected account paths.','Minute snapshots model fills; actual historical broker execution and assignment are not replayable from these inputs.']};
+ const result={spec:SPEC,status:{...STATE},summary:accounts.map(stats),sourceManifest:manifest,gammaCoverageDays:Object.keys(gamma).length,gammaReconstruction:gamma,gammaStudyCoverageDays:Object.keys(gamma).filter(d=>d>=SPEC.start&&d<=SPEC.end).length,fullFeatureHistoricalValidationComplete:false,coverageLimits:['Gamma add-on uses a consistent historical reconstruction, not recorded Tradier greeks; IV is held from the prior close and model assumptions are explicit.','XSP outcomes require authentic SPX settlement; unresolved swaps invalidate affected account paths.','Minute snapshots model fills; actual historical broker execution and assignment are not replayable from these inputs.','Missing or crossed guard-minute snapshots scan the first synchronized valid one-second quote within that same minute. quoteRepair records the observed timestamp; this models execution latency, not verified broker fills.']};
  fs.writeFileSync(path.join(OUT,'checkpoint.json'),JSON.stringify(result,null,2));return result;
 }
 function selfTest() {
@@ -458,7 +492,7 @@ async function execute() {
   for(const day of sessions().slice(STATE.completed)) {
    STATE.currentDay=day;
    const beforeAccounts=structuredClone(accounts);
-   try {const row=await recoverDataOperation(()=>replayDay(day),'day',()=>accounts.splice(0,accounts.length,...structuredClone(beforeAccounts)));STATE.stage='running';rowsByDay.set(day,row);fs.writeFileSync(path.join(OUT,day+'.json'),JSON.stringify(row));emit('day',row);}
+   try {const row=await recoverDataOperation(async()=>{const row=await replayDay(day);if(row.accounts.some(a=>a.unresolved?.length))throw Error('unresolved_day_exit:'+row.accounts.flatMap(a=>a.unresolved||[]).join(','));return row;},'day',()=>accounts.splice(0,accounts.length,...structuredClone(beforeAccounts)));STATE.stage='running';rowsByDay.set(day,row);fs.writeFileSync(path.join(OUT,day+'.json'),JSON.stringify(row));emit('day',row);}
    catch(e){accounts.splice(0,accounts.length,...beforeAccounts);STATE.dataErrors.push({day,error:String(e.message)});emit('data_error',{day,error:String(e.message)});for(const a of accounts){a.invalidFrom??=day;a.unresolved.push({day,reasons:['data_error']});}throw e;}
    STATE.completed++;if(STATE.completed%5===0){snapshot();await saveCheckpoint();emit('progress',{...STATE});}
   }
