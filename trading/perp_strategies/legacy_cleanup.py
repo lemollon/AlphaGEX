@@ -4,24 +4,29 @@ Two independent problems, closed in the same pass right before the normal
 per-position exit loop (after liquidation handling):
 
 1. Legacy-strategy close: `config.strategy_mode` can be flipped from
-   "combined_signal" to "weekly_breakout" (or back) without ever touching
-   positions that are already open. A position opened under the old
-   strategy has no stop/trail semantics the new strategy understands, and
-   worse - while it sits open it silently eats a slot out of the new mode's
-   (usually much smaller) `max_open_positions`, so every future scan comes
-   back BLOCKED_MAX_POSITIONS forever. When the bot is currently in
-   "weekly_breakout" mode, any open position that was NOT opened by the
-   weekly-breakout entry path is force-closed with reason STRATEGY_CHANGED.
+   "combined_signal" to "weekly_breakout" (or back), or -- AGAPE-SHIB-PERP
+   only -- to "fade_lock_breaker", without ever touching positions that are
+   already open. A position opened under the old strategy has no stop/trail
+   semantics the new strategy understands, and worse - while it sits open
+   it silently eats a slot out of the new mode's (usually much smaller)
+   `max_open_positions`, so every future scan comes back
+   BLOCKED_MAX_POSITIONS forever. When the bot is currently in a mode
+   listed in `STRATEGY_REASONING_PREFIXES`, any open position that was NOT
+   opened by that mode's own entry path is force-closed with reason
+   STRATEGY_CHANGED.
 
    The marker: `decide_entry()` in weekly_breakout.py always returns a
    reason of the form "WEEKLY_BREAKOUT_<...>" (see signals.py's
    `_weekly_breakout_signal`, which seeds the signal's `reasoning` with
-   that string), and that reasoning is persisted verbatim as
+   that string); `decide_entry()` in fade_lock_breaker.py does the same
+   with a "FADE_LOCK_BREAKER_<...>" prefix (see `_fade_lock_breaker_signal`
+   in agape_shib_perp/signals.py). That reasoning is persisted verbatim as
    `signal_reasoning` on the position row. No combined-signal reasoning
-   string (see `_determine_action`) ever starts with that prefix, so a
-   `signal_reasoning` that is missing or doesn't start with
-   "WEEKLY_BREAKOUT_" reliably means "not a weekly-breakout entry" -
-   including every position opened before this strategy existed.
+   string (see `_determine_action`), and no OTHER strategy's prefix, ever
+   starts with the current mode's prefix, so a `signal_reasoning` that is
+   missing or doesn't start with it reliably means "not an entry from the
+   current mode" - including every position opened before that strategy
+   existed.
 
 2. Over-cap trim: after step 1, if open positions still exceed
    `config.max_open_positions` (e.g. the cap itself was lowered under a
@@ -44,6 +49,17 @@ from typing import Dict, List, Tuple
 logger = logging.getLogger(__name__)
 
 WB_REASONING_PREFIX = "WEEKLY_BREAKOUT_"
+FLB_REASONING_PREFIX = "FADE_LOCK_BREAKER_"
+
+# Modes with their own entry-path marker prefix. Only strategy_mode values
+# listed here get the legacy-strategy close; other modes (combined_signal,
+# and any bot that never sets strategy_mode) are unaffected. Adding a new
+# entry here is additive per-bot: it only changes behaviour for a config
+# whose own strategy_mode literally equals that key.
+STRATEGY_REASONING_PREFIXES = {
+    "weekly_breakout": WB_REASONING_PREFIX,
+    "fade_lock_breaker": FLB_REASONING_PREFIX,
+}
 
 
 def close_legacy_and_overcap_positions(
@@ -66,11 +82,13 @@ def close_legacy_and_overcap_positions(
     closed = 0
 
     # 1. Legacy-strategy close.
-    if getattr(trader.config, "strategy_mode", "") == "weekly_breakout":
+    current_mode = getattr(trader.config, "strategy_mode", "")
+    required_prefix = wb_prefix if current_mode == "weekly_breakout" else STRATEGY_REASONING_PREFIXES.get(current_mode)
+    if required_prefix:
         keep = []
         for pos in remaining:
             reasoning = pos.get("signal_reasoning") or ""
-            if reasoning.startswith(wb_prefix):
+            if reasoning.startswith(required_prefix):
                 keep.append(pos)
                 continue
             try:

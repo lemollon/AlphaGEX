@@ -1,0 +1,875 @@
+[
+  {
+    "entry_date": "2022-07-20",
+    "exit_date": "2022-07-20",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.287e-05,
+    "exit_px": 1.216e-05,
+    "net_ret": 0.05643415634073539
+  },
+  {
+    "entry_date": "2022-08-19",
+    "exit_date": "2022-08-19",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.323e-05,
+    "exit_px": 1.365e-05,
+    "net_ret": 0.02983431594860155
+  },
+  {
+    "entry_date": "2022-09-24",
+    "exit_date": "2022-09-24",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.199e-05,
+    "exit_px": 1.1560000000000001e-05,
+    "net_ret": 0.03512917511998172
+  },
+  {
+    "entry_date": "2022-10-29",
+    "exit_date": "2022-10-29",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.418e-05,
+    "exit_px": 1.3005e-05,
+    "net_ret": 0.08853942820082757
+  },
+  {
+    "entry_date": "2022-10-31",
+    "exit_date": "2022-10-31",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.265e-05,
+    "exit_px": 1.241e-05,
+    "net_ret": 0.01735821487834927
+  },
+  {
+    "entry_date": "2022-11-08",
+    "exit_date": "2022-11-08",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.087e-05,
+    "exit_px": 1.116e-05,
+    "net_ret": 0.024439006439742526
+  },
+  {
+    "entry_date": "2022-11-10",
+    "exit_date": "2022-11-10",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.025e-05,
+    "exit_px": 1.0365e-05,
+    "net_ret": 0.00886829268292684
+  },
+  {
+    "entry_date": "2022-12-17",
+    "exit_date": "2022-12-17",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 8.22e-06,
+    "exit_px": 8.619999999999999e-06,
+    "net_ret": 0.045828710462287044
+  },
+  {
+    "entry_date": "2023-01-10",
+    "exit_date": "2023-01-10",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 9.27e-06,
+    "exit_px": 8.95e-06,
+    "net_ret": 0.03319669264100545
+  },
+  {
+    "entry_date": "2023-01-14",
+    "exit_date": "2023-01-14",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.032e-05,
+    "exit_px": 1.0055e-05,
+    "net_ret": 0.024017062744054976
+  },
+  {
+    "entry_date": "2023-01-18",
+    "exit_date": "2023-01-18",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.164e-05,
+    "exit_px": 1.1205e-05,
+    "net_ret": 0.03670374142618588
+  },
+  {
+    "entry_date": "2023-02-09",
+    "exit_date": "2023-02-12",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.317e-05,
+    "exit_px": 1.335e-05,
+    "net_ret": 0.011748823082763843
+  },
+  {
+    "entry_date": "2023-02-16",
+    "exit_date": "2023-02-16",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.373e-05,
+    "exit_px": 1.3130000000000001e-05,
+    "net_ret": 0.04384021314115275
+  },
+  {
+    "entry_date": "2023-03-11",
+    "exit_date": "2023-03-11",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 9.92e-06,
+    "exit_px": 1.0115e-05,
+    "net_ret": 0.017241129032258173
+  },
+  {
+    "entry_date": "2023-03-14",
+    "exit_date": "2023-03-14",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.17e-05,
+    "exit_px": 1.107e-05,
+    "net_ret": 0.054801167396289326
+  },
+  {
+    "entry_date": "2023-05-08",
+    "exit_date": "2023-05-09",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 8.98e-06,
+    "exit_px": 9.055e-06,
+    "net_ret": 0.0057247216035635476
+  },
+  {
+    "entry_date": "2023-06-06",
+    "exit_date": "2023-06-06",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 8.059e-06,
+    "exit_px": 8.15e-06,
+    "net_ret": 0.008410026057823454
+  },
+  {
+    "entry_date": "2023-06-10",
+    "exit_date": "2023-06-10",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 6.563e-06,
+    "exit_px": 6.798e-06,
+    "net_ret": 0.032359408806948
+  },
+  {
+    "entry_date": "2023-06-12",
+    "exit_date": "2023-06-12",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 6.605e-06,
+    "exit_px": 6.778e-06,
+    "net_ret": 0.02276426949280856
+  },
+  {
+    "entry_date": "2023-06-18",
+    "exit_date": "2023-06-18",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 7.352e-06,
+    "exit_px": 7.1955e-06,
+    "net_ret": 0.018629356471963846
+  },
+  {
+    "entry_date": "2023-06-22",
+    "exit_date": "2023-06-26",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 7.81e-06,
+    "exit_px": 7.617e-06,
+    "net_ret": 0.022377240141290514
+  },
+  {
+    "entry_date": "2023-07-14",
+    "exit_date": "2023-07-14",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 8.369e-06,
+    "exit_px": 7.9625e-06,
+    "net_ret": 0.04826203356072442
+  },
+  {
+    "entry_date": "2023-08-05",
+    "exit_date": "2023-08-05",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 9.774e-06,
+    "exit_px": 9.5075e-06,
+    "net_ret": 0.025584257094909732
+  },
+  {
+    "entry_date": "2023-08-10",
+    "exit_date": "2023-08-10",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 9.92e-06,
+    "exit_px": 9.849999999999999e-06,
+    "net_ret": 0.0046904699525135525
+  },
+  {
+    "entry_date": "2023-08-12",
+    "exit_date": "2023-08-12",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.067e-05,
+    "exit_px": 1.0487e-05,
+    "net_ret": 0.015175762163338975
+  },
+  {
+    "entry_date": "2023-08-17",
+    "exit_date": "2023-08-22",
+    "direction": 1,
+    "exit_reason": "time",
+    "entry_px": 8.563e-06,
+    "exit_px": 8.274e-06,
+    "net_ret": -0.03648548405932485
+  },
+  {
+    "entry_date": "2023-10-25",
+    "exit_date": "2023-10-25",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 7.753e-06,
+    "exit_px": 7.64e-06,
+    "net_ret": 0.011810929327812955
+  },
+  {
+    "entry_date": "2023-11-11",
+    "exit_date": "2023-11-11",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 9.282e-06,
+    "exit_px": 8.954e-06,
+    "net_ret": 0.03407696495824858
+  },
+  {
+    "entry_date": "2023-11-13",
+    "exit_date": "2023-11-13",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 8.829e-06,
+    "exit_px": 8.563e-06,
+    "net_ret": 0.028398617277390018
+  },
+  {
+    "entry_date": "2023-11-22",
+    "exit_date": "2023-11-22",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 7.924e-06,
+    "exit_px": 8.055500000000001e-06,
+    "net_ret": 0.013671176173649758
+  },
+  {
+    "entry_date": "2023-12-04",
+    "exit_date": "2023-12-05",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 8.959e-06,
+    "exit_px": 1.0388466859484216e-05,
+    "net_ret": -0.1402337222928009
+  },
+  {
+    "entry_date": "2023-12-07",
+    "exit_date": "2023-12-07",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 9.73e-06,
+    "exit_px": 9.681000000000001e-06,
+    "net_ret": 0.002605962134537635
+  },
+  {
+    "entry_date": "2023-12-12",
+    "exit_date": "2023-12-12",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 9.491e-06,
+    "exit_px": 9.5635e-06,
+    "net_ret": 0.005131556211147588
+  },
+  {
+    "entry_date": "2024-01-03",
+    "exit_date": "2024-01-03",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 9.701e-06,
+    "exit_px": 9.9185e-06,
+    "net_ret": 0.019958725904545765
+  },
+  {
+    "entry_date": "2024-01-05",
+    "exit_date": "2024-01-05",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 9.594e-06,
+    "exit_px": 9.735e-06,
+    "net_ret": 0.012212049197415059
+  },
+  {
+    "entry_date": "2024-01-11",
+    "exit_date": "2024-01-11",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.0152e-05,
+    "exit_px": 1.0016e-05,
+    "net_ret": 0.0112082195988389
+  },
+  {
+    "entry_date": "2024-02-27",
+    "exit_date": "2024-02-28",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.042e-05,
+    "exit_px": 1.01e-05,
+    "net_ret": 0.029363782520286607
+  },
+  {
+    "entry_date": "2024-06-18",
+    "exit_date": "2024-06-18",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.7753e-05,
+    "exit_px": 1.8337e-05,
+    "net_ret": 0.03136927843181423
+  },
+  {
+    "entry_date": "2024-07-05",
+    "exit_date": "2024-07-05",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.4429e-05,
+    "exit_px": 1.53125e-05,
+    "net_ret": 0.05944475708642318
+  },
+  {
+    "entry_date": "2024-07-16",
+    "exit_date": "2024-07-16",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.959e-05,
+    "exit_px": 1.9238e-05,
+    "net_ret": 0.016876191237342405
+  },
+  {
+    "entry_date": "2024-08-02",
+    "exit_date": "2024-08-04",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.5051e-05,
+    "exit_px": 1.2265290106710075e-05,
+    "net_ret": -0.1868135202504767
+  },
+  {
+    "entry_date": "2024-08-24",
+    "exit_date": "2024-08-24",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.5633e-05,
+    "exit_px": 1.5159e-05,
+    "net_ret": 0.02958920835928023
+  },
+  {
+    "entry_date": "2024-08-28",
+    "exit_date": "2024-08-28",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.3755e-05,
+    "exit_px": 1.41505e-05,
+    "net_ret": 0.02689916394038521
+  },
+  {
+    "entry_date": "2024-09-19",
+    "exit_date": "2024-09-19",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.4276e-05,
+    "exit_px": 1.40825e-05,
+    "net_ret": 0.011939505367466628
+  },
+  {
+    "entry_date": "2024-09-21",
+    "exit_date": "2024-09-21",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.4845e-05,
+    "exit_px": 1.45555e-05,
+    "net_ret": 0.01814213392279447
+  },
+  {
+    "entry_date": "2024-09-26",
+    "exit_date": "2024-09-30",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.745e-05,
+    "exit_px": 1.68955e-05,
+    "net_ret": 0.03127325797318572
+  },
+  {
+    "entry_date": "2024-10-02",
+    "exit_date": "2024-10-02",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.6733e-05,
+    "exit_px": 1.6917500000000002e-05,
+    "net_ret": 0.00943087312496274
+  },
+  {
+    "entry_date": "2024-10-29",
+    "exit_date": "2024-10-29",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.8999e-05,
+    "exit_px": 1.8596999999999998e-05,
+    "net_ret": 0.020163702756755345
+  },
+  {
+    "entry_date": "2024-12-10",
+    "exit_date": "2024-12-10",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 2.5053e-05,
+    "exit_px": 2.7048499999999997e-05,
+    "net_ret": 0.07845283199616815
+  },
+  {
+    "entry_date": "2024-12-20",
+    "exit_date": "2024-12-20",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 2.0953e-05,
+    "exit_px": 2.2476e-05,
+    "net_ret": 0.07133197155538587
+  },
+  {
+    "entry_date": "2025-02-03",
+    "exit_date": "2025-02-03",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.5451e-05,
+    "exit_px": 1.61905e-05,
+    "net_ret": 0.04616656527085608
+  },
+  {
+    "entry_date": "2025-03-09",
+    "exit_date": "2025-03-09",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.2022e-05,
+    "exit_px": 1.2509e-05,
+    "net_ret": 0.03844545000831824
+  },
+  {
+    "entry_date": "2025-03-26",
+    "exit_date": "2025-03-26",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.4635e-05,
+    "exit_px": 1.42805e-05,
+    "net_ret": 0.023057473833090827
+  },
+  {
+    "entry_date": "2025-03-29",
+    "exit_date": "2025-03-31",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.2718e-05,
+    "exit_px": 1.29305e-05,
+    "net_ret": 0.014736027677307657
+  },
+  {
+    "entry_date": "2025-04-12",
+    "exit_date": "2025-04-12",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.2589e-05,
+    "exit_px": 1.22965e-05,
+    "net_ret": 0.021798567998800582
+  },
+  {
+    "entry_date": "2025-05-08",
+    "exit_date": "2025-05-10",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.388e-05,
+    "exit_px": 1.674381179462724e-05,
+    "net_ret": -0.1728779494665225
+  },
+  {
+    "entry_date": "2025-06-14",
+    "exit_date": "2025-06-14",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.2067e-05,
+    "exit_px": 1.21005e-05,
+    "net_ret": 0.0007187536255904175
+  },
+  {
+    "entry_date": "2025-06-25",
+    "exit_date": "2025-06-25",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.1505e-05,
+    "exit_px": 1.13265e-05,
+    "net_ret": 0.0136211274329776
+  },
+  {
+    "entry_date": "2025-07-11",
+    "exit_date": "2025-07-11",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.341e-05,
+    "exit_px": 1.3108e-05,
+    "net_ret": 0.021147940962899306
+  },
+  {
+    "entry_date": "2025-07-18",
+    "exit_date": "2025-07-18",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.4759e-05,
+    "exit_px": 1.44925e-05,
+    "net_ret": 0.01663371644493981
+  },
+  {
+    "entry_date": "2025-07-24",
+    "exit_date": "2025-07-25",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.3877e-05,
+    "exit_px": 1.4046e-05,
+    "net_ret": 0.010337191035526567
+  },
+  {
+    "entry_date": "2025-08-09",
+    "exit_date": "2025-08-09",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.3819e-05,
+    "exit_px": 1.35385e-05,
+    "net_ret": 0.01887140841340141
+  },
+  {
+    "entry_date": "2025-09-13",
+    "exit_date": "2025-09-13",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.4404e-05,
+    "exit_px": 1.39675e-05,
+    "net_ret": 0.029462615474779952
+  },
+  {
+    "entry_date": "2025-09-16",
+    "exit_date": "2025-09-16",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.3104e-05,
+    "exit_px": 1.3177e-05,
+    "net_ret": 0.003644566544566525
+  },
+  {
+    "entry_date": "2025-10-03",
+    "exit_date": "2025-10-03",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 1.2663e-05,
+    "exit_px": 1.2443e-05,
+    "net_ret": 0.01570121907933665
+  },
+  {
+    "entry_date": "2025-10-09",
+    "exit_date": "2025-10-09",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.1871e-05,
+    "exit_px": 1.2005000000000001e-05,
+    "net_ret": 0.009203234773818647
+  },
+  {
+    "entry_date": "2025-10-11",
+    "exit_date": "2025-10-12",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.0331e-05,
+    "exit_px": 1.0690499999999999e-05,
+    "net_ret": 0.03246225921982369
+  },
+  {
+    "entry_date": "2025-10-16",
+    "exit_date": "2025-10-16",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 1.0086e-05,
+    "exit_px": 1.01825e-05,
+    "net_ret": 0.0071847709696608196
+  },
+  {
+    "entry_date": "2025-10-30",
+    "exit_date": "2025-10-30",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 9.634e-06,
+    "exit_px": 9.8245e-06,
+    "net_ret": 0.017297737180818132
+  },
+  {
+    "entry_date": "2025-11-03",
+    "exit_date": "2025-11-07",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 9.235e-06,
+    "exit_px": 9.7875e-06,
+    "net_ret": 0.057261072008662664
+  },
+  {
+    "entry_date": "2025-11-09",
+    "exit_date": "2025-11-10",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 9.953e-06,
+    "exit_px": 9.8605e-06,
+    "net_ret": 0.006971418650773122
+  },
+  {
+    "entry_date": "2025-11-16",
+    "exit_date": "2025-11-16",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 8.856e-06,
+    "exit_px": 9.018e-06,
+    "net_ret": 0.015634327009937006
+  },
+  {
+    "entry_date": "2025-11-21",
+    "exit_date": "2025-11-23",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 7.801e-06,
+    "exit_px": 7.9745e-06,
+    "net_ret": 0.019276964491731687
+  },
+  {
+    "entry_date": "2025-11-27",
+    "exit_date": "2025-11-28",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 8.728e-06,
+    "exit_px": 8.5875e-06,
+    "net_ret": 0.013669514100414028
+  },
+  {
+    "entry_date": "2025-12-01",
+    "exit_date": "2025-12-01",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 7.964e-06,
+    "exit_px": 8.271e-06,
+    "net_ret": 0.035637167252636645
+  },
+  {
+    "entry_date": "2025-12-04",
+    "exit_date": "2025-12-04",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 8.869e-06,
+    "exit_px": 8.588999999999999e-06,
+    "net_ret": 0.029944791336140437
+  },
+  {
+    "entry_date": "2026-01-02",
+    "exit_date": "2026-01-04",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 7.815e-06,
+    "exit_px": 9.268496014543419e-06,
+    "net_ret": -0.1597803106458354
+  },
+  {
+    "entry_date": "2026-01-06",
+    "exit_date": "2026-01-06",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 9.24e-06,
+    "exit_px": 9.024e-06,
+    "net_ret": 0.021371668048263674
+  },
+  {
+    "entry_date": "2026-01-31",
+    "exit_date": "2026-02-01",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 6.823e-06,
+    "exit_px": 6.9215e-06,
+    "net_ret": 0.011105202989887044
+  },
+  {
+    "entry_date": "2026-02-05",
+    "exit_date": "2026-02-06",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 6.011e-06,
+    "exit_px": 6.2135e-06,
+    "net_ret": 0.029961004824488567
+  },
+  {
+    "entry_date": "2026-02-14",
+    "exit_date": "2026-02-15",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 6.642e-06,
+    "exit_px": 6.529e-06,
+    "net_ret": 0.013896256541299615
+  },
+  {
+    "entry_date": "2026-02-28",
+    "exit_date": "2026-02-28",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 5.551e-06,
+    "exit_px": 5.7539999999999995e-06,
+    "net_ret": 0.03256703296703289
+  },
+  {
+    "entry_date": "2026-03-10",
+    "exit_date": "2026-03-10",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 5.954e-06,
+    "exit_px": 5.768e-06,
+    "net_ret": 0.028487793005739427
+  },
+  {
+    "entry_date": "2026-04-17",
+    "exit_date": "2026-04-17",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 6.386e-06,
+    "exit_px": 6.2250000000000005e-06,
+    "net_ret": 0.022331602891365095
+  },
+  {
+    "entry_date": "2026-05-17",
+    "exit_date": "2026-05-21",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 5.815e-06,
+    "exit_px": 5.853e-06,
+    "net_ret": 0.0026954428202922596
+  },
+  {
+    "entry_date": "2026-06-04",
+    "exit_date": "2026-06-09",
+    "direction": 1,
+    "exit_reason": "time",
+    "entry_px": 5.031e-06,
+    "exit_px": 4.745e-06,
+    "net_ret": -0.0612228980322002
+  },
+  {
+    "entry_date": "2026-06-15",
+    "exit_date": "2026-06-15",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 5.174e-06,
+    "exit_px": 5.0425e-06,
+    "net_ret": 0.021812852907227186
+  },
+  {
+    "entry_date": "2026-06-18",
+    "exit_date": "2026-06-18",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 4.648e-06,
+    "exit_px": 4.7225e-06,
+    "net_ret": 0.011325473321858794
+  },
+  {
+    "entry_date": "2026-06-24",
+    "exit_date": "2026-06-24",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 4.365e-06,
+    "exit_px": 4.408e-06,
+    "net_ret": 0.004869186712485646
+  },
+  {
+    "entry_date": "2026-06-26",
+    "exit_date": "2026-06-26",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 4.233e-06,
+    "exit_px": 4.267499999999999e-06,
+    "net_ret": 0.003025466572170994
+  },
+  {
+    "entry_date": "2026-07-25",
+    "exit_date": "2026-07-28",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 4.748e-06,
+    "exit_px": 4.642000000000001e-06,
+    "net_ret": 0.0182226850045389
+  },
+  {
+    "entry_date": "2026-08-01",
+    "exit_date": "2026-08-01",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 5.094e-06,
+    "exit_px": 4.9415e-06,
+    "net_ret": 0.026534886900727493
+  },
+  {
+    "entry_date": "2026-08-07",
+    "exit_date": "2026-08-07",
+    "direction": 1,
+    "exit_reason": "stop",
+    "entry_px": 4.597e-06,
+    "exit_px": 4.650500000000001e-06,
+    "net_ret": 0.006887361322601836
+  },
+  {
+    "entry_date": "2026-08-20",
+    "exit_date": "2026-08-21",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 4.928e-06,
+    "exit_px": 5.8894538975501115e-06,
+    "net_ret": -0.16770853473771852
+  },
+  {
+    "entry_date": "2026-08-23",
+    "exit_date": "2026-08-23",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 5.479e-06,
+    "exit_px": 5.386000000000001e-06,
+    "net_ret": 0.01321668733882939
+  },
+  {
+    "entry_date": "2026-09-19",
+    "exit_date": "2026-09-19",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 5.496e-06,
+    "exit_px": 5.409e-06,
+    "net_ret": 0.012045293748652765
+  },
+  {
+    "entry_date": "2026-09-21",
+    "exit_date": "2026-09-22",
+    "direction": -1,
+    "exit_reason": "stop",
+    "entry_px": 6.012e-06,
+    "exit_px": 5.779e-06,
+    "net_ret": 0.03659171421245881
+  }
+]

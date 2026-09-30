@@ -114,7 +114,11 @@ def test_shib_uses_breakout_with_full_precision_stop():
     from trading.agape_shib_perp.signals import AgapeShibPerpSignalGenerator
 
     cfg = AgapeShibPerpConfig()
-    assert cfg.strategy_mode == "weekly_breakout" and cfg.max_open_positions == 1
+    # SHIB's default engine is fade_lock_breaker (see models.py); this test
+    # exercises weekly_breakout's own SHIB-precision handling directly, which
+    # still works if that strategy_mode is explicitly selected.
+    cfg.strategy_mode = "weekly_breakout"
+    assert cfg.max_open_positions == 1
     gen = AgapeShibPerpSignalGenerator.__new__(AgapeShibPerpSignalGenerator)
     gen.config = cfg
     p = 0.000012
