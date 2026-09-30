@@ -558,6 +558,14 @@ async function execute(){
 }
 
 function start() {
+ console.log('INDEX_IMPORT_SWEEP_START',JSON.stringify({enabled:process.env.RESEARCH_INDEX_MINUTE_IMPORT==='1',maxChunks:process.env.INDEX_IMPORT_MAX_CHUNKS||null}));
+ if(process.env.RESEARCH_INDEX_MINUTE_IMPORT==='1'){
+  const server=http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify({ok:true,scope:'isolated_research_import'}));});
+  server.listen(Number(process.env.PORT||10000),'0.0.0.0',()=>require('./index_minutes_theta_importer.cjs').main()
+   .then(()=>console.log('INDEX_IMPORT_RUNTIME complete'))
+   .catch(error=>console.error('INDEX_IMPORT_RUNTIME failed',error&&error.stack?error.stack:String(error))));
+  return;
+ }
  process.env.FLAME_FAST_START='on';process.env.SPARK_FAST_START='on';
  const server=http.createServer(async(req,res)=>{
   const url=new URL(req.url,'http://localhost');res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store');
