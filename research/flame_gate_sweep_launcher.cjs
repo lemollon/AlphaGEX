@@ -1,6 +1,7 @@
 // Research service only. Preserve the immutable original replay and build tests.
 const Module=require('node:module'),path=require('node:path');
 const target=path.resolve(__dirname,'spark_flame_current_3y_20260928.cjs');
+console.log('INDEX_IMPORT_LAUNCHER',JSON.stringify({enabled:process.env.RESEARCH_INDEX_MINUTE_IMPORT==='1',maxChunks:process.env.INDEX_IMPORT_MAX_CHUNKS||null,sweep:process.env.FLAME_GATE_SWEEP==='1'}));
 if(process.argv[1]&&path.resolve(process.argv[1])===target&&!process.argv.includes('--self-test')){
  const previous=Module._extensions['.cjs'];
  const loader=process.env.RESEARCH_INDEX_MINUTE_IMPORT==='1'
