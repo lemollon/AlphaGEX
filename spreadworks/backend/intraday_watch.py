@@ -1132,7 +1132,13 @@ async def fetch_symbol_market(app, symbol: str, now: datetime) -> dict[str, Any]
             "start": datetime.combine(now_et.date(), time(4, 0), ET).strftime("%Y-%m-%d %H:%M"),
             "end": now_et.strftime("%Y-%m-%d %H:%M"), "session_filter": "all",
         }),
+        return_exceptions=True,
     )
+    if isinstance(quote_payload, Exception):
+        raise quote_payload
+    bars_error = str(bars_payload) if isinstance(bars_payload, Exception) else None
+    if bars_error:
+        bars_payload = {}
     quotes = _quote_rows(quote_payload)
     if not quotes:
         raise RuntimeError(f"Tradier returned no usable {symbol} quote")
@@ -1191,7 +1197,8 @@ async def fetch_symbol_market(app, symbol: str, now: datetime) -> dict[str, Any]
         ))
     return {"symbol": symbol, "price": price, "price_basis": price_basis,
             "quote_timestamp": quote_at,
-            "bars": bars, "source": "Tradier production consolidated feed",
+            "bars": bars, "bars_error": bars_error,
+            "source": "Tradier production consolidated feed",
             "session": market_session(now), **freshness(quote_at, now)}
 
 
@@ -1483,7 +1490,7 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
     """Evaluate persisted setups once. Called only by the dedicated worker."""
     now = (now or datetime.now(UTC)).astimezone(UTC)
     today = now.astimezone(ET).date()
-    poll = max(30, int(os.getenv("INTRADAY_WATCH_POLL_SECONDS", "60")))
+    poll = min(60, max(30, int(os.getenv("INTRADAY_WATCH_POLL_SECONDS", "60"))))
     status: dict[str, Any] = {
         "worker_heartbeat": now.isoformat(), "worker_healthy": True,
         "poll_interval_seconds": poll, "current_trading_date": today.isoformat(),
@@ -1564,6 +1571,8 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
                 market_cache[symbol] = await fetch_symbol_market(app, symbol, now)
                 item = market_cache[symbol]
                 status["data_freshness"][symbol] = {
+                    "price": item["price"], "price_basis": item["price_basis"],
+                    "bars_error": item.get("bars_error"),
                     "source": item["source"], "session": item["session"],
                     "exchange_timestamp": item["exchange_timestamp"],
                     "retrieval_timestamp": item["retrieval_timestamp"],
@@ -1617,6 +1626,8 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
                     row.last_market_timestamp = market["quote_timestamp"]
                     status["last_market_data_timestamp"] = market["exchange_timestamp"]
                     status["data_freshness"][row.symbol] = {
+                        "price": market["price"], "price_basis": market["price_basis"],
+                        "bars_error": market.get("bars_error"),
                         "source": market["source"], "session": market["session"],
                         "exchange_timestamp": market["exchange_timestamp"],
                         "retrieval_timestamp": market["retrieval_timestamp"],
