@@ -176,3 +176,34 @@ verify same-day state rollback/retry, permanent-error classification, and
 checkpoint recovery while waiting. All 24 fault tests and all mutation checks
 passed before deployment. Final export reconciliation has seven tests and
 must pass across all 751 sessions and 16 paths before delivery.
+
+
+## September 30 guard-quote recovery
+
+The ec9ce9ff engine processed all 751 sessions, but final export reconciliation
+failed: five Spark paths had an unresolved November 24, 2025 FLINT guard exit.
+Eleven paths reconciled. The full study is therefore not complete and its
+unresolved compounded results must not be delivered as valid performance.
+
+A bounded read-only research probe reproduced the identical source CSV hashes.
+The SPY 669 call at 15:57:00 ET had bid $0.53 and ask $0.48; the crossed quote
+was correctly rejected. The 671 call long had bid $0.00. Authentic one-second
+history first supplied synchronized valid quotes at 15:57:02 ET: short bid/ask
+$0.48/$0.48 with ask size 23, long bid $0.00. No theoretical price is substituted.
+
+The new research runner scans the first valid synchronized one-second quote
+only within a triggered guard minute when the minute quote cannot support an
+exit. It records the quote timestamp and modeled execution delay in quoteRepair.
+No future minute, stale quote, price interpolation or broker execution claim is
+used. Unresolved day exits now stop immediately and roll back the whole day.
+XSP transport/provider errors also propagate rather than being silently treated
+as absent XSP quotes. Genuine provider 404 absence retains native fallback.
+
+All 28 fault tests, the native/integration tests and seven reconciliation tests
+pass. The new numerical engine SHA-256 is
+`75214ba4a85515a0e8700b9e388ec569bbb6222d927fb4f199ce0f6e8398e583`.
+The gamma helper remains
+`d86d19ebc95421cbc1cb1ac06a756554bf230967a47e3c6c1c2ef1b3be7d909f`.
+A fresh full replay starts under the new hash; no prior account results are
+reused. The September 28 production baseline and live strategies remain frozen.
+The final ZIP is withheld until all 751 sessions and all 16 paths pass audit.
