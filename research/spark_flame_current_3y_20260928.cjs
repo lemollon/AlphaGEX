@@ -1,17 +1,3 @@
-/* Runtime-only switch for the isolated SPY/VIX index-minute importer.
- * Build self-tests and module consumers retain the frozen replay source unchanged.
- */
-const RUN_INDEX_MINUTE_IMPORT =
-  process.env.RESEARCH_INDEX_MINUTE_IMPORT === '1' &&
-  require.main === module && !process.argv.includes('--self-test');
-console.log('INDEX_IMPORT_MODE', JSON.stringify({ enabled: process.env.RESEARCH_INDEX_MINUTE_IMPORT === '1', main: require.main === module, selfTest: process.argv.includes('--self-test') }));
-if (RUN_INDEX_MINUTE_IMPORT) {
-  setImmediate(() => require('./index_minutes_theta_importer.cjs').main().catch(error => {
-    console.error('INDEX_IMPORT_FATAL', error && error.stack ? error.stack : String(error));
-    process.exitCode = 1;
-  }));
-}
-
 /* Isolated research. No broker SDK, credentials, trading DB or order endpoints.
  * Base this branch on 3637fd18396b9ab532ee0d9bd42281338353a8a2.
  * Native Node TypeScript stripping executes production PURE functions unchanged.
