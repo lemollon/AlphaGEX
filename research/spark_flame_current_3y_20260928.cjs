@@ -135,7 +135,7 @@ async function histories() {
  try {
   const rr=await request('https://cdn.cboe.com/api/global/us_indices/daily_prices/SPX_History.csv');
   for(const r of rr){const [m,d,y]=(r.date||'').split('/');if(y&&Number.isFinite(+(r.close||r.spx)))SPX[`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`]=+(r.close||r.spx);}
- } catch(e) {STATE.spxHistoryError=String(e.message);}
+ } catch(e) {STATE.spxHistoryError=String(e.message);throw e;}
 }
 const SPX={};
 function missingPriorExpiries(day,closingChains,morningOI) {
@@ -425,6 +425,27 @@ async function saveCheckpoint() {
  const body=zlib.gzipSync(JSON.stringify({state:STATE,accounts,gamma,vix,eod,spx:SPX,manifest,daily:[...rowsByDay]}));
  await checkpointPool.query('INSERT INTO spark_flame_research_checkpoints(run_key,status,completed,checkpoint) VALUES($1,$2,$3,$4) ON CONFLICT(run_key) DO UPDATE SET status=EXCLUDED.status,completed=EXCLUDED.completed,checkpoint=EXCLUDED.checkpoint,updated_at=NOW()',[checkpointKey,STATE.stage,STATE.completed,body]);
 }
+function transientDataError(e) {
+ return ['fetch failed','aborted','TimeoutError','AbortError'].includes(String(e.message))
+  ||['TimeoutError','AbortError'].includes(e.name)
+  ||/^http_(429|500|502|503|504)$/.test(String(e.message));
+}
+async function recoverDataOperation(task,phase,rollback=()=>{}) {
+ let attempts=0;
+ for(;;){
+  try{
+   const result=await task();
+   if(attempts){(STATE.dataRecoveries??=[]).push({phase,day:STATE.currentDay,attempts});emit('data_recovered',{phase,day:STATE.currentDay,attempts});}
+   delete STATE.retryPhase;delete STATE.retryAttempt;delete STATE.retryError;return result;
+  }catch(e){
+   rollback();if(!transientDataError(e))throw e;
+   attempts++;STATE.stage='waiting_for_data';STATE.retryPhase=phase;STATE.retryAttempt=attempts;STATE.retryError=String(e.message);
+   const delayMs=Math.min(60000,15000*2**Math.min(attempts-1,2));
+   emit('retrying_data',{phase,day:STATE.currentDay,attempts,delayMs,error:STATE.retryError});
+   await saveCheckpoint();await new Promise(resolve=>setTimeout(resolve,delayMs));
+  }
+ }
+}
 async function execute() {
  selfTest();STATE.startedAt=new Date().toISOString();STATE.stage='loading_history';STATE.total=sessions().length;
  const sourceHashes={};for(const file of ['customer-executor/contracts.ts','one-strategy.ts','ebb-sizing.ts','fast-start-sizing.ts','flint.ts','xsp-swap.ts'])sourceHashes[file]=sha(fs.readFileSync(path.join(LIB,file)));
@@ -432,14 +453,14 @@ async function execute() {
  try {
   const resumed=await initCheckpointStore();
   if(resumed&&['completed_with_coverage_limits','blocked','incomplete'].includes(STATE.stage)){report=snapshot();return;}
-  if(!resumed)await histories();if(reconstructGammaEnabled)await warmGamma();STATE.stage='running';let consecutive=0;
+  if(!resumed||STATE.retryPhase==='history')await recoverDataOperation(histories,'history');
+  if(reconstructGammaEnabled)await recoverDataOperation(warmGamma,'warmup');STATE.stage='running';
   for(const day of sessions().slice(STATE.completed)) {
    STATE.currentDay=day;
    const beforeAccounts=structuredClone(accounts);
-   try {const row=await replayDay(day);rowsByDay.set(day,row);fs.writeFileSync(path.join(OUT,day+'.json'),JSON.stringify(row));emit('day',row);consecutive=0;}
-   catch(e){accounts.splice(0,accounts.length,...beforeAccounts);STATE.dataErrors.push({day,error:String(e.message)});emit('data_error',{day,error:String(e.message)});consecutive++;for(const a of accounts){a.invalidFrom??=day;a.unresolved.push({day,reasons:['data_error']});}}
+   try {const row=await recoverDataOperation(()=>replayDay(day),'day',()=>accounts.splice(0,accounts.length,...structuredClone(beforeAccounts)));STATE.stage='running';rowsByDay.set(day,row);fs.writeFileSync(path.join(OUT,day+'.json'),JSON.stringify(row));emit('day',row);}
+   catch(e){accounts.splice(0,accounts.length,...beforeAccounts);STATE.dataErrors.push({day,error:String(e.message)});emit('data_error',{day,error:String(e.message)});for(const a of accounts){a.invalidFrom??=day;a.unresolved.push({day,reasons:['data_error']});}throw e;}
    STATE.completed++;if(STATE.completed%5===0){snapshot();await saveCheckpoint();emit('progress',{...STATE});}
-   if(consecutive>=3)throw Error('three_consecutive_data_errors; stopped rather than silently backtesting absent quotes');
   }
   STATE.stage=STATE.dataErrors.length?'incomplete':'completed_with_coverage_limits';report=snapshot();await saveCheckpoint();emit('finished',{stage:STATE.stage,summary:report.summary});
  }catch(e){STATE.stage='blocked';STATE.error=String(e.message);report=snapshot();try{await saveCheckpoint();}catch{}emit('blocked',{...STATE});}
