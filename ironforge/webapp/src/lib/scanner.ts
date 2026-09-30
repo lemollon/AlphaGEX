@@ -380,6 +380,16 @@ function isNoStopBot(name: string): boolean {
  * writing. Blocking is the safe direction.
  */
 export const VIX_DECAY_CEILING = { spark: 0.90, flame: 0.80 } as const
+// A deliberately narrow, default-off live experiment.  This is NOT a global
+// retune of Flame's proven .80 regime: only the incremental (.80, .925] days
+// use the stricter admission and credit rules below.  If any confirmation data
+// is unavailable, the incremental day is skipped.
+const FLAME_HEADLINE_VIX_CEILING = 0.925
+const FLAME_HEADLINE_MIN_CREDIT = 0.20
+
+function isFlameHeadline0925Mode(): boolean {
+  return process.env.FLAME_HEADLINE_0925_LIVE === 'true'
+}
 const VIX_DECAY_WINDOW = 20
 const VIX_DECAY_MIN_HISTORY = VIX_DECAY_WINDOW + 1
 
@@ -484,6 +494,26 @@ export async function vixDecayCheck(asofDate: string, ceiling: number): Promise<
 
 async function vixDecayBlock(asofDate: string, ceiling: number): Promise<string | null> {
   return (await vixDecayCheck(asofDate, ceiling)).reason
+}
+
+/**
+ * Returns whether the most recently completed SPY session closed above the
+ * session before it.  This is intentionally based only on completed daily
+ * bars before `asofDate`; an unavailable or incomplete history returns null
+ * so headline-only entries fail closed.
+ */
+async function priorSpySessionWasUp(asofDate: string): Promise<boolean | null> {
+  try {
+    const history = await getDailyHistory('SPY', 10)
+    const completed = history
+      .filter((bar) => typeof bar.date === 'string' && bar.date < asofDate && Number.isFinite(bar.close))
+      .sort((a, b) => b.date.localeCompare(a.date))
+    if (completed.length < 2) return null
+    return completed[0].close > completed[1].close
+  } catch (e) {
+    console.warn(`[scanner] FLAME headline prior-SPY gate unavailable: ${e instanceof Error ? e.message : String(e)}`)
+    return null
+  }
 }
 
 /**
@@ -5506,17 +5536,20 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   // favorable-day upsize (EBB_FAVORABLE_UPSIZE) can reuse the SAME ratio
   // FLAME's own VIX decay gate just computed, rather than re-querying it.
   let flameVixRatioForUpsize: number | null = null
+  let flameHeadlineAddedDay = false
   if (bot.name === 'spark') {
     const vixBlock = await vixDecayBlock(getCentralTime().toISOString().slice(0, 10), VIX_DECAY_CEILING.spark)
     if (vixBlock) return `skip:${vixBlock}`
   } else if (bot.name === 'flame') {
     const asofDate = getCentralTime().toISOString().slice(0, 10)
-    const flameVix = await vixDecayCheck(asofDate, VIX_DECAY_CEILING.flame)
+    const headlineMode = isFlameHeadline0925Mode()
+    const flameCeiling = headlineMode ? FLAME_HEADLINE_VIX_CEILING : VIX_DECAY_CEILING.flame
+    const flameVix = await vixDecayCheck(asofDate, flameCeiling)
     flameVixRatioForUpsize = flameVix.ratio
     if (flameVix.reason) {
       if (flameVix.ratio !== null && flameVix.prior !== null && flameVix.windowMax !== null) {
         console.log(
-          `[scanner] FLAME VIX GATE skip: ratio=${flameVix.ratio.toFixed(3)} threshold=${VIX_DECAY_CEILING.flame.toFixed(2)} ` +
+          `[scanner] FLAME VIX GATE skip: ratio=${flameVix.ratio.toFixed(3)} threshold=${flameCeiling.toFixed(3)} ` +
           `(prior VIX close ${flameVix.prior.toFixed(2)} / 20-session max ${flameVix.windowMax.toFixed(2)})`,
         )
       } else {
@@ -5524,7 +5557,21 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
       }
       return `skip:${flameVix.reason}`
     }
-    console.log(`[scanner] FLAME VIX GATE ok ratio=${flameVix.ratio !== null ? flameVix.ratio.toFixed(3) : 'n/a'}`)
+    // The original <= .80 regime remains byte-for-byte unchanged.  Only the
+    // added (.80, .925] range requires a prior completed SPY up-session.
+    flameHeadlineAddedDay = headlineMode && flameVix.ratio !== null && flameVix.ratio > VIX_DECAY_CEILING.flame
+    if (flameHeadlineAddedDay) {
+      const priorSpyUp = await priorSpySessionWasUp(asofDate)
+      if (priorSpyUp !== true) {
+        const reason = priorSpyUp === false ? 'prior_spy_not_up' : 'prior_spy_history_unavailable'
+        console.log(`[scanner] FLAME headline admission skip: ${reason}`)
+        return `skip:${reason}`
+      }
+    }
+    console.log(
+      `[scanner] FLAME VIX GATE ok ratio=${flameVix.ratio !== null ? flameVix.ratio.toFixed(3) : 'n/a'}` +
+      (flameHeadlineAddedDay ? ' headline_added_day=full_size_credit_floor_0.20' : ''),
+    )
   }
 
   const acctRows = await query(
@@ -5578,7 +5625,7 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
 
   const out: string[] = []
   for (const ticker of FLAME_BOOKS) {
-    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, otmAbs, width, perBook, perTrade, ledger, opts)}`)
+    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, otmAbs, width, perBook, perTrade, ledger, opts, flameHeadlineAddedDay)}`)
   }
   return `otm$${otmAbs} w${width} x${perTrade} ` + out.join(' ')
 }
@@ -5588,6 +5635,7 @@ async function tryOpenFlameBook(
   otmAbs: number, width: number, perBook: number, perTrade: number,
   ledger: { funded: number | null; highWater: number | null; equity?: number | null; vixRatio?: number | null },
   opts: { force?: boolean } = {},
+  flameHeadlineAddedDay = false,
 ): Promise<string> {
   const todayRows = await query(
     `SELECT COUNT(*) AS cnt FROM ${botTable(bot.name, 'positions')}
@@ -5660,8 +5708,9 @@ async function tryOpenFlameBook(
   const callCreditVal = 0
   const entryCredit = c.putCredit
 
-  if (entryCredit < botCfg.min_credit) {
-    return `credit_low($${entryCredit.toFixed(2)})`
+  const minCredit = flameHeadlineAddedDay ? Math.max(botCfg.min_credit, FLAME_HEADLINE_MIN_CREDIT) : botCfg.min_credit
+  if (entryCredit < minCredit) {
+    return `credit_low(${entryCredit.toFixed(2)})`
   }
 
   // An iron condor can only lose on ONE side, so the capital at risk is one
@@ -5697,7 +5746,7 @@ async function tryOpenFlameBook(
   // only — SPARK's own VIX gate ratio is a different ceiling and this spec
   // is scoped to "FLAME's VIX gate" ratio specifically.
   let finalContracts = contracts
-  if (bot.name === 'flame' && isEbbFavorableUpsizeMode()) {
+  if (bot.name === 'flame' && !flameHeadlineAddedDay && isEbbFavorableUpsizeMode()) {
     const upsizeCap = Math.min(EBB_LADDER_CAP, liq?.maxLots ?? contracts + 1)
     if (contracts + 1 <= upsizeCap) {
       if (isEbbFavorableVixDay(ledger.vixRatio ?? null)) {
