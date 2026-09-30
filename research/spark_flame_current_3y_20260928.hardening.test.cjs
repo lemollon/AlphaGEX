@@ -60,6 +60,34 @@ function seed(h,day='2024-06-03'){
  const vix=Array.from({length:21},(_,i)=>({day:new Date(Date.UTC(2024,0,1+i)).toISOString().slice(0,10),close:i===20?16:20}));
  h.r.historiesSet({vix,eod:{[day]:500}});
 }
+test('crossed guard snapshot recovers at the first synchronized valid second',async()=>{
+ const calls=[];const h=harness({fetch:async raw=>{
+  const u=new URL(raw);calls.push(u);const strike=+u.searchParams.get('strike'),fine=u.searchParams.get('interval')==='1s';
+  const header='symbol,expiration,right,strike,timestamp,bid,ask,bid_size,ask_size';
+  const rows=fine?[0,1,2,3].map(s=>`SPY,2025-11-24,CALL,${strike},2025-11-24T15:57:0${s},${strike===669?(s<2?.53:.48):0},${strike===669?.48:.01},${strike===669?95:0},23`):[`SPY,2025-11-24,CALL,${strike},2025-11-24T15:57:00,${strike===669?.53:0},${strike===669?.48:.01},95,23`];
+  return new Response([header,...rows].join('\n'),{headers:{'X-Market-Data-Provider':'thetadata'}});
+ }});
+ try{
+  const q=new h.r.Quotes('2025-11-24',960),s=await q.spread('SPY','call',669,671,957);
+  assert.equal(s.at(957),null);assert.equal(await s.repairGuardQuote(957),true);assert.equal(s.at(957).debit,.48);
+  assert.equal(s.repairs[957].second,2);assert.equal(calls.filter(u=>u.searchParams.get('interval')==='1s').length,2);
+  assert(calls.filter(u=>u.searchParams.get('interval')==='1s').every(u=>u.searchParams.get('start_time')==='15:57:00'&&u.searchParams.get('end_time')==='15:57:59'));
+  assert.equal(await s.repairGuardQuote(957),true);assert.equal(calls.length,4);
+  assert.equal(h.r.realizeSpread(s,665,.49,new Map([[957,{open:669.4}]]),960,669.4,0).pnl,-.4);
+ }finally{h.cleanup();}
+});
+test('guard recovery rejects a valid quote from the next minute',async()=>{
+ const h=harness({fetch:async()=>new Response('symbol,expiration,right,strike,timestamp,bid,ask,bid_size,ask_size\nSPY,2025-11-24,CALL,669,2025-11-24T15:58:00,.47,.48,95,23\n',{headers:{'X-Market-Data-Provider':'thetadata'}})});
+ try{await assert.rejects(h.r.Quotes.prototype.guardLeg.call(new h.r.Quotes('2025-11-24',960),'SPY','call',669,957),/guard_quote_outside_minute/);}finally{h.cleanup();}
+});
+test('a valid minute guard quote does not request finer data',async()=>{
+ let n=0;const h=harness({fetch:async raw=>{n++;const u=new URL(raw),k=+u.searchParams.get('strike');return new Response(`symbol,expiration,right,strike,timestamp,bid,ask,bid_size,ask_size\nSPY,2025-11-24,CALL,${k},2025-11-24T15:57:00,${k===669?.47:0},${k===669?.48:.01},95,23\n`,{headers:{'X-Market-Data-Provider':'thetadata'}});}});
+ try{const s=await new h.r.Quotes('2025-11-24',960).spread('SPY','call',669,671,957);assert.equal(await s.repairGuardQuote(957),true);assert.equal(n,2);assert.deepEqual(plain(s.repairs),{});}finally{h.cleanup();}
+});
+test('an unresolved exit stops the job and rolls back instead of completing the day',async()=>{
+ const h=harness();h.r.injectExecution(async()=>{h.r.accounts[0].equity+=100;return {accounts:[{unresolved:['guard_quote_missing']}]};});
+ try{await h.r.execute();assert.equal(h.r.state.completed,0);assert.equal(h.r.state.stage,'blocked');assert(h.r.state.error.includes('unresolved_day_exit'));assert(h.r.accounts.every(a=>a.equity===a.deposit&&a.trades.length===0));}finally{h.cleanup();}
+});
 test('transient provider errors recover with bounded retries and backoff',async()=>{
  let n=0;const h=harness({fetch:async()=>++n<3?new Response('down',{status:503}):new Response('a\n1\n')});
  try{assert.deepEqual(plain(await h.r.request('https://fixture.invalid/data')),[{a:'1'}]);assert.equal(n,3);assert.deepEqual(h.timeouts,[45000,45000,45000]);assert.deepEqual(h.timers,[1000,2000]);}finally{h.cleanup();}
