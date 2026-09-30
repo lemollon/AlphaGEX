@@ -72,9 +72,14 @@ closures include January 9, 2025, independently of the source's limited
 2025–2027 calendar. Flame's afternoon entries skip half days; Spark's morning
 entry remains eligible and its guard uses the early close.
 
-The collector retries failed requests, stops after three consecutive session
-failures, restores account state on a failed day, and invalidates account paths
-with missing payoff data. Partial paths cannot be presented as complete.
+The collector retries individual requests. Transport failures (fetch/abort/timeouts,
+429, and provider 5xx) now roll back the entire attempted day and retry that
+same day with capped 15/30/60-second waits. The last successfully completed
+session is checkpointed while waiting, including the retry phase. Neither the
+completed count nor account equity advances across a missing day. A permanent
+schema, identity, or data-integrity error stops immediately at the failed date.
+History and gamma warmup use the same transport recovery. Independent SPX
+history must load before replay. Missing payoff data invalidates account paths. Partial paths cannot be presented as complete.
 Intraday mark gaps are counted; marked drawdown is an observed bound when
 coverage is incomplete.
 
@@ -84,7 +89,7 @@ coverage is incomplete.
   costs, CSV decoding, timezone conversion, holiday exclusions.
 - Synthetic integration: 16 account paths, scaled P&L and fees, adverse fills,
   XSP fallback, no orders. This is NOT a market-performance result.
-- 21 isolated fault-injection regressions: bounded provider retries/timeouts,
+- 24 isolated fault-injection regressions: bounded provider retries/timeouts,
   explicit no-data handling, provider/contract identity, weekend expiry supplements,
   strike and term IV surface estimates, same-side missing surfaces, future-data
   and mixed-source exclusion, early closes, independent XSP settlement, missing
@@ -139,8 +144,8 @@ pending. Adding the reliability tests did not restart or change this run.
 
 Service: https://dashboard.render.com/web/srv-dau3ni7lot8c739htsv0
 Execution branch: `research/spark-flame-current-3y-20260928`.
-Deployed runner commit: `3aa2eb5961074f87c3629f1acbbe2fd4f7a486ab`.
-Reliability test commit: `9fb6c9cb00f99db6520e4ae026ef4a7f79124727`.
+Recovery runner commit: `4d2855748888cd36a12591a4cab2ef11f048102f`.
+Recovery regression commit: `3780010a0998d85059d08a059cd7afd9f3825ca0`.
 
 A read-only observer polls authenticated status every 45 seconds and saves
 existing report/trade/daily exports every five minutes. Quotes retrieved
@@ -158,3 +163,16 @@ empty post-close OHLC records do not invalidate prior session trades.
 Verification: the independent CBOE SPX settlement series contains every one of
 this replay's 751 requested sessions. Contract-level XSP quote availability
 is checked during execution; missing observations follow the native SPY fallback.
+
+## September 29 overnight recovery
+
+The prior run recorded transport failures on June 21 and June 24, 2024.
+It continued diagnostically, so those paths are invalid and will not be
+presented as completed returns. The corrected collector waits for the same
+session instead of skipping it. A fresh run under a new source-hash key is
+being deployed; no old equity/performance checkpoint is reused. Production
+strategy rules and the September 28 baseline remain frozen. Three new tests
+verify same-day state rollback/retry, permanent-error classification, and
+checkpoint recovery while waiting. All 24 fault tests and all mutation checks
+passed before deployment. Final export reconciliation has seven tests and
+must pass across all 751 sessions and 16 paths before delivery.
