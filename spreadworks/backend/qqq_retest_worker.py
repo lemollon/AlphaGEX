@@ -205,7 +205,7 @@ async def _run_worker() -> None:
                 started_at = datetime.now(UTC)
                 status = await run_watch_cycle(app, now=started_at)
                 intraday_poll = max(
-                    30, int(os.getenv("INTRADAY_WATCH_POLL_SECONDS", "60"))
+                    30, min(60, int(os.getenv("INTRADAY_WATCH_POLL_SECONDS", "60")))
                 )
                 if (last_intraday_cycle is None
                         or (started_at - last_intraday_cycle).total_seconds()
