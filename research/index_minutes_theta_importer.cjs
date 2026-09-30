@@ -67,7 +67,14 @@ async function fetchBars(endpoint, symbol, startDate, endDate) {
       const response = await fetch(url, { signal: AbortSignal.timeout(90000), headers: { 'Cache-Control': 'no-cache' } });
       if (!response.ok) throw new Error(`http_${response.status}`);
       if (response.headers.get('x-market-data-provider') !== 'thetadata') throw new Error('unverified_provider');
-      return csv(await response.text());
+      const body = await response.text();
+      const parsed = csv(body);
+      if (parsed.length === 0 || !fetchBars.loggedSample) {
+        fetchBars.loggedSample = true;
+        log('provider_sample', { endpoint, symbol, startDate, endDate, bytes: body.length,
+          headers: Object.keys(parsed[0] || {}), firstRow: parsed[0] || null });
+      }
+      return parsed;
     } catch (error) {
       last = error;
       if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 2000));
@@ -78,7 +85,9 @@ async function fetchBars(endpoint, symbol, startDate, endDate) {
 
 function normalize(rows) {
   return rows.map(row => {
-    const ts = String(row.timestamp || row.ts || '').replace('T', ' ').replace(/\.\d+$/, '');
+    const rawTs = String(row.timestamp || row.ts || row.datetime || row.date_time || '');
+    const match = rawTs.match(/(\\d{4}-\\d{2}-\\d{2})[ T](\\d{2}:\\d{2}:\\d{2})/);
+    const ts = match ? \`\${match[1]} \${match[2]}\` : '';
     const tradeDate = ts.slice(0, 10);
     const values = ['open', 'high', 'low', 'close', 'volume', 'count', 'vwap'].map(k => Number(row[k]));
     return { ts, tradeDate, open: values[0], high: values[1], low: values[2], close: values[3], volume: values[4], count: values[5], vwap: values[6] };
@@ -118,9 +127,17 @@ async function upsert(client, table, rows) {
 
 async function importSeries(client, table, endpoint, symbol) {
   let total = 0;
+  const maxChunks = Number(process.env.INDEX_IMPORT_MAX_CHUNKS || 0);
+  let chunks = 0;
   for (const [startDate, endDate] of ranges()) {
-    const rows = normalize(await fetchBars(endpoint, symbol, startDate, endDate));
-    await upsert(client, table, rows); total += rows.length;
+    if (maxChunks > 0 && chunks >= maxChunks) break;
+    const rawRows = await fetchBars(endpoint, symbol, startDate, endDate);
+    const rows = normalize(rawRows);
+    if (rawRows.length > 0 && rows.length === 0) {
+      log('normalize_rejected', { table, startDate, endDate, rawRows: rawRows.length,
+        headers: Object.keys(rawRows[0] || {}), firstRow: rawRows[0] || null });
+    }
+    await upsert(client, table, rows); total += rows.length; chunks += 1;
     log('chunk_complete', { table, startDate, endDate, rows: rows.length, total });
   }
   return total;
