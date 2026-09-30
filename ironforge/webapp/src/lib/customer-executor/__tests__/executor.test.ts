@@ -170,6 +170,15 @@ describe('Flame-only customer arm', () => {
     expect(isExecutorArmedForAgent('flame')).toBe(true)
     expect(isExecutorArmedForAgent('spark')).toBe(false)
   })
+
+  it('allows an eligible Flame mirror under the Flame-only arm', async () => {
+    delete process.env.CUSTOMER_EXECUTOR_ENABLED
+    process.env.FLAME_CUSTOMER_EXECUTOR_ENABLED = 'true'
+    const { mirrorOpenToCustomers } = await import('../executor')
+    state.eligible = [{ ...BASE_ROW, external_account_ref_ciphertext: 'customer-account-1' }]
+    await mirrorOpenToCustomers(MASTER_OPEN)
+    expect(placedOrders).toHaveLength(1)
+  })
 })
 
 describe('mirrorOpenToCustomers — bot-account guard', () => {
