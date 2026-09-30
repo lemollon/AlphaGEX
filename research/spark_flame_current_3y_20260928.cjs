@@ -1,3 +1,9 @@
+if (process.env.RESEARCH_INDEX_MINUTE_IMPORT === '1') {
+  require('./index_minutes_theta_importer.cjs').main().catch(error => {
+    console.error('INDEX_IMPORT_FATAL', error && error.stack ? error.stack : String(error));
+    process.exitCode = 1;
+  });
+} else {
 /* Isolated research. No broker SDK, credentials, trading DB or order endpoints.
  * Base this branch on 3637fd18396b9ab532ee0d9bd42281338353a8a2.
  * Native Node TypeScript stripping executes production PURE functions unchanged.
@@ -520,3 +526,5 @@ if(require.main===module) {
  server.listen(Number(process.env.PORT||10000),'0.0.0.0',()=>execute());
 }
 module.exports={selfTest,hostSize,flintSize,realizeSpread,sessions,stats,csv,SPEC,replayDay,accounts,setTestHistories: (data)=>{vix=data.vix;eod=data.eod;reconstructGammaEnabled=false;}};
+
+}
