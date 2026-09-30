@@ -156,7 +156,9 @@ async function loadGammaDay(day,spot) {
  // broaden this request to other expirations.
  const supplementalExpiries=missingPriorExpiries(day,closingChains,morningOI);
  for(const expiration of supplementalExpiries){
-  const rows=await feed('/v3/option/history/eod',{symbol:'SPY',date:priorDay,expiration,max_dte:0});
+  let rows;
+  try{rows=await feed('/v3/option/history/eod',{symbol:'SPY',date:priorDay,expiration,max_dte:0});}
+  catch(e){if(e.message==='http_404')continue;throw e;}
   if(rows.some(r=>String(r.expiration).slice(0,10)!==expiration))throw Error('gamma_supplement_wrong_expiry');
   closingChains.push(...rows);
  }
