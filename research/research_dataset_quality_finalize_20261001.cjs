@@ -21,7 +21,7 @@ async function main(){
    await save();
   }
   for(const [table,name] of [['research_spy_option_minute_valid','research_spy_prior_eod_valid'],['research_vix_option_minute_valid','research_vix_prior_eod_valid']]){
-   await c.query(`CREATE OR REPLACE VIEW ${name} AS SELECT r.* FROM ${table} r WHERE prior_eod_trade_date<trade_date AND prior_eod_underlying_price>0 AND prior_eod_underlying_price<'Infinity'::float8 AND CASE WHEN upper(cp) IN ('C','CALL') THEN prior_eod_call_bid>=0 AND prior_eod_call_ask>0 AND prior_eod_call_bid<=prior_eod_call_ask AND prior_eod_call_ask<'Infinity'::float8 AND prior_eod_call_oi>=0 ELSE prior_eod_put_bid>=0 AND prior_eod_put_ask>0 AND prior_eod_put_bid<=prior_eod_put_ask AND prior_eod_put_ask<'Infinity'::float8 AND prior_eod_put_oi>=0 END`);
+   await c.query(`CREATE OR REPLACE VIEW ${name} AS SELECT r.* FROM ${table} r WHERE prior_eod_trade_date<trade_date AND prior_eod_underlying_price>0 AND prior_eod_underlying_price<'Infinity'::float8 AND prior_eod_call_bid>=0 AND prior_eod_call_ask>0 AND prior_eod_call_bid<=prior_eod_call_ask AND prior_eod_call_ask<'Infinity'::float8 AND prior_eod_call_oi>=0 AND prior_eod_put_bid>=0 AND prior_eod_put_ask>0 AND prior_eod_put_bid<=prior_eod_put_ask AND prior_eod_put_ask<'Infinity'::float8 AND prior_eod_put_oi>=0`);
   }
   await c.query("COMMENT ON TABLE vix_minute_3y IS 'INVALID_SOURCE: audited 2026-10-01; all 305762 OHLC rows zero. Not VIX index signals. Use research_vix_index_minute_valid; no synthesized OHLC.'");
   await c.query("COMMENT ON TABLE spy_history_full IS 'PARTIAL older-history backfill (2020 through July 2022 as of 2026-10-01). Not new subminute data.'");
@@ -47,4 +47,3 @@ async function main(){
  finally{c.release();await pool.end();}
 }
 module.exports={main};if(require.main===module)main().catch(e=>{console.error(e.message);process.exitCode=1;});
-
