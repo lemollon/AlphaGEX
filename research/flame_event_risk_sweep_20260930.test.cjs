@@ -13,14 +13,17 @@ global.fetch=async raw=>{
 };
 (async()=>{
  seed();await R.replayDay(day);
- const base=R.accounts.filter(a=>a.scenario.id==='base_nofed_norisk');
+ const base=R.accounts.filter(a=>a.scenario.id==='flame_base');
+ assert.equal(base.length,2,'Baseline assertions must exercise both actual fill cases');
  for(const a of base){assert.equal(a.days[0].hostN,2);assert.equal(a.days[0].pnl,a.fillCase==='natural'?47.2:41.2);}
  assert(reqs<25,'historical data must be shared across paths');
- const risk=R.accounts.filter(a=>a.scenario.id==='base_nofed_risk10');
+ const risk=R.accounts.filter(a=>a.bot==='flame'&&a.scenario.maxRiskPct===.10);
+ assert.equal(risk.length,4,'Risk assertions must exercise actual accounts');
  for(const a of risk)assert.equal(a.days[0].hostN,1,'$2,000 account must cap the two-lot host at one lot');
  assert.equal(R.scenarioRiskCapacity({equity:200000,scenario:{maxRiskPct:.10}},2,18000,0),1);
  reset();day='2024-06-12';ratio=.75;seed();await R.replayDay(day);
  const guarded=R.accounts.filter(a=>a.scenario.eventGuard);
  for(const a of guarded){assert.equal(a.days[0].hostN,0);assert.equal(a.days[0].flintN,0,'FOMC blackout must not admit FLINT');}
- console.log(JSON.stringify({passed:true,paths:16,tests:'baseline parity fixture, fixed aggregate-risk cap, FOMC full new-entry blackout, shared quotes, zero order endpoints; SYNTHETIC fixtures only'}));
+ assert.equal(R.accounts.length,44);
+ console.log(JSON.stringify({passed:true,paths:44,tests:'baseline parity fixture, fixed aggregate-risk cap, FOMC full new-entry blackout, shared quotes, zero order endpoints; SYNTHETIC fixtures only'}));
 })().catch(e=>{console.error(e);process.exitCode=1;});
