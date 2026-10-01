@@ -57,6 +57,15 @@ class FakeThetaClient:
             "count": 100_000,
         }])
 
+
+    def stock_history_ohlc(self, **kwargs):
+        self.calls.append(("stock_history_ohlc", kwargs))
+        return Frame([{
+            "timestamp": "2025-04-11T15:03:00-04:00", "symbol": "SPY",
+            "open": 533.9, "high": 534.0, "low": 533.8, "close": 533.95,
+            "volume": 100, "count": 5, "vwap": 533.92,
+        }])
+
     def option_list_expirations(self, **kwargs):
         self.calls.append(("option_list_expirations", kwargs))
         return Frame([{"symbol": "SPY", "expiration": "2026-09-21"}])
@@ -347,3 +356,17 @@ def test_health_failure_is_cached(monkeypatch):
     assert client.get("/health").status_code == 503
     assert client.get("/health").status_code == 503
     assert calls["n"] == 1
+
+
+def test_private_proxy_allows_bounded_one_second_stock_history(monkeypatch):
+    fake = FakeThetaClient()
+    monkeypatch.setattr(proxy, "_client", lambda: fake)
+    client = TestClient(proxy.app)
+    response = client.get("/v3/stock/history/ohlc", params={
+        "symbol": "SPY", "date": "2025-04-11", "interval": "1s",
+        "start_time": "15:03:00", "end_time": "15:03:59", "venue": "utp_cta",
+    })
+    assert response.status_code == 200
+    assert response.headers["x-bar-timestamp"] == "interval-start"
+    assert fake.calls[-1][0] == "stock_history_ohlc"
+    assert fake.calls[-1][1]["interval"] == "1s"
