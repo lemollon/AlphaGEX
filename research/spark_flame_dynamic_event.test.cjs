@@ -19,6 +19,6 @@ assert.equal(r.triggerMinute,667);assert.equal(r.exit,668);assert.equal(r.reason
 assert.equal(R.eventBlocked({eventMode:'major'},'2026-06-05'),true);
 assert.equal(R.eventBlocked({eventMode:'fed'},'2026-06-05'),false);
 assert.equal(R.eventBlocked({eventMode:'fed'},'2026-06-17'),true);
-assert.equal(R.accounts.length,144);
+assert.equal(R.accounts.length,444);
 trailQuotes.set(680,{debit:500});assert.deepEqual(R.dynamicExit(xsp,665,.20,spots,690,0,{dynamicTrail:true},vix),r,'Future observations cannot change an earlier exit');
-console.log('PASS: delayed/deferred quote fills, blocked unresolved exit, VIX confirmation, XSP protection, event identity, future invariance, 144 paths');
+console.log('PASS: delayed/deferred quote fills, blocked unresolved exit, VIX confirmation, XSP protection, event identity, future invariance, 444 paths');
