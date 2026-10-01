@@ -63,10 +63,10 @@ async function fetchBars(endpoint, symbol, startDate, endDate) {
   Object.entries({ symbol, start_date: startDate, end_date: endDate, interval: '1m', start_time: '09:30:00', end_time: '16:00:00' })
     .forEach(([k, v]) => url.searchParams.set(k, v));
   let last;
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= 5; attempt++) {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(90000), headers: { 'Cache-Control': 'no-cache' } });
-      if (!response.ok) throw new Error(`http_${response.status}`);
+      if (!response.ok) { const error = new Error(`http_${response.status}`); error.retryable = [429, 500, 502, 503, 504].includes(response.status); throw error; }
       if (response.headers.get('x-market-data-provider') !== 'thetadata') throw new Error('unverified_provider');
       const body = await response.text();
       const parsed = csv(body);
@@ -78,7 +78,7 @@ async function fetchBars(endpoint, symbol, startDate, endDate) {
       return parsed;
     } catch (error) {
       last = error;
-      if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+      if (attempt < 5) await new Promise(resolve => setTimeout(resolve, Math.min(30000, attempt * 3000)));
     }
   }
   throw last;
@@ -126,20 +126,54 @@ async function upsert(client, table, rows) {
   ]);
 }
 
+function addDays(day, days) {
+  const value = new Date(`${day}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return iso(value);
+}
+function rangeDays(startDate, endDate) {
+  return Math.round((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86400000);
+}
+async function importRange(client, table, endpoint, symbol, startDate, endDate) {
+  let outageAttempt = 0;
+  for (;;) {
+    try {
+      const rawRows = await fetchBars(endpoint, symbol, startDate, endDate);
+      const rows = normalize(rawRows);
+      if (rawRows.length > 0 && rows.length === 0) {
+        throw new Error(`normalize_rejected:${table}:${startDate}:${endDate}`);
+      }
+      await upsert(client, table, rows);
+      log('chunk_complete', { table, startDate, endDate, rows: rows.length });
+      return rows.length;
+    } catch (error) {
+      const retryable = error.retryable || /^http_(429|500|502|503|504)$/.test(String(error.message));
+      const days = rangeDays(startDate, endDate);
+      if (!retryable) throw error;
+      if (days > 0) {
+        const leftDays = Math.floor(days / 2);
+        const middle = addDays(startDate, leftDays);
+        const rightStart = addDays(middle, 1);
+        log('split_retryable_range', { table, startDate, endDate, error: error.message, middle });
+        return (await importRange(client, table, endpoint, symbol, startDate, middle))
+          + (await importRange(client, table, endpoint, symbol, rightStart, endDate));
+      }
+      outageAttempt += 1;
+      const delayMs = Math.min(60000, 5000 * outageAttempt);
+      log('retrying_exact_day', { table, day: startDate, outageAttempt, delayMs, error: error.message });
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+}
 async function importSeries(client, table, endpoint, symbol) {
   let total = 0;
   const maxChunks = Number(process.env.INDEX_IMPORT_MAX_CHUNKS || 0);
   let chunks = 0;
   for (const [startDate, endDate] of ranges()) {
     if (maxChunks > 0 && chunks >= maxChunks) break;
-    const rawRows = await fetchBars(endpoint, symbol, startDate, endDate);
-    const rows = normalize(rawRows);
-    if (rawRows.length > 0 && rows.length === 0) {
-      log('normalize_rejected', { table, startDate, endDate, rawRows: rawRows.length,
-        headers: Object.keys(rawRows[0] || {}), firstRow: rawRows[0] || null });
-    }
-    await upsert(client, table, rows); total += rows.length; chunks += 1;
-    log('chunk_complete', { table, startDate, endDate, rows: rows.length, total });
+    total += await importRange(client, table, endpoint, symbol, startDate, endDate);
+    chunks += 1;
+    log('range_complete', { table, startDate, endDate, total });
   }
   return total;
 }
