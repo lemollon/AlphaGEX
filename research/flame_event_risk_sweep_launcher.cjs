@@ -3,7 +3,9 @@ const Module=require('node:module'),path=require('node:path');
 const target=path.resolve(__dirname,'spark_flame_current_3y_20260928.cjs');
 if(process.argv[1]&&path.resolve(process.argv[1])===target&&!process.argv.includes('--self-test')){
  const previous=Module._extensions['.cjs'];
- const loader=process.env.RESEARCH_QUALITY_FINALIZE==='1'
+ const loader=process.env.RESEARCH_REPAIR_SPY_GAPS==='1'
+  ? "require('./research_repair_spy_minute_gaps_20261001.cjs').main().catch(error=>{console.error('SPY_GAP_REPAIR_FATAL',error.message);process.exitCode=1;});"
+  : process.env.RESEARCH_QUALITY_FINALIZE==='1'
   ? "require('./research_dataset_quality_finalize_20261001.cjs').main().catch(error=>{console.error('QUALITY_FINALIZER_FATAL',error.message);process.exitCode=1;});"
   : process.env.RESEARCH_DATA_QUALITY==='1'
   ? "require('./research_dataset_quality_20261001.cjs').main().catch(error=>{console.error('QUALITY_FATAL',error.message);process.exitCode=1;});"
