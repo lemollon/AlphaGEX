@@ -19,6 +19,7 @@ const L = require(path.join(LIB, 'ebb-sizing.ts'));
 const X = require(path.join(LIB, 'xsp-swap.ts'));
 const FAST = require(path.join(LIB, 'fast-start-sizing.ts'));
 const GAMMA=require('./spark_flame_gamma_reconstruction.cjs');
+const PROFIT_LOCK=require('./spark_flame_profit_lock.cjs');
 let reconstructGammaEnabled=true;
 let separateSrc=fs.readFileSync(path.join(LIB,'spark-flint-separate.ts'),'utf8').replace(/import\s*\{[^}]*\}\s*from\s*'\.\/flint'/,'');
 const S=new Function('evaluateFlintProfitGate',`${stripTypeScriptTypes(separateSrc).replace(/\bexport\s+/g,'')}; return {decideSparkFlintContracts};`)(F.evaluateFlintProfitGate);
@@ -260,7 +261,7 @@ class Quotes {
  }
 }
 function newAccount(bot,profile,fillCase) {
- const deposit=cents(SPEC.seeds[bot]);return {bot,profile,fillCase,deposit,equity:deposit,peak:deposit,floorPeak:deposit,triggered:false,fast:FAST.seedFastStartState(deposit/100),trades:[],days:[],skips:{},unresolved:[],floorBreaches:0};
+ const deposit=cents(SPEC.seeds[bot]);return {bot,profile,fillCase,deposit,equity:deposit,peak:deposit,floorPeak:deposit,triggered:false,fast:FAST.seedFastStartState(deposit/100),trades:[],days:[],skips:{},unresolved:[],floorBreaches:0,profitLockState:null};
 }
 const accounts=[];
 for(const scenario of scenarioGrid())for(const fillCase of Object.keys(SPEC.fillCases)){const a=newAccount(scenario.bot,'current_customer_package',fillCase);a.scenario=scenario;a.history=[];a.tradeCounts={total:0,host:0,flint:0,addedHost:0};accounts.push(a);}
@@ -292,6 +293,12 @@ function scenarioRiskCapacity(a, n, ml, activeRisk=0) {
  if(!(pct>0))return n;
  const cap=Math.floor(a.equity*pct);
  return Math.max(0,Math.min(n,Math.floor(Math.max(0,cap-activeRisk)/ml)));
+}
+function profitLockCapacity(a,n,ml,activeRisk=0) {
+ if(!a.scenario?.profitLock)return n;
+ const decision=PROFIT_LOCK.cappedLots(a.profitLockState,a.equity,n,ml,activeRisk,a.scenario.profitLock);
+ if(decision.lots<n)a.profitLockSkips=(a.profitLockSkips||0)+1;
+ return decision.lots;
 }
 function persistHost(a,s) {
  if(!s.result)return;
@@ -382,7 +389,8 @@ async function replayDay(day) {
  const spots=new Map();for(const r of rr){const m=minute(r.timestamp||r.datetime,day);if(m>=close)continue;if(r.symbol?.trim()&&r.symbol.trim().toUpperCase()!=='SPY')throw Error('wrong_stock_identity');const b={open:+r.open,high:+r.high,low:+r.low,close:+r.close};if(Object.values(b).every(x=>x===0)&&+r.volume===0)continue;if(Object.values(b).some(x=>!Number.isFinite(x)||x<=0))throw Error('invalid_stock');spots.set(m,b);}
  if(!eod[day])throw Error('official_SPY_close_missing');
  if(reconstructGammaEnabled){const spot=spots.get(665)?.open;if(!(spot>0))throw Error('gamma_current_spot_missing');await loadGammaDay(day,spot);}
-  const dq=new Quotes(day,close), daily={day,vix:vg,close,events:MACRO_CALENDAR[day]||[],intradayVixPoints:currentVixTape.size,minuteInputs:{vix:[...currentVixTape],spyClose:[...spots].map(([m,b])=>[m,b.close])},accounts:[]};
+ for(const a of accounts)a.profitLockState=PROFIT_LOCK.beginDay(a.profitLockState,day,a.equity,a.deposit);
+ const dq=new Quotes(day,close), daily={day,vix:vg,close,events:MACRO_CALENDAR[day]||[],intradayVixPoints:currentVixTape.size,minuteInputs:{vix:[...currentVixTape],spyClose:[...spots].map(([m,b])=>[m,b.close])},accounts:[]};
  for(const bot of ['spark','flame']) {
   const cfg=SPEC.bots[bot], group=accounts.filter(a=>a.bot===bot), active=new Map(group.map(a=>[a,[]]));
   const hosts=new Map(), flints=new Set();
@@ -413,7 +421,8 @@ async function replayDay(day) {
      const f=flintSize(a,c.credit-slip,vg.ratio,candidates.get(a),host||proposed,Math.floor(Math.min(c.bidSize,c.askSize)),day);
      const available=a.equity-active.get(a).reduce((s,t)=>s+t.risk,0);
      const n=scenarioRiskCapacity(a,Math.min(f.n,Math.floor(Math.max(0,available)/f.ml)),f.ml,active.get(a).reduce((s,t)=>s+t.risk,0));
-     if(n>0) {active.get(a).push({spread:call,n,credit:c.credit-slip,entry:m,risk:f.ml*n,leg:'flint',controller:a.scenario});flints.add(a);}
+     const profitLocked=profitLockCapacity(a,n,f.ml,active.get(a).reduce((s,t)=>s+t.risk,0));
+     if(profitLocked>0) {active.get(a).push({spread:call,n:profitLocked,credit:c.credit-slip,entry:m,risk:f.ml*profitLocked,leg:'flint',controller:a.scenario});flints.add(a);}
     }
     // The real scanner evaluates FLINT first, then persists the host floor,
     // including a floor-capped zero-sized host decision.
@@ -421,7 +430,9 @@ async function replayDay(day) {
     if(!host&&proposed&&proposed.n>0) {
      // Re-read buying power after FLINT reserved its collateral.
      const available=a.equity-active.get(a).reduce((s,t)=>s+t.risk,0);proposed.n=Math.min(proposed.n,Math.floor(Math.max(0,available)/proposed.ml));
-     proposed.n=scenarioRiskCapacity(a,proposed.n,proposed.ml,active.get(a).reduce((s,t)=>s+t.risk,0));
+     const activeRisk=active.get(a).reduce((s,t)=>s+t.risk,0);
+     proposed.n=scenarioRiskCapacity(a,proposed.n,proposed.ml,activeRisk);
+     proposed.n=profitLockCapacity(a,proposed.n,proposed.ml,activeRisk);
      if(proposed.n<=0)continue;
      hosts.set(a,proposed);
      let decision={nXsp:0,nSpy:proposed.n,reason:'xsp_quote_unavailable'};
@@ -463,9 +474,9 @@ async function replayDay(day) {
    // No silently compounded missing-day returns. Once a path is unresolved,
    // future outputs remain diagnostic and never become a complete result.
    for(const t of resolved)if(!t.unresolved){const pnl=cents(t.pnl*t.n);net+=pnl;const tr={day,leg:t.leg,symbol:t.spread.symbol,short:t.spread.short,long:t.spread.long,entry:t.entry,exit:t.exit,n:t.n,credit:money(t.credit),pnl:money(pnl/100),reason:t.reason};if(Number.isFinite(t.exitDebit))Object.assign(tr,{exitDebit:t.exitDebit,triggerMinute:t.triggerMinute,signal:t.signal});if(t.spread.repairs[t.exit])tr.quoteRepair=t.spread.repairs[t.exit];a.trades.push(tr);}
-   a.equity+=net;a.peak=Math.max(a.peak,a.equity);
+   a.equity+=net;a.peak=Math.max(a.peak,a.equity);a.profitLockState=PROFIT_LOCK.closeDay(a.profitLockState,a.equity);
    if(a.triggered&&a.equity<a.deposit)a.floorBreaches++;
-   const row={day,before:before/100,after:a.equity/100,pnl:net/100,markedMin:mtmMin/100,markedPeak:mtmPeak/100,markedDD:markedDD/100,markGaps,hostN:hosts.get(a)?.n||0,flintN:resolved.filter(t=>t.leg==='flint').reduce((s,t)=>s+t.n,0),xsp:hosts.get(a)?.xspDecision||null,triggered:a.triggered,floor:C.currentFloorLevelCents(a.deposit,a.floorPeak,a.triggered,.10)/100,unresolved};
+   const row={day,before:before/100,after:a.equity/100,pnl:net/100,markedMin:mtmMin/100,markedPeak:mtmPeak/100,markedDD:markedDD/100,markGaps,hostN:hosts.get(a)?.n||0,flintN:resolved.filter(t=>t.leg==='flint').reduce((s,t)=>s+t.n,0),xsp:hosts.get(a)?.xspDecision||null,triggered:a.triggered,floor:C.currentFloorLevelCents(a.deposit,a.floorPeak,a.triggered,.10)/100,profitLock:a.scenario.profitLock||null,profitLockSkips:a.profitLockSkips||0,unresolved};
    a.days.push(row);daily.accounts.push({scenarioId:a.scenario.id,bot:a.bot,profile:a.profile,fillCase:a.fillCase,...row});
   }
  }
@@ -562,15 +573,31 @@ const MACRO_CALENDAR={"2023-10-03":["JOLTS"],"2023-10-06":["PAYROLLS"],"2023-10-
 function scenarioGrid(){
  const out=[];
  for(const [bot,baseGate,addedGate] of [['flame',.80,.925],['spark',.90,.975]]){
-  for(const admission of ['base','add_full','add_half']){
-   for(const protection of ['hold','shock','trail','shock_trail']){
-    for(const eventMode of ['none','fed','major']){
-     const original=admission==='base'&&protection==='hold'&&eventMode==='none';
-     out.push({id:original?bot+'_base':bot+'_'+admission+'_'+protection+'_'+eventMode,bot,baseGate,gate:admission==='base'?baseGate:addedGate,risk:admission==='add_half'?'50pct':'full',credit:admission==='base'?.10:.20,regime:admission==='base'?'all':'prior_up',eventGuard:false,eventMode,maxRiskPct:null,minute:'none',takePct:0,stopPct:0,dynamicShock:protection.includes('shock'),dynamicTrail:protection.includes('trail')});
+   for(const admission of ['base','add_full','add_half']){
+    for(const protection of ['hold','shock','trail','shock_trail']){
+     for(const eventMode of ['none','fed','major']){
+      // The frozen baseline is retained exactly.  VIX/price admission is
+      // only evaluated for incremental, higher-VIX-ratio entries, using
+      // observations completed before the original entry minute.
+      const minuteModes=admission==='base'?['none']:['none','vix_flat','spy_holding','both'];
+      for(const minute of minuteModes){
+       const original=admission==='base'&&protection==='hold'&&eventMode==='none';
+       const baseId=original?bot+'_base':bot+'_'+admission+'_'+protection+'_'+eventMode;
+       out.push({id:minute==='none'?baseId:baseId+'_minute_'+minute,bot,baseGate,gate:admission==='base'?baseGate:addedGate,risk:admission==='add_half'?'50pct':'full',credit:admission==='base'?.10:.20,regime:admission==='base'?'all':'prior_up',eventGuard:false,eventMode,maxRiskPct:null,minute,profitLock:null,takePct:0,stopPct:0,dynamicShock:protection.includes('shock'),dynamicTrail:protection.includes('trail')});
+      }
+     }
     }
-   }
   }
  }
+ // Account-level retained-profit governors are compared against the literal
+ // customer-package baseline before combining them with any selected VIX or
+ // event controller.  This prevents a broad interaction sweep from hiding
+ // which safeguard actually reduced customer-facing profit giveback.
+ for(const [bot,baseGate] of [['flame',.80],['spark',.90]])for(const [id,profitLock] of [
+  ['retain50',{dayRetention:.50,weekRetention:.50,accountRetention:.50}],
+  ['retain75',{dayRetention:.75,weekRetention:.75,accountRetention:.50}],
+  ['account50',{dayRetention:0,weekRetention:0,accountRetention:.50}],
+ ])out.push({id:`${bot}_base_profit_lock_${id}`,bot,baseGate,gate:baseGate,risk:'full',credit:.10,regime:'all',eventGuard:false,eventMode:'none',maxRiskPct:null,minute:'none',profitLock,takePct:0,stopPct:0,dynamicShock:false,dynamicTrail:false});
  return out;
 }
 function capAddedLots(n,risk){if(n<=0)return 0;if(risk==='one')return Math.min(n,1);if(risk==='full')return n;return Math.max(1,Math.floor(n*(risk==='75pct'?.75:.50)));}
@@ -600,13 +627,16 @@ function scenarioCandidate(s,ratio,day,spots){
  return eod[prior[1]]>=eod[prior[0]];
 }
 function sweepSelfTest(){
- assert.equal(scenarioGrid().length,72);assert.equal(new Set(scenarioGrid().map(s=>s.id)).size,72);
+ assert.equal(scenarioGrid().length,222);assert.equal(new Set(scenarioGrid().map(s=>s.id)).size,222);
+ assert.equal(scenarioGrid().filter(s=>s.minute!=='none'&&s.gate===s.baseGate).length,0,'baseline must not be selected with new minute filters');
+ assert.equal(scenarioGrid().filter(s=>s.minute==='vix_flat').length,48);
+ assert.equal(scenarioGrid().filter(s=>s.profitLock).length,6);
  for(const risk of ['full','75pct','50pct','one'])for(let n=0;n<30;n++){assert(capAddedLots(n,risk)<=n);assert(capAddedLots(n,risk)>=0);}
  assert.equal(capAddedLots(0,'one'),0);assert.equal(capAddedLots(3,'50pct'),1);
  const s={baseGate:.80,gate:.85,regime:'all',minute:'none'};assert(scenarioCandidate(s,.80,'2024-01-02',new Map()));assert(scenarioCandidate(s,.85,'2024-01-02',new Map()));assert(!scenarioCandidate(s,.850001,'2024-01-02',new Map()));
  assert(!scenarioCandidate({baseGate:.80,gate:1,regime:'all',eventGuard:true,minute:'none'},.75,'2026-03-18',new Map()));
  const a={equity:2000000,scenario:{maxRiskPct:.10}};assert.equal(scenarioRiskCapacity(a,20,18000,0),11);
- emit('sweep_self_test',{passed:true,scenarios:72,paths:144});
+ emit('sweep_self_test',{passed:true,scenarios:222,paths:444});
 }
 function sweepStats(a,period='full'){
  const selected=a.history.filter(d=>period==='full'||(period==='train'?d[0]<'2025-09-29':d[0]>='2025-09-29'));
@@ -699,4 +729,4 @@ function start() {
  server.listen(Number(process.env.PORT||10000),'0.0.0.0',()=>execute());
 }
 if(require.main===module){if(process.argv.includes('--self-test')){selfTest();sweepSelfTest();}else start();}
-module.exports={start,scenarioGrid,scenarioCandidate,minuteAdmission,dynamicExit,eventBlocked,capAddedLots,scenarioRiskCapacity,FOMC_DECISION_DAYS,sweepSelfTest,accounts,SPEC,replayDay,setTestHistories:(data)=>{vix=data.vix;eod=data.eod;gamma=data.gamma||{};if(data.vixMinute){vixMinute.clear();for(const [day,row] of data.vixMinute)vixMinute.set(day,row);}reconstructGammaEnabled=false;}};
+module.exports={start,scenarioGrid,scenarioCandidate,minuteAdmission,dynamicExit,eventBlocked,capAddedLots,scenarioRiskCapacity,profitLockCapacity,FOMC_DECISION_DAYS,sweepSelfTest,accounts,SPEC,replayDay,setTestHistories:(data)=>{vix=data.vix;eod=data.eod;gamma=data.gamma||{};if(data.vixMinute){vixMinute.clear();for(const [day,row] of data.vixMinute)vixMinute.set(day,row);}reconstructGammaEnabled=false;}};
