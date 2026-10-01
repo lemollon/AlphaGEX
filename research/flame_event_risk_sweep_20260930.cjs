@@ -424,7 +424,7 @@ async function replayDay(day) {
    a.equity+=net;a.peak=Math.max(a.peak,a.equity);
    if(a.triggered&&a.equity<a.deposit)a.floorBreaches++;
    const row={day,before:before/100,after:a.equity/100,pnl:net/100,markedMin:mtmMin/100,markedPeak:mtmPeak/100,markedDD:markedDD/100,markGaps,hostN:hosts.get(a)?.n||0,flintN:resolved.filter(t=>t.leg==='flint').reduce((s,t)=>s+t.n,0),xsp:hosts.get(a)?.xspDecision||null,triggered:a.triggered,floor:C.currentFloorLevelCents(a.deposit,a.floorPeak,a.triggered,.10)/100,unresolved};
-   a.days.push(row);daily.accounts.push({bot:a.bot,profile:a.profile,fillCase:a.fillCase,...row});
+   a.days.push(row);daily.accounts.push({scenarioId:a.scenario.id,bot:a.bot,profile:a.profile,fillCase:a.fillCase,...row});
   }
  }
  daily.quoteAbsences=dq.gaps;return daily;
@@ -620,7 +620,7 @@ async function commitDay(row){
   const added=d.hostN>0&&row.vix.ratio>a.scenario.baseGate?1:0;
   a.history.push([d.day,d.before,d.after,d.pnl,d.markedMin,d.markedPeak,d.markedDD,d.markGaps,d.hostN,d.flintN,added]);
   a.tradeCounts.total+=a.trades.length;a.tradeCounts.host+=a.trades.filter(t=>t.leg.startsWith('host')).length;a.tradeCounts.flint+=a.trades.filter(t=>t.leg==='flint').length;a.tradeCounts.addedHost+=added;
-  row.accounts[i].scenarioId=a.scenario.id;a.trades=[];a.days=[];
+  a.trades=[];a.days=[];
  }
  const payload=zlib.gzipSync(JSON.stringify(detailed));
  STATE.completed++;STATE.stage='running';
