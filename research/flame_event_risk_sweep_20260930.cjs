@@ -144,6 +144,11 @@ async function histories() {
  } catch(e) {STATE.spxHistoryError=String(e.message);throw e;}
 }
 const SPX={};
+// A provider log on 2026-10-01 established that this exact historical
+// contract request returns ThetaData NoDataFoundError but the proxy encodes it
+// as 502. Treat it exactly as the runner treats the provider's native 404:
+// no quote, no order, no synthetic value. Do not generalize this to errors.
+const CONFIRMED_NO_DATA_QUOTES=new Set(['2024-02-07:SPY:call:501']);
 function missingPriorExpiries(day,closingChains,morningOI) {
  const present=new Set(closingChains.map(r=>String(r.expiration).slice(0,10)));
  return [...new Set(morningOI.filter(r=>{
@@ -210,7 +215,13 @@ class Quotes {
   if(previous&&previous.start<=start)return previous.quotes;
   let rr;
   try {rr=await feed('/v3/option/history/quote',{symbol,right,strike,expiration:this.day,date:this.day,interval:'1m',start_time:clock(start),end_time:clock(this.close)});}
-  catch(e){if(e.message==='http_404'){this.cache.set(key,{start,quotes:new Map()});this.gaps.push({day:this.day,symbol,right,strike,start,reason:'provider_explicit_no_observations'});return this.cache.get(key).quotes;}throw e;}
+  catch(e){
+   const confirmedAbsent=CONFIRMED_NO_DATA_QUOTES.has(`${this.day}:${symbol}:${right}:${strike}`);
+   if(e.message==='http_404'||(e.message==='http_502'&&confirmedAbsent)){
+    this.cache.set(key,{start,quotes:new Map()});this.gaps.push({day:this.day,symbol,right,strike,start,reason:confirmedAbsent?'provider_verified_no_observations':'provider_explicit_no_observations'});return this.cache.get(key).quotes;
+   }
+   throw e;
+  }
 
   const out=new Map();for(const r of rr){
    // Single-contract history responses may omit identity columns. Their
