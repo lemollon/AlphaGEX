@@ -17,7 +17,7 @@ global.fetch=async raw=>{
  assert.equal(base.length,2,'Baseline assertions must exercise both actual fill cases');
  for(const a of base){assert.equal(a.days[0].hostN,2);assert.equal(a.days[0].pnl,a.fillCase==='natural'?47.2:41.2);}
  assert(reqs<25,'historical data must be shared across paths');
- // The current 72-scenario grid no longer creates the retired `risk10`
+ // The current grid no longer creates the retired `risk10`
  // profile.  Keep the sizing primitive covered without asserting against a
  // scenario that is not part of the run; otherwise this fixture can fail
  // before it reaches the actual replay-path checks.
@@ -27,6 +27,6 @@ global.fetch=async raw=>{
  reset();day='2024-06-12';ratio=.75;seed();await R.replayDay(day);
  const guarded=R.accounts.filter(a=>a.scenario.eventGuard);
  for(const a of guarded){assert.equal(a.days[0].hostN,0);assert.equal(a.days[0].flintN,0,'FOMC blackout must not admit FLINT');}
- assert.equal(R.accounts.length,144,'all 72 scenarios must exercise natural and adverse fill paths');
- console.log(JSON.stringify({passed:true,paths:144,tests:'baseline parity fixture, sizing-cap primitive, FOMC full new-entry blackout, shared quotes, zero order endpoints; SYNTHETIC fixtures only'}));
+ assert.equal(R.accounts.length,444,'all 222 scenarios must exercise natural and adverse fill paths');
+ console.log(JSON.stringify({passed:true,paths:444,tests:'baseline parity fixture, VIX-minute and retained-profit admission variants, sizing-cap primitive, FOMC full new-entry blackout, shared quotes, zero order endpoints; SYNTHETIC fixtures only'}));
 })().catch(e=>{console.error(e);process.exitCode=1;});
