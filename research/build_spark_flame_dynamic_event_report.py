@@ -16,6 +16,14 @@ def meets(candidate,baseline,period):
             c['netAfterExternalSubscription']>b['netAfterExternalSubscription'] and
             c['maxClosedDrawdownPct']<=b['maxClosedDrawdownPct'])
 
+def protective_meets(candidate,baseline,period):
+    # User priority fixed before viewing this replay's candidate performance:
+    # fewer trades/lower profit than baseline are acceptable, but losses after
+    # subscriptions are not a profitable protective solution.
+    c,b=candidate[period],baseline[period]
+    return (c['netAfterExternalSubscription']>0 and
+            c['maxClosedDrawdownPct']<b['maxClosedDrawdownPct'])
+
 def build(out):
     validation=json.loads((out/'validation.json').read_text())
     report=json.loads((out/'report.json').read_text())
@@ -31,11 +39,11 @@ def build(out):
         # Rank with training data only. Do not replace this choice after seeing validation.
         eligible.sort(key=lambda sid:min(paths[sid,f]['train']['netAfterExternalSubscription'] for f in ('natural','adverse3c')),reverse=True)
         chosen=eligible[0] if eligible else None
-        protective=[sid for sid in ids if all(paths[sid,f]['train']['netAfterExternalSubscription']>=paths[bot+'_base',f]['train']['netAfterExternalSubscription'] and paths[sid,f]['train']['maxClosedDrawdownPct']<paths[bot+'_base',f]['train']['maxClosedDrawdownPct'] for f in ('natural','adverse3c'))]
+        protective=[sid for sid in ids if all(protective_meets(paths[sid,f],paths[bot+'_base',f],'train') for f in ('natural','adverse3c'))]
         protective.sort(key=lambda sid:min(paths[bot+'_base',f]['train']['maxClosedDrawdownPct']-paths[sid,f]['train']['maxClosedDrawdownPct'] for f in ('natural','adverse3c')),reverse=True)
         risk_choice=protective[0] if protective else None
         selection[bot]={'trainingQualified':eligible,'trainingSelected':chosen,'validationPass':bool(chosen and all(meets(paths[chosen,f],paths[bot+'_base',f],'validation') for f in ('natural','adverse3c'))),'fullPeriodPass':bool(chosen and all(meets(paths[chosen,f],paths[bot+'_base',f],'full') for f in ('natural','adverse3c')))}
-        selection[bot].update({'protectiveTrainingQualified':protective,'protectiveTrainingSelected':risk_choice,'protectiveValidationPass':bool(risk_choice and all(paths[risk_choice,f]['validation']['netAfterExternalSubscription']>=paths[bot+'_base',f]['validation']['netAfterExternalSubscription'] and paths[risk_choice,f]['validation']['maxClosedDrawdownPct']<paths[bot+'_base',f]['validation']['maxClosedDrawdownPct'] for f in ('natural','adverse3c')))})
+        selection[bot].update({'protectiveObjective':'Positive profit after subscriptions and strictly smaller closed drawdown under both fills; frequency and profit versus baseline may fall. Rank by training worst-fill drawdown reduction only.','protectiveTrainingQualified':protective,'protectiveTrainingSelected':risk_choice,'protectiveValidationPass':bool(risk_choice and all(protective_meets(paths[risk_choice,f],paths[bot+'_base',f],'validation') for f in ('natural','adverse3c'))),'protectiveFullPeriodPass':bool(risk_choice and all(protective_meets(paths[risk_choice,f],paths[bot+'_base',f],'full') for f in ('natural','adverse3c')))})
     (out/'selection.json').write_text(json.dumps(selection,indent=2))
     fields=['scenario','bot','fill','period','gate','credit','regime','risk','minute','eventGuard','eventMode','dynamicShock','dynamicTrail','takePct','stopPct','maxRiskPct','startingEquity','endingEquity','pnl','returnPct','netAfterExternalSubscription','maxClosedDrawdownPct','hostTradeDays','flintTradeDays','addedHostDays','sessions']
     with (out/'scenario_summary.csv').open('w',newline='') as file:
@@ -73,7 +81,7 @@ def build(out):
         decision=selection[bot];chosen=decision['trainingSelected'];robust=decision['validationPass'] and decision['fullPeriodPass']
         text+=['## '+bot.title(),'',f'Training-selected candidate: **{chosen or "none"}**. '+('It meets the more entries, more net profit, no worse closed drawdown conditions under both fills in training, validation and the full period.' if robust else '**No robust winner under the stated requirements.**'),'', '| Rule / fill | End balance | Trading P&L | Net after $1,800 | Closed drawdown | Main days / FLINT days | Final-year trading P&L |','|---|---:|---:|---:|---:|---:|---:|']
         risk_choice=decision['protectiveTrainingSelected']
-        text+=['',f'Risk-focused training choice (profits maintained, drawdown reduced; more entries not required): {risk_choice or "none"}. Final-year protective criteria pass: {decision["protectiveValidationPass"]}.','']
+        text+=['',f'Risk-focused training choice (positive profit after subscriptions and reduced drawdown under both fills; fewer entries and less profit than baseline allowed): {risk_choice or "none"}. Final-year protective criteria pass: {decision["protectiveValidationPass"]}. Full-period protective criteria pass: {decision["protectiveFullPeriodPass"]}.','']
         show=[bot+'_base']+([chosen] if chosen else [])+([risk_choice] if risk_choice and risk_choice!=chosen else [])
         for sid in show:
             for fill in ('natural','adverse3c'):
