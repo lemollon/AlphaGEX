@@ -347,3 +347,40 @@ def index_history_ohlc(
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Bar-Timestamp"] = "interval-start"
     return response
+
+
+@app.get("/v3/index/history/price")
+def index_history_price(
+    symbol: str = Query(...),
+    date_value: str | None = Query(None, alias="date"),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    interval: str = Query("1m", pattern="^(1m|5m|10m|15m|30m|1h)$"),
+    start_time: str = "09:30:00",
+    end_time: str = "16:00:00",
+) -> PlainTextResponse:
+    """Read-only historical index price reports (Value tier supports 1-minute data)."""
+    from datetime import time as clock_time
+
+    try:
+        start_clock = clock_time.fromisoformat(start_time)
+        end_clock = clock_time.fromisoformat(end_time)
+        if start_clock.tzinfo or end_clock.tzinfo or end_clock < start_clock:
+            raise ValueError("invalid clock range")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="invalid time range") from exc
+    kwargs: dict[str, Any] = {
+        "symbol": _symbol(symbol), "interval": interval,
+        "start_time": start_time, "end_time": end_time,
+    }
+    if date_value:
+        kwargs["date"] = _date(date_value, "date")
+    elif start_date and end_date:
+        start, end = _date_range(start_date, end_date, max_days=30)
+        kwargs.update(start_date=start, end_date=end)
+    else:
+        raise HTTPException(status_code=422, detail="date or start_date/end_date required")
+    response = _csv_response(_call("index_history_price", **kwargs))
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Price-Timestamp"] = "observation-time"
+    return response
