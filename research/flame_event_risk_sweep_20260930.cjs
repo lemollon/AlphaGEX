@@ -33,7 +33,7 @@ const SPEC = {
   // New engine identity: this is a fresh, fully re-compounded replay which
   // uses the imported VIX *index* minute series for pre-entry admission.
   // It deliberately does not reuse the completed event-risk performance.
-  id: 'spark-flame-minute-protection-replay-20261001-v1', sourceCommit: '3637fd18396b9ab532ee0d9bd42281338353a8a2',
+  id: 'spark-flame-dynamic-event-protection-20261001-v1', sourceCommit: '3637fd18396b9ab532ee0d9bd42281338353a8a2',
   start: '2023-09-29', end: '2026-09-28', seeds: { flame: 2000, spark: 5000 },
   bots: { spark: { start: 665, end: 680, offset: 2, width: 5, vix: .90 }, flame: { start: 845, end: 850, offset: 1, width: 2, vix: .80 } },
   clock: 'America/New_York; CT clocks + 1 hour', creditFloor: .10,
@@ -48,6 +48,8 @@ const SPEC = {
   settlement: 'ThetaData official SPY EOD close; XSP requires independent SPX close / 10',
   gammaCoverage: 'Uniform reconstructed 0..60 DTE call/put dollar gamma: prior-close Theta quotes/IV, morning OI, 11:05 ET spot; 20 prior-session warmup. Modelled historical inputs, not identical Tradier observations.',
   xspCoverage: 'Enabled. Missing XSP quotes fall back per source; missing SPX settlement on an accepted swap makes that profile unresolved.',
+  dynamicCoverage: 'Shock and giveback exits apply to SPY host/FLINT and XSP host using recorded quotes. Completed-minute signals execute at the next or later executable minute. An unfilled triggered exit blocks the path. Historical broker fills are not established.',
+  eventCoverage: 'BLS historical release calendars and Fed scheduled decision dates; retrospective availability assumed. Original point-in-time schedules and unscheduled timestamped headlines not recovered. No release outcomes/surprise values enter rules.',
   blackout: 'BLACKOUT_HALT_ENABLED=false in frozen source', weekdaySkips: [],
   dependencies: 'No external Node packages. Private ThetaData proxy for historical market data.',
 };
@@ -123,6 +125,7 @@ let vix=[], eod={}, gamma={'2026-09-28':{value:13643544500.438574,source:'tradie
 // Date -> { before, entry }, both are raw VIX index observations.  The
 // separate vix_minute_3y OHLC import is intentionally never used here.
 const vixMinute=new Map();
+let currentVixTape=new Map();
 function vixRatio(day) {
  const p=vix.filter(x=>x.day<day);if(p.length<21)throw Error('vix_history_short');
  const prior=p.at(-1), max=Math.max(...p.slice(-21,-1).map(x=>x.close));
@@ -327,7 +330,34 @@ function flintSize(a,credit,ratio,hostCandidate,host,nDepth,day) {
  const dec=F.decideFlintContractsForCushion(desired,1,a.equity/100,a.deposit/100,1,3,credit);
  return {n:Math.min(dec.contracts,nDepth),ml,reason:dec.gate.reason};
 }
+function dynamicExit(spread,entry,credit,spots,close,slip,controller={},tape=currentVixTape){
+ if(!controller.dynamicShock&&!controller.dynamicTrail)return null;
+ let peakProfit=0,pending=null;
+ for(let m=entry+2;m<close-3;m++){
+  // Previous completed-minute signal, next-minute execution. Missing exit
+  // quotes defer a triggered exit; never book an exact theoretical stop.
+  const decisionMinute=m-1,previous=spread.at(decisionMinute);
+  if(!pending&&previous&&Number.isFinite(previous.debit)){
+   const markedDebit=Math.max(0,previous.debit+slip),profit=credit-markedDebit;
+   peakProfit=Math.max(peakProfit,profit);
+   const latest=spots.get(decisionMinute)?.close,prior=spots.get(decisionMinute-5)?.close;
+   const vLatest=tape.get(decisionMinute),vPrior=tape.get(decisionMinute-5);
+   const spy5Pct=latest>0&&prior>0?(latest/prior-1)*100:null;
+   const vix5Pct=vLatest>0&&vPrior>0?(vLatest/vPrior-1)*100:null;
+   const lossArmed=markedDebit>=credit*1.50;
+   const shock=spread.right==='put'?spy5Pct!==null&&spy5Pct<=-.25&&vix5Pct!==null&&vix5Pct>=3:spy5Pct!==null&&spy5Pct>=.25;
+   const trail=peakProfit>=credit*.25&&profit<=peakProfit*.50;
+   const reason=controller.dynamicShock&&lossArmed&&shock?'intraday_shock':controller.dynamicTrail&&trail?'profit_giveback':null;
+   if(reason)pending={triggerMinute:decisionMinute,reason,signal:{spy5Pct,vix5Pct,markedDebit,peakProfit}};
+  }
+  if(pending){const q=spread.at(m);if(q&&Number.isFinite(q.debit)){const exitDebit=Math.max(0,q.debit+slip);return {...pending,exit:m,exitDebit,pnl:money((credit-exitDebit)*100-SPEC.feeDollarsPerSpread)};}}
+ }
+ if(pending){for(let m=close-3;m<close;m++){const q=spread.at(m);if(q&&Number.isFinite(q.debit)){const exitDebit=Math.max(0,q.debit+slip);return {...pending,exit:m,exitDebit,pnl:money((credit-exitDebit)*100-SPEC.feeDollarsPerSpread)};}}return {unresolved:'triggered_dynamic_exit_without_executable_quote'};}
+ return null;
+}
+function eventBlocked(s,day){return !!(s.eventGuard&&FOMC_DECISION_DAYS.has(day)||s.eventMode==='fed'&&MACRO_CALENDAR[day]?.includes('FOMC')||s.eventMode==='major'&&MACRO_CALENDAR[day]?.some(k=>['FOMC','CPI','PAYROLLS'].includes(k)));}
 function realizeSpread(spread,entry,credit,spots,close,settle,slip,controller={}) {
+ const dynamic=dynamicExit(spread,entry,credit,spots,close,slip,controller);if(dynamic)return dynamic;
  for(let m=entry+1;m<close-3;m++){
   const q=spread.at(m);if(!q||!Number.isFinite(q.debit))continue;
   const debit=Math.max(0,q.debit+slip);
@@ -347,11 +377,12 @@ function realizeSpread(spread,entry,credit,spots,close,settle,slip,controller={}
 }
 async function replayDay(day) {
  const close=halves.has(day)?780:960, vg=vixRatio(day);
+ if(checkpointPool){const vi=await checkpointPool.query('SELECT extract(hour from ts)::int*60+extract(minute from ts)::int AS minute,price FROM vix_index_price_3y WHERE trade_date=$1::date ORDER BY ts',[day]);currentVixTape=new Map(vi.rows.map(r=>[+r.minute,+r.price]));if(!currentVixTape.size&&day!=='2023-09-29')throw Error('intraday_VIX_day_missing');}
  const rr=await feed('/v3/stock/history/ohlc',{symbol:'SPY',date:day,interval:'1m',start_time:'09:30:00',end_time:clock(close),venue:'utp_cta'});
  const spots=new Map();for(const r of rr){const m=minute(r.timestamp||r.datetime,day);if(m>=close)continue;if(r.symbol?.trim()&&r.symbol.trim().toUpperCase()!=='SPY')throw Error('wrong_stock_identity');const b={open:+r.open,high:+r.high,low:+r.low,close:+r.close};if(Object.values(b).every(x=>x===0)&&+r.volume===0)continue;if(Object.values(b).some(x=>!Number.isFinite(x)||x<=0))throw Error('invalid_stock');spots.set(m,b);}
  if(!eod[day])throw Error('official_SPY_close_missing');
  if(reconstructGammaEnabled){const spot=spots.get(665)?.open;if(!(spot>0))throw Error('gamma_current_spot_missing');await loadGammaDay(day,spot);}
-  const dq=new Quotes(day,close), daily={day,vix:vg,close,accounts:[]};
+  const dq=new Quotes(day,close), daily={day,vix:vg,close,events:MACRO_CALENDAR[day]||[],intradayVixPoints:currentVixTape.size,accounts:[]};
  for(const bot of ['spark','flame']) {
   const cfg=SPEC.bots[bot], group=accounts.filter(a=>a.bot===bot), active=new Map(group.map(a=>[a,[]]));
   const hosts=new Map(), flints=new Set();
@@ -377,8 +408,8 @@ async function replayDay(day) {
     // Event mode is a decision-time new-entry blackout, not a hindsight
     // trade filter: on a scheduled FOMC decision day it admits neither a
     // new FLINT spread nor a new host spread.
-    const eventBlocked=a.scenario.eventGuard&&FOMC_DECISION_DAYS.has(day);
-    if(!eventBlocked&&!flints.has(a)&&c&&c.credit-slip>=.10) {
+    const blockedByEvent=eventBlocked(a.scenario,day);
+    if(!blockedByEvent&&!flints.has(a)&&c&&c.credit-slip>=.10) {
      const f=flintSize(a,c.credit-slip,vg.ratio,candidates.get(a),host||proposed,Math.floor(Math.min(c.bidSize,c.askSize)),day);
      const available=a.equity-active.get(a).reduce((s,t)=>s+t.risk,0);
      const n=scenarioRiskCapacity(a,Math.min(f.n,Math.floor(Math.max(0,available)/f.ml)),f.ml,active.get(a).reduce((s,t)=>s+t.risk,0));
@@ -419,7 +450,7 @@ async function replayDay(day) {
     if(hit){await t.spread.repairGuardQuote(m);break;}
    }
    const resolved=trades.map(t=>{
-    const result=t.spread.symbol==='XSP'?(SPX[day]?{pnl:money((t.credit-Math.min(cfg.width,Math.max(0,t.spread.short-SPX[day]/10)))*100-SPEC.feeDollarsPerSpread),exit:close,reason:'cash_settlement'}:{unresolved:'SPX_settlement_missing'}):realizeSpread(t.spread,t.entry,t.credit,spots,close,eod[day],SPEC.fillCases[a.fillCase],t.controller);
+    const result=t.spread.symbol==='XSP'?(dynamicExit(t.spread,t.entry,t.credit,spots,close,SPEC.fillCases[a.fillCase],t.controller)||(SPX[day]?{pnl:money((t.credit-Math.min(cfg.width,Math.max(0,t.spread.short-SPX[day]/10)))*100-SPEC.feeDollarsPerSpread),exit:close,reason:'cash_settlement'}:{unresolved:'SPX_settlement_missing'})):realizeSpread(t.spread,t.entry,t.credit,spots,close,eod[day],SPEC.fillCases[a.fillCase],t.controller);
     if(result.unresolved)unresolved.push(result.unresolved);
     return { ...t,...result };
    });
@@ -431,7 +462,7 @@ async function replayDay(day) {
    if(unresolved.length){a.unresolved.push({day,reasons:unresolved});a.invalidFrom??=day;}
    // No silently compounded missing-day returns. Once a path is unresolved,
    // future outputs remain diagnostic and never become a complete result.
-   for(const t of resolved)if(!t.unresolved){const pnl=cents(t.pnl*t.n);net+=pnl;const tr={day,leg:t.leg,symbol:t.spread.symbol,short:t.spread.short,long:t.spread.long,entry:t.entry,exit:t.exit,n:t.n,credit:money(t.credit),pnl:money(pnl/100),reason:t.reason};if(t.spread.repairs[t.exit])tr.quoteRepair=t.spread.repairs[t.exit];a.trades.push(tr);}
+   for(const t of resolved)if(!t.unresolved){const pnl=cents(t.pnl*t.n);net+=pnl;const tr={day,leg:t.leg,symbol:t.spread.symbol,short:t.spread.short,long:t.spread.long,entry:t.entry,exit:t.exit,n:t.n,credit:money(t.credit),pnl:money(pnl/100),reason:t.reason};if(Number.isFinite(t.exitDebit))Object.assign(tr,{exitDebit:t.exitDebit,triggerMinute:t.triggerMinute,signal:t.signal});if(t.spread.repairs[t.exit])tr.quoteRepair=t.spread.repairs[t.exit];a.trades.push(tr);}
    a.equity+=net;a.peak=Math.max(a.peak,a.equity);
    if(a.triggered&&a.equity<a.deposit)a.floorBreaches++;
    const row={day,before:before/100,after:a.equity/100,pnl:net/100,markedMin:mtmMin/100,markedPeak:mtmPeak/100,markedDD:markedDD/100,markGaps,hostN:hosts.get(a)?.n||0,flintN:resolved.filter(t=>t.leg==='flint').reduce((s,t)=>s+t.n,0),xsp:hosts.get(a)?.xspDecision||null,triggered:a.triggered,floor:C.currentFloorLevelCents(a.deposit,a.floorPeak,a.triggered,.10)/100,unresolved};
@@ -527,27 +558,20 @@ const FOMC_DECISION_DAYS=new Set([
  '2025-01-29','2025-03-19','2025-05-07','2025-06-18','2025-07-30','2025-09-17','2025-10-29','2025-12-10',
  '2026-01-28','2026-03-18','2026-04-29','2026-06-17','2026-07-29','2026-09-16'
 ]);
+const MACRO_CALENDAR={"2023-10-03":["JOLTS"],"2023-10-06":["PAYROLLS"],"2023-10-11":["PPI"],"2023-10-12":["CPI"],"2023-11-01":["JOLTS","FOMC"],"2023-11-03":["PAYROLLS"],"2023-11-14":["CPI"],"2023-11-15":["PPI"],"2023-12-05":["JOLTS"],"2023-12-08":["PAYROLLS"],"2023-12-12":["CPI"],"2023-12-13":["PPI","FOMC"],"2024-01-03":["JOLTS"],"2024-01-05":["PAYROLLS"],"2024-01-11":["CPI"],"2024-01-12":["PPI"],"2024-01-30":["JOLTS"],"2024-01-31":["FOMC"],"2024-02-02":["PAYROLLS"],"2024-02-13":["CPI"],"2024-02-16":["PPI"],"2024-03-06":["JOLTS"],"2024-03-08":["PAYROLLS"],"2024-03-12":["CPI"],"2024-03-14":["PPI"],"2024-03-20":["FOMC"],"2024-04-02":["JOLTS"],"2024-04-05":["PAYROLLS"],"2024-04-10":["CPI"],"2024-04-11":["PPI"],"2024-05-01":["JOLTS","FOMC"],"2024-05-03":["PAYROLLS"],"2024-05-14":["PPI"],"2024-05-15":["CPI"],"2024-06-04":["JOLTS"],"2024-06-07":["PAYROLLS"],"2024-06-12":["CPI","FOMC"],"2024-06-13":["PPI"],"2024-07-02":["JOLTS"],"2024-07-05":["PAYROLLS"],"2024-07-11":["CPI"],"2024-07-12":["PPI"],"2024-07-30":["JOLTS"],"2024-07-31":["FOMC"],"2024-08-02":["PAYROLLS"],"2024-08-13":["PPI"],"2024-08-14":["CPI"],"2024-09-04":["JOLTS"],"2024-09-06":["PAYROLLS"],"2024-09-11":["CPI"],"2024-09-12":["PPI"],"2024-09-18":["FOMC"],"2024-10-01":["JOLTS"],"2024-10-04":["PAYROLLS"],"2024-10-10":["CPI"],"2024-10-11":["PPI"],"2024-10-29":["JOLTS"],"2024-11-01":["PAYROLLS"],"2024-11-07":["FOMC"],"2024-11-13":["CPI"],"2024-11-14":["PPI"],"2024-12-03":["JOLTS"],"2024-12-06":["PAYROLLS"],"2024-12-11":["CPI"],"2024-12-12":["PPI"],"2024-12-18":["FOMC"],"2025-01-07":["JOLTS"],"2025-01-10":["PAYROLLS"],"2025-01-14":["PPI"],"2025-01-15":["CPI"],"2025-01-29":["FOMC"],"2025-02-04":["JOLTS"],"2025-02-07":["PAYROLLS"],"2025-02-12":["CPI"],"2025-02-13":["PPI"],"2025-03-07":["PAYROLLS"],"2025-03-11":["JOLTS"],"2025-03-12":["CPI"],"2025-03-13":["PPI"],"2025-03-19":["FOMC"],"2025-04-01":["JOLTS"],"2025-04-04":["PAYROLLS"],"2025-04-10":["CPI"],"2025-04-11":["PPI"],"2025-04-29":["JOLTS"],"2025-05-02":["PAYROLLS"],"2025-05-07":["FOMC"],"2025-05-13":["CPI"],"2025-05-15":["PPI"],"2025-06-03":["JOLTS"],"2025-06-06":["PAYROLLS"],"2025-06-11":["CPI"],"2025-06-12":["PPI"],"2025-06-18":["FOMC"],"2025-07-01":["JOLTS"],"2025-07-03":["PAYROLLS"],"2025-07-15":["CPI"],"2025-07-16":["PPI"],"2025-07-29":["JOLTS"],"2025-07-30":["FOMC"],"2025-08-01":["PAYROLLS"],"2025-08-12":["CPI"],"2025-08-14":["PPI"],"2025-09-03":["JOLTS"],"2025-09-05":["PAYROLLS"],"2025-09-10":["PPI"],"2025-09-11":["CPI"],"2025-09-17":["FOMC"],"2025-09-30":["JOLTS"],"2025-10-24":["CPI"],"2025-10-29":["FOMC"],"2025-11-20":["PAYROLLS"],"2025-11-25":["PPI"],"2025-12-09":["JOLTS"],"2025-12-10":["FOMC"],"2025-12-16":["PAYROLLS"],"2025-12-18":["CPI"],"2026-01-07":["JOLTS"],"2026-01-09":["PAYROLLS"],"2026-01-13":["CPI"],"2026-01-14":["PPI"],"2026-01-28":["FOMC"],"2026-01-30":["PPI"],"2026-02-05":["JOLTS"],"2026-02-11":["PAYROLLS"],"2026-02-13":["CPI"],"2026-02-27":["PPI"],"2026-03-06":["PAYROLLS"],"2026-03-11":["CPI"],"2026-03-13":["JOLTS"],"2026-03-18":["PPI","FOMC"],"2026-03-31":["JOLTS"],"2026-04-03":["PAYROLLS"],"2026-04-10":["CPI"],"2026-04-14":["PPI"],"2026-04-29":["FOMC"],"2026-05-05":["JOLTS"],"2026-05-08":["PAYROLLS"],"2026-05-12":["CPI"],"2026-05-13":["PPI"],"2026-06-02":["JOLTS"],"2026-06-05":["PAYROLLS"],"2026-06-10":["CPI"],"2026-06-11":["PPI"],"2026-06-17":["FOMC"],"2026-06-30":["JOLTS"],"2026-07-02":["PAYROLLS"],"2026-07-14":["CPI"],"2026-07-15":["PPI"],"2026-07-29":["FOMC"],"2026-08-04":["JOLTS"],"2026-08-07":["PAYROLLS"],"2026-08-12":["CPI"],"2026-08-13":["PPI"],"2026-09-01":["JOLTS"],"2026-09-04":["PAYROLLS"],"2026-09-10":["PPI"],"2026-09-11":["CPI"],"2026-09-16":["FOMC"]};
 function scenarioGrid(){
- const mk=(bot,baseGate,gate)=>{
-  const base={bot,baseGate,gate:baseGate,risk:'full',credit:.10,regime:'all',eventGuard:false,maxRiskPct:null,minute:'none',takePct:0,stopPct:0};
-  const add={bot,baseGate,gate,risk:'full',credit:.20,regime:'prior_up',eventGuard:false,maxRiskPct:null,minute:'none',takePct:0,stopPct:0};
-  // Predeclared full-replay candidates.  Each one is a separate compounded
-  // account, not a screen applied to an already-known daily P&L series.
-  return [
-   {id:`${bot}_base`,...base},
-   {id:`${bot}_add`,...add},
-   {id:`${bot}_add_vixflat`,...add,minute:'vix_flat'},
-   {id:`${bot}_add_spyhold`,...add,minute:'spy_holding'},
-   {id:`${bot}_add_combined`,...add,minute:'combined'},
-   {id:`${bot}_add_combined_fed`,...add,minute:'combined',eventGuard:true},
-   {id:`${bot}_add_combined_risk10`,...add,minute:'combined',maxRiskPct:.10},
-   {id:`${bot}_add_combined_fed_risk10`,...add,minute:'combined',eventGuard:true,maxRiskPct:.10},
-   {id:`${bot}_add_combined_take50`,...add,minute:'combined',takePct:.50},
-   {id:`${bot}_add_combined_take50_stop150`,...add,minute:'combined',takePct:.50,stopPct:1.50},
-   {id:`${bot}_add_combined_take35_stop100`,...add,minute:'combined',takePct:.35,stopPct:1.00},
-  ];
- };
- return [...mk('flame',.80,.925),...mk('spark',.90,.975)];
+ const out=[];
+ for(const [bot,baseGate,addedGate] of [['flame',.80,.925],['spark',.90,.975]]){
+  for(const admission of ['base','add_full','add_half']){
+   for(const protection of ['hold','shock','trail','shock_trail']){
+    for(const eventMode of ['none','fed','major']){
+     const original=admission==='base'&&protection==='hold'&&eventMode==='none';
+     out.push({id:original?bot+'_base':bot+'_'+admission+'_'+protection+'_'+eventMode,bot,baseGate,gate:admission==='base'?baseGate:addedGate,risk:admission==='add_half'?'50pct':'full',credit:admission==='base'?.10:.20,regime:admission==='base'?'all':'prior_up',eventGuard:false,eventMode,maxRiskPct:null,minute:'none',takePct:0,stopPct:0,dynamicShock:protection.includes('shock'),dynamicTrail:protection.includes('trail')});
+    }
+   }
+  }
+ }
+ return out;
 }
 function capAddedLots(n,risk){if(n<=0)return 0;if(risk==='one')return Math.min(n,1);if(risk==='full')return n;return Math.max(1,Math.floor(n*(risk==='75pct'?.75:.50)));}
 function minuteAdmission(s,ratio,day,spots){
@@ -566,7 +590,7 @@ function minuteAdmission(s,ratio,day,spots){
  return {eligible,reason:eligible?'admitted':!vixOK?'vix_rising':'spy_weak_or_volatile',vix5Pct:money(vix5Pct),spy15Pct:money(spy15Pct),rangePct:money(rangePct)};
 }
 function scenarioCandidate(s,ratio,day,spots){
- if(s.eventGuard&&FOMC_DECISION_DAYS.has(day))return false;
+ if(eventBlocked(s,day))return false;
  if(ratio<=s.baseGate)return true;if(ratio>s.gate)return false;
  if(!minuteAdmission(s,ratio,day,spots).eligible)return false;
  if(s.regime==='all')return true;
@@ -576,13 +600,13 @@ function scenarioCandidate(s,ratio,day,spots){
  return eod[prior[1]]>=eod[prior[0]];
 }
 function sweepSelfTest(){
- assert.equal(scenarioGrid().length,22);assert.equal(new Set(scenarioGrid().map(s=>s.id)).size,22);
+ assert.equal(scenarioGrid().length,72);assert.equal(new Set(scenarioGrid().map(s=>s.id)).size,72);
  for(const risk of ['full','75pct','50pct','one'])for(let n=0;n<30;n++){assert(capAddedLots(n,risk)<=n);assert(capAddedLots(n,risk)>=0);}
  assert.equal(capAddedLots(0,'one'),0);assert.equal(capAddedLots(3,'50pct'),1);
  const s={baseGate:.80,gate:.85,regime:'all',minute:'none'};assert(scenarioCandidate(s,.80,'2024-01-02',new Map()));assert(scenarioCandidate(s,.85,'2024-01-02',new Map()));assert(!scenarioCandidate(s,.850001,'2024-01-02',new Map()));
  assert(!scenarioCandidate({baseGate:.80,gate:1,regime:'all',eventGuard:true,minute:'none'},.75,'2026-03-18',new Map()));
  const a={equity:2000000,scenario:{maxRiskPct:.10}};assert.equal(scenarioRiskCapacity(a,20,18000,0),11);
- emit('sweep_self_test',{passed:true,scenarios:22,paths:44});
+ emit('sweep_self_test',{passed:true,scenarios:72,paths:144});
 }
 function sweepStats(a,period='full'){
  const selected=a.history.filter(d=>period==='full'||(period==='train'?d[0]<'2025-09-29':d[0]>='2025-09-29'));
@@ -646,12 +670,13 @@ async function execute(){
   const resumed=await initCheckpointStore();if(resumed&&['completed_with_coverage_limits','blocked'].includes(STATE.stage))return;
   for(const day of sessions().slice(STATE.completed)){
    STATE.currentDay=day;const before=structuredClone(accounts),completedBefore=STATE.completed;
-   await recoverDataOperation(async()=>{const row=await replayDay(day);if(row.accounts.length!==44||row.accounts.some(a=>a.unresolved.length))throw Error('unresolved_sweep_day');await commitDay(row);},'day',()=>{accounts.splice(0,accounts.length,...structuredClone(before));STATE.completed=completedBefore;});
+   await recoverDataOperation(async()=>{const row=await replayDay(day);if(row.accounts.length!==accounts.length||row.accounts.some(a=>a.unresolved.length))throw Error('unresolved_sweep_day');await commitDay(row);},'day',()=>{accounts.splice(0,accounts.length,...structuredClone(before));STATE.completed=completedBefore;});
    emit('sweep_progress',{completed:STATE.completed,total:751,day,requests:STATE.requests,memoryMB:Math.round(process.memoryUsage().rss/1048576)});
   }
   const natural=accounts.find(a=>a.scenario.id==='flame_base'&&a.fillCase==='natural'),adverse=accounts.find(a=>a.scenario.id==='flame_base'&&a.fillCase==='adverse3c');
   assert.equal(sweepStats(natural).endingEquity,8185.20);assert.equal(sweepStats(adverse).endingEquity,2116.80);assert.equal(natural.tradeCounts.total,670);assert.equal(adverse.tradeCounts.total,97);
-  STATE.stage='completed_with_coverage_limits';STATE.baselineParity=true;await saveCheckpoint();emit('sweep_finished',{completed:751,paths:44,baselineParity:true});
+  for(const [fill,end,count] of [['natural',8842.40,930],['adverse3c',4322.40,627]]){const spark=accounts.find(a=>a.scenario.id==='spark_base'&&a.fillCase===fill);assert.equal(sweepStats(spark).endingEquity,end);assert.equal(spark.tradeCounts.total,count);}
+  STATE.stage='completed_with_coverage_limits';STATE.baselineParity=true;await saveCheckpoint();emit('sweep_finished',{completed:751,paths:accounts.length,baselineParity:true});
  }catch(e){STATE.stage='blocked';STATE.error=String(e.message);STATE.dataErrors.push({day:STATE.currentDay,error:STATE.error});try{await saveCheckpoint();}catch{}emit('sweep_blocked',{...STATE});}
 }
 
@@ -674,4 +699,4 @@ function start() {
  server.listen(Number(process.env.PORT||10000),'0.0.0.0',()=>execute());
 }
 if(require.main===module){if(process.argv.includes('--self-test')){selfTest();sweepSelfTest();}else start();}
-module.exports={start,scenarioGrid,scenarioCandidate,minuteAdmission,capAddedLots,scenarioRiskCapacity,FOMC_DECISION_DAYS,sweepSelfTest,accounts,SPEC,replayDay,setTestHistories:(data)=>{vix=data.vix;eod=data.eod;gamma=data.gamma||{};if(data.vixMinute){vixMinute.clear();for(const [day,row] of data.vixMinute)vixMinute.set(day,row);}reconstructGammaEnabled=false;}};
+module.exports={start,scenarioGrid,scenarioCandidate,minuteAdmission,dynamicExit,eventBlocked,capAddedLots,scenarioRiskCapacity,FOMC_DECISION_DAYS,sweepSelfTest,accounts,SPEC,replayDay,setTestHistories:(data)=>{vix=data.vix;eod=data.eod;gamma=data.gamma||{};if(data.vixMinute){vixMinute.clear();for(const [day,row] of data.vixMinute)vixMinute.set(day,row);}reconstructGammaEnabled=false;}};
