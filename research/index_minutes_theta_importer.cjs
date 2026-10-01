@@ -108,6 +108,19 @@ function normalize(rows) {
     && Number.isFinite(r.open) && Number.isFinite(r.high) && Number.isFinite(r.low) && Number.isFinite(r.close));
 }
 
+// Index Value provides point-in-time index prices, not OHLC bars. Preserve
+// those observations verbatim in their own table; do not manufacture bars or
+// silently turn missing updates into a price signal.
+function normalizePrice(rows) {
+  return rows.map(row => {
+    const rawTs = String(row.timestamp || row.ts || row.datetime || row.date_time || '');
+    const match = rawTs.match(/(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/);
+    const ts = match ? match[1] + ' ' + match[2] : '';
+    return { ts, tradeDate: ts.slice(0, 10), price: Number(row.price) };
+  }).filter(r => /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(r.ts)
+    && Number.isFinite(r.price) && r.price > 0);
+}
+
 async function setup(client) {
   for (const table of ['spy_minute_3y', 'vix_minute_3y']) {
     await client.query(`CREATE TABLE IF NOT EXISTS ${table} (
@@ -120,6 +133,14 @@ async function setup(client) {
     )`);
     await client.query(`CREATE INDEX IF NOT EXISTS ${table}_trade_date_idx ON ${table}(trade_date)`);
   }
+  await client.query(`CREATE TABLE IF NOT EXISTS vix_index_price_3y (
+    ts timestamp without time zone PRIMARY KEY,
+    trade_date date NOT NULL,
+    price double precision NOT NULL CHECK (price > 0),
+    provider text NOT NULL DEFAULT 'thetadata_index_price',
+    imported_at timestamptz NOT NULL DEFAULT now()
+  )`);
+  await client.query('CREATE INDEX IF NOT EXISTS vix_index_price_3y_trade_date_idx ON vix_index_price_3y(trade_date)');
 }
 
 async function upsert(client, table, rows) {
@@ -138,6 +159,16 @@ async function upsert(client, table, rows) {
   ]);
 }
 
+async function upsertPrice(client, rows) {
+  if (!rows.length) return;
+  await client.query(`INSERT INTO vix_index_price_3y (ts, trade_date, price)
+    SELECT * FROM unnest($1::timestamp[], $2::date[], $3::double precision[])
+    ON CONFLICT (ts) DO UPDATE SET trade_date=EXCLUDED.trade_date,
+      price=EXCLUDED.price, provider='thetadata_index_price', imported_at=now()`, [
+    rows.map(r => r.ts), rows.map(r => r.tradeDate), rows.map(r => r.price),
+  ]);
+}
+
 function addDays(day, days) {
   const value = new Date(`${day}T00:00:00Z`);
   value.setUTCDate(value.getUTCDate() + days);
@@ -146,16 +177,17 @@ function addDays(day, days) {
 function rangeDays(startDate, endDate) {
   return Math.round((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86400000);
 }
-async function importRange(client, table, endpoint, symbol, startDate, endDate) {
+async function importRange(client, table, endpoint, symbol, startDate, endDate, mode = 'ohlc') {
   let outageAttempt = 0;
   for (;;) {
     try {
       const rawRows = await fetchBars(endpoint, symbol, startDate, endDate);
-      const rows = normalize(rawRows);
+      const rows = mode === 'price' ? normalizePrice(rawRows) : normalize(rawRows);
       if (rawRows.length > 0 && rows.length === 0) {
         throw new Error(`normalize_rejected:${table}:${startDate}:${endDate}`);
       }
-      await upsert(client, table, rows);
+      if (mode === 'price') await upsertPrice(client, rows);
+      else await upsert(client, table, rows);
       log('chunk_complete', { table, startDate, endDate, rows: rows.length });
       return rows.length;
     } catch (error) {
@@ -167,8 +199,8 @@ async function importRange(client, table, endpoint, symbol, startDate, endDate) 
         const middle = addDays(startDate, leftDays);
         const rightStart = addDays(middle, 1);
         log('split_retryable_range', { table, startDate, endDate, error: error.message, middle });
-        return (await importRange(client, table, endpoint, symbol, startDate, middle))
-          + (await importRange(client, table, endpoint, symbol, rightStart, endDate));
+        return (await importRange(client, table, endpoint, symbol, startDate, middle, mode))
+          + (await importRange(client, table, endpoint, symbol, rightStart, endDate, mode));
       }
       outageAttempt += 1;
       const delayMs = Math.min(60000, 5000 * outageAttempt);
@@ -177,13 +209,13 @@ async function importRange(client, table, endpoint, symbol, startDate, endDate) 
     }
   }
 }
-async function importSeries(client, table, endpoint, symbol) {
+async function importSeries(client, table, endpoint, symbol, mode = 'ohlc') {
   let total = 0;
   const maxChunks = Number(process.env.INDEX_IMPORT_MAX_CHUNKS || 0);
   let chunks = 0;
   for (const [startDate, endDate] of ranges()) {
     if (maxChunks > 0 && chunks >= maxChunks) break;
-    total += await importRange(client, table, endpoint, symbol, startDate, endDate);
+    total += await importRange(client, table, endpoint, symbol, startDate, endDate, mode);
     chunks += 1;
     log('range_complete', { table, startDate, endDate, total });
   }
@@ -199,9 +231,9 @@ async function main() {
   try {
     await setup(client); serviceStatus.stage = 'importing';
     const spyRows = selected === 'vix' ? 0 : await importSeries(client, 'spy_minute_3y', '/v3/stock/history/ohlc', 'SPY');
-    const vixRows = selected === 'spy' ? 0 : await importSeries(client, 'vix_minute_3y', '/v3/stock/history/ohlc', 'VIX');
+    const vixRows = selected === 'spy' ? 0 : await importSeries(client, 'vix_index_price_3y', '/v3/index/history/price', 'VIX', 'price');
     const { rows } = await client.query(`SELECT 'spy' AS series, count(*)::int rows, min(ts) min_ts, max(ts) max_ts, count(DISTINCT trade_date)::int sessions FROM spy_minute_3y
-      UNION ALL SELECT 'vix', count(*)::int, min(ts), max(ts), count(DISTINCT trade_date)::int FROM vix_minute_3y`);
+      UNION ALL SELECT 'vix_price', count(*)::int, min(ts), max(ts), count(DISTINCT trade_date)::int FROM vix_index_price_3y`);
     serviceStatus.stage = 'complete'; serviceStatus.coverage = rows;
     log('complete', { selected, fetched: { spyRows, vixRows }, coverage: rows });
   } catch (error) {
@@ -210,5 +242,5 @@ async function main() {
   } finally { client.release(); await pool.end(); }
 }
 
-module.exports = { main, csv, normalize, ranges };
+module.exports = { main, csv, normalize, normalizePrice, ranges };
 if (require.main === module) main().catch(error => { log('failed', { message: error.message }); process.exitCode = 1; });
