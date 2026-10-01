@@ -117,6 +117,8 @@ def _call(method: str, **kwargs: Any) -> str:
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 - provider failures must be explicit and closed
+        if type(exc).__name__ == "NoDataFoundError":
+            raise HTTPException(status_code=404, detail="ThetaData returned no historical observations") from exc
         code = str(exc.code()) if callable(getattr(exc, "code", None)) else "n/a"
         LOGGER.error("ThetaData request failed method=%s error_type=%s grpc_code=%s",
                      method, type(exc).__name__, code)
