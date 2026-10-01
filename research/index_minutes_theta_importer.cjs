@@ -24,8 +24,8 @@ function loadPool() {
 }
 const Pool = loadPool();
 
-const START = '2023-10-02';
-const END = '2026-09-29';
+const START = process.env.INDEX_IMPORT_START || '2023-09-29';
+const END = process.env.INDEX_IMPORT_END || '2026-09-29';
 const BASE = process.env.THETADATA_BASE_URL || 'http://thetadata-proxy:10000';
 const DB = process.env.RESEARCH_DATABASE_URL;
 if (!DB) throw new Error('research_database_url_missing');
@@ -102,10 +102,22 @@ function normalize(rows) {
     const match = rawTs.match(/(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/);
     const ts = match ? match[1] + ' ' + match[2] : '';
     const tradeDate = ts.slice(0, 10);
-    const values = ['open', 'high', 'low', 'close', 'volume', 'count', 'vwap'].map(k => Number(row[k]));
+    const values = ['open', 'high', 'low', 'close', 'volume', 'count', 'vwap'].map((k, i) => {
+      const n = Number(row[k]);
+      // Preserve sub-cent quotes; remove only IEEE-754 serialization tails.
+      return i < 4 && Number.isFinite(n) ? Number(n.toFixed(8)) : n;
+    });
     return { ts, tradeDate, open: values[0], high: values[1], low: values[2], close: values[3], volume: values[4], count: values[5], vwap: values[6] };
-  }).filter(r => /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(r.ts)
-    && Number.isFinite(r.open) && Number.isFinite(r.high) && Number.isFinite(r.low) && Number.isFinite(r.close));
+  }).filter(r => {
+    const prices = [r.open, r.high, r.low, r.close];
+    if (!prices.every(Number.isFinite)) throw new Error('invalid_ohlc_nonfinite');
+    if (prices.every(x => x === 0)) return false;
+    if (!prices.every(x => x > 0) || r.high < Math.max(r.open, r.close, r.low)
+      || r.low > Math.min(r.open, r.close) || r.volume < 0 || r.count < 0)
+      throw new Error('invalid_ohlc_source');
+    if (!/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(r.ts)) throw new Error('invalid_ohlc_timestamp');
+    return true;
+  });
 }
 
 // Index Value provides point-in-time index prices, not OHLC bars. Preserve
@@ -122,6 +134,8 @@ function normalizePrice(rows) {
 }
 
 async function setup(client) {
+  const identity = await client.query('SELECT current_database() AS db');
+  if (identity.rows[0].db !== 'alphagex_backtest') throw new Error('research_database_isolation_failed');
   for (const table of ['spy_minute_3y', 'vix_minute_3y']) {
     await client.query(`CREATE TABLE IF NOT EXISTS ${table} (
       ts timestamp without time zone PRIMARY KEY,
@@ -242,5 +256,5 @@ async function main() {
   } finally { client.release(); await pool.end(); }
 }
 
-module.exports = { main, csv, normalize, normalizePrice, ranges };
+module.exports = { main, csv, normalize, normalizePrice, ranges, loadPool, setup, importRange };
 if (require.main === module) main().catch(error => { log('failed', { message: error.message }); process.exitCode = 1; });
