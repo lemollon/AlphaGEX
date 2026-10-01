@@ -79,8 +79,9 @@ function grid(){
  const out=[];
  for(const family of ['breakout','post_release','overlay'])for(const scope of ['fed','major','all']){
   if(family==='post_release'&&scope==='all')continue;
-  for(const budget of [.005,.01])for(const target of [.5,1])for(const wait of family==='post_release'?[5,15]:[0])for(const vixRise of family==='breakout'?[3,5]:[3]){
-   out.push({id:[family,scope,budget,target,wait,vixRise].join('_'),family,scope,budget,target,wait,vixRise,preConference:false});
+  const conferenceExits=family==='post_release'&&scope==='fed'?[false,true]:[false];
+  for(const budget of [.005,.01])for(const target of [.5,1])for(const wait of family==='post_release'?[5,15]:[0])for(const vixRise of family==='breakout'?[3,5]:[3])for(const preConference of conferenceExits){
+   out.push({id:[family,scope,budget,target,wait,vixRise,preConference?'preconf':'hold'].join('_'),family,scope,budget,target,wait,vixRise,preConference});
   }
  }
  return out;
