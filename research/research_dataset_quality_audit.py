@@ -34,10 +34,11 @@ assert len(definitions)==6
 assert 'vix_index_price_3y' in definitions['research_vix_index_minute_valid']
 assert 'vix_minute_3y' not in definitions['research_vix_index_minute_valid']
 for name in ['research_spy_prior_eod_valid','research_vix_prior_eod_valid']:
-    d=definitions[name]
+    # PostgreSQL removes redundant single-table aliases in pg_get_viewdef.
+    d=definitions[name].replace('r.','')
     for side in ('call','put'):
-        assert f'prior_eod_{side}_bid <= r.prior_eod_{side}_ask' in d, (name,side)
-    assert 'prior_eod_trade_date < r.trade_date' in d
+        assert f'prior_eod_{side}_bid <= prior_eod_{side}_ask' in d, (name,side)
+    assert 'prior_eod_trade_date < trade_date' in d
 result={'controls':'PASS','source_status':'LIMITED: two authentic SPY minute bars remain unavailable; all-zero VIX OHLC is rejected','calendar_sessions':751,'expected_minutes':291630,'spy_valid_minutes':291628,'vix_index_valid_minutes':291630,'duplicate_contract_groups':0,'future_eod_records':0,'crossed_prior_eod_rows_rejected_by_feature_policy':{'spy':3916,'vix_options':355}}
 (root/'independent_validation.json').write_text(json.dumps(result,indent=2))
 print(json.dumps(result))
