@@ -646,6 +646,11 @@ def register_gamma_alerts(scheduler, app) -> None:
                 logger.info("[GammaAlerts] intraday gamma: no reading (%s)",
                             out.get("reason"))
                 return
+            # Partial expiry pulls can manufacture a false threshold crossing.
+            if not out.get("chain_complete", False):
+                logger.warning("[GammaAlerts] incomplete intraday chain; skipping alert")
+                return
+            now = datetime.now(CT)  # timestamp the completed pull
             ensure_gamma_intraday_table()
             pct = None
             try:
@@ -668,6 +673,12 @@ def register_gamma_alerts(scheduler, app) -> None:
             record_gamma_intraday(now, out.get("spot"),
                                   out["net_gex"] / 1e9, pct,
                                   vix=vix_now, vix_ratio=vix_ratio)
+            from .squeeze_intraday_alerts import post_reading
+            from . import _send_intraday_webhook_sync
+            await asyncio.to_thread(
+                post_reading, engine, now, out["net_gex"] / 1e9,
+                out.get("spot"), pct, _send_intraday_webhook_sync)
+
         except Exception as e:  # noqa: BLE001
             logger.warning("[GammaAlerts] record_intraday_gamma failed: %r", e)
 
