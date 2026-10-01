@@ -1,0 +1,24 @@
+const assert=require('node:assert/strict');
+const {entrySignal,entryOrder,exitTrade,grid}=require('./spark_flame_event_offense.cjs');
+const spy=new Map(),vix=new Map();
+for(let m=570;m<600;m++){spy.set(m,{high:100.1,low:99.9,close:100});vix.set(m,20);}
+spy.set(598,{high:99.8,low:99.6,close:99.7});spy.set(599,{high:99.7,low:99.5,close:99.6});vix.set(599,21);
+const s={family:'breakout',scope:'major',vixRise:3,budget:.01,target:.5};
+const signal=entrySignal(s,600,spy,vix,['CPI']);assert.equal(signal.right,'put');assert.equal(signal.observedThrough,599);
+assert.equal(entrySignal(s,600,spy,vix,[]),null);
+spy.set(600,{high:300,low:1,close:20});vix.set(600,100);
+assert.deepEqual(entrySignal(s,600,spy,vix,['CPI']),signal);
+assert.equal(entrySignal({...s,family:'overlay'},600,spy,vix,['CPI']),null);
+assert.equal(entrySignal({...s,family:'post_release',wait:15},580,spy,vix,['CPI']),null);
+const q={buy:{bid:.19,ask:.2,bidSize:10,askSize:10},sell:{bid:.1,ask:.11,bidSize:10,askSize:10}};
+const fees={open:.7,close:.7};
+assert.equal(entryOrder(signal,q,2000,2000,{...s,budget:.005},0,fees),null);
+const order={...entryOrder(signal,q,2000,2000,s,0,fees),entry:600};assert.equal(order.n,1);
+assert.equal(entryOrder(signal,q,2000,5,s,0,fees),null);
+assert.equal(entryOrder(signal,{buy:{...q.buy,bid:.3},sell:q.sell},2000,2000,s,0,fees),null);
+const qs=new Map([[601,{buy:{...q.buy,bid:.3,ask:.31},sell:q.sell}],[603,{buy:{...q.buy,bid:.27,ask:.28},sell:q.sell}]]);
+const r=exitTrade(order,qs,610,s,0);assert.equal(r.triggerMinute,601);assert.equal(r.exit,603);assert.equal(r.pnl,4.6);
+qs.set(604,{buy:{...q.buy,bid:1.5,ask:1.6},sell:q.sell});assert.deepEqual(exitTrade(order,qs,610,s,0),r);
+assert(exitTrade(order,new Map(),610,s,0).unresolved);
+assert.equal(new Set(grid().map(x=>x.id)).size,grid().length);
+console.log(JSON.stringify({passed:true,scenarios:grid().length,cases:'causal completed bars, event scope, host prerequisite, post-release clock, budget skip, cash cap, crossed quote rejection, deferred executable exit, exact ledger fees, future invariance, unfilled close rejection'}));
