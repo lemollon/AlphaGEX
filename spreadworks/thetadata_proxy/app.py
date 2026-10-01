@@ -363,7 +363,7 @@ def stock_history_ohlc(
     date_value: str | None = Query(None, alias="date"),
     start_date: str | None = None,
     end_date: str | None = None,
-    interval: str = Query("1m", pattern="^(1m|5m|10m|15m|30m|1h)$"),
+    interval: str = Query("1m", pattern="^(1s|1m|5m|10m|15m|30m|1h)$"),
     start_time: str = "09:30:00",
     end_time: str = "16:00:00",
     venue: str = Query("utp_cta", pattern="^(nqb|utp_cta)$"),
