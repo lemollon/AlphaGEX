@@ -240,3 +240,110 @@ def test_call_failure_evicts_the_cached_client(monkeypatch):
         proxy._call("stock_snapshot_ohlc", symbol="AAA")
     assert excinfo.value.status_code == 502
     assert cleared["n"] == 1
+
+
+# --- 2026-10-01 re-login storm fix -------------------------------------------------
+
+
+class _GrpcError(Exception):
+    def __init__(self, code):
+        super().__init__(code)
+        self._code = code
+
+    def code(self):
+        return self._code
+
+
+def _holder_with(monkeypatch, client_obj):
+    """Real _ClientHolder whose ThetaClient constructor returns client_obj, counting logins."""
+    import sys
+    import types
+
+    holder = proxy._ClientHolder()
+    fake_mod = types.SimpleNamespace(ThetaClient=lambda **kw: client_obj)
+    monkeypatch.setitem(sys.modules, "thetadata", fake_mod)
+    monkeypatch.setenv("THETADATA_API_KEY", "test-key")
+    monkeypatch.setattr(proxy, "_client", holder)
+    return holder
+
+
+def test_unauthenticated_failure_starts_cooldown_instead_of_relogin_storm(monkeypatch):
+    monkeypatch.setattr(proxy, "RELOGIN_MIN_SECONDS", 60)
+
+    class KickedClient:
+        def stock_snapshot_ohlc(self, **kwargs):
+            raise _GrpcError("StatusCode.UNAUTHENTICATED")
+
+    holder = _holder_with(monkeypatch, KickedClient())
+    with pytest.raises(HTTPException) as first:
+        proxy._call("stock_snapshot_ohlc", symbol="AAA")
+    assert first.value.status_code == 502
+    assert holder.logins == 1
+
+    # 50 more requests inside the cooldown: zero new logins, fast 503s.
+    for _ in range(50):
+        with pytest.raises(HTTPException) as exc:
+            proxy._call("stock_snapshot_ohlc", symbol="AAA")
+        assert exc.value.status_code == 503
+    assert holder.logins == 1
+
+
+def test_cooldown_doubles_per_eviction_and_resets_after_success(monkeypatch):
+    monkeypatch.setattr(proxy, "RELOGIN_MIN_SECONDS", 10)
+    monkeypatch.setattr(proxy, "RELOGIN_MAX_SECONDS", 25)
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(proxy.time, "monotonic", lambda: clock["t"])
+    state = {"fail": True}
+
+    class FlakyClient:
+        def stock_snapshot_ohlc(self, **kwargs):
+            if state["fail"]:
+                raise _GrpcError("StatusCode.UNAVAILABLE")
+            return FakeThetaClient().stock_snapshot_ohlc(**kwargs)
+
+    holder = _holder_with(monkeypatch, FlakyClient())
+    for expected_wait in (10, 20, 25):          # doubles, capped at max
+        with pytest.raises(HTTPException):
+            proxy._call("stock_snapshot_ohlc", symbol="AAA")
+        assert holder._next_build_at - clock["t"] == expected_wait
+        clock["t"] += expected_wait
+    state["fail"] = False
+    proxy._call("stock_snapshot_ohlc", symbol="SPY")
+    assert holder._streak == 0
+
+
+def test_permission_denied_and_no_data_keep_the_client(monkeypatch):
+    class EntitlementClient:
+        def stock_snapshot_ohlc(self, **kwargs):
+            raise _GrpcError("StatusCode.PERMISSION_DENIED")
+
+    holder = _holder_with(monkeypatch, EntitlementClient())
+    for _ in range(5):
+        with pytest.raises(HTTPException) as exc:
+            proxy._call("stock_snapshot_ohlc", symbol="AAA")
+        assert exc.value.status_code == 403
+    assert holder.logins == 1
+
+
+def test_live_route_never_touches_thetadata(monkeypatch):
+    def boom():
+        raise AssertionError("liveness must not call ThetaData")
+
+    monkeypatch.setattr(proxy, "_client", boom)
+    assert TestClient(proxy.app).get("/live").json() == {"status": "alive"}
+
+
+def test_health_failure_is_cached(monkeypatch):
+    calls = {"n": 0}
+
+    class DownClient:
+        def stock_history_eod(self, **kwargs):
+            calls["n"] += 1
+            raise _GrpcError("StatusCode.PERMISSION_DENIED")
+
+    monkeypatch.setattr(proxy, "_client", lambda: DownClient())
+    monkeypatch.setattr(proxy, "_health_cache", None)
+    client = TestClient(proxy.app)
+    assert client.get("/health").status_code == 503
+    assert client.get("/health").status_code == 503
+    assert calls["n"] == 1
