@@ -33,7 +33,7 @@ const SPEC = {
   // New engine identity: this is a fresh, fully re-compounded replay which
   // uses the imported VIX *index* minute series for pre-entry admission.
   // It deliberately does not reuse the completed event-risk performance.
-  id: 'flame-minute-risk-replay-20261001-v1', sourceCommit: '3637fd18396b9ab532ee0d9bd42281338353a8a2',
+  id: 'spark-flame-minute-protection-replay-20261001-v1', sourceCommit: '3637fd18396b9ab532ee0d9bd42281338353a8a2',
   start: '2023-09-29', end: '2026-09-28', seeds: { flame: 2000, spark: 5000 },
   bots: { spark: { start: 665, end: 680, offset: 2, width: 5, vix: .90 }, flame: { start: 845, end: 850, offset: 1, width: 2, vix: .80 } },
   clock: 'America/New_York; CT clocks + 1 hour', creditFloor: .10,
@@ -249,7 +249,7 @@ function newAccount(bot,profile,fillCase) {
  const deposit=cents(SPEC.seeds[bot]);return {bot,profile,fillCase,deposit,equity:deposit,peak:deposit,floorPeak:deposit,triggered:false,fast:FAST.seedFastStartState(deposit/100),trades:[],days:[],skips:{},unresolved:[],floorBreaches:0};
 }
 const accounts=[];
-for(const scenario of scenarioGrid())for(const fillCase of Object.keys(SPEC.fillCases)){const a=newAccount('flame','current_customer_package',fillCase);a.scenario=scenario;a.history=[];a.tradeCounts={total:0,host:0,flint:0,addedHost:0};accounts.push(a);}
+for(const scenario of scenarioGrid())for(const fillCase of Object.keys(SPEC.fillCases)){const a=newAccount(scenario.bot,'current_customer_package',fillCase);a.scenario=scenario;a.history=[];a.tradeCounts={total:0,host:0,flint:0,addedHost:0};accounts.push(a);}
 function hostSize(a, credit, ratio, bidSize, buyingPower=a.equity, callCredit=null) {
  const cfg=SPEC.bots[a.bot], ml=cents((cfg.width-credit)*100);if(ml<=0)return {n:0,ml};
  let n, result;
@@ -267,7 +267,7 @@ function hostSize(a, credit, ratio, bidSize, buyingPower=a.equity, callCredit=nu
  }
  // Natural-leg historical fill capacity; no unlimited NBBO size assumption.
  n=Math.min(n,Math.floor(Math.max(0,buyingPower)/ml),Math.floor(bidSize));
- if(a.scenario&&ratio>.80)n=capAddedLots(n,a.scenario.risk);
+ if(a.scenario&&ratio>a.scenario.baseGate)n=capAddedLots(n,a.scenario.risk);
  return {n:Math.max(0,n),ml,result};
 }
 // The governor is fixed before replay.  It uses only account equity and the
@@ -316,7 +316,13 @@ function flintSize(a,credit,ratio,hostCandidate,host,nDepth,day) {
  const dec=F.decideFlintContractsForCushion(desired,1,a.equity/100,a.deposit/100,1,3,credit);
  return {n:Math.min(dec.contracts,nDepth),ml,reason:dec.gate.reason};
 }
-function realizeSpread(spread,entry,credit,spots,close,settle,slip) {
+function realizeSpread(spread,entry,credit,spots,close,settle,slip,controller={}) {
+ for(let m=entry+1;m<close-3;m++){
+  const q=spread.at(m);if(!q||!Number.isFinite(q.debit))continue;
+  const debit=Math.max(0,q.debit+slip);
+  if(controller.takePct>0&&debit<=credit*(1-controller.takePct))return {pnl:money((credit-debit)*100-SPEC.feeDollarsPerSpread),exit:m,reason:'profit_lock'};
+  if(controller.stopPct>0&&debit>=credit*(1+controller.stopPct))return {pnl:money((credit-debit)*100-SPEC.feeDollarsPerSpread),exit:m,reason:'loss_cap'};
+ }
  const buffer=spread.right==='put'?SPEC.putGuardBuffer:SPEC.callGuardBuffer;
  for(let m=close-3;m<close;m++) {
   const spot=spots.get(m)?.open; if(!Number.isFinite(spot))return {unresolved:'missing_guard_stock'};
@@ -335,13 +341,13 @@ async function replayDay(day) {
  if(!eod[day])throw Error('official_SPY_close_missing');
  if(reconstructGammaEnabled){const spot=spots.get(665)?.open;if(!(spot>0))throw Error('gamma_current_spot_missing');await loadGammaDay(day,spot);}
   const dq=new Quotes(day,close), daily={day,vix:vg,close,accounts:[]};
- for(const bot of ['flame']) {
+ for(const bot of ['spark','flame']) {
   const cfg=SPEC.bots[bot], group=accounts.filter(a=>a.bot===bot), active=new Map(group.map(a=>[a,[]]));
   const hosts=new Map(), flints=new Set();
   // Admission is evaluated after the real SPY minute bars have been loaded,
   // and before any option quote/order calculation.  It cannot see outcomes.
   const candidates=new Map(group.map(a=>[a,scenarioCandidate(a.scenario,vg.ratio,day,spots)]));const candidate=group.some(a=>candidates.get(a));
-  daily.minuteAdmission=Object.fromEntries(group.map(a=>[`${a.scenario.id}:${a.fillCase}`,minuteAdmission(a.scenario,vg.ratio,day,spots)]));
+  Object.assign(daily.minuteAdmission||={},Object.fromEntries(group.map(a=>[`${a.scenario.id}:${a.fillCase}`,minuteAdmission(a.scenario,vg.ratio,day,spots)])));
   for(let m=cfg.start;m<=Math.min(cfg.end,close-1);m++) {
    const spot=spots.get(m)?.open;if(!Number.isFinite(spot))throw Error('entry_stock_missing');
    let put=null,call=null,xsp=null;
@@ -352,7 +358,7 @@ async function replayDay(day) {
    for(const a of group) {
    const slip=SPEC.fillCases[a.fillCase], p=put?.at(m), c=call?.at(m);
     let host=hosts.get(a);let proposed=null;
-    if(!host&&candidates.get(a)&&p&&Number.isFinite(p.credit)&&p.credit-slip>=(vg.ratio>.80?a.scenario.credit:.10)) {
+    if(!host&&candidates.get(a)&&p&&Number.isFinite(p.credit)&&p.credit-slip>=(vg.ratio>a.scenario.baseGate?a.scenario.credit:.10)) {
      proposed=hostSize(a,p.credit-slip,vg.ratio,Math.min(p.bidSize,p.askSize),a.equity-active.get(a).reduce((s,t)=>s+t.risk,0),c&&c.credit-slip>=.10?c.credit-slip:null);
     }
     // FLINT precedes the actual host entry, matching scanner order. Retry
@@ -365,7 +371,7 @@ async function replayDay(day) {
      const f=flintSize(a,c.credit-slip,vg.ratio,candidates.get(a),host||proposed,Math.floor(Math.min(c.bidSize,c.askSize)),day);
      const available=a.equity-active.get(a).reduce((s,t)=>s+t.risk,0);
      const n=scenarioRiskCapacity(a,Math.min(f.n,Math.floor(Math.max(0,available)/f.ml)),f.ml,active.get(a).reduce((s,t)=>s+t.risk,0));
-     if(n>0) {active.get(a).push({spread:call,n,credit:c.credit-slip,entry:m,risk:f.ml*n,leg:'flint'});flints.add(a);}
+     if(n>0) {active.get(a).push({spread:call,n,credit:c.credit-slip,entry:m,risk:f.ml*n,leg:'flint',controller:a.scenario});flints.add(a);}
     }
     // The real scanner evaluates FLINT first, then persists the host floor,
     // including a floor-capped zero-sized host decision.
@@ -381,9 +387,9 @@ async function replayDay(day) {
       if(xsp===null)xsp=await dq.spread('XSP','put',put.short,put.long,m);
       const xq=xsp&&xsp.at(m);
       decision=X.decideXspSwap({nHost:proposed.n,spyCreditPerContract:p.credit-slip,xspCreditPerContract:xq?xq.credit-slip:null,xspShortBidSize:xq?.bidSize??null});
-      if(decision.nXsp)active.get(a).push({spread:xsp,n:decision.nXsp,credit:xq.credit-slip,entry:m,risk:cents((cfg.width-xq.credit+slip)*100)*decision.nXsp,leg:'host_xsp'});
+      if(decision.nXsp)active.get(a).push({spread:xsp,n:decision.nXsp,credit:xq.credit-slip,entry:m,risk:cents((cfg.width-xq.credit+slip)*100)*decision.nXsp,leg:'host_xsp',controller:a.scenario});
      }
-     if(decision.nSpy)active.get(a).push({spread:put,n:decision.nSpy,credit:p.credit-slip,entry:m,risk:proposed.ml*decision.nSpy,leg:'host_spy'});
+     if(decision.nSpy)active.get(a).push({spread:put,n:decision.nSpy,credit:p.credit-slip,entry:m,risk:proposed.ml*decision.nSpy,leg:'host_spy',controller:a.scenario});
      proposed.xspDecision=decision.reason;
     }
    }
@@ -402,7 +408,7 @@ async function replayDay(day) {
     if(hit){await t.spread.repairGuardQuote(m);break;}
    }
    const resolved=trades.map(t=>{
-    const result=t.spread.symbol==='XSP'?(SPX[day]?{pnl:money((t.credit-Math.min(cfg.width,Math.max(0,t.spread.short-SPX[day]/10)))*100-SPEC.feeDollarsPerSpread),exit:close,reason:'cash_settlement'}:{unresolved:'SPX_settlement_missing'}):realizeSpread(t.spread,t.entry,t.credit,spots,close,eod[day],SPEC.fillCases[a.fillCase]);
+    const result=t.spread.symbol==='XSP'?(SPX[day]?{pnl:money((t.credit-Math.min(cfg.width,Math.max(0,t.spread.short-SPX[day]/10)))*100-SPEC.feeDollarsPerSpread),exit:close,reason:'cash_settlement'}:{unresolved:'SPX_settlement_missing'}):realizeSpread(t.spread,t.entry,t.credit,spots,close,eod[day],SPEC.fillCases[a.fillCase],t.controller);
     if(result.unresolved)unresolved.push(result.unresolved);
     return { ...t,...result };
    });
@@ -511,27 +517,32 @@ const FOMC_DECISION_DAYS=new Set([
  '2026-01-28','2026-03-18','2026-04-29','2026-06-17','2026-07-29','2026-09-16'
 ]);
 function scenarioGrid(){
- const base={gate:.80,risk:'full',credit:.10,regime:'all'};
- const headline={gate:.925,risk:'full',credit:.20,regime:'prior_up'};
- // These filters are predeclared, pre-entry and apply only to the newly
- // admitted .80-.925 days.  They are deliberately modest: no data-mined
- // threshold grid and no selective application of already-known P&L.
- return [
-  {id:'base_nofed_norisk',...base,eventGuard:false,maxRiskPct:null,minute:'none'},
-  {id:'headline_nofed_norisk',...headline,eventGuard:false,maxRiskPct:null,minute:'none'},
-  {id:'headline_vixflat_nofed',...headline,eventGuard:false,maxRiskPct:null,minute:'vix_flat'},
-  {id:'headline_spyhold_nofed',...headline,eventGuard:false,maxRiskPct:null,minute:'spy_holding'},
-  {id:'headline_combined_nofed',...headline,eventGuard:false,maxRiskPct:null,minute:'combined'},
-  {id:'headline_combined_fed',...headline,eventGuard:true,maxRiskPct:null,minute:'combined'},
-  {id:'headline_combined_risk10',...headline,eventGuard:false,maxRiskPct:.10,minute:'combined'},
-  {id:'headline_combined_fed_risk10',...headline,eventGuard:true,maxRiskPct:.10,minute:'combined'},
- ];
+ const mk=(bot,baseGate,gate)=>{
+  const base={bot,baseGate,gate:baseGate,risk:'full',credit:.10,regime:'all',eventGuard:false,maxRiskPct:null,minute:'none',takePct:0,stopPct:0};
+  const add={bot,baseGate,gate,risk:'full',credit:.20,regime:'prior_up',eventGuard:false,maxRiskPct:null,minute:'none',takePct:0,stopPct:0};
+  // Predeclared full-replay candidates.  Each one is a separate compounded
+  // account, not a screen applied to an already-known daily P&L series.
+  return [
+   {id:`${bot}_base`,...base},
+   {id:`${bot}_add`,...add},
+   {id:`${bot}_add_vixflat`,...add,minute:'vix_flat'},
+   {id:`${bot}_add_spyhold`,...add,minute:'spy_holding'},
+   {id:`${bot}_add_combined`,...add,minute:'combined'},
+   {id:`${bot}_add_combined_fed`,...add,minute:'combined',eventGuard:true},
+   {id:`${bot}_add_combined_risk10`,...add,minute:'combined',maxRiskPct:.10},
+   {id:`${bot}_add_combined_fed_risk10`,...add,minute:'combined',eventGuard:true,maxRiskPct:.10},
+   {id:`${bot}_add_combined_take50`,...add,minute:'combined',takePct:.50},
+   {id:`${bot}_add_combined_take50_stop150`,...add,minute:'combined',takePct:.50,stopPct:1.50},
+   {id:`${bot}_add_combined_take35_stop100`,...add,minute:'combined',takePct:.35,stopPct:1.00},
+  ];
+ };
+ return [...mk('flame',.80,.925),...mk('spark',.90,.975)];
 }
 function capAddedLots(n,risk){if(n<=0)return 0;if(risk==='one')return Math.min(n,1);if(risk==='full')return n;return Math.max(1,Math.floor(n*(risk==='75pct'?.75:.50)));}
 function minuteAdmission(s,ratio,day,spots){
  // Preserve every original .80-or-lower entry without requiring the new
  // data. The added-day controller fails closed when raw index data is absent.
- if(ratio<=.80||s.minute==='none')return {eligible:true,reason:'not_required'};
+ if(ratio<=s.baseGate||s.minute==='none')return {eligible:true,reason:'not_required'};
  const v=vixMinute.get(day), before=spots.get(830)?.open, entry=spots.get(845)?.open;
  if(!(v?.before>0&&v?.entry>0&&before>0&&entry>0))return {eligible:false,reason:'minute_input_missing'};
  const vix5Pct=(v.entry/v.before-1)*100,spy15Pct=(entry/before-1)*100;
@@ -543,7 +554,7 @@ function minuteAdmission(s,ratio,day,spots){
 }
 function scenarioCandidate(s,ratio,day,spots){
  if(s.eventGuard&&FOMC_DECISION_DAYS.has(day))return false;
- if(ratio<=.80)return true;if(ratio>s.gate)return false;
+ if(ratio<=s.baseGate)return true;if(ratio>s.gate)return false;
  if(!minuteAdmission(s,ratio,day,spots).eligible)return false;
  if(s.regime==='all')return true;
  if(s.regime==='gamma_p67')return gammaDecision(day).eligible;
@@ -552,13 +563,13 @@ function scenarioCandidate(s,ratio,day,spots){
  return eod[prior[1]]>=eod[prior[0]];
 }
 function sweepSelfTest(){
- assert.equal(scenarioGrid().length,8);assert.equal(new Set(scenarioGrid().map(s=>s.id)).size,8);
+ assert.equal(scenarioGrid().length,22);assert.equal(new Set(scenarioGrid().map(s=>s.id)).size,22);
  for(const risk of ['full','75pct','50pct','one'])for(let n=0;n<30;n++){assert(capAddedLots(n,risk)<=n);assert(capAddedLots(n,risk)>=0);}
  assert.equal(capAddedLots(0,'one'),0);assert.equal(capAddedLots(3,'50pct'),1);
- const s={gate:.85,regime:'all',minute:'none'};assert(scenarioCandidate(s,.80,'2024-01-02',new Map()));assert(scenarioCandidate(s,.85,'2024-01-02',new Map()));assert(!scenarioCandidate(s,.850001,'2024-01-02',new Map()));
- assert(!scenarioCandidate({gate:1,regime:'all',eventGuard:true,minute:'none'},.75,'2026-03-18',new Map()));
+ const s={baseGate:.80,gate:.85,regime:'all',minute:'none'};assert(scenarioCandidate(s,.80,'2024-01-02',new Map()));assert(scenarioCandidate(s,.85,'2024-01-02',new Map()));assert(!scenarioCandidate(s,.850001,'2024-01-02',new Map()));
+ assert(!scenarioCandidate({baseGate:.80,gate:1,regime:'all',eventGuard:true,minute:'none'},.75,'2026-03-18',new Map()));
  const a={equity:2000000,scenario:{maxRiskPct:.10}};assert.equal(scenarioRiskCapacity(a,20,18000,0),11);
- emit('sweep_self_test',{passed:true,scenarios:8,paths:16});
+ emit('sweep_self_test',{passed:true,scenarios:22,paths:44});
 }
 function sweepStats(a,period='full'){
  const selected=a.history.filter(d=>period==='full'||(period==='train'?d[0]<'2025-09-29':d[0]>='2025-09-29'));
@@ -606,7 +617,7 @@ async function commitDay(row){
  const detailed={...row,trades:accounts.map(a=>({scenarioId:a.scenario.id,fillCase:a.fillCase,trades:a.trades}))};
  for(let i=0;i<accounts.length;i++){
   const a=accounts[i],d=a.days[0];assert(d&&a.days.length===1);assert.equal(money(a.trades.reduce((s,t)=>s+t.pnl,0)),d.pnl);
-  const added=d.hostN>0&&row.vix.ratio>.80?1:0;
+  const added=d.hostN>0&&row.vix.ratio>a.scenario.baseGate?1:0;
   a.history.push([d.day,d.before,d.after,d.pnl,d.markedMin,d.markedPeak,d.markedDD,d.markGaps,d.hostN,d.flintN,added]);
   a.tradeCounts.total+=a.trades.length;a.tradeCounts.host+=a.trades.filter(t=>t.leg.startsWith('host')).length;a.tradeCounts.flint+=a.trades.filter(t=>t.leg==='flint').length;a.tradeCounts.addedHost+=added;
   row.accounts[i].scenarioId=a.scenario.id;a.trades=[];a.days=[];
@@ -621,12 +632,12 @@ async function execute(){
   const resumed=await initCheckpointStore();if(resumed&&['completed_with_coverage_limits','blocked'].includes(STATE.stage))return;
   for(const day of sessions().slice(STATE.completed)){
    STATE.currentDay=day;const before=structuredClone(accounts),completedBefore=STATE.completed;
-   await recoverDataOperation(async()=>{const row=await replayDay(day);if(row.accounts.length!==16||row.accounts.some(a=>a.unresolved.length))throw Error('unresolved_sweep_day');await commitDay(row);},'day',()=>{accounts.splice(0,accounts.length,...structuredClone(before));STATE.completed=completedBefore;});
+   await recoverDataOperation(async()=>{const row=await replayDay(day);if(row.accounts.length!==44||row.accounts.some(a=>a.unresolved.length))throw Error('unresolved_sweep_day');await commitDay(row);},'day',()=>{accounts.splice(0,accounts.length,...structuredClone(before));STATE.completed=completedBefore;});
    emit('sweep_progress',{completed:STATE.completed,total:751,day,requests:STATE.requests,memoryMB:Math.round(process.memoryUsage().rss/1048576)});
   }
-  const natural=accounts.find(a=>a.scenario.id==='base_nofed_norisk'&&a.fillCase==='natural'),adverse=accounts.find(a=>a.scenario.id==='base_nofed_norisk'&&a.fillCase==='adverse3c');
+  const natural=accounts.find(a=>a.scenario.id==='flame_base'&&a.fillCase==='natural'),adverse=accounts.find(a=>a.scenario.id==='flame_base'&&a.fillCase==='adverse3c');
   assert.equal(sweepStats(natural).endingEquity,8185.20);assert.equal(sweepStats(adverse).endingEquity,2116.80);assert.equal(natural.tradeCounts.total,670);assert.equal(adverse.tradeCounts.total,97);
-  STATE.stage='completed_with_coverage_limits';STATE.baselineParity=true;await saveCheckpoint();emit('sweep_finished',{completed:751,paths:16,baselineParity:true});
+  STATE.stage='completed_with_coverage_limits';STATE.baselineParity=true;await saveCheckpoint();emit('sweep_finished',{completed:751,paths:44,baselineParity:true});
  }catch(e){STATE.stage='blocked';STATE.error=String(e.message);STATE.dataErrors.push({day:STATE.currentDay,error:STATE.error});try{await saveCheckpoint();}catch{}emit('sweep_blocked',{...STATE});}
 }
 
