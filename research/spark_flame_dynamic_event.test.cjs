@@ -1,0 +1,24 @@
+const assert=require('node:assert/strict');
+const R=require('./flame_event_risk_sweep_20260930.cjs');
+const spots=new Map(),vix=new Map(),quotes=new Map();
+for(let m=660;m<690;m++){spots.set(m,{close:500});vix.set(m,20);quotes.set(m,{debit:.15});}
+spots.set(666,{close:498});vix.set(666,21);quotes.set(666,{debit:.35});quotes.set(667,{debit:.40});
+const put={right:'put',symbol:'SPY',at:m=>quotes.get(m)};
+let r=R.dynamicExit(put,665,.20,spots,690,0,{dynamicShock:true},vix);
+assert.equal(r.triggerMinute,666);assert.equal(r.exit,667);assert.equal(r.exitDebit,.40);assert.equal(r.pnl,-21.40);
+quotes.delete(667);quotes.set(668,{debit:.45});
+r=R.dynamicExit(put,665,.20,spots,690,0,{dynamicShock:true},vix);assert.equal(r.exit,668);assert.equal(r.pnl,-26.40);
+for(let m=667;m<690;m++)quotes.delete(m);
+assert.equal(R.dynamicExit(put,665,.20,spots,690,0,{dynamicShock:true},vix).unresolved,'triggered_dynamic_exit_without_executable_quote');
+const flat=new Map(Array.from({length:30},(_,i)=>[660+i,20]));
+assert.equal(R.dynamicExit(put,665,.20,spots,690,0,{dynamicShock:true},flat),null,'Put shock needs VIX confirmation');
+const trailQuotes=new Map([[666,{debit:.10}],[667,{debit:.17}],[668,{debit:.18}]]);
+const xsp={right:'put',symbol:'XSP',at:m=>trailQuotes.get(m)};
+r=R.dynamicExit(xsp,665,.20,spots,690,0,{dynamicTrail:true},vix);
+assert.equal(r.triggerMinute,667);assert.equal(r.exit,668);assert.equal(r.reason,'profit_giveback');
+assert.equal(R.eventBlocked({eventMode:'major'},'2026-06-05'),true);
+assert.equal(R.eventBlocked({eventMode:'fed'},'2026-06-05'),false);
+assert.equal(R.eventBlocked({eventMode:'fed'},'2026-06-17'),true);
+assert.equal(R.accounts.length,144);
+trailQuotes.set(680,{debit:500});assert.deepEqual(R.dynamicExit(xsp,665,.20,spots,690,0,{dynamicTrail:true},vix),r,'Future observations cannot change an earlier exit');
+console.log('PASS: delayed/deferred quote fills, blocked unresolved exit, VIX confirmation, XSP protection, event identity, future invariance, 144 paths');
