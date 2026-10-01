@@ -180,6 +180,7 @@ def fetch_net_gex(client: Any, ticker: str = "SPY", *, today: date | None = None
 
     horizon = (today + timedelta(days=max_dte)).isoformat()
     rows: list[dict] = []
+    failed_expirations = []
     for exp in exps:
         if exp > horizon:
             break
@@ -191,16 +192,22 @@ def fetch_net_gex(client: Any, ticker: str = "SPY", *, today: date | None = None
             )
             if r.status_code != 200:
                 logger.warning("gamma_regime: chain %s %s -> %s", ticker, exp, r.status_code)
+                failed_expirations.append(exp)
                 continue
             data = (r.json().get("options") or {}).get("option") or []
             if isinstance(data, dict):
                 data = [data]
+            if not data:
+                failed_expirations.append(exp)
             rows.extend(data)
         except Exception as e:                                    # noqa: BLE001
             logger.warning("gamma_regime: chain %s %s failed: %s", ticker, exp, e)
+            failed_expirations.append(exp)
             continue
 
     out = compute_net_gex(rows, float(spot))
+    out["failed_expirations"] = failed_expirations
+    out["chain_complete"] = not failed_expirations
     out["spot"] = float(spot)
     out["n_expirations"] = len([e for e in exps if e <= horizon])
     return out
