@@ -1,0 +1,3654 @@
+{
+  "scope": "Attribution of already reconciled account ledgers; correlation is not causation; no counterfactual profits or rerun sizing inferred",
+  "events": {
+    "2023-10-03": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2023/",
+        "title": "Job Openings and Labor Turnover Survey for August 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2023-10-06": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2023/",
+        "title": "Employment Situation for September 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2023-10-11": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2023/",
+        "title": "Producer Price Index for September 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2023-10-12": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2023/",
+        "title": "Consumer Price Index for September 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2023-11-01": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2023/",
+        "title": "Job Openings and Labor Turnover Survey for September 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      },
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2023-11-03": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2023/",
+        "title": "Employment Situation for October 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2023-11-14": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2023/",
+        "title": "Consumer Price Index for October 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2023-11-15": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2023/",
+        "title": "Producer Price Index for October 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2023-12-05": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2023/",
+        "title": "Job Openings and Labor Turnover Survey for October 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2023-12-08": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2023/",
+        "title": "Employment Situation for November 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2023-12-12": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2023/",
+        "title": "Consumer Price Index for November 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2023-12-13": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2023/",
+        "title": "Producer Price Index for November 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      },
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2024-01-03": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Job Openings and Labor Turnover Survey for November 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-01-05": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Employment Situation for December 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-01-11": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Consumer Price Index for December 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-01-12": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Producer Price Index for December 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-01-30": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Job Openings and Labor Turnover Survey for December 2023",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-01-31": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2024-02-02": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Employment Situation for January 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-02-13": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Consumer Price Index for January 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-02-16": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Producer Price Index for January 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-03-06": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Job Openings and Labor Turnover Survey for January 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-03-08": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Employment Situation for February 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-03-12": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Consumer Price Index for February 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-03-14": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Producer Price Index for February 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-03-20": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2024-04-02": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Job Openings and Labor Turnover Survey for February 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-04-05": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Employment Situation for March 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-04-10": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Consumer Price Index for March 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-04-11": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Producer Price Index for March 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-05-01": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Job Openings and Labor Turnover Survey for March 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      },
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2024-05-03": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Employment Situation for April 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-05-14": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Producer Price Index for April 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-05-15": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Consumer Price Index for April 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-06-04": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Job Openings and Labor Turnover Survey for April 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-06-07": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Employment Situation for May 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-06-12": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Consumer Price Index for May 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      },
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2024-06-13": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Producer Price Index for May 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-07-02": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Job Openings and Labor Turnover Survey for May 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-07-05": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Employment Situation for June 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-07-11": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Consumer Price Index for June 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-07-12": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Producer Price Index for June 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-07-30": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Job Openings and Labor Turnover Survey for June 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-07-31": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2024-08-02": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Employment Situation for July 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-08-13": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Producer Price Index for July 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-08-14": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Consumer Price Index for July 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-09-04": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Job Openings and Labor Turnover Survey for July 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-09-06": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Employment Situation for August 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-09-11": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Consumer Price Index for August 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-09-12": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Producer Price Index for August 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-09-18": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2024-10-01": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Job Openings and Labor Turnover Survey for August 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-10-04": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Employment Situation for September 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-10-10": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Consumer Price Index for September 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-10-11": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Producer Price Index for September 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-10-29": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Job Openings and Labor Turnover Survey for September 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-11-01": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Employment Situation for October 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-11-07": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2024-11-13": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Consumer Price Index for October 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-11-14": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Producer Price Index for October 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-12-03": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Job Openings and Labor Turnover Survey for October 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-12-06": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Employment Situation for November 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-12-11": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Consumer Price Index for November 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-12-12": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2024/",
+        "title": "Producer Price Index for November 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2024-12-18": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2025-01-07": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Job Openings and Labor Turnover Survey for November 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-01-10": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Employment Situation for December 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-01-14": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Producer Price Index for December 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-01-15": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Consumer Price Index for December 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-01-29": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2025-02-04": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Job Openings and Labor Turnover Survey for December 2024",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-02-07": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Employment Situation for January 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-02-12": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Consumer Price Index for January 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-02-13": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Producer Price Index for January 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-03-07": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Employment Situation for February 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-03-11": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Job Openings and Labor Turnover Survey for January 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-03-12": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Consumer Price Index for February 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-03-13": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Producer Price Index for February 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-03-19": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2025-04-01": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Job Openings and Labor Turnover Survey for February 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-04-04": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Employment Situation for March 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-04-10": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Consumer Price Index for March 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-04-11": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Producer Price Index for March 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-04-29": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Job Openings and Labor Turnover Survey for March 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-05-02": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Employment Situation for April 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-05-07": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2025-05-13": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Consumer Price Index for April 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-05-15": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Producer Price Index for April 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-06-03": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Job Openings and Labor Turnover Survey for April 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-06-06": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Employment Situation for May 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-06-11": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Consumer Price Index for May 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-06-12": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Producer Price Index for May 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-06-18": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2025-07-01": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Job Openings and Labor Turnover Survey for May 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-07-03": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Employment Situation for June 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-07-15": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Consumer Price Index for June 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-07-16": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Producer Price Index for June 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-07-29": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Job Openings and Labor Turnover Survey for June 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-07-30": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2025-08-01": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Employment Situation for July 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-08-12": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Consumer Price Index for July 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-08-14": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Producer Price Index for July 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-09-03": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Job Openings and Labor Turnover Survey for July 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-09-05": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Employment Situation for August 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-09-10": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Producer Price Index for August 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-09-11": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Consumer Price Index for August 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-09-17": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2025-09-30": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Job Openings and Labor Turnover Survey for August 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-10-24": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Consumer Price Index for September 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-10-29": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2025-11-20": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Employment Situation for September 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-11-25": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Producer Price Index for September 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-12-09": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Job Openings and Labor Turnover Survey for October 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-12-10": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2025-12-16": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Employment Situation for November 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2025-12-18": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2025/",
+        "title": "Consumer Price Index for November 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-01-07": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Job Openings and Labor Turnover Survey for November 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-01-09": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Employment Situation for December 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-01-13": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Consumer Price Index for December 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-01-14": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Producer Price Index for November 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-01-28": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2026-01-30": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Producer Price Index for December 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-02-05": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Job Openings and Labor Turnover Survey for December 2025",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-02-11": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Employment Situation for January 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-02-13": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Consumer Price Index for January 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-02-27": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Producer Price Index for January 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-03-06": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Employment Situation for February 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-03-11": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Consumer Price Index for February 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-03-13": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Job Openings and Labor Turnover Survey for January 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-03-18": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Producer Price Index for February 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      },
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2026-03-31": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Job Openings and Labor Turnover Survey for February 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-04-03": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Employment Situation for March 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-04-10": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Consumer Price Index for March 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-04-14": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Producer Price Index for March 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-04-29": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2026-05-05": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Job Openings and Labor Turnover Survey for March 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-05-08": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Employment Situation for April 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-05-12": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Consumer Price Index for April 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-05-13": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Producer Price Index for April 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-06-02": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Job Openings and Labor Turnover Survey for April 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-06-05": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Employment Situation for May 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-06-10": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Consumer Price Index for May 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-06-11": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Producer Price Index for May 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-06-17": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2026-06-30": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Job Openings and Labor Turnover Survey for May 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-07-02": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Employment Situation for June 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-07-14": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Consumer Price Index for June 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-07-15": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Producer Price Index for June 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-07-29": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ],
+    "2026-08-04": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Job Openings and Labor Turnover Survey for June 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-08-07": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Employment Situation for July 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-08-12": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Consumer Price Index for July 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-08-13": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Producer Price Index for July 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-09-01": [
+      {
+        "kind": "JOLTS",
+        "timeET": "10:00 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Job Openings and Labor Turnover Survey for July 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-09-04": [
+      {
+        "kind": "PAYROLLS",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Employment Situation for August 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-09-10": [
+      {
+        "kind": "PPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Producer Price Index for August 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-09-11": [
+      {
+        "kind": "CPI",
+        "timeET": "08:30 AM",
+        "source": "https://www.bls.gov/schedule/2026/",
+        "title": "Consumer Price Index for August 2026",
+        "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+      }
+    ],
+    "2026-09-16": [
+      {
+        "kind": "FOMC",
+        "timeET": "02:00 PM",
+        "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "title": "FOMC policy decision",
+        "calendarAvailability": "Scheduled meeting; no decision outcome used"
+      }
+    ]
+  },
+  "eventCounts": {
+    "JOLTS": 35,
+    "PAYROLLS": 35,
+    "PPI": 35,
+    "CPI": 35,
+    "FOMC": 24
+  },
+  "statistics": [
+    {
+      "scenario": "spark_base",
+      "fill": "natural",
+      "bucket": "ALL",
+      "sessions": 751,
+      "tradingDays": 731,
+      "lossDays": 168,
+      "grossLoss": -49982.4,
+      "grossWin": 53824.8,
+      "recordedPnl": 3842.4,
+      "lossRateOnTradedDaysPct": 22.98
+    },
+    {
+      "scenario": "spark_base",
+      "fill": "natural",
+      "bucket": "NO_LISTED_EVENT",
+      "sessions": 593,
+      "tradingDays": 576,
+      "lossDays": 133,
+      "grossLoss": -39578.4,
+      "grossWin": 40627.6,
+      "recordedPnl": 1049.2,
+      "lossRateOnTradedDaysPct": 23.09
+    },
+    {
+      "scenario": "spark_base",
+      "fill": "adverse3c",
+      "bucket": "ALL",
+      "sessions": 751,
+      "tradingDays": 618,
+      "lossDays": 132,
+      "grossLoss": -31067.0,
+      "grossWin": 30389.4,
+      "recordedPnl": -677.6,
+      "lossRateOnTradedDaysPct": 21.36
+    },
+    {
+      "scenario": "spark_base",
+      "fill": "adverse3c",
+      "bucket": "NO_LISTED_EVENT",
+      "sessions": 593,
+      "tradingDays": 489,
+      "lossDays": 102,
+      "grossLoss": -25538.8,
+      "grossWin": 22847.6,
+      "recordedPnl": -2691.2,
+      "lossRateOnTradedDaysPct": 20.86
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "natural",
+      "bucket": "ALL",
+      "sessions": 751,
+      "tradingDays": 343,
+      "lossDays": 74,
+      "grossLoss": -16563.2,
+      "grossWin": 16919.6,
+      "recordedPnl": 356.4,
+      "lossRateOnTradedDaysPct": 21.57
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "natural",
+      "bucket": "NO_LISTED_EVENT",
+      "sessions": 593,
+      "tradingDays": 270,
+      "lossDays": 58,
+      "grossLoss": -14430.8,
+      "grossWin": 12042.0,
+      "recordedPnl": -2388.8,
+      "lossRateOnTradedDaysPct": 21.48
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "adverse3c",
+      "bucket": "ALL",
+      "sessions": 751,
+      "tradingDays": 636,
+      "lossDays": 133,
+      "grossLoss": -34134.8,
+      "grossWin": 32097.0,
+      "recordedPnl": -2037.8,
+      "lossRateOnTradedDaysPct": 20.91
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "adverse3c",
+      "bucket": "NO_LISTED_EVENT",
+      "sessions": 593,
+      "tradingDays": 502,
+      "lossDays": 103,
+      "grossLoss": -28008.8,
+      "grossWin": 23887.0,
+      "recordedPnl": -4121.8,
+      "lossRateOnTradedDaysPct": 20.52
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "natural",
+      "bucket": "ALL",
+      "sessions": 751,
+      "tradingDays": 530,
+      "lossDays": 130,
+      "grossLoss": -20809.4,
+      "grossWin": 26994.6,
+      "recordedPnl": 6185.2,
+      "lossRateOnTradedDaysPct": 24.53
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "natural",
+      "bucket": "NO_LISTED_EVENT",
+      "sessions": 593,
+      "tradingDays": 415,
+      "lossDays": 96,
+      "grossLoss": -15704.4,
+      "grossWin": 20683.2,
+      "recordedPnl": 4978.8,
+      "lossRateOnTradedDaysPct": 23.13
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "adverse3c",
+      "bucket": "ALL",
+      "sessions": 751,
+      "tradingDays": 96,
+      "lossDays": 24,
+      "grossLoss": -2424.4,
+      "grossWin": 2541.2,
+      "recordedPnl": 116.8,
+      "lossRateOnTradedDaysPct": 25.0
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "adverse3c",
+      "bucket": "NO_LISTED_EVENT",
+      "sessions": 593,
+      "tradingDays": 78,
+      "lossDays": 18,
+      "grossLoss": -2042.0,
+      "grossWin": 2069.0,
+      "recordedPnl": 27.0,
+      "lossRateOnTradedDaysPct": 23.08
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "natural",
+      "bucket": "ALL",
+      "sessions": 751,
+      "tradingDays": 623,
+      "lossDays": 153,
+      "grossLoss": -89291.2,
+      "grossWin": 104025.0,
+      "recordedPnl": 14733.8,
+      "lossRateOnTradedDaysPct": 24.56
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "natural",
+      "bucket": "NO_LISTED_EVENT",
+      "sessions": 593,
+      "tradingDays": 484,
+      "lossDays": 121,
+      "grossLoss": -71424.8,
+      "grossWin": 79734.8,
+      "recordedPnl": 8310.0,
+      "lossRateOnTradedDaysPct": 25.0
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "adverse3c",
+      "bucket": "ALL",
+      "sessions": 751,
+      "tradingDays": 537,
+      "lossDays": 147,
+      "grossLoss": -23946.6,
+      "grossWin": 24341.6,
+      "recordedPnl": 395.0,
+      "lossRateOnTradedDaysPct": 27.37
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "adverse3c",
+      "bucket": "NO_LISTED_EVENT",
+      "sessions": 593,
+      "tradingDays": 411,
+      "lossDays": 115,
+      "grossLoss": -19216.6,
+      "grossWin": 17447.8,
+      "recordedPnl": -1768.8,
+      "lossRateOnTradedDaysPct": 27.98
+    },
+    {
+      "scenario": "spark_base",
+      "fill": "natural",
+      "bucket": "ANY_EVENT",
+      "sessions": 158,
+      "tradingDays": 155,
+      "lossDays": 35,
+      "grossLoss": -10404.0,
+      "grossWin": 13197.2,
+      "recordedPnl": 2793.2,
+      "lossRateOnTradedDaysPct": 22.58
+    },
+    {
+      "scenario": "spark_base",
+      "fill": "natural",
+      "bucket": "JOLTS",
+      "sessions": 35,
+      "tradingDays": 34,
+      "lossDays": 10,
+      "grossLoss": -1886.8,
+      "grossWin": 1679.6,
+      "recordedPnl": -207.2,
+      "lossRateOnTradedDaysPct": 29.41
+    },
+    {
+      "scenario": "spark_base",
+      "fill": "adverse3c",
+      "bucket": "ANY_EVENT",
+      "sessions": 158,
+      "tradingDays": 129,
+      "lossDays": 30,
+      "grossLoss": -5528.2,
+      "grossWin": 7541.8,
+      "recordedPnl": 2013.6,
+      "lossRateOnTradedDaysPct": 23.26
+    },
+    {
+      "scenario": "spark_base",
+      "fill": "adverse3c",
+      "bucket": "JOLTS",
+      "sessions": 35,
+      "tradingDays": 28,
+      "lossDays": 9,
+      "grossLoss": -1030.6,
+      "grossWin": 1238.8,
+      "recordedPnl": 208.2,
+      "lossRateOnTradedDaysPct": 32.14
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "natural",
+      "bucket": "ANY_EVENT",
+      "sessions": 158,
+      "tradingDays": 73,
+      "lossDays": 16,
+      "grossLoss": -2132.4,
+      "grossWin": 4877.6,
+      "recordedPnl": 2745.2,
+      "lossRateOnTradedDaysPct": 21.92
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "natural",
+      "bucket": "JOLTS",
+      "sessions": 35,
+      "tradingDays": 16,
+      "lossDays": 4,
+      "grossLoss": -869.2,
+      "grossWin": 1037.0,
+      "recordedPnl": 167.8,
+      "lossRateOnTradedDaysPct": 25.0
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "adverse3c",
+      "bucket": "ANY_EVENT",
+      "sessions": 158,
+      "tradingDays": 134,
+      "lossDays": 30,
+      "grossLoss": -6126.0,
+      "grossWin": 8210.0,
+      "recordedPnl": 2084.0,
+      "lossRateOnTradedDaysPct": 22.39
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "adverse3c",
+      "bucket": "JOLTS",
+      "sessions": 35,
+      "tradingDays": 28,
+      "lossDays": 6,
+      "grossLoss": -844.0,
+      "grossWin": 1570.2,
+      "recordedPnl": 726.2,
+      "lossRateOnTradedDaysPct": 21.43
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "natural",
+      "bucket": "ANY_EVENT",
+      "sessions": 158,
+      "tradingDays": 115,
+      "lossDays": 34,
+      "grossLoss": -5105.0,
+      "grossWin": 6311.4,
+      "recordedPnl": 1206.4,
+      "lossRateOnTradedDaysPct": 29.57
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "natural",
+      "bucket": "JOLTS",
+      "sessions": 35,
+      "tradingDays": 23,
+      "lossDays": 8,
+      "grossLoss": -808.0,
+      "grossWin": 1319.2,
+      "recordedPnl": 511.2,
+      "lossRateOnTradedDaysPct": 34.78
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "adverse3c",
+      "bucket": "ANY_EVENT",
+      "sessions": 158,
+      "tradingDays": 18,
+      "lossDays": 6,
+      "grossLoss": -382.4,
+      "grossWin": 472.2,
+      "recordedPnl": 89.8,
+      "lossRateOnTradedDaysPct": 33.33
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "adverse3c",
+      "bucket": "JOLTS",
+      "sessions": 35,
+      "tradingDays": 3,
+      "lossDays": 2,
+      "grossLoss": -68.8,
+      "grossWin": 32.6,
+      "recordedPnl": -36.2,
+      "lossRateOnTradedDaysPct": 66.67
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "natural",
+      "bucket": "ANY_EVENT",
+      "sessions": 158,
+      "tradingDays": 139,
+      "lossDays": 32,
+      "grossLoss": -17866.4,
+      "grossWin": 24290.2,
+      "recordedPnl": 6423.8,
+      "lossRateOnTradedDaysPct": 23.02
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "natural",
+      "bucket": "JOLTS",
+      "sessions": 35,
+      "tradingDays": 30,
+      "lossDays": 7,
+      "grossLoss": -1690.8,
+      "grossWin": 4468.6,
+      "recordedPnl": 2777.8,
+      "lossRateOnTradedDaysPct": 23.33
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "adverse3c",
+      "bucket": "ANY_EVENT",
+      "sessions": 158,
+      "tradingDays": 126,
+      "lossDays": 32,
+      "grossLoss": -4730.0,
+      "grossWin": 6893.8,
+      "recordedPnl": 2163.8,
+      "lossRateOnTradedDaysPct": 25.4
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "adverse3c",
+      "bucket": "JOLTS",
+      "sessions": 35,
+      "tradingDays": 26,
+      "lossDays": 5,
+      "grossLoss": -776.2,
+      "grossWin": 1431.6,
+      "recordedPnl": 655.4,
+      "lossRateOnTradedDaysPct": 19.23
+    },
+    {
+      "scenario": "spark_base",
+      "fill": "natural",
+      "bucket": "PAYROLLS",
+      "sessions": 34,
+      "tradingDays": 32,
+      "lossDays": 7,
+      "grossLoss": -3005.2,
+      "grossWin": 2996.0,
+      "recordedPnl": -9.2,
+      "lossRateOnTradedDaysPct": 21.88
+    },
+    {
+      "scenario": "spark_base",
+      "fill": "adverse3c",
+      "bucket": "PAYROLLS",
+      "sessions": 34,
+      "tradingDays": 25,
+      "lossDays": 3,
+      "grossLoss": -1138.6,
+      "grossWin": 1560.2,
+      "recordedPnl": 421.6,
+      "lossRateOnTradedDaysPct": 12.0
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "natural",
+      "bucket": "PAYROLLS",
+      "sessions": 34,
+      "tradingDays": 16,
+      "lossDays": 5,
+      "grossLoss": -672.0,
+      "grossWin": 919.6,
+      "recordedPnl": 247.6,
+      "lossRateOnTradedDaysPct": 31.25
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "adverse3c",
+      "bucket": "PAYROLLS",
+      "sessions": 34,
+      "tradingDays": 29,
+      "lossDays": 6,
+      "grossLoss": -2184.6,
+      "grossWin": 1517.4,
+      "recordedPnl": -667.2,
+      "lossRateOnTradedDaysPct": 20.69
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "natural",
+      "bucket": "PAYROLLS",
+      "sessions": 34,
+      "tradingDays": 25,
+      "lossDays": 7,
+      "grossLoss": -393.2,
+      "grossWin": 816.2,
+      "recordedPnl": 423.0,
+      "lossRateOnTradedDaysPct": 28.0
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "adverse3c",
+      "bucket": "PAYROLLS",
+      "sessions": 34,
+      "tradingDays": 5,
+      "lossDays": 1,
+      "grossLoss": -111.4,
+      "grossWin": 89.6,
+      "recordedPnl": -21.8,
+      "lossRateOnTradedDaysPct": 20.0
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "natural",
+      "bucket": "PAYROLLS",
+      "sessions": 34,
+      "tradingDays": 30,
+      "lossDays": 7,
+      "grossLoss": -4312.4,
+      "grossWin": 3052.8,
+      "recordedPnl": -1259.6,
+      "lossRateOnTradedDaysPct": 23.33
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "adverse3c",
+      "bucket": "PAYROLLS",
+      "sessions": 34,
+      "tradingDays": 28,
+      "lossDays": 7,
+      "grossLoss": -792.2,
+      "grossWin": 696.8,
+      "recordedPnl": -95.4,
+      "lossRateOnTradedDaysPct": 25.0
+    },
+    {
+      "scenario": "spark_base",
+      "fill": "natural",
+      "bucket": "PPI",
+      "sessions": 35,
+      "tradingDays": 35,
+      "lossDays": 8,
+      "grossLoss": -2650.2,
+      "grossWin": 2684.0,
+      "recordedPnl": 33.8,
+      "lossRateOnTradedDaysPct": 22.86
+    },
+    {
+      "scenario": "spark_base",
+      "fill": "adverse3c",
+      "bucket": "PPI",
+      "sessions": 35,
+      "tradingDays": 32,
+      "lossDays": 8,
+      "grossLoss": -1699.4,
+      "grossWin": 1701.8,
+      "recordedPnl": 2.4,
+      "lossRateOnTradedDaysPct": 25.0
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "natural",
+      "bucket": "PPI",
+      "sessions": 35,
+      "tradingDays": 17,
+      "lossDays": 3,
+      "grossLoss": -356.6,
+      "grossWin": 770.2,
+      "recordedPnl": 413.6,
+      "lossRateOnTradedDaysPct": 17.65
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "adverse3c",
+      "bucket": "PPI",
+      "sessions": 35,
+      "tradingDays": 30,
+      "lossDays": 7,
+      "grossLoss": -1292.0,
+      "grossWin": 1645.0,
+      "recordedPnl": 353.0,
+      "lossRateOnTradedDaysPct": 23.33
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "natural",
+      "bucket": "PPI",
+      "sessions": 35,
+      "tradingDays": 25,
+      "lossDays": 8,
+      "grossLoss": -1511.0,
+      "grossWin": 1335.6,
+      "recordedPnl": -175.4,
+      "lossRateOnTradedDaysPct": 32.0
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "adverse3c",
+      "bucket": "PPI",
+      "sessions": 35,
+      "tradingDays": 3,
+      "lossDays": 1,
+      "grossLoss": -21.4,
+      "grossWin": 133.0,
+      "recordedPnl": 111.6,
+      "lossRateOnTradedDaysPct": 33.33
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "natural",
+      "bucket": "PPI",
+      "sessions": 35,
+      "tradingDays": 30,
+      "lossDays": 8,
+      "grossLoss": -4779.2,
+      "grossWin": 5323.6,
+      "recordedPnl": 544.4,
+      "lossRateOnTradedDaysPct": 26.67
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "adverse3c",
+      "bucket": "PPI",
+      "sessions": 35,
+      "tradingDays": 27,
+      "lossDays": 8,
+      "grossLoss": -1191.0,
+      "grossWin": 1574.6,
+      "recordedPnl": 383.6,
+      "lossRateOnTradedDaysPct": 29.63
+    },
+    {
+      "scenario": "spark_base",
+      "fill": "natural",
+      "bucket": "CPI",
+      "sessions": 35,
+      "tradingDays": 35,
+      "lossDays": 6,
+      "grossLoss": -809.8,
+      "grossWin": 2805.2,
+      "recordedPnl": 1995.4,
+      "lossRateOnTradedDaysPct": 17.14
+    },
+    {
+      "scenario": "spark_base",
+      "fill": "adverse3c",
+      "bucket": "CPI",
+      "sessions": 35,
+      "tradingDays": 31,
+      "lossDays": 6,
+      "grossLoss": -620.4,
+      "grossWin": 1462.2,
+      "recordedPnl": 841.8,
+      "lossRateOnTradedDaysPct": 19.35
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "natural",
+      "bucket": "CPI",
+      "sessions": 35,
+      "tradingDays": 17,
+      "lossDays": 3,
+      "grossLoss": -81.8,
+      "grossWin": 1328.0,
+      "recordedPnl": 1246.2,
+      "lossRateOnTradedDaysPct": 17.65
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "adverse3c",
+      "bucket": "CPI",
+      "sessions": 35,
+      "tradingDays": 31,
+      "lossDays": 6,
+      "grossLoss": -439.4,
+      "grossWin": 1717.8,
+      "recordedPnl": 1278.4,
+      "lossRateOnTradedDaysPct": 19.35
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "natural",
+      "bucket": "CPI",
+      "sessions": 35,
+      "tradingDays": 25,
+      "lossDays": 6,
+      "grossLoss": -948.2,
+      "grossWin": 1059.0,
+      "recordedPnl": 110.8,
+      "lossRateOnTradedDaysPct": 24.0
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "adverse3c",
+      "bucket": "CPI",
+      "sessions": 35,
+      "tradingDays": 6,
+      "lossDays": 2,
+      "grossLoss": -180.8,
+      "grossWin": 165.4,
+      "recordedPnl": -15.4,
+      "lossRateOnTradedDaysPct": 33.33
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "natural",
+      "bucket": "CPI",
+      "sessions": 35,
+      "tradingDays": 30,
+      "lossDays": 7,
+      "grossLoss": -2774.6,
+      "grossWin": 4119.8,
+      "recordedPnl": 1345.2,
+      "lossRateOnTradedDaysPct": 23.33
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "adverse3c",
+      "bucket": "CPI",
+      "sessions": 35,
+      "tradingDays": 28,
+      "lossDays": 9,
+      "grossLoss": -993.0,
+      "grossWin": 1399.6,
+      "recordedPnl": 406.6,
+      "lossRateOnTradedDaysPct": 32.14
+    },
+    {
+      "scenario": "spark_base",
+      "fill": "natural",
+      "bucket": "FOMC",
+      "sessions": 24,
+      "tradingDays": 24,
+      "lossDays": 5,
+      "grossLoss": -3363.8,
+      "grossWin": 3587.2,
+      "recordedPnl": 223.4,
+      "lossRateOnTradedDaysPct": 20.83
+    },
+    {
+      "scenario": "spark_base",
+      "fill": "adverse3c",
+      "bucket": "FOMC",
+      "sessions": 24,
+      "tradingDays": 18,
+      "lossDays": 5,
+      "grossLoss": -1742.4,
+      "grossWin": 2109.6,
+      "recordedPnl": 367.2,
+      "lossRateOnTradedDaysPct": 27.78
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "natural",
+      "bucket": "FOMC",
+      "sessions": 24,
+      "tradingDays": 11,
+      "lossDays": 1,
+      "grossLoss": -152.8,
+      "grossWin": 1643.0,
+      "recordedPnl": 1490.2,
+      "lossRateOnTradedDaysPct": 9.09
+    },
+    {
+      "scenario": "spark_add",
+      "fill": "adverse3c",
+      "bucket": "FOMC",
+      "sessions": 24,
+      "tradingDays": 21,
+      "lossDays": 6,
+      "grossLoss": -1834.8,
+      "grossWin": 2407.6,
+      "recordedPnl": 572.8,
+      "lossRateOnTradedDaysPct": 28.57
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "natural",
+      "bucket": "FOMC",
+      "sessions": 24,
+      "tradingDays": 19,
+      "lossDays": 6,
+      "grossLoss": -2529.8,
+      "grossWin": 1833.0,
+      "recordedPnl": -696.8,
+      "lossRateOnTradedDaysPct": 31.58
+    },
+    {
+      "scenario": "flame_base",
+      "fill": "adverse3c",
+      "bucket": "FOMC",
+      "sessions": 24,
+      "tradingDays": 2,
+      "lossDays": 0,
+      "grossLoss": 0,
+      "grossWin": 100.2,
+      "recordedPnl": 100.2,
+      "lossRateOnTradedDaysPct": 0.0
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "natural",
+      "bucket": "FOMC",
+      "sessions": 24,
+      "tradingDays": 24,
+      "lossDays": 4,
+      "grossLoss": -7479.8,
+      "grossWin": 8116.4,
+      "recordedPnl": 636.6,
+      "lossRateOnTradedDaysPct": 16.67
+    },
+    {
+      "scenario": "flame_add",
+      "fill": "adverse3c",
+      "bucket": "FOMC",
+      "sessions": 24,
+      "tradingDays": 22,
+      "lossDays": 4,
+      "grossLoss": -1144.0,
+      "grossWin": 2430.0,
+      "recordedPnl": 1286.0,
+      "lossRateOnTradedDaysPct": 18.18
+    }
+  ],
+  "worstDays": {
+    "spark_add:natural": [
+      {
+        "date": "2025-02-21",
+        "pnl": -1704,
+        "events": [],
+        "before": 8984.6,
+        "lossPct": 18.97
+      },
+      {
+        "date": "2025-01-31",
+        "pnl": -1331.6,
+        "events": [],
+        "before": 8869.8,
+        "lossPct": 15.01
+      },
+      {
+        "date": "2024-08-07",
+        "pnl": -1288.6,
+        "events": [],
+        "before": 7347.2,
+        "lossPct": 17.54
+      },
+      {
+        "date": "2025-03-03",
+        "pnl": -1275.6,
+        "events": [],
+        "before": 7202.6,
+        "lossPct": 17.71
+      },
+      {
+        "date": "2025-01-07",
+        "pnl": -757,
+        "events": [
+          {
+            "kind": "JOLTS",
+            "timeET": "10:00 AM",
+            "source": "https://www.bls.gov/schedule/2025/",
+            "title": "Job Openings and Labor Turnover Survey for November 2024",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 7360.4,
+        "lossPct": 10.28
+      },
+      {
+        "date": "2024-04-30",
+        "pnl": -748.6,
+        "events": [],
+        "before": 7584.6,
+        "lossPct": 9.87
+      },
+      {
+        "date": "2025-01-06",
+        "pnl": -702,
+        "events": [],
+        "before": 8062.4,
+        "lossPct": 8.71
+      },
+      {
+        "date": "2024-08-22",
+        "pnl": -668.8,
+        "events": [],
+        "before": 6486.8,
+        "lossPct": 10.31
+      },
+      {
+        "date": "2024-05-23",
+        "pnl": -608.6,
+        "events": [],
+        "before": 7825,
+        "lossPct": 7.78
+      },
+      {
+        "date": "2024-07-24",
+        "pnl": -458.6,
+        "events": [],
+        "before": 7484,
+        "lossPct": 6.13
+      },
+      {
+        "date": "2023-11-09",
+        "pnl": -412.2,
+        "events": [],
+        "before": 5772.4,
+        "lossPct": 7.14
+      },
+      {
+        "date": "2024-06-28",
+        "pnl": -397.6,
+        "events": [],
+        "before": 8200,
+        "lossPct": 4.85
+      },
+      {
+        "date": "2024-03-08",
+        "pnl": -354.2,
+        "events": [
+          {
+            "kind": "PAYROLLS",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2024/",
+            "title": "Employment Situation for February 2024",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 6749,
+        "lossPct": 5.25
+      },
+      {
+        "date": "2024-10-25",
+        "pnl": -291.4,
+        "events": [],
+        "before": 6231.4,
+        "lossPct": 4.68
+      },
+      {
+        "date": "2024-08-01",
+        "pnl": -264.6,
+        "events": [],
+        "before": 7595,
+        "lossPct": 3.48
+      },
+      {
+        "date": "2025-03-06",
+        "pnl": -262.4,
+        "events": [],
+        "before": 5707.2,
+        "lossPct": 4.6
+      },
+      {
+        "date": "2023-10-25",
+        "pnl": -230.8,
+        "events": [],
+        "before": 5512.2,
+        "lossPct": 4.19
+      },
+      {
+        "date": "2024-05-31",
+        "pnl": -217.4,
+        "events": [],
+        "before": 7473.6,
+        "lossPct": 2.91
+      },
+      {
+        "date": "2024-09-03",
+        "pnl": -208.4,
+        "events": [],
+        "before": 5874.6,
+        "lossPct": 3.55
+      },
+      {
+        "date": "2024-07-15",
+        "pnl": -190.6,
+        "events": [],
+        "before": 7555.2,
+        "lossPct": 2.52
+      }
+    ],
+    "spark_add:adverse3c": [
+      {
+        "date": "2024-08-07",
+        "pnl": -1372.2,
+        "events": [],
+        "before": 6487.2,
+        "lossPct": 21.15
+      },
+      {
+        "date": "2025-01-31",
+        "pnl": -1352.6,
+        "events": [],
+        "before": 6973.4,
+        "lossPct": 19.4
+      },
+      {
+        "date": "2025-05-21",
+        "pnl": -1318.2,
+        "events": [],
+        "before": 5258.6,
+        "lossPct": 25.07
+      },
+      {
+        "date": "2024-08-22",
+        "pnl": -1021.2,
+        "events": [],
+        "before": 5946.2,
+        "lossPct": 17.17
+      },
+      {
+        "date": "2025-04-23",
+        "pnl": -958.2,
+        "events": [],
+        "before": 3956.4,
+        "lossPct": 24.22
+      },
+      {
+        "date": "2026-06-05",
+        "pnl": -914.8,
+        "events": [
+          {
+            "kind": "PAYROLLS",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2026/",
+            "title": "Employment Situation for May 2026",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 5087,
+        "lossPct": 17.98
+      },
+      {
+        "date": "2025-03-03",
+        "pnl": -896.8,
+        "events": [],
+        "before": 5534.6,
+        "lossPct": 16.2
+      },
+      {
+        "date": "2025-02-21",
+        "pnl": -882.8,
+        "events": [],
+        "before": 6516.4,
+        "lossPct": 13.55
+      },
+      {
+        "date": "2026-06-17",
+        "pnl": -786.8,
+        "events": [
+          {
+            "kind": "FOMC",
+            "timeET": "02:00 PM",
+            "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+            "title": "FOMC policy decision",
+            "calendarAvailability": "Scheduled meeting; no decision outcome used"
+          }
+        ],
+        "before": 4571.8,
+        "lossPct": 17.21
+      },
+      {
+        "date": "2026-02-12",
+        "pnl": -780.8,
+        "events": [],
+        "before": 5081.4,
+        "lossPct": 15.37
+      },
+      {
+        "date": "2024-04-30",
+        "pnl": -769.6,
+        "events": [],
+        "before": 7002.4,
+        "lossPct": 10.99
+      },
+      {
+        "date": "2026-03-26",
+        "pnl": -768.8,
+        "events": [],
+        "before": 4449.2,
+        "lossPct": 17.28
+      },
+      {
+        "date": "2025-10-16",
+        "pnl": -742.8,
+        "events": [],
+        "before": 5139,
+        "lossPct": 14.45
+      },
+      {
+        "date": "2024-09-03",
+        "pnl": -643.2,
+        "events": [],
+        "before": 5031.8,
+        "lossPct": 12.78
+      },
+      {
+        "date": "2025-01-07",
+        "pnl": -616.2,
+        "events": [
+          {
+            "kind": "JOLTS",
+            "timeET": "10:00 AM",
+            "source": "https://www.bls.gov/schedule/2025/",
+            "title": "Job Openings and Labor Turnover Survey for November 2024",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 6005.6,
+        "lossPct": 10.26
+      },
+      {
+        "date": "2025-10-30",
+        "pnl": -613.2,
+        "events": [],
+        "before": 4559,
+        "lossPct": 13.45
+      },
+      {
+        "date": "2024-10-25",
+        "pnl": -594.8,
+        "events": [],
+        "before": 5214.6,
+        "lossPct": 11.41
+      },
+      {
+        "date": "2024-08-29",
+        "pnl": -580.2,
+        "events": [],
+        "before": 5508.2,
+        "lossPct": 10.53
+      },
+      {
+        "date": "2025-11-13",
+        "pnl": -577.2,
+        "events": [],
+        "before": 4285.2,
+        "lossPct": 13.47
+      },
+      {
+        "date": "2025-01-06",
+        "pnl": -568.2,
+        "events": [],
+        "before": 6573.8,
+        "lossPct": 8.64
+      }
+    ],
+    "flame_add:natural": [
+      {
+        "date": "2026-03-10",
+        "pnl": -4530,
+        "events": [],
+        "before": 20301.2,
+        "lossPct": 22.31
+      },
+      {
+        "date": "2026-05-15",
+        "pnl": -4218,
+        "events": [],
+        "before": 20194,
+        "lossPct": 20.89
+      },
+      {
+        "date": "2026-03-18",
+        "pnl": -3170.4,
+        "events": [
+          {
+            "kind": "PPI",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2026/",
+            "title": "Producer Price Index for February 2026",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          },
+          {
+            "kind": "FOMC",
+            "timeET": "02:00 PM",
+            "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+            "title": "FOMC policy decision",
+            "calendarAvailability": "Scheduled meeting; no decision outcome used"
+          }
+        ],
+        "before": 15500.4,
+        "lossPct": 20.45
+      },
+      {
+        "date": "2026-06-05",
+        "pnl": -3153,
+        "events": [
+          {
+            "kind": "PAYROLLS",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2026/",
+            "title": "Employment Situation for May 2026",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 16779.8,
+        "lossPct": 18.79
+      },
+      {
+        "date": "2025-04-03",
+        "pnl": -3131.4,
+        "events": [],
+        "before": 17180.4,
+        "lossPct": 18.23
+      },
+      {
+        "date": "2025-10-14",
+        "pnl": -2955.2,
+        "events": [],
+        "before": 19612,
+        "lossPct": 15.07
+      },
+      {
+        "date": "2025-04-17",
+        "pnl": -2943.8,
+        "events": [],
+        "before": 16552,
+        "lossPct": 17.79
+      },
+      {
+        "date": "2026-06-17",
+        "pnl": -2569.8,
+        "events": [
+          {
+            "kind": "FOMC",
+            "timeET": "02:00 PM",
+            "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+            "title": "FOMC policy decision",
+            "calendarAvailability": "Scheduled meeting; no decision outcome used"
+          }
+        ],
+        "before": 14651.2,
+        "lossPct": 17.54
+      },
+      {
+        "date": "2025-05-05",
+        "pnl": -2547.4,
+        "events": [],
+        "before": 17841,
+        "lossPct": 14.28
+      },
+      {
+        "date": "2025-06-13",
+        "pnl": -2486.4,
+        "events": [],
+        "before": 17110.4,
+        "lossPct": 14.53
+      },
+      {
+        "date": "2025-10-30",
+        "pnl": -2441.8,
+        "events": [],
+        "before": 16885.6,
+        "lossPct": 14.46
+      },
+      {
+        "date": "2025-12-01",
+        "pnl": -1969.4,
+        "events": [],
+        "before": 14630,
+        "lossPct": 13.46
+      },
+      {
+        "date": "2025-06-05",
+        "pnl": -1919.8,
+        "events": [],
+        "before": 17985,
+        "lossPct": 10.67
+      },
+      {
+        "date": "2025-05-22",
+        "pnl": -1868.6,
+        "events": [],
+        "before": 20397.2,
+        "lossPct": 9.16
+      },
+      {
+        "date": "2024-08-29",
+        "pnl": -1833.4,
+        "events": [],
+        "before": 9361,
+        "lossPct": 19.59
+      },
+      {
+        "date": "2025-07-15",
+        "pnl": -1728,
+        "events": [
+          {
+            "kind": "CPI",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2025/",
+            "title": "Consumer Price Index for June 2025",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 17765,
+        "lossPct": 9.73
+      },
+      {
+        "date": "2026-01-16",
+        "pnl": -1727,
+        "events": [],
+        "before": 17562.2,
+        "lossPct": 9.83
+      },
+      {
+        "date": "2025-11-04",
+        "pnl": -1580,
+        "events": [],
+        "before": 15483.8,
+        "lossPct": 10.2
+      },
+      {
+        "date": "2026-01-22",
+        "pnl": -1578.2,
+        "events": [],
+        "before": 15687.4,
+        "lossPct": 10.06
+      },
+      {
+        "date": "2026-09-14",
+        "pnl": -1496.2,
+        "events": [],
+        "before": 19260.6,
+        "lossPct": 7.77
+      }
+    ],
+    "flame_add:adverse3c": [
+      {
+        "date": "2024-08-29",
+        "pnl": -1142.4,
+        "events": [],
+        "before": 5596.4,
+        "lossPct": 20.41
+      },
+      {
+        "date": "2025-04-03",
+        "pnl": -1016.6,
+        "events": [],
+        "before": 5757.4,
+        "lossPct": 17.66
+      },
+      {
+        "date": "2025-04-17",
+        "pnl": -995.2,
+        "events": [],
+        "before": 5727,
+        "lossPct": 17.38
+      },
+      {
+        "date": "2025-05-05",
+        "pnl": -788.8,
+        "events": [],
+        "before": 5546.2,
+        "lossPct": 14.22
+      },
+      {
+        "date": "2024-09-18",
+        "pnl": -785.8,
+        "events": [
+          {
+            "kind": "FOMC",
+            "timeET": "02:00 PM",
+            "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+            "title": "FOMC policy decision",
+            "calendarAvailability": "Scheduled meeting; no decision outcome used"
+          }
+        ],
+        "before": 4481.4,
+        "lossPct": 17.53
+      },
+      {
+        "date": "2024-08-07",
+        "pnl": -758.2,
+        "events": [],
+        "before": 4933.2,
+        "lossPct": 15.37
+      },
+      {
+        "date": "2025-06-13",
+        "pnl": -638.4,
+        "events": [],
+        "before": 4621.8,
+        "lossPct": 13.81
+      },
+      {
+        "date": "2024-10-07",
+        "pnl": -584.4,
+        "events": [],
+        "before": 4243.4,
+        "lossPct": 13.77
+      },
+      {
+        "date": "2025-10-14",
+        "pnl": -545,
+        "events": [],
+        "before": 4237,
+        "lossPct": 12.86
+      },
+      {
+        "date": "2024-02-16",
+        "pnl": -523.6,
+        "events": [
+          {
+            "kind": "PPI",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2024/",
+            "title": "Producer Price Index for January 2024",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 3023.6,
+        "lossPct": 17.32
+      },
+      {
+        "date": "2025-05-22",
+        "pnl": -506.8,
+        "events": [],
+        "before": 5924,
+        "lossPct": 8.56
+      },
+      {
+        "date": "2025-06-05",
+        "pnl": -474.4,
+        "events": [],
+        "before": 4856.8,
+        "lossPct": 9.77
+      },
+      {
+        "date": "2025-01-31",
+        "pnl": -469,
+        "events": [],
+        "before": 3464,
+        "lossPct": 13.54
+      },
+      {
+        "date": "2025-10-30",
+        "pnl": -456,
+        "events": [],
+        "before": 3646,
+        "lossPct": 12.51
+      },
+      {
+        "date": "2024-09-03",
+        "pnl": -430.4,
+        "events": [],
+        "before": 4393.6,
+        "lossPct": 9.8
+      },
+      {
+        "date": "2025-01-07",
+        "pnl": -427,
+        "events": [
+          {
+            "kind": "JOLTS",
+            "timeET": "10:00 AM",
+            "source": "https://www.bls.gov/schedule/2025/",
+            "title": "Job Openings and Labor Turnover Survey for November 2024",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 3474,
+        "lossPct": 12.29
+      },
+      {
+        "date": "2025-05-28",
+        "pnl": -421.8,
+        "events": [],
+        "before": 5143,
+        "lossPct": 8.2
+      },
+      {
+        "date": "2024-04-30",
+        "pnl": -415,
+        "events": [],
+        "before": 3450.8,
+        "lossPct": 12.03
+      },
+      {
+        "date": "2026-03-10",
+        "pnl": -390.8,
+        "events": [],
+        "before": 3044.2,
+        "lossPct": 12.84
+      },
+      {
+        "date": "2024-11-13",
+        "pnl": -370.2,
+        "events": [
+          {
+            "kind": "CPI",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2024/",
+            "title": "Consumer Price Index for October 2024",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 3575.8,
+        "lossPct": 10.35
+      }
+    ],
+    "spark_base:natural": [
+      {
+        "date": "2026-06-05",
+        "pnl": -2214.4,
+        "events": [
+          {
+            "kind": "PAYROLLS",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2026/",
+            "title": "Employment Situation for May 2026",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 12912.2,
+        "lossPct": 17.15
+      },
+      {
+        "date": "2026-06-17",
+        "pnl": -1870.4,
+        "events": [
+          {
+            "kind": "FOMC",
+            "timeET": "02:00 PM",
+            "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+            "title": "FOMC policy decision",
+            "calendarAvailability": "Scheduled meeting; no decision outcome used"
+          }
+        ],
+        "before": 11984,
+        "lossPct": 15.61
+      },
+      {
+        "date": "2026-02-12",
+        "pnl": -1867.4,
+        "events": [],
+        "before": 12682.8,
+        "lossPct": 14.72
+      },
+      {
+        "date": "2026-03-26",
+        "pnl": -1845.4,
+        "events": [],
+        "before": 11317.8,
+        "lossPct": 16.31
+      },
+      {
+        "date": "2025-05-21",
+        "pnl": -1692,
+        "events": [],
+        "before": 7783.8,
+        "lossPct": 21.74
+      },
+      {
+        "date": "2025-01-31",
+        "pnl": -1331.6,
+        "events": [],
+        "before": 8010,
+        "lossPct": 16.62
+      },
+      {
+        "date": "2026-06-24",
+        "pnl": -1316,
+        "events": [],
+        "before": 10863.2,
+        "lossPct": 12.11
+      },
+      {
+        "date": "2026-03-18",
+        "pnl": -1311.8,
+        "events": [
+          {
+            "kind": "PPI",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2026/",
+            "title": "Producer Price Index for February 2026",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          },
+          {
+            "kind": "FOMC",
+            "timeET": "02:00 PM",
+            "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+            "title": "FOMC policy decision",
+            "calendarAvailability": "Scheduled meeting; no decision outcome used"
+          }
+        ],
+        "before": 12744.6,
+        "lossPct": 10.29
+      },
+      {
+        "date": "2026-05-07",
+        "pnl": -1295.4,
+        "events": [],
+        "before": 12582.4,
+        "lossPct": 10.3
+      },
+      {
+        "date": "2025-02-21",
+        "pnl": -1268.6,
+        "events": [],
+        "before": 8207.6,
+        "lossPct": 15.46
+      },
+      {
+        "date": "2026-08-20",
+        "pnl": -1259,
+        "events": [],
+        "before": 9904.2,
+        "lossPct": 12.71
+      },
+      {
+        "date": "2024-08-22",
+        "pnl": -1003.2,
+        "events": [],
+        "before": 5897.4,
+        "lossPct": 17.01
+      },
+      {
+        "date": "2026-03-10",
+        "pnl": -977.4,
+        "events": [],
+        "before": 12684,
+        "lossPct": 7.71
+      },
+      {
+        "date": "2024-08-07",
+        "pnl": -902.8,
+        "events": [],
+        "before": 5879,
+        "lossPct": 15.36
+      },
+      {
+        "date": "2026-08-28",
+        "pnl": -865.6,
+        "events": [],
+        "before": 9076,
+        "lossPct": 9.54
+      },
+      {
+        "date": "2026-04-23",
+        "pnl": -797.8,
+        "events": [],
+        "before": 12147.2,
+        "lossPct": 6.57
+      },
+      {
+        "date": "2025-01-07",
+        "pnl": -797.6,
+        "events": [
+          {
+            "kind": "JOLTS",
+            "timeET": "10:00 AM",
+            "source": "https://www.bls.gov/schedule/2025/",
+            "title": "Job Openings and Labor Turnover Survey for November 2024",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 6973.2,
+        "lossPct": 11.44
+      },
+      {
+        "date": "2025-10-30",
+        "pnl": -728,
+        "events": [],
+        "before": 7599.8,
+        "lossPct": 9.58
+      },
+      {
+        "date": "2025-01-06",
+        "pnl": -702,
+        "events": [],
+        "before": 7675.2,
+        "lossPct": 9.15
+      },
+      {
+        "date": "2025-11-13",
+        "pnl": -688,
+        "events": [],
+        "before": 7730.6,
+        "lossPct": 8.9
+      }
+    ],
+    "spark_base:adverse3c": [
+      {
+        "date": "2025-05-21",
+        "pnl": -1318.2,
+        "events": [],
+        "before": 5095,
+        "lossPct": 25.87
+      },
+      {
+        "date": "2026-02-12",
+        "pnl": -1119.6,
+        "events": [],
+        "before": 6945.6,
+        "lossPct": 16.12
+      },
+      {
+        "date": "2025-04-23",
+        "pnl": -958.2,
+        "events": [],
+        "before": 3936.6,
+        "lossPct": 24.34
+      },
+      {
+        "date": "2025-01-31",
+        "pnl": -918.8,
+        "events": [],
+        "before": 5032,
+        "lossPct": 18.26
+      },
+      {
+        "date": "2024-08-07",
+        "pnl": -914.8,
+        "events": [],
+        "before": 4738.2,
+        "lossPct": 19.31
+      },
+      {
+        "date": "2026-06-05",
+        "pnl": -914.8,
+        "events": [
+          {
+            "kind": "PAYROLLS",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2026/",
+            "title": "Employment Situation for May 2026",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 6422.2,
+        "lossPct": 14.24
+      },
+      {
+        "date": "2025-02-21",
+        "pnl": -882.8,
+        "events": [],
+        "before": 4775.2,
+        "lossPct": 18.49
+      },
+      {
+        "date": "2026-06-17",
+        "pnl": -786.8,
+        "events": [
+          {
+            "kind": "FOMC",
+            "timeET": "02:00 PM",
+            "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+            "title": "FOMC policy decision",
+            "calendarAvailability": "Scheduled meeting; no decision outcome used"
+          }
+        ],
+        "before": 5880,
+        "lossPct": 13.38
+      },
+      {
+        "date": "2026-03-26",
+        "pnl": -768.8,
+        "events": [],
+        "before": 5702.2,
+        "lossPct": 13.48
+      },
+      {
+        "date": "2026-03-18",
+        "pnl": -703.2,
+        "events": [
+          {
+            "kind": "PPI",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2026/",
+            "title": "Producer Price Index for February 2026",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          },
+          {
+            "kind": "FOMC",
+            "timeET": "02:00 PM",
+            "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+            "title": "FOMC policy decision",
+            "calendarAvailability": "Scheduled meeting; no decision outcome used"
+          }
+        ],
+        "before": 6472.8,
+        "lossPct": 10.86
+      },
+      {
+        "date": "2026-06-24",
+        "pnl": -692.8,
+        "events": [],
+        "before": 5364.8,
+        "lossPct": 12.91
+      },
+      {
+        "date": "2024-08-22",
+        "pnl": -680.8,
+        "events": [],
+        "before": 4358.2,
+        "lossPct": 15.62
+      },
+      {
+        "date": "2025-10-30",
+        "pnl": -613.2,
+        "events": [],
+        "before": 4872.8,
+        "lossPct": 12.58
+      },
+      {
+        "date": "2025-11-13",
+        "pnl": -577.2,
+        "events": [],
+        "before": 4853.4,
+        "lossPct": 11.89
+      },
+      {
+        "date": "2025-01-06",
+        "pnl": -568.2,
+        "events": [],
+        "before": 4881.6,
+        "lossPct": 11.64
+      },
+      {
+        "date": "2025-04-16",
+        "pnl": -548.8,
+        "events": [],
+        "before": 3941.8,
+        "lossPct": 13.92
+      },
+      {
+        "date": "2024-04-30",
+        "pnl": -532.8,
+        "events": [],
+        "before": 5923.8,
+        "lossPct": 8.99
+      },
+      {
+        "date": "2025-03-26",
+        "pnl": -522.8,
+        "events": [],
+        "before": 4097,
+        "lossPct": 12.76
+      },
+      {
+        "date": "2026-05-07",
+        "pnl": -511.2,
+        "events": [],
+        "before": 6600.4,
+        "lossPct": 7.74
+      },
+      {
+        "date": "2024-05-23",
+        "pnl": -438.8,
+        "events": [],
+        "before": 5995.6,
+        "lossPct": 7.32
+      }
+    ],
+    "flame_base:natural": [
+      {
+        "date": "2026-06-17",
+        "pnl": -1190.4,
+        "events": [
+          {
+            "kind": "FOMC",
+            "timeET": "02:00 PM",
+            "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+            "title": "FOMC policy decision",
+            "calendarAvailability": "Scheduled meeting; no decision outcome used"
+          }
+        ],
+        "before": 7086.8,
+        "lossPct": 16.8
+      },
+      {
+        "date": "2026-03-18",
+        "pnl": -1085.2,
+        "events": [
+          {
+            "kind": "PPI",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2026/",
+            "title": "Producer Price Index for February 2026",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          },
+          {
+            "kind": "FOMC",
+            "timeET": "02:00 PM",
+            "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+            "title": "FOMC policy decision",
+            "calendarAvailability": "Scheduled meeting; no decision outcome used"
+          }
+        ],
+        "before": 5864,
+        "lossPct": 18.51
+      },
+      {
+        "date": "2025-10-30",
+        "pnl": -902.6,
+        "events": [],
+        "before": 6283.2,
+        "lossPct": 14.37
+      },
+      {
+        "date": "2025-04-17",
+        "pnl": -807.8,
+        "events": [],
+        "before": 5055,
+        "lossPct": 15.98
+      },
+      {
+        "date": "2025-04-03",
+        "pnl": -710.8,
+        "events": [],
+        "before": 4736.4,
+        "lossPct": 15.01
+      },
+      {
+        "date": "2025-12-01",
+        "pnl": -645.4,
+        "events": [],
+        "before": 5446.2,
+        "lossPct": 11.85
+      },
+      {
+        "date": "2025-05-05",
+        "pnl": -621.4,
+        "events": [],
+        "before": 5185.2,
+        "lossPct": 11.98
+      },
+      {
+        "date": "2025-11-04",
+        "pnl": -567.2,
+        "events": [],
+        "before": 5745.4,
+        "lossPct": 9.87
+      },
+      {
+        "date": "2024-08-29",
+        "pnl": -542.6,
+        "events": [],
+        "before": 3111,
+        "lossPct": 17.44
+      },
+      {
+        "date": "2025-06-05",
+        "pnl": -533.8,
+        "events": [],
+        "before": 5225.2,
+        "lossPct": 10.22
+      },
+      {
+        "date": "2026-05-01",
+        "pnl": -525.6,
+        "events": [],
+        "before": 8198.4,
+        "lossPct": 6.41
+      },
+      {
+        "date": "2025-07-15",
+        "pnl": -518.4,
+        "events": [
+          {
+            "kind": "CPI",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2025/",
+            "title": "Consumer Price Index for June 2025",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 5923.2,
+        "lossPct": 8.75
+      },
+      {
+        "date": "2025-08-11",
+        "pnl": -491.8,
+        "events": [],
+        "before": 5544.2,
+        "lossPct": 8.87
+      },
+      {
+        "date": "2025-05-22",
+        "pnl": -467.8,
+        "events": [],
+        "before": 5979.4,
+        "lossPct": 7.82
+      },
+      {
+        "date": "2026-07-01",
+        "pnl": -448.2,
+        "events": [],
+        "before": 6298.8,
+        "lossPct": 7.12
+      },
+      {
+        "date": "2024-08-07",
+        "pnl": -441.6,
+        "events": [],
+        "before": 2852,
+        "lossPct": 15.48
+      },
+      {
+        "date": "2026-04-21",
+        "pnl": -399.2,
+        "events": [],
+        "before": 6589.4,
+        "lossPct": 6.06
+      },
+      {
+        "date": "2025-05-28",
+        "pnl": -382.8,
+        "events": [],
+        "before": 5279.4,
+        "lossPct": 7.25
+      },
+      {
+        "date": "2025-06-04",
+        "pnl": -371.8,
+        "events": [],
+        "before": 5597,
+        "lossPct": 6.64
+      },
+      {
+        "date": "2025-01-07",
+        "pnl": -310.2,
+        "events": [
+          {
+            "kind": "JOLTS",
+            "timeET": "10:00 AM",
+            "source": "https://www.bls.gov/schedule/2025/",
+            "title": "Job Openings and Labor Turnover Survey for November 2024",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 2786.2,
+        "lossPct": 11.13
+      }
+    ],
+    "flame_base:adverse3c": [
+      {
+        "date": "2024-08-29",
+        "pnl": -571.2,
+        "events": [],
+        "before": 2945.6,
+        "lossPct": 19.39
+      },
+      {
+        "date": "2024-08-07",
+        "pnl": -349.2,
+        "events": [],
+        "before": 2474.6,
+        "lossPct": 14.11
+      },
+      {
+        "date": "2024-05-31",
+        "pnl": -240.4,
+        "events": [],
+        "before": 2496,
+        "lossPct": 9.63
+      },
+      {
+        "date": "2024-04-30",
+        "pnl": -222.8,
+        "events": [],
+        "before": 2129,
+        "lossPct": 10.47
+      },
+      {
+        "date": "2024-09-11",
+        "pnl": -165.4,
+        "events": [
+          {
+            "kind": "CPI",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2024/",
+            "title": "Consumer Price Index for August 2024",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 2349.6,
+        "lossPct": 7.04
+      },
+      {
+        "date": "2025-04-03",
+        "pnl": -133.4,
+        "events": [],
+        "before": 2250.2,
+        "lossPct": 5.93
+      },
+      {
+        "date": "2024-08-02",
+        "pnl": -111.4,
+        "events": [
+          {
+            "kind": "PAYROLLS",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2024/",
+            "title": "Employment Situation for July 2024",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 2499.8,
+        "lossPct": 4.46
+      },
+      {
+        "date": "2024-09-03",
+        "pnl": -91.4,
+        "events": [],
+        "before": 2399,
+        "lossPct": 3.81
+      },
+      {
+        "date": "2023-11-09",
+        "pnl": -85.2,
+        "events": [],
+        "before": 2070.2,
+        "lossPct": 4.12
+      },
+      {
+        "date": "2024-12-09",
+        "pnl": -73.4,
+        "events": [],
+        "before": 2262,
+        "lossPct": 3.24
+      },
+      {
+        "date": "2024-08-08",
+        "pnl": -72.8,
+        "events": [],
+        "before": 2125.4,
+        "lossPct": 3.43
+      },
+      {
+        "date": "2024-06-26",
+        "pnl": -48.4,
+        "events": [],
+        "before": 2301.2,
+        "lossPct": 2.1
+      },
+      {
+        "date": "2024-12-05",
+        "pnl": -45.4,
+        "events": [],
+        "before": 2298.8,
+        "lossPct": 1.97
+      },
+      {
+        "date": "2024-07-30",
+        "pnl": -39.4,
+        "events": [
+          {
+            "kind": "JOLTS",
+            "timeET": "10:00 AM",
+            "source": "https://www.bls.gov/schedule/2024/",
+            "title": "Job Openings and Labor Turnover Survey for June 2024",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 2437,
+        "lossPct": 1.62
+      },
+      {
+        "date": "2024-09-05",
+        "pnl": -35.4,
+        "events": [],
+        "before": 2340.2,
+        "lossPct": 1.51
+      },
+      {
+        "date": "2024-06-04",
+        "pnl": -29.4,
+        "events": [
+          {
+            "kind": "JOLTS",
+            "timeET": "10:00 AM",
+            "source": "https://www.bls.gov/schedule/2024/",
+            "title": "Job Openings and Labor Turnover Survey for April 2024",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 2242.2,
+        "lossPct": 1.31
+      },
+      {
+        "date": "2024-06-13",
+        "pnl": -21.4,
+        "events": [
+          {
+            "kind": "PPI",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2024/",
+            "title": "Producer Price Index for May 2024",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 2261.4,
+        "lossPct": 0.95
+      },
+      {
+        "date": "2023-11-22",
+        "pnl": -16.2,
+        "events": [],
+        "before": 2116.8,
+        "lossPct": 0.77
+      },
+      {
+        "date": "2024-06-25",
+        "pnl": -15.4,
+        "events": [],
+        "before": 2316.6,
+        "lossPct": 0.66
+      },
+      {
+        "date": "2024-07-11",
+        "pnl": -15.4,
+        "events": [
+          {
+            "kind": "CPI",
+            "timeET": "08:30 AM",
+            "source": "https://www.bls.gov/schedule/2024/",
+            "title": "Consumer Price Index for June 2024",
+            "calendarAvailability": "Historical published calendar; original point-in-time schedule versions not recovered; no surprise values used"
+          }
+        ],
+        "before": 2261,
+        "lossPct": 0.68
+      }
+    ]
+  }
+}
