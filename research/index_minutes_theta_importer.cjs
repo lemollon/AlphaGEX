@@ -111,7 +111,12 @@ function normalize(rows) {
   }).filter(r => {
     const prices = [r.open, r.high, r.low, r.close];
     if (!prices.every(Number.isFinite)) throw new Error('invalid_ohlc_nonfinite');
-    if (prices.every(x => x === 0)) return false;
+    if (!Number.isFinite(r.volume) || !Number.isFinite(r.count) || r.volume < 0 || r.count < 0)
+      throw new Error('invalid_ohlc_activity');
+    if (prices.every(x => x === 0)) {
+      if (r.volume > 0 || r.count > 0) throw new Error('zero_price_with_activity');
+      return false;
+    }
     if (!prices.every(x => x > 0) || r.high < Math.max(r.open, r.close, r.low)
       || r.low > Math.min(r.open, r.close) || r.volume < 0 || r.count < 0)
       throw new Error('invalid_ohlc_source');
