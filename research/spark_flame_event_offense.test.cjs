@@ -20,5 +20,9 @@ const qs=new Map([[601,{buy:{...q.buy,bid:.3,ask:.31},sell:q.sell}],[603,{buy:{.
 const r=exitTrade(order,qs,610,s,0);assert.equal(r.triggerMinute,601);assert.equal(r.exit,603);assert.equal(r.pnl,4.6);
 qs.set(604,{buy:{...q.buy,bid:1.5,ask:1.6},sell:q.sell});assert.deepEqual(exitTrade(order,qs,610,s,0),r);
 assert(exitTrade(order,new Map(),610,s,0).unresolved);
-assert.equal(new Set(grid().map(x=>x.id)).size,grid().length);
-console.log(JSON.stringify({passed:true,scenarios:grid().length,cases:'causal completed bars, event scope, host prerequisite, post-release clock, budget skip, cash cap, crossed quote rejection, deferred executable exit, exact ledger fees, future invariance, unfilled close rejection'}));
+const scenarios=grid();
+assert.equal(new Set(scenarios.map(x=>x.id)).size,scenarios.length);
+assert.equal(scenarios.length,60,'full grid includes the FOMC pre-conference exit comparison');
+assert(scenarios.some(x=>x.family==='post_release'&&x.scope==='fed'&&x.preConference));
+assert(!scenarios.some(x=>x.family!=='post_release'&&x.preConference));
+console.log(JSON.stringify({passed:true,scenarios:scenarios.length,cases:'causal completed bars, event scope, host prerequisite, post-release clock, FOMC pre-conference branch, budget skip, cash cap, crossed quote rejection, deferred executable exit, exact ledger fees, future invariance, unfilled close rejection'}));
