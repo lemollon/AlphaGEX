@@ -50,6 +50,15 @@ services:
         sync: false
       - key: MES_MICROSTRUCTURE_COLLECTOR_ENABLED
         value: "true"
+      # Intraday VIX history for backtests (data/vix_minute_fetcher.py), via the
+      # thetadata-proxy private service. NOTE: thetadata-proxy is declared in
+      # spreadworks/render.yaml, a separate Blueprint from this file, so the
+      # `fromService` shorthand (same-blueprint only) can't resolve it here -
+      # set this manually in the Render dashboard to thetadata-proxy's actual
+      # internal hostport (same value spreadworks/render.yaml's fromService
+      # resolves to, e.g. "thetadata-proxy:<port>").
+      - key: THETADATA_BASE_URL
+        sync: false
       - key: ALLOWED_ORIGINS
         value: https://alphagex-frontend.vercel.app,https://*.vercel.app,http://localhost:3000,http://localhost:5173
       - key: DATABASE_URL
