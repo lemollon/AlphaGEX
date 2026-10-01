@@ -199,7 +199,7 @@ async function main() {
   try {
     await setup(client); serviceStatus.stage = 'importing';
     const spyRows = selected === 'vix' ? 0 : await importSeries(client, 'spy_minute_3y', '/v3/stock/history/ohlc', 'SPY');
-    const vixRows = selected === 'spy' ? 0 : await importSeries(client, 'vix_minute_3y', '/v3/index/history/ohlc', 'VIX');
+    const vixRows = selected === 'spy' ? 0 : await importSeries(client, 'vix_minute_3y', '/v3/stock/history/ohlc', 'VIX');
     const { rows } = await client.query(`SELECT 'spy' AS series, count(*)::int rows, min(ts) min_ts, max(ts) max_ts, count(DISTINCT trade_date)::int sessions FROM spy_minute_3y
       UNION ALL SELECT 'vix', count(*)::int, min(ts), max(ts), count(DISTINCT trade_date)::int FROM vix_minute_3y`);
     serviceStatus.stage = 'complete'; serviceStatus.coverage = rows;
