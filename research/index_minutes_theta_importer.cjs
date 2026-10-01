@@ -5,6 +5,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const http = require('node:http');
 
 function loadPool() {
   try { return require('pg').Pool; }
@@ -30,6 +31,17 @@ const DB = process.env.RESEARCH_DATABASE_URL;
 if (!DB) throw new Error('research_database_url_missing');
 
 const pool = new Pool({ connectionString: DB, max: 1, ssl: true });
+const serviceStatus = { stage: 'starting', selected: null, error: null, coverage: null };
+function startHealthServer() {
+  const server = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
+    if (req.url === '/health') return res.end(JSON.stringify({ ok: true, ...serviceStatus }));
+    if (req.url === '/status') return res.end(JSON.stringify(serviceStatus));
+    res.statusCode = 404; res.end(JSON.stringify({ error: 'not_found' }));
+  });
+  server.listen(Number(process.env.PORT || 10000), '0.0.0.0');
+  return server;
+}
 const log = (event, fields = {}) => console.log(`INDEX_IMPORT ${JSON.stringify({ event, utc: new Date().toISOString(), ...fields })}`);
 
 function csv(body) {
@@ -179,14 +191,22 @@ async function importSeries(client, table, endpoint, symbol) {
 }
 
 async function main() {
+  startHealthServer();
+  const selected = String(process.env.INDEX_IMPORT_SERIES || 'both').toLowerCase();
+  if (!['spy', 'vix', 'both'].includes(selected)) throw new Error('invalid_index_import_series');
+  serviceStatus.selected = selected; serviceStatus.stage = 'connecting';
   const client = await pool.connect();
   try {
-    await setup(client);
-    const spyRows = await importSeries(client, 'spy_minute_3y', '/v3/stock/history/ohlc', 'SPY');
-    const vixRows = await importSeries(client, 'vix_minute_3y', '/v3/index/history/ohlc', 'VIX');
+    await setup(client); serviceStatus.stage = 'importing';
+    const spyRows = selected === 'vix' ? 0 : await importSeries(client, 'spy_minute_3y', '/v3/stock/history/ohlc', 'SPY');
+    const vixRows = selected === 'spy' ? 0 : await importSeries(client, 'vix_minute_3y', '/v3/index/history/ohlc', 'VIX');
     const { rows } = await client.query(`SELECT 'spy' AS series, count(*)::int rows, min(ts) min_ts, max(ts) max_ts, count(DISTINCT trade_date)::int sessions FROM spy_minute_3y
       UNION ALL SELECT 'vix', count(*)::int, min(ts), max(ts), count(DISTINCT trade_date)::int FROM vix_minute_3y`);
-    log('complete', { fetched: { spyRows, vixRows }, coverage: rows });
+    serviceStatus.stage = 'complete'; serviceStatus.coverage = rows;
+    log('complete', { selected, fetched: { spyRows, vixRows }, coverage: rows });
+  } catch (error) {
+    serviceStatus.stage = 'blocked'; serviceStatus.error = error.message;
+    throw error;
   } finally { client.release(); await pool.end(); }
 }
 
