@@ -554,10 +554,12 @@ function minuteAdmission(s,ratio,day,spots){
  // Preserve every original .80-or-lower entry without requiring the new
  // data. The added-day controller fails closed when raw index data is absent.
  if(ratio<=s.baseGate||s.minute==='none')return {eligible:true,reason:'not_required'};
- const v=vixMinute.get(day), before=spots.get(830)?.open, entry=spots.get(845)?.open;
+ const decisionMinute=SPEC.bots[s.bot].start;
+ // Use only completed minutes. Spark must never consume afternoon inputs.
+ const v=vixMinute.get(day)?.[s.bot], before=spots.get(decisionMinute-15)?.open, entry=spots.get(decisionMinute)?.open;
  if(!(v?.before>0&&v?.entry>0&&before>0&&entry>0))return {eligible:false,reason:'minute_input_missing'};
  const vix5Pct=(v.entry/v.before-1)*100,spy15Pct=(entry/before-1)*100;
- const bars=[];for(let m=830;m<=845;m++){const b=spots.get(m);if(!b)return {eligible:false,reason:'spy_minute_missing'};bars.push(b);}
+ const bars=[];for(let m=decisionMinute-15;m<decisionMinute;m++){const b=spots.get(m);if(!b)return {eligible:false,reason:'spy_minute_missing'};bars.push(b);}
  const high=Math.max(...bars.map(b=>b.high)),low=Math.min(...bars.map(b=>b.low)),rangePct=(high/low-1)*100;
  const vixOK=vix5Pct<=.50,spyOK=spy15Pct>=-.10&&rangePct<=.45;
  const eligible=s.minute==='vix_flat'?vixOK:s.minute==='spy_holding'?spyOK:vixOK&&spyOK;
@@ -606,14 +608,15 @@ async function initCheckpointStore(){
  // 2023-09-29 predates the imported series; new high-VIX admissions fail
  // closed on that date while the frozen <=.80 baseline behavior remains.
  const vm=await checkpointPool.query(`SELECT trade_date::text AS day,
-   max(price) FILTER (WHERE ts::time='14:00:00') AS before,
-   max(price) FILTER (WHERE ts::time='14:05:00') AS entry
+   max(price) FILTER (WHERE ts::time='10:59:00') AS spark_before,
+   max(price) FILTER (WHERE ts::time='11:04:00') AS spark_entry,
+   max(price) FILTER (WHERE ts::time='13:59:00') AS flame_before,
+   max(price) FILTER (WHERE ts::time='14:04:00') AS flame_entry
    FROM vix_index_price_3y
    WHERE trade_date BETWEEN $1::date AND $2::date
    GROUP BY trade_date ORDER BY trade_date`,[SPEC.start,SPEC.end]);
- for(const r of vm.rows)if(Number.isFinite(+r.before)&&Number.isFinite(+r.entry))vixMinute.set(String(r.day).slice(0,10),{before:+r.before,entry:+r.entry});
- if(vixMinute.size<750)throw Error(`vix_index_minute_coverage_insufficient:${vixMinute.size}`);
- emit('vix_index_minute_coverage',{days:vixMinute.size,missing:sessions().filter(d=>!vixMinute.has(d))});
+ for(const r of vm.rows){const data={};for(const bot of ['spark','flame'])if(+r[bot+'_before']>0&&+r[bot+'_entry']>0)data[bot]={before:+r[bot+'_before'],entry:+r[bot+'_entry']};vixMinute.set(String(r.day).slice(0,10),data);}
+ for(const bot of ['spark','flame']){const missing=sessions().filter(d=>!vixMinute.get(d)?.[bot]);if(missing.some(d=>d!=='2023-09-29'))throw Error(`vix_index_minute_coverage_insufficient:${bot}:${missing.join(',')}`);emit('vix_index_minute_coverage',{bot,days:751-missing.length,missing});}
  await checkpointPool.query('CREATE TABLE IF NOT EXISTS flame_event_risk_sweep_days(run_key TEXT NOT NULL,day TEXT NOT NULL,payload BYTEA NOT NULL,PRIMARY KEY(run_key,day))');
  checkpointKey=SPEC.id+':'+sha(fs.readFileSync(__filename))+':'+sha(fs.readFileSync(path.join(__dirname,'spark_flame_gamma_reconstruction.cjs')));
  const r=await checkpointPool.query('SELECT checkpoint FROM spark_flame_research_checkpoints WHERE run_key=$1',[checkpointKey]);
@@ -671,4 +674,4 @@ function start() {
  server.listen(Number(process.env.PORT||10000),'0.0.0.0',()=>execute());
 }
 if(require.main===module){if(process.argv.includes('--self-test')){selfTest();sweepSelfTest();}else start();}
-module.exports={start,scenarioGrid,scenarioCandidate,capAddedLots,scenarioRiskCapacity,FOMC_DECISION_DAYS,sweepSelfTest,accounts,SPEC,replayDay,setTestHistories:(data)=>{vix=data.vix;eod=data.eod;gamma=data.gamma||{};reconstructGammaEnabled=false;}};
+module.exports={start,scenarioGrid,scenarioCandidate,minuteAdmission,capAddedLots,scenarioRiskCapacity,FOMC_DECISION_DAYS,sweepSelfTest,accounts,SPEC,replayDay,setTestHistories:(data)=>{vix=data.vix;eod=data.eod;gamma=data.gamma||{};if(data.vixMinute){vixMinute.clear();for(const [day,row] of data.vixMinute)vixMinute.set(day,row);}reconstructGammaEnabled=false;}};
