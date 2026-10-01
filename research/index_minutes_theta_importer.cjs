@@ -96,11 +96,25 @@ async function fetchBars(endpoint, symbol, startDate, endDate) {
   throw last;
 }
 
+function exchangeTimestamp(rawTs) {
+  const raw = String(rawTs);
+  if (/Z$|[+-]\d\d:\d\d$/.test(raw)) {
+    const value = new Date(raw);
+    if (!Number.isFinite(value.getTime())) throw new Error('invalid_source_timestamp');
+    const parts = new Intl.DateTimeFormat('en-CA', {timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(value);
+    const p=Object.fromEntries(parts.map(x=>[x.type,x.value]));
+    return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+  }
+  const match=raw.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})$/);
+  if (!match) throw new Error('invalid_source_timestamp');
+  const parsed=new Date(match[1]+'T'+match[2]+'Z');
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0,19)!==match[1]+'T'+match[2]) throw new Error('invalid_source_timestamp');
+  return match[1]+' '+match[2];
+}
 function normalize(rows) {
   return rows.map(row => {
     const rawTs = String(row.timestamp || row.ts || row.datetime || row.date_time || '');
-    const match = rawTs.match(/(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/);
-    const ts = match ? match[1] + ' ' + match[2] : '';
+    const ts = exchangeTimestamp(rawTs);
     const tradeDate = ts.slice(0, 10);
     const values = ['open', 'high', 'low', 'close', 'volume', 'count', 'vwap'].map((k, i) => {
       const n = Number(row[k]);
@@ -131,8 +145,7 @@ function normalize(rows) {
 function normalizePrice(rows) {
   return rows.map(row => {
     const rawTs = String(row.timestamp || row.ts || row.datetime || row.date_time || '');
-    const match = rawTs.match(/(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/);
-    const ts = match ? match[1] + ' ' + match[2] : '';
+    const ts = exchangeTimestamp(rawTs);
     return { ts, tradeDate: ts.slice(0, 10), price: Number(row.price) };
   }).filter(r => /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(r.ts)
     && Number.isFinite(r.price) && r.price > 0);
@@ -202,6 +215,8 @@ async function importRange(client, table, endpoint, symbol, startDate, endDate, 
     try {
       const rawRows = await fetchBars(endpoint, symbol, startDate, endDate);
       const rows = mode === 'price' ? normalizePrice(rawRows) : normalize(rawRows);
+      if (rows.some(r => r.tradeDate < startDate || r.tradeDate > endDate)) throw new Error('provider_date_scope_mismatch');
+      if (rows.some(r => r.ts.slice(11)<'09:30:00' || r.ts.slice(11)>'16:00:00' || r.ts.slice(-2)!=='00')) throw new Error('provider_minute_scope_mismatch');
       if (rawRows.length > 0 && rows.length === 0) {
         throw new Error(`normalize_rejected:${table}:${startDate}:${endDate}`);
       }
@@ -261,5 +276,5 @@ async function main() {
   } finally { client.release(); await pool.end(); }
 }
 
-module.exports = { main, csv, normalize, normalizePrice, ranges, loadPool, setup, importRange };
+module.exports = { main, csv, normalize, normalizePrice, ranges, loadPool, setup, importRange, exchangeTimestamp };
 if (require.main === module) main().catch(error => { log('failed', { message: error.message }); process.exitCode = 1; });
