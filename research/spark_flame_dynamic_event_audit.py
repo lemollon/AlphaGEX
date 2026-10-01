@@ -3,6 +3,7 @@
 import concurrent.futures
 import json
 import sys
+import time
 import urllib.request
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
@@ -18,9 +19,24 @@ def cents(x):
     return int((Decimal(str(x))*100).quantize(Decimal('1'),rounding=ROUND_HALF_UP))
 
 def get_day(day, token):
+    cache=OUT/'day-cache-6c7630b84b464c6b'/f'{day}.json'
+    if cache.exists():
+        saved=json.loads(cache.read_text())
+        if saved.get('day')!=day: raise ValueError('cached_day_identity_mismatch')
+        return saved
     req=urllib.request.Request(URL+day,headers={'Authorization':'Bearer '+token})
-    with urllib.request.urlopen(req,timeout=60) as r:
-        return json.loads(r.read())
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req,timeout=60) as r: row=json.loads(r.read())
+            if row.get('day')!=day: raise ValueError('downloaded_day_identity_mismatch')
+            cache.parent.mkdir(exist_ok=True)
+            temporary=cache.with_suffix('.tmp')
+            temporary.write_text(json.dumps(row,separators=(',',':')))
+            temporary.replace(cache)
+            return row
+        except (OSError,urllib.error.HTTPError):
+            if attempt==3: raise
+            time.sleep(2*(attempt+1))
 
 def main():
     if len(sys.argv)!=2:
@@ -46,8 +62,14 @@ def main():
     check(paths[('spark_base','natural')]['full']['endingEquity']==8842.4,'spark_baseline_natural_parity')
     check(paths[('spark_base','adverse3c')]['full']['endingEquity']==4322.4,'spark_baseline_adverse_parity')
     check(len(days)==751 and len(set(days))==751 and days==sorted(days),'calendar_mismatch')
-    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
-        rows=list(pool.map(lambda d:get_day(d,token),days))
+    downloaded={}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+        pending={pool.submit(get_day,d,token):d for d in days}
+        for future in concurrent.futures.as_completed(pending):
+            day=pending[future];downloaded[day]=future.result()
+            if len(downloaded)%25==0 or len(downloaded)==len(days):
+                print(json.dumps({'audit_exported_days':len(downloaded),'total':len(days)}),flush=True)
+    rows=[downloaded[d] for d in days]
     rows_by_day={r['day']:r for r in rows}
     (OUT/'report.json').write_text(json.dumps(report,indent=2))
     with (OUT/'days.jsonl').open('w') as f:
