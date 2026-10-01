@@ -48,9 +48,10 @@ function csv(body) {
 
 function iso(d) { return d.toISOString().slice(0, 10); }
 function ranges() {
+  const chunkDays = Math.max(1, Math.min(30, Number(process.env.INDEX_IMPORT_CHUNK_DAYS || 7)));
   const out = []; let cursor = new Date(`${START}T00:00:00Z`); const end = new Date(`${END}T00:00:00Z`);
   while (cursor <= end) {
-    const next = new Date(cursor); next.setUTCDate(next.getUTCDate() + 29);
+    const next = new Date(cursor); next.setUTCDate(next.getUTCDate() + chunkDays - 1);
     out.push([iso(cursor), iso(next > end ? end : next)]);
     cursor = new Date(next); cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
