@@ -116,7 +116,7 @@ async function request(url, params={}, provider=false) {
    const parsed=csv(body);
    const entry={url,params,bytes:Buffer.byteLength(body),sha256:sha(body),fetchedAt:new Date().toISOString(),schema:Object.keys(parsed[0]||{}),sample:parsed[0]||null};
    manifest.push(entry);fs.writeFileSync(path.join(OUT,`${manifest.length}.csv`),body);return parsed;
-  } catch(e) {last=e;if(e.retryable===false)break;if(attempt<2)await new Promise(resolve=>setTimeout(resolve,1000*(attempt+1)));}
+ } catch(e) {e.researchRequest={url,params};last=e;if(e.retryable===false)break;if(attempt<2)await new Promise(resolve=>setTimeout(resolve,1000*(attempt+1)));}
  }
  throw last;
 }
@@ -553,7 +553,7 @@ async function recoverDataOperation(task,phase,rollback=()=>{}) {
    rollback();if(!transientDataError(e))throw e;
    attempts++;STATE.stage='waiting_for_data';STATE.retryPhase=phase;STATE.retryAttempt=attempts;STATE.retryError=String(e.message);
    const delayMs=Math.min(60000,15000*2**Math.min(attempts-1,2));
-   emit('retrying_data',{phase,day:STATE.currentDay,attempts,delayMs,error:STATE.retryError});
+   emit('retrying_data',{phase,day:STATE.currentDay,attempts,delayMs,error:STATE.retryError,request:e.researchRequest||null});
    await saveCheckpoint();await new Promise(resolve=>setTimeout(resolve,delayMs));
   }
  }
