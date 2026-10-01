@@ -382,7 +382,7 @@ async function replayDay(day) {
  const spots=new Map();for(const r of rr){const m=minute(r.timestamp||r.datetime,day);if(m>=close)continue;if(r.symbol?.trim()&&r.symbol.trim().toUpperCase()!=='SPY')throw Error('wrong_stock_identity');const b={open:+r.open,high:+r.high,low:+r.low,close:+r.close};if(Object.values(b).every(x=>x===0)&&+r.volume===0)continue;if(Object.values(b).some(x=>!Number.isFinite(x)||x<=0))throw Error('invalid_stock');spots.set(m,b);}
  if(!eod[day])throw Error('official_SPY_close_missing');
  if(reconstructGammaEnabled){const spot=spots.get(665)?.open;if(!(spot>0))throw Error('gamma_current_spot_missing');await loadGammaDay(day,spot);}
-  const dq=new Quotes(day,close), daily={day,vix:vg,close,events:MACRO_CALENDAR[day]||[],intradayVixPoints:currentVixTape.size,accounts:[]};
+  const dq=new Quotes(day,close), daily={day,vix:vg,close,events:MACRO_CALENDAR[day]||[],intradayVixPoints:currentVixTape.size,minuteInputs:{vix:[...currentVixTape],spyClose:[...spots].map(([m,b])=>[m,b.close])},accounts:[]};
  for(const bot of ['spark','flame']) {
   const cfg=SPEC.bots[bot], group=accounts.filter(a=>a.bot===bot), active=new Map(group.map(a=>[a,[]]));
   const hosts=new Map(), flints=new Set();
