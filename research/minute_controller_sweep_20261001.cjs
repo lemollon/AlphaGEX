@@ -5,7 +5,7 @@ const sha=x=>crypto.createHash('sha256').update(x).digest('hex');
 let pool,checkpointKey,sessions=[],features=new Map(),baseline=new Map();
 const STATE={stage:'created',run:SPEC.id,completed:0,total:0,currentDay:null,startedAt:null,updatedAt:null,error:null};
 const scenarios=[];
-function pg(){try{return require('/tmp/sf3y-pg/node_modules/pg');}catch{return require('/tmp/index-minute-import-pg/node_modules/pg');}}
+function pg(){try{return require('/tmp/minute-controller-pg/node_modules/pg')}catch{const p='/tmp/minute-controller-pg';fs.mkdirSync(p,{recursive:true});require('node:child_process').execFileSync('npm',['install','--prefix',p,'--no-save','--ignore-scripts','pg@8.16.3'],{stdio:'inherit',timeout:120000});return require(p+'/node_modules/pg')}}
 function pct(a,b){return a&&b?(a/b-1)*100:NaN}
 function grids(bot){const t=bot==='spark'?['11:05','1105']:['14:05','1405'];for(const vixMax of [14,16,18,20,24,30])for(const vix5Max of [.1,.3,.5,.8,1.2])for(const spy5Min of [-.6,-.4,-.25,-.1,0])for(const range15Max of [.12,.18,.25,.35,.5])scenarios.push({id:`${bot}-${vixMax}-${vix5Max}-${spy5Min}-${range15Max}`,bot,vixMax,vix5Max,spy5Min,range15Max,time:t[0],key:t[1],fills:{natural:newStat(bot),adverse3c:newStat(bot)}})}
 function newStat(bot){const seed=bot==='spark'?5000:2000;return {equity:seed,peak:seed,pnl:0,trades:0,train:{pnl:0,trades:0,dd:0,peak:seed,equity:seed},validation:{pnl:0,trades:0,dd:0,peak:null,equity:null}}}
