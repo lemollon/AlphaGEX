@@ -59,7 +59,7 @@ def main():
         check(row.get('day')==expected,f'day_mismatch:{expected}')
         accts={(a['scenarioId'],a['fillCase']):a for a in row.get('accounts',[])}
         trs={(a['scenarioId'],a['fillCase']):a['trades'] for a in row.get('trades',[])}
-        check(set(accts)==set(paths)==set(trs),f'path_set:{expected}')
+        check(set(accts)==set(paths)==set(trs) and len(row.get('accounts',[]))==len(row.get('trades',[]))==44,f'path_set:{expected}')
         for p,a in accts.items():
             ledger[p].append((expected,a))
             ts=trs[p]
