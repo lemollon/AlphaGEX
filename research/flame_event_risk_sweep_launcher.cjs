@@ -2,7 +2,10 @@
 const Module=require('node:module'),path=require('node:path');
 const target=path.resolve(__dirname,'spark_flame_current_3y_20260928.cjs');
 if(process.argv[1]&&path.resolve(process.argv[1])===target&&!process.argv.includes('--self-test')){
- const previous=Module._extensions['.cjs'];
+ // Node 24 may leave `.cjs` undefined during `--require` preloading even
+ // though CommonJS `.js` handling is available.  Fall back to it so the
+ // launcher works both as a preload and as a normal module.
+ const previous=Module._extensions['.cjs']||Module._extensions['.js'];
  const loader=process.env.RESEARCH_REPAIR_SPY_GAPS==='1'
   ? "require('./research_repair_spy_minute_gaps_20261001.cjs').main().catch(error=>{console.error('SPY_GAP_REPAIR_FATAL',error.message);process.exitCode=1;});"
   : process.env.RESEARCH_QUALITY_FINALIZE==='1'
