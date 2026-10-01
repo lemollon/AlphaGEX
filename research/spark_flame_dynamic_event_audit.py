@@ -18,6 +18,13 @@ URL='https://spark-flame-current-3y-20260928.onrender.com/day?date='
 def cents(x):
     return int((Decimal(str(x))*100).quantize(Decimal('1'),rounding=ROUND_HALF_UP))
 
+def trail_trigger_valid(credit, marked_debit, peak_profit):
+    # Tradable credits/debits have cent precision. Entry credit is rounded
+    # in the export; JS peak subtraction may carry binary tails. Compare
+    # rational thresholds in integer cents, with no tolerance band.
+    credit_c, debit_c, peak_c=map(cents,(credit,marked_debit,peak_profit))
+    return 4*peak_c>=credit_c and 2*(credit_c-debit_c)<=peak_c
+
 def get_day(day, token):
     cache=OUT/'day-cache-6c7630b84b464c6b'/f'{day}.json'
     if cache.exists():
@@ -109,7 +116,7 @@ def main():
                     right_call=t['leg']=='flint'
                     check(actual_spy is not None and (actual_spy>=.25 if right_call else actual_spy<=-.25 and actual_vix is not None and actual_vix>=3),f'shock_direction:{p}:{expected}')
                 else:
-                    check(scenario.get('dynamicTrail') and sig['peakProfit']>=t['credit']*.25 and t['credit']-sig['markedDebit']<=sig['peakProfit']*.50,f'trail_trigger:{p}:{expected}')
+                    check(scenario.get('dynamicTrail') and trail_trigger_valid(t['credit'],sig['markedDebit'],sig['peakProfit']),f'trail_trigger:{p}:{expected}')
             check(not a.get('unresolved'),f'unresolved:{p}:{expected}')
             check(cents(a['before'])==chains[p],f'chain_before:{p}:{expected}')
             daypnl=sum(cents(t['pnl']) for t in ts)
