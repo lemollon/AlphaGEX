@@ -16,6 +16,7 @@ async function main(){
    ['missing_spy','spy_minute_3y','/v3/stock/history/ohlc','SPY','ohlc'],
    ['missing_vix','vix_index_price_3y','/v3/index/history/price','VIX','price']]){
    if(+gap[field]===0)continue;
+   if(state.imports.some(i=>i.table===table&&i.day===gap.day&&i.reason==='minute_gap_recheck'&&i.verified))continue;
    try{const rows=await imp.importRange(c,table,ep,symbol,gap.day,gap.day,mode);state.imports.push({table,day:gap.day,rows,verified:rows>0,reason:'minute_gap_recheck'});}
    catch(e){state.imports.push({table,day:gap.day,error:e.message,verified:false});}
    await save();
@@ -31,6 +32,7 @@ async function main(){
    ['vix_minute_3y','quality_status','INVALID_SOURCE_ALL_ZERO_OHLC: use vix_index_price_3y; preserve raw for audit'],
    ['vix_index_price_3y','quality_source','ThetaData index PRICE minute points; positive observations, not OHLC'],
    ['spy_history_full','quality_status','PARTIAL_OLDER_HISTORY_BACKFILL: 2020-01-03 through 2022-07-29'],
+   ['global','full_history_status','Quality audit 2026-10-01: spy_history_full exists as a PARTIAL older-history backfill, 4,139,806 rows spanning 2020-01-03 through 2022-07-29. Full coverage is not complete; this is not new subminute data. Earlier not-imported status is superseded.'],
    ['the_rock_3y','quality_execution_source','Trade bars/priorEOD features only; no historical NBBO/depth. Use authenticated option quote provider for fills'],
    ['global','quality_views','research_spy_minute_valid,research_vix_index_minute_valid,research_spy_option_minute_valid,research_vix_option_minute_valid,research_spy_prior_eod_valid,research_vix_prior_eod_valid; frozen751calendar and halfdays']]){
     await c.query('DELETE FROM dataset_metadata WHERE dataset=$1 AND key=$2',[dataset,key]);
@@ -40,7 +42,8 @@ async function main(){
   state.checks.curated_minute_coverage=(await c.query("SELECT 'spy' series,count(*) rows,count(DISTINCT trade_date) days,min(trade_date) first_day,max(trade_date) last_day FROM research_spy_minute_valid UNION ALL SELECT 'vix_index',count(*),count(DISTINCT trade_date),min(trade_date),max(trade_date) FROM research_vix_index_minute_valid")).rows;
   state.checks.expected_calendar=(await c.query("SELECT count(*) days,sum(extract(epoch FROM close_time-'09:30:00'::time)/60)::int expected_minutes FROM research_quality_sessions_20261001")).rows;
   state.checks.views=(await c.query("SELECT table_name FROM information_schema.views WHERE table_name LIKE 'research_%_valid' ORDER BY table_name")).rows;
-  state.limits.push('Crossed prior-EOD quotes are excluded from dedicated EOD feature views, not repaired into invented prices. GEX metadata has unknown intraday availability: do not use as causal minute signal until original provenance is recovered.');
+  const limit='Crossed prior-EOD quotes are excluded from dedicated EOD feature views, not repaired into invented prices. GEX metadata has unknown intraday availability: do not use as causal minute signal until original provenance is recovered.';
+  if(!state.limits.includes(limit))state.limits.push(limit);
   state.stage=state.checks.minute_gaps.length?'complete_with_coverage_limits':'complete_with_source_limits';
   await save();console.log('QUALITY_FINALIZED '+JSON.stringify({stage:state.stage,gaps:state.checks.minute_gaps,coverage:state.checks.curated_minute_coverage}));
  }catch(e){state??={};state.stage='blocked';state.error=e.message;console.error('QUALITY_FINALIZER_BLOCKED '+e.message);throw e;}
