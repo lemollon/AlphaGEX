@@ -30,7 +30,10 @@ const oneJS = stripTypeScriptTypes(oneSrc).replace(/\bexport\s+/g, '');
 const O = new Function('deps', 'process', `const {currentFloorLevelCents,evaluateCalmUpsize,evaluateDepositFloorCap,evaluateFastStartUpsize,evaluateFlintCushion}=deps; ${oneJS}; return {evaluateOneStrategyHostSizing,decideOneStrategyFlintContracts};`)(C, process);
 
 const SPEC = {
-  id: 'flame-event-risk-sweep-20260930-v1', sourceCommit: '3637fd18396b9ab532ee0d9bd42281338353a8a2',
+  // New engine identity: this is a fresh, fully re-compounded replay which
+  // uses the imported VIX *index* minute series for pre-entry admission.
+  // It deliberately does not reuse the completed event-risk performance.
+  id: 'flame-minute-risk-replay-20261001-v1', sourceCommit: '3637fd18396b9ab532ee0d9bd42281338353a8a2',
   start: '2023-09-29', end: '2026-09-28', seeds: { flame: 2000, spark: 5000 },
   bots: { spark: { start: 665, end: 680, offset: 2, width: 5, vix: .90 }, flame: { start: 845, end: 850, offset: 1, width: 2, vix: .80 } },
   clock: 'America/New_York; CT clocks + 1 hour', creditFloor: .10,
@@ -117,6 +120,9 @@ async function request(url, params={}, provider=false) {
 const BASE = process.env.THETADATA_BASE_URL || 'http://thetadata-proxy:10000';
 const feed = (endpoint, params) => request(BASE+endpoint, params, true);
 let vix=[], eod={}, gamma={'2026-09-28':{value:13643544500.438574,source:'tradier_chain_dollar_gex_dte0-60'}};
+// Date -> { before, entry }, both are raw VIX index observations.  The
+// separate vix_minute_3y OHLC import is intentionally never used here.
+const vixMinute=new Map();
 function vixRatio(day) {
  const p=vix.filter(x=>x.day<day);if(p.length<21)throw Error('vix_history_short');
  const prior=p.at(-1), max=Math.max(...p.slice(-21,-1).map(x=>x.close));
@@ -328,11 +334,14 @@ async function replayDay(day) {
  const spots=new Map();for(const r of rr){const m=minute(r.timestamp||r.datetime,day);if(m>=close)continue;if(r.symbol?.trim()&&r.symbol.trim().toUpperCase()!=='SPY')throw Error('wrong_stock_identity');const b={open:+r.open,high:+r.high,low:+r.low,close:+r.close};if(Object.values(b).every(x=>x===0)&&+r.volume===0)continue;if(Object.values(b).some(x=>!Number.isFinite(x)||x<=0))throw Error('invalid_stock');spots.set(m,b);}
  if(!eod[day])throw Error('official_SPY_close_missing');
  if(reconstructGammaEnabled){const spot=spots.get(665)?.open;if(!(spot>0))throw Error('gamma_current_spot_missing');await loadGammaDay(day,spot);}
- const dq=new Quotes(day,close), daily={day,vix:vg,close,accounts:[]};
+  const dq=new Quotes(day,close), daily={day,vix:vg,close,accounts:[]};
  for(const bot of ['flame']) {
   const cfg=SPEC.bots[bot], group=accounts.filter(a=>a.bot===bot), active=new Map(group.map(a=>[a,[]]));
   const hosts=new Map(), flints=new Set();
-  const candidates=new Map(group.map(a=>[a,scenarioCandidate(a.scenario,vg.ratio,day)]));const candidate=group.some(a=>candidates.get(a));
+  // Admission is evaluated after the real SPY minute bars have been loaded,
+  // and before any option quote/order calculation.  It cannot see outcomes.
+  const candidates=new Map(group.map(a=>[a,scenarioCandidate(a.scenario,vg.ratio,day,spots)]));const candidate=group.some(a=>candidates.get(a));
+  daily.minuteAdmission=Object.fromEntries(group.map(a=>[`${a.scenario.id}:${a.fillCase}`,minuteAdmission(a.scenario,vg.ratio,day,spots)]));
   for(let m=cfg.start;m<=Math.min(cfg.end,close-1);m++) {
    const spot=spots.get(m)?.open;if(!Number.isFinite(spot))throw Error('entry_stock_missing');
    let put=null,call=null,xsp=null;
@@ -504,17 +513,38 @@ const FOMC_DECISION_DAYS=new Set([
 function scenarioGrid(){
  const base={gate:.80,risk:'full',credit:.10,regime:'all'};
  const headline={gate:.925,risk:'full',credit:.20,regime:'prior_up'};
- const out=[];
- for(const [label,rule] of [['base',base],['headline',headline]])for(const eventGuard of [false,true])for(const maxRiskPct of [null,.10]){
-  const suffix=`${eventGuard?'fed':'nofed'}_${maxRiskPct?'risk10':'norisk'}`;
-  out.push({id:`${label}_${suffix}`,...rule,eventGuard,maxRiskPct});
- }
- return out;
+ // These filters are predeclared, pre-entry and apply only to the newly
+ // admitted .80-.925 days.  They are deliberately modest: no data-mined
+ // threshold grid and no selective application of already-known P&L.
+ return [
+  {id:'base_nofed_norisk',...base,eventGuard:false,maxRiskPct:null,minute:'none'},
+  {id:'headline_nofed_norisk',...headline,eventGuard:false,maxRiskPct:null,minute:'none'},
+  {id:'headline_vixflat_nofed',...headline,eventGuard:false,maxRiskPct:null,minute:'vix_flat'},
+  {id:'headline_spyhold_nofed',...headline,eventGuard:false,maxRiskPct:null,minute:'spy_holding'},
+  {id:'headline_combined_nofed',...headline,eventGuard:false,maxRiskPct:null,minute:'combined'},
+  {id:'headline_combined_fed',...headline,eventGuard:true,maxRiskPct:null,minute:'combined'},
+  {id:'headline_combined_risk10',...headline,eventGuard:false,maxRiskPct:.10,minute:'combined'},
+  {id:'headline_combined_fed_risk10',...headline,eventGuard:true,maxRiskPct:.10,minute:'combined'},
+ ];
 }
 function capAddedLots(n,risk){if(n<=0)return 0;if(risk==='one')return Math.min(n,1);if(risk==='full')return n;return Math.max(1,Math.floor(n*(risk==='75pct'?.75:.50)));}
-function scenarioCandidate(s,ratio,day){
+function minuteAdmission(s,ratio,day,spots){
+ // Preserve every original .80-or-lower entry without requiring the new
+ // data. The added-day controller fails closed when raw index data is absent.
+ if(ratio<=.80||s.minute==='none')return {eligible:true,reason:'not_required'};
+ const v=vixMinute.get(day), before=spots.get(830)?.open, entry=spots.get(845)?.open;
+ if(!(v?.before>0&&v?.entry>0&&before>0&&entry>0))return {eligible:false,reason:'minute_input_missing'};
+ const vix5Pct=(v.entry/v.before-1)*100,spy15Pct=(entry/before-1)*100;
+ const bars=[];for(let m=830;m<=845;m++){const b=spots.get(m);if(!b)return {eligible:false,reason:'spy_minute_missing'};bars.push(b);}
+ const high=Math.max(...bars.map(b=>b.high)),low=Math.min(...bars.map(b=>b.low)),rangePct=(high/low-1)*100;
+ const vixOK=vix5Pct<=.50,spyOK=spy15Pct>=-.10&&rangePct<=.45;
+ const eligible=s.minute==='vix_flat'?vixOK:s.minute==='spy_holding'?spyOK:vixOK&&spyOK;
+ return {eligible,reason:eligible?'admitted':!vixOK?'vix_rising':'spy_weak_or_volatile',vix5Pct:money(vix5Pct),spy15Pct:money(spy15Pct),rangePct:money(rangePct)};
+}
+function scenarioCandidate(s,ratio,day,spots){
  if(s.eventGuard&&FOMC_DECISION_DAYS.has(day))return false;
  if(ratio<=.80)return true;if(ratio>s.gate)return false;
+ if(!minuteAdmission(s,ratio,day,spots).eligible)return false;
  if(s.regime==='all')return true;
  if(s.regime==='gamma_p67')return gammaDecision(day).eligible;
  const prior=Object.keys(eod).filter(d=>d<day).sort().slice(-2);
@@ -525,8 +555,8 @@ function sweepSelfTest(){
  assert.equal(scenarioGrid().length,8);assert.equal(new Set(scenarioGrid().map(s=>s.id)).size,8);
  for(const risk of ['full','75pct','50pct','one'])for(let n=0;n<30;n++){assert(capAddedLots(n,risk)<=n);assert(capAddedLots(n,risk)>=0);}
  assert.equal(capAddedLots(0,'one'),0);assert.equal(capAddedLots(3,'50pct'),1);
- const s={gate:.85,regime:'all'};assert(scenarioCandidate(s,.80,'2024-01-02'));assert(scenarioCandidate(s,.85,'2024-01-02'));assert(!scenarioCandidate(s,.850001,'2024-01-02'));
- assert(!scenarioCandidate({gate:1,regime:'all',eventGuard:true},.75,'2026-03-18'));
+ const s={gate:.85,regime:'all',minute:'none'};assert(scenarioCandidate(s,.80,'2024-01-02',new Map()));assert(scenarioCandidate(s,.85,'2024-01-02',new Map()));assert(!scenarioCandidate(s,.850001,'2024-01-02',new Map()));
+ assert(!scenarioCandidate({gate:1,regime:'all',eventGuard:true,minute:'none'},.75,'2026-03-18',new Map()));
  const a={equity:2000000,scenario:{maxRiskPct:.10}};assert.equal(scenarioRiskCapacity(a,20,18000,0),11);
  emit('sweep_self_test',{passed:true,scenarios:8,paths:16});
 }
@@ -550,6 +580,18 @@ async function initCheckpointStore(){
  vix=input.vix;eod=input.eod;gamma=input.gamma;Object.assign(SPX,input.spx);reconstructGammaEnabled=false;
  if(input.accounts.length!==16||input.accounts.some(a=>a.unresolved?.length)||input.state.dataErrors.length)throw Error('invalid_baseline_inputs');
  for(const day of sessions()){const g=gamma[day];if(g?.source!==GAMMA.SOURCE||g.unpricedOIContracts!==0||g.used!==g.positiveOI)throw Error('gamma_input_coverage_invalid');if(!(eod[day]>0)||!(SPX[day]>0))throw Error('settlement_input_missing');}
+ // Raw CBOE VIX index bars, not VIX option bars and not synthetic zero OHLC.
+ // 2023-09-29 predates the imported series; new high-VIX admissions fail
+ // closed on that date while the frozen <=.80 baseline behavior remains.
+ const vm=await checkpointPool.query(`SELECT trade_date::text AS day,
+   max(price) FILTER (WHERE ts::time='14:00:00') AS before,
+   max(price) FILTER (WHERE ts::time='14:05:00') AS entry
+   FROM vix_index_price_3y
+   WHERE trade_date BETWEEN $1::date AND $2::date
+   GROUP BY trade_date ORDER BY trade_date`,[SPEC.start,SPEC.end]);
+ for(const r of vm.rows)if(Number.isFinite(+r.before)&&Number.isFinite(+r.entry))vixMinute.set(String(r.day).slice(0,10),{before:+r.before,entry:+r.entry});
+ if(vixMinute.size<750)throw Error(`vix_index_minute_coverage_insufficient:${vixMinute.size}`);
+ emit('vix_index_minute_coverage',{days:vixMinute.size,missing:sessions().filter(d=>!vixMinute.has(d))});
  await checkpointPool.query('CREATE TABLE IF NOT EXISTS flame_event_risk_sweep_days(run_key TEXT NOT NULL,day TEXT NOT NULL,payload BYTEA NOT NULL,PRIMARY KEY(run_key,day))');
  checkpointKey=SPEC.id+':'+sha(fs.readFileSync(__filename))+':'+sha(fs.readFileSync(path.join(__dirname,'spark_flame_gamma_reconstruction.cjs')));
  const r=await checkpointPool.query('SELECT checkpoint FROM spark_flame_research_checkpoints WHERE run_key=$1',[checkpointKey]);
