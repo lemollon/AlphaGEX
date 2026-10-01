@@ -1,1 +1,15 @@
-process.env.RESEARCH_DATABASE_URL='postgresql://unused:unused@localhost/alphagex_backtest';const assert=require('node:assert/strict');const m=require('./research_repair_spy_minute_gaps_20261001.cjs');const valid={timestamp:'2025-04-11T19:03:00Z',open:'510.1',high:'510.2',low:'510',close:'510.15',volume:'12',count:'2',vwap:'510.11'};assert.equal(m.et(valid.timestamp),'2025-04-11 15:03:00');assert.equal(m.bar(valid,['2025-04-11','15:03:00']).close,510.15);assert.equal(m.bar({...valid,high:'509.9'},['2025-04-11','15:03:00']),null);assert.equal(m.bar({...valid,volume:'0',open:'0',high:'0',low:'0',close:'0'},['2025-04-11','15:03:00']),null);assert.equal(m.bar(valid,['2025-04-11','15:04:00']),null);console.log('PASS gap-repair validation tests');
+process.env.RESEARCH_DATABASE_URL='postgresql://unused:unused@localhost/alphagex_backtest';
+const assert=require('node:assert/strict');
+const m=require('./research_repair_spy_minute_gaps_20261001.cjs');
+const valid={timestamp:'2025-04-11T19:03:00Z',open:'510.1',high:'510.2',low:'510',close:'510.15',volume:'12',count:'2',vwap:'510.11'};
+assert.equal(m.et(valid.timestamp),'2025-04-11 15:03:00');
+assert.equal(m.bar(valid,['2025-04-11','15:03:00']).close,510.15);
+assert.equal(m.bar({...valid,high:'509.9'},['2025-04-11','15:03:00']),null);
+assert.equal(m.bar({...valid,volume:'0',open:'0',high:'0',low:'0',close:'0'},['2025-04-11','15:03:00']),null);
+assert.equal(m.bar(valid,['2025-04-11','15:04:00']),null);
+const seconds=[{...valid,timestamp:'2025-04-11T19:03:00Z',open:'533.9',high:'534',low:'533.8',close:'533.95',volume:'10',count:'2',vwap:'533.9'},{...valid,timestamp:'2025-04-11T19:03:59Z',open:'533.95',high:'534.1',low:'533.9',close:'534.05',volume:'20',count:'3',vwap:'534'}];
+const aggregate=m.aggregateSeconds(seconds,['2025-04-11','15:03:00']);
+assert.deepEqual([aggregate.open,aggregate.high,aggregate.low,aggregate.close,aggregate.volume,aggregate.count],[533.9,534.1,533.8,534.05,30,5]);
+assert.equal(aggregate.sourceGranularity,'1s');
+assert.equal(m.aggregateSeconds([{...valid,timestamp:'2025-04-11T19:03:00Z',open:'0',high:'0',low:'0',close:'0',volume:'0',count:'0'}],['2025-04-11','15:03:00']),null);
+console.log('PASS gap-repair validation and one-second aggregation checks');
