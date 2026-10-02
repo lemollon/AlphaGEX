@@ -103,9 +103,15 @@ import { PROTECTIVE_REASON_PREFIXES } from './live/riskProtection'
 // throw into the scan tick that also places real orders — see flame-v2/engine.ts
 // header comment for the safety invariant and flame-v2/flags.ts for defaults.
 import {
-  flameRegimeBrainDecision, sparkTrailingBandDecision, sparkS1Decision, flameCallSpreadDecision,
+  flameRegimeBrainDecision, sparkTrailingBandDecision, sparkS1Decision,
 } from './flame-v2/engine'
 import type { D2Features } from './flame-v2/math'
+import { flameRegimeBrainMode, sparkTrailingBandMode, sparkSignalFilterMode, isLive } from './flame-v2/flags'
+import {
+  runFlameV2CallSpreadEntryTick,
+  runFlameV2CallSpreadGuardTick,
+  runFlameV2CallSpreadSettleTick,
+} from './flame-v2/call-spread-live'
 
 /**
  * Ops-channel-only "why no trade today" copy, keyed by the same prefixes as
@@ -394,6 +400,11 @@ export const VIX_DECAY_CEILING = { spark: 0.90, flame: 0.80 } as const
 // is unavailable, the incremental day is skipped.
 const FLAME_HEADLINE_VIX_CEILING = 0.925
 const FLAME_HEADLINE_MIN_CREDIT = 0.20
+// SPARK's own D1 relaxed band top (PREREG_dynamic_relax_flame_spark.md:
+// BAND["S"] = (0.90, 0.975]). Only ever used to widen vixDecayCheck's
+// ceiling when SPARK_V2_TRAILING_BAND_MODE === 'live' — see flame-v2/flags.ts
+// and flame-v2/engine.ts sparkTrailingBandDecision.
+const SPARK_V2_RELAXED_VIX_CEILING = 0.975
 
 function isFlameHeadline0925Mode(): boolean {
   return process.env.FLAME_HEADLINE_0925_LIVE === 'true'
@@ -520,6 +531,78 @@ async function priorSpySessionWasUp(asofDate: string): Promise<boolean | null> {
     return completed[0].close > completed[1].close
   } catch (e) {
     console.warn(`[scanner] FLAME headline prior-SPY gate unavailable: ${e instanceof Error ? e.message : String(e)}`)
+    return null
+  }
+}
+
+/**
+ * FLAME v2 D2 regime-brain features, built ONLY from completed daily history
+ * strictly before `asofDate` — the exact live-data counterpart of
+ * signal_on_flame_spark.py's `daily_features()` (see that file's header,
+ * 2026-xx, D2 section). Every field is either a value from a session
+ * strictly before today (SPY closes) or already-lagged VIX-family data.
+ * Returns null on any missing/short history — the caller
+ * (flameRegimeBrainDecision) fails that straight to "features_unavailable_
+ * fallback_R0", never guesses a feature.
+ *
+ *   vix_level   = prior session's VIX close (vix_l)
+ *   vix_1y_pct  = percentile rank of vix_level within its own trailing
+ *                 <=252-session window (min 60) — (count(w<=latest)/n)*100
+ *   vix_20d_chg = vix_level(t) - vix_level(t-20), both prior-day values
+ *   ts_ratio_l  = prior-day VIX / prior-day VIX3M (contango <1, backwardation
+ *                 >1) — the live reconstruction of bt_spy's ts_ratio_l column;
+ *                 this webapp has no direct read into the warehouse, so this
+ *                 is the standard VIX/VIX3M ratio convention already used
+ *                 elsewhere in this file (market-brief.ts, volatility.ts).
+ *                 Verify against bt_spy.ts_ratio_l before fully trusting the
+ *                 LIVE regime-brain decision on a new deploy.
+ *   ret20/ret60 = SPY pct-change over the 20/60 sessions ending at the most
+ *                 recently COMPLETED session before asofDate (yesterday's
+ *                 close vs. 20/60 sessions earlier) — never today's own.
+ *   above_50dma = 1 if that same completed close is above the 50-session SMA
+ *                 ending there, else 0.
+ */
+async function buildFlameD2Features(asofDate: string): Promise<D2Features | null> {
+  try {
+    const [vixHist, vix3mHist, spyHist] = await Promise.all([
+      getDailyHistory('VIX', 280),
+      getDailyHistory('VIX3M', 280),
+      getDailyHistory('SPY', 130),
+    ])
+    const closedAsc = (hist: { date: string; close: number }[]) =>
+      hist
+        .filter((h) => typeof h.date === 'string' && h.date < asofDate && Number.isFinite(h.close) && h.close > 0)
+        .sort((a, b) => a.date.localeCompare(b.date))
+
+    const vixClosed = closedAsc(vixHist)
+    const vix3mClosed = closedAsc(vix3mHist)
+    const spyClosed = closedAsc(spyHist)
+
+    if (vixClosed.length < 60 || vix3mClosed.length < 1 || spyClosed.length < 61) return null
+
+    const vixLevel = vixClosed[vixClosed.length - 1].close
+    const vix3mL = vix3mClosed[vix3mClosed.length - 1].close
+    const tsRatioL = vix3mL > 0 ? vixLevel / vix3mL : NaN
+
+    const window = vixClosed.slice(-252).map((h) => h.close)
+    const vix1yPct = (window.filter((v) => v <= vixLevel).length / window.length) * 100
+
+    const vix20dChg = vixClosed.length >= 21
+      ? vixLevel - vixClosed[vixClosed.length - 21].close
+      : NaN
+
+    const closes = spyClosed.map((h) => h.close)
+    const last = closes[closes.length - 1]
+    const ret20 = closes.length >= 21 ? last / closes[closes.length - 21] - 1 : NaN
+    const ret60 = closes.length >= 61 ? last / closes[closes.length - 61] - 1 : NaN
+    const sma50 = closes.slice(-50).reduce((a, b) => a + b, 0) / 50
+    const above50dma = last > sma50 ? 1 : 0
+
+    const features: D2Features = { vixLevel, vix1yPct, vix20dChg, tsRatioL, ret20, ret60, above50dma }
+    if (!Object.values(features).every((v) => Number.isFinite(v))) return null
+    return features
+  } catch (e) {
+    console.warn('[flame-v2] buildFlameD2Features failed (fail-closed, null features):', e)
     return null
   }
 }
@@ -5547,18 +5630,46 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   let flameHeadlineAddedDay = false
   if (bot.name === 'spark') {
     const sparkAsof = getCentralTime().toISOString().slice(0, 10)
-    const vixBlock = await vixDecayBlock(sparkAsof, VIX_DECAY_CEILING.spark)
-    if (vixBlock) return `skip:${vixBlock}`
-    // SPARK v2 D1 (relaxed-band trailing winner) + S1 (CALM-or-LONGG filter)
-    // — both default SHADOW (compute + log only; see flame-v2/flags.ts).
-    // Neither changes `vixBlock`, admission, sizing, or any order above.
+    // SPARK_V2_TRAILING_BAND_MODE=live widens the gate's own ceiling to the
+    // D1 relaxed band's top (0.975) so a ratio in (0.90, 0.975] reaches this
+    // function instead of being blocked outright — 'off'/'shadow' (default)
+    // leave the ceiling at SPARK's existing 0.90, so vixDecayCheck/vixBlock
+    // below is byte-for-byte identical to today in both of those modes.
+    const bandMode = sparkTrailingBandMode()
+    const sparkCeiling = isLive(bandMode) ? SPARK_V2_RELAXED_VIX_CEILING : VIX_DECAY_CEILING.spark
+    const sparkVix = await vixDecayCheck(sparkAsof, sparkCeiling)
+    if (sparkVix.reason) return `skip:${sparkVix.reason}`
+
+    // Only reachable at all when bandMode==='live' widened sparkCeiling above
+    // — in 'off'/'shadow' a ratio this high already returned skip above.
+    const inRelaxedBand = sparkVix.ratio !== null && sparkVix.ratio > VIX_DECAY_CEILING.spark
+
+    // SPARK v2 D1 (relaxed-band trailing winner) + S1 (CALM-or-LONGG filter).
+    // Both default SHADOW (compute + log only; see flame-v2/flags.ts) and, in
+    // that mode, change nothing below — D1's own `admits` is hard-false
+    // unless its mode is 'live' (see sparkTrailingBandDecision), and S1 is
+    // only consulted for the skip decision when SPARK_V2_SIGNAL_FILTER_MODE
+    // is 'live'.
+    let d1: Awaited<ReturnType<typeof sparkTrailingBandDecision>> | null = null
+    let s1: Awaited<ReturnType<typeof sparkS1Decision>> | null = null
     try {
-      const [d1, s1] = await Promise.all([sparkTrailingBandDecision(sparkAsof), sparkS1Decision(sparkAsof)])
-      if (d1.available || s1.available) {
-        console.log(`[flame-v2] SPARK shadow checks ${sparkAsof}: D1=${JSON.stringify(d1)} S1=${JSON.stringify(s1)}`)
+      ;[d1, s1] = await Promise.all([sparkTrailingBandDecision(sparkAsof), sparkS1Decision(sparkAsof)])
+      if (d1.available || s1.available || inRelaxedBand) {
+        console.log(`[flame-v2] SPARK checks ${sparkAsof}: D1=${JSON.stringify(d1)} S1=${JSON.stringify(s1)} in_relaxed_band=${inRelaxedBand}`)
       }
     } catch (e) {
-      console.warn('[flame-v2] SPARK v2 shadow checks failed (non-fatal, no behavior change):', e)
+      console.warn('[flame-v2] SPARK v2 checks failed (non-fatal, no behavior change):', e)
+    }
+
+    if (inRelaxedBand) {
+      if (!(d1 && d1.available && d1.admits)) {
+        return `skip:spark_relaxed_band_not_admitted(ratio=${sparkVix.ratio!.toFixed(3)})`
+      }
+      console.log(`[flame-v2] SPARK D1 LIVE admits relaxed-band day ratio=${sparkVix.ratio!.toFixed(3)} rule=R${d1.rule}`)
+    }
+
+    if (isLive(sparkSignalFilterMode()) && s1 && s1.available && s1.wouldSkip) {
+      return 'skip:spark_s1_no_signal'
     }
   } else if (bot.name === 'flame') {
     const asofDate = getCentralTime().toISOString().slice(0, 10)
@@ -5583,26 +5694,32 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
     if (flameHeadlineAddedDay) {
       const priorSpyUp = await priorSpySessionWasUp(asofDate)
       const priorUpAdmits = priorSpyUp === true
-      // FLAME v2 D2 regime brain — default SHADOW: logs what the monthly-
+      // FLAME v2 D2 regime brain. SHADOW (default): logs what the monthly-
       // refit depth-2 tree would decide for this relaxed-band day alongside
-      // today's actual prior-SPY-up admission, without changing it.
-      // 🚨 `d2Features` is null until live feature plumbing (vix_1y_pct,
-      // ts_ratio_l, vix_20d_chg, ret20/ret60/above_50dma from live Tradier
-      // daily history) is added — see PR "What remains". A null features
-      // argument makes flameRegimeBrainDecision fail closed to
-      // `admits=priorUpAdmits` by construction, so this call is safe to ship
-      // now and simply logs "features_unavailable" until that plumbing lands.
+      // today's actual prior-SPY-up admission, without changing it — `brain`
+      // falls back to `admits=priorUpAdmits` byte-for-byte whenever the mode
+      // isn't 'live', the features aren't computable, or training data is
+      // thin (see flameRegimeBrainDecision's own fallback contract). LIVE:
+      // `brain.admits` IS the admission decision below, replacing the static
+      // prior-SPY-up rule for this relaxed band.
+      let effectiveFlameAdmits = priorUpAdmits
       try {
-        const d2Features: D2Features | null = null
+        const d2Features: D2Features | null = await buildFlameD2Features(asofDate)
         const brain = await flameRegimeBrainDecision(asofDate, d2Features, priorUpAdmits)
         if (brain.available || brain.reason !== 'off') {
-          console.log(`[flame-v2] FLAME regime_brain shadow check ${asofDate}: ${JSON.stringify(brain)} (today's prior_spy_up=${priorUpAdmits})`)
+          console.log(`[flame-v2] FLAME regime_brain check ${asofDate}: ${JSON.stringify(brain)} (today's prior_spy_up=${priorUpAdmits})`)
         }
+        // brain.admits is null ONLY when the mode is explicitly 'off' — every
+        // other path (unavailable, insufficient data, shadow, live) already
+        // resolves to a usable boolean per flameRegimeBrainDecision's contract.
+        if (brain.admits !== null) effectiveFlameAdmits = brain.admits
       } catch (e) {
-        console.warn('[flame-v2] FLAME regime_brain shadow check failed (non-fatal, no behavior change):', e)
+        console.warn('[flame-v2] FLAME regime_brain check failed (non-fatal, falls back to prior-SPY-up rule):', e)
       }
-      if (priorSpyUp !== true) {
-        const reason = priorSpyUp === false ? 'prior_spy_not_up' : 'prior_spy_history_unavailable'
+      if (effectiveFlameAdmits !== true) {
+        const reason = effectiveFlameAdmits === false
+          ? (isLive(flameRegimeBrainMode()) ? 'd2_regime_brain_not_admitted' : 'prior_spy_not_up')
+          : 'prior_spy_history_unavailable'
         console.log(`[scanner] FLAME headline admission skip: ${reason}`)
         return `skip:${reason}`
       }
@@ -5666,23 +5783,24 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   for (const ticker of FLAME_BOOKS) {
     out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, otmAbs, width, perBook, perTrade, ledger, opts, flameHeadlineAddedDay)}`)
   }
-  // FLAME v2 14:05 ET SPY 0DTE CALL credit spread — default SHADOW: computes
-  // tier/strikes/contracts and logs them; places NO order regardless of
-  // mode (order placement is explicitly not implemented yet — see PR "What
-  // remains"). Runs only for the SPY book, after the put side has already
-  // been fully decided above, so it can never affect the put spread's result.
+  // FLAME v2 14:05 ET SPY 0DTE CALL credit spread. SHADOW (default): computes
+  // tier/strikes/contracts and logs them, places no order. LIVE
+  // (FLAME_V2_CALL_SPREAD_MODE=live): runFlameV2CallSpreadEntryTick places the
+  // paper/sandbox ledger row always, and a real order IF canPlaceLiveOrders
+  // ('flame') is also true — see flame-v2/call-spread-live.ts. Runs only for
+  // the SPY book, after the put side has already been fully decided above, so
+  // it can never affect the put spread's own result. Never throws into this
+  // function — see that module's own safety-invariant header comment.
   if (bot.name === 'flame') {
     try {
       const spyQuote = await getQuote('SPY')
       const spySpot = spyQuote?.last ?? 0
       if (spySpot > 0) {
-        const callDecision = await flameCallSpreadDecision(asofDateForFlame(), spySpot, perTrade)
-        if (callDecision.available || callDecision.reason !== 'off') {
-          console.log(`[flame-v2] FLAME call_spread shadow check: ${JSON.stringify(callDecision)}`)
-        }
+        const callTick = await runFlameV2CallSpreadEntryTick(asofDateForFlame(), spySpot, perTrade)
+        if (callTick) console.log(`[flame-v2] ${callTick}`)
       }
     } catch (e) {
-      console.warn('[flame-v2] FLAME call_spread shadow check failed (non-fatal, no order placed):', e)
+      console.warn('[flame-v2] FLAME call_spread entry tick failed (non-fatal, no order placed):', e)
     }
   }
   return `otm$${otmAbs} w${width} x${perTrade} ` + out.join(' ')
@@ -9050,6 +9168,26 @@ async function scanBot(bot: BotDef): Promise<void> {
       } catch (e) {
         console.error('[scanner] FLINT entry failed:', e)
       }
+
+      // FLAME v2 SPY 0DTE CALL credit spread (FLAME_V2_CALL_SPREAD_MODE).
+      // Own table (flame_v2_call_positions), own guard/settle — see
+      // flame-v2/call-spread-live.ts. Entry itself fires from inside
+      // tryOpenFlameBook's caller (tryOpenFlamePutSpread), AFTER the put
+      // side; guard/settle run here every cycle like FLINT's own above, and
+      // no-op most minutes. A failure here must never take FLAME's put-side
+      // cycle down.
+      try {
+        const callV2Guarded = await runFlameV2CallSpreadGuardTick(ct)
+        if (callV2Guarded) console.log(`[scanner] ${callV2Guarded}`)
+      } catch (e) {
+        console.error('[scanner] FLAME v2 call-spread guard failed:', e)
+      }
+      try {
+        const callV2Settled = await runFlameV2CallSpreadSettleTick(ct)
+        if (callV2Settled) console.log(`[scanner] ${callV2Settled}`)
+      } catch (e) {
+        console.error('[scanner] FLAME v2 call-spread settlement failed:', e)
+      }
     }
 
     // SPARK_FLINT (2026-09-27) — FLINT on SPARK customer accounts, its own
@@ -10811,6 +10949,9 @@ export const _testing = {
   closeFlintAtRiskBeforeBell,
   settleFlintExpired,
   assignmentGuardWindow,
+  buildFlameD2Features,
+  SPARK_V2_RELAXED_VIX_CEILING,
+  tryOpenFlamePutSpread,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },
   get _scanStartedAt() { return _scanStartedAt },

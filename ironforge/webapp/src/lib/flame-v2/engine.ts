@@ -220,13 +220,11 @@ export async function flameCallSpreadDecision(
     `[flame-v2] FLAME call_spread(${mode}) date=${dateStr} calm=${snap.calm.isCalm} longg=${snap.longg.isLongg} ` +
     `tier=${tier} contracts=${contracts} short=${short} long=${long} spot=${spot.toFixed(2)}`,
   )
-  if (isLive(mode)) {
-    console.warn(
-      `[flame-v2] FLAME call_spread mode=live but ORDER PLACEMENT IS NOT IMPLEMENTED in this build — ` +
-      `decision computed and logged only, no order was sent. See PR "What remains" before relying on live mode.`,
-    )
-  }
-  return { available: true, tier, contracts, shortStrike: short, longStrike: long, reason: isLive(mode) ? 'ok_live_decision_order_not_implemented' : 'ok_shadow' }
+  // Order placement itself (paper/sandbox ledger always, real order when
+  // canPlaceLiveOrders('flame') is also true) lives in
+  // flame-v2/call-spread-live.ts, which calls this function for the decision
+  // and then executes it — this function stays pure/decision-only.
+  return { available: true, tier, contracts, shortStrike: short, longStrike: long, reason: isLive(mode) ? 'ok_live' : 'ok_shadow' }
 }
 
 /** Mirrored assignment guard for an (eventually) live call leg: close if spot

@@ -5915,6 +5915,199 @@ export async function placeCallSpreadOrderAllAccounts(
   return results
 }
 
+/**
+ * FLAME v2 — SPY 0DTE CALL credit spread (FLAME_V2_CALL_SPREAD_MODE=live
+ * only; see flame-v2/flags.ts and flame-v2/call-spread-live.ts). 14:05 ET
+ * entry, mirrored assignment-guard close at 3:57 PM ET.
+ *
+ * Deliberately a SEPARATE function from placeIcOrderAllAccounts and
+ * placeCallSpreadOrderAllAccounts (FLINT) rather than a generalization of
+ * either:
+ *   - placeIcOrderAllAccounts always builds put-leg OCC symbols and divides
+ *     collateral by (putShort - putLong); a call-only spread (putShort =
+ *     putLong = 0) returns collateralPer <= 0 and the function refuses to
+ *     place anything.
+ *   - placeCallSpreadOrderAllAccounts IS call-only, but its sizing is
+ *     FLINT's own per-account profit-cushion rule (decideFlintContractsForCushion)
+ *     and its dedup is FLINT's own `flint_positions` table — neither applies
+ *     here. This sleeve's sizing is already fully decided by the caller
+ *     (flame-v2/math.ts callSpreadTier/callSpreadContracts: tier x FLAME's
+ *     own base contracts for the day) before this function is ever called.
+ * Both existing functions' SAFETY PRIMITIVES are reused as-is:
+ * resolveEligibleAccounts, canPlaceLiveOrders, getProductionPauseState,
+ * getOwnerPauseState, getAccountIdForKey, buildOccSymbol, getOrderFillPrice,
+ * and this file's own sandboxPost/sandboxGet — only the sizing/dedup bodies
+ * are new.
+ *
+ * Sizing: `contracts` is used AS GIVEN for every account (no per-account
+ * ladder re-derivation) after one safety check — this account's own option
+ * buying power must margin (callLong-callShort)*100*contracts. An account
+ * that fails the BP check is skipped, never silently under-sized.
+ *
+ * `opts.close` flips to a market buy-to-close/sell-to-close for the mirrored
+ * assignment guard, restricted to exactly ONE account (opts.targetPerson +
+ * opts.targetAccountType) — a close call with no targetPerson touches ZERO
+ * accounts (fail closed), same rule FLINT's own guard close uses.
+ */
+export async function placeFlameV2CallSpreadOrder(
+  ticker: string,
+  expiration: string,
+  callShort: number,
+  callLong: number,
+  contracts: number,
+  entryCredit: number,
+  positionId: string,
+  opts?: { close?: boolean; targetPerson?: string; targetAccountType?: 'sandbox' | 'production' },
+): Promise<Record<string, SandboxOrderInfo>> {
+  const results: Record<string, SandboxOrderInfo> = {}
+  const closing = opts?.close === true
+  const botName = 'flame'
+
+  if (!(contracts > 0)) return results
+  if (!(callLong > callShort)) return results
+
+  const eligibleAccounts = await resolveEligibleAccounts(botName)
+  let productionAccts = eligibleAccounts.filter((a) => a.type === 'production')
+  const sandboxAccts = eligibleAccounts.filter((a) => a.type !== 'production')
+
+  if (productionAccts.length > 0 && !canPlaceLiveOrders(botName)) {
+    productionAccts = []
+  }
+  if (productionAccts.length > 0) {
+    try {
+      const pause = await getProductionPauseState(botName)
+      if (pause.paused) {
+        console.warn(
+          `[tradier] FLAME_V2_CALL_SPREAD production PAUSED (reason=${pause.paused_reason ?? 'n/a'}) — ` +
+          `removing ${productionAccts.length} production account(s). Sandbox unaffected.`,
+        )
+        productionAccts = []
+      }
+    } catch { /* pre-migration deploy — fall through, matches the other order paths */ }
+  }
+  if (productionAccts.length > 0) {
+    const owners = await getOwnerPauseState(botName)
+    if (!owners.ok) {
+      productionAccts = []
+    } else if (owners.paused.size > 0) {
+      const dropped = productionAccts.filter((a) => owners.paused.has(a.name)).map((a) => a.name)
+      if (dropped.length > 0) {
+        console.warn(`[tradier] FLAME_V2_CALL_SPREAD owner-paused: ${dropped.join(', ')} — removing from this order.`)
+      }
+      productionAccts = productionAccts.filter((a) => !owners.paused.has(a.name))
+    }
+  }
+
+  let allAccts = [...sandboxAccts, ...productionAccts]
+  if (closing) {
+    if (!opts?.targetPerson) {
+      console.error('[tradier] FLAME_V2_CALL_SPREAD guard close called with no targetPerson — refusing to close ANY account.')
+      return results
+    }
+    allAccts = allAccts.filter(
+      (a) => a.name === opts.targetPerson && (!opts.targetAccountType || (a.type ?? 'sandbox') === opts.targetAccountType),
+    )
+  }
+  if (allAccts.length === 0) return results
+
+  const occCs = buildOccSymbol(ticker, expiration, callShort, 'C')
+  const occCl = buildOccSymbol(ticker, expiration, callLong, 'C')
+  const sides = closing
+    ? { shortSide: 'buy_to_close', longSide: 'sell_to_close' }
+    : { shortSide: 'sell_to_open', longSide: 'buy_to_open' }
+  const spreadWidth = callLong - callShort
+
+  for (const acct of allAccts) {
+    const isProd = acct.type === 'production'
+    const label = `${isProd ? 'PRODUCTION' : 'SANDBOX'} [${acct.name}] FLAME_V2_CALL_SPREAD`
+    try {
+      const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
+      if (!accountId) {
+        console.error(`${label}: getAccountIdForKey returned null — API key invalid or Tradier unreachable. SKIPPING.`)
+        continue
+      }
+
+      if (!closing) {
+        const bp = await readOptionBuyingPowerWithRetry(acct.apiKey, accountId, acct.baseUrl, label)
+        if (bp == null) {
+          console.error(`${label}: optionBP UNREADABLE after retries — SKIPPING (not an insufficient-funds decision).`)
+          if (isProd) await reportProductionBpUnreadable(botName, acct.name)
+          continue
+        }
+        const needed = spreadWidth * 100 * contracts
+        if (bp < needed) {
+          console.warn(`${label}: optionBP=$${bp.toFixed(0)} insufficient (need $${needed.toFixed(0)} for ${contracts}ct) — SKIPPING.`)
+          continue
+        }
+      }
+
+      const orderBody: Record<string, string> = closing
+        ? {
+            class: 'multileg', symbol: ticker, type: 'market', duration: 'day',
+            ...buildLegs(occCs, occCl, '', '', contracts, sides, true),
+            tag: `FLAMEV2C-${positionId}`.slice(0, 255),
+          }
+        : {
+            class: 'multileg', symbol: ticker, type: 'limit', duration: 'day',
+            price: entryCredit.toFixed(2),
+            ...buildLegs(occCs, occCl, '', '', contracts, sides, true),
+            tag: `FLAMEV2C-${positionId}`.slice(0, 255),
+          }
+
+      const result = await sandboxPost(`/accounts/${accountId}/orders`, orderBody, acct.apiKey, acct.baseUrl)
+      if (!result) {
+        console.error(`${label}: Order POST returned null (HTTP error)`)
+        continue
+      }
+      if (result.errors) {
+        console.error(`${label}: Order REJECTED at POST: ${JSON.stringify(result.errors)}`)
+        continue
+      }
+      if (!result?.order?.id) {
+        console.error(`${label}: Order POST returned no order.id — full response: ${JSON.stringify(result).slice(0, 500)}`)
+        continue
+      }
+
+      let fillPrice: number | null = null
+      try {
+        fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, isProd ? 0 : 90_000, acct.baseUrl)
+      } catch (pollErr: unknown) {
+        console.error(`${label}: fill poll failed: ${pollErr instanceof Error ? pollErr.message : String(pollErr)}`)
+      }
+
+      if (fillPrice == null) {
+        try {
+          const orderCheck = await sandboxGet(`/accounts/${accountId}/orders/${result.order.id}`, undefined, acct.apiKey, acct.baseUrl)
+          const status = orderCheck?.order?.status || 'unknown'
+          if (['rejected', 'canceled', 'expired'].includes(status)) {
+            const reason = orderCheck?.order?.reason_description || orderCheck?.order?.reject_reason || orderCheck?.order?.reason || 'no reason provided'
+            console.error(`${label}: order ${result.order.id} was ${status.toUpperCase()} by Tradier: "${reason}" — NOT recording.`)
+            continue
+          }
+          console.warn(`${label}: order ${result.order.id} status="${status}" with no fill price after polling — recording at modelled credit $${entryCredit.toFixed(4)}.`)
+        } catch (checkErr: unknown) {
+          console.warn(`${label}: could not verify order status: ${checkErr instanceof Error ? checkErr.message : String(checkErr)}`)
+        }
+      }
+
+      const resultKey = `${acct.name}:${acct.type ?? 'sandbox'}`
+      results[resultKey] = {
+        order_id: result.order.id,
+        contracts,
+        fill_price: fillPrice,
+        account_type: acct.type ?? 'sandbox',
+      }
+      console.log(
+        `[tradier] FLAME_V2_CALL_SPREAD ${closing ? 'GUARD CLOSE' : isProd ? 'LIVE FILL' : 'SANDBOX FILL'} [${acct.name}]: ` +
+        `${contracts}x order ${result.order.id} fill=${fillPrice != null ? '$' + fillPrice.toFixed(4) : 'unknown'}`,
+      )
+    } catch (err: unknown) {
+      console.error(`${label}: order failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  return results
+}
+
 export const _testing = {
   getOrderFillPrice,
   // Circuit breaker internals
