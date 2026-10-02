@@ -1,4 +1,4 @@
-import { dbQuery, botTable, sharedTable, num, int, escapeSql, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
+import { dbQuery, botTable, sharedTable, num, int, escapeSql, heartbeatName, dteMode, CT_TODAY, isSettleAtExpiryBot } from '@/lib/db'
 import {
   getProductionPauseState,
   getOwnerPauseState,
@@ -16,6 +16,7 @@ import {
   getCurrentPTTier,
   isSparkStrategyBot,
 } from '@/lib/pt-tiers'
+import { isEarlyClose } from '@/lib/market-calendar'
 import { deriveCustomerState, getMarketSession } from './state'
 import { countProtectiveSkipDays } from './riskProtection'
 import { buildActivityFeed } from './activityFeed'
@@ -683,27 +684,34 @@ export async function getLiveTrade(
   // SPARK-strategy bots ignore the DB profit_target_pct in favor of the live
   // sliding tier (mirrors pt-tiers.ts's own note on this — position-monitor
   // does the same override).
+  //
+  // FLAME/SPARK (isSettleAtExpiryBot) never read this config at all: EBB holds
+  // every position to settlement — PT off, stop not consulted — so the row's
+  // leftover IC-template defaults (30%/2.0×) must not leak into targetDollars/
+  // stopDollars below as a fabricated number the strategy doesn't act on.
   let icPtPct = 0.30
   let icSlMult = 2.0
-  try {
-    const cfgScope = resolveAccountMode(BOT) === 'production' ? 'production' : 'sandbox'
-    const cfgRows = await dbQuery(
-      `SELECT stop_loss_pct, profit_target_pct
-       FROM ${botTable(BOT, 'config')}
-       WHERE COALESCE(account_type, 'sandbox') IN ('${escapeSql(cfgScope)}', 'sandbox')
-         ${dteFilter}
-       ORDER BY CASE WHEN COALESCE(account_type, 'sandbox') = '${escapeSql(cfgScope)}' THEN 0 ELSE 1 END
-       LIMIT 1`,
-    )
-    const slPct = num(cfgRows[0]?.stop_loss_pct)
-    if (slPct > 0) icSlMult = slPct / 100
-    const ptPct = num(cfgRows[0]?.profit_target_pct)
-    if (ptPct > 0) icPtPct = ptPct / 100
-  } catch {
-    // Leave the defaults — the lifecycle line's Target/Stop caption falls back
-    // to the same numbers position-monitor would, rather than going blank.
+  if (!isSettleAtExpiryBot(BOT)) {
+    try {
+      const cfgScope = resolveAccountMode(BOT) === 'production' ? 'production' : 'sandbox'
+      const cfgRows = await dbQuery(
+        `SELECT stop_loss_pct, profit_target_pct
+         FROM ${botTable(BOT, 'config')}
+         WHERE COALESCE(account_type, 'sandbox') IN ('${escapeSql(cfgScope)}', 'sandbox')
+           ${dteFilter}
+         ORDER BY CASE WHEN COALESCE(account_type, 'sandbox') = '${escapeSql(cfgScope)}' THEN 0 ELSE 1 END
+         LIMIT 1`,
+      )
+      const slPct = num(cfgRows[0]?.stop_loss_pct)
+      if (slPct > 0) icSlMult = slPct / 100
+      const ptPct = num(cfgRows[0]?.profit_target_pct)
+      if (ptPct > 0) icPtPct = ptPct / 100
+    } catch {
+      // Leave the defaults — the lifecycle line's Target/Stop caption falls back
+      // to the same numbers position-monitor would, rather than going blank.
+    }
+    if (isSparkStrategyBot(BOT)) icPtPct = getCurrentPTTier(new Date(), BOT).pct
   }
-  if (isSparkStrategyBot(BOT)) icPtPct = getCurrentPTTier(new Date(), BOT).pct
 
   const positions: LiveOpenPosition[] = await Promise.all(
     positionRows.map(async (p): Promise<LiveOpenPosition> => {
@@ -720,17 +728,29 @@ export async function getLiveTrade(
       // converted from a per-contract price into what the customer actually
       // stands to gain/lose. slMult <= 1 means the strategy has no real stop
       // (holds to settlement) — null rather than a nonsense $0/negative figure.
-      const targetDollars = pCredit > 0
+      //
+      // FLAME/SPARK hold to settlement unconditionally — isSettleAtExpiryBot
+      // forces both to null above the config read even exists for them, so the
+      // client's "hold to close" fallback is never shadowed by a stray IC
+      // template default.
+      const targetDollars = !isSettleAtExpiryBot(BOT) && pCredit > 0
         ? Math.round(pContracts * pCredit * icPtPct * 100 * 100) / 100
         : null
-      const stopDollars = pCredit > 0 && icSlMult > 1
+      const stopDollars = !isSettleAtExpiryBot(BOT) && pCredit > 0 && icSlMult > 1
         ? Math.round(pContracts * pCredit * (icSlMult - 1) * 100 * 100) / 100
         : null
       // Auto-close only has a same-day scheduled instant when this position
-      // expires today (the EOD safety cutoff); a swung leg expiring another
-      // day has no "close by HH:MM" moment to show today.
+      // expires today. For most bots that instant is the EOD safety cutoff
+      // (2:45 PM CT); FLAME/SPARK instead hold to the actual session close
+      // (3:00 PM CT, or noon CT on an early-close half-day) — using the
+      // generic 2:45 PM cutoff for them was reporting a close time the bot
+      // does not observe (its own guard runs in the final three minutes
+      // before whichever close actually applies).
+      const closeCutoffMin = isSettleAtExpiryBot(BOT)
+        ? (isEarlyClose(new Date(`${ctTodayDate}T12:00:00`)) ? 12 * 60 : 15 * 60)
+        : DEFAULT_EOD_CUTOFF_MIN
       const autoCloseAt = pExpiration === ctTodayDate
-        ? ctWallTimeUtcIso(ctTodayDate, DEFAULT_EOD_CUTOFF_MIN)
+        ? ctWallTimeUtcIso(ctTodayDate, closeCutoffMin)
         : null
 
       let pnl: number | null = null
