@@ -1462,6 +1462,13 @@ function hasWorkingEntryOrder(
  */
 function getSlidingProfitTarget(ct: Date, basePt: number, botName: string): [number, string] {
   if (botName === 'inferno') return [1.0, 'HOLD_TO_EOD']
+  // 🚨 2026-10-02: EBB settle-at-expiry bots (FLAME, SPARK) NEVER take an intraday
+  // profit target, whatever the DB says. A production config row overrode FLAME's
+  // pt_pct 1.0 → 0.30; the AFTERNOON tier turned that into a 15% target, the PT
+  // close's debit limit was rejected, the cascade fell back to market legs and a
+  // 4-lot $0.22 credit spread was bought back for $0.30 (-$32) at ~1:50 PM CT
+  // (FLAME-SPY-20261002-Y7RZKZ). Code-controlled, like the SPARK tier shape below.
+  if (isSettleAtExpiryBot(botName)) return [1.0, 'HOLD_TO_EOD']
 
   // basePt >= 1.0 is the engine's OFF switch for the profit target, and it must
   // stay off all day. Before 2026-08-10 only the MORNING tier honored it: the
@@ -5791,7 +5798,16 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   // the SPY book, after the put side has already been fully decided above, so
   // it can never affect the put spread's own result. Never throws into this
   // function — see that module's own safety-invariant header comment.
-  if (bot.name === 'flame') {
+  // 🚨 2026-10-02 audit: the call spread is a MIRROR of the put trade, never an
+  // independent bet. Only run it when the SPY put book opened this tick
+  // ('traded@') or already holds today's trade ('traded_today'). Any skip —
+  // credit floor, no room, stand-down, ladder, weekday skip — skips the call too.
+  const spyPutResult = out.find((s) => s.startsWith('SPY=')) ?? ''
+  const putOpenedToday = spyPutResult.startsWith('SPY=traded@') || spyPutResult === 'SPY=traded_today'
+  if (bot.name === 'flame' && !putOpenedToday) {
+    console.log(`[flame-v2] call_spread skipped: put side did not open (${spyPutResult || 'no_spy_result'})`)
+  }
+  if (bot.name === 'flame' && putOpenedToday) {
     try {
       const spyQuote = await getQuote('SPY')
       const spySpot = spyQuote?.last ?? 0
