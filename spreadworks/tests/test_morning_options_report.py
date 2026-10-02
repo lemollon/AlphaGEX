@@ -187,6 +187,35 @@ async def test_generation_error_publishes_deterministic_fallback_plan(monkeypatc
     assert "provider unavailable" not in stored["payload"]["reason"]
 
 
+@pytest.mark.asyncio
+async def test_completed_plan_retries_a_failed_discord_delivery(monkeypatch):
+    now = datetime(2026, 9, 22, 12, 10, 5, tzinfo=UTC)
+    existing = {
+        "generated_by": report.GENERATOR_ID,
+        "run_status": "SUCCESS",
+        "generation_mode": "model_enriched",
+        "symbols": ["AMD"], "setups": [], "plan_hash": "c" * 64,
+        "discord_delivery": {"posted": False, "attempt_count": 1},
+    }
+    updated: dict = {}
+    monkeypatch.setenv("INTRADAY_ALERTS_ENABLED", "true")
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.example/webhook")
+    monkeypatch.setattr(report, "_latest_plan_payload", lambda _day: existing)
+    monkeypatch.setattr(report, "_send_discord", lambda payload: payload is existing)
+    monkeypatch.setattr(
+        report, "_update_delivery",
+        lambda trading_date, *, posted, attempted_at: updated.update(
+            trading_date=trading_date, posted=posted, attempted_at=attempted_at,
+        ),
+    )
+
+    result = await report.run_morning_options_report(SimpleNamespace(), now=now)
+
+    assert result["skipped"] is True
+    assert result["discord_posted"] is True
+    assert updated["posted"] is True
+
+
 def test_register_arms_exact_central_time_schedule(monkeypatch):
     calls = []
 
