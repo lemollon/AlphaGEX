@@ -130,12 +130,18 @@ class _ClientHolder:
     def cache_clear(self) -> None:
         """Evict the client and start (or extend) the re-login cooldown."""
         with self._lock:
-            if self._client is None:
-                return
+            # Several HTTP requests can have been using the same client when
+            # ThetaData drops its session. The first failure clears it; the
+            # remaining in-flight failures reach this method after that and
+            # used to return here without extending the cooldown. That
+            # reopened the login gate after only the first delay and created
+            # a repeated-login loop. Each confirmed connection failure must
+            # therefore extend the gate even if another request already
+            # cleared the client.
             self._client = None
             self._streak += 1
             wait = min(RELOGIN_MIN_SECONDS * (2 ** (self._streak - 1)), RELOGIN_MAX_SECONDS)
-            self._next_build_at = time.monotonic() + wait
+            self._next_build_at = max(self._next_build_at, time.monotonic() + wait)
             LOGGER.error("ThetaData client evicted (streak=%d); next login allowed in %.0fs",
                          self._streak, wait)
 
