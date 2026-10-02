@@ -281,6 +281,19 @@ def test_realized_volatility_rejects_stale_tape():
     assert result["reason"] == "stale_timesales_bar"
 
 
+def test_surface_read_explains_day_and_forward_volatility_pricing():
+    read = market_structure._surface_read(
+        atm_iv=0.12, realized_vol=0.09, skew=0.04,
+        iv_0dte=0.19, iv_1_5dte=0.13, iv_6_20dte=0.16,
+        iv_21_365dte=0.20,
+    )
+    assert read["available"] is True
+    assert read["day_state"] == "PREMIUM_RICH"
+    assert read["skew_state"] == "DOWNSIDE_HEDGE_PREMIUM"
+    assert "6–20DTE volatility is elevated" in read["forward_meaning"]
+    assert "not proof" in read["forward_meaning"]
+
+
 
 def test_register_arms_minute_capture_and_initializes_tables(monkeypatch):
     calls = []
