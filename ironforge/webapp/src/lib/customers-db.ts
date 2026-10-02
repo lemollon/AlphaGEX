@@ -296,6 +296,16 @@ CREATE TABLE IF NOT EXISTS customer_bot_subscriptions (
 CREATE INDEX IF NOT EXISTS idx_customer_bot_subs_user ON customer_bot_subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_customer_bot_subs_sub ON customer_bot_subscriptions(stripe_subscription_id);
 
+-- Apple In-App Purchase (iOS, Guideline 3.1.1). StoreKit 2 is a SECOND billing rail
+-- alongside Stripe — provider distinguishes which one wrote a row so the membership
+-- view and the CRM sync can render/route correctly. apple_original_transaction_id is
+-- StoreKit's originalTransactionId, the stable identifier across renewals for one
+-- subscription purchase (see lib/billing/apple/*). ADD COLUMN IF NOT EXISTS so this
+-- runs safely against a DB that already has the table from before Apple existed.
+ALTER TABLE customer_bot_subscriptions ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'stripe';
+ALTER TABLE customer_bot_subscriptions ADD COLUMN IF NOT EXISTS apple_original_transaction_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_customer_bot_subs_apple ON customer_bot_subscriptions(apple_original_transaction_id);
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Enrollment / activation (Enrollment spec §5). The rule these exist to enforce:
 -- paid membership is NOT authority to trade, so membership, brokerage, agent
