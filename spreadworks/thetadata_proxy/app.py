@@ -342,9 +342,14 @@ def option_history_eod(
 ) -> PlainTextResponse:
     """Read-only option EOD history; a single date is normalized to a one-day range."""
     expiry = "*" if expiration == "*" else _date(expiration, "expiration")
+    # The consumer aligns a prior-session chain with today's 0..60 DTE OI.
+    # A weekend or market holiday can add up to four calendar days between
+    # those sessions. Fetch that small real-data buffer with wildcard chains
+    # so the consumer does not need fragile one-expiry follow-up requests.
+    provider_max_dte = min(365, max_dte + 4) if expiry == "*" else max_dte
     kwargs: dict[str, Any] = {
         "symbol": _symbol(symbol), "expiration": expiry, "strike": strike,
-        "right": right, "max_dte": max_dte,
+        "right": right, "max_dte": provider_max_dte,
     }
     if strike_range is not None:
         kwargs["strike_range"] = strike_range
