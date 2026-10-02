@@ -304,7 +304,11 @@ def test_trade_quote_flow_uses_same_print_nbbo_for_initiation(monkeypatch):
         rows.append({"expiration": "2026-10-16", "right": "put",
                      "timestamp": "2026-10-02T10:00:20", "price": "1.00",
                      "bid": "1.00", "ask": "1.10", "size": "20"})
-    monkeypatch.setattr(market_structure, "_theta_rows", lambda path, params, timeout=25: rows)
+    monkeypatch.setattr(
+        market_structure, "_theta_rows",
+        lambda path, params, timeout=25: ([{"expiration": "2026-10-16"}]
+                                           if "list/expirations" in path else rows),
+    )
     result = market_structure.fetch_trade_quote_flow("SPY", now)
     assert result["available"] is True
     mid = result["buckets"]["6_20dte"]
