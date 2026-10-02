@@ -3295,6 +3295,36 @@ async function closePosition(
     if (posMetaRow[0]?.account_type) posAccountType = posMetaRow[0].account_type
   } catch { /* default */ }
 
+  // 🚨 HOLD-TO-EXPIRY LOCK (2026-10-02, FLAME-SPY-20261002-Y7RZKZ). FLAME and SPARK
+  // are EBB settle-at-expiry bots: the ONLY scanner exits are the assignment guard
+  // (final minutes before the close) and book-only settlement. A profit target that
+  // should never have been live bought back a live 4-lot at ~1:50 PM CT for -$32;
+  // held to the close it made +$88. Whatever triggers an early exit in future —
+  // a stale DB override, a data-feed failure, a new rule — no close order reaches
+  // the broker before the guard window. Operator force-close uses its own route.
+  if (isSettleAtExpiryBot(bot.name) && reason !== ASSIGNMENT_GUARD_REASON
+      && !isBookOnlyCloseReason(reason) && reason !== 'stale_holdover') {
+    const ctNow = getCentralTime()
+    const hhmm = ctNow.getHours() * 100 + ctNow.getMinutes()
+    const { startHHMM } = assignmentGuardWindow(ctNow)
+    if (hhmm < startHHMM) {
+      console.error(
+        `[scanner] *** ${bot.name.toUpperCase()} EARLY CLOSE BLOCKED *** ${positionId} reason=${reason} ` +
+        `at ${hhmm} CT (before guard ${startHHMM}) — EBB holds to expiry; no broker order sent.`,
+      )
+      try {
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+           VALUES ($1, $2, $3, $4)`,
+          ['CRITICAL', `EARLY CLOSE BLOCKED: ${positionId} reason=${reason}`,
+            JSON.stringify({ position_id: positionId, reason, hhmm_ct: hhmm, guard_start: startHHMM, account_type: posAccountType }),
+            bot.dte],
+        )
+      } catch { /* log failure must not unblock */ }
+      return 'failed'
+    }
+  }
+
   // Determine estimated close price if not provided.
   // Put credit spread detection: callShort === 0 (FLAME after Apr 2026 migration).
   // For those, use the 2-leg put-spread MTM; for ICs keep the existing 4-leg call.
@@ -4058,7 +4088,7 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
   const rows = await query(
     `SELECT position_id, ticker, expiration, put_short_strike, put_long_strike,
             call_short_strike, call_long_strike, contracts, total_credit,
-            collateral_required, spread_width, account_type
+            collateral_required, spread_width, account_type, person
        FROM ${botTable(bot.name, 'positions')}
       WHERE status = 'open' AND dte_mode = $1 AND expiration <= $2`,
     [bot.dte, todayStr],
@@ -4127,9 +4157,29 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
     const ks = num(p.put_short_strike)
     const kl = num(p.put_long_strike)
     const width = ks - kl
-    const value = Math.min(Math.max(ks - settlePx, 0), width)
+    let value = Math.min(Math.max(ks - settlePx, 0), width)
     const credit = num(p.total_credit)
     const contracts = int(p.contracts)
+
+    // 🚨 BROKER FIRST (2026-10-02). A production row can be open in the ledger while
+    // the broker already bought the spread back (FLAME-SPY-20261002-Y7RZKZ-prod-flame
+    // booked +$88 at expiry; the broker had closed it for -$32). Book the broker's own
+    // closing debit when one exists for the expiry date.
+    if (p.account_type === 'production') {
+      try {
+        const { productionSpreadCloseFill } = await import('./tradier')
+        const fill = await productionSpreadCloseFill(bot.name, String(p.person ?? ''), ticker, exp, ks, kl)
+        if (fill) {
+          console.warn(
+            `[scanner] ${bot.name.toUpperCase()} ${p.position_id}: broker already closed before expiry ` +
+            `(order ${fill.orderId}, net $${fill.net.toFixed(4)}) — booking the broker fill, not the expiry value $${value.toFixed(2)}`,
+          )
+          value = fill.net
+        }
+      } catch (e) {
+        console.warn(`[scanner] broker close-fill check failed for ${p.position_id} (booking expiry value):`, e)
+      }
+    }
 
     // 🚨 closePosition CAN DECLINE TO CLOSE. It defers on a missing broker fill and
     // returns without flipping `status`, so logging SETTLED unconditionally printed a

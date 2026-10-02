@@ -1601,12 +1601,13 @@ export async function findTodaySpreadCloseFill(
   baseUrl: string,
   occShort: string,
   occLong: string,
+  onDate?: string,
 ): Promise<{ net: number; orderId: number } | null> {
   const data = await sandboxGet(`/accounts/${accountId}/orders`, undefined, apiKey, baseUrl)
   let orders = data?.orders?.order
   if (!orders) return null
   if (!Array.isArray(orders)) orders = [orders]
-  const today = new Intl.DateTimeFormat('en-CA', {
+  const today = onDate ?? new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date())
   let debit = 0
@@ -1629,6 +1630,36 @@ export async function findTodaySpreadCloseFill(
   }
   if (shortQty <= 0 || lastOrderId <= 0) return null
   return { net: Math.max(0, (debit - credit) / shortQty), orderId: lastOrderId }
+}
+
+/**
+ * Did the BROKER already close this production put spread on `onDate` before it
+ * expired? Returns the broker's net closing debit per spread, or null when there
+ * is no closing fill (the spread really did ride to expiry) or the account can't
+ * be resolved. Used by settlement so a ledger never books an expiry value for a
+ * position the broker bought back earlier (2026-10-02: ledger +$88 vs broker -$32).
+ */
+export async function productionSpreadCloseFill(
+  botName: string,
+  person: string,
+  ticker: string,
+  expiration: string,
+  putShort: number,
+  putLong: number,
+): Promise<{ net: number; orderId: number } | null> {
+  await ensureSandboxAccountsLoaded()
+  let acct: SandboxAccount | null = null
+  if (botName.toLowerCase() === 'flame' && person === 'Flame') {
+    acct = flameProductionAccount({ requireArmed: false })
+  } else {
+    acct = _sandboxAccounts.find(a => a.type === 'production' && a.name === person) ?? null
+  }
+  if (!acct) return null
+  const accountId = acct.cachedAccountId ?? await getAccountIdForKey(acct.apiKey, acct.baseUrl)
+  if (!accountId) return null
+  const occS = buildOccSymbol(ticker, expiration, putShort, 'P')
+  const occL = buildOccSymbol(ticker, expiration, putLong, 'P')
+  return findTodaySpreadCloseFill(acct.apiKey, accountId, acct.baseUrl, occS, occL, String(expiration).slice(0, 10))
 }
 
 async function getOrderFillPrice(
@@ -3958,6 +3989,20 @@ export async function closeIcOrderAllAccounts(
           let fillPrice: number | null = null
           try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, pollMs, acct.baseUrl) } catch { /* non-fatal */ }
           results[resultKey] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice, account_type: acct.type ?? 'sandbox' }
+          return
+        }
+
+        // 🚨 A PRICE-CAPPED CLOSE NEVER DEGRADES TO MARKET (2026-10-02 audit). Stages 2
+        // and 3 below are market orders with no price. A debit-limit close exists to
+        // guarantee a price (a profit-target floor); when the broker rejected it, the
+        // cascade used to fall through and fill at market — FLAME-SPY-20261002-Y7RZKZ
+        // turned a 15% profit-target exit into a -$32 loss that way. Report no order
+        // for this account; the caller keeps the position open and re-evaluates.
+        if (effectiveOrderType === 'debit') {
+          console.warn(
+            `[tradier] ${acct.name}: debit-limit close rejected twice (limit=${limitPrice ?? 'n/a'}) — ` +
+            `NOT falling back to market legs. Position stays open; caller re-evaluates next cycle.`,
+          )
           return
         }
 
