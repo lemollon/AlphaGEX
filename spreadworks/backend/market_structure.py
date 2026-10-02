@@ -164,6 +164,23 @@ def _theta_rows(path: str, params: dict[str, Any], timeout: int = 35) -> list[di
     return list(csv.DictReader(io.StringIO(response.text))) if response.text.strip() else []
 
 
+def _theta_live_snapshot_rows(path: str, params: dict[str, Any], observed_at: datetime) -> list[dict[str, Any]]:
+    """Read a live Theta snapshot and supply its receipt time only if needed.
+
+    The authorized IV snapshot occasionally omits a per-contract timestamp.
+    That does not make the data stale: the entire response is a point-in-time
+    snapshot fetched synchronously.  Preserve a provider timestamp whenever it
+    exists, but attach the observed exchange-local time for timestamp-less rows
+    so the normal <=90-second guard can evaluate the actual snapshot age.
+    """
+    rows = _theta_rows(path, params)
+    fallback_stamp = observed_at.astimezone(ET).replace(tzinfo=None).isoformat()
+    for row in rows:
+        if not str(row.get("timestamp") or "").strip():
+            row["timestamp"] = fallback_stamp
+    return rows
+
+
 def _index_prices(symbols: tuple[str, ...]) -> dict[str, dict[str, Any]]:
     rows = _theta_rows("/v3/index/snapshot/price", {"symbol": ",".join(symbols)})
     return {str(row.get("symbol", "")).upper(): row for row in rows}
@@ -298,12 +315,16 @@ def fetch_theta_chain(symbol: str, now: datetime | None = None) -> dict[str, Any
               "strike_range": 60}
     try:
         try:
-            greeks = _theta_rows("/v3/option/snapshot/greeks/all", params)
+            greeks = _theta_live_snapshot_rows(
+                "/v3/option/snapshot/greeks/all", params, now
+            )
             gamma_source = "ThetaData Pro Greeks"
         except requests.HTTPError:
             # ThetaData's all-Greeks route requires Pro. Standard exposes IV,
             # from which gamma can be calculated without another vendor.
-            greeks = _theta_rows("/v3/option/snapshot/greeks/implied_volatility", params)
+            greeks = _theta_live_snapshot_rows(
+                "/v3/option/snapshot/greeks/implied_volatility", params, now
+            )
             gamma_source = "ThetaData Standard IV, locally calculated gamma"
         cached = _OI_CACHE.get(symbol)
         if cached and cached[0].astimezone(ET).date() == now.astimezone(ET).date() and (now - cached[0]).total_seconds() < 3600:
@@ -450,7 +471,9 @@ def _surface_rows(symbol: str, now: datetime) -> tuple[list[dict[str, Any]], str
     params = {"symbol": symbol, "expiration": "*", "max_dte": 365,
               "strike_range": 60}
     try:
-        raw_rows = _theta_rows("/v3/option/snapshot/greeks/implied_volatility", params)
+        raw_rows = _theta_live_snapshot_rows(
+            "/v3/option/snapshot/greeks/implied_volatility", params, now
+        )
     except Exception as exc:  # noqa: BLE001
         return [], f"theta_iv_snapshot_failure:{type(exc).__name__}"
 
