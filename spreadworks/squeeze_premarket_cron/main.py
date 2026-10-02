@@ -131,6 +131,13 @@ if THETA_BASE and "://" not in THETA_BASE:
     THETA_BASE = f"http://{THETA_BASE}"
 
 REQUEST_TIMEOUT_S = 10
+# Read timeout for calls to the internal thetadata-proxy service specifically
+# (both the live scan's and the backtest's _fetch_csv() calls share this path
+# -- see _fetch_csv() below). Raised from 10s to 30s 2026-10-02: concurrent
+# MAX_WORKERS=25 load was causing ~3% of backtest pulls to fail with
+# ReadTimeout even though the proxy itself was healthy. Kept separate from
+# REQUEST_TIMEOUT_S, which still governs the unrelated Discord webhook post.
+THETA_REQUEST_TIMEOUT_S = 30
 HTTP_RETRIES = 2
 HTTP_BACKOFF_S = 0.5
 MAX_WORKERS = 25
@@ -265,7 +272,7 @@ def _fetch_csv(url: str, params: dict):
     last_status_code = None
     for attempt in range(HTTP_RETRIES + 1):
         try:
-            resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT_S)
+            resp = requests.get(url, params=params, timeout=THETA_REQUEST_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 - connection errors, timeouts
             last_exc = exc
             last_status_code = None
