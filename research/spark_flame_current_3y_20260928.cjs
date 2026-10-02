@@ -486,7 +486,7 @@ async function execute() {
  emit('frozen_spec',{spec:SPEC,sourceHashes,sessions:STATE.total});
  try {
   const resumed=await initCheckpointStore();
-  if(resumed&&['completed_with_coverage_limits','blocked','incomplete'].includes(STATE.stage)){report=snapshot();return;}
+  if(resumed&&STATE.stage==='completed_with_coverage_limits'){report=snapshot();return;}
   if(!resumed||STATE.retryPhase==='history')await recoverDataOperation(histories,'history');
   if(reconstructGammaEnabled)await recoverDataOperation(warmGamma,'warmup');STATE.stage='running';
   for(const day of sessions().slice(STATE.completed)) {
