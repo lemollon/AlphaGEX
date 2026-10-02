@@ -680,6 +680,19 @@ def _initiation_read(ask_contracts: int, bid_contracts: int, total_contracts: in
     return "MIXED"
 
 
+def _flow_expiration_candidates(session_date: datetime) -> list[str]:
+    """Choose liquid ETF weekly expirations without a separate slow lookup."""
+    candidates: list[str] = []
+    for dte in (0, 3, 14, 45):
+        expiry = (session_date + timedelta(days=dte)).date()
+        while expiry.weekday() >= 5:
+            expiry += timedelta(days=1)
+        value = expiry.isoformat()
+        if value not in candidates:
+            candidates.append(value)
+    return candidates
+
+
 def fetch_trade_quote_flow(symbol: str, now: datetime | None = None) -> dict[str, Any]:
     """Read recent OPRA trade+NBBO records and summarize live option flow.
 
@@ -695,47 +708,26 @@ def fetch_trade_quote_flow(symbol: str, now: datetime | None = None) -> dict[str
         return {"symbol": symbol, "available": False, "confidence": "LOW",
                 "reason": "market_closed", "captured_at": now.isoformat()}
     start = now_et - timedelta(minutes=2)
-    try:
-        expiration_rows = _theta_rows("/v3/option/list/expirations", {"symbol": symbol}, timeout=15)
-    except Exception as exc:  # noqa: BLE001
-        return {"symbol": symbol, "available": False, "confidence": "LOW",
-                "reason": f"theta_expiration_list_failure:{type(exc).__name__}",
-                "captured_at": datetime.now(UTC).isoformat()}
-    expirations: list[tuple[str, int]] = []
-    for item in expiration_rows:
-        expiry = str(item.get("expiration") or item.get("date") or "")
-        try:
-            dte = (datetime.fromisoformat(expiry).date() - now_et.date()).days
-        except ValueError:
-            continue
-        if 0 <= dte <= 60:
-            expirations.append((expiry, dte))
-    targets = {"0dte": 0, "1_5dte": 3, "6_20dte": 14, "21_60dte": 45}
-    selected: list[str] = []
-    for bucket, target in targets.items():
-        candidates = [(expiry, dte) for expiry, dte in expirations if _flow_bucket(dte) == bucket]
-        if candidates:
-            selected.append(min(candidates, key=lambda item: abs(item[1] - target))[0])
-    if not selected:
-        return {"symbol": symbol, "available": False, "confidence": "LOW",
-                "reason": "no_eligible_trade_quote_expirations",
-                "captured_at": datetime.now(UTC).isoformat()}
+    selected = _flow_expiration_candidates(now_et)
     rows: list[dict[str, Any]] = []
-    try:
-        # Theta's historical trade+quote service is most reliable with one
-        # explicit expiration.  Four representative horizons keep this live
-        # enough for the report without pulling an unbounded full chain.
-        for expiry in selected:
+    failures: list[str] = []
+    # Theta's historical trade+quote service is most reliable with one
+    # explicit expiration.  Four representative ETF weekly horizons keep this
+    # live enough for the report without pulling an unbounded full chain.
+    for expiry in selected:
+        try:
             rows.extend(_theta_rows("/v3/option/history/trade_quote", {
                 "symbol": symbol, "expiration": expiry, "strike": "*", "right": "both",
                 "date": now_et.date().isoformat(),
                 "start_time": start.strftime("%H:%M:%S"),
                 "end_time": now_et.strftime("%H:%M:%S"),
                 "max_dte": 60, "strike_range": 12, "exclusive": "true",
-            }, timeout=25))
-    except Exception as exc:  # noqa: BLE001
+            }, timeout=12))
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"{expiry}:{type(exc).__name__}")
+    if not rows:
         return {"symbol": symbol, "available": False, "confidence": "LOW",
-                "reason": f"theta_trade_quote_failure:{type(exc).__name__}",
+                "reason": f"theta_trade_quote_failure:{','.join(failures) or 'empty'}",
                 "captured_at": datetime.now(UTC).isoformat()}
     buckets: dict[str, dict[str, Any]] = {
         key: {"call_contracts": 0, "put_contracts": 0,
