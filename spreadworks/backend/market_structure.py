@@ -1904,3 +1904,17 @@ def latest_symbol(symbol: str):
                 "supported": SYMBOLS}
     row = _latest_gamma(symbol)
     return {"available": row is not None, "symbol": symbol, "snapshot": row}
+
+
+@router.get("/report-contract")
+def report_contract_schema():
+    from .report_contract import REQUIREMENTS, CONTRACT_VERSION
+    return {"contract_version": CONTRACT_VERSION, "required_fields": REQUIREMENTS,
+            "render_rule": "Use canonical block headings with underscores replaced by spaces; render every field name and its value or explicit unavailable reason."}
+
+
+@router.post("/validate-report")
+def validate_intraday_report(payload: dict[str, Any]):
+    """Pure publication check for submitted final intraday report; no orders or writes."""
+    from .report_contract import validate_rendered_report
+    return validate_rendered_report(payload)
