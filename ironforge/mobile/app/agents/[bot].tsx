@@ -26,7 +26,7 @@ import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Card, SectionLabel, Money, Loading, ErrorState } from '@/components/ui'
 import { Mascot } from '@/components/Brand'
-import { soleConnection, brokerLabel } from '@/api/brokerage'
+import { soleConnection, brokerLabel, maskTail } from '@/api/brokerage'
 import { track } from '@/analytics/track'
 import { agentAction, type AgentActionKind } from '@/agents/eligibility'
 import type { AgentBot } from '@/agents/routes'
@@ -269,7 +269,7 @@ function CurrentAgentSection({
         <Text style={[type.label, { color: color.muted }]}>Brokerage account</Text>
         <Text style={[type.body, { color: color.text, marginTop: space.xs }]}>
           {sole
-            ? `${brokerLabel(sole.broker ?? sole.provider)}${sole.mask ? `  •••• ${sole.mask}` : ''}`
+            ? `${brokerLabel(sole.broker ?? sole.provider)}${sole.mask ? `  ${maskTail(sole.mask)}` : ''}`
             : 'Not available'}
         </Text>
 
@@ -592,7 +592,7 @@ function ActivationFlow({
               />
               <Text style={[type.body, { color: color.text, marginLeft: space.sm }]}>
                 {brokerLabel(connection.broker ?? connection.provider)}
-                {account.mask ? `  •••• ${account.mask}` : ''}
+                {account.mask ? `  ${maskTail(account.mask)}` : ''}
               </Text>
             </Pressable>
           )
@@ -643,7 +643,7 @@ function ActivationFlow({
     return (
       <Card style={{ marginTop: space.lg }}>
         <SectionLabel>Review</SectionLabel>
-        <ReviewRow label="Account" value={s1.account_mask ? `•••• ${s1.account_mask}` : 'Not available'} />
+        <ReviewRow label="Account" value={s1.account_mask ? maskTail(s1.account_mask) : 'Not available'} />
         {s1.plan ? (
           <ReviewRow label="Plan" value={`${s1.plan.name} — $${s1.plan.price_monthly}/mo`} />
         ) : null}
@@ -707,7 +707,7 @@ function ActivationFlow({
         </View>
         <Text style={[type.body, { color: color.textDim, marginTop: space.md }]}>
           {activated.account_mask
-            ? `Trading on •••• ${activated.account_mask}. `
+            ? `Trading on ${maskTail(activated.account_mask)}. `
             : ''}
           Your trial is now active.
         </Text>
