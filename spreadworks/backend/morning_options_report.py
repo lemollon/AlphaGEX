@@ -28,6 +28,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .db import SessionLocal
+from .report_contract import prepare_report_delivery
 from .economic_events import is_market_holiday
 from .intraday_watch import (
     CORE_SYMBOLS,
@@ -686,6 +687,9 @@ def _discord_embed(payload: dict[str, Any]) -> dict[str, Any]:
     else:
         title = "7:00 AM PLAN FAILED CLOSED — NO ACTIVE SETUPS"
         color = 0xEF4444
+    if payload.get("report_completeness") == "INCOMPLETE":
+        title = "MORNING REPORT INCOMPLETE — VERIFIED FIELDS MISSING"
+        color = 0xF59E0B
     setup_lines = []
     for setup in setups[:12]:
         entry = setup["entry"]
@@ -709,6 +713,12 @@ def _discord_embed(payload: dict[str, Any]) -> dict[str, Any]:
             "Otherwise: ENTRY TRIGGER HIT — STRIKES PENDING OPTIONS DATA."
         ), "inline": False},
     ]
+    check = payload.get("report_validation") or {}
+    fields.insert(0, {"name": "Report completeness", "value": (
+        f"{payload.get('report_completeness', 'UNVALIDATED')} | "
+        f"{len(check.get('unavailable_fields', []))} unavailable fields | "
+        f"contract {check.get('contract_version', 'unknown')}"
+    ), "inline": False})
     return {
         "title": title,
         "description": "Render cloud run; advisory only; no order routing.",
@@ -750,6 +760,10 @@ def _update_delivery(trading_date: date, *, posted: bool, attempted_at: datetime
 
 def _send_discord(payload: dict[str, Any]) -> bool:
     from . import _send_intraday_webhook_sync
+    check = prepare_report_delivery(payload)
+    if not check["publishable"]:
+        logger.error("[MorningOptions] report delivery rejected: %s", check["errors"])
+        return False
     try:
         return bool(_send_intraday_webhook_sync(_discord_embed(payload)))
     except Exception:  # noqa: BLE001
@@ -935,6 +949,7 @@ async def run_morning_options_report(app: Any, *, now: datetime | None = None,
             attempt=attempt,
         )
 
+    prepare_report_delivery(payload)
     result = await asyncio.to_thread(
         store_morning_plan_atomic, trading_date, payload["symbols"], payload["setups"],
         payload, ingested_at=started,
