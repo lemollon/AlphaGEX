@@ -52,6 +52,8 @@ GAMMA_TABLE = "sw_live_gamma"
 VOL_TABLE = "sw_live_vol_indices"
 SURFACE_TABLE = "sw_live_surface"
 FLOW_TABLE = "sw_live_trade_quote_flow"
+CROSS_ASSET_TABLE = "sw_live_cross_asset"
+CROSS_ASSET_SYMBOLS = ("SPY", "QQQ", "IWM", "SMH", "XLK", "XLF", "XLE", "XLV", "XLU", "HYG", "LQD", "TLT")
 # Gamma only needs the near-term, near-spot chain used by the intraday map.
 # Keeping this bounded is critical: ThetaData serializes requests in the shared
 # proxy, so an all-expiry/all-strike OI request can block surface refreshes for
@@ -143,12 +145,28 @@ CREATE TABLE IF NOT EXISTS {FLOW_TABLE} (
 """
 
 
+_CROSS_ASSET_DDL = f"""
+CREATE TABLE IF NOT EXISTS {CROSS_ASSET_TABLE} (
+  symbol TEXT NOT NULL,
+  captured_at TIMESTAMP NOT NULL,
+  price DOUBLE PRECISION,
+  open_price DOUBLE PRECISION,
+  prev_close DOUBLE PRECISION,
+  source_timestamp TIMESTAMP,
+  fresh BOOLEAN NOT NULL,
+  reason TEXT,
+  PRIMARY KEY(symbol, captured_at)
+)
+"""
+
+
 def ensure_tables() -> None:
     with engine.begin() as conn:
         conn.execute(text(_GAMMA_DDL))
         conn.execute(text(_VOL_DDL))
         conn.execute(text(_SURFACE_DDL))
         conn.execute(text(_FLOW_DDL))
+        conn.execute(text(_CROSS_ASSET_DDL))
         # Existing deployments already have the original table.  Keep this
         # additive migration here so a rolling deploy cannot leave reports
         # without the realized-volatility fields.
@@ -306,6 +324,66 @@ def fetch_vol_indices(now: datetime | None = None) -> dict[str, Any]:
     return {"available": any(v.get("fresh") for v in out.values()),
             "source": "ThetaData index snapshot price",
             "retrieved_at": now.isoformat(), "indices": out}
+
+
+def fetch_cross_asset(now: datetime | None = None) -> dict[str, Any]:
+    """Fresh sector/credit dashboard from one Tradier batch quote request."""
+    now = now or datetime.now(UTC)
+    token = _token("TRADIER_TOKEN") or _token("TRADIER_API_KEY")
+    if not token:
+        return {"available": False, "reason": "TRADIER_TOKEN missing", "assets": {}}
+    try:
+        response = requests.get(
+            TRADIER_QUOTES, params={"symbols": ",".join(CROSS_ASSET_SYMBOLS)},
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        raw = (response.json().get("quotes") or {}).get("quote") or []
+        if isinstance(raw, dict):
+            raw = [raw]
+    except Exception as exc:  # noqa: BLE001
+        return {"available": False, "reason": f"Tradier cross-asset failure: {type(exc).__name__}",
+                "assets": {}}
+
+    assets: dict[str, Any] = {}
+    for quote in raw:
+        symbol = str(quote.get("symbol") or "").upper()
+        if symbol not in CROSS_ASSET_SYMBOLS:
+            continue
+        price = _f(quote, "last")
+        stamp = _quote_timestamp(quote)
+        age = (now - stamp).total_seconds() if stamp else None
+        fresh = price is not None and age is not None and 0 <= age <= STALE_SECONDS
+        assets[symbol] = {
+            "symbol": symbol, "price": price, "open_price": _f(quote, "open"),
+            "prev_close": _f(quote, "prevclose"), "source_timestamp": stamp,
+            "age_seconds": round(age, 1) if age is not None else None, "fresh": fresh,
+            "reason": None if fresh else "stale_or_missing_quote",
+        }
+    return {"available": all(assets.get(symbol, {}).get("fresh")
+                             for symbol in CROSS_ASSET_SYMBOLS),
+            "source": "Tradier batch ETF quotes", "retrieved_at": now.isoformat(),
+            "assets": assets}
+
+
+def persist_cross_asset(payload: dict[str, Any], now: datetime | None = None) -> None:
+    ensure_tables()
+    now = now or datetime.now(UTC)
+    with engine.begin() as conn:
+        for symbol in CROSS_ASSET_SYMBOLS:
+            item = (payload.get("assets") or {}).get(symbol) or {"symbol": symbol}
+            stamp = item.get("source_timestamp")
+            conn.execute(text(
+                f"INSERT INTO {CROSS_ASSET_TABLE} "
+                "(symbol,captured_at,price,open_price,prev_close,source_timestamp,fresh,reason) "
+                "VALUES (:symbol,:captured,:price,:open,:prev,:stamp,:fresh,:reason) "
+                "ON CONFLICT(symbol,captured_at) DO NOTHING"),
+                {"symbol": symbol, "captured": now.replace(tzinfo=None),
+                 "price": item.get("price"), "open": item.get("open_price"),
+                 "prev": item.get("prev_close"),
+                 "stamp": stamp.replace(tzinfo=None) if stamp else None,
+                 "fresh": bool(item.get("fresh")), "reason": item.get("reason")})
 
 
 def fetch_spot(symbol: str, now: datetime | None = None) -> dict[str, Any]:
@@ -1344,6 +1422,9 @@ def capture_all() -> dict[str, Any]:
         return {"captured": False, "reason": "market_closed", "captured_at": now.isoformat()}
     vol = fetch_vol_indices(now)
     persist_vol(vol, now)
+    # Independent batch quotes cannot be starved by the serialized Theta client.
+    cross_asset = fetch_cross_asset(now)
+    persist_cross_asset(cross_asset, now)
     surface: dict[str, Any] = {}
     # Surface is intentionally limited to the two report underlyings.  It uses
     # the entitled IV-only endpoint and does not depend on the optional Greeks
@@ -1370,7 +1451,7 @@ def capture_all() -> dict[str, Any]:
     # Gamma/flow are fetched by their own explicit workers and read from their
     # persisted snapshots below; the report path never recalculates them.
     return {"captured": True, "captured_at": now.isoformat(), "volatility": vol,
-            "surface": surface}
+            "cross_asset": cross_asset, "surface": surface}
 
 
 def capture_gamma_pair() -> dict[str, Any]:
@@ -1680,6 +1761,30 @@ def latest_trade_quote_flow_symbol(symbol: str):
         return {"available": False, "reason": "trade-quote flow supports SPY and QQQ", "symbol": symbol}
     row = _latest_trade_quote_flow(symbol)
     return {"available": row is not None, "symbol": symbol, "flow": row}
+
+
+@router.get("/cross-asset")
+def cross_asset():
+    """Fresh sector-relative and credit-proxy context for reports."""
+    now = datetime.now(UTC)
+    payload = fetch_cross_asset(now)
+    assets = payload.get("assets") or {}
+    spy = assets.get("SPY") or {}
+    spy_prev = spy.get("prev_close")
+    spy_ret = ((spy.get("price") / spy_prev - 1) * 100
+               if spy.get("price") and spy_prev else None)
+    rows = []
+    for symbol in CROSS_ASSET_SYMBOLS:
+        item = assets.get(symbol) or {"symbol": symbol}
+        prev = item.get("prev_close")
+        ret = ((item.get("price") / prev - 1) * 100
+               if item.get("price") and prev else None)
+        rows.append({**item, "day_return_pct": round(ret, 3) if ret is not None else None,
+                     "relative_to_spy_pct": round(ret - spy_ret, 3)
+                     if ret is not None and spy_ret is not None else None})
+    return {**payload, "spy_day_return_pct": round(spy_ret, 3) if spy_ret is not None else None,
+            "rows": rows,
+            "interpretation_guardrail": "Use only fresh rows. Relative returns show leadership, not institutional flows or future certainty."}
 
 
 @router.get("/vol-indices")
