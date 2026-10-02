@@ -638,7 +638,7 @@ function scenarioCandidate(s,ratio,day,spots){
 function sweepSelfTest(){
  assert.equal(scenarioGrid().length,231);assert.equal(new Set(scenarioGrid().map(s=>s.id)).size,231);
  assert.equal(scenarioGrid().filter(s=>s.minute!=='none'&&s.gate===s.baseGate).length,0,'baseline must not be selected with new minute filters');
- assert.equal(scenarioGrid().filter(s=>s.minute==='vix_flat').length,48);
+ assert.equal(scenarioGrid().filter(s=>s.minute==='vix_flat').length,51);
  assert.equal(scenarioGrid().filter(s=>s.profitLock).length,6);
  for(const risk of ['full','75pct','50pct','one'])for(let n=0;n<30;n++){assert(capAddedLots(n,risk)<=n);assert(capAddedLots(n,risk)>=0);}
  assert.equal(capAddedLots(0,'one'),0);assert.equal(capAddedLots(3,'50pct'),1);
