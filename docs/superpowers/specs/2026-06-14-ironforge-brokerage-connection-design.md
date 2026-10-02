@@ -1,5 +1,12 @@
 # IronForge Brokerage Connection (Model A — customer-linked, per-trade approval) — Design
 
+> **Historical document — superseded for Spark/Flame operations as of September 28, 2026.**
+> This dated design/plan records its original implementation context. Its references to Spark/Flame strategy, account ownership, paper-only execution, or per-trade approval are historical. Current enrollment-v2 customer activation uses standing authorization; legacy-v1 approval is a separate path.
+> Use [Spark and Flame current state, September 28](../../../ironforge/SPARK_FLAME_CURRENT_STATE_2026-09-28.md) for the current 0DTE EBB rules, customer sizing, feature switches, and account boundaries.
+> Historical results and incident findings below retain their original scope; they are not current deployment verification.
+
+## Historical content
+
 **Date:** 2026-06-14
 **Status:** Approved — implementing v1.
 **Depends on:** Sub-project F (onboarding guard + handoff cookie) and customer-auth (session + onboarding-resume) — both shipped + live. Risk-assessment step — shipped.

@@ -1,6 +1,7 @@
 # Render Blueprint for SpreadWorks
 # Double Diagonal & Calendar Spread Analyzer
-# 3 services: Static Frontend + Python Backend + Node Discord Bot
+# 5 services: Static Frontend + Python Backend + private ThetaData service
+# + QQQ/SPY watcher + Node Discord Bot
 #
 # NOTE: spreadworks-backend (srv-d6mv30f5gffc73bog9a0) was created
 # from this blueprint then its live Build Command drifted in the
@@ -81,6 +82,18 @@ services:
         sync: false
       - key: DISCORD_WEBHOOK_URL
         sync: false
+      - key: INTRADAY_DISCORD_WEBHOOK_URL
+        sync: false
+      # Dedicated morning-plan and entry-alert route; does not enable the fleet.
+      - key: INTRADAY_ALERTS_ENABLED
+        value: "true"
+      - key: MORNING_OPTIONS_CLOUD_ENABLED
+        value: "true"
+      - key: MORNING_OPTIONS_MODEL
+        value: claude-sonnet-4-6
+      # Master switch for ALL SpreadWorks Discord posts. Flip to "true" to re-enable.
+      - key: SPREADWORKS_DISCORD_ENABLED
+        value: "false"
       - key: QQQ_RETEST_WATCH_ENABLED
         value: "true"
       - key: QQQ_RETEST_LEVELS_DATE
@@ -105,12 +118,38 @@ services:
         value: "false"
       - key: INTRADAY_WATCH_API_TOKEN
         sync: false
+      - key: THETADATA_BASE_URL
+        fromService:
+          name: thetadata-proxy
+          type: pserv
+          property: hostport
       - key: DATABASE_URL
         fromDatabase:
           name: alphagex-db
           property: connectionString
 
-  # SERVICE 3: Dedicated QQQ/SPY market watcher (alert-only; no orders)
+  # SERVICE 3: Private ThetaData stock/options market-data service.
+  # The Python client connects directly to ThetaData, so this has no
+  # workstation dependency and is reachable only on Render's private network.
+  - type: pserv
+    name: thetadata-proxy
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    autoDeploy: true
+    buildCommand: cd spreadworks && pip install --upgrade pip && pip install -r thetadata_proxy/requirements.txt
+    startCommand: cd spreadworks && uvicorn thetadata_proxy.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /live
+    envVars:
+      - key: TZ
+        value: America/Chicago
+      - key: PYTHON_VERSION
+        value: "3.12.11"
+      - key: THETADATA_API_KEY
+        sync: false
+
+  # SERVICE 4: Dedicated QQQ/SPY market watcher (alert-only; no orders)
   - type: worker
     name: qqq-retest-worker
     runtime: python
@@ -133,6 +172,14 @@ services:
         sync: false
       - key: DISCORD_WEBHOOK_URL
         sync: false
+      - key: INTRADAY_DISCORD_WEBHOOK_URL
+        sync: false
+      # Isolated entry-alert route; the fleet-wide Discord switch stays off.
+      - key: INTRADAY_ALERTS_ENABLED
+        value: "true"
+      # Master switch for ALL SpreadWorks Discord posts. Flip to "true" to re-enable.
+      - key: SPREADWORKS_DISCORD_ENABLED
+        value: "false"
       - key: QQQ_RETEST_WATCH_ENABLED
         value: "true"
       - key: QQQ_RETEST_LEVELS_DATE
@@ -168,7 +215,7 @@ services:
           name: alphagex-db
           property: connectionString
 
-  # SERVICE 4: Discord Bot (Node.js worker)
+  # SERVICE 5: Discord Bot (Node.js worker)
   - type: worker
     name: spreadworks-bot
     runtime: node
@@ -187,6 +234,9 @@ services:
         sync: false
       - key: DISCORD_WEBHOOK_URL
         sync: false
+      # Master switch for ALL SpreadWorks Discord posts. Flip to "true" to re-enable.
+      - key: SPREADWORKS_DISCORD_ENABLED
+        value: "false"
       - key: VITE_API_URL
         sync: false
 

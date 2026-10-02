@@ -80,3 +80,43 @@ def test_exit_prices_distinguish_missing_bid_from_displayed_zero():
         {"symbol": "SPY260918C00763000", "bid": 0.0, "ask": 0.01},
     ])
     assert p.get_leg_exit_prices(ticker="SPY", legs=legs) == [0.0]
+
+
+def test_fetch_gex_uses_canonical_market_structure(monkeypatch):
+    import backend.market_structure as market_structure
+
+    monkeypatch.setattr(
+        market_structure,
+        "build_gamma_snapshot",
+        lambda symbol: {
+            "available": True,
+            "gamma_flip": 742.86,
+            "call_wall": 744.0,
+            "put_wall": 737.0,
+            "gamma_regime": "negative",
+            "net_gex_b": -2.5,
+            "confidence": "HIGH",
+            "source": "ORATS live one-minute chain + Tradier spot",
+            "chain_timestamp": "2026-09-24T19:00:00+00:00",
+            "chain_age_seconds": 8.0,
+        },
+    )
+    p = LiveTradierChainProvider.__new__(LiveTradierChainProvider)
+    out = p._fetch_gex("QQQ", "2026-09-25")
+    assert out["flip_point"] == 742.86
+    assert out["call_wall"] == 744.0
+    assert out["put_wall"] == 737.0
+    assert out["gamma_regime"] == "negative"
+    assert out["gamma_confidence"] == "HIGH"
+    assert out["gamma_expiration_context"] == "full_chain"
+    assert out["magnets"] == []
+
+
+def test_fetch_gex_unsupported_symbol_skips_legacy_network():
+    class _ExplodingClient:
+        def get(self, *args, **kwargs):
+            raise AssertionError("legacy gamma endpoint must not be called")
+
+    p = LiveTradierChainProvider.__new__(LiveTradierChainProvider)
+    p._client = _ExplodingClient()
+    assert p._fetch_gex("NVDA", "2026-09-25") == {}

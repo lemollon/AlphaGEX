@@ -104,6 +104,11 @@ const config: ExpoConfig = {
     'expo-router',
     'expo-secure-store',
     'expo-local-authentication',
+    // StoreKit 2 in-app purchase (Apple IAP, Guideline 3.1.1 fix). No options needed for
+    // v1 — default StoreKit config only; iOS alternative/external billing entitlements
+    // are a separate decision this PR does not make. Android stays on Stripe
+    // (canPurchaseInApp is false there), so this plugin only affects the iOS build.
+    'expo-iap',
     // Oswald (display) + Inter (body) are declared in theme/tokens.ts and were never
     // actually loaded, so every fontFamily silently fell back to the system face and
     // no screen matched the approved type. The plugin is required for the native build;

@@ -30,7 +30,7 @@ export const AGENT_BLURB: Record<AgentBot, string> = {
   spark:
     'Same-day (0DTE) SPY put credit spreads, entered each morning — the lower-risk, steadier-paced agent.',
   flame:
-    'Same-day (0DTE) SPY put credit spreads, entered each afternoon — the higher-risk agent, aiming for near-term upside.',
+    'Same-day (0DTE) SPY put credit spreads, entered each afternoon. Flame uses its standard VIX regime through 0.80 and can add qualifying days through 0.925 when the prior SPY session was up and credit is at least $0.20.',
 }
 
 /** Longer description for the detail screen. */
@@ -38,7 +38,7 @@ export const AGENT_DESCRIPTION: Record<AgentBot, string> = {
   spark:
     'Spark trades same-day (0DTE) SPY put credit spreads, opened each morning while the market is open. It is the lower-risk, steadier-paced of the two agents.',
   flame:
-    'Flame trades same-day (0DTE) SPY put credit spreads, opened each afternoon while the market is open. It is the higher-risk agent, aiming for near-term upside within the same day.',
+    'Flame trades same-day (0DTE) SPY put credit spreads, opened each afternoon while the market is open. Its standard VIX regime runs through 0.80; added days can run through 0.925 only after an up prior SPY session and with at least $0.20 credit. It is the higher-risk agent, aiming for near-term upside within the same day.',
 }
 
 export const ACCOUNT_REQUIREMENTS =

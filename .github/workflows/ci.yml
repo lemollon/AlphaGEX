@@ -50,6 +50,11 @@ jobs:
           pip install -r requirements.txt || true
           pip install pandas numpy psycopg2-binary
 
+      - name: Run strict Valor tests
+        env:
+          TEST_VALOR_DB_URL: postgresql://test:test@localhost:5432/alphagex_test
+        run: python -m pytest tests/test_valor*.py -q --override-ini="addopts="
+
       - name: Run unit tests
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/alphagex_test

@@ -13,7 +13,7 @@ Single source of truth for all position and configuration data.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional, Dict, Any, List
 from zoneinfo import ZoneInfo
@@ -450,7 +450,7 @@ def get_ticker_point_value(ticker: str) -> float:
     return cfg.get("point_value", MES_POINT_VALUE)
 
 
-def get_front_month_symbol(ticker: str) -> str:
+def get_front_month_symbol(ticker: str, as_of: Optional[datetime] = None) -> str:
     """
     Get the current front month contract symbol for any futures ticker.
 
@@ -461,7 +461,22 @@ def get_front_month_symbol(ticker: str) -> str:
     prefix = cfg.get("contract_prefix", f"/{ticker}")
     months_str = cfg.get("contract_months", "HMUZ")
 
-    now = datetime.now(CENTRAL_TZ)
+    now = as_of or datetime.now(CENTRAL_TZ)
+    if now.tzinfo is None:
+        raise ValueError("Contract selection requires a timezone-aware timestamp")
+    now = now.astimezone(CENTRAL_TZ)
+    if ticker in {"MES", "MNQ", "RTY"}:
+        # CME customary equity-index roll: Monday before the third Friday.
+        # Adopt that lead contract at the Sunday 17:00 CT session opening.
+        # This is an entry policy, never a relabeling of existing positions.
+        # https://www.cmegroup.com/trading/equity-index/rolldates.html
+        for contract_year in (now.year, now.year + 1):
+            for contract_month, code in ((3, "H"), (6, "M"), (9, "U"), (12, "Z")):
+                first = datetime(contract_year, contract_month, 1, tzinfo=CENTRAL_TZ)
+                third_friday = first + timedelta(days=(4 - first.weekday()) % 7 + 14)
+                roll_open = (third_friday - timedelta(days=5)).replace(hour=17)
+                if now < roll_open:
+                    return f"{prefix}{code}{contract_year % 10}"
     month = now.month
     year = now.year % 10
 
@@ -525,6 +540,7 @@ class SignalSource(Enum):
     GEX_WALL_BOUNCE = "GEX_WALL_BOUNCE"        # Bounce off call/put wall
     OVERNIGHT_N1 = "OVERNIGHT_N1"              # Overnight using n+1 GEX
     SAR_REVERSAL = "SAR_REVERSAL"              # Stop-and-Reverse momentum capture
+    MNQ_BREAKOUT_30M = "MNQ_BREAKOUT_30M"      # Paper-only, time exit; no protective stop
 
 
 @dataclass
@@ -613,8 +629,10 @@ class FuturesPosition:
         return self.status == PositionStatus.OPEN
 
     @property
-    def risk_amount(self) -> float:
-        """Dollar risk from entry to initial stop"""
+    def risk_amount(self) -> Optional[float]:
+        """Dollar stop-defined risk; None means this paper strategy has no stop."""
+        if self.signal_source == SignalSource.MNQ_BREAKOUT_30M:
+            return None
         stop_distance = abs(self.entry_price - self.initial_stop)
         point_value = get_ticker_point_value(self.ticker)
         return stop_distance * self.contracts * point_value
@@ -668,8 +686,10 @@ class FuturesPosition:
             'contracts': self.contracts,
             'entry_price': self.entry_price,
             'entry_value': self.entry_value,
-            'initial_stop': self.initial_stop,
-            'current_stop': self.current_stop,
+            'initial_stop': None if self.signal_source == SignalSource.MNQ_BREAKOUT_30M else self.initial_stop,
+            'current_stop': None if self.signal_source == SignalSource.MNQ_BREAKOUT_30M else self.current_stop,
+            'has_protective_stop': self.signal_source != SignalSource.MNQ_BREAKOUT_30M,
+            'stop_type': self.stop_type,
             'breakeven_price': self.breakeven_price,
             'trailing_active': self.trailing_active,
             # Market context
@@ -714,6 +734,12 @@ class ValorConfig:
     """
     # Multi-ticker configuration
     tickers: List[str] = field(default_factory=lambda: list(DEFAULT_VALOR_TICKERS))
+
+    quarantined_tickers: List[str] = field(default_factory=lambda: ["CL"])
+    entry_cooldown_seconds: int = 60
+    paper_round_trip_fee: float = 3.0  # Estimated per contract; override with verified costs
+    paper_slippage_ticks: int = 1  # Adverse ticks beyond observed bid/ask
+    paper_fee_source: str = "assumed; verify broker statement"
 
     # Risk limits (shared defaults, overridden per-ticker by FUTURES_TICKERS)
     capital: float = 600000.0  # Paper trading capital ($100k per instrument × 6)
@@ -867,24 +893,8 @@ class ValorConfig:
         return config
 
     def get_front_month_symbol(self) -> str:
-        """
-        Get the current front month MES contract symbol.
-
-        Month codes: H=Mar, M=Jun, U=Sep, Z=Dec
-        """
-        now = datetime.now(CENTRAL_TZ)
-        month = now.month
-        year = now.year % 10  # Last digit
-
-        # Determine front month
-        if month <= 3:
-            return f"/MESH{year}"  # March
-        elif month <= 6:
-            return f"/MESM{year}"  # June
-        elif month <= 9:
-            return f"/MESU{year}"  # September
-        else:
-            return f"/MESZ{year}"  # December
+        """Legacy MES accessor uses the same roll policy as multi-ticker entries."""
+        return get_front_month_symbol("MES")
 
     def calculate_position_size(
         self,
@@ -1048,6 +1058,7 @@ class FuturesSignal:
 
     # Calculated values
     entry_price: float = 0.0
+    contract_symbol: str = ""  # Exact broker contract pinned before execution
     stop_price: float = 0.0
     target_price: float = 0.0
     contracts: int = 1
@@ -1074,13 +1085,17 @@ class FuturesSignal:
         )
 
     @property
-    def risk_points(self) -> float:
-        """Risk in points from entry to stop"""
+    def risk_points(self) -> Optional[float]:
+        """Risk in points from entry to stop; absent for time-only paper trades."""
+        if self.source == SignalSource.MNQ_BREAKOUT_30M:
+            return None
         return abs(self.entry_price - self.stop_price)
 
     @property
-    def risk_dollars(self) -> float:
-        """Risk in dollars"""
+    def risk_dollars(self) -> Optional[float]:
+        """Stop-defined risk, not a claim of zero risk for time-only positions."""
+        if self.risk_points is None:
+            return None
         point_value = get_ticker_point_value(self.ticker)
         return self.risk_points * self.contracts * point_value
 

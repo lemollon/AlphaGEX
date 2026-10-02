@@ -120,6 +120,23 @@ export default function SignInScreen() {
           <Text style={[type.body, { color: color.textDim }]}>Forgot password?</Text>
         </Pressable>
 
+        <View style={s.dividerRow}>
+          <View style={s.dividerLine} />
+          <Text style={[type.label, { color: color.textDim }]}>OR</Text>
+          <View style={s.dividerLine} />
+        </View>
+
+        <Pressable onPress={() => router.push('/waitlist')} style={s.waitlistButton}>
+          <Text style={[type.body, { color: color.accent, fontFamily: font.bodyBold }]}>
+            Join the Waitlist
+          </Text>
+        </Pressable>
+
+        <Text style={s.waitlistCaption}>
+          IronForge is currently available by invitation. Join the waitlist to get notified when
+          your access is ready.
+        </Text>
+
         <View style={s.signupRow}>
           <Text style={[type.body, { color: color.textDim }]}>Don't have an account? </Text>
           <Pressable
@@ -170,6 +187,27 @@ const makeStyles = (color: ColorTokens) =>
       marginTop: space.xl,
     },
     forgot: { alignItems: 'center', marginTop: space.lg, padding: space.sm },
+    dividerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: space.md,
+      marginTop: space.xl,
+    },
+    dividerLine: { flex: 1, height: 1, backgroundColor: color.border },
+    waitlistButton: {
+      borderWidth: 1,
+      borderColor: color.accent,
+      borderRadius: radius.md,
+      paddingVertical: space.lg,
+      alignItems: 'center',
+      marginTop: space.xl,
+    },
+    waitlistCaption: {
+      ...type.label,
+      color: color.textDim,
+      textAlign: 'center',
+      marginTop: space.md,
+    },
     signupRow: {
       flexDirection: 'row',
       justifyContent: 'center',

@@ -52,7 +52,7 @@ def test_time_based_priority_logic():
     print(f"  15:00 - 07:00 CT → TradingVolatility ONLY (no Tradier fallback)")
     print("  ✅ PASSED: Overnight uses TradingVolatility EXCLUSIVELY")
 
-    return True
+    return None
 
 
 def test_flip_point_validation_logic():
@@ -88,7 +88,7 @@ def test_flip_point_validation_logic():
     print(f"    Reason: {reason}")
     print("    ✅ CORRECT: Trading allowed with real data")
 
-    return True
+    return None
 
 
 def test_gamma_regime_logic():
@@ -120,7 +120,7 @@ def test_gamma_regime_logic():
     print(f"    Regime: {regime}")
     print("    ✅ CORRECT: NEGATIVE gamma detected")
 
-    return True
+    return None
 
 
 def test_signal_direction_logic():
@@ -192,7 +192,7 @@ def test_signal_direction_logic():
     print(f"    Price 5980 (below 6000): {signal} - {reason}")
     print("    ✅ CORRECT")
 
-    return True
+    return None
 
 
 def test_cache_age_validation():
@@ -224,7 +224,7 @@ def test_cache_age_validation():
     print(f"    Valid: {is_valid} (max age: {max_age} min)")
     print("    ✅ CORRECT: Stale cache rejected during market hours")
 
-    return True
+    return None
 
 
 def test_no_synthetic_data():
@@ -245,7 +245,8 @@ def test_no_synthetic_data():
     print("=" * 70)
 
     # Read the signals.py file and check that synthetic code is GONE
-    with open('/home/user/AlphaGEX/trading/valor/signals.py', 'r') as f:
+    from pathlib import Path
+    with (Path(__file__).resolve().parents[1] / 'trading/valor/signals.py').open() as f:
         content = f.read()
 
     # Check that synthetic fallback is REMOVED
@@ -272,7 +273,7 @@ def test_no_synthetic_data():
     print("\n  ✅ CONFIRMED: Synthetic data has been REMOVED")
     print("     VALOR will SKIP trading when no real data available")
 
-    return True
+    return None
 
 
 def run_all_tests():
@@ -296,8 +297,8 @@ def run_all_tests():
 
     for name, test_func in tests:
         try:
-            if test_func():
-                passed += 1
+            test_func()
+            passed += 1
         except AssertionError as e:
             print(f"\n❌ FAILED: {name}")
             print(f"   Error: {e}")

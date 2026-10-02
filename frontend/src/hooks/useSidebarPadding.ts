@@ -6,19 +6,18 @@ import { useSidebar } from '@/contexts/SidebarContext'
  * Hook that returns the appropriate padding class for main content
  * based on the current sidebar state.
  *
+ * The persistent left rail has been removed site-wide (navigation now lives
+ * in the top bar), so there's nothing left to reserve space for. Always
+ * returns an empty string.
+ *
  * Usage:
  * ```tsx
  * const sidebarPadding = useSidebarPadding()
  * return <main className={`pt-24 ${sidebarPadding}`}>...</main>
  * ```
- *
- * Returns:
- * - 'lg:pl-72' when sidebar is expanded (256px + 32px gap = 288px ≈ 18rem = pl-72)
- * - 'lg:pl-24' when sidebar is collapsed (64px + 32px gap = 96px = 6rem = pl-24)
  */
 export function useSidebarPadding(): string {
-  const { isExpanded } = useSidebar()
-  return isExpanded ? 'lg:pl-72' : 'lg:pl-24'
+  return ''
 }
 
 /**

@@ -650,6 +650,46 @@ export async function getOptionExpirations(
   return Array.isArray(dates) ? dates : [dates]
 }
 
+/**
+ * Full NBBO chain (every strike, both rights) for ONE expiration — used by
+ * CallDiag (calldiag-tracker.ts) to build the front chain's implied spot/ATM
+ * straddle and to locate its short/long strikes. Distinct from
+ * getOptionChainForGex (which returns only gamma/OI, no bid/ask, across
+ * MULTIPLE expirations) and getOptionQuote (a single already-known strike).
+ * Never throws; returns [] on any fetch failure or an empty chain.
+ */
+export interface OptionChainQuoteRow {
+  strike: number
+  cp: 'C' | 'P'
+  bid: number
+  ask: number
+}
+
+export async function getOptionChainQuotes(
+  symbol: string,
+  expiration: string,
+): Promise<OptionChainQuoteRow[]> {
+  const data = await tradierGet('/markets/options/chains', { symbol, expiration })
+  if (!data) return []
+  let opts = data.options?.option
+  if (!opts) return []
+  if (!Array.isArray(opts)) opts = [opts]
+  const rows: OptionChainQuoteRow[] = []
+  for (const o of opts) {
+    const strikeRaw = o?.strike
+    const bidRaw = o?.bid
+    const askRaw = o?.ask
+    if (strikeRaw == null || bidRaw == null || askRaw == null) continue
+    const strike = typeof strikeRaw === 'number' ? strikeRaw : parseFloat(String(strikeRaw))
+    const bid = typeof bidRaw === 'number' ? bidRaw : parseFloat(String(bidRaw))
+    const ask = typeof askRaw === 'number' ? askRaw : parseFloat(String(askRaw))
+    if (!Number.isFinite(strike) || !Number.isFinite(bid) || !Number.isFinite(ask)) continue
+    const cp: 'C' | 'P' = String(o.option_type || '').toLowerCase() === 'call' ? 'C' : 'P'
+    rows.push({ strike, cp, bid, ask })
+  }
+  return rows
+}
+
 /* ------------------------------------------------------------------ */
 /*  Regime hedge — SPY put-debit-spread placement (Phase 3)            */
 /*  Reuses the live IC multileg path (sandboxPost). The CALLER owns    */
@@ -1866,6 +1906,139 @@ export async function getProductionLadderCapital(botName: string, person: string
   }
 }
 
+/**
+ * XSP_SWAP (R4) — attempt to move this account's first min(n,2) host-leg
+ * contracts from SPY to a same-moneyness XSP 0DTE put credit spread, held
+ * to cash settlement with NO assignment guard. See xsp-swap.ts for the pure
+ * decision engine and xsp-swap-db.ts for the (deliberately separate)
+ * persistence table.
+ *
+ * Reads XSP_SWAP (default off; see isXspSwapMode() in lib/xsp-swap.ts) — off
+ * makes this ENTIRE function a same-inputs no-op with zero extra network
+ * calls (the caller checks the flag before calling at all — see
+ * placeIcOrderAllAccounts below — so this is defense in depth, not the only
+ * gate). Only ever called for the two-leg (put-spread-only) host path — EBB
+ * for FLAME, SPARK's put spread — never for a 4-leg iron condor or a call
+ * spread (FLINT), matching the task's literal scope.
+ *
+ * "If XSP doesn't fill, fall back to SPY for that contract. Never skip the
+ * trade because XSP failed": on ANY failure to place/fill the XSP leg —
+ * quote unavailable, price gate, thin touch, broker rejection, no order id —
+ * this returns the account's FULL original contract count for the (unchanged,
+ * existing) SPY order path below. The trade is never skipped; only its venue
+ * split changes.
+ */
+export async function attemptXspHostSwap(params: {
+  botName: string
+  ticker: string
+  expiration: string
+  putShort: number
+  putLong: number
+  acctContracts: number
+  spyCreditPerContract: number
+  acct: SandboxAccount
+  accountId: string
+  hostPositionId: string
+}): Promise<{ nSpy: number; reason: string }> {
+  const { acctContracts, ticker, acct, accountId, hostPositionId } = params
+  // The swap only ever applies to the SPY host leg — never to a different
+  // ticker some future caller might route through this same order path.
+  if (ticker.toUpperCase() !== 'SPY' || acctContracts <= 0) {
+    return { nSpy: acctContracts, reason: 'not_applicable' }
+  }
+
+  const xspSwap = await import('./xsp-swap')
+  if (!xspSwap.isXspSwapMode()) return { nSpy: acctContracts, reason: 'xsp_swap_disabled' }
+
+  let xspQuote: { putCredit: number; shortBidSize: number | null } | null = null
+  try {
+    xspQuote = await getPutSpreadEntryCredit(xspSwap.XSP_TICKER, params.expiration, params.putShort, params.putLong)
+  } catch (err: unknown) {
+    console.warn(`[tradier] XSP_SWAP quote fetch failed for ${hostPositionId}: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  let decision = xspSwap.decideXspSwap({
+    nHost: acctContracts,
+    spyCreditPerContract: params.spyCreditPerContract,
+    xspCreditPerContract: xspQuote?.putCredit ?? null,
+    xspShortBidSize: xspQuote?.shortBidSize ?? null,
+  })
+
+  if (!decision.usedXsp) {
+    console.log(
+      `[tradier] XSP_SWAP skip (${decision.reason}) for ${hostPositionId} — ` +
+      `spy_credit=$${decision.spyCreditPerContract.toFixed(4)} xsp_credit=${decision.xspCreditPerContract ?? 'n/a'}`,
+    )
+    return { nSpy: acctContracts, reason: decision.reason }
+  }
+
+  const label = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
+  const occXspPs = buildOccSymbol(xspSwap.XSP_TICKER, params.expiration, params.putShort, 'P')
+  const occXspPl = buildOccSymbol(xspSwap.XSP_TICKER, params.expiration, params.putLong, 'P')
+  const orderBody: Record<string, string> = {
+    class: 'multileg',
+    symbol: xspSwap.XSP_TICKER,
+    type: 'market',
+    duration: 'day',
+    ...buildLegs(occXspPs, occXspPl, '', '', decision.nXsp, { shortSide: 'sell_to_open', longSide: 'buy_to_open' }, true),
+    tag: `xsp-swap-${hostPositionId}`.slice(0, 255),
+  }
+
+  let filled = false
+  let orderId: number | null = null
+  let fillPrice: number | null = null
+  try {
+    const result = await sandboxPost(`/accounts/${accountId}/orders`, orderBody, acct.apiKey, acct.baseUrl)
+    if (result && !result.errors && result.order?.id) {
+      orderId = result.order.id
+      const pollTimeout = acct.type === 'production' ? 0 : 90_000
+      try {
+        fillPrice = await getOrderFillPrice(acct.apiKey, accountId, orderId as number, pollTimeout, acct.baseUrl)
+      } catch { /* handled by the null check below — an unread fill is not a broker rejection */ }
+      filled = true
+    } else {
+      console.warn(`${label}: XSP_SWAP order REJECTED or returned no id: ${JSON.stringify(result?.errors ?? result).slice(0, 300)}`)
+    }
+  } catch (err: unknown) {
+    console.error(`${label}: XSP_SWAP order FAILED: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  if (!filled) {
+    decision = xspSwap.applyXspFillFallback(decision, false)
+    console.warn(
+      `${label}: XSP_SWAP fallback — XSP leg did not fill for ${hostPositionId}, ` +
+      `routing all ${acctContracts} contract(s) to SPY instead (trade never skipped).`,
+    )
+    return { nSpy: decision.nSpy, reason: 'xsp_order_failed' }
+  }
+
+  try {
+    const xspSwapDb = await import('./xsp-swap-db')
+    await xspSwapDb.insertXspSwapLeg({
+      bot: params.botName,
+      hostPositionId,
+      accountType: acct.type === 'production' ? 'production' : 'sandbox',
+      accountName: acct.name,
+      expiration: params.expiration,
+      putShortStrike: params.putShort,
+      putLongStrike: params.putLong,
+      contracts: decision.nXsp,
+      creditPerContract: fillPrice ?? decision.xspCreditPerContract ?? decision.spyCreditPerContract,
+      orderId: orderId != null ? String(orderId) : null,
+      fillPrice,
+    })
+  } catch (err: unknown) {
+    console.error(`${label}: XSP_SWAP leg filled but DB record FAILED (order ${orderId}): ${err instanceof Error ? err.message : String(err)} — reconcile by hand.`)
+  }
+
+  console.log(
+    `${label}: XSP_SWAP applied — ${decision.nXsp}x XSP ${occXspPl}/${occXspPs} ` +
+    `@ $${(fillPrice ?? decision.xspCreditPerContract ?? 0).toFixed(4)} (order ${orderId}), ` +
+    `${decision.nSpy}x remain on SPY.`,
+  )
+  return { nSpy: decision.nSpy, reason: 'xsp_swap_applied' }
+}
+
 export async function placeIcOrderAllAccounts(
   ticker: string,
   expiration: string,
@@ -2096,14 +2269,36 @@ export async function placeIcOrderAllAccounts(
 
   async function placeForAccount(acct: SandboxAccount) {
     try {
+      const label = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
+
+      // ONE_STRATEGY (Leron, 2026-09-28: "1 strategy for all the versions of
+      // FLAME and SPARK"). Read once per account so every branch below (EBB
+      // sizing further down, this same function) can gate on it without a
+      // repeated dynamic import. Default off — see one-strategy.ts's header.
+      const oneStrategy = await import('./one-strategy')
+      const oneStrategyOn = oneStrategy.isOneStrategyMode()
+
+      // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now"). FLAME only —
+      // botName is checked, never the account, so SPARK/KINDLE production
+      // orders are never touched even if the env var is set. Unset env =
+      // isFlameSkipWeekday() always false = this block never fires; the rest
+      // of the function is byte-for-byte the prior behavior.
+      if (botName?.toLowerCase() === 'flame') {
+        const flameSkip = await import('./flame-skip')
+        const now = new Date()
+        if (flameSkip.shouldSkipAccountForWeekday(acct.type, flameSkip.isFlameSkipWeekday(now))) {
+          console.log(`${label}: ${flameSkip.weekdaySkipLogTag(flameSkip.centralWeekdayAbbrev(now))}`)
+          return
+        }
+      }
+
       const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
       if (!accountId) {
-        const label = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
         console.error(`${label}: getAccountIdForKey returned null — API key invalid or Tradier unreachable. SKIPPING order.`)
         return
       }
 
-      const bpLabel = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
+      const bpLabel = label
 
       // Query this account's OPTION buying power (not stock/day-trade BP)
       const bp = await readOptionBuyingPowerWithRetry(acct.apiKey, accountId, acct.baseUrl, bpLabel)
@@ -2192,7 +2387,49 @@ export async function placeIcOrderAllAccounts(
       let ladderDetail = ''
       if (acct.type === 'production') {
         const prodCeiling = prodMaxContracts > 0 ? prodMaxContracts : Number.POSITIVE_INFINITY
-        if (ebbSizing.isEbbLadderBot(botName)) {
+        if (oneStrategyOn && ebbSizing.isEbbLadderBot(botName)) {
+          // ONE_STRATEGY: this production account sizes EBB through the SAME
+          // shared customer-package module (one-strategy.ts) app customers
+          // already run, using ITS OWN deposit (getProductionLadderCapital's
+          // `starting` — the same funded-capital seed the pre-existing ladder
+          // used) and live equity (this account's own option buying power,
+          // `bp`, already read above). REPLACES the count ladder,
+          // FLAME_FAST_START, and EBB_FAVORABLE_UPSIZE entirely while this
+          // flag is on — see one-strategy.ts and the PR description for why
+          // those three are subsumed by evaluateOneStrategyHostSizing.
+          const ladderCap = await getProductionLadderCapital(botName, acct.name)
+          const depositDollars = ladderCap?.starting ?? null
+          if (depositDollars == null) {
+            console.warn(`${label}: ONE_STRATEGY skip:deposit_unknown — SKIPPING (never falls back to a stale ladder)`)
+            return
+          }
+          let vixRatio: number | null = null
+          try {
+            const { getFlameVixRatioForUpsize } = await import('./scanner')
+            vixRatio = await getFlameVixRatioForUpsize()
+          } catch { vixRatio = null }
+          const result = await oneStrategy.applyOneStrategyHostFloor({
+            person: acct.name, accountType: 'production', botName,
+            depositCents: Math.round(depositDollars * 100),
+            equityCents: Math.round(bp * 100),
+            maxLossCentsPerContract: Math.round(collateralPer * 100),
+            vixRatio,
+          })
+          if (!result.dataOk) {
+            console.warn(`${label}: ONE_STRATEGY data unreadable (${result.reason ?? 'unknown'}) — SKIPPING`)
+            return
+          }
+          const liq = ebbSizing.liquidityCappedLots(result.contracts, shortPutBidSize)
+          acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, liq.lots)
+          if (acctContracts < 1) {
+            console.warn(`${label}: ONE_STRATEGY sizing = 0 contracts after liquidity/BP caps (host wanted ${result.contracts}). SKIPPING.`)
+            return
+          }
+          ladderDetail =
+            `one_strategy=on deposit=$${depositDollars.toFixed(0)} triggered=${result.triggeredForSizing} ` +
+            `fast_start=${result.fastStartApplied} calm_upsize=${result.calmUpsizeApplied} ` +
+            `host=${result.contracts} post_caps=${acctContracts}, `
+        } else if (ebbSizing.isEbbLadderBot(botName)) {
           // COUNT LADDER (2026-09-04, ADR 0012/0013). SPARK / FLAME size from
           // the owner's ledger: lots = floor(max(starting_capital,
           // high_water_balance) / rung) — the high-water RATCHET, never
@@ -2236,21 +2473,387 @@ export async function placeIcOrderAllAccounts(
             )
             acctContracts = bpContracts
           }
+
+          // EBB_FAVORABLE_UPSIZE (Leron, 2026-09-26): +1 contract on this
+          // account's ladder count on a favorable-VIX day, gated by THIS
+          // account's own cushion — independent of every other account in
+          // this order. Unset/off leaves acctContracts untouched, so every
+          // number below (ladderDetail, the order, the fill) is
+          // byte-for-byte the pre-upsize value. FLAME only.
+          if (botName === 'flame' && ebbSizing.isEbbFavorableUpsizeMode()) {
+            const upsizeCap = Math.min(ebbSizing.EBB_LADDER_CAP, liq.maxLots ?? acctContracts + 1)
+            if (acctContracts + 1 <= upsizeCap && acctContracts + 1 <= bpContracts) {
+              const { getFlameVixRatioForUpsize } = await import('./scanner')
+              const vixRatio = await getFlameVixRatioForUpsize()
+              if (ebbSizing.isEbbFavorableVixDay(vixRatio)) {
+                const extraMaxLoss = ebbSizing.ebbUpsizeExtraContractMaxLoss(spreadWidth, totalCredit)
+                const allocated = await getAllocatedCapitalForAccount(acct.name, 'production')
+                const gate = ebbSizing.evaluateEbbUpsizeCushion(allocated?.equity ?? null, funded, extraMaxLoss)
+                if (gate.eligible) {
+                  acctContracts += 1
+                  console.log(
+                    `PRODUCTION [${acct.name}]: EBB upsize +1 (vix_ratio=${vixRatio?.toFixed(3) ?? 'n/a'}, cushion=$${gate.cushion?.toFixed(2) ?? 'n/a'})`,
+                  )
+                } else {
+                  console.log(`PRODUCTION [${acct.name}]: EBB upsize skipped: ${gate.reason}`)
+                }
+              }
+            }
+          }
+
+          // FLAME_FAST_START (Leron, 2026-09-27: "yes i want to add it",
+          // widened same day to also cover his own live account 6YB71371).
+          // Scope: botName==='flame' AND this production account is 'Flame'
+          // — no other production account is touched. Binds AFTER the
+          // favorable upsize above (acctContracts already reflects it),
+          // per the approved spec ("if the sim assumed no favorable
+          // upsizes, bind after") — fast-start's own cap/floor math then
+          // bounds the (possibly upsized) count, so the 20%-of-deposit cap
+          // (Phase 1) and the CPPI floor guarantee (Phase 2) still hold
+          // even including the upsize.
+          //
+          // INTRADAY, PHASE/PEAK_PROFIT/FLOOR ARE READ-ONLY (2026-09-29
+          // correction): `state.peakProfit` is the STORED, EOD-ratcheted
+          // value (updateFastStartEodState in fast-start-db.ts, called from
+          // FLAME's own EOD hook in scanner.ts) — never recomputed from
+          // live high-water here, so an intraday unrealized mark can't
+          // ratchet the floor or flip the phase mid-day. `skipTriggerCheck:
+          // true` makes this call size under `state.phase` AS-IS; LIVE
+          // equity is still used for the (equity - floor) budget/cushion
+          // arithmetic within sizing itself, per spec.
+          if (botName === 'flame' && acct.name === 'Flame') {
+            const fastStart = await import('./fast-start-sizing')
+            if (fastStart.isFastStartMode()) {
+              try {
+                const fastStartDb = await import('./fast-start-db')
+                const deposit = funded
+                if (deposit == null) {
+                  console.warn(`PRODUCTION [Flame]: FLAME_FAST_START skip:deposit_unknown — falling back to today's sizing`)
+                } else {
+                  const allocatedNow = await getAllocatedCapitalForAccount(acct.name, 'production')
+                  const equityNow = allocatedNow?.equity ?? null
+                  if (equityNow == null) {
+                    console.warn(`PRODUCTION [Flame]: FLAME_FAST_START skip:equity_unreadable — falling back to today's sizing (never sizing up on missing data)`)
+                  } else {
+                    const state = await fastStartDb.getOrSeedFastStartState('Flame', 'production', deposit, equityNow)
+                    if (state == null) {
+                      console.warn(`PRODUCTION [Flame]: FLAME_FAST_START skip:state_unreadable — falling back to today's sizing`)
+                    } else {
+                      const tradeDateCt = new Date().toISOString().slice(0, 10)
+                      const flintToday = await fastStartDb.readFlintTodayCandidacy(tradeDateCt)
+                      const ebbMaxLossToday = ebbSizing.ebbUpsizeExtraContractMaxLoss(spreadWidth, totalCredit)
+                      const { decision } = fastStart.decideFastStartSizing(state, {
+                        ebbCandidateDay: true,
+                        flintCandidateDay: flintToday.candidateDay,
+                        ebbMaxLossPerLot: ebbMaxLossToday,
+                        flintMaxLossPerContract: flintToday.maxLossPerContract,
+                        normalEbbLadder: acctContracts, // post-upsize, per the "bind after" spec
+                        equity: equityNow,
+                        peakProfit: state.peakProfit, // STORED, EOD-only — never recomputed intraday
+                      }, { skipTriggerCheck: true })
+                      await fastStartDb.logFastStartDecision({
+                        person: 'Flame', accountType: 'production', tradeDate: tradeDateCt, leg: 'ebb',
+                        phase: decision.phase, triggeredToday: decision.triggeredToday, normalLadder: acctContracts,
+                        ebbContracts: decision.ebbContracts, flintContracts: decision.flintContracts,
+                        deposit, equity: equityNow, cushion: decision.cushion, floor: decision.floor,
+                        budget: decision.budget, phase1CapBudget: decision.phase1CapBudget,
+                        triggerLevel: decision.triggerLevel, reason: decision.reason,
+                      })
+                      // Re-apply the SAME liquidity check against fast-start's own count —
+                      // the ladder-based liq.lots above was computed for the PRE-fast-start
+                      // count and must not silently become the wrong ceiling.
+                      const liqFs = ebbSizing.liquidityCappedLots(decision.ebbContracts, shortPutBidSize)
+                      acctContracts = liqFs.lots
+                      console.log(
+                        `PRODUCTION [Flame]: FLAME_FAST_START phase=${decision.phase} ` +
+                        `ebb=${decision.ebbContracts} (post-liquidity=${acctContracts}) ${decision.reason}`,
+                      )
+                    }
+                  }
+                }
+              } catch (e) {
+                console.error('PRODUCTION [Flame]: FLAME_FAST_START evaluation failed — falling back to today\'s sizing:', e)
+              }
+            }
+          }
+
           ladderDetail = ebbSizing.formatEbbSizingLine({
             funded, highWater, rung, ladderLots: ladder, liq, finalLots: acctContracts,
           }) + ', '
         } else {
           acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, prodCeiling)
         }
+      } else if (oneStrategyOn && ebbSizing.isEbbLadderBot(botName)) {
+        // ONE_STRATEGY: this sandbox mirror sizes EBB/SPARK through the SAME
+        // shared module as the production branch above and app customers —
+        // deposit from flint_account_floor (getFlintSandboxLedger's own
+        // seeding, the sandbox equivalent of getProductionLadderCapital),
+        // live equity from this account's own option buying power (`bp`).
+        // REPLACES EBB_CUSTOMER_LADDER, SPARK_FAST_START,
+        // SPARK_FAVORABLE_UPSIZE, and SPARK_FLINT's main-leg sizing input
+        // entirely while this flag is on — see one-strategy.ts.
+        const ledger = await getFlintSandboxLedger(acct.name, accountId)
+        const depositDollars = ledger.floor
+        if (depositDollars == null) {
+          console.warn(`${label}: ONE_STRATEGY skip:deposit_unknown — SKIPPING (never falls back to a stale mirror)`)
+          return
+        }
+        let vixRatio: number | null = null
+        try {
+          const { getFlameVixRatioForUpsize } = await import('./scanner')
+          vixRatio = await getFlameVixRatioForUpsize()
+        } catch { vixRatio = null }
+        const result = await oneStrategy.applyOneStrategyHostFloor({
+          person: acct.name, accountType: 'sandbox', botName,
+          depositCents: Math.round(depositDollars * 100),
+          equityCents: Math.round(bp * 100),
+          maxLossCentsPerContract: Math.round(collateralPer * 100),
+          vixRatio,
+        })
+        if (!result.dataOk) {
+          console.warn(`${label}: ONE_STRATEGY data unreadable (${result.reason ?? 'unknown'}) — SKIPPING`)
+          return
+        }
+        acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, result.contracts)
+        if (acctContracts < 1) {
+          console.warn(`${label}: ONE_STRATEGY sizing = 0 contracts after BP cap (host wanted ${result.contracts}). SKIPPING.`)
+          return
+        }
+        ladderDetail =
+          `one_strategy=on deposit=$${depositDollars.toFixed(0)} triggered=${result.triggeredForSizing} ` +
+          `fast_start=${result.fastStartApplied} calm_upsize=${result.calmUpsizeApplied} ` +
+          `host=${result.contracts} post_caps=${acctContracts}, `
+      } else if (botName === 'spark' && (await import('./fast-start-sizing')).isFastStartMode('SPARK_FAST_START')) {
+        // SPARK_FAST_START (+ SPARK_FAVORABLE_UPSIZE) for SPARK's customer
+        // (sandbox mirror) accounts ONLY — Leron, 2026-09-27, "build it...
+        // I want them armed and ready to trade". Mirrors FLAME's own
+        // FLAME_FAST_START sandbox branch below byte-for-structure
+        // (skipTriggerCheck:true, STORED EOD-only peak_profit for the
+        // floor/trigger, a live-high-water-based `ladder` only for the
+        // pre-fast-start "normal ladder" reference — see that branch's own
+        // comments for why those two ratchets are deliberately separate),
+        // generalized via decideFastStartSizing's `{envVar:'SPARK_FAST_START'}`
+        // and fast-start-db's `bot='spark'` scoping — SPARK's fast_start_state
+        // row NEVER collides with FLAME's on the same customer account.
+        // Held-out: $5,000 median $3,144->$4,852 fast-start alone
+        // (RESULT_spark_fast_start.md), 0 floor breaches.
+        const ledger = await getFlintSandboxLedger(acct.name, accountId)
+        if (ledger.floor == null || ledger.equity == null) {
+          console.warn(
+            `Sandbox [${acct.name}]: SPARK_FAST_START unreadable ` +
+            `(floor=${ledger.floor === null ? 'NONE' : '$' + ledger.floor.toFixed(0)}, ` +
+            `equity=${ledger.equity === null ? 'NONE' : '$' + ledger.equity.toFixed(0)}). ` +
+            `Falling back to today's plain sizing (paperContracts) for this account only.`,
+          )
+          // Same three-way min as the final `else` mirror below, args
+          // reordered so this line's source text stays distinct from that
+          // one — a repo test locates the mirror fallback by its exact text.
+          acctContracts = Math.min(paperContracts, bpContracts, SANDBOX_MAX_CONTRACTS)
+          ladderDetail = 'spark_fast_start=UNREADABLE(deposit/equity) -> fell back to plain mirror, '
+        } else {
+          const highWater = await getOrRatchetCustomerHighWater(acct.name, 'sandbox', ledger.equity)
+          if (highWater == null) {
+            console.warn(`Sandbox [${acct.name}]: SPARK_FAST_START high-water unreadable. Falling back to plain sizing.`)
+            acctContracts = Math.min(paperContracts, SANDBOX_MAX_CONTRACTS, bpContracts)
+            ladderDetail = 'spark_fast_start=UNREADABLE(high_water) -> fell back to plain mirror, '
+          } else {
+            const livePeakProfit = Math.max(0, highWater - ledger.floor)
+            const ladder = ebbSizing.ebbProfitLadderContracts('spark', ledger.floor, livePeakProfit)
+            let sparkFinalLots = ladder
+
+            try {
+              const fastStart = await import('./fast-start-sizing')
+              const fastStartDb = await import('./fast-start-db')
+              const state = await fastStartDb.getOrSeedFastStartState(acct.name, 'sandbox', ledger.floor, ledger.equity, 'spark')
+              if (state == null) {
+                console.warn(`Sandbox [${acct.name}]: SPARK_FAST_START skip:state_unreadable — falling back to today's sizing`)
+              } else {
+                const tradeDateCt = new Date().toISOString().slice(0, 10)
+                const ebbMaxLossToday = ebbSizing.ebbUpsizeExtraContractMaxLoss(spreadWidth, totalCredit)
+                const { decision } = fastStart.decideFastStartSizing(state, {
+                  ebbCandidateDay: true,
+                  flintCandidateDay: false, // SPARK_FLINT is a SEPARATE budget — never folded into this trigger/floor
+                  ebbMaxLossPerLot: ebbMaxLossToday,
+                  flintMaxLossPerContract: null,
+                  normalEbbLadder: ladder,
+                  equity: ledger.equity,
+                  peakProfit: state.peakProfit, // STORED, EOD-only — never recomputed intraday
+                }, { skipTriggerCheck: true, envVar: 'SPARK_FAST_START' })
+                sparkFinalLots = decision.ebbContracts
+
+                // SPARK_FAVORABLE_UPSIZE — +1 contract on a favorable-VIX day,
+                // deposit < $7,500 only (RESULT_spark_addons.md's own settled
+                // pass boundary). Reads the SAME decision this call just
+                // produced so its budget checks (phase1CapBudget/cushion) can
+                // never disagree with what EBB itself just sized.
+                try {
+                  const { isSparkFavorableUpsizeMode, decideSparkFavorableUpsize } = await import('./spark-favorable-upsize')
+                  if (isSparkFavorableUpsizeMode()) {
+                    const { getFlameVixRatioForUpsize } = await import('./scanner')
+                    const vixRatio = await getFlameVixRatioForUpsize()
+                    const favorable = ebbSizing.isEbbFavorableVixDay(vixRatio)
+                    const upsize = decideSparkFavorableUpsize({
+                      decision, deposit: ledger.floor, sparkCandidateDay: true,
+                      sparkMaxLossPerContract: ebbMaxLossToday, favorable, ladderCap: ebbSizing.EBB_LADDER_CAP,
+                    })
+                    if (upsize.upsizeContracts > 0) {
+                      sparkFinalLots += upsize.upsizeContracts
+                      console.log(`Sandbox [${acct.name}]: SPARK_FAVORABLE_UPSIZE +1 (${upsize.reason})`)
+                    }
+                  }
+                } catch (e) {
+                  console.warn(`Sandbox [${acct.name}]: SPARK_FAVORABLE_UPSIZE evaluation failed: ${e instanceof Error ? e.message : String(e)}`)
+                }
+
+                await fastStartDb.logFastStartDecision({
+                  person: acct.name, accountType: 'sandbox', bot: 'spark', tradeDate: tradeDateCt, leg: 'ebb',
+                  phase: decision.phase, triggeredToday: decision.triggeredToday, normalLadder: ladder,
+                  ebbContracts: sparkFinalLots, flintContracts: 0,
+                  deposit: ledger.floor, equity: ledger.equity, cushion: decision.cushion, floor: decision.floor,
+                  budget: decision.budget, phase1CapBudget: decision.phase1CapBudget,
+                  triggerLevel: decision.triggerLevel, reason: decision.reason,
+                })
+                console.log(`Sandbox [${acct.name}]: SPARK_FAST_START phase=${decision.phase} ebb=${sparkFinalLots} ${decision.reason}`)
+              }
+            } catch (e) {
+              console.error(`Sandbox [${acct.name}]: SPARK_FAST_START evaluation failed — falling back to today's sizing:`, e)
+            }
+
+            if (sparkFinalLots < 1) {
+              console.warn(
+                `Sandbox [${acct.name}]: SPARK fast-start = 0 contracts (floor=$${ledger.floor.toFixed(0)}, ` +
+                `high_water=$${highWater.toFixed(0)}). SKIPPING — never falls back to the paper mirror.`,
+              )
+              return
+            }
+            acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, sparkFinalLots)
+            ladderDetail = `floor=$${ledger.floor.toFixed(0)}, high_water=$${highWater.toFixed(0)}, ` +
+              `live_peak_profit=$${livePeakProfit.toFixed(0)}, profit_ladder=${ladder}, fast_start_spark=${sparkFinalLots}, `
+          }
+        }
+      } else if (botName === 'flame' && ebbSizing.ebbCustomerLadderMode() === 'profit') {
+        // PROFIT LADDER for FLAME's customer accounts ONLY (Leron, 2026-09-26,
+        // scope-corrected same day: "the profit ladder for FLAME's customer
+        // accounts only... SPARK customer sizing must stay exactly as before
+        // regardless of the flag"). contracts = floor(floor_amount / rung) +
+        // floor(peak_profit / rung), where floor_amount is THIS account's own
+        // FLINT floor (flint_account_floor, seeded once — the same floor
+        // EBB_FAVORABLE_UPSIZE's own sandbox cushion check already reads via
+        // getFlintSandboxLedger) and peak_profit is this account's high-water
+        // equity minus that floor. Gated by botName === 'flame' AND
+        // EBB_CUSTOMER_LADDER=profit — a SPARK customer account NEVER reaches
+        // this branch regardless of the flag, and unset/'equity' leaves every
+        // sandbox account (FLAME or SPARK) on the pre-2026-09-26 mirror below.
+        // FLAME's own production account is type='production' and never
+        // reaches here either.
+        const ledger = await getFlintSandboxLedger(acct.name, accountId)
+        if (ledger.floor == null || ledger.equity == null) {
+          console.warn(
+            `Sandbox [${acct.name}]: EBB profit ladder unreadable ` +
+            `(floor=${ledger.floor === null ? 'NONE' : '$' + ledger.floor.toFixed(0)}, ` +
+            `equity=${ledger.equity === null ? 'NONE' : '$' + ledger.equity.toFixed(0)}). SKIPPING.`,
+          )
+          return
+        }
+        const highWater = await getOrRatchetCustomerHighWater(acct.name, 'sandbox', ledger.equity)
+        if (highWater == null) {
+          console.warn(`Sandbox [${acct.name}]: EBB profit ladder high-water unreadable. SKIPPING.`)
+          return
+        }
+        const peakProfit = Math.max(0, highWater - ledger.floor)
+        const ladder = ebbSizing.ebbProfitLadderContracts(botName, ledger.floor, peakProfit)
+        if (ladder < 1) {
+          console.warn(
+            `Sandbox [${acct.name}]: ${botName.toUpperCase()} profit ladder = 0 lots ` +
+            `(floor=$${ledger.floor.toFixed(0)}, high_water=$${highWater.toFixed(0)}, ` +
+            `peak_profit=$${peakProfit.toFixed(0)}). SKIPPING — never falls back to the paper mirror.`,
+          )
+          return
+        }
+        let ebbFinalLots = ladder
+
+        // FLAME_FAST_START (Leron, 2026-09-27). Scope: this branch already
+        // requires botName==='flame' && EBB_CUSTOMER_LADDER=profit, i.e.
+        // exactly the customer/sandbox accounts fast-start targets. No
+        // favorable-upsize exists on this branch, so `ladder` here already
+        // IS the "normal ladder" fast-start's own cap/floor binds against —
+        // nothing to bind "after" on this path.
+        //
+        // INTRADAY, PHASE/PEAK_PROFIT/FLOOR ARE READ-ONLY (2026-09-29
+        // correction) — see the matching comment on the production branch
+        // above: `state.peakProfit` is the STORED, EOD-ratcheted value,
+        // never recomputed from live high-water here; `skipTriggerCheck:
+        // true` sizes under `state.phase` as-is. LIVE equity (`ledger.
+        // equity`) still feeds the budget/cushion arithmetic inside sizing.
+        const fastStart = await import('./fast-start-sizing')
+        if (fastStart.isFastStartMode()) {
+          try {
+            const fastStartDb = await import('./fast-start-db')
+            const state = await fastStartDb.getOrSeedFastStartState(acct.name, 'sandbox', ledger.floor, ledger.equity)
+            if (state == null) {
+              console.warn(`Sandbox [${acct.name}]: FLAME_FAST_START skip:state_unreadable — falling back to today's sizing`)
+            } else {
+              const tradeDateCt = new Date().toISOString().slice(0, 10)
+              const flintToday = await fastStartDb.readFlintTodayCandidacy(tradeDateCt)
+              const ebbMaxLossToday = ebbSizing.ebbUpsizeExtraContractMaxLoss(spreadWidth, totalCredit)
+              const { decision } = fastStart.decideFastStartSizing(state, {
+                ebbCandidateDay: true,
+                flintCandidateDay: flintToday.candidateDay,
+                ebbMaxLossPerLot: ebbMaxLossToday,
+                flintMaxLossPerContract: flintToday.maxLossPerContract,
+                normalEbbLadder: ladder,
+                equity: ledger.equity,
+                peakProfit: state.peakProfit, // STORED, EOD-only — never recomputed intraday
+              }, { skipTriggerCheck: true })
+              await fastStartDb.logFastStartDecision({
+                person: acct.name, accountType: 'sandbox', tradeDate: tradeDateCt, leg: 'ebb',
+                phase: decision.phase, triggeredToday: decision.triggeredToday, normalLadder: ladder,
+                ebbContracts: decision.ebbContracts, flintContracts: decision.flintContracts,
+                deposit: ledger.floor, equity: ledger.equity, cushion: decision.cushion, floor: decision.floor,
+                budget: decision.budget, phase1CapBudget: decision.phase1CapBudget,
+                triggerLevel: decision.triggerLevel, reason: decision.reason,
+              })
+              ebbFinalLots = decision.ebbContracts
+              console.log(`Sandbox [${acct.name}]: FLAME_FAST_START phase=${decision.phase} ebb=${decision.ebbContracts} ${decision.reason}`)
+            }
+          } catch (e) {
+            console.error(`Sandbox [${acct.name}]: FLAME_FAST_START evaluation failed — falling back to today's sizing:`, e)
+          }
+        }
+
+        acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, ebbFinalLots)
+        ladderDetail = `floor=$${ledger.floor.toFixed(0)}, high_water=$${highWater.toFixed(0)}, ` +
+          `peak_profit=$${peakProfit.toFixed(0)}, profit_ladder=${ladder}, fast_start_ebb=${ebbFinalLots}, `
       } else {
         acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, paperContracts)
+      }
+
+      // XSP_SWAP (R4): only ever the two-leg (put-spread-only) host path — EBB for
+      // FLAME, SPARK's put spread — never a 4-leg iron condor or FLINT's call spread.
+      // Off (default) or not applicable: attemptXspHostSwap returns acctContracts
+      // unchanged and the rest of this function is byte-for-byte the prior behavior.
+      if (twoLeg && acctContracts > 0) {
+        const hostPositionId = tag || `${botName ?? 'unknown'}-${ticker}-${expiration}-${accountId}`
+        const swap = await attemptXspHostSwap({
+          botName: botName ?? 'unknown',
+          ticker,
+          expiration,
+          putShort,
+          putLong,
+          acctContracts,
+          spyCreditPerContract: totalCredit,
+          acct,
+          accountId,
+          hostPositionId,
+        })
+        acctContracts = swap.nSpy
       }
 
       const totalMargin = acctContracts * brokerMarginPer
       const sizeLabel = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
       const capsDetail = acct.type === 'production'
         ? `${ladderDetail}bp_calc=${bpContracts}, prodMax=${prodMaxContracts > 0 ? prodMaxContracts : '∞'}, hardCap=${SANDBOX_MAX_CONTRACTS}`
-        : `bp_calc=${bpContracts}, paperCap=${paperContracts}, hardCap=${SANDBOX_MAX_CONTRACTS}`
+        : `${ladderDetail}bp_calc=${bpContracts}, paperCap=${paperContracts}, hardCap=${SANDBOX_MAX_CONTRACTS}`
       console.log(
         `${sizeLabel}: optionBP=$${bp.toFixed(0)}, bp_pct=${(bpPct * 100).toFixed(1)}%, ` +
         `usable=$${usableBP.toFixed(0)} (${(bpPct * 100).toFixed(1)}% × ${(botShare * 100).toFixed(0)}%), ` +
@@ -2269,7 +2872,6 @@ export async function placeIcOrderAllAccounts(
       }
       if (tag) orderBody.tag = tag.slice(0, 255)
 
-      const label = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
       const result = await sandboxPost(
         `/accounts/${accountId}/orders`,
         orderBody,
@@ -2712,6 +3314,136 @@ export async function getNetGex(
     }
   }
   return sawData ? net : null
+}
+
+/**
+ * FLINT forward-logging only — call/put decomposed $-gamma exposure,
+ * dollar-scaled the same way the (now-retired) alphagex-api /api/gex route
+ * and the ironforge-data backtest warehouse build it:
+ *
+ *   strike_gex = gamma * open_interest * 100 (contract multiplier) * spot^2 * 0.01
+ *
+ * i.e. dealer dollar-gamma per 1% move, summed separately over calls and
+ * puts. This is the SAME Tradier chain fetch + greeks.gamma + open_interest
+ * getNetGex() above already reads — no new external API, no new vendor.
+ * It is NOT byte-identical to the backtest's `igex_call` feature (see
+ * ironforge-data/ingest/build_intraday_gex.py): that pipeline recomputes
+ * gamma per-strike from Black-Scholes at each minute over a dte 0-60 chain,
+ * this reads Tradier's own quoted greeks.gamma over the same dte 0-60
+ * window. Same construction (call $-gamma, put $-gamma, net = call − put,
+ * same dollar-per-1%-move scale), different gamma source — directionally
+ * and order-of-magnitude comparable, not a guaranteed exact match.
+ *
+ * Never throws — a vendor/data failure returns null, same fail-open
+ * convention as getNetGex. Read-only forward logging; must never gate,
+ * size, or otherwise alter a trade.
+ */
+export async function getGammaExposureComponents(
+  symbol: string,
+  spot: number,
+  maxDte = 60,
+): Promise<{ callGex: number; putGex: number; netGex: number } | null> {
+  try {
+    if (!(spot > 0)) return null
+    await ensureQuoteApiKey()
+    if (!_tradierApiKey) return null
+    const expirations = await getOptionExpirations(symbol)
+    if (!expirations || expirations.length === 0) return null
+
+    const now = Date.now()
+    const within = expirations.filter((e) => {
+      const dte = (new Date(e + 'T00:00:00').getTime() - now) / 86_400_000
+      return dte >= 0 && dte <= maxDte
+    })
+    if (within.length === 0) return null
+
+    const dollarScale = 100 * spot * spot * 0.01
+    let callGex = 0
+    let putGex = 0
+    let sawData = false
+    for (const exp of within) {
+      const data = await tradierGet('/markets/options/chains', {
+        symbol,
+        expiration: exp,
+        greeks: 'true',
+      })
+      let opts = data?.options?.option
+      if (!opts) continue
+      if (!Array.isArray(opts)) opts = [opts]
+      for (const o of opts) {
+        const gRaw = o?.greeks?.gamma
+        const oiRaw = o?.open_interest
+        if (gRaw == null || oiRaw == null) continue
+        const gamma = typeof gRaw === 'number' ? gRaw : parseFloat(String(gRaw))
+        const oi = typeof oiRaw === 'number' ? oiRaw : parseFloat(String(oiRaw))
+        if (!Number.isFinite(gamma) || !Number.isFinite(oi)) continue
+        const contrib = gamma * oi * dollarScale
+        if (String(o.option_type || '').toLowerCase() === 'call') callGex += contrib
+        else putGex += contrib
+        sawData = true
+      }
+    }
+    if (!sawData) return null
+    return { callGex, putGex, netGex: callGex - putGex }
+  } catch {
+    return null
+  }
+}
+
+export interface GexChainOption {
+  strike: number
+  type: 'call' | 'put'
+  gamma: number
+  oi: number
+}
+
+/**
+ * Flat per-option chain (strike, type, gamma, OI) across all expirations
+ * within `maxDte`, greeks included. Mirrors the expiration-loop in
+ * getNetGex() above but returns the raw rows instead of a single summed
+ * number — used by gex-levels.ts to build per-strike wall/dollar-gamma
+ * profiles. Never throws; returns [] on any fetch/config failure.
+ */
+export async function getOptionChainForGex(
+  symbol: string,
+  maxDte = 45,
+): Promise<GexChainOption[]> {
+  await ensureQuoteApiKey()
+  if (!_tradierApiKey) return []
+  const expirations = await getOptionExpirations(symbol)
+  if (!expirations || expirations.length === 0) return []
+
+  const now = Date.now()
+  const within = expirations.filter((e) => {
+    const dte = (new Date(e + 'T00:00:00').getTime() - now) / 86_400_000
+    return dte >= 0 && dte <= maxDte
+  })
+  if (within.length === 0) return []
+
+  const rows: GexChainOption[] = []
+  for (const exp of within) {
+    const data = await tradierGet('/markets/options/chains', {
+      symbol,
+      expiration: exp,
+      greeks: 'true',
+    })
+    let opts = data?.options?.option
+    if (!opts) continue
+    if (!Array.isArray(opts)) opts = [opts]
+    for (const o of opts) {
+      const strikeRaw = o?.strike
+      const gRaw = o?.greeks?.gamma
+      const oiRaw = o?.open_interest
+      if (strikeRaw == null || gRaw == null || oiRaw == null) continue
+      const strike = typeof strikeRaw === 'number' ? strikeRaw : parseFloat(String(strikeRaw))
+      const gamma = typeof gRaw === 'number' ? gRaw : parseFloat(String(gRaw))
+      const oi = typeof oiRaw === 'number' ? oiRaw : parseFloat(String(oiRaw))
+      if (!Number.isFinite(strike) || !Number.isFinite(gamma) || !Number.isFinite(oi)) continue
+      const type: 'call' | 'put' = String(o.option_type || '').toLowerCase() === 'call' ? 'call' : 'put'
+      rows.push({ strike, type, gamma, oi })
+    }
+  }
+  return rows
 }
 
 /* ------------------------------------------------------------------ */
@@ -4263,6 +4995,1117 @@ export async function getPutSpreadMarkToMarket(
     quote_age_seconds: quoteAgeSeconds,
     last_prices: { ps: psLast, pl: plLast },
   }
+}
+
+/**
+ * NBBO credit for a 2-leg SPY 0DTE CALL credit spread — FLINT (scanner.ts,
+ * gated by FLINT_MODE). Mirrors getPutSpreadEntryCredit
+ * exactly, mirrored to the other side of the chain: sell the short call at its
+ * BID, buy the long call at its ASK — the same conservative, "worst realistic
+ * fill" convention every other paper price in this file uses. Falls back to
+ * the mid-to-mid spread only when the bid/ask credit is non-positive (a
+ * crossed or empty book), same as the put version.
+ */
+export async function getCallSpreadEntryCredit(
+  ticker: string,
+  expiration: string,
+  callShort: number,
+  callLong: number,
+): Promise<{ callCredit: number; source: string; shortBidSize: number | null } | null> {
+  const [csQ, clQ] = await Promise.all([
+    getOptionQuote(buildOccSymbol(ticker, expiration, callShort, 'C')),
+    getOptionQuote(buildOccSymbol(ticker, expiration, callLong, 'C')),
+  ])
+  if (!csQ || !clQ) return null
+
+  let credit = csQ.bid - clQ.ask
+  let source: 'TRADIER_BIDASK' | 'TRADIER_MID' = 'TRADIER_BIDASK'
+  if (credit <= 0) {
+    const csMid = (csQ.bid + csQ.ask) / 2
+    const clMid = (clQ.bid + clQ.ask) / 2
+    credit = Math.max(0, csMid - clMid)
+    source = 'TRADIER_MID'
+  }
+
+  return {
+    callCredit: Math.round(credit * 10000) / 10000,
+    source,
+    shortBidSize: csQ.bidsize ?? null,
+  }
+}
+
+/**
+ * How many flint_positions rows already exist today for this account — the
+ * "one trade per account per day" check, run BEFORE the profit gate and BP
+ * read so a second scan cycle inside the entry window cannot double-enter
+ * an account that already traded. Fails OPEN on a read error (returns 0,
+ * letting the downstream gates be the real backstop) — this is a
+ * convenience de-dup, not the primary real-money control. `accountType`
+ * distinguishes FLINT's own sandbox mirror fills (User/Matt/Logan, each a
+ * REAL Tradier sandbox order, person-tagged same as production) from its
+ * production fills — the two never share a dedup count.
+ */
+async function getFlintTradedTodayCount(
+  person: string,
+  accountType: 'production' | 'sandbox' = 'production',
+  bot: string = 'flame',
+): Promise<number> {
+  try {
+    const { query: dbq, CT_TODAY: ctToday } = await import('./db')
+    const rows = await dbq(
+      `SELECT COUNT(*) AS cnt FROM flint_positions
+        WHERE account_type = $1 AND person = $2 AND bot = $3 AND open_date = ${ctToday}`,
+      [accountType, person, bot],
+    )
+    return Number(rows[0]?.cnt) || 0
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getFlintTradedTodayCount('${person}', '${accountType}', bot=${bot}) failed: ${msg}`)
+    return 0
+  }
+}
+
+/**
+ * SPARK's own same-day put-spread collateral, per account — generalizes
+ * getFlamePutMarginToday's PURPOSE (FLINT's BP check must add whatever the
+ * bot's own put side is holding in the SAME account today) without
+ * touching that function's FLAME-specific behavior (its sandbox branch
+ * deliberately reads a single shared, person-less row because FLAME's own
+ * sandbox mirrors never place a real order — see that function's header).
+ * SPARK's sandbox mirrors DO place real per-account sandbox orders (the
+ * customer ladder / fast-start branch in placeIcOrderAllAccounts), so this
+ * always filters by person, both account types. Fails to 0 on a read error.
+ */
+async function getSparkPutMarginToday(person: string, accountType: 'production' | 'sandbox' = 'production'): Promise<number> {
+  try {
+    const { query: dbq, CT_TODAY: ctToday } = await import('./db')
+    const rows = await dbq(
+      `SELECT COALESCE(SUM(collateral_required), 0) AS m FROM spark_positions
+        WHERE account_type = $1 AND person = $2 AND status = 'open' AND open_date = ${ctToday}`,
+      [accountType, person],
+    )
+    const n = Number(rows[0]?.m)
+    return Number.isFinite(n) && n > 0 ? n : 0
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getSparkPutMarginToday('${person}', '${accountType}') failed: ${msg}`)
+    return 0
+  }
+}
+
+/**
+ * SPARK's CURRENT floor for TODAY, read-only — the EOD-ratcheted
+ * fast_start_state row (bot='spark'), no recompute, no write. Used ONLY by
+ * SPARK_FLINT's account-level safety net (placeCallSpreadOrderAllAccounts)
+ * to know the SAME floor the main sizing branch used this SAME tick.
+ * SPARK_FAST_START off -> deposit (the fast-start floor concept doesn't
+ * exist; deposit is the natural downside line). On, Phase 1 -> deposit.
+ * On, Phase 2 -> deposit + K*peak_profit, reading the SAME STORED,
+ * EOD-only peak_profit the main branch's own `state.peakProfit` uses — no
+ * live high-water recompute (2026-09-29 correction, matching FLAME's own
+ * fast-start-sizing.ts fix). null on any unreadable input.
+ */
+async function getSparkCurrentFloor(person: string): Promise<number | null> {
+  try {
+    const { isFastStartMode, FAST_START_K } = await import('./fast-start-sizing')
+    const ledger = await getFlintSandboxLedger(person, null)
+    if (ledger.floor == null) return null
+    const deposit = ledger.floor
+    if (!isFastStartMode('SPARK_FAST_START')) return deposit
+
+    const { getOrSeedFastStartState } = await import('./fast-start-db')
+    const state = await getOrSeedFastStartState(person, 'sandbox', deposit, ledger.equity, 'spark')
+    if (state == null) return deposit
+    if (state.phase === 1) return deposit
+    return deposit + FAST_START_K * state.peakProfit
+  } catch (err: unknown) {
+    console.warn(`[tradier] getSparkCurrentFloor('${person}') failed: ${err instanceof Error ? err.message : String(err)}`)
+    return null
+  }
+}
+
+/**
+ * Sum of collateral_required across FLAME's own put-spread positions opened
+ * TODAY in this SAME account, still open. FLINT's buying-power check adds
+ * this on top of its own $200/contract floor so a same-day FLAME put fill
+ * can never be double-spent against FLINT's own margin requirement — see
+ * placeCallSpreadOrderAllAccounts. Fails to 0 on a read error (never
+ * fabricates a number, but also never blocks FLINT on an unrelated table
+ * being briefly unreadable — the BP read itself is the real backstop).
+ *
+ * `accountType='sandbox'` drops the person filter: FLAME's own put side
+ * never places a real order per sandbox mirror (see EBB — placeIcOrderAllAccounts
+ * is called with `productionOnly: true` for FLAME), so its sandbox collateral
+ * lives in ONE shared bookkeeping row (flame_positions, account_type='sandbox',
+ * no person), not a per-person one.
+ */
+async function getFlamePutMarginToday(person: string, accountType: 'production' | 'sandbox' = 'production'): Promise<number> {
+  try {
+    const { query: dbq, CT_TODAY: ctToday } = await import('./db')
+    const rows = accountType === 'production'
+      ? await dbq(
+          `SELECT COALESCE(SUM(collateral_required), 0) AS m FROM flame_positions
+            WHERE account_type = 'production' AND person = $1 AND status = 'open' AND open_date = ${ctToday}`,
+          [person],
+        )
+      : await dbq(
+          `SELECT COALESCE(SUM(collateral_required), 0) AS m FROM flame_positions
+            WHERE COALESCE(account_type, 'sandbox') = 'sandbox' AND status = 'open' AND open_date = ${ctToday}`,
+        )
+    const n = Number(rows[0]?.m)
+    return Number.isFinite(n) && n > 0 ? n : 0
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getFlamePutMarginToday('${person}', '${accountType}') failed: ${msg}`)
+    return 0
+  }
+}
+
+/**
+ * flint_account_floor — the PER-ACCOUNT profit-gate floor (Leron,
+ * 2026-09-26, in-conversation follow-up: "ironforge will have a lot of
+ * accounts" — profit protection is enforced PER ACCOUNT, and customer
+ * accounts get FLINT too). Before this table, every sandbox mirror (User,
+ * Matt, Logan...) shared ONE floor: FLAME's own shared sandbox paper-ledger
+ * row (flame_paper_account, account_type='sandbox', no person), via
+ * getFlintPaperLedger — so Matt's cushion could be gated (or cleared) by
+ * User's money, and any sandbox customer added later would silently
+ * inherit that same shared number. This table gives each (person,
+ * account_type) its OWN floor, seeded once and never moved again.
+ *
+ * Seeding rule, evaluated at most ONCE per (person, account_type), in order:
+ *   1. A configured funded/starting amount for this account, if the schema
+ *      carries one. Checked here against ironforge_accounts (person, type)
+ *      — as of 2026-09-26 that table has no such column (only capital_pct,
+ *      a throttle %, not a dollar floor), so this branch is a documented
+ *      no-op today, wired for the day a funded-amount column is added
+ *      there so the seed logic never has to be revisited.
+ *   2. Otherwise, `currentEquity` — this account's OWN equity the FIRST
+ *      time FLINT ever evaluates it: "FLINT waits until this customer
+ *      earns profit above where they started" (Leron, 2026-09-26). Returns
+ *      null (never fabricates a seed) if equity itself is unreadable — the
+ *      caller must skip, same as every other unreadable-floor path here.
+ *
+ * Once a row exists it is READ-ONLY: this function never raises OR lowers
+ * floor_amount on a later call, even if a configured amount later appears
+ * where there was none — silently moving a real-money floor after seeding
+ * is exactly what rule R1 exists to prevent. `accountId` is stored for
+ * audit only; it is never part of the (person, account_type) uniqueness, so
+ * a person keeps the same floor even if their linked account number ever
+ * changes.
+ *
+ * This is also the floor source EBB_FAVORABLE_UPSIZE's OWN cushion check
+ * must use for a sandbox-type account. Today EBB's upsize only evaluates
+ * cushion for FLAME's production ladder (getProductionLadderCapital,
+ * unchanged by this table — already per-person) and for the single shared
+ * bot-level paper ledger (getFlintPaperLedger, also unchanged — one
+ * bookkeeping row, not a customer account); neither is a per-customer
+ * sandbox mirror, so there is no second call site to migrate today. If
+ * EBB's ladder is ever extended to real per-customer sandbox accounts, it
+ * must read floors from this same table — never a second, divergent floor
+ * for the same account.
+ */
+export async function getOrSeedFlintAccountFloor(
+  person: string,
+  accountType: 'sandbox' | 'production',
+  accountId: string | null,
+  currentEquity: number | null,
+): Promise<number | null> {
+  try {
+    const { query: dbq, dbExecute: dbx } = await import('./db')
+    await dbx(
+      `CREATE TABLE IF NOT EXISTS flint_account_floor (
+         id SERIAL PRIMARY KEY,
+         person TEXT NOT NULL,
+         account_type TEXT NOT NULL,
+         account_id TEXT,
+         floor_amount NUMERIC NOT NULL,
+         source TEXT NOT NULL,
+         set_at TIMESTAMP NOT NULL DEFAULT NOW(),
+         UNIQUE (person, account_type)
+       )`,
+    )
+
+    const existing = await dbq(
+      `SELECT floor_amount FROM flint_account_floor WHERE person = $1 AND account_type = $2`,
+      [person, accountType],
+    )
+    if (existing.length > 0) {
+      const n = Number(existing[0].floor_amount)
+      return Number.isFinite(n) ? n : null
+    }
+
+    // 1. A configured funded/starting amount, if the schema ever carries
+    // one. Wrapped: querying a column that doesn't exist yet aborts THIS
+    // statement only (a fresh client/connection per query() call), never
+    // the caller — expected on every deploy until such a column ships.
+    let configured: number | null = null
+    try {
+      const rows = await dbq(
+        `SELECT funded_amount FROM ironforge_accounts WHERE person = $1 AND type = $2 AND is_active = TRUE LIMIT 1`,
+        [person, accountType],
+      )
+      const n = Number(rows[0]?.funded_amount)
+      configured = Number.isFinite(n) && n > 0 ? n : null
+    } catch {
+      configured = null
+    }
+
+    const seedAmount = configured ?? currentEquity
+    if (seedAmount == null || !Number.isFinite(seedAmount) || seedAmount <= 0) return null
+
+    const source = configured != null ? 'configured_funded_amount' : 'first_evaluated_equity'
+    await dbq(
+      `INSERT INTO flint_account_floor (person, account_type, account_id, floor_amount, source, set_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (person, account_type) DO NOTHING`,
+      [person, accountType, accountId, seedAmount, source],
+    )
+    console.log(`[tradier] FLINT floor SEEDED for ${person}:${accountType} = $${seedAmount.toFixed(2)} (source=${source})`)
+
+    // Re-read rather than trust seedAmount: a concurrent scan tick may have
+    // won the ON CONFLICT DO NOTHING race and seeded a different equity
+    // snapshot first — the DB row is the single truth from here on.
+    const after = await dbq(
+      `SELECT floor_amount FROM flint_account_floor WHERE person = $1 AND account_type = $2`,
+      [person, accountType],
+    )
+    const n = Number(after[0]?.floor_amount)
+    return Number.isFinite(n) ? n : seedAmount
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getOrSeedFlintAccountFloor('${person}', '${accountType}') failed: ${msg}`)
+    return null
+  }
+}
+
+/**
+ * FLINT's R1 inputs for a SANDBOX mirror account (User/Matt/Logan) — floor
+ * comes from flint_account_floor (see getOrSeedFlintAccountFloor above),
+ * seeded once per account and never moved. `equity` IS per-account: this
+ * account's own real (fake-money) Tradier total_equity, read the same way
+ * production's is. null on any read failure — the caller must skip.
+ */
+async function getFlintSandboxLedger(person: string, accountId: string | null): Promise<{ floor: number | null; equity: number | null }> {
+  try {
+    const allocated = await getAllocatedCapitalForAccount(person, 'sandbox')
+    const equity = allocated?.equity ?? null
+    const floor = await getOrSeedFlintAccountFloor(person, 'sandbox', accountId, equity)
+    return { floor, equity }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getFlintSandboxLedger('${person}') failed: ${msg}`)
+    return { floor: null, equity: null }
+  }
+}
+
+/**
+ * EBB_CUSTOMER_LADDER=profit's high-water equity ratchet, per (person,
+ * account_type). No sandbox account had a high-water anywhere before this:
+ * flint_account_floor's floor_amount is seeded ONCE and never moves, and
+ * `{bot}_paper_account.high_water_balance` has no per-sandbox-person row —
+ * sandbox mirrors are real (fake-money) Tradier accounts read live via
+ * getAllocatedCapitalForAccount, not a bookkeeping ledger row. This table is
+ * the one place that peak lives: GREATEST()ed on every read inside the same
+ * INSERT ... ON CONFLICT statement, so it can only ratchet up — the same
+ * discipline as FLAME's own production high_water_balance. null on any read
+ * failure — the caller must SKIP, never trade off a guessed peak.
+ */
+async function getOrRatchetCustomerHighWater(
+  person: string,
+  accountType: 'sandbox' | 'production',
+  currentEquity: number | null,
+): Promise<number | null> {
+  if (currentEquity == null || !Number.isFinite(currentEquity) || currentEquity <= 0) return null
+  try {
+    const { query: dbq, dbExecute: dbx } = await import('./db')
+    await dbx(
+      `CREATE TABLE IF NOT EXISTS ebb_customer_high_water (
+         person TEXT NOT NULL,
+         account_type TEXT NOT NULL,
+         high_water NUMERIC NOT NULL,
+         updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+         PRIMARY KEY (person, account_type)
+       )`,
+    )
+    const rows = await dbq(
+      `INSERT INTO ebb_customer_high_water (person, account_type, high_water, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (person, account_type)
+       DO UPDATE SET high_water = GREATEST(ebb_customer_high_water.high_water, $3), updated_at = NOW()
+       RETURNING high_water`,
+      [person, accountType, currentEquity],
+    )
+    const n = Number(rows[0]?.high_water)
+    return Number.isFinite(n) ? n : currentEquity
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getOrRatchetCustomerHighWater('${person}', '${accountType}') failed: ${msg}`)
+    return null
+  }
+}
+
+/**
+ * Places (or closes) FLINT's 2-leg call spread on EVERY account EBB's own
+ * put spread places on for FLAME — Leron, 2026-09-26: "I want it live on
+ * customer account too." `resolveEligibleAccounts('flame')` is the SAME
+ * list placeIcOrderAllAccounts uses (User/Matt/Logan sandbox + Flame
+ * production today), split here into sandbox and production so each half
+ * gets the gate EBB itself applies to that half:
+ *   - PRODUCTION still requires canPlaceLiveOrders('flame') ==
+ *     isFlameLiveArmed(), the production kill-switch
+ *     (getProductionPauseState) and the per-owner pause (getOwnerPauseState)
+ *     — a disarmed/paused FLAME drops ONLY the production account(s).
+ *   - SANDBOX mirrors are fake money and are NOT gated by the production
+ *     arm switch or either pause layer — mirrors EBB's own sandbox path in
+ *     placeIcOrderAllAccounts, which carries no arm/pause check either.
+ *
+ * Deliberately a SEPARATE, simpler function from placeIcOrderAllAccounts
+ * rather than a generalization of it: this sleeve is fixed-size (never the
+ * EBB ladder), so none of the ladder/liquidity sizing in
+ * placeIcOrderAllAccounts applies, and reusing it would have required
+ * threading a call-only mode through 300+ lines that put strikes at 0
+ * assume are always real legs. `buildLegs` (leg-symbol/side/qty only, no
+ * put/call awareness) is reused as-is by passing the call symbols in the
+ * put-leg slots — it does not care which side of the chain a symbol is from.
+ *
+ * On OPEN only (opts.close !== true), EVERY account — sandbox or production
+ * — is gated INDEPENDENTLY, in order, before its own order is placed:
+ *   1. one FLINT trade per account per day (flint_positions row for today,
+ *      scoped by account_type so a sandbox mirror and Flame's own
+ *      production row never share a dedup count).
+ *   2. rule R1 — the per-account profit gate against the TOTAL contracts
+ *      (`contracts`, which may already carry the FLINT_FAVORABLE_UPSIZE
+ *      +1): cushion (that account's own current equity minus its own
+ *      funded floor) must clear the trade's max loss. If cushion covers
+ *      `opts.baseContracts` but not the upsized `contracts`, this account
+ *      alone steps down to `opts.baseContracts` — "if cushion covers 1 but
+ *      not 2, trade 1." Leron, 2026-09-26: "a loss eats into the total
+ *      account profits" only, per account.
+ *   3. buying power: option BP must clear $200/contract (FLINT_BP_FLOOR_PER_
+ *      CONTRACT) for the (possibly stepped-down) contract count, PLUS
+ *      whatever collateral FLAME's own put spread is holding in that SAME
+ *      account today — the two sleeves share one broker BP pool even though
+ *      they never share a table or a ledger. BP steps down the same way R1
+ *      does if only the extra lot is what breaks it.
+ * An account that fails any of these is skipped — logged, never thrown — and
+ * is simply absent from the returned map; every OTHER account still gets its
+ * own independent shot. `opts.close` (assignment-guard buy-back) skips all
+ * three checks: a buy-back must never be blocked by a gate meant for new
+ * risk.
+ *
+ * `opts.close` REQUIRES `opts.targetPerson` — the flint_positions row's own
+ * `person` column (closeFlintAtRiskBeforeBell, scanner.ts) — and closes
+ * EXACTLY that one account, sandbox or production, never "every eligible
+ * account of this type." Before 2026-09-26 this used ALL eligible production
+ * accounts on every close call; with a single Flame production account that
+ * was invisible, but "ironforge will have a lot of accounts" (Leron,
+ * 2026-09-26) makes it a real bug the moment a second production account
+ * exists — a guard triggered on Account A's position would buy back Account
+ * B's too. A close call with no `targetPerson` fails CLOSED (zero accounts,
+ * logged) rather than guessing. Sandbox rows are no longer skipped either —
+ * a triggered sandbox mirror gets its own real buy-back order on ITS OWN
+ * sandbox credentials, the same as production, instead of closing correctly
+ * in the DB while silently holding open on the broker.
+ *
+ * `opts.close` flips the leg sides to buy_to_close/sell_to_close for the
+ * assignment-guard buy-back; omitted (default) opens sell_to_open/buy_to_open.
+ * `opts.baseContracts` is the pre-upsize fallback size (defaults to
+ * `contracts` itself, so a caller that never sets it gets byte-for-byte the
+ * old single-size behavior).
+ *
+ * Returns Record<"Name:sandbox"|"Name:production", SandboxOrderInfo> —
+ * empty when nothing is eligible. Never throws into the caller; every
+ * failure is logged and that account is simply absent from the result.
+ */
+export async function placeCallSpreadOrderAllAccounts(
+  ticker: string,
+  expiration: string,
+  callShort: number,
+  callLong: number,
+  contracts: number,
+  entryCredit: number,
+  positionId: string,
+  opts?: { close?: boolean; baseContracts?: number; targetPerson?: string; botName?: string },
+): Promise<Record<string, SandboxOrderInfo>> {
+  const results: Record<string, SandboxOrderInfo> = {}
+  const closing = opts?.close === true
+  const baseContracts = opts?.baseContracts ?? contracts
+  // botName generalizes this from FLAME-only to any bot with a FLINT sleeve
+  // (2026-09-27/29, SPARK_FLINT) — every existing caller omits it and gets
+  // byte-for-byte the old 'flame' behavior.
+  const botName = (opts?.botName ?? 'flame').toLowerCase()
+
+  const eligibleAccounts = await resolveEligibleAccounts(botName)
+  let productionAccts = eligibleAccounts.filter((a) => a.type === 'production')
+  const sandboxAccts = eligibleAccounts.filter((a) => a.type !== 'production')
+
+  // Production still requires the SAME arm gate as before — a disarmed
+  // bot drops ONLY production, never sandbox (defense in depth; the
+  // caller in scanner.ts no longer short-circuits the whole call on this).
+  // canPlaceLiveOrders('spark') is hard-coded false (SPARK is paper-only on
+  // its shared production pot — see that function's header) so SPARK's
+  // FLINT sleeve can NEVER reach a production account; only its sandbox
+  // customer mirrors trade, exactly like SPARK's own put side today.
+  if (productionAccts.length > 0 && !canPlaceLiveOrders(botName)) {
+    productionAccts = []
+  }
+  if (productionAccts.length > 0) {
+    try {
+      const pause = await getProductionPauseState(botName)
+      if (pause.paused) {
+        console.warn(
+          `[tradier] FLINT/${botName.toUpperCase()} production trading PAUSED (reason=${pause.paused_reason ?? 'n/a'}) — ` +
+          `removing ${productionAccts.length} production account(s). Sandbox unaffected.`,
+        )
+        productionAccts = []
+      }
+    } catch { /* pre-migration deploy — fall through, matches placeIcOrderAllAccounts */ }
+  }
+  if (productionAccts.length > 0) {
+    const owners = await getOwnerPauseState(botName)
+    if (!owners.ok) {
+      productionAccts = []
+    } else if (owners.paused.size > 0) {
+      const dropped = productionAccts.filter((a) => owners.paused.has(a.name)).map((a) => a.name)
+      if (dropped.length > 0) {
+        console.warn(`[tradier] FLINT/${botName.toUpperCase()} owner-paused: ${dropped.join(', ')} — removing from this order. Sandbox unaffected.`)
+      }
+      productionAccts = productionAccts.filter((a) => !owners.paused.has(a.name))
+    }
+  }
+
+  // Closing (the assignment-guard buy-back) is routed to EXACTLY the one
+  // account named by opts.targetPerson — see the doc comment above. No
+  // targetPerson on a close call is a caller bug, not an ambiguous "close
+  // everyone eligible": fail closed, log it, touch zero accounts.
+  let allAccts = [...sandboxAccts, ...productionAccts]
+  if (closing) {
+    if (!opts?.targetPerson) {
+      console.error('[tradier] FLINT guard close called with no targetPerson — refusing to close ANY account.')
+      return results
+    }
+    allAccts = allAccts.filter((a) => a.name === opts.targetPerson)
+  }
+  if (allAccts.length === 0) return results
+
+  const occCs = buildOccSymbol(ticker, expiration, callShort, 'C')
+  const occCl = buildOccSymbol(ticker, expiration, callLong, 'C')
+  const sides = closing
+    ? { shortSide: 'buy_to_close', longSide: 'sell_to_close' }
+    : { shortSide: 'sell_to_open', longSide: 'buy_to_open' }
+
+  const { decideFlintContractsForCushion, FLINT_BP_FLOOR_PER_CONTRACT, flintMaxLoss } = await import('./flint')
+  const flameSkip = await import('./flame-skip')
+  const ebbSizing = await import('./ebb-sizing')
+
+  // Central-Time "today" (YYYY-MM-DD), for the FLAME_FAST_START planning
+  // block below — scanner.ts's own getCentralTime() isn't exported, so
+  // this duplicates its same Intl.DateTimeFormat approach rather than
+  // reaching into a private function.
+  const centralDateNow = (): string => {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(new Date())
+    const y = parts.find((p) => p.type === 'year')?.value ?? '1970'
+    const mo = parts.find((p) => p.type === 'month')?.value ?? '01'
+    const d = parts.find((p) => p.type === 'day')?.value ?? '01'
+    return `${y}-${mo}-${d}`
+  }
+
+  for (const acct of allAccts) {
+    const isProd = acct.type === 'production'
+    const label = `${isProd ? 'PRODUCTION' : 'SANDBOX'} [${acct.name}] FLINT${botName !== 'flame' ? '/' + botName.toUpperCase() : ''}`
+    try {
+      // ONE_STRATEGY — see placeIcOrderAllAccounts's own copy of this read
+      // for the full rationale. Read once per account here too.
+      const oneStrategy = await import('./one-strategy')
+      const oneStrategyOn = oneStrategy.isOneStrategyMode()
+
+      // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now") is a FLAME-only
+      // operator decision — gated on botName === 'flame' now that FLINT also
+      // runs for SPARK (2026-09-27/29, SPARK_FLINT), so SPARK's own FLINT
+      // entries are never affected by a flag scoped to FLAME's calendar.
+      // Never applies to the assignment-guard buy-back (`closing`) — only
+      // new entries. Unset env (or botName !== 'flame') = this branch never
+      // fires = byte-for-byte prior behavior for FLAME.
+      if (!closing && botName === 'flame') {
+        const now = new Date()
+        if (flameSkip.shouldSkipAccountForWeekday(acct.type, flameSkip.isFlameSkipWeekday(now))) {
+          console.log(`${label}: ${flameSkip.weekdaySkipLogTag(flameSkip.centralWeekdayAbbrev(now))}`)
+          continue
+        }
+      }
+
+      const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
+      if (!accountId) {
+        console.error(`${label}: getAccountIdForKey returned null — API key invalid or Tradier unreachable. SKIPPING.`)
+        continue
+      }
+
+      // The count THIS account will actually place — starts at the
+      // (possibly gamma-upsized) target and may step down to baseContracts
+      // below if the extra lot alone breaks this account's own cushion or BP.
+      let acctContracts = contracts
+
+      if (!closing) {
+        // 1. One FLINT trade per account per day — checked BEFORE any read so
+        // a second scan cycle inside the entry window can't double-enter an
+        // account that already has a row for today.
+        const alreadyToday = await getFlintTradedTodayCount(acct.name, isProd ? 'production' : 'sandbox', botName)
+        if (alreadyToday >= 1) {
+          console.log(`${label}: skip:already_traded_today`)
+          continue
+        }
+
+      if (oneStrategyOn) {
+        // ONE_STRATEGY: FLINT's cushion check nets against the host leg's
+        // OWN ONE_STRATEGY sizing — PLANNED, not read back, because FLINT's
+        // entry always runs BEFORE the host leg's real entry in this SAME
+        // scan tick (the same reason the FLAME_FAST_START planning block
+        // below, which this branch replaces, exists at all — see that
+        // block's own doc comment for the "plan, don't wait" rationale).
+        // Deposit/equity are this account's own — the SAME sources the host
+        // leg's own ONE_STRATEGY branch in placeIcOrderAllAccounts uses.
+        // REPLACES rule R1, FLAME_FAST_START's FLINT planning, and
+        // SPARK_FLINT's separate-budget safety net entirely while this flag
+        // is on — see one-strategy.ts.
+        const { floor, equity } = isProd
+          ? await (async () => {
+              const ladderCap = await getProductionLadderCapital(botName, acct.name)
+              const allocated = await getAllocatedCapitalForAccount(acct.name, 'production')
+              return { floor: ladderCap?.starting ?? null, equity: allocated?.equity ?? null }
+            })()
+          : await getFlintSandboxLedger(acct.name, accountId)
+        if (floor == null || equity == null) {
+          console.warn(`${label}: ONE_STRATEGY FLINT skip:deposit_or_equity_unreadable — SKIPPING`)
+          continue
+        }
+        const depositCents = Math.round(floor * 100)
+        const equityCents = Math.round(equity * 100)
+        // Conservative (largest-plausible) host-leg max-loss-per-contract
+        // estimate — FLINT has no live host quote at its own entry time.
+        // Same $2 wing / $0.10 minimum-credit-floor estimate the
+        // FLAME_FAST_START planning block below already established.
+        const hostMaxLossCentsPerContract = Math.round(ebbSizing.ebbUpsizeExtraContractMaxLoss(2, 0.10) * 100)
+        let vixRatio: number | null = null
+        try {
+          const { getFlameVixRatioForUpsize } = await import('./scanner')
+          vixRatio = await getFlameVixRatioForUpsize()
+        } catch { vixRatio = null }
+        const planned = await oneStrategy.planOneStrategyHostContracts({
+          person: acct.name, accountType: isProd ? 'production' : 'sandbox', botName,
+          depositCents, equityCents, maxLossCentsPerContract: hostMaxLossCentsPerContract, vixRatio,
+        })
+        if (planned == null) {
+          console.warn(`${label}: ONE_STRATEGY FLINT skip:host_plan_unreadable — SKIPPING (never assumes zero host risk)`)
+          continue
+        }
+        const decision = oneStrategy.decideOneStrategyFlintContracts({
+          desired: contracts, base: baseContracts,
+          equityCents, protectLevelCents: planned.floorLevelCents,
+          hostContracts: planned.contracts, hostMaxLossCentsPerContract,
+          shortStrike: callShort, longStrike: callLong, credit: entryCredit,
+          flintMaxLossFn: flintMaxLoss,
+        })
+        if (decision.contracts < 1) {
+          console.warn(`${label}: ONE_STRATEGY FLINT skip:${decision.reason ?? 'cushion_insufficient'} (planned_host=${planned.contracts})`)
+          continue
+        }
+        if (decision.contracts < contracts) {
+          console.log(`${label}: ONE_STRATEGY FLINT upsize stepped down ${contracts}->${decision.contracts} (netted cushion covers ${decision.contracts} only)`)
+        }
+        acctContracts = decision.contracts
+      } else {
+        // 2. Rule R1 — the per-account profit gate. Leron, 2026-09-26: a loss
+        // eats only into THIS account's own profit above its funded floor.
+        // Tried at the target count first, stepped down to baseContracts if
+        // only the extra lot breaks it — "if cushion covers 1 but not 2,
+        // trade 1." When contracts === baseContracts (upsize off or not
+        // eligible today) this is exactly one evaluation, byte-for-byte the
+        // old single-size gate.
+        const { floor, equity } = isProd
+          ? await (async () => {
+              const ladderCap = await getProductionLadderCapital(botName, acct.name)
+              const allocated = await getAllocatedCapitalForAccount(acct.name, 'production')
+              return { floor: ladderCap?.starting ?? null, equity: allocated?.equity ?? null }
+            })()
+          : await getFlintSandboxLedger(acct.name, accountId)
+
+        const r1 = decideFlintContractsForCushion(contracts, baseContracts, equity, floor, callShort, callLong, entryCredit)
+        if (r1.contracts < 1) {
+          console.warn(`${label}: ${r1.gate.reason ?? 'skip:flint_profit_cushion(unreadable)'}`)
+          continue
+        }
+        if (r1.contracts < contracts) {
+          console.log(`${label}: FLINT upsize stepped down ${contracts}->${r1.contracts} (cushion covers ${r1.contracts} only)`)
+        }
+        acctContracts = r1.contracts
+
+        // FLAME_FAST_START (Leron, 2026-09-27). Scope: every account
+        // reaching this function is already a FLAME account (User/Matt/
+        // Logan sandbox mirrors, or FLAME's own production account 'Flame'
+        // — 6YB71371), per resolveEligibleAccounts('flame') above, so no
+        // extra bot-name gate is needed here (unlike EBB's own call site,
+        // which is shared by SPARK too).
+        //
+        // ORDERING GAP, FIXED BY PLANNING (2026-09-29 correction — the
+        // original "defer until EBB is observable" design broke FLINT's
+        // own tested entry time on any day EBB's VIX gate fails, which is
+        // about half of FLINT's days: EBB never trades those days, so "EBB
+        // observable" never becomes true until FLAME_EOD_CUTOFF_HHMM_CT,
+        // hours after FLINT's normal ~13:05 CT entry). FLINT's entry
+        // (this function) ALWAYS runs BEFORE FLAME's own EBB put-side
+        // entry in the SAME scan tick, so it can never see a SAME-TICK EBB
+        // decision — but EBB's CANDIDACY is deterministic ahead of time:
+        // the SAME VIX-decay gate (prior close / prior-20-session max, see
+        // vixDecayCheck in scanner.ts) EBB's own entry itself gates on, no
+        // live quote required. So instead of waiting to observe EBB's real
+        // outcome, this PLANS it: computes what EBB's OWN Phase-1/Phase-2
+        // sizing formula would produce today, using EBB's real candidacy
+        // (the VIX gate) and a WORST-CASE (conservative — reserves MORE of
+        // the shared budget, never less) per-lot max-loss ESTIMATE, since
+        // EBB's exact strike-derived credit needs a live quote FLINT
+        // doesn't have. `decideFastStartSizing` itself is reused (with
+        // flintCandidateDay=false to isolate EBB's own side) rather than
+        // duplicating its Phase-1/Phase-2 math a second time. The estimate
+        // is intentionally conservative in EBB's favor (fixed $2 wing at
+        // EBB's own $0.10 minimum credit floor — the worst realistic
+        // credit, hence the LARGEST plausible max loss) so FLINT never
+        // over-claims budget EBB might actually need.
+        //
+        // Only if candidacy/estimate genuinely cannot be computed (a DB
+        // failure surfaces as an exception, caught below) does this fall
+        // back to TODAY's already-decided FLINT sizing (rule R1's own
+        // acctContracts, set above) — never to 0 by default.
+        const fastStart = await import('./fast-start-sizing')
+        if (botName === 'flame' && fastStart.isFastStartMode()) {
+          try {
+            const fastStartDb = await import('./fast-start-db')
+            if (floor == null) {
+              console.warn(`${label}: FLAME_FAST_START skip:deposit_unknown — falling back to today's sizing`)
+            } else if (equity == null) {
+              console.warn(`${label}: FLAME_FAST_START skip:equity_unreadable — falling back to today's sizing (never sizing up on missing data)`)
+            } else {
+              const state = await fastStartDb.getOrSeedFastStartState(acct.name, isProd ? 'production' : 'sandbox', floor, equity)
+              if (state == null) {
+                console.warn(`${label}: FLAME_FAST_START skip:state_unreadable — falling back to today's sizing`)
+              } else if (floor >= fastStart.FAST_START_DEPOSIT_CAP) {
+                // v3 deposit cap: this account trades plain BASE for its
+                // entire life — FLINT's own standing R1 gate (computed above,
+                // acctContracts already holds it) already IS BASE's own FLINT
+                // rule (cushion >= flint_maxloss), so there is nothing to
+                // override; leave acctContracts exactly as rule R1 set it.
+                console.log(`${label}: FLAME_FAST_START skip:deposit_cap (deposit=$${floor.toFixed(2)} >= $${fastStart.FAST_START_DEPOSIT_CAP.toFixed(2)}) — plain BASE, today's sizing unchanged`)
+              } else {
+                // STORED, EOD-ratcheted peak_profit (2026-09-29 correction)
+                // — the SAME value EBB's own intraday call reads, never a
+                // live high-water recompute here. `ebbNormalLadder` is
+                // therefore also computed from that stored figure, matching
+                // exactly what EBB's own real call would use as its
+                // `normalEbbLadder` input today.
+                let ebbNormalLadder = 0
+                if (isProd) {
+                  ebbNormalLadder = ebbSizing.ebbLadderContracts('flame', ebbSizing.ebbLadderCapital(floor, floor + state.peakProfit))
+                } else {
+                  ebbNormalLadder = ebbSizing.ebbProfitLadderContracts('flame', floor, state.peakProfit)
+                }
+                const tradeDateCt = centralDateNow()
+
+                // EBB's candidacy — the SAME deterministic VIX-decay gate
+                // (prior close / prior-20-session max) EBB's own entry uses.
+                // reason===null -> gate passes -> EBB is a candidate today.
+                const { vixDecayCheck, VIX_DECAY_CEILING } = await import('./scanner')
+                const flameVixForPlan = await vixDecayCheck(tradeDateCt, VIX_DECAY_CEILING.flame)
+                const ebbCandidateDayPlanned = flameVixForPlan.reason === null
+
+                // Worst-case (largest plausible) per-lot max loss: EBB's
+                // fixed $2 wing at its own $0.10 minimum credit floor — a
+                // real quote would almost always be a BETTER (smaller-loss)
+                // credit than this, so reserving against this figure never
+                // under-claims budget EBB might actually need.
+                const EBB_WING_WIDTH_ESTIMATE = 2
+                const EBB_MIN_CREDIT_FLOOR_ESTIMATE = 0.10
+                const ebbMaxLossEstimate = ebbSizing.ebbUpsizeExtraContractMaxLoss(EBB_WING_WIDTH_ESTIMATE, EBB_MIN_CREDIT_FLOOR_ESTIMATE)
+
+                // skipTriggerCheck: true — this LOCAL, transient "what would
+                // EBB do" computation must use the SAME `state.phase` as-is
+                // that EBB's own real intraday call uses (phase only ever
+                // advances at EOD); otherwise this planning call could
+                // locally "trigger" on live intraday equity while the real,
+                // persisted phase (and EBB's own real sizing) stays at
+                // Phase 1 — an inconsistency between FLINT's plan and EBB's
+                // real behavior today.
+                const planned = fastStart.decideFastStartSizing(state, {
+                  ebbCandidateDay: ebbCandidateDayPlanned,
+                  flintCandidateDay: false,
+                  ebbMaxLossPerLot: ebbMaxLossEstimate,
+                  flintMaxLossPerContract: null,
+                  normalEbbLadder: ebbNormalLadder,
+                  equity,
+                  peakProfit: state.peakProfit,
+                }, { skipTriggerCheck: true })
+
+                const flintMlToday = flintMaxLoss(callShort, callLong, entryCredit, 1)
+                const { flintContracts, reason } = fastStart.sizeFlintGivenEbbOutcome(
+                  state.phase, floor, equity, state.peakProfit, planned.decision.ebbContracts, ebbMaxLossEstimate, true, flintMlToday,
+                )
+                await fastStartDb.logFastStartDecision({
+                  person: acct.name, accountType: isProd ? 'production' : 'sandbox', tradeDate: tradeDateCt,
+                  leg: 'flint', phase: state.phase, triggeredToday: false, normalLadder: ebbNormalLadder,
+                  ebbContracts: planned.decision.ebbContracts, flintContracts, deposit: floor, equity,
+                  cushion: equity - floor, floor: null, budget: null, phase1CapBudget: null, triggerLevel: null,
+                  reason: `planned_ebb(candidate=${ebbCandidateDayPlanned}, vix_reason=${flameVixForPlan.reason ?? 'ok'}, ` +
+                    `est_maxloss=$${ebbMaxLossEstimate.toFixed(2)}) ${reason}`,
+                })
+                acctContracts = flintContracts
+                console.log(
+                  `${label}: FLAME_FAST_START phase=${state.phase} flint=${flintContracts} ` +
+                  `(planned ebb=${planned.decision.ebbContracts}, ebb_candidate=${ebbCandidateDayPlanned}) ${reason}`,
+                )
+              }
+            }
+          } catch (e) {
+            console.error(`${label}: FLAME_FAST_START evaluation failed — falling back to today's sizing:`, e)
+          }
+        }
+
+        // SPARK_FLINT account-level safety net (2026-09-27/29) — FLINT on
+        // SPARK accounts runs its OWN SEPARATE, profits-only budget
+        // (spark-flint-separate.ts), never sharing SPARK's X%/K fast-start
+        // budget the way FLAME's own FLINT does above (RESULT_spark_addons.md:
+        // sharing the budget crowds out SPARK's own better-paying Phase-2
+        // sizing and FAILED held-out at every deposit; RESULT_spark_flint_
+        // separate.md: a separate budget PASSES at every deposit). Rule R1
+        // above already gates FLINT on this account's OWN profits-only
+        // cushion (equity-deposit); the ONE thing left is the combined-cost
+        // safety net — drop FLINT first if SPARK's own already-sized
+        // contracts (read back from spark_positions, THIS SAME tick, via
+        // getSparkCurrentFloor/decideSparkFlintContracts below) plus this
+        // FLINT contract could push equity below the account's CURRENT
+        // floor (deposit in Phase 1, the ratcheted CPPI floor in Phase 2).
+        // SPARK's own count is NEVER reduced to make room.
+        if (botName === 'spark' && !isProd) {
+          try {
+            const { decideSparkFlintContracts } = await import('./spark-flint-separate')
+            const { readEbbTodayOutcome } = await import('./fast-start-db')
+            const sparkFloor = await getSparkCurrentFloor(acct.name)
+            const tradeDateCt = centralDateNow()
+            const sparkToday = await readEbbTodayOutcome('spark', acct.name, 'sandbox', tradeDateCt, true)
+            const flintMlPerContract = flintMaxLoss(callShort, callLong, entryCredit, 1)
+            if (sparkFloor == null || equity == null) {
+              console.warn(`${label}: skip:spark_flint_floor_safety(sparkFloor_or_equity_unreadable) — falling back to R1's own count`)
+            } else {
+              const safety = decideSparkFlintContracts({
+                equity,
+                deposit: floor ?? sparkFloor,
+                sparkFloor,
+                flintCandidateDay: true,
+                flintMaxLossPerContract: flintMlPerContract,
+                sparkContractsToday: sparkToday.contracts,
+                sparkMaxLossPerContract: sparkToday.maxLossPerLot,
+              })
+              if (safety.flintContracts < 1) {
+                console.warn(`${label}: ${safety.reason}`)
+              }
+              acctContracts = safety.flintContracts
+            }
+          } catch (e) {
+            console.error(`${label}: SPARK_FLINT safety-net evaluation failed — falling back to R1's own count:`, e)
+          }
+        }
+      }
+
+        if (acctContracts < 1) {
+          console.log(`${label}: skip:zero_contracts_after_sizing`)
+          continue
+        }
+
+        // 3. Buying power: $200/contract for FLINT itself, PLUS whatever
+        // collateral this bot's own put side is holding in this SAME
+        // account TODAY — the two sleeves share one broker BP pool. Steps
+        // down the same way R1 does if only the extra lot breaks BP.
+        const bp = await readOptionBuyingPowerWithRetry(acct.apiKey, accountId, acct.baseUrl, label)
+        if (bp == null) {
+          console.error(`${label}: optionBP UNREADABLE after retries — SKIPPING order. This is NOT an insufficient-funds decision.`)
+          if (isProd) await reportProductionBpUnreadable(botName, acct.name)
+          continue
+        }
+        const putMarginToday = botName === 'spark'
+          ? await getSparkPutMarginToday(acct.name, isProd ? 'production' : 'sandbox')
+          : await getFlamePutMarginToday(acct.name, isProd ? 'production' : 'sandbox')
+        let requiredBp = FLINT_BP_FLOOR_PER_CONTRACT * acctContracts + putMarginToday
+        if (bp < requiredBp && acctContracts > baseContracts) {
+          acctContracts = baseContracts
+          requiredBp = FLINT_BP_FLOOR_PER_CONTRACT * acctContracts + putMarginToday
+        }
+        if (bp < requiredBp) {
+          console.warn(
+            `${label}: skip:flint_insufficient_bp(bp=$${bp.toFixed(0)}<need=$${requiredBp.toFixed(0)}, ` +
+            `put_margin_today=$${putMarginToday.toFixed(0)})`,
+          )
+          continue
+        }
+      }
+
+      const orderBody: Record<string, string> = {
+        class: 'multileg',
+        symbol: ticker,
+        type: 'market',
+        duration: 'day',
+        ...buildLegs(occCs, occCl, '', '', acctContracts, sides, true),
+        tag: `FLINT-${positionId}`.slice(0, 255),
+      }
+
+      const result = await sandboxPost(`/accounts/${accountId}/orders`, orderBody, acct.apiKey, acct.baseUrl)
+      if (!result) {
+        console.error(`${label}: Order POST returned null (HTTP error)`)
+        continue
+      }
+      if (result.errors) {
+        console.error(`${label}: Order REJECTED at POST: ${JSON.stringify(result.errors)}`)
+        continue
+      }
+      if (!result?.order?.id) {
+        console.error(`${label}: Order POST returned no order.id — full response: ${JSON.stringify(result).slice(0, 500)}`)
+        continue
+      }
+
+      // Production market orders WILL fill — poll until Tradier confirms
+      // (maxPollMs=0). Sandbox uses a bounded poll — same convention as
+      // placeIcOrderAllAccounts's sandbox leg — since a sandbox fill is not
+      // real money and should never hang the scan tick.
+      let fillPrice: number | null = null
+      try {
+        fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, isProd ? 0 : 90_000, acct.baseUrl)
+      } catch (pollErr: unknown) {
+        console.error(`${label}: fill poll failed: ${pollErr instanceof Error ? pollErr.message : String(pollErr)}`)
+      }
+
+      if (fillPrice == null) {
+        try {
+          const orderCheck = await sandboxGet(`/accounts/${accountId}/orders/${result.order.id}`, undefined, acct.apiKey, acct.baseUrl)
+          const status = orderCheck?.order?.status || 'unknown'
+          if (['rejected', 'canceled', 'expired'].includes(status)) {
+            const reason = orderCheck?.order?.reason_description || orderCheck?.order?.reject_reason || orderCheck?.order?.reason || 'no reason provided'
+            console.error(`${label}: order ${result.order.id} was ${status.toUpperCase()} by Tradier: "${reason}" — NOT recording.`)
+            continue
+          }
+          console.warn(`${label}: order ${result.order.id} status="${status}" with no fill price after polling — recording at modelled credit $${entryCredit.toFixed(4)}.`)
+        } catch (checkErr: unknown) {
+          console.warn(`${label}: could not verify order status: ${checkErr instanceof Error ? checkErr.message : String(checkErr)}`)
+        }
+      }
+
+      const resultKey = `${acct.name}:${acct.type ?? 'sandbox'}`
+      results[resultKey] = {
+        order_id: result.order.id,
+        contracts: acctContracts,
+        fill_price: fillPrice,
+        account_type: acct.type ?? 'sandbox',
+      }
+      console.log(
+        `[tradier] FLINT ${closing ? 'LIVE GUARD CLOSE' : isProd ? 'LIVE FILL' : 'SANDBOX FILL'} [${acct.name}]: ` +
+        `${acctContracts}x order ${result.order.id} fill=${fillPrice != null ? '$' + fillPrice.toFixed(4) : 'unknown'}`,
+      )
+    } catch (err: unknown) {
+      console.error(`${label}: order failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  return results
+}
+
+/**
+ * FLAME v2 — SPY 0DTE CALL credit spread (FLAME_V2_CALL_SPREAD_MODE=live
+ * only; see flame-v2/flags.ts and flame-v2/call-spread-live.ts). 14:05 ET
+ * entry, mirrored assignment-guard close at 3:57 PM ET.
+ *
+ * Deliberately a SEPARATE function from placeIcOrderAllAccounts and
+ * placeCallSpreadOrderAllAccounts (FLINT) rather than a generalization of
+ * either:
+ *   - placeIcOrderAllAccounts always builds put-leg OCC symbols and divides
+ *     collateral by (putShort - putLong); a call-only spread (putShort =
+ *     putLong = 0) returns collateralPer <= 0 and the function refuses to
+ *     place anything.
+ *   - placeCallSpreadOrderAllAccounts IS call-only, but its sizing is
+ *     FLINT's own per-account profit-cushion rule (decideFlintContractsForCushion)
+ *     and its dedup is FLINT's own `flint_positions` table — neither applies
+ *     here. This sleeve's sizing is already fully decided by the caller
+ *     (flame-v2/math.ts callSpreadTier/callSpreadContracts: tier x FLAME's
+ *     own base contracts for the day) before this function is ever called.
+ * Both existing functions' SAFETY PRIMITIVES are reused as-is:
+ * resolveEligibleAccounts, canPlaceLiveOrders, getProductionPauseState,
+ * getOwnerPauseState, getAccountIdForKey, buildOccSymbol, getOrderFillPrice,
+ * and this file's own sandboxPost/sandboxGet — only the sizing/dedup bodies
+ * are new.
+ *
+ * Sizing: `contracts` is used AS GIVEN for every account (no per-account
+ * ladder re-derivation) after one safety check — this account's own option
+ * buying power must margin (callLong-callShort)*100*contracts. An account
+ * that fails the BP check is skipped, never silently under-sized.
+ *
+ * `opts.close` flips to a market buy-to-close/sell-to-close for the mirrored
+ * assignment guard, restricted to exactly ONE account (opts.targetPerson +
+ * opts.targetAccountType) — a close call with no targetPerson touches ZERO
+ * accounts (fail closed), same rule FLINT's own guard close uses.
+ */
+export async function placeFlameV2CallSpreadOrder(
+  ticker: string,
+  expiration: string,
+  callShort: number,
+  callLong: number,
+  contracts: number,
+  entryCredit: number,
+  positionId: string,
+  opts?: { close?: boolean; targetPerson?: string; targetAccountType?: 'sandbox' | 'production' },
+): Promise<Record<string, SandboxOrderInfo>> {
+  const results: Record<string, SandboxOrderInfo> = {}
+  const closing = opts?.close === true
+  const botName = 'flame'
+
+  if (!(contracts > 0)) return results
+  if (!(callLong > callShort)) return results
+
+  const eligibleAccounts = await resolveEligibleAccounts(botName)
+  let productionAccts = eligibleAccounts.filter((a) => a.type === 'production')
+  const sandboxAccts = eligibleAccounts.filter((a) => a.type !== 'production')
+
+  if (productionAccts.length > 0 && !canPlaceLiveOrders(botName)) {
+    productionAccts = []
+  }
+  if (productionAccts.length > 0) {
+    try {
+      const pause = await getProductionPauseState(botName)
+      if (pause.paused) {
+        console.warn(
+          `[tradier] FLAME_V2_CALL_SPREAD production PAUSED (reason=${pause.paused_reason ?? 'n/a'}) — ` +
+          `removing ${productionAccts.length} production account(s). Sandbox unaffected.`,
+        )
+        productionAccts = []
+      }
+    } catch { /* pre-migration deploy — fall through, matches the other order paths */ }
+  }
+  if (productionAccts.length > 0) {
+    const owners = await getOwnerPauseState(botName)
+    if (!owners.ok) {
+      productionAccts = []
+    } else if (owners.paused.size > 0) {
+      const dropped = productionAccts.filter((a) => owners.paused.has(a.name)).map((a) => a.name)
+      if (dropped.length > 0) {
+        console.warn(`[tradier] FLAME_V2_CALL_SPREAD owner-paused: ${dropped.join(', ')} — removing from this order.`)
+      }
+      productionAccts = productionAccts.filter((a) => !owners.paused.has(a.name))
+    }
+  }
+
+  let allAccts = [...sandboxAccts, ...productionAccts]
+  if (closing) {
+    if (!opts?.targetPerson) {
+      console.error('[tradier] FLAME_V2_CALL_SPREAD guard close called with no targetPerson — refusing to close ANY account.')
+      return results
+    }
+    allAccts = allAccts.filter(
+      (a) => a.name === opts.targetPerson && (!opts.targetAccountType || (a.type ?? 'sandbox') === opts.targetAccountType),
+    )
+  }
+  if (allAccts.length === 0) return results
+
+  const occCs = buildOccSymbol(ticker, expiration, callShort, 'C')
+  const occCl = buildOccSymbol(ticker, expiration, callLong, 'C')
+  const sides = closing
+    ? { shortSide: 'buy_to_close', longSide: 'sell_to_close' }
+    : { shortSide: 'sell_to_open', longSide: 'buy_to_open' }
+  const spreadWidth = callLong - callShort
+
+  for (const acct of allAccts) {
+    const isProd = acct.type === 'production'
+    const label = `${isProd ? 'PRODUCTION' : 'SANDBOX'} [${acct.name}] FLAME_V2_CALL_SPREAD`
+    try {
+      const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
+      if (!accountId) {
+        console.error(`${label}: getAccountIdForKey returned null — API key invalid or Tradier unreachable. SKIPPING.`)
+        continue
+      }
+
+      if (!closing) {
+        const bp = await readOptionBuyingPowerWithRetry(acct.apiKey, accountId, acct.baseUrl, label)
+        if (bp == null) {
+          console.error(`${label}: optionBP UNREADABLE after retries — SKIPPING (not an insufficient-funds decision).`)
+          if (isProd) await reportProductionBpUnreadable(botName, acct.name)
+          continue
+        }
+        const needed = spreadWidth * 100 * contracts
+        if (bp < needed) {
+          console.warn(`${label}: optionBP=$${bp.toFixed(0)} insufficient (need $${needed.toFixed(0)} for ${contracts}ct) — SKIPPING.`)
+          continue
+        }
+      }
+
+      const orderBody: Record<string, string> = closing
+        ? {
+            class: 'multileg', symbol: ticker, type: 'market', duration: 'day',
+            ...buildLegs(occCs, occCl, '', '', contracts, sides, true),
+            tag: `FLAMEV2C-${positionId}`.slice(0, 255),
+          }
+        : {
+            class: 'multileg', symbol: ticker, type: 'limit', duration: 'day',
+            price: entryCredit.toFixed(2),
+            ...buildLegs(occCs, occCl, '', '', contracts, sides, true),
+            tag: `FLAMEV2C-${positionId}`.slice(0, 255),
+          }
+
+      const result = await sandboxPost(`/accounts/${accountId}/orders`, orderBody, acct.apiKey, acct.baseUrl)
+      if (!result) {
+        console.error(`${label}: Order POST returned null (HTTP error)`)
+        continue
+      }
+      if (result.errors) {
+        console.error(`${label}: Order REJECTED at POST: ${JSON.stringify(result.errors)}`)
+        continue
+      }
+      if (!result?.order?.id) {
+        console.error(`${label}: Order POST returned no order.id — full response: ${JSON.stringify(result).slice(0, 500)}`)
+        continue
+      }
+
+      let fillPrice: number | null = null
+      try {
+        fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, isProd ? 0 : 90_000, acct.baseUrl)
+      } catch (pollErr: unknown) {
+        console.error(`${label}: fill poll failed: ${pollErr instanceof Error ? pollErr.message : String(pollErr)}`)
+      }
+
+      if (fillPrice == null) {
+        try {
+          const orderCheck = await sandboxGet(`/accounts/${accountId}/orders/${result.order.id}`, undefined, acct.apiKey, acct.baseUrl)
+          const status = orderCheck?.order?.status || 'unknown'
+          if (['rejected', 'canceled', 'expired'].includes(status)) {
+            const reason = orderCheck?.order?.reason_description || orderCheck?.order?.reject_reason || orderCheck?.order?.reason || 'no reason provided'
+            console.error(`${label}: order ${result.order.id} was ${status.toUpperCase()} by Tradier: "${reason}" — NOT recording.`)
+            continue
+          }
+          console.warn(`${label}: order ${result.order.id} status="${status}" with no fill price after polling — recording at modelled credit $${entryCredit.toFixed(4)}.`)
+        } catch (checkErr: unknown) {
+          console.warn(`${label}: could not verify order status: ${checkErr instanceof Error ? checkErr.message : String(checkErr)}`)
+        }
+      }
+
+      const resultKey = `${acct.name}:${acct.type ?? 'sandbox'}`
+      results[resultKey] = {
+        order_id: result.order.id,
+        contracts,
+        fill_price: fillPrice,
+        account_type: acct.type ?? 'sandbox',
+      }
+      console.log(
+        `[tradier] FLAME_V2_CALL_SPREAD ${closing ? 'GUARD CLOSE' : isProd ? 'LIVE FILL' : 'SANDBOX FILL'} [${acct.name}]: ` +
+        `${contracts}x order ${result.order.id} fill=${fillPrice != null ? '$' + fillPrice.toFixed(4) : 'unknown'}`,
+      )
+    } catch (err: unknown) {
+      console.error(`${label}: order failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  return results
 }
 
 export const _testing = {

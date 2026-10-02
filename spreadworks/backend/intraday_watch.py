@@ -14,6 +14,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
+from itertools import product
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
@@ -36,9 +37,12 @@ UTC = timezone.utc
 TRADIER_BASE = "https://api.tradier.com/v1"
 CORE_SYMBOLS = ("SPY", "QQQ", "XSP", "IWM")
 CONFIRMATION_SYMBOLS = ("VIX",)
+INTRADAY_DISCORD_ENABLED_ENV = "INTRADAY_ALERTS_ENABLED"
+INTRADAY_DISCORD_WEBHOOK_ENV = "INTRADAY_DISCORD_WEBHOOK_URL"
+_TRUTHY = {"1", "true", "yes", "on"}
 STATES = {
     "WAIT", "NEAR_TRIGGER", "ENTRY_READY", "ACTIVE", "INVALIDATED",
-    "EXPIRED", "DATA_UNAVAILABLE",
+    "EXPIRED", "DATA_UNAVAILABLE", "LIQUIDITY_BLOCKED",
 }
 STRATEGIES = {
     "long_call", "long_put", "call_debit_spread", "put_debit_spread",
@@ -79,6 +83,15 @@ def _iso(value: datetime | None) -> str | None:
 
 def _json(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), sort_keys=True, default=str)
+
+
+def _intraday_discord_webhook() -> str:
+    return (os.getenv(INTRADAY_DISCORD_WEBHOOK_ENV, "").strip()
+            or os.getenv("DISCORD_WEBHOOK_URL", "").strip())
+
+
+def _intraday_discord_enabled() -> bool:
+    return os.getenv(INTRADAY_DISCORD_ENABLED_ENV, "").strip().lower() in _TRUTHY
 
 
 def _parse_date(value: Any, field: str = "trading_date") -> date:
@@ -182,6 +195,32 @@ def validate_setup(raw: dict[str, Any], trading_date: date) -> dict[str, Any]:
     if not 1 <= confirmation_bars <= 10:
         raise HTTPException(status_code=422, detail="confirmation_bars must be between 1 and 10")
     entry["confirmation_bars"] = confirmation_bars
+    if strategy in {"calendar", "double_calendar"}:
+        for key, default in (
+            ("maximum_relative_leg_spread", 0.15),
+            ("maximum_natural_midpoint_gap_ratio", 0.125),
+        ):
+            try:
+                value = float(setup.get(key, default))
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail=f"{key} must be numeric") from exc
+            if not 0 < value <= 1:
+                raise HTTPException(status_code=422, detail=f"{key} must be in (0, 1]")
+            setup[key] = value
+        for key, default in (
+            ("minimum_calendar_open_interest", 50),
+            ("minimum_calendar_volume", 10),
+        ):
+            raw_value = setup.get(key, default)
+            if isinstance(raw_value, bool):
+                raise HTTPException(status_code=422, detail=f"{key} must be a nonnegative integer")
+            try:
+                value = int(raw_value)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail=f"{key} must be a nonnegative integer") from exc
+            if value < 0 or str(raw_value).strip() not in {str(value), f"{value}.0"}:
+                raise HTTPException(status_code=422, detail=f"{key} must be a nonnegative integer")
+            setup[key] = value
     sessions = setup.get("sessions", ["regular"])
     if not isinstance(sessions, list) or not sessions or any(
         item not in {"premarket", "regular", "postmarket"} for item in sessions
@@ -219,10 +258,12 @@ def validate_setup(raw: dict[str, Any], trading_date: date) -> dict[str, Any]:
     return setup
 
 
-def validate_setups_payload(payload: dict[str, Any]) -> tuple[date, list[dict[str, Any]]]:
+def validate_setups_payload(
+    payload: dict[str, Any], *, allow_empty: bool = False,
+) -> tuple[date, list[dict[str, Any]]]:
     trading_date = _parse_date(payload.get("trading_date"))
     raw = payload.get("setups")
-    if not isinstance(raw, list) or not raw:
+    if not isinstance(raw, list) or (not raw and not allow_empty):
         raise HTTPException(status_code=422, detail="setups must be a non-empty list")
     setups = [validate_setup(item, trading_date) for item in raw]
     ids = [item["setup_id"] for item in setups]
@@ -645,17 +686,16 @@ def select_option_structure(
 def select_calendar_structure(strategy: str, front: list[dict[str, Any]],
                               back: list[dict[str, Any]], setup: dict[str, Any],
                               front_expiration: str, back_expiration: str) -> dict[str, Any] | None:
-    """Select same-strike time spreads from two independently fresh chains."""
+    """Select the closest liquid same-strike structure, or diagnose the closest."""
     thesis = setup.get("thesis")
     rights = ["C" if thesis == "bullish" else "P"]
     if strategy == "double_calendar":
         rights = ["P", "C"]
-    legs: list[dict[str, Any]] = []
-    total_debit = 0.0
     anchors = {
         "P": (setup.get("support_levels") or [setup.get("current_price")])[-1],
         "C": (setup.get("resistance_levels") or [setup.get("current_price")])[0],
     }
+    pair_groups: list[list[tuple[dict[str, Any], dict[str, Any], tuple[float, float, float]]]] = []
     for right in rights:
         front_candidates = _delta_candidate(front, right, (0.30, 0.50))
         back_candidates = _delta_candidate(back, right, (0.30, 0.50))
@@ -664,27 +704,127 @@ def select_calendar_structure(strategy: str, front: list[dict[str, Any]],
         if not pairs:
             return None
         anchor = anchors[right]
-        near, far = min(
-            pairs,
-            key=lambda pair: (abs(pair[0]["strike"] - float(anchor)) if anchor is not None else 0,
-                              abs(abs(pair[0]["delta"]) - .40), pair[0]["strike"]),
-        )
-        debit = round(far["ask"] - near["bid"], 2)
-        if debit <= 0:
-            return None
-        total_debit += debit
-        legs.extend([
-            {"action": "sell", "expiration": front_expiration, **near},
-            {"action": "buy", "expiration": back_expiration, **far},
-        ])
-    return {
-        "strategy": strategy, "front_expiration": front_expiration,
-        "back_expiration": back_expiration, "legs": legs,
-        "natural_debit": round(total_debit, 2),
-        "max_risk": round(total_debit * 100, 2),
-        "source": "Tradier production option chains",
-        "selection_reason": "same-strike fresh front/back contracts nearest the configured range anchor and 0.40 absolute delta",
+        ranked = []
+        for near, far in pairs:
+            rank = (
+                abs(near["strike"] - float(anchor)) if anchor is not None else 0.0,
+                abs(abs(near["delta"]) - .40) + abs(abs(far["delta"]) - .40),
+                near["strike"],
+            )
+            ranked.append((near, far, rank))
+        pair_groups.append(ranked)
+
+    thresholds = {
+        "maximum_relative_leg_spread": float(setup.get("maximum_relative_leg_spread", 0.15)),
+        "maximum_natural_midpoint_gap_ratio": float(setup.get("maximum_natural_midpoint_gap_ratio", 0.125)),
+        "minimum_calendar_open_interest": int(setup.get("minimum_calendar_open_interest", 50)),
+        "minimum_calendar_volume": int(setup.get("minimum_calendar_volume", 10)),
     }
+
+    def snapshot(combo) -> tuple[dict[str, Any], tuple[Any, ...]]:
+        legs: list[dict[str, Any]] = []
+        failures: list[str] = []
+        midpoint_debit = 0.0
+        natural_debit = 0.0
+        for near, far, _pair_rank in combo:
+            observed = (
+                {"action": "sell", "expiration": front_expiration, **near},
+                {"action": "buy", "expiration": back_expiration, **far},
+            )
+            pair_midpoints = []
+            for leg in observed:
+                midpoint = (float(leg["bid"]) + float(leg["ask"])) / 2.0
+                relative_spread = ((float(leg["ask"]) - float(leg["bid"])) / midpoint
+                                   if midpoint > 0 else None)
+                oi = leg.get("open_interest")
+                volume = leg.get("volume")
+                activity_pass = (
+                    int(oi or 0) >= thresholds["minimum_calendar_open_interest"]
+                    or int(volume or 0) >= thresholds["minimum_calendar_volume"]
+                )
+                enriched = dict(leg, midpoint=round(midpoint, 4),
+                                relative_spread=(round(relative_spread, 6)
+                                                 if relative_spread is not None else None),
+                                activity_pass=activity_pass)
+                legs.append(enriched)
+                pair_midpoints.append(midpoint)
+                label = f"{leg['action']} {leg['right']} {leg['strike']:g} {leg['expiration']}"
+                if (relative_spread is None
+                        or relative_spread - thresholds["maximum_relative_leg_spread"] > 1e-12):
+                    spread_text = (f"{relative_spread:.1%}" if relative_spread is not None
+                                   else "unavailable")
+                    failures.append(
+                        f"{label} spread {spread_text} exceeds "
+                        f"{thresholds['maximum_relative_leg_spread']:.1%}"
+                    )
+                if not activity_pass:
+                    failures.append(
+                        f"{label} activity OI {int(oi or 0)} / volume {int(volume or 0)} "
+                        f"is below OI {thresholds['minimum_calendar_open_interest']} "
+                        f"OR volume {thresholds['minimum_calendar_volume']}"
+                    )
+            midpoint_debit += pair_midpoints[1] - pair_midpoints[0]
+            natural_debit += float(far["ask"]) - float(near["bid"])
+        if midpoint_debit <= 0:
+            gap_ratio = None
+            failures.append("composite midpoint debit is not positive")
+        else:
+            gap_ratio = (natural_debit - midpoint_debit) / midpoint_debit
+            if gap_ratio - thresholds["maximum_natural_midpoint_gap_ratio"] > 1e-12:
+                failures.append(
+                    f"natural-to-midpoint debit gap {gap_ratio:.1%} exceeds "
+                    f"{thresholds['maximum_natural_midpoint_gap_ratio']:.1%}"
+                )
+        if natural_debit <= 0:
+            failures.append("natural debit is not positive")
+        liquidity_status = "PASS" if not failures else "BLOCKED"
+        result = {
+            "strategy": strategy, "front_expiration": front_expiration,
+            "back_expiration": back_expiration, "legs": legs,
+            "natural_debit": round(natural_debit, 4),
+            "composite_midpoint_debit": round(midpoint_debit, 4),
+            "natural_midpoint_gap_ratio": (round(gap_ratio, 6) if gap_ratio is not None else None),
+            "liquidity_status": liquidity_status,
+            "failed_checks": failures,
+            "liquidity_thresholds": thresholds,
+            "source": "Tradier production option chains",
+            "selection_reason": (
+                "liquid same-strike front/back contracts nearest the configured range anchor "
+                "and 0.40 absolute delta" if liquidity_status == "PASS" else
+                "closest intended same-strike structure shown for liquidity diagnostics only"
+            ),
+            "observed_only": liquidity_status == "BLOCKED",
+        }
+        if liquidity_status == "PASS":
+            result["max_risk"] = round(natural_debit * 100, 2)
+        combo_rank = (
+            sum(pair[2][0] for pair in combo),
+            sum(pair[2][1] for pair in combo),
+            tuple(pair[2][2] for pair in combo),
+        )
+        return result, combo_rank
+
+    evaluated = [snapshot(combo) for combo in product(*pair_groups)]
+    passing = [item for item in evaluated if item[0]["liquidity_status"] == "PASS"]
+    candidates = passing or evaluated
+    selected, _rank = min(candidates, key=lambda item: item[1])
+    return selected
+
+
+def apply_option_liquidity_state(
+    result: RuleResult, option_selection: dict[str, Any] | None,
+) -> RuleResult:
+    """Turn a confirmed underlying trigger into a no-trade liquidity state."""
+    if result.state != "ENTRY_READY" or not option_selection:
+        return result
+    if option_selection.get("liquidity_status") != "BLOCKED":
+        return result
+    failures = option_selection.get("failed_checks") or ["calendar liquidity checks failed"]
+    return RuleResult(
+        "LIQUIDITY_BLOCKED",
+        "Underlying entry trigger confirmed, but no trade: " + "; ".join(failures),
+        result.evidence,
+    )
 
 
 def _db_required():
@@ -917,9 +1057,10 @@ async def post_plan(request: Request,
     _, symbols = validate_watchlist({
         "trading_date": trading_date.isoformat(), "symbols": payload["symbols"]
     })
-    _, setups = validate_setups_payload({
-        "trading_date": trading_date.isoformat(), "setups": payload["setups"]
-    })
+    _, setups = validate_setups_payload(
+        {"trading_date": trading_date.isoformat(), "setups": payload["setups"]},
+        allow_empty=True,
+    )
     validate_plan_parity(symbols, setups)
     return await asyncio.to_thread(
         store_morning_plan_atomic, trading_date, symbols, setups, payload
@@ -943,7 +1084,16 @@ async def get_plan(trading_date: str | None = None):
 
 @router.get("/status")
 async def get_status():
-    return await asyncio.to_thread(_load_runtime_status)
+    status = await asyncio.to_thread(_load_runtime_status)
+    try:
+        from .morning_options_report import scheduled_status
+        status["morning_options_report"] = await asyncio.to_thread(scheduled_status)
+    except Exception as exc:  # noqa: BLE001
+        status["morning_options_report"] = {
+            "registered": False,
+            "reason": f"status unavailable ({type(exc).__name__})",
+        }
+    return status
 
 
 async def _tradier_get(app, path: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -982,7 +1132,13 @@ async def fetch_symbol_market(app, symbol: str, now: datetime) -> dict[str, Any]
             "start": datetime.combine(now_et.date(), time(4, 0), ET).strftime("%Y-%m-%d %H:%M"),
             "end": now_et.strftime("%Y-%m-%d %H:%M"), "session_filter": "all",
         }),
+        return_exceptions=True,
     )
+    if isinstance(quote_payload, Exception):
+        raise quote_payload
+    bars_error = str(bars_payload) if isinstance(bars_payload, Exception) else None
+    if bars_error:
+        bars_payload = {}
     quotes = _quote_rows(quote_payload)
     if not quotes:
         raise RuntimeError(f"Tradier returned no usable {symbol} quote")
@@ -1041,7 +1197,8 @@ async def fetch_symbol_market(app, symbol: str, now: datetime) -> dict[str, Any]
         ))
     return {"symbol": symbol, "price": price, "price_basis": price_basis,
             "quote_timestamp": quote_at,
-            "bars": bars, "source": "Tradier production consolidated feed",
+            "bars": bars, "bars_error": bars_error,
+            "source": "Tradier production consolidated feed",
             "session": market_session(now), **freshness(quote_at, now)}
 
 
@@ -1090,6 +1247,8 @@ async def fetch_option_selection(app, setup: dict[str, Any], now: datetime) -> t
         return None, "ENTRY TRIGGER HIT — STRIKES PENDING OPTIONS DATA"
     if symbol == "XSP":
         selected["settlement_note"] = "XSP is cash-settled; verify AM/PM settlement and last-trading-time for this expiration."
+    if selected.get("liquidity_status") == "BLOCKED":
+        return selected, "LIQUIDITY BLOCKED — no complete calendar passed execution-quality checks"
     return selected, "fresh"
 
 
@@ -1179,12 +1338,16 @@ def build_alert_embed(setup: dict[str, Any], prior_state: str, result: RuleResul
                       options_reason: str | None, now: datetime) -> dict[str, Any]:
     strategy = setup["strategy"].replace("_", " ").upper()
     unavailable = result.state == "DATA_UNAVAILABLE"
+    liquidity_blocked = result.state == "LIQUIDITY_BLOCKED"
     if unavailable:
         title = f"NO TRADE — {setup['symbol']} DATA UNAVAILABLE"
         action = (
             f"NO TRADE. {result.reason} Market data must be 90 seconds old or less. "
             "Monitoring resumes automatically when fresh data returns."
         )
+    elif liquidity_blocked:
+        title = f"NO TRADE — {setup['symbol']} LIQUIDITY BLOCKED"
+        action = f"NO TRADE. The underlying trigger passed, but the observed option structure failed liquidity checks: {result.reason}"
     elif result.state == "ENTRY_READY":
         title = f"ENTRY READY — {setup['symbol']} {strategy}"
         action = "Review the qualified alert and defined risk; advisory only—no order was routed."
@@ -1227,6 +1390,11 @@ def build_alert_embed(setup: dict[str, Any], prior_state: str, result: RuleResul
                 f"{leg['action'].upper()} {leg['right']} ${leg['strike']:g} exp {expiration} | "
                 f"bid/ask {leg['bid']:.2f}/{leg['ask']:.2f} | Δ {leg['delta']:.3f}"
             )
+            if leg.get("relative_spread") is not None:
+                leg_lines[-1] += (
+                    f" | midpoint {leg['midpoint']:.2f} | spread {leg['relative_spread']:.1%} | "
+                    f"OI {leg.get('open_interest', 'unavailable')} | vol {leg.get('volume', 'unavailable')}"
+                )
             greek_lines.append(
                 f"{leg['right']} ${leg['strike']:g}: Γ {float(leg['gamma']):.4f}, "
                 f"Θ {float(leg['theta']):.4f}, Vega {float(leg['vega']):.4f}, IV {float(leg['iv']):.1%}"
@@ -1244,15 +1412,38 @@ def build_alert_embed(setup: dict[str, Any], prior_state: str, result: RuleResul
             cost_text += f" | width ${float(width):g}"
         cost_text += (f" | max risk ${float(max_risk):.2f}" if max_risk is not None
                       else " | max risk NOT DEFINED")
+        leg_heading = ("Observed option legs — NOT EXECUTABLE"
+                       if liquidity_blocked else "Option legs")
         fields.extend([
-            {"name": "Option legs", "value": "\n".join(leg_lines)[:1024], "inline": False},
+            {"name": leg_heading, "value": "\n".join(leg_lines)[:1024], "inline": False},
             {"name": "Greeks / IV", "value": "\n".join(greek_lines)[:1024], "inline": False},
-            {"name": "Defined cost / risk", "value": cost_text, "inline": False},
             {"name": "Options data", "value": (
                 f"{option_selection.get('source') or 'source unavailable'} | session regular | "
                 + "; ".join(provenance)
             )[:1024], "inline": False},
         ])
+        if liquidity_blocked:
+            midpoint = option_selection.get("composite_midpoint_debit")
+            natural = option_selection.get("natural_debit")
+            gap = option_selection.get("natural_midpoint_gap_ratio")
+            thresholds = option_selection.get("liquidity_thresholds") or {}
+            failures = option_selection.get("failed_checks") or []
+            fields.extend([
+                {"name": "Observed pricing — NOT EXECUTABLE", "value": (
+                    f"composite midpoint debit ${midpoint:.2f} | natural debit ${natural:.2f} | "
+                    f"natural-vs-mid gap {gap:.1%}" if gap is not None
+                    else f"composite midpoint debit ${midpoint:.2f} | natural debit ${natural:.2f} | gap unavailable"
+                ), "inline": False},
+                {"name": "Liquidity failures", "value": "; ".join(failures)[:1024], "inline": False},
+                {"name": "Liquidity thresholds", "value": (
+                    f"max leg spread {thresholds.get('maximum_relative_leg_spread', 0):.1%} | "
+                    f"max natural-mid gap {thresholds.get('maximum_natural_midpoint_gap_ratio', 0):.1%} | "
+                    f"activity per leg OI ≥ {thresholds.get('minimum_calendar_open_interest')} "
+                    f"OR volume ≥ {thresholds.get('minimum_calendar_volume')}"
+                ), "inline": False},
+            ])
+        else:
+            fields.append({"name": "Defined cost / risk", "value": cost_text, "inline": False})
         if option_selection.get("settlement_note"):
             fields.append({"name": "Settlement", "value": option_selection["settlement_note"][:1024], "inline": False})
     elif result.state == "ENTRY_READY":
@@ -1264,7 +1455,7 @@ def build_alert_embed(setup: dict[str, Any], prior_state: str, result: RuleResul
     return {
         "title": title,
         "description": "Alert only. No order preview, routing, modification, or cancellation.",
-        "color": 0x9CA3AF if unavailable else (0x34D399 if result.state == "ENTRY_READY" else 0xF87171),
+        "color": 0x9CA3AF if (unavailable or liquidity_blocked) else (0x34D399 if result.state == "ENTRY_READY" else 0xF87171),
         "fields": fields, "timestamp": now.isoformat(),
         "footer": {"text": "Render Intraday Options Watch | alert only | no order routing"},
     }
@@ -1299,7 +1490,7 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
     """Evaluate persisted setups once. Called only by the dedicated worker."""
     now = (now or datetime.now(UTC)).astimezone(UTC)
     today = now.astimezone(ET).date()
-    poll = max(30, int(os.getenv("INTRADAY_WATCH_POLL_SECONDS", "60")))
+    poll = min(60, max(30, int(os.getenv("INTRADAY_WATCH_POLL_SECONDS", "60"))))
     status: dict[str, Any] = {
         "worker_heartbeat": now.isoformat(), "worker_healthy": True,
         "poll_interval_seconds": poll, "current_trading_date": today.isoformat(),
@@ -1308,7 +1499,10 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
         "active_setup_count": 0, "per_symbol_state": {}, "last_market_data_timestamp": None,
         "last_options_data_timestamp": None, "last_alert": None,
         "data_source": "Tradier production consolidated feed", "data_freshness": {},
-        "discord_configured": bool(os.getenv("DISCORD_WEBHOOK_URL", "").strip()),
+        "discord_configured": bool(_intraday_discord_webhook()),
+        "discord_enabled": _intraday_discord_enabled(),
+        "discord_route": ("dedicated" if os.getenv(
+            INTRADAY_DISCORD_WEBHOOK_ENV, "").strip() else "shared_fallback"),
         "plan_ingestion_timestamp": None, "plan_hash": None,
         "plan_parity": {"valid": False, "reason": "no plan ingested"},
         "errors": [],
@@ -1377,6 +1571,8 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
                 market_cache[symbol] = await fetch_symbol_market(app, symbol, now)
                 item = market_cache[symbol]
                 status["data_freshness"][symbol] = {
+                    "price": item["price"], "price_basis": item["price_basis"],
+                    "bars_error": item.get("bars_error"),
                     "source": item["source"], "session": item["session"],
                     "exchange_timestamp": item["exchange_timestamp"],
                     "retrieval_timestamp": item["retrieval_timestamp"],
@@ -1430,6 +1626,8 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
                     row.last_market_timestamp = market["quote_timestamp"]
                     status["last_market_data_timestamp"] = market["exchange_timestamp"]
                     status["data_freshness"][row.symbol] = {
+                        "price": market["price"], "price_basis": market["price_basis"],
+                        "bars_error": market.get("bars_error"),
                         "source": market["source"], "session": market["session"],
                         "exchange_timestamp": market["exchange_timestamp"],
                         "retrieval_timestamp": market["retrieval_timestamp"],
@@ -1451,11 +1649,12 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
                         row.option_selection_json = _json(option_selection)
                         row.last_options_timestamp = now
                         status["last_options_data_timestamp"] = now.isoformat()
+                        result = apply_option_liquidity_state(result, option_selection)
                 except Exception as exc:  # noqa: BLE001
                     options_reason = f"ENTRY TRIGGER HIT — STRIKES PENDING OPTIONS DATA ({exc})"
             meaningful = (
                 result.state != prior and (
-                    result.state in {"ENTRY_READY", "INVALIDATED"}
+                    result.state in {"ENTRY_READY", "INVALIDATED", "LIQUIDITY_BLOCKED"}
                     or (result.state == "DATA_UNAVAILABLE" and prior == "NEAR_TRIGGER")
                 )
             )
@@ -1474,9 +1673,11 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
                 event_key = claim_alert(db, row.setup_id, today, result.state, now, embed)
                 if event_key:
                     attempted_alerts.add(event_key)
-                    from . import _send_webhook_sync
-                    webhook = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
-                    posted = bool(webhook) and await asyncio.to_thread(_send_webhook_sync, embed, webhook)
+                    from . import _send_intraday_webhook_sync
+                    webhook = _intraday_discord_webhook()
+                    posted = bool(webhook) and await asyncio.to_thread(
+                        _send_intraday_webhook_sync, embed, webhook
+                    )
                     if posted:
                         alert_row = db.get(IntradayAlertDedup, event_key)
                         if alert_row:
@@ -1486,19 +1687,21 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
                                             "transition_at": now.isoformat(), "posted": posted}
         # A failed webhook stays durable and is retried after restarts. Posted
         # transitions are never sent again.
-        webhook = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+        webhook = _intraday_discord_webhook()
         pending = db.query(IntradayAlertDedup).filter(
             IntradayAlertDedup.posted_at.is_(None),
             IntradayAlertDedup.trading_date == today,
         ).all()
         if webhook:
-            from . import _send_webhook_sync
+            from . import _send_intraday_webhook_sync
             for alert in pending:
                 if alert.event_key in attempted_alerts or not alert.payload_json:
                     continue
                 try:
                     embed = json.loads(alert.payload_json)
-                    posted = await asyncio.to_thread(_send_webhook_sync, embed, webhook)
+                    posted = await asyncio.to_thread(
+                        _send_intraday_webhook_sync, embed, webhook
+                    )
                 except (json.JSONDecodeError, TypeError) as exc:
                     status["errors"].append(f"pending alert {alert.event_key}: {exc}")
                     continue

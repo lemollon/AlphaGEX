@@ -12,6 +12,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 import backend.intraday_watch as watch
 from backend.db import Base
@@ -356,6 +357,127 @@ def test_calendar_uses_fresh_same_strike_front_and_back_legs():
     assert result["natural_debit"] == .9
 
 
+def test_bx_like_double_calendar_is_liquidity_blocked():
+    setup = _setup(
+        {"type": "opening_range_hold", "range_low": 124, "range_high": 124.9},
+        symbol="BX", strategy="double_calendar", thesis="neutral", current_price=124.46,
+        support_levels=[124], resistance_levels=[126],
+    )
+    front = [
+        _contract(124, "P", -.4505, 2.23, 2.47, oi=541, volume=2021),
+        _contract(126, "C", .4238, 1.72, 1.97, oi=16, volume=14),
+    ]
+    back = [
+        _contract(124, "P", -.4539, 3.10, 3.65, oi=60, volume=1),
+        _contract(126, "C", .4597, 2.85, 3.05, oi=10, volume=0),
+    ]
+    result = watch.select_calendar_structure(
+        "double_calendar", front, back, setup, "2026-09-25", "2026-10-02",
+    )
+    assert result["liquidity_status"] == "BLOCKED"
+    assert result["natural_debit"] == 2.75
+    assert result["composite_midpoint_debit"] == 2.13
+    assert result["natural_midpoint_gap_ratio"] == pytest.approx(.29108, abs=1e-6)
+    assert "max_risk" not in result
+    assert any("spread 16.3% exceeds 15.0%" in item for item in result["failed_checks"])
+    assert any("activity OI 10 / volume 0" in item for item in result["failed_checks"])
+    assert any("gap 29.1% exceeds 12.5%" in item for item in result["failed_checks"])
+
+
+def test_calendar_prefers_liquid_alternative_inside_delta_band():
+    setup = _setup(
+        {"type": "opening_range_hold", "range_low": 124, "range_high": 126},
+        strategy="double_calendar", thesis="neutral", current_price=125,
+        support_levels=[124], resistance_levels=[126],
+    )
+    front = [
+        _contract(124, "P", -.45, 2.23, 2.47, oi=541, volume=2021),
+        _contract(123, "P", -.38, 2.00, 2.10, oi=100, volume=20),
+        _contract(126, "C", .42, 1.72, 1.97, oi=16, volume=14),
+        _contract(127, "C", .38, 1.50, 1.60, oi=100, volume=20),
+    ]
+    back = [
+        _contract(124, "P", -.45, 3.10, 3.65, oi=60, volume=1),
+        _contract(123, "P", -.40, 3.00, 3.10, oi=100, volume=20),
+        _contract(126, "C", .46, 2.85, 3.05, oi=10, volume=0),
+        _contract(127, "C", .40, 2.50, 2.60, oi=100, volume=20),
+    ]
+    result = watch.select_calendar_structure(
+        "double_calendar", front, back, setup, "2026-09-25", "2026-10-02",
+    )
+    assert result["liquidity_status"] == "PASS"
+    assert [leg["strike"] for leg in result["legs"]] == [123, 123, 127, 127]
+    assert result["natural_midpoint_gap_ratio"] == pytest.approx(.10)
+
+
+def test_calendar_liquidity_exact_boundaries_are_accepted():
+    setup = _setup(
+        {"type": "breakout_hold", "breakout_level": 100},
+        strategy="calendar", thesis="bullish", current_price=100,
+    )
+    front = [_contract(100, "C", .40, .925, 1.075, oi=50, volume=0)]
+    back = [_contract(100, "C", .40, 2.125, 2.275, oi=50, volume=0)]
+    result = watch.select_calendar_structure(
+        "calendar", front, back, setup, "2026-09-25", "2026-10-02",
+    )
+    assert result["liquidity_status"] == "PASS"
+    assert result["legs"][0]["relative_spread"] == pytest.approx(.15)
+    assert result["natural_midpoint_gap_ratio"] == pytest.approx(.125)
+
+
+def test_calendar_missing_open_interest_and_volume_is_blocked():
+    setup = _setup(
+        {"type": "breakout_hold", "breakout_level": 100},
+        strategy="calendar", thesis="bullish", current_price=100,
+    )
+    front = [_contract(100, "C", .40, 1.00, 1.05, oi=0, volume=0)]
+    back = [_contract(100, "C", .40, 2.00, 2.05, oi=0, volume=0)]
+    result = watch.select_calendar_structure(
+        "calendar", front, back, setup, "2026-09-25", "2026-10-02",
+    )
+    assert result["liquidity_status"] == "BLOCKED"
+    assert len([item for item in result["failed_checks"] if "activity OI 0 / volume 0" in item]) == 2
+
+
+def test_calendar_liquidity_overrides_are_validated_and_preserved():
+    raw = {
+        "symbol": "BX", "strategy": "double_calendar", "thesis": "neutral",
+        "entry": {"type": "opening_range_hold", "range_low": 124, "range_high": 125},
+        "invalidation": {"type": "none"},
+        "maximum_relative_leg_spread": .20,
+        "maximum_natural_midpoint_gap_ratio": .25,
+        "minimum_calendar_open_interest": 25,
+        "minimum_calendar_volume": 5,
+    }
+    validated = watch.validate_setup(raw, date(2026, 9, 18))
+    assert validated["maximum_relative_leg_spread"] == .20
+    assert validated["maximum_natural_midpoint_gap_ratio"] == .25
+    assert validated["minimum_calendar_open_interest"] == 25
+    assert validated["minimum_calendar_volume"] == 5
+    with pytest.raises(HTTPException, match="maximum_relative_leg_spread"):
+        watch.validate_setup({**raw, "maximum_relative_leg_spread": 0}, date(2026, 9, 18))
+    with pytest.raises(HTTPException, match="minimum_calendar_volume"):
+        watch.validate_setup({**raw, "minimum_calendar_volume": 1.5}, date(2026, 9, 18))
+
+
+def test_blocked_calendar_converts_entry_ready_to_no_trade_state():
+    blocked = {
+        "liquidity_status": "BLOCKED",
+        "failed_checks": ["natural-to-midpoint debit gap 29.1% exceeds 12.5%"],
+    }
+    result = watch.apply_option_liquidity_state(
+        watch.RuleResult("ENTRY_READY", "underlying confirmed", ("underlying confirmed",)),
+        blocked,
+    )
+    assert result.state == "LIQUIDITY_BLOCKED"
+    assert "no trade" in result.reason
+    assert result.evidence == ("underlying confirmed",)
+    passing = watch.apply_option_liquidity_state(
+        watch.RuleResult("ENTRY_READY", "underlying confirmed"), {"liquidity_status": "PASS"},
+    )
+    assert passing.state == "ENTRY_READY"
+
+
 def test_expiration_preference_selects_nearest_band_midpoint():
     setup = {"expiration_preference": "7-14 DTE"}
     values = [date(2026, 9, 25), date(2026, 9, 29), date(2026, 10, 2)]
@@ -373,7 +495,11 @@ def test_xsp_is_never_rewritten_to_spy_in_validation():
 
 @pytest.fixture
 def sqlite_store(monkeypatch):
-    engine = create_engine("sqlite://")
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(bind=engine, tables=[
         IntradayTradePlan.__table__, IntradaySelectedWatchlist.__table__,
         IntradaySetup.__table__, IntradayAlertDedup.__table__,
@@ -447,6 +573,40 @@ def test_missing_trading_volatility_watchlist_falls_back_to_core_only(sqlite_sto
     assert "no random fallback" in result["errors"][0].lower()
 
 
+def test_cycle_persists_numeric_quotes_without_gamma_and_caps_poll(sqlite_store, monkeypatch):
+    monkeypatch.setenv("INTRADAY_WATCH_POLL_SECONDS", "3600")
+    async def market(_app, symbol, now):
+        return {"symbol": symbol, "price": 16.2 if symbol == "VIX" else 280.1,
+                "price_basis": "last trade", "bars": [],
+                "source": "Tradier production consolidated feed", "session": "regular",
+                "exchange_timestamp": now.isoformat(), "retrieval_timestamp": now.isoformat(),
+                "quote_timestamp": now, "age_seconds": 0, "fresh": True}
+    monkeypatch.setattr(watch, "fetch_symbol_market", market)
+    asyncio.run(watch.run_intraday_cycle(object(), now=NOW))
+    db = sqlite_store()
+    try:
+        payload = json.loads(db.get(IntradayWatchRuntimeStatus, "intraday-watch").payload_json)
+        assert payload["poll_interval_seconds"] == 60
+        assert payload["data_freshness"]["VIX"]["price"] == 16.2
+        assert payload["data_freshness"]["IWM"]["price"] == 280.1
+        assert payload["data_freshness"]["IWM"]["exchange_timestamp"] == NOW.isoformat()
+    finally:
+        db.close()
+
+
+def test_quote_survives_timesales_outage(monkeypatch):
+    async def get(_app, path, params):
+        if path.endswith("timesales"):
+            raise RuntimeError("bars unavailable")
+        return {"quotes": {"quote": {"symbol": "VIX", "last": 16.2,
+                                    "trade_date": int(NOW.timestamp() * 1000)}}}
+    monkeypatch.setattr(watch, "_tradier_get", get)
+    result = asyncio.run(watch.fetch_symbol_market(object(), "VIX", NOW))
+    assert result["price"] == 16.2 and result["fresh"] is True
+    assert result["bars"] == []
+    assert result["bars_error"] == "bars unavailable"
+
+
 def test_missing_option_data_produces_strikes_pending(monkeypatch):
     async def fake_get(_app, path, _params):
         if path.endswith("expirations"):
@@ -471,6 +631,15 @@ def test_missing_option_data_produces_strikes_pending(monkeypatch):
 def test_malformed_setup_payload_is_rejected(payload):
     with pytest.raises(HTTPException):
         watch.validate_setups_payload(payload)
+
+
+def test_standalone_setups_rejects_empty_payload_but_atomic_plan_accepts_it():
+    payload = {"trading_date": "2026-09-18", "setups": []}
+    with pytest.raises(HTTPException, match="non-empty"):
+        watch.validate_setups_payload(payload)
+    trading_date, setups = watch.validate_setups_payload(payload, allow_empty=True)
+    assert trading_date == date(2026, 9, 18)
+    assert setups == []
 
 
 def test_watchlist_rejects_duplicates_and_more_than_eight():
@@ -588,6 +757,38 @@ def test_plan_endpoint_requires_symbols_and_setups(monkeypatch):
         ))
 
 
+def test_plan_endpoint_persists_truthful_no_trade_day(sqlite_store, monkeypatch):
+    class Request:
+        async def json(self):
+            return {
+                "trading_date": "2026-09-18",
+                "symbols": [],
+                "setups": [],
+                "reason": "No Trade: no setup passed the morning confirmation rules.",
+            }
+
+    monkeypatch.setenv("INTRADAY_WATCH_API_TOKEN", "configured-token")
+    result = asyncio.run(watch.post_plan(
+        Request(), x_intraday_watch_token="configured-token", authorization=None
+    ))
+    assert result["registered_symbol_count"] == 0
+    assert result["registered_setup_count"] == 0
+    assert result["parity"] == {
+        "valid": True,
+        "selected_non_core_symbols": [],
+        "non_core_setup_symbols": [],
+        "selected_symbol_count": 0,
+        "setup_count": 0,
+    }
+    assert len(result["plan_hash"]) == 64
+
+    stored = asyncio.run(watch.get_plan("2026-09-18"))
+    assert stored["reason"].startswith("No Trade")
+    assert stored["symbols"] == []
+    assert stored["setups"] == []
+    assert stored["plan_hash"] == result["plan_hash"]
+
+
 def test_alert_embed_is_decision_first_human_readable_and_has_no_raw_json():
     setup = _setup(
         {"type": "breakout_retest", "breakout_level": 718},
@@ -660,6 +861,44 @@ def test_data_unavailable_embed_explicitly_says_no_trade_and_auto_resume():
     assert "stale (121.0s)" in values
     assert "90 seconds old or less" in values
     assert "Monitoring resumes automatically" in values
+
+
+def test_liquidity_blocked_embed_is_explicitly_not_executable():
+    setup = _setup(
+        {"type": "opening_range_hold", "range_low": 124, "range_high": 124.9},
+        symbol="BX", strategy="double_calendar", thesis="neutral", current_price=124.46,
+        support_levels=[124], resistance_levels=[126],
+    )
+    selection = watch.select_calendar_structure(
+        "double_calendar",
+        [_contract(124, "P", -.45, 2.23, 2.47, oi=541, volume=2021),
+         _contract(126, "C", .42, 1.72, 1.97, oi=16, volume=14)],
+        [_contract(124, "P", -.45, 3.10, 3.65, oi=60, volume=1),
+         _contract(126, "C", .46, 2.85, 3.05, oi=10, volume=0)],
+        setup, "2026-09-25", "2026-10-02",
+    )
+    result = watch.apply_option_liquidity_state(
+        watch.RuleResult("ENTRY_READY", "underlying confirmed"), selection,
+    )
+    market = {
+        "price": 124.46, "price_basis": "last trade",
+        "source": "Tradier production consolidated feed", "session": "regular",
+        "exchange_timestamp": (NOW - timedelta(seconds=5)).isoformat(),
+        "retrieval_timestamp": NOW.isoformat(), "age_seconds": 5.0,
+    }
+    embed = watch.build_alert_embed(setup, "ENTRY_READY", result, market, selection, None, NOW)
+    names = [field["name"] for field in embed["fields"]]
+    values = "\n".join(field["value"] for field in embed["fields"])
+    assert embed["title"] == "NO TRADE — BX LIQUIDITY BLOCKED"
+    assert "Observed option legs — NOT EXECUTABLE" in names
+    assert "Observed pricing — NOT EXECUTABLE" in names
+    assert "Defined cost / risk" not in names
+    assert "NO TRADE" in values
+    assert "natural debit $2.75" in values
+    assert "natural-vs-mid gap 29.1%" in values
+    assert "max leg spread 15.0%" in values
+    assert "session regular" in values
+    assert embed["footer"]["text"].endswith("no order routing")
 
 
 def test_no_order_routing_imports_or_calls_exist():

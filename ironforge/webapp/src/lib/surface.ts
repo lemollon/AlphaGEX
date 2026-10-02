@@ -114,6 +114,8 @@ export const OPERATOR_API_PREFIXES: readonly string[] = [
   '/api/kindle-reopen',
   '/api/kindle-sync',
   '/api/sms-test',
+  // Research instrument, not a customer feature — see lib/afternoon-spread-tracker.ts.
+  '/api/afternoon-spread',
   '/api/sandbox/',
   '/api/diagnose/',
   '/api/scanner/',
@@ -123,6 +125,12 @@ export const OPERATOR_API_PREFIXES: readonly string[] = [
   '/api/builder/',
   '/api/vol-alerts/',
   '/api/volatility/',
+  // Edge-decay CUSUM alarm (FLINT/CallDiag/EBB) — operator monitoring only,
+  // no customer-facing meaning. See lib/edge-decay.ts. No trailing slash: this
+  // is a single exact route (GET /api/edge-decay), not a namespace with
+  // children — matches()'s `pathname === p` branch is what actually matches
+  // it; a trailing slash would only match sub-paths that don't exist.
+  '/api/edge-decay',
 ]
 
 /**

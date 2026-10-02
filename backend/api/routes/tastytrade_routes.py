@@ -3,6 +3,7 @@ Tastytrade API Routes
 Connection testing and future VALOR bot integration
 """
 
+import asyncio
 import os
 import requests
 from datetime import datetime
@@ -79,7 +80,7 @@ async def test_tastytrade_connection():
 
     # Check 2: Authentication
     try:
-        session_token = get_tastytrade_session()
+        session_token = await asyncio.to_thread(get_tastytrade_session)
         results["checks"]["authentication"] = {
             "success": True,
             "token_preview": session_token[:20] + "..." if session_token else None
@@ -99,7 +100,8 @@ async def test_tastytrade_connection():
 
     # Check 3: Account access
     try:
-        account_response = requests.get(
+        account_response = await asyncio.to_thread(
+            requests.get,
             f"{TASTYTRADE_BASE_URL}/customers/me/accounts",
             headers=headers,
             timeout=30
@@ -148,7 +150,8 @@ async def test_tastytrade_connection():
     # Check 4: Account balances
     if account_id:
         try:
-            balance_response = requests.get(
+            balance_response = await asyncio.to_thread(
+                requests.get,
                 f"{TASTYTRADE_BASE_URL}/accounts/{account_id}/balances",
                 headers=headers,
                 timeout=30
@@ -179,7 +182,8 @@ async def test_tastytrade_connection():
         mes_contracts = []
 
         # Approach 1: Search by product code
-        search_response = requests.get(
+        search_response = await asyncio.to_thread(
+            requests.get,
             f"{TASTYTRADE_BASE_URL}/futures-products/MES",
             headers=headers,
             timeout=30
@@ -195,7 +199,8 @@ async def test_tastytrade_connection():
 
         for symbol in contract_symbols:
             try:
-                contract_response = requests.get(
+                contract_response = await asyncio.to_thread(
+                    requests.get,
                     f"{TASTYTRADE_BASE_URL}/instruments/futures/{symbol}",
                     headers=headers,
                     timeout=10
@@ -216,7 +221,8 @@ async def test_tastytrade_connection():
 
         # Approach 3: Search all futures instruments
         if not mes_contracts:
-            all_futures_response = requests.get(
+            all_futures_response = await asyncio.to_thread(
+                requests.get,
                 f"{TASTYTRADE_BASE_URL}/instruments/futures",
                 headers=headers,
                 params={"product-code": "MES"},
@@ -275,14 +281,15 @@ async def test_tastytrade_connection():
 async def get_futures_products():
     """List all available futures products to find MES symbol format"""
     try:
-        session_token = get_tastytrade_session()
+        session_token = await asyncio.to_thread(get_tastytrade_session)
         headers = {
             "Authorization": session_token,
             "Content-Type": "application/json"
         }
 
         # Get all futures products
-        products_response = requests.get(
+        products_response = await asyncio.to_thread(
+            requests.get,
             f"{TASTYTRADE_BASE_URL}/instruments/futures",
             headers=headers,
             timeout=30
@@ -330,7 +337,7 @@ async def get_futures_products():
 async def get_mes_quote():
     """Get current MES futures quote"""
     try:
-        session_token = get_tastytrade_session()
+        session_token = await asyncio.to_thread(get_tastytrade_session)
         headers = {
             "Authorization": session_token,
             "Content-Type": "application/json"
@@ -341,7 +348,8 @@ async def get_mes_quote():
         symbols_to_try = ["/MESH6", "/MESM6", "/MESU6", "/MESZ6", "/MESH5", "/MESM5"]
 
         for symbol in symbols_to_try:
-            quote_response = requests.get(
+            quote_response = await asyncio.to_thread(
+                requests.get,
                 f"{TASTYTRADE_BASE_URL}/market-data/quotes/{symbol}",
                 headers=headers,
                 timeout=10
@@ -379,13 +387,14 @@ async def get_account_positions():
         raise HTTPException(status_code=500, detail="TASTYTRADE_ACCOUNT_ID not configured")
 
     try:
-        session_token = get_tastytrade_session()
+        session_token = await asyncio.to_thread(get_tastytrade_session)
         headers = {
             "Authorization": session_token,
             "Content-Type": "application/json"
         }
 
-        positions_response = requests.get(
+        positions_response = await asyncio.to_thread(
+            requests.get,
             f"{TASTYTRADE_BASE_URL}/accounts/{account_id}/positions",
             headers=headers,
             timeout=30

@@ -39,6 +39,13 @@ _TIMEOUT_SECONDS = 5.0
 _USER_AGENT = "TSUNAMI-monitoring/1.0"
 _ENV_VAR = "TSUNAMI_DISCORD_WEBHOOK_URL"   # dedicated TSUNAMI channel
 _FALLBACK_ENV_VAR = "DISCORD_WEBHOOK_URL"  # platform-shared channel
+# Master kill switch shared with backend.discord_posting_enabled(). Default
+# OFF; TSUNAMI must not post when the rest of SpreadWorks is silenced.
+_ENABLED_ENV_VAR = "SPREADWORKS_DISCORD_ENABLED"
+
+
+def _posting_enabled() -> bool:
+    return os.getenv(_ENABLED_ENV_VAR, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _webhook_from_env() -> str:
@@ -73,6 +80,9 @@ def post_embed(
         webhook_url: override env var; mainly for tests
         session: requests.Session for tests; default uses requests directly
     """
+    if not _posting_enabled():
+        logger.info("[discord] %s not true -- skipping post", _ENABLED_ENV_VAR)
+        return False
     url = webhook_url or _webhook_from_env()
     if not url:
         logger.info("[discord] no TSUNAMI_DISCORD_WEBHOOK_URL or"

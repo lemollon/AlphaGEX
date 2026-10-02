@@ -7,7 +7,7 @@ Everything else /hunt shows (today's flag, today's confirm state, the
 playbook, the alert directory) already exists on /session and as static copy.
 """
 import asyncio
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -486,6 +486,21 @@ def test_capture_flow_intraday_writes_one_row_per_tenor(confirm_db, monkeypatch)
     zero_row = next(r for r in rows if r.tenor == "0dte")
     assert zero_row.call_vol == 100
     assert zero_row.spot == pytest.approx(700.0)
+
+
+def test_capture_flow_intraday_stores_central_clock_for_utc_worker(confirm_db, monkeypatch):
+    d = date(2026, 9, 2)
+    exp0 = d.isoformat()
+    monkeypatch.setattr(ROUTES, "_get_quote", _mock_quote(700.0))
+    monkeypatch.setattr(ROUTES, "_tradier_get", _mock_tradier(
+        [exp0], {exp0: [_opt("call", 700, bid=0.8, ask=1.0, last=1.0, volume=1)]},
+    ))
+    # 14:20 UTC is 09:20 Central during daylight saving time.
+    _run(R.capture_flow_intraday(object(), datetime(2026, 9, 2, 14, 20, tzinfo=timezone.utc)))
+    db = confirm_db()
+    row = db.query(R.RiskFlowIntraday).filter(R.RiskFlowIntraday.tenor == "0dte").one()
+    db.close()
+    assert row.ts == datetime(2026, 9, 2, 9, 20)
 
 
 def test_capture_flow_intraday_is_a_noop_before_book_start(confirm_db, monkeypatch):

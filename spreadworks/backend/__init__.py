@@ -50,8 +50,70 @@ else:
         print(f"[SpreadWorks]   {p} -> exists={p.exists()}")
 
 
+# Master kill switch for the fleet-wide SpreadWorks Discord route (scheduler,
+# bot open/close embeds, gamma/risk alerts, TSUNAMI, and daily brief). The
+# intraday + QQQ entry watchers use a separate, narrowly scoped switch below.
+# Default OFF because enabling entry alerts must not reactivate the fleet.
+DISCORD_ENABLED_ENV = "SPREADWORKS_DISCORD_ENABLED"
+INTRADAY_DISCORD_ENABLED_ENV = "INTRADAY_ALERTS_ENABLED"
+INTRADAY_DISCORD_WEBHOOK_ENV = "INTRADAY_DISCORD_WEBHOOK_URL"
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def discord_posting_enabled() -> bool:
+    return os.getenv(DISCORD_ENABLED_ENV, "").strip().lower() in _TRUTHY
+
+
+def intraday_discord_posting_enabled() -> bool:
+    """Return whether the isolated intraday/QQQ alert route is enabled."""
+    return os.getenv(INTRADAY_DISCORD_ENABLED_ENV, "").strip().lower() in _TRUTHY
+
+
+def _post_discord_webhook_sync(embed_or_embeds, webhook_url: str,
+                               *, log_prefix: str) -> bool:
+    """Post one Discord payload after the caller has applied its scope gate."""
+    import requests as req
+
+    if isinstance(embed_or_embeds, dict):
+        embeds = [embed_or_embeds]
+    else:
+        embeds = list(embed_or_embeds)[:10]  # Discord caps at 10
+
+    import time as _time
+    # Per-attempt timeout (30s) — Render egress to discord.com can be slow.
+    # Read-timeout retries are NOT safe for webhook POSTs: Discord may have
+    # processed the message even though the response timed out client-side.
+    # So we only retry on connect errors and 5xx, never on read timeout.
+    for attempt in range(3):
+        try:
+            resp = req.post(webhook_url, json={"embeds": embeds},
+                            headers={"Content-Type": "application/json"}, timeout=30)
+            if resp.status_code == 429:
+                retry_after = resp.json().get("retry_after", 5)
+                logger.warning("[%s] Rate limited, waiting %ss", log_prefix,
+                               retry_after)
+                _time.sleep(retry_after)
+                continue
+            resp.raise_for_status()
+            return True
+        except req.exceptions.ReadTimeout:
+            # Don't retry read timeouts — message may already be delivered.
+            logger.error("[%s] Webhook read timeout on attempt %s — NOT "
+                         "retrying (would risk duplicate)", log_prefix,
+                         attempt + 1)
+            return False
+        except Exception as exc:  # noqa: BLE001
+            # requests exceptions can include the full webhook URL. Log only
+            # the exception class so the Discord credential never reaches logs.
+            logger.error("[%s] Webhook attempt %s/3 failed: %s", log_prefix,
+                         attempt + 1, type(exc).__name__)
+            if attempt < 2:
+                _time.sleep(2 ** (attempt + 1))
+    return False
+
+
 def _send_webhook_sync(embed_or_embeds, webhook_url: str | None = None) -> bool:
-    """Send embeds to Discord webhook (sync, for scheduler use).
+    """Send embeds through the fleet-wide SpreadWorks Discord route.
 
     Accepts either a single embed dict or a list of embeds (max 10 per
     Discord's webhook limit). Multi-embed posts render as a vertical
@@ -63,43 +125,35 @@ def _send_webhook_sync(embed_or_embeds, webhook_url: str | None = None) -> bool:
     EBB's posts to the risk-advisor channel via a per-bot registry
     override). Falls back to DISCORD_WEBHOOK_URL when omitted/empty.
     """
-    import requests as req
-
-    if isinstance(embed_or_embeds, dict):
-        embeds = [embed_or_embeds]
-    else:
-        embeds = list(embed_or_embeds)[:10]  # Discord caps at 10
+    if not discord_posting_enabled():
+        logger.info(f"[SpreadWorks] Discord posting disabled ({DISCORD_ENABLED_ENV} not true) — skipping")
+        return False
 
     url = webhook_url or os.getenv("DISCORD_WEBHOOK_URL", "")
     if not url:
         logger.warning("[SpreadWorks] DISCORD_WEBHOOK_URL not set — skipping")
         return False
+    return _post_discord_webhook_sync(embed_or_embeds, url,
+                                      log_prefix="SpreadWorks")
 
-    import time as _time
-    # Per-attempt timeout (30s) — Render egress to discord.com can be slow.
-    # Read-timeout retries are NOT safe for webhook POSTs: Discord may have
-    # processed the message even though the response timed out client-side.
-    # So we only retry on connect errors and 5xx, never on read timeout.
-    for attempt in range(3):
-        try:
-            resp = req.post(url, json={"embeds": embeds},
-                            headers={"Content-Type": "application/json"}, timeout=30)
-            if resp.status_code == 429:
-                retry_after = resp.json().get("retry_after", 5)
-                logger.warning(f"[SpreadWorks] Rate limited, waiting {retry_after}s")
-                _time.sleep(retry_after)
-                continue
-            resp.raise_for_status()
-            return True
-        except req.exceptions.ReadTimeout:
-            # Don't retry read timeouts — message may already be delivered.
-            logger.error(f"[SpreadWorks] Webhook read timeout on attempt {attempt+1} — NOT retrying (would risk duplicate)")
-            return False
-        except Exception as e:
-            logger.error(f"[SpreadWorks] Webhook attempt {attempt+1}/3 failed: {e}")
-            if attempt < 2:
-                _time.sleep(2 ** (attempt + 1))
-    return False
+
+def _send_intraday_webhook_sync(embed_or_embeds,
+                                webhook_url: str | None = None) -> bool:
+    """Send only intraday/QQQ alerts, independent of the fleet-wide switch."""
+    if not intraday_discord_posting_enabled():
+        logger.info("[IntradayAlerts] Discord posting disabled (%s not true) "
+                    "— skipping", INTRADAY_DISCORD_ENABLED_ENV)
+        return False
+
+    url = (webhook_url
+           or os.getenv(INTRADAY_DISCORD_WEBHOOK_ENV, "").strip()
+           or os.getenv("DISCORD_WEBHOOK_URL", "").strip())
+    if not url:
+        logger.warning("[IntradayAlerts] %s and DISCORD_WEBHOOK_URL are not "
+                       "set — skipping", INTRADAY_DISCORD_WEBHOOK_ENV)
+        return False
+    return _post_discord_webhook_sync(embed_or_embeds, url,
+                                      log_prefix="IntradayAlerts")
 
 
 _active_scheduler = None  # singleton guard — only one scheduler per process
@@ -1824,6 +1878,15 @@ async def lifespan(app: FastAPI):
     # Start scheduler for Discord notifications (inside lifespan, not module-level)
     scheduler = _start_scheduler(app)
 
+    # The weekday 07:00 CT morning options report now runs in this always-on
+    # Render process.  It writes an atomic advisory plan for the dedicated
+    # worker; it never imports or calls broker order code.
+    try:
+        from .morning_options_report import register as register_morning_options
+        register_morning_options(scheduler, app)
+    except Exception as _morning_exc:  # noqa: BLE001
+        logger.error("[MorningOptions] failed to register: %r", _morning_exc)
+
     # Risk Advisor playbook alerts (import-guarded; advisory only)
     try:
         from .risk_alerts import register_risk_alerts
@@ -1838,6 +1901,27 @@ async def lifespan(app: FastAPI):
         register_gamma_alerts(scheduler, app)
     except Exception as _ga_exc:  # noqa: BLE001
         logger.warning("[SpreadWorks] gamma alerts failed to register: %r", _ga_exc)
+
+    # Canonical live market structure: persist fresh Tradier VIX-family data
+    # and ORATS+Tradier gamma maps every minute. Durable captures let report
+    # consumers recover through Postgres if the public Render URL is blocked.
+    try:
+        from .market_structure import register as register_market_structure
+        register_market_structure(scheduler, app)
+    except Exception as _market_structure_sched_exc:  # noqa: BLE001
+        logger.warning(
+            "[SpreadWorks] market-structure capture failed to register: %r",
+            _market_structure_sched_exc,
+        )
+
+    # EMBER owns the live Robinhood sleeves.  The module is disabled unless
+    # EMBER_XSP_ENABLED is explicitly set, and its own live flag and durable
+    # state checks still fail closed before any order tool is exposed.
+    try:
+        from .ember.runtime import register as register_ember
+        register_ember(scheduler)
+    except Exception as _ember_exc:  # noqa: BLE001
+        logger.error("[EMBER] failed to register: %r", _ember_exc)
 
     # The dedicated Render worker owns market-watch cycles.  The web process
     # continues to serve status, but does not race the worker for alert claims.
@@ -1876,6 +1960,12 @@ app.include_router(qqq_retest_watch_router)
 
 from .intraday_watch import router as intraday_watch_router
 app.include_router(intraday_watch_router)
+
+from .speculative_contracts import router as speculative_contracts_router
+app.include_router(speculative_contracts_router)
+
+from .ember.routes import router as ember_router
+app.include_router(ember_router)
 
 from .routes_bots import router as bots_router
 app.include_router(bots_router)
@@ -1928,6 +2018,15 @@ try:
 except Exception as _calls_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] Call-history routes failed to load: %r", _calls_exc)
+
+# Live market-structure engine (fresh VIX-family + self-calculated gamma maps)
+# Kept separate from the backtested daily SQUEEZE signal.
+try:
+    from .market_structure import router as market_structure_router
+    app.include_router(market_structure_router)
+except Exception as _market_structure_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] market-structure router failed: %r", _market_structure_exc)
 
 # Squeeze signal (net dealer gamma, backend/bots/gamma_regime.py) — read-only
 # current verdict + history for the chart. Import-guarded; advisory only.

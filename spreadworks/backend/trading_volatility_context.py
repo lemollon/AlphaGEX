@@ -11,9 +11,9 @@ data is reported as unavailable rather than inferred.
 """
 from __future__ import annotations
 
-import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 
@@ -24,7 +24,33 @@ _CACHE: dict[str, Any] = {
     "checked_at": None,
     "last_success_at": None,
     "payload": None,
+    "retry_at": None,
+    "rate_limit_strikes": 0,
 }
+
+
+class VendorRateLimited(RuntimeError):
+    def __init__(self, path: str, retry_after: str | None):
+        super().__init__(f"TradingVolatility {path} returned 429")
+        self.retry_after = retry_after
+
+
+def _retry_delay(value: str | None, now: datetime, strikes: int) -> float:
+    """Prefer the vendor's reset hint; otherwise cap exponential cooldown at one hour."""
+    fallback = min(3600.0, 300.0 * 2 ** min(strikes - 1, 4))
+    if not value:
+        return fallback
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            reset = parsedate_to_datetime(value)
+            if reset.tzinfo is None:
+                reset = reset.replace(tzinfo=UTC)
+            seconds = (reset.astimezone(UTC) - now).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return fallback
+    return max(60.0, seconds)
 
 
 def _token() -> str:
@@ -80,6 +106,8 @@ async def _get(client: Any, path: str, params: dict[str, Any]) -> dict[str, Any]
         params=params,
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
     )
+    if response.status_code == 429:
+        raise VendorRateLimited(path, response.headers.get("Retry-After"))
     if response.status_code != 200:
         raise RuntimeError(
             f"TradingVolatility {path} returned {response.status_code}: "
@@ -94,6 +122,49 @@ async def _get(client: Any, path: str, params: dict[str, Any]) -> dict[str, Any]
 def _data(payload: dict[str, Any]) -> dict[str, Any]:
     value = payload.get("data", payload)
     return value if isinstance(value, dict) else {}
+
+
+def _normalize_top_setup(item: dict[str, Any]) -> dict[str, Any]:
+    """Keep TradingVolatility's trader-facing ranking fields without leaking unrelated payload data."""
+    recommendation = item.get("trade_recommendation")
+    source = dict(item)
+    if isinstance(recommendation, dict):
+        source.update(recommendation)
+
+    ticker = source.get("ticker") or source.get("symbol")
+    score = source.get("opportunity_score")
+    try:
+        normalized_score = float(score) if score is not None else None
+    except (TypeError, ValueError):
+        normalized_score = None
+
+    structures = source.get("structures")
+    if structures is None:
+        structures = []
+    elif not isinstance(structures, list):
+        structures = [structures]
+
+    caution_flags = source.get("caution_flags")
+    if caution_flags is None:
+        caution_flags = []
+    elif not isinstance(caution_flags, list):
+        caution_flags = [caution_flags]
+
+    return {
+        "ticker": str(ticker).upper() if ticker else None,
+        "opportunity_score": normalized_score,
+        "opportunity_tier": source.get("opportunity_tier"),
+        "trade_bias": source.get("trade_bias"),
+        "trade_type": source.get("trade_type"),
+        "direction": source.get("direction"),
+        "structures": structures,
+        "entry_trigger": source.get("entry_trigger"),
+        "stop_description": source.get("stop_description"),
+        "target_description": source.get("target_description"),
+        "risk": source.get("risk"),
+        "caution_flags": caution_flags,
+        "agent_summary": source.get("agent_summary"),
+    }
 
 
 def _walls(points: list[dict[str, Any]], spot: float, side: str) -> list[dict[str, float]]:
@@ -129,11 +200,27 @@ def _build_payload(
     universe_items = _data(universe_payload).get("items")
     if not isinstance(universe_items, list):
         raise RuntimeError("TradingVolatility /top-setups returned no items list")
-    symbols = sorted({
-        str(item["ticker"]).upper()
+    top_setups = [
+        _normalize_top_setup(item)
         for item in universe_items
-        if isinstance(item, dict) and item.get("ticker")
-    })
+        if isinstance(item, dict)
+    ]
+    top_setups = [item for item in top_setups if item.get("ticker")]
+    # TradingVolatility documents /top-setups as ranked by opportunity_score.
+    # Preserve that order when scores are absent, but sort deterministically
+    # when scores are present so downstream consumers can use rank directly.
+    if any(item.get("opportunity_score") is not None for item in top_setups):
+        top_setups.sort(
+            key=lambda item: (
+                item.get("opportunity_score") is not None,
+                item.get("opportunity_score") if item.get("opportunity_score") is not None else float("-inf"),
+            ),
+            reverse=True,
+        )
+    for rank, item in enumerate(top_setups, start=1):
+        item["rank"] = rank
+
+    symbols = sorted({item["ticker"] for item in top_setups})
     if not symbols:
         raise RuntimeError("TradingVolatility liquid-options universe was empty")
 
@@ -183,6 +270,8 @@ def _build_payload(
         "last_success_at": _iso(retrieved_at),
         "universe_count": len(symbols),
         "symbols": symbols,
+        "top_setups": top_setups,
+        "top_setup_count": len(top_setups),
         "symbol_context": {
             "symbol": symbol,
             "covered": symbol in symbols,
@@ -206,6 +295,7 @@ def _unavailable(
     configured: bool,
     checked_at: datetime,
     error: str,
+    retry_at: datetime | None = None,
 ) -> dict[str, Any]:
     return {
         "configured": configured,
@@ -219,8 +309,11 @@ def _unavailable(
         "last_success_at": _iso(_CACHE.get("last_success_at")),
         "universe_count": None,
         "symbols": [],
+        "top_setups": [],
+        "top_setup_count": 0,
         "symbol_context": None,
         "last_error": error,
+        "next_retry_at": _iso(retry_at),
     }
 
 
@@ -244,7 +337,16 @@ async def get_trading_volatility_context(
 
     checked_at = _CACHE.get("checked_at")
     cached = _CACHE.get("payload")
-    if isinstance(checked_at, datetime) and isinstance(cached, dict):
+    retry_at = _CACHE.get("retry_at")
+    if isinstance(retry_at, datetime) and retrieved_at < retry_at:
+        return _unavailable(
+            configured=True,
+            checked_at=retrieved_at,
+            error="TradingVolatility rate limited; waiting for vendor cooldown",
+            retry_at=retry_at,
+        )
+    if (isinstance(checked_at, datetime) and isinstance(cached, dict)
+            and cached.get("available")):
         if _age_seconds(retrieved_at, checked_at) < refresh_seconds:
             result = dict(cached)
             result["cache_age_seconds"] = round(_age_seconds(retrieved_at, checked_at), 1)
@@ -253,11 +355,10 @@ async def get_trading_volatility_context(
     _CACHE["checked_at"] = retrieved_at
     symbol = symbol.upper()
     try:
-        universe_payload, curve_payload, levels_payload = await asyncio.gather(
-            _get(client, "/top-setups", {"limit": universe_limit, "min_score": 0}),
-            _get(client, f"/tickers/{symbol}/curves/gex_by_strike", {"exp": "nearest"}),
-            _get(client, f"/tickers/{symbol}/levels", {}),
-        )
+        # A 429 on the roster must stop the cycle before two more charged calls.
+        universe_payload = await _get(client, "/top-setups", {"limit": universe_limit, "min_score": 0})
+        curve_payload = await _get(client, f"/tickers/{symbol}/curves/gex_by_strike", {"exp": "nearest"})
+        levels_payload = await _get(client, f"/tickers/{symbol}/levels", {})
         payload = _build_payload(
             universe_payload,
             curve_payload,
@@ -266,8 +367,17 @@ async def get_trading_volatility_context(
             retrieved_at=retrieved_at,
             max_age_seconds=max_age_seconds,
         )
-        _CACHE.update(last_success_at=retrieved_at, payload=payload)
+        _CACHE.update(last_success_at=retrieved_at, payload=payload,
+                      retry_at=None, rate_limit_strikes=0)
         return payload
+    except VendorRateLimited as exc:
+        strikes = int(_CACHE.get("rate_limit_strikes") or 0) + 1
+        retry_at = retrieved_at + timedelta(seconds=_retry_delay(exc.retry_after, retrieved_at, strikes))
+        _CACHE.update(retry_at=retry_at, rate_limit_strikes=strikes)
+        failure = _unavailable(configured=True, checked_at=retrieved_at,
+                               error=str(exc), retry_at=retry_at)
+        _CACHE["payload"] = failure
+        return failure
     except Exception as exc:  # noqa: BLE001
         failure = _unavailable(
             configured=True,

@@ -2,9 +2,18 @@
 
 ## What Is IronForge
 
-IronForge is a **standalone SPY Iron Condor paper trading system** that runs independently from the main AlphaGEX platform. It uses **PostgreSQL on Render** for all data storage and runs as a **Render-hosted Next.js web service** (dashboard + scanner in one process).
+IronForge is an independently deployed trading application inside the AlphaGEX
+monorepo. `ironforge-customer` builds `ironforge/webapp`; Next.js serves the
+customer/operator surfaces and runs the one-minute scanner. Internal trading
+state uses PostgreSQL through `lib/db.ts`; app-customer execution uses its own
+customer database and SnapTrade mirror path.
 
-It runs three bots — **FLAME** (2DTE), **SPARK** (1DTE), and **INFERNO** (0DTE) — that trade SPY Iron Condors using real Tradier market data with paper execution. INFERNO is a FORTRESS-style aggressive bot that allows unlimited trades/day with multiple simultaneous positions.
+**Spark and Flame current state: September 28, 2026.** Both run 0DTE EBB SPY put
+credit spreads, with different clocks, offsets and widths. They are not the
+retired 1DTE/2DTE iron-condor products, and they are not universally paper-only.
+Read [the current strategy reference](SPARK_FLAME_CURRENT_STATE_2026-09-28.md)
+for sizing, assignment guards, optional FLINT/XSP features, and switch defaults.
+INFERNO and other bot descriptions are outside this Spark/Flame update.
 
 ## Architecture
 
@@ -102,8 +111,8 @@ ironforge/
     │           ├── diagnose-pnl/route.ts  # Diagnose P&L discrepancies
     │           ├── eod-close/route.ts     # Force close all positions (EOD)
     │           ├── signals/route.ts       # Recent signals
-    │           ├── pdt/route.ts         # ✅ Databricks — PDT status + toggle/reset
-    │           └── pdt/audit/route.ts   # ✅ Databricks — PDT audit log
+    │           ├── pdt/route.ts         # PostgreSQL — PDT status + toggle/reset
+    │           └── pdt/audit/route.ts   # PostgreSQL — PDT audit log
     └── .env.local.example
 ```
 
@@ -134,55 +143,48 @@ Scanner runs inside the Next.js process via `@/lib/scanner.ts`.
 - `api/accounts/test-all/route.ts` — Account connectivity test
 - `api/accounts/production/route.ts` — Sandbox account balances with bot attribution
 
-## Bots
+## Spark and Flame parameters (September 28, 2026)
 
-| Bot | DTE | Description |
-|-----|-----|-------------|
-| **FLAME** | 2DTE | Longer-duration Iron Condors. More premium, more time to work. |
-| **SPARK** | 1DTE | Shorter-duration Iron Condors. Faster theta decay, quicker resolution. |
-| **INFERNO** | 0DTE | FORTRESS-style aggressive Iron Condors. Unlimited trades/day, multiple simultaneous positions. |
+| Parameter | Spark | Flame |
+|---|---|---|
+| Main strategy | 0DTE EBB put credit spread | 0DTE EBB put credit spread |
+| Entry default (CT) | 10:05–10:20 AM | 1:05–1:10 PM |
+| Short put | `Math.round(SPY - 2)` | `Math.round(SPY - 1)` |
+| Wing width | $5 | $2 |
+| Minimum credit code floor | $0.10/share | $0.10/share |
+| VIX-decay ratio ceiling | 0.90 | 0.80 |
+| Main trades/day default | 1 | 1 |
+| Intraday PT default / conventional stop | PT off / stop not consulted | PT off / stop not consulted |
+| Internal paper seed | $5,000 | $2,000 |
 
-FLAME and SPARK share identical config except `min_dte`. INFERNO uses FORTRESS-style aggressive parameters. Key parameters:
-- Ticker: SPY
-- Starting capital: $10,000 (paper)
-- Spread width: $5
-- SD multiplier: 1.2x (FLAME/SPARK), 1.0x (INFERNO)
-- Profit target: 30% of credit (FLAME/SPARK), 50% (INFERNO)
-- Stop loss: 100% of credit / 2.0x (FLAME/SPARK), 100% of credit / 2.0x (INFERNO)
-- Max 1 trade/day (FLAME/SPARK), unlimited (INFERNO)
-- Position sizing: **Per-trade Kelly criterion** (INFERNO + SPARK, half-Kelly clamped 10%-85%), BP-sized (FLAME)
-- No max_contracts ceiling — Kelly sizes dynamically based on WP × R/R ratio
-- VIX skip: > 32
-- PDT limit: 4 day trades / 5 rolling business days (matches FINRA Rule 4210)
-- Entry window: 8:30 AM - 2:00 PM CT (FLAME/SPARK), 8:30 AM - 2:30 PM CT (INFERNO)
-- EOD cutoff: 2:50 PM CT (scanner.ts isAfterEodCutoff >= 1450)
-- Scan frequency: every 1 minute (scanner.ts SCAN_INTERVAL_MS)
+The VIX ratio uses the prior session close divided by the maximum of the
+20 earlier sessions. Missing history blocks entry. Config overrides can affect
+entry end, credit, PT, and trade count; scope reads to `0DTE` and account type.
+Strike placement and width come from `botStructure`, not SD/delta settings.
 
-## Trading Cycle (trader.py `run_cycle()`)
+### Sizing and customer execution
 
-1. Always manage existing positions first (profit target, stop loss, EOD, stale/expired)
-2. Check bot active
-3. Check trading window
-4. Check open positions (only 1 at a time)
-5. Check already-traded-today (max 1/day)
-6. PDT check
-7. Buying power check (>$200)
-8. Generate signal (Tradier spot + VIX, SD strikes, symmetric wings, real bid/ask credits)
-9. Size trade (collateral math, 85% BP usage)
-10. Race guard (re-check no open position)
-11. Execute paper trade
-12. Save equity snapshot every cycle
+Customer enrollment defaults to 20% deployment; the saved customer percentage
+and fresh broker buying power determine base contracts. Optional customer
+floor/calm/FLINT switches are independently default-off. ONE_STRATEGY is a
+separate default-off switch routing internal production/sandbox sizing through
+the same pure package (N=3, K=0.10, variant G, $50 buffer, calm ratio ≤0.70).
+Customer mirrors do not use ONE_STRATEGY, but still use their own switches.
+This is not Kelly sizing and `max_contracts=1` in a config display is not a
+universal live/customer ceiling.
 
-## Exit Logic
+### Exits and reconciliation
 
-| Trigger | Condition |
-|---------|-----------|
-| Profit target | Cost to close <= 70% of entry credit |
-| Stop loss | Cost to close >= 200% of entry credit (2.0x) |
-| EOD safety | Time >= 2:50 PM CT |
-| Stale/expired | Position from prior day or past expiration |
-| Data failure | 10 consecutive MTM failures |
-| Server restart | Force-close if market closed, resume if open |
+EBB's generic 2:45 PM cutoff is deferred to expiry handling. The assignment
+guard runs during the final three minutes before the actual close (including
+early-close days), and attempts to buy back at-risk SPY shorts. Source buffer
+fallback is $0.50; an environment override can differ. XSP swap legs, when
+enabled, are separately cash-settled and guard-exempt. Customer broker fills
+and settlement must be reconciled separately from internal paper accounting.
+
+See [the complete current reference](SPARK_FLAME_CURRENT_STATE_2026-09-28.md).
+Python `trader.py` cycles and the former generic PT/SL table are reference-only,
+not operating rules for Spark or Flame.
 
 ## Database Tables (PostgreSQL on Render)
 
@@ -231,7 +233,7 @@ All routes are dynamic: `/api/[bot]/...` where bot is `flame`, `spark`, or `infe
 | `GET /api/{bot}/config` | Bot config (merged defaults + DB) |
 | `PUT /api/{bot}/config` | Update bot config (MERGE upsert) |
 | `POST /api/{bot}/toggle` | Enable/disable bot |
-| `POST /api/{bot}/force-trade` | Force open IC position |
+| `POST /api/{bot}/force-trade` | Force entry through the applicable bot strategy |
 | `POST /api/{bot}/force-close` | Force close position |
 | `GET /api/{bot}/logs` | Activity logs |
 | `GET /api/{bot}/fix-collateral` | Diagnose stuck collateral (read-only) |
@@ -240,7 +242,7 @@ All routes are dynamic: `/api/[bot]/...` where bot is `flame`, `spark`, or `infe
 | `GET /api/{bot}/diagnose-pnl` | Diagnose P&L discrepancies |
 | `POST /api/{bot}/eod-close` | Force close all positions (EOD safety) |
 | `GET /api/{bot}/signals` | Recent signals (scan activity) |
-| `GET /api/health` | Databricks connectivity check |
+| `GET /api/health` | Runtime database/market-data health check |
 
 ## Frontend Pages
 
@@ -256,9 +258,9 @@ All routes are dynamic: `/api/[bot]/...` where bot is `flame`, `spark`, or `infe
 ## Key Design Decisions
 
 1. **Fully standalone** — no imports from the main AlphaGEX codebase. Has its own Tradier client, config, DB layer
-2. **Unified code for all bots** — Trader, SignalGenerator, PaperExecutor, TradingDatabase all parameterized by BotConfig (FLAME/SPARK differ only by `min_dte`; INFERNO adds `max_trades_per_day=0` (unlimited) and FORTRESS-style parameters)
-3. **Real market data, paper execution** — Tradier production/sandbox API for quotes and option chains, but no actual orders placed
-4. **Conservative fills** — sells at bid, buys at ask (worst-case paper fills)
+2. **Executable source governs** — Spark/Flame use `scanner.ts` with distinct clocks and structures; the Python BotConfig factories are historical references.
+3. **Separate execution scopes** — internal paper, Tradier sandbox/production, and activated customer brokerage execution have distinct gates and ledgers. Verify the applicable arming switches; do not assume paper-only.
+4. **Execution evidence** — bid/ask paper accounting does not prove actual multileg fills; reconcile broker orders and balances independently.
 5. **PostgreSQL on Render** — all persistence via PostgreSQL. Next.js API routes use `@/lib/db.ts` client. Tables auto-created on first use.
 6. **Oracle fields stored but not yet wired** — position table has oracle_confidence, oracle_win_probability, etc. but signal generator doesn't call Oracle yet
 
@@ -322,7 +324,7 @@ catching every adjacent bug. Stay inside the approved scope:
 - Databricks notebooks in `ironforge/databricks/`
 - Any backend code outside the webapp
 
-**Why:** The webapp is the only deployed backend. Vercel serves the Next.js API routes. There is no other backend server. Scripts and notebooks require manual Databricks access — the webapp API routes can be called from the browser or curl immediately.
+**Why:** The Render-hosted webapp is the deployed IronForge backend. Put supported operational endpoints in the webapp and use the authenticated operator surface. The retired Databricks runtime is not an operational path.
 
 **Pattern for fix/diagnostic endpoints:**
 ```
@@ -340,7 +342,7 @@ POST /api/{bot}/fix-{issue}  → Apply the fix
 1. **Stale positions**: Positions past expiration or from a prior trading day still marked `status = 'open'`
 2. **Orphan positions**: Open positions with wrong/NULL `dte_mode` — invisible to the status API's dte filter but holding collateral
 3. **Paper account drift**: `paper_account.collateral_in_use` gets out of sync with actual open positions (e.g., position was closed but collateral wasn't released)
-4. **Schema mismatch**: Vercel `DATABRICKS_SCHEMA` env var pointing to `default` instead of `ironforge` — reads completely different stale data
+4. **Scope mismatch**: wrong PostgreSQL instance, account type, person, or retired DTE tag — reads a different ledger from the current 0DTE strategy.
 
 **Fix:**
 ```
@@ -368,68 +370,48 @@ If the dashboard still shows wrong values despite the database being correct, ch
 
 **Fix:** Same as stuck collateral — `POST /api/{bot}/fix-collateral` reconciles all values.
 
-### Tradier Sandbox Positions Won't Close (400 Errors)
+### Spark/Flame broker positions and expiry
 
-**Symptoms:** Notebook or API trying to close Tradier sandbox positions gets 400 errors on all attempts (4-leg, 2x2-leg, individual).
+Reconcile pending orders and filled positions on the correct brokerage account.
+A database close or paper settlement does not prove that a broker position
+closed. Inspect the existing close order before attempting another, and compare
+contracts, cash, assignment and buying power after settlement. Do not stack
+orders or treat a collateral repair as evidence of a broker fill.
 
-**Root Causes (in order of likelihood):**
-1. **Market is closed** — Options can only be traded during market hours (8:30 AM - 3:00 PM CT). Sandbox rejects orders outside this window.
-2. **Options expired** — 0DTE options (same-day expiration) can't be closed after ~2:45 PM CT. They auto-expire at settlement. Wait for overnight settlement, then collateral is released.
-3. **Negative buying power** — Even closing orders can be rejected when option buying power is deeply negative. Close smallest positions first to free margin, then close larger ones.
-4. **Sandbox quantity limits** — Very large orders (200+ contracts) may be rejected. Split into smaller batches.
-
-**Fix procedure:**
-1. Wait until next market day (after 8:30 AM CT)
-2. Expired options (0DTE) will have settled overnight — their collateral is released
-3. Close remaining open positions (March 16, March 17 expirations) during market hours
-4. If 400 errors persist, try smaller quantities or contact Tradier support for sandbox reset
-
-**Prevention:** The scanner's EOD close logic (`eod-close` API route + scanner `close_position()`) should close all positions before 2:45 PM CT daily. If positions are left open:
-- Check scanner heartbeat (is it running?)
-- Check scanner logs for close failures
-- Use `POST /api/{bot}/force-close` during market hours
+EBB defaults hold toward expiry; it does not close every position at 2:45 PM.
+The final-three-minute assignment guard follows the actual close, including
+early-close days. An expired contract cannot be closed as a new option trade
+the next morning; reconcile settlement/assignment instead. See the current
+reference for SPY guard handling and the XSP exemption.
 
 ## Operations Runbook
 
-### Daily Health Check
-1. Visit each bot dashboard (FLAME, SPARK, INFERNO)
-2. Verify: open_positions matches collateral (0 positions = $0 collateral)
-3. Verify: balance = $10,000 + cumulative_pnl
-4. Check scanner heartbeat is recent (< 10 min old)
+### Daily Spark/Flame health check
 
-### When Dashboard Shows Wrong Data
-```
-Step 1: Check database directly (Databricks SQL Editor)
-  → SELECT * FROM alpha_prime.ironforge.{bot}_paper_account WHERE is_active = TRUE
+1. Verify deployed commit and surface. Use authenticated operator routes for
+   `/api/{bot}/status` and `/api/{bot}/config`; customer-only surfaces can 404 them.
+2. Select the correct person, account type and current `0DTE` ledger. Old
+   `1DTE`/`2DTE` records are retained history, not the active configuration.
+3. Check heartbeat, entry-window decisions, VIX history/gate, feature switches,
+   and order errors. The scanner runs every minute.
+4. Reconcile internal account basis, P&L and open-position collateral within
+   the same scope. Paper seeds are Spark $5,000 / Flame $2,000.
+5. For customers, inspect saved authorization and fresh broker balances plus
+   actual order/fill records in the customer execution path. A master position
+   alone does not establish a customer fill.
 
-Step 2: Check API directly (browser)
-  → ironforge-pi.vercel.app/api/{bot}/status
+### Dashboard or collateral discrepancy
 
-Step 3: Compare database vs API
-  → If API matches database but dashboard is wrong → browser cache (Ctrl+Shift+R)
-  → If API differs from database → Databricks SQL cache issue (check cacheBust in databricks-sql.ts)
-  → If both are wrong → data needs reconciliation (POST /api/{bot}/fix-collateral)
-```
+Start with read-only status and diagnostic routes on the operator service.
+Compare with PostgreSQL using `DATABASE_URL`, `dte_mode='0DTE'`, account type
+and person filters. Customer records use `CUSTOMERS_DATABASE_URL` separately.
+If a repair is needed, inspect the implementation and its mutation scope before
+calling its POST endpoint; reconcile broker state independently afterward.
 
-### When Positions Are Stuck Open
-```
-Step 1: Check if market is open (8:30 AM - 3:00 PM CT, Mon-Fri)
-  → If closed: wait until next market day
+### Deployment verification
 
-Step 2: Try force-close via webapp
-  → POST /api/{bot}/force-close
-
-Step 3: If force-close fails, use fix-collateral
-  → POST /api/{bot}/fix-collateral
-  (closes stale/expired/orphan positions in the database)
-
-Step 4: For Tradier sandbox positions, run close_all_tradier_positions notebook
-  → ONLY during market hours
-  → Expired options settle automatically overnight
-```
-
-### When Adding New Features or Fixes
-1. **ALL backend code goes in `ironforge/webapp/src/app/api/`** — no scripts, no notebooks
-2. **Create a PR to `main`** — Vercel auto-deploys from main
-3. **Verify deployment** — check Vercel Deployments page, then hit the API endpoint in browser
-4. **Test with GET first** — diagnostic endpoints should be read-only on GET, write on POST
+Create a reviewed PR to `main`; Render services following main can auto-deploy.
+Verify the actual live commit on each affected service and the correct surface.
+A source default or successful build does not prove an environment feature is
+armed, a customer is eligible, or an order filled. Historical Databricks and
+Vercel instructions do not apply to this runtime.

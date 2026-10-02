@@ -1,5 +1,12 @@
 # IronForge Sandbox
 
+## Spark/Flame strategy baseline
+
+The seeded sandbox fixture and its `production` row labels are test data, not
+live fills or current strategy parameters. Use [September 28 current state](SPARK_FLAME_CURRENT_STATE_2026-09-28.md) for the 0DTE EBB definitions. The
+separate staging deployment retains the safety gates described below;
+ONE_STRATEGY must not be used to bypass them.
+
 ## The deploy gate
 
 The sandbox tracks the **`staging`** branch, not `main`. That is the whole point:

@@ -21,6 +21,7 @@ Endpoints follow the standard bot pattern:
   /disable       - Disable trading
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Optional, Dict
@@ -103,7 +104,7 @@ async def get_status():
         }
 
     try:
-        status = trader.get_status()
+        status = await asyncio.to_thread(trader.get_status)
         return {
             "success": True,
             "data": status,
@@ -133,8 +134,8 @@ async def get_positions():
         return {"success": False, "data": [], "message": "AGAPE-ETH-PERP not available"}
 
     try:
-        positions = trader.db.get_open_positions()
-        current_price = trader.executor.get_current_price()
+        positions = await asyncio.to_thread(trader.db.get_open_positions)
+        current_price = await asyncio.to_thread(trader.executor.get_current_price)
 
         # Add unrealized P&L - Perpetual: no contract_size multiplier
         for pos in positions:
@@ -169,7 +170,7 @@ async def get_closed_trades(
         return {"success": False, "data": [], "message": "AGAPE-ETH-PERP not available"}
 
     try:
-        trades = trader.db.get_closed_trades(limit=limit)
+        trades = await asyncio.to_thread(trader.db.get_closed_trades, limit=limit)
         return {
             "success": True,
             "data": trades,
@@ -219,116 +220,119 @@ async def get_equity_curve(
             "timestamp": now.isoformat(),
         }
 
-    conn = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        # Get starting capital from config
-        starting_capital = 12500.0
+    def _query():
+        conn = None
         try:
-            cursor.execute(
-                "SELECT value FROM autonomous_config WHERE key = 'agape_eth_perp_starting_capital'"
-            )
-            row = cursor.fetchone()
-            if row and row[0]:
-                starting_capital = float(row[0])
-        except Exception:
-            pass
+            conn = get_connection()
+            cursor = conn.cursor()
 
-        # Get ALL closed trades ordered chronologically (no date filter on SQL)
-        cursor.execute("""
-            SELECT
-                (close_time AT TIME ZONE 'America/Chicago')::date as trade_date,
-                realized_pnl,
-                position_id
-            FROM agape_eth_perp_positions
-            WHERE status IN ('closed', 'expired', 'stopped')
-              AND close_time IS NOT NULL
-              AND realized_pnl IS NOT NULL
-            ORDER BY close_time ASC
-        """)
-        rows = cursor.fetchall()
+            # Get starting capital from config
+            starting_capital = 12500.0
+            try:
+                cursor.execute(
+                    "SELECT value FROM autonomous_config WHERE key = 'agape_eth_perp_starting_capital'"
+                )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    starting_capital = float(row[0])
+            except Exception:
+                pass
 
-        if not rows:
-            now = datetime.now(CENTRAL_TZ)
+            # Get ALL closed trades ordered chronologically (no date filter on SQL)
+            cursor.execute("""
+                SELECT
+                    (close_time AT TIME ZONE 'America/Chicago')::date as trade_date,
+                    realized_pnl,
+                    position_id
+                FROM agape_eth_perp_positions
+                WHERE status IN ('closed', 'expired', 'stopped')
+                  AND close_time IS NOT NULL
+                  AND realized_pnl IS NOT NULL
+                ORDER BY close_time ASC
+            """)
+            rows = cursor.fetchall()
+
+            if not rows:
+                now = datetime.now(CENTRAL_TZ)
+                return {
+                    "success": True,
+                    "data": {
+                        "equity_curve": [{
+                            "date": now.strftime("%Y-%m-%d"),
+                            "daily_pnl": 0.0,
+                            "cumulative_pnl": 0.0,
+                            "equity": starting_capital,
+                            "trades": 0,
+                            "return_pct": 0.0,
+                        }],
+                        "starting_capital": starting_capital,
+                        "current_equity": starting_capital,
+                        "total_pnl": 0.0,
+                        "total_return_pct": 0.0,
+                    },
+                    "points": 1,
+                    "days": days,
+                    "timestamp": now.isoformat(),
+                }
+
+            # Aggregate by day
+            from collections import defaultdict
+            daily: Dict = defaultdict(lambda: {"pnl": 0.0, "trades": 0})
+            for row in rows:
+                trade_date = str(row[0])
+                pnl = float(row[1]) if row[1] else 0.0
+                daily[trade_date]["pnl"] += pnl
+                daily[trade_date]["trades"] += 1
+
+            # Build equity curve chronologically
+            sorted_dates = sorted(daily.keys())
+            cumulative_pnl = 0.0
+            equity_curve = []
+
+            for d in sorted_dates:
+                day_pnl = daily[d]["pnl"]
+                day_trades = daily[d]["trades"]
+                cumulative_pnl += day_pnl
+                equity = starting_capital + cumulative_pnl
+
+                equity_curve.append({
+                    "date": d,
+                    "daily_pnl": round(day_pnl, 2),
+                    "cumulative_pnl": round(cumulative_pnl, 2),
+                    "equity": round(equity, 2),
+                    "trades": day_trades,
+                    "return_pct": round(max(-100.0, cumulative_pnl / starting_capital * 100), 2),
+                })
+
+            # Filter to requested days (output filter only, not SQL)
+            if days < 365 and len(equity_curve) > days:
+                equity_curve = equity_curve[-days:]
+
+            current_equity = equity_curve[-1]["equity"] if equity_curve else starting_capital
+            total_pnl = equity_curve[-1]["cumulative_pnl"] if equity_curve else 0.0
+
             return {
                 "success": True,
                 "data": {
-                    "equity_curve": [{
-                        "date": now.strftime("%Y-%m-%d"),
-                        "daily_pnl": 0.0,
-                        "cumulative_pnl": 0.0,
-                        "equity": starting_capital,
-                        "trades": 0,
-                        "return_pct": 0.0,
-                    }],
+                    "equity_curve": equity_curve,
                     "starting_capital": starting_capital,
-                    "current_equity": starting_capital,
-                    "total_pnl": 0.0,
-                    "total_return_pct": 0.0,
+                    "current_equity": round(current_equity, 2),
+                    "total_pnl": round(total_pnl, 2),
+                    "total_return_pct": round(max(-100.0, total_pnl / starting_capital * 100), 2),
                 },
-                "points": 1,
+                "points": len(equity_curve),
                 "days": days,
-                "timestamp": now.isoformat(),
+                "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
             }
+        finally:
+            if conn:
+                conn.close()
 
-        # Aggregate by day
-        from collections import defaultdict
-        daily: Dict = defaultdict(lambda: {"pnl": 0.0, "trades": 0})
-        for row in rows:
-            trade_date = str(row[0])
-            pnl = float(row[1]) if row[1] else 0.0
-            daily[trade_date]["pnl"] += pnl
-            daily[trade_date]["trades"] += 1
-
-        # Build equity curve chronologically
-        sorted_dates = sorted(daily.keys())
-        cumulative_pnl = 0.0
-        equity_curve = []
-
-        for d in sorted_dates:
-            day_pnl = daily[d]["pnl"]
-            day_trades = daily[d]["trades"]
-            cumulative_pnl += day_pnl
-            equity = starting_capital + cumulative_pnl
-
-            equity_curve.append({
-                "date": d,
-                "daily_pnl": round(day_pnl, 2),
-                "cumulative_pnl": round(cumulative_pnl, 2),
-                "equity": round(equity, 2),
-                "trades": day_trades,
-                "return_pct": round(max(-100.0, cumulative_pnl / starting_capital * 100), 2),
-            })
-
-        # Filter to requested days (output filter only, not SQL)
-        if days < 365 and len(equity_curve) > days:
-            equity_curve = equity_curve[-days:]
-
-        current_equity = equity_curve[-1]["equity"] if equity_curve else starting_capital
-        total_pnl = equity_curve[-1]["cumulative_pnl"] if equity_curve else 0.0
-
-        return {
-            "success": True,
-            "data": {
-                "equity_curve": equity_curve,
-                "starting_capital": starting_capital,
-                "current_equity": round(current_equity, 2),
-                "total_pnl": round(total_pnl, 2),
-                "total_return_pct": round(max(-100.0, total_pnl / starting_capital * 100), 2),
-            },
-            "points": len(equity_curve),
-            "days": days,
-            "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
-        }
-
+    try:
+        return await asyncio.to_thread(_query)
     except Exception as e:
         logger.error(f"AGAPE-ETH-PERP equity curve error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            conn.close()
 
 
 @router.get("/equity-curve/intraday")
@@ -347,188 +351,192 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
     if not get_connection:
         return _intraday_fallback(today, now, current_time, starting_capital)
 
-    conn = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        # Get starting capital from config
-        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'agape_eth_perp_starting_capital'")
-        row = cursor.fetchone()
-        if row and row[0]:
-            try:
-                starting_capital = float(row[0])
-            except (ValueError, TypeError):
-                pass
-
-        # Get intraday snapshots for the requested date
-        cursor.execute("""
-            SELECT timestamp, equity, unrealized_pnl,
-                   realized_pnl_cumulative, open_positions, eth_price
-            FROM agape_eth_perp_equity_snapshots
-            WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
-            ORDER BY timestamp ASC
-        """, (today,))
-        snapshots = cursor.fetchall()
-
-        # Get total realized P&L from all closed positions up to today
-        cursor.execute("""
-            SELECT COALESCE(SUM(realized_pnl), 0)
-            FROM agape_eth_perp_positions
-            WHERE status IN ('closed', 'expired', 'stopped')
-            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') <= %s
-        """, (today,))
-        total_realized_row = cursor.fetchone()
-        total_realized = float(total_realized_row[0]) if total_realized_row and total_realized_row[0] else 0
-
-        # Get today's closed positions P&L
-        cursor.execute("""
-            SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
-            FROM agape_eth_perp_positions
-            WHERE status IN ('closed', 'expired', 'stopped')
-            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
-        """, (today,))
-        today_row = cursor.fetchone()
-        today_realized = float(today_row[0]) if today_row and today_row[0] else 0
-        today_closed_count = int(today_row[1]) if today_row and today_row[1] else 0
-
-        # Get today's closed trades with timestamps for accurate intraday cumulative calculation
-        cursor.execute("""
-            SELECT COALESCE(close_time, open_time)::timestamptz, realized_pnl
-            FROM agape_eth_perp_positions
-            WHERE status IN ('closed', 'expired', 'stopped')
-            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
-            ORDER BY COALESCE(close_time, open_time) ASC
-        """, (today,))
-        today_closes = cursor.fetchall()
-
-        # Calculate unrealized P&L from open positions
-        # Perpetual: P&L = (current - entry) * quantity * direction
-        unrealized_pnl = 0.0
-        open_positions_count = 0
-
-        cursor.execute("""
-            SELECT position_id, side, quantity, entry_price
-            FROM agape_eth_perp_positions
-            WHERE status = 'open'
-        """)
-        open_rows = cursor.fetchall()
-        open_positions_count = len(open_rows)
-
-        if open_rows:
-            # Get current ETH price from latest snapshot or trader
-            current_eth_price = None
-            if snapshots:
-                current_eth_price = float(snapshots[-1][5]) if snapshots[-1][5] else None
-
-            if not current_eth_price:
-                # Try from trader
-                trader = _get_trader()
-                if trader:
-                    try:
-                        current_eth_price = trader.executor.get_current_price()
-                    except Exception:
-                        pass
-
-            if current_eth_price:
-                for pos_row in open_rows:
-                    side = pos_row[1]
-                    quantity = float(pos_row[2])
-                    entry_price = float(pos_row[3])
-                    direction = 1 if side == 'long' else -1
-                    pnl = (current_eth_price - entry_price) * quantity * direction
-                    unrealized_pnl += pnl
-
-        conn.close()
+    def _query():
         conn = None
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
 
-        # Build intraday data_points (frontend expects this format)
-        data_points = []
+            # Get starting capital from config
+            local_starting_capital = starting_capital
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'agape_eth_perp_starting_capital'")
+            row = cursor.fetchone()
+            if row and row[0]:
+                try:
+                    local_starting_capital = float(row[0])
+                except (ValueError, TypeError):
+                    pass
 
-        # Add market open point (perpetuals trade 24/7, use 00:00 for "day start")
-        prev_day_realized = total_realized - today_realized
-        market_open_equity = round(starting_capital + prev_day_realized, 2)
-        data_points.append({
-            "timestamp": f"{today}T00:00:00",
-            "time": "00:00:00",
-            "equity": market_open_equity,
-            "cumulative_pnl": round(prev_day_realized, 2),
-            "open_positions": 0,
-            "unrealized_pnl": 0
-        })
+            # Get intraday snapshots for the requested date
+            cursor.execute("""
+                SELECT timestamp, equity, unrealized_pnl,
+                       realized_pnl_cumulative, open_positions, eth_price
+                FROM agape_eth_perp_equity_snapshots
+                WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                ORDER BY timestamp ASC
+            """, (today,))
+            snapshots = cursor.fetchall()
 
-        all_equities = [market_open_equity]
+            # Get total realized P&L from all closed positions up to today
+            cursor.execute("""
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM agape_eth_perp_positions
+                WHERE status IN ('closed', 'expired', 'stopped')
+                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') <= %s
+            """, (today,))
+            total_realized_row = cursor.fetchone()
+            total_realized = float(total_realized_row[0]) if total_realized_row and total_realized_row[0] else 0
 
-        # Add snapshots with correct cumulative realized at each timestamp
-        for snapshot in snapshots:
-            ts, balance, snap_unrealized, snap_realized_cum, open_count, eth_price = snapshot
-            snap_time = ts.astimezone(CENTRAL_TZ) if ts.tzinfo else ts
+            # Get today's closed positions P&L
+            cursor.execute("""
+                SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
+                FROM agape_eth_perp_positions
+                WHERE status IN ('closed', 'expired', 'stopped')
+                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
+            """, (today,))
+            today_row = cursor.fetchone()
+            today_realized = float(today_row[0]) if today_row and today_row[0] else 0
+            today_closed_count = int(today_row[1]) if today_row and today_row[1] else 0
 
-            # Calculate cumulative realized at this snapshot's timestamp from actual trades
-            snap_realized_val = prev_day_realized
-            for close_time, close_pnl in today_closes:
-                close_time_ct = close_time.astimezone(CENTRAL_TZ) if close_time and close_time.tzinfo else close_time
-                if close_time_ct and close_time_ct <= snap_time:
-                    snap_realized_val += float(close_pnl or 0)
+            # Get today's closed trades with timestamps for accurate intraday cumulative calculation
+            cursor.execute("""
+                SELECT COALESCE(close_time, open_time)::timestamptz, realized_pnl
+                FROM agape_eth_perp_positions
+                WHERE status IN ('closed', 'expired', 'stopped')
+                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                ORDER BY COALESCE(close_time, open_time) ASC
+            """, (today,))
+            today_closes = cursor.fetchall()
 
-            snap_unrealized_val = float(snap_unrealized or 0)
-            snap_equity = round(starting_capital + snap_realized_val + snap_unrealized_val, 2)
-            all_equities.append(snap_equity)
+            # Calculate unrealized P&L from open positions
+            # Perpetual: P&L = (current - entry) * quantity * direction
+            unrealized_pnl = 0.0
+            open_positions_count = 0
 
+            cursor.execute("""
+                SELECT position_id, side, quantity, entry_price
+                FROM agape_eth_perp_positions
+                WHERE status = 'open'
+            """)
+            open_rows = cursor.fetchall()
+            open_positions_count = len(open_rows)
+
+            if open_rows:
+                # Get current ETH price from latest snapshot or trader
+                current_eth_price = None
+                if snapshots:
+                    current_eth_price = float(snapshots[-1][5]) if snapshots[-1][5] else None
+
+                if not current_eth_price:
+                    # Try from trader
+                    trader = _get_trader()
+                    if trader:
+                        try:
+                            current_eth_price = trader.executor.get_current_price()
+                        except Exception:
+                            pass
+
+                if current_eth_price:
+                    for pos_row in open_rows:
+                        side = pos_row[1]
+                        quantity = float(pos_row[2])
+                        entry_price = float(pos_row[3])
+                        direction = 1 if side == 'long' else -1
+                        pnl = (current_eth_price - entry_price) * quantity * direction
+                        unrealized_pnl += pnl
+
+            conn.close()
+            conn = None
+
+            # Build intraday data_points (frontend expects this format)
+            data_points = []
+
+            # Add market open point (perpetuals trade 24/7, use 00:00 for "day start")
+            prev_day_realized = total_realized - today_realized
+            market_open_equity = round(local_starting_capital + prev_day_realized, 2)
             data_points.append({
-                "timestamp": snap_time.isoformat(),
-                "time": snap_time.strftime('%H:%M:%S'),
-                "equity": snap_equity,
-                "cumulative_pnl": round(snap_realized_val + snap_unrealized_val, 2),
-                "open_positions": open_count or 0,
-                "unrealized_pnl": round(snap_unrealized_val, 2)
+                "timestamp": f"{today}T00:00:00",
+                "time": "00:00:00",
+                "equity": market_open_equity,
+                "cumulative_pnl": round(prev_day_realized, 2),
+                "open_positions": 0,
+                "unrealized_pnl": 0
             })
 
-        # Add current live point
-        current_equity = starting_capital + total_realized + unrealized_pnl
-        if today == now.strftime('%Y-%m-%d'):
-            total_pnl = total_realized + unrealized_pnl
-            current_equity = starting_capital + total_pnl
-            all_equities.append(round(current_equity, 2))
+            all_equities = [market_open_equity]
 
-            data_points.append({
-                "timestamp": now.isoformat(),
-                "time": current_time,
-                "equity": round(current_equity, 2),
-                "cumulative_pnl": round(total_pnl, 2),
-                "open_positions": open_positions_count,
-                "unrealized_pnl": round(unrealized_pnl, 2)
-            })
+            # Add snapshots with correct cumulative realized at each timestamp
+            for snapshot in snapshots:
+                ts, balance, snap_unrealized, snap_realized_cum, open_count, eth_price = snapshot
+                snap_time = ts.astimezone(CENTRAL_TZ) if ts.tzinfo else ts
 
-        high_of_day = max(all_equities) if all_equities else starting_capital
-        low_of_day = min(all_equities) if all_equities else starting_capital
-        day_pnl = today_realized + unrealized_pnl
+                # Calculate cumulative realized at this snapshot's timestamp from actual trades
+                snap_realized_val = prev_day_realized
+                for close_time, close_pnl in today_closes:
+                    close_time_ct = close_time.astimezone(CENTRAL_TZ) if close_time and close_time.tzinfo else close_time
+                    if close_time_ct and close_time_ct <= snap_time:
+                        snap_realized_val += float(close_pnl or 0)
 
-        return {
-            "success": True,
-            "date": today,
-            "bot": "AGAPE-ETH-PERP",
-            "data_points": data_points,
-            "current_equity": round(current_equity, 2),
-            "day_pnl": round(day_pnl, 2),
-            "day_realized": round(today_realized, 2),
-            "day_unrealized": round(unrealized_pnl, 2),
-            "starting_equity": market_open_equity,
-            "high_of_day": round(high_of_day, 2),
-            "low_of_day": round(low_of_day, 2),
-            "snapshots_count": len(snapshots),
-            "today_closed_count": today_closed_count,
-            "open_positions_count": open_positions_count
-        }
+                snap_unrealized_val = float(snap_unrealized or 0)
+                snap_equity = round(local_starting_capital + snap_realized_val + snap_unrealized_val, 2)
+                all_equities.append(snap_equity)
 
+                data_points.append({
+                    "timestamp": snap_time.isoformat(),
+                    "time": snap_time.strftime('%H:%M:%S'),
+                    "equity": snap_equity,
+                    "cumulative_pnl": round(snap_realized_val + snap_unrealized_val, 2),
+                    "open_positions": open_count or 0,
+                    "unrealized_pnl": round(snap_unrealized_val, 2)
+                })
+
+            # Add current live point
+            current_equity = local_starting_capital + total_realized + unrealized_pnl
+            if today == now.strftime('%Y-%m-%d'):
+                total_pnl = total_realized + unrealized_pnl
+                current_equity = local_starting_capital + total_pnl
+                all_equities.append(round(current_equity, 2))
+
+                data_points.append({
+                    "timestamp": now.isoformat(),
+                    "time": current_time,
+                    "equity": round(current_equity, 2),
+                    "cumulative_pnl": round(total_pnl, 2),
+                    "open_positions": open_positions_count,
+                    "unrealized_pnl": round(unrealized_pnl, 2)
+                })
+
+            high_of_day = max(all_equities) if all_equities else local_starting_capital
+            low_of_day = min(all_equities) if all_equities else local_starting_capital
+            day_pnl = today_realized + unrealized_pnl
+
+            return {
+                "success": True,
+                "date": today,
+                "bot": "AGAPE-ETH-PERP",
+                "data_points": data_points,
+                "current_equity": round(current_equity, 2),
+                "day_pnl": round(day_pnl, 2),
+                "day_realized": round(today_realized, 2),
+                "day_unrealized": round(unrealized_pnl, 2),
+                "starting_equity": market_open_equity,
+                "high_of_day": round(high_of_day, 2),
+                "low_of_day": round(low_of_day, 2),
+                "snapshots_count": len(snapshots),
+                "today_closed_count": today_closed_count,
+                "open_positions_count": open_positions_count
+            }
+        finally:
+            if conn:
+                conn.close()
+
+    try:
+        return await asyncio.to_thread(_query)
     except Exception as e:
         logger.error(f"AGAPE-ETH-PERP intraday equity error: {e}")
         import traceback
         traceback.print_exc()
         return _intraday_fallback(today, now, current_time, starting_capital, str(e))
-    finally:
-        if conn:
-            conn.close()
 
 
 def _intraday_fallback(today, now, current_time, starting_capital, error=None):
@@ -574,7 +582,7 @@ async def get_performance():
         return {"success": False, "data": {}, "message": "AGAPE-ETH-PERP not available"}
 
     try:
-        perf = trader.get_performance()
+        perf = await asyncio.to_thread(trader.get_performance)
         return {
             "success": True,
             "data": perf,
@@ -599,7 +607,7 @@ async def get_logs(
         return {"success": False, "data": [], "message": "AGAPE-ETH-PERP not available"}
 
     try:
-        logs = trader.db.get_logs(limit=limit)
+        logs = await asyncio.to_thread(trader.db.get_logs, limit=limit)
         return {
             "success": True,
             "data": logs,
@@ -625,7 +633,7 @@ async def get_scan_activity(
         return {"success": False, "data": [], "message": "AGAPE-ETH-PERP not available"}
 
     try:
-        scans = trader.db.get_scan_activity(limit=limit)
+        scans = await asyncio.to_thread(trader.db.get_scan_activity, limit=limit)
         return {
             "success": True,
             "data": scans,
@@ -759,7 +767,7 @@ async def generate_signal():
         return {"success": False, "message": "AGAPE-ETH-PERP not available"}
 
     try:
-        signal = trader.signals.generate_signal()
+        signal = await asyncio.to_thread(trader.signals.generate_signal)
         return {
             "success": True,
             "data": signal.to_dict(),
@@ -891,14 +899,14 @@ async def get_margin_analysis():
         from trading.shared.margin_config import PERPETUAL_MARGIN_SPECS
 
         spec = PERPETUAL_MARGIN_SPECS.get("ETH-PERP", {})
-        positions = trader.db.get_open_positions()
+        positions = await asyncio.to_thread(trader.db.get_open_positions)
         try:
-            current_price = trader.executor.get_current_price()
+            current_price = await asyncio.to_thread(trader.executor.get_current_price)
         except Exception:
             current_price = None
 
         starting_capital = getattr(trader.config, "starting_capital", 12500.0)
-        closed = trader.db.get_closed_trades(limit=10000)
+        closed = await asyncio.to_thread(trader.db.get_closed_trades, limit=10000)
         realized_pnl = sum(float(t.get("realized_pnl", 0) or 0) for t in closed) if closed else 0.0
         account_equity = starting_capital + realized_pnl
 

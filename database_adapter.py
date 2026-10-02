@@ -28,10 +28,19 @@ class DatabaseAdapter:
     """PostgreSQL database adapter with connection pooling"""
 
     # Pool configuration — PgBouncer handles connection multiplexing; the app
-    # pool is intentionally small (min=1, max=10). PgBouncer will multiplex
-    # these 10 app-side slots across the full server connection limit.
+    # pool is intentionally small relative to Postgres's own max_connections.
+    # Raised from max=10 -> 25 (2026-09-23): once route handlers moved their
+    # blocking psycopg2 calls behind asyncio.to_thread, requests started
+    # running truly in parallel and a single page load (~22 concurrent API
+    # calls) could ask for more simultaneous connections than 10 could serve,
+    # exhausting the pool and contributing to real Postgres deadlocks under
+    # concurrent access. 25 is a conservative bump, not the server's own
+    # max_connections limit — this Postgres instance (pro_4gb) is shared with
+    # alphagex-trader, alphagex-collector, and alphagex-backtester, so this
+    # process must leave real headroom for those. Confirm 25 is safe against
+    # the actual max_connections value on the Render Postgres dashboard.
     MIN_CONNECTIONS = 1
-    MAX_CONNECTIONS = 10
+    MAX_CONNECTIONS = 25
 
     def __init__(self):
         """Initialize adapter with connection pool - requires DATABASE_URL"""

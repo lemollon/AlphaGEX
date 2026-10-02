@@ -91,11 +91,27 @@ import { forgeBriefingsTick } from './forgeBriefings/tick'
 import { isCustomersDbConfigured } from './customers-db'
 import { getCTNow } from './pt-tiers'
 import { runTrialDayClose, marketDateKey, isAfterTrialCloseTime } from './enrollment/trial-close'
-import { mirrorOpenToCustomers, mirrorCloseToCustomers, retryFailedCustomerCloses } from './customer-executor/executor'
+import { mirrorOpenToCustomers, mirrorFlintOpenToCustomers, mirrorCloseToCustomers, retryFailedCustomerCloses } from './customer-executor/executor'
 import { buildTradeOpenedEvent, buildTradeClosedEvent } from './push/trade-events'
 import { dispatchToCustomers } from './push/dispatch'
+import { isXspTicker, isXspSwapMode, decideXspSwap, XSP_TICKER } from './xsp-swap'
+import { settleXspSwapLegsForBot } from './xsp-swap-db'
 import type { LiveBot } from './live/bots'
 import { PROTECTIVE_REASON_PREFIXES } from './live/riskProtection'
+// FLAME v2 / SPARK v2 — D2 regime brain, D1 trailing band, S1 filter, call
+// spread. Every call below is shadow-by-default and wrapped so it can NEVER
+// throw into the scan tick that also places real orders — see flame-v2/engine.ts
+// header comment for the safety invariant and flame-v2/flags.ts for defaults.
+import {
+  flameRegimeBrainDecision, sparkTrailingBandDecision, sparkS1Decision,
+} from './flame-v2/engine'
+import type { D2Features } from './flame-v2/math'
+import { flameRegimeBrainMode, sparkTrailingBandMode, sparkSignalFilterMode, isLive } from './flame-v2/flags'
+import {
+  runFlameV2CallSpreadEntryTick,
+  runFlameV2CallSpreadGuardTick,
+  runFlameV2CallSpreadSettleTick,
+} from './flame-v2/call-spread-live'
 
 /**
  * Ops-channel-only "why no trade today" copy, keyed by the same prefixes as
@@ -214,7 +230,34 @@ import {
   type IcMtmResult,
   getOptionQuote,
   getDailyHistory,
+  getCallSpreadEntryCredit,
+  placeCallSpreadOrderAllAccounts,
+  getGammaExposureComponents,
 } from './tradier'
+import {
+  getFlintMode,
+  getFlintMaxContracts,
+  getFlintGuardBuffer,
+  getFlintOtmOffset,
+  getFlintMinCredit,
+  computeFlintStrikes,
+  meetsFlintCreditFloor,
+  isFlintDayEligible,
+  isFlintGuardTriggered,
+  decideFlintContractsForCushion,
+  buildFlintDailyContextRow,
+  UNAVAILABLE_FLINT_GAMMA_CONTEXT,
+  getFlintFavorableUpsizeMode,
+  evaluateFlintGammaUpsize,
+  FLINT_GAMMA_UPSIZE_MIN_SESSIONS,
+  type FlintGammaContext,
+} from './flint'
+import {
+  getFlameSkipWeekdays,
+  isWeekdayInSkipSet,
+  weekdayAbbrevFromDow,
+  weekdaySkipLogTag,
+} from './flame-skip'
 import { BOT_STARTING_CAPITAL } from './bot-capital'
 import { getTvMarketStructure, type TvMarketStructure } from './gex/trading-volatility-client'
 import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, classifySignalState, notifyDecision, type SignalStreak } from './volAlerts'
@@ -267,7 +310,10 @@ const PRODUCTION_BOT_DTE = '1DTE' // Matches BOTS[] entry for PRODUCTION_BOT
 // in tradier.ts. These were two hand-copied pairs kept in sync by comment; they decide
 // how much real money enters a trade.
 import { SPARK_BP_CAP_POS, SPARK_BP_CAP_NEG } from './spark-sizing'
-import { ebbLadderCapital, ebbLadderContracts, ebbRungUsd, formatEbbSizingLine, isEbbLadderBot, liquidityCappedLots } from './ebb-sizing'
+import {
+  ebbLadderCapital, ebbLadderContracts, ebbRungUsd, formatEbbSizingLine, isEbbLadderBot, liquidityCappedLots,
+  EBB_LADDER_CAP, isEbbFavorableUpsizeMode, isEbbFavorableVixDay, ebbUpsizeExtraContractMaxLoss, evaluateEbbUpsizeCushion,
+} from './ebb-sizing'
 
 function isSparkV2Sizing(name: string): boolean {
   return name === 'spark'
@@ -347,7 +393,22 @@ function isNoStopBot(name: string): boolean {
  * two that can disagree — but it does mean IronForge blocks if SpreadWorks stops
  * writing. Blocking is the safe direction.
  */
-const VIX_DECAY_CEILING = { spark: 0.90, flame: 0.80 } as const
+export const VIX_DECAY_CEILING = { spark: 0.90, flame: 0.80 } as const
+// A deliberately narrow, default-off live experiment.  This is NOT a global
+// retune of Flame's proven .80 regime: only the incremental (.80, .925] days
+// use the stricter admission and credit rules below.  If any confirmation data
+// is unavailable, the incremental day is skipped.
+const FLAME_HEADLINE_VIX_CEILING = 0.925
+const FLAME_HEADLINE_MIN_CREDIT = 0.20
+// SPARK's own D1 relaxed band top (PREREG_dynamic_relax_flame_spark.md:
+// BAND["S"] = (0.90, 0.975]). Only ever used to widen vixDecayCheck's
+// ceiling when SPARK_V2_TRAILING_BAND_MODE === 'live' — see flame-v2/flags.ts
+// and flame-v2/engine.ts sparkTrailingBandDecision.
+const SPARK_V2_RELAXED_VIX_CEILING = 0.975
+
+function isFlameHeadline0925Mode(): boolean {
+  return process.env.FLAME_HEADLINE_0925_LIVE === 'true'
+}
 const VIX_DECAY_WINDOW = 20
 const VIX_DECAY_MIN_HISTORY = VIX_DECAY_WINDOW + 1
 
@@ -413,14 +474,14 @@ async function ensureVixHistory(asofDate: string): Promise<void> {
  *  to re-run the query. `ratio`/`prior`/`windowMax` are null whenever `reason`
  *  came from a data problem (unavailable/unknown/bad window) rather than the
  *  ratio itself clearing or missing the ceiling. */
-type VixDecayCheck = {
+export type VixDecayCheck = {
   reason: string | null
   ratio: number | null
   prior: number | null
   windowMax: number | null
 }
 
-async function vixDecayCheck(asofDate: string, ceiling: number): Promise<VixDecayCheck> {
+export async function vixDecayCheck(asofDate: string, ceiling: number): Promise<VixDecayCheck> {
   await ensureVixHistory(asofDate)
   let rows: Array<Record<string, unknown>>
   try {
@@ -452,6 +513,112 @@ async function vixDecayCheck(asofDate: string, ceiling: number): Promise<VixDeca
 
 async function vixDecayBlock(asofDate: string, ceiling: number): Promise<string | null> {
   return (await vixDecayCheck(asofDate, ceiling)).reason
+}
+
+/**
+ * Returns whether the most recently completed SPY session closed above the
+ * session before it.  This is intentionally based only on completed daily
+ * bars before `asofDate`; an unavailable or incomplete history returns null
+ * so headline-only entries fail closed.
+ */
+async function priorSpySessionWasUp(asofDate: string): Promise<boolean | null> {
+  try {
+    const history = await getDailyHistory('SPY', 10)
+    const completed = history
+      .filter((bar) => typeof bar.date === 'string' && bar.date < asofDate && Number.isFinite(bar.close))
+      .sort((a, b) => b.date.localeCompare(a.date))
+    if (completed.length < 2) return null
+    return completed[0].close > completed[1].close
+  } catch (e) {
+    console.warn(`[scanner] FLAME headline prior-SPY gate unavailable: ${e instanceof Error ? e.message : String(e)}`)
+    return null
+  }
+}
+
+/**
+ * FLAME v2 D2 regime-brain features, built ONLY from completed daily history
+ * strictly before `asofDate` — the exact live-data counterpart of
+ * signal_on_flame_spark.py's `daily_features()` (see that file's header,
+ * 2026-xx, D2 section). Every field is either a value from a session
+ * strictly before today (SPY closes) or already-lagged VIX-family data.
+ * Returns null on any missing/short history — the caller
+ * (flameRegimeBrainDecision) fails that straight to "features_unavailable_
+ * fallback_R0", never guesses a feature.
+ *
+ *   vix_level   = prior session's VIX close (vix_l)
+ *   vix_1y_pct  = percentile rank of vix_level within its own trailing
+ *                 <=252-session window (min 60) — (count(w<=latest)/n)*100
+ *   vix_20d_chg = vix_level(t) - vix_level(t-20), both prior-day values
+ *   ts_ratio_l  = prior-day VIX / prior-day VIX3M (contango <1, backwardation
+ *                 >1) — the live reconstruction of bt_spy's ts_ratio_l column;
+ *                 this webapp has no direct read into the warehouse, so this
+ *                 is the standard VIX/VIX3M ratio convention already used
+ *                 elsewhere in this file (market-brief.ts, volatility.ts).
+ *                 Verify against bt_spy.ts_ratio_l before fully trusting the
+ *                 LIVE regime-brain decision on a new deploy.
+ *   ret20/ret60 = SPY pct-change over the 20/60 sessions ending at the most
+ *                 recently COMPLETED session before asofDate (yesterday's
+ *                 close vs. 20/60 sessions earlier) — never today's own.
+ *   above_50dma = 1 if that same completed close is above the 50-session SMA
+ *                 ending there, else 0.
+ */
+async function buildFlameD2Features(asofDate: string): Promise<D2Features | null> {
+  try {
+    const [vixHist, vix3mHist, spyHist] = await Promise.all([
+      getDailyHistory('VIX', 280),
+      getDailyHistory('VIX3M', 280),
+      getDailyHistory('SPY', 130),
+    ])
+    const closedAsc = (hist: { date: string; close: number }[]) =>
+      hist
+        .filter((h) => typeof h.date === 'string' && h.date < asofDate && Number.isFinite(h.close) && h.close > 0)
+        .sort((a, b) => a.date.localeCompare(b.date))
+
+    const vixClosed = closedAsc(vixHist)
+    const vix3mClosed = closedAsc(vix3mHist)
+    const spyClosed = closedAsc(spyHist)
+
+    if (vixClosed.length < 60 || vix3mClosed.length < 1 || spyClosed.length < 61) return null
+
+    const vixLevel = vixClosed[vixClosed.length - 1].close
+    const vix3mL = vix3mClosed[vix3mClosed.length - 1].close
+    const tsRatioL = vix3mL > 0 ? vixLevel / vix3mL : NaN
+
+    const window = vixClosed.slice(-252).map((h) => h.close)
+    const vix1yPct = (window.filter((v) => v <= vixLevel).length / window.length) * 100
+
+    const vix20dChg = vixClosed.length >= 21
+      ? vixLevel - vixClosed[vixClosed.length - 21].close
+      : NaN
+
+    const closes = spyClosed.map((h) => h.close)
+    const last = closes[closes.length - 1]
+    const ret20 = closes.length >= 21 ? last / closes[closes.length - 21] - 1 : NaN
+    const ret60 = closes.length >= 61 ? last / closes[closes.length - 61] - 1 : NaN
+    const sma50 = closes.slice(-50).reduce((a, b) => a + b, 0) / 50
+    const above50dma = last > sma50 ? 1 : 0
+
+    const features: D2Features = { vixLevel, vix1yPct, vix20dChg, tsRatioL, ret20, ret60, above50dma }
+    if (!Object.values(features).every((v) => Number.isFinite(v))) return null
+    return features
+  } catch (e) {
+    console.warn('[flame-v2] buildFlameD2Features failed (fail-closed, null features):', e)
+    return null
+  }
+}
+
+/**
+ * The SAME ratio FLAME's own VIX decay gate computes (prior VIX close / max
+ * VIX close of the 20 sessions before), exposed so tradier.ts's production
+ * ladder can evaluate the EBB favorable-day upsize (EBB_FAVORABLE_UPSIZE)
+ * for TODAY without re-deriving the gate math. Pure re-read of the already-
+ * synced sw_vix_daily table — same inputs, same ceiling, so this returns the
+ * identical number the paper path's tryOpenFlamePutSpread just computed on
+ * this same scan tick.
+ */
+export async function getFlameVixRatioForUpsize(): Promise<number | null> {
+  const asofDate = getCentralTime().toISOString().slice(0, 10)
+  return (await vixDecayCheck(asofDate, VIX_DECAY_CEILING.flame)).ratio
 }
 
 /**
@@ -534,7 +701,7 @@ const _lastSandboxPlacedAt: Record<string, number> = {}
 // MUST be mirrored in dteMode() in lib/db.ts — when the two disagree the API
 // reads one row while the scanner runs off another, which is exactly how FLAME
 // ended up silently running DEFAULT_CONFIG.
-const BOTS = [
+export const BOTS = [
   { name: 'flame', dte: '0DTE', minDte: 0 },
   // SPARK moved 1 DTE -> 5 DTE on 2026-08-10. The 1DTE condor had no edge on real
   // fills (972-cell sweep: best-on-train -$5.13/ct out-of-sample, 37% of cells
@@ -3117,7 +3284,21 @@ async function closePosition(
   // Mirror close to Tradier — FLAME requires close to succeed (1:1 sync).
   // SPARK + INFERNO: paper-only, no Tradier positions to close.
   let sandboxCloseInfo: Record<string, SandboxCloseInfo> = {}
-  const isProductionBotClose = isProductionBot(bot.name)
+  // 🚨 canPlaceLiveOrders IS THE SECOND PREDICATE ON PURPOSE — same fix as the
+  // 2026-08-31 production-only catch-up path (line ~6041 in this file). The
+  // local isProductionBot() above is SPARK + KINDLE only, so on its own this
+  // NEVER opened the broker-close branch for FLAME, despite the comment above
+  // (and the assignment guard, closeAtRiskBeforeBell) assuming it did: the
+  // guard's `closePosition(..., ASSIGNMENT_GUARD_REASON, ..., mustCloseNow)`
+  // call would book the DB row closed and skip the real Tradier buy-back
+  // entirely, leaving FLAME's live spread open into settlement — assignment
+  // risk unmitigated on every account (2026-09-27, Leron: guard ON for every
+  // FLAME account). canPlaceLiveOrders('spark') is false (paper-only since
+  // 2026-08-16) so SPARK's routing is unchanged; for FLAME it is
+  // isFlameLiveArmed(), so this widens the broker-close path to exactly the
+  // bot that places live orders today — sandbox or production alike, since
+  // shouldCloseSandbox below still routes by the position's own account_type.
+  const isProductionBotClose = isProductionBot(bot.name) || canPlaceLiveOrders(bot.name)
 
   // 🚨 AN EXPIRED CONTRACT HAS NO MARKET, SO IT CAN NEVER PRODUCE A FILL PRICE.
   // Tradier rejects every close order against one — "There is no price. Security
@@ -3849,7 +4030,7 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
   const rows = await query(
     `SELECT position_id, ticker, expiration, put_short_strike, put_long_strike,
             call_short_strike, call_long_strike, contracts, total_credit,
-            collateral_required, spread_width
+            collateral_required, spread_width, account_type
        FROM ${botTable(bot.name, 'positions')}
       WHERE status = 'open' AND dte_mode = $1 AND expiration <= $2`,
     [bot.dte, todayStr],
@@ -3869,8 +4050,11 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
     // Eight other sites in this file already use this exact defensive idiom;
     // this was the one that did not.
     const exp = p.expiration?.toISOString?.()?.slice(0, 10) || String(p.expiration).slice(0, 10)
-    // Same-day: wait for the actual close. Past expiry: settle immediately.
-    if (exp === todayStr && ctHHMM(ct) < 1500) continue
+    // Same-day: wait for the actual close (marketCloseMinuteCT — 1500 normally,
+    // 1200 on a half day; NOT a hardcoded 1500, or a same-day position on an
+    // early-close day would sit open for 3 extra hours past the real close
+    // waiting for a boundary that already passed). Past expiry: settle immediately.
+    if (exp === todayStr && ctHHMM(ct) < marketCloseMinuteCT(ct)) continue
 
     const ticker = String(p.ticker)
     let settlePx = 0
@@ -3956,6 +4140,18 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
       out.push(`${p.position_id}=settle_declined`)
       continue
     }
+    // EDGE-DECAY (EBB, notify-only, never pauses): flame_positions production
+    // + sandbox rows only, per the RESULT file's data table — this is the
+    // strategy's primary close path (holds to expiry). No-ops with zero DB
+    // access when EDGE_DECAY_MODE is unset.
+    if (bot.name === 'flame' && (p.account_type === 'production' || p.account_type === 'sandbox')) {
+      try {
+        const { recordEdgeDecayClose } = await import('./edge-decay')
+        await recordEdgeDecayClose('ebb', pnl / Math.max(1, contracts))
+      } catch (e) {
+        console.warn(`[edge-decay] EBB settle hook failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
     console.log(
       `[scanner] ${bot.name.toUpperCase()} SETTLED ${p.position_id} ` +
       `close=${settlePx.toFixed(2)} ${kl}/${ks}P value=$${value.toFixed(2)} ` +
@@ -4025,10 +4221,35 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
  * contract is a rounding error of time value; the cost of missing the window is
  * an assignment. Those are not symmetric, so the window is not symmetric either.
  */
-const ASSIGNMENT_GUARD_HHMM = 1457        // 2:57 PM CT = 3:57 PM ET
-const ASSIGNMENT_GUARD_END_HHMM = 1500    // hand off to settleExpiredPositions
+const ASSIGNMENT_GUARD_HHMM = 1457        // 2:57 PM CT = 3:57 PM ET — NORMAL DAY ONLY, see assignmentGuardWindow()
+const ASSIGNMENT_GUARD_END_HHMM = 1500    // hand off to settleExpiredPositions — NORMAL DAY ONLY, see assignmentGuardWindow()
 const ASSIGNMENT_GUARD_REASON = 'assignment_guard'
 const ASSIGNMENT_GUARD_DEFAULT_BUFFER = 0.50
+
+/**
+ * The guard's end boundary is the REAL market close for the day
+ * (marketCloseMinuteCT: 1500 normally, 1200 on a half day per market-calendar.ts)
+ * — not the hardcoded 1500/ASSIGNMENT_GUARD_END_HHMM above. Before this fix, a
+ * half day (day-after-Thanksgiving, Christmas Eve) still ran the guard window
+ * and the settle handoff at the hardcoded 14:57-15:00 CT slot, three hours
+ * AFTER the market actually closed at 12:00 CT: a same-day contract has no
+ * market by then, so the guard's own "no quote -> holds unguarded" fail-safe
+ * fired for the wrong reason, and settleExpiredPositions withheld settling a
+ * same-day position until the fictitious 15:00 boundary instead of the real
+ * noon close.
+ *
+ * Start is always exactly 3 minutes before that close (see the docblock two
+ * screens up for why 3, not 1), computed in real minutes-since-midnight — NOT
+ * by subtracting from the HHMM integer directly (1500 - 3 = 1497 is not a
+ * valid HHMM; 14:57 is, because HHMM is base-60-in-the-last-two-digits, not a
+ * continuous integer).
+ */
+function assignmentGuardWindow(ct: Date): { startHHMM: number; endHHMM: number } {
+  const endHHMM = marketCloseMinuteCT(ct)
+  const totalMin = Math.floor(endHHMM / 100) * 60 + (endHHMM % 100) - 3
+  const startHHMM = Math.floor(totalMin / 60) * 100 + (totalMin % 60)
+  return { startHHMM, endHHMM }
+}
 
 function assignmentGuardBuffer(): number {
   const raw = Number(process.env.IRONFORGE_ASSIGNMENT_GUARD_BUFFER)
@@ -4050,7 +4271,8 @@ async function logGuard(bot: BotDef, level: string, message: string, details: ob
 async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
   if (!isSettleAtExpiryBot(bot.name)) return ''
   const hhmm = ctHHMM(ct)
-  if (hhmm < ASSIGNMENT_GUARD_HHMM || hhmm >= ASSIGNMENT_GUARD_END_HHMM) return ''
+  const { startHHMM, endHHMM } = assignmentGuardWindow(ct)
+  if (hhmm < startHHMM || hhmm >= endHHMM) return ''
 
   const todayStr = ct.toISOString().slice(0, 10)
   const rows = await query(
@@ -4078,6 +4300,17 @@ async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
 
     const positionId = String(p.position_id)
     const ticker = String(p.ticker || 'SPY')
+
+    // XSP_SWAP (R4): XSP is cash-settled, European-style, no early assignment —
+    // it must NEVER be guard-closed. By construction an XSP leg is never
+    // inserted into this table (see xsp-swap-db.ts's header — it lives in its
+    // own `xsp_swap_legs` table instead), so this is defense in depth, not the
+    // only thing stopping it: a row that somehow carries ticker='XSP' skips the
+    // guard outright and holds to settlement, same as the design intends.
+    if (isXspTicker(ticker)) {
+      out.push(`${positionId}=xsp_guard_exempt`)
+      continue
+    }
 
     const q = await getQuote(ticker)
     const spot = q?.last ?? 0
@@ -4202,6 +4435,735 @@ async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
   }
 
   return out.length ? ` guard[${out.join(' ')}]` : ''
+}
+
+/* ------------------------------------------------------------------ */
+/*  FLINT — SPY 0DTE call credit spread, EVERY trading day, on FLAME's */
+/*  own paper ledger and production account(s). Own table, own arm     */
+/*  switch, own production path. Never reads or writes flame_positions */
+/*  / flame_paper_account, EXCEPT to read (never write) FLAME's own    */
+/*  per-account funded/high-water ledger and same-day put collateral   */
+/*  for FLINT's own profit gate (rule R1) and buying-power check.      */
+/* ------------------------------------------------------------------ */
+
+const FLINT_TABLE = 'flint_positions'
+let _flintTableReady = false
+
+async function ensureFlintTable(): Promise<void> {
+  if (_flintTableReady) return
+  await dbExecute(
+    `CREATE TABLE IF NOT EXISTS ${FLINT_TABLE} (
+       id SERIAL PRIMARY KEY,
+       position_id TEXT UNIQUE NOT NULL,
+       ticker TEXT NOT NULL DEFAULT 'SPY',
+       expiration DATE NOT NULL,
+       call_short_strike NUMERIC NOT NULL,
+       call_long_strike NUMERIC NOT NULL,
+       contracts INTEGER NOT NULL,
+       entry_credit NUMERIC NOT NULL,
+       collateral_required NUMERIC NOT NULL,
+       underlying_at_entry NUMERIC,
+       close_price NUMERIC,
+       realized_pnl NUMERIC,
+       status TEXT NOT NULL DEFAULT 'open',
+       close_reason TEXT,
+       account_type TEXT NOT NULL DEFAULT 'paper',
+       person TEXT,
+       mode TEXT NOT NULL,
+       sandbox_order_id TEXT,
+       bot TEXT NOT NULL DEFAULT 'flame',
+       open_time TIMESTAMP NOT NULL DEFAULT NOW(),
+       close_time TIMESTAMP,
+       open_date DATE NOT NULL,
+       created_at TIMESTAMP NOT NULL DEFAULT NOW()
+     )`,
+  )
+  // Defensive migration (2026-09-27, SPARK_FLINT): a table created before
+  // this column existed has no `bot` column — add it so FLINT-on-SPARK's
+  // own daily-dedup and rows never collide with FLAME's on the same
+  // customer sandbox account. Every pre-existing row backfills to 'flame',
+  // which is correct (FLINT was FLAME-exclusive until this change).
+  await dbExecute(`ALTER TABLE ${FLINT_TABLE} ADD COLUMN IF NOT EXISTS bot TEXT NOT NULL DEFAULT 'flame'`)
+  _flintTableReady = true
+}
+
+/* ------------------------------------------------------------------ */
+/*  FLINT forward-logging — daily dealer-gamma context.                 */
+/*                                                                      */
+/*  Not statistically confirmed: a sizing study found this sleeve      */
+/*  loses on days call-side dealer gamma (igex_call in the backtest    */
+/*  warehouse) is low at the 13:05 CT entry, and wins big when it is   */
+/*  high. Recorded here, RAW, so the hypothesis can be re-tested later */
+/*  once enough live days accumulate — tiers vs. the trailing 20       */
+/*  sessions are computed OFFLINE, never in this file. One row per     */
+/*  evaluated day; NEVER gates, sizes, or otherwise touches a trade —  */
+/*  every write is wrapped so a logging failure cannot reach the       */
+/*  trading path (see logFlintDailyContext below).                     */
+/* ------------------------------------------------------------------ */
+
+const FLINT_CONTEXT_TABLE = 'flint_daily_context'
+let _flintContextTableReady = false
+
+async function ensureFlintContextTable(): Promise<void> {
+  if (_flintContextTableReady) return
+  await dbExecute(
+    `CREATE TABLE IF NOT EXISTS ${FLINT_CONTEXT_TABLE} (
+       id SERIAL PRIMARY KEY,
+       trade_date DATE UNIQUE NOT NULL,
+       evaluated_at TIMESTAMP NOT NULL,
+       spot NUMERIC,
+       vix_ratio NUMERIC,
+       call_short_strike_considered NUMERIC,
+       call_long_strike_considered NUMERIC,
+       entry_credit_seen NUMERIC,
+       decision TEXT NOT NULL,
+       call_gamma NUMERIC,
+       put_gamma NUMERIC,
+       net_gamma NUMERIC,
+       gamma_flip NUMERIC,
+       put_wall NUMERIC,
+       call_wall NUMERIC,
+       gamma_source TEXT NOT NULL,
+       created_at TIMESTAMP NOT NULL DEFAULT NOW()
+     )`,
+  )
+  _flintContextTableReady = true
+}
+
+/**
+ * Dealer-gamma read for the day, cached once per CT day — mirrors
+ * getNetGexCached()/getTvMarketStructureCached() above: OI updates once
+ * daily, so re-reading the chain every scan cycle inside the 5-minute
+ * entry window buys nothing and just burns Tradier/TV calls. Never
+ * throws: any failure anywhere in this function resolves to
+ * UNAVAILABLE_FLINT_GAMMA_CONTEXT rather than propagating.
+ *
+ * put_wall/call_wall are always null — no LIVE source in this codebase
+ * currently reports dealer wall price levels (the old alphagex-api
+ * /api/gex/{symbol} route that used to is gone — confirmed 404 as of
+ * 2026-09-26 — and the Trading Volatility market-structure client used
+ * here only exposes the flip price, not wall strikes). Storing a
+ * fabricated wall would violate "never fabricate," so these stay null
+ * until a real source exists.
+ */
+let _flintGammaContextCache: { day: string; value: FlintGammaContext } | null = null
+async function getFlintGammaContextCached(ct: Date, spot: number | null): Promise<FlintGammaContext> {
+  const day = ct.toISOString().slice(0, 10)
+  if (_flintGammaContextCache && _flintGammaContextCache.day === day) {
+    return _flintGammaContextCache.value
+  }
+  let value: FlintGammaContext = UNAVAILABLE_FLINT_GAMMA_CONTEXT
+  try {
+    if (spot && spot > 0) {
+      const comps = await getGammaExposureComponents('SPY', spot, 60)
+      if (comps) {
+        let gammaFlip: number | null = null
+        try {
+          const tv = await getTvMarketStructure('SPY')
+          gammaFlip = tv && tv.gammaFlipPrice > 0 ? tv.gammaFlipPrice : null
+        } catch { gammaFlip = null }
+        value = {
+          callGamma: comps.callGex,
+          putGamma: comps.putGex,
+          netGamma: comps.netGex,
+          gammaFlip,
+          putWall: null,
+          callWall: null,
+          gammaSource: 'tradier_chain_dollar_gex_dte0-60',
+        }
+      }
+    }
+  } catch {
+    value = UNAVAILABLE_FLINT_GAMMA_CONTEXT
+  }
+  _flintGammaContextCache = { day, value }
+  return value
+}
+
+/**
+ * Writes one row of forward-logging context per evaluated day. Called from
+ * every terminal branch of tryOpenFlint EXCEPT the "already traded today"
+ * short-circuit (that branch re-checks existing state, it doesn't make a
+ * fresh evaluation, and re-logging it would clobber the good row already
+ * written when the trade actually happened).
+ *
+ * 🚨 Must NEVER throw into the trading path — this is pure observability.
+ * Every failure (gamma read, DB write, anything) is caught here and only
+ * ever produces a console.warn.
+ */
+async function logFlintDailyContext(params: {
+  ct: Date
+  decision: string
+  vixRatio: number | null
+  spot: number | null
+  shortStrike: number | null
+  longStrike: number | null
+  entryCredit: number | null
+}): Promise<void> {
+  try {
+    await ensureFlintContextTable()
+
+    let spot = params.spot
+    if (!(spot && spot > 0)) {
+      try {
+        const q = await getQuote('SPY')
+        spot = q?.last ?? null
+      } catch { spot = null }
+    }
+
+    const gamma = await getFlintGammaContextCached(params.ct, spot)
+    const row = buildFlintDailyContextRow({
+      tradeDate: params.ct.toISOString().slice(0, 10),
+      evaluatedAt: params.ct,
+      spot,
+      vixRatio: params.vixRatio,
+      shortStrike: params.shortStrike,
+      longStrike: params.longStrike,
+      entryCredit: params.entryCredit,
+      decision: params.decision,
+      gamma,
+    })
+
+    await query(
+      `INSERT INTO ${FLINT_CONTEXT_TABLE} (
+         trade_date, evaluated_at, spot, vix_ratio,
+         call_short_strike_considered, call_long_strike_considered, entry_credit_seen,
+         decision, call_gamma, put_gamma, net_gamma, gamma_flip, put_wall, call_wall, gamma_source
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       ON CONFLICT (trade_date) DO UPDATE SET
+         evaluated_at = EXCLUDED.evaluated_at,
+         spot = EXCLUDED.spot,
+         vix_ratio = EXCLUDED.vix_ratio,
+         call_short_strike_considered = EXCLUDED.call_short_strike_considered,
+         call_long_strike_considered = EXCLUDED.call_long_strike_considered,
+         entry_credit_seen = EXCLUDED.entry_credit_seen,
+         decision = EXCLUDED.decision,
+         call_gamma = EXCLUDED.call_gamma,
+         put_gamma = EXCLUDED.put_gamma,
+         net_gamma = EXCLUDED.net_gamma,
+         gamma_flip = EXCLUDED.gamma_flip,
+         put_wall = EXCLUDED.put_wall,
+         call_wall = EXCLUDED.call_wall,
+         gamma_source = EXCLUDED.gamma_source`,
+      [
+        row.trade_date, row.evaluated_at, row.spot, row.vix_ratio,
+        row.call_short_strike_considered, row.call_long_strike_considered, row.entry_credit_seen,
+        row.decision, row.call_gamma, row.put_gamma, row.net_gamma, row.gamma_flip, row.put_wall,
+        row.call_wall, row.gamma_source,
+      ],
+    )
+  } catch (e: unknown) {
+    console.warn(`[scanner] FLINT context logging failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
+/**
+ * FLINT's own paper ledger read — FLAME's paper (sandbox) account, the same
+ * row the EBB put-side ladder reads for `bot.dte`. floor = starting_capital
+ * (the funded seed); equity = current_balance (starting + realized P&L). Not
+ * FLINT's own table — FLINT never gets its own ledger, per spec, it trades
+ * "(FLAME account)" and is gated on FLAME's account state. null on any read
+ * failure or missing row — the caller must skip, never guess.
+ */
+export async function getFlintPaperLedger(bot: BotDef): Promise<{ floor: number | null; equity: number | null }> {
+  try {
+    const rows = await query(
+      `SELECT starting_capital, current_balance FROM ${botTable(bot.name, 'paper_account')}
+       WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+       ORDER BY id DESC LIMIT 1`,
+      [bot.dte],
+    )
+    if (rows.length === 0) return { floor: null, equity: null }
+    const floor = num(rows[0].starting_capital)
+    const equity = num(rows[0].current_balance)
+    return {
+      floor: Number.isFinite(floor) && floor > 0 ? floor : null,
+      equity: Number.isFinite(equity) ? equity : null,
+    }
+  } catch (e: unknown) {
+    console.warn(`[scanner] FLINT: paper ledger read failed: ${e instanceof Error ? e.message : String(e)}`)
+    return { floor: null, equity: null }
+  }
+}
+
+/**
+ * Trailing LOGGED call_gamma for FLINT_FAVORABLE_UPSIZE's day-20 self-
+ * activation — every flint_daily_context row strictly BEFORE `beforeDate`
+ * with a non-null call_gamma and the SAME gamma_source as today's live
+ * read (mixing sources would compare numbers from different vendors), most
+ * recent first, capped at `limit` sessions. Empty on any read failure or a
+ * pre-migration deploy — the caller's evaluateFlintGammaUpsize then reports
+ * n=0/20 (inactive), never a guess.
+ */
+async function getFlintTrailingCallGamma(gammaSource: string, beforeDate: string, limit: number): Promise<number[]> {
+  try {
+    await ensureFlintContextTable()
+    const rows = await query(
+      `SELECT call_gamma FROM ${FLINT_CONTEXT_TABLE}
+       WHERE call_gamma IS NOT NULL AND gamma_source = $1 AND trade_date < $2
+       ORDER BY trade_date DESC LIMIT $3`,
+      [gammaSource, beforeDate, limit],
+    )
+    return rows.map((r) => num(r.call_gamma)).filter((v) => Number.isFinite(v))
+  } catch (e: unknown) {
+    console.warn(`[scanner] FLINT: trailing call_gamma read failed: ${e instanceof Error ? e.message : String(e)}`)
+    return []
+  }
+}
+
+/**
+ * Entry. Called every scan cycle for FLAME only (see scanBot); internally a
+ * no-op unless mode != off and inside FLAME's own 13:05-13:10 CT entry
+ * window (isInEntryWindow reused byte-for-byte, not re-derived). Unlike the
+ * old FLAME-CALL sleeve, FLINT trades EVERY day — FLAME's own VIX decay gate
+ * ratio is recorded (for flint_daily_context research only) but no longer
+ * gates entry (isFlintDayEligible is a documented no-op; see flint.ts).
+ *
+ * The paper book and each production account are gated INDEPENDENTLY by
+ * rule R1 (evaluateFlintProfitGate) — one account's outcome never affects
+ * another's. The paper book's decision is evaluated here directly; each
+ * production account's R1 gate + buying-power check run inside
+ * placeCallSpreadOrderAllAccounts (tradier.ts), so an account already
+ * traded today, or gated out on cushion or BP, simply never appears in that
+ * call's result and gets no row here. One trade per account per day, fixed
+ * size — no ladder, no stand-down, no liquidity cap; this is a 1-lot sleeve.
+ */
+async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
+  const mode = getFlintMode()
+  if (mode === 'off') return ''
+  if (!isConfigured()) return ''
+  if (!isInEntryWindow(ct, bot)) return ''
+
+  await ensureFlintTable()
+
+  // Ratio is recorded for research (flint_daily_context) — it never gates
+  // entry any more. isFlintDayEligible is called (and its result ignored)
+  // purely so a future accidental re-introduction of a ratio gate shows up
+  // as a diff to that function, not a silent behavior change here.
+  const asofDate = ct.toISOString().slice(0, 10)
+  // botCeiling generalizes this from FLAME-only to SPARK too (2026-09-27,
+  // SPARK_FLINT) — the ratio itself is a market-wide VIX signal; only the
+  // "gated" boolean this function ALSO returns differs by ceiling, and that
+  // field is unused here (isFlintDayEligible below is a no-op by design).
+  const botCeiling = VIX_DECAY_CEILING[bot.name as keyof typeof VIX_DECAY_CEILING] ?? VIX_DECAY_CEILING.flame
+  const flameVix = await vixDecayCheck(asofDate, botCeiling)
+  void isFlintDayEligible(flameVix.ratio)
+
+  const q = await getQuote('SPY')
+  const spot = q?.last ?? 0
+  if (!(spot > 0)) {
+    console.log('[scanner] FLINT: no_trade | skip:no_quote')
+    await logFlintDailyContext({
+      ct, decision: 'skip:no_quote', vixRatio: flameVix.ratio,
+      spot: null, shortStrike: null, longStrike: null, entryCredit: null,
+    }).catch(() => { /* forward-logging must never touch the trading path */ })
+    return 'FLINT: no_trade | skip:no_quote'
+  }
+
+  const expiration = getTargetExpiration(0) // 0DTE, same-day — independent of FLAME's own 2DTE
+  const { short: callShort, long: callLong } = computeFlintStrikes(spot, getFlintOtmOffset())
+
+  const credit = await getCallSpreadEntryCredit('SPY', expiration, callShort, callLong)
+  if (!credit) {
+    console.log('[scanner] FLINT: no_trade | skip:no_quotes')
+    await logFlintDailyContext({
+      ct, decision: 'skip:no_quotes', vixRatio: flameVix.ratio,
+      spot, shortStrike: callShort, longStrike: callLong, entryCredit: null,
+    }).catch(() => { /* forward-logging must never touch the trading path */ })
+    return 'FLINT: no_trade | skip:no_quotes'
+  }
+  const minCredit = getFlintMinCredit()
+  if (!meetsFlintCreditFloor(credit.callCredit, minCredit)) {
+    console.log(`[scanner] FLINT: no_trade | skip:call_credit_too_low($${credit.callCredit.toFixed(2)})`)
+    await logFlintDailyContext({
+      ct, decision: 'skip:call_credit_too_low', vixRatio: flameVix.ratio,
+      spot, shortStrike: callShort, longStrike: callLong, entryCredit: credit.callCredit,
+    }).catch(() => { /* forward-logging must never touch the trading path */ })
+    return 'FLINT: no_trade | skip:call_credit_too_low'
+  }
+
+  const baseContracts = getFlintMaxContracts()
+  const width = callLong - callShort
+
+  // FLINT_FAVORABLE_UPSIZE (Leron, 2026-09-26, "Yes" to "FLINT's size-up
+  // switching itself on at day 20"): +1 contract when today's call-side
+  // dealer gamma is in the top third (67th percentile) of the trailing 20
+  // LOGGED sessions with the same gamma_source. A MARKET-WIDE decision made
+  // ONCE here and shared by the paper book and every production/sandbox
+  // account below — each of THOSE still applies its own R1/BP step-down
+  // independently (see evaluateFlintGammaUpsize, flint.ts). Self-activates
+  // at day 20; before that, `inactive`, never a cushion skip.
+  let desiredContracts = baseContracts
+  if (getFlintFavorableUpsizeMode()) {
+    const gammaCtx = await getFlintGammaContextCached(ct, spot)
+    const trailing = await getFlintTrailingCallGamma(gammaCtx.gammaSource, asofDate, FLINT_GAMMA_UPSIZE_MIN_SESSIONS)
+    const gammaEval = evaluateFlintGammaUpsize(gammaCtx.callGamma, trailing)
+    if (gammaEval.sessionsUsed < FLINT_GAMMA_UPSIZE_MIN_SESSIONS) {
+      console.log(`[scanner] FLINT upsize inactive: ${gammaEval.reason}`)
+    } else if (gammaEval.eligible) {
+      desiredContracts = baseContracts + 1
+      console.log(
+        `[scanner] FLINT upsize +1 (call_gamma=${gammaCtx.callGamma}, p67=${gammaEval.threshold?.toFixed(4) ?? 'n/a'}, n=${gammaEval.sessionsUsed})`,
+      )
+    } else {
+      console.log(`[scanner] FLINT upsize skip: ${gammaEval.reason}`)
+    }
+  }
+
+  const botName = bot.name.toLowerCase()
+  const positionId =
+    `FLINT-${botName !== 'flame' ? botName.toUpperCase() + '-' : ''}SPY-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+
+  // ---- PAPER BOOK — rule R1 against this bot's OWN paper ledger, tried at
+  // desiredContracts first and stepped down to baseContracts if only the
+  // extra lot breaks the cushion ("if cushion covers 1 but not 2, trade 1").
+  // When the upsize is off/inactive, desiredContracts === baseContracts, so
+  // this is exactly ONE evaluation — byte-for-byte the old single-size gate.
+  // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now") is a FLAME-only
+  // operator decision, gated on botName === 'flame' now that FLINT also
+  // runs for SPARK — unset env (or botName !== 'flame') = this branch never
+  // fires = byte-for-byte prior behavior for FLAME, and SPARK's own paper
+  // book is never affected by a flag scoped to FLAME's calendar.
+  let paperDecision: string
+  const weekdaySkipSet = getFlameSkipWeekdays()
+  const todayAbbrev = weekdayAbbrevFromDow(ct.getDay())
+  if (botName === 'flame' && isWeekdayInSkipSet(todayAbbrev, weekdaySkipSet)) {
+    paperDecision = weekdaySkipLogTag(todayAbbrev)
+    console.log(`[scanner] FLINT/${botName.toUpperCase()}: no_trade | paper ${paperDecision}`)
+  } else {
+    const paperToday = await query(
+      `SELECT COUNT(*) AS cnt FROM ${FLINT_TABLE}
+       WHERE open_date = ${CT_TODAY} AND account_type = 'paper' AND bot = $1`,
+      [botName],
+    )
+    if (int(paperToday[0]?.cnt) >= 1) {
+      paperDecision = 'skip:already_traded_today'
+      console.log(`[scanner] FLINT/${botName.toUpperCase()}: no_trade | paper skip:already_traded_today`)
+    } else {
+      const paperLedger = await getFlintPaperLedger(bot)
+      const decision = decideFlintContractsForCushion(
+        desiredContracts, baseContracts, paperLedger.equity, paperLedger.floor, callShort, callLong, credit.callCredit,
+      )
+      const gate = decision.gate
+      if (decision.contracts < 1) {
+        paperDecision = gate.reason ?? 'skip:flint_profit_cushion(unreadable)'
+        console.log(`[scanner] FLINT/${botName.toUpperCase()}: no_trade | paper ${paperDecision}`)
+      } else {
+        const contracts = decision.contracts
+        const collateral = Math.max(0, (width - credit.callCredit) * 100) * contracts
+        await query(
+          `INSERT INTO ${FLINT_TABLE} (
+             position_id, ticker, expiration, call_short_strike, call_long_strike,
+             contracts, entry_credit, collateral_required, underlying_at_entry,
+             status, account_type, person, mode, bot, open_time, open_date
+           ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open','paper',NULL,$9,$10, NOW(), ${CT_TODAY})`,
+          [positionId, expiration, callShort, callLong, contracts, credit.callCredit, collateral, spot, mode, botName],
+        )
+        console.log(
+          `[scanner] FLINT/${botName.toUpperCase()} SPY: ${contracts}x ${callShort}/${callLong}C exp ${expiration} ` +
+          `@ $${credit.callCredit.toFixed(2)} (spot ${spot.toFixed(2)}, cushion=$${gate.cushion?.toFixed(2) ?? 'n/a'}) mode=${mode}`,
+        )
+        paperDecision = 'traded'
+
+        // CUSTOMER_FLINT (2026-09-28): mirror to activated customers. Fire-and-forget,
+        // never throws into the trading path — mirrorFlintOpenToCustomers catches
+        // everything internally. No-ops with zero DB/broker calls unless BOTH
+        // CUSTOMER_EXECUTOR_ENABLED and CUSTOMER_FLINT are set. width/positionId reuse
+        // the exact values just written to the paper ledger above (same trade, same day).
+        void mirrorFlintOpenToCustomers({
+          botName, positionId, ticker: 'SPY', expiration,
+          callShort, callLong, spreadWidth: width, credit: credit.callCredit,
+          tradeDate: asofDate,
+        })
+      }
+    }
+  }
+
+  await logFlintDailyContext({
+    ct, decision: paperDecision, vixRatio: flameVix.ratio,
+    spot, shortStrike: callShort, longStrike: callLong, entryCredit: credit.callCredit,
+  }).catch(() => { /* forward-logging must never touch the trading path */ })
+
+  if (mode !== 'live') return `FLINT: paper=${paperDecision}`
+
+  // EDGE-DECAY PAUSE (real accounts only). Blocks SANDBOX + PRODUCTION entries
+  // while FLINT is paused on a CUSUM alarm (EDGE_DECAY_MODE=enforce); the paper
+  // book above is deliberately NOT gated — it already runs unconditionally,
+  // independent of the live arm switch, and its continued zero-capital-risk
+  // closes ARE the 10-trade shadow block the resume rule scores (see
+  // lib/edge-decay.ts's header). No-ops false with zero DB access unless mode
+  // is exactly 'enforce'.
+  try {
+    const { isEdgeDecayPaused } = await import('./edge-decay')
+    if (await isEdgeDecayPaused('flint')) {
+      console.log('[scanner] FLINT: live entries paused by edge-decay alarm — paper book continues as the shadow block')
+      return `FLINT: paper=${paperDecision} live:paused(edge_decay)`
+    }
+  } catch (e) {
+    console.warn(`[edge-decay] FLINT pause check failed (non-fatal, trading continues): ${e instanceof Error ? e.message : String(e)}`)
+  }
+
+  // ---- SANDBOX + PRODUCTION ACCOUNT(S) — every account this bot's own put
+  // spread places on (resolveEligibleAccounts(botName)), each gated
+  // INDEPENDENTLY of the paper book and of every other account.
+  // canPlaceLiveOrders(botName) / describeLiveGate are no longer checked
+  // here as a blanket early-return: a disarmed bot must still let its
+  // SANDBOX mirrors trade — placeCallSpreadOrderAllAccounts applies the arm
+  // gate to PRODUCTION only, internally (canPlaceLiveOrders('spark') is
+  // hard-coded false, so SPARK's FLINT sleeve only ever reaches sandbox).
+  // Rule R1 + the buying-power check both run per-account inside that call
+  // (with its own upsize step-down from desiredContracts to baseContracts);
+  // an account that already traded today, or is gated out on cushion or
+  // BP, is simply absent from `live`.
+  try {
+    const live = await placeCallSpreadOrderAllAccounts(
+      'SPY', expiration, callShort, callLong, desiredContracts, credit.callCredit, positionId,
+      { baseContracts, botName },
+    )
+    const fills = Object.entries(live)
+    if (fills.length === 0) {
+      const armNote = canPlaceLiveOrders(botName) ? '' : ` (production:disarmed(${describeLiveGate(botName)}))`
+      console.log(`[scanner] FLINT/${botName.toUpperCase()}: live:no_fill${armNote}`)
+      return `FLINT: paper=${paperDecision} live:no_fill${armNote}`
+    }
+    for (const [key, info] of fills) {
+      const hasFill = info.fill_price != null && info.fill_price > 0
+      const pCredit = hasFill ? info.fill_price! : credit.callCredit
+      const pContracts = info.contracts
+      const pCollateral = Math.max(0, (width - pCredit) * 100) * pContracts
+      const pPerson = key.split(':')[0] || 'PRODUCTION'
+      const pAccountType = info.account_type === 'production' ? 'production' : 'sandbox'
+      const pId = `${positionId}-${pAccountType}-${pPerson.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+      await query(
+        `INSERT INTO ${FLINT_TABLE} (
+           position_id, ticker, expiration, call_short_strike, call_long_strike,
+           contracts, entry_credit, collateral_required, underlying_at_entry,
+           status, account_type, person, mode, bot, sandbox_order_id, open_time, open_date
+         ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open',$9,$10,$11,$12,$13, NOW(), ${CT_TODAY})`,
+        [pId, expiration, callShort, callLong, pContracts, pCredit, pCollateral, spot, pAccountType, pPerson, mode, botName, String(info.order_id)],
+      )
+      console.log(
+        `[scanner] FLINT/${botName.toUpperCase()} ${pAccountType === 'production' ? 'LIVE' : 'SANDBOX'} FILL [${pPerson}]: ${pId} ${pContracts}x @ $${pCredit.toFixed(4)}`,
+      )
+    }
+  } catch (e: unknown) {
+    console.error(`[scanner] FLINT live placement failed: ${e instanceof Error ? e.message : String(e)}`)
+  }
+
+  return `FLINT: paper=${paperDecision}`
+}
+
+/**
+ * Assignment guard for FLINT — mirrors closeAtRiskBeforeBell's 14:57-15:00 CT
+ * window and buffer semantics (spot within, or above, the buffer of the
+ * short strike), but against flint_positions only, with its OWN buffer
+ * (FLINT_GUARD_BUFFER, default $0.25 — narrower than FLAME's put-side
+ * $0.50, per spec). A buffer of 0 (env set to '' or '0') disables the
+ * guard: the position then holds to expiry unguarded, deliberately, same
+ * fail-safe direction as the rest of this file — no quote closes nothing.
+ *
+ * The DB row is always closed here (status/close_price/realized_pnl), for
+ * EVERY account_type, the moment the buffer trips — that bookkeeping never
+ * depended on the broker call below. The broker-side buy-back runs for
+ * BOTH 'production' and 'sandbox' rows with mode='live' (real Tradier
+ * orders on both, per Leron 2026-09-26 — a sandbox mirror's guard used to
+ * close only in the DB and hold open on the broker), and is routed by
+ * `flint_positions.person` to that ONE account — see
+ * placeCallSpreadOrderAllAccounts's targetPerson doc. Never "close every
+ * eligible account of this type": with more than one account of the same
+ * type, that would buy back a DIFFERENT customer's position.
+ */
+async function closeFlintAtRiskBeforeBell(ct: Date): Promise<string> {
+  if (getFlintMode() === 'off') return ''
+  const hhmm = ctHHMM(ct)
+  const { startHHMM, endHHMM } = assignmentGuardWindow(ct)
+  if (hhmm < startHHMM || hhmm >= endHHMM) return ''
+
+  const buffer = getFlintGuardBuffer()
+  if (!(buffer > 0)) return ''
+
+  const todayStr = ct.toISOString().slice(0, 10)
+  const rows = await query(
+    `SELECT position_id, expiration, call_short_strike, call_long_strike, contracts,
+            entry_credit, account_type, mode, person, bot
+       FROM ${FLINT_TABLE}
+      WHERE status = 'open' AND expiration = $1`,
+    [todayStr],
+  )
+  if (rows.length === 0) return ''
+
+  const q = await getQuote('SPY')
+  const spot = q?.last ?? 0
+  if (!(spot > 0)) {
+    console.warn(`[scanner] FLINT ASSIGNMENT GUARD NO QUOTE: no SPY price at ${hhmm} CT — holds to settlement unguarded.`)
+    return 'FLINT guard:no_quote'
+  }
+
+  const out: string[] = []
+  for (const p of rows) {
+    const shortStrike = num(p.call_short_strike)
+    if (!isFlintGuardTriggered(spot, shortStrike, buffer)) {
+      out.push(`${p.position_id}=clear@${spot.toFixed(2)}`)
+      continue
+    }
+
+    const longStrike = num(p.call_long_strike)
+    const contracts = int(p.contracts)
+    const entryCredit = num(p.entry_credit)
+    const width = longStrike - shortStrike
+    const expiration = p.expiration?.toISOString?.()?.slice(0, 10) || String(p.expiration).slice(0, 10)
+
+    // Cost to close, worst-realistic-fill NBBO: buy back the short at its ASK,
+    // sell the long at its BID. No quote fails safe to the theoretical max
+    // (the full wing) rather than guessing a cheaper close.
+    let costToClose = width
+    try {
+      const [csQ, clQ] = await Promise.all([
+        getOptionQuote(buildOccSymbol('SPY', expiration, shortStrike, 'C')),
+        getOptionQuote(buildOccSymbol('SPY', expiration, longStrike, 'C')),
+      ])
+      if (csQ && clQ) costToClose = Math.min(Math.max(0, csQ.ask - clQ.bid), width)
+    } catch { /* keep the fail-safe worst case */ }
+
+    const realizedPnl = Math.round((entryCredit - costToClose) * 100 * contracts * 100) / 100
+
+    // Idempotency claim (Fix 5's pattern, ported here): flint_positions is
+    // bot-agnostic and closeFlintAtRiskBeforeBell is invoked once per bot from
+    // scanBot() for BOTH 'flame' and 'spark', which run concurrently via
+    // Promise.allSettled — so two overlapping calls can both select the SAME
+    // open row in the 14:57-15:00 CT window (this is also the second caller a
+    // stuck-cycle watchdog reset can create). Whichever UPDATE actually flips
+    // status='open'->'closed' wins the row; a loser that doesn't check its own
+    // rowcount would still fall through and fire a SECOND real broker buy-back
+    // for a position that's already closed. dbExecute + rowCount, not query().
+    const claimed = await dbExecute(
+      `UPDATE ${FLINT_TABLE}
+         SET status = 'closed', close_reason = 'assignment_guard', close_price = $1,
+             realized_pnl = $2, close_time = NOW()
+       WHERE position_id = $3 AND status = 'open'`,
+      [costToClose, realizedPnl, p.position_id],
+    )
+    if (claimed === 0) {
+      out.push(`${p.position_id}=already_closed`)
+      continue
+    }
+    // EDGE-DECAY: feed this closed trade's per-contract pnl into FLINT's own
+    // CUSUM. No-ops with zero DB access when EDGE_DECAY_MODE is unset — see
+    // lib/edge-decay.ts. Never allowed to affect the trading path.
+    try {
+      const { recordEdgeDecayClose } = await import('./edge-decay')
+      await recordEdgeDecayClose('flint', realizedPnl / Math.max(1, contracts))
+    } catch (e) {
+      console.warn(`[edge-decay] FLINT guard-close hook failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+    }
+    console.log(
+      `[scanner] FLINT GUARD CLOSED ${p.position_id} spot=${spot.toFixed(2)} ` +
+      `short ${shortStrike}C buffer=$${buffer.toFixed(2)} cost=$${costToClose.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,
+    )
+
+    // CUSTOMER_FLINT: close every customer mirror of this FLINT position (fire-and-forget,
+    // never throws). Keyed by source_position_id — a never-mirrored position_id simply
+    // matches zero customer_positions rows.
+    void mirrorCloseToCustomers((p.bot as string | undefined) ?? 'flame', String(p.position_id), 'assignment_guard')
+
+    if ((p.account_type === 'production' || p.account_type === 'sandbox') && p.mode === 'live') {
+      if (!p.person) {
+        console.error(
+          `[scanner] FLINT LIVE GUARD CLOSE SKIPPED ${p.position_id}: no person on a ${p.account_type} row — ` +
+          `refusing to guess which account to close.`,
+        )
+      } else {
+        try {
+          await placeCallSpreadOrderAllAccounts(
+            'SPY', expiration, shortStrike, longStrike, contracts, costToClose, String(p.position_id),
+            { close: true, targetPerson: p.person, botName: (p.bot as string | undefined) ?? 'flame' },
+          )
+        } catch (e: unknown) {
+          console.error(`[scanner] FLINT LIVE GUARD CLOSE FAILED ${p.position_id}: ${e instanceof Error ? e.message : String(e)}`)
+        }
+      }
+    }
+    out.push(`${p.position_id}=guarded@${spot.toFixed(2)}`)
+  }
+  return out.length ? `FLINT guard[${out.join(' ')}]` : ''
+}
+
+/**
+ * Settlement at expiry — hold to close, no stop, no take-profit (spec). Books
+ * intrinsic value of the call spread against SPY's close, clamped to the
+ * wing width, the same convention FLAME's own put side settles with. Only
+ * ever touches rows whose expiration has been reached; a missing close price
+ * fails safe to the full wing (worst case) rather than guessing.
+ */
+async function settleFlintExpired(ct: Date): Promise<string> {
+  if (getFlintMode() === 'off') return ''
+  const hhmm = ctHHMM(ct)
+  if (hhmm < assignmentGuardWindow(ct).endHHMM) return '' // same close-of-day boundary as the put side, early-close aware
+
+  const todayStr = ct.toISOString().slice(0, 10)
+  const rows = await query(
+    `SELECT position_id, expiration, call_short_strike, call_long_strike, contracts, entry_credit, bot
+       FROM ${FLINT_TABLE}
+      WHERE status = 'open' AND expiration <= $1`,
+    [todayStr],
+  )
+  if (rows.length === 0) return ''
+
+  const q = await getQuote('SPY')
+  const closePx = q?.last ?? null
+
+  const out: string[] = []
+  for (const p of rows) {
+    const shortStrike = num(p.call_short_strike)
+    const longStrike = num(p.call_long_strike)
+    const contracts = int(p.contracts)
+    const entryCredit = num(p.entry_credit)
+    const width = longStrike - shortStrike
+
+    const intrinsic = closePx != null && closePx > 0
+      ? Math.min(Math.max(0, closePx - shortStrike), width)
+      : width // no close price: fail safe to worst case, same convention as the guard above
+
+    const realizedPnl = Math.round((entryCredit - intrinsic) * 100 * contracts * 100) / 100
+
+    // Same idempotency claim as closeFlintAtRiskBeforeBell above: settleFlintExpired
+    // is also called for both 'flame' and 'spark' every cycle against this SAME
+    // bot-agnostic table, so two overlapping cycles can both select this row.
+    // rowCount === 0 means another cycle already settled it — skip the
+    // edge-decay double-count and the misleading duplicate "SETTLED" log line.
+    const claimed = await dbExecute(
+      `UPDATE ${FLINT_TABLE}
+         SET status = 'expired', close_reason = 'settled_at_expiry', close_price = $1,
+             realized_pnl = $2, close_time = NOW()
+       WHERE position_id = $3 AND status = 'open'`,
+      [intrinsic, realizedPnl, p.position_id],
+    )
+    if (claimed === 0) {
+      out.push(`${p.position_id}=already_settled`)
+      continue
+    }
+    // EDGE-DECAY: this is FLINT's primary close path (holds to expiry) — see
+    // the assignment-guard hook above for the other one. No-ops with zero DB
+    // access when EDGE_DECAY_MODE is unset.
+    try {
+      const { recordEdgeDecayClose } = await import('./edge-decay')
+      await recordEdgeDecayClose('flint', realizedPnl / Math.max(1, contracts))
+    } catch (e) {
+      console.warn(`[edge-decay] FLINT settle hook failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+    }
+    console.log(
+      `[scanner] FLINT SETTLED ${p.position_id}: close=${closePx != null ? '$' + closePx.toFixed(2) : 'unknown'} ` +
+      `short ${shortStrike}C intrinsic=$${intrinsic.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,
+    )
+
+    // CUSTOMER_FLINT: close every customer mirror of this FLINT position (fire-and-forget,
+    // never throws). This is FLINT's primary close path (holds to expiry) — see the
+    // assignment-guard hook above for the other one.
+    void mirrorCloseToCustomers((p.bot as string | undefined) ?? 'flame', String(p.position_id), 'settled_at_expiry')
+
+    out.push(`${p.position_id}=settled`)
+  }
+  return out.length ? `FLINT settle[${out.join(' ')}]` : ''
 }
 
 /* ------------------------------------------------------------------ */
@@ -4661,16 +5623,64 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   // $656 ungated, worst trade -$181, $5k ladder 9.8%/mo full / 5.6%/mo 2026,
   // max drawdown 19% vs 69%. 0.85 and 0.90 both fail for FLAME — see the
   // VIX_DECAY_CEILING doc comment above.
+  // Hoisted to function scope (not just the flame branch below) so the EBB
+  // favorable-day upsize (EBB_FAVORABLE_UPSIZE) can reuse the SAME ratio
+  // FLAME's own VIX decay gate just computed, rather than re-querying it.
+  let flameVixRatioForUpsize: number | null = null
+  let flameHeadlineAddedDay = false
   if (bot.name === 'spark') {
-    const vixBlock = await vixDecayBlock(getCentralTime().toISOString().slice(0, 10), VIX_DECAY_CEILING.spark)
-    if (vixBlock) return `skip:${vixBlock}`
+    const sparkAsof = getCentralTime().toISOString().slice(0, 10)
+    // SPARK_V2_TRAILING_BAND_MODE=live widens the gate's own ceiling to the
+    // D1 relaxed band's top (0.975) so a ratio in (0.90, 0.975] reaches this
+    // function instead of being blocked outright — 'off'/'shadow' (default)
+    // leave the ceiling at SPARK's existing 0.90, so vixDecayCheck/vixBlock
+    // below is byte-for-byte identical to today in both of those modes.
+    const bandMode = sparkTrailingBandMode()
+    const sparkCeiling = isLive(bandMode) ? SPARK_V2_RELAXED_VIX_CEILING : VIX_DECAY_CEILING.spark
+    const sparkVix = await vixDecayCheck(sparkAsof, sparkCeiling)
+    if (sparkVix.reason) return `skip:${sparkVix.reason}`
+
+    // Only reachable at all when bandMode==='live' widened sparkCeiling above
+    // — in 'off'/'shadow' a ratio this high already returned skip above.
+    const inRelaxedBand = sparkVix.ratio !== null && sparkVix.ratio > VIX_DECAY_CEILING.spark
+
+    // SPARK v2 D1 (relaxed-band trailing winner) + S1 (CALM-or-LONGG filter).
+    // Both default SHADOW (compute + log only; see flame-v2/flags.ts) and, in
+    // that mode, change nothing below — D1's own `admits` is hard-false
+    // unless its mode is 'live' (see sparkTrailingBandDecision), and S1 is
+    // only consulted for the skip decision when SPARK_V2_SIGNAL_FILTER_MODE
+    // is 'live'.
+    let d1: Awaited<ReturnType<typeof sparkTrailingBandDecision>> | null = null
+    let s1: Awaited<ReturnType<typeof sparkS1Decision>> | null = null
+    try {
+      ;[d1, s1] = await Promise.all([sparkTrailingBandDecision(sparkAsof), sparkS1Decision(sparkAsof)])
+      if (d1.available || s1.available || inRelaxedBand) {
+        console.log(`[flame-v2] SPARK checks ${sparkAsof}: D1=${JSON.stringify(d1)} S1=${JSON.stringify(s1)} in_relaxed_band=${inRelaxedBand}`)
+      }
+    } catch (e) {
+      console.warn('[flame-v2] SPARK v2 checks failed (non-fatal, no behavior change):', e)
+    }
+
+    if (inRelaxedBand) {
+      if (!(d1 && d1.available && d1.admits)) {
+        return `skip:spark_relaxed_band_not_admitted(ratio=${sparkVix.ratio!.toFixed(3)})`
+      }
+      console.log(`[flame-v2] SPARK D1 LIVE admits relaxed-band day ratio=${sparkVix.ratio!.toFixed(3)} rule=R${d1.rule}`)
+    }
+
+    if (isLive(sparkSignalFilterMode()) && s1 && s1.available && s1.wouldSkip) {
+      return 'skip:spark_s1_no_signal'
+    }
   } else if (bot.name === 'flame') {
     const asofDate = getCentralTime().toISOString().slice(0, 10)
-    const flameVix = await vixDecayCheck(asofDate, VIX_DECAY_CEILING.flame)
+    const headlineMode = isFlameHeadline0925Mode()
+    const flameCeiling = headlineMode ? FLAME_HEADLINE_VIX_CEILING : VIX_DECAY_CEILING.flame
+    const flameVix = await vixDecayCheck(asofDate, flameCeiling)
+    flameVixRatioForUpsize = flameVix.ratio
     if (flameVix.reason) {
       if (flameVix.ratio !== null && flameVix.prior !== null && flameVix.windowMax !== null) {
         console.log(
-          `[scanner] FLAME VIX GATE skip: ratio=${flameVix.ratio.toFixed(3)} threshold=${VIX_DECAY_CEILING.flame.toFixed(2)} ` +
+          `[scanner] FLAME VIX GATE skip: ratio=${flameVix.ratio.toFixed(3)} threshold=${flameCeiling.toFixed(3)} ` +
           `(prior VIX close ${flameVix.prior.toFixed(2)} / 20-session max ${flameVix.windowMax.toFixed(2)})`,
         )
       } else {
@@ -4678,7 +5688,46 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
       }
       return `skip:${flameVix.reason}`
     }
-    console.log(`[scanner] FLAME VIX GATE ok ratio=${flameVix.ratio !== null ? flameVix.ratio.toFixed(3) : 'n/a'}`)
+    // The original <= .80 regime remains byte-for-byte unchanged.  Only the
+    // added (.80, .925] range requires a prior completed SPY up-session.
+    flameHeadlineAddedDay = headlineMode && flameVix.ratio !== null && flameVix.ratio > VIX_DECAY_CEILING.flame
+    if (flameHeadlineAddedDay) {
+      const priorSpyUp = await priorSpySessionWasUp(asofDate)
+      const priorUpAdmits = priorSpyUp === true
+      // FLAME v2 D2 regime brain. SHADOW (default): logs what the monthly-
+      // refit depth-2 tree would decide for this relaxed-band day alongside
+      // today's actual prior-SPY-up admission, without changing it — `brain`
+      // falls back to `admits=priorUpAdmits` byte-for-byte whenever the mode
+      // isn't 'live', the features aren't computable, or training data is
+      // thin (see flameRegimeBrainDecision's own fallback contract). LIVE:
+      // `brain.admits` IS the admission decision below, replacing the static
+      // prior-SPY-up rule for this relaxed band.
+      let effectiveFlameAdmits = priorUpAdmits
+      try {
+        const d2Features: D2Features | null = await buildFlameD2Features(asofDate)
+        const brain = await flameRegimeBrainDecision(asofDate, d2Features, priorUpAdmits)
+        if (brain.available || brain.reason !== 'off') {
+          console.log(`[flame-v2] FLAME regime_brain check ${asofDate}: ${JSON.stringify(brain)} (today's prior_spy_up=${priorUpAdmits})`)
+        }
+        // brain.admits is null ONLY when the mode is explicitly 'off' — every
+        // other path (unavailable, insufficient data, shadow, live) already
+        // resolves to a usable boolean per flameRegimeBrainDecision's contract.
+        if (brain.admits !== null) effectiveFlameAdmits = brain.admits
+      } catch (e) {
+        console.warn('[flame-v2] FLAME regime_brain check failed (non-fatal, falls back to prior-SPY-up rule):', e)
+      }
+      if (effectiveFlameAdmits !== true) {
+        const reason = effectiveFlameAdmits === false
+          ? (isLive(flameRegimeBrainMode()) ? 'd2_regime_brain_not_admitted' : 'prior_spy_not_up')
+          : 'prior_spy_history_unavailable'
+        console.log(`[scanner] FLAME headline admission skip: ${reason}`)
+        return `skip:${reason}`
+      }
+    }
+    console.log(
+      `[scanner] FLAME VIX GATE ok ratio=${flameVix.ratio !== null ? flameVix.ratio.toFixed(3) : 'n/a'}` +
+      (flameHeadlineAddedDay ? ' headline_added_day=full_size_credit_floor_0.20' : ''),
+    )
   }
 
   const acctRows = await query(
@@ -4717,7 +5766,10 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   // capital — max(starting_capital, high_water_balance), the ratchet that only
   // moves up — never from the floating balance — see lib/ebb-sizing.ts.
   // 0 lots means the ledger is below one rung: skip, never fall back to 1.
-  const ledger = { funded, highWater }
+  // `equity` and `vixRatio` ride along on `ledger` ONLY for the EBB
+  // favorable-day upsize gate (evaluateEbbUpsizeCushion) — the ladder sizing
+  // itself still keys on funded/highWater alone, unchanged.
+  const ledger = { funded, highWater, equity: balance, vixRatio: flameVixRatioForUpsize }
   const perTrade = flameContracts(bot.name, ebbLadderCapital(funded, highWater))
   if (perTrade < 1) {
     return `skip:below_ladder_rung(funded=$${funded.toFixed(0)} high_water=${highWater === null ? 'NONE' : '$' + highWater.toFixed(0)})`
@@ -4729,16 +5781,41 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
 
   const out: string[] = []
   for (const ticker of FLAME_BOOKS) {
-    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, otmAbs, width, perBook, perTrade, ledger, opts)}`)
+    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, otmAbs, width, perBook, perTrade, ledger, opts, flameHeadlineAddedDay)}`)
+  }
+  // FLAME v2 14:05 ET SPY 0DTE CALL credit spread. SHADOW (default): computes
+  // tier/strikes/contracts and logs them, places no order. LIVE
+  // (FLAME_V2_CALL_SPREAD_MODE=live): runFlameV2CallSpreadEntryTick places the
+  // paper/sandbox ledger row always, and a real order IF canPlaceLiveOrders
+  // ('flame') is also true — see flame-v2/call-spread-live.ts. Runs only for
+  // the SPY book, after the put side has already been fully decided above, so
+  // it can never affect the put spread's own result. Never throws into this
+  // function — see that module's own safety-invariant header comment.
+  if (bot.name === 'flame') {
+    try {
+      const spyQuote = await getQuote('SPY')
+      const spySpot = spyQuote?.last ?? 0
+      if (spySpot > 0) {
+        const callTick = await runFlameV2CallSpreadEntryTick(asofDateForFlame(), spySpot, perTrade)
+        if (callTick) console.log(`[flame-v2] ${callTick}`)
+      }
+    } catch (e) {
+      console.warn('[flame-v2] FLAME call_spread entry tick failed (non-fatal, no order placed):', e)
+    }
   }
   return `otm$${otmAbs} w${width} x${perTrade} ` + out.join(' ')
+}
+
+function asofDateForFlame(): string {
+  return getCentralTime().toISOString().slice(0, 10)
 }
 
 async function tryOpenFlameBook(
   bot: BotDef, botCfg: BotConfig, ticker: string,
   otmAbs: number, width: number, perBook: number, perTrade: number,
-  ledger: { funded: number | null; highWater: number | null },
+  ledger: { funded: number | null; highWater: number | null; equity?: number | null; vixRatio?: number | null },
   opts: { force?: boolean } = {},
+  flameHeadlineAddedDay = false,
 ): Promise<string> {
   const todayRows = await query(
     `SELECT COUNT(*) AS cnt FROM ${botTable(bot.name, 'positions')}
@@ -4811,8 +5888,9 @@ async function tryOpenFlameBook(
   const callCreditVal = 0
   const entryCredit = c.putCredit
 
-  if (entryCredit < botCfg.min_credit) {
-    return `credit_low($${entryCredit.toFixed(2)})`
+  const minCredit = flameHeadlineAddedDay ? Math.max(botCfg.min_credit, FLAME_HEADLINE_MIN_CREDIT) : botCfg.min_credit
+  if (entryCredit < minCredit) {
+    return `credit_low(${entryCredit.toFixed(2)})`
   }
 
   // An iron condor can only lose on ONE side, so the capital at risk is one
@@ -4837,43 +5915,121 @@ async function tryOpenFlameBook(
     console.warn(`[scanner] ${bot.name.toUpperCase()} ${ticker}: LIQUIDITY check = 0 lots, skipping (${sizingLine})`)
     return `skip:liquidity(displayed_size=${liq?.displayedSize ?? 'UNKNOWN'} max=${liq?.maxLots ?? 'n/a'} ladder=${perTrade})`
   }
-  if ((perBook - committed) < maxLossPer * contracts) {
+
+  // EBB_FAVORABLE_UPSIZE (Leron, 2026-09-26): +1 contract on top of the
+  // ladder's `contracts` on a favorable-VIX day, gated by the SAME
+  // per-account house-money rule as FLINT's R1 — the extra lot's max loss
+  // must fit inside this account's cushion (equity above its funded
+  // floor). Off by default (isEbbFavorableUpsizeMode() reads unset -> off),
+  // so with the flag unset `finalContracts` is always `contracts` and every
+  // downstream number below is byte-for-byte the pre-upsize value. FLAME
+  // only — SPARK's own VIX gate ratio is a different ceiling and this spec
+  // is scoped to "FLAME's VIX gate" ratio specifically.
+  let finalContracts = contracts
+  if (bot.name === 'flame' && !flameHeadlineAddedDay && isEbbFavorableUpsizeMode()) {
+    const upsizeCap = Math.min(EBB_LADDER_CAP, liq?.maxLots ?? contracts + 1)
+    if (contracts + 1 <= upsizeCap) {
+      if (isEbbFavorableVixDay(ledger.vixRatio ?? null)) {
+        const extraMaxLoss = ebbUpsizeExtraContractMaxLoss(width, entryCredit)
+        const gate = evaluateEbbUpsizeCushion(ledger.equity ?? null, ledger.funded, extraMaxLoss)
+        if (gate.eligible) {
+          finalContracts = contracts + 1
+          console.log(
+            `[scanner] EBB upsize +1 (vix_ratio=${ledger.vixRatio?.toFixed(3) ?? 'n/a'}, cushion=$${gate.cushion?.toFixed(2) ?? 'n/a'})`,
+          )
+        } else {
+          console.log(`[scanner] EBB upsize skipped: ${gate.reason}`)
+        }
+      }
+    }
+  }
+
+  if ((perBook - committed) < maxLossPer * finalContracts) {
     return `no_room($${(perBook - committed).toFixed(0)})`
   }
 
-  const collateral = maxLossPer * contracts
+  const collateral = maxLossPer * finalContracts
   // SPARK shares this code path, so the prefix must come from the BOT, not be
   // hardcoded -- SPARK's live positions were being written as 'FLAME-SPY-...'.
   const positionId = `${bot.name.toUpperCase()}-${ticker}-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
 
-  await query(
-    `INSERT INTO ${botTable(bot.name, 'positions')} (
-       position_id, ticker, expiration,
-       put_short_strike, put_long_strike, put_credit,
-       call_short_strike, call_long_strike, call_credit,
-       contracts, spread_width, total_credit, max_loss, max_profit,
-       collateral_required, underlying_at_entry, expected_move,
-       status, open_time, open_date, dte_mode, account_type
-     ) VALUES ($1,$2,$3,$4,$5,$6,$15,$16,$17,$7,$8,$18,$9,$10,$11,$12,$13,
-               'open', NOW(), ${CT_TODAY}, $14, 'sandbox')`,
-    [positionId, ticker, expiration, putShort, putLong, putCreditVal,
-     contracts, width, collateral,
-     Math.round(entryCredit * 100 * contracts * 100) / 100,
-     collateral, spot, em, bot.dte,
-     callShort, callLong,
-     callCreditVal,
-     entryCredit],
-  )
-  console.log(
-    `[scanner] ${bot.name.toUpperCase()} ${ticker}: ${contracts}x ${putLong}/${putShort}P ` +
-    `exp ${expiration} @ $${entryCredit.toFixed(2)} ` +
-    `(spot ${spot.toFixed(2)}, otm $${otmAbs}, wing $${width}, EM ${em.toFixed(2)}) ` +
-    `sizing: ${sizingLine}`,
-  )
+  // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now"): this "sandbox"
+  // row IS FLAME's customer/paper side of EBB (SPARK writes the same
+  // account_type='sandbox' tag through this shared function, so the FLAME
+  // check is explicit — SPARK is out of scope for this env var). Skipped
+  // whenever today's weekday matches, independent of FLAME_SKIP_SCOPE —
+  // scope only decides whether the PRODUCTION leg below is ALSO skipped
+  // (placeIcOrderAllAccounts in tradier.ts). Unset env = the skip set is
+  // always empty = skipCustomerSide is always false = byte-for-byte prior
+  // behavior below.
+  const todayAbbrev = weekdayAbbrevFromDow(getCentralTime().getDay())
+  const skipCustomerSide = bot.name === 'flame' && isWeekdayInSkipSet(todayAbbrev, getFlameSkipWeekdays())
 
-  // Customer push (UAT #7): fire-and-forget, never throws into the trade path —
-  // notifyTradeOpened catches everything internally.
-  void notifyTradeOpened(bot.name, positionId)
+  if (skipCustomerSide) {
+    console.log(`[scanner] FLAME ${ticker}: ${weekdaySkipLogTag(todayAbbrev)} (customer/paper side)`)
+  } else {
+    await query(
+      `INSERT INTO ${botTable(bot.name, 'positions')} (
+         position_id, ticker, expiration,
+         put_short_strike, put_long_strike, put_credit,
+         call_short_strike, call_long_strike, call_credit,
+         contracts, spread_width, total_credit, max_loss, max_profit,
+         collateral_required, underlying_at_entry, expected_move,
+         status, open_time, open_date, dte_mode, account_type
+       ) VALUES ($1,$2,$3,$4,$5,$6,$15,$16,$17,$7,$8,$18,$9,$10,$11,$12,$13,
+                 'open', NOW(), ${CT_TODAY}, $14, 'sandbox')`,
+      [positionId, ticker, expiration, putShort, putLong, putCreditVal,
+       finalContracts, width, collateral,
+       Math.round(entryCredit * 100 * finalContracts * 100) / 100,
+       collateral, spot, em, bot.dte,
+       callShort, callLong,
+       callCreditVal,
+       entryCredit],
+    )
+    console.log(
+      `[scanner] ${bot.name.toUpperCase()} ${ticker}: ${finalContracts}x ${putLong}/${putShort}P ` +
+      `exp ${expiration} @ $${entryCredit.toFixed(2)} ` +
+      `(spot ${spot.toFixed(2)}, otm $${otmAbs}, wing $${width}, EM ${em.toFixed(2)}) ` +
+      `sizing: ${sizingLine}`,
+    )
+
+    // XSP_SWAP (R4) — the SAME go/no-go signal the internal production/sandbox
+    // order path (tradier.ts placeIcOrderAllAccounts -> attemptXspHostSwap)
+    // computes for itself independently, at its own quote pull. Customers
+    // mirror THIS eligibility rather than pricing their own XSP quote (the
+    // customer-executor path has no direct Tradier market-data access) — see
+    // customer-executor/executor.ts mirrorOneOpen. Only meaningful for the
+    // put-spread host leg on SPY; off (default) or not the SPY host leg =
+    // zero extra network calls, xspSwapForCustomers stays undefined, and
+    // MasterOpen is byte-for-byte the prior shape.
+    let xspSwapForCustomers: { eligible: boolean; xspCreditPerContract: number | null } | undefined
+    if (ticker === 'SPY' && callShort === 0 && isXspSwapMode()) {
+      try {
+        const xspQuote = await getPutSpreadEntryCredit(XSP_TICKER, expiration, putShort, putLong)
+        const decision = decideXspSwap({
+          nHost: finalContracts,
+          spyCreditPerContract: entryCredit,
+          xspCreditPerContract: xspQuote?.putCredit ?? null,
+          xspShortBidSize: xspQuote?.shortBidSize ?? null,
+        })
+        xspSwapForCustomers = { eligible: decision.usedXsp, xspCreditPerContract: decision.xspCreditPerContract }
+      } catch (e) {
+        console.warn(`[scanner] ${bot.name.toUpperCase()} XSP_SWAP customer-eligibility quote failed:`, e)
+      }
+    }
+
+    // Customer push (UAT #7): fire-and-forget, never throws into the trade path —
+    // notifyTradeOpened catches everything internally.
+    void mirrorOpenToCustomers({
+      botName: bot.name, positionId, ticker, expiration,
+      putShort, putLong, callShort, callLong,
+      spreadWidth: width, credit: entryCredit,
+      vixRatio: ledger.vixRatio ?? null,
+      xspSwap: xspSwapForCustomers,
+    })
+
+    void notifyTradeOpened(bot.name, positionId)
+  }
 
   // ────────────────────────────────────────────────────────────────────────
   // LIVE ORDER — everything above this line is paper and always runs.
@@ -4913,7 +6069,7 @@ async function tryOpenFlameBook(
         const live = await placeIcOrderAllAccounts(
           ticker, expiration,
           putShort, putLong, callShort, callLong,
-          contracts, entryCredit, positionId, bot.name,
+          finalContracts, entryCredit, positionId, bot.name,
           { productionOnly: true },
         )
         const prodFills = Object.entries(live).filter(([, i]) => i.account_type === 'production')
@@ -4968,6 +6124,9 @@ async function tryOpenFlameBook(
     }
   }
 
+  if (skipCustomerSide) {
+    return `${weekdaySkipLogTag(todayAbbrev)}${liveNote}`
+  }
   return `traded@${entryCredit.toFixed(2)}${liveNote}`
 }
 
@@ -6576,6 +7735,19 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   console.log(`[scanner] ${botName} OPENED ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${effectiveContracts} @ $${effectiveCredit.toFixed(4)} [sandbox:${JSON.stringify(sandboxOrderIds)}]${isProductionFillOnly ? ' [Tradier-fill-only]' : ''}`)
 
+  // CUSTOMER_CALM_UPSIZE (2026-09-28): the mirror needs today's VIX-decay ratio — the
+  // SAME signal FLINT's own day-eligibility already reads (vixDecayCheck), computed
+  // fresh here since this path (unlike tryOpenFlameBook's `ledger.vixRatio`) doesn't
+  // already carry one. vixDecayCheck never throws (fails to ratio:null internally);
+  // the extra try/catch only guards ensureVixHistory. Never allowed to affect the
+  // trade already placed above — a failure here just means calm-upsize skips today.
+  let calmVixRatio: number | null = null
+  try {
+    const asofDateForCalm = getCentralTime().toISOString().slice(0, 10)
+    const calmCeiling = VIX_DECAY_CEILING[bot.name as keyof typeof VIX_DECAY_CEILING] ?? VIX_DECAY_CEILING.flame
+    calmVixRatio = (await vixDecayCheck(asofDateForCalm, calmCeiling)).ratio
+  } catch { /* calmVixRatio stays null -> calm-day upsize simply skips today */ }
+
   // Phase B: mirror to activated customers (fire-and-forget, never throws, gated
   // inside on CUSTOMER_EXECUTOR_ENABLED + kill switch + per-customer state).
   void mirrorOpenToCustomers({
@@ -6583,6 +7755,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     putShort: strikes.putShort, putLong: strikes.putLong,
     callShort: strikes.callShort, callLong: strikes.callLong,
     spreadWidth, credit: effectiveCredit,
+    vixRatio: calmVixRatio,
   })
 
   // Customer push (UAT #7): fire-and-forget, never throws into the trade path —
@@ -7949,6 +9122,265 @@ async function scanBot(bot: BotDef): Promise<void> {
       console.error(`[scanner] ${botName} settlement failed:`, e)
     }
 
+    // XSP_SWAP (R4) settlement: any XSP host-leg contracts opened via the
+    // XSP_SWAP flag live in their own `xsp_swap_legs` table (never in
+    // `{bot}_positions` — see xsp-swap-db.ts's header), so they need their
+    // own settle pass. A no-op query when the flag has never been on (no
+    // rows exist). Settles from the OFFICIAL SPX close ÷ 10 — the same
+    // "daily bar for the expiration date" source settleExpiredPositions uses
+    // for SPY, just pointed at the index ticker — never inventing a price.
+    try {
+      const xspSettled = await settleXspSwapLegsForBot(bot.name, ct.toISOString().slice(0, 10), async (exp) => {
+        const hist = await getDailyHistory('SPX', 30)
+        const c = hist.find((h) => h.date === exp)?.close
+        return typeof c === 'number' && c > 0 ? c : null
+      })
+      if (xspSettled.settled > 0 || xspSettled.unsettled > 0) {
+        reason += ` xsp_settle:${xspSettled.settled}ok/${xspSettled.unsettled}pending`
+      }
+    } catch (e) {
+      console.error(`[scanner] ${botName} XSP_SWAP settlement failed:`, e)
+    }
+
+    // FLINT — SPY 0DTE call credit spread, EVERY trading day (FLINT_MODE,
+    // default off). Entirely separate table and arm switch from FLAME's put
+    // side; scoped to bot.name === 'flame' only so SPARK/INFERNO/FORGE/KINDLE
+    // never reach this code. Guard and settle run every cycle (they no-op
+    // most minutes); entry only fires inside its own window check. Wrapped
+    // like every other guard/settle above: a failure here must never take
+    // FLAME's own put-side cycle down.
+    if (bot.name === 'flame') {
+      try {
+        const callGuarded = await closeFlintAtRiskBeforeBell(ct)
+        if (callGuarded) console.log(`[scanner] ${callGuarded}`)
+      } catch (e) {
+        console.error('[scanner] FLINT assignment guard failed:', e)
+      }
+      try {
+        const callSettled = await settleFlintExpired(ct)
+        if (callSettled) console.log(`[scanner] ${callSettled}`)
+      } catch (e) {
+        console.error('[scanner] FLINT settlement failed:', e)
+      }
+      try {
+        const callTraded = await tryOpenFlint(bot, ct)
+        if (callTraded) console.log(`[scanner] ${callTraded}`)
+      } catch (e) {
+        console.error('[scanner] FLINT entry failed:', e)
+      }
+
+      // FLAME v2 SPY 0DTE CALL credit spread (FLAME_V2_CALL_SPREAD_MODE).
+      // Own table (flame_v2_call_positions), own guard/settle — see
+      // flame-v2/call-spread-live.ts. Entry itself fires from inside
+      // tryOpenFlameBook's caller (tryOpenFlamePutSpread), AFTER the put
+      // side; guard/settle run here every cycle like FLINT's own above, and
+      // no-op most minutes. A failure here must never take FLAME's put-side
+      // cycle down.
+      try {
+        const callV2Guarded = await runFlameV2CallSpreadGuardTick(ct)
+        if (callV2Guarded) console.log(`[scanner] ${callV2Guarded}`)
+      } catch (e) {
+        console.error('[scanner] FLAME v2 call-spread guard failed:', e)
+      }
+      try {
+        const callV2Settled = await runFlameV2CallSpreadSettleTick(ct)
+        if (callV2Settled) console.log(`[scanner] ${callV2Settled}`)
+      } catch (e) {
+        console.error('[scanner] FLAME v2 call-spread settlement failed:', e)
+      }
+    }
+
+    // SPARK_FLINT (2026-09-27) — FLINT on SPARK customer accounts, its own
+    // separate profits-only budget (spark-flint-separate.ts / SPARK_FLINT).
+    // Guard + settle run every cycle here (they no-op most minutes, and are
+    // bot-agnostic — they act on ANY open flint_positions row regardless of
+    // which bot opened it), same as FLAME's block above. ENTRY is
+    // deliberately NOT here — it fires further down, AFTER this SAME
+    // scanBot() call's own SPARK put-spread entry (tryOpenTrade, below) has
+    // already run and persisted this account's contracts for today, so
+    // FLINT's account-level safety net (decideSparkFlintContracts,
+    // tradier.ts) can read back the REAL sized SPARK cost instead of
+    // guessing at it out of order.
+    if (bot.name === 'spark') {
+      try {
+        const callGuarded = await closeFlintAtRiskBeforeBell(ct)
+        if (callGuarded) console.log(`[scanner] ${callGuarded}`)
+      } catch (e) {
+        console.error('[scanner] FLINT/SPARK assignment guard failed:', e)
+      }
+      try {
+        const callSettled = await settleFlintExpired(ct)
+        if (callSettled) console.log(`[scanner] ${callSettled}`)
+      } catch (e) {
+        console.error('[scanner] FLINT/SPARK settlement failed:', e)
+      }
+    }
+
+    // FLAME_FAST_START EOD hook (2026-09-29 correction: phase, peak_profit
+    // and the CPPI floor update ONCE PER DAY, here, from that day's CLOSING
+    // equity — never intraday from a live unrealized mark. See
+    // fast-start-db.ts's updateFastStartEodState header for the full
+    // rationale). Runs on every remaining tick once time >= FLAME's own
+    // eod_cutoff_hhmm_ct; updateFastStartEodState's own `last_eod_date`
+    // guard makes every tick AFTER the first one that day a no-op, so this
+    // is safe to leave unconditional here rather than adding a second,
+    // separate "have I run today" flag.
+    if (bot.name === 'flame' && isAfterEodCutoff(ct, bot)) {
+      try {
+        const fastStart = await import('./fast-start-sizing')
+        if (fastStart.isFastStartMode()) {
+          const fastStartDb = await import('./fast-start-db')
+          const ebbSizing = await import('./ebb-sizing')
+          const tradier = await import('./tradier')
+          const tradeDateCt = ct.toISOString().slice(0, 10)
+
+          const flintToday = await fastStartDb.readFlintTodayCandidacy(tradeDateCt)
+
+          const eligible = await tradier.resolveEligibleAccounts('flame')
+          for (const acct of eligible) {
+            const accountType: 'sandbox' | 'production' = acct.type === 'production' ? 'production' : 'sandbox'
+            try {
+              const allocated = await tradier.getAllocatedCapitalForAccount(acct.name, accountType)
+              const closingEquity = allocated?.equity ?? null
+              let deposit: number | null = null
+              if (accountType === 'production') {
+                const cap = await tradier.getProductionLadderCapital('flame', acct.name)
+                deposit = cap?.starting ?? null
+              } else {
+                deposit = await tradier.getOrSeedFlintAccountFloor(acct.name, 'sandbox', null, closingEquity)
+              }
+              if (deposit == null || closingEquity == null) {
+                console.warn(`[scanner] FLAME_FAST_START EOD [${acct.name}:${accountType}]: skip:deposit_or_equity_unreadable`)
+                continue
+              }
+              const state = await fastStartDb.getOrSeedFastStartState(acct.name, accountType, deposit, closingEquity)
+              if (state == null) continue
+              const normalLadder = accountType === 'production'
+                ? ebbSizing.ebbLadderContracts('flame', ebbSizing.ebbLadderCapital(deposit, deposit + state.peakProfit))
+                : ebbSizing.ebbProfitLadderContracts('flame', deposit, state.peakProfit)
+
+              const ebbToday = await fastStartDb.readEbbTodayOutcome('flame', acct.name, accountType, tradeDateCt, true)
+              const result = await fastStartDb.updateFastStartEodState(
+                acct.name, accountType, tradeDateCt, closingEquity, normalLadder,
+                ebbToday.contracts >= 1, ebbToday.maxLossPerLot,
+                flintToday.candidateDay, flintToday.maxLossPerContract,
+              )
+              if (result.updated) {
+                console.log(
+                  `[scanner] FLAME_FAST_START EOD [${acct.name}:${accountType}]: phase=${result.phase} ` +
+                  `peak_profit=$${result.peakProfit?.toFixed(2)} triggered_today=${result.triggeredToday}`,
+                )
+              }
+            } catch (e) {
+              console.error(`[scanner] FLAME_FAST_START EOD [${acct.name}:${accountType}] failed:`, e)
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[scanner] FLAME_FAST_START EOD hook failed:', e)
+      }
+    }
+
+    // SPARK_FAST_START EOD hook — mirrors FLAME's own EOD hook above
+    // exactly (same rationale: phase/peak_profit/floor update ONCE PER DAY,
+    // from that day's CLOSING equity, never intraday), scoped to bot='spark'
+    // via fast-start-db's `bot` parameter so this NEVER collides with
+    // FLAME's own fast_start_state row on a shared customer account.
+    // readEbbTodayOutcome('spark', ...) reads SPARK's own {bot}_positions
+    // (spark_positions) — generic, already bot-parameterized.
+    // flintCandidateToday/flintMaxLossToday pass false/null here (never
+    // true) because SPARK_FLINT is a SEPARATE, independent budget
+    // (spark-flint-separate.ts) that is NEVER folded into SPARK's own
+    // Phase-1->2 trigger or CPPI floor — passing FLINT's real candidacy here
+    // would re-introduce exactly the shared-budget trigger-crowding effect
+    // RESULT_spark_addons.md proved kills SPARK's own performance.
+    if (bot.name === 'spark' && isAfterEodCutoff(ct, bot)) {
+      try {
+        const fastStart = await import('./fast-start-sizing')
+        if (fastStart.isFastStartMode('SPARK_FAST_START')) {
+          const fastStartDb = await import('./fast-start-db')
+          const ebbSizing = await import('./ebb-sizing')
+          const tradier = await import('./tradier')
+          const tradeDateCt = ct.toISOString().slice(0, 10)
+
+          const eligible = await tradier.resolveEligibleAccounts('spark')
+          for (const acct of eligible) {
+            if (acct.type === 'production') continue // SPARK's production pot never runs fast-start (canPlaceLiveOrders('spark') is hard-coded false) — sandbox customer accounts only
+            const accountType: 'sandbox' | 'production' = 'sandbox'
+            try {
+              const allocated = await tradier.getAllocatedCapitalForAccount(acct.name, accountType)
+              const closingEquity = allocated?.equity ?? null
+              const deposit = await tradier.getOrSeedFlintAccountFloor(acct.name, 'sandbox', null, closingEquity)
+              if (deposit == null || closingEquity == null) {
+                console.warn(`[scanner] SPARK_FAST_START EOD [${acct.name}:${accountType}]: skip:deposit_or_equity_unreadable`)
+                continue
+              }
+              const state = await fastStartDb.getOrSeedFastStartState(acct.name, accountType, deposit, closingEquity, 'spark')
+              if (state == null) continue
+              const normalLadder = ebbSizing.ebbProfitLadderContracts('spark', deposit, state.peakProfit)
+
+              const sparkToday = await fastStartDb.readEbbTodayOutcome('spark', acct.name, accountType, tradeDateCt, true)
+              const result = await fastStartDb.updateFastStartEodState(
+                acct.name, accountType, tradeDateCt, closingEquity, normalLadder,
+                sparkToday.contracts >= 1, sparkToday.maxLossPerLot,
+                false, null, 'spark',
+              )
+              if (result.updated) {
+                console.log(
+                  `[scanner] SPARK_FAST_START EOD [${acct.name}:${accountType}]: phase=${result.phase} ` +
+                  `peak_profit=$${result.peakProfit?.toFixed(2)} triggered_today=${result.triggeredToday}`,
+                )
+              }
+            } catch (e) {
+              console.error(`[scanner] SPARK_FAST_START EOD [${acct.name}:${accountType}] failed:`, e)
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[scanner] SPARK_FAST_START EOD hook failed:', e)
+      }
+    }
+
+    // AFTERNOON-SPREAD PAPER TRACKER (Leron, 2026-09-26: "Put on paper to
+    // track it") — the "dynamic hedge V2" research lead. PAPER-ONLY: reads
+    // quotes and writes to its own table, never places an order (see
+    // lib/afternoon-spread-tracker.ts's header). Disarmed unless
+    // AFTERNOON_SPREAD_PAPER=on; both calls no-op immediately when it isn't.
+    // Scoped to bot.name === 'flame' because it needs FLAME's own EBB put
+    // strike and VIX gate ratio, evaluated once per cycle, not once per bot.
+    if (bot.name === 'flame') {
+      try {
+        const { runAfternoonSpreadTick, settleAfternoonSpreadExpired } = await import('./afternoon-spread-tracker')
+        const spreadSettled = await settleAfternoonSpreadExpired(ct)
+        if (spreadSettled) console.log(`[scanner] ${spreadSettled}`)
+        const spreadTick = await runAfternoonSpreadTick(ct)
+        if (spreadTick) console.log(`[scanner] ${spreadTick}`)
+      } catch (e) {
+        console.error('[scanner] afternoon-spread paper tracker failed:', e)
+      }
+    }
+
+    // CALLDIAG — IWM 10d/20d call diagonal, PAPER sleeve unlocked per-account
+    // at CALLDIAG_MIN_EQUITY (default $7,500, env CALLDIAG_MODE=off by
+    // default). Entry at 09:35 ET, exit at 15:59 ET of the last session
+    // before front expiry; both no-op every other minute. See
+    // lib/calldiag-tracker.ts's header — never places a real order in this
+    // PR under any mode. Scoped to bot.name === 'flame' since this sleeve
+    // rides FLAME's own account list (resolveEligibleAccounts('flame')) and
+    // FLINT's floor infrastructure; wrapped so a failure here never takes
+    // FLAME's own put-side cycle down.
+    if (bot.name === 'flame') {
+      try {
+        const { runCallDiagEntryTick, runCallDiagExitTick } = await import('./calldiag-tracker')
+        const cdExit = await runCallDiagExitTick(ct)
+        if (cdExit) console.log(`[scanner] ${cdExit}`)
+        const cdEntry = await runCallDiagEntryTick(ct)
+        if (cdEntry) console.log(`[scanner] ${cdEntry}`)
+      } catch (e) {
+        console.error('[scanner] CALLDIAG paper tracker failed:', e)
+      }
+    }
+
     // BACKSTOP. The pass above owns the normal case; this one owns everything else.
     // An expired contract that is still `status = 'open'` is ALWAYS wrong, whatever
     // the cause, and it blocks every entry until a human notices — SPARK lost three
@@ -8266,6 +9698,35 @@ async function scanBot(bot: BotDef): Promise<void> {
       reason = hhmmNow < entryStart
         ? `Before entry open (${clock}, opens ${entryStart})`
         : `Past entry cutoff (${clock}, cutoff ${botCfg.entry_end})`
+    }
+
+    // SPARK_FLINT entry (2026-09-27) — deliberately placed AFTER the block
+    // above, not alongside FLAME's FLINT block near the top of scanBot: by
+    // this point SPARK's own put-spread attempt for THIS tick (tryOpenTrade,
+    // just above) has already run, so spark_positions reflects today's real
+    // contract count (or its absence) BEFORE FLINT's account-level safety
+    // net (decideSparkFlintContracts, tradier.ts) reads it back via
+    // readEbbTodayOutcome('spark', ...). isInEntryWindow(ct, bot) inside
+    // tryOpenFlint reuses SPARK's OWN window (10:05-10:20 CT via `bot`),
+    // independent of FLAME's 13:05 window. One low-probability, accepted
+    // race: if SPARK's own entry is delayed to a LATER tick within the
+    // window (a transient quote/BP miss) after FLINT has ALREADY traded
+    // THIS tick assuming sparkCost=0, the safety net cannot retroactively
+    // re-check — the same per-tick-snapshot limitation every other gate in
+    // this scanner already has (BP, liquidity). Never fires unless BOTH
+    // FLINT_MODE != off AND SPARK_FLINT=on (isSparkFlintMode,
+    // spark-flint-separate.ts) — off/unset means this whole block is
+    // skipped, zero extra DB reads.
+    if (bot.name === 'spark') {
+      try {
+        const { isSparkFlintMode } = await import('./spark-flint-separate')
+        if (isSparkFlintMode()) {
+          const flintTraded = await tryOpenFlint(bot, ct)
+          if (flintTraded) console.log(`[scanner] ${flintTraded}`)
+        }
+      } catch (e) {
+        console.error('[scanner] FLINT/SPARK entry failed:', e)
+      }
     }
 
     // Take equity snapshot every cycle — save SEPARATE snapshots for sandbox and production.
@@ -9482,6 +10943,15 @@ export const _testing = {
   vixDecayCheck,
   vixDecayBlock,
   VIX_DECAY_CEILING,
+  logFlintDailyContext,
+  getFlintGammaContextCached,
+  FLINT_CONTEXT_TABLE,
+  closeFlintAtRiskBeforeBell,
+  settleFlintExpired,
+  assignmentGuardWindow,
+  buildFlameD2Features,
+  SPARK_V2_RELAXED_VIX_CEILING,
+  tryOpenFlamePutSpread,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },
   get _scanStartedAt() { return _scanStartedAt },

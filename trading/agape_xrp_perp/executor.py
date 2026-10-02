@@ -50,14 +50,15 @@ class AgapeXrpPerpExecutor:
 
         # Pre-trade margin check - strict only in LIVE mode.
         from trading.margin.pre_trade_check import check_margin_before_trade
-        is_live = self.config.mode == TradingMode.LIVE
         approved, reason = check_margin_before_trade(
             bot_name="AGAPE_XRP_PERP",
             symbol="XRP-PERP",
             side=signal.side or "long",
             quantity=signal.quantity,
             entry_price=signal.entry_price or signal.spot_price,
-            strict=is_live,
+            # Paper accounts must behave like a real Hyperliquid account: fail
+            # CLOSED (block the trade) on any margin-system error, not just in LIVE.
+            strict=True,
         )
         if not approved:
             self.last_failure_reason = f"margin_rejected: {reason}"
@@ -68,19 +69,68 @@ class AgapeXrpPerpExecutor:
             )
             return None
 
+        # Free-margin + leverage-cap check. Paper accounts must never be able
+        # to open a position they couldn't actually afford on a real cross-margin
+        # Hyperliquid account. Fails CLOSED on any computation error.
+        from trading.margin.pre_trade_check import check_free_margin_for_perp
+        margin_ok, margin_reason = check_free_margin_for_perp(
+            db=self.db,
+            config=self.config,
+            signal_side=signal.side or "long",
+            signal_quantity=signal.quantity,
+            signal_entry_price=signal.entry_price or signal.spot_price,
+            current_price=self.get_current_price(),
+        )
+        if not margin_ok:
+            self.last_failure_reason = f"free_margin_rejected: {margin_reason}"
+            logger.warning(
+                f"AGAPE-XRP-PERP: Trade BLOCKED by free-margin check: {margin_reason}"
+            )
+            return None
+
         if self.config.mode == TradingMode.LIVE:
             return self._execute_live(signal)
         return self._execute_paper(signal)
 
     def _execute_paper(self, signal: AgapeXrpPerpSignal) -> Optional[AgapeXrpPerpPosition]:
         try:
-            slippage = signal.spot_price * 0.001
-            fill_price = signal.spot_price + slippage if signal.side == "long" else signal.spot_price - slippage
+            from trading.shared.margin_config import PERPETUAL_MARGIN_SPECS
+            from trading.shared.perp_realism import simulate_selective_reference_fill
+
+            spec = PERPETUAL_MARGIN_SPECS.get(self.config.instrument, {})
+            fill, reference_market, venue_rules = simulate_selective_reference_fill(
+                self.config.instrument,
+                signal.side,
+                signal.quantity,
+                signal.spot_price,
+                default_leverage=float(spec.get("default_leverage", 5) or 5),
+                max_leverage=float(spec.get("max_leverage", 20) or 20),
+                fallback_maintenance_margin_rate=float(
+                    spec.get("maintenance_margin_rate", 0.01) or 0.01
+                ),
+                funding_interval_hours=float(
+                    spec.get("funding_interval_hours", 8) or 8
+                ),
+                prefer_maker=getattr(signal, "confidence", "") in ("HIGH", "VERY_HIGH"),
+                seed_key=f"{self.config.instrument}|{getattr(signal, 'side', '')}|{getattr(signal, 'entry_price', 0)}|{getattr(signal, 'spot_price', 0)}|{getattr(signal, 'confidence', '')}",
+            )
+            fill_price = fill.fill_price
+            logger.info(
+                "%s paper fill source=%s style=%s fill_frac=%.2f ref=%.8f fill=%.8f slippage=%.2fbps fee=$%.4f",
+                self.config.instrument,
+                reference_market.quote.source if reference_market else "fallback",
+                fill.execution_style,
+                fill.fill_fraction,
+                fill.reference_price,
+                fill.fill_price,
+                fill.slippage_bps,
+                fill.fee_usd,
+            )
             position_id = f"AGAPE-XRP-PERP-{uuid.uuid4().hex[:8].upper()}"
             return AgapeXrpPerpPosition(
                 position_id=position_id,
                 side=PositionSide.LONG if signal.side == "long" else PositionSide.SHORT,
-                quantity=signal.quantity, entry_price=round(fill_price, 4),
+                quantity=signal.quantity * fill.fill_fraction, entry_price=round(fill_price, 4),
                 stop_loss=signal.stop_loss, take_profit=signal.take_profit,
                 max_risk_usd=signal.max_risk_usd,
                 underlying_at_entry=signal.spot_price,
@@ -114,8 +164,8 @@ class AgapeXrpPerpExecutor:
         integrate with a specific perpetual exchange API (e.g., Binance,
         Bybit, dYdX). For now, falls back to paper execution.
         """
-        logger.warning("AGAPE-XRP-PERP Executor: Live perpetual execution not yet integrated, using paper mode")
-        return self._execute_paper(signal)
+        logger.error("AGAPE-XRP-PERP Executor: LIVE execution is disabled until a real perpetual venue adapter is configured")
+        return None
 
     def get_current_price(self) -> Optional[float]:
         """Get current XRP price via CryptoDataProvider.

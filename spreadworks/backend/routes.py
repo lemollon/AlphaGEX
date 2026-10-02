@@ -551,124 +551,73 @@ async def _annotate_gex_staleness(
 
 @router.get("/gex")
 async def get_gex(request: Request, symbol: str = "SPY"):
-    """Proxy GEX levels from AlphaGEX. Falls back to cache when unavailable.
+    """Canonical intraday gamma context for supported index/ETF symbols.
 
-    Every response carries ``fetched_at`` and, when the upstream snapshot looks
-    stale (too old, or reported spot diverges from the market), a ``stale:true``
-    flag with ``stale_reason`` so the frontend can warn the user rather than
-    silently render days-old walls."""
-    import httpx
+    SPY/QQQ/IWM/XSP are served exclusively by SpreadWorks' ORATS+Tradier
+    market-structure engine. We intentionally do NOT fall back to the legacy
+    AlphaGEX WATCHTOWER/simple-GEX endpoints because mixing methodologies was
+    producing stale walls, source discontinuities, and repeated 404s.
 
-    http = request.app.state.http
-    _timeout = 5.0
+    Unsupported symbols fail closed with an explicit unavailable payload.
+    """
+    symbol = symbol.upper()
     now_iso = datetime.now(timezone.utc).isoformat()
+    supported = {"SPY", "QQQ", "IWM", "XSP"}
+    if symbol not in supported:
+        return {
+            "symbol": symbol,
+            "error": "canonical gamma unavailable for symbol",
+            "supported_symbols": sorted(supported),
+            "source": "spreadworks_market_structure",
+            "fetched_at": now_iso,
+            "stale": True,
+            "stale_reason": "unsupported_symbol",
+        }
 
-    # Try WATCHTOWER first
     try:
-        resp = await http.get(
-            f"{ALPHAGEX_BASE_URL}/api/watchtower/gamma",
-            params={"symbol": symbol, "expiration": "today"},
-            timeout=_timeout,
-        )
-        if resp.status_code == 200:
-            body = resp.json()
-            d = body.get("data", {})
-            ms = d.get("market_structure", {})
-            fp_obj = ms.get("flip_point", {})
-            gw = ms.get("gamma_walls", {})
-            upstream_fetched_at = d.get("fetched_at") or d.get("data_timestamp")
-            result = {
-                "flip_point": fp_obj.get("current") if isinstance(fp_obj, dict) else fp_obj,
-                "call_wall": gw.get("call_wall") if isinstance(gw, dict) else None,
-                "put_wall": gw.get("put_wall") if isinstance(gw, dict) else None,
-                "gamma_regime": d.get("gamma_regime") or ms.get("gamma_regime"),
-                "spot_price": d.get("spot_price"),
-                "vix": d.get("vix"),
-                # Per-strike gamma structure. The bots' strike selection runs on
-                # THIS, not on the three scalars above — `long_butterfly.
-                # _pin_center()` centers the body on the gamma-weighted midpoint
-                # of the large magnets and only falls back to spot when they're
-                # missing. Dropping them here (as this proxy used to) is what
-                # made every suggested fly land at the money.
-                "magnets": d.get("magnets") or [],
-                "pin_strike": d.get("likely_pin"),
-                "pin_probability": d.get("pin_probability"),
-                "source": "watchtower",
-                "fetched_at": upstream_fetched_at or now_iso,
-                "stale": False,
-            }
-            _cache_gex(symbol, result)
-            return await _annotate_gex_staleness(request, result, symbol)
-    except httpx.TimeoutException:
-        logger.warning(f"[gex] Watchtower timeout for {symbol}")
-    except Exception as e:
-        logger.warning(f"[gex] Watchtower fetch failed for {symbol}: {e}")
+        from .market_structure import build_gamma_snapshot
+        snap = await asyncio.to_thread(build_gamma_snapshot, symbol)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[gex] canonical market-structure failure for %s: %r", symbol, exc)
+        return {
+            "symbol": symbol,
+            "error": "canonical gamma unavailable",
+            "source": "spreadworks_market_structure",
+            "fetched_at": now_iso,
+            "stale": True,
+            "stale_reason": f"engine_error:{type(exc).__name__}",
+        }
 
-    # Fallback to simple GEX endpoint
-    try:
-        resp = await http.get(
-            f"{ALPHAGEX_BASE_URL}/api/gex/{symbol}",
-            timeout=_timeout,
-        )
-        if resp.status_code == 200:
-            body = resp.json()
-            d = body.get("data", body)
-            upstream_fetched_at = d.get("fetched_at") or d.get("data_timestamp")
-            result = {
-                "flip_point": d.get("flip_point"),
-                "call_wall": d.get("call_wall"),
-                "put_wall": d.get("put_wall"),
-                "gamma_regime": d.get("regime") or d.get("gamma_regime"),
-                "spot_price": d.get("spot_price"),
-                "vix": d.get("vix"),
-                # This fallback endpoint has no per-strike structure. Emit the
-                # keys anyway so downstream shape is uniform — callers degrade
-                # on empty magnets rather than on a missing key.
-                "magnets": d.get("magnets") or [],
-                "pin_strike": d.get("pin_strike") or d.get("likely_pin"),
-                "pin_probability": d.get("pin_probability"),
-                "source": "gex",
-                "fetched_at": upstream_fetched_at or now_iso,
-                "stale": False,
-            }
-            _cache_gex(symbol, result)
-            return await _annotate_gex_staleness(request, result, symbol)
-    except httpx.TimeoutException:
-        logger.warning(f"[gex] Simple GEX timeout for {symbol}")
-    except Exception as e:
-        logger.warning(f"[gex] Simple GEX fetch failed for {symbol}: {e}")
-
-    # All live sources failed — try cache, but only if it's not expired.
-    max_age = (
-        GEX_CACHE_MAX_AGE_OPEN_SEC
-        if _is_market_open_now()
-        else GEX_CACHE_MAX_AGE_CLOSED_SEC
-    )
-    cached = _read_cached_gex(symbol, max_age_sec=max_age)
-    if cached:
-        # Cache came back — flag it explicitly so the UI can label it as cached
-        # data rather than live, and still run the spot-drift sanity check.
-        cached["stale"] = False
-        return await _annotate_gex_staleness(request, cached, symbol)
-
-    # Check if there's an expired cache row we deliberately skipped — surface
-    # that to the caller instead of silently returning "unavailable", so the
-    # frontend can show "data is X minutes old" rather than a mystery error.
-    expired = _read_cached_gex(symbol, max_age_sec=None)
-    if expired:
-        expired["stale"] = True
-        expired["stale_reason"] = (
-            f"Upstream GEX unavailable; last cached snapshot is "
-            f"{int((expired.get('age_seconds') or 0) / 60)} min old"
-        )
-        return expired
-
-    return {
-        "error": "GEX data unavailable",
-        "detail": "Could not reach AlphaGEX backend",
-        "fetched_at": now_iso,
-        "stale": True,
+    result = {
+        "symbol": symbol,
+        "flip_point": snap.get("gamma_flip"),
+        "call_wall": snap.get("call_wall"),
+        "put_wall": snap.get("put_wall"),
+        "gamma_regime": snap.get("gamma_regime"),
+        "net_gex_b": snap.get("net_gex_b"),
+        "spot_price": snap.get("spot"),
+        "vix": None,
+        "magnets": [],
+        "pin_strike": None,
+        "pin_probability": None,
+        "source": "spreadworks_market_structure",
+        "source_detail": snap.get("source"),
+        "confidence": snap.get("confidence"),
+        "chain_timestamp": snap.get("chain_timestamp"),
+        "chain_age_seconds": snap.get("chain_age_seconds"),
+        "spot_age_seconds": snap.get("spot_age_seconds"),
+        "buckets": snap.get("buckets") or {},
+        "walls": snap.get("walls") or {},
+        "fetched_at": snap.get("captured_at") or now_iso,
+        "stale": not bool(snap.get("available")),
+        "stale_reason": snap.get("reason") if not snap.get("available") else None,
+        "dealer_position_note": (
+            "Estimated from public OI/Greeks; dealer inventory is not directly observable."
+        ),
     }
+    if snap.get("available"):
+        _cache_gex(symbol, result)
+    return result
 
 
 # ---------------------------------------------------------------------------
