@@ -51,6 +51,7 @@ STALE_SECONDS = int(os.getenv("MARKET_STRUCTURE_STALE_SECONDS", "90"))
 GAMMA_TABLE = "sw_live_gamma"
 VOL_TABLE = "sw_live_vol_indices"
 SURFACE_TABLE = "sw_live_surface"
+FLOW_TABLE = "sw_live_trade_quote_flow"
 _OI_CACHE: dict[str, tuple[datetime, datetime, dict[tuple[str, float, str], float]]] = {}
 
 _GAMMA_DDL = f"""
@@ -120,12 +121,28 @@ CREATE TABLE IF NOT EXISTS {SURFACE_TABLE} (
 )
 """
 
+_FLOW_DDL = f"""
+CREATE TABLE IF NOT EXISTS {FLOW_TABLE} (
+  symbol TEXT NOT NULL,
+  captured_at TIMESTAMP NOT NULL,
+  trade_date DATE NOT NULL,
+  source TEXT NOT NULL,
+  source_timestamp TIMESTAMP,
+  confidence TEXT NOT NULL,
+  n_trades INTEGER,
+  bucket_json TEXT,
+  reason TEXT,
+  PRIMARY KEY(symbol, captured_at)
+)
+"""
+
 
 def ensure_tables() -> None:
     with engine.begin() as conn:
         conn.execute(text(_GAMMA_DDL))
         conn.execute(text(_VOL_DDL))
         conn.execute(text(_SURFACE_DDL))
+        conn.execute(text(_FLOW_DDL))
         # Existing deployments already have the original table.  Keep this
         # additive migration here so a rolling deploy cannot leave reports
         # without the realized-volatility fields.
@@ -625,6 +642,124 @@ def fetch_intraday_realized_volatility(
     result = _realized_volatility_from_bars(list(rows), datetime.now(UTC), window_minutes)
     result["source"] = "Tradier 1-minute timesales"
     return result
+
+
+def _flow_bucket(dte: int) -> str | None:
+    if dte == 0:
+        return "0dte"
+    if 1 <= dte <= 5:
+        return "1_5dte"
+    if 6 <= dte <= 20:
+        return "6_20dte"
+    if 21 <= dte <= 60:
+        return "21_60dte"
+    return None
+
+
+def _classify_trade_side(price: float | None, bid: float | None, ask: float | None) -> str:
+    """Classify against the NBBO attached to the *same* OPRA print."""
+    if price is None or bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
+        return "unclassified"
+    epsilon = max(0.01, (ask - bid) * 0.05)
+    if price >= ask - epsilon:
+        return "ask"
+    if price <= bid + epsilon:
+        return "bid"
+    return "mid"
+
+
+def _initiation_read(ask_contracts: int, bid_contracts: int, total_contracts: int) -> str:
+    """Bounded evidence label; never implies opening/closing inventory."""
+    classified = ask_contracts + bid_contracts
+    if total_contracts < 100 or classified < max(50, total_contracts * 0.35):
+        return "INSUFFICIENT_CLASSIFIED_PRINTS"
+    if ask_contracts / classified >= 0.60:
+        return "LIKELY_BUYER_INITIATED"
+    if bid_contracts / classified >= 0.60:
+        return "LIKELY_SELLER_INITIATED"
+    return "MIXED"
+
+
+def fetch_trade_quote_flow(symbol: str, now: datetime | None = None) -> dict[str, Any]:
+    """Read recent OPRA trade+NBBO records and summarize live option flow.
+
+    ThetaData pairs each OPRA print with the NBBO available at that trade, so
+    at-ask/at-bid classification is evidence-based.  This remains a trade-side
+    read only: it cannot identify opening/closing, institutions, or multi-leg
+    structures and the returned guardrail is intentionally report-visible.
+    """
+    now = now or datetime.now(UTC)
+    symbol = symbol.upper()
+    now_et = now.astimezone(ET)
+    if now_et.weekday() >= 5 or not (dtime(9, 30) <= now_et.time() < dtime(16, 0)):
+        return {"symbol": symbol, "available": False, "confidence": "LOW",
+                "reason": "market_closed", "captured_at": now.isoformat()}
+    start = now_et - timedelta(minutes=2)
+    params = {
+        "symbol": symbol, "expiration": "*", "strike": "*", "right": "both",
+        "date": now_et.date().isoformat(),
+        "start_time": start.strftime("%H:%M:%S"),
+        "end_time": now_et.strftime("%H:%M:%S"),
+        "max_dte": 60, "strike_range": 12, "exclusive": "true",
+    }
+    try:
+        rows = _theta_rows("/v3/option/history/trade_quote", params, timeout=25)
+    except Exception as exc:  # noqa: BLE001
+        return {"symbol": symbol, "available": False, "confidence": "LOW",
+                "reason": f"theta_trade_quote_failure:{type(exc).__name__}",
+                "captured_at": datetime.now(UTC).isoformat()}
+    buckets: dict[str, dict[str, Any]] = {
+        key: {"call_contracts": 0, "put_contracts": 0,
+              "call_ask_contracts": 0, "call_bid_contracts": 0,
+              "put_ask_contracts": 0, "put_bid_contracts": 0,
+              "call_notional": 0.0, "put_notional": 0.0}
+        for key in ("0dte", "1_5dte", "6_20dte", "21_60dte")
+    }
+    newest: datetime | None = None
+    accepted = 0
+    for row in rows:
+        expiry = str(row.get("expiration") or "")
+        right = str(row.get("right") or "").lower()
+        stamp = _theta_ts(row.get("timestamp"))
+        price, bid, ask, size = (_f(row, "price"), _f(row, "bid"),
+                                 _f(row, "ask"), _f(row, "size"))
+        if not expiry or right not in {"call", "put"} or stamp is None or size is None or size <= 0:
+            continue
+        try:
+            bucket = _flow_bucket((datetime.fromisoformat(expiry).date() - now_et.date()).days)
+        except ValueError:
+            continue
+        if bucket is None:
+            continue
+        contracts = int(size)
+        stats = buckets[bucket]
+        stats[f"{right}_contracts"] += contracts
+        stats[f"{right}_notional"] += contracts * (price or 0.0) * 100.0
+        side = _classify_trade_side(price, bid, ask)
+        if side in {"ask", "bid"}:
+            stats[f"{right}_{side}_contracts"] += contracts
+        newest = max(newest, stamp) if newest else stamp
+        accepted += 1
+    completed_at = datetime.now(UTC)
+    age = (completed_at - newest).total_seconds() if newest else None
+    fresh = newest is not None and age is not None and 0 <= age <= STALE_SECONDS
+    for stats in buckets.values():
+        stats["call_initiation"] = _initiation_read(
+            stats.pop("call_ask_contracts"), stats.pop("call_bid_contracts"), stats["call_contracts"])
+        stats["put_initiation"] = _initiation_read(
+            stats.pop("put_ask_contracts"), stats.pop("put_bid_contracts"), stats["put_contracts"])
+    return {
+        "symbol": symbol, "available": bool(fresh and accepted),
+        "captured_at": completed_at.isoformat(),
+        "source": "ThetaData OPRA trade + contemporaneous NBBO",
+        "source_timestamp": newest.isoformat() if newest else None,
+        "age_seconds": round(age, 1) if age is not None else None,
+        "confidence": "HIGH" if fresh and accepted >= 20 else "LOW",
+        "n_trades": accepted, "buckets": buckets,
+        "guardrail": ("LIKELY buyer/seller initiated is based on an OPRA print at the attached NBBO. "
+                      "It does not establish opening/closing, institution, or multi-leg structure."),
+        "reason": None if fresh and accepted else ("stale_or_empty_trade_quote_flow"),
+    }
 
 
 def _atm_ivs_by_dte(records: list[dict[str, Any]], spot: float) -> dict[int, float]:
@@ -1142,6 +1277,25 @@ def persist_surface(surface: dict[str, Any]) -> None:
             "ON CONFLICT(symbol,captured_at) DO NOTHING"), params)
 
 
+def persist_trade_quote_flow(flow: dict[str, Any]) -> None:
+    """Persist every flow attempt so reports can use a dated fallback safely."""
+    ensure_tables()
+    captured = datetime.fromisoformat(flow["captured_at"].replace("Z", "+00:00"))
+    source_ts = _parse_ts(flow.get("source_timestamp")) if flow.get("source_timestamp") else None
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"INSERT INTO {FLOW_TABLE} "
+            "(symbol,captured_at,trade_date,source,source_timestamp,confidence,n_trades,bucket_json,reason) "
+            "VALUES (:symbol,:captured,:date,:source,:source_ts,:confidence,:n,:buckets,:reason) "
+            "ON CONFLICT(symbol,captured_at) DO NOTHING"),
+            {"symbol": flow["symbol"], "captured": captured.replace(tzinfo=None),
+             "date": captured.astimezone(CT).date(),
+             "source": flow.get("source") or "ThetaData OPRA trade + NBBO",
+             "source_ts": source_ts.replace(tzinfo=None) if source_ts else None,
+             "confidence": flow.get("confidence") or "LOW", "n": flow.get("n_trades"),
+             "buckets": json.dumps(flow.get("buckets") or {}), "reason": flow.get("reason")})
+
+
 def capture_all() -> dict[str, Any]:
     now = datetime.now(UTC)
     now_ct = now.astimezone(CT)
@@ -1151,6 +1305,7 @@ def capture_all() -> dict[str, Any]:
     persist_vol(vol, now)
     gamma: dict[str, Any] = {}
     surface: dict[str, Any] = {}
+    flow: dict[str, Any] = {}
     # Surface is intentionally limited to the two report underlyings.  It uses
     # the entitled IV-only endpoint and does not depend on the optional Greeks
     # package or the slower OI join used by the dealer-gamma map.  Capture it
@@ -1170,6 +1325,22 @@ def capture_all() -> dict[str, Any]:
                         "captured_at": datetime.now(UTC).isoformat()}
             surface[symbol] = item
             persist_surface(item)
+    # The flow request is separate from the IV snapshot because it carries the
+    # OPRA print + contemporaneous NBBO needed for an at-bid/at-ask read.
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="trade-quote-flow") as pool:
+        futures = {pool.submit(fetch_trade_quote_flow, symbol, datetime.now(UTC)): symbol
+                   for symbol in ("SPY", "QQQ")}
+        for future in as_completed(futures):
+            symbol = futures[future]
+            try:
+                item = future.result()
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("[MarketStructure] %s trade-quote flow capture crashed", symbol)
+                item = {"symbol": symbol, "available": False, "confidence": "LOW",
+                        "reason": f"capture_exception:{type(exc).__name__}",
+                        "captured_at": datetime.now(UTC).isoformat()}
+            flow[symbol] = item
+            persist_trade_quote_flow(item)
     # Fetch independent symbols concurrently after the report-critical surface
     # has been persisted.  Each snapshot still carries its own fresh clock.
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="market-structure") as pool:
@@ -1191,7 +1362,7 @@ def capture_all() -> dict[str, Any]:
             gamma[symbol] = snap
             persist_snapshot(snap)
     return {"captured": True, "captured_at": now.isoformat(), "volatility": vol,
-            "gamma": gamma, "surface": surface}
+            "gamma": gamma, "surface": surface, "flow": flow}
 
 
 def _latest_gamma(symbol: str) -> dict[str, Any] | None:
@@ -1238,6 +1409,29 @@ def _latest_surface(symbol: str) -> dict[str, Any] | None:
                 "realized_vol_bar_timestamp"):
         if result[key] is not None:
             result[key] = result[key].isoformat()
+    return result
+
+
+def _latest_trade_quote_flow(symbol: str) -> dict[str, Any] | None:
+    ensure_tables()
+    with engine.begin() as conn:
+        row = conn.execute(text(
+            f"SELECT captured_at,source,source_timestamp,confidence,n_trades,bucket_json,reason "
+            f"FROM {FLOW_TABLE} WHERE symbol=:symbol ORDER BY captured_at DESC LIMIT 1"),
+            {"symbol": symbol}).fetchone()
+    if not row:
+        return None
+    keys = ("captured_at", "source", "source_timestamp", "confidence", "n_trades",
+            "bucket_json", "reason")
+    result = dict(zip(keys, row))
+    for key in ("captured_at", "source_timestamp"):
+        if result[key] is not None:
+            result[key] = result[key].isoformat()
+    result["buckets"] = json.loads(result.pop("bucket_json") or "{}")
+    result["guardrail"] = (
+        "LIKELY buyer/seller initiated is based on an OPRA print at the attached NBBO. "
+        "It does not establish opening/closing, institution, or multi-leg structure."
+    )
     return result
 
 
@@ -1321,6 +1515,23 @@ def latest_surface_symbol(symbol: str):
         return {"available": False, "reason": "surface supports SPY and QQQ", "symbol": symbol}
     row = _latest_surface(symbol)
     return {"available": row is not None, "symbol": symbol, "surface": row}
+
+
+@router.get("/flow/{symbol}")
+def trade_quote_flow_symbol(symbol: str):
+    symbol = symbol.upper()
+    if symbol not in {"SPY", "QQQ"}:
+        return {"available": False, "reason": "trade-quote flow supports SPY and QQQ", "symbol": symbol}
+    return fetch_trade_quote_flow(symbol, datetime.now(UTC))
+
+
+@router.get("/flow/latest/{symbol}")
+def latest_trade_quote_flow_symbol(symbol: str):
+    symbol = symbol.upper()
+    if symbol not in {"SPY", "QQQ"}:
+        return {"available": False, "reason": "trade-quote flow supports SPY and QQQ", "symbol": symbol}
+    row = _latest_trade_quote_flow(symbol)
+    return {"available": row is not None, "symbol": symbol, "flow": row}
 
 
 @router.get("/vol-indices")
