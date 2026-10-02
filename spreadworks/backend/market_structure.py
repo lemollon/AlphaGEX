@@ -1791,6 +1791,61 @@ def cross_asset():
             "interpretation_guardrail": "Use only fresh rows. Relative returns show leadership, not institutional flows or future certainty."}
 
 
+@router.get("/report-readiness")
+def report_readiness():
+    """Single auditable contract for report-critical live data.
+
+    Report writers use this before drafting.  It makes each required block
+    explicit, prevents a missing field from silently disappearing, and keeps
+    LOW/stale observations from influencing the thesis.
+    """
+    now = datetime.now(UTC)
+    surface = {symbol: _cached_surface_payload(symbol, now) for symbol in ("SPY", "QQQ")}
+    gamma = {symbol: _cached_gamma_payload(symbol, now) for symbol in ("SPY", "QQQ")}
+    vol = _cached_vol_payload(now)
+    cross = fetch_cross_asset(now)
+    flow: dict[str, Any] = {}
+    for symbol in ("SPY", "QQQ"):
+        row = _latest_trade_quote_flow(symbol)
+        stamp = _parse_ts((row or {}).get("source_timestamp"))
+        age = (now - stamp).total_seconds() if stamp else None
+        usable = bool(row and row.get("confidence") in {"HIGH", "MEDIUM"}
+                      and age is not None and 0 <= age <= STALE_SECONDS)
+        flow[symbol] = {**(row or {"symbol": symbol, "reason": "no_persisted_flow"}),
+                        "available": usable,
+                        "age_seconds": round(age, 1) if age is not None else None}
+
+    checks = {
+        "surface_spy": bool(surface["SPY"].get("available")),
+        "surface_qqq": bool(surface["QQQ"].get("available")),
+        "gamma_spy": bool(gamma["SPY"].get("available")),
+        "gamma_qqq": bool(gamma["QQQ"].get("available")),
+        "vix_family": bool(vol.get("available")),
+        "sector_credit": bool(cross.get("available")),
+        "flow_spy": bool(flow["SPY"].get("available")),
+        "flow_qqq": bool(flow["QQQ"].get("available")),
+    }
+    # Flow is required to be visibly accounted for, but it cannot be silently
+    # fabricated merely to pass a publish gate.  The reports receive both the
+    # mandatory-core and optional-live-flow verdicts.
+    mandatory_core = ("surface_spy", "surface_qqq", "gamma_spy", "gamma_qqq",
+                      "vix_family", "sector_credit")
+    return {
+        "retrieved_at": now.isoformat(), "freshness_limit_seconds": STALE_SECONDS,
+        "required_checks": checks,
+        "core_ready": all(checks[key] for key in mandatory_core),
+        "flow_ready": checks["flow_spy"] and checks["flow_qqq"],
+        "missing_core": [key for key in mandatory_core if not checks[key]],
+        "missing_flow": [key for key in ("flow_spy", "flow_qqq") if not checks[key]],
+        "surface": surface, "gamma": gamma, "volatility": vol,
+        "cross_asset": cross, "flow": flow,
+        "writer_rule": (
+            "Every named block must be rendered from this payload or listed once in Data Integrity. "
+            "Never replace an unavailable block with a decorative image or inferred data."
+        ),
+    }
+
+
 @router.get("/vol-indices")
 def vol_indices():
     payload = _cached_vol_payload(datetime.now(UTC))
