@@ -647,6 +647,19 @@ function sweepStats(a,period='full'){
  return {startingEquity:start,endingEquity:end,pnl,returnPct:money(100*pnl/start),netAfterExternalSubscription:money(pnl-bills*50),subscriptionCharges:bills*50,maxClosedDrawdown:money(dd),maxClosedDrawdownPct:money(ddpct*100),maxMarkedDrawdownObserved:money(markedDD),markGapMinutes:markGaps,hostTradeDays:hosts,flintTradeDays:flints,addedHostDays:added,tradingDays:days,lossDays,longestLosingDayStreak:longest,worstDay:worst,monthly:months,sessions:selected.length};
 }
 function sweepSnapshot(){return {spec:{...SPEC,scenarioGrid:scenarioGrid(),trainingEnd:'2025-09-26',validationStart:'2025-09-29',inputReuse:'Only frozen gamma/VIX/EOD/SPX market inputs from the validated baseline checkpoint; every account performance path recomputed; fresh minute quotes fetched once per day across scenarios.'},status:{...STATE},engineHash:sha(fs.readFileSync(__filename)),baselineKey:BASELINE_KEY,summary:accounts.map(a=>({scenario:a.scenario,fillCase:a.fillCase,full:sweepStats(a),train:sweepStats(a,'train'),validation:sweepStats(a,'validation'),tradeCounts:a.tradeCounts,unresolved:a.unresolved,complete:STATE.completed===751&&!STATE.dataErrors.length&&!a.unresolved.length})),coverageLimits:SPEC.gammaCoverage+' '+SPEC.execution};}
+function flameCustomerRankings(limit=10){
+ const grouped=new Map();
+ for(const account of accounts.filter(a=>a.scenario.bot==='flame'&&a.scenario.profile==='current_customer_package')){
+  const item=grouped.get(account.scenario.id)||{scenario:account.scenario};
+  item[account.fillCase]=sweepStats(account);
+  grouped.set(account.scenario.id,item);
+ }
+ return [...grouped.values()].filter(x=>x.natural&&x.adverse3c).map(x=>({
+  scenario:x.scenario,
+  natural:{endingEquity:x.natural.endingEquity,netAfterSubscription:x.natural.netAfterExternalSubscription,maxClosedDrawdown:x.natural.maxClosedDrawdown,maxMarkedDrawdown:x.natural.maxMarkedDrawdownObserved,worstDay:x.natural.worstDay},
+  adverse:{endingEquity:x.adverse3c.endingEquity,netAfterSubscription:x.adverse3c.netAfterExternalSubscription,maxClosedDrawdown:x.adverse3c.maxClosedDrawdown,maxMarkedDrawdown:x.adverse3c.maxMarkedDrawdownObserved,worstDay:x.adverse3c.worstDay}
+ })).sort((a,b)=>b.adverse.netAfterSubscription-a.adverse.netAfterSubscription||a.adverse.maxMarkedDrawdown-b.adverse.maxMarkedDrawdown).slice(0,limit);
+}
 async function initCheckpointStore(){
  let pg;try{pg=require('/tmp/sf3y-pg/node_modules/pg');}catch{require('node:child_process').execFileSync('npm',['install','--no-save','--no-package-lock','--prefix','/tmp/sf3y-pg','pg@8.16.3'],{stdio:'ignore'});pg=require('/tmp/sf3y-pg/node_modules/pg');}
  checkpointPool=new pg.Pool({connectionString:process.env.RESEARCH_DATABASE_URL,max:1,connectionTimeoutMillis:10000,ssl:true});
@@ -697,7 +710,7 @@ async function commitDay(row){
 async function execute(){
  selfTest();sweepSelfTest();STATE.startedAt=new Date().toISOString();STATE.total=751;STATE.stage='loading_inputs';
  try{
-  const resumed=await initCheckpointStore();if(resumed&&['completed_with_coverage_limits','blocked'].includes(STATE.stage))return;
+  const resumed=await initCheckpointStore();if(resumed&&['completed_with_coverage_limits','blocked'].includes(STATE.stage)){if(STATE.stage==='completed_with_coverage_limits')emit('flame_customer_rankings',{rankings:flameCustomerRankings()});return;}
   for(const day of sessions().slice(STATE.completed)){
    STATE.currentDay=day;const before=structuredClone(accounts),completedBefore=STATE.completed;
    await recoverDataOperation(async()=>{const row=await replayDay(day);if(row.accounts.length!==accounts.length||row.accounts.some(a=>a.unresolved.length))throw Error('unresolved_sweep_day');await commitDay(row);},'day',()=>{accounts.splice(0,accounts.length,...structuredClone(before));STATE.completed=completedBefore;});
@@ -706,7 +719,7 @@ async function execute(){
   const natural=accounts.find(a=>a.scenario.id==='flame_base'&&a.fillCase==='natural'),adverse=accounts.find(a=>a.scenario.id==='flame_base'&&a.fillCase==='adverse3c');
   assert.equal(sweepStats(natural).endingEquity,8185.20);assert.equal(sweepStats(adverse).endingEquity,2116.80);assert.equal(natural.tradeCounts.total,670);assert.equal(adverse.tradeCounts.total,97);
   for(const [fill,end,count] of [['natural',8842.40,930],['adverse3c',4322.40,627]]){const spark=accounts.find(a=>a.scenario.id==='spark_base'&&a.fillCase===fill);assert.equal(sweepStats(spark).endingEquity,end);assert.equal(spark.tradeCounts.total,count);}
-  STATE.stage='completed_with_coverage_limits';STATE.baselineParity=true;await saveCheckpoint();emit('sweep_finished',{completed:751,paths:accounts.length,baselineParity:true});
+  STATE.stage='completed_with_coverage_limits';STATE.baselineParity=true;await saveCheckpoint();emit('sweep_finished',{completed:751,paths:accounts.length,baselineParity:true});emit('flame_customer_rankings',{rankings:flameCustomerRankings()});
  }catch(e){STATE.stage='blocked';STATE.error=String(e.message);STATE.dataErrors.push({day:STATE.currentDay,error:STATE.error});try{await saveCheckpoint();}catch{}emit('sweep_blocked',{...STATE});}
 }
 
