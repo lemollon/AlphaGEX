@@ -20,11 +20,11 @@ global.fetch=async raw=>{
  // Risk-capped scenarios are explicit revision candidates, not the retired
  // implicit `risk10` profile. Both fill paths must exercise every cap.
  const risk=R.accounts.filter(a=>a.bot==='flame'&&a.scenario.id.includes('_riskcap_'));
- assert.equal(risk.length,18,'nine explicit risk-cap scenarios must cover both fills');
+ assert.equal(risk.length,24,'twelve explicit risk-cap scenarios must cover both fills');
  assert.equal(R.scenarioRiskCapacity({equity:200000,scenario:{maxRiskPct:.10}},2,18000,0),1);
  reset();day='2024-06-12';ratio=.75;seed();await R.replayDay(day);
  const guarded=R.accounts.filter(a=>a.scenario.eventGuard);
  for(const a of guarded){assert.equal(a.days[0].hostN,0);assert.equal(a.days[0].flintN,0,'FOMC blackout must not admit FLINT');}
- assert.equal(R.accounts.length,462,'all 231 scenarios must exercise natural and adverse fill paths');
- console.log(JSON.stringify({passed:true,paths:462,tests:'baseline parity fixture, VIX-minute and retained-profit admission variants, explicit per-trade risk-cap candidates, FOMC full new-entry blackout, shared quotes, zero order endpoints; SYNTHETIC fixtures only'}));
+ assert.equal(R.accounts.length,468,'all 234 scenarios must exercise natural and adverse fill paths');
+ console.log(JSON.stringify({passed:true,paths:468,tests:'baseline parity fixture, VIX-minute and retained-profit admission variants, explicit per-trade risk-cap and adaptive-minute candidates, FOMC full new-entry blackout, shared quotes, zero order endpoints; SYNTHETIC fixtures only'}));
 })().catch(e=>{console.error(e);process.exitCode=1;});
