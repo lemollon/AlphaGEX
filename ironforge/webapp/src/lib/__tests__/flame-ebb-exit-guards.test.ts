@@ -121,3 +121,20 @@ describe('settlement books the broker fill when the broker closed early', () => 
     expect(check).toBeLessThan(book)
   })
 })
+
+describe('EBB entry window is code-controlled', () => {
+  it('pins entry_start/entry_end after the DB entry_end string is parsed, in both loaders', () => {
+    const fn = SCANNER_SRC.slice(SCANNER_SRC.indexOf('function pinEbbExitConfig('))
+    expect(fn).toContain('merged.entry_start = d.entry_start')
+    expect(fn).toContain('merged.entry_end = d.entry_end')
+    for (const loader of ['async function loadConfigOverrides(', 'async function loadProductionConfigFor(']) {
+      const i = SCANNER_SRC.indexOf(loader)
+      if (i < 0) continue
+      const body = SCANNER_SRC.slice(i, i + 6000)
+      const parse = body.indexOf('merged.entry_end = h * 100 + m')
+      const pin = body.indexOf('pinEbbExitConfig(bot.name, merged)')
+      expect(parse).toBeGreaterThan(0)
+      expect(pin).toBeGreaterThan(parse)
+    }
+  })
+})

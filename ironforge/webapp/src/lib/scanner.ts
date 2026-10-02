@@ -927,6 +927,17 @@ function pinEbbExitConfig(botName: string, merged: BotConfig): void {
   }
   merged.pt_pct = d.pt_pct
   merged.sl_mult = d.sl_mult
+  // The validated entry window is part of the strategy, not a tunable (2026-10-02
+  // audit: a stale row set FLAME entry_end 1400, letting live FLAME enter anywhere
+  // 13:05-14:00 CT instead of 13:05-13:10).
+  if (merged.entry_start !== d.entry_start || merged.entry_end !== d.entry_end) {
+    console.warn(
+      `[scanner] ${botName.toUpperCase()} DB entry-window override ignored ` +
+      `(${merged.entry_start}-${merged.entry_end}) — using code ${d.entry_start}-${d.entry_end} CT`,
+    )
+  }
+  merged.entry_start = d.entry_start
+  merged.entry_end = d.entry_end
 }
 
 /** DB column → config key mapping (with optional transform) */
@@ -1005,7 +1016,6 @@ async function loadConfigOverrides(): Promise<void> {
       // Operators can RAISE min_credit via DB; they cannot LOWER it below the
       // strategy's floor without a code change + review.
       merged.min_credit = Math.max(merged.min_credit, DEFAULT_CONFIG[bot.name].min_credit)
-      pinEbbExitConfig(bot.name, merged)
 
       // entry_end from config table is stored as "14:00" string — parse to HHMM int
       const entryEndStr = row.entry_end
@@ -1013,6 +1023,7 @@ async function loadConfigOverrides(): Promise<void> {
         const [h, m] = entryEndStr.split(':').map(Number)
         if (!isNaN(h) && !isNaN(m)) merged.entry_end = h * 100 + m
       }
+      pinEbbExitConfig(bot.name, merged)
 
       // eod_cutoff_et is a "HH:MM" string in CENTRAL time. The `_et` suffix is a
       // legacy misnomer — all IronForge times are CT (matching entry_end above),
@@ -1103,12 +1114,12 @@ export async function loadProductionConfigFor(botName: string): Promise<BotConfi
     }
     // Same code-level min_credit floor as the sandbox loader above.
     merged.min_credit = Math.max(merged.min_credit, DEFAULT_CONFIG[bot.name].min_credit)
-    pinEbbExitConfig(bot.name, merged)
     const entryEndStr = row.entry_end
     if (entryEndStr && typeof entryEndStr === 'string' && entryEndStr.includes(':')) {
       const [h, m] = entryEndStr.split(':').map(Number)
       if (!isNaN(h) && !isNaN(m)) merged.entry_end = h * 100 + m
     }
+    pinEbbExitConfig(bot.name, merged)
     // eod_cutoff_et is Central time (legacy `_et` name); parsed as-is, no shift.
     const eodCtStr = row.eod_cutoff_et
     if (eodCtStr && typeof eodCtStr === 'string' && eodCtStr.includes(':')) {
