@@ -1820,11 +1820,25 @@ def report_readiness():
         "surface_qqq": bool(surface["QQQ"].get("available")),
         "gamma_spy": bool(gamma["SPY"].get("available")),
         "gamma_qqq": bool(gamma["QQQ"].get("available")),
-        "vix_family": bool(vol.get("available")),
+        "vix_family": all((vol.get("indices") or {}).get(symbol, {}).get("fresh")
+                          for symbol in VOL_SYMBOLS),
         "sector_credit": bool(cross.get("available")),
         "flow_spy": bool(flow["SPY"].get("available")),
         "flow_qqq": bool(flow["QQQ"].get("available")),
     }
+    # All requested products are part of the audit, including producers that
+    # have not yet been implemented. Absence must never be called readiness.
+    outstanding = {
+        "smile_wings": "separate put/ATM/call IV points not persisted",
+        "breadth": "dedicated breadth producer not implemented",
+        "profile": "validated volume-at-price producer not implemented",
+        "macro": "full rates/FX/commodity/MOVE capture not implemented",
+        "contract_packages": "fresh per-leg executable packages not integrated",
+        "paper_scorecard": "report-alert paper ledger not implemented",
+        "event_study": "validated chop/event study not integrated",
+        "render_validation": "delivered report renderer not wired to validator",
+    }
+    full_checks = {**checks, **{key: False for key in outstanding}}
     # Flow is required to be visibly accounted for, but it cannot be silently
     # fabricated merely to pass a publish gate.  The reports receive both the
     # mandatory-core and optional-live-flow verdicts.
@@ -1832,7 +1846,9 @@ def report_readiness():
                       "vix_family", "sector_credit")
     return {
         "retrieved_at": now.isoformat(), "freshness_limit_seconds": STALE_SECONDS,
-        "required_checks": checks,
+        "required_checks": full_checks,
+        "all_requested_ready": all(full_checks.values()),
+        "outstanding_producers": outstanding,
         "core_ready": all(checks[key] for key in mandatory_core),
         "flow_ready": checks["flow_spy"] and checks["flow_qqq"],
         "missing_core": [key for key in mandatory_core if not checks[key]],
