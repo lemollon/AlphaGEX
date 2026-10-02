@@ -11,11 +11,25 @@ Frozen rule, see `dev/squeeze/research/PREREG.md`, section
     FIRST ONLY: no qualifying signal for this symbol in the prior 30
         calendar days.
 
-SIGNAL ONLY, same convention as the local `research/premarket_velocity_scan.py`
-this mirrors: no fill/entry/exit is computed and no trade is taken. The
-pre-reg's own fill convention (first NBBO ask >= 09:30:00 ET) is explicitly
-gated on a quote-level (bid/ask) pull that does not exist here either -- see
-PREREG.md's "Entry / exit" section before adding one.
+SIGNAL ONLY for the turnover/move rule itself -- no exit or P&L is computed
+and no trade is taken, same convention as the local
+`research/premarket_velocity_scan.py` this mirrors.
+
+LIVE-MODE ENTRY PRICE (added 2026-10-02)
+-----------------------------------------
+The pre-reg's own fill convention (PREREG.md "Entry / exit": "buy at the
+first NBBO ask timestamped >= 09:30:00 ET") was previously gated on a
+quote-level (bid/ask) pull that did not exist -- `stock/history/ohlc` is
+TRADES only. The proxy now also exposes `/v3/stock/history/quote` (NBBO
+bid/ask, same param conventions as the ohlc route). For every candidate that
+clears both floors in LIVE mode (never in BACKTEST_MODE), `fetch_entry_ask()`
+pulls that endpoint for the 09:30:00-09:31:00 ET window and takes the ASK of
+the first quote timestamped >= 09:30:00 ET -- never a trade price, never a
+mid/mark. If no usable quote surfaces in that 60s window, the price is
+logged as missing and left NULL rather than guessed. This closes PREREG.md's
+stated data gap for the ENTRY leg only; the EXIT leg (10th-session close)
+and the spread-bound tradeability check remain a separate, not-yet-built
+ledger and are out of scope here.
 
 WHY THIS RUNS ON RENDER INSTEAD OF THE WORKSTATION
 ---------------------------------------------------
@@ -213,9 +227,18 @@ def ensure_tables(conn) -> None:
                 premarket_move DOUBLE PRECISION,
                 premarket_vol BIGINT,
                 has_options BOOLEAN,
+                suggested_entry_ask DOUBLE PRECISION,
                 noted_at TIMESTAMPTZ DEFAULT now(),
                 PRIMARY KEY (signal_date, symbol)
             )
+        """)
+        # Migration for a table that already existed before suggested_entry_ask
+        # was added (2026-10-02) -- CREATE TABLE IF NOT EXISTS above is a no-op
+        # against an already-deployed table, so the column needs its own
+        # idempotent ALTER (AlphaGEX auto-migrate convention, common-mistakes #10).
+        cur.execute("""
+            ALTER TABLE squeeze_premarket_signals
+            ADD COLUMN IF NOT EXISTS suggested_entry_ask DOUBLE PRECISION
         """)
     conn.commit()
 
@@ -245,15 +268,15 @@ def already_signaled_recently(conn, symbol: str, today: date) -> bool:
 
 
 def insert_signal(conn, today: date, symbol: str, turnover: float, move: float,
-                   vol: int, has_options) -> None:
+                   vol: int, has_options, suggested_entry_ask) -> None:
     with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO squeeze_premarket_signals
                 (signal_date, symbol, premarket_turnover, premarket_move,
-                 premarket_vol, has_options)
-            VALUES (%s, %s, %s, %s, %s, %s)
+                 premarket_vol, has_options, suggested_entry_ask)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (signal_date, symbol) DO NOTHING
-        """, [today, symbol, turnover, move, vol, has_options])
+        """, [today, symbol, turnover, move, vol, has_options, suggested_entry_ask])
     conn.commit()
 
 
@@ -372,6 +395,48 @@ def probe_has_options(symbol: str):
     if status == "error":
         return None
     return bool(rows)
+
+
+ENTRY_QUOTE_OPEN = clock_time(9, 30, 0)
+ENTRY_QUOTE_WINDOW_END = "09:31:00"  # 60s search window for the first NBBO
+                                      # ask at/after the 09:30:00 ET open
+
+
+def fetch_entry_ask(symbol: str, today: date):
+    """LIVE MODE ONLY (see module docstring 'LIVE-MODE ENTRY PRICE' section).
+    Returns (ask, quote_time, reason): ask/quote_time are the first NBBO ask
+    timestamped >= 09:30:00 ET within a 60s window -- the pre-reg's frozen
+    ENTRY fill convention, and the standing "buy at the ask, never a mark"
+    rule. If no usable ask surfaces in that window, ask/quote_time are None
+    and `reason` explains why, so the caller logs a clear skip instead of
+    falling back to a trade price or a mid. Only called for the (small)
+    candidate set, same call-count discipline as probe_has_options()."""
+    url = f"{THETA_BASE}/v3/stock/history/quote"
+    params = {
+        "symbol": symbol,
+        "date": today.isoformat(),
+        "start_time": "09:30:00",
+        "end_time": ENTRY_QUOTE_WINDOW_END,
+        "interval": "1s",
+        "venue": "utp_cta",
+    }
+    rows, status, detail = _fetch_csv(url, params)
+    if status == "error":
+        return None, None, f"proxy error fetching NBBO quote: {detail}"
+    if status == "no_data" or not rows:
+        return None, None, "no NBBO quote data for the 09:30:00-09:31:00 ET window"
+
+    for row in rows:
+        try:
+            ts = datetime.fromisoformat(row["timestamp"])
+            ask = float(row["ask"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if ts.time() < ENTRY_QUOTE_OPEN:
+            continue
+        if ask and ask > 0:
+            return ask, ts, None
+    return None, None, "no quote with a usable ask price at/after 09:30:00 ET within the 60s window"
 
 
 # ===========================================================================
@@ -693,8 +758,12 @@ def main() -> int:
             if already_signaled_recently(conn, symbol, today):
                 continue
             has_options = probe_has_options(symbol)
-            insert_signal(conn, today, symbol, turnover, move, vol, has_options)
-            hits.append((symbol, turnover, move, vol, has_options))
+            entry_ask, entry_quote_time, entry_skip_reason = fetch_entry_ask(symbol, today)
+            if entry_ask is None:
+                log.warning("no usable 09:30:00 ET NBBO ask for %s: %s",
+                            symbol, entry_skip_reason)
+            insert_signal(conn, today, symbol, turnover, move, vol, has_options, entry_ask)
+            hits.append((symbol, turnover, move, vol, has_options, entry_ask, entry_quote_time))
 
         elapsed = time.monotonic() - run_start
         log.info(
@@ -704,12 +773,22 @@ def main() -> int:
             len(candidates), len(hits), elapsed,
         )
 
-        for symbol, turnover, move, vol, has_options in hits:
+        for symbol, turnover, move, vol, has_options, entry_ask, entry_quote_time in hits:
             opt_tag = {True: "OPTIONS", False: "no opts", None: "opts?"}[has_options]
+            if entry_ask is not None:
+                price_line = (
+                    f"ask ~{entry_quote_time.strftime('%H:%M:%S')} ET: ${entry_ask:.2f}"
+                )
+            else:
+                price_line = (
+                    "ask MISSING - no NBBO quote at/after 09:30:00 ET "
+                    "within 60s (not a trade price, not a mark)"
+                )
             msg = (
                 f"**{symbol}** premarket turnover {turnover * 100:.0f}% of float, "
                 f"+{move * 100:.0f}% premarket move  [{opt_tag}]\n"
-                f"_PREREG #3 (V3), signal-only, no fill/exit computed - "
+                f"{price_line}\n"
+                f"_PREREG #3 (V3), signal-only, no exit/P&L computed - "
                 f"{today}_"
             )
             _discord_post(msg)

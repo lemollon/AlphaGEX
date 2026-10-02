@@ -342,6 +342,42 @@ def stock_history_ohlc(
     return response
 
 
+@app.get("/v3/stock/history/quote")
+def stock_history_quote(
+    symbol: str = Query(...),
+    date_value: str | None = Query(None, alias="date"),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    interval: str = Query("1s"),
+    start_time: str = "09:30:00",
+    end_time: str = "16:00:00",
+    venue: str = Query("utp_cta", pattern="^(nqb|utp_cta)$"),
+) -> PlainTextResponse:
+    """Bounded, read-only stock NBBO quote history -- the bid/ask counterpart
+    to `/v3/stock/history/ohlc` (which is TRADES only). Added for the
+    premarket squeeze scanner's live entry-price recommendation: per the
+    standing fill-discipline rule, a "buy at the open" call needs a real
+    NBBO ask, never a trade print or a mark (see squeeze_premarket_cron's
+    fetch_entry_ask()). Same param conventions as stock_history_ohlc;
+    `venue` defaults to utp_cta to match that route's proven entitlement."""
+    if interval not in INTERVALS:
+        raise HTTPException(status_code=422, detail="invalid interval")
+    kwargs: dict[str, Any] = {
+        "symbol": _symbol(symbol), "interval": interval,
+        "start_time": start_time, "end_time": end_time, "venue": venue,
+    }
+    if date_value:
+        kwargs["date"] = _date(date_value, "date")
+    elif start_date and end_date:
+        start, end = _date_range(start_date, end_date, max_days=30)
+        kwargs.update(start_date=start, end_date=end)
+    else:
+        raise HTTPException(status_code=422, detail="date or start_date/end_date required")
+    response = _csv_response(_call("stock_history_quote", **kwargs))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/v3/option/history/eod")
 def option_history_eod_research(
     symbol: str, date_value: str = Query(..., alias="date"),

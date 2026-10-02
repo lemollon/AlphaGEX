@@ -81,6 +81,13 @@ class FakeThetaClient:
             "volume": 100, "count": 5, "vwap": 533.92,
         }])
 
+    def stock_history_quote(self, **kwargs):
+        self.calls.append(("stock_history_quote", kwargs))
+        return Frame([{
+            "timestamp": "2026-09-21T09:30:00-04:00", "symbol": "SPY",
+            "bid": 663.0, "bid_size": 2, "ask": 663.05, "ask_size": 3,
+        }])
+
     def option_list_expirations(self, **kwargs):
         self.calls.append(("option_list_expirations", kwargs))
         return Frame([{"symbol": "SPY", "expiration": "2026-09-21"}])
@@ -175,6 +182,27 @@ def test_private_proxy_serves_compatible_stock_and_option_csv(monkeypatch):
     method, kwargs = fake.calls[-1]
     assert method == "option_history_trade_quote"
     assert kwargs["exclusive"] is True
+
+
+def test_private_proxy_serves_stock_nbbo_quote_history(monkeypatch):
+    fake = FakeThetaClient()
+    monkeypatch.setattr(proxy, "_client", lambda: fake)
+    client = TestClient(proxy.app)
+    response = client.get("/v3/stock/history/quote", params={
+        "symbol": "SPY", "date": "2026-09-21", "interval": "1s",
+        "start_time": "09:30:00", "end_time": "09:31:00", "venue": "utp_cta",
+    })
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    row = list(csv.DictReader(io.StringIO(response.text)))[0]
+    assert row["ask"] == "663.05"
+    method, kwargs = fake.calls[-1]
+    assert method == "stock_history_quote"
+    assert kwargs["date"].isoformat() == "2026-09-21"
+    assert client.get("/v3/stock/history/quote", params={
+        "symbol": "SPY", "date": "2026-09-21", "interval": "2m",
+    }).status_code == 422
+    assert client.get("/v3/stock/history/quote", params={"symbol": "SPY"}).status_code == 422
 
 
 def test_private_proxy_rejects_unsafe_or_oversized_requests(monkeypatch):
