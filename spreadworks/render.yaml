@@ -118,6 +118,10 @@ services:
         value: "false"
       - key: INTRADAY_WATCH_API_TOKEN
         sync: false
+      # Private Watch Manager unlock. The browser receives only a signed,
+      # expiring session and never this key or the plan-write token.
+      - key: INTRADAY_WATCH_UI_ACCESS_KEY
+        sync: false
       - key: THETADATA_BASE_URL
         fromService:
           name: thetadata-proxy

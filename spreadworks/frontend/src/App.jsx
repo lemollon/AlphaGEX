@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { ShieldAlert, Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, Zap, Radio, Crosshair, Ruler, Target } from 'lucide-react';
+import { ShieldAlert, Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, Zap, Radio, Crosshair, Ruler, Target, BellRing } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import UpdateBanner from './components/UpdateBanner';
 import ChartArea from './components/ChartArea';
@@ -22,6 +22,7 @@ const HuntPage = lazy(() => import('./pages/HuntPage'));
 const SqueezeHuntPage = lazy(() => import('./pages/SqueezeHuntPage'));
 const WallScannerPage = lazy(() => import('./pages/WallScannerPage'));
 const OpportunityPage = lazy(() => import('./pages/OpportunityPage'));
+const WatchManagerPage = lazy(() => import('./pages/WatchManagerPage'));
 
 import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
@@ -203,6 +204,7 @@ function NavBar() {
           <RouteBtn to="/squeeze-hunt"            icon={<Crosshair size={14} />} label="Squeeze Hunt" />
           <RouteBtn to="/wall-scanner"     icon={<Ruler size={14} />} label="Wall Scanner" />
           <RouteBtn to="/opportunity"      icon={<Target size={14} />} label="Opportunity" />
+          <RouteBtn to="/watches"          icon={<BellRing size={14} />} label="Watches" />
         </nav>
       </div>
 
@@ -426,6 +428,7 @@ export default function App() {
             <Route path="/squeeze-hunt" element={<SqueezeHuntPage />} />
             <Route path="/wall-scanner" element={<WallScannerPage />} />
             <Route path="/opportunity" element={<OpportunityPage />} />
+            <Route path="/watches" element={<WatchManagerPage />} />
             <Route path="/gex-profile" element={<GexProfilePage />} />
             {/* /bots is the fleet overview — every bot as its own card. It used
                 to redirect straight to /bots/surge, which meant there was no
