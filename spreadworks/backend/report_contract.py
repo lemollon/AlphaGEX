@@ -252,3 +252,48 @@ def completeness(blocks, rendered):
     missing = [name for name in REQUIRED_BLOCKS if not blocks.get(name, {}).get("available")]
     return {"publishable": not omitted, "all_data_live": not missing,
             "omitted_blocks": omitted, "unavailable_blocks": missing}
+
+
+def prepare_report_delivery(payload):
+    """Render the contract fields and disclosures, then gate delivery on them.
+
+    Supplied structured fields are canonical; legacy prose is supplementary.
+    Missing fields are disclosed, not promoted to live data or fabricated.
+    """
+    import copy
+    blocks = copy.deepcopy(payload.get("report_blocks") or {})
+    for name, fields in REQUIREMENTS.items():
+        block = blocks.setdefault(name, {})
+        if not isinstance(block, dict):
+            block = {}
+            blocks[name] = block
+        for field in fields:
+            if field not in block:
+                block[field] = {"status": "unavailable",
+                                "reason": "Producer supplied no verified observation."}
+    check = validate_report(blocks)
+    payload["report_validation"] = check
+    payload["report_blocks"] = blocks
+    if not check["publishable"]:
+        return check
+    lines = ["## Verified report fields",
+             "Report status: " + ("COMPLETE" if check["complete_live_data"] else "INCOMPLETE")]
+    for name, fields in REQUIREMENTS.items():
+        lines.append("### " + name.replace("_", " ").title())
+        missing = []
+        for field in fields:
+            item = blocks[name][field]
+            status = item["status"]
+            if status == "unavailable":
+                missing.append(field + ": " + str(item["reason"]))
+            else:
+                lines.append("- " + field + ": " + str(item.get("value")) +
+                             " [" + status.upper() + "; " + str(item["source_timestamp"]) +
+                             "; age " + str(item["age_seconds"]) + "s]")
+        if missing:
+            lines.append("DATA UNAVAILABLE — " + "; ".join(missing))
+    # Keep legacy prose separately; repeated preparation cannot duplicate it.
+    original = payload.setdefault("report_original_markdown", payload.get("report_markdown") or "")
+    payload["report_markdown"] = "\n\n".join(lines) + "\n\n## Supplemental analysis\n\n" + original
+    payload["report_completeness"] = "COMPLETE" if check["complete_live_data"] else "INCOMPLETE"
+    return check
