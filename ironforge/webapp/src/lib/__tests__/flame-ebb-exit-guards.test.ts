@@ -127,6 +127,7 @@ describe('EBB entry window is code-controlled', () => {
     const fn = SCANNER_SRC.slice(SCANNER_SRC.indexOf('function pinEbbExitConfig('))
     expect(fn).toContain('merged.entry_start = d.entry_start')
     expect(fn).toContain('merged.entry_end = d.entry_end')
+    expect(fn).toContain('merged.starting_capital = d.starting_capital')
     for (const loader of ['async function loadConfigOverrides(', 'async function loadProductionConfigFor(']) {
       const i = SCANNER_SRC.indexOf(loader)
       if (i < 0) continue

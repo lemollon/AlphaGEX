@@ -938,6 +938,16 @@ function pinEbbExitConfig(botName: string, merged: BotConfig): void {
   }
   merged.entry_start = d.entry_start
   merged.entry_end = d.entry_end
+  // Paper seed is the product tier (FLAME $2,000 / SPARK $5,000, bot-capital.ts).
+  // A stale row had FLAME at $5,000, overstating paper % returns 2.5x. Production
+  // ledgers are seeded from broker equity and never read this value.
+  if (merged.starting_capital !== d.starting_capital) {
+    console.warn(
+      `[scanner] ${botName.toUpperCase()} DB starting_capital override ignored ` +
+      `($${merged.starting_capital}) — using code $${d.starting_capital}`,
+    )
+  }
+  merged.starting_capital = d.starting_capital
 }
 
 /** DB column → config key mapping (with optional transform) */
