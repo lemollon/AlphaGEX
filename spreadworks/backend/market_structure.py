@@ -52,7 +52,13 @@ GAMMA_TABLE = "sw_live_gamma"
 VOL_TABLE = "sw_live_vol_indices"
 SURFACE_TABLE = "sw_live_surface"
 FLOW_TABLE = "sw_live_trade_quote_flow"
-_OI_CACHE: dict[str, tuple[datetime, datetime, dict[tuple[str, float, str], float]]] = {}
+# Gamma only needs the near-term, near-spot chain used by the intraday map.
+# Keeping this bounded is critical: ThetaData serializes requests in the shared
+# proxy, so an all-expiry/all-strike OI request can block surface refreshes for
+# long enough to fail the report freshness gate.
+GAMMA_MAX_DTE = int(os.getenv("MARKET_STRUCTURE_GAMMA_MAX_DTE", "60"))
+GAMMA_STRIKE_RANGE = int(os.getenv("MARKET_STRUCTURE_GAMMA_STRIKE_RANGE", "25"))
+_OI_CACHE: dict[tuple[str, int, int], tuple[datetime, datetime, dict[tuple[str, float, str], float]]] = {}
 
 _GAMMA_DDL = f"""
 CREATE TABLE IF NOT EXISTS {GAMMA_TABLE} (
@@ -345,10 +351,15 @@ def fetch_spot(symbol: str, now: datetime | None = None) -> dict[str, Any]:
                 "reason": f"Tradier quote failure: {type(exc).__name__}"}
 
 
-def fetch_theta_chain(symbol: str, now: datetime | None = None) -> dict[str, Any]:
+def fetch_theta_chain(symbol: str, now: datetime | None = None,
+                      max_dte: int | None = None,
+                      strike_range: int | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
-    params = {"symbol": symbol, "expiration": "*", "max_dte": 365,
-              "strike_range": 60}
+    max_dte = max_dte if max_dte is not None else GAMMA_MAX_DTE
+    strike_range = strike_range if strike_range is not None else GAMMA_STRIKE_RANGE
+    params = {"symbol": symbol, "expiration": "*", "max_dte": max_dte,
+              "strike_range": strike_range}
+    cache_key = (symbol, max_dte, strike_range)
     try:
         try:
             greeks = _theta_live_snapshot_rows(
@@ -362,7 +373,7 @@ def fetch_theta_chain(symbol: str, now: datetime | None = None) -> dict[str, Any
                 "/v3/option/snapshot/greeks/implied_volatility", params, now
             )
             gamma_source = "ThetaData Standard IV, locally calculated gamma"
-        cached = _OI_CACHE.get(symbol)
+        cached = _OI_CACHE.get(cache_key)
         if cached and cached[0].astimezone(ET).date() == now.astimezone(ET).date() and (now - cached[0]).total_seconds() < 3600:
             oi_stamp, oi_by_contract = cached[1], cached[2]
         else:
@@ -382,7 +393,7 @@ def fetch_theta_chain(symbol: str, now: datetime | None = None) -> dict[str, Any
                                     str(item.get("right", "")).lower())] = amount
             if oi_stamp.astimezone(ET).date() == now.astimezone(ET).date() and oi_by_contract:
                 # Keep only the join key and OI number, not full CSV dicts.
-                _OI_CACHE[symbol] = (now, oi_stamp, oi_by_contract)
+                _OI_CACHE[cache_key] = (now, oi_stamp, oi_by_contract)
     except Exception as exc:  # noqa: BLE001
         return {"rows": [], "reason": f"ThetaData chain failure: {type(exc).__name__}",
                 "source_timestamp": None}
@@ -1150,13 +1161,22 @@ def _spot_from_theta_chain(chain: dict[str, Any], now: datetime) -> dict[str, An
             "age_seconds": age, "source": "ThetaData option-chain underlying price"}
 
 
-def build_gamma_snapshot(symbol: str, now: datetime | None = None) -> dict[str, Any]:
+def build_gamma_snapshot(symbol: str, now: datetime | None = None,
+                         max_dte: int | None = None,
+                         strike_range: int | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     symbol = symbol.upper()
     spot = fetch_spot(symbol, now)
     chain = None
+
+    def load_chain() -> dict[str, Any]:
+        if max_dte is None and strike_range is None:
+            return fetch_theta_chain(symbol, now)
+        return fetch_theta_chain(symbol, now, max_dte=max_dte,
+                                 strike_range=strike_range)
+
     if symbol in INDEX_SYMBOLS and not spot.get("fresh"):
-        chain = fetch_theta_chain(symbol, now)
+        chain = load_chain()
         chain_spot = _spot_from_theta_chain(chain, datetime.now(UTC))
         if chain_spot:
             spot = chain_spot
@@ -1164,7 +1184,7 @@ def build_gamma_snapshot(symbol: str, now: datetime | None = None) -> dict[str, 
         return {"symbol": symbol, "available": False, "confidence": "LOW",
                 "reason": (chain or {}).get("reason") or spot.get("reason"),
                 "captured_at": datetime.now(UTC).isoformat()}
-    chain = chain if chain is not None else fetch_theta_chain(symbol, now)
+    chain = chain if chain is not None else load_chain()
     completed_at = datetime.now(UTC)
     if not chain.get("rows"):
         return {"symbol": symbol, "available": False, "confidence": "LOW",
@@ -1352,6 +1372,33 @@ def capture_all() -> dict[str, Any]:
     return {"captured": True, "captured_at": now.isoformat(), "volatility": vol,
             "surface": surface}
 
+
+def capture_gamma_pair() -> dict[str, Any]:
+    """Persist a bounded, report-grade SPY/QQQ gamma map without blocking IV."""
+    now = datetime.now(UTC)
+    now_ct = now.astimezone(CT)
+    if now_ct.weekday() >= 5 or not (dtime(8, 30) <= now_ct.time() <= dtime(15, 5)):
+        return {"captured": False, "reason": "market_closed", "captured_at": now.isoformat()}
+
+    snapshots: dict[str, Any] = {}
+    # Sequential by design: concurrent submissions only queue at the proxy's
+    # single Theta client and make timeout ordering nondeterministic.
+    for symbol in ("SPY", "QQQ"):
+        try:
+            snapshot = build_gamma_snapshot(
+                symbol, datetime.now(UTC), max_dte=GAMMA_MAX_DTE,
+                strike_range=GAMMA_STRIKE_RANGE,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[MarketStructure] %s gamma capture crashed", symbol)
+            snapshot = {"symbol": symbol, "available": False, "confidence": "LOW",
+                        "reason": f"capture_exception:{type(exc).__name__}",
+                        "captured_at": datetime.now(UTC).isoformat()}
+        persist_snapshot(snapshot)
+        snapshots[symbol] = snapshot
+    return {"captured": True, "captured_at": now.isoformat(), "gamma": snapshots}
+
+
 def recover_critical_surface() -> dict[str, Any]:
     """Self-heal a stale/missing report surface without waiting for the next tick."""
     now = datetime.now(UTC)
@@ -1528,6 +1575,18 @@ def register(scheduler: Any, app: Any | None = None) -> bool:
         except Exception:  # noqa: BLE001
             logger.exception("[MarketStructure] critical surface recovery failed")
 
+    def gamma_tick() -> None:
+        try:
+            result = capture_gamma_pair()
+            if result.get("captured"):
+                logger.info(
+                    "[MarketStructure] bounded gamma capture complete available=%d/2",
+                    sum(1 for item in (result.get("gamma") or {}).values()
+                        if item.get("available")),
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("[MarketStructure] bounded gamma capture failed")
+
     scheduler.add_job(
         tick, "cron", day_of_week="mon-fri", hour="8-15", minute="*",
         timezone=CT, id="market_structure_capture", replace_existing=True,
@@ -1539,9 +1598,17 @@ def register(scheduler: Any, app: Any | None = None) -> bool:
         timezone=CT, id="market_structure_surface_recovery", replace_existing=True,
         coalesce=True, max_instances=1, misfire_grace_time=45,
     )
+    # A 20-second gap after the primary tick is a circuit breaker: when Theta
+    # is slow, gamma may fail independently but cannot stale the surface/VIX.
+    scheduler.add_job(
+        gamma_tick, "cron", day_of_week="mon-fri", hour="8-15", minute="*", second=20,
+        timezone=CT, id="market_structure_gamma_capture", replace_existing=True,
+        coalesce=True, max_instances=1, misfire_grace_time=45,
+        next_run_time=datetime.now(UTC) + timedelta(seconds=5),
+    )
     logger.info(
-        "[MarketStructure] registered minute gamma + IV-surface captures 08:00-15:59 CT; "
-        "capture_all enforces the 08:30-15:05 market window"
+        "[MarketStructure] registered isolated minute IV-surface/VIX and bounded SPY/QQQ gamma captures; "
+        "both enforce the 08:30-15:05 market window"
     )
     return True
 
