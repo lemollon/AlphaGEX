@@ -251,31 +251,43 @@ def insert_signal(conn, today: date, symbol: str, turnover: float, move: float,
 
 
 def _fetch_csv(url: str, params: dict):
-    """GET with a capped retry/backoff budget. Returns (rows, status):
-    status is 'ok' (rows is a list of dict rows, possibly empty), 'no_data'
-    (a definite ThetaData negative - 404/403 from the proxy, not worth
-    retrying), or 'error' (timeout/connection failure/5xx after HTTP_RETRIES
-    retries - an unanswered question, never conflated with a negative
-    answer)."""
+    """GET with a capped retry/backoff budget. Returns (rows, status, detail):
+    status is 'ok' (rows is a list of dict rows, possibly empty, detail is
+    None), 'no_data' (a definite ThetaData negative - 404/403 from the proxy,
+    not worth retrying, detail is None), or 'error' (timeout/connection
+    failure/5xx after HTTP_RETRIES retries - an unanswered question, never
+    conflated with a negative answer). For 'error', `detail` is a dict
+    {"http_status": int|None, "exception_type": str|None,
+    "exception_message": str|None} describing the LAST attempt's failure, so
+    callers that need a per-row failure reason (e.g. the backtest path) don't
+    have to re-derive it from a bare exception repr."""
     last_exc = None
+    last_status_code = None
     for attempt in range(HTTP_RETRIES + 1):
         try:
             resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 - connection errors, timeouts
             last_exc = exc
+            last_status_code = None
             if attempt < HTTP_RETRIES:
                 time.sleep(HTTP_BACKOFF_S * (attempt + 1))
             continue
         if resp.status_code in (404, 403):
-            return [], "no_data"
+            return [], "no_data", None
         if resp.status_code == 200:
             rows = list(DictReader(StringIO(resp.text)))
-            return rows, "ok"
+            return rows, "ok", None
+        last_status_code = resp.status_code
         last_exc = RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
         if attempt < HTTP_RETRIES:
             time.sleep(HTTP_BACKOFF_S * (attempt + 1))
-    log.debug("fetch failed after retries url=%s err=%r", url, last_exc)
-    return None, "error"
+    detail = {
+        "http_status": last_status_code,
+        "exception_type": type(last_exc).__name__ if last_exc else None,
+        "exception_message": str(last_exc) if last_exc else None,
+    }
+    log.debug("fetch failed after retries url=%s params=%s detail=%s", url, params, detail)
+    return None, "error", detail
 
 
 def scan_symbol(symbol: str, shares_outstanding: int, today: date):
@@ -297,7 +309,7 @@ def scan_symbol(symbol: str, shares_outstanding: int, today: date):
         "interval": "1m",
         "venue": "utp_cta",
     }
-    rows, status = _fetch_csv(url, params)
+    rows, status, _detail = _fetch_csv(url, params)
     if status == "error":
         return "error", None
     if status == "no_data" or not rows:
@@ -347,7 +359,7 @@ def probe_has_options(symbol: str):
     called for the (small) candidate set, same call-count discipline as the
     local scanner's option_probe stage."""
     url = f"{THETA_BASE}/v3/option/list/expirations"
-    rows, status = _fetch_csv(url, {"symbol": symbol})
+    rows, status, _detail = _fetch_csv(url, {"symbol": symbol})
     if status == "no_data":
         return False
     if status == "error":
@@ -408,6 +420,20 @@ def load_backtest_queue(conn) -> list:
         return cur.fetchall()
 
 
+def load_resolved_backtest_keys(conn) -> set:
+    """(symbol, event_date) pairs that already have a row in
+    squeeze_premarket_backtest_results -- i.e. already resolved by a prior
+    run_backtest() run, whether that row is a real scored result or a
+    'no_data' row (both are a written, final answer). A pair is NOT in this
+    set only if a prior run hit status == 'error' for it, since the error
+    branch below never writes a results row. Used so a re-run only retries
+    the pairs that actually failed last time instead of re-pulling the whole
+    queue."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT symbol, event_date FROM squeeze_premarket_backtest_results")
+        return {(sym, ed) for sym, ed in cur.fetchall()}
+
+
 def insert_backtest_result(conn, symbol: str, event_date: date, turnover, move,
                             vol, fired: bool, full_day_move, share_of_day_move) -> None:
     with conn.cursor() as cur:
@@ -437,9 +463,13 @@ def scan_symbol_backtest(symbol: str, event_date: date):
     closer to the frozen rule's literal "prior regular session's official
     close" than the live scanner's proxy is.
 
-    Returns (status, premarket_vol, premarket_last_px). status is 'error' (no
-    answer after retries), 'no_data' (no premarket print at all -- a real
-    coverage gap, not computed as a non-fire), or 'ok'.
+    Returns (status, premarket_vol, premarket_last_px, detail). status is
+    'error' (no answer after retries), 'no_data' (no premarket print at all --
+    a real coverage gap, not computed as a non-fire), or 'ok'. `detail` is
+    None except when status == 'error', where it carries the
+    {"http_status", "exception_type", "exception_message"} dict from
+    `_fetch_csv()` so run_backtest() can log the real per-row failure reason
+    instead of folding it into a bare aggregate count.
     """
     url = f"{THETA_BASE}/v3/stock/history/ohlc"
     params = {
@@ -450,11 +480,11 @@ def scan_symbol_backtest(symbol: str, event_date: date):
         "interval": "1m",
         "venue": "utp_cta",
     }
-    rows, status = _fetch_csv(url, params)
+    rows, status, detail = _fetch_csv(url, params)
     if status == "error":
-        return "error", None, None
+        return "error", None, None, detail
     if status == "no_data" or not rows:
-        return "no_data", None, None
+        return "no_data", None, None, None
 
     premarket_vol = 0
     premarket_last_px = None
@@ -469,11 +499,17 @@ def scan_symbol_backtest(symbol: str, event_date: date):
             premarket_last_px = close
 
     if premarket_vol == 0 or premarket_last_px is None:
-        return "no_data", None, None
-    return "ok", premarket_vol, premarket_last_px
+        return "no_data", None, None, None
+    return "ok", premarket_vol, premarket_last_px, None
 
 
 def run_backtest() -> int:
+    """RESUMABLE: skips (symbol, event_date) pairs already written to
+    squeeze_premarket_backtest_results and only retries pairs still missing
+    (prior 'error' rows, which never get a results row written -- see
+    load_resolved_backtest_keys()). Each row that still fails after retries
+    is logged individually with symbol/event_date/http_status/exception, not
+    just folded into the final aggregate count."""
     run_start = time.monotonic()
     log.info("=== squeeze premarket cron BACKTEST MODE (PREREG #3 / V3, "
               "EXPLORATORY/IN-SAMPLE, not the live forward ledger) ===")
@@ -483,8 +519,8 @@ def run_backtest() -> int:
         ensure_tables(conn)
         ensure_backtest_tables(conn)
 
-        queue = load_backtest_queue(conn)
-        if not queue:
+        full_queue = load_backtest_queue(conn)
+        if not full_queue:
             log.warning(
                 "squeeze_premarket_backtest_queue is empty - nothing to "
                 "backtest. Run dev/squeeze/research/sync_premarket_backtest_queue.py "
@@ -492,7 +528,23 @@ def run_backtest() -> int:
             )
             return 0
 
-        log.info("backtest queue size: %d (symbol, event_date) rows", len(queue))
+        # RESUME: skip (symbol, event_date) pairs that already have a row in
+        # squeeze_premarket_backtest_results (prior 'ok' or 'no_data' run) and
+        # only retry pairs that are queued but have no result yet (prior
+        # 'error' run, or never run at all). Turns a re-run after partial
+        # failures into "only the rows that failed last time" instead of
+        # redoing the whole queue.
+        resolved = load_resolved_backtest_keys(conn)
+        queue = [row for row in full_queue if (row[0], row[1]) not in resolved]
+        already_resolved = len(full_queue) - len(queue)
+        log.info(
+            "backtest queue size: %d (symbol, event_date) rows, %d already "
+            "resolved (skipped), %d pending (resume mode)",
+            len(full_queue), already_resolved, len(queue),
+        )
+        if not queue:
+            log.info("nothing pending - every queued row already has a result.")
+            return 0
 
         checked = 0
         errors = 0
@@ -509,13 +561,25 @@ def run_backtest() -> int:
                 sym, ed = futures[fut]
                 shares_outstanding, prior_close, day_close = by_key[(sym, ed)]
                 try:
-                    status, vol, last_px = fut.result()
+                    status, vol, last_px, detail = fut.result()
                 except Exception as exc:  # noqa: BLE001 - one worker must never kill the run
-                    log.warning("backtest worker exception for %s %s: %r", sym, ed, exc)
                     status, vol, last_px = "error", None, None
+                    detail = {
+                        "http_status": None,
+                        "exception_type": type(exc).__name__,
+                        "exception_message": repr(exc),
+                    }
                 checked += 1
                 if status == "error":
                     errors += 1
+                    log.error(
+                        "backtest FAILED symbol=%s event_date=%s http_status=%s "
+                        "exception_type=%s exception_message=%s",
+                        sym, ed,
+                        (detail or {}).get("http_status"),
+                        (detail or {}).get("exception_type"),
+                        (detail or {}).get("exception_message"),
+                    )
                     continue
                 full_day_move = (
                     day_close / prior_close - 1 if prior_close else None
@@ -542,9 +606,11 @@ def run_backtest() -> int:
 
         elapsed = time.monotonic() - run_start
         log.info(
-            "=== BACKTEST DONE: queue=%d checked=%d errors=%d no_premarket_print=%d "
-            "fired_v3=%d wall_clock=%.1fs ===",
-            len(queue), checked, errors, no_data, fired, elapsed,
+            "=== BACKTEST DONE: full_queue=%d already_resolved=%d pending=%d "
+            "checked=%d errors=%d no_premarket_print=%d fired_v3=%d "
+            "wall_clock=%.1fs ===",
+            len(full_queue), already_resolved, len(queue), checked, errors,
+            no_data, fired, elapsed,
         )
         log.info(
             "EXPLORATORY/IN-SAMPLE result, not the live forward ledger. No "
