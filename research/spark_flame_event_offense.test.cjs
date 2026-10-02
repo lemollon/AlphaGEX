@@ -25,4 +25,7 @@ assert.equal(new Set(scenarios.map(x=>x.id)).size,scenarios.length);
 assert.equal(scenarios.length,60,'full grid includes the FOMC pre-conference exit comparison');
 assert(scenarios.some(x=>x.family==='post_release'&&x.scope==='fed'&&x.preConference));
 assert(!scenarios.some(x=>x.family!=='post_release'&&x.preConference));
+const controlled=grid({includeOverlayControls:true});
+assert.equal(controlled.length,84,'overlay controls add close-only and close-then-directional comparators');
+assert.deepEqual(new Set(controlled.filter(x=>x.family==='overlay').map(x=>x.overlayMode)),new Set(['close_only','hedge_only','close_then_directional']));
 console.log(JSON.stringify({passed:true,scenarios:scenarios.length,cases:'causal completed bars, event scope, host prerequisite, post-release clock, FOMC pre-conference branch, budget skip, cash cap, crossed quote rejection, deferred executable exit, exact ledger fees, future invariance, unfilled close rejection'}));
