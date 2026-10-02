@@ -23,7 +23,7 @@ import { Card, Money, Balance, SectionLabel, Loading, Empty, ErrorState } from '
 import { StatRow } from '@/components/StatRow'
 import { AppHeader, Mascot } from '@/components/Brand'
 import { PnlChart } from '@/components/PnlChart'
-import { brokerLabel, soleConnection } from '@/api/brokerage'
+import { brokerLabel, maskTail, soleConnection } from '@/api/brokerage'
 import { totalCapital } from '@/live/capital'
 import { agentStatItems } from '@/live/card-stats'
 import { formatPeriodValue, periodTone, type PeriodTone } from '@/live/period-stats'
@@ -370,7 +370,7 @@ function AgentTile({
             {connection ? (
               <Text style={[type.label, { color: color.textDim, marginTop: 2 }]}>
                 {brokerLabel(connection.broker ?? connection.provider)}
-                {connection.mask ? `  •••• ${connection.mask}` : ''}
+                {connection.mask ? `  ${maskTail(connection.mask)}` : ''}
               </Text>
             ) : null}
           </View>
