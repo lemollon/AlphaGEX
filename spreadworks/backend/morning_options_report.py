@@ -728,6 +728,7 @@ def _update_delivery(trading_date: date, *, posted: bool, attempted_at: datetime
         if row is None:
             return
         payload = json.loads(row.payload_json)
+        previous = payload.get("discord_delivery") or {}
         payload["discord_delivery"] = {
             "configured": bool(
                 os.getenv("INTRADAY_DISCORD_WEBHOOK_URL", "").strip()
@@ -736,6 +737,7 @@ def _update_delivery(trading_date: date, *, posted: bool, attempted_at: datetime
             "enabled": _truthy("INTRADAY_ALERTS_ENABLED"),
             "attempted_at": attempted_at.astimezone(UTC).isoformat(),
             "posted": posted,
+            "attempt_count": int(previous.get("attempt_count") or 0) + 1,
         }
         row.payload_json = json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str)
         db.commit()
@@ -748,7 +750,36 @@ def _update_delivery(trading_date: date, *, posted: bool, attempted_at: datetime
 
 def _send_discord(payload: dict[str, Any]) -> bool:
     from . import _send_intraday_webhook_sync
-    return _send_intraday_webhook_sync(_discord_embed(payload))
+    try:
+        return bool(_send_intraday_webhook_sync(_discord_embed(payload)))
+    except Exception:  # noqa: BLE001
+        # A notification transport failure must not abort persistence or prevent
+        # the scheduled 07:10/07:20 delivery-recovery ticks from running.
+        logger.exception("[MorningOptions] Discord delivery attempt raised")
+        return False
+
+
+def _delivery_required() -> bool:
+    return bool(
+        _truthy("INTRADAY_ALERTS_ENABLED") and (
+            os.getenv("INTRADAY_DISCORD_WEBHOOK_URL", "").strip()
+            or os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+        )
+    )
+
+
+async def _retry_discord_delivery(existing: dict[str, Any], trading_date: date) -> bool:
+    """Retry a stored report's notification without regenerating its plan.
+
+    This keeps the report, levels, and audit hash immutable.  It is deliberately
+    limited to a later scheduler tick so a webhook timeout cannot cause an
+    immediate duplicate post.
+    """
+    posted = await asyncio.to_thread(_send_discord, existing)
+    await asyncio.to_thread(
+        _update_delivery, trading_date, posted=posted, attempted_at=datetime.now(UTC),
+    )
+    return posted
 
 
 def _failure_payload(now: datetime, reason: str, *, attempt: int) -> dict[str, Any]:
@@ -784,6 +815,23 @@ async def run_morning_options_report(app: Any, *, now: datetime | None = None,
     if (not force and existing and existing.get("generated_by") == GENERATOR_ID
             and existing.get("run_status") in {"SUCCESS", "SKIPPED_MARKET_CLOSED"}
             and existing.get("generation_mode") != "deterministic_fresh_data"):
+        delivery = existing.get("discord_delivery") or {}
+        if _delivery_required() and delivery.get("posted") is False:
+            posted = await _retry_discord_delivery(existing, trading_date)
+            result = {
+                "skipped": True,
+                "reason": "retried stored cloud morning plan Discord delivery",
+                "discord_posted": posted,
+                **existing,
+            }
+            _LAST_RUN.update(
+                finished_at=datetime.now(UTC).isoformat(), run_status=existing.get("run_status"),
+                reason=result["reason"], plan_hash=existing.get("plan_hash"),
+                registered_symbol_count=len(existing.get("symbols") or []),
+                registered_setup_count=len(existing.get("setups") or []),
+                discord_posted=posted,
+            )
+            return result
         # A deterministic fallback plan is not final: the 07:10/07:20 ticks
         # retry model enrichment and replace it if the model answers.
         result = {"skipped": True, "reason": "cloud morning plan already completed", **existing}
@@ -972,6 +1020,8 @@ def register(scheduler: Any, app: Any) -> bool:
         complete = bool(
             existing and existing.get("generated_by") == GENERATOR_ID
             and existing.get("run_status") in {"SUCCESS", "SKIPPED_MARKET_CLOSED"}
+            and (not _delivery_required()
+                 or (existing.get("discord_delivery") or {}).get("posted") is True)
         )
         if not complete:
             scheduler.add_job(
