@@ -1352,6 +1352,25 @@ def capture_all() -> dict[str, Any]:
     return {"captured": True, "captured_at": now.isoformat(), "volatility": vol,
             "surface": surface}
 
+def recover_critical_surface() -> dict[str, Any]:
+    """Self-heal a stale/missing report surface without waiting for the next tick."""
+    now = datetime.now(UTC)
+    now_ct = now.astimezone(CT)
+    if now_ct.weekday() >= 5 or not (dtime(8, 30) <= now_ct.time() <= dtime(15, 5)):
+        return {"recovered": False, "reason": "market_closed"}
+    recovered: dict[str, Any] = {}
+    for symbol in ("SPY", "QQQ"):
+        cached = _cached_surface_payload(symbol, now)
+        if cached.get("available"):
+            recovered[symbol] = cached
+            continue
+        item = build_volatility_surface(symbol, datetime.now(UTC))
+        persist_surface(item)
+        recovered[symbol] = item
+    return {"recovered": all(item.get("available") for item in recovered.values()),
+            "captured_at": datetime.now(UTC).isoformat(), "surface": recovered}
+
+
 def _latest_gamma(symbol: str) -> dict[str, Any] | None:
     ensure_tables()
     with engine.begin() as conn:
@@ -1501,11 +1520,24 @@ def register(scheduler: Any, app: Any | None = None) -> bool:
         except Exception:  # noqa: BLE001
             logger.exception("[MarketStructure] minute capture failed")
 
+    def recovery_tick() -> None:
+        try:
+            result = recover_critical_surface()
+            if not result.get("recovered") and result.get("reason") != "market_closed":
+                logger.error("[MarketStructure] critical surface recovery did not pass freshness")
+        except Exception:  # noqa: BLE001
+            logger.exception("[MarketStructure] critical surface recovery failed")
+
     scheduler.add_job(
         tick, "cron", day_of_week="mon-fri", hour="8-15", minute="*",
         timezone=CT, id="market_structure_capture", replace_existing=True,
         coalesce=True, max_instances=1, misfire_grace_time=90,
         next_run_time=datetime.now(UTC),
+    )
+    scheduler.add_job(
+        recovery_tick, "cron", day_of_week="mon-fri", hour="8-15", minute="*", second=35,
+        timezone=CT, id="market_structure_surface_recovery", replace_existing=True,
+        coalesce=True, max_instances=1, misfire_grace_time=45,
     )
     logger.info(
         "[MarketStructure] registered minute gamma + IV-surface captures 08:00-15:59 CT; "
@@ -1542,7 +1574,15 @@ def surface_symbol(symbol: str):
     symbol = symbol.upper()
     if symbol not in {"SPY", "QQQ"}:
         return {"available": False, "reason": "surface supports SPY and QQQ", "symbol": symbol}
-    return _cached_surface_payload(symbol, datetime.now(UTC))
+    payload = _cached_surface_payload(symbol, datetime.now(UTC))
+    if payload.get("available"):
+        return payload
+    # Report requests get one bounded, report-critical recovery attempt. This
+    # is only reached after the cache has failed its freshness gate; it never
+    # restarts the old slow gamma/flow sweep.
+    rebuilt = build_volatility_surface(symbol, datetime.now(UTC))
+    persist_surface(rebuilt)
+    return rebuilt
 
 
 @router.get("/surface/latest/{symbol}")
@@ -1574,7 +1614,12 @@ def latest_trade_quote_flow_symbol(symbol: str):
 
 @router.get("/vol-indices")
 def vol_indices():
-    return _cached_vol_payload(datetime.now(UTC))
+    payload = _cached_vol_payload(datetime.now(UTC))
+    if payload.get("available"):
+        return payload
+    refreshed = fetch_vol_indices(datetime.now(UTC))
+    persist_vol(refreshed)
+    return refreshed
 
 
 @router.get("/gamma/{symbol}")
