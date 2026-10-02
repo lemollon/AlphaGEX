@@ -228,6 +228,24 @@ def test_iv_only_surface_builds_term_skew_and_expected_move(monkeypatch):
     assert result["expected_move_low"] < 750 < result["expected_move_high"]
 
 
+def test_iv_snapshot_without_provider_timestamp_uses_fresh_receipt_time(monkeypatch):
+    now = datetime(2026, 10, 2, 14, 45, tzinfo=timezone.utc)
+    payload = []
+    for strike in range(735, 767, 2):
+        for right in ("call", "put"):
+            payload.append({
+                "expiration": "2026-10-16", "strike": str(strike),
+                "right": right, "implied_vol": "0.18",
+            })
+    monkeypatch.setattr(market_structure, "fetch_spot", lambda symbol, current: {
+        "price": 750.0, "fresh": True, "source_timestamp": now,
+    })
+    monkeypatch.setattr(market_structure, "_theta_rows", lambda path, params: payload)
+    result = market_structure.build_volatility_surface("SPY", now)
+    assert result["available"] is True
+    assert result["n_rows"] == len(payload)
+
+
 
 def test_register_arms_minute_capture_and_initializes_tables(monkeypatch):
     calls = []
