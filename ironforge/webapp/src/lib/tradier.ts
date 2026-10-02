@@ -1582,6 +1582,51 @@ export interface SandboxCloseInfo {
  * Query a sandbox order and return the average fill price.
  * Retries up to 3 times with 1s delay for pending orders.
  */
+/**
+ * The broker's own closing fill for a two-leg put spread today, read from the
+ * account's order history: net debit per spread =
+ * Σ(buy_to_close short fills) − Σ(sell_to_close long fills), per contract of the
+ * short leg. Covers multileg orders and single-leg orders alike (a rejected
+ * multileg followed by two single-leg fills is exactly what happened on
+ * 2026-10-02). Null when today's history has no filled close of the short leg —
+ * never invented.
+ */
+export async function findTodaySpreadCloseFill(
+  apiKey: string,
+  accountId: string,
+  baseUrl: string,
+  occShort: string,
+  occLong: string,
+): Promise<{ net: number; orderId: number } | null> {
+  const data = await sandboxGet(`/accounts/${accountId}/orders`, undefined, apiKey, baseUrl)
+  let orders = data?.orders?.order
+  if (!orders) return null
+  if (!Array.isArray(orders)) orders = [orders]
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date())
+  let debit = 0
+  let credit = 0
+  let shortQty = 0
+  let lastOrderId = 0
+  for (const o of orders) {
+    if (String(o.create_date ?? o.transaction_date ?? '').slice(0, 10) !== today) continue
+    let legs = o.leg ? (Array.isArray(o.leg) ? o.leg : [o.leg]) : [o]
+    for (const l of legs) {
+      const qty = parseFloat(l.exec_quantity ?? l.quantity ?? '0')
+      const px = parseFloat(l.avg_fill_price ?? '0')
+      if (!(qty > 0) || !(px >= 0) || l.status && l.status !== 'filled' && o.status !== 'filled') continue
+      if (l.option_symbol === occShort && l.side === 'buy_to_close') {
+        debit += px * qty; shortQty += qty; lastOrderId = Math.max(lastOrderId, Number(o.id) || 0)
+      } else if (l.option_symbol === occLong && l.side === 'sell_to_close') {
+        credit += px * qty; lastOrderId = Math.max(lastOrderId, Number(o.id) || 0)
+      }
+    }
+  }
+  if (shortQty <= 0 || lastOrderId <= 0) return null
+  return { net: Math.max(0, (debit - credit) / shortQty), orderId: lastOrderId }
+}
+
 async function getOrderFillPrice(
   apiKey: string,
   accountId: string,
@@ -3814,7 +3859,38 @@ export async function closeIcOrderAllAccounts(
         // This prevents quantity mismatches from pileup (multiple opens without closes).
         let closeQty = paperContracts
         try {
-          const positions = await getSandboxAccountPositions(acct.apiKey)
+          // 🚨 2026-10-02: this call used to omit acct.baseUrl, so a PRODUCTION
+          // account was looked up on the SANDBOX host, came back empty, and the
+          // close fell through to the paper count. When the broker was already
+          // flat, every scan cycle fired a close order that could never fill and
+          // the app showed a closed trade as open (FLAME-SPY-20261002-Y7RZKZ:
+          // 50+ unfillable close orders, app +$72 vs broker -$32).
+          const posData = await sandboxGet(`/accounts/${accountId}/positions`, undefined, acct.apiKey, acct.baseUrl)
+          if (posData) {
+            let raw = posData.positions?.position
+            if (!raw) raw = []
+            if (!Array.isArray(raw)) raw = [raw]
+            const held = raw.filter((p: any) =>
+              (p.symbol === occPs || p.symbol === occPl) && parseFloat(p.quantity || '0') !== 0)
+            if (twoLegClose && held.length === 0) {
+              // Broker is already FLAT on this spread — something closed it
+              // (broker-side or an earlier cycle). Never send another order; book
+              // the close from the broker's own fills for today.
+              const resultKey = `${acct.name}:${acct.type ?? 'sandbox'}`
+              const fill = await findTodaySpreadCloseFill(acct.apiKey, accountId, acct.baseUrl, occPs, occPl)
+              console.warn(
+                `[tradier] ${acct.name}: broker already FLAT on ${occPs}/${occPl} — no order sent. ` +
+                (fill ? `Booking broker close fill net $${fill.net.toFixed(4)} (order ${fill.orderId}).`
+                      : `No closing fill found in today's orders — booking at estimate.`),
+              )
+              results[resultKey] = {
+                order_id: fill?.orderId ?? -1, contracts: closeQty,
+                fill_price: fill?.net ?? null, account_type: acct.type ?? 'sandbox',
+              }
+              return
+            }
+          }
+          const positions = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
           // Find the short put leg to determine actual quantity
           const shortPutPos = positions.find(p => p.symbol === occPs && p.quantity < 0)
           if (shortPutPos) {
