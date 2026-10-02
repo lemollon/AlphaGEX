@@ -20,6 +20,7 @@ const X = require(path.join(LIB, 'xsp-swap.ts'));
 const FAST = require(path.join(LIB, 'fast-start-sizing.ts'));
 const GAMMA=require('./spark_flame_gamma_reconstruction.cjs');
 const PROFIT_LOCK=require('./spark_flame_profit_lock.cjs');
+const MINUTE_BRAIN=require('./flame_minute_brain.cjs');
 let reconstructGammaEnabled=true;
 let separateSrc=fs.readFileSync(path.join(LIB,'spark-flint-separate.ts'),'utf8').replace(/import\s*\{[^}]*\}\s*from\s*'\.\/flint'/,'');
 const S=new Function('evaluateFlintProfitGate',`${stripTypeScriptTypes(separateSrc).replace(/\bexport\s+/g,'')}; return {decideSparkFlintContracts};`)(F.evaluateFlintProfitGate);
@@ -338,7 +339,7 @@ function flintSize(a,credit,ratio,hostCandidate,host,nDepth,day) {
  return {n:Math.min(dec.contracts,nDepth),ml,reason:dec.gate.reason};
 }
 function dynamicExit(spread,entry,credit,spots,close,slip,controller={},tape=currentVixTape){
- if(!controller.dynamicShock&&!controller.dynamicTrail)return null;
+ if(!controller.dynamicShock&&!controller.dynamicTrail&&!controller.minuteBrain)return null;
  let peakProfit=0,pending=null;
  for(let m=entry+2;m<close-3;m++){
   // Previous completed-minute signal, next-minute execution. Missing exit
@@ -351,11 +352,12 @@ function dynamicExit(spread,entry,credit,spots,close,slip,controller={},tape=cur
    const vLatest=tape.get(decisionMinute),vPrior=tape.get(decisionMinute-5);
    const spy5Pct=latest>0&&prior>0?(latest/prior-1)*100:null;
    const vix5Pct=vLatest>0&&vPrior>0?(vLatest/vPrior-1)*100:null;
+   const brain=controller.minuteBrain?MINUTE_BRAIN.positionDecision({right:spread.right,credit,markedDebit,shortStrike:spread.short,features:MINUTE_BRAIN.completedFeatures({spots,vix:tape,asOf:decisionMinute})}):null;
    const lossArmed=markedDebit>=credit*1.50;
    const shock=spread.right==='put'?spy5Pct!==null&&spy5Pct<=-.25&&vix5Pct!==null&&vix5Pct>=3:spy5Pct!==null&&spy5Pct>=.25;
    const trail=peakProfit>=credit*.25&&profit<=peakProfit*.50;
-   const reason=controller.dynamicShock&&lossArmed&&shock?'intraday_shock':controller.dynamicTrail&&trail?'profit_giveback':null;
-   if(reason)pending={triggerMinute:decisionMinute,reason,signal:{spy5Pct,vix5Pct,markedDebit,peakProfit}};
+   const reason=brain?.action==='exit'?'minute_risk_exit':controller.dynamicShock&&lossArmed&&shock?'intraday_shock':controller.dynamicTrail&&trail?'profit_giveback':null;
+   if(reason)pending={triggerMinute:decisionMinute,reason,signal:{spy5Pct,vix5Pct,markedDebit,peakProfit,brain}};
   }
   if(pending){const q=spread.at(m);if(q&&Number.isFinite(q.debit)){const exitDebit=Math.max(0,q.debit+slip);return {...pending,exit:m,exitDebit,pnl:money((credit-exitDebit)*100-SPEC.feeDollarsPerSpread)};}}
  }
@@ -393,7 +395,7 @@ async function replayDay(day) {
  const dq=new Quotes(day,close), daily={day,vix:vg,close,events:MACRO_CALENDAR[day]||[],intradayVixPoints:currentVixTape.size,minuteInputs:{vix:[...currentVixTape],spyClose:[...spots].map(([m,b])=>[m,b.close])},accounts:[]};
  for(const bot of ['spark','flame']) {
   const cfg=SPEC.bots[bot], group=accounts.filter(a=>a.bot===bot), active=new Map(group.map(a=>[a,[]]));
-  const hosts=new Map(), flints=new Set();
+  const hosts=new Map(), flints=new Set(), brainRejected=new Set();
   // Admission is evaluated after the real SPY minute bars have been loaded,
   // and before any option quote/order calculation.  It cannot see outcomes.
   const candidates=new Map(group.map(a=>[a,scenarioCandidate(a.scenario,vg.ratio,day,spots)]));const candidate=group.some(a=>candidates.get(a));
@@ -408,8 +410,14 @@ async function replayDay(day) {
    for(const a of group) {
    const slip=SPEC.fillCases[a.fillCase], p=put?.at(m), c=call?.at(m);
     let host=hosts.get(a);let proposed=null;
-    if(!host&&candidates.get(a)&&p&&Number.isFinite(p.credit)&&p.credit-slip>=(vg.ratio>a.scenario.baseGate?a.scenario.credit:.10)) {
+    if(!host&&!brainRejected.has(a)&&candidates.get(a)&&p&&Number.isFinite(p.credit)&&p.credit-slip>=(vg.ratio>a.scenario.baseGate?a.scenario.credit:.10)) {
      proposed=hostSize(a,p.credit-slip,vg.ratio,Math.min(p.bidSize,p.askSize),a.equity-active.get(a).reduce((s,t)=>s+t.risk,0),c&&c.credit-slip>=.10?c.credit-slip:null);
+     if(a.scenario.minuteBrain){
+      const brain=MINUTE_BRAIN.entryDecision({right:'put',features:MINUTE_BRAIN.completedFeatures({spots,vix:currentVixTape,asOf:m-1})});
+      proposed.minuteBrain=brain;
+      if(brain.action==='skip'){brainRejected.add(a);proposed=null;}
+      else if(brain.action==='wait')proposed.n=Math.floor(proposed.n*brain.sizeMultiplier);
+     }
     }
     // FLINT precedes the actual host entry, matching scanner order. Retry
     // profits/credit/quote gates within the entry window until filled.
@@ -476,7 +484,7 @@ async function replayDay(day) {
    for(const t of resolved)if(!t.unresolved){const pnl=cents(t.pnl*t.n);net+=pnl;const tr={day,leg:t.leg,symbol:t.spread.symbol,short:t.spread.short,long:t.spread.long,entry:t.entry,exit:t.exit,n:t.n,credit:money(t.credit),pnl:money(pnl/100),reason:t.reason};if(Number.isFinite(t.exitDebit))Object.assign(tr,{exitDebit:t.exitDebit,triggerMinute:t.triggerMinute,signal:t.signal});if(t.spread.repairs[t.exit])tr.quoteRepair=t.spread.repairs[t.exit];a.trades.push(tr);}
    a.equity+=net;a.peak=Math.max(a.peak,a.equity);a.profitLockState=PROFIT_LOCK.closeDay(a.profitLockState,a.equity);
    if(a.triggered&&a.equity<a.deposit)a.floorBreaches++;
-   const row={day,before:before/100,after:a.equity/100,pnl:net/100,markedMin:mtmMin/100,markedPeak:mtmPeak/100,markedDD:markedDD/100,markGaps,hostN:hosts.get(a)?.n||0,flintN:resolved.filter(t=>t.leg==='flint').reduce((s,t)=>s+t.n,0),xsp:hosts.get(a)?.xspDecision||null,triggered:a.triggered,floor:C.currentFloorLevelCents(a.deposit,a.floorPeak,a.triggered,.10)/100,profitLock:a.scenario.profitLock||null,profitLockSkips:a.profitLockSkips||0,unresolved};
+   const row={day,before:before/100,after:a.equity/100,pnl:net/100,markedMin:mtmMin/100,markedPeak:mtmPeak/100,markedDD:markedDD/100,markGaps,hostN:hosts.get(a)?.n||0,flintN:resolved.filter(t=>t.leg==='flint').reduce((s,t)=>s+t.n,0),xsp:hosts.get(a)?.xspDecision||null,minuteBrain:hosts.get(a)?.minuteBrain||null,triggered:a.triggered,floor:C.currentFloorLevelCents(a.deposit,a.floorPeak,a.triggered,.10)/100,profitLock:a.scenario.profitLock||null,profitLockSkips:a.profitLockSkips||0,unresolved};
    a.days.push(row);daily.accounts.push({scenarioId:a.scenario.id,bot:a.bot,profile:a.profile,fillCase:a.fillCase,...row});
   }
  }
@@ -607,6 +615,7 @@ function scenarioGrid(){
   {id:'add_full_hold_none_minute_vix_flat',gate:.925,credit:.20,regime:'prior_up',minute:'vix_flat',eventMode:'none',dynamicShock:false},
   {id:'base_shock_major',gate:.80,credit:.10,regime:'all',minute:'none',eventMode:'major',dynamicShock:true},
  ])out.push({id:`flame_${cfg.id}_riskcap_${Math.round(maxRiskPct*100)}`,bot:'flame',baseGate:.80,gate:cfg.gate,risk:'full',credit:cfg.credit,regime:cfg.regime,eventGuard:false,eventMode:cfg.eventMode,maxRiskPct,minute:cfg.minute,profitLock:null,takePct:0,stopPct:0,dynamicShock:cfg.dynamicShock,dynamicTrail:false});
+ for(const maxRiskPct of [.10,.15,.20])out.push({id:`flame_base_minute_brain_riskcap_${Math.round(maxRiskPct*100)}`,bot:'flame',baseGate:.80,gate:.80,risk:'full',credit:.10,regime:'all',eventGuard:false,eventMode:'none',maxRiskPct,minute:'none',profitLock:null,takePct:0,stopPct:0,dynamicShock:false,dynamicTrail:false,minuteBrain:true});
  return out;
 }
 function capAddedLots(n,risk){if(n<=0)return 0;if(risk==='one')return Math.min(n,1);if(risk==='full')return n;return Math.max(1,Math.floor(n*(risk==='75pct'?.75:.50)));}
@@ -636,7 +645,7 @@ function scenarioCandidate(s,ratio,day,spots){
  return eod[prior[1]]>=eod[prior[0]];
 }
 function sweepSelfTest(){
- assert.equal(scenarioGrid().length,231);assert.equal(new Set(scenarioGrid().map(s=>s.id)).size,231);
+ assert.equal(scenarioGrid().length,234);assert.equal(new Set(scenarioGrid().map(s=>s.id)).size,234);
  assert.equal(scenarioGrid().filter(s=>s.minute!=='none'&&s.gate===s.baseGate).length,0,'baseline must not be selected with new minute filters');
  assert.equal(scenarioGrid().filter(s=>s.minute==='vix_flat').length,51);
  assert.equal(scenarioGrid().filter(s=>s.profitLock).length,6);
