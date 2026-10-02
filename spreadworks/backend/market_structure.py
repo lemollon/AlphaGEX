@@ -1324,9 +1324,7 @@ def capture_all() -> dict[str, Any]:
         return {"captured": False, "reason": "market_closed", "captured_at": now.isoformat()}
     vol = fetch_vol_indices(now)
     persist_vol(vol, now)
-    gamma: dict[str, Any] = {}
     surface: dict[str, Any] = {}
-    flow: dict[str, Any] = {}
     # Surface is intentionally limited to the two report underlyings.  It uses
     # the entitled IV-only endpoint and does not depend on the optional Greeks
     # package or the slower OI join used by the dealer-gamma map.  Capture it
@@ -1346,45 +1344,13 @@ def capture_all() -> dict[str, Any]:
                         "captured_at": datetime.now(UTC).isoformat()}
             surface[symbol] = item
             persist_surface(item)
-    # The flow request is separate from the IV snapshot because it carries the
-    # OPRA print + contemporaneous NBBO needed for an at-bid/at-ask read.
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="trade-quote-flow") as pool:
-        futures = {pool.submit(fetch_trade_quote_flow, symbol, datetime.now(UTC)): symbol
-                   for symbol in ("SPY", "QQQ")}
-        for future in as_completed(futures):
-            symbol = futures[future]
-            try:
-                item = future.result()
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("[MarketStructure] %s trade-quote flow capture crashed", symbol)
-                item = {"symbol": symbol, "available": False, "confidence": "LOW",
-                        "reason": f"capture_exception:{type(exc).__name__}",
-                        "captured_at": datetime.now(UTC).isoformat()}
-            flow[symbol] = item
-            persist_trade_quote_flow(item)
-    # Fetch independent symbols concurrently after the report-critical surface
-    # has been persisted.  Each snapshot still carries its own fresh clock.
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="market-structure") as pool:
-        futures = {pool.submit(build_gamma_snapshot, symbol, datetime.now(UTC)): symbol
-                   for symbol in SYMBOLS}
-        for future in as_completed(futures):
-            symbol = futures[future]
-            try:
-                snap = future.result()
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("[MarketStructure] %s gamma capture crashed", symbol)
-                snap = {
-                    "symbol": symbol,
-                    "available": False,
-                    "confidence": "LOW",
-                    "reason": f"capture_exception:{type(exc).__name__}",
-                    "captured_at": datetime.now(UTC).isoformat(),
-                }
-            gamma[symbol] = snap
-            persist_snapshot(snap)
+    # Do not queue slow chain or historical-print requests behind the minute
+    # surface capture. They can consume the single Theta client for tens of
+    # seconds and used to turn an otherwise valid surface into a stale report.
+    # Gamma/flow are fetched by their own explicit workers and read from their
+    # persisted snapshots below; the report path never recalculates them.
     return {"captured": True, "captured_at": now.isoformat(), "volatility": vol,
-            "gamma": gamma, "surface": surface, "flow": flow}
-
+            "surface": surface}
 
 def _latest_gamma(symbol: str) -> dict[str, Any] | None:
     ensure_tables()
@@ -1433,6 +1399,23 @@ def _latest_surface(symbol: str) -> dict[str, Any] | None:
     return result
 
 
+def _cached_surface_payload(symbol: str, now: datetime | None = None) -> dict[str, Any]:
+    """Return the durable surface with an honest *current* freshness verdict."""
+    now = now or datetime.now(UTC)
+    row = _latest_surface(symbol)
+    if row is None:
+        return {"symbol": symbol, "available": False, "confidence": "LOW",
+                "reason": "no_persisted_surface"}
+    source_ts = _parse_ts(row.get("source_timestamp"))
+    age = (now - source_ts).total_seconds() if source_ts else None
+    fresh = (row.get("confidence") == "HIGH" and age is not None
+             and 0 <= age <= STALE_SECONDS)
+    row.update({"symbol": symbol, "available": fresh,
+                "age_seconds": round(age, 1) if age is not None else None,
+                "reason": row.get("reason") or (None if fresh else "stale_persisted_surface")})
+    return row
+
+
 def _latest_trade_quote_flow(symbol: str) -> dict[str, Any] | None:
     ensure_tables()
     with engine.begin() as conn:
@@ -1456,6 +1439,43 @@ def _latest_trade_quote_flow(symbol: str) -> dict[str, Any] | None:
     return result
 
 
+def _cached_gamma_payload(symbol: str, now: datetime | None = None) -> dict[str, Any]:
+    now = now or datetime.now(UTC)
+    row = _latest_gamma(symbol)
+    if row is None:
+        return {"symbol": symbol, "available": False, "confidence": "LOW",
+                "reason": "no_persisted_gamma"}
+    source_ts = _parse_ts(row.get("source_timestamp"))
+    age = (now - source_ts).total_seconds() if source_ts else None
+    fresh = (row.get("confidence") == "HIGH" and age is not None
+             and 0 <= age <= STALE_SECONDS)
+    row.update({"symbol": symbol, "available": fresh,
+                "age_seconds": round(age, 1) if age is not None else None,
+                "reason": row.get("reason") or (None if fresh else "stale_persisted_gamma")})
+    return row
+
+
+def _cached_vol_payload(now: datetime | None = None) -> dict[str, Any]:
+    now = now or datetime.now(UTC)
+    ensure_tables()
+    with engine.begin() as conn:
+        rows = conn.execute(text(
+            f"SELECT DISTINCT ON (symbol) symbol,price,source,source_timestamp,reason "
+            f"FROM {VOL_TABLE} ORDER BY symbol,captured_at DESC"), {}).fetchall()
+    indices: dict[str, Any] = {}
+    for symbol, price, _source, source_timestamp, reason in rows:
+        stamp = source_timestamp.replace(tzinfo=UTC) if source_timestamp and source_timestamp.tzinfo is None else source_timestamp
+        age = (now - stamp).total_seconds() if stamp else None
+        fresh = price is not None and age is not None and 0 <= age <= STALE_SECONDS
+        indices[symbol] = {"symbol": symbol, "price": price,
+                           "source_timestamp": stamp.isoformat() if stamp else None,
+                           "age_seconds": round(age, 1) if age is not None else None,
+                           "fresh": fresh,
+                           "reason": reason or (None if fresh else "stale_persisted_quote")}
+    return {"available": any(item["fresh"] for item in indices.values()),
+            "source": "Persisted ThetaData index snapshot price",
+            "retrieved_at": now.isoformat(), "indices": indices}
+
 def register(scheduler: Any, app: Any | None = None) -> bool:
     """Persist canonical live market structure once a minute on market days.
 
@@ -1473,13 +1493,9 @@ def register(scheduler: Any, app: Any | None = None) -> bool:
         try:
             result = capture_all()
             if result.get("captured"):
-                available = sum(
-                    1 for item in (result.get("gamma") or {}).values()
-                    if item.get("available")
-                )
                 logger.info(
-                    "[MarketStructure] capture complete gamma_available=%d/%d vol_available=%s",
-                    available, len(SYMBOLS),
+                    "[MarketStructure] critical capture complete surface_available=%d/2 vol_available=%s",
+                    sum(1 for item in (result.get("surface") or {}).values() if item.get("available")),
                     bool((result.get("volatility") or {}).get("available")),
                 )
         except Exception:  # noqa: BLE001
@@ -1526,7 +1542,7 @@ def surface_symbol(symbol: str):
     symbol = symbol.upper()
     if symbol not in {"SPY", "QQQ"}:
         return {"available": False, "reason": "surface supports SPY and QQQ", "symbol": symbol}
-    return build_volatility_surface(symbol, datetime.now(UTC))
+    return _cached_surface_payload(symbol, datetime.now(UTC))
 
 
 @router.get("/surface/latest/{symbol}")
@@ -1543,7 +1559,8 @@ def trade_quote_flow_symbol(symbol: str):
     symbol = symbol.upper()
     if symbol not in {"SPY", "QQQ"}:
         return {"available": False, "reason": "trade-quote flow supports SPY and QQQ", "symbol": symbol}
-    return fetch_trade_quote_flow(symbol, datetime.now(UTC))
+    row = _latest_trade_quote_flow(symbol)
+    return {"available": row is not None, "symbol": symbol, "flow": row}
 
 
 @router.get("/flow/latest/{symbol}")
@@ -1557,7 +1574,7 @@ def latest_trade_quote_flow_symbol(symbol: str):
 
 @router.get("/vol-indices")
 def vol_indices():
-    return fetch_vol_indices(datetime.now(UTC))
+    return _cached_vol_payload(datetime.now(UTC))
 
 
 @router.get("/gamma/{symbol}")
@@ -1566,7 +1583,7 @@ def gamma_symbol(symbol: str):
     if symbol not in SYMBOLS:
         return {"available": False, "reason": f"unsupported symbol {symbol}",
                 "supported": SYMBOLS}
-    return build_gamma_snapshot(symbol, datetime.now(UTC))
+    return _cached_gamma_payload(symbol, datetime.now(UTC))
 
 
 @router.get("/latest/{symbol}")
