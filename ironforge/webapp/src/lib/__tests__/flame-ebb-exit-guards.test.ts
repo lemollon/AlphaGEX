@@ -86,3 +86,38 @@ describe('closeAllSandboxPositions is sandbox-only', () => {
     expect(f).not.toHaveBeenCalled()
   })
 })
+
+const TRADIER_SRC = readFileSync(join(__dirname, '..', 'tradier.ts'), 'utf8')
+
+describe('hold-to-expiry lock', () => {
+  it('closePosition blocks FLAME/SPARK broker closes before the guard window, except guard/settlement/stale', () => {
+    const fn = SCANNER_SRC.slice(SCANNER_SRC.indexOf('async function closePosition('))
+    const lock = fn.indexOf('EARLY CLOSE BLOCKED')
+    const broker = fn.indexOf('closeIcOrderAllAccounts(')
+    expect(lock).toBeGreaterThan(0)
+    expect(lock).toBeLessThan(broker)
+    expect(fn).toContain("if (isSettleAtExpiryBot(bot.name) && reason !== ASSIGNMENT_GUARD_REASON")
+    expect(fn).toContain("&& !isBookOnlyCloseReason(reason) && reason !== 'stale_holdover')")
+    expect(fn).toContain('if (hhmm < startHHMM) {')
+  })
+})
+
+describe('price-capped close never degrades to market', () => {
+  it('returns before the market Stage 2/3 fallback when the order type is debit', () => {
+    const fn = TRADIER_SRC.slice(TRADIER_SRC.indexOf('export async function closeIcOrderAllAccounts('))
+    const guard = fn.indexOf("if (effectiveOrderType === 'debit') {")
+    const stage2 = fn.indexOf('// --- Stage 2: 2 × 2-leg spread close ---')
+    expect(guard).toBeGreaterThan(0)
+    expect(guard).toBeLessThan(stage2)
+  })
+})
+
+describe('settlement books the broker fill when the broker closed early', () => {
+  it('settleExpiredPositions consults productionSpreadCloseFill for production rows before booking', () => {
+    const fn = SCANNER_SRC.slice(SCANNER_SRC.indexOf('async function settleExpiredPositions('))
+    const check = fn.indexOf('productionSpreadCloseFill(')
+    const book = fn.indexOf("'settled_at_expiry', value,")
+    expect(check).toBeGreaterThan(0)
+    expect(check).toBeLessThan(book)
+  })
+})
