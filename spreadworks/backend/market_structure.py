@@ -1513,7 +1513,10 @@ def _cached_gamma_payload(symbol: str, now: datetime | None = None) -> dict[str,
                 "reason": "no_persisted_gamma"}
     source_ts = _parse_ts(row.get("source_timestamp"))
     age = (now - source_ts).total_seconds() if source_ts else None
-    fresh = (row.get("confidence") == "HIGH" and age is not None
+    # Gamma coverage can be MEDIUM on a deliberately bounded near-term map.
+    # The report contract rejects LOW confidence; it must not discard a fresh,
+    # numeric MEDIUM map and then claim gamma is unavailable.
+    fresh = (row.get("confidence") in {"HIGH", "MEDIUM"} and age is not None
              and 0 <= age <= STALE_SECONDS)
     row.update({"symbol": symbol, "available": fresh,
                 "age_seconds": round(age, 1) if age is not None else None,
