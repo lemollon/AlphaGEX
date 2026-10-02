@@ -53,7 +53,7 @@ VOL_TABLE = "sw_live_vol_indices"
 SURFACE_TABLE = "sw_live_surface"
 FLOW_TABLE = "sw_live_trade_quote_flow"
 CROSS_ASSET_TABLE = "sw_live_cross_asset"
-CROSS_ASSET_SYMBOLS = ("SPY", "QQQ", "IWM", "SMH", "XLK", "XLF", "XLE", "XLV", "XLU", "HYG", "LQD", "TLT")
+CROSS_ASSET_SYMBOLS = ("SPY", "QQQ", "IWM", "SMH", "XLK", "XLF", "XLE", "XLV", "XLU", "XLY", "XLP", "HYG", "LQD", "TLT")
 # Gamma only needs the near-term, near-spot chain used by the intraday map.
 # Keeping this bounded is critical: ThetaData serializes requests in the shared
 # proxy, so an all-expiry/all-strike OI request can block surface refreshes for
