@@ -75,13 +75,15 @@ function exitTrade(order,quotes,close,s,slip){
  }
  return {unresolved:'offense_triggered_exit_has_no_executable_quote'};
 }
-function grid(){
+function grid({includeOverlayControls=false}={}){
  const out=[];
  for(const family of ['breakout','post_release','overlay'])for(const scope of ['fed','major','all']){
   if(family==='post_release'&&scope==='all')continue;
   const conferenceExits=family==='post_release'&&scope==='fed'?[false,true]:[false];
-  for(const budget of [.005,.01])for(const target of [.5,1])for(const wait of family==='post_release'?[5,15]:[0])for(const vixRise of family==='breakout'?[3,5]:[3])for(const preConference of conferenceExits){
-   out.push({id:[family,scope,budget,target,wait,vixRise,preConference?'preconf':'hold'].join('_'),family,scope,budget,target,wait,vixRise,preConference});
+  const overlayModes=family==='overlay'&&includeOverlayControls?['close_only','hedge_only','close_then_directional']:['hedge_only'];
+  for(const budget of [.005,.01])for(const target of [.5,1])for(const wait of family==='post_release'?[5,15]:[0])for(const vixRise of family==='breakout'?[3,5]:[3])for(const preConference of conferenceExits)for(const overlayMode of overlayModes){
+   const controls=family==='overlay'&&includeOverlayControls?[overlayMode]:[];
+   out.push({id:[family,scope,budget,target,wait,vixRise,preConference?'preconf':'hold',...controls].join('_'),family,scope,budget,target,wait,vixRise,preConference,overlayMode});
   }
  }
  return out;
