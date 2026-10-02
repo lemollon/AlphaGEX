@@ -651,6 +651,103 @@ def _term_iv(atm_by_dte: dict[int, float], lo: int, hi: int) -> float | None:
     return statistics.median(values) if values else None
 
 
+def _surface_read(
+    atm_iv: float | None, realized_vol: float | None, skew: float | None,
+    iv_0dte: float | None, iv_1_5dte: float | None,
+    iv_6_20dte: float | None, iv_21_365dte: float | None,
+) -> dict[str, Any]:
+    """Translate the surface into bounded, non-directional report language.
+
+    IV prices *future uncertainty* while realized volatility describes the
+    recent tape.  The gap is therefore a premium/risk read, never a directional
+    forecast.  Likewise, a skew or a term premium describes what options cost;
+    it does not prove an option position was opened or identify a trader.
+    """
+    if atm_iv is None or realized_vol is None or realized_vol <= 0:
+        return {"available": False, "reason": "requires fresh ATM IV and realized volatility"}
+    ratio = atm_iv / realized_vol
+    gap = atm_iv - realized_vol
+    if ratio >= 1.25:
+        day_state = "PREMIUM_RICH"
+        day_meaning = (
+            "Implied volatility materially exceeds the last hour's realized pace: "
+            "the market is charging for a larger forward move than it has just delivered. "
+            "Do not chase options unless price/flow confirms expansion; defined-risk premium "
+            "selling is attractive only while range acceptance and event risk support it."
+        )
+    elif ratio >= 1.10:
+        day_state = "MODEST_PREMIUM"
+        day_meaning = (
+            "Implied volatility is modestly above the last hour's realized pace. "
+            "Premium has a cushion, but the edge is too small to sell volatility into a breakout."
+        )
+    elif ratio >= 0.90:
+        day_state = "BALANCED"
+        day_meaning = (
+            "Implied and recent realized volatility are broadly aligned. "
+            "Price location, catalyst risk, and actual options flow should decide the trade."
+        )
+    else:
+        day_state = "REALIZED_RUNNING_HOT"
+        day_meaning = (
+            "The tape is moving faster than implied volatility. "
+            "Short-premium trades need extra caution; a continuation needs price confirmation, "
+            "not volatility alone."
+        )
+
+    if skew is None:
+        skew_state = "UNAVAILABLE"
+        skew_meaning = "No current smile/skew conclusion."
+    elif skew >= 0.025:
+        skew_state = "DOWNSIDE_HEDGE_PREMIUM"
+        skew_meaning = (
+            "25-delta puts are materially richer than comparable calls: downside insurance is bid. "
+            "This raises downside-tail sensitivity, but does not by itself predict a decline."
+        )
+    elif skew <= -0.025:
+        skew_state = "UPSIDE_CALL_PREMIUM"
+        skew_meaning = (
+            "Comparable calls are richer than puts: upside optionality is carrying the premium. "
+            "Treat this as speculation demand only after trade-side flow confirms it."
+        )
+    else:
+        skew_state = "BALANCED_SKEW"
+        skew_meaning = "Put/call wing pricing is not meaningfully tilted at the current reference tenor."
+
+    forward_parts: list[str] = []
+    if iv_0dte is not None and iv_1_5dte is not None:
+        if iv_0dte >= iv_1_5dte * 1.15:
+            forward_parts.append("front-day premium is elevated versus 1–5DTE")
+        elif iv_0dte <= iv_1_5dte * 0.85:
+            forward_parts.append("front-day premium is discounted versus 1–5DTE")
+    if iv_6_20dte is not None and iv_1_5dte is not None:
+        if iv_6_20dte >= iv_1_5dte * 1.10:
+            forward_parts.append("6–20DTE volatility is elevated versus the near curve")
+    if iv_21_365dte is not None and iv_6_20dte is not None:
+        if iv_21_365dte >= iv_6_20dte * 1.10:
+            forward_parts.append("21+D volatility carries additional longer-horizon uncertainty premium")
+    forward_meaning = (
+        "; ".join(forward_parts) + ". This is forward volatility pricing, not proof of future-dated call/put buying or selling."
+        if forward_parts else
+        "The available term structure has no material forward premium/dislocation signal. "
+        "It is price-of-risk context, not position or trade-direction evidence."
+    )
+    return {
+        "available": True,
+        "iv_realized_ratio": ratio,
+        "iv_realized_gap": gap,
+        "day_state": day_state,
+        "day_meaning": day_meaning,
+        "skew_state": skew_state,
+        "skew_meaning": skew_meaning,
+        "forward_meaning": forward_meaning,
+        "guardrail": (
+            "Use this with price acceptance and fresh trade-at-bid/ask flow. "
+            "It cannot identify opening versus closing trades, institutions, or multi-leg structures."
+        ),
+    }
+
+
 def _surface_skew(records: list[dict[str, Any]], spot: float) -> tuple[float | None, int | None]:
     """Return put-IV minus call-IV at locally calculated 25-delta points."""
     available_dtes = sorted({int(row["dte"]) for row in records if row["dte"] >= 1})
@@ -703,6 +800,14 @@ def build_volatility_surface(symbol: str, now: datetime | None = None) -> dict[s
         confidence = "LOW"
     realized = fetch_intraday_realized_volatility(symbol, completed_at)
     realized_vol = realized.get("realized_vol_60m") if realized.get("available") else None
+    term_0dte = _term_iv(atm_by_dte, 0, 0)
+    term_1_5dte = _term_iv(atm_by_dte, 1, 5)
+    term_6_20dte = _term_iv(atm_by_dte, 6, 20)
+    term_21_365dte = _term_iv(atm_by_dte, 21, 365)
+    surface_read = _surface_read(
+        atm_iv, realized_vol, skew, term_0dte, term_1_5dte,
+        term_6_20dte, term_21_365dte,
+    )
     captured_at = datetime.now(UTC)
     em_pct = atm_iv * math.sqrt(1.0 / 252.0) * 100.0 if atm_iv else None
     em_dollars = price * em_pct / 100.0 if em_pct else None
@@ -712,10 +817,10 @@ def build_volatility_surface(symbol: str, now: datetime | None = None) -> dict[s
         "source_timestamp": source_ts.isoformat(), "age_seconds": round(age, 1),
         "confidence": confidence, "n_rows": len(rows), "atm_iv": atm_iv,
         "atm_reference_dte": reference_dte, "skew_25d": skew,
-        "skew_reference_dte": skew_dte, "iv_0dte": _term_iv(atm_by_dte, 0, 0),
-        "iv_1_5dte": _term_iv(atm_by_dte, 1, 5),
-        "iv_6_20dte": _term_iv(atm_by_dte, 6, 20),
-        "iv_21_365dte": _term_iv(atm_by_dte, 21, 365),
+        "skew_reference_dte": skew_dte, "iv_0dte": term_0dte,
+        "iv_1_5dte": term_1_5dte,
+        "iv_6_20dte": term_6_20dte,
+        "iv_21_365dte": term_21_365dte,
         "expected_move_pct_1d": em_pct, "expected_move_dollars_1d": em_dollars,
         "expected_move_low": price - em_dollars if em_dollars else None,
         "expected_move_high": price + em_dollars if em_dollars else None,
@@ -730,6 +835,7 @@ def build_volatility_surface(symbol: str, now: datetime | None = None) -> dict[s
         "realized_vol_reason": realized.get("reason"),
         "iv_minus_realized_vol": (atm_iv - realized_vol
                                    if atm_iv is not None and realized_vol is not None else None),
+        "surface_read": surface_read,
         "reason": None if confidence != "LOW" else "missing_atm_iv",
     }
 
