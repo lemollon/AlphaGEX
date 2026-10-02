@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import requests
 
 import backend.market_structure as market_structure
@@ -214,6 +214,13 @@ def test_iv_only_surface_builds_term_skew_and_expected_move(monkeypatch):
         "source": "Tradier ETF quote",
     })
     monkeypatch.setattr(market_structure, "_theta_rows", lambda path, params: payload)
+    monkeypatch.setattr(market_structure, "fetch_intraday_realized_volatility",
+                        lambda symbol, current: {"available": True,
+                                                 "realized_vol_60m": 0.12,
+                                                 "bars": 60,
+                                                 "source_timestamp": current.isoformat(),
+                                                 "bar_timestamp": current.isoformat(),
+                                                 "method": "test", "source": "test"})
     result = market_structure.build_volatility_surface("SPY", now)
     assert result["available"] is True
     assert result["confidence"] == "HIGH"
@@ -226,6 +233,8 @@ def test_iv_only_surface_builds_term_skew_and_expected_move(monkeypatch):
     assert result["skew_25d"] > 0
     assert result["expected_move_dollars_1d"] > 0
     assert result["expected_move_low"] < 750 < result["expected_move_high"]
+    assert result["realized_vol_60m"] == 0.12
+    assert result["iv_minus_realized_vol"] == result["atm_iv"] - 0.12
 
 
 def test_iv_snapshot_without_provider_timestamp_uses_fresh_receipt_time(monkeypatch):
@@ -241,9 +250,35 @@ def test_iv_snapshot_without_provider_timestamp_uses_fresh_receipt_time(monkeypa
         "price": 750.0, "fresh": True, "source_timestamp": now,
     })
     monkeypatch.setattr(market_structure, "_theta_rows", lambda path, params: payload)
+    monkeypatch.setattr(market_structure, "fetch_intraday_realized_volatility",
+                        lambda symbol, current: {"available": False,
+                                                 "reason": "insufficient_intraday_bars"})
     result = market_structure.build_volatility_surface("SPY", now)
     assert result["available"] is True
     assert result["n_rows"] == len(payload)
+
+
+def test_realized_volatility_uses_fresh_rth_one_minute_tape():
+    now = datetime(2026, 10, 2, 15, 31, 20, tzinfo=timezone.utc)  # 10:31:20 ET
+    start = now - timedelta(minutes=60)
+    bars = []
+    for i in range(61):
+        stamp = start + timedelta(minutes=i)
+        bars.append({"time": stamp.astimezone(market_structure.ET).replace(tzinfo=None).isoformat(),
+                     "close": 750.0 * (1.0001 ** i)})
+    result = market_structure._realized_volatility_from_bars(bars, now)
+    assert result["available"] is True
+    assert result["bars"] == 60
+    assert result["realized_vol_60m"] > 0
+    assert result["bar_age_seconds"] == 20
+
+
+def test_realized_volatility_rejects_stale_tape():
+    now = datetime(2026, 10, 2, 15, 35, tzinfo=timezone.utc)
+    bars = [{"time": "2026-10-02T10:30:00", "close": 750.0}]
+    result = market_structure._realized_volatility_from_bars(bars, now)
+    assert result["available"] is False
+    assert result["reason"] == "stale_timesales_bar"
 
 
 
