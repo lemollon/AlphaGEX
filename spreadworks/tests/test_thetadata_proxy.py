@@ -93,6 +93,14 @@ class FakeThetaClient:
             "bid": 1.0, "ask": 1.1,
         }])
 
+    def option_history_trade_quote(self, **kwargs):
+        self.calls.append(("option_history_trade_quote", kwargs))
+        return Frame([{
+            "symbol": "SPY", "expiration": "2026-09-21", "strike": 663.0,
+            "right": "call", "timestamp": "2026-09-21T15:59:00",
+            "price": 1.1, "size": 25, "bid": 1.0, "ask": 1.1,
+        }])
+
     def option_snapshot_greeks_all(self, **kwargs):
         self.calls.append(("option_snapshot_greeks_all", kwargs))
         return Frame([{"symbol": "SPX", "expiration": "2026-09-29",
@@ -158,6 +166,15 @@ def test_private_proxy_serves_compatible_stock_and_option_csv(monkeypatch):
     assert method == "option_history_quote"
     assert kwargs["expiration"].isoformat() == "2026-09-21"
     assert kwargs["start_date"].isoformat() == "2026-09-21"
+
+    trade_quotes = client.get("/v3/option/history/trade_quote", params={
+        "symbol": "SPY", "date": "20260921", "expiration": "*",
+        "start_time": "15:58:00", "end_time": "15:59:00",
+    })
+    assert trade_quotes.status_code == 200
+    method, kwargs = fake.calls[-1]
+    assert method == "option_history_trade_quote"
+    assert kwargs["exclusive"] is True
 
 
 def test_private_proxy_rejects_unsafe_or_oversized_requests(monkeypatch):
