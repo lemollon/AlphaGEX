@@ -895,30 +895,13 @@ def capture_all() -> dict[str, Any]:
     persist_vol(vol, now)
     gamma: dict[str, Any] = {}
     surface: dict[str, Any] = {}
-    # Fetch independent symbols concurrently; each ThetaData request retains
-    # a bounded proxy timeout and each result must pass its freshness gate.
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="market-structure") as pool:
-        futures = {pool.submit(build_gamma_snapshot, symbol, now): symbol for symbol in SYMBOLS}
-        for future in as_completed(futures):
-            symbol = futures[future]
-            try:
-                snap = future.result()
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("[MarketStructure] %s gamma capture crashed", symbol)
-                snap = {
-                    "symbol": symbol,
-                    "available": False,
-                    "confidence": "LOW",
-                    "reason": f"capture_exception:{type(exc).__name__}",
-                    "captured_at": now.isoformat(),
-                }
-            gamma[symbol] = snap
-            persist_snapshot(snap)
     # Surface is intentionally limited to the two report underlyings.  It uses
     # the entitled IV-only endpoint and does not depend on the optional Greeks
-    # package or the slower OI join used by the dealer-gamma map.
+    # package or the slower OI join used by the dealer-gamma map.  Capture it
+    # first: a full seven-index gamma pass can take longer than the 90-second
+    # freshness contract and must never starve the report's live IV fields.
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="iv-surface") as pool:
-        futures = {pool.submit(build_volatility_surface, symbol, now): symbol
+        futures = {pool.submit(build_volatility_surface, symbol, datetime.now(UTC)): symbol
                    for symbol in ("SPY", "QQQ")}
         for future in as_completed(futures):
             symbol = futures[future]
@@ -931,6 +914,26 @@ def capture_all() -> dict[str, Any]:
                         "captured_at": datetime.now(UTC).isoformat()}
             surface[symbol] = item
             persist_surface(item)
+    # Fetch independent symbols concurrently after the report-critical surface
+    # has been persisted.  Each snapshot still carries its own fresh clock.
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="market-structure") as pool:
+        futures = {pool.submit(build_gamma_snapshot, symbol, datetime.now(UTC)): symbol
+                   for symbol in SYMBOLS}
+        for future in as_completed(futures):
+            symbol = futures[future]
+            try:
+                snap = future.result()
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("[MarketStructure] %s gamma capture crashed", symbol)
+                snap = {
+                    "symbol": symbol,
+                    "available": False,
+                    "confidence": "LOW",
+                    "reason": f"capture_exception:{type(exc).__name__}",
+                    "captured_at": datetime.now(UTC).isoformat(),
+                }
+            gamma[symbol] = snap
+            persist_snapshot(snap)
     return {"captured": True, "captured_at": now.isoformat(), "volatility": vol,
             "gamma": gamma, "surface": surface}
 
