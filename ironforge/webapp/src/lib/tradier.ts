@@ -1547,14 +1547,18 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
  */
 export async function getSandboxPositionSymbols(
   apiKey: string,
+  baseUrl: string = SANDBOX_URL,
 ): Promise<string[]> {
-  const accountId = await getAccountIdForKey(apiKey)
+  // baseUrl threaded through (2026-10-02 audit): production accounts were
+  // queried on the SANDBOX host and came back empty.
+  const accountId = await getAccountIdForKey(apiKey, baseUrl)
   if (!accountId) return []
 
   const data = await sandboxGet(
     `/accounts/${accountId}/positions`,
     undefined,
     apiKey,
+    baseUrl,
   )
   if (!data?.positions?.position) return []
 
@@ -4311,11 +4315,17 @@ export async function closeOrphanSandboxPositions(
  * Used when an account is deactivated to prevent orphaned positions.
  * Returns the number of positions successfully closed.
  */
-export async function closeAllSandboxPositions(apiKey: string): Promise<number> {
-  const accountId = await getAccountIdForKey(apiKey)
+export async function closeAllSandboxPositions(apiKey: string, baseUrl: string = SANDBOX_URL): Promise<number> {
+  // SANDBOX ONLY (2026-10-02 audit). This is a blunt market-close of every leg
+  // used on account deactivation; it must never reach a real-money account.
+  if (baseUrl !== SANDBOX_URL) {
+    console.error('[tradier] closeAllSandboxPositions refused: non-sandbox baseUrl — close production positions through the bot close path')
+    return 0
+  }
+  const accountId = await getAccountIdForKey(apiKey, baseUrl)
   if (!accountId) return 0
 
-  const positions = await getSandboxAccountPositions(apiKey)
+  const positions = await getSandboxAccountPositions(apiKey, undefined, baseUrl)
   const openPositions = positions.filter(p => p.quantity !== 0)
   if (openPositions.length === 0) return 0
 
@@ -4332,8 +4342,14 @@ export async function closeAllSandboxPositions(apiKey: string): Promise<number> 
         quantity: String(qty),
         type: 'market',
         duration: 'day',
-      }, apiKey)
-      if (result?.order?.id) closed++
+      }, apiKey, baseUrl)
+      // Count it only when the broker reports a FILL — an order id alone can be
+      // a rejected order, which used to be reported as "closed".
+      if (result?.order?.id) {
+        const fill = await getOrderFillPrice(apiKey, accountId, result.order.id, 30_000, baseUrl)
+        if (fill != null) closed++
+        else console.warn(`[tradier] closeAllSandboxPositions: order ${result.order.id} for ${pos.symbol} did not fill`)
+      }
     } catch { /* best-effort */ }
   }
   return closed

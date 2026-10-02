@@ -24,11 +24,15 @@ export async function GET() {
 
     const accounts = await Promise.all(
       balances.map(async (acct) => {
-        const acctConfig = sandboxAccounts.find((a) => a.name === acct.name)
+        // Match name AND type: the same person can hold a sandbox and a production
+        // account, and the symbols must come from the right one.
+        const acctConfig = sandboxAccounts.find(
+          (a) => a.name === acct.name && (a.type ?? 'sandbox') === ((acct as any).account_type ?? 'sandbox'),
+        )
 
         let tradierSymbols: string[] = []
         if (acctConfig?.apiKey) {
-          tradierSymbols = await getSandboxPositionSymbols(acctConfig.apiKey)
+          tradierSymbols = await getSandboxPositionSymbols(acctConfig.apiKey, acctConfig.baseUrl)
         }
 
         // Cross-reference: for each bot, check which Tradier symbols match
