@@ -656,8 +656,24 @@ function sweepSelfTest(){
  const a={equity:2000000,scenario:{maxRiskPct:.10}};assert.equal(scenarioRiskCapacity(a,20,18000,0),11);
  emit('sweep_self_test',{passed:true,scenarios:scenarioGrid().length,paths:scenarioGrid().length*2});
 }
+function historyRows(a){
+ // Checkpoints used to carry every scenario's day rows as live JS arrays.
+ // Near the end of a 468-path replay, serializing those arrays temporarily
+ // exceeded the 512 MB research instance. Older rows are now retained as a
+ // gzip payload; the active tail stays editable and is expanded only for the
+ // single account being summarized. This changes storage, never a trade.
+ const archived=a.historyPacked?JSON.parse(zlib.gunzipSync(Buffer.from(a.historyPacked,'base64')).toString()):[];
+ return archived.concat(a.history||[]);
+}
+function compactHistory(a){
+ if(!Array.isArray(a.history)||!a.history.length)return;
+ const archived=a.historyPacked?JSON.parse(zlib.gunzipSync(Buffer.from(a.historyPacked,'base64')).toString()):[];
+ archived.push(...a.history);
+ a.historyPacked=zlib.gzipSync(JSON.stringify(archived)).toString('base64');
+ a.history=[];
+}
 function sweepStats(a,period='full'){
- const selected=a.history.filter(d=>period==='full'||(period==='train'?d[0]<'2025-09-29':d[0]>='2025-09-29'));
+ const selected=historyRows(a).filter(d=>period==='full'||(period==='train'?d[0]<'2025-09-29':d[0]>='2025-09-29'));
  const start=selected[0]?.[1]??a.deposit/100;let peak=start,dd=0,ddpct=0,markedPeak=start,markedDD=0,streak=0,longest=0,worst=0;
  let hosts=0,flints=0,added=0,days=0,markGaps=0;const months={};let lossDays=0;
  for(const d of selected){peak=Math.max(peak,d[2]);dd=Math.max(dd,peak-d[2]);ddpct=Math.max(ddpct,(peak-d[2])/peak);markedDD=Math.max(markedDD,markedPeak-d[4],d[6]);markedPeak=Math.max(markedPeak,d[5]);streak=d[3]<0?streak+1:0;longest=Math.max(longest,streak);lossDays+=d[3]<0?1:0;worst=Math.min(worst,d[3]);hosts+=d[8]>0?1:0;flints+=d[9]>0?1:0;added+=d[10];days+=(d[8]+d[9])>0?1:0;markGaps+=d[7];months[d[0].slice(0,7)]=money((months[d[0].slice(0,7)]||0)+d[3]);}
@@ -709,10 +725,13 @@ async function initCheckpointStore(){
  const checkpointSourceHash=process.env.SWEEP_CHECKPOINT_SOURCE_HASH||sha(fs.readFileSync(__filename));
  checkpointKey=SPEC.id+':'+checkpointSourceHash+':'+sha(fs.readFileSync(path.join(__dirname,'spark_flame_gamma_reconstruction.cjs')));
  const r=await checkpointPool.query('SELECT checkpoint FROM spark_flame_research_checkpoints WHERE run_key=$1',[checkpointKey]);
- if(r.rows.length){const saved=JSON.parse(zlib.gunzipSync(r.rows[0].checkpoint));Object.assign(STATE,saved.state);accounts.splice(0,accounts.length,...saved.accounts);manifest.splice(0,manifest.length,...saved.manifest);emit('resumed_sweep',{completed:STATE.completed,stage:STATE.stage});return true;}return false;
+ if(r.rows.length){const saved=JSON.parse(zlib.gunzipSync(r.rows[0].checkpoint));Object.assign(STATE,saved.state);accounts.splice(0,accounts.length,...saved.accounts);manifest.splice(0,manifest.length,...saved.manifest);for(const a of accounts)compactHistory(a);emit('resumed_sweep',{completed:STATE.completed,stage:STATE.stage,historyStorage:'compacted'});return true;}return false;
 }
 async function saveCheckpoint(){
  if(!checkpointPool)return;
+ // Keep checkpoint serialization bounded. A compacted history is immutable;
+ // only rows since the previous checkpoint are held as object arrays.
+ for(const a of accounts)compactHistory(a);
  const body=zlib.gzipSync(JSON.stringify({state:STATE,accounts,manifest}));
  await checkpointPool.query('INSERT INTO spark_flame_research_checkpoints(run_key,status,completed,checkpoint) VALUES($1,$2,$3,$4) ON CONFLICT(run_key) DO UPDATE SET status=EXCLUDED.status,completed=EXCLUDED.completed,checkpoint=EXCLUDED.checkpoint,updated_at=NOW()',[checkpointKey,STATE.stage,STATE.completed,body]);
 }
