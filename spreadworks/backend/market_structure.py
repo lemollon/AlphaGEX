@@ -470,35 +470,37 @@ def _surface_rows(symbol: str, now: datetime) -> tuple[list[dict[str, Any]], str
     """
     params = {"symbol": symbol, "expiration": "*", "max_dte": 365,
               "strike_range": 60}
-    try:
-        raw_rows = _theta_live_snapshot_rows(
-            "/v3/option/snapshot/greeks/implied_volatility", params, now
-        )
-    except Exception as exc:  # noqa: BLE001
-        return [], f"theta_iv_snapshot_failure:{type(exc).__name__}"
-
-    records: list[dict[str, Any]] = []
-    for item in raw_rows:
-        stamp = _theta_ts(item.get("timestamp"))
-        strike = _f(item, "strike")
-        right = str(item.get("right", "")).strip().lower()
-        iv = _iv(item.get("implied_vol"))
-        expiry = str(item.get("expiration", ""))
-        if stamp is None or strike is None or right not in {"call", "put"} or iv is None:
-            continue
-        age = (now - stamp).total_seconds()
-        if not 0 <= age <= STALE_SECONDS:
-            continue
+    # A snapshot is live as of its completed HTTP response.  Individual
+    # contract timestamps, when supplied, describe the last contract update
+    # and are not a valid freshness clock for an aggregate snapshot surface.
+    # Retry one thin response immediately; this removes a transient provider
+    # sampling gap without loosening the live-snapshot requirement.
+    for attempt in range(2):
         try:
-            dte = (datetime.fromisoformat(expiry).date() - now.astimezone(ET).date()).days
-        except ValueError:
+            raw_rows = _theta_rows("/v3/option/snapshot/greeks/implied_volatility", params)
+        except Exception as exc:  # noqa: BLE001
+            if attempt == 1:
+                return [], f"theta_iv_snapshot_failure:{type(exc).__name__}"
             continue
-        if 0 <= dte <= 365:
-            records.append({"strike": strike, "right": right, "iv": iv,
-                            "dte": dte, "timestamp": stamp})
-    if len(records) < 20:
-        return [], "thin_or_stale_theta_iv_surface"
-    return records, None
+        received_at = datetime.now(UTC)
+        records: list[dict[str, Any]] = []
+        for item in raw_rows:
+            strike = _f(item, "strike")
+            right = str(item.get("right", "")).strip().lower()
+            iv = _iv(item.get("implied_vol"))
+            expiry = str(item.get("expiration", ""))
+            if strike is None or right not in {"call", "put"} or iv is None:
+                continue
+            try:
+                dte = (datetime.fromisoformat(expiry).date() - now.astimezone(ET).date()).days
+            except ValueError:
+                continue
+            if 0 <= dte <= 365:
+                records.append({"strike": strike, "right": right, "iv": iv,
+                                "dte": dte, "timestamp": received_at})
+        if len(records) >= 20:
+            return records, None
+    return [], "thin_theta_iv_snapshot_after_retry"
 
 
 def _atm_ivs_by_dte(records: list[dict[str, Any]], spot: float) -> dict[int, float]:
