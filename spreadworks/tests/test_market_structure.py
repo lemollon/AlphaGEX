@@ -191,6 +191,43 @@ def test_index_gamma_can_use_fresh_theta_option_underlying(monkeypatch):
     assert rejected["reason"] == "ThetaData index permission denied"
 
 
+def test_iv_only_surface_builds_term_skew_and_expected_move(monkeypatch):
+    now = datetime(2026, 10, 2, 14, 45, tzinfo=timezone.utc)
+    payload = []
+    # A small, realistic IV-only grid.  No vendor delta or gamma fields are
+    # required; the surface code calculates the 25-delta selection locally.
+    for expiry, dte, base_iv in (
+        ("2026-10-02", 0, 0.15),
+        ("2026-10-05", 3, 0.16),
+        ("2026-10-16", 14, 0.18),
+        ("2026-11-02", 31, 0.20),
+    ):
+        for strike in range(735, 767, 2):
+            for right in ("call", "put"):
+                payload.append({
+                    "expiration": expiry, "strike": str(strike), "right": right,
+                    "timestamp": "2026-10-02T10:44:30",
+                    "implied_vol": str(base_iv + (0.015 if right == "put" else 0.0)),
+                })
+    monkeypatch.setattr(market_structure, "fetch_spot", lambda symbol, current: {
+        "price": 750.0, "fresh": True, "source_timestamp": now,
+        "source": "Tradier ETF quote",
+    })
+    monkeypatch.setattr(market_structure, "_theta_rows", lambda path, params: payload)
+    result = market_structure.build_volatility_surface("SPY", now)
+    assert result["available"] is True
+    assert result["confidence"] == "HIGH"
+    assert result["atm_iv"] == 0.1675
+    assert result["iv_0dte"] == 0.1575
+    assert result["iv_1_5dte"] == 0.1675
+    assert result["iv_6_20dte"] == 0.1875
+    assert result["iv_21_365dte"] == 0.2075
+    assert result["skew_25d"] is not None
+    assert result["skew_25d"] > 0
+    assert result["expected_move_dollars_1d"] > 0
+    assert result["expected_move_low"] < 750 < result["expected_move_high"]
+
+
 
 def test_register_arms_minute_capture_and_initializes_tables(monkeypatch):
     calls = []
@@ -245,6 +282,13 @@ def test_capture_all_parallel_persists_failed_snapshots(monkeypatch):
     monkeypatch.setattr(market_structure, "build_gamma_snapshot", fake_snapshot)
     monkeypatch.setattr(market_structure, "persist_snapshot",
                         lambda snapshot: persisted.append(snapshot))
+    surfaces = []
+    monkeypatch.setattr(market_structure, "build_volatility_surface", lambda symbol, current: {
+        "symbol": symbol, "available": True, "confidence": "HIGH",
+        "captured_at": current.isoformat(), "atm_iv": 0.2,
+    })
+    monkeypatch.setattr(market_structure, "persist_surface",
+                        lambda surface: surfaces.append(surface))
 
     # Force market-hours regardless of the actual test clock.
     class FixedDateTime:
@@ -258,3 +302,5 @@ def test_capture_all_parallel_persists_failed_snapshots(monkeypatch):
     assert set(out["gamma"]) == set(market_structure.SYMBOLS)
     assert len(persisted) == len(market_structure.SYMBOLS)
     assert any(item["reason"] == "ThetaData chain failure" for item in persisted)
+    assert set(out["surface"]) == {"SPY", "QQQ"}
+    assert len(surfaces) == 2

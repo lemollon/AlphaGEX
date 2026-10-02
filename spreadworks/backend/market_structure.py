@@ -42,13 +42,14 @@ router = APIRouter(prefix="/api/spreadworks/market-structure",
 TRADIER_QUOTES = "https://api.tradier.com/v1/markets/quotes"
 SYMBOLS = ("SPY", "QQQ", "IWM", "XSP", "SPX", "NDX", "RUT")
 INDEX_SYMBOLS = frozenset(("XSP", "SPX", "NDX", "RUT"))
-VOL_SYMBOLS = ("VIX", "VIX9D", "VIX3M", "VVIX")
+VOL_SYMBOLS = ("VIX", "VIX1D", "VIX9D", "VIX3M", "VVIX")
 ET = ZoneInfo("America/New_York")
 BUCKETS = ((0, 0, "0dte"), (1, 5, "1_5dte"), (6, 20, "6_20dte"),
            (21, 365, "21_365dte"))
 STALE_SECONDS = int(os.getenv("MARKET_STRUCTURE_STALE_SECONDS", "90"))
 GAMMA_TABLE = "sw_live_gamma"
 VOL_TABLE = "sw_live_vol_indices"
+SURFACE_TABLE = "sw_live_surface"
 _OI_CACHE: dict[str, tuple[datetime, datetime, dict[tuple[str, float, str], float]]] = {}
 
 _GAMMA_DDL = f"""
@@ -86,11 +87,39 @@ CREATE TABLE IF NOT EXISTS {VOL_TABLE} (
 )
 """
 
+_SURFACE_DDL = f"""
+CREATE TABLE IF NOT EXISTS {SURFACE_TABLE} (
+  symbol TEXT NOT NULL,
+  captured_at TIMESTAMP NOT NULL,
+  trade_date DATE NOT NULL,
+  spot DOUBLE PRECISION,
+  source TEXT NOT NULL,
+  source_timestamp TIMESTAMP,
+  confidence TEXT NOT NULL,
+  n_rows INTEGER,
+  atm_iv DOUBLE PRECISION,
+  atm_reference_dte INTEGER,
+  skew_25d DOUBLE PRECISION,
+  skew_reference_dte INTEGER,
+  iv_0dte DOUBLE PRECISION,
+  iv_1_5dte DOUBLE PRECISION,
+  iv_6_20dte DOUBLE PRECISION,
+  iv_21_365dte DOUBLE PRECISION,
+  expected_move_pct_1d DOUBLE PRECISION,
+  expected_move_dollars_1d DOUBLE PRECISION,
+  expected_move_low DOUBLE PRECISION,
+  expected_move_high DOUBLE PRECISION,
+  reason TEXT,
+  PRIMARY KEY(symbol, captured_at)
+)
+"""
+
 
 def ensure_tables() -> None:
     with engine.begin() as conn:
         conn.execute(text(_GAMMA_DDL))
         conn.execute(text(_VOL_DDL))
+        conn.execute(text(_SURFACE_DDL))
 
 
 def _token(name: str) -> str:
@@ -373,6 +402,176 @@ def _f(row: dict[str, Any], name: str) -> float | None:
         return None
 
 
+def _iv(raw: Any) -> float | None:
+    """Normalize ThetaData IV to a decimal without accepting implausible data."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value <= 0:
+        return None
+    # ThetaData normally returns 0.18, but accept a percent-form response too.
+    if 3 < value <= 300:
+        value /= 100.0
+    return value if 0 < value <= 3 else None
+
+
+def _normal_cdf(value: float) -> float:
+    return 0.5 * (1.0 + math.erf(value / math.sqrt(2.0)))
+
+
+def _option_delta(spot: float, strike: float, iv: float, dte: int, right: str) -> float | None:
+    """Black-Scholes delta used only to locate the 25-delta IV points.
+
+    This is deliberately not presented as a vendor Greek.  It lets the
+    authorized IV-only feed supply a stable skew measure when the optional
+    ThetaData all-Greeks entitlement is not present.
+    """
+    if min(spot, strike, iv) <= 0 or right not in {"call", "put"}:
+        return None
+    t = max(float(max(dte, 1)) / 365.0, 1.0 / (365.0 * 24.0))
+    sigma_t = iv * math.sqrt(t)
+    if sigma_t <= 0:
+        return None
+    rate = float(os.getenv("MARKET_STRUCTURE_RISK_FREE_RATE", "0.05"))
+    d1 = (math.log(spot / strike) + (rate + 0.5 * iv * iv) * t) / sigma_t
+    call_delta = _normal_cdf(d1)
+    return call_delta if right == "call" else call_delta - 1.0
+
+
+def _surface_rows(symbol: str, now: datetime) -> tuple[list[dict[str, Any]], str | None]:
+    """Read the ThetaData endpoint that is included with the current plan.
+
+    Do not route this through the all-Greeks endpoint.  That add-on is denied
+    on the deployed account, while the IV snapshot endpoint is explicitly
+    authorized and is sufficient for ATM IV, term structure, skew and an
+    IV-based one-day expected move.
+    """
+    params = {"symbol": symbol, "expiration": "*", "max_dte": 365,
+              "strike_range": 60}
+    try:
+        raw_rows = _theta_rows("/v3/option/snapshot/greeks/implied_volatility", params)
+    except Exception as exc:  # noqa: BLE001
+        return [], f"theta_iv_snapshot_failure:{type(exc).__name__}"
+
+    records: list[dict[str, Any]] = []
+    for item in raw_rows:
+        stamp = _theta_ts(item.get("timestamp"))
+        strike = _f(item, "strike")
+        right = str(item.get("right", "")).strip().lower()
+        iv = _iv(item.get("implied_vol"))
+        expiry = str(item.get("expiration", ""))
+        if stamp is None or strike is None or right not in {"call", "put"} or iv is None:
+            continue
+        age = (now - stamp).total_seconds()
+        if not 0 <= age <= STALE_SECONDS:
+            continue
+        try:
+            dte = (datetime.fromisoformat(expiry).date() - now.astimezone(ET).date()).days
+        except ValueError:
+            continue
+        if 0 <= dte <= 365:
+            records.append({"strike": strike, "right": right, "iv": iv,
+                            "dte": dte, "timestamp": stamp})
+    if len(records) < 20:
+        return [], "thin_or_stale_theta_iv_surface"
+    return records, None
+
+
+def _atm_ivs_by_dte(records: list[dict[str, Any]], spot: float) -> dict[int, float]:
+    by_dte: dict[int, dict[str, list[dict[str, Any]]]] = defaultdict(
+        lambda: {"call": [], "put": []}
+    )
+    for row in records:
+        by_dte[int(row["dte"])][str(row["right"])].append(row)
+    result: dict[int, float] = {}
+    for dte, legs in by_dte.items():
+        values: list[float] = []
+        for right in ("call", "put"):
+            rows = legs[right]
+            if rows:
+                nearest = min(rows, key=lambda row: abs(float(row["strike"]) - spot))
+                values.append(float(nearest["iv"]))
+        if values:
+            result[dte] = statistics.median(values)
+    return result
+
+
+def _term_iv(atm_by_dte: dict[int, float], lo: int, hi: int) -> float | None:
+    values = [iv for dte, iv in atm_by_dte.items() if lo <= dte <= hi]
+    return statistics.median(values) if values else None
+
+
+def _surface_skew(records: list[dict[str, Any]], spot: float) -> tuple[float | None, int | None]:
+    """Return put-IV minus call-IV at locally calculated 25-delta points."""
+    available_dtes = sorted({int(row["dte"]) for row in records if row["dte"] >= 1})
+    if not available_dtes:
+        return None, None
+    # 30 calendar days is the most stable reference when it is available.
+    reference_dte = min(available_dtes, key=lambda dte: abs(dte - 30))
+    subset = [row for row in records if int(row["dte"]) == reference_dte]
+    calls = [row for row in subset if row["right"] == "call"]
+    puts = [row for row in subset if row["right"] == "put"]
+    if not calls or not puts:
+        return None, reference_dte
+    for row in calls + puts:
+        row["_delta"] = _option_delta(
+            spot, float(row["strike"]), float(row["iv"]), reference_dte, str(row["right"])
+        )
+    calls = [row for row in calls if row.get("_delta") is not None]
+    puts = [row for row in puts if row.get("_delta") is not None]
+    if not calls or not puts:
+        return None, reference_dte
+    call = min(calls, key=lambda row: abs(float(row["_delta"]) - 0.25))
+    put = min(puts, key=lambda row: abs(float(row["_delta"]) + 0.25))
+    return float(put["iv"]) - float(call["iv"]), reference_dte
+
+
+def build_volatility_surface(symbol: str, now: datetime | None = None) -> dict[str, Any]:
+    """Build a fresh, IV-only surface from the authorized ThetaData feed."""
+    now = now or datetime.now(UTC)
+    symbol = symbol.upper()
+    spot = fetch_spot(symbol, now)
+    if not spot.get("fresh"):
+        return {"symbol": symbol, "available": False, "confidence": "LOW",
+                "reason": spot.get("reason"), "captured_at": datetime.now(UTC).isoformat()}
+    rows, reason = _surface_rows(symbol, now)
+    completed_at = datetime.now(UTC)
+    if not rows:
+        return {"symbol": symbol, "available": False, "confidence": "LOW",
+                "reason": reason, "spot": spot.get("price"),
+                "captured_at": completed_at.isoformat()}
+    price = float(spot["price"])
+    atm_by_dte = _atm_ivs_by_dte(rows, price)
+    positive_dtes = sorted(dte for dte in atm_by_dte if dte >= 1)
+    reference_dte = positive_dtes[0] if positive_dtes else min(atm_by_dte, default=None)
+    atm_iv = atm_by_dte.get(reference_dte) if reference_dte is not None else None
+    skew, skew_dte = _surface_skew(rows, price)
+    source_ts = min(row["timestamp"] for row in rows)
+    age = (completed_at - source_ts).total_seconds()
+    confidence = "HIGH" if age <= 30 and len(rows) >= 100 else "MEDIUM"
+    if atm_iv is None:
+        confidence = "LOW"
+    em_pct = atm_iv * math.sqrt(1.0 / 252.0) * 100.0 if atm_iv else None
+    em_dollars = price * em_pct / 100.0 if em_pct else None
+    return {
+        "symbol": symbol, "available": confidence != "LOW", "captured_at": completed_at.isoformat(),
+        "spot": price, "source": "ThetaData implied-volatility snapshots (authorized)",
+        "source_timestamp": source_ts.isoformat(), "age_seconds": round(age, 1),
+        "confidence": confidence, "n_rows": len(rows), "atm_iv": atm_iv,
+        "atm_reference_dte": reference_dte, "skew_25d": skew,
+        "skew_reference_dte": skew_dte, "iv_0dte": _term_iv(atm_by_dte, 0, 0),
+        "iv_1_5dte": _term_iv(atm_by_dte, 1, 5),
+        "iv_6_20dte": _term_iv(atm_by_dte, 6, 20),
+        "iv_21_365dte": _term_iv(atm_by_dte, 21, 365),
+        "expected_move_pct_1d": em_pct, "expected_move_dollars_1d": em_dollars,
+        "expected_move_low": price - em_dollars if em_dollars else None,
+        "expected_move_high": price + em_dollars if em_dollars else None,
+        "expected_move_method": "ATM IV × sqrt(1/252), using nearest positive-DTE expiration",
+        "reason": None if confidence != "LOW" else "missing_atm_iv",
+    }
+
+
 def _row_gamma(row: dict[str, Any], spot: float, right: str) -> float | None:
     """Revalue gamma at hypothetical spot for flip solving using row IV."""
     strike = _f(row, "strike")
@@ -628,6 +827,42 @@ def persist_vol(vol: dict[str, Any], now: datetime | None = None) -> None:
                  "r": item.get("reason")})
 
 
+def persist_surface(surface: dict[str, Any]) -> None:
+    """Persist a surface attempt every minute, including a failed attempt.
+
+    The row is an operational contract for reports: absence means the writer
+    did not run; LOW confidence means it ran but did not pass the live gate.
+    """
+    ensure_tables()
+    captured = datetime.fromisoformat(surface["captured_at"].replace("Z", "+00:00"))
+    source_ts = _parse_ts(surface.get("source_timestamp")) if surface.get("source_timestamp") else None
+    params = {
+        "symbol": surface["symbol"], "captured": captured.replace(tzinfo=None),
+        "date": captured.astimezone(CT).date(), "spot": surface.get("spot"),
+        "source": surface.get("source") or "ThetaData implied-volatility snapshots",
+        "source_ts": source_ts.replace(tzinfo=None) if source_ts else None,
+        "confidence": surface.get("confidence") or "LOW", "n": surface.get("n_rows"),
+        "atm": surface.get("atm_iv"), "atm_dte": surface.get("atm_reference_dte"),
+        "skew": surface.get("skew_25d"), "skew_dte": surface.get("skew_reference_dte"),
+        "iv0": surface.get("iv_0dte"), "iv15": surface.get("iv_1_5dte"),
+        "iv620": surface.get("iv_6_20dte"), "iv21": surface.get("iv_21_365dte"),
+        "emp": surface.get("expected_move_pct_1d"),
+        "emd": surface.get("expected_move_dollars_1d"),
+        "emlow": surface.get("expected_move_low"), "emhigh": surface.get("expected_move_high"),
+        "reason": surface.get("reason"),
+    }
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"INSERT INTO {SURFACE_TABLE} "
+            "(symbol,captured_at,trade_date,spot,source,source_timestamp,confidence,n_rows,"
+            "atm_iv,atm_reference_dte,skew_25d,skew_reference_dte,iv_0dte,iv_1_5dte,"
+            "iv_6_20dte,iv_21_365dte,expected_move_pct_1d,expected_move_dollars_1d,"
+            "expected_move_low,expected_move_high,reason) "
+            "VALUES (:symbol,:captured,:date,:spot,:source,:source_ts,:confidence,:n,"
+            ":atm,:atm_dte,:skew,:skew_dte,:iv0,:iv15,:iv620,:iv21,:emp,:emd,:emlow,:emhigh,:reason) "
+            "ON CONFLICT(symbol,captured_at) DO NOTHING"), params)
+
+
 def capture_all() -> dict[str, Any]:
     now = datetime.now(UTC)
     now_ct = now.astimezone(CT)
@@ -636,6 +871,7 @@ def capture_all() -> dict[str, Any]:
     vol = fetch_vol_indices(now)
     persist_vol(vol, now)
     gamma: dict[str, Any] = {}
+    surface: dict[str, Any] = {}
     # Fetch independent symbols concurrently; each ThetaData request retains
     # a bounded proxy timeout and each result must pass its freshness gate.
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="market-structure") as pool:
@@ -655,8 +891,25 @@ def capture_all() -> dict[str, Any]:
                 }
             gamma[symbol] = snap
             persist_snapshot(snap)
+    # Surface is intentionally limited to the two report underlyings.  It uses
+    # the entitled IV-only endpoint and does not depend on the optional Greeks
+    # package or the slower OI join used by the dealer-gamma map.
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="iv-surface") as pool:
+        futures = {pool.submit(build_volatility_surface, symbol, now): symbol
+                   for symbol in ("SPY", "QQQ")}
+        for future in as_completed(futures):
+            symbol = futures[future]
+            try:
+                item = future.result()
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("[MarketStructure] %s IV surface capture crashed", symbol)
+                item = {"symbol": symbol, "available": False, "confidence": "LOW",
+                        "reason": f"capture_exception:{type(exc).__name__}",
+                        "captured_at": datetime.now(UTC).isoformat()}
+            surface[symbol] = item
+            persist_surface(item)
     return {"captured": True, "captured_at": now.isoformat(), "volatility": vol,
-            "gamma": gamma}
+            "gamma": gamma, "surface": surface}
 
 
 def _latest_gamma(symbol: str) -> dict[str, Any] | None:
@@ -678,6 +931,29 @@ def _latest_gamma(symbol: str) -> dict[str, Any] | None:
     d["buckets"] = json.loads(d.pop("bucket_json") or "{}")
     d["walls"] = json.loads(d.pop("wall_json") or "{}")
     return d
+
+
+def _latest_surface(symbol: str) -> dict[str, Any] | None:
+    ensure_tables()
+    with engine.begin() as conn:
+        row = conn.execute(text(
+            f"SELECT captured_at,spot,source,source_timestamp,confidence,n_rows,atm_iv,"
+            "atm_reference_dte,skew_25d,skew_reference_dte,iv_0dte,iv_1_5dte,"
+            "iv_6_20dte,iv_21_365dte,expected_move_pct_1d,expected_move_dollars_1d,"
+            "expected_move_low,expected_move_high,reason "
+            f"FROM {SURFACE_TABLE} WHERE symbol=:s ORDER BY captured_at DESC LIMIT 1"),
+            {"s": symbol}).fetchone()
+    if not row:
+        return None
+    keys = ("captured_at","spot","source","source_timestamp","confidence","n_rows","atm_iv",
+            "atm_reference_dte","skew_25d","skew_reference_dte","iv_0dte","iv_1_5dte",
+            "iv_6_20dte","iv_21_365dte","expected_move_pct_1d","expected_move_dollars_1d",
+            "expected_move_low","expected_move_high","reason")
+    result = dict(zip(keys, row))
+    for key in ("captured_at", "source_timestamp"):
+        if result[key] is not None:
+            result[key] = result[key].isoformat()
+    return result
 
 
 def register(scheduler: Any, app: Any | None = None) -> bool:
@@ -716,7 +992,7 @@ def register(scheduler: Any, app: Any | None = None) -> bool:
         next_run_time=datetime.now(UTC),
     )
     logger.info(
-        "[MarketStructure] registered minute captures 08:00-15:59 CT; "
+        "[MarketStructure] registered minute gamma + IV-surface captures 08:00-15:59 CT; "
         "capture_all enforces the 08:30-15:05 market window"
     )
     return True
@@ -743,6 +1019,23 @@ def live_market_structure():
             "volatility": vol, "gamma": gamma,
             "dealer_position_note": "Estimated from public OI/Greeks; dealer inventory is not directly observable.",
             "squeeze_note": "Intraday context only; existing 15:05 CT SQUEEZE close signal is unchanged."}
+
+
+@router.get("/surface/{symbol}")
+def surface_symbol(symbol: str):
+    symbol = symbol.upper()
+    if symbol not in {"SPY", "QQQ"}:
+        return {"available": False, "reason": "surface supports SPY and QQQ", "symbol": symbol}
+    return build_volatility_surface(symbol, datetime.now(UTC))
+
+
+@router.get("/surface/latest/{symbol}")
+def latest_surface_symbol(symbol: str):
+    symbol = symbol.upper()
+    if symbol not in {"SPY", "QQQ"}:
+        return {"available": False, "reason": "surface supports SPY and QQQ", "symbol": symbol}
+    row = _latest_surface(symbol)
+    return {"available": row is not None, "symbol": symbol, "surface": row}
 
 
 @router.get("/vol-indices")

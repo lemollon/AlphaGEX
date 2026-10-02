@@ -10,6 +10,21 @@ from fastapi.testclient import TestClient
 from thetadata_proxy import app as proxy
 
 
+def test_provider_permission_denied_is_reported_as_403(monkeypatch):
+    class Denied(Exception):
+        def code(self):
+            return "StatusCode.PERMISSION_DENIED"
+    class Client:
+        def index_snapshot_price(self, **kwargs):
+            raise Denied()
+    def fake_client():
+        return Client()
+    fake_client.cache_clear = lambda: None
+    monkeypatch.setattr(proxy, "_client", fake_client)
+    assert TestClient(proxy.app).get(
+        "/v3/index/snapshot/price", params={"symbol": "SPX"}).status_code == 403
+
+
 class Frame:
     def __init__(self, rows):
         self.rows = rows

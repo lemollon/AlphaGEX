@@ -731,7 +731,12 @@ async def capture_flow_intraday(request: Request, now: datetime) -> bool:
         return False
     try:
         from .routes import _tradier_get, _get_quote
-        today = now.date()
+        # risk_flow_intraday.ts is a legacy naive column whose semantics are
+        # Central time.  The Render worker supplies UTC-aware `now`; stripping
+        # that timezone stored a UTC wall-clock value and made every otherwise
+        # current flow row appear five hours old to report readers.
+        now_ct = now.astimezone(CT) if now.tzinfo else now.replace(tzinfo=CT)
+        today = now_ct.date()
         if today < PAPER_BOOK_START:
             return False
         q = await _get_quote(request, "SPY")
@@ -742,7 +747,7 @@ async def capture_flow_intraday(request: Request, now: datetime) -> bool:
         if isinstance(all_exps, str):
             all_exps = [all_exps]
         buckets = _bucket_expirations(today, all_exps)
-        ts = now.replace(tzinfo=None) if now.tzinfo else now
+        ts = now_ct.replace(tzinfo=None)
 
         db = SessionLocal()
         try:
