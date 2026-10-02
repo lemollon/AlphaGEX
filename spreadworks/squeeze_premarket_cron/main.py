@@ -64,6 +64,32 @@ as the local script), and treats a non-empty expirations list as
 proxy error as `NULL` (unknown, not a negative).
 
 THRESHOLDS (FROZEN 2026-10-02 -- do not change without a new pre-registration)
+
+BACKTEST MODE (added 2026-10-02, EXPLORATORY / IN-SAMPLE, NOT this file's live
+forward ledger)
+----------------------------------------------------------------------------
+When the env var `BACKTEST_MODE` is set (any truthy value), `main()` branches
+to `run_backtest()` BEFORE anything else -- the weekend guard, the live
+universe/signals read-write path, and the Discord alert are never reached.
+This answers a different, narrower question than the live scanner: of the
+ALREADY-KNOWN historical day-level ignition population FAMILY #1/#2 already
+use (see `dev/squeeze/research/sync_premarket_backtest_queue.py`, which
+copies FAMILY #2's `exit_study.py signals()` definition verbatim), how many
+ALSO clear the frozen V3 premarket turnover/move floors that same day? It is
+a coverage/lead-time study, not a P&L backtest -- there is no real premarket
+NBBO quote data behind this, so per the standing fill-discipline rule NO fill,
+entry price, or dollar return is computed or stored anywhere in this mode.
+
+Reads `squeeze_premarket_backtest_queue` (symbol, event_date,
+shares_outstanding, prior_close, day_close) instead of
+`squeeze_premarket_universe`, calls the proxy with THAT ROW's own event_date
+(never "today"), and writes to `squeeze_premarket_backtest_results` instead
+of `squeeze_premarket_signals`. No Discord alert is ever sent in this mode --
+a backtest ping would read as a live signal, which it is not.
+
+This mode must NEVER run on the scheduled trigger -- only via a manual
+"Trigger Run" on the Render cron job with `BACKTEST_MODE` set in that run's
+environment. Do not set `BACKTEST_MODE` on the job's persistent env vars.
 """
 import logging
 import os
@@ -95,6 +121,11 @@ PREMARKET_CUTOFF = clock_time(4, 0, 0)   # 04:00:00 ET - start of the scored win
 SESSION_END = "09:29:59"                 # end of the scored window
 
 # ---- Infra config (not part of the frozen rule) ----
+# EXPLORATORY backtest path, see module docstring "BACKTEST MODE" section --
+# any truthy value. Must never be set on the scheduled trigger's persistent
+# env, only on a manual "Trigger Run".
+BACKTEST_MODE = os.getenv("BACKTEST_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+
 THETA_BASE = os.getenv("THETADATA_BASE_URL", "http://thetadata-proxy:10000").strip().rstrip("/")
 if THETA_BASE and "://" not in THETA_BASE:
     THETA_BASE = f"http://{THETA_BASE}"
@@ -324,8 +355,210 @@ def probe_has_options(symbol: str):
     return bool(rows)
 
 
+# ===========================================================================
+# BACKTEST MODE -- EXPLORATORY / IN-SAMPLE, NOT the live forward ledger above.
+# See module docstring "BACKTEST MODE" section. Everything below this line is
+# only ever reached when `BACKTEST_MODE` is set; it must never run on the
+# scheduled trigger.
+# ===========================================================================
+
+def ensure_backtest_tables(conn) -> None:
+    """CREATE TABLE IF NOT EXISTS for the two backtest-only tables. Called
+    ONLY from run_backtest(), never from the live path's ensure_tables(), so
+    a live run never issues these extra statements."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS squeeze_premarket_backtest_queue (
+                symbol TEXT,
+                event_date DATE,
+                shares_outstanding BIGINT,
+                prior_close DOUBLE PRECISION,
+                day_close DOUBLE PRECISION,
+                PRIMARY KEY (symbol, event_date)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS squeeze_premarket_backtest_results (
+                symbol TEXT,
+                event_date DATE,
+                premarket_turnover DOUBLE PRECISION,
+                premarket_move DOUBLE PRECISION,
+                premarket_vol BIGINT,
+                fired_v3 BOOLEAN,
+                full_day_move DOUBLE PRECISION,
+                premarket_share_of_day_move DOUBLE PRECISION,
+                checked_at TIMESTAMPTZ DEFAULT now(),
+                PRIMARY KEY (symbol, event_date)
+            )
+        """)
+    conn.commit()
+
+
+def load_backtest_queue(conn) -> list:
+    """(symbol, event_date, shares_outstanding, prior_close, day_close) for
+    every queued ignition event with a usable share count -- same NULL/>0
+    guard as load_universe(), applied to the backtest queue instead."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT symbol, event_date, shares_outstanding, prior_close, day_close
+            FROM squeeze_premarket_backtest_queue
+            WHERE shares_outstanding IS NOT NULL AND shares_outstanding > 0
+            ORDER BY event_date, symbol
+        """)
+        return cur.fetchall()
+
+
+def insert_backtest_result(conn, symbol: str, event_date: date, turnover, move,
+                            vol, fired: bool, full_day_move, share_of_day_move) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO squeeze_premarket_backtest_results
+                (symbol, event_date, premarket_turnover, premarket_move,
+                 premarket_vol, fired_v3, full_day_move, premarket_share_of_day_move)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol, event_date) DO UPDATE SET
+                premarket_turnover = EXCLUDED.premarket_turnover,
+                premarket_move = EXCLUDED.premarket_move,
+                premarket_vol = EXCLUDED.premarket_vol,
+                fired_v3 = EXCLUDED.fired_v3,
+                full_day_move = EXCLUDED.full_day_move,
+                premarket_share_of_day_move = EXCLUDED.premarket_share_of_day_move,
+                checked_at = now()
+        """, [symbol, event_date, turnover, move, vol, fired, full_day_move, share_of_day_move])
+    conn.commit()
+
+
+def scan_symbol_backtest(symbol: str, event_date: date):
+    """Backtest-mode stage-1 worker: pulls ONLY the premarket window
+    (04:00:00-09:29:59 ET) for event_date -- unlike the live scan_symbol(),
+    it does NOT need the wider 00:00:00-start proxy window for a prior-close
+    stand-in, because the queue row already carries a real prior-session
+    close from `bars_hold`. That makes this backtest path's premarket_move
+    closer to the frozen rule's literal "prior regular session's official
+    close" than the live scanner's proxy is.
+
+    Returns (status, premarket_vol, premarket_last_px). status is 'error' (no
+    answer after retries), 'no_data' (no premarket print at all -- a real
+    coverage gap, not computed as a non-fire), or 'ok'.
+    """
+    url = f"{THETA_BASE}/v3/stock/history/ohlc"
+    params = {
+        "symbol": symbol,
+        "date": event_date.isoformat(),
+        "start_time": PREMARKET_CUTOFF.strftime("%H:%M:%S"),
+        "end_time": SESSION_END,
+        "interval": "1m",
+        "venue": "utp_cta",
+    }
+    rows, status = _fetch_csv(url, params)
+    if status == "error":
+        return "error", None, None
+    if status == "no_data" or not rows:
+        return "no_data", None, None
+
+    premarket_vol = 0
+    premarket_last_px = None
+    for row in rows:
+        try:
+            close = float(row["close"])
+            vol = int(float(row["volume"]))
+        except (KeyError, ValueError, TypeError):
+            continue
+        premarket_vol += vol
+        if close and close > 0:
+            premarket_last_px = close
+
+    if premarket_vol == 0 or premarket_last_px is None:
+        return "no_data", None, None
+    return "ok", premarket_vol, premarket_last_px
+
+
+def run_backtest() -> int:
+    run_start = time.monotonic()
+    log.info("=== squeeze premarket cron BACKTEST MODE (PREREG #3 / V3, "
+              "EXPLORATORY/IN-SAMPLE, not the live forward ledger) ===")
+
+    conn = get_db_connection()
+    try:
+        ensure_tables(conn)
+        ensure_backtest_tables(conn)
+
+        queue = load_backtest_queue(conn)
+        if not queue:
+            log.warning(
+                "squeeze_premarket_backtest_queue is empty - nothing to "
+                "backtest. Run dev/squeeze/research/sync_premarket_backtest_queue.py "
+                "first."
+            )
+            return 0
+
+        log.info("backtest queue size: %d (symbol, event_date) rows", len(queue))
+
+        checked = 0
+        errors = 0
+        no_data = 0
+        fired = 0
+        by_key = {(sym, ed): (sh, pc, dc) for sym, ed, sh, pc, dc in queue}
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {
+                pool.submit(scan_symbol_backtest, sym, ed): (sym, ed)
+                for sym, ed, _sh, _pc, _dc in queue
+            }
+            for fut in as_completed(futures):
+                sym, ed = futures[fut]
+                shares_outstanding, prior_close, day_close = by_key[(sym, ed)]
+                try:
+                    status, vol, last_px = fut.result()
+                except Exception as exc:  # noqa: BLE001 - one worker must never kill the run
+                    log.warning("backtest worker exception for %s %s: %r", sym, ed, exc)
+                    status, vol, last_px = "error", None, None
+                checked += 1
+                if status == "error":
+                    errors += 1
+                    continue
+                full_day_move = (
+                    day_close / prior_close - 1 if prior_close else None
+                )
+                if status == "no_data":
+                    no_data += 1
+                    insert_backtest_result(conn, sym, ed, None, None, None,
+                                            False, full_day_move, None)
+                    continue
+                turnover = vol / shares_outstanding
+                move = (last_px / prior_close - 1) if prior_close else None
+                is_fired = bool(
+                    move is not None and turnover >= TURNOVER_FLOOR and move >= MOVE_FLOOR
+                )
+                share_of_day_move = (
+                    move / full_day_move
+                    if move is not None and full_day_move not in (None, 0)
+                    else None
+                )
+                if is_fired:
+                    fired += 1
+                insert_backtest_result(conn, sym, ed, turnover, move, vol,
+                                        is_fired, full_day_move, share_of_day_move)
+
+        elapsed = time.monotonic() - run_start
+        log.info(
+            "=== BACKTEST DONE: queue=%d checked=%d errors=%d no_premarket_print=%d "
+            "fired_v3=%d wall_clock=%.1fs ===",
+            len(queue), checked, errors, no_data, fired, elapsed,
+        )
+        log.info(
+            "EXPLORATORY/IN-SAMPLE result, not the live forward ledger. No "
+            "fill, entry price, or P&L computed anywhere in this mode."
+        )
+        return 0
+    finally:
+        conn.close()
+
+
 def main() -> int:
     run_start = time.monotonic()
+    if BACKTEST_MODE:
+        return run_backtest()
     today = datetime.now(ET).date()
     log.info("=== squeeze premarket cron (PREREG #3 / V3) - %s ===", today)
 
