@@ -6,13 +6,22 @@
  *   2. The D2/D1 band-eligible-day feature+outcome rows the regime brain and
  *      trailing-winner train on.
  *
- * SEEDING: the spec requires offline-computed thresholds from
- * vix_minute.duckdb (Leron's laptop, not reachable from Render) to seed this
- * table so a fresh deploy doesn't need ~20 real sessions to accumulate
- * before CALM can ever fire. That seed is a ONE-TIME data load an operator
- * runs (see PR description "Go-live checklist" — scripts/seed-flame-v2-signal-history.md);
- * this module only reads/writes the live table, it never touches the local
- * DuckDB files and never runs that seed itself.
+ * SEEDING: CALM's raw per-day measure (not its percentile threshold, which
+ * stays a live-computed expanding window) is pre-computed offline from
+ * vix_minute.duckdb (Leron's laptop, not reachable from Render — see
+ * ironforge/scripts/seed_flame_v2_signal_history.py) and committed as JSON
+ * under ./seed/. `ensureCalmSeedLoaded()` below loads any still-missing
+ * seed rows into this table on first use of `priorCalmMeasures`, in every
+ * environment, so a fresh deploy never needs ~20 real sessions before CALM
+ * can first fire. This module never touches the local DuckDB files itself —
+ * only the committed JSON the operator's script already produced.
+ *
+ * D1/D2's own training rows (ratio, prior_spy_up, r0_pnl..r3_pnl, D2's 7
+ * features) are NOT seeded — signal_on_flame_spark.py never persisted a
+ * per-day dump of those, so D1/D2 start empty and accumulate purely from
+ * live trading days (see the seed script's own header for the full
+ * rationale). Both already fail closed to today's existing admission rule
+ * until minHist=20 / minSamples=40 real days accumulate.
  *
  * Every function here fails closed: a DB error returns an empty/`null`
  * result (never throws past the caller), because a missing table or an
@@ -21,6 +30,8 @@
  * unaffected. Same posture as scanner.ts's own ensureVixHistory/vixDecayCheck.
  */
 import { query, dbExecute } from '@/lib/db'
+import flameCalmSeedRaw from './seed/flame_calm_seed.json'
+import sparkCalmSeedRaw from './seed/spark_calm_seed.json'
 
 export type BotKey = 'flame' | 'spark'
 
@@ -128,12 +139,67 @@ export async function recordDailySignal(bot: BotKey, tradeDate: string, row: Dai
   }
 }
 
+/**
+ * One-time (per process) load of the committed CALM-measure seed
+ * (ironforge/scripts/seed_flame_v2_signal_history.py's output,
+ * seed/{bot}_calm_seed.json) into flame_v2_signal_history, so a fresh
+ * deploy does not need ~20 real trading sessions before CALM can first
+ * fire for either bot — see this file's header comment.
+ *
+ * Idempotent: `ON CONFLICT (bot, trade_date) DO NOTHING` means re-running
+ * this (a new deploy, a restarted process, or a re-generated/extended seed
+ * file that gets recommitted) only ever inserts rows that are still
+ * missing — it never overwrites a real trading day's already-recorded
+ * CALM measure or any other column `recordDailySignal` has since written
+ * for that date. Source is tagged 'seed' (vs. 'live') so the two are
+ * distinguishable in the table. Fails closed: a DB error here never
+ * blocks the caller — CALM simply accumulates live instead, same posture
+ * as every other function in this file.
+ */
+type CalmSeedRow = { trade_date: string; calm_measure: number }
+const CALM_SEED_BY_BOT: Record<BotKey, CalmSeedRow[]> = {
+  flame: flameCalmSeedRaw as CalmSeedRow[],
+  spark: sparkCalmSeedRaw as CalmSeedRow[],
+}
+const _seedLoaded: Partial<Record<BotKey, boolean>> = {}
+
+export async function ensureCalmSeedLoaded(bot: BotKey): Promise<void> {
+  if (_seedLoaded[bot]) return
+  _seedLoaded[bot] = true // set first — a failure must not retry on every call
+  await ensureSignalHistoryTable()
+  const rows = CALM_SEED_BY_BOT[bot]
+  if (!rows || rows.length === 0) return
+  try {
+    const CHUNK = 200
+    let inserted = 0
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const chunk = rows.slice(i, i + CHUNK)
+      const params: unknown[] = []
+      const tuples = chunk.map((r, j) => {
+        params.push(bot, r.trade_date, r.calm_measure)
+        return `($${j * 3 + 1}, $${j * 3 + 2}, $${j * 3 + 3}, FALSE, 'seed')`
+      })
+      const n = await dbExecute(
+        `INSERT INTO flame_v2_signal_history (bot, trade_date, calm_measure, band_eligible, source)
+         VALUES ${tuples.join(', ')}
+         ON CONFLICT (bot, trade_date) DO NOTHING`,
+        params as any[],
+      )
+      inserted += Number(n) || 0
+    }
+    console.log(`[flame-v2] CALM seed check for ${bot}: ${inserted}/${rows.length} new row(s) inserted (rest already present)`)
+  } catch (e) {
+    console.error(`[flame-v2] ensureCalmSeedLoaded(${bot}) failed (non-fatal, CALM accumulates from live days only):`, e)
+  }
+}
+
 /** CALM measure on every session strictly before `beforeDate`, most recent
  *  first, capped at `limit` — matches calm_flag's "all PRIOR days" (an
  *  expanding window; the cap is just a sane upper bound, not a sliding
  *  window — 2000 sessions is ~8 years, far more than `minHist=20` needs). */
 export async function priorCalmMeasures(bot: BotKey, beforeDate: string, limit = 2000): Promise<number[]> {
   await ensureSignalHistoryTable()
+  await ensureCalmSeedLoaded(bot)
   try {
     const rows = await query<{ calm_measure: number }>(
       `SELECT calm_measure FROM flame_v2_signal_history
