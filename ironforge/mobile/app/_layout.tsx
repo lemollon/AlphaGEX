@@ -218,7 +218,11 @@ function RootLayoutInner() {
     // and redirecting a signed-in one to '/' the instant they finish verifying would
     // eject them from their own enrollment funnel mid-flow.
     const inEnrollGroup = segments[0] === 'enroll'
-    if (!signedIn && !inAuthGroup && !inEnrollGroup) router.replace('/sign-in')
+    // Same reasoning as inEnrollGroup: /waitlist and /waitlist-success are reached from
+    // /sign-in while signed OUT. Without this exemption the gate would bounce a visitor
+    // straight back to /sign-in the instant they tapped "Join the Waitlist".
+    const inWaitlistGroup = segments[0] === 'waitlist' || segments[0] === 'waitlist-success'
+    if (!signedIn && !inAuthGroup && !inEnrollGroup && !inWaitlistGroup) router.replace('/sign-in')
     else if (signedIn && inAuthGroup) router.replace('/')
   }, [ready, signedIn, segments, router])
 
