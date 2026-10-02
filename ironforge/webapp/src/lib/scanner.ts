@@ -98,6 +98,14 @@ import { isXspTicker, isXspSwapMode, decideXspSwap, XSP_TICKER } from './xsp-swa
 import { settleXspSwapLegsForBot } from './xsp-swap-db'
 import type { LiveBot } from './live/bots'
 import { PROTECTIVE_REASON_PREFIXES } from './live/riskProtection'
+// FLAME v2 / SPARK v2 — D2 regime brain, D1 trailing band, S1 filter, call
+// spread. Every call below is shadow-by-default and wrapped so it can NEVER
+// throw into the scan tick that also places real orders — see flame-v2/engine.ts
+// header comment for the safety invariant and flame-v2/flags.ts for defaults.
+import {
+  flameRegimeBrainDecision, sparkTrailingBandDecision, sparkS1Decision, flameCallSpreadDecision,
+} from './flame-v2/engine'
+import type { D2Features } from './flame-v2/math'
 
 /**
  * Ops-channel-only "why no trade today" copy, keyed by the same prefixes as
@@ -5538,8 +5546,20 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   let flameVixRatioForUpsize: number | null = null
   let flameHeadlineAddedDay = false
   if (bot.name === 'spark') {
-    const vixBlock = await vixDecayBlock(getCentralTime().toISOString().slice(0, 10), VIX_DECAY_CEILING.spark)
+    const sparkAsof = getCentralTime().toISOString().slice(0, 10)
+    const vixBlock = await vixDecayBlock(sparkAsof, VIX_DECAY_CEILING.spark)
     if (vixBlock) return `skip:${vixBlock}`
+    // SPARK v2 D1 (relaxed-band trailing winner) + S1 (CALM-or-LONGG filter)
+    // — both default SHADOW (compute + log only; see flame-v2/flags.ts).
+    // Neither changes `vixBlock`, admission, sizing, or any order above.
+    try {
+      const [d1, s1] = await Promise.all([sparkTrailingBandDecision(sparkAsof), sparkS1Decision(sparkAsof)])
+      if (d1.available || s1.available) {
+        console.log(`[flame-v2] SPARK shadow checks ${sparkAsof}: D1=${JSON.stringify(d1)} S1=${JSON.stringify(s1)}`)
+      }
+    } catch (e) {
+      console.warn('[flame-v2] SPARK v2 shadow checks failed (non-fatal, no behavior change):', e)
+    }
   } else if (bot.name === 'flame') {
     const asofDate = getCentralTime().toISOString().slice(0, 10)
     const headlineMode = isFlameHeadline0925Mode()
@@ -5562,6 +5582,25 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
     flameHeadlineAddedDay = headlineMode && flameVix.ratio !== null && flameVix.ratio > VIX_DECAY_CEILING.flame
     if (flameHeadlineAddedDay) {
       const priorSpyUp = await priorSpySessionWasUp(asofDate)
+      const priorUpAdmits = priorSpyUp === true
+      // FLAME v2 D2 regime brain — default SHADOW: logs what the monthly-
+      // refit depth-2 tree would decide for this relaxed-band day alongside
+      // today's actual prior-SPY-up admission, without changing it.
+      // 🚨 `d2Features` is null until live feature plumbing (vix_1y_pct,
+      // ts_ratio_l, vix_20d_chg, ret20/ret60/above_50dma from live Tradier
+      // daily history) is added — see PR "What remains". A null features
+      // argument makes flameRegimeBrainDecision fail closed to
+      // `admits=priorUpAdmits` by construction, so this call is safe to ship
+      // now and simply logs "features_unavailable" until that plumbing lands.
+      try {
+        const d2Features: D2Features | null = null
+        const brain = await flameRegimeBrainDecision(asofDate, d2Features, priorUpAdmits)
+        if (brain.available || brain.reason !== 'off') {
+          console.log(`[flame-v2] FLAME regime_brain shadow check ${asofDate}: ${JSON.stringify(brain)} (today's prior_spy_up=${priorUpAdmits})`)
+        }
+      } catch (e) {
+        console.warn('[flame-v2] FLAME regime_brain shadow check failed (non-fatal, no behavior change):', e)
+      }
       if (priorSpyUp !== true) {
         const reason = priorSpyUp === false ? 'prior_spy_not_up' : 'prior_spy_history_unavailable'
         console.log(`[scanner] FLAME headline admission skip: ${reason}`)
@@ -5627,7 +5666,30 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   for (const ticker of FLAME_BOOKS) {
     out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, otmAbs, width, perBook, perTrade, ledger, opts, flameHeadlineAddedDay)}`)
   }
+  // FLAME v2 14:05 ET SPY 0DTE CALL credit spread — default SHADOW: computes
+  // tier/strikes/contracts and logs them; places NO order regardless of
+  // mode (order placement is explicitly not implemented yet — see PR "What
+  // remains"). Runs only for the SPY book, after the put side has already
+  // been fully decided above, so it can never affect the put spread's result.
+  if (bot.name === 'flame') {
+    try {
+      const spyQuote = await getQuote('SPY')
+      const spySpot = spyQuote?.last ?? 0
+      if (spySpot > 0) {
+        const callDecision = await flameCallSpreadDecision(asofDateForFlame(), spySpot, perTrade)
+        if (callDecision.available || callDecision.reason !== 'off') {
+          console.log(`[flame-v2] FLAME call_spread shadow check: ${JSON.stringify(callDecision)}`)
+        }
+      }
+    } catch (e) {
+      console.warn('[flame-v2] FLAME call_spread shadow check failed (non-fatal, no order placed):', e)
+    }
+  }
   return `otm$${otmAbs} w${width} x${perTrade} ` + out.join(' ')
+}
+
+function asofDateForFlame(): string {
+  return getCentralTime().toISOString().slice(0, 10)
 }
 
 async function tryOpenFlameBook(
