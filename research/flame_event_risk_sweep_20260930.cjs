@@ -659,9 +659,9 @@ function sweepSelfTest(){
 function historyRows(a){
  // Checkpoints used to carry every scenario's day rows as live JS arrays.
  // Near the end of a 468-path replay, serializing those arrays temporarily
- // exceeded the 512 MB research instance. Older rows are now retained as a
+ // exceeded the 512 MB research instance.  Older rows are now retained as a
  // gzip payload; the active tail stays editable and is expanded only for the
- // single account being summarized. This changes storage, never a trade.
+ // single account being summarized.  This changes storage, never a trade.
  const archived=a.historyPacked?JSON.parse(zlib.gunzipSync(Buffer.from(a.historyPacked,'base64')).toString()):[];
  return archived.concat(a.history||[]);
 }
@@ -729,7 +729,7 @@ async function initCheckpointStore(){
 }
 async function saveCheckpoint(){
  if(!checkpointPool)return;
- // Keep checkpoint serialization bounded. A compacted history is immutable;
+ // Keep checkpoint serialization bounded.  A compacted history is immutable;
  // only rows since the previous checkpoint are held as object arrays.
  for(const a of accounts)compactHistory(a);
  const body=zlib.gzipSync(JSON.stringify({state:STATE,accounts,manifest}));
