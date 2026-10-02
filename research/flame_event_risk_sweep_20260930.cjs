@@ -685,7 +685,11 @@ async function initCheckpointStore(){
  for(const r of vm.rows){const data={};for(const bot of ['spark','flame'])if(+r[bot+'_before']>0&&+r[bot+'_entry']>0)data[bot]={before:+r[bot+'_before'],entry:+r[bot+'_entry']};vixMinute.set(String(r.day).slice(0,10),data);}
  for(const bot of ['spark','flame']){const missing=sessions().filter(d=>!vixMinute.get(d)?.[bot]);if(missing.some(d=>d!=='2023-09-29'))throw Error(`vix_index_minute_coverage_insufficient:${bot}:${missing.join(',')}`);emit('vix_index_minute_coverage',{bot,days:751-missing.length,missing});}
  await checkpointPool.query('CREATE TABLE IF NOT EXISTS flame_event_risk_sweep_days(run_key TEXT NOT NULL,day TEXT NOT NULL,payload BYTEA NOT NULL,PRIMARY KEY(run_key,day))');
- checkpointKey=SPEC.id+':'+sha(fs.readFileSync(__filename))+':'+sha(fs.readFileSync(path.join(__dirname,'spark_flame_gamma_reconstruction.cjs')));
+ // A report-only revision may intentionally read a completed, frozen sweep.
+ // The override is restricted to this isolated research checkpoint and never
+ // changes inputs, scenarios, or any production trading code.
+ const checkpointSourceHash=process.env.SWEEP_CHECKPOINT_SOURCE_HASH||sha(fs.readFileSync(__filename));
+ checkpointKey=SPEC.id+':'+checkpointSourceHash+':'+sha(fs.readFileSync(path.join(__dirname,'spark_flame_gamma_reconstruction.cjs')));
  const r=await checkpointPool.query('SELECT checkpoint FROM spark_flame_research_checkpoints WHERE run_key=$1',[checkpointKey]);
  if(r.rows.length){const saved=JSON.parse(zlib.gunzipSync(r.rows[0].checkpoint));Object.assign(STATE,saved.state);accounts.splice(0,accounts.length,...saved.accounts);manifest.splice(0,manifest.length,...saved.manifest);emit('resumed_sweep',{completed:STATE.completed,stage:STATE.stage});return true;}return false;
 }
