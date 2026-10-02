@@ -26,8 +26,31 @@ export type LiveBot = (typeof LIVE_BOTS)[number]
  */
 export type LiveAccountMode = 'production' | 'paper'
 
+/**
+ * 🚨 SPARK IS PAPER (2026-08-28). It was declared 'production' here long after it
+ * stopped having a production account, and the two facts drifted apart silently:
+ *
+ *   - `describeLiveGate('spark')` returns the constant `'spark_is_paper_only'`.
+ *   - `/api/health` on ironforge-customer reports `live_accounts.spark: 0` —
+ *     `resolveEligibleAccounts('spark')` reaches zero real accounts, because the
+ *     one `ironforge_accounts` production row for SPARK (`Logan[production]`,
+ *     bot='SPARK,INFERNO') was deactivated on 2026-08-23 as a dead key.
+ *
+ * Declaring it 'production' sent the customer read down the production branch of
+ * `scopeFilter`, which resolves to an inactive $5,000 row with zero trades — or,
+ * for a customer with no `person` mapping, to `AND FALSE` and the "isn't connected
+ * to your account yet" empty state. Either way SPARK's REAL book (the paper
+ * ledger the scanner actually writes) was unreachable on ironforge.trade.
+ *
+ * It also suppressed the Paper badge on a simulated bot, which is the dangerous
+ * direction of the PAPER_DISCLOSURE rule above: a paper bot rendered as real money.
+ *
+ * If SPARK is ever given a live account again, flip this back in the SAME commit
+ * that activates the account row — `live-bots.test.ts` pins this declaration
+ * against `describeLiveGate` so the two cannot drift apart silently a second time.
+ */
 export const LIVE_BOT_MODE: Record<LiveBot, LiveAccountMode> = {
-  spark: 'production',
+  spark: 'paper',
   flame: 'paper',
 }
 
