@@ -322,6 +322,67 @@ def index_snapshot_price(symbol: str = Query(...)) -> PlainTextResponse:
     return response
 
 
+@app.get("/v3/option/history/eod")
+def option_history_eod(
+    symbol: str = Query(...),
+    expiration: str = Query("*"),
+    strike: str = Query("*"),
+    right: str = Query("both", pattern="^(call|put|both)$"),
+    date_value: str | None = Query(None, alias="date"),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    max_dte: int = Query(60, ge=0, le=365),
+    strike_range: int | None = Query(None, ge=0, le=500),
+) -> PlainTextResponse:
+    """Read-only option EOD history; a single date is normalized to a one-day range."""
+    expiry = "*" if expiration == "*" else _date(expiration, "expiration")
+    kwargs: dict[str, Any] = {
+        "symbol": _symbol(symbol), "expiration": expiry, "strike": strike,
+        "right": right, "max_dte": max_dte,
+    }
+    if strike_range is not None:
+        kwargs["strike_range"] = strike_range
+    if date_value:
+        day = _date(date_value, "date")
+        kwargs.update(start_date=day, end_date=day)
+    elif start_date and end_date:
+        start, end = _date_range(start_date, end_date)
+        kwargs.update(start_date=start, end_date=end)
+    else:
+        raise HTTPException(status_code=422, detail="date or start_date/end_date required")
+    return _csv_response(_call("option_history_eod", **kwargs))
+
+
+@app.get("/v3/option/history/open_interest")
+def option_history_open_interest(
+    symbol: str = Query(...),
+    expiration: str = Query("*"),
+    strike: str = Query("*"),
+    right: str = Query("both", pattern="^(call|put|both)$"),
+    date_value: str | None = Query(None, alias="date"),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    max_dte: int = Query(60, ge=0, le=365),
+    strike_range: int | None = Query(None, ge=0, le=500),
+) -> PlainTextResponse:
+    """Read-only historical option open interest."""
+    expiry = "*" if expiration == "*" else _date(expiration, "expiration")
+    kwargs: dict[str, Any] = {
+        "symbol": _symbol(symbol), "expiration": expiry, "strike": strike,
+        "right": right, "max_dte": max_dte,
+    }
+    if strike_range is not None:
+        kwargs["strike_range"] = strike_range
+    if date_value:
+        kwargs["date"] = _date(date_value, "date")
+    elif start_date and end_date:
+        start, end = _date_range(start_date, end_date)
+        kwargs.update(start_date=start, end_date=end)
+    else:
+        raise HTTPException(status_code=422, detail="date or start_date/end_date required")
+    return _csv_response(_call("option_history_open_interest", **kwargs))
+
+
 @app.get("/v3/option/history/quote")
 def option_history_quote(
     symbol: str = Query(...),
