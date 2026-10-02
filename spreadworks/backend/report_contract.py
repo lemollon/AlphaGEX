@@ -297,3 +297,47 @@ def prepare_report_delivery(payload):
     payload["report_markdown"] = "\n\n".join(lines) + "\n\n## Supplemental analysis\n\n" + original
     payload["report_completeness"] = "COMPLETE" if check["complete_live_data"] else "INCOMPLETE"
     return check
+
+
+def validate_rendered_report(payload):
+    """Intraday publication gate: validate fields, final prose and PNG references."""
+    import re
+    from datetime import datetime, timezone
+    blocks = payload.get("report_blocks") or {}
+    check = validate_report(blocks)
+    errors = list(check["errors"])
+    markdown = payload.get("report_markdown") or ""
+    now = datetime.now(timezone.utc)
+    for name, fields in REQUIREMENTS.items():
+        heading = name.replace("_", " ")
+        # Canonical headings allow mechanical verification of the final document.
+        match = re.search(r"(?im)^#{1,6}\s+" + re.escape(heading) + r"\s*$", markdown)
+        if not match:
+            errors.append(name + ": missing rendered heading")
+            continue
+        tail = markdown[match.end():]
+        section = re.split(r"(?m)^#{1,6}\s", tail, maxsplit=1)[0]
+        for field in fields:
+            item = blocks.get(name, {}).get(field, {})
+            if field not in section:
+                errors.append(name + "." + field + ": missing rendered field")
+            if item.get("status") == "live":
+                try:
+                    stamp = datetime.fromisoformat(item["source_timestamp"].replace("Z", "+00:00"))
+                    if stamp.tzinfo is None:
+                        raise ValueError("timezone required")
+                    age = (now - stamp).total_seconds()
+                    if not 0 <= age <= LIVE_MAX_AGE_SECONDS:
+                        errors.append(name + "." + field + ": stale at publication")
+                except (ValueError, TypeError, KeyError):
+                    errors.append(name + "." + field + ": invalid exchange timestamp")
+            if name == "visuals" and field.endswith("_png") and item.get("status") in ("live", "historical"):
+                ref = str(item.get("value") or "")
+                if not ref.lower().endswith(".png") or ref not in markdown:
+                    errors.append(field + ": PNG not embedded")
+    if "```mermaid" in markdown.lower():
+        errors.append("Mermaid is prohibited")
+    check["errors"] = errors
+    check["publishable"] = not errors
+    check["complete_live_data"] = check["complete_live_data"] and not errors
+    return check
