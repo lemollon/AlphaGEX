@@ -339,6 +339,10 @@ def fetch_cross_asset(now: datetime | None = None) -> dict[str, Any]:
             timeout=15,
         )
         response.raise_for_status()
+        # Quote timestamps can be a few milliseconds after the request began.
+        # Freshness must be measured against the completed response, not its
+        # pre-request clock, otherwise valid quotes are falsely rejected.
+        observed_at = datetime.now(UTC)
         raw = (response.json().get("quotes") or {}).get("quote") or []
         if isinstance(raw, dict):
             raw = [raw]
@@ -353,7 +357,7 @@ def fetch_cross_asset(now: datetime | None = None) -> dict[str, Any]:
             continue
         price = _f(quote, "last")
         stamp = _quote_timestamp(quote)
-        age = (now - stamp).total_seconds() if stamp else None
+        age = (observed_at - stamp).total_seconds() if stamp else None
         fresh = price is not None and age is not None and 0 <= age <= STALE_SECONDS
         assets[symbol] = {
             "symbol": symbol, "price": price, "open_price": _f(quote, "open"),
@@ -363,7 +367,7 @@ def fetch_cross_asset(now: datetime | None = None) -> dict[str, Any]:
         }
     return {"available": all(assets.get(symbol, {}).get("fresh")
                              for symbol in CROSS_ASSET_SYMBOLS),
-            "source": "Tradier batch ETF quotes", "retrieved_at": now.isoformat(),
+            "source": "Tradier batch ETF quotes", "retrieved_at": observed_at.isoformat(),
             "assets": assets}
 
 
