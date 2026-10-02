@@ -35,6 +35,8 @@ import {
   formatElapsedMinutes,
   formatTargetStopCaption,
   formatAutoCloseCaption,
+  formatSettleAtCloseCaption,
+  isSettleAtExpiryBot,
 } from '@/live/lifecycle'
 import { pickBanner, bannerActionHref, billingBannerMode } from '@/alerts/banner'
 import { manageSubscriptionUrl } from '@/billing/store-policy'
@@ -427,6 +429,7 @@ function AgentTile({
       {trade?.active ? (
         <LifecycleLine
           accent={accent}
+          bot={agent.bot}
           openedAt={trade.opened_at}
           targetDollars={trade.target_dollars ?? null}
           stopDollars={trade.stop_dollars ?? null}
@@ -524,12 +527,14 @@ function AgentTile({
  */
 function LifecycleLine({
   accent,
+  bot,
   openedAt,
   targetDollars,
   stopDollars,
   autoCloseAt,
 }: {
   accent: string
+  bot: string
   openedAt: string | null
   targetDollars: number | null
   stopDollars: number | null
@@ -546,13 +551,17 @@ function LifecycleLine({
     return () => clearInterval(id)
   }, [])
 
-  const nodes = deriveLifecycleNodes(false)
+  const settleAtExpiry = isSettleAtExpiryBot(bot)
+  const nodes = deriveLifecycleNodes(false, bot)
   const fillPct = lifecycleFillFraction(nodes) * 75 // track spans the middle 75% of the row
+  // FLAME/SPARK hold every position to settlement — no stop, no early auto-close —
+  // so their last two captions say that plainly rather than reusing the generic
+  // "$target / −$stop" and "by 2:45 PM" copy that describes a different strategy.
   const captions = [
     formatLocalClock(openedAt) ?? '—',
     openedAt ? formatElapsedMinutes(minutesSince(openedAt)) : '—',
-    formatTargetStopCaption(targetDollars, stopDollars),
-    formatAutoCloseCaption(autoCloseAt),
+    settleAtExpiry ? 'Hold to close' : formatTargetStopCaption(targetDollars, stopDollars),
+    settleAtExpiry ? formatSettleAtCloseCaption(autoCloseAt) : formatAutoCloseCaption(autoCloseAt),
   ]
 
   return (

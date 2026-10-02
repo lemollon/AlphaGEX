@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isCustomersDbConfigured, customerQuery } from '@/lib/customers-db'
+import { isExecutorArmed } from '@/lib/customer-executor/executor'
+import { resolveExecutingBroker } from '@/lib/live/executing-broker'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -47,6 +49,53 @@ export async function GET() {
   // Cookie OR mobile bearer. Shape preserved so the checks below read unchanged.
   const session = { customerId: identity?.customerId ?? null }
   if (!session.customerId) return NextResponse.json({ ok: false }, { status: 401 })
+
+  // WRONG BROKER LABEL (customer audit): this used to always trust the
+  // enrollment-time SnapTrade `brokerage_connections` row below — e.g. showing
+  // "Tastytrade" — even though CUSTOMER_EXECUTOR_ENABLED ships disarmed in
+  // production (see customer-executor/executor.ts's isExecutorArmed), meaning
+  // NO customer order is actually mirrored into a SnapTrade-linked account at
+  // all right now. Every mapped bot instead trades the house's own Tradier
+  // production account (FLAME off TRADIER_FLAME_* env, SPARK off its
+  // ironforge_accounts row — see live/viewer.ts resolveAccountMode). So while
+  // the executor is disarmed, THAT account is the truth for every customer,
+  // and brokerage_connections (if it has a row at all) is not what their money
+  // is trading through. Once the executor is genuinely armed, this resolves to
+  // null for a real self-custody customer and the SnapTrade-derived response
+  // below is unchanged.
+  if (!isExecutorArmed()) {
+    const execBroker = await resolveExecutingBroker(session.customerId)
+    if (execBroker) {
+      return NextResponse.json({
+        ok: true,
+        configured: true,
+        connections: [
+          {
+            id: `executing-${execBroker.bot}`,
+            provider: 'tradier',
+            // Nothing to disconnect — this is the house's own account, not a
+            // customer SnapTrade authorization. ConnectionRow's disconnect
+            // flow already reads a null authorization_id as "not available".
+            authorization_id: null,
+            broker: execBroker.broker,
+            status: 'active',
+            connected_on: '',
+            last_synced_at: null,
+            accounts: [
+              {
+                id: `executing-${execBroker.bot}-account`,
+                mask: `••••${execBroker.last4}`,
+                eligibility: null,
+                ineligible_reason: null,
+                buying_power_cents: null,
+              },
+            ],
+          },
+        ],
+      })
+    }
+  }
+
   if (!isCustomersDbConfigured()) {
     return NextResponse.json({ ok: true, connections: [], configured: false })
   }
