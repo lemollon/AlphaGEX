@@ -66,3 +66,23 @@ describe('ensureCalmSeedLoaded retry', () => {
     expect(dbExecute.mock.calls.filter(c => String(c[0]).includes('INSERT')).length).toBe(after)
   })
 })
+
+describe('EBB DB exit override is ignored', () => {
+  it('both config loaders pin pt/sl for settle-at-expiry bots after the DB merge', () => {
+    const calls = SCANNER_SRC.split('pinEbbExitConfig(bot.name, merged)').length - 1
+    expect(calls).toBe(2)
+    const fn = SCANNER_SRC.slice(SCANNER_SRC.indexOf('function pinEbbExitConfig('))
+    expect(fn).toContain('if (!isSettleAtExpiryBot(botName)) return')
+    expect(fn).toContain('merged.pt_pct = d.pt_pct')
+    expect(fn).toContain('merged.sl_mult = d.sl_mult')
+  })
+})
+
+describe('closeAllSandboxPositions is sandbox-only', () => {
+  it('refuses a non-sandbox baseUrl before touching the broker', async () => {
+    const { closeAllSandboxPositions } = await import('../tradier')
+    const f = vi.fn(); vi.stubGlobal('fetch', f)
+    expect(await closeAllSandboxPositions('k', 'https://api.tradier.com/v1')).toBe(0)
+    expect(f).not.toHaveBeenCalled()
+  })
+})

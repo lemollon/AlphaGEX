@@ -910,6 +910,25 @@ function forgeWingWidth(equity: number): number {
  *  is code-controlled). */
 type NumericConfigKey = { [K in keyof BotConfig]: BotConfig[K] extends number ? K : never }[keyof BotConfig]
 
+/**
+ * 2026-10-02: EBB settle-at-expiry bots (FLAME, SPARK) hold to the close — no
+ * intraday profit target, no stop. A stale production config row (pt 30 / sl 100)
+ * re-enabled both on FLAME and closed a live trade early for -$32. DB
+ * profit_target_pct / stop_loss_pct are ignored for these bots; the code values win.
+ */
+function pinEbbExitConfig(botName: string, merged: BotConfig): void {
+  if (!isSettleAtExpiryBot(botName)) return
+  const d = DEFAULT_CONFIG[botName]
+  if (merged.pt_pct !== d.pt_pct || merged.sl_mult !== d.sl_mult) {
+    console.warn(
+      `[scanner] ${botName.toUpperCase()} DB exit override ignored (pt=${merged.pt_pct}, sl=${merged.sl_mult}) — ` +
+      `EBB holds to expiry; using code pt=${d.pt_pct} sl=${d.sl_mult}`,
+    )
+  }
+  merged.pt_pct = d.pt_pct
+  merged.sl_mult = d.sl_mult
+}
+
 /** DB column → config key mapping (with optional transform) */
 const DB_TO_CFG: Record<string, { key: NumericConfigKey; transform?: (v: number) => number }> = {
   sd_multiplier:        { key: 'sd' },
@@ -986,6 +1005,7 @@ async function loadConfigOverrides(): Promise<void> {
       // Operators can RAISE min_credit via DB; they cannot LOWER it below the
       // strategy's floor without a code change + review.
       merged.min_credit = Math.max(merged.min_credit, DEFAULT_CONFIG[bot.name].min_credit)
+      pinEbbExitConfig(bot.name, merged)
 
       // entry_end from config table is stored as "14:00" string — parse to HHMM int
       const entryEndStr = row.entry_end
@@ -1083,6 +1103,7 @@ export async function loadProductionConfigFor(botName: string): Promise<BotConfi
     }
     // Same code-level min_credit floor as the sandbox loader above.
     merged.min_credit = Math.max(merged.min_credit, DEFAULT_CONFIG[bot.name].min_credit)
+    pinEbbExitConfig(bot.name, merged)
     const entryEndStr = row.entry_end
     if (entryEndStr && typeof entryEndStr === 'string' && entryEndStr.includes(':')) {
       const [h, m] = entryEndStr.split(':').map(Number)
