@@ -997,18 +997,18 @@ def _surface_read(
     }
 
 
-def _surface_skew(records: list[dict[str, Any]], spot: float) -> tuple[float | None, int | None]:
+def _surface_smile(records: list[dict[str, Any]], spot: float) -> dict[str, Any]:
     """Return put-IV minus call-IV at locally calculated 25-delta points."""
     available_dtes = sorted({int(row["dte"]) for row in records if row["dte"] >= 1})
     if not available_dtes:
-        return None, None
+        return {"available": False}
     # 30 calendar days is the most stable reference when it is available.
     reference_dte = min(available_dtes, key=lambda dte: abs(dte - 30))
     subset = [row for row in records if int(row["dte"]) == reference_dte]
     calls = [row for row in subset if row["right"] == "call"]
     puts = [row for row in subset if row["right"] == "put"]
     if not calls or not puts:
-        return None, reference_dte
+        return {"available": False, "reference_dte": reference_dte}
     for row in calls + puts:
         row["_delta"] = _option_delta(
             spot, float(row["strike"]), float(row["iv"]), reference_dte, str(row["right"])
@@ -1016,10 +1016,25 @@ def _surface_skew(records: list[dict[str, Any]], spot: float) -> tuple[float | N
     calls = [row for row in calls if row.get("_delta") is not None]
     puts = [row for row in puts if row.get("_delta") is not None]
     if not calls or not puts:
-        return None, reference_dte
+        return {"available": False, "reference_dte": reference_dte}
     call = min(calls, key=lambda row: abs(float(row["_delta"]) - 0.25))
     put = min(puts, key=lambda row: abs(float(row["_delta"]) + 0.25))
-    return float(put["iv"]) - float(call["iv"]), reference_dte
+    atm = min(subset, key=lambda row: abs(float(row["strike"]) - spot))
+    return {
+        "available": True, "reference_dte": reference_dte,
+        "put_25d_iv": float(put["iv"]), "put_strike": float(put["strike"]),
+        "put_delta": float(put["_delta"]), "atm_iv": float(atm["iv"]),
+        "atm_strike": float(atm["strike"]), "call_25d_iv": float(call["iv"]),
+        "call_strike": float(call["strike"]), "call_delta": float(call["_delta"]),
+        "skew": float(put["iv"]) - float(call["iv"]),
+        "method": "Observed ThetaData IV; nearest locally calculated 25-delta wings at the same DTE; no interpolation",
+    }
+
+
+def _surface_skew(records: list[dict[str, Any]], spot: float) -> tuple[float | None, int | None]:
+    smile = _surface_smile(records, spot)
+    return smile.get("skew"), smile.get("reference_dte")
+
 
 
 def build_volatility_surface(symbol: str, now: datetime | None = None) -> dict[str, Any]:
@@ -1066,7 +1081,7 @@ def build_volatility_surface(symbol: str, now: datetime | None = None) -> dict[s
         "source_timestamp": source_ts.isoformat(), "age_seconds": round(age, 1),
         "confidence": confidence, "n_rows": len(rows), "atm_iv": atm_iv,
         "atm_reference_dte": reference_dte, "skew_25d": skew,
-        "skew_reference_dte": skew_dte, "iv_0dte": term_0dte,
+        "skew_reference_dte": skew_dte, "smile": _surface_smile(rows, price), "iv_0dte": term_0dte,
         "iv_1_5dte": term_1_5dte,
         "iv_6_20dte": term_6_20dte,
         "iv_21_365dte": term_21_365dte,
@@ -1820,11 +1835,25 @@ def report_readiness():
         "surface_qqq": bool(surface["QQQ"].get("available")),
         "gamma_spy": bool(gamma["SPY"].get("available")),
         "gamma_qqq": bool(gamma["QQQ"].get("available")),
-        "vix_family": bool(vol.get("available")),
+        "vix_family": all((vol.get("indices") or {}).get(symbol, {}).get("fresh")
+                          for symbol in VOL_SYMBOLS),
         "sector_credit": bool(cross.get("available")),
         "flow_spy": bool(flow["SPY"].get("available")),
         "flow_qqq": bool(flow["QQQ"].get("available")),
     }
+    # All requested products are part of the audit, including producers that
+    # have not yet been implemented. Absence must never be called readiness.
+    outstanding = {
+        "smile_wings": "separate put/ATM/call IV points not persisted",
+        "breadth": "dedicated breadth producer not implemented",
+        "profile": "validated volume-at-price producer not implemented",
+        "macro": "full rates/FX/commodity/MOVE capture not implemented",
+        "contract_packages": "fresh per-leg executable packages not integrated",
+        "paper_scorecard": "report-alert paper ledger not implemented",
+        "event_study": "validated chop/event study not integrated",
+        "render_validation": "delivered report renderer not wired to validator",
+    }
+    full_checks = {**checks, **{key: False for key in outstanding}}
     # Flow is required to be visibly accounted for, but it cannot be silently
     # fabricated merely to pass a publish gate.  The reports receive both the
     # mandatory-core and optional-live-flow verdicts.
@@ -1832,7 +1861,9 @@ def report_readiness():
                       "vix_family", "sector_credit")
     return {
         "retrieved_at": now.isoformat(), "freshness_limit_seconds": STALE_SECONDS,
-        "required_checks": checks,
+        "required_checks": full_checks,
+        "all_requested_ready": all(full_checks.values()),
+        "outstanding_producers": outstanding,
         "core_ready": all(checks[key] for key in mandatory_core),
         "flow_ready": checks["flow_spy"] and checks["flow_qqq"],
         "missing_core": [key for key in mandatory_core if not checks[key]],
