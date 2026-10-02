@@ -783,4 +783,4 @@ function start() {
  server.listen(Number(process.env.PORT||10000),'0.0.0.0',()=>execute());
 }
 if(require.main===module){if(process.argv.includes('--self-test')){selfTest();sweepSelfTest();}else start();}
-module.exports={start,scenarioGrid,scenarioCandidate,minuteAdmission,dynamicExit,eventBlocked,capAddedLots,scenarioRiskCapacity,profitLockCapacity,FOMC_DECISION_DAYS,sweepSelfTest,accounts,SPEC,replayDay,setTestHistories:(data)=>{vix=data.vix;eod=data.eod;gamma=data.gamma||{};if(data.vixMinute){vixMinute.clear();for(const [day,row] of data.vixMinute)vixMinute.set(day,row);}reconstructGammaEnabled=false;}};
+module.exports={start,scenarioGrid,scenarioCandidate,minuteAdmission,dynamicExit,eventBlocked,capAddedLots,scenarioRiskCapacity,profitLockCapacity,FOMC_DECISION_DAYS,MACRO_CALENDAR,sessions,csv,clock,minute,sweepSelfTest,accounts,SPEC,replayDay,setTestHistories:(data)=>{vix=data.vix;eod=data.eod;gamma=data.gamma||{};if(data.vixMinute){vixMinute.clear();for(const [day,row] of data.vixMinute)vixMinute.set(day,row);}reconstructGammaEnabled=false;}};
