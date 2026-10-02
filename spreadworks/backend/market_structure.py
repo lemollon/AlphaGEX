@@ -22,7 +22,7 @@ import logging
 import statistics
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -40,6 +40,7 @@ router = APIRouter(prefix="/api/spreadworks/market-structure",
                    tags=["Market Structure"])
 
 TRADIER_QUOTES = "https://api.tradier.com/v1/markets/quotes"
+TRADIER_TIMESALES = "https://api.tradier.com/v1/markets/timesales"
 SYMBOLS = ("SPY", "QQQ", "IWM", "XSP", "SPX", "NDX", "RUT")
 INDEX_SYMBOLS = frozenset(("XSP", "SPX", "NDX", "RUT"))
 VOL_SYMBOLS = ("VIX", "VIX1D", "VIX9D", "VIX3M", "VVIX")
@@ -50,7 +51,16 @@ STALE_SECONDS = int(os.getenv("MARKET_STRUCTURE_STALE_SECONDS", "90"))
 GAMMA_TABLE = "sw_live_gamma"
 VOL_TABLE = "sw_live_vol_indices"
 SURFACE_TABLE = "sw_live_surface"
-_OI_CACHE: dict[str, tuple[datetime, datetime, dict[tuple[str, float, str], float]]] = {}
+FLOW_TABLE = "sw_live_trade_quote_flow"
+CROSS_ASSET_TABLE = "sw_live_cross_asset"
+CROSS_ASSET_SYMBOLS = ("SPY", "QQQ", "IWM", "SMH", "XLK", "XLF", "XLE", "XLV", "XLU", "XLY", "XLP", "HYG", "LQD", "TLT")
+# Gamma only needs the near-term, near-spot chain used by the intraday map.
+# Keeping this bounded is critical: ThetaData serializes requests in the shared
+# proxy, so an all-expiry/all-strike OI request can block surface refreshes for
+# long enough to fail the report freshness gate.
+GAMMA_MAX_DTE = int(os.getenv("MARKET_STRUCTURE_GAMMA_MAX_DTE", "60"))
+GAMMA_STRIKE_RANGE = int(os.getenv("MARKET_STRUCTURE_GAMMA_STRIKE_RANGE", "25"))
+_OI_CACHE: dict[tuple[str, int, int], tuple[datetime, datetime, dict[tuple[str, float, str], float]]] = {}
 
 _GAMMA_DDL = f"""
 CREATE TABLE IF NOT EXISTS {GAMMA_TABLE} (
@@ -109,6 +119,41 @@ CREATE TABLE IF NOT EXISTS {SURFACE_TABLE} (
   expected_move_dollars_1d DOUBLE PRECISION,
   expected_move_low DOUBLE PRECISION,
   expected_move_high DOUBLE PRECISION,
+  realized_vol_60m DOUBLE PRECISION,
+  realized_vol_bars INTEGER,
+  realized_vol_source_timestamp TIMESTAMP,
+  realized_vol_bar_timestamp TIMESTAMP,
+  iv_minus_realized_vol DOUBLE PRECISION,
+  reason TEXT,
+  PRIMARY KEY(symbol, captured_at)
+)
+"""
+
+_FLOW_DDL = f"""
+CREATE TABLE IF NOT EXISTS {FLOW_TABLE} (
+  symbol TEXT NOT NULL,
+  captured_at TIMESTAMP NOT NULL,
+  trade_date DATE NOT NULL,
+  source TEXT NOT NULL,
+  source_timestamp TIMESTAMP,
+  confidence TEXT NOT NULL,
+  n_trades INTEGER,
+  bucket_json TEXT,
+  reason TEXT,
+  PRIMARY KEY(symbol, captured_at)
+)
+"""
+
+
+_CROSS_ASSET_DDL = f"""
+CREATE TABLE IF NOT EXISTS {CROSS_ASSET_TABLE} (
+  symbol TEXT NOT NULL,
+  captured_at TIMESTAMP NOT NULL,
+  price DOUBLE PRECISION,
+  open_price DOUBLE PRECISION,
+  prev_close DOUBLE PRECISION,
+  source_timestamp TIMESTAMP,
+  fresh BOOLEAN NOT NULL,
   reason TEXT,
   PRIMARY KEY(symbol, captured_at)
 )
@@ -120,6 +165,21 @@ def ensure_tables() -> None:
         conn.execute(text(_GAMMA_DDL))
         conn.execute(text(_VOL_DDL))
         conn.execute(text(_SURFACE_DDL))
+        conn.execute(text(_FLOW_DDL))
+        conn.execute(text(_CROSS_ASSET_DDL))
+        # Existing deployments already have the original table.  Keep this
+        # additive migration here so a rolling deploy cannot leave reports
+        # without the realized-volatility fields.
+        for column, sql_type in (
+            ("realized_vol_60m", "DOUBLE PRECISION"),
+            ("realized_vol_bars", "INTEGER"),
+            ("realized_vol_source_timestamp", "TIMESTAMP"),
+            ("realized_vol_bar_timestamp", "TIMESTAMP"),
+            ("iv_minus_realized_vol", "DOUBLE PRECISION"),
+        ):
+            conn.execute(text(
+                f"ALTER TABLE {SURFACE_TABLE} ADD COLUMN IF NOT EXISTS {column} {sql_type}"
+            ))
 
 
 def _token(name: str) -> str:
@@ -266,6 +326,70 @@ def fetch_vol_indices(now: datetime | None = None) -> dict[str, Any]:
             "retrieved_at": now.isoformat(), "indices": out}
 
 
+def fetch_cross_asset(now: datetime | None = None) -> dict[str, Any]:
+    """Fresh sector/credit dashboard from one Tradier batch quote request."""
+    now = now or datetime.now(UTC)
+    token = _token("TRADIER_TOKEN") or _token("TRADIER_API_KEY")
+    if not token:
+        return {"available": False, "reason": "TRADIER_TOKEN missing", "assets": {}}
+    try:
+        response = requests.get(
+            TRADIER_QUOTES, params={"symbols": ",".join(CROSS_ASSET_SYMBOLS)},
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        # Quote timestamps can be a few milliseconds after the request began.
+        # Freshness must be measured against the completed response, not its
+        # pre-request clock, otherwise valid quotes are falsely rejected.
+        observed_at = datetime.now(UTC)
+        raw = (response.json().get("quotes") or {}).get("quote") or []
+        if isinstance(raw, dict):
+            raw = [raw]
+    except Exception as exc:  # noqa: BLE001
+        return {"available": False, "reason": f"Tradier cross-asset failure: {type(exc).__name__}",
+                "assets": {}}
+
+    assets: dict[str, Any] = {}
+    for quote in raw:
+        symbol = str(quote.get("symbol") or "").upper()
+        if symbol not in CROSS_ASSET_SYMBOLS:
+            continue
+        price = _f(quote, "last")
+        stamp = _quote_timestamp(quote)
+        age = (observed_at - stamp).total_seconds() if stamp else None
+        fresh = price is not None and age is not None and 0 <= age <= STALE_SECONDS
+        assets[symbol] = {
+            "symbol": symbol, "price": price, "open_price": _f(quote, "open"),
+            "prev_close": _f(quote, "prevclose"), "source_timestamp": stamp,
+            "age_seconds": round(age, 1) if age is not None else None, "fresh": fresh,
+            "reason": None if fresh else "stale_or_missing_quote",
+        }
+    return {"available": all(assets.get(symbol, {}).get("fresh")
+                             for symbol in CROSS_ASSET_SYMBOLS),
+            "source": "Tradier batch ETF quotes", "retrieved_at": observed_at.isoformat(),
+            "assets": assets}
+
+
+def persist_cross_asset(payload: dict[str, Any], now: datetime | None = None) -> None:
+    ensure_tables()
+    now = now or datetime.now(UTC)
+    with engine.begin() as conn:
+        for symbol in CROSS_ASSET_SYMBOLS:
+            item = (payload.get("assets") or {}).get(symbol) or {"symbol": symbol}
+            stamp = item.get("source_timestamp")
+            conn.execute(text(
+                f"INSERT INTO {CROSS_ASSET_TABLE} "
+                "(symbol,captured_at,price,open_price,prev_close,source_timestamp,fresh,reason) "
+                "VALUES (:symbol,:captured,:price,:open,:prev,:stamp,:fresh,:reason) "
+                "ON CONFLICT(symbol,captured_at) DO NOTHING"),
+                {"symbol": symbol, "captured": now.replace(tzinfo=None),
+                 "price": item.get("price"), "open": item.get("open_price"),
+                 "prev": item.get("prev_close"),
+                 "stamp": stamp.replace(tzinfo=None) if stamp else None,
+                 "fresh": bool(item.get("fresh")), "reason": item.get("reason")})
+
+
 def fetch_spot(symbol: str, now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     if symbol in INDEX_SYMBOLS:
@@ -309,10 +433,15 @@ def fetch_spot(symbol: str, now: datetime | None = None) -> dict[str, Any]:
                 "reason": f"Tradier quote failure: {type(exc).__name__}"}
 
 
-def fetch_theta_chain(symbol: str, now: datetime | None = None) -> dict[str, Any]:
+def fetch_theta_chain(symbol: str, now: datetime | None = None,
+                      max_dte: int | None = None,
+                      strike_range: int | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
-    params = {"symbol": symbol, "expiration": "*", "max_dte": 365,
-              "strike_range": 60}
+    max_dte = max_dte if max_dte is not None else GAMMA_MAX_DTE
+    strike_range = strike_range if strike_range is not None else GAMMA_STRIKE_RANGE
+    params = {"symbol": symbol, "expiration": "*", "max_dte": max_dte,
+              "strike_range": strike_range}
+    cache_key = (symbol, max_dte, strike_range)
     try:
         try:
             greeks = _theta_live_snapshot_rows(
@@ -326,7 +455,7 @@ def fetch_theta_chain(symbol: str, now: datetime | None = None) -> dict[str, Any
                 "/v3/option/snapshot/greeks/implied_volatility", params, now
             )
             gamma_source = "ThetaData Standard IV, locally calculated gamma"
-        cached = _OI_CACHE.get(symbol)
+        cached = _OI_CACHE.get(cache_key)
         if cached and cached[0].astimezone(ET).date() == now.astimezone(ET).date() and (now - cached[0]).total_seconds() < 3600:
             oi_stamp, oi_by_contract = cached[1], cached[2]
         else:
@@ -346,7 +475,7 @@ def fetch_theta_chain(symbol: str, now: datetime | None = None) -> dict[str, Any
                                     str(item.get("right", "")).lower())] = amount
             if oi_stamp.astimezone(ET).date() == now.astimezone(ET).date() and oi_by_contract:
                 # Keep only the join key and OI number, not full CSV dicts.
-                _OI_CACHE[symbol] = (now, oi_stamp, oi_by_contract)
+                _OI_CACHE[cache_key] = (now, oi_stamp, oi_by_contract)
     except Exception as exc:  # noqa: BLE001
         return {"rows": [], "reason": f"ThetaData chain failure: {type(exc).__name__}",
                 "source_timestamp": None}
@@ -503,6 +632,250 @@ def _surface_rows(symbol: str, now: datetime) -> tuple[list[dict[str, Any]], str
     return [], "thin_theta_iv_snapshot_after_retry"
 
 
+def _timesales_timestamp(value: Any) -> datetime | None:
+    """Parse Tradier's exchange-local one-minute bar timestamps."""
+    if not value:
+        return None
+    try:
+        stamp = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (stamp.replace(tzinfo=ET) if stamp.tzinfo is None else stamp).astimezone(UTC)
+
+
+def _realized_volatility_from_bars(
+    bars: list[dict[str, Any]], now: datetime, window_minutes: int = 60,
+) -> dict[str, Any]:
+    """Calculate annualized trailing one-minute realized volatility.
+
+    Tradier marks a one-minute bar with its minute start.  We require its
+    timestamp to be within the live freshness contract, then use the response
+    receipt as the snapshot timestamp.  That makes the resulting comparison
+    both auditable (last bar time is retained) and safe for live reports.
+    """
+    parsed: list[tuple[datetime, float]] = []
+    for bar in bars:
+        stamp = _timesales_timestamp(bar.get("time"))
+        close = _f(bar, "close")
+        if stamp is None or close is None or close <= 0:
+            continue
+        local = stamp.astimezone(ET)
+        if local.weekday() < 5 and dtime(9, 30) <= local.time() < dtime(16, 0):
+            parsed.append((stamp, close))
+    parsed.sort(key=lambda item: item[0])
+    # Some Tradier responses repeat a bar during corrections.  Keep the last
+    # close for every minute before forming log returns.
+    deduped: dict[datetime, float] = {}
+    for stamp, close in parsed:
+        deduped[stamp] = close
+    series = sorted(deduped.items())
+    if not series:
+        return {"available": False, "reason": "no_valid_rth_timesales"}
+    last_bar_at = series[-1][0]
+    bar_age = (now - last_bar_at).total_seconds()
+    if not 0 <= bar_age <= STALE_SECONDS:
+        return {"available": False, "reason": "stale_timesales_bar",
+                "bar_timestamp": last_bar_at.isoformat(),
+                "bar_age_seconds": round(bar_age, 1)}
+    # Retain one additional close, because N log returns need N+1 prices.
+    prices = [close for _, close in series[-(window_minutes + 1):]]
+    if len(prices) < 31:
+        return {"available": False, "reason": "insufficient_intraday_bars",
+                "bar_timestamp": last_bar_at.isoformat(),
+                "bar_age_seconds": round(bar_age, 1),
+                "bars": len(prices)}
+    returns = [math.log(current / previous)
+               for previous, current in zip(prices, prices[1:])]
+    realized = statistics.stdev(returns) * math.sqrt(252.0 * 390.0)
+    return {
+        "available": math.isfinite(realized) and realized >= 0,
+        "realized_vol_60m": realized,
+        "bars": len(returns),
+        "window_minutes": min(window_minutes, len(returns)),
+        "source_timestamp": now.isoformat(),
+        "bar_timestamp": last_bar_at.isoformat(),
+        "bar_age_seconds": round(bar_age, 1),
+        "method": "Trailing 60 one-minute log-return stdev × sqrt(252 × 390)",
+        "reason": None,
+    }
+
+
+def fetch_intraday_realized_volatility(
+    symbol: str, now: datetime | None = None, window_minutes: int = 60,
+) -> dict[str, Any]:
+    """Fetch a fresh Tradier one-minute tape and calculate trailing RV."""
+    now = now or datetime.now(UTC)
+    token = _token("TRADIER_TOKEN") or _token("TRADIER_API_KEY")
+    if not token:
+        return {"available": False, "reason": "TRADIER_TOKEN missing"}
+    now_et = now.astimezone(ET)
+    start = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    # Asking slightly past the clock includes the active minute.  The
+    # timestamp guard above still rejects a lagging response.
+    end = now_et + timedelta(minutes=5)
+    try:
+        response = requests.get(
+            TRADIER_TIMESALES,
+            params={"symbol": symbol, "interval": "1min",
+                    "start": start.strftime("%Y-%m-%d %H:%M"),
+                    "end": end.strftime("%Y-%m-%d %H:%M"),
+                    "session_filter": "all"},
+            headers={"Authorization": f"Bearer {token}",
+                     "Accept": "application/json"}, timeout=15,
+        )
+        response.raise_for_status()
+        rows = ((response.json().get("series") or {}).get("data") or [])
+        if isinstance(rows, dict):
+            rows = [rows]
+    except Exception as exc:  # noqa: BLE001
+        return {"available": False,
+                "reason": f"Tradier timesales failure: {type(exc).__name__}"}
+    # Snapshot receipt time is the freshness clock; the final exchange bar
+    # timestamp remains separately visible for audit.
+    result = _realized_volatility_from_bars(list(rows), datetime.now(UTC), window_minutes)
+    result["source"] = "Tradier 1-minute timesales"
+    return result
+
+
+def _flow_bucket(dte: int) -> str | None:
+    if dte == 0:
+        return "0dte"
+    if 1 <= dte <= 5:
+        return "1_5dte"
+    if 6 <= dte <= 20:
+        return "6_20dte"
+    if 21 <= dte <= 60:
+        return "21_60dte"
+    return None
+
+
+def _classify_trade_side(price: float | None, bid: float | None, ask: float | None) -> str:
+    """Classify against the NBBO attached to the *same* OPRA print."""
+    if price is None or bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
+        return "unclassified"
+    epsilon = max(0.01, (ask - bid) * 0.05)
+    if price >= ask - epsilon:
+        return "ask"
+    if price <= bid + epsilon:
+        return "bid"
+    return "mid"
+
+
+def _initiation_read(ask_contracts: int, bid_contracts: int, total_contracts: int) -> str:
+    """Bounded evidence label; never implies opening/closing inventory."""
+    classified = ask_contracts + bid_contracts
+    if total_contracts < 100 or classified < max(50, total_contracts * 0.35):
+        return "INSUFFICIENT_CLASSIFIED_PRINTS"
+    if ask_contracts / classified >= 0.60:
+        return "LIKELY_BUYER_INITIATED"
+    if bid_contracts / classified >= 0.60:
+        return "LIKELY_SELLER_INITIATED"
+    return "MIXED"
+
+
+def _flow_expiration_candidates(session_date: datetime) -> list[str]:
+    """Choose liquid ETF weekly expirations without a separate slow lookup."""
+    candidates: list[str] = []
+    for dte in (0, 3, 14, 45):
+        expiry = (session_date + timedelta(days=dte)).date()
+        while expiry.weekday() >= 5:
+            expiry += timedelta(days=1)
+        value = expiry.isoformat()
+        if value not in candidates:
+            candidates.append(value)
+    return candidates
+
+
+def fetch_trade_quote_flow(symbol: str, now: datetime | None = None) -> dict[str, Any]:
+    """Read recent OPRA trade+NBBO records and summarize live option flow.
+
+    ThetaData pairs each OPRA print with the NBBO available at that trade, so
+    at-ask/at-bid classification is evidence-based.  This remains a trade-side
+    read only: it cannot identify opening/closing, institutions, or multi-leg
+    structures and the returned guardrail is intentionally report-visible.
+    """
+    now = now or datetime.now(UTC)
+    symbol = symbol.upper()
+    now_et = now.astimezone(ET)
+    if now_et.weekday() >= 5 or not (dtime(9, 30) <= now_et.time() < dtime(16, 0)):
+        return {"symbol": symbol, "available": False, "confidence": "LOW",
+                "reason": "market_closed", "captured_at": now.isoformat()}
+    start = now_et - timedelta(minutes=2)
+    selected = _flow_expiration_candidates(now_et)
+    rows: list[dict[str, Any]] = []
+    failures: list[str] = []
+    # Theta's historical trade+quote service is most reliable with one
+    # explicit expiration.  Four representative ETF weekly horizons keep this
+    # live enough for the report without pulling an unbounded full chain.
+    for expiry in selected:
+        try:
+            rows.extend(_theta_rows("/v3/option/history/trade_quote", {
+                "symbol": symbol, "expiration": expiry, "strike": "*", "right": "both",
+                "date": now_et.date().isoformat(),
+                "start_time": start.strftime("%H:%M:%S"),
+                "end_time": now_et.strftime("%H:%M:%S"),
+                "max_dte": 60, "strike_range": 12, "exclusive": "true",
+            }, timeout=12))
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"{expiry}:{type(exc).__name__}")
+    if not rows:
+        return {"symbol": symbol, "available": False, "confidence": "LOW",
+                "reason": f"theta_trade_quote_failure:{','.join(failures) or 'empty'}",
+                "captured_at": datetime.now(UTC).isoformat()}
+    buckets: dict[str, dict[str, Any]] = {
+        key: {"call_contracts": 0, "put_contracts": 0,
+              "call_ask_contracts": 0, "call_bid_contracts": 0,
+              "put_ask_contracts": 0, "put_bid_contracts": 0,
+              "call_notional": 0.0, "put_notional": 0.0}
+        for key in ("0dte", "1_5dte", "6_20dte", "21_60dte")
+    }
+    newest: datetime | None = None
+    accepted = 0
+    for row in rows:
+        expiry = str(row.get("expiration") or "")
+        right = str(row.get("right") or "").lower()
+        stamp = _theta_ts(row.get("timestamp"))
+        price, bid, ask, size = (_f(row, "price"), _f(row, "bid"),
+                                 _f(row, "ask"), _f(row, "size"))
+        if not expiry or right not in {"call", "put"} or stamp is None or size is None or size <= 0:
+            continue
+        try:
+            bucket = _flow_bucket((datetime.fromisoformat(expiry).date() - now_et.date()).days)
+        except ValueError:
+            continue
+        if bucket is None:
+            continue
+        contracts = int(size)
+        stats = buckets[bucket]
+        stats[f"{right}_contracts"] += contracts
+        stats[f"{right}_notional"] += contracts * (price or 0.0) * 100.0
+        side = _classify_trade_side(price, bid, ask)
+        if side in {"ask", "bid"}:
+            stats[f"{right}_{side}_contracts"] += contracts
+        newest = max(newest, stamp) if newest else stamp
+        accepted += 1
+    completed_at = datetime.now(UTC)
+    age = (completed_at - newest).total_seconds() if newest else None
+    fresh = newest is not None and age is not None and 0 <= age <= STALE_SECONDS
+    for stats in buckets.values():
+        stats["call_initiation"] = _initiation_read(
+            stats.pop("call_ask_contracts"), stats.pop("call_bid_contracts"), stats["call_contracts"])
+        stats["put_initiation"] = _initiation_read(
+            stats.pop("put_ask_contracts"), stats.pop("put_bid_contracts"), stats["put_contracts"])
+    return {
+        "symbol": symbol, "available": bool(fresh and accepted),
+        "captured_at": completed_at.isoformat(),
+        "source": "ThetaData OPRA trade + contemporaneous NBBO",
+        "source_timestamp": newest.isoformat() if newest else None,
+        "age_seconds": round(age, 1) if age is not None else None,
+        "confidence": "HIGH" if fresh and accepted >= 20 else "LOW",
+        "n_trades": accepted, "buckets": buckets,
+        "guardrail": ("LIKELY buyer/seller initiated is based on an OPRA print at the attached NBBO. "
+                      "It does not establish opening/closing, institution, or multi-leg structure."),
+        "reason": None if fresh and accepted else ("stale_or_empty_trade_quote_flow"),
+    }
+
+
 def _atm_ivs_by_dte(records: list[dict[str, Any]], spot: float) -> dict[int, float]:
     by_dte: dict[int, dict[str, list[dict[str, Any]]]] = defaultdict(
         lambda: {"call": [], "put": []}
@@ -527,18 +900,115 @@ def _term_iv(atm_by_dte: dict[int, float], lo: int, hi: int) -> float | None:
     return statistics.median(values) if values else None
 
 
-def _surface_skew(records: list[dict[str, Any]], spot: float) -> tuple[float | None, int | None]:
+def _surface_read(
+    atm_iv: float | None, realized_vol: float | None, skew: float | None,
+    iv_0dte: float | None, iv_1_5dte: float | None,
+    iv_6_20dte: float | None, iv_21_365dte: float | None,
+) -> dict[str, Any]:
+    """Translate the surface into bounded, non-directional report language.
+
+    IV prices *future uncertainty* while realized volatility describes the
+    recent tape.  The gap is therefore a premium/risk read, never a directional
+    forecast.  Likewise, a skew or a term premium describes what options cost;
+    it does not prove an option position was opened or identify a trader.
+    """
+    if atm_iv is None or realized_vol is None or realized_vol <= 0:
+        return {"available": False, "reason": "requires fresh ATM IV and realized volatility"}
+    ratio = atm_iv / realized_vol
+    gap = atm_iv - realized_vol
+    if ratio >= 1.25:
+        day_state = "PREMIUM_RICH"
+        day_meaning = (
+            "Implied volatility materially exceeds the last hour's realized pace: "
+            "the market is charging for a larger forward move than it has just delivered. "
+            "Do not chase options unless price/flow confirms expansion; defined-risk premium "
+            "selling is attractive only while range acceptance and event risk support it."
+        )
+    elif ratio >= 1.10:
+        day_state = "MODEST_PREMIUM"
+        day_meaning = (
+            "Implied volatility is modestly above the last hour's realized pace. "
+            "Premium has a cushion, but the edge is too small to sell volatility into a breakout."
+        )
+    elif ratio >= 0.90:
+        day_state = "BALANCED"
+        day_meaning = (
+            "Implied and recent realized volatility are broadly aligned. "
+            "Price location, catalyst risk, and actual options flow should decide the trade."
+        )
+    else:
+        day_state = "REALIZED_RUNNING_HOT"
+        day_meaning = (
+            "The tape is moving faster than implied volatility. "
+            "Short-premium trades need extra caution; a continuation needs price confirmation, "
+            "not volatility alone."
+        )
+
+    if skew is None:
+        skew_state = "UNAVAILABLE"
+        skew_meaning = "No current smile/skew conclusion."
+    elif skew >= 0.025:
+        skew_state = "DOWNSIDE_HEDGE_PREMIUM"
+        skew_meaning = (
+            "25-delta puts are materially richer than comparable calls: downside insurance is bid. "
+            "This raises downside-tail sensitivity, but does not by itself predict a decline."
+        )
+    elif skew <= -0.025:
+        skew_state = "UPSIDE_CALL_PREMIUM"
+        skew_meaning = (
+            "Comparable calls are richer than puts: upside optionality is carrying the premium. "
+            "Treat this as speculation demand only after trade-side flow confirms it."
+        )
+    else:
+        skew_state = "BALANCED_SKEW"
+        skew_meaning = "Put/call wing pricing is not meaningfully tilted at the current reference tenor."
+
+    forward_parts: list[str] = []
+    if iv_0dte is not None and iv_1_5dte is not None:
+        if iv_0dte >= iv_1_5dte * 1.15:
+            forward_parts.append("front-day premium is elevated versus 1–5DTE")
+        elif iv_0dte <= iv_1_5dte * 0.85:
+            forward_parts.append("front-day premium is discounted versus 1–5DTE")
+    if iv_6_20dte is not None and iv_1_5dte is not None:
+        if iv_6_20dte >= iv_1_5dte * 1.10:
+            forward_parts.append("6–20DTE volatility is elevated versus the near curve")
+    if iv_21_365dte is not None and iv_6_20dte is not None:
+        if iv_21_365dte >= iv_6_20dte * 1.10:
+            forward_parts.append("21+D volatility carries additional longer-horizon uncertainty premium")
+    forward_meaning = (
+        "; ".join(forward_parts) + ". This is forward volatility pricing, not proof of future-dated call/put buying or selling."
+        if forward_parts else
+        "The available term structure has no material forward premium/dislocation signal. "
+        "It is price-of-risk context, not position or trade-direction evidence."
+    )
+    return {
+        "available": True,
+        "iv_realized_ratio": ratio,
+        "iv_realized_gap": gap,
+        "day_state": day_state,
+        "day_meaning": day_meaning,
+        "skew_state": skew_state,
+        "skew_meaning": skew_meaning,
+        "forward_meaning": forward_meaning,
+        "guardrail": (
+            "Use this with price acceptance and fresh trade-at-bid/ask flow. "
+            "It cannot identify opening versus closing trades, institutions, or multi-leg structures."
+        ),
+    }
+
+
+def _surface_smile(records: list[dict[str, Any]], spot: float) -> dict[str, Any]:
     """Return put-IV minus call-IV at locally calculated 25-delta points."""
     available_dtes = sorted({int(row["dte"]) for row in records if row["dte"] >= 1})
     if not available_dtes:
-        return None, None
+        return {"available": False}
     # 30 calendar days is the most stable reference when it is available.
     reference_dte = min(available_dtes, key=lambda dte: abs(dte - 30))
     subset = [row for row in records if int(row["dte"]) == reference_dte]
     calls = [row for row in subset if row["right"] == "call"]
     puts = [row for row in subset if row["right"] == "put"]
     if not calls or not puts:
-        return None, reference_dte
+        return {"available": False, "reference_dte": reference_dte}
     for row in calls + puts:
         row["_delta"] = _option_delta(
             spot, float(row["strike"]), float(row["iv"]), reference_dte, str(row["right"])
@@ -546,10 +1016,25 @@ def _surface_skew(records: list[dict[str, Any]], spot: float) -> tuple[float | N
     calls = [row for row in calls if row.get("_delta") is not None]
     puts = [row for row in puts if row.get("_delta") is not None]
     if not calls or not puts:
-        return None, reference_dte
+        return {"available": False, "reference_dte": reference_dte}
     call = min(calls, key=lambda row: abs(float(row["_delta"]) - 0.25))
     put = min(puts, key=lambda row: abs(float(row["_delta"]) + 0.25))
-    return float(put["iv"]) - float(call["iv"]), reference_dte
+    atm = min(subset, key=lambda row: abs(float(row["strike"]) - spot))
+    return {
+        "available": True, "reference_dte": reference_dte,
+        "put_25d_iv": float(put["iv"]), "put_strike": float(put["strike"]),
+        "put_delta": float(put["_delta"]), "atm_iv": float(atm["iv"]),
+        "atm_strike": float(atm["strike"]), "call_25d_iv": float(call["iv"]),
+        "call_strike": float(call["strike"]), "call_delta": float(call["_delta"]),
+        "skew": float(put["iv"]) - float(call["iv"]),
+        "method": "Observed ThetaData IV; nearest locally calculated 25-delta wings at the same DTE; no interpolation",
+    }
+
+
+def _surface_skew(records: list[dict[str, Any]], spot: float) -> tuple[float | None, int | None]:
+    smile = _surface_smile(records, spot)
+    return smile.get("skew"), smile.get("reference_dte")
+
 
 
 def build_volatility_surface(symbol: str, now: datetime | None = None) -> dict[str, Any]:
@@ -577,22 +1062,44 @@ def build_volatility_surface(symbol: str, now: datetime | None = None) -> dict[s
     confidence = "HIGH" if age <= 30 and len(rows) >= 100 else "MEDIUM"
     if atm_iv is None:
         confidence = "LOW"
+    realized = fetch_intraday_realized_volatility(symbol, completed_at)
+    realized_vol = realized.get("realized_vol_60m") if realized.get("available") else None
+    term_0dte = _term_iv(atm_by_dte, 0, 0)
+    term_1_5dte = _term_iv(atm_by_dte, 1, 5)
+    term_6_20dte = _term_iv(atm_by_dte, 6, 20)
+    term_21_365dte = _term_iv(atm_by_dte, 21, 365)
+    surface_read = _surface_read(
+        atm_iv, realized_vol, skew, term_0dte, term_1_5dte,
+        term_6_20dte, term_21_365dte,
+    )
+    captured_at = datetime.now(UTC)
     em_pct = atm_iv * math.sqrt(1.0 / 252.0) * 100.0 if atm_iv else None
     em_dollars = price * em_pct / 100.0 if em_pct else None
     return {
-        "symbol": symbol, "available": confidence != "LOW", "captured_at": completed_at.isoformat(),
+        "symbol": symbol, "available": confidence != "LOW", "captured_at": captured_at.isoformat(),
         "spot": price, "source": "ThetaData implied-volatility snapshots (authorized)",
         "source_timestamp": source_ts.isoformat(), "age_seconds": round(age, 1),
         "confidence": confidence, "n_rows": len(rows), "atm_iv": atm_iv,
         "atm_reference_dte": reference_dte, "skew_25d": skew,
-        "skew_reference_dte": skew_dte, "iv_0dte": _term_iv(atm_by_dte, 0, 0),
-        "iv_1_5dte": _term_iv(atm_by_dte, 1, 5),
-        "iv_6_20dte": _term_iv(atm_by_dte, 6, 20),
-        "iv_21_365dte": _term_iv(atm_by_dte, 21, 365),
+        "skew_reference_dte": skew_dte, "smile": _surface_smile(rows, price), "iv_0dte": term_0dte,
+        "iv_1_5dte": term_1_5dte,
+        "iv_6_20dte": term_6_20dte,
+        "iv_21_365dte": term_21_365dte,
         "expected_move_pct_1d": em_pct, "expected_move_dollars_1d": em_dollars,
         "expected_move_low": price - em_dollars if em_dollars else None,
         "expected_move_high": price + em_dollars if em_dollars else None,
         "expected_move_method": "ATM IV × sqrt(1/252), using nearest positive-DTE expiration",
+        "realized_vol_60m": realized_vol,
+        "realized_vol_bars": realized.get("bars"),
+        "realized_vol_source_timestamp": realized.get("source_timestamp"),
+        "realized_vol_bar_timestamp": realized.get("bar_timestamp"),
+        "realized_vol_bar_age_seconds": realized.get("bar_age_seconds"),
+        "realized_vol_method": realized.get("method"),
+        "realized_vol_source": realized.get("source"),
+        "realized_vol_reason": realized.get("reason"),
+        "iv_minus_realized_vol": (atm_iv - realized_vol
+                                   if atm_iv is not None and realized_vol is not None else None),
+        "surface_read": surface_read,
         "reason": None if confidence != "LOW" else "missing_atm_iv",
     }
 
@@ -751,13 +1258,22 @@ def _spot_from_theta_chain(chain: dict[str, Any], now: datetime) -> dict[str, An
             "age_seconds": age, "source": "ThetaData option-chain underlying price"}
 
 
-def build_gamma_snapshot(symbol: str, now: datetime | None = None) -> dict[str, Any]:
+def build_gamma_snapshot(symbol: str, now: datetime | None = None,
+                         max_dte: int | None = None,
+                         strike_range: int | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     symbol = symbol.upper()
     spot = fetch_spot(symbol, now)
     chain = None
+
+    def load_chain() -> dict[str, Any]:
+        if max_dte is None and strike_range is None:
+            return fetch_theta_chain(symbol, now)
+        return fetch_theta_chain(symbol, now, max_dte=max_dte,
+                                 strike_range=strike_range)
+
     if symbol in INDEX_SYMBOLS and not spot.get("fresh"):
-        chain = fetch_theta_chain(symbol, now)
+        chain = load_chain()
         chain_spot = _spot_from_theta_chain(chain, datetime.now(UTC))
         if chain_spot:
             spot = chain_spot
@@ -765,7 +1281,7 @@ def build_gamma_snapshot(symbol: str, now: datetime | None = None) -> dict[str, 
         return {"symbol": symbol, "available": False, "confidence": "LOW",
                 "reason": (chain or {}).get("reason") or spot.get("reason"),
                 "captured_at": datetime.now(UTC).isoformat()}
-    chain = chain if chain is not None else fetch_theta_chain(symbol, now)
+    chain = chain if chain is not None else load_chain()
     completed_at = datetime.now(UTC)
     if not chain.get("rows"):
         return {"symbol": symbol, "available": False, "confidence": "LOW",
@@ -861,6 +1377,10 @@ def persist_surface(surface: dict[str, Any]) -> None:
     ensure_tables()
     captured = datetime.fromisoformat(surface["captured_at"].replace("Z", "+00:00"))
     source_ts = _parse_ts(surface.get("source_timestamp")) if surface.get("source_timestamp") else None
+    realized_source_ts = (_parse_ts(surface.get("realized_vol_source_timestamp"))
+                          if surface.get("realized_vol_source_timestamp") else None)
+    realized_bar_ts = (_parse_ts(surface.get("realized_vol_bar_timestamp"))
+                       if surface.get("realized_vol_bar_timestamp") else None)
     params = {
         "symbol": surface["symbol"], "captured": captured.replace(tzinfo=None),
         "date": captured.astimezone(CT).date(), "spot": surface.get("spot"),
@@ -874,6 +1394,11 @@ def persist_surface(surface: dict[str, Any]) -> None:
         "emp": surface.get("expected_move_pct_1d"),
         "emd": surface.get("expected_move_dollars_1d"),
         "emlow": surface.get("expected_move_low"), "emhigh": surface.get("expected_move_high"),
+        "rv": surface.get("realized_vol_60m"),
+        "rv_bars": surface.get("realized_vol_bars"),
+        "rv_source_ts": realized_source_ts.replace(tzinfo=None) if realized_source_ts else None,
+        "rv_bar_ts": realized_bar_ts.replace(tzinfo=None) if realized_bar_ts else None,
+        "iv_minus_rv": surface.get("iv_minus_realized_vol"),
         "reason": surface.get("reason"),
     }
     with engine.begin() as conn:
@@ -882,10 +1407,31 @@ def persist_surface(surface: dict[str, Any]) -> None:
             "(symbol,captured_at,trade_date,spot,source,source_timestamp,confidence,n_rows,"
             "atm_iv,atm_reference_dte,skew_25d,skew_reference_dte,iv_0dte,iv_1_5dte,"
             "iv_6_20dte,iv_21_365dte,expected_move_pct_1d,expected_move_dollars_1d,"
-            "expected_move_low,expected_move_high,reason) "
+            "expected_move_low,expected_move_high,realized_vol_60m,realized_vol_bars,"
+            "realized_vol_source_timestamp,realized_vol_bar_timestamp,iv_minus_realized_vol,reason) "
             "VALUES (:symbol,:captured,:date,:spot,:source,:source_ts,:confidence,:n,"
-            ":atm,:atm_dte,:skew,:skew_dte,:iv0,:iv15,:iv620,:iv21,:emp,:emd,:emlow,:emhigh,:reason) "
+            ":atm,:atm_dte,:skew,:skew_dte,:iv0,:iv15,:iv620,:iv21,:emp,:emd,:emlow,:emhigh,"
+            ":rv,:rv_bars,:rv_source_ts,:rv_bar_ts,:iv_minus_rv,:reason) "
             "ON CONFLICT(symbol,captured_at) DO NOTHING"), params)
+
+
+def persist_trade_quote_flow(flow: dict[str, Any]) -> None:
+    """Persist every flow attempt so reports can use a dated fallback safely."""
+    ensure_tables()
+    captured = datetime.fromisoformat(flow["captured_at"].replace("Z", "+00:00"))
+    source_ts = _parse_ts(flow.get("source_timestamp")) if flow.get("source_timestamp") else None
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"INSERT INTO {FLOW_TABLE} "
+            "(symbol,captured_at,trade_date,source,source_timestamp,confidence,n_trades,bucket_json,reason) "
+            "VALUES (:symbol,:captured,:date,:source,:source_ts,:confidence,:n,:buckets,:reason) "
+            "ON CONFLICT(symbol,captured_at) DO NOTHING"),
+            {"symbol": flow["symbol"], "captured": captured.replace(tzinfo=None),
+             "date": captured.astimezone(CT).date(),
+             "source": flow.get("source") or "ThetaData OPRA trade + NBBO",
+             "source_ts": source_ts.replace(tzinfo=None) if source_ts else None,
+             "confidence": flow.get("confidence") or "LOW", "n": flow.get("n_trades"),
+             "buckets": json.dumps(flow.get("buckets") or {}), "reason": flow.get("reason")})
 
 
 def capture_all() -> dict[str, Any]:
@@ -895,7 +1441,9 @@ def capture_all() -> dict[str, Any]:
         return {"captured": False, "reason": "market_closed", "captured_at": now.isoformat()}
     vol = fetch_vol_indices(now)
     persist_vol(vol, now)
-    gamma: dict[str, Any] = {}
+    # Independent batch quotes cannot be starved by the serialized Theta client.
+    cross_asset = fetch_cross_asset(now)
+    persist_cross_asset(cross_asset, now)
     surface: dict[str, Any] = {}
     # Surface is intentionally limited to the two report underlyings.  It uses
     # the entitled IV-only endpoint and does not depend on the optional Greeks
@@ -916,28 +1464,58 @@ def capture_all() -> dict[str, Any]:
                         "captured_at": datetime.now(UTC).isoformat()}
             surface[symbol] = item
             persist_surface(item)
-    # Fetch independent symbols concurrently after the report-critical surface
-    # has been persisted.  Each snapshot still carries its own fresh clock.
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="market-structure") as pool:
-        futures = {pool.submit(build_gamma_snapshot, symbol, datetime.now(UTC)): symbol
-                   for symbol in SYMBOLS}
-        for future in as_completed(futures):
-            symbol = futures[future]
-            try:
-                snap = future.result()
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("[MarketStructure] %s gamma capture crashed", symbol)
-                snap = {
-                    "symbol": symbol,
-                    "available": False,
-                    "confidence": "LOW",
-                    "reason": f"capture_exception:{type(exc).__name__}",
-                    "captured_at": datetime.now(UTC).isoformat(),
-                }
-            gamma[symbol] = snap
-            persist_snapshot(snap)
+    # Do not queue slow chain or historical-print requests behind the minute
+    # surface capture. They can consume the single Theta client for tens of
+    # seconds and used to turn an otherwise valid surface into a stale report.
+    # Gamma/flow are fetched by their own explicit workers and read from their
+    # persisted snapshots below; the report path never recalculates them.
     return {"captured": True, "captured_at": now.isoformat(), "volatility": vol,
-            "gamma": gamma, "surface": surface}
+            "cross_asset": cross_asset, "surface": surface}
+
+
+def capture_gamma_pair() -> dict[str, Any]:
+    """Persist a bounded, report-grade SPY/QQQ gamma map without blocking IV."""
+    now = datetime.now(UTC)
+    now_ct = now.astimezone(CT)
+    if now_ct.weekday() >= 5 or not (dtime(8, 30) <= now_ct.time() <= dtime(15, 5)):
+        return {"captured": False, "reason": "market_closed", "captured_at": now.isoformat()}
+
+    snapshots: dict[str, Any] = {}
+    # Sequential by design: concurrent submissions only queue at the proxy's
+    # single Theta client and make timeout ordering nondeterministic.
+    for symbol in ("SPY", "QQQ"):
+        try:
+            snapshot = build_gamma_snapshot(
+                symbol, datetime.now(UTC), max_dte=GAMMA_MAX_DTE,
+                strike_range=GAMMA_STRIKE_RANGE,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[MarketStructure] %s gamma capture crashed", symbol)
+            snapshot = {"symbol": symbol, "available": False, "confidence": "LOW",
+                        "reason": f"capture_exception:{type(exc).__name__}",
+                        "captured_at": datetime.now(UTC).isoformat()}
+        persist_snapshot(snapshot)
+        snapshots[symbol] = snapshot
+    return {"captured": True, "captured_at": now.isoformat(), "gamma": snapshots}
+
+
+def recover_critical_surface() -> dict[str, Any]:
+    """Self-heal a stale/missing report surface without waiting for the next tick."""
+    now = datetime.now(UTC)
+    now_ct = now.astimezone(CT)
+    if now_ct.weekday() >= 5 or not (dtime(8, 30) <= now_ct.time() <= dtime(15, 5)):
+        return {"recovered": False, "reason": "market_closed"}
+    recovered: dict[str, Any] = {}
+    for symbol in ("SPY", "QQQ"):
+        cached = _cached_surface_payload(symbol, now)
+        if cached.get("available"):
+            recovered[symbol] = cached
+            continue
+        item = build_volatility_surface(symbol, datetime.now(UTC))
+        persist_surface(item)
+        recovered[symbol] = item
+    return {"recovered": all(item.get("available") for item in recovered.values()),
+            "captured_at": datetime.now(UTC).isoformat(), "surface": recovered}
 
 
 def _latest_gamma(symbol: str) -> dict[str, Any] | None:
@@ -968,7 +1546,8 @@ def _latest_surface(symbol: str) -> dict[str, Any] | None:
             f"SELECT captured_at,spot,source,source_timestamp,confidence,n_rows,atm_iv,"
             "atm_reference_dte,skew_25d,skew_reference_dte,iv_0dte,iv_1_5dte,"
             "iv_6_20dte,iv_21_365dte,expected_move_pct_1d,expected_move_dollars_1d,"
-            "expected_move_low,expected_move_high,reason "
+            "expected_move_low,expected_move_high,realized_vol_60m,realized_vol_bars,"
+            "realized_vol_source_timestamp,realized_vol_bar_timestamp,iv_minus_realized_vol,reason "
             f"FROM {SURFACE_TABLE} WHERE symbol=:s ORDER BY captured_at DESC LIMIT 1"),
             {"s": symbol}).fetchone()
     if not row:
@@ -976,13 +1555,95 @@ def _latest_surface(symbol: str) -> dict[str, Any] | None:
     keys = ("captured_at","spot","source","source_timestamp","confidence","n_rows","atm_iv",
             "atm_reference_dte","skew_25d","skew_reference_dte","iv_0dte","iv_1_5dte",
             "iv_6_20dte","iv_21_365dte","expected_move_pct_1d","expected_move_dollars_1d",
-            "expected_move_low","expected_move_high","reason")
+            "expected_move_low","expected_move_high","realized_vol_60m","realized_vol_bars",
+            "realized_vol_source_timestamp","realized_vol_bar_timestamp","iv_minus_realized_vol","reason")
     result = dict(zip(keys, row))
-    for key in ("captured_at", "source_timestamp"):
+    for key in ("captured_at", "source_timestamp", "realized_vol_source_timestamp",
+                "realized_vol_bar_timestamp"):
         if result[key] is not None:
             result[key] = result[key].isoformat()
     return result
 
+
+def _cached_surface_payload(symbol: str, now: datetime | None = None) -> dict[str, Any]:
+    """Return the durable surface with an honest *current* freshness verdict."""
+    now = now or datetime.now(UTC)
+    row = _latest_surface(symbol)
+    if row is None:
+        return {"symbol": symbol, "available": False, "confidence": "LOW",
+                "reason": "no_persisted_surface"}
+    source_ts = _parse_ts(row.get("source_timestamp"))
+    age = (now - source_ts).total_seconds() if source_ts else None
+    fresh = (row.get("confidence") == "HIGH" and age is not None
+             and 0 <= age <= STALE_SECONDS)
+    row.update({"symbol": symbol, "available": fresh,
+                "age_seconds": round(age, 1) if age is not None else None,
+                "reason": row.get("reason") or (None if fresh else "stale_persisted_surface")})
+    return row
+
+
+def _latest_trade_quote_flow(symbol: str) -> dict[str, Any] | None:
+    ensure_tables()
+    with engine.begin() as conn:
+        row = conn.execute(text(
+            f"SELECT captured_at,source,source_timestamp,confidence,n_trades,bucket_json,reason "
+            f"FROM {FLOW_TABLE} WHERE symbol=:symbol ORDER BY captured_at DESC LIMIT 1"),
+            {"symbol": symbol}).fetchone()
+    if not row:
+        return None
+    keys = ("captured_at", "source", "source_timestamp", "confidence", "n_trades",
+            "bucket_json", "reason")
+    result = dict(zip(keys, row))
+    for key in ("captured_at", "source_timestamp"):
+        if result[key] is not None:
+            result[key] = result[key].isoformat()
+    result["buckets"] = json.loads(result.pop("bucket_json") or "{}")
+    result["guardrail"] = (
+        "LIKELY buyer/seller initiated is based on an OPRA print at the attached NBBO. "
+        "It does not establish opening/closing, institution, or multi-leg structure."
+    )
+    return result
+
+
+def _cached_gamma_payload(symbol: str, now: datetime | None = None) -> dict[str, Any]:
+    now = now or datetime.now(UTC)
+    row = _latest_gamma(symbol)
+    if row is None:
+        return {"symbol": symbol, "available": False, "confidence": "LOW",
+                "reason": "no_persisted_gamma"}
+    source_ts = _parse_ts(row.get("source_timestamp"))
+    age = (now - source_ts).total_seconds() if source_ts else None
+    # Gamma coverage can be MEDIUM on a deliberately bounded near-term map.
+    # The report contract rejects LOW confidence; it must not discard a fresh,
+    # numeric MEDIUM map and then claim gamma is unavailable.
+    fresh = (row.get("confidence") in {"HIGH", "MEDIUM"} and age is not None
+             and 0 <= age <= STALE_SECONDS)
+    row.update({"symbol": symbol, "available": fresh,
+                "age_seconds": round(age, 1) if age is not None else None,
+                "reason": row.get("reason") or (None if fresh else "stale_persisted_gamma")})
+    return row
+
+
+def _cached_vol_payload(now: datetime | None = None) -> dict[str, Any]:
+    now = now or datetime.now(UTC)
+    ensure_tables()
+    with engine.begin() as conn:
+        rows = conn.execute(text(
+            f"SELECT DISTINCT ON (symbol) symbol,price,source,source_timestamp,reason "
+            f"FROM {VOL_TABLE} ORDER BY symbol,captured_at DESC"), {}).fetchall()
+    indices: dict[str, Any] = {}
+    for symbol, price, _source, source_timestamp, reason in rows:
+        stamp = source_timestamp.replace(tzinfo=UTC) if source_timestamp and source_timestamp.tzinfo is None else source_timestamp
+        age = (now - stamp).total_seconds() if stamp else None
+        fresh = price is not None and age is not None and 0 <= age <= STALE_SECONDS
+        indices[symbol] = {"symbol": symbol, "price": price,
+                           "source_timestamp": stamp.isoformat() if stamp else None,
+                           "age_seconds": round(age, 1) if age is not None else None,
+                           "fresh": fresh,
+                           "reason": reason or (None if fresh else "stale_persisted_quote")}
+    return {"available": any(item["fresh"] for item in indices.values()),
+            "source": "Persisted ThetaData index snapshot price",
+            "retrieved_at": now.isoformat(), "indices": indices}
 
 def register(scheduler: Any, app: Any | None = None) -> bool:
     """Persist canonical live market structure once a minute on market days.
@@ -1001,17 +1662,33 @@ def register(scheduler: Any, app: Any | None = None) -> bool:
         try:
             result = capture_all()
             if result.get("captured"):
-                available = sum(
-                    1 for item in (result.get("gamma") or {}).values()
-                    if item.get("available")
-                )
                 logger.info(
-                    "[MarketStructure] capture complete gamma_available=%d/%d vol_available=%s",
-                    available, len(SYMBOLS),
+                    "[MarketStructure] critical capture complete surface_available=%d/2 vol_available=%s",
+                    sum(1 for item in (result.get("surface") or {}).values() if item.get("available")),
                     bool((result.get("volatility") or {}).get("available")),
                 )
         except Exception:  # noqa: BLE001
             logger.exception("[MarketStructure] minute capture failed")
+
+    def recovery_tick() -> None:
+        try:
+            result = recover_critical_surface()
+            if not result.get("recovered") and result.get("reason") != "market_closed":
+                logger.error("[MarketStructure] critical surface recovery did not pass freshness")
+        except Exception:  # noqa: BLE001
+            logger.exception("[MarketStructure] critical surface recovery failed")
+
+    def gamma_tick() -> None:
+        try:
+            result = capture_gamma_pair()
+            if result.get("captured"):
+                logger.info(
+                    "[MarketStructure] bounded gamma capture complete available=%d/2",
+                    sum(1 for item in (result.get("gamma") or {}).values()
+                        if item.get("available")),
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("[MarketStructure] bounded gamma capture failed")
 
     scheduler.add_job(
         tick, "cron", day_of_week="mon-fri", hour="8-15", minute="*",
@@ -1019,9 +1696,22 @@ def register(scheduler: Any, app: Any | None = None) -> bool:
         coalesce=True, max_instances=1, misfire_grace_time=90,
         next_run_time=datetime.now(UTC),
     )
+    scheduler.add_job(
+        recovery_tick, "cron", day_of_week="mon-fri", hour="8-15", minute="*", second=35,
+        timezone=CT, id="market_structure_surface_recovery", replace_existing=True,
+        coalesce=True, max_instances=1, misfire_grace_time=45,
+    )
+    # A 20-second gap after the primary tick is a circuit breaker: when Theta
+    # is slow, gamma may fail independently but cannot stale the surface/VIX.
+    scheduler.add_job(
+        gamma_tick, "cron", day_of_week="mon-fri", hour="8-15", minute="*", second=20,
+        timezone=CT, id="market_structure_gamma_capture", replace_existing=True,
+        coalesce=True, max_instances=1, misfire_grace_time=45,
+        next_run_time=datetime.now(UTC) + timedelta(seconds=5),
+    )
     logger.info(
-        "[MarketStructure] registered minute gamma + IV-surface captures 08:00-15:59 CT; "
-        "capture_all enforces the 08:30-15:05 market window"
+        "[MarketStructure] registered isolated minute IV-surface/VIX and bounded SPY/QQQ gamma captures; "
+        "both enforce the 08:30-15:05 market window"
     )
     return True
 
@@ -1054,7 +1744,15 @@ def surface_symbol(symbol: str):
     symbol = symbol.upper()
     if symbol not in {"SPY", "QQQ"}:
         return {"available": False, "reason": "surface supports SPY and QQQ", "symbol": symbol}
-    return build_volatility_surface(symbol, datetime.now(UTC))
+    payload = _cached_surface_payload(symbol, datetime.now(UTC))
+    if payload.get("available"):
+        return payload
+    # Report requests get one bounded, report-critical recovery attempt. This
+    # is only reached after the cache has failed its freshness gate; it never
+    # restarts the old slow gamma/flow sweep.
+    rebuilt = build_volatility_surface(symbol, datetime.now(UTC))
+    persist_surface(rebuilt)
+    return rebuilt
 
 
 @router.get("/surface/latest/{symbol}")
@@ -1066,9 +1764,127 @@ def latest_surface_symbol(symbol: str):
     return {"available": row is not None, "symbol": symbol, "surface": row}
 
 
+@router.get("/flow/{symbol}")
+def trade_quote_flow_symbol(symbol: str):
+    symbol = symbol.upper()
+    if symbol not in {"SPY", "QQQ"}:
+        return {"available": False, "reason": "trade-quote flow supports SPY and QQQ", "symbol": symbol}
+    row = _latest_trade_quote_flow(symbol)
+    return {"available": row is not None, "symbol": symbol, "flow": row}
+
+
+@router.get("/flow/latest/{symbol}")
+def latest_trade_quote_flow_symbol(symbol: str):
+    symbol = symbol.upper()
+    if symbol not in {"SPY", "QQQ"}:
+        return {"available": False, "reason": "trade-quote flow supports SPY and QQQ", "symbol": symbol}
+    row = _latest_trade_quote_flow(symbol)
+    return {"available": row is not None, "symbol": symbol, "flow": row}
+
+
+@router.get("/cross-asset")
+def cross_asset():
+    """Fresh sector-relative and credit-proxy context for reports."""
+    now = datetime.now(UTC)
+    payload = fetch_cross_asset(now)
+    assets = payload.get("assets") or {}
+    spy = assets.get("SPY") or {}
+    spy_prev = spy.get("prev_close")
+    spy_ret = ((spy.get("price") / spy_prev - 1) * 100
+               if spy.get("price") and spy_prev else None)
+    rows = []
+    for symbol in CROSS_ASSET_SYMBOLS:
+        item = assets.get(symbol) or {"symbol": symbol}
+        prev = item.get("prev_close")
+        ret = ((item.get("price") / prev - 1) * 100
+               if item.get("price") and prev else None)
+        rows.append({**item, "day_return_pct": round(ret, 3) if ret is not None else None,
+                     "relative_to_spy_pct": round(ret - spy_ret, 3)
+                     if ret is not None and spy_ret is not None else None})
+    return {**payload, "spy_day_return_pct": round(spy_ret, 3) if spy_ret is not None else None,
+            "rows": rows,
+            "interpretation_guardrail": "Use only fresh rows. Relative returns show leadership, not institutional flows or future certainty."}
+
+
+@router.get("/report-readiness")
+def report_readiness():
+    """Single auditable contract for report-critical live data.
+
+    Report writers use this before drafting.  It makes each required block
+    explicit, prevents a missing field from silently disappearing, and keeps
+    LOW/stale observations from influencing the thesis.
+    """
+    now = datetime.now(UTC)
+    surface = {symbol: _cached_surface_payload(symbol, now) for symbol in ("SPY", "QQQ")}
+    gamma = {symbol: _cached_gamma_payload(symbol, now) for symbol in ("SPY", "QQQ")}
+    vol = _cached_vol_payload(now)
+    cross = fetch_cross_asset(now)
+    flow: dict[str, Any] = {}
+    for symbol in ("SPY", "QQQ"):
+        row = _latest_trade_quote_flow(symbol)
+        stamp = _parse_ts((row or {}).get("source_timestamp"))
+        age = (now - stamp).total_seconds() if stamp else None
+        usable = bool(row and row.get("confidence") in {"HIGH", "MEDIUM"}
+                      and age is not None and 0 <= age <= STALE_SECONDS)
+        flow[symbol] = {**(row or {"symbol": symbol, "reason": "no_persisted_flow"}),
+                        "available": usable,
+                        "age_seconds": round(age, 1) if age is not None else None}
+
+    checks = {
+        "surface_spy": bool(surface["SPY"].get("available")),
+        "surface_qqq": bool(surface["QQQ"].get("available")),
+        "gamma_spy": bool(gamma["SPY"].get("available")),
+        "gamma_qqq": bool(gamma["QQQ"].get("available")),
+        "vix_family": all((vol.get("indices") or {}).get(symbol, {}).get("fresh")
+                          for symbol in VOL_SYMBOLS),
+        "sector_credit": bool(cross.get("available")),
+        "flow_spy": bool(flow["SPY"].get("available")),
+        "flow_qqq": bool(flow["QQQ"].get("available")),
+    }
+    # All requested products are part of the audit, including producers that
+    # have not yet been implemented. Absence must never be called readiness.
+    outstanding = {
+        "smile_wings": "separate put/ATM/call IV points not persisted",
+        "breadth": "dedicated breadth producer not implemented",
+        "profile": "validated volume-at-price producer not implemented",
+        "macro": "full rates/FX/commodity/MOVE capture not implemented",
+        "contract_packages": "fresh per-leg executable packages not integrated",
+        "paper_scorecard": "report-alert paper ledger not implemented",
+        "event_study": "validated chop/event study not integrated",
+        "render_validation": "delivered report renderer not wired to validator",
+    }
+    full_checks = {**checks, **{key: False for key in outstanding}}
+    # Flow is required to be visibly accounted for, but it cannot be silently
+    # fabricated merely to pass a publish gate.  The reports receive both the
+    # mandatory-core and optional-live-flow verdicts.
+    mandatory_core = ("surface_spy", "surface_qqq", "gamma_spy", "gamma_qqq",
+                      "vix_family", "sector_credit")
+    return {
+        "retrieved_at": now.isoformat(), "freshness_limit_seconds": STALE_SECONDS,
+        "required_checks": full_checks,
+        "all_requested_ready": all(full_checks.values()),
+        "outstanding_producers": outstanding,
+        "core_ready": all(checks[key] for key in mandatory_core),
+        "flow_ready": checks["flow_spy"] and checks["flow_qqq"],
+        "missing_core": [key for key in mandatory_core if not checks[key]],
+        "missing_flow": [key for key in ("flow_spy", "flow_qqq") if not checks[key]],
+        "surface": surface, "gamma": gamma, "volatility": vol,
+        "cross_asset": cross, "flow": flow,
+        "writer_rule": (
+            "Every named block must be rendered from this payload or listed once in Data Integrity. "
+            "Never replace an unavailable block with a decorative image or inferred data."
+        ),
+    }
+
+
 @router.get("/vol-indices")
 def vol_indices():
-    return fetch_vol_indices(datetime.now(UTC))
+    payload = _cached_vol_payload(datetime.now(UTC))
+    if payload.get("available"):
+        return payload
+    refreshed = fetch_vol_indices(datetime.now(UTC))
+    persist_vol(refreshed)
+    return refreshed
 
 
 @router.get("/gamma/{symbol}")
@@ -1077,7 +1893,7 @@ def gamma_symbol(symbol: str):
     if symbol not in SYMBOLS:
         return {"available": False, "reason": f"unsupported symbol {symbol}",
                 "supported": SYMBOLS}
-    return build_gamma_snapshot(symbol, datetime.now(UTC))
+    return _cached_gamma_payload(symbol, datetime.now(UTC))
 
 
 @router.get("/latest/{symbol}")
@@ -1088,3 +1904,17 @@ def latest_symbol(symbol: str):
                 "supported": SYMBOLS}
     row = _latest_gamma(symbol)
     return {"available": row is not None, "symbol": symbol, "snapshot": row}
+
+
+@router.get("/report-contract")
+def report_contract_schema():
+    from .report_contract import REQUIREMENTS, CONTRACT_VERSION
+    return {"contract_version": CONTRACT_VERSION, "required_fields": REQUIREMENTS,
+            "render_rule": "Use canonical block headings with underscores replaced by spaces; render every field name and its value or explicit unavailable reason."}
+
+
+@router.post("/validate-report")
+def validate_intraday_report(payload: dict[str, Any]):
+    """Pure publication check for submitted final intraday report; no orders or writes."""
+    from .report_contract import validate_rendered_report
+    return validate_rendered_report(payload)

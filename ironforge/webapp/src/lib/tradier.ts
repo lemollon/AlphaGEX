@@ -1547,14 +1547,18 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
  */
 export async function getSandboxPositionSymbols(
   apiKey: string,
+  baseUrl: string = SANDBOX_URL,
 ): Promise<string[]> {
-  const accountId = await getAccountIdForKey(apiKey)
+  // baseUrl threaded through (2026-10-02 audit): production accounts were
+  // queried on the SANDBOX host and came back empty.
+  const accountId = await getAccountIdForKey(apiKey, baseUrl)
   if (!accountId) return []
 
   const data = await sandboxGet(
     `/accounts/${accountId}/positions`,
     undefined,
     apiKey,
+    baseUrl,
   )
   if (!data?.positions?.position) return []
 
@@ -1582,6 +1586,82 @@ export interface SandboxCloseInfo {
  * Query a sandbox order and return the average fill price.
  * Retries up to 3 times with 1s delay for pending orders.
  */
+/**
+ * The broker's own closing fill for a two-leg put spread today, read from the
+ * account's order history: net debit per spread =
+ * Σ(buy_to_close short fills) − Σ(sell_to_close long fills), per contract of the
+ * short leg. Covers multileg orders and single-leg orders alike (a rejected
+ * multileg followed by two single-leg fills is exactly what happened on
+ * 2026-10-02). Null when today's history has no filled close of the short leg —
+ * never invented.
+ */
+export async function findTodaySpreadCloseFill(
+  apiKey: string,
+  accountId: string,
+  baseUrl: string,
+  occShort: string,
+  occLong: string,
+  onDate?: string,
+): Promise<{ net: number; orderId: number } | null> {
+  const data = await sandboxGet(`/accounts/${accountId}/orders`, undefined, apiKey, baseUrl)
+  let orders = data?.orders?.order
+  if (!orders) return null
+  if (!Array.isArray(orders)) orders = [orders]
+  const today = onDate ?? new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date())
+  let debit = 0
+  let credit = 0
+  let shortQty = 0
+  let lastOrderId = 0
+  for (const o of orders) {
+    if (String(o.create_date ?? o.transaction_date ?? '').slice(0, 10) !== today) continue
+    let legs = o.leg ? (Array.isArray(o.leg) ? o.leg : [o.leg]) : [o]
+    for (const l of legs) {
+      const qty = parseFloat(l.exec_quantity ?? l.quantity ?? '0')
+      const px = parseFloat(l.avg_fill_price ?? '0')
+      if (!(qty > 0) || !(px >= 0) || l.status && l.status !== 'filled' && o.status !== 'filled') continue
+      if (l.option_symbol === occShort && l.side === 'buy_to_close') {
+        debit += px * qty; shortQty += qty; lastOrderId = Math.max(lastOrderId, Number(o.id) || 0)
+      } else if (l.option_symbol === occLong && l.side === 'sell_to_close') {
+        credit += px * qty; lastOrderId = Math.max(lastOrderId, Number(o.id) || 0)
+      }
+    }
+  }
+  if (shortQty <= 0 || lastOrderId <= 0) return null
+  return { net: Math.max(0, (debit - credit) / shortQty), orderId: lastOrderId }
+}
+
+/**
+ * Did the BROKER already close this production put spread on `onDate` before it
+ * expired? Returns the broker's net closing debit per spread, or null when there
+ * is no closing fill (the spread really did ride to expiry) or the account can't
+ * be resolved. Used by settlement so a ledger never books an expiry value for a
+ * position the broker bought back earlier (2026-10-02: ledger +$88 vs broker -$32).
+ */
+export async function productionSpreadCloseFill(
+  botName: string,
+  person: string,
+  ticker: string,
+  expiration: string,
+  putShort: number,
+  putLong: number,
+): Promise<{ net: number; orderId: number } | null> {
+  await ensureSandboxAccountsLoaded()
+  let acct: SandboxAccount | null = null
+  if (botName.toLowerCase() === 'flame' && person === 'Flame') {
+    acct = flameProductionAccount({ requireArmed: false })
+  } else {
+    acct = _sandboxAccounts.find(a => a.type === 'production' && a.name === person) ?? null
+  }
+  if (!acct) return null
+  const accountId = acct.cachedAccountId ?? await getAccountIdForKey(acct.apiKey, acct.baseUrl)
+  if (!accountId) return null
+  const occS = buildOccSymbol(ticker, expiration, putShort, 'P')
+  const occL = buildOccSymbol(ticker, expiration, putLong, 'P')
+  return findTodaySpreadCloseFill(acct.apiKey, accountId, acct.baseUrl, occS, occL, String(expiration).slice(0, 10))
+}
+
 async function getOrderFillPrice(
   apiKey: string,
   accountId: string,
@@ -3814,7 +3894,38 @@ export async function closeIcOrderAllAccounts(
         // This prevents quantity mismatches from pileup (multiple opens without closes).
         let closeQty = paperContracts
         try {
-          const positions = await getSandboxAccountPositions(acct.apiKey)
+          // 🚨 2026-10-02: this call used to omit acct.baseUrl, so a PRODUCTION
+          // account was looked up on the SANDBOX host, came back empty, and the
+          // close fell through to the paper count. When the broker was already
+          // flat, every scan cycle fired a close order that could never fill and
+          // the app showed a closed trade as open (FLAME-SPY-20261002-Y7RZKZ:
+          // 50+ unfillable close orders, app +$72 vs broker -$32).
+          const posData = await sandboxGet(`/accounts/${accountId}/positions`, undefined, acct.apiKey, acct.baseUrl)
+          if (posData) {
+            let raw = posData.positions?.position
+            if (!raw) raw = []
+            if (!Array.isArray(raw)) raw = [raw]
+            const held = raw.filter((p: any) =>
+              (p.symbol === occPs || p.symbol === occPl) && parseFloat(p.quantity || '0') !== 0)
+            if (twoLegClose && held.length === 0) {
+              // Broker is already FLAT on this spread — something closed it
+              // (broker-side or an earlier cycle). Never send another order; book
+              // the close from the broker's own fills for today.
+              const resultKey = `${acct.name}:${acct.type ?? 'sandbox'}`
+              const fill = await findTodaySpreadCloseFill(acct.apiKey, accountId, acct.baseUrl, occPs, occPl)
+              console.warn(
+                `[tradier] ${acct.name}: broker already FLAT on ${occPs}/${occPl} — no order sent. ` +
+                (fill ? `Booking broker close fill net $${fill.net.toFixed(4)} (order ${fill.orderId}).`
+                      : `No closing fill found in today's orders — booking at estimate.`),
+              )
+              results[resultKey] = {
+                order_id: fill?.orderId ?? -1, contracts: closeQty,
+                fill_price: fill?.net ?? null, account_type: acct.type ?? 'sandbox',
+              }
+              return
+            }
+          }
+          const positions = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
           // Find the short put leg to determine actual quantity
           const shortPutPos = positions.find(p => p.symbol === occPs && p.quantity < 0)
           if (shortPutPos) {
@@ -3878,6 +3989,20 @@ export async function closeIcOrderAllAccounts(
           let fillPrice: number | null = null
           try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, pollMs, acct.baseUrl) } catch { /* non-fatal */ }
           results[resultKey] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice, account_type: acct.type ?? 'sandbox' }
+          return
+        }
+
+        // 🚨 A PRICE-CAPPED CLOSE NEVER DEGRADES TO MARKET (2026-10-02 audit). Stages 2
+        // and 3 below are market orders with no price. A debit-limit close exists to
+        // guarantee a price (a profit-target floor); when the broker rejected it, the
+        // cascade used to fall through and fill at market — FLAME-SPY-20261002-Y7RZKZ
+        // turned a 15% profit-target exit into a -$32 loss that way. Report no order
+        // for this account; the caller keeps the position open and re-evaluates.
+        if (effectiveOrderType === 'debit') {
+          console.warn(
+            `[tradier] ${acct.name}: debit-limit close rejected twice (limit=${limitPrice ?? 'n/a'}) — ` +
+            `NOT falling back to market legs. Position stays open; caller re-evaluates next cycle.`,
+          )
           return
         }
 
@@ -4235,11 +4360,17 @@ export async function closeOrphanSandboxPositions(
  * Used when an account is deactivated to prevent orphaned positions.
  * Returns the number of positions successfully closed.
  */
-export async function closeAllSandboxPositions(apiKey: string): Promise<number> {
-  const accountId = await getAccountIdForKey(apiKey)
+export async function closeAllSandboxPositions(apiKey: string, baseUrl: string = SANDBOX_URL): Promise<number> {
+  // SANDBOX ONLY (2026-10-02 audit). This is a blunt market-close of every leg
+  // used on account deactivation; it must never reach a real-money account.
+  if (baseUrl !== SANDBOX_URL) {
+    console.error('[tradier] closeAllSandboxPositions refused: non-sandbox baseUrl — close production positions through the bot close path')
+    return 0
+  }
+  const accountId = await getAccountIdForKey(apiKey, baseUrl)
   if (!accountId) return 0
 
-  const positions = await getSandboxAccountPositions(apiKey)
+  const positions = await getSandboxAccountPositions(apiKey, undefined, baseUrl)
   const openPositions = positions.filter(p => p.quantity !== 0)
   if (openPositions.length === 0) return 0
 
@@ -4256,8 +4387,14 @@ export async function closeAllSandboxPositions(apiKey: string): Promise<number> 
         quantity: String(qty),
         type: 'market',
         duration: 'day',
-      }, apiKey)
-      if (result?.order?.id) closed++
+      }, apiKey, baseUrl)
+      // Count it only when the broker reports a FILL — an order id alone can be
+      // a rejected order, which used to be reported as "closed".
+      if (result?.order?.id) {
+        const fill = await getOrderFillPrice(apiKey, accountId, result.order.id, 30_000, baseUrl)
+        if (fill != null) closed++
+        else console.warn(`[tradier] closeAllSandboxPositions: order ${result.order.id} for ${pos.symbol} did not fill`)
+      }
     } catch { /* best-effort */ }
   }
   return closed

@@ -36,6 +36,7 @@ vi.mock('../db', () => ({
   int: (v: any) => parseInt(v) || 0,
   escapeSql: (v: string) => v,
   CT_TODAY: "'2026-03-23'",
+  isSettleAtExpiryBot: (b: string) => b === 'flame' || b === 'spark',
 }))
 
 /* ── Mock fetch ─────────────────────────────────────────────────────── */
@@ -436,19 +437,19 @@ describe('Sliding Profit Target', () => {
   }
 
   it('before 10:30 AM CT: PT stays at base (30%)', () => {
-    const [pct, tier] = getSlidingProfitTarget(makeCT(9, 30), 0.30, 'flame')
+    const [pct, tier] = getSlidingProfitTarget(makeCT(9, 30), 0.30, 'blaze')
     expect(pct).toBe(0.30)
     expect(tier).toBe('MORNING')
   })
 
   it('at 11:00 AM CT: PT loosens to 20% (base - 10%)', () => {
-    const [pct, tier] = getSlidingProfitTarget(makeCT(11, 0), 0.30, 'flame')
+    const [pct, tier] = getSlidingProfitTarget(makeCT(11, 0), 0.30, 'blaze')
     expect(pct).toBeCloseTo(0.20, 10)
     expect(tier).toBe('MIDDAY')
   })
 
   it('at 1:30 PM CT: PT loosens to 15% (base - 15%)', () => {
-    const [pct, tier] = getSlidingProfitTarget(makeCT(13, 30), 0.30, 'flame')
+    const [pct, tier] = getSlidingProfitTarget(makeCT(13, 30), 0.30, 'blaze')
     expect(pct).toBe(0.15)
     expect(tier).toBe('AFTERNOON')
   })
@@ -463,7 +464,7 @@ describe('Sliding Profit Target', () => {
   })
 
   it('PT never goes below 10%', () => {
-    const [pct] = getSlidingProfitTarget(makeCT(14, 0), 0.30, 'flame')
+    const [pct] = getSlidingProfitTarget(makeCT(14, 0), 0.30, 'blaze')
     expect(pct).toBeGreaterThanOrEqual(0.10)
   })
 })

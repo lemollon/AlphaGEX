@@ -7,6 +7,8 @@ import {
   formatElapsedMinutes,
   formatTargetStopCaption,
   formatAutoCloseCaption,
+  formatSettleAtCloseCaption,
+  isSettleAtExpiryBot,
 } from '@/live/lifecycle'
 
 describe('deriveLifecycleNodes', () => {
@@ -18,6 +20,35 @@ describe('deriveLifecycleNodes', () => {
   it('closed: every node is done', () => {
     const nodes = deriveLifecycleNodes(true)
     expect(nodes.map((n) => n.status)).toEqual(['done', 'done', 'done', 'done'])
+  })
+
+  it('uses the generic labels for a non-settle-at-expiry bot', () => {
+    const nodes = deriveLifecycleNodes(false, 'inferno')
+    expect(nodes.map((n) => n.label)).toEqual(['Opened', 'Monitoring', 'Target / Stop', 'Auto Close'])
+  })
+
+  it('uses the settle-at-expiry labels for FLAME and SPARK', () => {
+    expect(deriveLifecycleNodes(false, 'flame').map((n) => n.label)).toEqual([
+      'Opened', 'Monitoring', 'Hold to Close', 'Settles at Close',
+    ])
+    expect(deriveLifecycleNodes(false, 'spark').map((n) => n.label)).toEqual([
+      'Opened', 'Monitoring', 'Hold to Close', 'Settles at Close',
+    ])
+  })
+
+  it('defaults to the generic labels when no bot is given', () => {
+    expect(deriveLifecycleNodes(false).map((n) => n.label)).toEqual([
+      'Opened', 'Monitoring', 'Target / Stop', 'Auto Close',
+    ])
+  })
+})
+
+describe('isSettleAtExpiryBot', () => {
+  it('is true for flame and spark only', () => {
+    expect(isSettleAtExpiryBot('flame')).toBe(true)
+    expect(isSettleAtExpiryBot('spark')).toBe(true)
+    expect(isSettleAtExpiryBot('inferno')).toBe(false)
+    expect(isSettleAtExpiryBot('kindle')).toBe(false)
   })
 })
 
@@ -123,5 +154,28 @@ describe('formatAutoCloseCaption', () => {
   it('falls back to "at close" when no same-day instant is known', () => {
     expect(formatAutoCloseCaption(null)).toBe('at close')
     expect(formatAutoCloseCaption(undefined)).toBe('at close')
+  })
+})
+
+describe('formatSettleAtCloseCaption', () => {
+  it('reads "Settles at close (<CT time>)" when a scheduled close instant is known', () => {
+    // 2026-01-15T21:00:00Z = 3:00 PM CT (no DST that week).
+    expect(formatSettleAtCloseCaption('2026-01-15T21:00:00.000Z')).toBe('Settles at close (3:00 PM CT)')
+  })
+
+  it('always renders CT, never the device/viewer local zone', () => {
+    // Same instant, asserted against the fixed CT reading regardless of where this
+    // test happens to run — formatAutoCloseCaption's local-time test deliberately
+    // does not pin a zone; this one must, because the whole point is that it doesn't.
+    expect(formatSettleAtCloseCaption('2026-01-15T18:00:00.000Z')).toBe('Settles at close (12:00 PM CT)')
+  })
+
+  it('falls back to the bare label when no same-day instant is known', () => {
+    expect(formatSettleAtCloseCaption(null)).toBe('Settles at close')
+    expect(formatSettleAtCloseCaption(undefined)).toBe('Settles at close')
+  })
+
+  it('falls back to the bare label on an invalid timestamp', () => {
+    expect(formatSettleAtCloseCaption('not-a-date')).toBe('Settles at close')
   })
 })

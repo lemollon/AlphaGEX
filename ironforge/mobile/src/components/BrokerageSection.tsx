@@ -24,7 +24,7 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR from 'swr'
 import { api } from '@/api/client'
 import type { BrokerageConnection, BrokerageConnections, LiveAgents } from '@/api/types'
-import { brokerLabel, health, type HealthKey } from '@/api/brokerage'
+import { brokerLabel, health, maskTail, type HealthKey } from '@/api/brokerage'
 import { assignedAgentLabels } from '@/agents/assignment'
 import { space, radius, type, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
@@ -231,7 +231,7 @@ function ConnectionRow({
         </View>
         {masks.length ? (
           <Text style={[type.label, { color: color.textDim, marginTop: 2 }]}>
-            {masks.map((m) => `•••• ${m}`).join('   ')}
+            {masks.map((m) => maskTail(m)).join('   ')}
           </Text>
         ) : null}
         <Text style={[type.label, { color: color.muted, marginTop: 2 }]}>

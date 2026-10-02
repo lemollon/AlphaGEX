@@ -29,6 +29,13 @@ const KNOWN: Record<string, string> = {
   fidelity: 'Fidelity',
 }
 
+/** "•••• 2434" from any mask shape ("2434", "••••2434", "****2434"). The server
+ *  sometimes pre-masks, which rendered a doubled "•••• ••••2434". Last 4 only. */
+export function maskTail(mask: string | null | undefined): string {
+  const tail = String(mask ?? '').replace(/[^0-9A-Za-z]/g, '').slice(-4)
+  return tail ? `•••• ${tail}` : ''
+}
+
 export function brokerLabel(slug: string | null | undefined): string {
   if (!slug) return 'Brokerage'
   const key = slug.trim().toLowerCase()

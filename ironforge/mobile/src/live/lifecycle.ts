@@ -9,11 +9,37 @@
 
 export const LIFECYCLE_LABELS = ['Opened', 'Monitoring', 'Target / Stop', 'Auto Close'] as const
 
+/**
+ * FLAME and SPARK are EBB settle-at-expiry bots — see isSettleAtExpiryBot below.
+ * They never stop out and never auto-close early, so "Target / Stop" and "Auto
+ * Close" describe outcomes that cannot happen for them: a short holds to the
+ * close and a guard only steps in during the final three minutes before it.
+ * Showing the generic labels (and, downstream, "by 2:45 PM") on these bots is
+ * what the customer actually traded against, not what the lifecycle line said.
+ */
+export const SETTLE_AT_EXPIRY_LIFECYCLE_LABELS = [
+  'Opened',
+  'Monitoring',
+  'Hold to Close',
+  'Settles at Close',
+] as const
+
 export type LifecycleNodeStatus = 'done' | 'current' | 'future'
 
 export interface LifecycleNode {
-  label: (typeof LIFECYCLE_LABELS)[number]
+  label: string
   status: LifecycleNodeStatus
+}
+
+/**
+ * FLAME/SPARK (EBB) hold every position to expiry/settlement instead of being
+ * stopped out or force-closed early — mirrors webapp lib/db.ts isSettleAtExpiryBot.
+ * Duplicated rather than imported: the mobile app is a separate package with its
+ * own bundler root and does not import webapp source (same pattern as
+ * theme/tokens.ts's agentAccent).
+ */
+export function isSettleAtExpiryBot(bot: string): boolean {
+  return bot === 'flame' || bot === 'spark'
 }
 
 /**
@@ -26,10 +52,13 @@ export interface LifecycleNode {
  *
  * `closed` marks every node done — the moment a lifecycle line would read as
  * fully complete (Auto Close gets the real close time) before the card falls
- * back to its existing closed-state rendering.
+ * back to its existing closed-state rendering. `bot` selects the settle-at-
+ * expiry label set for FLAME/SPARK; omitted or any other bot keeps the
+ * original four labels.
  */
-export function deriveLifecycleNodes(closed: boolean): LifecycleNode[] {
-  return LIFECYCLE_LABELS.map((label, i) => ({
+export function deriveLifecycleNodes(closed: boolean, bot?: string | null): LifecycleNode[] {
+  const labels = bot && isSettleAtExpiryBot(bot) ? SETTLE_AT_EXPIRY_LIFECYCLE_LABELS : LIFECYCLE_LABELS
+  return labels.map((label, i) => ({
     label,
     status: closed ? 'done' : i === 0 ? 'done' : i === 1 ? 'current' : 'future',
   }))
@@ -98,4 +127,24 @@ export function formatTargetStopCaption(
 export function formatAutoCloseCaption(autoCloseAt: string | null | undefined): string {
   const clock = formatLocalClock(autoCloseAt)
   return clock ? `by ${clock}` : 'at close'
+}
+
+/**
+ * The settle-at-close caption for FLAME/SPARK — "Settles at close (3:00 PM CT)".
+ * Always CT, never the viewer's local time: "at close" means the CT session
+ * close (noon CT on an early-close half-day), and showing it converted to the
+ * viewer's own zone would read as a different, invented cutoff. Falls back to
+ * the bare label when no same-day instant is known (a swung leg), same honesty
+ * rule as formatAutoCloseCaption's "at close".
+ */
+export function formatSettleAtCloseCaption(autoCloseAt: string | null | undefined): string {
+  if (!autoCloseAt) return 'Settles at close'
+  const d = new Date(autoCloseAt)
+  if (Number.isNaN(d.getTime())) return 'Settles at close'
+  const ct = d.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'America/Chicago',
+  })
+  return `Settles at close (${ct} CT)`
 }

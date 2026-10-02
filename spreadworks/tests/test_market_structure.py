@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import requests
 
 import backend.market_structure as market_structure
@@ -214,6 +214,13 @@ def test_iv_only_surface_builds_term_skew_and_expected_move(monkeypatch):
         "source": "Tradier ETF quote",
     })
     monkeypatch.setattr(market_structure, "_theta_rows", lambda path, params: payload)
+    monkeypatch.setattr(market_structure, "fetch_intraday_realized_volatility",
+                        lambda symbol, current: {"available": True,
+                                                 "realized_vol_60m": 0.12,
+                                                 "bars": 60,
+                                                 "source_timestamp": current.isoformat(),
+                                                 "bar_timestamp": current.isoformat(),
+                                                 "method": "test", "source": "test"})
     result = market_structure.build_volatility_surface("SPY", now)
     assert result["available"] is True
     assert result["confidence"] == "HIGH"
@@ -226,6 +233,8 @@ def test_iv_only_surface_builds_term_skew_and_expected_move(monkeypatch):
     assert result["skew_25d"] > 0
     assert result["expected_move_dollars_1d"] > 0
     assert result["expected_move_low"] < 750 < result["expected_move_high"]
+    assert result["realized_vol_60m"] == 0.12
+    assert result["iv_minus_realized_vol"] == result["atm_iv"] - 0.12
 
 
 def test_iv_snapshot_without_provider_timestamp_uses_fresh_receipt_time(monkeypatch):
@@ -241,9 +250,67 @@ def test_iv_snapshot_without_provider_timestamp_uses_fresh_receipt_time(monkeypa
         "price": 750.0, "fresh": True, "source_timestamp": now,
     })
     monkeypatch.setattr(market_structure, "_theta_rows", lambda path, params: payload)
+    monkeypatch.setattr(market_structure, "fetch_intraday_realized_volatility",
+                        lambda symbol, current: {"available": False,
+                                                 "reason": "insufficient_intraday_bars"})
     result = market_structure.build_volatility_surface("SPY", now)
     assert result["available"] is True
     assert result["n_rows"] == len(payload)
+
+
+def test_realized_volatility_uses_fresh_rth_one_minute_tape():
+    now = datetime(2026, 10, 2, 15, 31, 20, tzinfo=timezone.utc)  # 10:31:20 ET
+    start = now - timedelta(minutes=60)
+    bars = []
+    for i in range(61):
+        stamp = start + timedelta(minutes=i)
+        bars.append({"time": stamp.astimezone(market_structure.ET).replace(tzinfo=None).isoformat(),
+                     "close": 750.0 * (1.0001 ** i)})
+    result = market_structure._realized_volatility_from_bars(bars, now)
+    assert result["available"] is True
+    assert result["bars"] == 60
+    assert result["realized_vol_60m"] > 0
+    assert result["bar_age_seconds"] == 20
+
+
+def test_realized_volatility_rejects_stale_tape():
+    now = datetime(2026, 10, 2, 15, 35, tzinfo=timezone.utc)
+    bars = [{"time": "2026-10-02T10:30:00", "close": 750.0}]
+    result = market_structure._realized_volatility_from_bars(bars, now)
+    assert result["available"] is False
+    assert result["reason"] == "stale_timesales_bar"
+
+
+def test_surface_read_explains_day_and_forward_volatility_pricing():
+    read = market_structure._surface_read(
+        atm_iv=0.12, realized_vol=0.09, skew=0.04,
+        iv_0dte=0.19, iv_1_5dte=0.13, iv_6_20dte=0.16,
+        iv_21_365dte=0.20,
+    )
+    assert read["available"] is True
+    assert read["day_state"] == "PREMIUM_RICH"
+    assert read["skew_state"] == "DOWNSIDE_HEDGE_PREMIUM"
+    assert "6–20DTE volatility is elevated" in read["forward_meaning"]
+    assert "not proof" in read["forward_meaning"]
+
+
+def test_trade_quote_flow_uses_same_print_nbbo_for_initiation(monkeypatch):
+    now = datetime(2026, 10, 2, 15, 0, 30, tzinfo=timezone.utc)
+    rows = []
+    for i in range(10):
+        rows.append({"expiration": "2026-10-16", "right": "call",
+                     "timestamp": "2026-10-02T10:00:20", "price": "1.10",
+                     "bid": "1.00", "ask": "1.10", "size": "20"})
+        rows.append({"expiration": "2026-10-16", "right": "put",
+                     "timestamp": "2026-10-02T10:00:20", "price": "1.00",
+                     "bid": "1.00", "ask": "1.10", "size": "20"})
+    monkeypatch.setattr(market_structure, "_theta_rows", lambda path, params, timeout=25: rows)
+    result = market_structure.fetch_trade_quote_flow("SPY", now)
+    assert result["available"] is True
+    mid = result["buckets"]["6_20dte"]
+    assert mid["call_initiation"] == "LIKELY_BUYER_INITIATED"
+    assert mid["put_initiation"] == "LIKELY_SELLER_INITIATED"
+    assert "opening/closing" in result["guardrail"]
 
 
 

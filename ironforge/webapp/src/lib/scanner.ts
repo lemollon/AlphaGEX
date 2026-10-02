@@ -910,6 +910,46 @@ function forgeWingWidth(equity: number): number {
  *  is code-controlled). */
 type NumericConfigKey = { [K in keyof BotConfig]: BotConfig[K] extends number ? K : never }[keyof BotConfig]
 
+/**
+ * 2026-10-02: EBB settle-at-expiry bots (FLAME, SPARK) hold to the close — no
+ * intraday profit target, no stop. A stale production config row (pt 30 / sl 100)
+ * re-enabled both on FLAME and closed a live trade early for -$32. DB
+ * profit_target_pct / stop_loss_pct are ignored for these bots; the code values win.
+ */
+function pinEbbExitConfig(botName: string, merged: BotConfig): void {
+  if (!isSettleAtExpiryBot(botName)) return
+  const d = DEFAULT_CONFIG[botName]
+  if (merged.pt_pct !== d.pt_pct || merged.sl_mult !== d.sl_mult) {
+    console.warn(
+      `[scanner] ${botName.toUpperCase()} DB exit override ignored (pt=${merged.pt_pct}, sl=${merged.sl_mult}) — ` +
+      `EBB holds to expiry; using code pt=${d.pt_pct} sl=${d.sl_mult}`,
+    )
+  }
+  merged.pt_pct = d.pt_pct
+  merged.sl_mult = d.sl_mult
+  // The validated entry window is part of the strategy, not a tunable (2026-10-02
+  // audit: a stale row set FLAME entry_end 1400, letting live FLAME enter anywhere
+  // 13:05-14:00 CT instead of 13:05-13:10).
+  if (merged.entry_start !== d.entry_start || merged.entry_end !== d.entry_end) {
+    console.warn(
+      `[scanner] ${botName.toUpperCase()} DB entry-window override ignored ` +
+      `(${merged.entry_start}-${merged.entry_end}) — using code ${d.entry_start}-${d.entry_end} CT`,
+    )
+  }
+  merged.entry_start = d.entry_start
+  merged.entry_end = d.entry_end
+  // Paper seed is the product tier (FLAME $2,000 / SPARK $5,000, bot-capital.ts).
+  // A stale row had FLAME at $5,000, overstating paper % returns 2.5x. Production
+  // ledgers are seeded from broker equity and never read this value.
+  if (merged.starting_capital !== d.starting_capital) {
+    console.warn(
+      `[scanner] ${botName.toUpperCase()} DB starting_capital override ignored ` +
+      `($${merged.starting_capital}) — using code $${d.starting_capital}`,
+    )
+  }
+  merged.starting_capital = d.starting_capital
+}
+
 /** DB column → config key mapping (with optional transform) */
 const DB_TO_CFG: Record<string, { key: NumericConfigKey; transform?: (v: number) => number }> = {
   sd_multiplier:        { key: 'sd' },
@@ -993,6 +1033,7 @@ async function loadConfigOverrides(): Promise<void> {
         const [h, m] = entryEndStr.split(':').map(Number)
         if (!isNaN(h) && !isNaN(m)) merged.entry_end = h * 100 + m
       }
+      pinEbbExitConfig(bot.name, merged)
 
       // eod_cutoff_et is a "HH:MM" string in CENTRAL time. The `_et` suffix is a
       // legacy misnomer — all IronForge times are CT (matching entry_end above),
@@ -1088,6 +1129,7 @@ export async function loadProductionConfigFor(botName: string): Promise<BotConfi
       const [h, m] = entryEndStr.split(':').map(Number)
       if (!isNaN(h) && !isNaN(m)) merged.entry_end = h * 100 + m
     }
+    pinEbbExitConfig(bot.name, merged)
     // eod_cutoff_et is Central time (legacy `_et` name); parsed as-is, no shift.
     const eodCtStr = row.eod_cutoff_et
     if (eodCtStr && typeof eodCtStr === 'string' && eodCtStr.includes(':')) {
@@ -1462,6 +1504,13 @@ function hasWorkingEntryOrder(
  */
 function getSlidingProfitTarget(ct: Date, basePt: number, botName: string): [number, string] {
   if (botName === 'inferno') return [1.0, 'HOLD_TO_EOD']
+  // 🚨 2026-10-02: EBB settle-at-expiry bots (FLAME, SPARK) NEVER take an intraday
+  // profit target, whatever the DB says. A production config row overrode FLAME's
+  // pt_pct 1.0 → 0.30; the AFTERNOON tier turned that into a 15% target, the PT
+  // close's debit limit was rejected, the cascade fell back to market legs and a
+  // 4-lot $0.22 credit spread was bought back for $0.30 (-$32) at ~1:50 PM CT
+  // (FLAME-SPY-20261002-Y7RZKZ). Code-controlled, like the SPARK tier shape below.
+  if (isSettleAtExpiryBot(botName)) return [1.0, 'HOLD_TO_EOD']
 
   // basePt >= 1.0 is the engine's OFF switch for the profit target, and it must
   // stay off all day. Before 2026-08-10 only the MORNING tier honored it: the
@@ -3267,6 +3316,36 @@ async function closePosition(
     if (posMetaRow[0]?.account_type) posAccountType = posMetaRow[0].account_type
   } catch { /* default */ }
 
+  // 🚨 HOLD-TO-EXPIRY LOCK (2026-10-02, FLAME-SPY-20261002-Y7RZKZ). FLAME and SPARK
+  // are EBB settle-at-expiry bots: the ONLY scanner exits are the assignment guard
+  // (final minutes before the close) and book-only settlement. A profit target that
+  // should never have been live bought back a live 4-lot at ~1:50 PM CT for -$32;
+  // held to the close it made +$88. Whatever triggers an early exit in future —
+  // a stale DB override, a data-feed failure, a new rule — no close order reaches
+  // the broker before the guard window. Operator force-close uses its own route.
+  if (isSettleAtExpiryBot(bot.name) && reason !== ASSIGNMENT_GUARD_REASON
+      && !isBookOnlyCloseReason(reason) && reason !== 'stale_holdover') {
+    const ctNow = getCentralTime()
+    const hhmm = ctNow.getHours() * 100 + ctNow.getMinutes()
+    const { startHHMM } = assignmentGuardWindow(ctNow)
+    if (hhmm < startHHMM) {
+      console.error(
+        `[scanner] *** ${bot.name.toUpperCase()} EARLY CLOSE BLOCKED *** ${positionId} reason=${reason} ` +
+        `at ${hhmm} CT (before guard ${startHHMM}) — EBB holds to expiry; no broker order sent.`,
+      )
+      try {
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+           VALUES ($1, $2, $3, $4)`,
+          ['CRITICAL', `EARLY CLOSE BLOCKED: ${positionId} reason=${reason}`,
+            JSON.stringify({ position_id: positionId, reason, hhmm_ct: hhmm, guard_start: startHHMM, account_type: posAccountType }),
+            bot.dte],
+        )
+      } catch { /* log failure must not unblock */ }
+      return 'failed'
+    }
+  }
+
   // Determine estimated close price if not provided.
   // Put credit spread detection: callShort === 0 (FLAME after Apr 2026 migration).
   // For those, use the 2-leg put-spread MTM; for ICs keep the existing 4-leg call.
@@ -4030,7 +4109,7 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
   const rows = await query(
     `SELECT position_id, ticker, expiration, put_short_strike, put_long_strike,
             call_short_strike, call_long_strike, contracts, total_credit,
-            collateral_required, spread_width, account_type
+            collateral_required, spread_width, account_type, person
        FROM ${botTable(bot.name, 'positions')}
       WHERE status = 'open' AND dte_mode = $1 AND expiration <= $2`,
     [bot.dte, todayStr],
@@ -4099,9 +4178,29 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
     const ks = num(p.put_short_strike)
     const kl = num(p.put_long_strike)
     const width = ks - kl
-    const value = Math.min(Math.max(ks - settlePx, 0), width)
+    let value = Math.min(Math.max(ks - settlePx, 0), width)
     const credit = num(p.total_credit)
     const contracts = int(p.contracts)
+
+    // 🚨 BROKER FIRST (2026-10-02). A production row can be open in the ledger while
+    // the broker already bought the spread back (FLAME-SPY-20261002-Y7RZKZ-prod-flame
+    // booked +$88 at expiry; the broker had closed it for -$32). Book the broker's own
+    // closing debit when one exists for the expiry date.
+    if (p.account_type === 'production') {
+      try {
+        const { productionSpreadCloseFill } = await import('./tradier')
+        const fill = await productionSpreadCloseFill(bot.name, String(p.person ?? ''), ticker, exp, ks, kl)
+        if (fill) {
+          console.warn(
+            `[scanner] ${bot.name.toUpperCase()} ${p.position_id}: broker already closed before expiry ` +
+            `(order ${fill.orderId}, net $${fill.net.toFixed(4)}) — booking the broker fill, not the expiry value $${value.toFixed(2)}`,
+          )
+          value = fill.net
+        }
+      } catch (e) {
+        console.warn(`[scanner] broker close-fill check failed for ${p.position_id} (booking expiry value):`, e)
+      }
+    }
 
     // 🚨 closePosition CAN DECLINE TO CLOSE. It defers on a missing broker fill and
     // returns without flipping `status`, so logging SETTLED unconditionally printed a
@@ -5791,7 +5890,16 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   // the SPY book, after the put side has already been fully decided above, so
   // it can never affect the put spread's own result. Never throws into this
   // function — see that module's own safety-invariant header comment.
-  if (bot.name === 'flame') {
+  // 🚨 2026-10-02 audit: the call spread is a MIRROR of the put trade, never an
+  // independent bet. Only run it when the SPY put book opened this tick
+  // ('traded@') or already holds today's trade ('traded_today'). Any skip —
+  // credit floor, no room, stand-down, ladder, weekday skip — skips the call too.
+  const spyPutResult = out.find((s) => s.startsWith('SPY=')) ?? ''
+  const putOpenedToday = spyPutResult.startsWith('SPY=traded@') || spyPutResult === 'SPY=traded_today'
+  if (bot.name === 'flame' && !putOpenedToday) {
+    console.log(`[flame-v2] call_spread skipped: put side did not open (${spyPutResult || 'no_spy_result'})`)
+  }
+  if (bot.name === 'flame' && putOpenedToday) {
     try {
       const spyQuote = await getQuote('SPY')
       const spySpot = spyQuote?.last ?? 0

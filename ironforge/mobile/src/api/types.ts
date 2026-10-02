@@ -308,6 +308,13 @@ export interface MembershipResponse {
     /** YYYY-MM-DD, or null when Stripe has not written a period end yet. */
     next_billing_date: string | null
     bots: string[]
+    /**
+     * Which billing rail wrote this membership (Apple IAP handoff, "Mobile
+     * contract" §4). 'apple' when any live row came from StoreKit; 'stripe' for the
+     * original rail; null only if the server has rows but genuinely can't tell —
+     * treated the same as 'stripe' on iOS (plain sentence, no link).
+     */
+    provider: 'stripe' | 'apple' | null
   } | null
 }
 

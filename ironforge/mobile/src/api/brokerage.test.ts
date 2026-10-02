@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { brokerLabel, health, soleConnection } from '@/api/brokerage'
+import { brokerLabel, health, maskTail, soleConnection } from '@/api/brokerage'
 import type { BrokerageConnections } from '@/api/types'
 
 function conn(over: Partial<BrokerageConnections['connections'][number]> = {}) {
@@ -94,5 +94,15 @@ describe('soleConnection — never guesses which account belongs to an agent', (
     )
     expect(r).not.toBeNull()
     expect(r!.mask).toBeNull()
+  })
+})
+
+describe('maskTail', () => {
+  it('never doubles a pre-masked value (the "•••• ••••2434" bug)', () => {
+    expect(maskTail('••••2434')).toBe('•••• 2434')
+    expect(maskTail('2434')).toBe('•••• 2434')
+    expect(maskTail('****2434')).toBe('•••• 2434')
+    expect(maskTail('6YB71371')).toBe('•••• 1371')
+    expect(maskTail(null)).toBe('')
   })
 })
