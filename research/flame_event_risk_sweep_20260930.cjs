@@ -649,7 +649,7 @@ function sweepStats(a,period='full'){
 function sweepSnapshot(){return {spec:{...SPEC,scenarioGrid:scenarioGrid(),trainingEnd:'2025-09-26',validationStart:'2025-09-29',inputReuse:'Only frozen gamma/VIX/EOD/SPX market inputs from the validated baseline checkpoint; every account performance path recomputed; fresh minute quotes fetched once per day across scenarios.'},status:{...STATE},engineHash:sha(fs.readFileSync(__filename)),baselineKey:BASELINE_KEY,summary:accounts.map(a=>({scenario:a.scenario,fillCase:a.fillCase,full:sweepStats(a),train:sweepStats(a,'train'),validation:sweepStats(a,'validation'),tradeCounts:a.tradeCounts,unresolved:a.unresolved,complete:STATE.completed===751&&!STATE.dataErrors.length&&!a.unresolved.length})),coverageLimits:SPEC.gammaCoverage+' '+SPEC.execution};}
 function flameCustomerRankings(limit=10){
  const grouped=new Map();
- for(const account of accounts.filter(a=>a.scenario.bot==='flame'&&a.scenario.profile==='current_customer_package')){
+ for(const account of accounts.filter(a=>a.bot==='flame'&&a.profile==='current_customer_package')){
   const item=grouped.get(account.scenario.id)||{scenario:account.scenario};
   item[account.fillCase]=sweepStats(account);
   grouped.set(account.scenario.id,item);
