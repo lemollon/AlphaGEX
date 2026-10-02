@@ -598,6 +598,15 @@ function scenarioGrid(){
   ['retain75',{dayRetention:.75,weekRetention:.75,accountRetention:.50}],
   ['account50',{dayRetention:0,weekRetention:0,accountRetention:.50}],
  ])out.push({id:`${bot}_base_profit_lock_${id}`,bot,baseGate,gate:baseGate,risk:'full',credit:.10,regime:'all',eventGuard:false,eventMode:'none',maxRiskPct:null,minute:'none',profitLock,takePct:0,stopPct:0,dynamicShock:false,dynamicTrail:false});
+ // Per-trade loss caps directly address the customer problem: a single
+ // late-day guard event must not be large enough to erase a retained streak.
+ // Compare the literal base, the higher-credit VIX-gated admission, and the
+ // event/shock controller at 10%, 15%, and 20% of current account equity.
+ for(const maxRiskPct of [.10,.15,.20])for(const cfg of [
+  {id:'base',gate:.80,credit:.10,regime:'all',minute:'none',eventMode:'none',dynamicShock:false},
+  {id:'add_full_hold_none_minute_vix_flat',gate:.925,credit:.20,regime:'prior_up',minute:'vix_flat',eventMode:'none',dynamicShock:false},
+  {id:'base_shock_major',gate:.80,credit:.10,regime:'all',minute:'none',eventMode:'major',dynamicShock:true},
+ ])out.push({id:`flame_${cfg.id}_riskcap_${Math.round(maxRiskPct*100)}`,bot:'flame',baseGate:.80,gate:cfg.gate,risk:'full',credit:cfg.credit,regime:cfg.regime,eventGuard:false,eventMode:cfg.eventMode,maxRiskPct,minute:cfg.minute,profitLock:null,takePct:0,stopPct:0,dynamicShock:cfg.dynamicShock,dynamicTrail:false});
  return out;
 }
 function capAddedLots(n,risk){if(n<=0)return 0;if(risk==='one')return Math.min(n,1);if(risk==='full')return n;return Math.max(1,Math.floor(n*(risk==='75pct'?.75:.50)));}
@@ -627,7 +636,7 @@ function scenarioCandidate(s,ratio,day,spots){
  return eod[prior[1]]>=eod[prior[0]];
 }
 function sweepSelfTest(){
- assert.equal(scenarioGrid().length,222);assert.equal(new Set(scenarioGrid().map(s=>s.id)).size,222);
+ assert.equal(scenarioGrid().length,231);assert.equal(new Set(scenarioGrid().map(s=>s.id)).size,231);
  assert.equal(scenarioGrid().filter(s=>s.minute!=='none'&&s.gate===s.baseGate).length,0,'baseline must not be selected with new minute filters');
  assert.equal(scenarioGrid().filter(s=>s.minute==='vix_flat').length,48);
  assert.equal(scenarioGrid().filter(s=>s.profitLock).length,6);
@@ -636,7 +645,7 @@ function sweepSelfTest(){
  const s={baseGate:.80,gate:.85,regime:'all',minute:'none'};assert(scenarioCandidate(s,.80,'2024-01-02',new Map()));assert(scenarioCandidate(s,.85,'2024-01-02',new Map()));assert(!scenarioCandidate(s,.850001,'2024-01-02',new Map()));
  assert(!scenarioCandidate({baseGate:.80,gate:1,regime:'all',eventGuard:true,minute:'none'},.75,'2026-03-18',new Map()));
  const a={equity:2000000,scenario:{maxRiskPct:.10}};assert.equal(scenarioRiskCapacity(a,20,18000,0),11);
- emit('sweep_self_test',{passed:true,scenarios:222,paths:444});
+ emit('sweep_self_test',{passed:true,scenarios:scenarioGrid().length,paths:scenarioGrid().length*2});
 }
 function sweepStats(a,period='full'){
  const selected=a.history.filter(d=>period==='full'||(period==='train'?d[0]<'2025-09-29':d[0]>='2025-09-29'));
