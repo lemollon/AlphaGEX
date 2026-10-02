@@ -275,6 +275,35 @@ def option_history_quote(
     return _csv_response(_call("option_history_quote", **kwargs))
 
 
+@app.get("/v3/option/history/trade_quote")
+def option_history_trade_quote(
+    symbol: str = Query(...),
+    expiration: str = Query("*"),
+    strike: str = Query("*"),
+    right: str = Query("both", pattern="^(call|put|both)$"),
+    date_value: str = Query(..., alias="date"),
+    start_time: str = "09:30:00",
+    end_time: str = "16:00:00",
+    max_dte: int = Query(60, ge=0, le=365),
+    strike_range: int = Query(12, ge=1, le=60),
+    exclusive: bool = True,
+) -> PlainTextResponse:
+    """OPRA trades paired with the NBBO available at each trade.
+
+    This is the required evidence for an at-bid / at-ask initiation read.  It
+    is deliberately separate from chain volume: the latter cannot establish
+    who initiated the trade.  No caller may infer opening/closing inventory or
+    a multi-leg structure from these prints.
+    """
+    expiry = "*" if expiration == "*" else _date(expiration, "expiration")
+    return _csv_response(_call(
+        "option_history_trade_quote", symbol=_symbol(symbol), expiration=expiry,
+        strike=strike, right=right, date=_date(date_value, "date"),
+        start_time=start_time, end_time=end_time, max_dte=max_dte,
+        strike_range=strike_range, exclusive=exclusive,
+    ))
+
+
 @app.get("/v3/stock/history/ohlc")
 def stock_history_ohlc(
     symbol: str = Query(...),
