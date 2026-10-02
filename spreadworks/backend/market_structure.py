@@ -22,7 +22,7 @@ import logging
 import statistics
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -40,6 +40,7 @@ router = APIRouter(prefix="/api/spreadworks/market-structure",
                    tags=["Market Structure"])
 
 TRADIER_QUOTES = "https://api.tradier.com/v1/markets/quotes"
+TRADIER_TIMESALES = "https://api.tradier.com/v1/markets/timesales"
 SYMBOLS = ("SPY", "QQQ", "IWM", "XSP", "SPX", "NDX", "RUT")
 INDEX_SYMBOLS = frozenset(("XSP", "SPX", "NDX", "RUT"))
 VOL_SYMBOLS = ("VIX", "VIX1D", "VIX9D", "VIX3M", "VVIX")
@@ -109,6 +110,11 @@ CREATE TABLE IF NOT EXISTS {SURFACE_TABLE} (
   expected_move_dollars_1d DOUBLE PRECISION,
   expected_move_low DOUBLE PRECISION,
   expected_move_high DOUBLE PRECISION,
+  realized_vol_60m DOUBLE PRECISION,
+  realized_vol_bars INTEGER,
+  realized_vol_source_timestamp TIMESTAMP,
+  realized_vol_bar_timestamp TIMESTAMP,
+  iv_minus_realized_vol DOUBLE PRECISION,
   reason TEXT,
   PRIMARY KEY(symbol, captured_at)
 )
@@ -120,6 +126,19 @@ def ensure_tables() -> None:
         conn.execute(text(_GAMMA_DDL))
         conn.execute(text(_VOL_DDL))
         conn.execute(text(_SURFACE_DDL))
+        # Existing deployments already have the original table.  Keep this
+        # additive migration here so a rolling deploy cannot leave reports
+        # without the realized-volatility fields.
+        for column, sql_type in (
+            ("realized_vol_60m", "DOUBLE PRECISION"),
+            ("realized_vol_bars", "INTEGER"),
+            ("realized_vol_source_timestamp", "TIMESTAMP"),
+            ("realized_vol_bar_timestamp", "TIMESTAMP"),
+            ("iv_minus_realized_vol", "DOUBLE PRECISION"),
+        ):
+            conn.execute(text(
+                f"ALTER TABLE {SURFACE_TABLE} ADD COLUMN IF NOT EXISTS {column} {sql_type}"
+            ))
 
 
 def _token(name: str) -> str:
@@ -503,6 +522,111 @@ def _surface_rows(symbol: str, now: datetime) -> tuple[list[dict[str, Any]], str
     return [], "thin_theta_iv_snapshot_after_retry"
 
 
+def _timesales_timestamp(value: Any) -> datetime | None:
+    """Parse Tradier's exchange-local one-minute bar timestamps."""
+    if not value:
+        return None
+    try:
+        stamp = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (stamp.replace(tzinfo=ET) if stamp.tzinfo is None else stamp).astimezone(UTC)
+
+
+def _realized_volatility_from_bars(
+    bars: list[dict[str, Any]], now: datetime, window_minutes: int = 60,
+) -> dict[str, Any]:
+    """Calculate annualized trailing one-minute realized volatility.
+
+    Tradier marks a one-minute bar with its minute start.  We require its
+    timestamp to be within the live freshness contract, then use the response
+    receipt as the snapshot timestamp.  That makes the resulting comparison
+    both auditable (last bar time is retained) and safe for live reports.
+    """
+    parsed: list[tuple[datetime, float]] = []
+    for bar in bars:
+        stamp = _timesales_timestamp(bar.get("time"))
+        close = _f(bar, "close")
+        if stamp is None or close is None or close <= 0:
+            continue
+        local = stamp.astimezone(ET)
+        if local.weekday() < 5 and dtime(9, 30) <= local.time() < dtime(16, 0):
+            parsed.append((stamp, close))
+    parsed.sort(key=lambda item: item[0])
+    # Some Tradier responses repeat a bar during corrections.  Keep the last
+    # close for every minute before forming log returns.
+    deduped: dict[datetime, float] = {}
+    for stamp, close in parsed:
+        deduped[stamp] = close
+    series = sorted(deduped.items())
+    if not series:
+        return {"available": False, "reason": "no_valid_rth_timesales"}
+    last_bar_at = series[-1][0]
+    bar_age = (now - last_bar_at).total_seconds()
+    if not 0 <= bar_age <= STALE_SECONDS:
+        return {"available": False, "reason": "stale_timesales_bar",
+                "bar_timestamp": last_bar_at.isoformat(),
+                "bar_age_seconds": round(bar_age, 1)}
+    # Retain one additional close, because N log returns need N+1 prices.
+    prices = [close for _, close in series[-(window_minutes + 1):]]
+    if len(prices) < 31:
+        return {"available": False, "reason": "insufficient_intraday_bars",
+                "bar_timestamp": last_bar_at.isoformat(),
+                "bar_age_seconds": round(bar_age, 1),
+                "bars": len(prices)}
+    returns = [math.log(current / previous)
+               for previous, current in zip(prices, prices[1:])]
+    realized = statistics.stdev(returns) * math.sqrt(252.0 * 390.0)
+    return {
+        "available": math.isfinite(realized) and realized >= 0,
+        "realized_vol_60m": realized,
+        "bars": len(returns),
+        "window_minutes": min(window_minutes, len(returns)),
+        "source_timestamp": now.isoformat(),
+        "bar_timestamp": last_bar_at.isoformat(),
+        "bar_age_seconds": round(bar_age, 1),
+        "method": "Trailing 60 one-minute log-return stdev × sqrt(252 × 390)",
+        "reason": None,
+    }
+
+
+def fetch_intraday_realized_volatility(
+    symbol: str, now: datetime | None = None, window_minutes: int = 60,
+) -> dict[str, Any]:
+    """Fetch a fresh Tradier one-minute tape and calculate trailing RV."""
+    now = now or datetime.now(UTC)
+    token = _token("TRADIER_TOKEN") or _token("TRADIER_API_KEY")
+    if not token:
+        return {"available": False, "reason": "TRADIER_TOKEN missing"}
+    now_et = now.astimezone(ET)
+    start = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    # Asking slightly past the clock includes the active minute.  The
+    # timestamp guard above still rejects a lagging response.
+    end = now_et + timedelta(minutes=5)
+    try:
+        response = requests.get(
+            TRADIER_TIMESALES,
+            params={"symbol": symbol, "interval": "1min",
+                    "start": start.strftime("%Y-%m-%d %H:%M"),
+                    "end": end.strftime("%Y-%m-%d %H:%M"),
+                    "session_filter": "all"},
+            headers={"Authorization": f"Bearer {token}",
+                     "Accept": "application/json"}, timeout=15,
+        )
+        response.raise_for_status()
+        rows = ((response.json().get("series") or {}).get("data") or [])
+        if isinstance(rows, dict):
+            rows = [rows]
+    except Exception as exc:  # noqa: BLE001
+        return {"available": False,
+                "reason": f"Tradier timesales failure: {type(exc).__name__}"}
+    # Snapshot receipt time is the freshness clock; the final exchange bar
+    # timestamp remains separately visible for audit.
+    result = _realized_volatility_from_bars(list(rows), datetime.now(UTC), window_minutes)
+    result["source"] = "Tradier 1-minute timesales"
+    return result
+
+
 def _atm_ivs_by_dte(records: list[dict[str, Any]], spot: float) -> dict[int, float]:
     by_dte: dict[int, dict[str, list[dict[str, Any]]]] = defaultdict(
         lambda: {"call": [], "put": []}
@@ -577,10 +701,13 @@ def build_volatility_surface(symbol: str, now: datetime | None = None) -> dict[s
     confidence = "HIGH" if age <= 30 and len(rows) >= 100 else "MEDIUM"
     if atm_iv is None:
         confidence = "LOW"
+    realized = fetch_intraday_realized_volatility(symbol, completed_at)
+    realized_vol = realized.get("realized_vol_60m") if realized.get("available") else None
+    captured_at = datetime.now(UTC)
     em_pct = atm_iv * math.sqrt(1.0 / 252.0) * 100.0 if atm_iv else None
     em_dollars = price * em_pct / 100.0 if em_pct else None
     return {
-        "symbol": symbol, "available": confidence != "LOW", "captured_at": completed_at.isoformat(),
+        "symbol": symbol, "available": confidence != "LOW", "captured_at": captured_at.isoformat(),
         "spot": price, "source": "ThetaData implied-volatility snapshots (authorized)",
         "source_timestamp": source_ts.isoformat(), "age_seconds": round(age, 1),
         "confidence": confidence, "n_rows": len(rows), "atm_iv": atm_iv,
@@ -593,6 +720,16 @@ def build_volatility_surface(symbol: str, now: datetime | None = None) -> dict[s
         "expected_move_low": price - em_dollars if em_dollars else None,
         "expected_move_high": price + em_dollars if em_dollars else None,
         "expected_move_method": "ATM IV × sqrt(1/252), using nearest positive-DTE expiration",
+        "realized_vol_60m": realized_vol,
+        "realized_vol_bars": realized.get("bars"),
+        "realized_vol_source_timestamp": realized.get("source_timestamp"),
+        "realized_vol_bar_timestamp": realized.get("bar_timestamp"),
+        "realized_vol_bar_age_seconds": realized.get("bar_age_seconds"),
+        "realized_vol_method": realized.get("method"),
+        "realized_vol_source": realized.get("source"),
+        "realized_vol_reason": realized.get("reason"),
+        "iv_minus_realized_vol": (atm_iv - realized_vol
+                                   if atm_iv is not None and realized_vol is not None else None),
         "reason": None if confidence != "LOW" else "missing_atm_iv",
     }
 
@@ -861,6 +998,10 @@ def persist_surface(surface: dict[str, Any]) -> None:
     ensure_tables()
     captured = datetime.fromisoformat(surface["captured_at"].replace("Z", "+00:00"))
     source_ts = _parse_ts(surface.get("source_timestamp")) if surface.get("source_timestamp") else None
+    realized_source_ts = (_parse_ts(surface.get("realized_vol_source_timestamp"))
+                          if surface.get("realized_vol_source_timestamp") else None)
+    realized_bar_ts = (_parse_ts(surface.get("realized_vol_bar_timestamp"))
+                       if surface.get("realized_vol_bar_timestamp") else None)
     params = {
         "symbol": surface["symbol"], "captured": captured.replace(tzinfo=None),
         "date": captured.astimezone(CT).date(), "spot": surface.get("spot"),
@@ -874,6 +1015,11 @@ def persist_surface(surface: dict[str, Any]) -> None:
         "emp": surface.get("expected_move_pct_1d"),
         "emd": surface.get("expected_move_dollars_1d"),
         "emlow": surface.get("expected_move_low"), "emhigh": surface.get("expected_move_high"),
+        "rv": surface.get("realized_vol_60m"),
+        "rv_bars": surface.get("realized_vol_bars"),
+        "rv_source_ts": realized_source_ts.replace(tzinfo=None) if realized_source_ts else None,
+        "rv_bar_ts": realized_bar_ts.replace(tzinfo=None) if realized_bar_ts else None,
+        "iv_minus_rv": surface.get("iv_minus_realized_vol"),
         "reason": surface.get("reason"),
     }
     with engine.begin() as conn:
@@ -882,9 +1028,11 @@ def persist_surface(surface: dict[str, Any]) -> None:
             "(symbol,captured_at,trade_date,spot,source,source_timestamp,confidence,n_rows,"
             "atm_iv,atm_reference_dte,skew_25d,skew_reference_dte,iv_0dte,iv_1_5dte,"
             "iv_6_20dte,iv_21_365dte,expected_move_pct_1d,expected_move_dollars_1d,"
-            "expected_move_low,expected_move_high,reason) "
+            "expected_move_low,expected_move_high,realized_vol_60m,realized_vol_bars,"
+            "realized_vol_source_timestamp,realized_vol_bar_timestamp,iv_minus_realized_vol,reason) "
             "VALUES (:symbol,:captured,:date,:spot,:source,:source_ts,:confidence,:n,"
-            ":atm,:atm_dte,:skew,:skew_dte,:iv0,:iv15,:iv620,:iv21,:emp,:emd,:emlow,:emhigh,:reason) "
+            ":atm,:atm_dte,:skew,:skew_dte,:iv0,:iv15,:iv620,:iv21,:emp,:emd,:emlow,:emhigh,"
+            ":rv,:rv_bars,:rv_source_ts,:rv_bar_ts,:iv_minus_rv,:reason) "
             "ON CONFLICT(symbol,captured_at) DO NOTHING"), params)
 
 
@@ -968,7 +1116,8 @@ def _latest_surface(symbol: str) -> dict[str, Any] | None:
             f"SELECT captured_at,spot,source,source_timestamp,confidence,n_rows,atm_iv,"
             "atm_reference_dte,skew_25d,skew_reference_dte,iv_0dte,iv_1_5dte,"
             "iv_6_20dte,iv_21_365dte,expected_move_pct_1d,expected_move_dollars_1d,"
-            "expected_move_low,expected_move_high,reason "
+            "expected_move_low,expected_move_high,realized_vol_60m,realized_vol_bars,"
+            "realized_vol_source_timestamp,realized_vol_bar_timestamp,iv_minus_realized_vol,reason "
             f"FROM {SURFACE_TABLE} WHERE symbol=:s ORDER BY captured_at DESC LIMIT 1"),
             {"s": symbol}).fetchone()
     if not row:
@@ -976,9 +1125,11 @@ def _latest_surface(symbol: str) -> dict[str, Any] | None:
     keys = ("captured_at","spot","source","source_timestamp","confidence","n_rows","atm_iv",
             "atm_reference_dte","skew_25d","skew_reference_dte","iv_0dte","iv_1_5dte",
             "iv_6_20dte","iv_21_365dte","expected_move_pct_1d","expected_move_dollars_1d",
-            "expected_move_low","expected_move_high","reason")
+            "expected_move_low","expected_move_high","realized_vol_60m","realized_vol_bars",
+            "realized_vol_source_timestamp","realized_vol_bar_timestamp","iv_minus_realized_vol","reason")
     result = dict(zip(keys, row))
-    for key in ("captured_at", "source_timestamp"):
+    for key in ("captured_at", "source_timestamp", "realized_vol_source_timestamp",
+                "realized_vol_bar_timestamp"):
         if result[key] is not None:
             result[key] = result[key].isoformat()
     return result
