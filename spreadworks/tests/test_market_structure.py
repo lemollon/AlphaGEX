@@ -294,6 +294,25 @@ def test_surface_read_explains_day_and_forward_volatility_pricing():
     assert "not proof" in read["forward_meaning"]
 
 
+def test_trade_quote_flow_uses_same_print_nbbo_for_initiation(monkeypatch):
+    now = datetime(2026, 10, 2, 15, 0, 30, tzinfo=timezone.utc)
+    rows = []
+    for i in range(10):
+        rows.append({"expiration": "2026-10-16", "right": "call",
+                     "timestamp": "2026-10-02T10:00:20", "price": "1.10",
+                     "bid": "1.00", "ask": "1.10", "size": "20"})
+        rows.append({"expiration": "2026-10-16", "right": "put",
+                     "timestamp": "2026-10-02T10:00:20", "price": "1.00",
+                     "bid": "1.00", "ask": "1.10", "size": "20"})
+    monkeypatch.setattr(market_structure, "_theta_rows", lambda path, params, timeout=25: rows)
+    result = market_structure.fetch_trade_quote_flow("SPY", now)
+    assert result["available"] is True
+    mid = result["buckets"]["6_20dte"]
+    assert mid["call_initiation"] == "LIKELY_BUYER_INITIATED"
+    assert mid["put_initiation"] == "LIKELY_SELLER_INITIATED"
+    assert "opening/closing" in result["guardrail"]
+
+
 
 def test_register_arms_minute_capture_and_initializes_tables(monkeypatch):
     calls = []
