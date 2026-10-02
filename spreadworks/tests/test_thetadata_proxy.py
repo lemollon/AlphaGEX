@@ -321,6 +321,27 @@ def test_cooldown_doubles_per_eviction_and_resets_after_success(monkeypatch):
     assert holder._streak == 0
 
 
+
+def test_concurrent_failures_extend_cooldown_after_first_eviction(monkeypatch):
+    """A second in-flight failure must not reopen the login gate early."""
+    monkeypatch.setattr(proxy, "RELOGIN_MIN_SECONDS", 10)
+    monkeypatch.setattr(proxy, "RELOGIN_MAX_SECONDS", 25)
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(proxy.time, "monotonic", lambda: clock["t"])
+    holder = proxy._ClientHolder()
+    holder._client = object()
+
+    holder.cache_clear()
+    assert holder._streak == 1
+    assert holder._next_build_at == 1010.0
+
+    # This represents another request that started before the first request
+    # cleared the shared client, then failed afterwards.
+    clock["t"] = 1001.0
+    holder.cache_clear()
+    assert holder._streak == 2
+    assert holder._next_build_at == 1021.0
+
 def test_permission_denied_and_no_data_keep_the_client(monkeypatch):
     class EntitlementClient:
         def stock_snapshot_ohlc(self, **kwargs):
