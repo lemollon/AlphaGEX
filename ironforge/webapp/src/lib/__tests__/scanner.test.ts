@@ -15,6 +15,7 @@ vi.mock('../db', () => ({
   num: (v: any) => { if (v == null || v === '') return 0; const n = parseFloat(v); return isNaN(n) ? 0 : n },
   int: (v: any) => { if (v == null || v === '') return 0; const n = parseInt(v, 10); return isNaN(n) ? 0 : n },
   CT_TODAY: "(CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date",
+  isSettleAtExpiryBot: (b: string) => b === 'flame' || b === 'spark',
 }))
 
 // Mock tradier module
@@ -252,37 +253,31 @@ describe('Market Hours', () => {
 /* ================================================================== */
 
 describe('Sliding Profit Target', () => {
-  describe('FLAME/SPARK (base=0.30)', () => {
-    it('MORNING (8:30-10:29): 30%', () => {
-      const [pt, tier] = getSlidingProfitTarget(makeCT(8, 30), 0.30, 'flame')
-      expect(tier).toBe('MORNING')
-      expect(pt).toBe(0.30)
+  describe('FLAME/SPARK — EBB settle-at-expiry, never a profit target', () => {
+    it('HOLD_TO_EOD all day even when a DB override sets base 0.30 (2026-10-02 -$32 incident)', () => {
+      for (const bot of ['flame', 'spark']) {
+        for (const [h, m] of [[8, 30], [10, 30], [13, 0], [13, 50], [14, 44]] as const) {
+          const [pt, tier] = getSlidingProfitTarget(makeCT(h, m), 0.30, bot)
+          expect(tier).toBe('HOLD_TO_EOD')
+          expect(pt).toBe(1.0)
+        }
+      }
     })
+  })
 
-    it('SPARK MORNING at 10:29: 40% (SPARK tier is 40/35/30, not 30/20/15)', () => {
-      // SPARK-strategy bots moved to a higher-floor 40/35/30 ladder on 2026-07-02;
-      // the DB profit_target_pct override deliberately does NOT apply to them.
-      const [pt, tier] = getSlidingProfitTarget(makeCT(10, 29), 0.30, 'spark')
+  describe('legacy ladder (non-EBB bots, base=0.30)', () => {
+    it('KINDLE (SPARK-strategy) MORNING at 10:29: 40%', () => {
+      const [pt, tier] = getSlidingProfitTarget(makeCT(10, 29), 0.30, 'kindle')
       expect(tier).toBe('MORNING')
       expect(pt).toBe(0.40)
     })
 
-    it('MIDDAY (10:30-12:59): 20%', () => {
-      const [pt, tier] = getSlidingProfitTarget(makeCT(10, 30), 0.30, 'flame')
-      expect(tier).toBe('MIDDAY')
-      expect(pt).toBeCloseTo(0.20, 10) // base - 0.10
-    })
-
-    it('AFTERNOON (13:00-14:44): 15%', () => {
-      const [pt, tier] = getSlidingProfitTarget(makeCT(13, 0), 0.30, 'flame')
-      expect(tier).toBe('AFTERNOON')
-      expect(pt).toBe(0.15) // base - 0.15
-    })
-
-    it('AFTERNOON at 14:44: still 15%', () => {
-      const [pt, tier] = getSlidingProfitTarget(makeCT(14, 44), 0.30, 'flame')
-      expect(tier).toBe('AFTERNOON')
-      expect(pt).toBe(0.15)
+    it('generic bot MORNING 30% / MIDDAY 20% / AFTERNOON 15%', () => {
+      expect(getSlidingProfitTarget(makeCT(8, 30), 0.30, 'blaze')).toEqual([0.30, 'MORNING'])
+      const [mid, midTier] = getSlidingProfitTarget(makeCT(10, 30), 0.30, 'blaze')
+      expect(midTier).toBe('MIDDAY'); expect(mid).toBeCloseTo(0.20, 10)
+      expect(getSlidingProfitTarget(makeCT(13, 0), 0.30, 'blaze')).toEqual([0.15, 'AFTERNOON'])
+      expect(getSlidingProfitTarget(makeCT(14, 44), 0.30, 'blaze')).toEqual([0.15, 'AFTERNOON'])
     })
   })
 
@@ -310,14 +305,14 @@ describe('Sliding Profit Target', () => {
   describe('profit target price calculation', () => {
     it('MORNING 30%: PT price = entry * 0.70', () => {
       const entryCredit = 0.50
-      const [ptFrac] = getSlidingProfitTarget(makeCT(9, 0), 0.30, 'flame')
+      const [ptFrac] = getSlidingProfitTarget(makeCT(9, 0), 0.30, 'blaze')
       const ptPrice = entryCredit * (1 - ptFrac)
       expect(ptPrice).toBeCloseTo(0.35, 4) // 0.50 * 0.70
     })
 
     it('AFTERNOON 15%: PT price = entry * 0.85', () => {
       const entryCredit = 0.50
-      const [ptFrac] = getSlidingProfitTarget(makeCT(13, 30), 0.30, 'flame')
+      const [ptFrac] = getSlidingProfitTarget(makeCT(13, 30), 0.30, 'blaze')
       const ptPrice = entryCredit * (1 - ptFrac)
       expect(ptPrice).toBeCloseTo(0.425, 4) // 0.50 * 0.85
     })
@@ -1104,9 +1099,9 @@ describe('Close position decision logic', () => {
     const midday = new Date('2026-03-18T11:00:00')  // 11 AM
     const afternoon = new Date('2026-03-18T13:30:00') // 1:30 PM
 
-    const [mPt] = getSlidingProfitTarget(morning, 0.30, 'flame')
-    const [mdPt] = getSlidingProfitTarget(midday, 0.30, 'flame')
-    const [aPt] = getSlidingProfitTarget(afternoon, 0.30, 'flame')
+    const [mPt] = getSlidingProfitTarget(morning, 0.30, 'blaze')
+    const [mdPt] = getSlidingProfitTarget(midday, 0.30, 'blaze')
+    const [aPt] = getSlidingProfitTarget(afternoon, 0.30, 'blaze')
 
     expect(mPt).toBeGreaterThan(mdPt)
     expect(mdPt).toBeGreaterThan(aPt)

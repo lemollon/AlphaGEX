@@ -162,13 +162,21 @@ const CALM_SEED_BY_BOT: Record<BotKey, CalmSeedRow[]> = {
   spark: sparkCalmSeedRaw as CalmSeedRow[],
 }
 const _seedLoaded: Partial<Record<BotKey, boolean>> = {}
+// 2026-10-02 audit: a failure used to set _seedLoaded=true forever, so one
+// transient cold-start DB error disabled CALM for the life of the process
+// (~20 trading days of no call spreads, silently). Now: retry at most every
+// SEED_RETRY_MS, and mark loaded only after the inserts succeed.
+const _seedLastAttemptMs: Partial<Record<BotKey, number>> = {}
+const SEED_RETRY_MS = 10 * 60 * 1000
 
 export async function ensureCalmSeedLoaded(bot: BotKey): Promise<void> {
   if (_seedLoaded[bot]) return
-  _seedLoaded[bot] = true // set first — a failure must not retry on every call
+  const now = Date.now()
+  if (now - (_seedLastAttemptMs[bot] ?? 0) < SEED_RETRY_MS) return
+  _seedLastAttemptMs[bot] = now
   await ensureSignalHistoryTable()
   const rows = CALM_SEED_BY_BOT[bot]
-  if (!rows || rows.length === 0) return
+  if (!rows || rows.length === 0) { _seedLoaded[bot] = true; return }
   try {
     const CHUNK = 200
     let inserted = 0
@@ -188,6 +196,7 @@ export async function ensureCalmSeedLoaded(bot: BotKey): Promise<void> {
       inserted += Number(n) || 0
     }
     console.log(`[flame-v2] CALM seed check for ${bot}: ${inserted}/${rows.length} new row(s) inserted (rest already present)`)
+    _seedLoaded[bot] = true
   } catch (e) {
     console.error(`[flame-v2] ensureCalmSeedLoaded(${bot}) failed (non-fatal, CALM accumulates from live days only):`, e)
   }
