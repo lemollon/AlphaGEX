@@ -1667,11 +1667,36 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
             status["per_symbol_state"].setdefault(row.symbol, []).append({
                 "setup_id": row.setup_id, "state": result.state,
                 "reason": result.reason, "option_strike_selection": option_selection,
+                "confirmation_evidence": [
+                    {"timestamp": bar.timestamp.isoformat(), "close": bar.close,
+                     "high": bar.high, "low": bar.low}
+                    for bar in _closed_bars(market.get("bars") or [], now)[-3:]
+                ],
+                "source_timestamp": market.get("exchange_timestamp"),
             })
             if meaningful:
                 embed = build_alert_embed(setup, prior, result, market, option_selection, options_reason, now)
                 event_key = claim_alert(db, row.setup_id, today, result.state, now, embed)
                 if event_key:
+                    try:
+                        from .report_ledger import record_trigger
+                        proof = {"underlying_price": market.get("price"),
+                                 "source_timestamp": market.get("exchange_timestamp"),
+                                 "reason": result.reason,
+                                 "completed_bars": [
+                                     {"timestamp": bar.timestamp.isoformat(), "close": bar.close,
+                                      "high": bar.high, "low": bar.low}
+                                     for bar in _closed_bars(market.get("bars") or [], now)[-3:]]}
+                        await asyncio.to_thread(record_trigger, setup, result.state, proof, now)
+                    except Exception as exc:
+                        logger.exception("[IntradayWatch] trigger evidence recording failed: %s", type(exc).__name__)
+                    if result.state == "ENTRY_READY" and option_selection:
+                        try:
+                            from .report_ledger import record_entry
+                            await asyncio.to_thread(record_entry,
+                                dict(setup, current_price=market.get("price")), option_selection, now)
+                        except Exception as exc:
+                            logger.exception("[IntradayWatch] report paper entry failed: %s", type(exc).__name__)
                     attempted_alerts.add(event_key)
                     from . import _send_intraday_webhook_sync
                     webhook = _intraday_discord_webhook()

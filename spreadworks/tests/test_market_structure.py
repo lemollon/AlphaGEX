@@ -193,6 +193,7 @@ def test_index_gamma_can_use_fresh_theta_option_underlying(monkeypatch):
     assert rejected["reason"] == "ThetaData index permission denied"
 
 
+@freeze_time("2026-10-02T14:45:00Z")
 def test_iv_only_surface_builds_term_skew_and_expected_move(monkeypatch):
     now = datetime(2026, 10, 2, 14, 45, tzinfo=timezone.utc)
     payload = []
@@ -239,7 +240,7 @@ def test_iv_only_surface_builds_term_skew_and_expected_move(monkeypatch):
     assert result["iv_minus_realized_vol"] == result["atm_iv"] - 0.12
 
 
-def test_iv_snapshot_without_provider_timestamp_uses_fresh_receipt_time(monkeypatch):
+def test_iv_snapshot_without_provider_timestamp_is_rejected(monkeypatch):
     now = datetime(2026, 10, 2, 14, 45, tzinfo=timezone.utc)
     payload = []
     for strike in range(735, 767, 2):
@@ -256,8 +257,8 @@ def test_iv_snapshot_without_provider_timestamp_uses_fresh_receipt_time(monkeypa
                         lambda symbol, current: {"available": False,
                                                  "reason": "insufficient_intraday_bars"})
     result = market_structure.build_volatility_surface("SPY", now)
-    assert result["available"] is True
-    assert result["n_rows"] == len(payload)
+    assert result["available"] is False
+    assert result["reason"] == "thin_theta_iv_snapshot_after_retry"
 
 
 def test_realized_volatility_uses_fresh_rth_one_minute_tape():

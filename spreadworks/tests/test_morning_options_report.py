@@ -234,7 +234,7 @@ def test_register_arms_exact_central_time_schedule(monkeypatch):
     cron = next(item for item in calls if item[2].get("id") == report.JOB_ID)
     assert cron[1] == "cron"
     assert cron[2]["hour"] == 7
-    assert cron[2]["minute"] == "0,10,20"
+    assert cron[2]["minute"] == "35,45,55"
     assert cron[2]["day_of_week"] == "mon-fri"
     assert cron[2]["max_instances"] == 1
 
