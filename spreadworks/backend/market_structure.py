@@ -2061,7 +2061,9 @@ def latest_symbol(symbol: str):
 @router.get("/report-contract")
 def report_contract_schema():
     from .report_contract import REQUIREMENTS, CONTRACT_VERSION
+    from .report_policy import policy_identity, PRESENTATION
     return {"contract_version": CONTRACT_VERSION, "required_fields": REQUIREMENTS,
+            "report_policy":policy_identity(),"presentation":PRESENTATION,
             "render_rule": "Use canonical block headings with underscores replaced by spaces; render every field name and its value or explicit unavailable reason."}
 
 
