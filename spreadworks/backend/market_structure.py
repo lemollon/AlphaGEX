@@ -176,10 +176,12 @@ def ensure_tables() -> None:
             ("realized_vol_source_timestamp", "TIMESTAMP"),
             ("realized_vol_bar_timestamp", "TIMESTAMP"),
             ("iv_minus_realized_vol", "DOUBLE PRECISION"),
+            ("surface_json", "TEXT"),
         ):
             conn.execute(text(
                 f"ALTER TABLE {SURFACE_TABLE} ADD COLUMN IF NOT EXISTS {column} {sql_type}"
             ))
+        conn.execute(text(f"ALTER TABLE {FLOW_TABLE} ADD COLUMN IF NOT EXISTS evidence_json TEXT"))
 
 
 def _token(name: str) -> str:
@@ -625,7 +627,7 @@ def _surface_rows(symbol: str, now: datetime) -> tuple[list[dict[str, Any]], str
             except ValueError:
                 continue
             if 0 <= dte <= 365:
-                records.append({"strike": strike, "right": right, "iv": iv,
+                records.append({"strike": strike, "right": right, "iv": iv, "expiration": expiry,
                                 "dte": dte, "timestamp": received_at})
         if len(records) >= 20:
             return records, None
@@ -751,9 +753,11 @@ def _flow_bucket(dte: int) -> str | None:
 
 def _classify_trade_side(price: float | None, bid: float | None, ask: float | None) -> str:
     """Classify against the NBBO attached to the *same* OPRA print."""
-    if price is None or bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
+    if price is None or bid is None or ask is None or bid <= 0 or ask <= bid:
         return "unclassified"
-    epsilon = max(0.01, (ask - bid) * 0.05)
+    if not all(math.isfinite(x) for x in (price, bid, ask)):
+        return "unclassified"
+    epsilon = min(0.01, (ask - bid) * 0.05)
     if price >= ask - epsilon:
         return "ask"
     if price <= bid + epsilon:
@@ -784,6 +788,91 @@ def _flow_expiration_candidates(session_date: datetime) -> list[str]:
         if value not in candidates:
             candidates.append(value)
     return candidates
+
+
+def summarize_flow_evidence(rows: list[dict[str, Any]], session_now: datetime,
+                            retrieved_at: datetime) -> dict[str, Any]:
+    """Keep auditable category totals and strike evidence from the same tape.
+
+    Coverage is of requested expirations/window only, never the entire market.
+    Unknown initiation remains in total premium and contract denominators.
+    """
+    categories = ("calls_bought", "calls_sold", "puts_bought", "puts_sold", "unclassified")
+    buckets: dict[str, Any] = {}
+    concentrations: dict[tuple, Any] = {}
+    total = classified = 0
+    total_premium = classified_premium = 0.0
+    stamps: list[datetime] = []
+    rejected = 0
+    for row in rows:
+        stamp = _theta_ts(row.get("timestamp"))
+        price, size = _f(row, "price"), _f(row, "size")
+        right = str(row.get("right") or "").lower()
+        expiry = str(row.get("expiration") or "")
+        strike = _f(row, "strike")
+        if (stamp is None or price is None or size is None or strike is None
+                or not all(math.isfinite(v) for v in (price, size, strike))
+                or price <= 0 or size <= 0 or size != int(size)
+                or right not in {"call", "put"}
+                or not 0 <= (session_now.astimezone(UTC) - stamp).total_seconds() <= 120):
+            rejected += 1
+            continue
+        try:
+            bucket = _flow_bucket((datetime.fromisoformat(expiry).date() - session_now.date()).days)
+        except ValueError:
+            bucket = None
+        if bucket is None:
+            rejected += 1
+            continue
+        bid, ask = _f(row, "bid"), _f(row, "ask")
+        side = _classify_trade_side(price, bid, ask)
+        # When an explicit quote clock exists, reject invalid/late quotes.
+        quote_raw = row.get("quote_timestamp")
+        if quote_raw:
+            quote_stamp = _theta_ts(quote_raw)
+            if quote_stamp is None or not 0 <= (stamp - quote_stamp).total_seconds() <= 1:
+                side = "unclassified"
+        category = (right + "s_" + ("bought" if side == "ask" else "sold")
+                    if side in {"ask", "bid"} else "unclassified")
+        count = int(size)
+        premium = count * price * 100
+        stats = buckets.setdefault(bucket, {name: {"contracts": 0, "premium": 0.0}
+                                            for name in categories})
+        stats[category]["contracts"] += count
+        stats[category]["premium"] += premium
+        key = (expiry, strike, right, category)
+        group = concentrations.setdefault(key, {
+            "expiration": expiry, "strike": strike, "right": right,
+            "initiation": category, "contracts": 0, "premium": 0.0,
+            "print_count": 0, "latest_print": {},
+        })
+        group["contracts"] += count
+        group["premium"] += premium
+        group["print_count"] += 1
+        if not group["latest_print"] or stamp.isoformat() > group["latest_print"]["timestamp"]:
+            group["latest_print"] = {"price": price, "bid": bid, "ask": ask,
+                                     "timestamp": stamp.isoformat(), "quote_timestamp": quote_raw,
+                                     "side": side}
+        total += count
+        total_premium += premium
+        if category != "unclassified":
+            classified += count
+            classified_premium += premium
+        stamps.append(stamp)
+    return {
+        "source": "ThetaData live trades + contemporaneous ThetaData quotes",
+        "retrieval_timestamp": retrieved_at.isoformat(),
+        "window_start": min(stamps).isoformat() if stamps else None,
+        "window_end": max(stamps).isoformat() if stamps else None,
+        "buckets": buckets, "total_contracts": total, "total_premium": total_premium,
+        "classified_contracts": classified, "unclassified_contracts": total - classified,
+        "classified_contract_fraction": classified / total if total else None,
+        "classified_premium_fraction": classified_premium / total_premium if total_premium else None,
+        "unclassified_premium": total_premium - classified_premium,
+        "concentrations": sorted(concentrations.values(), key=lambda x: x["premium"], reverse=True)[:40],
+        "rejected_rows": rejected,
+        "coverage_scope": "Requested representative expirations; recent 120-second window; not whole-market flow",
+    }
 
 
 def fetch_trade_quote_flow(symbol: str, now: datetime | None = None) -> dict[str, Any]:
@@ -817,7 +906,12 @@ def fetch_trade_quote_flow(symbol: str, now: datetime | None = None) -> dict[str
                 "max_dte": 60, "strike_range": 12, "exclusive": "true",
             }, timeout=12))
         except Exception as exc:  # noqa: BLE001
-            failures.append(f"{expiry}:{type(exc).__name__}")
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            failures.append(f"{expiry}:{type(exc).__name__}" + (f":HTTP{status}" if status else ""))
+            # Repeating the same rejected credential/entitlement cannot recover
+            # another expiry and only monopolizes the shared provider queue.
+            if status in {401, 403}:
+                break
     if not rows:
         return {"symbol": symbol, "available": False, "confidence": "LOW",
                 "reason": f"theta_trade_quote_failure:{','.join(failures) or 'empty'}",
@@ -859,18 +953,19 @@ def fetch_trade_quote_flow(symbol: str, now: datetime | None = None) -> dict[str
     fresh = newest is not None and age is not None and 0 <= age <= STALE_SECONDS
     for stats in buckets.values():
         stats["call_initiation"] = _initiation_read(
-            stats.pop("call_ask_contracts"), stats.pop("call_bid_contracts"), stats["call_contracts"])
+            stats["call_ask_contracts"], stats["call_bid_contracts"], stats["call_contracts"])
         stats["put_initiation"] = _initiation_read(
-            stats.pop("put_ask_contracts"), stats.pop("put_bid_contracts"), stats["put_contracts"])
+            stats["put_ask_contracts"], stats["put_bid_contracts"], stats["put_contracts"])
+    evidence = summarize_flow_evidence(rows, now_et, completed_at)
     return {
         "symbol": symbol, "available": bool(fresh and accepted),
         "captured_at": completed_at.isoformat(),
-        "source": "ThetaData OPRA trade + contemporaneous NBBO",
+        "source": "ThetaData live trades + contemporaneous ThetaData quotes",
         "source_timestamp": newest.isoformat() if newest else None,
         "age_seconds": round(age, 1) if age is not None else None,
         "confidence": "HIGH" if fresh and accepted >= 20 else "LOW",
-        "n_trades": accepted, "buckets": buckets,
-        "guardrail": ("LIKELY buyer/seller initiated is based on an OPRA print at the attached NBBO. "
+        "n_trades": accepted, "buckets": buckets, "evidence": evidence,
+        "guardrail": ("LIKELY buyer/seller initiated is estimated from a ThetaData print and its attached quote. "
                       "It does not establish opening/closing, institution, or multi-leg structure."),
         "reason": None if fresh and accepted else ("stale_or_empty_trade_quote_flow"),
     }
@@ -1022,6 +1117,7 @@ def _surface_smile(records: list[dict[str, Any]], spot: float) -> dict[str, Any]
     atm = min(subset, key=lambda row: abs(float(row["strike"]) - spot))
     return {
         "available": True, "reference_dte": reference_dte,
+        "expiration": put.get("expiration"),
         "put_25d_iv": float(put["iv"]), "put_strike": float(put["strike"]),
         "put_delta": float(put["_delta"]), "atm_iv": float(atm["iv"]),
         "atm_strike": float(atm["strike"]), "call_25d_iv": float(call["iv"]),
@@ -1100,6 +1196,10 @@ def build_volatility_surface(symbol: str, now: datetime | None = None) -> dict[s
         "iv_minus_realized_vol": (atm_iv - realized_vol
                                    if atm_iv is not None and realized_vol is not None else None),
         "surface_read": surface_read,
+        "surface_points": [{"expiration": row.get("expiration"), "strike": row["strike"],
+                            "right": row["right"], "iv": row["iv"], "dte": row["dte"],
+                            "source_timestamp": row["timestamp"].isoformat()}
+                           for row in rows],
         "reason": None if confidence != "LOW" else "missing_atm_iv",
     }
 
@@ -1400,6 +1500,8 @@ def persist_surface(surface: dict[str, Any]) -> None:
         "rv_bar_ts": realized_bar_ts.replace(tzinfo=None) if realized_bar_ts else None,
         "iv_minus_rv": surface.get("iv_minus_realized_vol"),
         "reason": surface.get("reason"),
+        "surface_json": json.dumps({key: surface.get(key) for key in
+                                    ("smile", "surface_points", "surface_read", "expected_move_method")}),
     }
     with engine.begin() as conn:
         conn.execute(text(
@@ -1408,10 +1510,10 @@ def persist_surface(surface: dict[str, Any]) -> None:
             "atm_iv,atm_reference_dte,skew_25d,skew_reference_dte,iv_0dte,iv_1_5dte,"
             "iv_6_20dte,iv_21_365dte,expected_move_pct_1d,expected_move_dollars_1d,"
             "expected_move_low,expected_move_high,realized_vol_60m,realized_vol_bars,"
-            "realized_vol_source_timestamp,realized_vol_bar_timestamp,iv_minus_realized_vol,reason) "
+            "realized_vol_source_timestamp,realized_vol_bar_timestamp,iv_minus_realized_vol,reason,surface_json) "
             "VALUES (:symbol,:captured,:date,:spot,:source,:source_ts,:confidence,:n,"
             ":atm,:atm_dte,:skew,:skew_dte,:iv0,:iv15,:iv620,:iv21,:emp,:emd,:emlow,:emhigh,"
-            ":rv,:rv_bars,:rv_source_ts,:rv_bar_ts,:iv_minus_rv,:reason) "
+            ":rv,:rv_bars,:rv_source_ts,:rv_bar_ts,:iv_minus_rv,:reason,:surface_json) "
             "ON CONFLICT(symbol,captured_at) DO NOTHING"), params)
 
 
@@ -1423,15 +1525,16 @@ def persist_trade_quote_flow(flow: dict[str, Any]) -> None:
     with engine.begin() as conn:
         conn.execute(text(
             f"INSERT INTO {FLOW_TABLE} "
-            "(symbol,captured_at,trade_date,source,source_timestamp,confidence,n_trades,bucket_json,reason) "
-            "VALUES (:symbol,:captured,:date,:source,:source_ts,:confidence,:n,:buckets,:reason) "
+            "(symbol,captured_at,trade_date,source,source_timestamp,confidence,n_trades,bucket_json,reason,evidence_json) "
+            "VALUES (:symbol,:captured,:date,:source,:source_ts,:confidence,:n,:buckets,:reason,:evidence) "
             "ON CONFLICT(symbol,captured_at) DO NOTHING"),
             {"symbol": flow["symbol"], "captured": captured.replace(tzinfo=None),
              "date": captured.astimezone(CT).date(),
              "source": flow.get("source") or "ThetaData OPRA trade + NBBO",
              "source_ts": source_ts.replace(tzinfo=None) if source_ts else None,
              "confidence": flow.get("confidence") or "LOW", "n": flow.get("n_trades"),
-             "buckets": json.dumps(flow.get("buckets") or {}), "reason": flow.get("reason")})
+             "buckets": json.dumps(flow.get("buckets") or {}), "reason": flow.get("reason"),
+             "evidence": json.dumps(flow.get("evidence") or {})})
 
 
 def capture_all() -> dict[str, Any]:
@@ -1547,7 +1650,7 @@ def _latest_surface(symbol: str) -> dict[str, Any] | None:
             "atm_reference_dte,skew_25d,skew_reference_dte,iv_0dte,iv_1_5dte,"
             "iv_6_20dte,iv_21_365dte,expected_move_pct_1d,expected_move_dollars_1d,"
             "expected_move_low,expected_move_high,realized_vol_60m,realized_vol_bars,"
-            "realized_vol_source_timestamp,realized_vol_bar_timestamp,iv_minus_realized_vol,reason "
+            "realized_vol_source_timestamp,realized_vol_bar_timestamp,iv_minus_realized_vol,reason,surface_json "
             f"FROM {SURFACE_TABLE} WHERE symbol=:s ORDER BY captured_at DESC LIMIT 1"),
             {"s": symbol}).fetchone()
     if not row:
@@ -1556,8 +1659,9 @@ def _latest_surface(symbol: str) -> dict[str, Any] | None:
             "atm_reference_dte","skew_25d","skew_reference_dte","iv_0dte","iv_1_5dte",
             "iv_6_20dte","iv_21_365dte","expected_move_pct_1d","expected_move_dollars_1d",
             "expected_move_low","expected_move_high","realized_vol_60m","realized_vol_bars",
-            "realized_vol_source_timestamp","realized_vol_bar_timestamp","iv_minus_realized_vol","reason")
+            "realized_vol_source_timestamp","realized_vol_bar_timestamp","iv_minus_realized_vol","reason","surface_json")
     result = dict(zip(keys, row))
+    result.update(json.loads(result.pop("surface_json") or "{}"))
     for key in ("captured_at", "source_timestamp", "realized_vol_source_timestamp",
                 "realized_vol_bar_timestamp"):
         if result[key] is not None:
@@ -1574,7 +1678,7 @@ def _cached_surface_payload(symbol: str, now: datetime | None = None) -> dict[st
                 "reason": "no_persisted_surface"}
     source_ts = _parse_ts(row.get("source_timestamp"))
     age = (now - source_ts).total_seconds() if source_ts else None
-    fresh = (row.get("confidence") == "HIGH" and age is not None
+    fresh = (row.get("confidence") in {"HIGH", "MEDIUM"} and age is not None
              and 0 <= age <= STALE_SECONDS)
     row.update({"symbol": symbol, "available": fresh,
                 "age_seconds": round(age, 1) if age is not None else None,
@@ -1586,18 +1690,19 @@ def _latest_trade_quote_flow(symbol: str) -> dict[str, Any] | None:
     ensure_tables()
     with engine.begin() as conn:
         row = conn.execute(text(
-            f"SELECT captured_at,source,source_timestamp,confidence,n_trades,bucket_json,reason "
+            f"SELECT captured_at,source,source_timestamp,confidence,n_trades,bucket_json,reason,evidence_json "
             f"FROM {FLOW_TABLE} WHERE symbol=:symbol ORDER BY captured_at DESC LIMIT 1"),
             {"symbol": symbol}).fetchone()
     if not row:
         return None
     keys = ("captured_at", "source", "source_timestamp", "confidence", "n_trades",
-            "bucket_json", "reason")
+            "bucket_json", "reason", "evidence_json")
     result = dict(zip(keys, row))
     for key in ("captured_at", "source_timestamp"):
         if result[key] is not None:
             result[key] = result[key].isoformat()
     result["buckets"] = json.loads(result.pop("bucket_json") or "{}")
+    result["evidence"] = json.loads(result.pop("evidence_json") or "{}")
     result["guardrail"] = (
         "LIKELY buyer/seller initiated is based on an OPRA print at the attached NBBO. "
         "It does not establish opening/closing, institution, or multi-leg structure."
@@ -1840,11 +1945,14 @@ def report_readiness():
         "sector_credit": bool(cross.get("available")),
         "flow_spy": bool(flow["SPY"].get("available")),
         "flow_qqq": bool(flow["QQQ"].get("available")),
+        "smile_wings": all(item.get("available") and (item.get("smile") or {}).get("available")
+                           and all((item.get("smile") or {}).get(key) is not None for key in
+                                   ("put_25d_iv", "atm_iv", "call_25d_iv", "put_strike", "atm_strike", "call_strike"))
+                           for item in surface.values()),
     }
     # All requested products are part of the audit, including producers that
     # have not yet been implemented. Absence must never be called readiness.
     outstanding = {
-        "smile_wings": "separate put/ATM/call IV points not persisted",
         "breadth": "dedicated breadth producer not implemented",
         "profile": "validated volume-at-price producer not implemented",
         "macro": "full rates/FX/commodity/MOVE capture not implemented",
@@ -1853,6 +1961,8 @@ def report_readiness():
         "event_study": "validated chop/event study not integrated",
         "render_validation": "delivered report renderer not wired to validator",
     }
+    if not checks["smile_wings"]:
+        outstanding["smile_wings"] = "Fresh same-expiry observed smile wings unavailable; inspect surface.smile and producer reason"
     full_checks = {**checks, **{key: False for key in outstanding}}
     # Flow is required to be visibly accounted for, but it cannot be silently
     # fabricated merely to pass a publish gate.  The reports receive both the

@@ -346,7 +346,7 @@ def test_unauthenticated_failure_starts_cooldown_instead_of_relogin_storm(monkey
     holder = _holder_with(monkeypatch, KickedClient())
     with pytest.raises(HTTPException) as first:
         proxy._call("stock_snapshot_ohlc", symbol="AAA")
-    assert first.value.status_code == 502
+    assert first.value.status_code == 401
     assert holder.logins == 1
 
     # 50 more requests inside the cooldown: zero new logins, fast 503s.
