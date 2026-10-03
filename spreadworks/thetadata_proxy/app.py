@@ -135,6 +135,9 @@ def _csv(frame: Any) -> str:
 
 
 def _call(method: str, **kwargs: Any) -> str:
+    low_priority = kwargs.pop("_low_priority", False)
+    if low_priority and not CLIENT_LOCK.acquire(blocking=False):
+        raise HTTPException(429, detail="Report history deferred while live data client is busy")
     try:
         with CLIENT_LOCK:
             future = _CALL_EXECUTOR.submit(lambda: getattr(_client(), method)(**kwargs))
@@ -166,6 +169,9 @@ def _call(method: str, **kwargs: Any) -> str:
             "StatusCode.INVALID_ARGUMENT": (422, "ThetaData request arguments rejected"),
         }.get(code, (502, "ThetaData request failed"))
         raise HTTPException(status_code=status, detail=detail) from exc
+    finally:
+        if low_priority:
+            CLIENT_LOCK.release()
 
 
 def _csv_response(body: str) -> PlainTextResponse:
@@ -253,12 +259,13 @@ def option_snapshot_implied_volatility(
     symbol: str = Query(...), expiration: str = Query("*"),
     max_dte: int = Query(365, ge=0, le=365),
     strike_range: int = Query(60, ge=1, le=150),
+    background: bool = False,
 ) -> PlainTextResponse:
     """Standard-tier IV data for a local gamma calculation when Pro is absent."""
     expiry = "*" if expiration == "*" else _date(expiration, "expiration")
     response = _csv_response(_call(
         "option_snapshot_greeks_implied_volatility", symbol=_symbol(symbol),
-        expiration=expiry, max_dte=max_dte, strike_range=strike_range,
+        expiration=expiry, max_dte=max_dte, strike_range=strike_range, _low_priority=background,
     ))
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -386,6 +393,24 @@ def stock_history_ohlc(
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Bar-Timestamp"] = "interval-start"
     return response
+
+
+@app.get("/v3/stock/history/trade")
+def stock_history_trade(symbol: str = Query(...), date_value: str = Query(..., alias="date"),
+                        start_time: str = "09:30:00", end_time: str = "10:00:00",
+                        venue: str = Query("utp_cta", pattern="^(nqb|utp_cta)$")):
+    """Bounded consolidated tape for observed volume-at-price; no bar approximation."""
+    from datetime import time as clock
+    try:
+        start, end = clock.fromisoformat(start_time), clock.fromisoformat(end_time)
+        span = (end.hour-start.hour)*3600+(end.minute-start.minute)*60+end.second-start.second
+        if start.tzinfo or end.tzinfo or not 0 <= span <= 1800:
+            raise ValueError("trade window must be <=30 minutes")
+    except ValueError as exc:
+        raise HTTPException(422, detail="trade window must be 0-30 minutes") from exc
+    return _csv_response(_call("stock_history_trade", symbol=_symbol(symbol),
+                         date=_date(date_value, "date"), start_time=start_time,
+                         end_time=end_time, venue=venue, _low_priority=True))
 
 
 @app.get("/v3/index/history/ohlc")

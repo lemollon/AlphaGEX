@@ -198,6 +198,7 @@ REQUIREMENTS = {
         "gamma_expiry_png",
         "sector_credit_png",
         "dark_theme"
+        ,"surface_png", "term_structure_png", "volume_profile_png"
     ],
     "futures_context": [
         "es_mes", "nq", "overnight_range", "basis", "index_confirmation"
@@ -300,7 +301,11 @@ def prepare_report_delivery(payload):
             item = blocks[name][field]
             status = item["status"]
             if status == "unavailable":
-                missing.append(field + ": " + str(item["reason"]))
+                if item.get("value") is not None:
+                    lines.append("- " + field + ": " + str(item["value"]) +
+                                 " [UNVERIFIED — " + str(item["reason"]) + "]")
+                else:
+                    missing.append(field + ": " + str(item["reason"]))
             else:
                 lines.append("- " + field + ": " + str(item.get("value")) +
                              " [" + status.upper() + "; " + str(item["source_timestamp"]) +
@@ -311,7 +316,9 @@ def prepare_report_delivery(payload):
     original = payload.setdefault("report_original_markdown", payload.get("report_markdown") or "")
     payload["report_markdown"] = "\n\n".join(lines) + "\n\n## Supplemental analysis\n\n" + original
     payload["report_completeness"] = "COMPLETE" if check["complete_live_data"] else "INCOMPLETE"
-    return check
+    final_check = validate_rendered_report(payload)
+    payload["report_validation"] = final_check
+    return final_check
 
 
 def validate_rendered_report(payload):

@@ -1908,6 +1908,8 @@ async def lifespan(app: FastAPI):
     try:
         from .market_structure import register as register_market_structure
         register_market_structure(scheduler, app)
+        from .full_options_report import register as register_full_reports
+        register_full_reports(scheduler, app)
     except Exception as _market_structure_sched_exc:  # noqa: BLE001
         logger.warning(
             "[SpreadWorks] market-structure capture failed to register: %r",
@@ -2024,6 +2026,8 @@ except Exception as _calls_exc:  # noqa: BLE001
 try:
     from .market_structure import router as market_structure_router
     app.include_router(market_structure_router)
+    from .full_options_report import router as full_report_router
+    app.include_router(full_report_router)
 except Exception as _market_structure_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] market-structure router failed: %r", _market_structure_exc)
