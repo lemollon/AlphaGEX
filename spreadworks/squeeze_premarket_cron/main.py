@@ -31,6 +31,36 @@ stated data gap for the ENTRY leg only; the EXIT leg (10th-session close)
 and the spread-bound tradeability check remain a separate, not-yet-built
 ledger and are out of scope here.
 
+LIVE MONEY PACE (added 2026-10-03, decision-support only -- never gates the
+signal or touches any backtest/PNL mode below)
+---------------------------------------------------------------------------
+Ports the ACCELERATING/FADING money-pace read already live in the local
+intraday scanner (`dev/squeeze/research/intraday_velocity_scan.py`'s
+`money_pace()`/`money_state()`) onto this premarket scanner's Discord alert,
+reusing that logic's convention rather than reinventing it: compare $/minute
+flow over a trailing window against $/minute for the session so far, same
+1.25x ACCELERATING / 0.6x FADING thresholds.
+
+For every signal that clears both frozen V3 floors, `scan_symbol()`'s
+already-pulled premarket bars give a free session baseline (total premarket
+$ volume / minutes elapsed since PREMARKET_CUTOFF, 04:00:00 ET -- used
+instead of "since the regular open" because there is no regular-session open
+yet when a premarket signal fires). `fetch_recent_dollar_flow()` then makes
+ONE extra call to the same `/v3/stock/history/ohlc` route, for just the
+trailing `MONEY_PACE_RECENT_MINUTES` (15) ending at alert time, only for the
+small set of names that already cleared the floors -- same "only call for
+the candidate set" discipline as `probe_has_options()`/`fetch_entry_ask()`.
+`money_pace_tag()` compares the two rates and returns 'ACCELERATING',
+'FADING', 'STEADY', or None (not enough premarket history, or the recent
+pull failed -- never a guess). The tag is appended as its own line in the
+Discord alert ("Money: ACCELERATING" / "Money: FADING - may already be
+done" / "Money: STEADY"); it does not change the turnover/move entry filter,
+the dedupe, `has_options`, the entry-ask fetch, or whether `insert_signal()`
+writes a row. No other mode (BACKTEST_MODE, PNL_BACKTEST_MODE,
+SAMEDAY_PNL_BACKTEST_MODE, TRAIL_PNL_BACKTEST_MODE,
+OPTIONS_PNL_BACKTEST_MODE) calls any of this -- it is wired into the live
+(non-BACKTEST_MODE) Discord-alert step only.
+
 WHY THIS RUNS ON RENDER INSTEAD OF THE WORKSTATION
 ---------------------------------------------------
 The local scanner talks to a Theta Terminal on the workstation
@@ -626,7 +656,8 @@ def scan_symbol(symbol: str, shares_outstanding: int, today: date):
     Returns (status, payload). status is one of 'error' (no answer after
     retries), 'no_data' (proxy had nothing for this symbol/date), 'below_floor'
     (checked, did not clear turnover/move), or 'candidate' (payload is the
-    tuple Stage 2 needs for dedupe + options lookup + insert).
+    tuple Stage 2 needs for dedupe + options lookup + insert + the live money
+    pace read -- see module docstring "LIVE MONEY PACE" section).
     """
     url = f"{THETA_BASE}/v3/stock/history/ohlc"
     params = {
@@ -646,6 +677,11 @@ def scan_symbol(symbol: str, shares_outstanding: int, today: date):
     pre_cutoff_close = None
     premarket_vol = 0
     premarket_last_px = None
+    # Dollar volume + last premarket bar timestamp, accumulated here (free,
+    # from bars this call already pulled) so the money-pace read at alert
+    # time has a session baseline without a second full-window HTTP call.
+    premarket_dollar_vol = 0.0
+    premarket_last_ts = None
     for row in rows:
         try:
             ts = datetime.fromisoformat(row["timestamp"])
@@ -663,6 +699,8 @@ def scan_symbol(symbol: str, shares_outstanding: int, today: date):
         premarket_vol += vol
         if close and close > 0:
             premarket_last_px = close
+            premarket_dollar_vol += close * vol
+            premarket_last_ts = ts
 
     if premarket_vol == 0 or premarket_last_px is None:
         return "no_data", None
@@ -679,7 +717,8 @@ def scan_symbol(symbol: str, shares_outstanding: int, today: date):
     if move < MOVE_FLOOR:
         return "below_floor", None
 
-    return "candidate", (symbol, turnover, move, premarket_vol)
+    return "candidate", (symbol, turnover, move, premarket_vol,
+                          premarket_dollar_vol, premarket_last_ts)
 
 
 def probe_has_options(symbol: str):
@@ -735,6 +774,98 @@ def fetch_entry_ask(symbol: str, today: date):
         if ask and ask > 0:
             return ask, ts, None
     return None, None, "no quote with a usable ask price at/after 09:30:00 ET within the 60s window"
+
+
+# ---- LIVE MONEY PACE (added 2026-10-03) ------------------------------------
+# Decision-support only, see module docstring "LIVE MONEY PACE" section --
+# never gates whether a signal fires. Reuses the ACCELERATING/FADING/STEADY
+# convention and 1.25x/0.6x thresholds from
+# dev/squeeze/research/intraday_velocity_scan.py's money_pace()/money_state(),
+# not reinvented here.
+MONEY_PACE_RECENT_MINUTES = 15   # trailing window for the "right now" flow read
+MONEY_PACE_ACCEL_HIGH = 1.25     # same convention as intraday_velocity_scan.py
+MONEY_PACE_ACCEL_LOW = 0.6
+
+
+def fetch_recent_dollar_flow(symbol: str, today: date, now_et: datetime,
+                              window_minutes: int = MONEY_PACE_RECENT_MINUTES):
+    """Trailing `window_minutes` of 1-minute OHLC bars ending at the current
+    ET wall-clock time, via the SAME `/v3/stock/history/ohlc` route
+    scan_symbol() already uses for the full premarket pull -- just a short
+    recent window instead of 00:00:00-09:29:59. Clamped so the window never
+    reaches back before PREMARKET_CUTOFF (04:00:00 ET): there is no earlier
+    premarket print to compare against, and reaching into the prior session
+    would silently change what "recent" means. Returns (dollar_vol,
+    elapsed_minutes, reason); a fetch failure or empty window returns
+    (None, None, reason) rather than a guessed rate."""
+    premarket_start_et = datetime.combine(today, PREMARKET_CUTOFF, tzinfo=ET)
+    start_dt = max(now_et - timedelta(minutes=window_minutes), premarket_start_et)
+    if start_dt >= now_et:
+        return None, None, "signal fired at/before premarket start - no recent window yet"
+    url = f"{THETA_BASE}/v3/stock/history/ohlc"
+    params = {
+        "symbol": symbol,
+        "date": today.isoformat(),
+        "start_time": start_dt.strftime("%H:%M:%S"),
+        "end_time": now_et.strftime("%H:%M:%S"),
+        "interval": "1m",
+        "venue": "utp_cta",
+    }
+    rows, status, detail = _fetch_csv(url, params)
+    if status == "error":
+        return None, None, f"proxy error fetching recent window: {detail}"
+    if status == "no_data" or not rows:
+        return None, None, "no bars in the trailing window"
+
+    dollar_vol = 0.0
+    for row in rows:
+        try:
+            close = float(row["close"])
+            vol = int(float(row["volume"]))
+        except (KeyError, ValueError, TypeError):
+            continue
+        if close and close > 0 and vol:
+            dollar_vol += close * vol
+
+    elapsed_minutes = (now_et - start_dt).total_seconds() / 60.0
+    return dollar_vol, elapsed_minutes, None
+
+
+def money_pace_tag(symbol: str, today: date, now_et: datetime,
+                    premarket_dollar_vol, premarket_minutes):
+    """Live 'is the money still arriving, or already done' read for the
+    Discord alert -- informational only, never changes whether the signal
+    fires or any entry/exit logic. Compares $/minute over the trailing
+    MONEY_PACE_RECENT_MINUTES window (pulled fresh at alert time) against
+    $/minute over the WHOLE PREMARKET SESSION SO FAR (since PREMARKET_CUTOFF,
+    04:00:00 ET).
+
+    Baseline choice: the frozen V3 rule itself is scored on premarket
+    turnover/move, and there is no regular-session open yet when this alert
+    fires (the signal is premarket by definition) -- "since premarket start"
+    is therefore the only session boundary that is actually meaningful here,
+    unlike the local intraday scanner (which runs during RTH and baselines
+    off the 08:30 CT cash open).
+
+    Returns 'ACCELERATING', 'FADING', 'STEADY', or None if a pace read isn't
+    possible yet (too little premarket history to baseline against, or the
+    recent-window pull failed) -- never a guess."""
+    if not premarket_minutes or premarket_minutes < 5 or not premarket_dollar_vol:
+        return None
+    recent_dv, recent_minutes, reason = fetch_recent_dollar_flow(symbol, today, now_et)
+    if recent_dv is None or not recent_minutes:
+        log.info("money pace unavailable for %s: %s", symbol, reason)
+        return None
+    rate_before = premarket_dollar_vol / premarket_minutes
+    if rate_before <= 0:
+        return None
+    rate_now = recent_dv / recent_minutes
+    accel = rate_now / rate_before
+    if accel >= MONEY_PACE_ACCEL_HIGH:
+        return "ACCELERATING"
+    if accel <= MONEY_PACE_ACCEL_LOW:
+        return "FADING"
+    return "STEADY"
 
 
 # ===========================================================================
@@ -2454,7 +2585,7 @@ def main() -> int:
         )
 
         hits = []
-        for symbol, turnover, move, vol in candidates:
+        for symbol, turnover, move, vol, premarket_dollar_vol, premarket_last_ts in candidates:
             if already_signaled_recently(conn, symbol, today):
                 continue
             has_options = probe_has_options(symbol)
@@ -2463,7 +2594,8 @@ def main() -> int:
                 log.warning("no usable 09:30:00 ET NBBO ask for %s: %s",
                             symbol, entry_skip_reason)
             insert_signal(conn, today, symbol, turnover, move, vol, has_options, entry_ask)
-            hits.append((symbol, turnover, move, vol, has_options, entry_ask, entry_quote_time))
+            hits.append((symbol, turnover, move, vol, has_options, entry_ask, entry_quote_time,
+                         premarket_dollar_vol, premarket_last_ts))
 
         elapsed = time.monotonic() - run_start
         log.info(
@@ -2473,7 +2605,8 @@ def main() -> int:
             len(candidates), len(hits), elapsed,
         )
 
-        for symbol, turnover, move, vol, has_options, entry_ask, entry_quote_time in hits:
+        for (symbol, turnover, move, vol, has_options, entry_ask, entry_quote_time,
+             premarket_dollar_vol, premarket_last_ts) in hits:
             opt_tag = {True: "OPTIONS", False: "no opts", None: "opts?"}[has_options]
             if entry_ask is not None:
                 price_line = (
@@ -2484,14 +2617,34 @@ def main() -> int:
                     "ask MISSING - no NBBO quote at/after 09:30:00 ET "
                     "within 60s (not a trade price, not a mark)"
                 )
-            msg = (
+
+            # LIVE MONEY PACE (decision-support only -- see
+            # money_pace_tag()'s docstring; never gates the signal above).
+            now_et = datetime.now(ET)
+            premarket_minutes = None
+            if premarket_last_ts is not None:
+                premarket_start_dt = datetime.combine(today, PREMARKET_CUTOFF)
+                premarket_minutes = (
+                    (premarket_last_ts - premarket_start_dt).total_seconds() / 60.0
+                )
+            pace_tag = money_pace_tag(symbol, today, now_et, premarket_dollar_vol,
+                                       premarket_minutes)
+
+            lines = [
                 f"**{symbol}** premarket turnover {turnover * 100:.0f}% of float, "
-                f"+{move * 100:.0f}% premarket move  [{opt_tag}]\n"
-                f"{price_line}\n"
-                f"_PREREG #3 (V3), signal-only, no exit/P&L computed - "
-                f"{today}_"
+                f"+{move * 100:.0f}% premarket move  [{opt_tag}]",
+                price_line,
+            ]
+            if pace_tag == "ACCELERATING":
+                lines.append("Money: ACCELERATING")
+            elif pace_tag == "FADING":
+                lines.append("Money: FADING - may already be done")
+            elif pace_tag == "STEADY":
+                lines.append("Money: STEADY")
+            lines.append(
+                f"_PREREG #3 (V3), signal-only, no exit/P&L computed - {today}_"
             )
-            _discord_post(msg)
+            _discord_post("\n".join(lines))
 
         return 0
     finally:
