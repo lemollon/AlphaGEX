@@ -1,5 +1,5 @@
 """Deterministic dark PNGs from report evidence, never generated illustrations."""
-import io, threading
+import io, threading, textwrap
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from .report_producers import number
@@ -91,7 +91,7 @@ def chart_png(kind,evidence):
         elif kind=='event_risk':
             events=evidence.get('events') or []
             if events:
-                labels=[r['name']+' '+str(r['datetime'])[:16] for r in events[:10]]
+                labels=[textwrap.shorten(r['name'],width=32,placeholder='…')+'\n'+str(r['datetime'])[:16]+(' • estimated' if not r.get('verified') else ' • verified') for r in events[:10]]
                 ax.barh(labels,[3 if r.get('impact')=='HIGH' else 2 for r in events[:10]],color='#FBBF24');ax.set_xlabel('Scheduled impact class (not a probability)');plotted=True
         elif kind=='volume_profile':
             for symbol,row in (evidence.get('profiles') or {}).items():
@@ -104,5 +104,5 @@ def chart_png(kind,evidence):
         if ax.get_legend_handles_labels()[0]:ax.legend(facecolor=PANEL,labelcolor=TEXT)
         ax.set_title(title,color=TEXT,fontsize=19,pad=20)
         fig.text(.04,.025,'Source clocks and coverage are in the report. Historical data is labeled; paper results are simulations.',color=TEXT,fontsize=9)
-        fig.subplots_adjust(left=.19,right=.96,top=.88,bottom=.16)
+        fig.subplots_adjust(left=.36 if kind=='event_risk' else .19,right=.96,top=.88,bottom=.16)
         out=io.BytesIO();fig.savefig(out,format='png',facecolor=BG);return out.getvalue(),plotted
