@@ -141,6 +141,72 @@ trigger -- only via a manual "Trigger Run" with `PNL_BACKTEST_MODE` set in
 that run's environment. Do not set it on the job's persistent env vars.
 Writes to `squeeze_premarket_v3_pnl`, a table of its own -- it never touches
 `squeeze_premarket_backtest_results` (read-only here) or any FAMILY #2 table.
+
+SAMEDAY PNL BACKTEST MODE (added 2026-10-03, EXPLORATORY second look -- a new
+question against the same historical population PNL_BACKTEST_MODE already
+scored, NOT a confirmed result)
+----------------------------------------------------------------------------
+When the env var `SAMEDAY_PNL_BACKTEST_MODE` is set (any truthy value),
+`main()` branches to `run_sameday_pnl_backtest()` BEFORE anything else --
+same isolation as `BACKTEST_MODE`/`PNL_BACKTEST_MODE` above, checked after
+both of those and mutually exclusive with them. This is deliberately a
+SEPARATE mode/table from both -- neither existing mode's behavior changes.
+
+This asks a different exit question than PNL_BACKTEST_MODE: instead of
+holding 10 trading sessions, what does the SAME entry pay if closed out the
+SAME DAY, at a real NBBO bid near the close -- never the trade-print close,
+never a mark?
+
+Two fixes applied here, both already diagnosed outside this file (not
+re-derived):
+
+  FIX 1 -- DATA QUALITY FILTER: `squeeze_premarket_backtest_results.
+    premarket_turnover` can show physically impossible values (e.g. 214x,
+    322x of float) from corrupt/stale `shares_outstanding` -- the identical
+    bug the live scanner already guards against (see
+    `dev/squeeze/research/live_velocity_screen.py`'s `if t > 50: continue
+    # corrupt share count`). The queue query below applies the identical
+    `premarket_turnover <= 50` cap.
+
+  FIX 2 -- REAL SAME-DAY EXIT PRICE: exit at the last NBBO bid timestamped
+    strictly before 16:00:00 ET, searched in the 15:55:00-16:00:00 ET
+    lookback window via the same `/v3/stock/history/quote` endpoint used for
+    the entry leg -- never the close print, never a mark.
+
+Population: `load_sameday_pnl_queue()` joins the already-resolved
+`squeeze_premarket_v3_pnl` rows (entry already computed there -- reused
+as-is, not re-pulled) to `squeeze_premarket_backtest_results` on
+(symbol, event_date), keeping only rows where `premarket_turnover <= 50`,
+`tradeable = true`, and `exit_close IS NOT NULL` (i.e. already a clean,
+fully-resolved row in the 10-day P&L). This is the same 266-row population
+verified by hand against Postgres before this mode was built.
+
+Rule:
+  ENTRY: `entry_ask` as already computed in `squeeze_premarket_v3_pnl` --
+    reused, not re-pulled.
+  EXIT: the last NBBO bid timestamped < 16:00:00 ET, found in the
+    15:55:00-16:00:00 ET window via `/v3/stock/history/quote`. If no usable
+    bid surfaces in that window, the row is written with exit fields NULL
+    and the reason is logged -- same fail-closed discipline as the entry-ask
+    logic, never a guess.
+  SLIPPAGE: identical mechanism/constant to PNL_BACKTEST_MODE's `PNL_SLIPPAGE`
+    (2% per side: entry fill = entry_ask * (1 + slip), exit fill =
+    exit_bid * (1 - slip)) -- reused for an apples-to-apples comparison, not
+    reinvented.
+
+This needs the same private-network path as `BACKTEST_MODE`/
+`PNL_BACKTEST_MODE` -- `/v3/stock/history/quote` is only reachable from
+inside Render. This mode must NEVER run on the scheduled trigger -- only via
+a manual "Trigger Run" with `SAMEDAY_PNL_BACKTEST_MODE` set in that run's
+environment. Do not set it on the job's persistent env vars.
+Writes to `squeeze_premarket_v3_sameday_pnl`, a new table of its own -- it
+never touches `squeeze_premarket_v3_pnl`, `squeeze_premarket_backtest_results`
+(both read-only here), or any FAMILY #2 table.
+
+This is a SECOND LOOK at the same historical population PNL_BACKTEST_MODE
+already scored, not a fresh out-of-sample test -- label any result from this
+mode EXPLORATORY, never a confirmed finding, until it clears its own
+pre-registration.
 """
 import logging
 import os
@@ -181,6 +247,12 @@ BACKTEST_MODE = os.getenv("BACKTEST_MODE", "").strip().lower() in ("1", "true", 
 # persistent env, only on a manual "Trigger Run". Checked separately from
 # BACKTEST_MODE; the two never run in the same invocation.
 PNL_BACKTEST_MODE = os.getenv("PNL_BACKTEST_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+# EXPLORATORY same-day-exit second look, see module docstring "SAMEDAY PNL
+# BACKTEST MODE" section -- any truthy value. Must never be set on the
+# scheduled trigger's persistent env, only on a manual "Trigger Run". Checked
+# separately from (and after) BACKTEST_MODE/PNL_BACKTEST_MODE; never runs in
+# the same invocation as either.
+SAMEDAY_PNL_BACKTEST_MODE = os.getenv("SAMEDAY_PNL_BACKTEST_MODE", "").strip().lower() in ("1", "true", "yes", "on")
 
 THETA_BASE = os.getenv("THETADATA_BASE_URL", "http://thetadata-proxy:10000").strip().rstrip("/")
 if THETA_BASE and "://" not in THETA_BASE:
@@ -1042,12 +1114,284 @@ def run_pnl_backtest() -> int:
         conn.close()
 
 
+# ===========================================================================
+# SAMEDAY PNL BACKTEST MODE -- EXPLORATORY second look (same historical
+# population PNL_BACKTEST_MODE already scored, different exit question), see
+# module docstring "SAMEDAY PNL BACKTEST MODE" section. Everything below this
+# line is only ever reached when `SAMEDAY_PNL_BACKTEST_MODE` is set; it must
+# never run on the scheduled trigger, and never touches PNL_BACKTEST_MODE's
+# or BACKTEST_MODE's tables.
+# ===========================================================================
+
+# FIX 1 (data quality): identical corrupt-share-count guard as the live
+# scanner's `research/live_velocity_screen.py` (`if t > 50: continue #
+# corrupt share count`), applied here as a ceiling on
+# squeeze_premarket_backtest_results.premarket_turnover when building the
+# queue.
+SAMEDAY_TURNOVER_CAP = 50
+# FIX 2 (real exit fill): last NBBO bid timestamped strictly before
+# 16:00:00 ET, searched in this trailing window -- never the trade-print
+# close, never a mark.
+SAMEDAY_EXIT_WINDOW_START = "15:55:00"
+SAMEDAY_EXIT_WINDOW_END = "16:00:00"
+SAMEDAY_MARKET_CLOSE = clock_time(16, 0, 0)
+
+
+def ensure_sameday_pnl_tables(conn) -> None:
+    """CREATE TABLE IF NOT EXISTS for the sameday-PNL-backtest-only table.
+    Called ONLY from run_sameday_pnl_backtest() -- a new table of its own,
+    nothing overwritten in squeeze_premarket_v3_pnl or
+    squeeze_premarket_backtest_results."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS squeeze_premarket_v3_sameday_pnl (
+                symbol TEXT,
+                event_date DATE,
+                entry_ask DOUBLE PRECISION,
+                exit_bid DOUBLE PRECISION,
+                exit_quote_time TIMESTAMPTZ,
+                raw_return DOUBLE PRECISION,
+                return_after_slippage DOUBLE PRECISION,
+                checked_at TIMESTAMPTZ DEFAULT now(),
+                PRIMARY KEY (symbol, event_date)
+            )
+        """)
+    conn.commit()
+
+
+def load_sameday_pnl_queue(conn) -> list:
+    """(symbol, event_date, entry_ask) for every signal in the clean 266-row
+    population: already-resolved squeeze_premarket_v3_pnl rows (entry_ask
+    reused as-is, never re-pulled) joined to squeeze_premarket_backtest_results
+    on (symbol, event_date), kept only where premarket_turnover <=
+    SAMEDAY_TURNOVER_CAP (FIX 1), tradeable = true, and exit_close IS NOT
+    NULL -- i.e. the same join/filter verified by hand against Postgres
+    before this mode was built."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.symbol, p.event_date, p.entry_ask
+            FROM squeeze_premarket_v3_pnl p
+            JOIN squeeze_premarket_backtest_results b
+                ON b.symbol = p.symbol AND b.event_date = p.event_date
+            WHERE b.premarket_turnover <= %s
+              AND p.tradeable = true
+              AND p.exit_close IS NOT NULL
+            ORDER BY p.event_date, p.symbol
+        """, [SAMEDAY_TURNOVER_CAP])
+        return cur.fetchall()
+
+
+def load_resolved_sameday_keys(conn) -> set:
+    """(symbol, event_date) pairs that already have a FULLY resolved row in
+    squeeze_premarket_v3_sameday_pnl -- same resume convention as
+    load_resolved_pnl_keys(): a row with a NULL exit_bid (no usable bid found
+    in the 15:55:00-16:00:00 ET window) is treated as still unresolved, so
+    the next Trigger Run automatically re-checks it."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT symbol, event_date FROM squeeze_premarket_v3_sameday_pnl "
+            "WHERE exit_bid IS NOT NULL"
+        )
+        return {(sym, ed) for sym, ed in cur.fetchall()}
+
+
+def insert_sameday_pnl_result(conn, symbol: str, event_date: date, entry_ask,
+                               exit_bid, exit_quote_time, raw_return,
+                               return_after_slippage) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO squeeze_premarket_v3_sameday_pnl
+                (symbol, event_date, entry_ask, exit_bid, exit_quote_time,
+                 raw_return, return_after_slippage)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol, event_date) DO UPDATE SET
+                entry_ask = EXCLUDED.entry_ask,
+                exit_bid = EXCLUDED.exit_bid,
+                exit_quote_time = EXCLUDED.exit_quote_time,
+                raw_return = EXCLUDED.raw_return,
+                return_after_slippage = EXCLUDED.return_after_slippage,
+                checked_at = now()
+        """, [symbol, event_date, entry_ask, exit_bid, exit_quote_time,
+              raw_return, return_after_slippage])
+    conn.commit()
+
+
+def fetch_sameday_exit_bid(symbol: str, event_date: date):
+    """FIX 2: the last NBBO bid timestamped strictly before 16:00:00 ET,
+    searched in the 15:55:00-16:00:00 ET window via the same
+    `/v3/stock/history/quote` endpoint used for the entry leg -- never the
+    trade-print close, never a mid/mark. Returns (bid, quote_time, reason):
+    bid/quote_time are the LAST usable quote in that window (rows are sorted
+    by timestamp here first, same defensive convention as
+    fetch_tenth_session_close()'s EOD sort, since the proxy does not
+    guarantee row order). If no usable bid surfaces, bid/quote_time are None
+    and `reason` explains why -- the caller leaves the row's exit fields
+    NULL rather than guessing, same fail-closed discipline as
+    fetch_entry_ask()."""
+    url = f"{THETA_BASE}/v3/stock/history/quote"
+    params = {
+        "symbol": symbol,
+        "date": event_date.isoformat(),
+        "start_time": SAMEDAY_EXIT_WINDOW_START,
+        "end_time": SAMEDAY_EXIT_WINDOW_END,
+        "interval": "1s",
+        "venue": "utp_cta",
+    }
+    rows, status, detail = _fetch_csv(url, params)
+    if status == "error":
+        return None, None, f"proxy error fetching NBBO quote: {detail}"
+    if status == "no_data" or not rows:
+        return None, None, "no NBBO quote data for the 15:55:00-16:00:00 ET window"
+
+    parsed = []
+    for row in rows:
+        try:
+            ts = datetime.fromisoformat(row["timestamp"])
+            bid = float(row["bid"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if ts.time() >= SAMEDAY_MARKET_CLOSE:
+            continue
+        if bid and bid > 0:
+            parsed.append((ts, bid))
+
+    if not parsed:
+        return None, None, (
+            "no quote with a usable bid strictly before 16:00:00 ET within "
+            "the 15:55:00-16:00:00 ET window"
+        )
+    parsed.sort(key=lambda pair: pair[0])
+    exit_time, exit_bid = parsed[-1]
+    return exit_bid, exit_time, None
+
+
+def scan_sameday_pair(symbol: str, event_date: date, entry_ask: float):
+    """Stage-1 worker: pure HTTP, no DB access -- same discipline as
+    scan_pnl_pair(). entry_ask is already resolved (reused from
+    squeeze_premarket_v3_pnl), so only the exit leg is pulled here. Returns
+    (status, payload):
+      'exit_missing' - no usable bid in the 15:55:00-16:00:00 ET window
+         (payload carries the reason only; the row is still written, exit
+         fields left NULL).
+      'ok'           - exit resolved (payload carries exit_bid/quote_time/
+         raw_return/return_after_slippage).
+    """
+    exit_bid, exit_quote_time, exit_reason = fetch_sameday_exit_bid(symbol, event_date)
+    if exit_bid is None:
+        return "exit_missing", {"reason": exit_reason}
+
+    raw_return = exit_bid / entry_ask - 1
+    # Same slippage mechanism/constant as PNL_BACKTEST_MODE's PNL_SLIPPAGE
+    # (2% per side) -- reused, not reinvented, for an apples-to-apples
+    # comparison against the 10-day exit.
+    return_after_slip = exit_bid * (1 - PNL_SLIPPAGE) / (entry_ask * (1 + PNL_SLIPPAGE)) - 1
+    return "ok", dict(
+        exit_bid=exit_bid, exit_quote_time=exit_quote_time,
+        raw_return=raw_return, return_after_slippage=return_after_slip,
+    )
+
+
+def run_sameday_pnl_backtest() -> int:
+    """RESUMABLE, same convention as run_pnl_backtest(): skips (symbol,
+    event_date) pairs already written to squeeze_premarket_v3_sameday_pnl."""
+    run_start = time.monotonic()
+    log.info("=== squeeze premarket cron SAMEDAY PNL BACKTEST MODE (PREREG #3 "
+              "/ V3, EXPLORATORY second look, same-day real-bid exit, not a "
+              "confirmed result) ===")
+
+    conn = get_db_connection()
+    try:
+        ensure_tables(conn)
+        ensure_sameday_pnl_tables(conn)
+
+        full_queue = load_sameday_pnl_queue(conn)
+        if not full_queue:
+            log.warning(
+                "no clean rows found (premarket_turnover <= %s, tradeable, "
+                "exit_close resolved) joining squeeze_premarket_v3_pnl to "
+                "squeeze_premarket_backtest_results - nothing to score. Run "
+                "PNL_BACKTEST_MODE first.", SAMEDAY_TURNOVER_CAP,
+            )
+            return 0
+
+        resolved = load_resolved_sameday_keys(conn)
+        queue = [row for row in full_queue if (row[0], row[1]) not in resolved]
+        already_resolved = len(full_queue) - len(queue)
+        log.info(
+            "SAMEDAY PNL queue size: %d clean rows (turnover<=%s, tradeable, "
+            "exit_close resolved), %d already resolved (skipped), %d pending "
+            "(resume mode)",
+            len(full_queue), SAMEDAY_TURNOVER_CAP, already_resolved, len(queue),
+        )
+        if not queue:
+            log.info("nothing pending - every clean row already has a sameday result.")
+            return 0
+
+        checked = 0
+        exit_missing = 0
+        resolved_ok = 0
+        by_key = {(sym, ed): ask for sym, ed, ask in queue}
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {
+                pool.submit(scan_sameday_pair, sym, ed, ask): (sym, ed)
+                for sym, ed, ask in queue
+            }
+            for fut in as_completed(futures):
+                sym, ed = futures[fut]
+                entry_ask = by_key[(sym, ed)]
+                try:
+                    status, payload = fut.result()
+                except Exception as exc:  # noqa: BLE001 - one worker must never kill the run
+                    status, payload = "exit_missing", {"reason": repr(exc)}
+                checked += 1
+
+                if status == "exit_missing":
+                    exit_missing += 1
+                    log.warning("no usable same-day exit bid for %s %s: %s",
+                                sym, ed, payload["reason"])
+                    insert_sameday_pnl_result(conn, sym, ed, entry_ask, None, None, None, None)
+                    continue
+
+                resolved_ok += 1
+                insert_sameday_pnl_result(
+                    conn, sym, ed, entry_ask, payload["exit_bid"],
+                    payload["exit_quote_time"], payload["raw_return"],
+                    payload["return_after_slippage"],
+                )
+
+        elapsed = time.monotonic() - run_start
+        log.info(
+            "=== SAMEDAY PNL BACKTEST DONE: full_queue=%d already_resolved=%d "
+            "pending=%d checked=%d exit_missing=%d resolved_ok=%d "
+            "wall_clock=%.1fs ===",
+            len(full_queue), already_resolved, len(queue), checked,
+            exit_missing, resolved_ok, elapsed,
+        )
+        log.info(
+            "Fill convention: ENTRY = entry_ask reused as-is from "
+            "squeeze_premarket_v3_pnl; EXIT = last real NBBO bid timestamped "
+            "< 16:00:00 ET, found in the 15:55:00-16:00:00 ET window (never "
+            "the close print, never a mark); 2%% slippage per side "
+            "(entry*(1+slip), exit*(1-slip)), same constant as "
+            "PNL_BACKTEST_MODE. EXPLORATORY SECOND LOOK at the same "
+            "historical population PNL_BACKTEST_MODE already scored -- query "
+            "squeeze_premarket_v3_sameday_pnl for the primary metric and "
+            "robustness report, label it exploratory, not confirmed."
+        )
+        return 0
+    finally:
+        conn.close()
+
+
 def main() -> int:
     run_start = time.monotonic()
     if BACKTEST_MODE:
         return run_backtest()
     if PNL_BACKTEST_MODE:
         return run_pnl_backtest()
+    if SAMEDAY_PNL_BACKTEST_MODE:
+        return run_sameday_pnl_backtest()
     today = datetime.now(ET).date()
     log.info("=== squeeze premarket cron (PREREG #3 / V3) - %s ===", today)
 
