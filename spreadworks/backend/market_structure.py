@@ -591,7 +591,7 @@ def _option_delta(spot: float, strike: float, iv: float, dte: int, right: str) -
     return call_delta if right == "call" else call_delta - 1.0
 
 
-def _surface_rows(symbol: str, now: datetime) -> tuple[list[dict[str, Any]], str | None]:
+def _surface_rows(symbol: str, now: datetime, *, background: bool = False) -> tuple[list[dict[str, Any]], str | None]:
     """Read the ThetaData endpoint that is included with the current plan.
 
     Do not route this through the all-Greeks endpoint.  That add-on is denied
@@ -601,15 +601,18 @@ def _surface_rows(symbol: str, now: datetime) -> tuple[list[dict[str, Any]], str
     """
     params = {"symbol": symbol, "expiration": "*", "max_dte": 365,
               "strike_range": 60}
-    # A snapshot is live as of its completed HTTP response.  Individual
-    # contract timestamps, when supplied, describe the last contract update
-    # and are not a valid freshness clock for an aggregate snapshot surface.
+    if background:
+        params["background"] = "true"
+    # Receipt time does not refresh the option's NBBO or its underlying.
+    # Require the provider clocks; otherwise this could relabel yesterday's IV live.
     # Retry one thin response immediately; this removes a transient provider
     # sampling gap without loosening the live-snapshot requirement.
-    for attempt in range(2):
+    for attempt in range(1 if background else 2):
         try:
             raw_rows = _theta_rows("/v3/option/snapshot/greeks/implied_volatility", params)
         except Exception as exc:  # noqa: BLE001
+            if background or (isinstance(exc, requests.HTTPError) and exc.response.status_code in (401,403,429,503)):
+                return [], f"theta_iv_snapshot_failure:{type(exc).__name__}"
             if attempt == 1:
                 return [], f"theta_iv_snapshot_failure:{type(exc).__name__}"
             continue
@@ -620,6 +623,12 @@ def _surface_rows(symbol: str, now: datetime) -> tuple[list[dict[str, Any]], str
             right = str(item.get("right", "")).strip().lower()
             iv = _iv(item.get("implied_vol"))
             expiry = str(item.get("expiration", ""))
+            quote_at = _theta_ts(item.get("timestamp"))
+            underlying_at = _theta_ts(item.get("underlying_timestamp"))
+            if not quote_at or not 0 <= (received_at - quote_at).total_seconds() <= STALE_SECONDS:
+                continue
+            if underlying_at and not 0 <= (received_at - underlying_at).total_seconds() <= STALE_SECONDS:
+                continue
             if strike is None or right not in {"call", "put"} or iv is None:
                 continue
             try:
@@ -628,7 +637,7 @@ def _surface_rows(symbol: str, now: datetime) -> tuple[list[dict[str, Any]], str
                 continue
             if 0 <= dte <= 365:
                 records.append({"strike": strike, "right": right, "iv": iv, "expiration": expiry,
-                                "dte": dte, "timestamp": received_at})
+                                "dte": dte, "timestamp": min(quote_at, underlying_at) if underlying_at else quote_at})
         if len(records) >= 20:
             return records, None
     return [], "thin_theta_iv_snapshot_after_retry"
@@ -1133,7 +1142,7 @@ def _surface_skew(records: list[dict[str, Any]], spot: float) -> tuple[float | N
 
 
 
-def build_volatility_surface(symbol: str, now: datetime | None = None) -> dict[str, Any]:
+def build_volatility_surface(symbol: str, now: datetime | None = None, *, background: bool = False) -> dict[str, Any]:
     """Build a fresh, IV-only surface from the authorized ThetaData feed."""
     now = now or datetime.now(UTC)
     symbol = symbol.upper()
@@ -1141,7 +1150,7 @@ def build_volatility_surface(symbol: str, now: datetime | None = None) -> dict[s
     if not spot.get("fresh"):
         return {"symbol": symbol, "available": False, "confidence": "LOW",
                 "reason": spot.get("reason"), "captured_at": datetime.now(UTC).isoformat()}
-    rows, reason = _surface_rows(symbol, now)
+    rows, reason = _surface_rows(symbol, now, background=True) if background else _surface_rows(symbol, now)
     completed_at = datetime.now(UTC)
     if not rows:
         return {"symbol": symbol, "available": False, "confidence": "LOW",
@@ -1621,13 +1630,15 @@ def recover_critical_surface() -> dict[str, Any]:
             "captured_at": datetime.now(UTC).isoformat(), "surface": recovered}
 
 
-def _latest_gamma(symbol: str) -> dict[str, Any] | None:
+def _latest_gamma(symbol: str, *, verified_only: bool = False) -> dict[str, Any] | None:
     ensure_tables()
     with engine.begin() as conn:
         row = conn.execute(text(
             f"SELECT captured_at,spot,source,source_timestamp,confidence,n_rows,"
             "net_gex_b,gamma_flip,call_wall,put_wall,bucket_json,wall_json,reason "
-            f"FROM {GAMMA_TABLE} WHERE symbol=:s ORDER BY captured_at DESC LIMIT 1"),
+            f"FROM {GAMMA_TABLE} WHERE symbol=:s "
+            + ("AND confidence IN ('HIGH','MEDIUM') AND net_gex_b IS NOT NULL " if verified_only else "")
+            + "ORDER BY captured_at DESC LIMIT 1"),
             {"s": symbol}).fetchone()
     if not row:
         return None
@@ -1642,7 +1653,7 @@ def _latest_gamma(symbol: str) -> dict[str, Any] | None:
     return d
 
 
-def _latest_surface(symbol: str) -> dict[str, Any] | None:
+def _latest_surface(symbol: str, *, verified_only: bool = False) -> dict[str, Any] | None:
     ensure_tables()
     with engine.begin() as conn:
         row = conn.execute(text(
@@ -1651,7 +1662,9 @@ def _latest_surface(symbol: str) -> dict[str, Any] | None:
             "iv_6_20dte,iv_21_365dte,expected_move_pct_1d,expected_move_dollars_1d,"
             "expected_move_low,expected_move_high,realized_vol_60m,realized_vol_bars,"
             "realized_vol_source_timestamp,realized_vol_bar_timestamp,iv_minus_realized_vol,reason,surface_json "
-            f"FROM {SURFACE_TABLE} WHERE symbol=:s ORDER BY captured_at DESC LIMIT 1"),
+            f"FROM {SURFACE_TABLE} WHERE symbol=:s "
+            + ("AND confidence IN ('HIGH','MEDIUM') AND atm_iv IS NOT NULL " if verified_only else "")
+            + "ORDER BY captured_at DESC LIMIT 1"),
             {"s": symbol}).fetchone()
     if not row:
         return None
@@ -1686,12 +1699,14 @@ def _cached_surface_payload(symbol: str, now: datetime | None = None) -> dict[st
     return row
 
 
-def _latest_trade_quote_flow(symbol: str) -> dict[str, Any] | None:
+def _latest_trade_quote_flow(symbol: str, *, verified_only: bool = False) -> dict[str, Any] | None:
     ensure_tables()
     with engine.begin() as conn:
         row = conn.execute(text(
             f"SELECT captured_at,source,source_timestamp,confidence,n_trades,bucket_json,reason,evidence_json "
-            f"FROM {FLOW_TABLE} WHERE symbol=:symbol ORDER BY captured_at DESC LIMIT 1"),
+            f"FROM {FLOW_TABLE} WHERE symbol=:symbol "
+            + ("AND confidence IN ('HIGH','MEDIUM') AND n_trades>0 " if verified_only else "")
+            + "ORDER BY captured_at DESC LIMIT 1"),
             {"symbol": symbol}).fetchone()
     if not row:
         return None
@@ -1953,17 +1968,42 @@ def report_readiness():
     # All requested products are part of the audit, including producers that
     # have not yet been implemented. Absence must never be called readiness.
     outstanding = {
-        "breadth": "dedicated breadth producer not implemented",
-        "profile": "validated volume-at-price producer not implemented",
-        "macro": "full rates/FX/commodity/MOVE capture not implemented",
-        "contract_packages": "fresh per-leg executable packages not integrated",
-        "paper_scorecard": "report-alert paper ledger not implemented",
-        "event_study": "validated chop/event study not integrated",
-        "render_validation": "delivered report renderer not wired to validator",
+        "breadth": "awaiting verified constituent/VWAP observations",
+        "profile": "awaiting timestamped consolidated trade profile",
+        "macro": "awaiting verified rates/FX/commodities/MOVE observations",
+        "contract_packages": "awaiting freshly qualified per-leg package",
+        "paper_scorecard": "awaiting report-ledger query",
+        "event_study": "awaiting completed historical study capture",
+        "render_validation": "awaiting a full rendered report",
     }
+    extended_checks = {}
+    producer_details = {}
+    try:
+        from .full_options_report import latest_report
+        from .report_contract import validate_rendered_report
+        latest = latest_report()
+        report_blocks = latest.get("report_blocks") or {}
+        for name in tuple(outstanding):
+            if name == "render_validation":
+                ready = bool(report_blocks and validate_rendered_report(latest)["publishable"])
+            else:
+                block = report_blocks.get(name) or {}
+                # Historical context is displayed but remains distinct from live readiness.
+                ready = bool(block) and all(
+                    item.get("status") == "live"
+                    and (stamp := _parse_ts(item.get("source_timestamp"))) is not None
+                    and 0 <= (now-stamp).total_seconds() <= STALE_SECONDS
+                    for item in block.values())
+                producer_details[name] = {field: {key: item.get(key) for key in
+                    ("status", "source_timestamp", "reason")} for field,item in block.items()}
+            extended_checks[name] = ready
+            if ready:
+                outstanding.pop(name)
+    except Exception as exc:
+        producer_details["read_error"] = type(exc).__name__
     if not checks["smile_wings"]:
         outstanding["smile_wings"] = "Fresh same-expiry observed smile wings unavailable; inspect surface.smile and producer reason"
-    full_checks = {**checks, **{key: False for key in outstanding}}
+    full_checks = {**checks, **extended_checks, **{key: False for key in outstanding}}
     # Flow is required to be visibly accounted for, but it cannot be silently
     # fabricated merely to pass a publish gate.  The reports receive both the
     # mandatory-core and optional-live-flow verdicts.
@@ -1974,6 +2014,8 @@ def report_readiness():
         "required_checks": full_checks,
         "all_requested_ready": all(full_checks.values()),
         "outstanding_producers": outstanding,
+        "producer_details": producer_details,
+        "implemented_collectors": ["constituent_breadth", "observed_trade_profile", "macro", "candidate_surfaces", "futures", "report_paper_ledger", "historical_event_study", "dark_png_renderer"],
         "core_ready": all(checks[key] for key in mandatory_core),
         "flow_ready": checks["flow_spy"] and checks["flow_qqq"],
         "missing_core": [key for key in mandatory_core if not checks[key]],

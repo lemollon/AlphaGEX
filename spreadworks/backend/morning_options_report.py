@@ -1,4 +1,4 @@
-"""Cloud-owned 07:00 CT morning options plan generator.
+"""Cloud-owned 07:35 CT morning options plan generator.
 
 The Render web service owns research and plan registration.  The dedicated
 ``qqq-retest-worker`` remains the only intraday evaluator.  This module never
@@ -679,13 +679,13 @@ def _discord_embed(payload: dict[str, Any]) -> dict[str, Any]:
     setups = payload.get("setups") or []
     status = payload.get("run_status")
     if status == "SUCCESS" and setups:
-        title = f"7:00 AM PLAN REGISTERED — {len(setups)} SETUP(S)"
+        title = f"7:35 AM PLAN REGISTERED — {len(setups)} SETUP(S)"
         color = 0x34D399
     elif status == "SUCCESS":
-        title = "7:00 AM PLAN REGISTERED — NO TRADE"
+        title = "7:35 AM PLAN REGISTERED — NO TRADE"
         color = 0xF59E0B
     else:
-        title = "7:00 AM PLAN FAILED CLOSED — NO ACTIVE SETUPS"
+        title = "7:35 AM PLAN FAILED CLOSED — NO ACTIVE SETUPS"
         color = 0xEF4444
     if payload.get("report_completeness") == "INCOMPLETE":
         title = "MORNING REPORT INCOMPLETE — VERIFIED FIELDS MISSING"
@@ -725,7 +725,7 @@ def _discord_embed(payload: dict[str, Any]) -> dict[str, Any]:
         "color": color,
         "fields": fields,
         "timestamp": payload.get("generated_at"),
-        "footer": {"text": "SpreadWorks Cloud Morning Options | 07:00 CT"},
+        "footer": {"text": "SpreadWorks Cloud Morning Options | 07:35 CT"},
     }
 
 
@@ -764,11 +764,22 @@ def _send_discord(payload: dict[str, Any]) -> bool:
     if not check["publishable"]:
         logger.error("[MorningOptions] report delivery rejected: %s", check["errors"])
         return False
+    from .report_contract import validate_rendered_report
+    final_check = validate_rendered_report(payload)
+    payload["report_validation"] = final_check
+    if not final_check["publishable"]:
+        logger.error("[MorningOptions] final renderer rejected delivery: %s", final_check["errors"])
+        return False
     try:
-        return bool(_send_intraday_webhook_sync(_discord_embed(payload)))
+        embed = _discord_embed(payload)
+        if payload.get("report_url"):
+            embed["description"] = f'[Open the complete dark report]({payload["report_url"]})'
+        if payload.get("chart_urls", {}).get("market_map"):
+            embed["image"] = {"url": payload["chart_urls"]["market_map"]}
+        return bool(_send_intraday_webhook_sync(embed))
     except Exception:  # noqa: BLE001
         # A notification transport failure must not abort persistence or prevent
-        # the scheduled 07:10/07:20 delivery-recovery ticks from running.
+        # the scheduled 07:45/07:55 delivery-recovery ticks from running.
         logger.exception("[MorningOptions] Discord delivery attempt raised")
         return False
 
@@ -846,7 +857,7 @@ async def run_morning_options_report(app: Any, *, now: datetime | None = None,
                 discord_posted=posted,
             )
             return result
-        # A deterministic fallback plan is not final: the 07:10/07:20 ticks
+        # A deterministic fallback plan is not final: the 07:45/07:55 ticks
         # retry model enrichment and replace it if the model answers.
         result = {"skipped": True, "reason": "cloud morning plan already completed", **existing}
         _LAST_RUN.update(
@@ -911,7 +922,11 @@ async def run_morning_options_report(app: Any, *, now: datetime | None = None,
                 return {"skipped": True,
                         "reason": "model enrichment retry failed; kept existing fallback plan",
                         **existing}
-        symbols, setups, rejected = _normalize_plan(research, evidence, trading_date, started)
+        # Enrichment can take minutes. Refresh quotes/bars before registering
+        # actionable levels; the initial request clock cannot qualify them.
+        refreshed_at = datetime.now(UTC)
+        evidence = await _collect_market_evidence(app, requested, refreshed_at)
+        symbols, setups, rejected = _normalize_plan(research, evidence, trading_date, refreshed_at)
         report = _report_markdown(
             started, research, symbols, setups, rejected, universe_source, trimmed_tv,
         )
@@ -949,6 +964,17 @@ async def run_morning_options_report(app: Any, *, now: datetime | None = None,
             attempt=attempt,
         )
 
+    if payload.get("run_status") == "SUCCESS":
+        try:
+            from .full_options_report import assemble_report
+            full = await assemble_report(app, kind="morning", plan=payload)
+            payload.update({key: full[key] for key in (
+                "report_blocks", "report_markdown", "report_original_markdown",
+                "report_validation", "report_completeness", "report_url", "markdown_url",
+                "report_id", "chart_urls", "producer_status")})
+        except Exception as exc:
+            logger.exception("[MorningOptions] full evidence assembly failed: %s", type(exc).__name__)
+            payload["full_report_error"] = type(exc).__name__
     prepare_report_delivery(payload)
     result = await asyncio.to_thread(
         store_morning_plan_atomic, trading_date, payload["symbols"], payload["setups"],
@@ -979,7 +1005,7 @@ def scheduled_status() -> dict[str, Any]:
     return {
         "owner": "spreadworks-backend Render web service",
         "schedule": (
-            "07:00 America/Chicago, Monday-Friday; 07:10/07:20 retry only after failure; "
+            "07:35 America/Chicago, Monday-Friday; 07:45/07:55 retry only after failure; "
             "NYSE holiday gate"
         ),
         "registered": bool(job),
@@ -1007,7 +1033,7 @@ def scheduled_status() -> dict[str, Any]:
 
 def register(scheduler: Any, app: Any) -> bool:
     if scheduler is None:
-        logger.error("[MorningOptions] scheduler unavailable; 07:00 cloud report is not armed")
+        logger.error("[MorningOptions] scheduler unavailable; 07:35 cloud report is not armed")
         return False
     if not _truthy("MORNING_OPTIONS_CLOUD_ENABLED", True):
         logger.warning("[MorningOptions] cloud generator disabled by MORNING_OPTIONS_CLOUD_ENABLED")
@@ -1017,19 +1043,19 @@ def register(scheduler: Any, app: Any) -> bool:
         await run_morning_options_report(app)
 
     scheduler.add_job(
-        tick, "cron", hour=7, minute="0,10,20", day_of_week="mon-fri",
+        tick, "cron", hour=7, minute="35,45,55", day_of_week="mon-fri",
         id=JOB_ID, replace_existing=True, coalesce=True, max_instances=1,
         misfire_grace_time=5400,
     )
     _SCHEDULER["ref"] = scheduler
     logger.info(
-        "[MorningOptions] registered 07:00 CT weekdays with 07:10/07:20 failure retries; "
+        "[MorningOptions] registered 07:35 CT weekdays with 07:45/07:55 failure retries; "
         "advisory only; no orders"
     )
 
-    # A deploy/restart shortly after 07:00 would otherwise wait until tomorrow.
+    # A deploy/restart shortly after 07:35 would otherwise wait until tomorrow.
     now_ct = datetime.now(CT)
-    if (now_ct.weekday() < 5 and time(7, 0) <= now_ct.time().replace(tzinfo=None) < time(8, 30)
+    if (now_ct.weekday() < 5 and time(7, 35) <= now_ct.time().replace(tzinfo=None) < time(8, 30)
             and not is_market_holiday(now_ct.date())):
         existing = _latest_plan_payload(now_ct.date())
         complete = bool(
@@ -1044,5 +1070,5 @@ def register(scheduler: Any, app: Any) -> bool:
                 id=f"{JOB_ID}_catchup", replace_existing=True,
                 misfire_grace_time=300,
             )
-            logger.warning("[MorningOptions] scheduled immediate post-07:00 catch-up run")
+            logger.warning("[MorningOptions] scheduled immediate post-07:35 catch-up run")
     return True
