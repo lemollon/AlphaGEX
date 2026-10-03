@@ -15,6 +15,7 @@ from . import market_structure as ms
 from .report_contract import REQUIREMENTS, prepare_report_delivery, validate_rendered_report
 from .report_producers import observation, unavailable, number, collect_breadth, collect_profile, collect_macro, collect_study, stored_futures, UTC, ET
 from .report_ledger import scorecard, qualify_package, mark_open_positions
+from .report_policy import build_strategy_blocks, finite_tree, render_opening_html
 logger=logging.getLogger(__name__)
 router=APIRouter(prefix='/api/spreadworks/reports',tags=['Full Options Reports'])
 CT=ZoneInfo('America/Chicago')
@@ -27,6 +28,7 @@ def ensure_tables():
         c.execute(text('CREATE TABLE IF NOT EXISTS sw_report_evidence (name TEXT PRIMARY KEY, captured_at TIMESTAMP NOT NULL, payload_json TEXT NOT NULL)'))
         c.execute(text('CREATE TABLE IF NOT EXISTS sw_full_reports (report_id TEXT PRIMARY KEY, generated_at TIMESTAMP NOT NULL, kind TEXT NOT NULL, payload_json TEXT NOT NULL)'))
         c.execute(text('CREATE TABLE IF NOT EXISTS sw_report_charts (chart_id TEXT PRIMARY KEY, png_base64 TEXT NOT NULL, created_at TIMESTAMP NOT NULL)'))
+        c.execute(text('CREATE TABLE IF NOT EXISTS sw_report_deliveries (slot TEXT PRIMARY KEY, status TEXT NOT NULL, lease_until TIMESTAMP, attempts INTEGER NOT NULL DEFAULT 0, report_id TEXT, posted_at TIMESTAMP, error TEXT)'))
 
 def save_evidence(name,value,now):
     ensure_tables()
@@ -72,14 +74,24 @@ async def capture_study():
     return result
 
 def cached_core(now):
-    result={'surface':{},'gamma':{},'flow':{},'volatility':ms._cached_vol_payload(now),
-            'cross_asset':ms.fetch_cross_asset(now),'futures':stored_futures(now)}
+    failures={}
+    def read(name, fn, fallback):
+        try:
+            value=fn()
+            if not isinstance(value,dict) or not finite_tree(value):raise ValueError('Invalid provider value')
+            return value
+        except Exception as exc:
+            failures[name]=type(exc).__name__
+            return dict(fallback,reason=name+' collector failed: '+type(exc).__name__)
+    result={'surface':{},'gamma':{},'flow':{},'volatility':read('volatility',lambda:ms._cached_vol_payload(now),{}),
+            'cross_asset':read('cross_asset',lambda:ms.fetch_cross_asset(now),{'assets':{}}),
+            'futures':read('futures',lambda:stored_futures(now),{}),'failures':failures}
     for symbol in ('SPY','QQQ'):
         for group,loader in (('surface',ms._latest_surface),('gamma',ms._latest_gamma),('flow',ms._latest_trade_quote_flow)):
-            latest=loader(symbol) or {}
+            latest=read(group+'_'+symbol,lambda:loader(symbol) or {},{})
             row=latest
             if row.get('confidence') not in ('HIGH','MEDIUM'):
-                last_good=loader(symbol,verified_only=True)
+                last_good=read(group+'_'+symbol+'_historical',lambda:loader(symbol,verified_only=True) or {},{})
                 if last_good:
                     row=dict(last_good,last_attempt={'reason':latest.get('reason'),'captured_at':latest.get('captured_at')},
                              historical_fallback=True)
@@ -92,13 +104,18 @@ def dated_item(value,row,now,reason=None):
                        confidence=row.get('confidence') or 'MEDIUM')
 
 def merge_symbols(rows,keys,now):
-    values={};stamps=[];sources=[]
+    values={};stamps=[];sources=[];missing=[]
     for symbol,row in rows.items():
         value={key:row.get(key) for key in keys}
         ts=ms._parse_ts(row.get('source_timestamp'))
-        if row.get('confidence')=='LOW' or not ts or all(v is None for v in value.values()):continue
+        if row.get('confidence')=='LOW' or not ts or all(v is None for v in value.values()) or not finite_tree(value):
+            missing.append(symbol+': '+str(row.get('reason') or 'Missing '+','.join(keys)+' or valid source clock'))
+            continue
         values[symbol]=value;stamps.append(ts);sources.append(row.get('source') or 'Stored observation')
-    return observation(values if values else None,'; '.join(sorted(set(sources))),min(stamps) if stamps else None,now)
+    item=observation(values if values else None,'; '.join(sorted(set(sources))),min(stamps) if stamps else None,now)
+    if missing:
+        item=dict(unavailable('Partial/missing source coverage: '+'; '.join(missing)),**({'value':values} if values else {}))
+    return item
 
 def market_comparison(core,baseline):
     result={}
@@ -107,6 +124,9 @@ def market_comparison(core,baseline):
         spot,ref=number(row.get('spot')),number(old.get('spot'))
         result[symbol]={'price_change_pct':(spot/ref-1)*100 if spot and ref else None,
              'morning_timestamp':baseline.get('generated_at'),'morning_spot':ref,'current_spot':spot,
+             'frozen_expected_move':number(old.get('expected_move_dollars_1d')),
+             'frozen_lower':number(old.get('expected_move_low')),'frozen_upper':number(old.get('expected_move_high')),
+             'baseline_source_timestamp':old.get('source_timestamp'),
              'current_source_timestamp':row.get('source_timestamp')}
     return result
 
@@ -172,8 +192,10 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
     for field in ('budget_used','price_location'):
         vals={}
         for s,r in comparison.items():
-            base=r.get('morning_spot');current=r.get('current_spot');em=number(surface[s].get('expected_move_dollars_1d'))
-            if base and current and em:vals[s]={'absolute_move_fraction':abs(current-base)/em,'signed_change':current-base,'reference':'Morning baseline; current IV estimate denominator'}
+            base=r.get('morning_spot');current=r.get('current_spot');em=number(r.get('frozen_expected_move'))
+            if base and current and em and em>0:vals[s]={'absolute_move_fraction':abs(current-base)/em,'signed_change':current-base,
+                'frozen_expected_move_dollars':em,'frozen_lower':r.get('frozen_lower'),'frozen_upper':r.get('frozen_upper'),
+                'reference':'Frozen first morning expected-move estimate; current IV shown separately'}
         put('expected_move',field,vals or None,source='Recorded morning baseline vs current underlying',ts=min([ms._parse_ts(r.get('source_timestamp')) for r in surface.values() if ms._parse_ts(r.get('source_timestamp'))],default=None),reason='No comparable morning baseline')
     for field,key in {'net_gex':'net_gex_b','flip':'gamma_flip','walls':'walls','expiry_buckets':'buckets','coverage':'n_rows'}.items():blocks['gamma'][field]=merge_symbols(gamma,[key],now)
     put('gamma','scope_comparability','Bounded near-spot <=60DTE estimated dealer gamma; compare only matching coverage. OI is daily, not intraminute.')
@@ -348,32 +370,54 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
 def previous_reports(now):
     ensure_tables();start=datetime.combine(now.astimezone(CT).date(),time(0),CT).astimezone(UTC).replace(tzinfo=None)
     with engine.begin() as c:
-        rows=c.execute(text('SELECT kind,payload_json FROM sw_full_reports WHERE generated_at>=:start ORDER BY generated_at'),{'start':start}).fetchall()
+        rows=c.execute(text("SELECT kind,payload_json FROM sw_full_reports WHERE generated_at>=:start AND generated_at<=:now AND kind IN ('morning','market_open','intraday') ORDER BY generated_at"),{'start':start,'now':now.replace(tzinfo=None)}).fetchall()
     morning=next((json.loads(raw) for kind,raw in rows if kind=='morning'),{})
     prior=json.loads(rows[-1][1]) if rows else {}
     return morning,prior
 
 async def assemble_report(app,*,kind='intraday',plan=None,now=None):
     started=now or datetime.now(UTC)
-    core=await asyncio.to_thread(cached_core,started)
-    context={name:await asyncio.to_thread(load_evidence,name) for name in ('breadth','macro','profile_SPY','profile_QQQ','study','candidate_surfaces')}
-    stored_plan,runtime=await asyncio.to_thread(_plan_and_runtime,started)
+    read_failures={}
+    async def read(name,fn,default,timeout=15):
+        try:
+            value=await asyncio.wait_for(asyncio.to_thread(fn),timeout)
+            if not isinstance(value,type(default)) or not finite_tree(value):raise ValueError('Malformed stored evidence')
+            return value
+        except Exception as exc:
+            read_failures[name]=type(exc).__name__
+            logger.warning('[FullReport] optional read failed %s: %s',name,type(exc).__name__)
+            return default
+    core=await read('core',lambda:cached_core(started),{'surface':{'SPY':{},'QQQ':{}},'gamma':{},'flow':{},'volatility':{},'cross_asset':{'assets':{}},'futures':{}},timeout=60)
+    context={name:await read(name,lambda n=name:load_evidence(n),{'reason':'Stored evidence read failed for '+name}) for name in ('breadth','macro','profile_SPY','profile_QQQ','study','candidate_surfaces')}
+    stored_plan,runtime=await read('plan_runtime',lambda:_plan_and_runtime(started),({},{}))
     plan=plan if plan is not None else stored_plan
-    paper=await asyncio.to_thread(scorecard)
-    morning,prior=await asyncio.to_thread(previous_reports,started)
-    days,events=await asyncio.to_thread(scheduled_events,started)
+    paper=await read('paper',scorecard,{'entry_ready_alerts':None,'trade_details':[],'exceptions':[{'reason':'Paper ledger unavailable'}],
+        'fill_rules':'Ledger failed; no paper performance or open risk may be inferred','loss_clusters':[]})
+    morning,prior=await read('baselines',lambda:previous_reports(started),({},{}))
+    days,events=await read('calendar',lambda:scheduled_events(started),([],[]))
     now=datetime.now(UTC)
     comparison=market_comparison(core,morning)
+    prior_comparison=market_comparison(core,prior)
+    core.update(comparison=comparison,prior_comparison=prior_comparison)
     blocks=report_blocks(core,context,plan,runtime,paper,context['study'],comparison,events,now)
+    if kind=='morning' and not morning:
+        morning={'generated_at':now.isoformat(),'evidence':core,'report_blocks':blocks}
+        comparison=market_comparison(core,morning)
+        core['comparison']=comparison
     prior_stamp=prior.get('generated_at')
     if prior_stamp:
         blocks['morning_comparison']['prior_hour_timestamp']=observation(prior_stamp,'Previous stored report',now,now)
     blocks['event_calendar']['next_five_trading_days']=observation([d.isoformat() for d in days],'Trading-calendar dates, excludes known holidays',now,now)
+    build_strategy_blocks(blocks,core,plan,runtime,paper,morning,prior,now)
+    if 'paper' in read_failures:
+        for name in ('paper_scorecard','trigger_accountability','position_management'):
+            blocks[name]={field:unavailable('Paper ledger unavailable: '+read_failures['paper']) for field in REQUIREMENTS[name]}
     evidence=dict(core,profiles={s:context['profile_'+s] for s in ('SPY','QQQ')},paper=paper,comparison=comparison,events=events)
     headline=blocks['risk_on_defensive']['verdict'].get('value') or 'Directional verdict pending verified fresh evidence'
     payload={'generated_at':now.isoformat(),'kind':kind,'advisory_only':True,'report_blocks':blocks,'evidence':evidence,
              'report_markdown':f'# {kind.title()} Options Report\n\n**{headline}**\n\nSource clocks and historical labels are preserved. Conditional watches are advisory; paper fills are simulated.',
              'producer_status':{name:context[name].get('reason') or context[name].get('captured_at') or 'No capture yet' for name in context},
+             'producer_failures':dict(core.get('failures') or {},**read_failures,**{name:{k:row.get(k) for k in ('reason','last_attempt','failures') if row.get(k)} for name,row in context.items() if row.get('reason') or row.get('last_attempt') or row.get('failures')}),
              'collector_coverage':{'breadth':'SPY constituents; VWAP candidate sample','profile':'Cumulative observed RTH tape, checkpointed in bounded windows; coverage timestamps disclosed','flow':'Representative expirations / 120-second window','futures':'Broker MES/MNQ observations where recorded; delayed continuous ES/NQ fallback'}}
     from .report_charts import chart_png
     image_refs={};inspection=[]
@@ -413,9 +457,6 @@ async def assemble_report(app,*,kind='intraday',plan=None,now=None):
     blocks['visuals']['dark_theme']=observation({'background':'#0B1220','panels':'#111827','text':'#E5E7EB','renderer':'Matplotlib PNG; no Mermaid or generated imagery'},'Chart renderer configuration',now,now)
     payload['chart_urls']=image_refs
     prepare_report_delivery(payload)
-    # Real image embeds are present in the delivered artifact, not only filenames in metadata.
-    payload['report_markdown']+='\n\n## Data charts\n\n'+'\n\n'.join(f'![{name.replace("_"," ").title()}]({ref})' for name,ref in image_refs.items())
-    payload['report_original_markdown']=payload['report_markdown'].split('## Supplemental analysis',1)[-1]
     payload['report_validation']=validate_rendered_report(payload)
     if not payload['report_validation']['publishable']:
         raise ValueError('Final report renderer rejected: '+str(payload['report_validation']['errors']))
@@ -432,7 +473,14 @@ def latest_report():
     ensure_tables()
     with engine.begin() as c:
         row=c.execute(text('SELECT payload_json FROM sw_full_reports ORDER BY generated_at DESC LIMIT 1')).fetchone()
-    return json.loads(row[0]) if row else {'available':False,'reason':'No full report generated yet'}
+    if not row:return {'available':False,'reason':'No full report generated yet'}
+    payload=json.loads(row[0])
+    from .report_policy import parse_clock
+    clock=parse_clock(payload.get('generated_at'))
+    payload['retrieved_at']=datetime.now(UTC).isoformat()
+    payload['report_age_seconds']=(datetime.now(UTC)-clock).total_seconds() if clock else None
+    payload['snapshot_notice']='Immutable stored report. Re-reading it does not refresh any observation; source clocks must be rechecked.'
+    return payload
 
 @router.get('/producer-status')
 def producer_status():
@@ -477,21 +525,54 @@ def report_view(report_id:str):
             content=json.dumps(val,indent=2,ensure_ascii=False) if isinstance(val,(dict,list)) else str(val) if val is not None else item.get('reason') or 'Unavailable'
             clock=item.get('source_timestamp') or ''
             rows.append(f'<details><summary>{html.escape(field.replace("_"," "))} <small>{html.escape(item["status"].upper())}</small></summary><pre>{html.escape(content)}</pre><p>{html.escape(str(item.get("source") or ""))} {html.escape(clock)} | age {item.get("age_seconds","n/a")}s</p></details>')
-        img=images.get(groups.get(name,''));image=f'<img src="{html.escape(img,quote=True)}" alt="{html.escape(name)} chart">' if img else ''
+        chart_names=[groups.get(name)]
+        if name=='surface':chart_names+=['term_structure']
+        image=''.join(f'<img src="{html.escape(images[n],quote=True)}" alt="{html.escape(n)} chart">' for n in chart_names if n in images)
         parts.append(f'<section><h2>{html.escape(name.replace("_"," ").title())}</h2>{image}{"".join(rows)}</section>')
-    return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Full Options Report</title><style>body{background:#0B1220;color:#E5E7EB;font:16px system-ui;max-width:1200px;margin:auto;padding:24px}section{background:#111827;border:1px solid #374151;border-radius:16px;padding:20px;margin:20px 0}h1,h2{color:#22D3EE}img{max-width:100%;border-radius:12px}details{border-top:1px solid #374151;padding:12px 0}summary{cursor:pointer}small{float:right;color:#FBBF24}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#E5E7EB}p{color:#9CA3AF;font-size:13px}a{color:#22D3EE}</style></head><body>'+f'<h1>{html.escape(payload["kind"].title())} Options Report</h1><p>{html.escape(payload["generated_at"])} | {payload["report_completeness"]}</p><a href="{payload["markdown_url"]}">Download complete report</a>'+''.join(parts)+'</body></html>'
+    return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Full Options Report</title><style>body{background:#0B1220;color:#E5E7EB;font:16px/1.6 system-ui;max-width:1000px;margin:auto;padding:24px}section{padding:20px 0;margin:20px 0}h1,h2{color:#E5E7EB}table{width:100%;table-layout:fixed;border-collapse:collapse}td,th{padding:12px 8px;border-bottom:1px solid #374151;text-align:left;overflow-wrap:anywhere;vertical-align:top}th{width:32%}img{max-width:100%}details{border-top:1px solid #374151;padding:12px 0}summary{cursor:pointer;overflow-wrap:anywhere}small{color:#FBBF24}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#E5E7EB}p{color:#AEB8CB}a{color:#22D3EE}</style></head><body>'+f'<h1>{html.escape(payload["kind"].title())} Options Sentiment</h1><p>{html.escape(payload["generated_at"])} | {payload["report_completeness"]} | Immutable snapshot; clocks are as of generation.</p><a href="{payload["markdown_url"]}">Download complete report</a>'+render_opening_html(payload)+''.join(parts)+'</body></html>'
+
+def claim_delivery(kind,now):
+    """Atomic per-checkpoint lease. Successful sends are never normally resent."""
+    ensure_tables()
+    slot=kind+':'+now.astimezone(CT).strftime('%Y-%m-%dT%H')
+    stamp=now.replace(tzinfo=None)
+    with engine.begin() as c:
+        c.execute(text("INSERT INTO sw_report_deliveries (slot,status) VALUES (:slot,'PENDING') ON CONFLICT(slot) DO NOTHING"),{'slot':slot})
+        claimed=c.execute(text("UPDATE sw_report_deliveries SET status='SENDING',lease_until=:lease,attempts=attempts+1,error=NULL WHERE slot=:slot AND status!='POSTED' AND (lease_until IS NULL OR lease_until<:now)"),
+            {'slot':slot,'lease':stamp+timedelta(minutes=4),'now':stamp}).rowcount
+    return slot if claimed else None
+
+def finish_delivery(slot,report_id,posted,error=None):
+    with engine.begin() as c:
+        c.execute(text('UPDATE sw_report_deliveries SET status=:status,lease_until=NULL,report_id=:report,posted_at=:posted,error=:error WHERE slot=:slot'),
+            {'status':'POSTED' if posted else 'FAILED','report':report_id,'posted':datetime.now(UTC).replace(tzinfo=None) if posted else None,'error':error,'slot':slot})
 
 async def scheduled_intraday(app,kind='intraday'):
     now=datetime.now(UTC)
     from .economic_events import is_market_holiday
     if now.astimezone(CT).weekday()>=5 or is_market_holiday(now.astimezone(CT).date()):return
-    report=await assemble_report(app,kind=kind)
+    slot=await asyncio.to_thread(claim_delivery,kind,now)
+    if not slot:return {'delivery':'already posted or leased'}
+    try:
+        report=await assemble_report(app,kind=kind)
+    except Exception as exc:
+        await asyncio.to_thread(finish_delivery,slot,None,False,'Assembly failed: '+type(exc).__name__)
+        logger.exception('[FullReport] checkpoint assembly failed')
+        return {'delivery':'failed','reason':type(exc).__name__}
     # Existing approved advisory channel; delivery remains on. No brokerage calls.
     from . import _send_intraday_webhook_sync
     embed={'title':'Intraday Options Report','description':f'[{report["report_completeness"]} — Open the full dark report]({report["report_url"]})',
            'color':0x22D3EE,'timestamp':report['generated_at'],'image':{'url':report['chart_urls']['market_map']},
            'fields':[{'name':'Data integrity','value':f'{len(report["report_validation"]["unavailable_fields"])} fields historical/unavailable; all sections included.'}]}
-    posted=await asyncio.to_thread(_send_intraday_webhook_sync,embed)
+    posted=False;error=None
+    try:
+        check=prepare_report_delivery(report)
+        if not check['publishable']:raise ValueError('Final publication gate rejected delivery')
+        posted=await asyncio.to_thread(_send_intraday_webhook_sync,embed)
+        if not posted:error='Notification transport returned failure'
+    except Exception as exc:
+        error=type(exc).__name__;logger.exception('[FullReport] notification delivery failed')
+    await asyncio.to_thread(finish_delivery,slot,report['report_id'],bool(posted),error)
     save_evidence('intraday_delivery',{'posted':bool(posted),'report_id':report['report_id']},datetime.now(UTC))
     return report
 
@@ -512,7 +593,9 @@ def register(scheduler,app):
     async def opening():await scheduled_intraday(app,kind='market_open')
     scheduler.add_job(context_tick,'cron',hour='7-15',minute='1,6,11,16,21,26,31,36,41,46,51,56',day_of_week='mon-fri',id='full_report_context',replace_existing=True,max_instances=1,coalesce=True)
     scheduler.add_job(hourly,'cron',hour='9-15',minute=0,day_of_week='mon-fri',id='full_intraday_report',replace_existing=True,max_instances=1,coalesce=True,misfire_grace_time=300)
+    scheduler.add_job(hourly,'cron',hour='9-15',minute='5,10',day_of_week='mon-fri',id='full_intraday_report_recovery',replace_existing=True,max_instances=1,coalesce=True,misfire_grace_time=300)
     scheduler.add_job(opening,'cron',hour=8,minute=30,day_of_week='mon-fri',id='full_open_report',replace_existing=True,max_instances=1,coalesce=True,misfire_grace_time=300)
+    scheduler.add_job(opening,'cron',hour=8,minute='35,40',day_of_week='mon-fri',id='full_open_report_recovery',replace_existing=True,max_instances=1,coalesce=True,misfire_grace_time=300)
     scheduler.add_job(study,'cron',hour=17,minute=15,day_of_week='mon-fri',id='report_historical_study',replace_existing=True,max_instances=1,coalesce=True)
 
 async def study_bootstrap():

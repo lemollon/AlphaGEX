@@ -964,14 +964,16 @@ async def run_morning_options_report(app: Any, *, now: datetime | None = None,
             attempt=attempt,
         )
 
-    if payload.get("run_status") == "SUCCESS":
+    # A model outage cannot erase the deterministic evidence report. Failed
+    # enrichment produces visible missing plan fields, never fabricated ideas.
+    if payload.get("run_status") in ("SUCCESS", "FAILED_CLOSED"):
         try:
             from .full_options_report import assemble_report
             full = await assemble_report(app, kind="morning", plan=payload)
             payload.update({key: full[key] for key in (
                 "report_blocks", "report_markdown", "report_original_markdown",
                 "report_validation", "report_completeness", "report_url", "markdown_url",
-                "report_id", "chart_urls", "producer_status")})
+                "report_id", "chart_urls", "producer_status", "report_policy", "producer_failures", "collector_coverage", "evidence")})
         except Exception as exc:
             logger.exception("[MorningOptions] full evidence assembly failed: %s", type(exc).__name__)
             payload["full_report_error"] = type(exc).__name__
