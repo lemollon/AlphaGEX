@@ -1902,6 +1902,16 @@ async def lifespan(app: FastAPI):
     except Exception as _ga_exc:  # noqa: BLE001
         logger.warning("[SpreadWorks] gamma alerts failed to register: %r", _ga_exc)
 
+    # Premarket squeeze-hunt signal (PREREG #3/V3): daily scan + Discord alert
+    # at 08:15 CT, ported from the standalone squeeze-premarket-scan Render
+    # Cron Job. Import-guarded; advisory only -- signal-only, no bot reads this.
+    try:
+        from .squeeze_premarket_alerts import register_squeeze_premarket_alerts
+        register_squeeze_premarket_alerts(scheduler, app)
+    except Exception as _spa_exc:  # noqa: BLE001
+        logger.warning("[SpreadWorks] squeeze premarket alerts failed to "
+                       "register: %r", _spa_exc)
+
     # Canonical live market structure: persist fresh Tradier VIX-family data
     # and ORATS+Tradier gamma maps every minute. Durable captures let report
     # consumers recover through Postgres if the public Render URL is blocked.
@@ -2040,6 +2050,15 @@ try:
 except Exception as _squeeze_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] Squeeze routes failed to load: %r", _squeeze_exc)
+
+# Premarket squeeze-hunt signal (PREREG #3/V3, squeeze_premarket_alerts.py) --
+# read-only state for today's scan + recent signal history. Advisory only.
+try:
+    from .routes_squeeze_premarket import router as squeeze_premarket_router
+    app.include_router(squeeze_premarket_router)
+except Exception as _squeeze_pm_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] Squeeze premarket routes failed to load: %r", _squeeze_pm_exc)
 
 # Wall Scanner (backend/bots/wall_scanner.py) — descriptive-only $/% distance
 # to the nearest GEX call/put wall for GME + 7 tickers. NO directional call
