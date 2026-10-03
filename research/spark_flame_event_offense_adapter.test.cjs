@@ -24,6 +24,9 @@ const runner=require('./flame_event_offense_sweep_20261002.cjs');
 const mapped=[...runner.quoteMap([{timestamp:'2026-09-28T10:00:00',bid:.10,ask:.12,bid_size:7,ask_size:9}],'2026-09-28').values()][0];
 assert.equal(mapped.askSize,9);assert.equal(mapped.bidSize,7);assert.equal(mapped.ask,.12);
 async function main(){
+const savedAccounts=structuredClone(runner.accounts);
+await assert.rejects(runner.withDayRollback(async()=>{runner.accounts[0].equity+=99;runner.accounts[0].trades.push({pnl:99});throw Error('mid_day_quote_failure');}),/mid_day_quote_failure/);
+assert.deepEqual(runner.accounts,savedAccounts);
 const budgetSkip=await A.runDay({scenario,events:['CPI'],spy,vix,close:615,dayStartEquity:2000,cash:2000,host:{reservedMargin:500},quoteAt:quote});
 assert.equal(budgetSkip.status,'skipped');assert.equal(budgetSkip.reason,'all_causal_entries_rejected');
 assert(budgetSkip.admission.rejections.entry_risk_budget_too_small>0);
