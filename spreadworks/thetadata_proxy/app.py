@@ -14,7 +14,6 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import date, timedelta
-from functools import lru_cache
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
@@ -44,6 +43,8 @@ _health_cache: tuple[float, dict[str, Any]] | None = None
 # connection instead of the same wedged one.
 _CALL_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="theta-call")
 THETA_CALL_TIMEOUT_SECONDS = float(os.getenv("THETADATA_CALL_TIMEOUT_SECONDS", "25"))
+RELOGIN_MIN_SECONDS = float(os.getenv("THETADATA_RELOGIN_MIN_SECONDS", "30"))
+RELOGIN_MAX_SECONDS = float(os.getenv("THETADATA_RELOGIN_MAX_SECONDS", "300"))
 
 app = FastAPI(title="ThetaData Private Proxy", docs_url=None, redoc_url=None)
 
@@ -80,14 +81,47 @@ def _date_range(start_raw: str, end_raw: str, *, max_days: int = 31) -> tuple[da
     return start, end
 
 
-@lru_cache(maxsize=1)
-def _client():
-    api_key = os.getenv("THETADATA_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("THETADATA_API_KEY is not configured")
-    from thetadata import ThetaClient
+class _ClientHolder:
+    """A failed session cannot cause a login storm across endpoint callers."""
+    def __init__(self):
+        self._client = None
+        self._next_build_at = 0.0
+        self._streak = 0
+        self.logins = 0
+        self._lock = threading.RLock()
 
-    return ThetaClient(api_key=api_key, dataframe_type="pandas")
+    def __call__(self):
+        with self._lock:
+            if self._client is not None:
+                return self._client
+            if time.monotonic() < self._next_build_at:
+                raise HTTPException(status_code=503, detail="ThetaData session recovery cooldown")
+            api_key = os.getenv("THETADATA_API_KEY", "").strip()
+            if not api_key:
+                raise RuntimeError("THETADATA_API_KEY is not configured")
+            from thetadata import ThetaClient
+            try:
+                self._client = ThetaClient(api_key=api_key, dataframe_type="pandas")
+            except Exception:
+                self.cache_clear()
+                raise
+            self.logins += 1
+            return self._client
+
+    def cache_clear(self):
+        with self._lock:
+            self._client = None
+            self._streak += 1
+            delay = min(RELOGIN_MAX_SECONDS, RELOGIN_MIN_SECONDS * 2 ** min(self._streak - 1, 20))
+            self._next_build_at = max(self._next_build_at, time.monotonic() + delay)
+
+    def mark_success(self):
+        with self._lock:
+            self._streak = 0
+            self._next_build_at = 0.0
+
+
+_client = _ClientHolder()
 
 
 def _csv(frame: Any) -> str:
@@ -113,6 +147,8 @@ def _call(method: str, **kwargs: Any) -> str:
                 )
                 _client.cache_clear()
                 raise HTTPException(status_code=504, detail="ThetaData request timed out") from exc
+        if callable(getattr(_client, "mark_success", None)):
+            _client.mark_success()
         return _csv(frame)
     except HTTPException:
         raise
@@ -122,9 +158,14 @@ def _call(method: str, **kwargs: Any) -> str:
         code = str(exc.code()) if callable(getattr(exc, "code", None)) else "n/a"
         LOGGER.error("ThetaData request failed method=%s error_type=%s grpc_code=%s",
                      method, type(exc).__name__, code)
-        _client.cache_clear()   # never keep reusing a client that just errored (2026-09-28 fix)
-        raise HTTPException(status_code=403 if code == "StatusCode.PERMISSION_DENIED" else 502,
-                            detail="ThetaData request failed") from exc
+        if code not in {"StatusCode.PERMISSION_DENIED", "StatusCode.INVALID_ARGUMENT"}:
+            _client.cache_clear()
+        status, detail = {
+            "StatusCode.UNAUTHENTICATED": (401, "ThetaData authentication rejected"),
+            "StatusCode.PERMISSION_DENIED": (403, "ThetaData entitlement denied"),
+            "StatusCode.INVALID_ARGUMENT": (422, "ThetaData request arguments rejected"),
+        }.get(code, (502, "ThetaData request failed"))
+        raise HTTPException(status_code=status, detail=detail) from exc
 
 
 def _csv_response(body: str) -> PlainTextResponse:
@@ -141,22 +182,27 @@ def health() -> dict[str, Any]:
     now = time.monotonic()
     with HEALTH_LOCK:
         if _health_cache and now - _health_cache[0] < HEALTH_TTL_SECONDS:
+            if _health_cache[1].get("status") == "unavailable":
+                raise HTTPException(status_code=503, detail="ThetaData unavailable")
             return _health_cache[1]
         end = date.today()
         start = end - timedelta(days=10)
         try:
-            with CLIENT_LOCK:
-                frame = _client().stock_history_eod(
-                    symbol="SPY", start_date=start, end_date=end,
-                )
+            frame = _call("stock_history_eod", symbol="SPY", start_date=start, end_date=end)
             if frame is None or len(frame) == 0:
                 raise RuntimeError("ThetaData health probe returned no rows")
         except Exception as exc:  # noqa: BLE001
             LOGGER.error("ThetaData health probe failed error_type=%s", type(exc).__name__)
+            _health_cache = (now, {"status": "unavailable", "provider": "thetadata", "authenticated": False})
             raise HTTPException(status_code=503, detail="ThetaData unavailable") from exc
         payload = {"status": "ok", "provider": "thetadata", "authenticated": True}
         _health_cache = (now, payload)
         return payload
+
+
+@app.get("/live")
+def liveness():
+    return {"status": "alive"}
 
 
 @app.get("/v3/stock/snapshot/ohlc")
@@ -310,7 +356,7 @@ def stock_history_ohlc(
     date_value: str | None = Query(None, alias="date"),
     start_date: str | None = None,
     end_date: str | None = None,
-    interval: str = Query("1m", pattern="^(1m|5m|10m|15m|30m|1h)$"),
+    interval: str = Query("1m", pattern="^(1s|1m|5m|10m|15m|30m|1h)$"),
     start_time: str = "09:30:00",
     end_time: str = "16:00:00",
     venue: str = Query("utp_cta", pattern="^(nqb|utp_cta)$"),
@@ -339,6 +385,25 @@ def stock_history_ohlc(
     response = _csv_response(_call("stock_history_ohlc", **kwargs))
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Bar-Timestamp"] = "interval-start"
+    return response
+
+
+@app.get("/v3/index/history/ohlc")
+def index_history_ohlc(symbol: str = Query(...), start_date: str = Query(...),
+                       end_date: str = Query(...), interval: str = Query("1m", pattern="^(1m|5m|10m|15m|30m|1h)$"),
+                       start_time: str = "09:30:00", end_time: str = "16:00:00"):
+    from datetime import time as clock_time
+    start, end = _date_range(start_date, end_date, max_days=31)
+    try:
+        lo, hi = clock_time.fromisoformat(start_time), clock_time.fromisoformat(end_time)
+        if lo.tzinfo or hi.tzinfo or hi < lo:
+            raise ValueError("invalid clock range")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="invalid time range") from exc
+    response = _csv_response(_call("index_history_ohlc", symbol=_symbol(symbol),
+        start_date=start, end_date=end, interval=interval, start_time=start_time, end_time=end_time))
+    response.headers["X-Bar-Timestamp"] = "interval-start"
+    response.headers["Cache-Control"] = "no-store"
     return response
 
 

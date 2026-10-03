@@ -194,11 +194,26 @@ REQUIREMENTS = {
         "baseline_comparison_png",
         "event_risk_png",
         "paper_equity_drawdown_png",
-        "image_inspection"
+        "image_inspection",
+        "gamma_expiry_png",
+        "sector_credit_png",
+        "dark_theme"
+    ],
+    "futures_context": [
+        "es_mes", "nq", "overnight_range", "basis", "index_confirmation"
+    ],
+    "candidate_analysis": [
+        "symbols", "surface", "catalysts", "quote_chain_freshness", "liquidity", "conditional_triggers"
+    ],
+    "position_management": [
+        "position_scope", "risk_exposure", "hold_exit_conditions", "chain_qualification"
+    ],
+    "trigger_accountability": [
+        "registered_triggers", "verified_occurrence", "confirmation_sequence", "mfe_mae", "outcome", "loss_clusters"
     ]
 }
 REQUIRED_BLOCKS = tuple(REQUIREMENTS)
-CONTRACT_VERSION = "2026-10-02.2"
+CONTRACT_VERSION = "2026-10-03.1"
 FLOW_SOURCE = "ThetaData live trades with contemporaneous ThetaData bid/ask"
 LIVE_MAX_AGE_SECONDS = 90
 CHART_FORMAT = "PNG"
@@ -333,7 +348,8 @@ def validate_rendered_report(payload):
                     errors.append(name + "." + field + ": invalid exchange timestamp")
             if name == "visuals" and field.endswith("_png") and item.get("status") in ("live", "historical"):
                 ref = str(item.get("value") or "")
-                if not ref.lower().endswith(".png") or ref not in markdown:
+                embedded = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", markdown)
+                if not ref.lower().endswith(".png") or ref not in embedded:
                     errors.append(field + ": PNG not embedded")
     if "```mermaid" in markdown.lower():
         errors.append("Mermaid is prohibited")

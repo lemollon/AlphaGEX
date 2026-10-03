@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import requests
+import pytest
+from freezegun import freeze_time
 
 import backend.market_structure as market_structure
 from backend.market_structure import compute_gamma_map, _confidence
@@ -224,11 +226,11 @@ def test_iv_only_surface_builds_term_skew_and_expected_move(monkeypatch):
     result = market_structure.build_volatility_surface("SPY", now)
     assert result["available"] is True
     assert result["confidence"] == "HIGH"
-    assert result["atm_iv"] == 0.1675
-    assert result["iv_0dte"] == 0.1575
-    assert result["iv_1_5dte"] == 0.1675
-    assert result["iv_6_20dte"] == 0.1875
-    assert result["iv_21_365dte"] == 0.2075
+    assert result["atm_iv"] == pytest.approx(0.1675)
+    assert result["iv_0dte"] == pytest.approx(0.1575)
+    assert result["iv_1_5dte"] == pytest.approx(0.1675)
+    assert result["iv_6_20dte"] == pytest.approx(0.1875)
+    assert result["iv_21_365dte"] == pytest.approx(0.2075)
     assert result["skew_25d"] is not None
     assert result["skew_25d"] > 0
     assert result["expected_move_dollars_1d"] > 0
@@ -260,7 +262,7 @@ def test_iv_snapshot_without_provider_timestamp_uses_fresh_receipt_time(monkeypa
 
 def test_realized_volatility_uses_fresh_rth_one_minute_tape():
     now = datetime(2026, 10, 2, 15, 31, 20, tzinfo=timezone.utc)  # 10:31:20 ET
-    start = now - timedelta(minutes=60)
+    start = now.replace(second=0) - timedelta(minutes=60)
     bars = []
     for i in range(61):
         stamp = start + timedelta(minutes=i)
@@ -294,15 +296,16 @@ def test_surface_read_explains_day_and_forward_volatility_pricing():
     assert "not proof" in read["forward_meaning"]
 
 
+@freeze_time("2026-10-02T15:00:30Z")
 def test_trade_quote_flow_uses_same_print_nbbo_for_initiation(monkeypatch):
     now = datetime(2026, 10, 2, 15, 0, 30, tzinfo=timezone.utc)
     rows = []
     for i in range(10):
         rows.append({"expiration": "2026-10-16", "right": "call",
-                     "timestamp": "2026-10-02T10:00:20", "price": "1.10",
+                     "timestamp": "2026-10-02T11:00:20", "price": "1.10", "strike": "770",
                      "bid": "1.00", "ask": "1.10", "size": "20"})
         rows.append({"expiration": "2026-10-16", "right": "put",
-                     "timestamp": "2026-10-02T10:00:20", "price": "1.00",
+                     "timestamp": "2026-10-02T11:00:20", "price": "1.00", "strike": "770",
                      "bid": "1.00", "ask": "1.10", "size": "20"})
     monkeypatch.setattr(market_structure, "_theta_rows", lambda path, params, timeout=25: rows)
     result = market_structure.fetch_trade_quote_flow("SPY", now)
@@ -332,7 +335,9 @@ def test_register_arms_minute_capture_and_initializes_tables(monkeypatch):
 
     assert market_structure.register(Scheduler()) is True
     assert calls == ["tables"]
-    assert len(jobs) == 1
+    assert len(jobs) == 3
+    assert {job[2]["id"] for job in jobs} == {
+        "market_structure_capture", "market_structure_surface_recovery", "market_structure_gamma_capture"}
     func, trigger, kwargs = jobs[0]
     assert trigger == "cron"
     assert kwargs["id"] == "market_structure_capture"
@@ -352,8 +357,10 @@ def test_capture_all_parallel_persists_failed_snapshots(monkeypatch):
     monkeypatch.setattr(market_structure, "fetch_vol_indices",
                         lambda current: {"available": True, "indices": {}})
     monkeypatch.setattr(market_structure, "persist_vol", lambda vol, current: None)
+    monkeypatch.setattr(market_structure, "fetch_cross_asset", lambda current: {"available": True})
+    monkeypatch.setattr(market_structure, "persist_cross_asset", lambda *args: None)
 
-    def fake_snapshot(symbol, current):
+    def fake_snapshot(symbol, current, **kwargs):
         return {
             "symbol": symbol,
             "available": symbol == "SPY",
@@ -384,8 +391,11 @@ def test_capture_all_parallel_persists_failed_snapshots(monkeypatch):
     monkeypatch.setattr(market_structure, "datetime", FixedDateTime)
     out = market_structure.capture_all()
     assert out["captured"] is True
-    assert set(out["gamma"]) == set(market_structure.SYMBOLS)
-    assert len(persisted) == len(market_structure.SYMBOLS)
+    assert "gamma" not in out
+    assert not persisted
+    gamma_out = market_structure.capture_gamma_pair()
+    assert set(gamma_out["gamma"]) == {"SPY", "QQQ"}
+    assert len(persisted) == 2
     assert any(item["reason"] == "ThetaData chain failure" for item in persisted)
     assert set(out["surface"]) == {"SPY", "QQQ"}
     assert len(surfaces) == 2
