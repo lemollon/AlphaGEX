@@ -284,6 +284,100 @@ modes already scored, not a fresh out-of-sample test -- label any result
 from this mode EXPLORATORY, never a confirmed finding, until it clears its
 own pre-registration. Report ALL THREE thresholds, not just whichever one
 comes out positive.
+
+OPTIONS PNL BACKTEST MODE (added 2026-10-03, EXPLORATORY new-instrument test
+-- CALL OPTIONS instead of shares on the exact same signal, NOT a reslice of
+the share-trade results)
+----------------------------------------------------------------------------
+When the env var `OPTIONS_PNL_BACKTEST_MODE` is set (any truthy value),
+`main()` branches to `run_options_pnl_backtest()` BEFORE anything else --
+same isolation as the four modes above, checked after all of them and
+mutually exclusive with each. This is a SEPARATE mode/table -- none of the
+other four modes' behavior changes.
+
+The share-trade version of this signal (PNL_BACKTEST_MODE's 10-session hold)
+returned a real but too-small +4%/year on a $500 account. This mode asks
+whether buying the CALL OPTION on the same entry instead of the stock,
+closed out the same day, produces a meaningfully bigger (but still honest)
+number via leverage -- for the subset of names that actually have listed
+options. This is genuinely new data (option quotes), not another cut of the
+share-trade population.
+
+Population: the frozen 37-row query (verified by hand against Postgres
+before this mode was built):
+    SELECT r.symbol, r.event_date, r.entry_ask
+    FROM squeeze_premarket_v3_pnl r
+    JOIN squeeze_premarket_backtest_results b
+        ON r.symbol = b.symbol AND r.event_date = b.event_date
+    WHERE r.tradeable AND r.exit_close IS NOT NULL
+      AND b.premarket_turnover <= 50 AND b.premarket_move < 0.25
+      AND b.premarket_turnover < 1
+`entry_ask` here is the STOCK's entry ask, reused as-is (never re-pulled) --
+only as the reference price used to pick the nearest-to-money strike below,
+same "reuse, don't re-pull" discipline as every other PNL mode in this file.
+
+Step 1 -- OPTIONS AVAILABILITY (verified per-row, not assumed): for every
+(symbol, event_date) pair, `fetch_option_expirations()` calls the
+already-deployed `/v3/option/list/expirations` endpoint (the SAME call
+`probe_has_options()` makes for the live scanner) and caches the result per
+symbol for the run. That endpoint returns ThetaData's FULL historical list
+of expirations ever available for that root, not just currently-live ones,
+so it is safe to use for a past `event_date`. A symbol with an empty/no-data
+result is recorded with `fill_status = 'no_options'` and excluded from any
+fill attempt -- expect many microcaps to land here; report the exact count,
+don't guess it.
+
+Step 2 -- ENTRY/EXIT (real-fill, same-day):
+  EXPIRY: the nearest expiration in that symbol's list that is >= event_date
+    + 7 calendar days (`OPTIONS_MIN_DTE_DAYS`) -- avoids 0-7 DTE, too close
+    to the event, likely terrible liquidity/theta decay on a microcap. If no
+    expiration clears that floor, `fill_status = 'no_expiry'`.
+  ENTRY: at 09:30:00+ ET on event_date, the full call chain for that expiry
+    is pulled via `/v3/option/history/quote` (strike='*', right='call',
+    09:30:00-09:31:00 ET window -- same window convention as the live
+    scanner's `fetch_entry_ask()`), and the strike whose quoted ASK is
+    closest to the stock's own `entry_ask` (reused from the 37-row query) is
+    selected. Buy at that contract's real ASK -- never a mark/mid. No usable
+    quote in the window -> `fill_status = 'no_entry_quote'`.
+  EXIT: the SAME contract's last real NBBO BID timestamped strictly before
+    16:00:00 ET, searched in the 15:55:00-16:00:00 ET window (re-pulling the
+    same endpoint for that expiry and filtering client-side for the chosen
+    strike, since a specific-strike query string is not an established
+    convention anywhere else in this file) -- the identical window/fail-
+    closed discipline as `fetch_sameday_exit_bid()`. No usable bid ->
+    `fill_status = 'no_exit_quote'`.
+  RETURN: `raw_return = exit_bid / entry_ask - 1`, computed on the OPTION
+    price itself. This is inherently leveraged vs. the underlying -- that IS
+    the point of this test -- so no separate leverage multiplier is applied.
+  SLIPPAGE / FILL CONVENTION: unlike every other PNL mode in this file, NO
+    additional slippage constant (e.g. `PNL_SLIPPAGE`) is layered on top
+    here. Options markets are already wider than stock, and entry ASK ->
+    exit BID already charges the real bid/ask spread crossed at both ends --
+    applying a flat 2% on top of that would double-charge the same cost.
+    State this plainly in every result: `raw_return` here is already a
+    real-fill number, not a before-slippage one.
+
+`fill_status` values (also the resume key): 'no_options', 'no_expiry', and
+'filled' are terminal -- never retried. 'probe_error', 'no_entry_quote', and
+'no_exit_quote' are treated as still-pending (same "NULL exit_bid is
+unresolved" resume convention as SAMEDAY_PNL_BACKTEST_MODE) so the next
+Trigger Run automatically re-checks them.
+
+This needs the same private-network path as every other backtest mode in
+this file -- `/v3/option/list/expirations` and `/v3/option/history/quote`
+are only reachable from inside Render. This mode must NEVER run on the
+scheduled trigger -- only via a manual "Trigger Run" with
+`OPTIONS_PNL_BACKTEST_MODE` set in that run's environment. Do not set it on
+the job's persistent env vars.
+Writes to `squeeze_premarket_v3_options_pnl`, a new table of its own -- it
+never touches `squeeze_premarket_v3_pnl`, `squeeze_premarket_backtest_results`
+(both read-only here), any of the other three PNL-mode tables, FAMILY #2, or
+PREREG.md.
+
+This is a NEW-INSTRUMENT test (option quotes, not a reslice of the share
+trades) on a likely THIN population after the options-availability filter --
+label any result EXPLORATORY, and if the filtered population lands in
+single digits, report that honestly rather than stretching it into a claim.
 """
 import logging
 import os
@@ -336,6 +430,13 @@ SAMEDAY_PNL_BACKTEST_MODE = os.getenv("SAMEDAY_PNL_BACKTEST_MODE", "").strip().l
 # separately from (and after) BACKTEST_MODE/PNL_BACKTEST_MODE/
 # SAMEDAY_PNL_BACKTEST_MODE; never runs in the same invocation as any of them.
 TRAIL_PNL_BACKTEST_MODE = os.getenv("TRAIL_PNL_BACKTEST_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+# EXPLORATORY new-instrument test (call options instead of shares), see
+# module docstring "OPTIONS PNL BACKTEST MODE" section -- any truthy value.
+# Must never be set on the scheduled trigger's persistent env, only on a
+# manual "Trigger Run". Checked separately from (and after) BACKTEST_MODE/
+# PNL_BACKTEST_MODE/SAMEDAY_PNL_BACKTEST_MODE/TRAIL_PNL_BACKTEST_MODE; never
+# runs in the same invocation as any of them.
+OPTIONS_PNL_BACKTEST_MODE = os.getenv("OPTIONS_PNL_BACKTEST_MODE", "").strip().lower() in ("1", "true", "yes", "on")
 
 THETA_BASE = os.getenv("THETADATA_BASE_URL", "http://thetadata-proxy:10000").strip().rstrip("/")
 if THETA_BASE and "://" not in THETA_BASE:
@@ -1856,6 +1957,434 @@ def run_trail_pnl_backtest() -> int:
         conn.close()
 
 
+# ===========================================================================
+# OPTIONS PNL BACKTEST MODE -- EXPLORATORY new-instrument test (call options
+# instead of shares on the exact same signal), see module docstring "OPTIONS
+# PNL BACKTEST MODE" section. Everything below this line is only ever reached
+# when `OPTIONS_PNL_BACKTEST_MODE` is set; it must never run on the scheduled
+# trigger, and never touches any other mode's tables, FAMILY #2, or
+# PREREG.md.
+# ===========================================================================
+
+# Avoid 0-7 DTE at entry -- too close to the event, likely terrible
+# liquidity/theta decay on a microcap. See module docstring.
+OPTIONS_MIN_DTE_DAYS = 7
+# Same entry/exit window conventions as the live scanner's fetch_entry_ask()
+# and SAMEDAY_PNL_BACKTEST_MODE's fetch_sameday_exit_bid() -- reused, not
+# reinvented.
+OPTIONS_ENTRY_WINDOW_START = "09:30:00"
+OPTIONS_ENTRY_WINDOW_END = ENTRY_QUOTE_WINDOW_END  # "09:31:00"
+OPTIONS_EXIT_WINDOW_START = SAMEDAY_EXIT_WINDOW_START  # "15:55:00"
+OPTIONS_EXIT_WINDOW_END = SAMEDAY_EXIT_WINDOW_END      # "16:00:00"
+
+# fill_status values that are terminal (never retried on the next Trigger
+# Run) vs. still-pending (same "NULL exit_bid is unresolved" resume
+# convention as SAMEDAY_PNL_BACKTEST_MODE).
+OPTIONS_TERMINAL_STATUSES = {"no_options", "no_expiry", "filled"}
+
+
+def ensure_options_pnl_tables(conn) -> None:
+    """CREATE TABLE IF NOT EXISTS for the options-PNL-backtest-only table.
+    Called ONLY from run_options_pnl_backtest() -- a new table of its own,
+    nothing overwritten in squeeze_premarket_v3_pnl,
+    squeeze_premarket_backtest_results, or any other PNL mode's table."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS squeeze_premarket_v3_options_pnl (
+                symbol TEXT,
+                event_date DATE,
+                underlying_entry_ask DOUBLE PRECISION,
+                option_symbol TEXT,
+                strike DOUBLE PRECISION,
+                expiration DATE,
+                entry_ask DOUBLE PRECISION,
+                entry_quote_time TIMESTAMPTZ,
+                exit_bid DOUBLE PRECISION,
+                exit_quote_time TIMESTAMPTZ,
+                raw_return DOUBLE PRECISION,
+                fill_status TEXT,
+                checked_at TIMESTAMPTZ DEFAULT now(),
+                PRIMARY KEY (symbol, event_date)
+            )
+        """)
+    conn.commit()
+
+
+def load_options_pnl_queue(conn) -> list:
+    """(symbol, event_date, entry_ask) for the frozen 37-row population --
+    the EXACT query given in the task spec, verified by hand against
+    Postgres before this mode was built. `entry_ask` is the STOCK's entry
+    ask from squeeze_premarket_v3_pnl, reused as-is (never re-pulled) --
+    only used below as the reference price for picking the nearest-to-money
+    strike."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT r.symbol, r.event_date, r.entry_ask
+            FROM squeeze_premarket_v3_pnl r
+            JOIN squeeze_premarket_backtest_results b
+                ON r.symbol = b.symbol AND r.event_date = b.event_date
+            WHERE r.tradeable AND r.exit_close IS NOT NULL
+              AND b.premarket_turnover <= 50 AND b.premarket_move < 0.25
+              AND b.premarket_turnover < 1
+            ORDER BY r.event_date, r.symbol
+        """)
+        return cur.fetchall()
+
+
+def load_resolved_options_keys(conn) -> set:
+    """(symbol, event_date) pairs whose fill_status is terminal -- see
+    OPTIONS_TERMINAL_STATUSES. Rows stuck on a transient status
+    ('probe_error', 'no_entry_quote', 'no_exit_quote') are treated as still
+    unresolved, so the next Trigger Run automatically re-checks them -- same
+    resume convention as every other PNL mode in this file."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT symbol, event_date FROM squeeze_premarket_v3_options_pnl "
+            "WHERE fill_status = ANY(%s)",
+            [list(OPTIONS_TERMINAL_STATUSES)],
+        )
+        return {(sym, ed) for sym, ed in cur.fetchall()}
+
+
+def insert_options_pnl_result(conn, symbol: str, event_date: date, underlying_entry_ask,
+                               option_symbol, strike, expiration, entry_ask,
+                               entry_quote_time, exit_bid, exit_quote_time,
+                               raw_return, fill_status: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO squeeze_premarket_v3_options_pnl
+                (symbol, event_date, underlying_entry_ask, option_symbol, strike,
+                 expiration, entry_ask, entry_quote_time, exit_bid,
+                 exit_quote_time, raw_return, fill_status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol, event_date) DO UPDATE SET
+                underlying_entry_ask = EXCLUDED.underlying_entry_ask,
+                option_symbol = EXCLUDED.option_symbol,
+                strike = EXCLUDED.strike,
+                expiration = EXCLUDED.expiration,
+                entry_ask = EXCLUDED.entry_ask,
+                entry_quote_time = EXCLUDED.entry_quote_time,
+                exit_bid = EXCLUDED.exit_bid,
+                exit_quote_time = EXCLUDED.exit_quote_time,
+                raw_return = EXCLUDED.raw_return,
+                fill_status = EXCLUDED.fill_status,
+                checked_at = now()
+        """, [symbol, event_date, underlying_entry_ask, option_symbol, strike,
+              expiration, entry_ask, entry_quote_time, exit_bid, exit_quote_time,
+              raw_return, fill_status])
+    conn.commit()
+
+
+def fetch_option_expirations(symbol: str):
+    """FULL historical list of expirations ThetaData has for this root --
+    the SAME call probe_has_options() already makes, see module docstring
+    'Step 1' section. Safe to use for a past event_date because the endpoint
+    is not scoped to "currently listed" -- it returns everything ThetaData
+    has ever had data for. Returns (expirations, status): status is 'ok'
+    (expirations is a sorted list of date objects, possibly empty if parsing
+    failed), 'no_data' (a definite negative -- no options ever), or 'error'
+    (unanswered question, not a negative)."""
+    url = f"{THETA_BASE}/v3/option/list/expirations"
+    rows, status, _detail = _fetch_csv(url, {"symbol": symbol})
+    if status == "error":
+        return [], "error"
+    if status == "no_data" or not rows:
+        return [], "no_data"
+    out = []
+    for row in rows:
+        try:
+            out.append(date.fromisoformat(str(row["expiration"])[:10]))
+        except (KeyError, ValueError, TypeError):
+            continue
+    if not out:
+        return [], "no_data"
+    return sorted(out), "ok"
+
+
+def pick_nearest_expiration(expirations: list, event_date: date):
+    """Nearest expiration >= event_date + OPTIONS_MIN_DTE_DAYS calendar days
+    -- see module docstring 'EXPIRY' rule. None if nothing clears the
+    floor."""
+    floor = event_date + timedelta(days=OPTIONS_MIN_DTE_DAYS)
+    candidates = [exp for exp in expirations if exp >= floor]
+    return min(candidates) if candidates else None
+
+
+def fetch_entry_call(symbol: str, event_date: date, expiration: date,
+                      underlying_entry_ask: float):
+    """ENTRY leg -- see module docstring 'ENTRY' rule. Pulls the full call
+    chain for `expiration` in the 09:30:00-09:31:00 ET window via
+    /v3/option/history/quote (strike='*'), keeps the FIRST usable ask at/
+    after 09:30:00 ET per strike, and picks the strike closest to
+    `underlying_entry_ask`. Returns (strike, ask, quote_time, reason): on
+    failure strike/ask/quote_time are None and `reason` explains why -- same
+    fail-closed discipline as fetch_entry_ask(), never a guess."""
+    url = f"{THETA_BASE}/v3/option/history/quote"
+    params = {
+        "symbol": symbol,
+        "expiration": expiration.isoformat(),
+        "strike": "*",
+        "right": "call",
+        "interval": "1s",
+        "date": event_date.isoformat(),
+        "start_time": OPTIONS_ENTRY_WINDOW_START,
+        "end_time": OPTIONS_ENTRY_WINDOW_END,
+    }
+    rows, status, detail = _fetch_csv(url, params)
+    if status == "error":
+        return None, None, None, f"proxy error fetching entry option chain: {detail}"
+    if status == "no_data" or not rows:
+        return None, None, None, "no option quote data for the 09:30:00-09:31:00 ET window"
+
+    by_strike: dict[float, tuple] = {}
+    for row in rows:
+        try:
+            ts = datetime.fromisoformat(row["timestamp"])
+            strike = float(row["strike"])
+            ask = float(row["ask"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if ts.time() < ENTRY_QUOTE_OPEN:
+            continue
+        if not (ask and ask > 0):
+            continue
+        existing = by_strike.get(strike)
+        if existing is None or ts < existing[0]:
+            by_strike[strike] = (ts, ask)
+
+    if not by_strike:
+        return None, None, None, (
+            "no call strike with a usable ask at/after 09:30:00 ET within "
+            "the 09:30:00-09:31:00 ET window"
+        )
+
+    nearest_strike = min(by_strike, key=lambda s: abs(s - underlying_entry_ask))
+    quote_time, ask = by_strike[nearest_strike]
+    return nearest_strike, ask, quote_time, None
+
+
+def fetch_exit_call_bid(symbol: str, event_date: date, expiration: date, strike: float):
+    """EXIT leg -- see module docstring 'EXIT' rule. Re-pulls the full call
+    chain for `expiration` in the 15:55:00-16:00:00 ET window and filters
+    client-side for `strike` (a specific-strike query string is not an
+    established convention anywhere else in this file, so the wildcard chain
+    is reused and filtered instead of guessing a format). Returns
+    (bid, quote_time, reason) -- same fail-closed discipline as
+    fetch_sameday_exit_bid()."""
+    url = f"{THETA_BASE}/v3/option/history/quote"
+    params = {
+        "symbol": symbol,
+        "expiration": expiration.isoformat(),
+        "strike": "*",
+        "right": "call",
+        "interval": "1s",
+        "date": event_date.isoformat(),
+        "start_time": OPTIONS_EXIT_WINDOW_START,
+        "end_time": OPTIONS_EXIT_WINDOW_END,
+    }
+    rows, status, detail = _fetch_csv(url, params)
+    if status == "error":
+        return None, None, f"proxy error fetching exit option chain: {detail}"
+    if status == "no_data" or not rows:
+        return None, None, "no option quote data for the 15:55:00-16:00:00 ET window"
+
+    parsed = []
+    for row in rows:
+        try:
+            row_strike = float(row["strike"])
+            ts = datetime.fromisoformat(row["timestamp"])
+            bid = float(row["bid"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if abs(row_strike - strike) > 1e-6:
+            continue
+        if ts.time() >= SAMEDAY_MARKET_CLOSE:
+            continue
+        if bid and bid > 0:
+            parsed.append((ts, bid))
+
+    if not parsed:
+        return None, None, (
+            "no quote with a usable bid for the chosen strike strictly before "
+            "16:00:00 ET within the 15:55:00-16:00:00 ET window"
+        )
+    parsed.sort(key=lambda pair: pair[0])
+    exit_time, exit_bid = parsed[-1]
+    return exit_bid, exit_time, None
+
+
+def scan_options_pair(symbol: str, event_date: date, underlying_entry_ask: float):
+    """Stage-1 worker: pure HTTP, no DB access -- same discipline as every
+    other scan_*_pair() in this file. Returns (fill_status, payload); see
+    module docstring 'fill_status values' section for the full state
+    machine."""
+    expirations, probe_status = fetch_option_expirations(symbol)
+    if probe_status == "error":
+        return "probe_error", {"reason": "proxy error fetching expirations list"}
+    if probe_status == "no_data" or not expirations:
+        return "no_options", {}
+
+    expiration = pick_nearest_expiration(expirations, event_date)
+    if expiration is None:
+        return "no_expiry", {}
+
+    strike, entry_ask, entry_quote_time, entry_reason = fetch_entry_call(
+        symbol, event_date, expiration, underlying_entry_ask)
+    if entry_ask is None:
+        return "no_entry_quote", {"expiration": expiration, "reason": entry_reason}
+
+    exit_bid, exit_quote_time, exit_reason = fetch_exit_call_bid(
+        symbol, event_date, expiration, strike)
+    if exit_bid is None:
+        return "no_exit_quote", {
+            "expiration": expiration, "strike": strike, "entry_ask": entry_ask,
+            "entry_quote_time": entry_quote_time, "reason": exit_reason,
+        }
+
+    # No separate slippage multiplier -- entry ASK -> exit BID already
+    # charges the real bid/ask spread crossed at both ends. See module
+    # docstring 'SLIPPAGE / FILL CONVENTION' section.
+    raw_return = exit_bid / entry_ask - 1
+    option_symbol = f"{symbol}_{expiration.isoformat()}_C{strike:g}"
+    return "filled", dict(
+        option_symbol=option_symbol, strike=strike, expiration=expiration,
+        entry_ask=entry_ask, entry_quote_time=entry_quote_time,
+        exit_bid=exit_bid, exit_quote_time=exit_quote_time, raw_return=raw_return,
+    )
+
+
+def run_options_pnl_backtest() -> int:
+    """RESUMABLE, same convention as every other PNL mode in this file:
+    skips (symbol, event_date) pairs already resolved to a terminal
+    fill_status in squeeze_premarket_v3_options_pnl."""
+    run_start = time.monotonic()
+    log.info("=== squeeze premarket cron OPTIONS PNL BACKTEST MODE "
+              "(EXPLORATORY new-instrument test, call options instead of "
+              "shares on the frozen 37-row signal, not a confirmed result) ===")
+
+    conn = get_db_connection()
+    try:
+        ensure_tables(conn)
+        ensure_options_pnl_tables(conn)
+
+        full_queue = load_options_pnl_queue(conn)
+        if not full_queue:
+            log.warning(
+                "no rows found for the frozen 37-row options population "
+                "query joining squeeze_premarket_v3_pnl to "
+                "squeeze_premarket_backtest_results - nothing to score. Run "
+                "PNL_BACKTEST_MODE first."
+            )
+            return 0
+
+        resolved = load_resolved_options_keys(conn)
+        queue = [row for row in full_queue if (row[0], row[1]) not in resolved]
+        already_resolved = len(full_queue) - len(queue)
+        log.info(
+            "OPTIONS PNL queue size: %d rows (frozen 37-row population), %d "
+            "already resolved (skipped), %d pending (resume mode)",
+            len(full_queue), already_resolved, len(queue),
+        )
+        if not queue:
+            log.info("nothing pending - every row already has a terminal options result.")
+            return 0
+
+        checked = 0
+        by_status = {
+            "filled": 0, "no_options": 0, "no_expiry": 0,
+            "no_entry_quote": 0, "no_exit_quote": 0, "probe_error": 0,
+        }
+        by_key = {(sym, ed): ask for sym, ed, ask in queue}
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {
+                pool.submit(scan_options_pair, sym, ed, ask): (sym, ed)
+                for sym, ed, ask in queue
+            }
+            for fut in as_completed(futures):
+                sym, ed = futures[fut]
+                underlying_entry_ask = by_key[(sym, ed)]
+                try:
+                    status, payload = fut.result()
+                except Exception as exc:  # noqa: BLE001 - one worker must never kill the run
+                    status, payload = "probe_error", {"reason": repr(exc)}
+                checked += 1
+                by_status[status] = by_status.get(status, 0) + 1
+
+                if status in ("no_options", "no_expiry", "probe_error"):
+                    if status != "probe_error":
+                        log.info("%s for %s %s", status, sym, ed)
+                    else:
+                        log.warning("options probe error for %s %s: %s",
+                                    sym, ed, payload.get("reason"))
+                    insert_options_pnl_result(
+                        conn, sym, ed, underlying_entry_ask, None, None, None,
+                        None, None, None, None, None, status,
+                    )
+                    continue
+
+                if status == "no_entry_quote":
+                    log.warning("no usable entry call quote for %s %s (expiry %s): %s",
+                                sym, ed, payload.get("expiration"), payload["reason"])
+                    insert_options_pnl_result(
+                        conn, sym, ed, underlying_entry_ask, None, None,
+                        payload.get("expiration"), None, None, None, None,
+                        None, status,
+                    )
+                    continue
+
+                if status == "no_exit_quote":
+                    log.warning("no usable exit call bid for %s %s (expiry %s, strike %s): %s",
+                                sym, ed, payload.get("expiration"), payload.get("strike"),
+                                payload["reason"])
+                    insert_options_pnl_result(
+                        conn, sym, ed, underlying_entry_ask, None, payload.get("strike"),
+                        payload.get("expiration"), payload.get("entry_ask"),
+                        payload.get("entry_quote_time"), None, None, None, status,
+                    )
+                    continue
+
+                # status == "filled"
+                insert_options_pnl_result(
+                    conn, sym, ed, underlying_entry_ask, payload["option_symbol"],
+                    payload["strike"], payload["expiration"], payload["entry_ask"],
+                    payload["entry_quote_time"], payload["exit_bid"],
+                    payload["exit_quote_time"], payload["raw_return"], status,
+                )
+
+        elapsed = time.monotonic() - run_start
+        log.info(
+            "=== OPTIONS PNL BACKTEST DONE: full_queue=%d already_resolved=%d "
+            "pending=%d checked=%d filled=%d no_options=%d no_expiry=%d "
+            "no_entry_quote=%d no_exit_quote=%d probe_error=%d wall_clock=%.1fs ===",
+            len(full_queue), already_resolved, len(queue), checked,
+            by_status["filled"], by_status["no_options"], by_status["no_expiry"],
+            by_status["no_entry_quote"], by_status["no_exit_quote"],
+            by_status["probe_error"], elapsed,
+        )
+        log.info(
+            "Fill convention: ENTRY = real ASK of the call strike nearest the "
+            "stock's own entry_ask (reused from squeeze_premarket_v3_pnl), "
+            "nearest expiry >= event_date+7 calendar days, bought in the "
+            "09:30:00-09:31:00 ET window; EXIT = same contract's real BID in "
+            "the 15:55:00-16:00:00 ET window, same day; raw_return = "
+            "exit_bid/entry_ask - 1 on the OPTION price itself (inherently "
+            "leveraged vs. the underlying -- no separate leverage multiplier "
+            "applied); NO additional slippage constant layered on top -- ask-"
+            "to-bid already charges the real spread crossed at both ends. "
+            "EXPLORATORY new-instrument test (option quotes, not a reslice of "
+            "the share trades) -- query squeeze_premarket_v3_options_pnl "
+            "grouped by fill_status for the options-availability count, and "
+            "WHERE fill_status = 'filled' for the primary metric and "
+            "robustness report (remove best symbol, remove best month). "
+            "Label any result exploratory, not confirmed, and report the "
+            "population size honestly if it lands in single digits."
+        )
+        return 0
+    finally:
+        conn.close()
+
+
 def main() -> int:
     run_start = time.monotonic()
     if BACKTEST_MODE:
@@ -1866,6 +2395,8 @@ def main() -> int:
         return run_sameday_pnl_backtest()
     if TRAIL_PNL_BACKTEST_MODE:
         return run_trail_pnl_backtest()
+    if OPTIONS_PNL_BACKTEST_MODE:
+        return run_options_pnl_backtest()
     today = datetime.now(ET).date()
     log.info("=== squeeze premarket cron (PREREG #3 / V3) - %s ===", today)
 
