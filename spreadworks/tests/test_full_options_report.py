@@ -121,3 +121,34 @@ def test_missing_clocks_never_become_live_context():
 
 def ledger_empty():
     return {'entry_ready_alerts':0,'trade_details':[],'exceptions':[],'fill_rules':'test','loss_clusters':[]}
+
+@freeze_time(NOW)
+@pytest.mark.parametrize('offset',[None,-91,1])
+def test_iv_receipt_cannot_refresh_missing_stale_or_future_nbbo(monkeypatch,offset):
+    from backend import market_structure as ms
+    rows=[{'strike':100+i,'right':'call','implied_vol':.2,'expiration':'2026-10-09',
+           **({'timestamp':(NOW+timedelta(seconds=offset)).astimezone(p.ET).replace(tzinfo=None).isoformat()} if offset is not None else {})} for i in range(25)]
+    monkeypatch.setattr(ms,'_theta_rows',lambda path,params:rows)
+    valid,reason=ms._surface_rows('SPY',NOW)
+    assert valid==[];assert reason=='thin_theta_iv_snapshot_after_retry'
+
+@freeze_time(NOW)
+def test_iv_preserves_oldest_actual_quote_underlying_clock(monkeypatch):
+    from backend import market_structure as ms
+    rows=[{'strike':100+i,'right':'call','implied_vol':.2,'expiration':'2026-10-09',
+           'timestamp':(NOW-timedelta(seconds=20)).astimezone(p.ET).replace(tzinfo=None).isoformat(),
+           'underlying_timestamp':(NOW-timedelta(seconds=30)).astimezone(p.ET).replace(tzinfo=None).isoformat()} for i in range(25)]
+    monkeypatch.setattr(ms,'_theta_rows',lambda path,params:rows)
+    valid,reason=ms._surface_rows('SPY',NOW)
+    assert len(valid)==25;assert reason is None
+    assert all(row['timestamp']==NOW-timedelta(seconds=30) for row in valid)
+
+
+def test_session_profile_checkpoint_merges_observed_bins_without_new_trades():
+    start=NOW-timedelta(minutes=30);middle=NOW-timedelta(minutes=15)
+    old=p.volume_profile([{'price':100.1,'size':50,'timestamp':(middle-timedelta(seconds=1)).isoformat()}],.1,start,middle)
+    new=p.volume_profile([{'price':100.2,'size':100,'timestamp':(NOW-timedelta(seconds=1)).isoformat()}],.1,middle,NOW)
+    merged=p.merge_profiles(old,new,.1)
+    assert merged['trade_count']==2;assert merged['total_volume']==150
+    assert merged['window_start']==start.isoformat();assert merged['window_end']==NOW.isoformat()
+    assert sum(r['volume'] for r in merged['bins'])==150
