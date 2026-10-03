@@ -104,13 +104,50 @@ a backtest ping would read as a live signal, which it is not.
 This mode must NEVER run on the scheduled trigger -- only via a manual
 "Trigger Run" on the Render cron job with `BACKTEST_MODE` set in that run's
 environment. Do not set `BACKTEST_MODE` on the job's persistent env vars.
+
+PNL BACKTEST MODE (added 2026-10-03, fill-honest P&L for PREREG #3 / V3)
+----------------------------------------------------------------------------
+When the env var `PNL_BACKTEST_MODE` is set (any truthy value), `main()`
+branches to `run_pnl_backtest()` BEFORE anything else -- same isolation as
+`BACKTEST_MODE` above, and mutually exclusive with it (checked in that order).
+This answers the question `BACKTEST_MODE` deliberately does NOT: of the
+signals in `squeeze_premarket_backtest_results` that already cleared the
+frozen V3 turnover/move floors (`fired_v3 = true`), what did the PREREG.md
+"Entry / exit" rule actually pay, with real fills?
+
+Rule (frozen, PREREG.md PRE-REGISTRATION #3, "Entry / exit" + "Primary
+metric" -- not re-derived here):
+  ENTRY: the first NBBO ask timestamped >= 09:30:00 ET on event_date (via
+    `/v3/stock/history/quote`, same convention as the live path's
+    `fetch_entry_ask()` -- never a trade price, never a mid/mark).
+  TRADEABLE: entry spread ((ask-bid)/ask at that same quote) <= 2%. A signal
+    with no usable quote, or spread > 2%, still gets a row (for the
+    robustness report) but is excluded from the primary metric.
+  EXIT: the close of the 10th trading session after event_date (via
+    `/v3/stock/history/eod`), no stop, no target.
+  SLIPPAGE: 2% per side, same convention as
+    `dev/squeeze/research/exit_study.py`/`exit_study2.py` (the squeeze-nimble
+    cell): entry fill = ask * (1 + 0.02), exit fill = exit_close * (1 - 0.02).
+  SIZING: 1 unit per signal, equal weight (not applied here -- this job
+    writes per-trade returns; the equal-weight sum is computed by the
+    reporting script, not this cron).
+
+This needs the SAME private-network path as `BACKTEST_MODE` -- the proxy's
+`/v3/stock/history/quote` and `/v3/stock/history/eod` endpoints are only
+reachable from inside Render, never from the workstation (confirmed
+2026-10-03, same constraint `research/sync_premarket_backtest_queue.py`
+documents for `BACKTEST_MODE`). This mode must NEVER run on the scheduled
+trigger -- only via a manual "Trigger Run" with `PNL_BACKTEST_MODE` set in
+that run's environment. Do not set it on the job's persistent env vars.
+Writes to `squeeze_premarket_v3_pnl`, a table of its own -- it never touches
+`squeeze_premarket_backtest_results` (read-only here) or any FAMILY #2 table.
 """
 import logging
 import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, time as clock_time
+from datetime import date, datetime, time as clock_time, timedelta
 from io import StringIO
 from csv import DictReader
 from zoneinfo import ZoneInfo
@@ -139,6 +176,11 @@ SESSION_END = "09:29:59"                 # end of the scored window
 # any truthy value. Must never be set on the scheduled trigger's persistent
 # env, only on a manual "Trigger Run".
 BACKTEST_MODE = os.getenv("BACKTEST_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+# EXPLORATORY fill-honest P&L path, see module docstring "PNL BACKTEST MODE"
+# section -- any truthy value. Must never be set on the scheduled trigger's
+# persistent env, only on a manual "Trigger Run". Checked separately from
+# BACKTEST_MODE; the two never run in the same invocation.
+PNL_BACKTEST_MODE = os.getenv("PNL_BACKTEST_MODE", "").strip().lower() in ("1", "true", "yes", "on")
 
 THETA_BASE = os.getenv("THETADATA_BASE_URL", "http://thetadata-proxy:10000").strip().rstrip("/")
 if THETA_BASE and "://" not in THETA_BASE:
@@ -693,10 +735,301 @@ def run_backtest() -> int:
         conn.close()
 
 
+# ===========================================================================
+# PNL BACKTEST MODE -- EXPLORATORY, fill-honest P&L for PREREG #3 / V3. See
+# module docstring "PNL BACKTEST MODE" section. Everything below this line is
+# only ever reached when `PNL_BACKTEST_MODE` is set; it must never run on the
+# scheduled trigger.
+# ===========================================================================
+
+PNL_SLIPPAGE = 0.02   # per side, same convention as exit_study.py/exit_study2.py
+PNL_SPREAD_MAX = 0.02  # tradeable ceiling, PREREG.md "Entry / exit"
+PNL_EXIT_SESSIONS = 10  # "close of the 10th session after entry"
+# Calendar-day window pulled from `/v3/stock/history/eod` to find the 10th
+# TRADING session after event_date -- comfortably >= 10 sessions even across
+# a long holiday run; ThetaData's EOD series already skips weekends/holidays,
+# so counting rows IS counting trading sessions, no calendar math needed.
+PNL_EXIT_WINDOW_DAYS = 30
+
+
+def ensure_pnl_tables(conn) -> None:
+    """CREATE TABLE IF NOT EXISTS for the PNL-backtest-only table. Called
+    ONLY from run_pnl_backtest(), never from the live path or BACKTEST_MODE's
+    ensure_backtest_tables() -- a separate table, nothing overwritten."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS squeeze_premarket_v3_pnl (
+                symbol TEXT,
+                event_date DATE,
+                entry_ask DOUBLE PRECISION,
+                entry_spread DOUBLE PRECISION,
+                tradeable BOOLEAN,
+                exit_close DOUBLE PRECISION,
+                exit_date DATE,
+                raw_return DOUBLE PRECISION,
+                return_after_slippage DOUBLE PRECISION,
+                checked_at TIMESTAMPTZ DEFAULT now(),
+                PRIMARY KEY (symbol, event_date)
+            )
+        """)
+    conn.commit()
+
+
+def load_pnl_queue(conn) -> list:
+    """(symbol, event_date) for every signal that already fired V3 in the
+    EXPLORATORY coverage backtest -- the population PREREG.md's primary
+    metric is scored over."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT symbol, event_date FROM squeeze_premarket_backtest_results
+            WHERE fired_v3 = true
+            ORDER BY event_date, symbol
+        """)
+        return cur.fetchall()
+
+
+def load_resolved_pnl_keys(conn) -> set:
+    """(symbol, event_date) pairs that already have a row in
+    squeeze_premarket_v3_pnl -- same resume convention as
+    load_resolved_backtest_keys() above."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT symbol, event_date FROM squeeze_premarket_v3_pnl")
+        return {(sym, ed) for sym, ed in cur.fetchall()}
+
+
+def insert_pnl_result(conn, symbol: str, event_date: date, entry_ask, entry_spread,
+                       tradeable, exit_close, exit_date, raw_return,
+                       return_after_slippage) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO squeeze_premarket_v3_pnl
+                (symbol, event_date, entry_ask, entry_spread, tradeable,
+                 exit_close, exit_date, raw_return, return_after_slippage)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol, event_date) DO UPDATE SET
+                entry_ask = EXCLUDED.entry_ask,
+                entry_spread = EXCLUDED.entry_spread,
+                tradeable = EXCLUDED.tradeable,
+                exit_close = EXCLUDED.exit_close,
+                exit_date = EXCLUDED.exit_date,
+                raw_return = EXCLUDED.raw_return,
+                return_after_slippage = EXCLUDED.return_after_slippage,
+                checked_at = now()
+        """, [symbol, event_date, entry_ask, entry_spread, tradeable, exit_close,
+              exit_date, raw_return, return_after_slippage])
+    conn.commit()
+
+
+def fetch_entry_quote_for_date(symbol: str, event_date: date):
+    """Same 60s-window NBBO search as the live path's `fetch_entry_ask()`,
+    parametrized by a historical `event_date` instead of "today", and
+    returning the paired bid alongside the ask so the caller can score the
+    entry spread. Returns (ask, bid, quote_time, reason)."""
+    url = f"{THETA_BASE}/v3/stock/history/quote"
+    params = {
+        "symbol": symbol,
+        "date": event_date.isoformat(),
+        "start_time": "09:30:00",
+        "end_time": ENTRY_QUOTE_WINDOW_END,
+        "interval": "1s",
+        "venue": "utp_cta",
+    }
+    rows, status, detail = _fetch_csv(url, params)
+    if status == "error":
+        return None, None, None, f"proxy error fetching NBBO quote: {detail}"
+    if status == "no_data" or not rows:
+        return None, None, None, "no NBBO quote data for the 09:30:00-09:31:00 ET window"
+
+    for row in rows:
+        try:
+            ts = datetime.fromisoformat(row["timestamp"])
+            ask = float(row["ask"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if ts.time() < ENTRY_QUOTE_OPEN:
+            continue
+        if ask and ask > 0:
+            try:
+                bid = float(row["bid"])
+            except (KeyError, ValueError, TypeError):
+                bid = None
+            return ask, bid, ts, None
+    return None, None, None, "no quote with a usable ask price at/after 09:30:00 ET within the 60s window"
+
+
+def fetch_tenth_session_close(symbol: str, event_date: date):
+    """EXIT leg (PREREG.md: "sell at the close of the 10th session after
+    entry"). Pulls daily EOD closes for the PNL_EXIT_WINDOW_DAYS calendar
+    days after event_date and takes the 10th row by position. Returns
+    (exit_close, exit_date, reason)."""
+    start = event_date + timedelta(days=1)
+    end = event_date + timedelta(days=PNL_EXIT_WINDOW_DAYS)
+    url = f"{THETA_BASE}/v3/stock/history/eod"
+    params = {"symbol": symbol, "start_date": start.isoformat(), "end_date": end.isoformat()}
+    rows, status, detail = _fetch_csv(url, params)
+    if status == "error":
+        return None, None, f"proxy error fetching EOD closes: {detail}"
+    if status == "no_data" or not rows:
+        return None, None, "no EOD data in the 30 calendar-day window after event_date"
+    if len(rows) < PNL_EXIT_SESSIONS:
+        return None, None, (
+            f"only {len(rows)} trading sessions available in the 30 calendar-day "
+            f"window, need {PNL_EXIT_SESSIONS}"
+        )
+    row10 = rows[PNL_EXIT_SESSIONS - 1]
+    try:
+        exit_close = float(row10["close"])
+    except (KeyError, ValueError, TypeError):
+        return None, None, "10th-session row has no usable close"
+    exit_date_raw = row10.get("date") or row10.get("timestamp") or ""
+    try:
+        exit_date = date.fromisoformat(str(exit_date_raw)[:10])
+    except ValueError:
+        return None, None, f"10th-session row has an unparseable date: {exit_date_raw!r}"
+    return exit_close, exit_date, None
+
+
+def scan_pnl_pair(symbol: str, event_date: date):
+    """Stage-1 worker: pure HTTP, no DB access -- same discipline as
+    scan_symbol_backtest(). Returns (status, payload):
+      'entry_missing' - no usable NBBO ask at all (payload carries the reason
+         only; the row is still written, all-NULL except symbol/event_date).
+      'exit_missing'  - entry resolved but the 10th-session close did not
+         (payload carries ask/spread/tradeable plus the reason).
+      'ok'            - both legs resolved (payload carries every column).
+    Spread and tradeability are computed here so a missing/zero bid never
+    silently passes the <=2% gate."""
+    ask, bid, _quote_time, entry_reason = fetch_entry_quote_for_date(symbol, event_date)
+    if ask is None:
+        return "entry_missing", {"reason": entry_reason}
+
+    entry_spread = (ask - bid) / ask if (bid and bid > 0) else None
+    tradeable = bool(entry_spread is not None and entry_spread <= PNL_SPREAD_MAX)
+
+    exit_close, exit_date, exit_reason = fetch_tenth_session_close(symbol, event_date)
+    if exit_close is None:
+        return "exit_missing", {
+            "ask": ask, "spread": entry_spread, "tradeable": tradeable,
+            "reason": exit_reason,
+        }
+
+    raw_return = exit_close / ask - 1
+    # 2% slippage per side, same convention as exit_study.py/exit_study2.py
+    # (the squeeze-nimble cell): entry inflated by (1+slip), exit deflated by
+    # (1-slip) -- see PNL_SLIPPAGE above.
+    return_after_slip = exit_close * (1 - PNL_SLIPPAGE) / (ask * (1 + PNL_SLIPPAGE)) - 1
+    return "ok", dict(
+        entry_ask=ask, entry_spread=entry_spread, tradeable=tradeable,
+        exit_close=exit_close, exit_date=exit_date,
+        raw_return=raw_return, return_after_slippage=return_after_slip,
+    )
+
+
+def run_pnl_backtest() -> int:
+    """RESUMABLE, same convention as run_backtest(): skips (symbol,
+    event_date) pairs already written to squeeze_premarket_v3_pnl."""
+    run_start = time.monotonic()
+    log.info("=== squeeze premarket cron PNL BACKTEST MODE (PREREG #3 / V3, "
+              "fill-honest P&L, EXPLORATORY, not the live forward ledger) ===")
+
+    conn = get_db_connection()
+    try:
+        ensure_tables(conn)
+        ensure_pnl_tables(conn)
+
+        full_queue = load_pnl_queue(conn)
+        if not full_queue:
+            log.warning(
+                "no fired_v3=true rows in squeeze_premarket_backtest_results - "
+                "nothing to score. Run BACKTEST_MODE first."
+            )
+            return 0
+
+        resolved = load_resolved_pnl_keys(conn)
+        queue = [row for row in full_queue if tuple(row) not in resolved]
+        already_resolved = len(full_queue) - len(queue)
+        log.info(
+            "PNL queue size: %d fired_v3 rows, %d already resolved (skipped), "
+            "%d pending (resume mode)",
+            len(full_queue), already_resolved, len(queue),
+        )
+        if not queue:
+            log.info("nothing pending - every fired_v3 row already has a PNL result.")
+            return 0
+
+        checked = 0
+        entry_missing = 0
+        exit_missing = 0
+        tradeable = 0
+        not_tradeable = 0
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {
+                pool.submit(scan_pnl_pair, sym, ed): (sym, ed)
+                for sym, ed in queue
+            }
+            for fut in as_completed(futures):
+                sym, ed = futures[fut]
+                try:
+                    status, payload = fut.result()
+                except Exception as exc:  # noqa: BLE001 - one worker must never kill the run
+                    status, payload = "entry_missing", {"reason": repr(exc)}
+                checked += 1
+
+                if status == "entry_missing":
+                    entry_missing += 1
+                    log.warning("no usable NBBO ask for %s %s: %s", sym, ed, payload["reason"])
+                    insert_pnl_result(conn, sym, ed, None, None, False, None, None, None, None)
+                    continue
+
+                if status == "exit_missing":
+                    exit_missing += 1
+                    log.warning("no usable 10th-session close for %s %s: %s",
+                                sym, ed, payload["reason"])
+                    if payload["tradeable"]:
+                        tradeable += 1
+                    else:
+                        not_tradeable += 1
+                    insert_pnl_result(conn, sym, ed, payload["ask"], payload["spread"],
+                                       payload["tradeable"], None, None, None, None)
+                    continue
+
+                if payload["tradeable"]:
+                    tradeable += 1
+                else:
+                    not_tradeable += 1
+                insert_pnl_result(
+                    conn, sym, ed, payload["entry_ask"], payload["entry_spread"],
+                    payload["tradeable"], payload["exit_close"], payload["exit_date"],
+                    payload["raw_return"], payload["return_after_slippage"],
+                )
+
+        elapsed = time.monotonic() - run_start
+        log.info(
+            "=== PNL BACKTEST DONE: full_queue=%d already_resolved=%d pending=%d "
+            "checked=%d entry_missing=%d exit_missing=%d tradeable=%d "
+            "not_tradeable=%d wall_clock=%.1fs ===",
+            len(full_queue), already_resolved, len(queue), checked,
+            entry_missing, exit_missing, tradeable, not_tradeable, elapsed,
+        )
+        log.info(
+            "Fill convention: ENTRY = first NBBO ask >= 09:30:00 ET; EXIT = "
+            "close of the 10th trading session after entry; 2%% slippage per "
+            "side (entry*(1+slip), exit*(1-slip)); tradeable requires entry "
+            "spread <= 2%%. EXPLORATORY result -- query squeeze_premarket_v3_pnl "
+            "for the primary metric and robustness report."
+        )
+        return 0
+    finally:
+        conn.close()
+
+
 def main() -> int:
     run_start = time.monotonic()
     if BACKTEST_MODE:
         return run_backtest()
+    if PNL_BACKTEST_MODE:
+        return run_pnl_backtest()
     today = datetime.now(ET).date()
     log.info("=== squeeze premarket cron (PREREG #3 / V3) - %s ===", today)
 
