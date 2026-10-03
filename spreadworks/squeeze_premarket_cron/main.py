@@ -789,11 +789,19 @@ def load_pnl_queue(conn) -> list:
 
 
 def load_resolved_pnl_keys(conn) -> set:
-    """(symbol, event_date) pairs that already have a row in
+    """(symbol, event_date) pairs that already have a FULLY resolved row in
     squeeze_premarket_v3_pnl -- same resume convention as
-    load_resolved_backtest_keys() above."""
+    load_resolved_backtest_keys() above, except a row with a NULL
+    exit_close (entry or exit leg failed -- including every row written by
+    the pre-fix last_trade/created column bug below) is treated as still
+    unresolved, so the next Trigger Run automatically re-checks it and
+    overwrites it via insert_pnl_result's ON CONFLICT DO UPDATE. No manual
+    cleanup/DELETE needed."""
     with conn.cursor() as cur:
-        cur.execute("SELECT symbol, event_date FROM squeeze_premarket_v3_pnl")
+        cur.execute(
+            "SELECT symbol, event_date FROM squeeze_premarket_v3_pnl "
+            "WHERE exit_close IS NOT NULL"
+        )
         return {(sym, ed) for sym, ed in cur.fetchall()}
 
 
@@ -861,7 +869,14 @@ def fetch_tenth_session_close(symbol: str, event_date: date):
     """EXIT leg (PREREG.md: "sell at the close of the 10th session after
     entry"). Pulls daily EOD closes for the PNL_EXIT_WINDOW_DAYS calendar
     days after event_date and takes the 10th row by position. Returns
-    (exit_close, exit_date, reason)."""
+    (exit_close, exit_date, reason).
+
+    The proxy's /v3/stock/history/eod rows carry no 'date' or 'timestamp'
+    column -- the session date lives in 'last_trade' (falling back to
+    'created'), the same convention already used by
+    backend/ember/legacy/spike.py's _load_theta_history() against this same
+    endpoint. Rows are also not guaranteed to arrive in chronological order,
+    so they're sorted here before counting sessions, same as spike.py does."""
     start = event_date + timedelta(days=1)
     end = event_date + timedelta(days=PNL_EXIT_WINDOW_DAYS)
     url = f"{THETA_BASE}/v3/stock/history/eod"
@@ -871,21 +886,24 @@ def fetch_tenth_session_close(symbol: str, event_date: date):
         return None, None, f"proxy error fetching EOD closes: {detail}"
     if status == "no_data" or not rows:
         return None, None, "no EOD data in the 30 calendar-day window after event_date"
-    if len(rows) < PNL_EXIT_SESSIONS:
+
+    sessions = []
+    for row in rows:
+        raw_ts = row.get("last_trade") or row.get("created") or ""
+        try:
+            session_date = date.fromisoformat(str(raw_ts)[:10])
+            close = float(row["close"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        sessions.append((session_date, close))
+    sessions.sort(key=lambda pair: pair[0])
+
+    if len(sessions) < PNL_EXIT_SESSIONS:
         return None, None, (
-            f"only {len(rows)} trading sessions available in the 30 calendar-day "
+            f"only {len(sessions)} usable trading sessions in the 30 calendar-day "
             f"window, need {PNL_EXIT_SESSIONS}"
         )
-    row10 = rows[PNL_EXIT_SESSIONS - 1]
-    try:
-        exit_close = float(row10["close"])
-    except (KeyError, ValueError, TypeError):
-        return None, None, "10th-session row has no usable close"
-    exit_date_raw = row10.get("date") or row10.get("timestamp") or ""
-    try:
-        exit_date = date.fromisoformat(str(exit_date_raw)[:10])
-    except ValueError:
-        return None, None, f"10th-session row has an unparseable date: {exit_date_raw!r}"
+    exit_date, exit_close = sessions[PNL_EXIT_SESSIONS - 1]
     return exit_close, exit_date, None
 
 
