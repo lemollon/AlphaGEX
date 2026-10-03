@@ -207,6 +207,83 @@ This is a SECOND LOOK at the same historical population PNL_BACKTEST_MODE
 already scored, not a fresh out-of-sample test -- label any result from this
 mode EXPLORATORY, never a confirmed finding, until it clears its own
 pre-registration.
+
+TRAIL PNL BACKTEST MODE (added 2026-10-03, EXPLORATORY third look -- a THIRD,
+structurally different exit question against the SAME historical population
+PNL_BACKTEST_MODE and SAMEDAY_PNL_BACKTEST_MODE already scored, NOT a
+confirmed result)
+----------------------------------------------------------------------------
+When the env var `TRAIL_PNL_BACKTEST_MODE` is set (any truthy value),
+`main()` branches to `run_trail_pnl_backtest()` BEFORE anything else -- same
+isolation as the three modes above, checked after all of them and mutually
+exclusive with each. This is deliberately a SEPARATE mode/table -- none of
+the other three modes' behavior changes.
+
+PNL_BACKTEST_MODE holds 10 trading sessions; SAMEDAY_PNL_BACKTEST_MODE exits
+at a real bid near the close of the SAME day. This mode asks a third
+question: instead of a fixed exit time, what does the same entry pay under
+an INTRADAY TRAILING STOP -- exit the first time price drops some percentage
+below the running high since entry, simulated on real regular-session
+1-minute bars?
+
+Population: `load_trail_pnl_queue()` uses the IDENTICAL join/filter as
+`load_sameday_pnl_queue()` (squeeze_premarket_v3_pnl joined to
+squeeze_premarket_backtest_results on premarket_turnover <=
+SAMEDAY_TURNOVER_CAP, tradeable = true, exit_close IS NOT NULL) -- the SAME
+266-row population already scored twice. This is now a THIRD dependent look
+at that exact set; any result is EXPLORATORY, not confirmed, same as the
+mode above.
+
+Data: day-0 REGULAR-SESSION (09:30:00-16:00:00 ET, never premarket)
+1-minute OHLC bars via the already-deployed `/v3/stock/history/ohlc`
+endpoint (`fetch_regular_session_bars()`) -- the same TRADES-only route
+scan_symbol()/scan_symbol_backtest() already use, just pointed at the
+regular session.
+
+Rule:
+  ENTRY: `entry_ask` as already computed in `squeeze_premarket_v3_pnl` --
+    reused, not re-pulled, same convention as SAMEDAY_PNL_BACKTEST_MODE.
+  TRIGGER: for each 1-minute bar in chronological order, the running peak
+    is updated to the bar's HIGH, then the bar's LOW is checked against
+    peak * (1 - trail_pct). The first bar whose low breaches that level
+    triggers the stop. Three thresholds are tested in the SAME run, never
+    just one: trail_pct in {10%, 15%, 20%} (`TRAIL_PCTS`), looped and
+    written separately, tagged by `trail_pct_used` -- report all three,
+    never cherry-pick the best after the fact.
+  STOP FILL (the standing rule-0 honesty requirement -- "never score a fill
+    you could not have gotten"): once triggered, the simulated fill is the
+    CLOSE of the triggering bar, NOT the stop level itself. A real
+    trailing-stop order fills at the next available price after the
+    trigger, which can gap below the stop level on an illiquid microcap --
+    the bar close is one extra bar of slippage beyond the stop level, a more
+    honest stand-in than assuming a fill exactly at the stop price. This is
+    still an approximation: the true NBBO bid at the exact trigger instant
+    would be more rigorous, but pulling tick-level quote data for every bar
+    of every trade is a much bigger pull than this pass -- left for a future,
+    more rigorous look if any threshold here looks promising.
+  NO-TRIGGER FILL: if no bar ever breaches the trailing level through
+    16:00:00 ET, exit at the real NBBO bid near the close -- the SAME
+    15:55:00-16:00:00 ET bid search SAMEDAY_PNL_BACKTEST_MODE already built
+    (`fetch_sameday_exit_bid()`), reused/imported here, not rewritten.
+  SLIPPAGE: identical mechanism/constant to PNL_BACKTEST_MODE's
+    `PNL_SLIPPAGE` (2% per side), reused for an apples-to-apples comparison
+    against the other two exit variants.
+
+This needs the same private-network path as the other backtest modes --
+`/v3/stock/history/ohlc` and `/v3/stock/history/quote` are only reachable
+from inside Render. This mode must NEVER run on the scheduled trigger --
+only via a manual "Trigger Run" with `TRAIL_PNL_BACKTEST_MODE` set in that
+run's environment. Do not set it on the job's persistent env vars.
+Writes to `squeeze_premarket_v3_trail_pnl`, a new table of its own -- it
+never touches `squeeze_premarket_v3_pnl`, `squeeze_premarket_v3_sameday_pnl`,
+or `squeeze_premarket_backtest_results` (all read-only here), or any
+FAMILY #2 table.
+
+This is a THIRD LOOK at the same historical population the other two PNL
+modes already scored, not a fresh out-of-sample test -- label any result
+from this mode EXPLORATORY, never a confirmed finding, until it clears its
+own pre-registration. Report ALL THREE thresholds, not just whichever one
+comes out positive.
 """
 import logging
 import os
@@ -253,6 +330,12 @@ PNL_BACKTEST_MODE = os.getenv("PNL_BACKTEST_MODE", "").strip().lower() in ("1", 
 # separately from (and after) BACKTEST_MODE/PNL_BACKTEST_MODE; never runs in
 # the same invocation as either.
 SAMEDAY_PNL_BACKTEST_MODE = os.getenv("SAMEDAY_PNL_BACKTEST_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+# EXPLORATORY intraday-trailing-stop third look, see module docstring "TRAIL
+# PNL BACKTEST MODE" section -- any truthy value. Must never be set on the
+# scheduled trigger's persistent env, only on a manual "Trigger Run". Checked
+# separately from (and after) BACKTEST_MODE/PNL_BACKTEST_MODE/
+# SAMEDAY_PNL_BACKTEST_MODE; never runs in the same invocation as any of them.
+TRAIL_PNL_BACKTEST_MODE = os.getenv("TRAIL_PNL_BACKTEST_MODE", "").strip().lower() in ("1", "true", "yes", "on")
 
 THETA_BASE = os.getenv("THETADATA_BASE_URL", "http://thetadata-proxy:10000").strip().rstrip("/")
 if THETA_BASE and "://" not in THETA_BASE:
@@ -1384,6 +1467,395 @@ def run_sameday_pnl_backtest() -> int:
         conn.close()
 
 
+# ===========================================================================
+# TRAIL PNL BACKTEST MODE -- EXPLORATORY third look (same 266-row historical
+# population PNL_BACKTEST_MODE and SAMEDAY_PNL_BACKTEST_MODE already scored,
+# a third, structurally different exit question), see module docstring
+# "TRAIL PNL BACKTEST MODE" section. Everything below this line is only ever
+# reached when `TRAIL_PNL_BACKTEST_MODE` is set; it must never run on the
+# scheduled trigger, and never touches PNL_BACKTEST_MODE's,
+# SAMEDAY_PNL_BACKTEST_MODE's, or BACKTEST_MODE's tables.
+# ===========================================================================
+
+TRAIL_SESSION_START = "09:30:00"  # regular session, NOT premarket
+TRAIL_SESSION_END = "16:00:00"
+# Trailing-stop drawdown thresholds from the running peak since entry,
+# tested in the SAME run per the task spec -- report all three separately,
+# never cherry-pick the best one after the fact.
+TRAIL_PCTS = (0.10, 0.15, 0.20)
+
+
+def ensure_trail_pnl_tables(conn) -> None:
+    """CREATE TABLE IF NOT EXISTS for the trailing-stop-backtest-only table.
+    Called ONLY from run_trail_pnl_backtest() -- a new table of its own,
+    nothing overwritten in squeeze_premarket_v3_pnl,
+    squeeze_premarket_v3_sameday_pnl, or squeeze_premarket_backtest_results."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS squeeze_premarket_v3_trail_pnl (
+                symbol TEXT,
+                event_date DATE,
+                entry_ask DOUBLE PRECISION,
+                trail_pct_used DOUBLE PRECISION,
+                stop_triggered BOOLEAN,
+                exit_price DOUBLE PRECISION,
+                exit_time TIMESTAMPTZ,
+                exit_reason TEXT,
+                raw_return DOUBLE PRECISION,
+                return_after_slippage DOUBLE PRECISION,
+                checked_at TIMESTAMPTZ DEFAULT now(),
+                PRIMARY KEY (symbol, event_date, trail_pct_used)
+            )
+        """)
+    conn.commit()
+
+
+def load_trail_pnl_queue(conn) -> list:
+    """(symbol, event_date, entry_ask) for every signal in the SAME clean
+    266-row population SAMEDAY_PNL_BACKTEST_MODE already scored --
+    load_sameday_pnl_queue()'s identical join/filter
+    (squeeze_premarket_v3_pnl joined to squeeze_premarket_backtest_results on
+    premarket_turnover <= SAMEDAY_TURNOVER_CAP, tradeable = true, exit_close
+    IS NOT NULL), copied here rather than called so this mode stays fully
+    self-contained and never has to change if the sameday query ever did --
+    verified identical to load_sameday_pnl_queue() by inspection, not
+    re-derived, for an apples-to-apples population across all three exit
+    variants."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.symbol, p.event_date, p.entry_ask
+            FROM squeeze_premarket_v3_pnl p
+            JOIN squeeze_premarket_backtest_results b
+                ON b.symbol = p.symbol AND b.event_date = p.event_date
+            WHERE b.premarket_turnover <= %s
+              AND p.tradeable = true
+              AND p.exit_close IS NOT NULL
+            ORDER BY p.event_date, p.symbol
+        """, [SAMEDAY_TURNOVER_CAP])
+        return cur.fetchall()
+
+
+def load_resolved_trail_pairs(conn) -> set:
+    """(symbol, event_date) pairs where EVERY TRAIL_PCTS threshold already
+    has a FULLY resolved row (non-NULL exit_price) -- same resume
+    convention as load_resolved_pnl_keys()/load_resolved_sameday_keys(),
+    extended to "all three thresholds done" since this mode writes one row
+    per threshold per pair. A pair with any threshold still NULL (no bars at
+    all, or no triggered stop AND no usable EOD bid) is treated as still
+    unresolved, so the next Trigger Run automatically re-checks the whole
+    pair (and re-pulls bars once, re-simulating all three thresholds)."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT symbol, event_date FROM squeeze_premarket_v3_trail_pnl
+            WHERE exit_price IS NOT NULL
+            GROUP BY symbol, event_date
+            HAVING count(*) = %s
+        """, [len(TRAIL_PCTS)])
+        return {(sym, ed) for sym, ed in cur.fetchall()}
+
+
+def insert_trail_pnl_result(conn, symbol: str, event_date: date, entry_ask,
+                             trail_pct_used: float, stop_triggered, exit_price,
+                             exit_time, exit_reason, raw_return,
+                             return_after_slippage) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO squeeze_premarket_v3_trail_pnl
+                (symbol, event_date, entry_ask, trail_pct_used, stop_triggered,
+                 exit_price, exit_time, exit_reason, raw_return,
+                 return_after_slippage)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol, event_date, trail_pct_used) DO UPDATE SET
+                entry_ask = EXCLUDED.entry_ask,
+                stop_triggered = EXCLUDED.stop_triggered,
+                exit_price = EXCLUDED.exit_price,
+                exit_time = EXCLUDED.exit_time,
+                exit_reason = EXCLUDED.exit_reason,
+                raw_return = EXCLUDED.raw_return,
+                return_after_slippage = EXCLUDED.return_after_slippage,
+                checked_at = now()
+        """, [symbol, event_date, entry_ask, trail_pct_used, stop_triggered,
+              exit_price, exit_time, exit_reason, raw_return, return_after_slippage])
+    conn.commit()
+
+
+def fetch_regular_session_bars(symbol: str, event_date: date):
+    """Day-0 regular-session (09:30:00-16:00:00 ET, NOT premarket) 1-minute
+    OHLC bars via the already-deployed `/v3/stock/history/ohlc` endpoint --
+    the SAME TRADES-only route scan_symbol()/scan_symbol_backtest() already
+    use, pointed at the regular session instead of the premarket window.
+    Returns (status, bars, detail): bars is a list of
+    (timestamp, high, low, close) tuples sorted chronologically (the proxy
+    does not guarantee row order -- same defensive sort as
+    fetch_tenth_session_close()/fetch_sameday_exit_bid()). status/detail
+    follow the same 'error'/'no_data'/'ok' convention as every other
+    fetch_* helper in this file."""
+    url = f"{THETA_BASE}/v3/stock/history/ohlc"
+    params = {
+        "symbol": symbol,
+        "date": event_date.isoformat(),
+        "start_time": TRAIL_SESSION_START,
+        "end_time": TRAIL_SESSION_END,
+        "interval": "1m",
+        "venue": "utp_cta",
+    }
+    rows, status, detail = _fetch_csv(url, params)
+    if status == "error":
+        return "error", None, detail
+    if status == "no_data" or not rows:
+        return "no_data", None, None
+
+    bars = []
+    for row in rows:
+        try:
+            ts = datetime.fromisoformat(row["timestamp"])
+            high = float(row["high"])
+            low = float(row["low"])
+            close = float(row["close"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if high > 0 and low > 0 and close > 0:
+            bars.append((ts, high, low, close))
+    if not bars:
+        return "no_data", None, None
+    bars.sort(key=lambda bar: bar[0])
+    return "ok", bars, None
+
+
+def simulate_trailing_stop(entry_ask: float, bars: list, trail_pct: float):
+    """Core trailing-stop simulation for ONE threshold over ONE day's bars.
+
+    Tracks the running high (peak) since entry, starting at entry_ask itself
+    (the real fill price, not the first bar's own open). For each bar in
+    chronological order: the peak is updated to the bar's HIGH first, then
+    the bar's LOW is checked against peak * (1 - trail_pct) -- the frozen
+    trigger rule ("exit the first time price drops X% below the running
+    high"). Using the bar's own high to update the peak before checking its
+    own low is itself an approximation forced by 1-minute OHLC granularity
+    (true intra-bar sequencing of the high vs. the low is unknown) -- noted
+    here, not hidden.
+
+    FILL CONVENTION (the task's explicit honesty requirement, standing rule
+    0 "never score a fill you could not have gotten"): once the stop
+    triggers, the simulated fill is the CLOSE of the triggering bar, NOT the
+    stop level itself. A real trailing-stop order fills at the next
+    available price after the trigger, which can gap below the stop level on
+    an illiquid microcap -- the bar close is one bar of slippage beyond the
+    stop level, a more honest (if still imperfect) stand-in than assuming a
+    fill exactly at the stop price. The true NBBO bid at the exact trigger
+    instant would be more rigorous still; that requires tick-level quote
+    data for every bar of every trade, a much bigger pull, and is left for a
+    future pass if this threshold looks promising.
+
+    Returns (triggered: bool, fill_price: float|None, fill_time: datetime|None).
+    """
+    peak = entry_ask
+    for ts, high, low, close in bars:
+        peak = max(peak, high)
+        stop_level = peak * (1 - trail_pct)
+        if low <= stop_level:
+            return True, close, ts
+    return False, None, None
+
+
+def scan_trail_pair(symbol: str, event_date: date, entry_ask: float):
+    """Stage-1 worker: pure HTTP, no DB access -- same discipline as
+    scan_pnl_pair()/scan_sameday_pair(). Pulls the day's regular-session
+    bars ONCE and reuses them for all three TRAIL_PCTS thresholds (never
+    three separate HTTP pulls per symbol/day). The EOD-bid fallback
+    (fetch_sameday_exit_bid(), reused as-is from SAMEDAY_PNL_BACKTEST_MODE,
+    NOT rewritten) is also pulled at most ONCE per symbol/day, only if at
+    least one threshold needs it.
+
+    Returns (status, payload):
+      'error'    - bars fetch failed after retries (payload carries the
+         detail dict only; no row is written, so the pair is retried next
+         run -- same convention as every other mode's 'error' branch).
+      'no_data'  - no usable regular-session bars at all (payload is None;
+         every threshold gets a row with exit_reason='no_data').
+      'ok'       - bars resolved (payload is a dict keyed by trail_pct of
+         [triggered, exit_price, exit_time, exit_reason]).
+    """
+    bars_status, bars, detail = fetch_regular_session_bars(symbol, event_date)
+    if bars_status == "error":
+        return "error", detail
+    if bars_status == "no_data":
+        return "no_data", None
+
+    per_threshold = {}
+    need_eod_bid = False
+    for pct in TRAIL_PCTS:
+        triggered, fill_price, fill_time = simulate_trailing_stop(entry_ask, bars, pct)
+        per_threshold[pct] = [triggered, fill_price, fill_time, "stop" if triggered else None]
+        if not triggered:
+            need_eod_bid = True
+
+    if need_eod_bid:
+        # Reused as-is from SAMEDAY_PNL_BACKTEST_MODE -- NOT rewritten. Same
+        # 15:55:00-16:00:00 ET real-NBBO-bid search, never the close print,
+        # never a mark.
+        eod_bid, eod_time, eod_reason = fetch_sameday_exit_bid(symbol, event_date)
+        for pct in TRAIL_PCTS:
+            if per_threshold[pct][0]:  # already triggered on a stop
+                continue
+            if eod_bid is not None:
+                per_threshold[pct][1] = eod_bid
+                per_threshold[pct][2] = eod_time
+                per_threshold[pct][3] = "eod_bid"
+            else:
+                log.warning(
+                    "no usable EOD exit bid for %s %s trail_pct=%.0f%%: %s",
+                    symbol, event_date, pct * 100, eod_reason,
+                )
+                per_threshold[pct][3] = "no_data"
+
+    return "ok", per_threshold
+
+
+def run_trail_pnl_backtest() -> int:
+    """RESUMABLE, same convention as run_pnl_backtest()/
+    run_sameday_pnl_backtest(): skips (symbol, event_date) pairs where every
+    TRAIL_PCTS threshold already has a non-NULL exit_price."""
+    run_start = time.monotonic()
+    log.info("=== squeeze premarket cron TRAIL PNL BACKTEST MODE (PREREG #3 "
+              "/ V3, EXPLORATORY third look, intraday trailing-stop exit, "
+              "not a confirmed result) ===")
+
+    conn = get_db_connection()
+    try:
+        ensure_tables(conn)
+        ensure_trail_pnl_tables(conn)
+
+        full_queue = load_trail_pnl_queue(conn)
+        if not full_queue:
+            log.warning(
+                "no clean rows found (premarket_turnover <= %s, tradeable, "
+                "exit_close resolved) joining squeeze_premarket_v3_pnl to "
+                "squeeze_premarket_backtest_results - nothing to score. Run "
+                "PNL_BACKTEST_MODE first.", SAMEDAY_TURNOVER_CAP,
+            )
+            return 0
+
+        resolved_pairs = load_resolved_trail_pairs(conn)
+        queue = [row for row in full_queue if (row[0], row[1]) not in resolved_pairs]
+        already_resolved = len(full_queue) - len(queue)
+        log.info(
+            "TRAIL PNL queue size: %d clean rows (turnover<=%s, tradeable, "
+            "exit_close resolved) x %d thresholds, %d pairs already fully "
+            "resolved (skipped), %d pairs pending (resume mode)",
+            len(full_queue), SAMEDAY_TURNOVER_CAP, len(TRAIL_PCTS),
+            already_resolved, len(queue),
+        )
+        if not queue:
+            log.info("nothing pending - every clean row already has a trail result for all thresholds.")
+            return 0
+
+        checked = 0
+        errors = 0
+        no_bars = 0
+        by_threshold = {pct: {"stop": 0, "eod_bid": 0, "no_data": 0} for pct in TRAIL_PCTS}
+        by_key = {(sym, ed): ask for sym, ed, ask in queue}
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {
+                pool.submit(scan_trail_pair, sym, ed, ask): (sym, ed)
+                for sym, ed, ask in queue
+            }
+            for fut in as_completed(futures):
+                sym, ed = futures[fut]
+                entry_ask = by_key[(sym, ed)]
+                try:
+                    status, payload = fut.result()
+                except Exception as exc:  # noqa: BLE001 - one worker must never kill the run
+                    status, payload = "error", {
+                        "http_status": None,
+                        "exception_type": type(exc).__name__,
+                        "exception_message": repr(exc),
+                    }
+                checked += 1
+
+                if status == "error":
+                    errors += 1
+                    log.error(
+                        "trail backtest FAILED symbol=%s event_date=%s "
+                        "detail=%s -- not written, will retry next run",
+                        sym, ed, payload,
+                    )
+                    continue
+
+                if status == "no_data":
+                    no_bars += 1
+                    log.warning(
+                        "no usable regular-session bars for %s %s - writing "
+                        "no_data rows for all %d thresholds",
+                        sym, ed, len(TRAIL_PCTS),
+                    )
+                    for pct in TRAIL_PCTS:
+                        by_threshold[pct]["no_data"] += 1
+                        insert_trail_pnl_result(
+                            conn, sym, ed, entry_ask, pct, False, None, None,
+                            "no_data", None, None,
+                        )
+                    continue
+
+                for pct, (triggered, exit_price, exit_time, exit_reason) in payload.items():
+                    if exit_price is None:
+                        by_threshold[pct]["no_data"] += 1
+                        raw_return = None
+                        return_after_slip = None
+                    else:
+                        by_threshold[pct][exit_reason] += 1
+                        raw_return = exit_price / entry_ask - 1
+                        # Same slippage mechanism/constant as PNL_BACKTEST_MODE's
+                        # PNL_SLIPPAGE (2% per side) -- reused, not reinvented,
+                        # for an apples-to-apples comparison against the other
+                        # two exit variants.
+                        return_after_slip = (
+                            exit_price * (1 - PNL_SLIPPAGE)
+                            / (entry_ask * (1 + PNL_SLIPPAGE)) - 1
+                        )
+                    insert_trail_pnl_result(
+                        conn, sym, ed, entry_ask, pct, triggered, exit_price,
+                        exit_time, exit_reason, raw_return, return_after_slip,
+                    )
+
+        elapsed = time.monotonic() - run_start
+        log.info(
+            "=== TRAIL PNL BACKTEST DONE: full_queue=%d thresholds=%d "
+            "already_resolved_pairs=%d pending_pairs=%d checked=%d errors=%d "
+            "no_bars=%d wall_clock=%.1fs ===",
+            len(full_queue), len(TRAIL_PCTS), already_resolved, len(queue),
+            checked, errors, no_bars, elapsed,
+        )
+        for pct in TRAIL_PCTS:
+            counts = by_threshold[pct]
+            log.info(
+                "  trail_pct=%.0f%%: stop=%d eod_bid=%d no_data=%d (this run "
+                "only -- query squeeze_premarket_v3_trail_pnl for the full "
+                "table/primary metric)",
+                pct * 100, counts["stop"], counts["eod_bid"], counts["no_data"],
+            )
+        log.info(
+            "Fill convention: ENTRY = entry_ask reused as-is from "
+            "squeeze_premarket_v3_pnl; STOP TRIGGER = 1-minute regular-"
+            "session (09:30-16:00 ET) bar LOW crosses peak*(1-trail_pct); "
+            "STOP FILL = the CLOSE of the triggering bar (one bar of "
+            "slippage beyond the stop level, never the stop price itself -- "
+            "standing rule 0, a real stop can fill worse on an illiquid "
+            "microcap); NO-TRIGGER FILL = real NBBO bid in the 15:55:00-"
+            "16:00:00 ET window (fetch_sameday_exit_bid(), reused from "
+            "SAMEDAY_PNL_BACKTEST_MODE); 2%% slippage per side on top of "
+            "either fill, same PNL_SLIPPAGE constant as the other two "
+            "variants. EXPLORATORY THIRD LOOK at the same 266-row historical "
+            "population PNL_BACKTEST_MODE and SAMEDAY_PNL_BACKTEST_MODE "
+            "already scored -- report ALL THREE thresholds, never just the "
+            "best one, and label this exploratory, not confirmed."
+        )
+        return 0
+    finally:
+        conn.close()
+
+
 def main() -> int:
     run_start = time.monotonic()
     if BACKTEST_MODE:
@@ -1392,6 +1864,8 @@ def main() -> int:
         return run_pnl_backtest()
     if SAMEDAY_PNL_BACKTEST_MODE:
         return run_sameday_pnl_backtest()
+    if TRAIL_PNL_BACKTEST_MODE:
+        return run_trail_pnl_backtest()
     today = datetime.now(ET).date()
     log.info("=== squeeze premarket cron (PREREG #3 / V3) - %s ===", today)
 
