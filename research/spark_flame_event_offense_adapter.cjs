@@ -58,31 +58,39 @@ async function runDay({scenario,events,spy,vix,close,dayStartEquity,cash,host=nu
  if(availableCash<0)return {status:'skipped',reason:'host_margin_exceeds_cash',cashBefore:cash,cashAfter:cash,hostMargin};
  const start=570, last=Math.min(930,close-1); // no new entry after 15:30 ET
  let signal=null, entry=null;
+ const admission={signals:0,rejections:{},lastRejected:null};
+ const reject=(reason,details={})=>{admission.rejections[reason]=(admission.rejections[reason]||0)+1;admission.lastRejected={reason,...details};};
  for(let decisionMinute=start;decisionMinute<=last;decisionMinute++){
   const visibleHost=scenario.family==='overlay'&&host?.threatened?host:null;
   signal=O.entrySignal(scenario,decisionMinute,spy,vix,events,visibleHost);
   if(!signal)continue;
-  // Signal observes through decisionMinute-1. Entry starts on the next
-  // minute and may wait for a later executable quote.
-  const candidate=await nextExecutable(signal,decisionMinute+1,close,quoteAt);
-  if(!candidate)return {status:'skipped',reason:'no_executable_entry_quote',signal,cashBefore:cash,cashAfter:cash,hostMargin};
-  const order=O.entryOrder(signal,candidate.quote,dayStartEquity,availableCash,scenario,slip,FEES);
-  if(!order)return {status:'skipped',reason:'budget_cash_or_quote_gate',signal,cashBefore:cash,cashAfter:cash,hostMargin};
+  admission.signals++;
+  // Recompute the signal every completed minute. Evaluate only the next
+  // minute's quote; never wait into the future and then resume an earlier
+  // decision clock or abandon the entire day after a rejected candidate.
+  const executionMinute=decisionMinute+1;
+  if(executionMinute>=close)continue;
+  const q=normalizeQuote(await quoteAt(signal,executionMinute));
+  if(!q){reject('no_executable_entry_quote',{decisionMinute});continue;}
+  const assessment=O.entryAssessment(signal,q,dayStartEquity,availableCash,scenario,slip,FEES);
+  if(!assessment.order){reject(assessment.reason,{decisionMinute,...assessment});continue;}
+  const order=assessment.order;
+  const candidate={minute:executionMinute};
   entry={...order,entry:candidate.minute};
   break;
  }
- if(!entry)return {status:'skipped',reason:'no_causal_signal',cashBefore:cash,cashAfter:cash,hostMargin};
+ if(!entry)return {status:'skipped',reason:admission.signals?'all_causal_entries_rejected':'no_causal_signal',admission,cashBefore:cash,cashAfter:cash,hostMargin};
  const quotes=new Map();
  for(let minute=entry.entry;minute<close;minute++)quotes.set(minute,normalizeQuote(await quoteAt(entry,minute)));
  const exit=O.exitTrade(entry,quotes,close,scenario,slip);
- if(exit.unresolved)return {status:'unresolved',reason:exit.unresolved,signal,entry,cashBefore:cash,cashAfter:cash,hostMargin};
+ if(exit.unresolved)return {status:'unresolved',reason:exit.unresolved,admission,signal,entry,cashBefore:cash,cashAfter:cash,hostMargin};
  const entryCash=round(cash-entry.reservedCash);
  const exitProceeds=round((exit.exitValue*100-entry.fees.close)*entry.n);
  const cashAfter=round(entryCash+exitProceeds);
  const reconciledPnl=round(cashAfter-cash);
  if(Math.abs(reconciledPnl-exit.pnl)>.001)throw Error('offense_cash_reconciliation_failed');
  return {
-  status:'closed',signal,entry:{...entry,contractKey:quoteKey(entry)},exit,
+  status:'closed',admission,signal,entry:{...entry,contractKey:quoteKey(entry)},exit,
   cashBefore:cash,cashAfter,hostMargin,entryCash,exitProceeds,
   maxCashAtRisk:round(entry.reservedCash+hostMargin),pnl:reconciledPnl,
   feeModel:{...FEES,roundTripPerSpread:round((FEES.open+FEES.close))},

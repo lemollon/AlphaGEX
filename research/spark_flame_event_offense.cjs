@@ -40,15 +40,23 @@ function executable(quote,n=1){
  for(const x of [quote.buy,quote.sell])if(!x||![x.bid,x.ask,x.bidSize,x.askSize].every(Number.isFinite)||x.bid<0||x.ask<=0||x.ask<x.bid)return false;
  return quote.buy.askSize>=n&&quote.sell.bidSize>=n;
 }
-function entryOrder(signal,quote,dayStartEquity,availableCash,s,slip,fees){
- if(!executable(quote)||![fees.open,fees.close].every(x=>Number.isFinite(x)&&x>=0))return null;
+function entryAssessment(signal,quote,dayStartEquity,availableCash,s,slip,fees){
+ if(!executable(quote))return {reason:'entry_quote_or_size_invalid'};
+ if(![fees.open,fees.close].every(x=>Number.isFinite(x)&&x>=0))throw Error('invalid_entry_fees');
  const debit=round(quote.buy.ask-quote.sell.bid+2*slip);
- if(!(debit>0&&debit<2))return null;
+ const width=Math.abs(signal.buyStrike-signal.sellStrike);
+ if(!(debit>0&&debit<width))return {reason:'entry_debit_outside_spread_width',debit,width};
  const maximumLoss=round(debit*100+fees.open+fees.close);
- const budget=Math.min(dayStartEquity*s.budget,availableCash);
+ const riskBudget=dayStartEquity*s.budget;
+ if(maximumLoss>riskBudget+1e-8)return {reason:'entry_risk_budget_too_small',debit,maximumLoss,riskBudget,availableCash};
+ if(maximumLoss>availableCash+1e-8)return {reason:'entry_cash_too_small',debit,maximumLoss,riskBudget,availableCash};
+ const budget=Math.min(riskBudget,availableCash);
  const n=Math.min(Math.floor((budget+1e-8)/maximumLoss),Math.floor(quote.buy.askSize),Math.floor(quote.sell.bidSize));
- if(n<1)return null; // Never force a lot above its risk budget.
- return {...signal,n,debit,maximumLoss,fees:{...fees},reservedCash:round((debit*100+fees.open)*n)};
+ if(n<1)return {reason:'entry_displayed_size_too_small',maximumLoss,riskBudget,availableCash};
+ return {order:{...signal,n,debit,maximumLoss,fees:{...fees},reservedCash:round((debit*100+fees.open)*n)}};
+}
+function entryOrder(signal,quote,dayStartEquity,availableCash,s,slip,fees){
+ return entryAssessment(signal,quote,dayStartEquity,availableCash,s,slip,fees).order||null;
 }
 function sellValue(q,n,slip){
  if(!q)return null;
@@ -88,4 +96,4 @@ function grid({includeOverlayControls=false}={}){
  }
  return out;
 }
-module.exports={entrySignal,entryOrder,exitTrade,eventAllows,grid};
+module.exports={entrySignal,entryAssessment,entryOrder,exitTrade,eventAllows,grid};
