@@ -83,7 +83,7 @@ def test_study_frozen_forward_window_rejects_gap_and_no_option_pnl_claim():
 
 
 def core():
-    row={'confidence':'MEDIUM','source':'Fixture observed IV','source_timestamp':NOW.isoformat(),'spot':100,
+    row={'confidence':'MEDIUM','source':'Observed IV provider','source_timestamp':NOW.isoformat(),'spot':100,
        'atm_iv':.2,'skew_25d':.03,'iv_0dte':.22,'iv_1_5dte':.21,'iv_6_20dte':.2,'iv_21_365dte':.19,
        'expected_move_low':98,'expected_move_high':102,'expected_move_pct_1d':2,'expected_move_dollars_1d':2,
        'smile':{'expiration':'2026-10-09','put_strike':95,'atm_strike':100,'call_strike':105,'put_25d_iv':.23,'atm_iv':.2,'call_25d_iv':.19},
@@ -105,7 +105,7 @@ async def test_full_assembly_all_fields_dark_png_embed_and_durable_view(db,monke
     chart_id=result['chart_urls']['smile_term'].split('/')[-1][:-4]
     image=Image.open(io.BytesIO(report.get_chart(chart_id).body))
     assert image.size==(1440,780);assert image.convert('RGB').getpixel((0,0))==(11,18,32)
-    assert 'Fixture observed IV' in report.report_view(result['report_id'])
+    assert 'Observed IV provider' in report.report_view(result['report_id'])
     assert report.latest_report()['report_id']==result['report_id']
     # Preparing delivery again preserves embeds; callers cannot bypass rendered checks.
     from backend.report_contract import prepare_report_delivery

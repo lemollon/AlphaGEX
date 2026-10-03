@@ -213,8 +213,19 @@ REQUIREMENTS = {
         "registered_triggers", "verified_occurrence", "confirmation_sequence", "mfe_mae", "outcome", "loss_clusters"
     ]
 }
+STRATEGY_FIELDS = ["horizon", "thesis", "evidence", "conflicts", "structure", "trigger",
+                   "invalidation", "status", "contracts", "quote_qualification",
+                   "risk_exit_rules", "catalysts"]
+for _name in ("day_strategy", "near_forward_strategy", "forward_strategy"):
+    REQUIREMENTS[_name] = list(STRATEGY_FIELDS)
+REQUIREMENTS["horizon_comparison"] = ["morning_baseline", "prior_checkpoint", "current",
+    "forward_options", "futures_confirmation", "alignment", "changes"]
+REQUIREMENTS["adaptation_rules"] = ["activate", "cancel", "switch", "stand_aside",
+    "existing_positions", "reassessment"]
+REQUIREMENTS["data_integrity"] = ["contract", "source_clocks", "coverage", "historical_fields",
+    "unavailable_fields", "producer_failures", "model_prose_policy", "execution_scope", "format"]
 REQUIRED_BLOCKS = tuple(REQUIREMENTS)
-CONTRACT_VERSION = "2026-10-03.1"
+CONTRACT_VERSION = "2026-10-03.2"
 FLOW_SOURCE = "ThetaData live trades with contemporaneous ThetaData bid/ask"
 LIVE_MAX_AGE_SECONDS = 90
 CHART_FORMAT = "PNG"
@@ -227,6 +238,8 @@ def validate_report(blocks):
     reason: ..., source_timestamp: ..., age_seconds: ..., confidence: ...}.
     Historical and unavailable fields never satisfy complete live data.
     """
+    import math
+    from .report_policy import finite_tree, parse_clock
     errors, unavailable = [], []
     for name, fields in REQUIREMENTS.items():
         block = blocks.get(name)
@@ -240,19 +253,23 @@ def validate_report(blocks):
                 errors.append(key + ": omitted")
                 continue
             status = item.get("status")
+            if not finite_tree(item):
+                errors.append(key + ": nonfinite value")
             if status == "unavailable":
                 unavailable.append(key)
                 if not item.get("reason"):
                     errors.append(key + ": missing reason")
             elif status == "historical":
                 unavailable.append(key)
-                if not item.get("source_timestamp") or item.get("age_seconds") is None:
+                age = item.get("age_seconds")
+                if (item.get("value") is None or not parse_clock(item.get("source_timestamp"))
+                        or type(age) not in (int, float) or not math.isfinite(age) or age < 0):
                     errors.append(key + ": missing historical age/source")
             elif status == "live":
                 age = item.get("age_seconds")
                 if item.get("value") is None:
                     errors.append(key + ": missing value")
-                if not item.get("source_timestamp") or not isinstance(age, (int, float)) or not 0 <= age <= LIVE_MAX_AGE_SECONDS:
+                if not parse_clock(item.get("source_timestamp")) or type(age) not in (int, float) or not math.isfinite(age) or not 0 <= age <= LIVE_MAX_AGE_SECONDS:
                     errors.append(key + ": stale or untimestamped")
                 if item.get("confidence") not in ("HIGH", "MEDIUM"):
                     errors.append(key + ": invalid confidence")
@@ -276,8 +293,17 @@ def prepare_report_delivery(payload):
     Supplied structured fields are canonical; legacy prose is supplementary.
     Missing fields are disclosed, not promoted to live data or fabricated.
     """
-    import copy
-    blocks = copy.deepcopy(payload.get("report_blocks") or {})
+    from .report_policy import normalize_blocks, render_markdown, policy_identity, add_integrity
+    blocks = normalize_blocks(payload.get("report_blocks") or {})
+    for name, fields in REQUIREMENTS.items():
+        blocks.setdefault(name, {})
+        for field in fields:
+            blocks[name].setdefault(field, {"status": "unavailable", "reason": "Producer supplied no verified observation."})
+    for name in ("day_strategy", "near_forward_strategy", "forward_strategy"):
+        if blocks[name]["status"].get("value") == "ENTRY_READY" and blocks[name]["contracts"].get("status") != "live":
+            blocks[name]["status"]["value"] = "WATCH"
+            blocks[name]["status"]["reason"] = "Executable quotes aged or failed qualification before publication"
+    add_integrity(blocks, payload)
     for name, fields in REQUIREMENTS.items():
         block = blocks.setdefault(name, {})
         if not isinstance(block, dict):
@@ -292,30 +318,14 @@ def prepare_report_delivery(payload):
     payload["report_blocks"] = blocks
     if not check["publishable"]:
         return check
-    lines = ["## Verified report fields",
-             "Report status: " + ("COMPLETE" if check["complete_live_data"] else "INCOMPLETE")]
-    for name, fields in REQUIREMENTS.items():
-        lines.append("### " + name.replace("_", " ").title())
-        missing = []
-        for field in fields:
-            item = blocks[name][field]
-            status = item["status"]
-            if status == "unavailable":
-                if item.get("value") is not None:
-                    lines.append("- " + field + ": " + str(item["value"]) +
-                                 " [UNVERIFIED — " + str(item["reason"]) + "]")
-                else:
-                    missing.append(field + ": " + str(item["reason"]))
-            else:
-                lines.append("- " + field + ": " + str(item.get("value")) +
-                             " [" + status.upper() + "; " + str(item["source_timestamp"]) +
-                             "; age " + str(item["age_seconds"]) + "s]")
-        if missing:
-            lines.append("DATA UNAVAILABLE — " + "; ".join(missing))
-    # Keep legacy prose separately; repeated preparation cannot duplicate it.
-    original = payload.setdefault("report_original_markdown", payload.get("report_markdown") or "")
-    payload["report_markdown"] = "\n\n".join(lines) + "\n\n## Supplemental analysis\n\n" + original
+    # Provider observations are canonical. Arbitrary model prose is retained for
+    # diagnostics only and cannot introduce unsupported facts into delivery.
+    if not payload.get("report_policy"):
+        payload.setdefault("report_unverified_prose", payload.get("report_markdown") or "")
+    payload["report_policy"] = policy_identity()
     payload["report_completeness"] = "COMPLETE" if check["complete_live_data"] else "INCOMPLETE"
+    payload["report_markdown"] = render_markdown(payload)
+    payload["report_original_markdown"] = ""  # legacy callers cannot reinsert prose
     final_check = validate_rendered_report(payload)
     payload["report_validation"] = final_check
     return final_check
@@ -330,6 +340,14 @@ def validate_rendered_report(payload):
     errors = list(check["errors"])
     markdown = payload.get("report_markdown") or ""
     now = datetime.now(timezone.utc)
+    from .report_policy import policy_identity, validate_semantics
+    if payload.get("report_policy"):
+        if payload["report_policy"] != policy_identity():
+            errors.append("Report policy version/hash mismatch")
+        for heading in ("Today’s mission", "30-second scoreboard", "Today vs forward"):
+            if heading not in markdown:
+                errors.append("Missing presentation section: " + heading)
+        errors.extend(validate_semantics(payload, now))
     for name, fields in REQUIREMENTS.items():
         heading = name.replace("_", " ")
         # Canonical headings allow mechanical verification of the final document.
@@ -363,4 +381,6 @@ def validate_rendered_report(payload):
     check["errors"] = errors
     check["publishable"] = not errors
     check["complete_live_data"] = check["complete_live_data"] and not errors
+    check["required_sections"] = len(REQUIREMENTS)
+    check["required_fields"] = sum(len(fields) for fields in REQUIREMENTS.values())
     return check
