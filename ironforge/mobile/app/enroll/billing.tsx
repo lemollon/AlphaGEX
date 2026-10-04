@@ -240,12 +240,26 @@ export default function BillingScreen() {
   const price = isCommunity
     ? catalog?.community.price_monthly
     : catalog?.bots.find((b) => enrollment?.selected_plan === b.slug)?.price_monthly ??
-      (enrollment?.selected_plan === 'both' ? catalog?.both.price_monthly : undefined)
+      (enrollment?.selected_plan === 'both'
+        ? catalog?.both.price_monthly
+        : enrollment?.selected_plan === 'automate'
+          ? catalog?.bots.find((b) => b.slug === 'spark')?.price_monthly
+          : undefined)
 
   // The Apple product ID for the plan already chosen earlier in the funnel — this
   // screen sells exactly ONE product, the plan the customer picked, same as the web
   // billing step; it is never a general storefront listing all four.
-  const iapLookupKey = enrollment?.selected_plan ? `${enrollment.selected_plan}_monthly` : null
+  //
+  // 'automate' is a FAMILY value (web: "pick your specific bot after setup, $0 due
+  // today"), not an Apple product — Apple has no deferred-pricing purchase, so on iOS
+  // an automate purchase sells as the Spark product (identical price to Flame) and
+  // grants Spark immediately. See Leron 2026-10-04: confirmed, no new ASC product.
+  const iapLookupKey =
+    enrollment?.selected_plan === 'automate'
+      ? 'spark_monthly'
+      : enrollment?.selected_plan
+        ? `${enrollment.selected_plan}_monthly`
+        : null
   const iapProductId = iapLookupKey ? productIdFor(iapLookupKey) : null
   const iapProduct = iapProductId ? iapProducts.find((p) => p.productId === iapProductId) : undefined
   const planInfo = planLabel(enrollment?.selected_plan ?? null, catalog)
@@ -369,6 +383,9 @@ function planLabel(plan: string | null, catalog: PlanCatalog | null): { name: st
   }
   if (plan === 'both') {
     return { name: 'Spark + Flame', blurb: 'Both trading agents in one subscription.' }
+  }
+  if (plan === 'automate') {
+    return { name: 'Forge Automate', blurb: 'One automated trading agent — choose Spark or Flame after setup.' }
   }
   const bot = catalog.bots.find((b) => b.slug === plan)
   return bot ? { name: bot.name, blurb: bot.blurb } : null
