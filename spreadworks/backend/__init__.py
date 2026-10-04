@@ -1912,6 +1912,18 @@ async def lifespan(app: FastAPI):
         logger.warning("[SpreadWorks] squeeze premarket alerts failed to "
                        "register: %r", _spa_exc)
 
+    # Reactive-momentum squeeze signal (ported REACTIVE_WIDE_FADE_PNL_
+    # BACKTEST_MODE): repeating scan every 5 min, 09:30-16:00 ET weekdays,
+    # entry + exit Discord alerts. Separate from the premarket-gated job
+    # above -- no premarket gate, watches the regular session. Import-
+    # guarded; advisory only.
+    try:
+        from .squeeze_reactive_alerts import register_squeeze_reactive_alerts
+        register_squeeze_reactive_alerts(scheduler, app)
+    except Exception as _sra_exc:  # noqa: BLE001
+        logger.warning("[SpreadWorks] squeeze reactive alerts failed to "
+                       "register: %r", _sra_exc)
+
     # Canonical live market structure: persist fresh Tradier VIX-family data
     # and ORATS+Tradier gamma maps every minute. Durable captures let report
     # consumers recover through Postgres if the public Render URL is blocked.
@@ -2059,6 +2071,16 @@ try:
 except Exception as _squeeze_pm_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] Squeeze premarket routes failed to load: %r", _squeeze_pm_exc)
+
+# Reactive-momentum squeeze signal (squeeze_reactive_alerts.py) -- read-only
+# open positions + recent closed signal history. Sibling to the premarket
+# route above, not a replacement. Advisory only.
+try:
+    from .routes_squeeze_reactive import router as squeeze_reactive_router
+    app.include_router(squeeze_reactive_router)
+except Exception as _squeeze_react_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] Squeeze reactive routes failed to load: %r", _squeeze_react_exc)
 
 # Wall Scanner (backend/bots/wall_scanner.py) — descriptive-only $/% distance
 # to the nearest GEX call/put wall for GME + 7 tickers. NO directional call
