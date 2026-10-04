@@ -641,6 +641,69 @@ Render cron job with `REACTIVE_WIDE_FADE_PNL_BACKTEST_MODE` set in that run's
 environment. Do not set it on the job's persistent env vars. Same SCALE
 WARNING as `REACTIVE_PNL_BACKTEST_MODE` applies (same full-regular-session
 candidate population, same ~40 min wall-clock expectation).
+
+REACTIVE NO-FADE PNL BACKTEST MODE (added 2026-10-04, ONE pre-specified rule
+change against REACTIVE_PNL_BACKTEST_MODE above -- remove the fade exit
+entirely, NOT a grid search)
+----------------------------------------------------------------------------
+`REACTIVE_PNL_BACKTEST_MODE`'s own result, and the wider-fade result above,
+both point the same direction: fade-exited trades made +2.19 units total
+across 2,029 trades (noise) while EOD-held trades made +40.33 units across
+1,047 trades (+3.85%% average) -- and loosening the fade threshold (0.6x ->
+0.4x) made the EOD-held trades even better on average while fade-exits stayed
+near zero both times. This is the natural next test: what if there is no
+fade exit at all? ONE pre-specified rule change, one result, reported
+honestly either way -- not a parameter sweep.
+
+ENTRY TRIGGER is UNCHANGED from `REACTIVE_PNL_BACKTEST_MODE`:
+`find_reactive_entry_trigger()` is reused verbatim (same move >=
+REACTIVE_MOVE_FLOOR AND accel >= MONEY_PACE_ACCEL_HIGH test, same "+1 minute,
+real NBBO ask" confirm/fill convention). Not touched, not re-derived.
+
+EXIT is the ONE change: the fade check is removed entirely.
+`find_reactive_fade_exit()`/`find_reactive_wide_fade_exit()` are never called
+by this mode -- there is no fade monitoring of any kind after entry, so this
+mode's own scan function never continues the money-pace walk past the entry
+bar. Every position is held to the end of the day and exits at the real NBBO
+bid in the 15:55:00-16:00:00 ET window via `fetch_sameday_exit_bid()`,
+REUSED AS-IS from `SAMEDAY_PNL_BACKTEST_MODE` (same discipline as both modes
+above) -- regardless of what money pace does intraday. `exit_reason` is not
+stored in this mode's table at all since every resolved exit is, by
+definition, 'eod' -- see table shape below.
+
+EVERYTHING ELSE IS IDENTICAL to `REACTIVE_PNL_BACKTEST_MODE`: same candidate
+population (`load_reactive_pnl_queue()`'s `squeeze_premarket_backtest_results`
+join with `premarket_turnover <= REACTIVE_TURNOVER_CAP`, reused verbatim --
+not re-queried, not re-filtered), same real NBBO ask entry, same ask-to-bid
+IS the slippage charge (no extra flat-%% layered on top,
+`return_after_slippage` numerically identical to `raw_return`), same 30-day
+first-only dedupe deferred to report time (not applied in this write path).
+
+Writes to a NEW table of its own, `squeeze_reactive_no_fade_pnl` (symbol,
+event_date, entry_time, entry_ask, exit_bid, raw_return,
+return_after_slippage, checked_at -- no `exit_time`/`exit_reason` columns,
+since every exit is the same EOD bid pull and there is nothing else to
+record). Neither `squeeze_reactive_momentum_pnl` nor
+`squeeze_reactive_wide_fade_pnl` nor either of those modes' own code paths
+are touched by this mode.
+
+This is the THIRD dependent look at the same underlying reactive-momentum
+population (same ignition day list, same entry mechanism) -- report the
+result with that in mind, honestly, whether removing the fade exit helps or
+not. This is a single pre-specified rule change (fade exit removed, always
+hold to EOD), not a parameter sweep; do not test partial-fade variants under
+this mode.
+
+Same isolation discipline as every mode above: never touches FAMILY #2,
+PREREG.md, `squeeze_premarket_v3_pnl`, any other PNL/TRAIL/OPTIONS table, or
+either `REACTIVE_PNL_BACKTEST_MODE`'s or
+`REACTIVE_WIDE_FADE_PNL_BACKTEST_MODE`'s own tables. Must never run on the
+scheduled trigger -- only via a manual "Trigger Run" on the Render cron job
+with `REACTIVE_NO_FADE_PNL_BACKTEST_MODE` set in that run's environment. Do
+not set it on the job's persistent env vars. Same SCALE WARNING as
+`REACTIVE_PNL_BACKTEST_MODE` applies (same full-regular-session candidate
+population, same ~40-45 min wall-clock expectation -- do not try to shrink
+this pull).
 """
 import logging
 import os
@@ -719,6 +782,14 @@ REACTIVE_PNL_BACKTEST_MODE = os.getenv("REACTIVE_PNL_BACKTEST_MODE", "").strip()
 # last, after every mode above including REACTIVE_PNL_BACKTEST_MODE; never
 # runs in the same invocation as any of them.
 REACTIVE_WIDE_FADE_PNL_BACKTEST_MODE = os.getenv("REACTIVE_WIDE_FADE_PNL_BACKTEST_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+# ONE pre-specified rule change against REACTIVE_PNL_BACKTEST_MODE (fade exit
+# removed entirely, always hold to EOD, see module docstring "REACTIVE
+# NO-FADE PNL BACKTEST MODE" section) -- any truthy value. Must never be set
+# on the scheduled trigger's persistent env, only on a manual "Trigger Run".
+# Checked last, after every mode above including REACTIVE_PNL_BACKTEST_MODE
+# and REACTIVE_WIDE_FADE_PNL_BACKTEST_MODE; never runs in the same
+# invocation as any of them.
+REACTIVE_NO_FADE_PNL_BACKTEST_MODE = os.getenv("REACTIVE_NO_FADE_PNL_BACKTEST_MODE", "").strip().lower() in ("1", "true", "yes", "on")
 
 THETA_BASE = os.getenv("THETADATA_BASE_URL", "http://thetadata-proxy:10000").strip().rstrip("/")
 if THETA_BASE and "://" not in THETA_BASE:
@@ -3913,6 +3984,265 @@ def run_reactive_wide_fade_pnl_backtest() -> int:
         conn.close()
 
 
+# ===========================================================================
+# REACTIVE NO-FADE PNL BACKTEST MODE -- ONE pre-specified rule change against
+# REACTIVE PNL BACKTEST MODE above (fade exit removed entirely, always hold
+# to EOD), NOT a grid search. See module docstring "REACTIVE NO-FADE PNL
+# BACKTEST MODE" section. Everything below this line is only ever reached
+# when `REACTIVE_NO_FADE_PNL_BACKTEST_MODE` is set; it must never run on the
+# scheduled trigger, and never touches REACTIVE_PNL_BACKTEST_MODE's or
+# REACTIVE_WIDE_FADE_PNL_BACKTEST_MODE's own tables.
+# ===========================================================================
+
+def ensure_reactive_no_fade_pnl_tables(conn) -> None:
+    """CREATE TABLE IF NOT EXISTS for the no-fade variant's own table -- a
+    new table of its own, nothing overwritten in squeeze_reactive_momentum_pnl,
+    squeeze_reactive_wide_fade_pnl, or any other PNL mode's table. No
+    exit_time/exit_reason columns -- every exit is the same EOD bid pull
+    (fetch_sameday_exit_bid()), so there is nothing else to record."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS squeeze_reactive_no_fade_pnl (
+                symbol TEXT,
+                event_date DATE,
+                entry_time TIMESTAMPTZ,
+                entry_ask DOUBLE PRECISION,
+                exit_bid DOUBLE PRECISION,
+                raw_return DOUBLE PRECISION,
+                return_after_slippage DOUBLE PRECISION,
+                checked_at TIMESTAMPTZ DEFAULT now(),
+                PRIMARY KEY (symbol, event_date)
+            )
+        """)
+    conn.commit()
+
+
+def load_resolved_reactive_no_fade_keys(conn) -> set:
+    """(symbol, event_date) pairs already terminally resolved in
+    squeeze_reactive_no_fade_pnl -- same resume semantics as
+    load_resolved_reactive_keys(), just pointed at this mode's own table."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT symbol, event_date FROM squeeze_reactive_no_fade_pnl
+            WHERE entry_time IS NULL OR exit_bid IS NOT NULL
+        """)
+        return {(sym, ed) for sym, ed in cur.fetchall()}
+
+
+def insert_reactive_no_fade_pnl_result(conn, symbol: str, event_date: date,
+                                        entry_time, entry_ask, exit_bid,
+                                        raw_return, return_after_slippage) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO squeeze_reactive_no_fade_pnl
+                (symbol, event_date, entry_time, entry_ask, exit_bid,
+                 raw_return, return_after_slippage)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol, event_date) DO UPDATE SET
+                entry_time = EXCLUDED.entry_time,
+                entry_ask = EXCLUDED.entry_ask,
+                exit_bid = EXCLUDED.exit_bid,
+                raw_return = EXCLUDED.raw_return,
+                return_after_slippage = EXCLUDED.return_after_slippage,
+                checked_at = now()
+        """, [symbol, event_date, entry_time, entry_ask, exit_bid,
+              raw_return, return_after_slippage])
+    conn.commit()
+
+
+def scan_reactive_no_fade_pair(symbol: str, event_date: date, prior_close):
+    """Line-for-line the same shape as scan_reactive_pair(), with the fade
+    walk removed entirely -- same entry trigger
+    (find_reactive_entry_trigger(), UNCHANGED), but NO call to
+    find_reactive_fade_exit()/find_reactive_wide_fade_exit() and no
+    continuation of the money-pace walk past the entry bar. Every resolved
+    entry goes straight to the real EOD NBBO bid (fetch_sameday_exit_bid(),
+    reused as-is), same ask-to-bid fill convention with no extra slippage
+    layered on top. See scan_reactive_pair()'s own docstring for the full
+    status-value contract ('error' / 'no_entry' / 'no_entry_quote' / 'ok'),
+    reused unchanged here."""
+    if not prior_close or prior_close <= 0:
+        return "no_entry", None
+
+    bars_status, bars, detail = fetch_reactive_session_bars(symbol, event_date)
+    if bars_status == "error":
+        return "error", detail
+    if bars_status == "no_data":
+        return "no_entry", None
+
+    entry_index, entry_confirm_time = find_reactive_entry_trigger(bars, prior_close)
+    if entry_index is None:
+        return "no_entry", None
+
+    entry_ask, entry_quote_time, entry_reason = fetch_reactive_quote(
+        symbol, event_date, entry_confirm_time, "ask")
+    if entry_ask is None:
+        return "no_entry_quote", {"reason": entry_reason}
+
+    # No fade monitoring at all -- always hold to EOD, reusing the SAME real
+    # NBBO-bid search SAMEDAY_PNL_BACKTEST_MODE already built
+    # (fetch_sameday_exit_bid(), not reimplemented): last real NBBO bid
+    # timestamped < 16:00:00 ET in the 15:55:00-16:00:00 ET window -- never
+    # the close print, never a mark.
+    exit_bid, exit_quote_time, exit_detail = fetch_sameday_exit_bid(symbol, event_date)
+
+    if exit_bid is None:
+        log.warning("no usable EOD exit bid for %s %s: %s",
+                    symbol, event_date, exit_detail)
+        return "ok", dict(
+            entry_time=entry_quote_time, entry_ask=entry_ask,
+            exit_bid=None, raw_return=None, return_after_slippage=None,
+        )
+
+    # Ask-to-bid IS the real spread charge -- no additional flat-% slippage
+    # layered on top, same convention as scan_reactive_pair().
+    raw_return = exit_bid / entry_ask - 1
+    return "ok", dict(
+        entry_time=entry_quote_time, entry_ask=entry_ask,
+        exit_bid=exit_bid, raw_return=raw_return,
+        return_after_slippage=raw_return,
+    )
+
+
+def run_reactive_no_fade_pnl_backtest() -> int:
+    """RESUMABLE, same convention as every other PNL mode in this file: skips
+    (symbol, event_date) pairs already terminally resolved in
+    squeeze_reactive_no_fade_pnl (see load_resolved_reactive_no_fade_keys()).
+    Candidate population is load_reactive_pnl_queue() REUSED AS-IS -- the
+    identical (symbol, event_date, prior_close) list REACTIVE_PNL_BACKTEST_MODE
+    uses, not re-queried or re-filtered."""
+    run_start = time.monotonic()
+    log.info("=== squeeze premarket cron REACTIVE NO-FADE PNL BACKTEST "
+              "MODE (EXPLORATORY, ONE pre-specified rule change against "
+              "REACTIVE_PNL_BACKTEST_MODE -- fade exit removed entirely, "
+              "always hold to EOD, nothing else differs) ===")
+
+    conn = get_db_connection()
+    try:
+        ensure_tables(conn)
+        ensure_backtest_tables(conn)
+        ensure_reactive_no_fade_pnl_tables(conn)
+
+        full_queue = load_reactive_pnl_queue(conn)
+        if not full_queue:
+            log.warning(
+                "no rows found in squeeze_premarket_backtest_results with "
+                "premarket_turnover <= %s joined to "
+                "squeeze_premarket_backtest_queue - nothing to score. Run "
+                "BACKTEST_MODE first.", REACTIVE_TURNOVER_CAP,
+            )
+            return 0
+
+        resolved = load_resolved_reactive_no_fade_keys(conn)
+        queue = [row for row in full_queue if (row[0], row[1]) not in resolved]
+        already_resolved = len(full_queue) - len(queue)
+        log.info(
+            "REACTIVE NO-FADE PNL queue size: %d candidate days "
+            "(premarket_turnover <= %s), %d already resolved (skipped), %d "
+            "pending (resume mode)",
+            len(full_queue), REACTIVE_TURNOVER_CAP, already_resolved, len(queue),
+        )
+        if not queue:
+            log.info("nothing pending - every candidate day already resolved.")
+            return 0
+
+        checked = 0
+        errors = 0
+        no_entry = 0
+        no_entry_quote = 0
+        entered = 0
+        eod = 0
+        exit_missing = 0
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {
+                pool.submit(scan_reactive_no_fade_pair, sym, ed, pc): (sym, ed)
+                for sym, ed, pc in queue
+            }
+            for fut in as_completed(futures):
+                sym, ed = futures[fut]
+                try:
+                    status, payload = fut.result()
+                except Exception as exc:  # noqa: BLE001 - one worker must never kill the run
+                    status, payload = "error", {
+                        "http_status": None,
+                        "exception_type": type(exc).__name__,
+                        "exception_message": repr(exc),
+                    }
+                checked += 1
+
+                if status == "error":
+                    errors += 1
+                    log.error(
+                        "reactive no-fade backtest FAILED symbol=%s "
+                        "event_date=%s detail=%s -- not written, will retry "
+                        "next run",
+                        sym, ed, payload,
+                    )
+                    continue
+
+                if status == "no_entry":
+                    no_entry += 1
+                    insert_reactive_no_fade_pnl_result(
+                        conn, sym, ed, None, None, None, None, None)
+                    continue
+
+                if status == "no_entry_quote":
+                    no_entry_quote += 1
+                    log.warning(
+                        "entry triggered but no usable NBBO ask for %s %s: %s",
+                        sym, ed, payload["reason"],
+                    )
+                    insert_reactive_no_fade_pnl_result(
+                        conn, sym, ed, None, None, None, None, None)
+                    continue
+
+                entered += 1
+                if payload["exit_bid"] is None:
+                    exit_missing += 1
+                else:
+                    eod += 1
+                insert_reactive_no_fade_pnl_result(
+                    conn, sym, ed, payload["entry_time"], payload["entry_ask"],
+                    payload["exit_bid"], payload["raw_return"],
+                    payload["return_after_slippage"],
+                )
+
+        elapsed = time.monotonic() - run_start
+        log.info(
+            "=== REACTIVE NO-FADE PNL BACKTEST DONE: full_queue=%d "
+            "already_resolved=%d pending=%d checked=%d errors=%d no_entry=%d "
+            "no_entry_quote=%d entered=%d eod=%d exit_missing=%d "
+            "wall_clock=%.1fs ===",
+            len(full_queue), already_resolved, len(queue), checked, errors,
+            no_entry, no_entry_quote, entered, eod, exit_missing, elapsed,
+        )
+        log.info(
+            "Fill convention: ENTRY = first real NBBO ask at/after the "
+            "confirmed trigger minute (move>=10%% from prior close AND money "
+            "pace >= 1.25x session average, both computable in real time at "
+            "that minute -- UNCHANGED from REACTIVE_PNL_BACKTEST_MODE); EXIT "
+            "= ALWAYS the last real NBBO bid < 16:00:00 ET in the "
+            "15:55:00-16:00:00 ET window (fetch_sameday_exit_bid(), reused "
+            "as-is) -- the fade exit is removed entirely, no money-pace "
+            "monitoring happens after entry at all, this is the ONE rule "
+            "changed from REACTIVE_PNL_BACKTEST_MODE. No flat-%% slippage "
+            "layered on top of ask-to-bid (that spread IS the real cost, "
+            "return_after_slippage == raw_return in every row). Same "
+            "candidate-population caveat as REACTIVE_PNL_BACKTEST_MODE: "
+            "reuses the KNOWN-to-have-moved ignition day list for backtest "
+            "efficiency -- fine for testing the entry/exit MECHANISM, not "
+            "live-ready on its own. 30-day first-only dedupe is NOT applied "
+            "in this write path -- apply it at report time. This is the "
+            "THIRD dependent look at the same underlying reactive-momentum "
+            "population; report honestly whether removing the fade exit "
+            "helped or not. EXPLORATORY, not a confirmed result."
+        )
+        return 0
+    finally:
+        conn.close()
+
+
 def main() -> int:
     run_start = time.monotonic()
     if BACKTEST_MODE:
@@ -3931,6 +4261,8 @@ def main() -> int:
         return run_reactive_pnl_backtest()
     if REACTIVE_WIDE_FADE_PNL_BACKTEST_MODE:
         return run_reactive_wide_fade_pnl_backtest()
+    if REACTIVE_NO_FADE_PNL_BACKTEST_MODE:
+        return run_reactive_no_fade_pnl_backtest()
     today = datetime.now(ET).date()
     log.info("=== squeeze premarket cron (PREREG #3 / V3) - %s ===", today)
 
