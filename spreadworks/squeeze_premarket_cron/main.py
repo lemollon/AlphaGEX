@@ -481,6 +481,123 @@ that run's environment. Do not set it on the job's persistent env vars.
 Needs the same private-network path as every BACKTEST/PNL mode above --
 `/v3/stock/history/ohlc` and `/v3/stock/history/quote` are only reachable
 from inside Render.
+
+REACTIVE PNL BACKTEST MODE (added 2026-10-03, STRUCTURALLY DIFFERENT idea --
+REACTS to confirmed intraday momentum during the regular session, drops the
+PREMARKET filter entirely, not a reslice of any PNL mode above)
+----------------------------------------------------------------------------
+When the env var `REACTIVE_PNL_BACKTEST_MODE` is set (any truthy value),
+`main()` branches to `run_reactive_pnl_backtest()` BEFORE anything else --
+same isolation as every mode above, checked last and mutually exclusive with
+all of them. It never touches `squeeze_premarket_v3_pnl`,
+`squeeze_premarket_v3_sameday_pnl`, any TRAIL/OPTIONS table,
+`squeeze_premarket_2018_2021_*`, FAMILY #2, or PREREG.md -- read-only against
+`squeeze_premarket_backtest_queue`/`squeeze_premarket_backtest_results`,
+writes only to its own new table.
+
+WHY THIS IS A DIFFERENT IDEA, NOT A RESLICE: every PNL mode above requires a
+PREMARKET signal (turnover/move measured 04:00-09:29:59 ET) before the open.
+`BACKTEST_MODE`'s own coverage result showed that floor qualifies on only
+~4.5% of real squeeze days (307 of 6,860). This mode drops the premarket
+requirement completely and instead walks the REGULAR SESSION minute by
+minute, reacting to momentum only once it is already confirmed in real
+time -- "move in after the gains are already being made, not predict them
+before."
+
+CANDIDATE POPULATION -- A KNOWN GAP BETWEEN THIS BACKTEST AND A LIVE VERSION
+(stated plainly, not hidden): for backtest efficiency this reuses the
+already-known clean ignition day list, `load_reactive_pnl_queue()`'s
+`SELECT DISTINCT symbol, event_date FROM squeeze_premarket_backtest_results
+WHERE premarket_turnover <= 50` (6,860 pairs; that cap is the same corrupt-
+share-count guard every other mode in this file applies), joined to
+`squeeze_premarket_backtest_queue` for `prior_close` (carried there, not on
+the results table). Every OTHER premarket column on both tables is ignored
+here -- only the (symbol, event_date) pairs and `prior_close` are used. This
+is fine for testing the ENTRY/EXIT MECHANISM itself: the rule below only
+looks at REGULAR-SESSION intraday data from `event_date` forward, so there is
+no look-ahead in the rule. It is NOT fine as a live-ready design: a live
+version needs a continuous intraday scanner checking ALL candidates (not
+just days already known, after the fact, to have moved) throughout every
+session -- this backtest cannot and does not validate that scanning problem,
+only the entry/exit decision once a candidate is already being watched.
+
+ENTRY TRIGGER (look-ahead-free; see `find_reactive_entry_trigger()`): the
+FIRST regular-session (09:30:00-16:00:00 ET) 1-minute bar at which BOTH are
+true, using only data knowable at that bar's own close:
+  1. intraday move: that bar's close vs. `prior_close` >= REACTIVE_MOVE_FLOOR
+     (+10%).
+  2. money pace is ACCELERATING: trailing `MONEY_PACE_RECENT_MINUTES` (15)
+     $/minute flow >= `MONEY_PACE_ACCEL_HIGH` (1.25x) the whole-session-so-
+     far $/minute flow -- the EXACT ported thresholds already live in this
+     file's own `money_pace_tag()`/`MONEY_PACE_ACCEL_HIGH`/
+     `MONEY_PACE_ACCEL_LOW` (itself ported from
+     `dev/squeeze/research/intraday_velocity_scan.py`), reused verbatim, not
+     re-derived. Computed here entirely from the ONE regular-session OHLC
+     pull already in memory (`_reactive_pace_series()`), never a second
+     per-minute HTTP call, unlike the live Discord path's
+     `fetch_recent_dollar_flow()`.
+A floor of `REACTIVE_MIN_SESSION_MINUTES` (5) elapsed minutes is required
+before either condition is evaluated -- the same "too little history to
+baseline against" floor `money_pace_tag()` already applies to the premarket
+read, just applied to session-since-open instead of session-since-04:00.
+ENTRY FILL: the first real NBBO ASK timestamped at/after the trigger bar's
+OWN timestamp + 1 minute (`fetch_reactive_quote()`, 60s search window).
+ThetaData's 1-minute OHLC bars are timestamped at interval START, so a bar's
+close/volume (and therefore both trigger conditions) are only knowable once
+that bar's own minute has elapsed -- acting on the signal at the bar's start
+timestamp itself would be look-ahead; waiting one minute is what keeps this
+rule real-time-computable. Never a trade price, never a mid/mark.
+
+EXIT TRIGGER: continuing the SAME whole-session pace walk forward from the
+entry bar (`find_reactive_fade_exit()`), the first LATER bar where money pace
+flips to FADING (<= `MONEY_PACE_ACCEL_LOW`, 0.6x), confirmed and filled the
+same "+1 minute, real NBBO" way as entry (`exit_reason = 'faded'`). If no
+bar ever fades through 16:00:00 ET, exit at the last real NBBO bid timestamped
+< 16:00:00 ET in the 15:55:00-16:00:00 ET window -- `fetch_sameday_exit_bid()`,
+REUSED AS-IS from `SAMEDAY_PNL_BACKTEST_MODE`, not reimplemented
+(`exit_reason = 'eod'`).
+
+SLIPPAGE: per task spec, ask-to-bid IS the real spread charge; NO additional
+flat-% slippage constant (e.g. `PNL_SLIPPAGE`) is layered on top -- the same
+avoid-double-charging reasoning `OPTIONS_PNL_BACKTEST_MODE` already applied.
+`return_after_slippage` is therefore numerically IDENTICAL to `raw_return` in
+every row this mode writes; both columns exist only so this table's shape
+matches every other PNL table in this file, not because a second number is
+computed.
+
+FIRST-ONLY DEDUPE (30 calendar days per symbol): NOT applied in this mode's
+write path. Every triggered day is written to
+`squeeze_reactive_momentum_pnl` as its own round trip -- the same precedent
+`PNL_BACKTEST_MODE`'s "Primary metric" section already set (it defers the
+equal-weight sum to "the reporting script, not this cron"). Apply the 30-day
+first-only filter when computing the primary metric from this table, not
+here -- stated explicitly so a raw row count out of this table is never
+mistaken for the deduped trade count.
+
+`fill_status` resume semantics (see `load_resolved_reactive_keys()`): a row
+with `entry_time IS NULL` (no `prior_close`, no usable regular-session bars,
+or the walk never found a qualifying trigger minute, or a trigger fired but
+no usable NBBO ask surfaced) is TERMINAL -- historical bars never change, so
+it is never retried. A row with `entry_time` set but `exit_bid` still NULL
+(entry triggered, but the exit leg's NBBO quote came up empty) is treated as
+still unresolved, same resume convention as `SAMEDAY_PNL_BACKTEST_MODE`.
+
+SCALE WARNING: this candidate population (6,860 days) is pulled over its FULL
+regular session (up to 390 one-minute bars per day) instead of just a
+premarket window -- a much bigger pull than any PNL mode above. See the
+session report for the pre-run size/wall-clock estimate; this mode must NEVER
+run on the scheduled trigger, and should not be Triggered at full scale
+without first checking that estimate against actual observed throughput.
+
+This mode must NEVER run on the scheduled trigger -- only via a manual
+"Trigger Run" on the Render cron job with `REACTIVE_PNL_BACKTEST_MODE` set in
+that run's environment. Do not set it on the job's persistent env vars.
+Writes to `squeeze_reactive_momentum_pnl`, a new table of its own.
+
+This is a NEW, STRUCTURALLY DIFFERENT idea (reactive, no premarket
+requirement) -- label any result EXPLORATORY, and report the
+backtest-vs-live-ready population gap above with it every time, not just
+once.
 """
 import logging
 import os
@@ -546,6 +663,12 @@ OPTIONS_PNL_BACKTEST_MODE = os.getenv("OPTIONS_PNL_BACKTEST_MODE", "").strip().l
 # (and after) every mode above; never runs in the same invocation as any of
 # them.
 BACKTEST_2018_2021_MODE = os.getenv("BACKTEST_2018_2021_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+# STRUCTURALLY DIFFERENT, REACTIVE idea -- no premarket filter at all, see
+# module docstring "REACTIVE PNL BACKTEST MODE" section -- any truthy value.
+# Must never be set on the scheduled trigger's persistent env, only on a
+# manual "Trigger Run". Checked last, after every mode above; never runs in
+# the same invocation as any of them.
+REACTIVE_PNL_BACKTEST_MODE = os.getenv("REACTIVE_PNL_BACKTEST_MODE", "").strip().lower() in ("1", "true", "yes", "on")
 
 THETA_BASE = os.getenv("THETADATA_BASE_URL", "http://thetadata-proxy:10000").strip().rstrip("/")
 if THETA_BASE and "://" not in THETA_BASE:
@@ -2945,6 +3068,507 @@ def run_backtest_2018_2021() -> int:
         conn.close()
 
 
+# ===========================================================================
+# REACTIVE PNL BACKTEST MODE -- STRUCTURALLY DIFFERENT idea (no premarket
+# filter at all, reacts to confirmed intraday momentum during the regular
+# session). See module docstring "REACTIVE PNL BACKTEST MODE" section.
+# Everything below this line is only ever reached when
+# `REACTIVE_PNL_BACKTEST_MODE` is set; it must never run on the scheduled
+# trigger, and never touches any other mode's tables, FAMILY #2, or
+# PREREG.md.
+# ===========================================================================
+
+REACTIVE_SESSION_START = "09:30:00"   # regular session, never premarket
+REACTIVE_SESSION_END = "16:00:00"
+# Frozen for this test (task spec) -- not the PREREG.md V3 premarket floor,
+# a new rule under a new idea.
+REACTIVE_MOVE_FLOOR = 0.10            # intraday move from prior_close
+# Same "too little history to baseline against" floor money_pace_tag()
+# already applies to the premarket read (`premarket_minutes < 5`), applied
+# here to session-since-open instead of session-since-04:00.
+REACTIVE_MIN_SESSION_MINUTES = 5
+# 60s search window for the first real NBBO ask/bid at/after a trigger
+# minute -- same window LENGTH as fetch_entry_ask()'s fixed 09:30:00-09:31:00
+# search, generalized to an arbitrary intraday trigger time.
+REACTIVE_QUOTE_WINDOW_SECONDS = 60
+# squeeze_premarket_backtest_results' own corrupt-share-count guard (FIX 1,
+# see SAMEDAY_PNL_BACKTEST_MODE docstring) -- identical cap, reused, not
+# reinvented.
+REACTIVE_TURNOVER_CAP = 50
+
+
+def ensure_reactive_pnl_tables(conn) -> None:
+    """CREATE TABLE IF NOT EXISTS for the reactive-momentum-only table.
+    Called ONLY from run_reactive_pnl_backtest() -- a new table of its own,
+    nothing overwritten in squeeze_premarket_backtest_queue,
+    squeeze_premarket_backtest_results, or any other PNL mode's table."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS squeeze_reactive_momentum_pnl (
+                symbol TEXT,
+                event_date DATE,
+                entry_time TIMESTAMPTZ,
+                entry_ask DOUBLE PRECISION,
+                exit_time TIMESTAMPTZ,
+                exit_bid DOUBLE PRECISION,
+                exit_reason TEXT,
+                raw_return DOUBLE PRECISION,
+                return_after_slippage DOUBLE PRECISION,
+                checked_at TIMESTAMPTZ DEFAULT now(),
+                PRIMARY KEY (symbol, event_date)
+            )
+        """)
+    conn.commit()
+
+
+def load_reactive_pnl_queue(conn) -> list:
+    """(symbol, event_date, prior_close) for the EXACT task-spec candidate
+    population: `squeeze_premarket_backtest_results` rows with
+    `premarket_turnover <= REACTIVE_TURNOVER_CAP` (6,860 pairs at task-spec
+    time), joined to `squeeze_premarket_backtest_queue` for `prior_close`
+    (carried there, not on the results table). Every OTHER premarket column
+    on either table is ignored here -- see module docstring, this mode drops
+    the premarket filter entirely and only reuses the (symbol, event_date)
+    pair list plus prior_close."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT DISTINCT b.symbol, b.event_date, q.prior_close
+            FROM squeeze_premarket_backtest_results b
+            JOIN squeeze_premarket_backtest_queue q
+                ON q.symbol = b.symbol AND q.event_date = b.event_date
+            WHERE b.premarket_turnover <= %s
+            ORDER BY b.event_date, b.symbol
+        """, [REACTIVE_TURNOVER_CAP])
+        return cur.fetchall()
+
+
+def load_resolved_reactive_keys(conn) -> set:
+    """(symbol, event_date) pairs that are TERMINALLY resolved: either
+    entry_time IS NULL (no prior_close, no usable regular-session bars, or
+    the walk never found a qualifying trigger minute, or a trigger fired but
+    no usable NBBO ask surfaced -- all permanent answers against historical
+    bars, never retried) OR exit_bid IS NOT NULL (a full round trip was
+    priced). A row with entry_time set but exit_bid still NULL (entry
+    triggered, exit leg's NBBO quote came up empty) is treated as still
+    unresolved, same resume convention as load_resolved_sameday_keys()."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT symbol, event_date FROM squeeze_reactive_momentum_pnl
+            WHERE entry_time IS NULL OR exit_bid IS NOT NULL
+        """)
+        return {(sym, ed) for sym, ed in cur.fetchall()}
+
+
+def insert_reactive_pnl_result(conn, symbol: str, event_date: date, entry_time,
+                                entry_ask, exit_time, exit_bid, exit_reason,
+                                raw_return, return_after_slippage) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO squeeze_reactive_momentum_pnl
+                (symbol, event_date, entry_time, entry_ask, exit_time, exit_bid,
+                 exit_reason, raw_return, return_after_slippage)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol, event_date) DO UPDATE SET
+                entry_time = EXCLUDED.entry_time,
+                entry_ask = EXCLUDED.entry_ask,
+                exit_time = EXCLUDED.exit_time,
+                exit_bid = EXCLUDED.exit_bid,
+                exit_reason = EXCLUDED.exit_reason,
+                raw_return = EXCLUDED.raw_return,
+                return_after_slippage = EXCLUDED.return_after_slippage,
+                checked_at = now()
+        """, [symbol, event_date, entry_time, entry_ask, exit_time, exit_bid,
+              exit_reason, raw_return, return_after_slippage])
+    conn.commit()
+
+
+def fetch_reactive_session_bars(symbol: str, event_date: date):
+    """ONE regular-session (09:30:00-16:00:00 ET, never premarket) 1-minute
+    OHLC pull per candidate day via the already-deployed
+    `/v3/stock/history/ohlc` endpoint -- the SAME TRADES-only route
+    scan_symbol()/fetch_regular_session_bars() already use, just capturing
+    (timestamp, close, volume) instead of (timestamp, high, low, close),
+    since this mode needs dollar volume (close * volume) for the money-pace
+    read rather than a high/low trailing-stop check. This single pull is
+    reused in-memory for BOTH the entry-trigger search and the exit-fade
+    search -- never a second per-minute HTTP call (see module docstring,
+    this is what keeps the per-day pull cost to ONE call for the large
+    majority of days that never trigger). Returns (status, bars, detail):
+    bars is a list of (timestamp, close, volume) tuples sorted
+    chronologically -- same defensive sort as fetch_regular_session_bars()/
+    fetch_sameday_exit_bid(), since the proxy does not guarantee row order.
+    """
+    url = f"{THETA_BASE}/v3/stock/history/ohlc"
+    params = {
+        "symbol": symbol,
+        "date": event_date.isoformat(),
+        "start_time": REACTIVE_SESSION_START,
+        "end_time": REACTIVE_SESSION_END,
+        "interval": "1m",
+        "venue": "utp_cta",
+    }
+    rows, status, detail = _fetch_csv(url, params)
+    if status == "error":
+        return "error", None, detail
+    if status == "no_data" or not rows:
+        return "no_data", None, None
+
+    bars = []
+    for row in rows:
+        try:
+            ts = datetime.fromisoformat(row["timestamp"])
+            close = float(row["close"])
+            vol = int(float(row["volume"]))
+        except (KeyError, ValueError, TypeError):
+            continue
+        if close and close > 0:
+            bars.append((ts, close, vol))
+    if not bars:
+        return "no_data", None, None
+    bars.sort(key=lambda bar: bar[0])
+    return "ok", bars, None
+
+
+def _reactive_pace_series(bars: list):
+    """Shared sliding-window pass over one day's regular-session bars --
+    yields (index, timestamp, close, accel) for every bar, where `accel` is
+    the SAME ratio money_pace_tag() computes (trailing
+    MONEY_PACE_RECENT_MINUTES $/minute flow over whole-session-since-open
+    $/minute flow), or None if REACTIVE_MIN_SESSION_MINUTES hasn't elapsed
+    yet or the session-so-far rate isn't positive. ONE pass, reused by BOTH
+    find_reactive_entry_trigger() and find_reactive_fade_exit() so the entry
+    and exit questions are answered from the IDENTICAL pace computation --
+    no second definition of "money pace" to drift out of sync with the
+    first. O(n) via a two-pointer trailing window, not O(n^2) -- this mode's
+    candidate population (6,860 days x up to 390 bars) is already a much
+    bigger pull than any other mode in this file; no need to make the
+    in-memory walk slow on top of that."""
+    if not bars:
+        return
+    session_open = bars[0][0].replace(hour=9, minute=30, second=0, microsecond=0)
+    cum_dollar_vol = 0.0
+    recent_dollar_vol = 0.0
+    lo = 0
+    for i, (ts, close, vol) in enumerate(bars):
+        dv = close * vol
+        cum_dollar_vol += dv
+        recent_dollar_vol += dv
+        window_start = ts - timedelta(minutes=MONEY_PACE_RECENT_MINUTES)
+        while lo < i and bars[lo][0] <= window_start:
+            recent_dollar_vol -= bars[lo][1] * bars[lo][2]
+            lo += 1
+
+        elapsed_minutes = (ts - session_open).total_seconds() / 60.0 + 1.0
+        if elapsed_minutes < REACTIVE_MIN_SESSION_MINUTES or cum_dollar_vol <= 0:
+            yield i, ts, close, None
+            continue
+
+        rate_before = cum_dollar_vol / elapsed_minutes
+        if rate_before <= 0:
+            yield i, ts, close, None
+            continue
+
+        window_lo_ts = bars[lo][0] if lo <= i else ts
+        recent_minutes = max((ts - window_lo_ts).total_seconds() / 60.0 + 1.0, 1.0)
+        rate_now = recent_dollar_vol / recent_minutes
+        yield i, ts, close, rate_now / rate_before
+
+
+def find_reactive_entry_trigger(bars: list, prior_close):
+    """The FIRST regular-session bar at which BOTH are true, using only data
+    knowable at that bar's own close -- look-ahead-free, see module
+    docstring 'ENTRY TRIGGER' walkthrough:
+      1. intraday move (bar's own close vs. prior_close) >= REACTIVE_MOVE_FLOOR
+      2. money pace ACCELERATING (accel >= MONEY_PACE_ACCEL_HIGH), from
+         _reactive_pace_series() above.
+    Returns (index, confirm_time) or (None, None) if no bar ever qualifies.
+    `confirm_time` is the trigger bar's OWN timestamp + 1 minute: ThetaData's
+    1m OHLC bars are timestamped at interval START, so a bar's close/volume
+    (and therefore both trigger conditions) are only knowable once that
+    bar's own minute has elapsed -- acting at the bar's start timestamp
+    itself would be look-ahead; waiting one minute is what keeps this rule
+    real-time-computable."""
+    if not bars or not prior_close or prior_close <= 0:
+        return None, None
+    for i, ts, close, accel in _reactive_pace_series(bars):
+        if accel is None:
+            continue
+        move = close / prior_close - 1
+        if move >= REACTIVE_MOVE_FLOOR and accel >= MONEY_PACE_ACCEL_HIGH:
+            return i, ts + timedelta(minutes=1)
+    return None, None
+
+
+def find_reactive_fade_exit(bars: list, entry_index: int):
+    """Continuing the SAME whole-session pace walk forward from entry_index,
+    the first LATER bar where money pace flips to FADING
+    (accel <= MONEY_PACE_ACCEL_LOW). Returns (index, confirm_time) -- same
+    '+1 minute' confirm-time convention as find_reactive_entry_trigger() --
+    or (None, None) if no bar ever fades through the end of the session
+    (caller falls back to the real EOD NBBO bid)."""
+    for i, ts, close, accel in _reactive_pace_series(bars):
+        if i <= entry_index:
+            continue
+        if accel is not None and accel <= MONEY_PACE_ACCEL_LOW:
+            return i, ts + timedelta(minutes=1)
+    return None, None
+
+
+def fetch_reactive_quote(symbol: str, event_date: date, confirm_time: datetime, side: str):
+    """First usable real NBBO `side` ('ask' or 'bid') timestamped at/after
+    `confirm_time`, searched in a REACTIVE_QUOTE_WINDOW_SECONDS window
+    starting at confirm_time -- same 'first usable quote at/after the
+    trigger instant' discipline as fetch_entry_ask()/
+    fetch_sameday_exit_bid(), generalized to an arbitrary intraday trigger
+    time instead of a fixed 09:30:00 or 15:55:00-16:00:00 window. Returns
+    (price, quote_time, reason); never a trade price, never a mid/mark."""
+    window_end = confirm_time + timedelta(seconds=REACTIVE_QUOTE_WINDOW_SECONDS)
+    url = f"{THETA_BASE}/v3/stock/history/quote"
+    params = {
+        "symbol": symbol,
+        "date": event_date.isoformat(),
+        "start_time": confirm_time.strftime("%H:%M:%S"),
+        "end_time": window_end.strftime("%H:%M:%S"),
+        "interval": "1s",
+        "venue": "utp_cta",
+    }
+    rows, status, detail = _fetch_csv(url, params)
+    if status == "error":
+        return None, None, f"proxy error fetching NBBO quote: {detail}"
+    if status == "no_data" or not rows:
+        return None, None, (
+            f"no NBBO quote data for the {confirm_time.strftime('%H:%M:%S')}-"
+            f"{window_end.strftime('%H:%M:%S')} ET window"
+        )
+
+    confirm_t = confirm_time.time()
+    for row in rows:
+        try:
+            ts = datetime.fromisoformat(row["timestamp"])
+            price = float(row[side])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if ts.time() < confirm_t:
+            continue
+        if price and price > 0:
+            return price, ts, None
+    return None, None, (
+        f"no quote with a usable {side} at/after {confirm_t} within the "
+        f"{REACTIVE_QUOTE_WINDOW_SECONDS}s window"
+    )
+
+
+def scan_reactive_pair(symbol: str, event_date: date, prior_close):
+    """Stage-1 worker: pure HTTP, no DB access -- same discipline as every
+    other scan_*_pair() in this file. ONE regular-session OHLC pull, reused
+    for BOTH the entry-trigger search and the exit-fade search. Entry/exit
+    NBBO quote pulls only happen for days that actually trigger an entry --
+    the large majority that never do cost exactly one HTTP call each.
+
+    Returns (status, payload):
+      'error'          - the OHLC pull failed after retries (payload carries
+         the detail dict; no row written, retried next run).
+      'no_entry'       - no prior_close to compare against, no usable
+         regular-session bars, or the walk never found a qualifying trigger
+         minute (payload is None). Terminal -- historical bars never change.
+      'no_entry_quote' - a trigger minute was found but no usable NBBO ask
+         surfaced in the 60s confirm window (payload carries the reason).
+         Terminal, same discipline as fetch_entry_ask().
+      'ok'             - entry resolved; payload carries entry_time/entry_ask
+         and (if resolved) exit_time/exit_bid/exit_reason/returns. If the
+         exit leg's NBBO quote comes up empty, exit fields are None and the
+         row stays non-terminal (retried next run), same convention as
+         SAMEDAY_PNL_BACKTEST_MODE.
+    """
+    if not prior_close or prior_close <= 0:
+        return "no_entry", None
+
+    bars_status, bars, detail = fetch_reactive_session_bars(symbol, event_date)
+    if bars_status == "error":
+        return "error", detail
+    if bars_status == "no_data":
+        return "no_entry", None
+
+    entry_index, entry_confirm_time = find_reactive_entry_trigger(bars, prior_close)
+    if entry_index is None:
+        return "no_entry", None
+
+    entry_ask, entry_quote_time, entry_reason = fetch_reactive_quote(
+        symbol, event_date, entry_confirm_time, "ask")
+    if entry_ask is None:
+        return "no_entry_quote", {"reason": entry_reason}
+
+    exit_index, exit_confirm_time = find_reactive_fade_exit(bars, entry_index)
+    if exit_index is not None:
+        exit_bid, exit_quote_time, exit_detail = fetch_reactive_quote(
+            symbol, event_date, exit_confirm_time, "bid")
+        exit_reason = "faded"
+    else:
+        # Never faded through 16:00:00 ET -- EOD exit, reusing the SAME real
+        # NBBO-bid search SAMEDAY_PNL_BACKTEST_MODE already built
+        # (fetch_sameday_exit_bid(), not reimplemented): last real NBBO bid
+        # timestamped < 16:00:00 ET in the 15:55:00-16:00:00 ET window --
+        # never the close print, never a mark.
+        exit_bid, exit_quote_time, exit_detail = fetch_sameday_exit_bid(symbol, event_date)
+        exit_reason = "eod"
+
+    if exit_bid is None:
+        log.warning("no usable exit bid for %s %s (%s): %s",
+                    symbol, event_date, exit_reason, exit_detail)
+        return "ok", dict(
+            entry_time=entry_quote_time, entry_ask=entry_ask,
+            exit_time=None, exit_bid=None, exit_reason=None,
+            raw_return=None, return_after_slippage=None,
+        )
+
+    # Ask-to-bid IS the real spread charge -- no additional flat-% slippage
+    # layered on top (task spec; same avoid-double-charging reasoning
+    # OPTIONS_PNL_BACKTEST_MODE already applied). return_after_slippage is
+    # therefore numerically identical to raw_return here; both columns exist
+    # only so this table's shape matches every other PNL table in this file.
+    raw_return = exit_bid / entry_ask - 1
+    return "ok", dict(
+        entry_time=entry_quote_time, entry_ask=entry_ask,
+        exit_time=exit_quote_time, exit_bid=exit_bid, exit_reason=exit_reason,
+        raw_return=raw_return, return_after_slippage=raw_return,
+    )
+
+
+def run_reactive_pnl_backtest() -> int:
+    """RESUMABLE, same convention as every other PNL mode in this file: skips
+    (symbol, event_date) pairs already terminally resolved in
+    squeeze_reactive_momentum_pnl (see load_resolved_reactive_keys())."""
+    run_start = time.monotonic()
+    log.info("=== squeeze premarket cron REACTIVE PNL BACKTEST MODE "
+              "(EXPLORATORY, no premarket filter, reacts to confirmed "
+              "intraday momentum during the regular session, not a reslice "
+              "of any PNL mode above) ===")
+
+    conn = get_db_connection()
+    try:
+        ensure_tables(conn)
+        ensure_backtest_tables(conn)
+        ensure_reactive_pnl_tables(conn)
+
+        full_queue = load_reactive_pnl_queue(conn)
+        if not full_queue:
+            log.warning(
+                "no rows found in squeeze_premarket_backtest_results with "
+                "premarket_turnover <= %s joined to "
+                "squeeze_premarket_backtest_queue - nothing to score. Run "
+                "BACKTEST_MODE first.", REACTIVE_TURNOVER_CAP,
+            )
+            return 0
+
+        resolved = load_resolved_reactive_keys(conn)
+        queue = [row for row in full_queue if (row[0], row[1]) not in resolved]
+        already_resolved = len(full_queue) - len(queue)
+        log.info(
+            "REACTIVE PNL queue size: %d candidate days (premarket_turnover "
+            "<= %s), %d already resolved (skipped), %d pending (resume mode)",
+            len(full_queue), REACTIVE_TURNOVER_CAP, already_resolved, len(queue),
+        )
+        if not queue:
+            log.info("nothing pending - every candidate day already resolved.")
+            return 0
+
+        checked = 0
+        errors = 0
+        no_entry = 0
+        no_entry_quote = 0
+        entered = 0
+        faded = 0
+        eod = 0
+        exit_missing = 0
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {
+                pool.submit(scan_reactive_pair, sym, ed, pc): (sym, ed)
+                for sym, ed, pc in queue
+            }
+            for fut in as_completed(futures):
+                sym, ed = futures[fut]
+                try:
+                    status, payload = fut.result()
+                except Exception as exc:  # noqa: BLE001 - one worker must never kill the run
+                    status, payload = "error", {
+                        "http_status": None,
+                        "exception_type": type(exc).__name__,
+                        "exception_message": repr(exc),
+                    }
+                checked += 1
+
+                if status == "error":
+                    errors += 1
+                    log.error(
+                        "reactive backtest FAILED symbol=%s event_date=%s "
+                        "detail=%s -- not written, will retry next run",
+                        sym, ed, payload,
+                    )
+                    continue
+
+                if status == "no_entry":
+                    no_entry += 1
+                    insert_reactive_pnl_result(conn, sym, ed, None, None,
+                                                None, None, None, None, None)
+                    continue
+
+                if status == "no_entry_quote":
+                    no_entry_quote += 1
+                    log.warning(
+                        "entry triggered but no usable NBBO ask for %s %s: %s",
+                        sym, ed, payload["reason"],
+                    )
+                    insert_reactive_pnl_result(conn, sym, ed, None, None,
+                                                None, None, None, None, None)
+                    continue
+
+                entered += 1
+                if payload["exit_bid"] is None:
+                    exit_missing += 1
+                elif payload["exit_reason"] == "faded":
+                    faded += 1
+                else:
+                    eod += 1
+                insert_reactive_pnl_result(
+                    conn, sym, ed, payload["entry_time"], payload["entry_ask"],
+                    payload["exit_time"], payload["exit_bid"],
+                    payload["exit_reason"], payload["raw_return"],
+                    payload["return_after_slippage"],
+                )
+
+        elapsed = time.monotonic() - run_start
+        log.info(
+            "=== REACTIVE PNL BACKTEST DONE: full_queue=%d already_resolved=%d "
+            "pending=%d checked=%d errors=%d no_entry=%d no_entry_quote=%d "
+            "entered=%d faded=%d eod=%d exit_missing=%d wall_clock=%.1fs ===",
+            len(full_queue), already_resolved, len(queue), checked, errors,
+            no_entry, no_entry_quote, entered, faded, eod, exit_missing, elapsed,
+        )
+        log.info(
+            "Fill convention: ENTRY = first real NBBO ask at/after the "
+            "confirmed trigger minute (move>=10%% from prior close AND money "
+            "pace >= 1.25x session average, both computable in real time at "
+            "that minute); EXIT = first real NBBO bid at/after the confirmed "
+            "fade minute (money pace <= 0.6x session average) or, if it never "
+            "fades, the last real NBBO bid < 16:00:00 ET; no flat-%% slippage "
+            "layered on top of ask-to-bid (that spread IS the real cost, "
+            "return_after_slippage == raw_return in every row). CANDIDATE "
+            "POPULATION CAVEAT: reuses the KNOWN-to-have-moved ignition day "
+            "list for backtest efficiency -- fine for testing the entry/exit "
+            "MECHANISM (no look-ahead in the rule itself), but a live version "
+            "needs a continuous intraday scanner over ALL candidates, not a "
+            "pre-filtered day list. 30-day first-only dedupe is NOT applied "
+            "in this write path (every triggered day is written) -- apply it "
+            "at report time, same precedent as PNL_BACKTEST_MODE deferring "
+            "equal-weight sizing to the reporting script. EXPLORATORY, not a "
+            "confirmed result."
+        )
+        return 0
+    finally:
+        conn.close()
+
+
 def main() -> int:
     run_start = time.monotonic()
     if BACKTEST_MODE:
@@ -2959,6 +3583,8 @@ def main() -> int:
         return run_options_pnl_backtest()
     if BACKTEST_2018_2021_MODE:
         return run_backtest_2018_2021()
+    if REACTIVE_PNL_BACKTEST_MODE:
+        return run_reactive_pnl_backtest()
     today = datetime.now(ET).date()
     log.info("=== squeeze premarket cron (PREREG #3 / V3) - %s ===", today)
 
