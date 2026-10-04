@@ -41,17 +41,17 @@ export default function PerformanceClient() {
 
   return (
     <CustomerShell membership={null} bots={allowedBots} paperBots={paperBots}>
-          <h1 className="text-2xl font-bold text-white">Performance</h1>
-          <p className="mt-1 text-sm text-gray-400">Your all-time results across every strategy you own.</p>
+          <h1 className="text-2xl font-bold text-[var(--fg)]">Performance</h1>
+          <p className="mt-1 text-sm text-[var(--muted)]">Your all-time results across every strategy you own.</p>
 
           {data && 'empty' in data && data.empty ? (
             <ActivateCard />
           ) : error && !data ? (
-            <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-6 text-sm text-gray-400">
+            <div className="mt-4 rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-6 text-sm text-[var(--muted)]">
               Performance data is temporarily unavailable — try refreshing in a moment.
             </div>
           ) : !data ? (
-            <div className="mt-4 h-40 animate-pulse rounded-xl border border-forge-border bg-forge-card/50" />
+            <div className="mt-4 h-40 animate-pulse rounded-xl border border-[var(--line)] bg-[var(--bg)]/50" />
           ) : (
             <PerformanceBody data={data as PerformanceData} />
           )}
@@ -71,41 +71,41 @@ function ActivateCard() {
     { ...BOT_PLANS.flame, accent: '#EE5A24' },
   ]
   return (
-    <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-6 sm:p-8">
-      <h2 className="text-lg font-bold text-white">Let’s get your first strategy trading</h2>
-      <p className="mt-1 max-w-xl text-sm leading-relaxed text-gray-400">
+    <div className="mt-4 rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-6 sm:p-8">
+      <h2 className="text-lg font-bold text-[var(--fg)]">Let’s get your first strategy trading</h2>
+      <p className="mt-1 max-w-xl text-sm leading-relaxed text-[var(--muted)]">
         Your results show up here once a strategy is live. Two quick steps:
       </p>
 
       <div className="mt-5 grid gap-3">
-        <div className="flex items-start gap-3 rounded-lg border border-forge-border bg-forge-bg/50 p-4">
-          <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-xs font-bold text-amber-400">1</span>
+        <div className="flex items-start gap-3 rounded-lg border border-[var(--line)] bg-[var(--bg)]/50 p-4">
+          <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/15 text-xs font-bold text-[var(--accent)]">1</span>
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-white">Connect a brokerage</div>
-            <p className="mt-0.5 text-xs text-gray-400">Link the account your strategy will trade through. Takes a minute.</p>
+            <div className="text-sm font-semibold text-[var(--fg)]">Connect a brokerage</div>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">Link the account your strategy will trade through. Takes a minute.</p>
           </div>
-          <Link href="/onboarding/brokerage" className="shrink-0 self-center rounded-lg border border-forge-border px-3 py-2 text-xs font-semibold text-gray-200 transition hover:bg-white/5">Connect</Link>
+          <Link href="/onboarding/brokerage" className="shrink-0 self-center rounded-lg border border-[var(--line)] px-3 py-2 text-xs font-semibold text-[var(--fg)] transition hover:bg-[var(--bg-2)]">Connect</Link>
         </div>
 
-        <div className="rounded-lg border border-forge-border bg-forge-bg/50 p-4">
+        <div className="rounded-lg border border-[var(--line)] bg-[var(--bg)]/50 p-4">
           <div className="flex items-start gap-3">
-            <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-xs font-bold text-amber-400">2</span>
+            <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/15 text-xs font-bold text-[var(--accent)]">2</span>
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold text-white">Open a strategy account</div>
-              <p className="mt-0.5 text-xs text-gray-400">Starts a 5-day free trial — no charge today, cancel anytime.</p>
+              <div className="text-sm font-semibold text-[var(--fg)]">Open a strategy account</div>
+              <p className="mt-0.5 text-xs text-[var(--muted)]">Starts a 5-day free trial — no charge today, cancel anytime.</p>
             </div>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {strategies.map((s) => (
               <Link key={s.slug} href={`/live/${s.slug}/open`}
-                className="flex items-center justify-between gap-3 rounded-lg border border-forge-border bg-forge-card/60 px-3 py-2.5 transition hover:border-white/25"
+                className="flex items-center justify-between gap-3 rounded-lg border border-[var(--line)] bg-[var(--bg-2)] px-3 py-2.5 transition hover:border-[var(--line-2)]"
                 style={{ borderLeft: `3px solid ${s.accent}` }}>
-                <span className="text-sm font-semibold text-white">Open {s.name}</span>
+                <span className="text-sm font-semibold text-[var(--fg)]">Open {s.name}</span>
                 <span className="text-xs font-medium" style={{ color: s.accent }}>${s.priceMonthly}/mo</span>
               </Link>
             ))}
           </div>
-          <p className="mt-2 text-[11px] text-gray-500">A second strategy is its own ${BOT_PLANS.flame.priceMonthly}/mo subscription, billed separately.</p>
+          <p className="mt-2 text-[11px] text-[var(--muted)]">A second strategy is its own ${BOT_PLANS.flame.priceMonthly}/mo subscription, billed separately.</p>
         </div>
       </div>
 
@@ -173,13 +173,13 @@ function PerformanceBody({ data }: { data: PerformanceData }) {
       )}
 
       {/* Hero: mascot(s) + account value for the current view */}
-      <section className="rounded-xl border border-forge-border bg-forge-card/80 p-5">
+      <section className="rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-5">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
           <div className="flex shrink-0 gap-3">
             {(active ? [active] : bots).map((b) => (
               <div
                 key={b.bot}
-                className={`flex h-16 w-16 items-center justify-center rounded-2xl bg-forge-bg ring-1 sm:h-20 sm:w-20 ${
+                className={`flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--bg)] ring-1 sm:h-20 sm:w-20 ${
                   b.accent === 'flame' ? 'ring-flame/25' : 'ring-spark/25'
                 }`}
               >
@@ -188,15 +188,15 @@ function PerformanceBody({ data }: { data: PerformanceData }) {
             ))}
           </div>
           <div className="min-w-0">
-            <div className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+            <div className="text-xs font-semibold uppercase tracking-widest text-[var(--muted)]">
               {active || bots.length === 1 ? 'Account Value' : 'Total Account Value'}
             </div>
-            <div className="mt-1 font-mono text-4xl font-bold text-white">{formatMoney(view.account_value)}</div>
-            <div className="mt-1 text-sm text-gray-400">{view.label} · started {formatMoney(view.starting_capital)}</div>
+            <div className="mt-1 font-mono text-4xl font-bold text-[var(--fg)]">{formatMoney(view.account_value)}</div>
+            <div className="mt-1 text-sm text-[var(--muted)]">{view.label} · started {formatMoney(view.starting_capital)}</div>
             {view.return_pct != null && (
               <div
                 className={`mt-3 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 text-sm font-semibold ${
-                  positive ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400' : 'border-red-500/25 bg-red-500/10 text-red-400'
+                  positive ? 'border-[var(--up)]/25 bg-[var(--up)]/10 text-[var(--up)]' : 'border-[var(--bad)]/25 bg-[var(--bad)]/10 text-[var(--bad)]'
                 }`}
               >
                 {positive ? '▲' : '▼'} {pctLabel(view.return_pct)} all time
@@ -208,26 +208,26 @@ function PerformanceBody({ data }: { data: PerformanceData }) {
 
       {/* Wealth KPIs — moved here from the Home dashboard */}
       <div className="grid grid-cols-3 gap-4">
-        <StatTile label="This Week" value={formatDollarPnl(view.weekly)} valueClass={view.weekly >= 0 ? 'text-emerald-400' : 'text-red-400'} sub="Realized income" />
-        <StatTile label="This Month" value={formatDollarPnl(view.monthly)} valueClass={view.monthly >= 0 ? 'text-emerald-400' : 'text-red-400'} sub="Realized income" />
-        <StatTile label="Lifetime Return" value={pctLabel(view.return_pct)} valueClass={(view.return_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'} sub="All time" />
+        <StatTile label="This Week" value={formatDollarPnl(view.weekly)} valueClass={view.weekly >= 0 ? 'text-[var(--up)]' : 'text-[var(--bad)]'} sub="Realized income" />
+        <StatTile label="This Month" value={formatDollarPnl(view.monthly)} valueClass={view.monthly >= 0 ? 'text-[var(--up)]' : 'text-[var(--bad)]'} sub="Realized income" />
+        <StatTile label="Lifetime Return" value={pctLabel(view.return_pct)} valueClass={(view.return_pct ?? 0) >= 0 ? 'text-[var(--up)]' : 'text-[var(--bad)]'} sub="All time" />
       </div>
 
       {/* Stat tiles */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatTile label="Total P&L" value={formatDollarPnl(view.total_pnl)} valueClass={positive ? 'text-emerald-400' : 'text-red-400'} />
+        <StatTile label="Total P&L" value={formatDollarPnl(view.total_pnl)} valueClass={positive ? 'text-[var(--up)]' : 'text-[var(--bad)]'} />
         <StatTile label="Win Rate" value={view.win_rate != null ? `${view.win_rate.toFixed(1)}%` : '—'} sub={wins != null ? `${wins} wins · ${view.trades - wins} losses` : undefined} />
         <StatTile label="Total Trades" value={String(view.trades)} />
         <StatTile
           label="Best Day"
           value={view.best_day != null ? formatDollarPnl(view.best_day) : '—'}
-          valueClass={view.best_day != null && view.best_day >= 0 ? 'text-emerald-400' : undefined}
+          valueClass={view.best_day != null && view.best_day >= 0 ? 'text-[var(--up)]' : undefined}
         />
       </div>
 
       {/* Equity curve — follows the selected strategy, refreshes every 60s (live) */}
-      <section className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-amber-500">
+      <section className="rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-4">
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-[var(--accent)]">
           Equity Curve{active ? ` · ${active.label}` : ''}
         </h3>
         {view.curve.length >= 2 ? (
@@ -254,7 +254,7 @@ function PerformanceBody({ data }: { data: PerformanceData }) {
             </ResponsiveContainer>
           </div>
         ) : (
-          <p className="mt-3 pb-2 text-sm text-gray-500">Your equity curve appears once trades close.</p>
+          <p className="mt-3 pb-2 text-sm text-[var(--muted)]">Your equity curve appears once trades close.</p>
         )}
       </section>
     </div>
@@ -266,27 +266,27 @@ function TogglePill({ label, active, onClick, accent, paper }: { label: string; 
     ? 'border-flame/40 bg-flame/15 text-flame'
     : accent === 'spark'
       ? 'border-spark/40 bg-spark/15 text-spark'
-      : 'border-amber-500/40 bg-amber-500/15 text-amber-400'
+      : 'border-[var(--accent)]/40 bg-[var(--accent)]/15 text-[var(--accent)]'
   return (
     <button
       type="button"
       onClick={onClick}
       className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
-        active ? activeClass : 'border-forge-border text-gray-400 hover:text-white'
+        active ? activeClass : 'border-[var(--line)] text-[var(--muted)] hover:text-[var(--fg)]'
       }`}
     >
       {label}
-      {paper && <span className="rounded bg-gray-700 px-1 py-px text-[9px] font-bold uppercase tracking-wider text-gray-300">Paper</span>}
+      {paper && <span className="rounded bg-[var(--bg-2)] px-1 py-px text-[9px] font-bold uppercase tracking-wider text-[var(--muted)]">Paper</span>}
     </button>
   )
 }
 
 function StatTile({ label, value, sub, valueClass }: { label: string; value: string; sub?: string; valueClass?: string }) {
   return (
-    <div className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
-      <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</div>
-      <div className={`mt-1.5 font-mono text-2xl font-bold ${valueClass ?? 'text-white'}`}>{value}</div>
-      {sub && <div className="mt-1 text-xs text-gray-500">{sub}</div>}
+    <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-4">
+      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">{label}</div>
+      <div className={`mt-1.5 font-mono text-2xl font-bold ${valueClass ?? 'text-[var(--fg)]'}`}>{value}</div>
+      {sub && <div className="mt-1 text-xs text-[var(--muted)]">{sub}</div>}
     </div>
   )
 }

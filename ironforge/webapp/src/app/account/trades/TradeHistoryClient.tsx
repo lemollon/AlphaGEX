@@ -14,12 +14,12 @@ type Resp =
   | { error: string }
 
 const OUTCOME_CLASS: Record<OutcomeKind, string> = {
-  profit: 'text-emerald-400',
+  profit: 'text-[var(--up)]',
   auto: 'text-spark',
-  stop: 'text-red-400',
-  manual: 'text-amber-400',
-  expired: 'text-gray-400',
-  other: 'text-gray-400',
+  stop: 'text-[var(--bad)]',
+  manual: 'text-[var(--accent)]',
+  expired: 'text-[var(--muted)]',
+  other: 'text-[var(--muted)]',
 }
 const STRATEGY_CLASS: Record<string, string> = { Spark: 'text-spark', Flame: 'text-flame' }
 
@@ -77,18 +77,18 @@ export default function TradeHistoryClient() {
     <CustomerShell membership={null} bots={allowedBots} paperBots={paperBots}>
           {/* breadcrumb */}
           <div className="flex items-center gap-2 text-sm">
-            <Link href="/live" className="font-semibold text-amber-500 hover:text-amber-400">Live</Link>
-            <span className="text-gray-600">›</span>
-            <span className="text-gray-400">Trade History</span>
+            <Link href="/live" className="font-semibold text-[var(--accent)] hover:opacity-80">Live</Link>
+            <span className="text-[var(--muted)]">›</span>
+            <span className="text-[var(--muted)]">Trade History</span>
           </div>
 
           <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <div className="flex items-center gap-3">
-                <h1 className="text-2xl font-bold text-white">Trade History</h1>
-                <span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-400">All Trades</span>
+                <h1 className="text-2xl font-bold text-[var(--fg)]">Trade History</h1>
+                <span className="rounded-md border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-2.5 py-1 text-xs font-semibold text-[var(--accent)]">All Trades</span>
               </div>
-              <p className="mt-1 text-sm text-gray-400">Review recent and historical trades across your strategies.</p>
+              <p className="mt-1 text-sm text-[var(--muted)]">Review recent and historical trades across your strategies.</p>
             </div>
             {/* controls */}
             <div className="flex flex-wrap items-center gap-2">
@@ -96,12 +96,12 @@ export default function TradeHistoryClient() {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Search trades…"
-                className="w-44 rounded-lg border border-forge-border bg-forge-card px-3 py-2 text-sm text-white placeholder:text-gray-500 focus:border-amber-500/50 focus:outline-none"
+                className="w-44 rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--fg)] placeholder:text-[var(--muted)] focus:border-[var(--accent)]/50 focus:outline-none"
               />
               <select
                 value={strategy}
                 onChange={(e) => setStrategy(e.target.value)}
-                className="rounded-lg border border-forge-border bg-forge-card px-3 py-2 text-sm text-gray-200 focus:border-amber-500/50 focus:outline-none"
+                className="rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--fg)] focus:border-[var(--accent)]/50 focus:outline-none"
               >
                 <option value="all">All Strategies</option>
                 {strategies.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -109,7 +109,7 @@ export default function TradeHistoryClient() {
               <select
                 value={range}
                 onChange={(e) => setRange(e.target.value as typeof range)}
-                className="rounded-lg border border-forge-border bg-forge-card px-3 py-2 text-sm text-gray-200 focus:border-amber-500/50 focus:outline-none"
+                className="rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--fg)] focus:border-[var(--accent)]/50 focus:outline-none"
               >
                 {RANGES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
               </select>
@@ -117,21 +117,21 @@ export default function TradeHistoryClient() {
           </div>
 
           {isEmpty ? (
-            <div className="mt-5 rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
-              <h2 className="text-lg font-bold text-white">Sign in to see your trades</h2>
-              <p className="mx-auto mt-2 max-w-md text-sm text-gray-400">Your trade history appears here once a strategy is connected to your membership.</p>
-              <Link href="/login?next=/account/trades" className="mt-4 inline-block rounded-md bg-amber-500 px-5 py-2.5 text-sm font-semibold text-black hover:bg-amber-400">Sign in</Link>
+            <div className="mt-5 rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-8 text-center">
+              <h2 className="text-lg font-bold text-[var(--fg)]">Sign in to see your trades</h2>
+              <p className="mx-auto mt-2 max-w-md text-sm text-[var(--muted)]">Your trade history appears here once a strategy is connected to your membership.</p>
+              <Link href="/login?next=/account/trades" className="mt-4 inline-block rounded-md bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-[var(--accent-ink)] hover:brightness-105">Sign in</Link>
             </div>
           ) : isErr ? (
-            <div className="mt-5 rounded-xl border border-forge-border bg-forge-card/80 p-6 text-sm text-gray-400">Trade history is temporarily unavailable — try refreshing in a moment.</div>
+            <div className="mt-5 rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-6 text-sm text-[var(--muted)]">Trade history is temporarily unavailable — try refreshing in a moment.</div>
           ) : !data ? (
-            <div className="mt-5 h-64 animate-pulse rounded-xl border border-forge-border bg-forge-card/50" />
+            <div className="mt-5 h-64 animate-pulse rounded-xl border border-[var(--line)] bg-[var(--bg)]/50" />
           ) : (
             <>
-              <div className="mt-5 overflow-x-auto rounded-xl border border-forge-border bg-forge-card/80">
+              <div className="mt-5 overflow-x-auto rounded-xl border border-[var(--line)] bg-[var(--bg)]/80">
                 <table className="w-full min-w-[820px] text-sm">
                   <thead>
-                    <tr className="border-b border-forge-border text-left text-xs uppercase tracking-wider text-gray-500">
+                    <tr className="border-b border-[var(--line)] text-left text-xs uppercase tracking-wider text-[var(--muted)]">
                       <th className="px-4 py-3 font-semibold">Date</th>
                       <th className="px-4 py-3 font-semibold">Strategy</th>
                       <th className="px-4 py-3 font-semibold">Underlying</th>
@@ -146,17 +146,17 @@ export default function TradeHistoryClient() {
                     {rows.map((t) => {
                       const pos = t.pnl >= 0
                       return (
-                        <tr key={t.id} className="border-b border-forge-border/60 last:border-0 hover:bg-white/[0.02]">
-                          <td className="whitespace-nowrap px-4 py-3 text-gray-300">{fmtDate(t.close_date)}</td>
+                        <tr key={t.id} className="border-b border-[var(--line)]/60 last:border-0 hover:bg-[var(--bg-2)]">
+                          <td className="whitespace-nowrap px-4 py-3 text-[var(--muted)]">{fmtDate(t.close_date)}</td>
                           <td className="whitespace-nowrap px-4 py-3">
-                            <span className={`font-semibold ${STRATEGY_CLASS[t.strategy] ?? 'text-gray-200'}`}>{t.strategy}</span>
-                            {t.paper && <span className="ml-1.5 rounded bg-gray-700 px-1 py-px text-[9px] font-bold uppercase tracking-wider text-gray-300">Paper</span>}
+                            <span className={`font-semibold ${STRATEGY_CLASS[t.strategy] ?? 'text-[var(--fg)]'}`}>{t.strategy}</span>
+                            {t.paper && <span className="ml-1.5 rounded bg-[var(--bg-2)] px-1 py-px text-[9px] font-bold uppercase tracking-wider text-[var(--muted)]">Paper</span>}
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-gray-300">{t.underlying}</td>
-                          <td className="whitespace-nowrap px-4 py-3 text-gray-400">{t.opened_ct ?? '—'}</td>
-                          <td className="whitespace-nowrap px-4 py-3 text-gray-400">{t.closed_ct ?? '—'}</td>
-                          <td className="whitespace-nowrap px-4 py-3 text-gray-300">{t.contracts}</td>
-                          <td className={`whitespace-nowrap px-4 py-3 text-right font-mono font-semibold ${pos ? 'text-emerald-400' : 'text-red-400'}`}>
+                          <td className="whitespace-nowrap px-4 py-3 text-[var(--muted)]">{t.underlying}</td>
+                          <td className="whitespace-nowrap px-4 py-3 text-[var(--muted)]">{t.opened_ct ?? '—'}</td>
+                          <td className="whitespace-nowrap px-4 py-3 text-[var(--muted)]">{t.closed_ct ?? '—'}</td>
+                          <td className="whitespace-nowrap px-4 py-3 text-[var(--muted)]">{t.contracts}</td>
+                          <td className={`whitespace-nowrap px-4 py-3 text-right font-mono font-semibold ${pos ? 'text-[var(--up)]' : 'text-[var(--bad)]'}`}>
                             {signedFull(t.pnl)}
                             {t.pnl_pct != null && <span className="ml-1 text-xs opacity-80">({t.pnl_pct > 0 ? '+' : ''}{t.pnl_pct.toFixed(2)}%)</span>}
                           </td>
@@ -165,12 +165,12 @@ export default function TradeHistoryClient() {
                       )
                     })}
                     {rows.length === 0 && (
-                      <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-500">No trades match these filters.</td></tr>
+                      <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-[var(--muted)]">No trades match these filters.</td></tr>
                     )}
                   </tbody>
                 </table>
               </div>
-              <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-gray-500">
+              <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-[var(--muted)]">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5"><rect x="3" y="11" width="18" height="10" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
                 All trade data is encrypted and securely stored.
               </p>

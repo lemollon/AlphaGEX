@@ -92,91 +92,72 @@ export default function LegalClient() {
       headline="Know what you’re authorizing."
       subline="Review the required agreements before continuing with Forge Automate."
       maxWidthClass="max-w-3xl"
+      step="legal"
+      enrollment={enrollment}
     >
-      <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-6 lg:p-8">
-        <h2 className="text-2xl font-bold text-white">Review and accept</h2>
-        <p className="mt-1 text-sm text-gray-400">These agreements are required for automated trading.</p>
+      {error ? <p className="err" style={{ marginBottom: 14 }}>{error}</p> : null}
 
-        {error ? (
-          <p className="mt-4 rounded-md border border-red-700/40 bg-red-950/30 px-3 py-2 text-sm text-red-300">{error}</p>
-        ) : null}
+      {!enrollment || (docs.length === 0 && !error) ? <div className="card pad" style={{ height: 280 }} /> : null}
 
-        {!enrollment || (docs.length === 0 && !error) ? (
-          <div className="mt-6 h-72 animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
-        ) : null}
-
-        {docs.length > 0 ? (
-          <>
-            <ul className="mt-5 divide-y divide-forge-border rounded-xl border border-forge-border bg-black/20">
-              {docs.map((d) => (
-                <li key={d.code} className="flex items-center gap-4 px-4 py-3.5">
-                  <span aria-hidden className="text-lg text-gray-500">📄</span>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-semibold text-white">{d.title}</div>
-                    <p className="mt-0.5 truncate text-xs text-gray-500">{DOC_SUBTITLES[d.code] ?? `Version ${d.version}`}</p>
-                  </div>
-                  {opened[d.code] ? (
-                    <span aria-hidden className="text-xs font-bold text-emerald-400">✓</span>
-                  ) : null}
+      {docs.length > 0 ? (
+        <>
+          <div className="card">
+            {docs.map((d) => (
+              <div key={d.code} className="ack" style={{ gridTemplateColumns: '1fr auto' }}>
+                <div>
+                  <b>{d.title}</b>
+                  <p>{DOC_SUBTITLES[d.code] ?? `Version ${d.version}`}</p>
+                </div>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {opened[d.code] ? <span aria-hidden className="num" style={{ color: 'var(--up)', fontWeight: 700 }}>✓</span> : null}
                   <Link
                     href={d.contentUri}
                     target="_blank"
                     onClick={() => setOpened((o) => ({ ...o, [d.code]: true }))}
-                    className="shrink-0 text-sm font-semibold text-amber-500 hover:text-amber-400"
+                    className="link"
                   >
                     Review
                   </Link>
-                </li>
-              ))}
-            </ul>
+                </span>
+              </div>
+            ))}
+          </div>
 
-            <label className="mt-5 flex items-start gap-3 text-sm text-gray-200">
-              <input
-                type="checkbox"
-                checked={agreed}
-                disabled={!allOpened}
-                onChange={(e) => setAgreed(e.target.checked)}
-                className="mt-1 h-4 w-4 shrink-0 accent-amber-500 disabled:opacity-40"
-              />
-              <span>
-                I have opened, reviewed, and agree to all required agreements.
-                {!allOpened ? (
-                  <span className="block text-xs text-gray-500">Review each document above to enable this.</span>
-                ) : null}
-              </span>
-            </label>
+          <label className="field" style={{ gridTemplateColumns: '22px 1fr', display: 'grid', marginTop: 20, alignItems: 'start' }}>
+            <input
+              type="checkbox"
+              checked={agreed}
+              disabled={!allOpened}
+              onChange={(e) => setAgreed(e.target.checked)}
+              style={{ width: 18, height: 18, marginTop: 2 }}
+            />
+            <span style={{ fontWeight: 400 }}>
+              I have opened, reviewed, and agree to all required agreements.
+              {!allOpened ? <span className="help" style={{ display: 'block', marginTop: 2 }}>Review each document above to enable this.</span> : null}
+            </span>
+          </label>
 
-            <div className="mt-5">
-              <label htmlFor="signature" className="block text-xs text-gray-400">
-                Electronic signature
-              </label>
-              <input
-                id="signature"
-                type="text"
-                value={signature}
-                onChange={(e) => setSignature(e.target.value)}
-                placeholder="Enter your full legal name"
-                autoComplete="name"
-                className="mt-1 w-full rounded-md border border-white/15 bg-black/40 px-3 py-2.5 text-sm text-white outline-none focus:border-amber-500"
-              />
-              <p className="mt-1 text-xs text-gray-500">Your signature and acceptance date will be recorded electronically.</p>
-            </div>
+          <div className="field" style={{ marginTop: 20 }}>
+            <label htmlFor="signature">Electronic signature</label>
+            <input
+              id="signature"
+              type="text"
+              value={signature}
+              onChange={(e) => setSignature(e.target.value)}
+              placeholder="Enter your full legal name"
+              autoComplete="name"
+            />
+            <p className="help">Your signature and acceptance date will be recorded electronically.</p>
+          </div>
 
-            <button
-              type="button"
-              disabled={!canSubmit}
-              onClick={accept}
-              className="mt-6 w-full rounded-lg bg-amber-500 px-5 py-3 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
-            >
+          <div className="nav-row">
+            <Link href="/enroll/plan" className="btn">← Back</Link>
+            <button type="button" disabled={!canSubmit} onClick={accept} className="btn btn-accent btn-lg">
               {busy ? 'Saving…' : 'Accept & Continue'}
             </button>
-
-            <Link href="/enroll/plan" className="mt-4 inline-block text-sm text-gray-400 hover:text-white">
-              ← Back to membership selection
-            </Link>
-          </>
-        ) : null}
-      </div>
+          </div>
+        </>
+      ) : null}
     </EnrollShell>
   )
 }

@@ -114,35 +114,28 @@ export default function AgentClient() {
 
   return (
     <EnrollShell
-      headline="Choose your trading agent."
-      subline="Select the risk profile that best fits how you want to trade."
+      headline={plan === 'ember' ? 'Set up Ember.' : 'Choose your trading agent.'}
+      subline={
+        plan === 'ember'
+          ? 'Ember runs the same rules-based approach, sized for smaller accounts.'
+          : 'Select the risk profile that best fits how you want to trade.'
+      }
       maxWidthClass="max-w-3xl"
+      step="agent"
+      enrollment={enrollment}
     >
-      <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-6 lg:p-8">
-        <h2 className="text-2xl font-bold text-white">
-          {plan === 'ember' ? 'Set up Ember' : 'Choose Spark or Flame'}
-        </h2>
-        <p className="mt-1 text-sm text-gray-400">
-          {plan === 'ember'
-            ? 'Ember runs the same rules-based approach, sized for smaller accounts.'
-            : 'Both agents use rules-based iron condor strategies with different risk profiles.'}
-        </p>
         {account?.mask ? (
-          <p className="mt-2 text-xs text-gray-500">
-            Trading account: <span className="font-mono text-gray-300">{account.mask}</span>
+          <p className="help" style={{ marginBottom: 14 }}>
+            Trading account: <span className="mono">{account.mask}</span>
           </p>
         ) : null}
 
-        {error ? (
-          <p className="mt-4 rounded-md border border-red-700/40 bg-red-950/30 px-3 py-2 text-sm text-red-300">{error}</p>
-        ) : null}
+        {error ? <p className="err" style={{ marginBottom: 14 }}>{error}</p> : null}
 
-        {resolving && !error ? (
-          <div className="mt-6 h-72 animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
-        ) : null}
+        {resolving && !error ? <div className="card pad" style={{ height: 280 }} /> : null}
 
         {account ? (
-          <div className="mt-6 grid gap-5 md:grid-cols-3">
+          <div className="agents" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', display: 'grid' }}>
           {/*
             ONE STRATEGY AT TWO CLOCKS — this is the screen where a customer picks
             which bot trades their money, so the copy has to be true.
@@ -276,14 +269,13 @@ export default function AgentClient() {
           </div>
         ) : null}
 
-        <p className="mt-5 text-sm text-gray-500">
+        <p className="help" style={{ marginTop: 20 }}>
           Agent selection does not activate trading. You will review your setup before activation.
         </p>
 
-        <Link href="/enroll/broker" className="mt-4 inline-block text-sm text-gray-400 hover:text-white">
-          ← Back to brokerage
-        </Link>
-      </div>
+        <div className="nav-row">
+          <Link href="/enroll/broker" className="btn">← Back to brokerage</Link>
+        </div>
     </EnrollShell>
   )
 }

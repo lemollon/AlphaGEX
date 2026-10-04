@@ -43,42 +43,42 @@ export default function EmberWorkspaceClient() {
     <CustomerShell membership={summary?.membership ?? null} planVariant="trial">
       <div className="flex items-center gap-3">
         <span
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-[var(--fg)]"
           style={{ backgroundColor: EMBER_AGENT.accent }}
         >
           E
         </span>
         <div>
-          <h1 className="text-2xl font-bold text-white">{EMBER_AGENT.name}</h1>
-          <p className="text-sm text-gray-400">{EMBER_AGENT.sub}</p>
+          <h1 className="text-2xl font-bold text-[var(--fg)]">{EMBER_AGENT.name}</h1>
+          <p className="text-sm text-[var(--muted)]">{EMBER_AGENT.sub}</p>
         </div>
       </div>
 
       {!known ? (
-        <div className="mt-6 h-40 animate-pulse rounded-xl border border-forge-border bg-forge-card/40" />
+        <div className="mt-6 h-40 animate-pulse rounded-xl border border-[var(--line)] bg-[var(--bg-2)]" />
       ) : !ownsEmber ? (
-        <div className="mt-6 rounded-xl border border-forge-border bg-forge-card/80 p-6">
-          <p className="text-sm text-gray-300">You don&rsquo;t have an Ember account yet.</p>
-          <p className="mt-1 text-xs text-gray-500">
+        <div className="mt-6 rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-6">
+          <p className="text-sm text-[var(--muted)]">You don&rsquo;t have an Ember account yet.</p>
+          <p className="mt-1 text-xs text-[var(--muted)]">
             Free · one account per person · $500–$2,000 trading capital.
           </p>
           <Link
             href="/enroll"
-            className="mt-4 inline-flex items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-white"
+            className="mt-4 inline-flex items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-[var(--fg)]"
             style={{ backgroundColor: EMBER_AGENT.accent }}
           >
             Start Ember free
           </Link>
         </div>
       ) : (
-        <div className="mt-6 rounded-xl border border-forge-border bg-forge-card/80 p-6">
-          <p className="text-sm font-semibold text-white">Ember is enrolled on this account.</p>
-          <p className="mt-2 text-sm text-gray-400">
+        <div className="mt-6 rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-6">
+          <p className="text-sm font-semibold text-[var(--fg)]">Ember is enrolled on this account.</p>
+          <p className="mt-2 text-sm text-[var(--muted)]">
             Trade history, open positions and profit/loss aren&rsquo;t shown here yet — IronForge
             has no live data connection to Ember&rsquo;s execution engine (REFLEX) today. Nothing
             fabricated is shown in its place.
           </p>
-          <p className="mt-3 text-xs text-gray-500">
+          <p className="mt-3 text-xs text-[var(--muted)]">
             Missing endpoint: a read-only positions/trades API for this agent. See this file&rsquo;s
             own comment for what that would require.
           </p>
