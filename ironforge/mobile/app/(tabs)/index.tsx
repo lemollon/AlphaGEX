@@ -19,7 +19,7 @@ import type {
 import { space, radius, type, font, agentAccent, color as staticColor } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
-import { Card, Money, Balance, SectionLabel, Loading, Empty, ErrorState } from '@/components/ui'
+import { Card, Money, Balance, SectionLabel, Loading, Empty, ErrorState, Button } from '@/components/ui'
 import { StatRow } from '@/components/StatRow'
 import { AppHeader, Mascot } from '@/components/Brand'
 import { PnlChart } from '@/components/PnlChart'
@@ -102,12 +102,33 @@ export default function ForgeScreen() {
   // The server returns {empty:true} for a customer with no account mapping. That is an
   // honest empty state, NOT an error — and never a reason to show someone else's money.
   if (!data || data.empty) {
+    // Distinguish "never finished billing" (nothing else to do but resume enrollment)
+    // from "paid but hasn't connected a broker/activated yet" (the generic empty state
+    // is correct — Account tab's "Connect Another Brokerage" is the next step). Without
+    // this, a customer who dropped off mid-signup sees a dead-end screen with no path
+    // back into /enroll/*, and the ONLY way back in was signing out and back in again
+    // (Leron, 2026-10-04 — found by actually walking a fresh signup through).
+    const neverBilled = billing.data?.configured && !billing.data?.membership
     return (
       <Shell>
-        <Empty
-          title="No account connected yet"
-          detail="Once your agent is activated and a brokerage account is linked, your capital and positions appear here."
-        />
+        {neverBilled ? (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl }}>
+            <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+              Finish setting up your account
+            </Text>
+            <Text style={[type.body, { color: color.textDim, marginTop: space.sm, textAlign: 'center' }]}>
+              Your signup never finished — pick up right where you left off.
+            </Text>
+            <View style={{ marginTop: space.lg, alignSelf: 'stretch' }}>
+              <Button label="Continue setup" onPress={() => router.push('/enroll/plan')} />
+            </View>
+          </View>
+        ) : (
+          <Empty
+            title="No account connected yet"
+            detail="Once your agent is activated and a brokerage account is linked, your capital and positions appear here."
+          />
+        )}
       </Shell>
     )
   }
