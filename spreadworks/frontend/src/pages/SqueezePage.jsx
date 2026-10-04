@@ -80,11 +80,12 @@ function signedPct(x, d = 2) {
 // series loads, when it last did, and when the next point lands.
 //
 // ⛔ THE NEXT-POINT TIME IS DERIVED FROM THE DATA'S OWN GRID, NOT THE BROWSER
-// CLOCK. The recorder writes fixed 10-minute buckets between 08:30 and 15:00
-// CT, so last-bucket + 10 is a fact about the schedule rather than a guess
-// about now — and when the last bucket IS 15:00 the honest answer is that the
-// grid is done for the day, not a time ten minutes into the close.
-const GRID_STEP_MIN = 10;
+// CLOCK. The recorder writes fixed 1-minute buckets between 08:30 and 15:00
+// CT (tightened from 10-minute 2026-10-04), so last-bucket + 1 is a fact
+// about the schedule rather than a guess about now — and when the last
+// bucket IS 15:00 the honest answer is that the grid is done for the day,
+// not a time one minute into the close.
+const GRID_STEP_MIN = 1;
 const GRID_CLOSE_MIN = 15 * 60;          // 15:00 CT, the last bucket
 const GRID_OPEN_LABEL = '08:30 CT';
 
@@ -370,7 +371,7 @@ export default function SqueezePage() {
     const load = async () => {
       if (document.visibilityState !== 'visible') return;
       try {
-        // Today's stored 10-minute gamma path. Cheap — served from the table
+        // Today's stored 1-minute gamma path. Cheap — served from the table
         // the scheduled job writes, never a live chain pull.
         fetch(`${API_URL}/api/spreadworks/squeeze/intraday-path`)
           .then((x) => x.json()).then((t) => { if (live) setIpath(t); })
@@ -1323,9 +1324,9 @@ export default function SqueezePage() {
 
           {/* TODAY'S INTRADAY GAMMA PATH — a SEPARATE chart on purpose. The
               daily chart is one point per session and IS the signal. This is
-              a 10-minute path through today and is NOT — an intraday sample
-              lands in the wrong percentile zone 21.6% of the time against
-              its own close. */}
+              a 1-minute path through today (tightened from 10-minute
+              2026-10-04) and is NOT — an intraday sample lands in the wrong
+              percentile zone 21.6% of the time against its own close. */}
           {(() => {
             const rows = (ipath?.rows || []).filter((r) => r.net_gex_b != null);
             const today = rows.length ? rows[rows.length - 1].trade_date : null;
@@ -1334,7 +1335,7 @@ export default function SqueezePage() {
             return (
               <div style={S.card}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={S.cardTitle}>Gamma through today — every 10 minutes</span>
+                  <span style={S.cardTitle}>Gamma through today — every minute</span>
                   <ContextTag />
                   {pts.length > 0 && (
                     <IntradayCadence count={pts.length}
@@ -1448,13 +1449,13 @@ export default function SqueezePage() {
                   })()
                 ) : (
                   <div style={{ ...S.caption, marginTop: 6 }}>
-                    {ipath?.reason || 'Nothing recorded yet today — points land every 10 minutes '
+                    {ipath?.reason || 'Nothing recorded yet today — points land every minute '
                       + 'between 08:30 and 15:00 CT.'}
                   </div>
                 )}
                 <div style={{ ...S.caption, marginTop: 10 }}>
                   The <b style={{ color: LIVE }}>purple line</b> is net dealer gamma, recomputed from
-                  the live chain every 10 minutes. The <b style={{ color: '#d6d3d1' }}>pale
+                  the live chain every minute. The <b style={{ color: '#d6d3d1' }}>pale
                   line</b> is SPY on a hidden right axis — net gamma measured at spot moves when spot
                   moves, so the two together tell you whether dealers repositioned or price just slid
                   down a fixed curve. The <b style={{ color: '#8b93a7' }}>grey dashed line</b> is the
@@ -1533,7 +1534,7 @@ export default function SqueezePage() {
                     <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #1c2233' }}>
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
                         <span style={{ fontSize: 13, fontWeight: 700 }}>
-                          The VIX leg through today — every 10 minutes
+                          The VIX leg through today — every minute
                         </span>
                         <ContextTag />
                         <span style={S.small}>

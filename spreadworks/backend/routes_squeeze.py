@@ -49,10 +49,12 @@ HISTORY_ROWS = 90
 # signal_history is O(n * PCT_WINDOW).
 MAX_HISTORY_ROWS = 400
 
-# /intraday: 40-ish chain requests per pull, so cache it — same convention as
-# routes_bots.py's _FLEET_STATS_CACHE.
+# /intraday: 2026-10-04, reads sw_gamma_intraday instead of pulling a live
+# chain itself (see the endpoint's own docstring) -- this cache now exists
+# only to collapse concurrent requests onto one DB read, not to throttle a
+# live pull.
 _INTRADAY_CACHE: dict[str, Any] = {"ts": 0.0, "payload": None}
-_INTRADAY_CACHE_TTL = 60
+_INTRADAY_CACHE_TTL = 15
 
 # RTH-ish window for the "stale" flag. Outside this (or a weekend) the live
 # pull is either impossible or meaningless, so the frontend greys it out.
@@ -350,16 +352,6 @@ def ensure_gamma_intraday_table() -> None:
         logger.warning("[routes_squeeze] ensure_gamma_intraday_table: %r", e)
 
 
-def _live_vix():
-    """Current VIX spot, or None. Never raises — a missing quote must degrade
-    the live outlook's VIX leg to unknown, not take the endpoint down."""
-    try:
-        from .bots.routes_helpers import build_live_chain_provider
-        return build_live_chain_provider()._spot("VIX")
-    except Exception:                                        # noqa: BLE001
-        return None
-
-
 def live_vix_ratio(vix_now):
     """Live VIX over its own trailing 20-session max.
 
@@ -389,26 +381,38 @@ def live_vix_ratio(vix_now):
 
 def record_gamma_intraday(now, spot, net_gex_b, pct_if_now,
                           vix=None, vix_ratio=None) -> None:
-    """Store one intraday point, bucketed to the 10-minute slot.
+    """Store one intraday point, bucketed to the 1-minute slot.
 
     Bucketing makes the write idempotent: a retry inside the same slot updates
     rather than duplicating, and the series has a predictable shape regardless
     of when the poll actually landed.
+
+    🚨 2026-10-04 BUG FIX: `vix`/`vix_ratio` were accepted as parameters but
+    never actually included in the INSERT's column list or params -- every
+    row ever written has NULL in both columns, silently. Caught because the
+    new /intraday endpoint reads `vix_ratio` from this table to recompute
+    `live_outlook` (it used to fetch its own live VIX quote instead); with
+    the bug, that leg would have gone permanently None. Fixed here, not
+    backfilled -- there is no live VIX reading to backfill historical rows
+    with, and they were never read for anything before now.
     """
     if net_gex_b is None:
         return
-    minute = now.hour * 60 + (now.minute // 10) * 10
+    minute = now.hour * 60 + now.minute
     try:
         with ENGINE.begin() as conn:
             conn.execute(text(
                 f"INSERT INTO {GAMMA_INTRADAY_TABLE} "
-                " (trade_date, minute_ct, captured_at, spot, net_gex_b, pct_if_now)"
-                " VALUES (:d, :m, :t, :s, :g, :p)"
+                " (trade_date, minute_ct, captured_at, spot, net_gex_b, pct_if_now,"
+                "  vix, vix_ratio)"
+                " VALUES (:d, :m, :t, :s, :g, :p, :v, :vr)"
                 " ON CONFLICT (trade_date, minute_ct) DO UPDATE SET"
                 "  captured_at = EXCLUDED.captured_at, spot = EXCLUDED.spot,"
-                "  net_gex_b = EXCLUDED.net_gex_b, pct_if_now = EXCLUDED.pct_if_now"),
+                "  net_gex_b = EXCLUDED.net_gex_b, pct_if_now = EXCLUDED.pct_if_now,"
+                "  vix = EXCLUDED.vix, vix_ratio = EXCLUDED.vix_ratio"),
                 {"d": now.date(), "m": minute, "t": now.replace(tzinfo=None),
-                 "s": spot, "g": net_gex_b, "p": pct_if_now})
+                 "s": spot, "g": net_gex_b, "p": pct_if_now,
+                 "v": vix, "vr": vix_ratio})
     except Exception as e:  # noqa: BLE001
         logger.warning("[routes_squeeze] record_gamma_intraday: %r", e)
 
@@ -442,21 +446,35 @@ def intraday_path(sessions: int = 1):
         return {"rows": [], "reason": f"query error: {e}"}
 
 
+_INTRADAY_STALE_MINUTES = 3   # job now runs every minute; 3 missed ticks = stale
+
+
 @router.get("/intraday")
-async def intraday():
-    """Live SPY net-gamma reading right now — CONTEXT ONLY, NOT THE SIGNAL.
+def intraday():
+    """Latest SPY net-gamma reading — CONTEXT ONLY, NOT THE SIGNAL.
 
     The shipped signal is one reading a session, captured at 15:05 CT and
     consumed the next morning; it was backtested on that daily close. This
-    endpoint pulls the chain live and shows what net gamma looks like THIS
-    MINUTE next to that stored close — useful context, not a second verdict.
-    Measured against 495 sessions, an intraday sample lands in the wrong
-    percentile zone 21.6% of the time versus that session's close, and ~5%
-    of sessions would flash a false "oversold" the close then retracts.
+    endpoint shows what net gamma looked like at the last minute the
+    background job recorded, next to that stored close — useful context, not
+    a second verdict. Measured against 495 sessions, an intraday sample lands
+    in the wrong percentile zone 21.6% of the time versus that session's
+    close, and ~5% of sessions would flash a false "oversold" the close then
+    retracts.
 
-    Never raises — degrades to nulls + a `reason` string. Cached 60s
-    (module-level) so repeated page loads don't re-pull SPY's full chain
-    (~40 requests) every time.
+    🚨 2026-10-04: this used to do its OWN live Tradier chain pull on every
+    request (cached 60s), which meant the reading only updated when someone
+    had the tab open and went stale/absent the moment they closed it. The
+    actual live pull is `gamma_alerts.py`'s `record_intraday_gamma` job —
+    "A JOB, NOT A PAGE HOOK" per its own docstring, now running every minute,
+    8:30-15:00 CT weekdays, independent of any viewer. This endpoint just
+    READS whatever that job most recently wrote to sw_gamma_intraday — zero
+    extra Tradier calls per page view, and the reading is fresh even with
+    nobody watching.
+
+    Never raises — degrades to nulls + a `reason` string. Cached 15s
+    (module-level) purely to collapse concurrent requests onto one DB query,
+    not to throttle a live pull (there isn't one here anymore).
     """
     ts = time.time()
     cached = _INTRADAY_CACHE
@@ -471,42 +489,36 @@ async def intraday():
     last_close_b: float | None = None
     delta_b: float | None = None
     pct_if_now: float | None = None
+    vix_ratio: float | None = None
+    captured_at_iso: str | None = None
     reason: str | None = None
 
-    # DO NOT PULL WHEN THE MARKET IS SHUT. Two reasons, both real:
-    #
-    #   1. Cost. This is ~40 chain requests. Cached 60s, so an open tab over a
-    #      weekend meant 40 Tradier calls a minute, indefinitely, for a number
-    #      that cannot change.
-    #   2. Honesty. Out of hours Tradier serves the last stale quotes, and the
-    #      strip rendered that as "net gamma now $6.30B · +$2.79B vs last
-    #      close" — presenting a stale chain differenced against an ORATS
-    #      close as though gamma had moved 2.79B. It had not; the market was
-    #      closed. The copy even called it "the last available reading", which
-    #      it was not: it was a fresh pull of stale quotes taken that second.
-    #
-    # Serving nulls with a reason is the honest answer. last_close_b below
-    # still comes from the database, so the strip keeps its context.
     if stale:
         reason = "market_closed"
     else:
         try:
-            from .bots.gamma_regime import fetch_net_gex
-            from .bots.routes_helpers import build_live_chain_provider
-
-            def _run() -> dict:
-                client = build_live_chain_provider()
-                return fetch_net_gex(client, "SPY")
-
-            out = await asyncio.to_thread(_run)
-            spot = out.get("spot")
-            if out.get("net_gex") is not None:
-                net_gex_b = out["net_gex"] / 1e9
+            ensure_gamma_intraday_table()
+            with ENGINE.begin() as conn:
+                row = conn.execute(text(
+                    f"SELECT captured_at, spot, net_gex_b, pct_if_now, vix_ratio "
+                    f"FROM {GAMMA_INTRADAY_TABLE} WHERE trade_date = :d "
+                    "ORDER BY minute_ct DESC LIMIT 1"
+                ), {"d": now.date()}).fetchone()
+            if row is None:
+                reason = "no_intraday_reading_yet"
             else:
-                reason = out.get("reason") or "no_reading"
+                captured_at, spot, net_gex_b, pct_if_now, vix_ratio = row
+                if captured_at is not None:
+                    if captured_at.tzinfo is None:
+                        captured_at = captured_at.replace(tzinfo=CT)
+                    captured_at_iso = captured_at.isoformat()
+                    age_min = (now - captured_at).total_seconds() / 60.0
+                    if age_min > _INTRADAY_STALE_MINUTES:
+                        reason = (f"job hasn't reported in {age_min:.0f} min "
+                                 "— record_intraday_gamma may be down")
         except Exception as e:  # noqa: BLE001
-            logger.warning("[routes_squeeze] intraday fetch_net_gex failed: %r", e)
-            reason = f"fetch_net_gex error: {e}"
+            logger.warning("[routes_squeeze] intraday read failed: %r", e)
+            reason = f"intraday read error: {e}"
 
     try:
         with ENGINE.begin() as conn:
@@ -524,17 +536,15 @@ async def intraday():
     if net_gex_b is not None and last_close_b is not None:
         delta_b = net_gex_b - last_close_b
 
-    if net_gex_b is not None:
-        try:
-            pct_if_now = _pct_if_now(ENGINE, net_gex_b)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[routes_squeeze] intraday pct_if_now failed: %r", e)
-
-    # 🚨 THE WHOLE "WHAT TO WATCH" CARD, RECOMPUTED FROM THIS MINUTE. Every
-    # figure on it except the calendar is a function of the current gamma
-    # reading, so there was no reason for it to sit frozen between 15:05
-    # captures. The trigger LEVELS stay historical (they are percentiles of a
-    # window of closes); only the current reading is swapped.
+    # 🚨 THE WHOLE "WHAT TO WATCH" CARD, RECOMPUTED FROM THE LATEST STORED
+    # MINUTE. Every figure on it except the calendar is a function of the
+    # current gamma reading, so there was no reason for it to sit frozen
+    # between 15:05 captures. The trigger LEVELS stay historical (they are
+    # percentiles of a window of closes); only the current reading is
+    # swapped. Both legs (gamma AND vix_ratio) now come from the SAME stored
+    # row the job wrote together, rather than this endpoint fetching its own
+    # separate live VIX quote — one less live call, and the two legs can no
+    # longer drift apart from being sampled a few seconds apart.
     #
     # ⛔ Advisory. The verdict is still the 15:05 capture — this says where the
     # levels sit right now, not that the call has changed.
@@ -544,7 +554,7 @@ async def intraday():
             from .bots.gamma_regime import squeeze_outlook
             live_outlook = squeeze_outlook(
                 ENGINE, now.date(), live_gex_b=net_gex_b,
-                live_vix_ratio=live_vix_ratio(_live_vix()))
+                live_vix_ratio=vix_ratio)
         except Exception as e:  # noqa: BLE001
             logger.warning("[routes_squeeze] live outlook failed: %r", e)
 
@@ -552,7 +562,7 @@ async def intraday():
         "net_gex_b": net_gex_b,
         "spot": float(spot) if spot else None,
         "live_outlook": live_outlook,
-        "captured_at": now.isoformat(),
+        "captured_at": captured_at_iso,
         "last_close_b": last_close_b,
         "delta_b": delta_b,
         "pct_if_now": pct_if_now,

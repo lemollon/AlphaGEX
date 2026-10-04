@@ -23,7 +23,7 @@ def test_the_writer_is_a_scheduled_job_not_a_page_hook():
     assert "record_intraday_gamma" in src
     i = src.index('id="gamma_intraday"')
     seg = src[max(0, i - 400):i]
-    assert 'minute="*/10"' in seg
+    assert 'minute="*"' in seg
     assert 'day_of_week="mon-fri"' in seg
 
 
@@ -43,8 +43,8 @@ def test_the_writer_refuses_outside_the_session():
 
 
 def test_the_window_includes_the_1500_close():
-    """⛔ `< 15:00` makes 14:50 the last */10 tick, leaving the closing ten
-    minutes unrecorded — the most informative reading of the day and the one
+    """⛔ `< 15:00` makes 14:59 the last tick, leaving the closing minute
+    unrecorded — the most informative reading of the day and the one
     nearest the 15:05 capture. Same blind spot the /session tape had at
     14:00-15:00."""
     src = inspect.getsource(gamma_alerts.register_gamma_alerts)
@@ -56,8 +56,18 @@ def test_the_window_includes_the_1500_close():
 
 def test_points_are_bucketed_so_a_retry_updates_rather_than_duplicates():
     src = inspect.getsource(R.record_gamma_intraday)
-    assert "// 10) * 10" in src, "must bucket to a 10-minute slot"
+    assert "now.hour * 60 + now.minute" in src, "must bucket to a 1-minute slot"
     assert "ON CONFLICT" in src, "a retry in the same slot must update, not insert"
+
+
+def test_vix_and_vix_ratio_are_actually_persisted():
+    """🚨 2026-10-04 regression test: vix/vix_ratio were accepted as params
+    but never included in the INSERT, so every row ever written had them
+    NULL -- caught when /intraday started reading vix_ratio from this table
+    for live_outlook and got None every time."""
+    src = inspect.getsource(R.record_gamma_intraday)
+    assert '"v": vix' in src and '"vr": vix_ratio' in src
+    assert "vix, vix_ratio" in src or "vix,\n" in src
 
 
 def test_a_null_reading_is_never_stored():

@@ -452,18 +452,19 @@ def test_state_never_422s_on_a_bad_sessions_param(engine, monkeypatch):
     assert len(asyncio.run(rs.state(sessions="99999"))["history"]) <= rs.MAX_HISTORY_ROWS
 
 
-def test_intraday_does_not_pull_the_chain_when_the_market_is_shut(monkeypatch):
-    """~40 chain requests, cached 60s, for a number that cannot change — and
-    out of hours Tradier serves stale quotes that the strip rendered as a
-    live move."""
-    import asyncio
+def test_intraday_never_pulls_a_chain_at_all(monkeypatch):
+    """🚨 2026-10-04: /intraday no longer pulls ANY live chain, market open or
+    shut — it reads sw_gamma_intraday, written independently by the
+    record_intraday_gamma job. fetch_net_gex must never be called from this
+    endpoint, period (not just "while shut", the old framing — there is no
+    live-pull branch left to gate)."""
     import backend.routes_squeeze as rs
 
     called = {"n": 0}
 
     def _boom(*a, **k):
         called["n"] += 1
-        raise AssertionError("fetch_net_gex must not run while the market is shut")
+        raise AssertionError("fetch_net_gex must not run from /intraday anymore")
 
     monkeypatch.setattr(rs, "_INTRADAY_CACHE", {"ts": 0.0, "payload": None})
     monkeypatch.setattr("backend.bots.gamma_regime.fetch_net_gex", _boom)
@@ -474,11 +475,25 @@ def test_intraday_does_not_pull_the_chain_when_the_market_is_shut(monkeypatch):
             return rs.datetime(2026, 8, 15, 12, 0, tzinfo=rs.CT)   # Saturday
     monkeypatch.setattr(rs, "datetime", _Sat)
 
-    out = asyncio.run(rs.intraday())
+    out = rs.intraday()
     assert called["n"] == 0
     assert out["stale"] is True
     assert out["net_gex_b"] is None
     assert out["reason"] == "market_closed"
+
+
+def test_intraday_reads_the_stored_job_output_not_a_live_pull():
+    """When the market's open, /intraday must read sw_gamma_intraday's
+    latest row for today rather than fetching its own chain — confirmed by
+    source inspection, since fetch_net_gex must not appear in the function
+    body at all anymore."""
+    import inspect
+    import backend.routes_squeeze as rs
+
+    src = inspect.getsource(rs.intraday)
+    assert "fetch_net_gex" not in src
+    assert "build_live_chain_provider" not in src
+    assert rs.GAMMA_INTRADAY_TABLE in src
 
 
 # --------------------------------------------------------------------------

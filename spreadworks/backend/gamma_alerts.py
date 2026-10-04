@@ -605,13 +605,15 @@ def register_gamma_alerts(scheduler, app) -> None:
     # an advertised firing that does nothing is a lie about when the data
     # actually moves next. On a Friday the honest answer is Monday.
     async def record_intraday_gamma():
-        """Every 10 min, 08:30-15:00 CT weekdays: store one net-gamma point.
+        """Every 1 min, 08:30-15:00 CT weekdays: store one net-gamma point.
 
-        🚨 THE LIVE READING WAS NEVER KEPT. /squeeze/intraday computes gamma
-        from the live chain and the page polls it every 60s, but nothing was
-        stored — so the chart had a single dot for "now", no path through the
-        session, and nothing at all once the market shut. You could not see
-        what gamma did during the session you had just traded.
+        🚨 Tightened from every 10 min to every 1 min 2026-10-04 (Leron's
+        call, ~10x more live chain pulls/day -- 390 vs 39 -- accepted
+        knowingly). /squeeze/intraday now READS this job's own output
+        (sw_gamma_intraday) instead of pulling its own separate live chain
+        per page view, so tightening this job's cadence is the only way to
+        make the page's reading fresher -- there is no other live pull left
+        to throttle or tighten independently.
 
         ⛔ CONTEXT, NOT THE SIGNAL. The verdict stays on the 15:05 capture,
         which is what seven years of evidence is attached to. An intraday
@@ -625,8 +627,8 @@ def register_gamma_alerts(scheduler, app) -> None:
             now = datetime.now(CT)
             if now.weekday() >= 5:
                 return
-            # 🚨 INCLUSIVE OF THE 15:00 CLOSE. With `< 15:00` the last */10
-            # tick inside the window is 14:50, so the closing ten minutes went
+            # 🚨 INCLUSIVE OF THE 15:00 CLOSE. With `< 15:00` the last tick
+            # inside the window is 14:59, so the closing minute went
             # unrecorded — and the close is both the most informative reading
             # of the day and the one nearest the 15:05 capture the signal is
             # built from. Same shape of blind spot as the /session tape, which
@@ -658,7 +660,7 @@ def register_gamma_alerts(scheduler, app) -> None:
                 pct = _pct_if_now(_E, out["net_gex"] / 1e9)
             except Exception:                                # noqa: BLE001
                 pct = None
-            # VIX on the same 10-minute grid. The verdict's VIX leg is a
+            # VIX on the same 1-minute grid. The verdict's VIX leg is a
             # prior-close reading; this is the live one, so you can watch the
             # missing leg approach 0.95 during the session instead of finding
             # out after the close.
@@ -683,7 +685,7 @@ def register_gamma_alerts(scheduler, app) -> None:
             logger.warning("[GammaAlerts] record_intraday_gamma failed: %r", e)
 
     scheduler.add_job(record_intraday_gamma, "cron", day_of_week="mon-fri",
-                      minute="*/10", timezone=CT, id="gamma_intraday",
+                      minute="*", timezone=CT, id="gamma_intraday",
                       coalesce=True, max_instances=1, replace_existing=True)
 
     scheduler.add_job(capture_gamma, "cron", day_of_week="mon-fri",
