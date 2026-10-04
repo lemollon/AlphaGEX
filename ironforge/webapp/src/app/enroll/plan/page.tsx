@@ -7,8 +7,8 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
-  title: 'Choose your membership — IronForge',
-  description: 'Forge Community or Forge Automate.',
+  title: 'Choose your plan — IronForge',
+  description: 'Community, Spark, Flame, or both agents together.',
 }
 
 /** PLAN-01 — membership selection. */
