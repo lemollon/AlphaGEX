@@ -29,6 +29,10 @@ const PUBLIC_EXACT = new Set<string>([
   '/login',
   '/signup',
   '/pricing',
+  // 10.4 marketing redesign: agent grid/compare and the team/values page —
+  // same public-marketing treatment as /how-it-works and /pricing above.
+  '/agents',
+  '/about',
   '/contact',
   '/privacy',
   '/terms',

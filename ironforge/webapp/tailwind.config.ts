@@ -90,6 +90,33 @@ const config: Config = {
           card: '#16161A',
           border: '#262629',
           muted: '#78716c',
+          // IronForge 10.4 marketing design system — CSS-variable-backed, so
+          // light/dark and the `forge-tokens.css` values stay the single
+          // source of truth. Nested under `ds` (design-system) so it can't
+          // collide with forge.bg/card/border/muted above, which 130+
+          // existing app files already read and which this redesign must
+          // not repaint. Used as e.g. `bg-forge-ds-bg`, `text-forge-ds-muted`.
+          ds: {
+            bg: 'var(--bg)',
+            bg2: 'var(--bg-2)',
+            line: 'var(--line)',
+            line2: 'var(--line-2)',
+            fg: 'var(--fg)',
+            muted: 'var(--muted)',
+            accent: 'var(--accent)',
+            accentInk: 'var(--accent-ink)',
+            accentSoft: 'var(--accent-soft)',
+            up: 'var(--up)',
+            upSoft: 'var(--up-soft)',
+            warn: 'var(--warn)',
+            bad: 'var(--bad)',
+            spark: 'var(--spark)',
+            flame: 'var(--flame)',
+            ember: 'var(--ember)',
+            cSpark: 'var(--c-spark)',
+            cFlame: 'var(--c-flame)',
+            av: 'var(--av)',
+          },
         },
       },
       backgroundImage: {
