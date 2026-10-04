@@ -1,7 +1,7 @@
 """Reactive-momentum squeeze signal API: /api/spreadworks/squeeze-reactive
 
 Read-only surface for `squeeze_reactive_alerts.py`'s repeating intraday scan
-(ported REACTIVE_WIDE_FADE_PNL_BACKTEST_MODE) — current OPEN positions plus
+(ported no-fade-exit backtest mode) — current OPEN positions plus
 recent CLOSED signals, with the same never-silently-blank freshness/
 blocked-state contract as `routes_squeeze_premarket.py`. A sibling route,
 not an extension of the premarket one: the state model is fundamentally
@@ -28,7 +28,6 @@ from .squeeze_reactive_alerts import (
     PREFILTER_MOVE_FLOOR,
     REACTIVE_JOB_ID,
     REACTIVE_MOVE_FLOOR,
-    REACTIVE_WIDE_FADE_ACCEL_LOW,
     SCAN_LOG_TABLE,
     SIGNALS_TABLE,
 )
@@ -214,11 +213,11 @@ async def state(closed_days: int = CLOSED_HISTORY_DAYS):
         "rule": {
             "move_floor": REACTIVE_MOVE_FLOOR,
             "money_pace_accel_high": MONEY_PACE_ACCEL_HIGH,
-            "wide_fade_accel_low": REACTIVE_WIDE_FADE_ACCEL_LOW,
             "prefilter_move_floor": PREFILTER_MOVE_FLOOR,
             "dedupe_days": DEDUPE_DAYS,
-            "name": ("REACTIVE_WIDE_FADE_PNL_BACKTEST_MODE (live port) — no "
-                     "premarket gate, regular session only, real NBBO both legs"),
+            "name": ("no-fade-exit backtest mode (live port) — no premarket "
+                     "gate, regular session only, real NBBO both legs, hold "
+                     "to EOD (no fade exit)"),
         },
         "open_positions": open_positions,
         "open_count": len(open_positions),

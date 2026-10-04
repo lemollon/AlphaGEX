@@ -1,14 +1,16 @@
 """Reactive-momentum squeeze signal — LIVE two-leg (entry + exit) scanner.
 
-PORTS the just-validated `REACTIVE_WIDE_FADE_PNL_BACKTEST_MODE` from the
-standalone Render Cron Job (`squeeze_premarket_cron/main.py`) into this
-always-on backend as a REPEATING intraday scan, following the same wiring
-pattern `squeeze_premarket_alerts.py` uses for the (once-daily) premarket
-signal: APScheduler job registration via `backend/__init__.py`,
+PORTS the just-validated no-fade-exit backtest mode (`squeeze_reactive_no_fade_pnl`
+table) from the standalone Render Cron Job (`squeeze_premarket_cron/main.py`)
+into this always-on backend as a REPEATING intraday scan, following the same
+wiring pattern `squeeze_premarket_alerts.py` uses for the (once-daily)
+premarket signal: APScheduler job registration via `backend/__init__.py`,
 `backend._dedup_ok`-style discipline where it still applies, posted through
-`backend._send_webhook_sync`. That backtest mode showed +42.51 units / 3,076
-trades / 630 symbols in `squeeze_reactive_wide_fade_pnl`, survives dropping
-its single best symbol (+22.46) — see `dev/squeeze/research/PREREG.md` for
+`backend._send_webhook_sync`. That backtest mode showed +95.18 units / 2,702
+trades / 605 symbols in `squeeze_reactive_no_fade_pnl`, survives dropping its
+single best symbol (+75.13) — more than DOUBLE the prior wide-fade
+(0.6x->0.4x) exit rule's +42.51 units / 3,076 trades / 630 symbols / +22.46
+after dropping its best symbol — see `dev/squeeze/research/PREREG.md` for
 the research record. Nothing in this module touches FAMILY #2, PREREG.md,
 the gamma-regime squeeze signal, or `squeeze_premarket_alerts.py`'s own
 premarket-gated job — this is a NEW, separate live capability sitting
@@ -28,13 +30,14 @@ new pre-registration):
       >= MONEY_PACE_ACCEL_HIGH (1.25x) the whole-session-so-far $/min pace.
       Confirmed one minute after the bar's own timestamp (ThetaData's 1m
       bars are timestamped at interval START).
-  EXIT TRIGGER: the first LATER bar where that same pace ratio fades to
-      <= REACTIVE_WIDE_FADE_ACCEL_LOW (0.4x) — the wide-fade threshold this
-      backtest mode proved better than the original 0.6x — or 16:00:00 ET
-      if it never fades.
-  FILLS: real NBBO ask at entry, real NBBO bid at exit (fade) or the real
-      15:55:00-16:00:00 ET NBBO-bid window at EOD. Never a trade price,
-      never a mid/mark.
+  EXIT TRIGGER: NONE — there is no fade exit. Every open position holds all
+      the way to 16:00:00 ET; the backtest proved holding to EOD more than
+      doubles total units versus fading out early on a pace-collapse signal
+      (see the numbers above), so that fade path has been removed entirely.
+      `exit_reason` is therefore always `"eod"`, never `"faded"`.
+  FILLS: real NBBO ask at entry, the real 15:55:00-16:00:00 ET NBBO-bid
+      window at EOD. Never a trade price, never a mid/mark, never a fade
+      exit.
   DEDUPE: 30 calendar days per symbol, same convention as the premarket
       signal.
 
@@ -124,7 +127,7 @@ logger = logging.getLogger(__name__)
 CT = ZoneInfo("America/Chicago")
 ET = ZoneInfo("America/New_York")
 
-# ---- Frozen rule (ported from REACTIVE_WIDE_FADE_PNL_BACKTEST_MODE) -------
+# ---- Frozen rule (ported from the no-fade-exit backtest mode) -------------
 REACTIVE_SESSION_START = "09:30:00"
 REACTIVE_SESSION_END = "16:00:00"
 REACTIVE_SESSION_START_T = dtime(9, 30, 0)
@@ -132,7 +135,6 @@ REACTIVE_SESSION_END_T = dtime(16, 0, 0)
 REACTIVE_MOVE_FLOOR = 0.10            # intraday move from the real prior_close
 REACTIVE_MIN_SESSION_MINUTES = 5
 REACTIVE_QUOTE_WINDOW_SECONDS = 60
-REACTIVE_WIDE_FADE_ACCEL_LOW = 0.4     # the proven-better wide-fade threshold
 
 # EOD fallback exit — identical window/convention as the cron's
 # fetch_sameday_exit_bid(): the last real NBBO bid strictly before 16:00:00
@@ -491,19 +493,6 @@ def find_reactive_entry_trigger(bars: list, prior_close):
     return None, None
 
 
-def find_reactive_wide_fade_exit(bars: list, entry_index: int):
-    """Line-for-line the same walk as the cron's
-    find_reactive_wide_fade_exit() — ONLY the fade threshold differs from
-    the original (0.6x): accel <= REACTIVE_WIDE_FADE_ACCEL_LOW (0.4x), the
-    threshold this backtest mode proved better."""
-    for i, ts, close, accel in _reactive_pace_series(bars):
-        if i <= entry_index:
-            continue
-        if accel is not None and accel <= REACTIVE_WIDE_FADE_ACCEL_LOW:
-            return i, ts + timedelta(minutes=1)
-    return None, None
-
-
 def fetch_reactive_quote(symbol: str, event_date: date, confirm_time: datetime, side: str):
     """First usable real NBBO `side` ('ask' or 'bid') timestamped at/after
     `confirm_time`, searched in a REACTIVE_QUOTE_WINDOW_SECONDS window —
@@ -633,50 +622,26 @@ def check_entry_candidate(symbol: str, today: date, now_et: datetime):
 
 
 def check_exit_position(symbol: str, open_row: dict, today: date, now_et: datetime):
-    """Returns (status, payload):
-      'pending' - not time to exit yet (still running, or the exit/EOD
-          quote leg hasn't surfaced a usable price yet). Retried next scan;
-          the position stays 'open'.
-      'error'   - the bars pull failed after retries.
+    """No fade exit anymore (see module docstring) — every open position
+    simply holds until 16:00:00 ET and resolves off the real
+    15:55:00-16:00:00 ET NBBO-bid window. Returns (status, payload):
+      'pending' - not EOD yet, or the EOD NBBO-bid leg hasn't surfaced a
+          usable price yet. Retried next scan; the position stays 'open'.
       'exit'    - exit resolved (payload carries exit_time, exit_bid,
-          exit_reason, raw_return).
+          exit_reason='eod', raw_return).
     """
-    entry_bar_time = open_row["entry_bar_time"]
     is_eod = now_et.time() >= REACTIVE_SESSION_END_T
-    end_time = SAMEDAY_EXIT_WINDOW_END if is_eod else now_et.strftime("%H:%M:%S")
-
-    bars_status, bars, detail = fetch_reactive_session_bars(symbol, today, end_time)
-    exit_index = None
-    exit_confirm_time = None
-    if bars_status == "error" and not is_eod:
-        return "error", detail
-    if bars_status == "ok":
-        entry_index = next((i for i, b in enumerate(bars) if b[0] >= entry_bar_time), None)
-        if entry_index is not None:
-            exit_index, exit_confirm_time = find_reactive_wide_fade_exit(bars, entry_index)
-
-    if exit_index is not None and exit_confirm_time.time() < now_et.time():
-        exit_bid, exit_quote_time, exit_detail = fetch_reactive_quote(
-            symbol, today, exit_confirm_time, "bid")
-        if exit_bid is not None:
-            raw_return = exit_bid / open_row["entry_ask"] - 1
-            return "exit", dict(exit_time=exit_quote_time, exit_bid=exit_bid,
-                                exit_reason="faded", raw_return=raw_return)
-        logger.info("[SqueezeReactive] fade exit for %s but no usable bid yet "
-                   "(%s) -- retrying next scan", symbol, exit_detail)
+    if not is_eod:
         return "pending", None
 
-    if is_eod:
-        exit_bid, exit_quote_time, exit_detail = fetch_sameday_exit_bid(symbol, today)
-        if exit_bid is not None:
-            raw_return = exit_bid / open_row["entry_ask"] - 1
-            return "exit", dict(exit_time=exit_quote_time, exit_bid=exit_bid,
-                                exit_reason="eod", raw_return=raw_return)
-        logger.warning("[SqueezeReactive] EOD exit for %s has no usable NBBO "
-                       "bid (%s) -- position stays open, retried next scan",
-                       symbol, exit_detail)
-        return "pending", None
-
+    exit_bid, exit_quote_time, exit_detail = fetch_sameday_exit_bid(symbol, today)
+    if exit_bid is not None:
+        raw_return = exit_bid / open_row["entry_ask"] - 1
+        return "exit", dict(exit_time=exit_quote_time, exit_bid=exit_bid,
+                            exit_reason="eod", raw_return=raw_return)
+    logger.warning("[SqueezeReactive] EOD exit for %s has no usable NBBO "
+                   "bid (%s) -- position stays open, retried next scan",
+                   symbol, exit_detail)
     return "pending", None
 
 
@@ -771,14 +736,14 @@ def _build_entry_alert(hit: dict) -> str:
         f"+{hit['entry_move'] * 100:.0f}% vs prior close (${hit['prior_close']:.2f}), "
         f"money pace ACCELERATING\n"
         f"ask ~{hit['entry_time'].strftime('%H:%M:%S')} ET: ${hit['entry_ask']:.2f}\n"
-        "_squeeze reactive-momentum (wide-fade), no premarket gate, regular "
-        "session only_"
+        "_squeeze reactive-momentum (no fade exit, hold to EOD), no "
+        "premarket gate, regular session only_"
     )
 
 
 def _build_exit_alert(hit: dict) -> str:
     ret_pct = hit["raw_return"] * 100
-    reason_label = {"faded": "money pace FADED", "eod": "16:00:00 ET close"}.get(
+    reason_label = {"eod": "16:00:00 ET close"}.get(
         hit["exit_reason"], hit["exit_reason"])
     arrow = "\U0001f7e2" if ret_pct >= 0 else "\U0001f534"
     return (
@@ -786,7 +751,7 @@ def _build_exit_alert(hit: dict) -> str:
         f"bid ~{hit['exit_time'].strftime('%H:%M:%S')} ET: ${hit['exit_bid']:.2f} "
         f"(entry ${hit['entry_ask']:.2f})\n"
         f"{arrow} realized: {ret_pct:+.1f}% (ask-to-bid, real NBBO both legs)\n"
-        "_squeeze reactive-momentum (wide-fade)_"
+        "_squeeze reactive-momentum (no fade exit, hold to EOD)_"
     )
 
 
@@ -858,8 +823,8 @@ def register_squeeze_reactive_alerts(scheduler, app) -> None:
                 await asyncio.to_thread(
                     _send_webhook_sync,
                     {"description": content, "color": 0x00E676,
-                     "footer": {"text": "squeeze-reactive (wide-fade) · ENTRY · "
-                                        "signal-only, advisory only"}},
+                     "footer": {"text": "squeeze-reactive (no fade exit, hold to "
+                                        "EOD) · ENTRY · signal-only, advisory only"}},
                     webhook)
             for hit in summary["exits_closed"]:
                 content = _build_exit_alert(hit)
@@ -867,8 +832,8 @@ def register_squeeze_reactive_alerts(scheduler, app) -> None:
                 await asyncio.to_thread(
                     _send_webhook_sync,
                     {"description": content, "color": color,
-                     "footer": {"text": "squeeze-reactive (wide-fade) · EXIT · "
-                                        "signal-only, advisory only"}},
+                     "footer": {"text": "squeeze-reactive (no fade exit, hold to "
+                                        "EOD) · EXIT · signal-only, advisory only"}},
                     webhook)
         except Exception as e:  # noqa: BLE001
             logger.warning("[SqueezeReactive] scan_reactive_squeeze failed: %r", e)
