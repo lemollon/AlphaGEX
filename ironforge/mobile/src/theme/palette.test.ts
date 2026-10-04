@@ -14,6 +14,7 @@ const TOKEN_KEYS: (keyof ColorTokens)[] = [
   'accent',
   'spark',
   'flame',
+  'ember',
   'pos',
   'positive',
   'neg',
@@ -35,6 +36,7 @@ describe('dark palette', () => {
     expect(dark.accent).toBe(darkTokens.accent)
     expect(dark.spark).toBe(darkTokens.spark)
     expect(dark.flame).toBe(darkTokens.flame)
+    expect(dark.ember).toBe(darkTokens.ember)
     expect(dark.pos).toBe(darkTokens.pos)
     expect(dark.neg).toBe(darkTokens.neg)
     expect(dark.warn).toBe(darkTokens.warn)
@@ -103,6 +105,7 @@ describe('light palette WCAG AA text contrast (>= 4.5:1 on white card)', () => {
     ['warn', light.warn],
     ['spark', light.spark],
     ['flame', light.flame],
+    ['ember', light.ember],
   ])('%s clears 4.5:1 against a white card', (_name, hex) => {
     expect(contrastRatio(hex, white)).toBeGreaterThanOrEqual(4.5)
   })

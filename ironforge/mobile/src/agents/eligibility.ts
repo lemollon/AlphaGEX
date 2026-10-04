@@ -32,7 +32,10 @@ export interface AgentActionInput {
   eligibleAccountCount: number
 }
 
-function otherBot(bot: AgentBot): AgentBot {
+/** Spark/Flame are the only pair this "one slot, two mutually-exclusive bots"
+ *  shortcut applies to — Ember is a distinct product (free, its own $500–$2,000
+ *  capital band) sharing no such pairing, so it has no "other bot" to switch from. */
+function otherBot(bot: 'spark' | 'flame'): AgentBot {
   return bot === 'spark' ? 'flame' : 'spark'
 }
 
@@ -55,10 +58,16 @@ export function agentAction(input: AgentActionInput): AgentAction {
 
   // With exactly one eligible account and the OTHER agent already actively trading
   // it, a second activation cannot describe a second account — it would only ever
-  // mean displacing the one that is running. That is a switch, not an add.
-  const otherActive = input.activations.some((a) => a.agent === otherBot(input.bot) && !a.paused)
-  if (otherActive && input.eligibleAccountCount === 1) {
-    return { kind: 'switch', label: 'Switch' }
+  // mean displacing the one that is running. That is a switch, not an add. Ember
+  // has no "other bot" in this sense (see otherBot's note), so it always falls
+  // through to 'add' below.
+  const bot = input.bot
+  if (bot === 'spark' || bot === 'flame') {
+    const other = otherBot(bot)
+    const otherActive = input.activations.some((a) => a.agent === other && !a.paused)
+    if (otherActive && input.eligibleAccountCount === 1) {
+      return { kind: 'switch', label: 'Switch' }
+    }
   }
 
   // Membership entitlement is not re-checked here: a customer who is not entitled

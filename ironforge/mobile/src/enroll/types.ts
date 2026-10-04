@@ -106,7 +106,7 @@ export interface SelectBrokerAccountResponse {
 /** POST /api/v1/agent-configs */
 export interface AgentConfigResponse {
   id: string
-  agent_code: 'spark' | 'flame'
+  agent_code: 'spark' | 'flame' | 'ember'
   rule_version: string
   status: 'valid' | 'draft'
   limits: { max_deployment_cents: number; buying_power_cents: number | null }
@@ -125,7 +125,7 @@ export interface ActivationPreview {
   preview_hash: string
   expires_in_seconds: number
   snapshot: {
-    agent: 'spark' | 'flame'
+    agent: 'spark' | 'flame' | 'ember'
     rule_version: string
     account_mask: string
     max_deployment_cents: number
@@ -142,7 +142,7 @@ export type ActivateResponse =
   | {
       ok: true
       activation_id: string
-      agent: 'spark' | 'flame'
+      agent: 'spark' | 'flame' | 'ember'
       account_mask: string
       trial: { status: string; eligible_days_used: number; eligible_days_total: number }
     }

@@ -241,7 +241,7 @@ export function TextField({
       <Text style={[type.label, { color: color.textDim, marginBottom: space.xs }]}>{label}</Text>
       <TextInput
         placeholderTextColor={color.muted}
-        style={[s.input, error && { borderColor: color.neg }]}
+        style={[s.input, error ? { borderColor: color.neg } : undefined]}
         {...inputProps}
       />
       {error ? <Text style={[type.label, { color: color.neg, marginTop: space.xs }]}>{error}</Text> : null}
@@ -371,18 +371,20 @@ const makeStyles = (color: ColorTokens) =>
     paddingHorizontal: space.xl,
     paddingVertical: space.md,
   },
+  // 10.4 redesign (design-spec §1): "Buttons/chips/pills: 999px (full pill)".
   btn: {
-    borderRadius: radius.md,
+    borderRadius: radius.pill,
     paddingVertical: space.lg,
     alignItems: 'center',
   },
   btnPrimary: { backgroundColor: color.accent },
   btnSecondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: color.border },
+  // 10.4 redesign (design-spec §1): "Inputs: 8px (--r-sm)".
   input: {
     backgroundColor: color.card,
     borderColor: color.border,
     borderWidth: 1,
-    borderRadius: radius.md,
+    borderRadius: radius.sm,
     paddingHorizontal: space.lg,
     paddingVertical: space.md,
     color: color.text,

@@ -31,6 +31,7 @@ export interface ColorTokens {
   accent: string
   spark: string
   flame: string
+  ember: string
   pos: string
   positive: string
   neg: string
@@ -55,6 +56,7 @@ export const dark: ColorTokens = {
   accent: darkColor.accent,
   spark: darkColor.spark,
   flame: darkColor.flame,
+  ember: darkColor.ember,
   pos: darkColor.pos,
   positive: darkColor.pos,
   neg: darkColor.neg,
@@ -71,21 +73,32 @@ export const dark: ColorTokens = {
  * these render on); all text-weight tokens clear 4.5:1, all decorative/border tokens
  * are exempt (WCAG 1.4.11 non-text).
  *   pos     #0A8548  4.71:1     neg   #D93025  4.77:1     warn  #9C6B14  4.64:1
- *   spark   #2563EB  5.17:1     flame #B33900  6.00:1
- *   text    #111114 18.85:1     textDim/muted #5B5B63 6.73:1 / #6B6560 5.74:1
+ *   spark   #2563EB  5.17:1     flame #B33900  6.00:1     ember #B52FE0  4.72:1
+ *   text    #111114 18.85:1     textDim/muted #6E6E78  5.04:1
+ *
+ * bg/card/border updated 2026-10 to the 10.4 redesign's light surface tokens
+ * (--bg-2/--bg/--line, handoff/ironforge-10.4-design-spec.md §1) — those three are
+ * decorative, not text, so no contrast re-check was needed. spark/flame/pos/neg/warn
+ * stay at their EXISTING contrast-tuned hexes rather than the design doc's raw light
+ * tokens (#1f7ae0/#f0600d/#0f9f6e/#d23a2a/#b7791f) — those fail 4.5:1 on a white card
+ * (4.27/3.29/3.38/—/3.64 measured), so adopting them verbatim would regress the WCAG
+ * AA guarantee below. accent/wordmark stay locked per the note above (unchanged by
+ * request, independent of the 10.4 doc's per-theme accent). muted/textMuted collapse
+ * onto the design's single --muted token, which happens to clear 4.5:1.
  */
 export const light: ColorTokens = {
-  bg: '#F7F7F8',
+  bg: '#F6F6F7',
   card: '#FFFFFF',
   surface: '#FFFFFF',
   surfaceRaised: '#FFFFFF',
-  border: '#E2E2E6',
-  muted: '#6B6560',
-  textMuted: '#5B5B63',
+  border: '#E7E7EA',
+  muted: '#6E6E78',
+  textMuted: '#6E6E78',
   wordmark: '#FD5301',
   accent: '#EE5A24',
   spark: '#2563EB',
   flame: '#B33900',
+  ember: '#B52FE0',
   pos: '#0A8548',
   positive: '#0A8548',
   neg: '#D93025',

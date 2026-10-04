@@ -48,6 +48,21 @@ import type { PlanCatalog } from '@/enroll/types'
  * Community's clickwrap (Terms/Privacy/Refund — no standalone legal screen) is
  * recorded here, same point in the funnel as the web billing submit, before any of
  * the actions below is offered.
+ *
+ * PRICING CHANGE (Leron, 2026-10-04, binding): no "Both" bundle any more, and
+ * `ironforge.both.monthly` is never offered for a NEW purchase — Spark and Flame
+ * sell as two independent subscriptions (plan.tsx no longer lets anyone choose
+ * 'both'). The product stays in apple-products.ts purely so an EXISTING customer's
+ * entitlement still resolves (restore purchases, server-side verify). If a stale
+ * in-flight enrollment somehow still carries selected_plan === 'both', this screen
+ * now resolves no Apple product for it (iapProductId below is null) and falls back
+ * to the existing "Subscription option unavailable for this plan" message, rather
+ * than selling the retired bundle.
+ *
+ * Ember never reaches this screen — it is free and design-spec §5 skips billing
+ * for it entirely. The redirect-forward effect below is a second guard (steps.ts's
+ * routeForNextStep already routes an Ember 'billing' next_step to /enroll/broker;
+ * this catches the case where a customer's navigation stack lands here directly).
  */
 export default function BillingScreen() {
   const { colors: color } = useTheme()
@@ -64,6 +79,7 @@ export default function BillingScreen() {
   const [legal, setLegal] = useState<{ terms: string; privacy: string } | null>(null)
 
   const isCommunity = enrollment?.selected_plan === 'community'
+  const isEmber = enrollment?.selected_plan === 'ember'
   const platform = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web'
   const storeLabel = Platform.OS === 'ios' ? 'Subscribe with Apple' : 'Subscribe with Google Play'
   const iapEnabled = canPurchaseInApp(platform)
@@ -73,6 +89,11 @@ export default function BillingScreen() {
       .then(setCatalog)
       .catch(() => {})
   }, [])
+
+  /** Ember is free — billing is skipped automatically (design-spec §5). */
+  useEffect(() => {
+    if (isEmber) router.replace('/enroll/broker')
+  }, [isEmber, router])
 
   /**
    * Terms/Privacy links for the Apple disclosure block — the SAME URIs the web
@@ -240,26 +261,30 @@ export default function BillingScreen() {
   const price = isCommunity
     ? catalog?.community.price_monthly
     : catalog?.bots.find((b) => enrollment?.selected_plan === b.slug)?.price_monthly ??
-      (enrollment?.selected_plan === 'both'
-        ? catalog?.both.price_monthly
-        : enrollment?.selected_plan === 'automate'
-          ? catalog?.bots.find((b) => b.slug === 'spark')?.price_monthly
-          : undefined)
+      (enrollment?.selected_plan === 'automate'
+        ? catalog?.bots.find((b) => b.slug === 'spark')?.price_monthly
+        : undefined)
 
   // The Apple product ID for the plan already chosen earlier in the funnel — this
   // screen sells exactly ONE product, the plan the customer picked, same as the web
-  // billing step; it is never a general storefront listing all four.
+  // billing step; it is never a general storefront listing all of them.
   //
   // 'automate' is a FAMILY value (web: "pick your specific bot after setup, $0 due
   // today"), not an Apple product — Apple has no deferred-pricing purchase, so on iOS
   // an automate purchase sells as the Spark product (identical price to Flame) and
   // grants Spark immediately. See Leron 2026-10-04: confirmed, no new ASC product.
+  //
+  // 'both' resolves to null on purpose (see the file header note above) — the bundle
+  // is retired for new purchases, so this screen falls back to "Subscription option
+  // unavailable for this plan" rather than selling ironforge.both.monthly again.
   const iapLookupKey =
     enrollment?.selected_plan === 'automate'
       ? 'spark_monthly'
-      : enrollment?.selected_plan
-        ? `${enrollment.selected_plan}_monthly`
-        : null
+      : enrollment?.selected_plan === 'both'
+        ? null
+        : enrollment?.selected_plan
+          ? `${enrollment.selected_plan}_monthly`
+          : null
   const iapProductId = iapLookupKey ? productIdFor(iapLookupKey) : null
   const iapProduct = iapProductId ? iapProducts.find((p) => p.productId === iapProductId) : undefined
   const planInfo = planLabel(enrollment?.selected_plan ?? null, catalog)
@@ -268,6 +293,8 @@ export default function BillingScreen() {
     <EnrollShell title="Billing" step={5} error={error}>
       {!enrollment ? (
         <Loading label="Loading…" />
+      ) : isEmber ? (
+        <Loading label="Ember is free — continuing…" />
       ) : (
         <>
           <Text style={[type.body, { color: color.textDim, marginBottom: space.lg }]}>
