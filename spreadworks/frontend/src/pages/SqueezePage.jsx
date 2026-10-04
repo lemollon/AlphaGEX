@@ -548,7 +548,7 @@ export default function SqueezePage() {
         </>
       );
     } else if (verdict === 'NO_SELL') {
-      ticket = 'Skip the put spread entirely. Net gamma is below −$10B.';
+      ticket = 'Skip the put spread entirely. Net gamma is below −$12.5B.';
     }
   }
 
@@ -1711,7 +1711,7 @@ export default function SqueezePage() {
                     <td style={{ ...S.td, color: RED, fontWeight: 700 }}>nothing</td>
                   </tr>
                   <tr>
-                    <td style={S.td}>NO SELL — net gamma ≤ −$10B</td>
+                    <td style={S.td}>NO SELL — net gamma ≤ −$10B <span style={{ color: DIM, fontWeight: 400 }}>(pre-10/4 threshold, pending re-run at −$12.5B)</span></td>
                     <td style={S.td}>72.6%</td>
                     <td style={{ ...S.td, color: GREEN, fontWeight: 700 }}>23 of 1,604 (+1.4pts)</td>
                   </tr>
@@ -1836,8 +1836,8 @@ export default function SqueezePage() {
                   title: 'NO SELL',
                   body: (
                     <div style={{ fontSize: 13 }}>
-                      Skip the put spread entirely. Fires on roughly 9% of sessions (net gamma below
-                      −$10B).
+                      Skip the put spread entirely. Fires on roughly 1.6% of sessions (net gamma below
+                      −$12.5B).
                     </div>
                   ),
                 },
@@ -2028,10 +2028,13 @@ export default function SqueezePage() {
           </Fold>
 
           {/* FALSIFICATION TABLE */}
-          <Fold title="What happened the last 22 times gamma went below −$10B" meta="the falsification test">
+          <Fold title="What happened the last 22 times gamma went below −$10B" meta="pre-10/4 threshold — pending re-run at −$12.5B">
             <div style={{ ...S.small, marginBottom: 10 }}>
               The evidence above is what supports the signal. This is what breaks it — if deep short
-              gamma were a squeeze setup, this table would be mostly green.
+              gamma were a squeeze setup, this table would be mostly green. This table is the OLD
+              −$10B threshold's episode list, from before the 2026-10-04 tighten to −$12.5B — most of
+              these 16 episodes (anything between −$10B and −$12.5B) would no longer qualify as
+              deep_short_gamma live. Kept as the historical record until it's re-run on the new cutoff.
             </div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 620, marginBottom: 10 }}>

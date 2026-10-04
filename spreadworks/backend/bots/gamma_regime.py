@@ -40,8 +40,17 @@ BOTH directions — read as "get long" it was wrong 16 times out of 22. What it 
 
     every SPY squeeze since 2020 began in short gamma      33 of 33 (base rate 58%)
     ...but precision is only                               3.4%   (929 false alarms)
-    P(-4% within 5 sessions), net_gex > +5B                1.89%  (vs 10.16% base)
+    P(-4% within 5 sessions), net_gex > +5B                2.04%  (vs 4.89% base)
     P(>1% intraday break), short gamma vs long             28.2% vs 10.1%
+
+    2026-10-04: the +5B pin-side figure above was recalibrated with the
+    PRIOR-SESSION-LAGGED convention gamma_state() actually uses (the original
+    1.89%/10.16% figures used a different, unlagged definition — see
+    DEEP_LONG_B below). The effect is real and the right sign (long gamma
+    suppresses the downside tail) but about a third the size originally
+    claimed. A threshold sweep (+2.5B to +20B) found no better cutoff than
+    +5B -- the sample collapses above +7.5B (net_gex essentially never prints
+    above +15B in six years of history).
 
 So: a prerequisite for a squeeze, a strong veto for short premium, and useless as
 a direction call.
@@ -66,8 +75,14 @@ logger = logging.getLogger(__name__)
 MAX_DTE = 365
 
 # Regime thresholds, in $bn of gamma per 1% move.
-DEEP_LONG_B = 5.0     # P(-4% in 5d) = 1.89% vs a 10.16% base rate
-DEEP_SHORT_B = -10.0  # the short-premium veto; fires on ~9% of sessions
+DEEP_LONG_B = 5.0     # P(-4% in 5d) = 2.04% vs a 4.89% base rate (relagged 2026-10-04)
+# Tightened 2026-10-04 from -10.0 to -12.5 -- a threshold sweep (-5B to -20B)
+# found the break-probability LIFT at -10B (+0.32 full-sample / +0.33 on
+# 2023+ minute data) was not the strongest usable cutoff: -12.5B lifts to
+# +0.52 / +0.47 on n=27/41 sessions, still a defensible sample. -15B looked
+# even stronger (+0.55/+0.59) but n=9/16 is too thin to trust. Fires on
+# ~1.6% of sessions now (was ~9% at -10B) -- rarer, sharper.
+DEEP_SHORT_B = -12.5   # the short-premium veto
 
 # --- the normalised view, which beats the raw sign -------------------------------
 # Percentile rank of net_gex within its own trailing window. The LEVEL of gamma is
@@ -317,19 +332,25 @@ def gamma_percentile(engine: Engine, asof: date,
 # high/low):
 #     short_below_flip   28.8% (n=473) vs 27.5% daily-bar  — no material change
 #     long_above_flip     9.8% (n=347) vs  9.6% daily-bar  — no material change
-#     deep_short_gamma   53.6% (n=84)  vs 33.3% daily-bar  — REAL MISS, updated below
+#     deep_short_gamma (at -10B, the threshold in force at measurement time)
+#                        53.6% (n=84)  vs 33.3% daily-bar  — REAL MISS
 # The first two cells' daily-bar-era numbers already matched minute precision
-# closely; deep_short_gamma's daily-bar figure was materially understated and
-# is the only one changed. (Tested and dropped: whether breaking the opening
-# 30-minute range adds predictive power on top of the regime cell — it does
-# not, conditional rates run flat-to-INVERSE of the base rate in all three
-# cells, e.g. short_below_flip 20.1% given an OR30 break vs 32.9% without
-# one. Not wired into anything; noted here so it is not re-tested.)
+# closely. (Tested and dropped: whether breaking the opening 30-minute range
+# adds predictive power on top of the regime cell — it does not, conditional
+# rates run flat-to-INVERSE of the base rate in all three cells, e.g.
+# short_below_flip 20.1% given an OR30 break vs 32.9% without one. Not wired
+# into anything; noted here so it is not re-tested.)
+#
+# 2026-10-04 THRESHOLD TIGHTEN: DEEP_SHORT_B moved -10.0 -> -12.5 (see its own
+# comment above) — deep_short_gamma's break probability below is there-fore
+# the -12.5B figure (68.3%, n=41, 2023+ minute data), not the -10B figure
+# (53.6%) measured just above; that -10B number is kept in the comment purely
+# as the before/after record, it is no longer what this cell means live.
 # ---------------------------------------------------------------------------
 BREAK_CELLS = {
     "short_below_flip": 0.275,   # short gamma, spot below flip
     "long_above_flip": 0.096,    # long gamma, spot above flip
-    "deep_short_gamma": 0.536,   # net gamma below -$10B — a subset of short_below_flip
+    "deep_short_gamma": 0.683,   # net gamma below -$12.5B — a subset of short_below_flip
     "sample": "1,646 sessions, 2020-2026",
 }
 
@@ -341,8 +362,10 @@ BREAK_CELLS = {
 # BREAK_CELLS["sample"] via break_sample_for() for any cell without its own
 # entry here.
 BREAK_CELLS_SAMPLE = {
-    "deep_short_gamma": ("904 minute-bar sessions, 2023-2026 (recalibrated "
-                         "2026-10-04 — the 2020-2026 daily-bar figure was 33.3%)"),
+    "deep_short_gamma": ("41 minute-bar sessions below -$12.5B, 2023-2026 "
+                         "(threshold tightened from -$10B 2026-10-04; at "
+                         "-$10B the figure was 53.6% on n=84, and the "
+                         "original 2020-2026 daily-bar figure was 33.3%)"),
 }
 
 
@@ -377,7 +400,8 @@ def squeeze_signal(engine: Engine, asof: date) -> dict[str, Any]:
       SQUEEZE_WATCH  gamma oversold AND VIX at its highs. 15.13% of these started a
                      squeeze (base 3.38%) and ZERO were crashes-from-highs. This is
                      where the long-convexity trade goes and where selling stands down.
-      NO_SELL        gamma below -$10B. The short-premium veto, ~9% of sessions.
+      NO_SELL        gamma below -$12.5B. The short-premium veto, ~1.6% of sessions
+                     (tightened from -$10B/~9% 2026-10-04, see DEEP_SHORT_B).
       SELL_PREMIUM   gamma overbought. Zero squeezes in 387 sessions, smallest
                      downside tail on the board.
       NEUTRAL        everything else. Trade the sell side normally.
