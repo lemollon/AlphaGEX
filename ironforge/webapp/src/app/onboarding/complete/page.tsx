@@ -94,7 +94,7 @@ export default async function OnboardingCompletePage() {
         </div>
 
         <p className="mt-4 text-center text-xs text-gray-500">
-          Running both? Add the second for <span className="text-gray-300">+$25/mo</span> — $75 total.
+          Running both? Each strategy is its own ${BOT_PLANS.spark.priceMonthly}/mo subscription.
         </p>
 
         <div className="mt-6 border-t border-white/10 pt-5 text-center">

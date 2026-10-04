@@ -6,7 +6,7 @@ import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import CustomerShell, { type PlanCardData } from '@/components/customer/CustomerShell'
 import CheckoutNotice from '@/components/customer/CheckoutNotice'
-import { BOT_PLANS, BOTH_PLAN, otherBotSlug, secondBotIncrement, type BotSlug } from '@/lib/billing/plans'
+import { BOT_PLANS, otherBotSlug, type BotSlug } from '@/lib/billing/plans'
 
 interface BrokerageAccount {
   id: string
@@ -55,10 +55,12 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
   const { data: entitlements } = useSWR<EntitlementsResp>('/api/billing/entitlements', fetcher, { shouldRetryOnError: false })
   const accounts = accountsData?.accounts ?? []
 
-  // Second-bot bundle pricing: if the customer already runs the OTHER bot, opening this one lifts
-  // their subscription to the $75 bundle — an increment of $25, not another full $50.
+  // No bundle for new purchases (Leron, binding, 2026-10-04): a second bot is its own
+  // full-price subscription — ownsOther is informational copy only now, never a price
+  // adjustment. Legacy both_monthly bundle subscribers are unaffected (see
+  // lib/billing/membership.ts resolvePlan).
   const ownsOther = (entitlements?.bots ?? []).includes(otherBotSlug(bot))
-  const displayPrice = ownsOther ? secondBotIncrement(otherBotSlug(bot)) : plan.priceMonthly
+  const displayPrice = plan.priceMonthly
 
   const [connection, setConnection] = useState('')
   const [busy, setBusy] = useState(false)
@@ -123,15 +125,14 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
                 style={{ borderColor: `${accent}66`, color: accent }}>Simple Setup</span>
               <span className="rounded-full border px-3 py-1 text-xs font-medium"
                 style={{ borderColor: `${accent}66`, color: accent }}>
-                ${displayPrice} <span className="text-gray-400">/ month{ownsOther ? ' more' : ''}</span>
+                ${displayPrice} <span className="text-gray-400">/ month</span>
               </span>
             </div>
             <p className="mt-2 text-sm text-gray-400">{plan.blurb}</p>
             {ownsOther && (
               <p className="mt-2 text-sm text-gray-400">
-                You already run {BOT_PLANS[otherBotSlug(bot)].name}. Adding {plan.name} bundles both
-                strategies for <span className="font-medium" style={{ color: accent }}>${BOTH_PLAN.priceMonthly} / month total</span> —
-                just ${displayPrice} more.
+                You already run {BOT_PLANS[otherBotSlug(bot)].name}. {plan.name} is billed separately —
+                ${displayPrice} / month, its own 5-day free trial.
               </p>
             )}
           </div>
@@ -208,17 +209,8 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
             ))}
           </ul>
           <p className="mt-3 text-sm text-gray-400">
-            {ownsOther ? (
-              <>
-                Adding {plan.name} bundles both strategies at{' '}
-                <span className="font-medium" style={{ color: accent }}>${BOTH_PLAN.priceMonthly} / month total</span>{' '}
-                (${displayPrice} more) — billed on your existing subscription, no new trial.
-              </>
-            ) : (
-              <>
-                {plan.name} is billed <span className="font-medium" style={{ color: accent }}>${displayPrice} / month</span> after a 5-day free trial.
-              </>
-            )}
+            {plan.name} is billed <span className="font-medium" style={{ color: accent }}>${displayPrice} / month</span> after a 5-day free trial —
+            a separate subscription from any other strategy you run.
           </p>
         </div>
 
@@ -245,7 +237,7 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
             {busy
               ? 'Starting…'
               : ownsOther
-                ? `Add ${plan.name} — $${displayPrice} / month more`
+                ? `Add ${plan.name} — $${displayPrice} / month`
                 : `Open ${plan.name} Account — $${displayPrice} / month`}
           </button>
         </div>

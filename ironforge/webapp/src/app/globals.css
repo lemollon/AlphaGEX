@@ -5,6 +5,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 10.4 design tokens — verbatim :root block from IronForge_WebDesign_10.4.html.
+   Byte-identical across the three 10.4 builders (marketing/app/mobile) so none
+   of them can drift on color/radius/font values. Do not edit here — edit the
+   source design file and resync. */
+@import '../styles/forge-tokens.css';
+
 /* Per-bot identity colors — single source of truth (mirror of src/lib/botColors.ts). */
 :root {
   --bot-flame: #FF5500;

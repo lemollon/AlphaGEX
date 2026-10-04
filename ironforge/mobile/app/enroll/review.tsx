@@ -10,6 +10,7 @@ import { EnrollShell } from '@/enroll/Shell'
 import { useEnrollment } from '@/enroll/useEnrollment'
 import { previewActivation, activate } from '@/enroll/api'
 import type { ActivationPreview, ActivationBlocker } from '@/enroll/types'
+import { AGENT_LABEL } from '@/agents/copy'
 
 /** Not security-sensitive — only needs to be unique per screen visit so a double-tap
  * or a retry-after-timeout reuses the SAME Idempotency-Key rather than minting a new
@@ -138,7 +139,7 @@ export default function ReviewScreen() {
 
           <View style={s.card}>
             <Text style={[type.label, { color: color.muted, marginBottom: space.sm }]}>TRADING SETUP</Text>
-            <Kv label="Agent" value={preview.snapshot.agent === 'spark' ? 'Spark' : 'Flame'} />
+            <Kv label="Agent" value={AGENT_LABEL[preview.snapshot.agent]} />
             <Kv label="Brokerage account" value={preview.snapshot.account_mask || '—'} />
             <Kv
               label="Maximum capital deployment"

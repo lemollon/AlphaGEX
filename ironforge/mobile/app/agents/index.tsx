@@ -16,7 +16,7 @@ import { agentAction, type AgentActionKind } from '@/agents/eligibility'
 import { agentDetailHref, type AgentBot } from '@/agents/routes'
 import { AGENT_LABEL, AGENT_BLURB } from '@/agents/copy'
 
-const BOTS: AgentBot[] = ['spark', 'flame']
+const BOTS: AgentBot[] = ['spark', 'flame', 'ember']
 
 function dotColorFor(dot: string, color: ColorTokens): string {
   const map: Record<string, string> = {

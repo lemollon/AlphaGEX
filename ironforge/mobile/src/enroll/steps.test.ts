@@ -15,9 +15,13 @@ describe('routeForNextStep', () => {
     expect(routeForNextStep('legal', 'community')).toEqual({ route: '/enroll/billing', rank: PAGE_RANK.billing })
   })
 
-  it('routes billing -> /enroll/billing regardless of plan', () => {
+  it('routes billing -> /enroll/billing for any paid plan', () => {
     expect(routeForNextStep('billing', 'flame')).toEqual({ route: '/enroll/billing', rank: PAGE_RANK.billing })
     expect(routeForNextStep('billing', 'community')).toEqual({ route: '/enroll/billing', rank: PAGE_RANK.billing })
+  })
+
+  it('routes billing -> /enroll/broker for Ember (free, never asks for a card)', () => {
+    expect(routeForNextStep('billing', 'ember')).toEqual({ route: '/enroll/broker', rank: PAGE_RANK.broker })
   })
 
   it('routes setup -> /enroll/broker (the first of the three setup screens)', () => {

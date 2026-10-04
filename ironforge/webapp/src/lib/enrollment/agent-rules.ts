@@ -47,9 +47,14 @@ const MAX_DEPLOYMENT: RuleField = {
   unit: 'percent',
 }
 
+/** Ember's absolute capital band (design spec §3/§5) — $500 to $2,000, inclusive. */
+export const EMBER_MIN_CAPITAL_CENTS = 50_000
+export const EMBER_MAX_CAPITAL_CENTS = 200_000
+
 export const AGENT_RULE_SCHEMA: Record<string, RuleField[]> = {
   spark: [MAX_DEPLOYMENT],
   flame: [MAX_DEPLOYMENT],
+  ember: [MAX_DEPLOYMENT],
 }
 
 export function isConfigurableAgent(code: string): boolean {
@@ -135,6 +140,21 @@ export function validateAgentConfig(opts: {
       field: 'broker_account_id',
       message: 'We could not read this account’s buying power. Reconnect your brokerage and try again.',
     })
+  }
+
+  // Ember's $500–$2,000 capital band (design spec §3/§5) — an ABSOLUTE account-value
+  // limit, not a percent-of-buying-power one, so it's enforced here on top of the
+  // generic schema rather than as a RuleField, and BEFORE maxDeploymentCents below so
+  // an out-of-range balance zeroes the computed limit too. Checked only when buying
+  // power is known; the generic "unknown buying power" violation above already fails
+  // closed otherwise.
+  if (opts.agentCode === 'ember' && opts.buyingPowerCents != null) {
+    if (bp < EMBER_MIN_CAPITAL_CENTS || bp > EMBER_MAX_CAPITAL_CENTS) {
+      violations.push({
+        field: 'broker_account_id',
+        message: 'Ember needs a balance between $500 and $2,000. Adjust your balance or choose Spark or Flame.',
+      })
+    }
   }
 
   const pct = config[MAX_DEPLOYMENT.key] ?? MAX_DEPLOYMENT.default
