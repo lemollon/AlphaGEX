@@ -206,26 +206,43 @@ const CALENDAR_EVIDENCE = [
   { event: 'Monthly opex day', rate: '4.35%', mult: '0.43x', n: 23, tone: 'suppressive' },
 ];
 
-// Falsification — the last 22 times net gamma broke below −$10B (16 shown,
-// the rest are unremarkable middles). [date, net gamma, vs flip, fwd 5d,
-// 5d max, >+3% rip].
+// Falsification — EVERY session (not a curated subset) where net gamma's
+// OWN SAME-DAY close broke below −$12.5B, 2020-2026. [date, net gamma, fwd
+// 5d, 5d max, >+3% rip]. The "vs flip" column from the old −$10B-era table
+// is gone — it needed the dealer gamma flip-point reconciliation (a full
+// option-chain computation), which isn't available outside the live capture
+// job, and approximating it would be a guess wearing a number's clothes.
+// 19 more 2026 sessions qualify but are excluded here because their 5-session
+// forward window runs past the SPY price series' own 2025-12-12 end date —
+// not cherry-picked, just not yet resolvable.
 const FALSIFICATION_EPISODES = [
-  ['2023-03-02', '−10.2B', '−1.84%', '−1.57%', '+1.67%', false],
-  ['2023-08-25', '−11.3B', '−1.50%', '+2.55%', '+2.55%', false],
-  ['2023-09-18', '−10.2B', '−1.60%', '−2.57%', '−0.21%', false],
-  ['2023-10-19', '−10.5B', '−2.62%', '−3.25%', '−0.66%', false],
-  ['2023-10-26', '−11.5B', '−4.11%', '+4.41%', '+4.41%', true],
-  ['2024-04-16', '−11.1B', '−2.44%', '+0.42%', '+0.42%', false],
-  ['2024-08-08', '−10.1B', '−2.58%', '+4.23%', '+4.23%', true],
-  ['2024-09-09', '−10.2B', '−1.57%', '+3.01%', '+3.01%', true],
-  ['2025-01-13', '−12.6B', '−2.04%', '+3.73%', '+3.73%', true],
-  ['2025-02-26', '−11.3B', '−2.00%', '−1.93%', '−0.06%', false],
-  ['2025-03-31', '−12.5B', '−2.87%', '−4.55%', '+0.92%', false],
-  ['2025-04-17', '−10.9B', '−5.03%', '+4.60%', '+4.60%', true],
-  ['2026-02-06', '−15.5B', '−0.51%', '−1.28%', '+0.48%', false],
-  ['2026-03-04', '−11.0B', '−1.02%', '−1.28%', '−0.56%', false],
-  ['2026-06-10', '−11.7B', '−3.01%', '+2.14%', '+4.05%', true],
-  ['2026-07-24', '−12.9B', '−1.84%', '+1.10%', '+1.10%', false],
+  ['2023-03-10', '−12.64B', '+1.44%', '+2.64%', false],
+  ['2023-03-15', '−12.57B', '+1.11%', '+2.86%', false],
+  ['2023-08-17', '−13.71B', '+0.14%', '+1.55%', false],
+  ['2023-09-21', '−14.75B', '−0.67%', '+0.19%', false],
+  ['2023-09-26', '−14.54B', '−1.01%', '+0.62%', false],
+  ['2023-09-27', '−13.34B', '−0.33%', '+0.58%', false],
+  ['2023-10-03', '−12.56B', '+3.07%', '+3.07%', true],
+  ['2023-10-19', '−13.19B', '−3.25%', '−0.66%', false],
+  ['2023-10-26', '−12.74B', '+4.41%', '+4.41%', true],
+  ['2025-01-02', '−17.68B', '−0.71%', '+1.83%', false],
+  ['2025-01-10', '−12.61B', '+2.94%', '+2.94%', false],
+  ['2025-02-27', '−14.27B', '−2.11%', '+1.56%', false],
+  ['2025-03-03', '−12.85B', '−3.97%', '−0.12%', false],
+  ['2025-03-04', '−14.17B', '−3.63%', '+1.08%', false],
+  ['2025-03-06', '−15.03B', '−3.72%', '+0.56%', false],
+  ['2025-03-07', '−12.63B', '−2.28%', '−2.28%', false],
+  ['2025-03-10', '−15.87B', '+1.17%', '+1.17%', false],
+  ['2025-03-11', '−15.05B', '+0.92%', '+2.02%', false],
+  ['2025-03-12', '−15.33B', '+1.48%', '+1.48%', false],
+  ['2025-03-13', '−16.52B', '+2.55%', '+2.85%', false],
+  ['2025-03-14', '−14.35B', '+0.51%', '+0.77%', false],
+  ['2025-03-17', '−12.75B', '+1.53%', '+1.53%', false],
+  ['2025-03-18', '−17.20B', '+2.88%', '+2.88%', false],
+  ['2025-03-19', '−16.20B', '+0.56%', '+1.78%', false],
+  ['2025-03-20', '−17.47B', '+0.58%', '+2.07%', false],
+  ['2025-04-03', '−14.68B', '−2.26%', '+2.22%', false],
+  ['2025-11-20', '−14.28B', '+4.73%', '+4.73%', true],
 ];
 
 // Hover "i" circle with an absolutely-positioned tooltip. Mirrors
@@ -1711,20 +1728,21 @@ export default function SqueezePage() {
                     <td style={{ ...S.td, color: RED, fontWeight: 700 }}>nothing</td>
                   </tr>
                   <tr>
-                    <td style={S.td}>NO SELL — net gamma ≤ −$10B <span style={{ color: DIM, fontWeight: 400 }}>(pre-10/4 threshold, pending re-run at −$12.5B)</span></td>
-                    <td style={S.td}>72.6%</td>
-                    <td style={{ ...S.td, color: GREEN, fontWeight: 700 }}>23 of 1,604 (+1.4pts)</td>
+                    <td style={S.td}>NO SELL — net gamma ≤ −$12.5B</td>
+                    <td style={S.td}>69.6%</td>
+                    <td style={{ ...S.td, color: GREEN, fontWeight: 700 }}>14 of 1,635 (+0.86pts)</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <div style={{ ...S.caption, marginTop: 10 }}>
-              Measured over 1,604 sessions. <b style={{ color: '#c6cbd8' }}>Every one of the 161
+              Measured over 1,635 sessions (re-run 2026-10-04 at the new −$12.5B threshold).{' '}
+              <b style={{ color: '#c6cbd8' }}>Every one of the 165
               SQUEEZE WATCH days is a day EBB would already have skipped</b> — a strict subset,
               not a correlation. So do NOT run both as two sell-side vetoes: that applies one
               variable twice and quietly halves your trade count for nothing. The gamma veto's
-              only additive contribution is NO SELL, and it is worth 23 extra skip-days in six
-              and a half years.
+              only additive contribution is NO SELL — on a thin 46-day sample, it is worth 14
+              extra skip-days.
               <br /><br />
               Where this page is genuinely additive is the <b style={{ color: AMBER }}>buy
               side</b> — the 0.25 delta call. EBB has no long-convexity trade at all, and the
@@ -2028,28 +2046,26 @@ export default function SqueezePage() {
           </Fold>
 
           {/* FALSIFICATION TABLE */}
-          <Fold title="What happened the last 22 times gamma went below −$10B" meta="pre-10/4 threshold — pending re-run at −$12.5B">
+          <Fold title="What happened every time gamma went below −$12.5B" meta="27 episodes, 2020-2026, re-run 2026-10-04">
             <div style={{ ...S.small, marginBottom: 10 }}>
               The evidence above is what supports the signal. This is what breaks it — if deep short
-              gamma were a squeeze setup, this table would be mostly green. This table is the OLD
-              −$10B threshold's episode list, from before the 2026-10-04 tighten to −$12.5B — most of
-              these 16 episodes (anything between −$10B and −$12.5B) would no longer qualify as
-              deep_short_gamma live. Kept as the historical record until it's re-run on the new cutoff.
+              gamma were a squeeze setup, this table would be mostly green. Every qualifying session
+              is shown, not a curated subset (19 more 2026 sessions qualify but are excluded — their
+              5-day forward window isn't resolvable yet against the price series' own data cutoff).
             </div>
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 620, marginBottom: 10 }}>
+              <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 520, marginBottom: 10 }}>
                 <thead>
                   <tr>
-                    <th style={S.th}>episode start</th><th style={S.th}>net gamma</th><th style={S.th}>vs flip</th>
+                    <th style={S.th}>episode start</th><th style={S.th}>net gamma</th>
                     <th style={S.th}>fwd 5d</th><th style={S.th}>5d max</th><th style={S.th}>&gt;+3% rip</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {FALSIFICATION_EPISODES.map(([date, gamma, vsFlip, fwd5d, max5d, rip]) => (
+                  {FALSIFICATION_EPISODES.map(([date, gamma, fwd5d, max5d, rip]) => (
                     <tr key={date}>
                       <td style={S.td}>{date}</td>
                       <td style={S.td}>{gamma}</td>
-                      <td style={S.td}>{vsFlip}</td>
                       <td style={{ ...S.td, color: fwd5d.startsWith('+') ? GREEN : RED, fontWeight: 700 }}>{fwd5d}</td>
                       <td style={S.td}>{max5d}</td>
                       <td style={{ ...S.td, color: rip ? AMBER : DIM, fontWeight: rip ? 700 : 400 }}>{rip ? 'YES' : '—'}</td>
@@ -2059,11 +2075,10 @@ export default function SqueezePage() {
               </table>
             </div>
             <div style={S.small}>
-              16 of 22 episodes shown; the rest are unremarkable middles. Full count: 6 of 22 rip (27%),
-              mean forward 5-day +0.75%, worst −4.55%. Deep short gamma doubles BOTH tails — it lifts the
-              odds of a 5-day rip above +3% from 7.9% to 17.9%, and the odds of a 5-day drop below −3%
-              from 3.7% to 6.4%. Read as "get long" it was wrong 16 times out of 22. That is an amplifier,
-              not a direction call.
+              All 27 qualifying episodes shown. 3 of 27 produced a 5-day rip of +3% or more (11%), mean
+              forward 5-day +0.23%, best +4.73%, worst −3.97%. Read as "get long" it was wrong 11 times
+              out of 27 (forward 5-day return finished negative). That is an amplifier, not a direction
+              call.
             </div>
           </Fold>
         </Fold>
