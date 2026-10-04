@@ -13,7 +13,7 @@ import { getBrokerConnections, startTradierConnect, selectBrokerAccount } from '
 import type { BrokerAccountPick } from '@/enroll/types'
 
 /**
- * Connect brokerage (UAT #6, screen 6 of 9) — Tradier only, per the approved mock.
+ * Connect brokerage (step 6 of 8) — Tradier only, per the approved mock.
  *
  * KNOWN MISMATCH (see PR description): the Tradier OAuth callback
  * (webapp/src/app/api/onboarding/brokerage/tradier/callback/route.ts) always

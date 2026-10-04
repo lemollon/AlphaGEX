@@ -36,7 +36,7 @@ const BLOCKER_ROUTE: Record<string, string> = {
 }
 
 /**
- * Review and activate (UAT #6, screen 8 of 9) — POST /api/v1/activations/preview
+ * Review and activate (step 8 of 8) — POST /api/v1/activations/preview
  * then POST /api/v1/activations. Everything shown is a LIVE server-computed snapshot,
  * never a hardcoded number. On success, hands off to /enroll/done (screen 9), which
  * calls confirmation-seen and enters the app.

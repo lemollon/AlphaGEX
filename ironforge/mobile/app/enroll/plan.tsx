@@ -12,7 +12,7 @@ import { routeForNextStep } from '@/enroll/steps'
 import type { PlanCatalog } from '@/enroll/types'
 
 /**
- * Choose a plan (UAT #6, screen 3 of 9) — PUT /api/v1/enrollments/{id}/plan.
+ * Choose a plan (step 3 of 8) — PUT /api/v1/enrollments/{id}/plan.
  *
  * Prices come from GET /api/public/plans (additive route added in this PR — see
  * webapp/src/app/api/public/plans/route.ts), which serves lib/billing/plans.ts
