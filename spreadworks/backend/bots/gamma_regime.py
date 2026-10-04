@@ -303,17 +303,34 @@ def gamma_percentile(engine: Engine, asof: date,
 
 
 # ---------------------------------------------------------------------------
-# Intraday break probability by regime cell — P(>1% intraday move), measured
-# 2020-01-02 through 2026-08-11 (1,646 sessions). Cells are net_gex sign +
-# spot vs the re-solved flip; the two collapse to the SAME variable here (net
-# gamma < 0 and spot below flip agree 96.1% of the time — see the module
-# docstring), so the sign of net_gex_b alone selects a cell.
+# Intraday break probability by regime cell — P(>1% intraday move). Original
+# calibration measured 2020-01-02 through 2026-08-11 (1,646 sessions) off
+# DAILY OHLC bars — the sample predates minute-level SPY data, which only
+# exists in the warehouse from 2023-01-03. Cells are net_gex sign + spot vs
+# the re-solved flip; the two collapse to the SAME variable here (net gamma <
+# 0 and spot below flip agree 96.1% of the time — see the module docstring),
+# so the sign of net_gex_b alone selects a cell.
+#
+# 2026-10-04 RECALIBRATION against real minute-bar paths (bt_spy, 2023-01-03
+# through 2026-08-11, 904 sessions, prior-session-lagged classification,
+# day's own session high/low from running intraday min/max, not daily-bar
+# high/low):
+#     short_below_flip   28.8% (n=473) vs 27.5% daily-bar  — no material change
+#     long_above_flip     9.8% (n=347) vs  9.6% daily-bar  — no material change
+#     deep_short_gamma   53.6% (n=84)  vs 33.3% daily-bar  — REAL MISS, updated below
+# The first two cells' daily-bar-era numbers already matched minute precision
+# closely; deep_short_gamma's daily-bar figure was materially understated and
+# is the only one changed. (Tested and dropped: whether breaking the opening
+# 30-minute range adds predictive power on top of the regime cell — it does
+# not, conditional rates run flat-to-INVERSE of the base rate in all three
+# cells, e.g. short_below_flip 20.1% given an OR30 break vs 32.9% without
+# one. Not wired into anything; noted here so it is not re-tested.)
 # ---------------------------------------------------------------------------
 BREAK_CELLS = {
     "short_below_flip": 0.275,   # short gamma, spot below flip
     "long_above_flip": 0.096,    # long gamma, spot above flip
-    "deep_short_gamma": 0.333,   # net gamma below -$10B — a subset of short_below_flip
-    "sample": "1,646 sessions, 2020-2026",
+    "deep_short_gamma": 0.536,   # net gamma below -$10B — a subset of short_below_flip
+    "sample": "1,646 sessions, 2020-2026 (deep_short_gamma recalibrated 2026-10-04 on 904 minute-bar sessions, 2023-2026)",
 }
 
 
