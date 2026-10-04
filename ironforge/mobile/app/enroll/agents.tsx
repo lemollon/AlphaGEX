@@ -16,7 +16,7 @@ import type { AgentBot } from '@/agents/routes'
 const BOTS: AgentBot[] = ['spark', 'flame']
 
 /**
- * Pick your agent (UAT #6, screen 7 of 9) — POST /api/v1/agent-configs.
+ * Pick your agent (step 7 of 8) — POST /api/v1/agent-configs.
  *
  * JUDGMENT CALL: "Both" at the plan screen still only configures ONE agent here —
  * v1's agent-configs/activations endpoints activate a single agent_code per pass.

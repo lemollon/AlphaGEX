@@ -23,7 +23,7 @@ const DOC_SUBTITLES: Record<string, string> = {
 }
 
 /**
- * Legal review (UAT #6, screen 4 of 9) — GET/POST /api/v1/enrollments/{id}/legal|acceptances.
+ * Legal review (step 4 of 8) — GET/POST /api/v1/enrollments/{id}/legal|acceptances.
  *
  * Documents, order, and signature requirement all come from the API — never a fixed
  * 3-checkbox list. Community has no standalone legal screen (its core docs are a

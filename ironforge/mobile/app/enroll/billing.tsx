@@ -16,7 +16,7 @@ import { routeForNextStep, PAGE_RANK } from '@/enroll/steps'
 import type { PlanCatalog } from '@/enroll/types'
 
 /**
- * Billing (UAT #6, screen 5 of 9).
+ * Billing (step 5 of 8).
  *
  * SPEC CHANGE 2026-09-05 (App Store Guideline 3.1.1 — the iOS build was IN REVIEW):
  * NO purchase surface opened in-app on ANY platform. The original brief's "Pay with

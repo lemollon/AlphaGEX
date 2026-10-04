@@ -19,7 +19,7 @@ import { getPendingPassword, clearPendingPassword } from '@/enroll/pending-crede
 const RESEND_COOLDOWN_SEC = 30
 
 /**
- * Verify email (UAT #6, screen 2 of 9) — POST /api/auth/verify-code, then auto
+ * Verify email (step 2 of 8) — POST /api/auth/verify-code, then auto
  * sign-in via POST /api/auth/mobile/login and continue at the enrollment's
  * next_step. Replaces the "tap the link" screen from #2965 now that a 6-digit
  * code exists server-side (see verify-code/route.ts).

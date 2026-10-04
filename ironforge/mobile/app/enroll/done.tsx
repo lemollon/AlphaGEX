@@ -11,7 +11,7 @@ import { AGENT_LABEL } from '@/agents/copy'
 import { agentDetailHref, type AgentBot } from '@/agents/routes'
 
 /**
- * Done (UAT #6, screen 9 of 9) — POST /api/v1/activations/{id}/confirmation-seen,
+ * Done (final confirmation, after step 8 of 8) — POST /api/v1/activations/{id}/confirmation-seen,
  * then into the app. Mirrors webapp/src/app/enroll/done/page.tsx's "You're in" copy.
  */
 export default function EnrollDoneScreen() {

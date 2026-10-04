@@ -10,7 +10,7 @@ import { validateSignup, type SignupFields, type SignupErrors } from '@/enroll/s
 import { setPendingPassword } from '@/enroll/pending-credentials'
 
 /**
- * Create account (UAT #6, screen 1 of 9) — POST /api/auth/signup.
+ * Create account (step 1 of 8) — POST /api/auth/signup.
  *
  * All nine fields the server actually requires (webapp/src/lib/signup-validation.ts)
  * are collected here, not just the name/email/password the approved mock shows —
