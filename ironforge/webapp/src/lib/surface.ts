@@ -41,6 +41,10 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/how-it-works',
   '/waitlist',
   '/pricing',
+  // 10.4 marketing redesign: the 3-agent grid/compare page and the team/values
+  // page. Standalone marketing chrome, same as the other entries here.
+  '/agents',
+  '/about',
   '/live',
   '/live/spark/open',
   '/live/flame/open',
