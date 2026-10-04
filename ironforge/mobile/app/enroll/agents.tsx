@@ -11,18 +11,28 @@ import { EnrollShell } from '@/enroll/Shell'
 import { useEnrollment } from '@/enroll/useEnrollment'
 import { getBrokerConnections, createAgentConfig } from '@/enroll/api'
 import { AGENT_LABEL, AGENT_BLURB } from '@/agents/copy'
-import type { AgentBot } from '@/agents/routes'
 
-const BOTS: AgentBot[] = ['spark', 'flame']
+/**
+ * This deferred-choice screen is reached only from the retired "both" family value
+ * and the "automate" family value (pick Spark or Flame after setup) — Ember is
+ * never deferred, it's chosen directly at /enroll/plan and skips straight past
+ * billing, so it never reaches here. Kept as its own narrower type (not the
+ * app-wide AgentBot, which now also has 'ember') because createAgentConfig's
+ * /api/v1/agent-configs only ever accepts 'spark' | 'flame'.
+ */
+type DeferredBot = 'spark' | 'flame'
+
+const BOTS: DeferredBot[] = ['spark', 'flame']
 
 /**
  * Pick your agent (step 7 of 8) — POST /api/v1/agent-configs.
  *
- * JUDGMENT CALL: "Both" at the plan screen still only configures ONE agent here —
+ * JUDGMENT CALL: a legacy "both" enrollee still only configures ONE agent here —
  * v1's agent-configs/activations endpoints activate a single agent_code per pass.
- * A "both" enrollee starts with whichever they pick below; the second bot is added
+ * Such an enrollee starts with whichever they pick below; the second bot is added
  * afterward through the existing /live bundle-upgrade path, not through this funnel.
- * The note under the tiles says so.
+ * The note under the tiles says so. "Both" is no longer offered at /enroll/plan for
+ * new enrollments (Leron, 2026-10-04) — this path only serves pre-existing ones.
  */
 export default function AgentsScreen() {
   const { colors: color } = useTheme()
@@ -47,7 +57,7 @@ export default function AgentsScreen() {
       .finally(() => setResolving(false))
   }, [accountId, enrollment, router, setError])
 
-  async function select(bot: AgentBot) {
+  async function select(bot: DeferredBot) {
     if (!accountId || busy) return
     setBusy(true)
     setError(null)

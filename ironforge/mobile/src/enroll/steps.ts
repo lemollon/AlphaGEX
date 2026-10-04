@@ -34,6 +34,12 @@ export const PAGE_RANK: Record<EnrollPageStep, number> = {
  * Community legal screen (its core Terms/Privacy/Refund are accepted as a clickwrap
  * at the Community billing submit), so a community enrollment whose next_step is
  * 'legal' canonically lands on /enroll/billing.
+ *
+ * Ember quirk (10.4 redesign): Ember is free and never asks for a card (design-spec
+ * §5 step 5 — "skipped automatically for Ember"), so an Ember enrollment whose
+ * next_step is 'billing' canonically skips straight to /enroll/broker. billing.tsx
+ * also redirects forward on mount as a second guard, in case a customer's browser
+ * history lands them back on that screen directly.
  */
 export function routeForNextStep(
   nextStep: EnrollmentNextStep | string | null | undefined,
@@ -45,7 +51,9 @@ export function routeForNextStep(
         ? { route: '/enroll/billing', rank: PAGE_RANK.billing }
         : { route: '/enroll/legal', rank: PAGE_RANK.legal }
     case 'billing':
-      return { route: '/enroll/billing', rank: PAGE_RANK.billing }
+      return selectedPlan === 'ember'
+        ? { route: '/enroll/broker', rank: PAGE_RANK.broker }
+        : { route: '/enroll/billing', rank: PAGE_RANK.billing }
     case 'setup':
       return { route: '/enroll/broker', rank: PAGE_RANK.broker }
     case 'done':

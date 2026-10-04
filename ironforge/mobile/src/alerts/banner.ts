@@ -1,7 +1,7 @@
 import type { LiveAgent, BrokerageConnections } from '@/api/types'
 import { health } from '@/api/brokerage'
 import { color } from '@/theme/tokens'
-import { agentDetailHref } from '@/agents/routes'
+import { agentDetailHref, type AgentBot } from '@/agents/routes'
 import { canManageBillingInApp } from '@/billing/store-policy'
 
 /**
@@ -136,7 +136,7 @@ export function pickBanner(input: BannerInput): Banner | null {
 export function bannerActionHref(action: NonNullable<Banner['action']>): string | null {
   if (action.target === 'brokerage') return '/account'
   if (action.target === 'billing') return '/account'
-  if (action.target === 'agent' && action.bot) return agentDetailHref(action.bot as 'spark' | 'flame')
+  if (action.target === 'agent' && action.bot) return agentDetailHref(action.bot as AgentBot)
   return null
 }
 

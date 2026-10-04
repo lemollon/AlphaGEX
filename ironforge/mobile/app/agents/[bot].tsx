@@ -64,7 +64,9 @@ export default function AgentDetailScreen() {
   const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   const params = useLocalSearchParams<{ bot: string }>()
-  const bot = (params.bot === 'flame' ? 'flame' : 'spark') as AgentBot
+  const bot = (
+    params.bot === 'flame' ? 'flame' : params.bot === 'ember' ? 'ember' : 'spark'
+  ) as AgentBot
   const label = AGENT_LABEL[bot]
 
   const agentsSWR = useSWR<LiveAgents>('/api/live/agents', (p: string) => api<LiveAgents>(p))

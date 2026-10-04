@@ -10,20 +10,29 @@ import { useEnrollment } from '@/enroll/useEnrollment'
 import { choosePlan, getPlanCatalog } from '@/enroll/api'
 import { routeForNextStep } from '@/enroll/steps'
 import type { PlanCatalog } from '@/enroll/types'
+import { EMBER_LIMITS } from '@/agents/copy'
+import { color as staticColor } from '@/theme/tokens'
 
 /**
  * Choose a plan (step 3 of 8) — PUT /api/v1/enrollments/{id}/plan.
  *
  * Prices come from GET /api/public/plans (additive route added in this PR — see
  * webapp/src/app/api/public/plans/route.ts), which serves lib/billing/plans.ts
- * directly. Never the mock's "Paper free / Live $49" — Leron corrected that 9/5:
- * Community $10/mo, Spark or Flame $50/mo each, both $75/mo.
+ * directly — this screen never hardcodes a price, it only renders whatever that
+ * route returns. Leron confirmed (2026-10-04, follow-up) to leave the actual price
+ * amounts unchanged from main for this task — only the "Both" bundle and Ember are
+ * in scope here, not a price change.
  *
- * JUDGMENT CALL (flagged in the PR body): "Both" is a valid `plan` value server-side,
- * but POST /api/v1/agent-configs and /api/v1/activations can each only configure and
- * activate ONE bot per enrollment pass. Picking Both here still only sets up one agent
- * at the Agents screen; the second bot is added afterward through the existing /live
- * upsell (bundle-upgrade) path, not through this funnel. The Agents screen says so.
+ * PRICING CHANGE (Leron, 2026-10-04, binding): no "Both" bundle any more — Spark
+ * and Flame are each sold as their own separate subscription, chosen and purchased
+ * independently (the second bot is added afterward through the existing /live
+ * upsell path, same as before, just never framed here as "one bundle price"). The
+ * "Both agents" tile that used to live on this screen is removed.
+ *
+ * Ember (10.4 redesign, design-spec §3/§5) is added as a fourth tile: free, one
+ * account per person, $500–$2,000 trading capital. Not in the server's
+ * PlanCatalog (that type only carries the two paid bots + Community), so its
+ * copy/limits are the product facts from EMBER_LIMITS, not a fetched price.
  */
 export default function PlanScreen() {
   const { colors: color } = useTheme()
@@ -93,11 +102,11 @@ export default function PlanScreen() {
             />
           ) : null}
           <PlanTile
-            name="Both agents"
-            blurb="Spark and Flame together, one bundle price."
-            price={catalog.both.price_monthly}
-            accent={color.accent}
-            onPress={() => choose('both')}
+            name="Ember"
+            blurb="Built for smaller accounts and first-time investors. One account per person, $500–$2,000 trading capital."
+            priceLabel={EMBER_LIMITS.priceLabel}
+            accent={staticColor.ember}
+            onPress={() => choose('ember')}
             disabled={busy}
           />
         </View>
@@ -110,13 +119,16 @@ function PlanTile({
   name,
   blurb,
   price,
+  priceLabel,
   accent,
   onPress,
   disabled,
 }: {
   name: string
   blurb: string
-  price: number
+  /** Monthly dollar price — ignored when `priceLabel` is given (e.g. Ember's "Free"). */
+  price?: number
+  priceLabel?: string
   accent: string
   onPress: () => void
   disabled: boolean
@@ -129,7 +141,9 @@ function PlanTile({
         <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 17 }]}>{name}</Text>
         <Text style={[type.label, { color: color.textDim, marginTop: 2 }]}>{blurb}</Text>
       </View>
-      <Text style={[type.body, { color: accent, fontFamily: font.bodyBold, fontSize: 17 }]}>${price}/mo</Text>
+      <Text style={[type.body, { color: accent, fontFamily: font.bodyBold, fontSize: 17 }]}>
+        {priceLabel ?? `$${price}/mo`}
+      </Text>
     </Pressable>
   )
 }
