@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { ShieldAlert, Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, Zap, Radio, Crosshair, Ruler, Target, ActivitySquare } from 'lucide-react';
+import { ShieldAlert, Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, Zap, Crosshair, Ruler, Target, ActivitySquare } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import UpdateBanner from './components/UpdateBanner';
 import ChartArea from './components/ChartArea';
@@ -15,7 +15,6 @@ const GexProfilePage = lazy(() => import('./pages/GexProfilePage'));
 const BotDashboard = lazy(() => import('./pages/BotDashboard'));
 const FleetPage = lazy(() => import('./pages/FleetPage'));
 const RiskAdvisorPage = lazy(() => import('./pages/RiskAdvisorPage'));
-const SessionPage = lazy(() => import('./pages/SessionPage'));
 const SqueezePage = lazy(() => import('./pages/SqueezePage'));
 const TsunamiPage = lazy(() => import('./pages/TsunamiPage'));
 const HuntPage = lazy(() => import('./pages/HuntPage'));
@@ -198,7 +197,6 @@ function NavBar() {
               highlighted too. */}
           <RouteBtn to="/bots"            icon={<Cpu size={14} />}  label="Bots" />
           <RouteBtn to="/risk"            icon={<ShieldAlert size={14} />} label="Risk" />
-          <RouteBtn to="/session"         icon={<Radio size={14} />} label="Session" />
           <RouteBtn to="/squeeze"         icon={<Zap size={14} />} label="Squeeze" />
           <RouteBtn to="/hunt"            icon={<Crosshair size={14} />} label="Hunt" />
           <RouteBtn to="/squeeze-hunt"            icon={<Crosshair size={14} />} label="Squeeze Hunt" />
@@ -422,7 +420,6 @@ export default function App() {
             <Route path="/" element={<BuilderPage />} />
             <Route path="/positions" element={<PositionsPage />} />
             <Route path="/risk" element={<RiskAdvisorPage />} />
-            <Route path="/session" element={<SessionPage />} />
             <Route path="/squeeze" element={<SqueezePage />} />
             <Route path="/hunt" element={<HuntPage />} />
             <Route path="/squeeze-hunt" element={<SqueezeHuntPage />} />
