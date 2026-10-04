@@ -27,6 +27,40 @@ def test_crossing_dedup_recovery_and_hourly_context():
     assert 'current reading' in messages[-1]['title']
 
 
+def test_veto_threshold_crosses_independently_and_shows_both_legs():
+    """🚨 2026-10-04: a second threshold (VETO_THRESHOLD_B, mirrors
+    gamma_regime.DEEP_SHORT_B) was added alongside the original
+    WARN_THRESHOLD_B -- Leron's call was "do both with context", meaning
+    every alert shows both legs' distance/zone, not just whichever one
+    fired. Crossing warn then veto in the same session must fire two
+    distinct alerts, each still describing both thresholds."""
+    engine = create_engine('sqlite://')
+    messages = []
+    def send(embed):
+        messages.append(embed)
+        return True
+    def tick(minute, value):
+        return post_reading(engine, datetime(2026, 10, 1, 9, minute, tzinfo=CT), value, 760, .05, send)
+
+    assert tick(0, -5.0)   # above both -- hourly first-reading alert
+    assert 'clear of both thresholds' in messages[-1]['description']
+
+    assert tick(1, -11.0)  # crosses warn only
+    assert 'BELOW WARNING' in messages[-1]['title']
+    assert 'WARNING — approaching the veto zone' in messages[-1]['description']
+    assert '$10.13' in messages[-1]['description'] and '$12.5' in messages[-1]['description']
+
+    assert tick(2, -13.0)  # now crosses veto too -- veto title takes priority
+    assert 'BELOW VETO' in messages[-1]['title']
+    assert 'NO_SELL live' in messages[-1]['title']
+    assert 'VETO ACTIVE' in messages[-1]['description']
+    # still shows the warning leg's own distance, not just the veto leg
+    assert 'Warning (' in messages[-1]['description']
+
+    assert not tick(3, -13.5)  # still below both, same hour -- no re-alert
+    assert len(messages) == 3
+
+
 def test_failed_delivery_retries_and_state_survives_restart():
     engine = create_engine('sqlite://')
     now = datetime(2026, 10, 1, 9, 0, tzinfo=CT)
