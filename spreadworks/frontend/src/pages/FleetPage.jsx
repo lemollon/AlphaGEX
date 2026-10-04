@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Search, AlertTriangle, RefreshCw } from 'lucide-react';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip,
@@ -540,7 +540,6 @@ export default function FleetPage() {
   const { bots, loading, error, updatedAt, refetch } = useFleet();
   const { stats, riskState } = useFleetStats();
   const { isOpen } = useMarketHours();
-  const navigate = useNavigate();
   const [filter, setFilter] = useState('all');
   const [tickerFilter, setTickerFilter] = useState('all');
   const [sort, setSort] = useState('today');
@@ -692,23 +691,22 @@ export default function FleetPage() {
         </div>
       )}
 
-      {/* ── risk advisor banner — only when the market is NOT normal ── */}
+      {/* ── risk banner — only when the market is NOT normal. Display-only:
+          the Risk Advisor page it used to link to was removed (stale data,
+          Leron's call); riskState itself is live, from useFleetStats(), so
+          the banner stays — it just no longer promises a "playbook" page. ── */}
       {riskHeadline && (riskOff || calmFloor) && (
         <div
-          role="button"
-          tabIndex={0}
-          onClick={() => navigate('/risk')}
-          onKeyDown={e => { if (e.key === 'Enter') navigate('/risk'); }}
           className="rounded-lg"
           style={{
-            padding: '10px 14px', marginBottom: 16, cursor: 'pointer',
+            padding: '10px 14px', marginBottom: 16,
             background: riskOff ? 'rgba(251,113,133,0.08)' : 'rgba(52,211,153,0.08)',
             boxShadow: `inset 0 0 0 1px ${riskOff ? 'rgba(251,113,133,0.28)' : 'rgba(52,211,153,0.28)'}`,
             fontSize: 12.5, fontWeight: 600,
             color: riskOff ? '#fda4af' : '#6ee7b7',
           }}
         >
-          {riskOff ? `${riskHeadline} — see Risk page for the playbook` : riskHeadline}
+          {riskHeadline}
         </div>
       )}
 
