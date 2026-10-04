@@ -408,6 +408,79 @@ This is a NEW-INSTRUMENT test (option quotes, not a reslice of the share
 trades) on a likely THIN population after the options-availability filter --
 label any result EXPLORATORY, and if the filtered population lands in
 single digits, report that honestly rather than stretching it into a claim.
+
+2018-2021 BACKTEST MODE (added 2026-10-03, GENUINE OUT-OF-SAMPLE -- a NEW
+population the frozen V3 rule has never been looked at, not a reslice of
+spent 2023-2026 history)
+----------------------------------------------------------------------------
+When the env var `BACKTEST_2018_2021_MODE` is set (any truthy value),
+`main()` branches to `run_backtest_2018_2021()` BEFORE anything else -- same
+isolation as every mode above, checked after all of them and mutually
+exclusive with each. It never touches `squeeze_premarket_backtest_queue`,
+`squeeze_premarket_backtest_results`, `squeeze_premarket_v3_pnl`,
+`squeeze_premarket_v3_sameday_pnl`, any TRAIL/OPTIONS table, or FAMILY #2 --
+entirely new tables, entirely new population.
+
+ThetaData's STOCK.STANDARD premarket coverage is independently confirmed
+back to 2018-01-03 (see `dev/squeeze/research/PREREG.md`'s honesty
+constraints note) -- a 5-year window 2018-01-01..2021-08-01 (the gap before
+`bars_hold` starts, 2021-08-02) that has NEVER been tested under this rule.
+`dev/squeeze/research/sync_premarket_2018_2021_queue.py` (run on the
+workstation, where the SEC/FINRA source tables live) builds
+`squeeze_premarket_2018_2021_queue` using the IDENTICAL day-level ignition
+definition and fuel-universe screen `sync_premarket_backtest_queue.py` /
+`rebuild_fuel_hold.py` already use, just re-windowed and sourced from a new
+local DuckDB table (`bars_fuel_2018_2021`) built for this gap -- see that
+script's docstring for the full universe-construction note and its
+survivorship caveat (127 of 506 screened symbols have no yfinance history,
+mostly delisted/acquired/bankrupt names; any result from this mode carries
+that bias and must report it, not hide it).
+
+Rule applied, in ONE pass per queued (symbol, event_date) row (unlike the
+2023-2026 path, which splits signal detection / entry / same-day exit across
+three separate Trigger Runs across three modes -- combined here into one
+pass since this is a single one-shot out-of-sample validation, not an
+evolving ledger, and it halves the number of manual Render triggers needed):
+
+  SIGNAL: `scan_symbol_backtest()` (reused as-is, not reimplemented) against
+    the queue row's own event_date -- premarket turnover (sum of premarket
+    volume / shares_outstanding) >= 0.15 AND premarket move (last premarket
+    print vs the queue row's `prior_close`, carried over from
+    `bars_fuel_2018_2021`, same convention `scan_symbol_backtest()`'s own
+    docstring describes) >= 0.10. Written to
+    `squeeze_premarket_2018_2021_results` regardless of outcome (no_data,
+    below floor, or fired) -- same signal-coverage bookkeeping as
+    `squeeze_premarket_backtest_results`.
+  LOSS-PATTERN EXCLUSION (found this session, applied here as part of the
+    frozen rule under test, per task spec -- NOT a new pre-registration):
+    exclude premarket_move > `LOSS_PATTERN_MOVE_CAP` (0.5) OR
+    premarket_turnover > `LOSS_PATTERN_TURNOVER_CAP` (5). A fired signal that
+    hits this exclusion gets a result row (`fired_v3 = true,
+    excluded_by_loss_pattern = true`) but NO entry/exit quote pull is
+    attempted for it -- it is not part of the tradeable population.
+  ENTRY (only for fired, non-excluded signals): `fetch_entry_quote_for_date()`
+    (reused as-is) -- first NBBO ask timestamped >= 09:30:00 ET, entry spread
+    = (ask-bid)/ask, tradeable = spread <= `PNL_SPREAD_MAX` (0.02).
+  EXIT (only if entry resolved): `fetch_sameday_exit_bid()` (reused as-is) --
+    last NBBO bid timestamped < 16:00:00 ET in the 15:55:00-16:00:00 ET
+    window, same convention `SAMEDAY_PNL_BACKTEST_MODE` already proved out.
+  SLIPPAGE: identical mechanism/constant to every other PNL mode in this file
+    (`PNL_SLIPPAGE`, 2% per side): entry fill = ask * (1 + slip), exit fill =
+    bid * (1 - slip).
+
+Writes signal rows to `squeeze_premarket_2018_2021_results` and (for fired,
+non-excluded signals only) P&L rows to `squeeze_premarket_2018_2021_sameday_pnl`.
+Both tables are RESUMABLE the same way as every other mode here: a
+(symbol, event_date) pair already written to the results table is skipped on
+re-run for the signal leg; a pair in the PNL table with a NULL `exit_bid` is
+treated as still unresolved so the next Trigger Run retries it.
+
+This mode must NEVER run on the scheduled trigger -- only via a manual
+"Trigger Run" on the Render cron job with `BACKTEST_2018_2021_MODE` set in
+that run's environment. Do not set it on the job's persistent env vars.
+Needs the same private-network path as every BACKTEST/PNL mode above --
+`/v3/stock/history/ohlc` and `/v3/stock/history/quote` are only reachable
+from inside Render.
 """
 import logging
 import os
@@ -467,6 +540,12 @@ TRAIL_PNL_BACKTEST_MODE = os.getenv("TRAIL_PNL_BACKTEST_MODE", "").strip().lower
 # PNL_BACKTEST_MODE/SAMEDAY_PNL_BACKTEST_MODE/TRAIL_PNL_BACKTEST_MODE; never
 # runs in the same invocation as any of them.
 OPTIONS_PNL_BACKTEST_MODE = os.getenv("OPTIONS_PNL_BACKTEST_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+# GENUINE OUT-OF-SAMPLE test, see module docstring "2018-2021 BACKTEST MODE"
+# section -- any truthy value. Must never be set on the scheduled trigger's
+# persistent env, only on a manual "Trigger Run". Checked separately from
+# (and after) every mode above; never runs in the same invocation as any of
+# them.
+BACKTEST_2018_2021_MODE = os.getenv("BACKTEST_2018_2021_MODE", "").strip().lower() in ("1", "true", "yes", "on")
 
 THETA_BASE = os.getenv("THETADATA_BASE_URL", "http://thetadata-proxy:10000").strip().rstrip("/")
 if THETA_BASE and "://" not in THETA_BASE:
@@ -2516,6 +2595,356 @@ def run_options_pnl_backtest() -> int:
         conn.close()
 
 
+# ===========================================================================
+# 2018-2021 BACKTEST MODE -- GENUINE OUT-OF-SAMPLE, see module docstring
+# "2018-2021 BACKTEST MODE" section. Everything below this line is only ever
+# reached when `BACKTEST_2018_2021_MODE` is set; it must never run on the
+# scheduled trigger, and never touches any table any other mode in this file
+# owns.
+# ===========================================================================
+
+# Loss-pattern exclusion found this session (reported, not re-derived here) --
+# applied as part of the frozen rule under test for this population, per task
+# spec. A fired signal hitting either cap is written to the results table
+# (fired_v3=true, excluded_by_loss_pattern=true) but never reaches the PNL leg.
+LOSS_PATTERN_MOVE_CAP = 0.5
+LOSS_PATTERN_TURNOVER_CAP = 5
+
+
+def ensure_2018_2021_tables(conn) -> None:
+    """CREATE TABLE IF NOT EXISTS for all three 2018-2021-only tables --
+    queue included (normally populated by the workstation-side
+    sync_premarket_2018_2021_queue.py first, but a fresh deploy or run-order
+    flip must not crash), same auto-create convention as
+    ensure_backtest_tables()."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS squeeze_premarket_2018_2021_queue (
+                symbol TEXT,
+                event_date DATE,
+                shares_outstanding BIGINT,
+                prior_close DOUBLE PRECISION,
+                day_close DOUBLE PRECISION,
+                PRIMARY KEY (symbol, event_date)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS squeeze_premarket_2018_2021_results (
+                symbol TEXT,
+                event_date DATE,
+                premarket_turnover DOUBLE PRECISION,
+                premarket_move DOUBLE PRECISION,
+                premarket_vol BIGINT,
+                fired_v3 BOOLEAN,
+                excluded_by_loss_pattern BOOLEAN,
+                checked_at TIMESTAMPTZ DEFAULT now(),
+                PRIMARY KEY (symbol, event_date)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS squeeze_premarket_2018_2021_sameday_pnl (
+                symbol TEXT,
+                event_date DATE,
+                entry_ask DOUBLE PRECISION,
+                entry_spread DOUBLE PRECISION,
+                tradeable BOOLEAN,
+                exit_bid DOUBLE PRECISION,
+                exit_quote_time TIMESTAMPTZ,
+                raw_return DOUBLE PRECISION,
+                return_after_slippage DOUBLE PRECISION,
+                checked_at TIMESTAMPTZ DEFAULT now(),
+                PRIMARY KEY (symbol, event_date)
+            )
+        """)
+    conn.commit()
+
+
+def load_2018_2021_queue(conn) -> list:
+    """(symbol, event_date, shares_outstanding, prior_close) for every queued
+    ignition event with a usable share count -- same guard as
+    load_backtest_queue(). day_close is not needed here (no full_day_move
+    computed for this population)."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT symbol, event_date, shares_outstanding, prior_close
+            FROM squeeze_premarket_2018_2021_queue
+            WHERE shares_outstanding IS NOT NULL AND shares_outstanding > 0
+            ORDER BY event_date, symbol
+        """)
+        return cur.fetchall()
+
+
+def load_resolved_2018_2021_results(conn) -> dict:
+    """(symbol, event_date) -> (fired_v3, excluded_by_loss_pattern) for every
+    pair that already has a signal row in squeeze_premarket_2018_2021_results
+    -- same resume convention as load_resolved_backtest_keys(), but keyed to
+    a dict (not a bare set) so run_backtest_2018_2021() can tell a
+    fully-done non-tradeable row (no PNL ever needed) apart from a fired,
+    non-excluded row still waiting on its PNL leg."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT symbol, event_date, fired_v3, excluded_by_loss_pattern "
+            "FROM squeeze_premarket_2018_2021_results"
+        )
+        return {(sym, ed): (bool(fired), bool(excluded))
+                for sym, ed, fired, excluded in cur.fetchall()}
+
+
+def insert_2018_2021_result(conn, symbol: str, event_date: date, turnover, move,
+                             vol, fired: bool, excluded: bool) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO squeeze_premarket_2018_2021_results
+                (symbol, event_date, premarket_turnover, premarket_move,
+                 premarket_vol, fired_v3, excluded_by_loss_pattern)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol, event_date) DO UPDATE SET
+                premarket_turnover = EXCLUDED.premarket_turnover,
+                premarket_move = EXCLUDED.premarket_move,
+                premarket_vol = EXCLUDED.premarket_vol,
+                fired_v3 = EXCLUDED.fired_v3,
+                excluded_by_loss_pattern = EXCLUDED.excluded_by_loss_pattern,
+                checked_at = now()
+        """, [symbol, event_date, turnover, move, vol, fired, excluded])
+    conn.commit()
+
+
+def load_resolved_2018_2021_pnl_keys(conn) -> set:
+    """Same NULL-exit-bid-means-unresolved convention as
+    load_resolved_sameday_keys()."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT symbol, event_date FROM squeeze_premarket_2018_2021_sameday_pnl "
+            "WHERE exit_bid IS NOT NULL"
+        )
+        return {(sym, ed) for sym, ed in cur.fetchall()}
+
+
+def insert_2018_2021_pnl_result(conn, symbol: str, event_date: date, entry_ask,
+                                 entry_spread, tradeable, exit_bid, exit_quote_time,
+                                 raw_return, return_after_slippage) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO squeeze_premarket_2018_2021_sameday_pnl
+                (symbol, event_date, entry_ask, entry_spread, tradeable,
+                 exit_bid, exit_quote_time, raw_return, return_after_slippage)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol, event_date) DO UPDATE SET
+                entry_ask = EXCLUDED.entry_ask,
+                entry_spread = EXCLUDED.entry_spread,
+                tradeable = EXCLUDED.tradeable,
+                exit_bid = EXCLUDED.exit_bid,
+                exit_quote_time = EXCLUDED.exit_quote_time,
+                raw_return = EXCLUDED.raw_return,
+                return_after_slippage = EXCLUDED.return_after_slippage,
+                checked_at = now()
+        """, [symbol, event_date, entry_ask, entry_spread, tradeable, exit_bid,
+              exit_quote_time, raw_return, return_after_slippage])
+    conn.commit()
+
+
+def scan_pair_2018_2021(symbol: str, event_date: date, shares_outstanding: int,
+                         prior_close: float):
+    """Stage-1 worker: pure HTTP, no DB access -- same discipline as every
+    other scan_* worker in this file. Does signal detection AND (for fired,
+    non-excluded signals) entry+exit in one pass, reusing
+    scan_symbol_backtest()/fetch_entry_quote_for_date()/fetch_sameday_exit_bid()
+    as-is. Returns (signal_status, signal_payload, pnl_status, pnl_payload).
+
+    signal_status: 'error' | 'no_data' | 'ok' (payload is
+      (turnover, move, vol, fired, excluded) for 'ok', None otherwise).
+    pnl_status: None (never attempted - not fired or excluded or signal not
+      'ok'), 'entry_missing', 'exit_missing', or 'ok'.
+    """
+    status, vol, last_px, detail = scan_symbol_backtest(symbol, event_date)
+    if status == "error":
+        return "error", detail, None, None
+    if status == "no_data":
+        return "no_data", None, None, None
+
+    turnover = vol / shares_outstanding
+    move = (last_px / prior_close - 1) if prior_close else None
+    fired = bool(move is not None and turnover >= TURNOVER_FLOOR and move >= MOVE_FLOOR)
+    excluded = bool(fired and (
+        (move is not None and move > LOSS_PATTERN_MOVE_CAP)
+        or turnover > LOSS_PATTERN_TURNOVER_CAP
+    ))
+    signal_payload = (turnover, move, vol, fired, excluded)
+
+    if not fired or excluded:
+        return "ok", signal_payload, None, None
+
+    ask, bid, _quote_time, entry_reason = fetch_entry_quote_for_date(symbol, event_date)
+    if ask is None:
+        return "ok", signal_payload, "entry_missing", {"reason": entry_reason}
+
+    entry_spread = (ask - bid) / ask if (bid and bid > 0) else None
+    tradeable = bool(entry_spread is not None and entry_spread <= PNL_SPREAD_MAX)
+
+    exit_bid, exit_quote_time, exit_reason = fetch_sameday_exit_bid(symbol, event_date)
+    if exit_bid is None:
+        return "ok", signal_payload, "exit_missing", {
+            "entry_ask": ask, "entry_spread": entry_spread, "tradeable": tradeable,
+            "reason": exit_reason,
+        }
+
+    raw_return = exit_bid / ask - 1
+    return_after_slip = exit_bid * (1 - PNL_SLIPPAGE) / (ask * (1 + PNL_SLIPPAGE)) - 1
+    return "ok", signal_payload, "ok", dict(
+        entry_ask=ask, entry_spread=entry_spread, tradeable=tradeable,
+        exit_bid=exit_bid, exit_quote_time=exit_quote_time,
+        raw_return=raw_return, return_after_slippage=return_after_slip,
+    )
+
+
+def run_backtest_2018_2021() -> int:
+    """RESUMABLE: the signal leg skips (symbol, event_date) pairs already in
+    squeeze_premarket_2018_2021_results; the PNL leg (for fired, non-excluded
+    signals) separately skips pairs already fully resolved (non-NULL
+    exit_bid) in squeeze_premarket_2018_2021_sameday_pnl -- same two-table
+    resume convention as run_backtest()+run_sameday_pnl_backtest() combined,
+    collapsed into one pass here since this is a one-shot out-of-sample
+    validation, not an evolving ledger."""
+    run_start = time.monotonic()
+    log.info("=== squeeze premarket cron 2018-2021 BACKTEST MODE (PREREG #3 "
+              "/ V3, GENUINE OUT-OF-SAMPLE, not a reslice of 2023-2026) ===")
+
+    conn = get_db_connection()
+    try:
+        ensure_tables(conn)
+        ensure_2018_2021_tables(conn)
+
+        full_queue = load_2018_2021_queue(conn)
+        if not full_queue:
+            log.warning(
+                "squeeze_premarket_2018_2021_queue is empty - nothing to "
+                "backtest. Run dev/squeeze/research/"
+                "sync_premarket_2018_2021_queue.py first."
+            )
+            return 0
+
+        resolved_results = load_resolved_2018_2021_results(conn)
+        resolved_pnl = load_resolved_2018_2021_pnl_keys(conn)
+
+        def _needs_work(sym: str, ed: date) -> bool:
+            prior = resolved_results.get((sym, ed))
+            if prior is None:
+                return True  # signal never scanned
+            fired_before, excluded_before = prior
+            if not fired_before or excluded_before:
+                return False  # non-tradeable row, fully done, no PNL ever needed
+            return (sym, ed) not in resolved_pnl  # tradeable, PNL still pending
+
+        queue = [row for row in full_queue if _needs_work(row[0], row[1])]
+        already_resolved = len(full_queue) - len(queue)
+        log.info(
+            "2018-2021 queue size: %d (symbol, event_date) rows, %d fully "
+            "resolved (skipped), %d pending (resume mode)",
+            len(full_queue), already_resolved, len(queue),
+        )
+        if not queue:
+            log.info("nothing pending - every queued row already has a result.")
+            return 0
+
+        checked = 0
+        errors = 0
+        no_data = 0
+        fired = 0
+        excluded = 0
+        pnl_ok = 0
+        pnl_missing = 0
+        by_key = {(sym, ed): (sh, pc) for sym, ed, sh, pc in queue}
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {
+                pool.submit(scan_pair_2018_2021, sym, ed, sh, pc): (sym, ed)
+                for sym, ed, sh, pc in queue
+            }
+            for fut in as_completed(futures):
+                sym, ed = futures[fut]
+                try:
+                    sig_status, sig_payload, pnl_status, pnl_payload = fut.result()
+                except Exception as exc:  # noqa: BLE001 - one worker must never kill the run
+                    sig_status, sig_payload, pnl_status, pnl_payload = "error", {
+                        "exception_type": type(exc).__name__,
+                        "exception_message": repr(exc),
+                    }, None, None
+                checked += 1
+
+                if (sym, ed) not in resolved_results:
+                    if sig_status == "error":
+                        errors += 1
+                        log.error("2018-2021 backtest signal FAILED symbol=%s "
+                                  "event_date=%s detail=%s", sym, ed, sig_payload)
+                        continue
+                    if sig_status == "no_data":
+                        no_data += 1
+                        insert_2018_2021_result(conn, sym, ed, None, None, None, False, False)
+                        continue
+                    turnover, move, vol, is_fired, is_excluded = sig_payload
+                    if is_fired:
+                        fired += 1
+                    if is_excluded:
+                        excluded += 1
+                    insert_2018_2021_result(conn, sym, ed, turnover, move, vol,
+                                             is_fired, is_excluded)
+
+                if pnl_status is None:
+                    continue
+                if (sym, ed) in resolved_pnl:
+                    continue
+                if pnl_status == "entry_missing":
+                    pnl_missing += 1
+                    log.warning("no usable entry ask for %s %s: %s",
+                                sym, ed, pnl_payload["reason"])
+                    insert_2018_2021_pnl_result(conn, sym, ed, None, None, None,
+                                                 None, None, None, None)
+                    continue
+                if pnl_status == "exit_missing":
+                    pnl_missing += 1
+                    log.warning("no usable same-day exit bid for %s %s: %s",
+                                sym, ed, pnl_payload["reason"])
+                    insert_2018_2021_pnl_result(
+                        conn, sym, ed, pnl_payload["entry_ask"],
+                        pnl_payload["entry_spread"], pnl_payload["tradeable"],
+                        None, None, None, None,
+                    )
+                    continue
+                # pnl_status == "ok"
+                pnl_ok += 1
+                insert_2018_2021_pnl_result(
+                    conn, sym, ed, pnl_payload["entry_ask"], pnl_payload["entry_spread"],
+                    pnl_payload["tradeable"], pnl_payload["exit_bid"],
+                    pnl_payload["exit_quote_time"], pnl_payload["raw_return"],
+                    pnl_payload["return_after_slippage"],
+                )
+
+        elapsed = time.monotonic() - run_start
+        log.info(
+            "=== 2018-2021 BACKTEST DONE: full_queue=%d already_resolved=%d "
+            "pending=%d checked=%d errors=%d no_premarket_print=%d fired_v3=%d "
+            "excluded_by_loss_pattern=%d pnl_resolved=%d pnl_missing=%d "
+            "wall_clock=%.1fs ===",
+            len(full_queue), already_resolved, len(queue), checked, errors,
+            no_data, fired, excluded, pnl_ok, pnl_missing, elapsed,
+        )
+        log.info(
+            "GENUINE OUT-OF-SAMPLE result (2018-01-01..2021-08-01, never "
+            "looked at before) -- query squeeze_premarket_2018_2021_results "
+            "for signal coverage and squeeze_premarket_2018_2021_sameday_pnl "
+            "WHERE return_after_slippage IS NOT NULL for the primary metric. "
+            "Fill convention: entry = first real NBBO ask >= 09:30:00 ET, "
+            "exit = last real NBBO bid < 16:00:00 ET found in the "
+            "15:55:00-16:00:00 ET window, same day, 2%% slippage per side -- "
+            "never a mark, never a trade-print close. Report the "
+            "survivorship caveat (127 of 506 screened symbols missing "
+            "yfinance history) with any result."
+        )
+        return 0
+    finally:
+        conn.close()
+
+
 def main() -> int:
     run_start = time.monotonic()
     if BACKTEST_MODE:
@@ -2528,6 +2957,8 @@ def main() -> int:
         return run_trail_pnl_backtest()
     if OPTIONS_PNL_BACKTEST_MODE:
         return run_options_pnl_backtest()
+    if BACKTEST_2018_2021_MODE:
+        return run_backtest_2018_2021()
     today = datetime.now(ET).date()
     log.info("=== squeeze premarket cron (PREREG #3 / V3) - %s ===", today)
 
