@@ -330,8 +330,27 @@ BREAK_CELLS = {
     "short_below_flip": 0.275,   # short gamma, spot below flip
     "long_above_flip": 0.096,    # long gamma, spot above flip
     "deep_short_gamma": 0.536,   # net gamma below -$10B — a subset of short_below_flip
-    "sample": "1,646 sessions, 2020-2026 (deep_short_gamma recalibrated 2026-10-04 on 904 minute-bar sessions, 2023-2026)",
+    "sample": "1,646 sessions, 2020-2026",
 }
+
+# Per-cell sample description. deep_short_gamma was recalibrated on a
+# DIFFERENT (smaller, minute-bar) sample than the other two cells, which
+# still carry the original daily-bar figure — showing BREAK_CELLS["sample"]
+# for every cell would misleadingly attach the deep_short_gamma recalibration
+# note to short_below_flip/long_above_flip readings too. Falls back to
+# BREAK_CELLS["sample"] via break_sample_for() for any cell without its own
+# entry here.
+BREAK_CELLS_SAMPLE = {
+    "deep_short_gamma": ("904 minute-bar sessions, 2023-2026 (recalibrated "
+                         "2026-10-04 — the 2020-2026 daily-bar figure was 33.3%)"),
+}
+
+
+def break_sample_for(cell: str | None) -> str | None:
+    """The sample description for `cell`, or None if there is no cell."""
+    if cell is None:
+        return None
+    return BREAK_CELLS_SAMPLE.get(cell, BREAK_CELLS.get("sample"))
 
 
 def break_probability(net_gex_b: float | None) -> tuple[float | None, str]:

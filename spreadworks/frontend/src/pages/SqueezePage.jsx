@@ -634,8 +634,7 @@ export default function SqueezePage() {
             <div style={{ fontSize: 14, color: '#e6e9f0', marginTop: 8, lineHeight: 1.55, maxWidth: '70ch' }}>
               {blockedReason}{' '}
               <span style={{ color: DIM }}>
-                Don’t act on this page today. The bots trade on their own schedule; the Risk page
-                has today’s tickets.
+                Don’t act on this page today. The bots trade on their own schedule.
               </span>
             </div>
           )}
@@ -1685,12 +1684,15 @@ export default function SqueezePage() {
             </div>
           </Fold>
 
-          {/* HOW THIS OVERLAPS THE RISK PAGE. Measured, because the two pages
-              quote the SAME trade — same underlying, same short strike, same
-              entry minute — differing only in wing width. */}
-          <Fold title="How this overlaps the Risk page" meta="same trade, $5 wing instead of $2">
+          {/* HOW THIS OVERLAPS EBB'S OWN GATE. Measured, because EBB quotes
+              the SAME trade — same underlying, same short strike, same entry
+              minute — differing only in wing width. (Used to be framed as
+              "the Risk page" before that advisory dashboard page was removed
+              2026-10-04 — EBB itself is unaffected, it's a live bot, not that
+              page.) */}
+          <Fold title="How this overlaps EBB's gate" meta="same trade, $5 wing instead of $2">
             <div style={{ fontSize: 13, marginBottom: 8, color: '#c6cbd8' }}>
-              The Risk page's EBB recipe is the <b>same trade as this one</b> — same
+              EBB's own recipe is the <b>same trade as this one</b> — same
               underlying, same short strike, same entry minute — with a $5 wing instead
               of $2. Its VIX decay gate already skips at ratio &gt; 0.90; this page's
               VIX leg fires at &gt; 0.95.

@@ -27,11 +27,11 @@ from fastapi import APIRouter
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from .bots.gamma_regime import (BREAK_CELLS, GAMMA_DAILY_TABLE, PCT_WINDOW,
-                                attach_forward_returns, capture_health,
-                                data_freshness, job_status, signal_history,
-                                signal_summary, squeeze_outlook, squeeze_signal,
-                                trade_ticket, vix_history)
+from .bots.gamma_regime import (GAMMA_DAILY_TABLE, PCT_WINDOW,
+                                attach_forward_returns, break_sample_for,
+                                capture_health, data_freshness, job_status,
+                                signal_history, signal_summary, squeeze_outlook,
+                                squeeze_signal, trade_ticket, vix_history)
 from .db import engine as _global_engine
 
 logger = logging.getLogger("spreadworks.routes_squeeze")
@@ -270,7 +270,7 @@ async def state(sessions: str | None = None):
         "vix_ratio": sig.get("vix_ratio"),
         "break_prob": sig.get("break_prob"),
         "break_cell": sig.get("break_cell"),
-        "break_sample": BREAK_CELLS.get("sample"),
+        "break_sample": break_sample_for(sig.get("break_cell")),
         "prior_date": (_isoformat(sig["prior_date"])
                       if sig.get("prior_date") is not None else None),
         "reason": sig.get("reason"),
