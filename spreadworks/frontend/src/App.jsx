@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { ShieldAlert, Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, Zap, Radio, Crosshair, Ruler, Target } from 'lucide-react';
+import { ShieldAlert, Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, Zap, Radio, Crosshair, Ruler, Target, ActivitySquare } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import UpdateBanner from './components/UpdateBanner';
 import ChartArea from './components/ChartArea';
@@ -22,6 +22,7 @@ const HuntPage = lazy(() => import('./pages/HuntPage'));
 const SqueezeHuntPage = lazy(() => import('./pages/SqueezeHuntPage'));
 const WallScannerPage = lazy(() => import('./pages/WallScannerPage'));
 const OpportunityPage = lazy(() => import('./pages/OpportunityPage'));
+const ReflexPage = lazy(() => import('./pages/ReflexPage'));
 
 import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
@@ -203,6 +204,7 @@ function NavBar() {
           <RouteBtn to="/squeeze-hunt"            icon={<Crosshair size={14} />} label="Squeeze Hunt" />
           <RouteBtn to="/wall-scanner"     icon={<Ruler size={14} />} label="Wall Scanner" />
           <RouteBtn to="/opportunity"      icon={<Target size={14} />} label="Opportunity" />
+          <RouteBtn to="/reflex"           icon={<ActivitySquare size={14} />} label="Reflex" />
         </nav>
       </div>
 
@@ -434,6 +436,7 @@ export default function App() {
             <Route path="/bots" element={<FleetPage />} />
             <Route path="/bots/:bot" element={<BotDashboard />} />
             <Route path="/tsunami" element={<TsunamiPage />} />
+            <Route path="/reflex" element={<ReflexPage />} />
           </Routes>
         </Suspense>
       </div>

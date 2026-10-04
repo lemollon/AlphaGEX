@@ -27,6 +27,10 @@ export const BOT_REGISTRY = {
   ember: { display: 'EMBER', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   squall: { display: 'SQUALL', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   tempest: { display: 'TEMPEST', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
+  // REFLEX is the one exception to the "mirrored from registry.py" note above:
+  // it's a Robinhood stock bot (dev/meltup/ember/run_reflex.py), not part of
+  // the options backend registry. Included here only for display/theme metadata.
+  reflex: { display: 'REFLEX', strategy: 'reactive_momentum', ticker: 'multi', version: 'v1.0' },
 };
 
 export const STRATEGY_LABEL = {
@@ -53,6 +57,7 @@ export const STRATEGY_LABEL = {
   vertical_debit:        'Debit Vertical',
   vertical_credit:       'Credit Vertical',
   bull_put_spread:       'Put Credit Spread (0DTE)',
+  reactive_momentum:     'Reactive Momentum (stocks)',
 };
 
 // Live A/B pairs: each bot's equity chart overlays its peer's curve. SPLASH
@@ -266,5 +271,13 @@ export const BOT_THEME = {
     primaryRing: 'rgba(153,246,228,0.30)',
     glow:        'rgba(153,246,228,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(153,246,228,0.22) 0%, rgba(153,246,228,0.03) 100%)',
+  },
+  reflex: {
+    glyph:       'stream',                     // REFLEX = riding the current once it's already moving
+    primary:     '#06b6d4',                    // cyan-500 (distinct from SURGE's cyan-400)
+    primarySoft: 'rgba(6,182,212,0.10)',
+    primaryRing: 'rgba(6,182,212,0.30)',
+    glow:        'rgba(6,182,212,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(6,182,212,0.22) 0%, rgba(6,182,212,0.03) 100%)',
   },
 };

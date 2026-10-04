@@ -5,6 +5,7 @@ import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip,
 } from 'recharts';
 import BotGlyph from '../components/bots/BotGlyph';
+import ReflexSpotlightCard from '../components/bots/ReflexSpotlightCard';
 import { BOT_REGISTRY, BOT_THEME, STRATEGY_LABEL } from '../lib/botRegistry';
 import useFleet from '../hooks/useFleet';
 import useFleetStats from '../hooks/useFleetStats';
@@ -869,6 +870,13 @@ export default function FleetPage() {
             <option key={s.id} value={s.id}>Sort: {s.label}</option>
           ))}
         </select>
+      </div>
+
+      {/* ── featured — REFLEX is new, has no row/stats data, and isn't
+          subject to the filter/sort controls above, so it renders once,
+          outside the grid, rather than inside visible.map(...). ── */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" style={{ marginBottom: 16 }}>
+        <ReflexSpotlightCard />
       </div>
 
       {/* ── grid ── */}
