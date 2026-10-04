@@ -11,6 +11,11 @@
    source design file and resync. */
 @import '../styles/forge-tokens.css';
 
+/* 10.4 enrollment + dashboard visual systems — scoped under .if-enroll / .if-dash
+   (see ironforge-10.4-redesign.md), so they never affect marketing pages. */
+@import '../styles/forge-enroll.css';
+@import '../styles/forge-dashboard.css';
+
 /* Per-bot identity colors — single source of truth (mirror of src/lib/botColors.ts). */
 :root {
   --bot-flame: #FF5500;

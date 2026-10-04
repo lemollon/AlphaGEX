@@ -94,52 +94,44 @@ export default function PlanClient() {
       headline="Choose how you enter the Forge."
       subline="Pick the agent (or agents) you want running, or start with Community."
       maxWidthClass="max-w-3xl"
+      step="plan"
+      enrollment={enrollment}
     >
-      <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-6 lg:p-8">
-        <h2 className="text-2xl font-bold text-white">Choose your plan</h2>
-        <p className="mt-1 text-sm text-gray-400">Select the experience that fits how you want to use IronForge.</p>
+      {error ? <p className="err" style={{ marginBottom: 14 }}>{error}</p> : null}
 
-        {error ? (
-          <p className="mt-4 rounded-md border border-red-700/40 bg-red-950/30 px-3 py-2 text-sm text-red-300">{error}</p>
-        ) : null}
+      {!enrollment && !error ? <div className="card pad" style={{ height: 280 }} /> : null}
 
-        {!enrollment && !error ? (
-          <div className="mt-6 h-72 animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
-        ) : null}
-
-        {enrollment ? (
-          <div className="mt-6 flex flex-col gap-4">
-            {tiles.map((tile) => (
-              <button
-                key={tile.slug}
-                type="button"
-                disabled={busy}
-                onClick={() => choose(tile.slug)}
-                className="flex w-full items-center justify-between gap-4 rounded-xl border bg-black/20 p-6 text-left transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-50"
-                style={{ borderColor: `${tile.accent}80` }}
-              >
-                <div>
-                  <h3 className="text-lg font-bold text-white">{tile.name}</h3>
-                  <p className="mt-1 text-sm text-gray-400">{tile.blurb}</p>
-                  {tile.note ? <p className="mt-1 text-xs text-gray-500">{tile.note}</p> : null}
-                </div>
-                <div className="shrink-0 text-right">
-                  {tile.price === 0 ? (
-                    <span className="text-2xl font-bold" style={{ color: tile.accent }}>Free</span>
-                  ) : (
-                    <>
-                      <span className="text-2xl font-bold" style={{ color: tile.accent }}>
-                        ${tile.price}
-                      </span>
-                      <span className="ml-1 text-sm text-gray-500">/mo</span>
-                    </>
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
+      {enrollment ? (
+        <div className="agents">
+          {tiles.map((tile) => (
+            <button
+              key={tile.slug}
+              type="button"
+              disabled={busy}
+              onClick={() => choose(tile.slug)}
+              className="agent"
+              style={{ borderColor: `${tile.accent}80` }}
+            >
+              <span className="av" aria-hidden="true" />
+              <span>
+                <h3 style={{ color: tile.accent }}>{tile.name}</h3>
+                <span className="sub">{tile.blurb}</span>
+                {tile.note ? <span className="tags"><span>{tile.note}</span></span> : null}
+              </span>
+              <span className={`pr ${tile.price === 0 ? 'free' : ''}`}>
+                {tile.price === 0 ? (
+                  <b>Free</b>
+                ) : (
+                  <>
+                    <b>${tile.price}</b>
+                    <small>/month</small>
+                  </>
+                )}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </EnrollShell>
   )
 }

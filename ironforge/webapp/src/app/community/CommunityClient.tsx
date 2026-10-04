@@ -19,11 +19,11 @@ interface CustomerMe {
 }
 
 const AVATAR_STYLES = [
-  'bg-amber-500/20 text-amber-500',
-  'bg-emerald-500/20 text-emerald-500',
+  'bg-[var(--accent)]/20 text-[var(--accent)]',
+  'bg-[var(--up)]/20 text-[var(--up)]',
   'bg-spark/20 text-spark',
   'bg-stone-500/30 text-stone-300',
-  'bg-red-500/20 text-red-400',
+  'bg-[var(--bad)]/20 text-[var(--bad)]',
 ]
 
 function avatarStyle(name: string): string {
@@ -40,7 +40,7 @@ function initialsOf(name: string): string {
 function Avatar({ message, size = 'h-8 w-8' }: { message: Pick<CommunityMessage, 'sender_name' | 'sender_type'>; size?: string }) {
   if (message.sender_type !== 'USER') {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src="/forge-mascot-sm.png" alt="Forge" className={`${size} shrink-0 rounded-full bg-black ring-1 ring-amber-500/60`} />
+    return <img src="/forge-mascot-sm.png" alt="Forge" className={`${size} shrink-0 rounded-full bg-[var(--av)] ring-1 ring-[var(--accent)]/60`} />
   }
   return (
     <div className={`${size} flex shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${avatarStyle(message.sender_name)}`}>
@@ -58,14 +58,14 @@ function timeLabel(iso: string): string {
 function GreenCheck() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-      strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500">
+      strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 h-4 w-4 shrink-0 text-[var(--up)]">
       <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><path d="m9 11 3 3L22 4" />
     </svg>
   )
 }
 
 function RailHeader({ children }: { children: React.ReactNode }) {
-  return <div className="text-xs font-semibold uppercase tracking-wider text-white">{children}</div>
+  return <div className="text-xs font-semibold uppercase tracking-wider text-[var(--fg)]">{children}</div>
 }
 
 /** One reply's row inside a thread panel — same avatar/AI-tag treatment as the top-level feed. */
@@ -75,13 +75,13 @@ function ReplyRow({ reply }: { reply: CommunityMessage }) {
       <Avatar message={reply} size="h-6 w-6" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-semibold text-white">{reply.sender_name}</span>
+          <span className="text-[11px] font-semibold text-[var(--fg)]">{reply.sender_name}</span>
           {reply.sender_type !== 'USER' && (
-            <span className="rounded bg-amber-500 px-1 py-px text-[9px] font-bold leading-none text-black">AI</span>
+            <span className="rounded bg-[var(--accent)] px-1 py-px text-[9px] font-bold leading-none text-[var(--accent-ink)]">AI</span>
           )}
-          <span className="text-[10px] text-gray-500">{timeLabel(reply.created_at)}</span>
+          <span className="text-[10px] text-[var(--muted)]">{timeLabel(reply.created_at)}</span>
         </div>
-        <div className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-gray-300">{reply.message}</div>
+        <div className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--muted)]">{reply.message}</div>
       </div>
     </div>
   )
@@ -98,18 +98,18 @@ function ThreadPanel({ parentId }: { parentId: string }) {
   )
   const hasAi = data?.replies.some((r) => r.sender_type !== 'USER')
   return (
-    <div className="mt-2 space-y-2 border-l-2 border-forge-border pl-3">
+    <div className="mt-2 space-y-2 border-l-2 border-[var(--line)] pl-3">
       {error ? (
-        <div className="text-[11px] text-gray-500">Replies didn’t load. Try again shortly.</div>
+        <div className="text-[11px] text-[var(--muted)]">Replies didn’t load. Try again shortly.</div>
       ) : !data ? (
-        <div className="text-[11px] text-gray-500">Loading replies…</div>
+        <div className="text-[11px] text-[var(--muted)]">Loading replies…</div>
       ) : data.replies.length === 0 ? (
-        <div className="text-[11px] text-gray-500">No replies yet.</div>
+        <div className="text-[11px] text-[var(--muted)]">No replies yet.</div>
       ) : (
         <>
           {data.replies.map((r) => <ReplyRow key={r.id} reply={r} />)}
           {hasAi && (
-            <div className="text-[10px] text-gray-500">
+            <div className="text-[10px] text-[var(--muted)]">
               AI updates are general market context, not personalized advice.
             </div>
           )}
@@ -130,20 +130,20 @@ function MessageRow({ msg, canReact, onReact }: {
       <Avatar message={msg} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
-          <span className="text-xs font-semibold text-white">{msg.sender_name}</span>
+          <span className="text-xs font-semibold text-[var(--fg)]">{msg.sender_name}</span>
           {msg.sender_type === 'FORGE' && (
-            <span className="rounded bg-amber-500 px-1 py-px text-[9px] font-bold leading-none text-black">AI</span>
+            <span className="rounded bg-[var(--accent)] px-1 py-px text-[9px] font-bold leading-none text-[var(--accent-ink)]">AI</span>
           )}
-          <span className="text-[10px] text-gray-500">{timeLabel(msg.created_at)}</span>
+          <span className="text-[10px] text-[var(--muted)]">{timeLabel(msg.created_at)}</span>
         </div>
-        <div className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-200">{msg.message}</div>
+        <div className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--fg)]">{msg.message}</div>
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           {msg.reactions.map((r) => (
             <button key={r.emoji} disabled={!canReact}
               onClick={() => onReact(msg.id, r.emoji)}
               className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
-                r.mine ? 'border-amber-500/50 bg-amber-500/10 text-amber-500' : 'border-forge-border bg-forge-bg text-gray-300'
-              } ${canReact ? 'hover:border-amber-500/50' : 'cursor-default'}`}>
+                r.mine ? 'border-[var(--accent)]/50 bg-[var(--accent)]/10 text-[var(--accent)]' : 'border-[var(--line)] bg-[var(--bg)] text-[var(--muted)]'
+              } ${canReact ? 'hover:border-[var(--accent)]/50' : 'cursor-default'}`}>
               <span>{r.emoji}</span>
               <span>{r.count}</span>
             </button>
@@ -152,7 +152,7 @@ function MessageRow({ msg, canReact, onReact }: {
             <div className="hidden gap-1 group-hover:flex">
               {['👍', '🔥'].filter((e) => !msg.reactions.some((r) => r.emoji === e)).map((e) => (
                 <button key={e} onClick={() => onReact(msg.id, e)}
-                  className="rounded-full border border-forge-border px-2 py-0.5 text-[11px] opacity-60 transition-opacity hover:opacity-100">
+                  className="rounded-full border border-[var(--line)] px-2 py-0.5 text-[11px] opacity-60 transition-opacity hover:opacity-100">
                   {e}
                 </button>
               ))}
@@ -160,7 +160,7 @@ function MessageRow({ msg, canReact, onReact }: {
           )}
           {(msg.reply_count ?? 0) > 0 && (
             <button type="button" onClick={() => setThreadOpen((v) => !v)}
-              className="text-[11px] font-medium text-amber-500 hover:text-amber-400">
+              className="text-[11px] font-medium text-[var(--accent)] hover:opacity-80">
               {threadOpen ? 'Hide replies' : `${msg.reply_count} ${msg.reply_count === 1 ? 'reply' : 'replies'}`}
             </button>
           )}
@@ -315,16 +315,16 @@ export default function CommunityClient() {
     <CustomerShell membership={summary?.membership ?? null} planVariant="active" maxWidthClass="max-w-[1280px]">
       <div className="grid items-start gap-4 lg:grid-cols-[1fr_300px]">
         {/* ── Chat column ── */}
-        <div className="flex h-[calc(100vh-6.5rem)] min-h-[480px] flex-col rounded-xl border border-forge-border bg-forge-card">
+        <div className="flex h-[calc(100vh-6.5rem)] min-h-[480px] flex-col rounded-xl border border-[var(--line)] bg-[var(--bg)]">
           {/* Header */}
-          <div className="flex items-center gap-2 border-b border-forge-border px-4 py-3">
-            <span className="font-display text-lg tracking-wide text-white">Forge Community</span>
+          <div className="flex items-center gap-2 border-b border-[var(--line)] px-4 py-3">
+            <span className="font-display text-lg tracking-wide text-[var(--fg)]">Forge Community</span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-              strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-gray-500">
+              strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-[var(--muted)]">
               <path d="m6 9 6 6 6-6" />
             </svg>
-            <span className="ml-2 flex items-center gap-1.5 text-xs text-gray-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            <span className="ml-2 flex items-center gap-1.5 text-xs text-[var(--muted)]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--up)]" />
               {feed ? `${feed.online_count.toLocaleString()} member${feed.online_count === 1 ? '' : 's'} online` : '…'}
             </span>
             {/* Search / members / kebab icons removed. They were cursor-default
@@ -341,19 +341,19 @@ export default function CommunityClient() {
             </div>
             {/* Welcome banner */}
             {!welcomeDismissed && (
-              <div className="mt-3 flex items-start gap-3 rounded-lg border border-amber-500/25 bg-gradient-to-r from-amber-500/10 to-transparent p-3">
+              <div className="mt-3 flex items-start gap-3 rounded-lg border border-[var(--accent)]/25 bg-gradient-to-r from-[var(--accent)]/10 to-transparent p-3">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/forge-mascot.png" alt="Forge" className="h-12 w-12 shrink-0 rounded-lg bg-black object-cover" />
+                <img src="/forge-mascot.png" alt="Forge" className="h-12 w-12 shrink-0 rounded-lg bg-[var(--av)] object-cover" />
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold text-white">
-                    Welcome to <span className="text-amber-500">Forge Community</span>
+                  <div className="text-sm font-semibold text-[var(--fg)]">
+                    Welcome to <span className="text-[var(--accent)]">Forge Community</span>
                   </div>
-                  <div className="mt-0.5 text-xs leading-relaxed text-gray-300">
+                  <div className="mt-0.5 text-xs leading-relaxed text-[var(--muted)]">
                     A place for disciplined traders to learn, share ideas, and grow together.
                     Respect every member and protect the forge.
                   </div>
                 </div>
-                <button onClick={dismissWelcome} className="text-gray-500 transition-colors hover:text-white" aria-label="Dismiss">
+                <button onClick={dismissWelcome} className="text-[var(--muted)] transition-colors hover:text-[var(--fg)]" aria-label="Dismiss">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                     strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                     <path d="M18 6 6 18M6 6l12 12" />
@@ -368,8 +368,8 @@ export default function CommunityClient() {
                 <button key={c.slug} onClick={() => setChannel(c.slug)}
                   className={`rounded-full px-3 py-1 text-xs transition-colors ${
                     channel === c.slug
-                      ? 'bg-amber-500 font-medium text-black'
-                      : 'border border-forge-border text-gray-300 hover:text-white'
+                      ? 'bg-[var(--accent)] font-medium text-[var(--accent-ink)]'
+                      : 'border border-[var(--line)] text-[var(--muted)] hover:text-[var(--fg)]'
                   }`}>
                   {c.name}
                 </button>
@@ -379,13 +379,13 @@ export default function CommunityClient() {
             {/* Messages */}
             <div ref={scrollRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto py-4">
               {feedError && !feed ? (
-                <div className="py-8 text-center text-xs text-gray-500">
+                <div className="py-8 text-center text-xs text-[var(--muted)]">
                   The community is temporarily unavailable. Try refreshing in a moment.
                 </div>
               ) : !feed ? (
-                <div className="py-8 text-center text-xs text-gray-500">Loading the conversation…</div>
+                <div className="py-8 text-center text-xs text-[var(--muted)]">Loading the conversation…</div>
               ) : feed.messages.length === 0 ? (
-                <div className="py-8 text-center text-xs text-gray-500">
+                <div className="py-8 text-center text-xs text-[var(--muted)]">
                   No messages in this channel yet — start the conversation.
                 </div>
               ) : (
@@ -396,18 +396,18 @@ export default function CommunityClient() {
             </div>
 
             {/* Composer */}
-            <div className="border-t border-forge-border py-3">
-              {sendError && <div className="mb-2 text-xs text-red-400">{sendError}</div>}
+            <div className="border-t border-[var(--line)] py-3">
+              {sendError && <div className="mb-2 text-xs text-[var(--bad)]">{sendError}</div>}
               {needsMembership ? (
-                <div className="flex flex-col gap-2 rounded-lg border border-amber-600/40 bg-amber-950/20 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="text-sm text-gray-200">
-                    <span className="font-semibold text-amber-400">Join the Forge Community</span> to post —{' '}
-                    <span className="font-semibold text-white">${COMMUNITY_PLAN.priceMonthly}/mo</span>. Every strategy plan includes it.
+                <div className="flex flex-col gap-2 rounded-lg border border-[var(--warn)]/40 bg-[var(--warn-soft)] px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-sm text-[var(--fg)]">
+                    <span className="font-semibold text-[var(--accent)]">Join the Forge Community</span> to post —{' '}
+                    <span className="font-semibold text-[var(--fg)]">${COMMUNITY_PLAN.priceMonthly}/mo</span>. Every strategy plan includes it.
                   </div>
                   <button
                     onClick={() => void joinCommunity()}
                     disabled={joining}
-                    className="shrink-0 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="shrink-0 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-[var(--accent-ink)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {joining ? 'Opening…' : `Join for $${COMMUNITY_PLAN.priceMonthly}/mo`}
                   </button>
@@ -423,11 +423,11 @@ export default function CommunityClient() {
                   placeholder={loggedIn ? 'Message Forge Community...' : 'Log in to join the conversation'}
                   disabled={!loggedIn && me !== undefined}
                   maxLength={2000}
-                  className="h-9 min-w-0 flex-1 rounded-lg border border-forge-border bg-forge-bg px-3 text-sm text-white placeholder-gray-500 outline-none transition-colors focus:border-amber-500/50 disabled:opacity-60"
+                  className="h-9 min-w-0 flex-1 rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 text-sm text-[var(--fg)] placeholder-[var(--muted)] outline-none transition-colors focus:border-[var(--accent)]/50 disabled:opacity-60"
                 />
                 <div className="relative hidden sm:block">
                   <button type="button"
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-forge-border text-gray-400 transition-colors hover:text-white"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--line)] text-[var(--muted)] transition-colors hover:text-[var(--fg)]"
                     aria-label="Emoji" aria-haspopup="true" aria-expanded={emojiOpen}
                     onClick={() => setEmojiOpen((o) => !o)}>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
@@ -436,10 +436,10 @@ export default function CommunityClient() {
                     </svg>
                   </button>
                   {emojiOpen && (
-                    <div className="absolute bottom-11 right-0 z-40 grid w-56 grid-cols-8 gap-1 rounded-xl border border-forge-border bg-forge-card p-2 shadow-xl">
+                    <div className="absolute bottom-11 right-0 z-40 grid w-56 grid-cols-8 gap-1 rounded-xl border border-[var(--line)] bg-[var(--bg)] p-2 shadow-xl">
                       {EMOJI_CHOICES.map((e) => (
                         <button key={e} type="button"
-                          className="rounded p-1 text-base leading-none transition-colors hover:bg-white/10"
+                          className="rounded p-1 text-base leading-none transition-colors hover:bg-[var(--bg-2)]"
                           onClick={() => { setDraft((d) => `${d}${e}`); setEmojiOpen(false) }}>
                           {e}
                         </button>
@@ -448,7 +448,7 @@ export default function CommunityClient() {
                   )}
                 </div>
                 <button onClick={() => void handleSend()} disabled={sending || (!draft.trim() && loggedIn)}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-black transition-colors hover:bg-amber-400 disabled:opacity-50"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)] text-[var(--accent-ink)] transition-colors hover:brightness-105 disabled:opacity-50"
                   aria-label="Send">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                     strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -463,23 +463,23 @@ export default function CommunityClient() {
 
         {/* ── Right rail ── */}
         <div className="flex flex-col gap-4">
-          <div className="rounded-xl border border-forge-border bg-forge-card p-4">
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-4">
             <RailHeader>About Forge AI</RailHeader>
             <div className="mt-3 flex items-start gap-3">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/forge-mascot-sm.png" alt="Forge" className="h-10 w-10 shrink-0 rounded-lg bg-black" />
-              <p className="text-xs leading-relaxed text-gray-300">
+              <img src="/forge-mascot-sm.png" alt="Forge" className="h-10 w-10 shrink-0 rounded-lg bg-[var(--av)]" />
+              <p className="text-xs leading-relaxed text-[var(--muted)]">
                 Forge is your AI-powered guide. Sharing trade ideas, market news, and insights throughout the day.
               </p>
             </div>
-            <a href="mailto:support@ironforge.trade?subject=About%20Forge%20AI" className="mt-3 inline-block text-xs font-medium text-amber-500 hover:text-amber-400">
+            <a href="mailto:support@ironforge.trade?subject=About%20Forge%20AI" className="mt-3 inline-block text-xs font-medium text-[var(--accent)] hover:opacity-80">
               Learn More →
             </a>
           </div>
 
-          <div className="rounded-xl border border-forge-border bg-forge-card p-4">
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-4">
             <RailHeader>Community Standards</RailHeader>
-            <p className="mt-1.5 text-xs text-gray-500">Keep our community strong.</p>
+            <p className="mt-1.5 text-xs text-[var(--muted)]">Keep our community strong.</p>
             <div className="mt-3 space-y-2.5">
               {[
                 'Be respectful and professional',
@@ -489,16 +489,16 @@ export default function CommunityClient() {
               ].map((rule) => (
                 <div key={rule} className="flex items-start gap-2">
                   <GreenCheck />
-                  <span className="text-xs text-gray-200">{rule}</span>
+                  <span className="text-xs text-[var(--fg)]">{rule}</span>
                 </div>
               ))}
             </div>
-            <a href="/terms" className="mt-3 inline-block text-xs font-medium text-amber-500 hover:text-amber-400">
+            <a href="/terms" className="mt-3 inline-block text-xs font-medium text-[var(--accent)] hover:opacity-80">
               View Full Guidelines
             </a>
           </div>
 
-          <div className="rounded-xl border border-forge-border bg-forge-card p-4">
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-4">
             <RailHeader>Online Members {feed ? `(${feed.online_count.toLocaleString()})` : ''}</RailHeader>
             <div className="mt-3 space-y-2.5">
               {feed && feed.members.length > 0 ? (
@@ -507,37 +507,37 @@ export default function CommunityClient() {
                     <div className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-semibold ${avatarStyle(m.name)}`}>
                       {initialsOf(m.name)}
                     </div>
-                    <span className="text-xs text-gray-200">
+                    <span className="text-xs text-[var(--fg)]">
                       {m.name}{m.you ? ' (You)' : ''}
                     </span>
                   </div>
                 ))
               ) : (
-                <div className="text-xs text-gray-500">No members online right now.</div>
+                <div className="text-xs text-[var(--muted)]">No members online right now.</div>
               )}
             </div>
             {feed && feed.members.length > 6 && (
               <button type="button" onClick={() => setShowAllMembers((v) => !v)}
-                className="mt-3 text-xs font-medium text-amber-500 transition-colors hover:text-amber-400">
+                className="mt-3 text-xs font-medium text-[var(--accent)] transition-colors hover:opacity-80">
                 {showAllMembers ? 'Show fewer' : `View All Members (${feed.members.length})`}
               </button>
             )}
           </div>
 
-          <div className="rounded-xl border border-forge-border bg-forge-card p-4">
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-4">
             <div className="flex items-center gap-2">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-                strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-amber-500">
+                strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-[var(--accent)]">
                 <path d="M3 11h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5zm18 0h-3a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-5z" />
                 <path d="M3 11v-1a9 9 0 0 1 18 0v1" />
               </svg>
               <RailHeader>Need Support?</RailHeader>
             </div>
-            <p className="mt-2 text-xs leading-relaxed text-gray-400">
+            <p className="mt-2 text-xs leading-relaxed text-[var(--muted)]">
               Forge can help with most questions. For anything else, our team is here.
             </p>
             <a href="mailto:support@ironforge.trade"
-              className="mt-3 flex items-center justify-center gap-2 rounded-lg border border-amber-500 px-3 py-2 text-xs font-medium text-amber-500 transition-colors hover:bg-amber-500/10">
+              className="mt-3 flex items-center justify-center gap-2 rounded-lg border border-[var(--accent)] px-3 py-2 text-xs font-medium text-[var(--accent)] transition-colors hover:bg-[var(--accent)]/10">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
                 strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
                 <rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-10 6L2 7" />

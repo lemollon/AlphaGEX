@@ -72,7 +72,7 @@ export default function LiveClient({ account }: { account: LiveBot }) {
   const accent = accentFor(account)
 
   const ledgerSwitch = showLedgerSwitch ? (
-    <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
+    <div className="flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--bg-2)] p-1">
       {(['live', 'paper'] as const).map((m) => (
         <button
           key={m}
@@ -81,8 +81,8 @@ export default function LiveClient({ account }: { account: LiveBot }) {
           aria-pressed={ledger === m}
           className={
             ledger === m
-              ? 'rounded-md bg-white/15 px-3 py-1 text-xs font-semibold text-white'
-              : 'rounded-md px-3 py-1 text-xs text-gray-400 transition-colors hover:text-white'
+              ? 'rounded-md bg-[var(--bg)] px-3 py-1 text-xs font-semibold text-[var(--fg)]'
+              : 'rounded-md px-3 py-1 text-xs text-[var(--muted)] transition-colors hover:text-[var(--fg)]'
           }
         >
           {m === 'live' ? 'Live account' : 'Paper $2,000'}
@@ -125,7 +125,7 @@ export default function LiveClient({ account }: { account: LiveBot }) {
           {ledgerSwitch && (
             <div className="mt-4 flex flex-wrap items-center gap-3">
               {ledgerSwitch}
-              <span className="text-xs text-gray-500">
+              <span className="text-xs text-[var(--muted)]">
                 {ledger === 'live'
                   ? 'Real brokerage account. Balance and positions come from Tradier.'
                   : 'Simulated $2,000 book. No real orders, no real money.'}
@@ -135,11 +135,11 @@ export default function LiveClient({ account }: { account: LiveBot }) {
           {/* Billing needs attention (audit M11): a failed payment previously produced
               NO customer-facing state anywhere in the workspace. */}
           {summary?.membership?.badge === 'Payment due' && (
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-600/40 bg-amber-950/25 px-4 py-3">
-              <p className="text-sm text-amber-200">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--warn)]/40 bg-[var(--warn-soft)] px-4 py-3">
+              <p className="text-sm text-[var(--warn)]">
                 Your last payment didn’t go through. Update your card to keep {LIVE_BOT_LABEL[account]} running.
               </p>
-              <a href="/account/billing" className="rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-amber-400">
+              <a href="/account/billing" className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-[var(--accent-ink)] transition hover:brightness-105">
                 Update payment
               </a>
             </div>
@@ -152,7 +152,7 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                state: authorized, waiting, account provisioning in progress. */
             <div className="mt-4 flex flex-col gap-4">
               <ActivationConfirmationCard confirmation={summary.activation_confirmation} />
-              <div className="rounded-xl border border-forge-border bg-forge-card/60 p-5 text-sm leading-relaxed text-gray-400">
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--bg-2)] p-5 text-sm leading-relaxed text-[var(--muted)]">
                 Your dashboard is being provisioned — live trade data appears here once your account
                 is fully linked. Nothing is required from you.
               </div>
@@ -172,8 +172,8 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                /live/{bot}/open; this was the one that didn't. */
             <div className="mt-4">
               <div className="text-center">
-                <h2 className="font-display text-2xl tracking-wide text-white">Put a bot to work</h2>
-                <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-gray-400">
+                <h2 className="font-display text-2xl tracking-wide text-[var(--fg)]">Put a bot to work</h2>
+                <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-[var(--muted)]">
                   Start a dedicated account for a strategy and it trades the same disciplined
                   rules every session.
                 </p>
@@ -191,14 +191,14 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                     <img src={c.mascot} alt="" className="h-14 w-14 shrink-0" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-base font-bold text-white">{c.name}</span>
+                        <span className="text-base font-bold text-[var(--fg)]">{c.name}</span>
                         <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${c.pillClass}`}>
                           {c.pill}
                         </span>
                       </div>
-                      <p className="mt-0.5 text-sm text-gray-400">{c.tagline}</p>
+                      <p className="mt-0.5 text-sm text-[var(--muted)]">{c.tagline}</p>
                     </div>
-                    <span className={`shrink-0 rounded-md px-4 py-2 text-sm font-semibold text-white transition ${c.btnClass}`}>
+                    <span className={`shrink-0 rounded-md px-4 py-2 text-sm font-semibold text-[var(--fg)] transition ${c.btnClass}`}>
                       {signedIn ? 'Open Account' : 'Sign up'}
                     </span>
                   </a>
@@ -206,7 +206,7 @@ export default function LiveClient({ account }: { account: LiveBot }) {
               </div>
             </div>
           ) : summaryError && !summary ? (
-            <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-6 text-sm text-gray-400">
+            <div className="mt-4 rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-6 text-sm text-[var(--muted)]">
               Live data is temporarily unavailable. We&apos;re on it — try refreshing in a moment.
             </div>
           ) : !summary ? (
@@ -218,12 +218,12 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                render. Skeletons carry no digits, so no figure is ever implied either. */
             <div className="mt-4 flex flex-col gap-4" aria-busy="true" aria-live="polite">
               <span className="sr-only">Loading your account…</span>
-              <div className="h-[104px] animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
+              <div className="h-[104px] animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--bg-2)]" />
               <div className="grid gap-4 lg:grid-cols-[11fr_9fr]">
-                <div className="h-[320px] animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
-                <div className="h-[320px] animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
+                <div className="h-[320px] animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--bg-2)]" />
+                <div className="h-[320px] animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--bg-2)]" />
               </div>
-              <div className="h-[132px] animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
+              <div className="h-[132px] animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--bg-2)]" />
             </div>
           ) : (
             <div className="mt-4 flex flex-col gap-4">
@@ -236,7 +236,7 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                   <span className="mt-px rounded bg-flame/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-flame">
                     Paper
                   </span>
-                  <p className="text-sm leading-relaxed text-gray-300">
+                  <p className="text-sm leading-relaxed text-[var(--muted)]">
                     {summary.account.disclosure}
                   </p>
                 </div>

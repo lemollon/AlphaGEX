@@ -39,23 +39,23 @@ export default function SettingsClient() {
 
   return (
     <CustomerShell membership={summary?.membership ?? null} maxWidthClass="max-w-[860px]">
-      <h1 className="text-2xl font-bold text-white">Settings</h1>
-      <p className="mt-1 text-sm text-gray-400">Account management — membership, brokerages, and security.</p>
+      <h1 className="text-2xl font-bold text-[var(--fg)]">Settings</h1>
+      <p className="mt-1 text-sm text-[var(--muted)]">Account management — membership, brokerages, and security.</p>
 
       <div className="mt-5 space-y-3">
         {SECTIONS.map((s) => (
           <Link key={s.href} href={s.href}
-            className="flex items-center gap-4 rounded-xl border border-forge-border bg-forge-card/80 p-5 transition hover:border-white/25">
+            className="flex items-center gap-4 rounded-xl border border-[var(--line)] bg-[var(--bg)] p-5 transition hover:border-[var(--line-2)]">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-              className="h-6 w-6 shrink-0 text-amber-500" aria-hidden="true">
+              className="h-6 w-6 shrink-0 text-[var(--accent)]" aria-hidden="true">
               <path d={s.icon} strokeLinecap="round" strokeLinejoin="round" />
             </svg>
             <span className="min-w-0">
-              <span className="block text-sm font-semibold text-white">{s.title}</span>
-              <span className="mt-0.5 block text-xs text-gray-400">{s.blurb}</span>
+              <span className="block text-sm font-semibold text-[var(--fg)]">{s.title}</span>
+              <span className="mt-0.5 block text-xs text-[var(--muted)]">{s.blurb}</span>
             </span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-              className="ml-auto h-4 w-4 shrink-0 text-gray-600" aria-hidden="true">
+              className="ml-auto h-4 w-4 shrink-0 text-[var(--muted)]" aria-hidden="true">
               <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </Link>

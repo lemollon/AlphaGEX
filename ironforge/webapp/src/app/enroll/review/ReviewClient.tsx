@@ -171,57 +171,51 @@ export default function ReviewClient() {
       headline="Review. Authorize. Go live."
       subline="Confirm your setup and activate automated trading."
       maxWidthClass="max-w-3xl"
+      step="review"
+      enrollment={enrollment}
     >
-      <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-6 lg:p-8">
-        <h2 className="text-2xl font-bold text-white">Review and activate</h2>
-        <p className="mt-1 text-sm text-gray-400">Confirm your configuration before enabling automated execution.</p>
-
-        {error ? (
-          <p className="mt-4 rounded-md border border-red-700/40 bg-red-950/30 px-3 py-2 text-sm text-red-300">{error}</p>
-        ) : null}
+        {error ? <p className="err" style={{ marginBottom: 14 }}>{error}</p> : null}
         {staleNotice ? (
-          <p className="mt-4 rounded-md border border-amber-500/40 bg-amber-950/30 px-3 py-2 text-sm text-amber-300">
+          <p className="help" style={{ marginBottom: 14, color: 'var(--warn)' }}>
             Something changed while you were reviewing — the summary below has been refreshed. Please review it again.
           </p>
         ) : null}
 
-        {!preview && !error ? (
-          <div className="mt-6 h-80 animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
-        ) : null}
+        {!preview && !error ? <div className="card pad" style={{ height: 320 }} /> : null}
 
         {preview ? (
           <>
             {/* Checks banner */}
             {visibleBlockers.length === 0 ? (
-              <p
-                className={`mt-5 flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm text-gray-200 ${
-                  isSpark ? 'border-spark/40' : isEmber ? '' : 'border-amber-500/40'
-                }`}
-                style={isEmber ? { borderColor: `${EMBER_AGENT.accent}66` } : undefined}
-              >
+              <p className="check-row ok" style={{ marginTop: 20 }}>
                 <span
                   aria-hidden
-                  className={`h-2 w-2 rounded-full ${isSpark ? 'bg-spark' : isEmber ? '' : 'bg-amber-500'}`}
-                  style={isEmber ? { backgroundColor: EMBER_AGENT.accent } : undefined}
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    display: 'inline-block',
+                    background: isSpark ? 'var(--spark)' : isEmber ? EMBER_AGENT.accent : 'var(--flame)',
+                  }}
                 />
                 All required checks passed
               </p>
             ) : (
-              <div className="mt-5 rounded-lg border border-red-700/40 bg-red-950/20 p-4">
-                <p className="text-sm font-semibold text-red-300">Before you can activate:</p>
-                <ul className="mt-2 space-y-1.5">
+              <div className="check-row bad" style={{ display: 'block', marginTop: 20 }}>
+                <p style={{ fontWeight: 600 }}>Before you can activate:</p>
+                <ul style={{ marginTop: 8, display: 'grid', gap: 6 }}>
                   {visibleBlockers.map((b) => (
-                    <li key={b.code} className="flex flex-wrap items-baseline gap-2 text-sm text-gray-300">
+                    <li key={b.code} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline' }}>
                       <span>{b.message}</span>
                       {b.remediable && BLOCKER_ROUTE[b.code] ? (
-                        <Link href={BLOCKER_ROUTE[b.code]} className="text-xs font-semibold text-amber-500 hover:text-amber-400">
+                        <Link href={BLOCKER_ROUTE[b.code]} className="link" style={{ fontSize: '.78rem' }}>
                           Fix this →
                         </Link>
                       ) : !b.remediable ? (
                         /* Non-remediable (e.g. KILL_SWITCH_ENGAGED, a platform pause):
                            there's no self-service fix, but a dead end with no next
                            action is worse (audit M12). Point to support. */
-                        <a href="/support" className="text-xs font-semibold text-amber-500 hover:text-amber-400">
+                        <a href="/support" className="link" style={{ fontSize: '.78rem' }}>
                           Contact support →
                         </a>
                       ) : null}
@@ -231,43 +225,32 @@ export default function ReviewClient() {
               </div>
             )}
 
-            <div className="mt-5 grid gap-5 md:grid-cols-2">
+            <div className="row2" style={{ marginTop: 20 }}>
               {/* Trading setup */}
-              <div className="rounded-xl border border-forge-border bg-black/20 p-5">
-                <h3 className="text-sm font-bold text-white">Trading setup</h3>
-                <dl className="mt-3 space-y-2.5 text-sm">
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-gray-500">Membership</dt>
-                    <dd className="text-gray-200">{isEmber ? 'Ember (free)' : 'Forge Automate'}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-gray-500">Agent</dt>
+              <div className="card pad">
+                <h3>Trading setup</h3>
+                <dl className="rv" style={{ marginTop: 10, gap: 10, display: 'grid' }}>
+                  <div className="sum-row"><dt>Membership</dt><dd>{isEmber ? 'Ember (free)' : 'Forge Automate'}</dd></div>
+                  <div className="sum-row">
+                    <dt>Agent</dt>
                     <dd>
                       <span
-                        className={`rounded-md px-2 py-0.5 text-xs font-bold text-black ${
-                          isSpark ? 'bg-spark' : isEmber ? '' : 'bg-amber-500'
-                        }`}
-                        style={isEmber ? { backgroundColor: EMBER_AGENT.accent, color: '#fff' } : undefined}
+                        className="badge"
+                        style={{
+                          backgroundColor: isSpark ? 'var(--spark)' : isEmber ? EMBER_AGENT.accent : 'var(--flame)',
+                          color: '#fff',
+                        }}
                       >
                         {agentName}
                       </span>
                     </dd>
                   </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-gray-500">Strategy</dt>
-                    <dd className="text-gray-200">Rules-based iron condor</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-gray-500">Brokerage account</dt>
-                    <dd className="font-mono text-gray-200">{preview.snapshot.account_mask || '—'}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-gray-500">Account eligibility</dt>
-                    <dd className="text-emerald-400">✓ Options enabled</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-gray-500">Maximum capital deployment</dt>
-                    <dd className="text-right text-gray-200">
+                  <div className="sum-row"><dt>Strategy</dt><dd>Rules-based iron condor</dd></div>
+                  <div className="sum-row"><dt>Brokerage account</dt><dd className="mono">{preview.snapshot.account_mask || '—'}</dd></div>
+                  <div className="sum-row"><dt>Account eligibility</dt><dd style={{ color: 'var(--up)' }}>✓ Options enabled</dd></div>
+                  <div className="sum-row">
+                    <dt>Maximum capital deployment</dt>
+                    <dd className="num">
                       {pct != null ? `${pct}% · ` : ''}
                       {usd(preview.snapshot.max_deployment_cents)}
                     </dd>
@@ -276,31 +259,19 @@ export default function ReviewClient() {
               </div>
 
               {/* Trial & billing */}
-              <div className="rounded-xl border border-forge-border bg-black/20 p-5">
-                <h3 className="text-sm font-bold text-white">Trial &amp; billing</h3>
-                <dl className="mt-3 space-y-2.5 text-sm">
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-gray-500">Due today</dt>
-                    <dd className="text-gray-200">$0.00</dd>
-                  </div>
+              <div className="card pad">
+                <h3>Trial &amp; billing</h3>
+                <dl className="rv" style={{ marginTop: 10, gap: 10, display: 'grid' }}>
+                  <div className="sum-row"><dt>Due today</dt><dd>$0.00</dd></div>
                   {isEmber ? (
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-gray-500">Free trial</dt>
-                      <dd className="text-gray-200">Always free</dd>
-                    </div>
+                    <div className="sum-row"><dt>Free trial</dt><dd>Always free</dd></div>
                   ) : (
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-gray-500">Free trial</dt>
-                      <dd className="text-gray-200">{preview.snapshot.trial.eligible_days_total} eligible trading days</dd>
-                    </div>
+                    <div className="sum-row"><dt>Free trial</dt><dd>{preview.snapshot.trial.eligible_days_total} eligible trading days</dd></div>
                   )}
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-gray-500">Trial begins</dt>
-                    <dd className="text-gray-200">When trading is activated</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-gray-500">After trial</dt>
-                    <dd className="text-gray-200">
+                  <div className="sum-row"><dt>Trial begins</dt><dd>When trading is activated</dd></div>
+                  <div className="sum-row">
+                    <dt>After trial</dt>
+                    <dd>
                       {isEmber
                         ? 'Free · no card needed'
                         : preview.snapshot.plan
@@ -308,16 +279,17 @@ export default function ReviewClient() {
                           : '—'}
                     </dd>
                   </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-gray-500">Membership</dt>
-                    <dd className="text-gray-200">{isEmber ? 'One Ember account, $500–$2,000 capital' : 'Cancel anytime'}</dd>
-                  </div>
+                  <div className="sum-row"><dt>Membership</dt><dd>{isEmber ? 'One Ember account, $500–$2,000 capital' : 'Cancel anytime'}</dd></div>
                 </dl>
                 <p
-                  className={`mt-4 rounded-lg border px-3 py-2.5 text-xs leading-relaxed ${
-                    isSpark ? 'border-spark/50 text-spark' : isEmber ? '' : 'border-amber-500/50 text-amber-500'
-                  }`}
-                  style={isEmber ? { borderColor: `${EMBER_AGENT.accent}80`, color: EMBER_AGENT.accent } : undefined}
+                  className="help"
+                  style={{
+                    marginTop: 14,
+                    padding: '10px 12px',
+                    borderRadius: 'var(--r-sm)',
+                    background: 'var(--bg-2)',
+                    color: isSpark ? 'var(--spark)' : isEmber ? EMBER_AGENT.accent : 'var(--flame)',
+                  }}
                 >
                   Activation authorizes IronForge to submit and manage orders under the selected {agentName}{' '}
                   configuration.
@@ -326,24 +298,24 @@ export default function ReviewClient() {
             </div>
 
             {/* Acknowledgments */}
-            <div className="mt-5 space-y-3">
-              <label className="flex items-start gap-3 text-sm text-gray-200">
+            <div className="stack" style={{ marginTop: 20 }}>
+              <label className="field" style={{ gridTemplateColumns: '18px 1fr', display: 'grid', alignItems: 'start' }}>
                 <input
                   type="checkbox"
                   checked={riskAck}
                   onChange={(e) => setRiskAck(e.target.checked)}
-                  className="mt-1 h-4 w-4 shrink-0 accent-amber-500"
+                  style={{ width: 16, height: 16, marginTop: 2 }}
                 />
-                I understand automated options trading involves substantial risk.
+                <span style={{ fontWeight: 400 }}>I understand automated options trading involves substantial risk.</span>
               </label>
-              <label className="flex items-start gap-3 text-sm text-gray-200">
+              <label className="field" style={{ gridTemplateColumns: '18px 1fr', display: 'grid', alignItems: 'start' }}>
                 <input
                   type="checkbox"
                   checked={authAck}
                   onChange={(e) => setAuthAck(e.target.checked)}
-                  className="mt-1 h-4 w-4 shrink-0 accent-amber-500"
+                  style={{ width: 16, height: 16, marginTop: 2 }}
                 />
-                I authorize IronForge to submit and manage orders using this configuration.
+                <span style={{ fontWeight: 400 }}>I authorize IronForge to submit and manage orders using this configuration.</span>
               </label>
             </div>
 
@@ -351,24 +323,26 @@ export default function ReviewClient() {
               type="button"
               disabled={!canActivate}
               onClick={activate}
-              className={`mt-6 w-full rounded-lg px-5 py-3 text-sm font-semibold text-black transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                isSpark ? 'bg-spark hover:bg-spark-dark' : isEmber ? '' : 'bg-amber-500 hover:bg-amber-400'
-              }`}
-              style={isEmber ? { backgroundColor: EMBER_AGENT.accent } : undefined}
+              className="btn btn-block btn-lg"
+              style={{
+                marginTop: 24,
+                backgroundColor: isSpark ? 'var(--spark)' : isEmber ? EMBER_AGENT.accent : 'var(--flame)',
+                borderColor: isSpark ? 'var(--spark)' : isEmber ? EMBER_AGENT.accent : 'var(--flame)',
+                color: '#fff',
+              }}
             >
               {busy ? 'Activating…' : `Activate ${agentName}`}
             </button>
-            <p className="mt-2 text-center text-xs text-gray-500">
+            <p className="help" style={{ marginTop: 10, textAlign: 'center' }}>
               Trading will begin only when {agentName} identifies an eligible opportunity. You can pause automation at
               any time.
             </p>
 
-            <Link href="/enroll/agent" className="mt-5 inline-block text-sm text-gray-400 hover:text-white">
-              ← Back to agent selection
-            </Link>
+            <div className="nav-row">
+              <Link href="/enroll/agent" className="btn">← Back to agent selection</Link>
+            </div>
           </>
         ) : null}
-      </div>
     </EnrollShell>
   )
 }

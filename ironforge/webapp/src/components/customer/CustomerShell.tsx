@@ -111,28 +111,28 @@ function PlanCard({ membership, variant }: { membership: PlanCardData | null; va
   const plan = membership?.plan ?? 'No membership'
 
   return (
-    <div className={`rounded-xl border bg-forge-card p-3.5 ${none ? 'border-forge-border' : 'border-amber-900/40'}`}>
+    <div className={`rounded-xl border bg-[var(--bg)] p-3.5 ${none ? 'border-[var(--line)]' : 'border-[var(--accent-soft)]'}`}>
       <div className="flex items-start gap-2.5">
-        <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${none ? 'text-gray-500' : 'text-amber-500'}`}
+        <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${none ? 'text-[var(--muted)]' : 'text-[var(--accent)]'}`}
           d="M12 2l8 3v6c0 5.25-3.4 9.74-8 11-4.6-1.26-8-5.75-8-11V5z" />
         <div>
-          <div className={`font-display text-base leading-tight ${none ? 'text-gray-300' : 'text-amber-500'}`}>{plan}</div>
+          <div className={`font-display text-base leading-tight ${none ? 'text-[var(--muted)]' : 'text-[var(--accent)]'}`}>{plan}</div>
           {none ? (
-            <a href="/account/billing" className="text-xs text-amber-500 hover:text-amber-400">
+            <a href="/account/billing" className="text-xs text-[var(--accent)] hover:opacity-80">
               Choose a plan
             </a>
           ) : variant === 'trial' && trial ? (
-            <div className="text-xs text-gray-500">{trial.label}</div>
+            <div className="text-xs text-[var(--muted)]">{trial.label}</div>
           ) : membership.badge === 'Payment due' ? (
             /* Audit M11: this used to render as a GREEN CHECK — "✓ Payment due" in
                emerald — the exact state that needs attention dressed as success.
                Amber warning + a direct path to fix the card. */
-            <a href="/account/billing" className="flex items-center gap-1 text-xs font-semibold text-amber-500 hover:text-amber-400">
+            <a href="/account/billing" className="flex items-center gap-1 text-xs font-semibold text-[var(--accent)] hover:opacity-80">
               <Icon className="h-3.5 w-3.5" d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
               Payment due — update card
             </a>
           ) : (
-            <div className="flex items-center gap-1 text-xs text-emerald-500">
+            <div className="flex items-center gap-1 text-xs text-[var(--up)]">
               <Icon className="h-3.5 w-3.5" d="M20 6 9 17l-5-5" />
               {membership.badge ?? 'Active'}
             </div>
@@ -141,11 +141,11 @@ function PlanCard({ membership, variant }: { membership: PlanCardData | null; va
       </div>
       {variant === 'trial' && trial && (
         <div className="mt-3">
-          <div className="text-xs text-gray-200">Trial Day {trial.day} of {trial.total_days}</div>
+          <div className="text-xs text-[var(--fg)]">Trial Day {trial.day} of {trial.total_days}</div>
           <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-forge-border">
-            <div className="h-full rounded-full bg-amber-500" style={{ width: `${pct}%` }} />
+            <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${pct}%` }} />
           </div>
-          <div className="mt-1.5 text-[11px] text-gray-500">{trial.ends_label}</div>
+          <div className="mt-1.5 text-[11px] text-[var(--muted)]">{trial.ends_label}</div>
         </div>
       )}
     </div>
@@ -197,8 +197,8 @@ function AgentNavItems({ onNavigate }: { onNavigate?: () => void }) {
             aria-current={active ? 'page' : undefined}
             className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
               active
-                ? `border-l-2 border-amber-500 bg-amber-500/10 font-medium ${accent}`
-                : 'border-l-2 border-transparent text-gray-400 hover:text-white'
+                ? `border-l-2 border-[var(--accent)] bg-[var(--accent)]/10 font-medium ${accent}`
+                : 'border-l-2 border-transparent text-[var(--muted)] hover:text-[var(--fg)]'
             }`}>
             {strategyGlyph(accent)}
             <span>{LIVE_BOT_LABEL[b]}</span>
@@ -231,11 +231,11 @@ function EmberNavItem({ onNavigate }: { onNavigate?: () => void }) {
       aria-current={active ? 'page' : undefined}
       className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
         active
-          ? 'border-l-2 bg-black/20 font-medium'
-          : 'border-l-2 border-transparent text-gray-400 hover:text-white'
+          ? 'border-l-2 bg-[var(--bg-2)] font-medium'
+          : 'border-l-2 border-transparent text-[var(--muted)] hover:text-[var(--fg)]'
       }`}
       style={active ? { borderColor: EMBER_AGENT.accent, color: EMBER_AGENT.accent } : undefined}>
-      {strategyGlyph('text-gray-400')}
+      {strategyGlyph('text-[var(--muted)]')}
       <span>{EMBER_AGENT.name}</span>
       <span className="ml-auto rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-wider"
         style={{ backgroundColor: `${EMBER_AGENT.accent}26`, color: EMBER_AGENT.accent }}>Active</span>
@@ -263,8 +263,8 @@ function NavItems({ onNavigate, strategy }: { onNavigate?: () => void; strategy?
       <Link key={item.label} href={item.href} onClick={onNavigate}
         className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
           active
-            ? 'border-l-2 border-amber-500 bg-amber-500/10 font-medium text-amber-500'
-            : 'border-l-2 border-transparent text-gray-400 hover:text-white'
+            ? 'border-l-2 border-[var(--accent)] bg-[var(--accent)]/10 font-medium text-[var(--accent)]'
+            : 'border-l-2 border-transparent text-[var(--muted)] hover:text-[var(--fg)]'
         }`}>
         <Icon d={item.icon} />
         <span>{item.label}</span>
@@ -278,7 +278,7 @@ function NavItems({ onNavigate, strategy }: { onNavigate?: () => void; strategy?
           surface — /spark 404s there and operator chrome shouldn't reach customers. */}
       {isOperator && servesPath(surface, '/spark') ? (
         <Link href="/spark" onClick={onNavigate}
-          className="flex items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm font-semibold text-amber-500 transition-colors hover:text-amber-400">
+          className="flex items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm font-semibold text-[var(--accent)] transition-colors hover:opacity-80">
           <Icon d={ICONS.ops} />
           <span>Ops</span>
         </Link>
@@ -293,11 +293,11 @@ function NavItems({ onNavigate, strategy }: { onNavigate?: () => void; strategy?
           renderItem(item)
         ),
       )}
-      <div className="mx-4 my-3 border-t border-forge-border" />
+      <div className="mx-4 my-3 border-t border-[var(--line)]" />
       {filterNavBySurface(NAV_SECONDARY, surface).map(renderItem)}
-      <div className="mx-4 my-3 border-t border-forge-border" />
+      <div className="mx-4 my-3 border-t border-[var(--line)]" />
       <button onClick={handleLogout}
-        className="flex w-full items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm text-gray-400 transition-colors hover:text-white">
+        className="flex w-full items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm text-[var(--muted)] transition-colors hover:text-[var(--fg)]">
         <Icon d={ICONS.logout} />
         <span>Log Out</span>
       </button>
@@ -332,10 +332,10 @@ export function MobileNavDrawer({
   return (
     <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation menu">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} aria-hidden />
-      <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-forge-border bg-forge-bg">
+      <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-[var(--line)] bg-[var(--bg)]">
         <div className="flex items-center justify-between px-4 py-4">
           <LogoLockup />
-          <button onClick={onClose} className="p-1 text-gray-400 transition-colors hover:text-white" aria-label="Close menu">
+          <button onClick={onClose} className="p-1 text-[var(--muted)] transition-colors hover:text-[var(--fg)]" aria-label="Close menu">
             <Icon className="h-5 w-5" d={ICONS.close} />
           </button>
         </div>
@@ -369,10 +369,10 @@ export default function CustomerShell({
   const strategy: StrategyNav = { bots, activeBot, paperBots, onSwitch }
 
   return (
-    <div className="min-h-screen bg-forge-bg">
+    <div className="if-dash min-h-screen bg-[var(--bg)]">
       {/* Mobile top bar — hamburger on the LEFT, then wordmark (consistent everywhere). */}
-      <div className="flex items-center gap-4 border-b border-forge-border bg-forge-bg px-4 py-3 lg:hidden">
-        <button onClick={() => setMenuOpen(true)} className="-ml-1 p-1 text-gray-300 transition-colors hover:text-white" aria-label="Open menu">
+      <div className="flex items-center gap-4 border-b border-[var(--line)] bg-[var(--bg)] px-4 py-3 lg:hidden">
+        <button onClick={() => setMenuOpen(true)} className="-ml-1 p-1 text-[var(--muted)] transition-colors hover:text-[var(--fg)]" aria-label="Open menu">
           <Icon className="h-6 w-6" d={ICONS.menu} />
         </button>
         <Link href="/"><Wordmark markClass="h-6 w-auto" textClass="text-lg" /></Link>
@@ -382,7 +382,7 @@ export default function CustomerShell({
 
       {/* Desktop rail — the whole column scrolls; the plan card sits at the bottom
           (mt-auto) but is never clipped on short viewports. */}
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col overflow-y-auto border-r border-forge-border bg-forge-bg lg:flex">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col overflow-y-auto border-r border-[var(--line)] bg-[var(--bg)] lg:flex">
         <div className="shrink-0 px-4 py-5"><LogoLockup /></div>
         <nav className="shrink-0 space-y-0.5 pb-4">
           <NavItems strategy={strategy} />
