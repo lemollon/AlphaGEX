@@ -3,7 +3,7 @@ import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isCustomersDbConfigured } from '@/lib/customers-db'
 import { getEnrollmentForUser, setEnrollmentPlan, legalRequirementsFor } from '@/lib/enrollment/service'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
-import { BOT_PLANS, COMMUNITY_PLAN, BOTH_PLAN } from '@/lib/billing/plans'
+import { BOT_PLANS, COMMUNITY_PLAN } from '@/lib/billing/plans'
 import { isEnrollmentClosed, enrollmentClosedResponse } from '@/lib/enrollment-mode'
 
 export const runtime = 'nodejs'
@@ -14,11 +14,15 @@ export const dynamic = 'force-dynamic'
  * 'automate' is the PLAN-01 family value — persisted before an agent is chosen; the
  * agent choice becomes agent_configs.agent_code at AGENT-01 and is never a second plan
  * PUT (setEnrollmentPlan rewinds the funnel to legal by design).
+ *
+ * 'both' removed 2026-10-04 (Leron, binding): no bundle plan for NEW enrollments —
+ * Spark and Flame are bought as two separate subscriptions. 'ember' added the same
+ * day: free, 1 account per person, $500–$2,000 trading capital, no billing step.
  */
 const VALID_PLANS = new Set<string>([
   COMMUNITY_PLAN.key,
   ...Object.keys(BOT_PLANS),
-  'both',
+  'ember',
   'automate',
 ])
 

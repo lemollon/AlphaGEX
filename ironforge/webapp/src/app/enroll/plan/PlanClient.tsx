@@ -2,24 +2,30 @@
 
 import EnrollShell from '../EnrollShell'
 import { useEnrollment } from '../useEnrollment'
-import { COMMUNITY_PLAN, BOT_PLANS, BOTH_PLAN } from '@/lib/billing/plans'
+import { COMMUNITY_PLAN, BOT_PLANS } from '@/lib/billing/plans'
+import { EMBER_AGENT } from '@/lib/agents/ember'
 
 /**
  * PLAN-01 — Choose your plan.
  *
- * Four direct tiles: Community, Spark, Flame, Both agents — the same four options
- * mobile's app/enroll/plan.tsx has always shown. Replaces the July 29 two-tile
- * "Forge Automate" design (Leron, 2026-10-04): that design persisted
- * selected_plan='automate' as a family placeholder and deferred the actual
- * bot choice to agent setup, which Apple's In-App Purchase can't do — you pay for
- * a specific product at purchase time, not a deferred-choice family. Web and
+ * Four direct tiles: Community, Spark, Flame, Ember — the real plans this deployment
+ * sells. Replaces the July 29 two-tile "Forge Automate" design (Leron, 2026-10-04):
+ * that design persisted selected_plan='automate' as a family placeholder and deferred
+ * the actual bot choice to agent setup, which Apple's In-App Purchase can't do — you
+ * pay for a specific product at purchase time, not a deferred-choice family. Web and
  * mobile now pick the real plan up front, same as checkout already bills it.
  *
+ * "Both agents" removed 2026-10-04 (Leron, binding) — no bundle plan for new
+ * enrollments. A customer wanting Spark AND Flame runs this flow twice (two separate
+ * $50/mo subscriptions); legacy both_monthly subscribers keep their existing bundle
+ * (see lib/billing/plans.ts BOTH_PLAN, lib/billing/membership.ts resolvePlan).
+ *
  * Prices come from lib/billing/plans.ts, never a frontend constant, so a tile
- * can't quote a number Stripe no longer charges.
+ * can't quote a number Stripe no longer charges. Ember is free and not Stripe-backed —
+ * its price/limits come from lib/agents/ember.ts.
  */
 
-type PlanSlug = 'community' | 'spark' | 'flame' | 'both'
+type PlanSlug = 'community' | 'spark' | 'flame' | 'ember'
 
 interface TileSpec {
   slug: PlanSlug
@@ -27,6 +33,7 @@ interface TileSpec {
   blurb: string
   price: number
   accent: string
+  note?: string
 }
 
 export default function PlanClient() {
@@ -73,11 +80,12 @@ export default function PlanClient() {
       accent: BOT_PLANS.flame.accent,
     },
     {
-      slug: 'both',
-      name: 'Both agents',
-      blurb: 'Spark and Flame together, one bundle price.',
-      price: BOTH_PLAN.priceMonthly,
-      accent: '#F59E0B',
+      slug: 'ember',
+      name: EMBER_AGENT.name,
+      blurb: EMBER_AGENT.blurb,
+      price: EMBER_AGENT.priceMonthly,
+      accent: EMBER_AGENT.accent,
+      note: '$500–$2,000 accounts · one per person',
     },
   ]
 
@@ -113,12 +121,19 @@ export default function PlanClient() {
                 <div>
                   <h3 className="text-lg font-bold text-white">{tile.name}</h3>
                   <p className="mt-1 text-sm text-gray-400">{tile.blurb}</p>
+                  {tile.note ? <p className="mt-1 text-xs text-gray-500">{tile.note}</p> : null}
                 </div>
                 <div className="shrink-0 text-right">
-                  <span className="text-2xl font-bold" style={{ color: tile.accent }}>
-                    ${tile.price}
-                  </span>
-                  <span className="ml-1 text-sm text-gray-500">/mo</span>
+                  {tile.price === 0 ? (
+                    <span className="text-2xl font-bold" style={{ color: tile.accent }}>Free</span>
+                  ) : (
+                    <>
+                      <span className="text-2xl font-bold" style={{ color: tile.accent }}>
+                        ${tile.price}
+                      </span>
+                      <span className="ml-1 text-sm text-gray-500">/mo</span>
+                    </>
+                  )}
                 </div>
               </button>
             ))}

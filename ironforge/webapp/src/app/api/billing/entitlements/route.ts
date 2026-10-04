@@ -6,10 +6,10 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 /**
- * The bots this customer currently has an active/trialing subscription to. Drives the Open Account
- * page's "second bot = +$25 bundle" pricing: if you already own one bot, opening the other shows
- * the bundle increment rather than a full second price. Self-guarded (no session → empty), and
- * degrades to empty when billing isn't provisioned, so the page just shows the normal single price.
+ * The bots (and bot-shaped rows like 'community', 'ember') this customer currently has an
+ * active/trialing subscription to. Drives nav ownership badges and the Open Account page's
+ * "you already run X" copy. Self-guarded (no session → empty), and degrades to empty when
+ * billing isn't provisioned.
  */
 const LIVE_STATUSES = ['trialing', 'active', 'past_due']
 

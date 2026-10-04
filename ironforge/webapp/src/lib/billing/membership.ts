@@ -36,16 +36,23 @@ function badgeFor(status: string): string {
 }
 
 /**
- * One customer can hold several rows (spark, flame, community). What they PAY is not the
- * sum of the catalogue prices: two bots are the $75 bundle, not $50 + $50. So the price
- * is resolved from the set of live bot subscriptions, exactly as checkout resolves it.
+ * One customer can hold several rows (spark, flame, community). What they PAY depends on
+ * HOW the second bot was bought: a legacy both_monthly bundle subscription (one Stripe
+ * sub covering both bots, $75) still exists for customers who bought it before 2026-10-04.
+ * Every NEW second-bot purchase since then is its own full-price subscription — two
+ * separate $50 subs, summing to $100, never the $75 bundle rate (Leron, binding).
  */
 function resolvePlan(rows: SubRow[]): { name: string; priceMonthly: number } {
   const bots = rows.map((r) => r.bot).filter((b): b is BotSlug => b === 'spark' || b === 'flame')
   const hasCommunity = rows.some((r) => r.bot === COMMUNITY_KEY)
+  const isLegacyBundle = rows.some((r) => r.price_lookup_key === BOTH_PLAN.lookupKey)
 
   if (bots.length >= 2) {
-    return { name: 'Forge Automate — Spark + Flame', priceMonthly: BOTH_PLAN.priceMonthly }
+    if (isLegacyBundle) {
+      return { name: 'Forge Automate — Spark + Flame', priceMonthly: BOTH_PLAN.priceMonthly }
+    }
+    const total = bots.reduce((sum, b) => sum + BOT_PLANS[b].priceMonthly, 0)
+    return { name: `Forge Automate — ${bots.map((b) => BOT_PLANS[b].name).join(' + ')}`, priceMonthly: total }
   }
   if (bots.length === 1) {
     const plan = BOT_PLANS[bots[0]]
