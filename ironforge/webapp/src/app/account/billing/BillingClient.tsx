@@ -5,10 +5,11 @@ import Link from 'next/link'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import CustomerShell, { type PlanCardData } from '@/components/customer/CustomerShell'
-import { BOT_PLANS, BOTH_PLAN, COMMUNITY_PLAN, COMMUNITY_KEY, secondBotIncrement } from '@/lib/billing/plans'
+import { BOT_PLANS, COMMUNITY_PLAN, COMMUNITY_KEY } from '@/lib/billing/plans'
 
 interface SummaryResp { membership?: PlanCardData | null }
 interface EntitlementsResp { bots?: string[] }
+interface MembershipResp { membership?: { price_monthly: number } | null }
 
 /**
  * Billing home — the real "Manage Membership" destination (the rail item used to
@@ -19,10 +20,17 @@ interface EntitlementsResp { bots?: string[] }
 export default function BillingClient() {
   const { data: summary } = useSWR<SummaryResp>('/api/live/summary', fetcher, { refreshInterval: 60_000 })
   const { data: entitlements } = useSWR<EntitlementsResp>('/api/billing/entitlements', fetcher, { shouldRetryOnError: false })
+  // Price comes from buildMembershipResponse (lib/billing/membership.ts resolvePlan) —
+  // the ONE place that knows whether two owned bots are a legacy $75 both_monthly
+  // bundle or two separate $50 subscriptions. /api/live/summary's membership object
+  // carries no price; re-deriving it here is exactly how the stale "$75 always" bug
+  // shipped before.
+  const { data: billingMembership } = useSWR<MembershipResp>('/api/billing/membership', fetcher, { shouldRetryOnError: false })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const membership = summary?.membership ?? null
+  const priceMonthly = billingMembership?.membership?.price_monthly ?? null
   const owned = entitlements?.bots ?? []
   // Community is tracked in the same table but is not a trading bot — split it out so it
   // never counts as a "second strategy" (which would misprice the plan as Pro).
@@ -89,7 +97,8 @@ export default function BillingClient() {
             </div>
             {ownedBots.length > 0 && (
               <div className="mt-1 text-xs text-gray-400">
-                {ownedBots.map((b) => BOT_PLANS[b]?.name ?? b).join(' + ')} · {ownedBots.length > 1 ? `$${BOTH_PLAN.priceMonthly}/mo` : `$${BOT_PLANS[ownedBots[0]]?.priceMonthly ?? 50}/mo`}
+                {ownedBots.map((b) => BOT_PLANS[b]?.name ?? b).join(' + ')}
+                {priceMonthly != null ? ` · $${priceMonthly}/mo` : ''}
                 <span className="text-gray-500"> · Community included</span>
               </div>
             )}
@@ -116,9 +125,11 @@ export default function BillingClient() {
         {error && <p className="mt-3 rounded-md border border-red-700/40 bg-red-950/30 px-3 py-2 text-sm text-red-300">{error}</p>}
       </div>
 
-      {/* Add / open a strategy. Pricing ladder (UAT-011): Community only = $10;
-          Community + FIRST agent = an UPGRADE to $50/mo TOTAL (Automate includes
-          Community — never "+$25"); only the SECOND agent is +$25 → $75 total. */}
+      {/* Add / open a strategy. Pricing ladder (UAT-011, revised 2026-10-04): Community
+          only = $10; Community + FIRST agent = an UPGRADE to $50/mo TOTAL (Automate
+          includes Community). A SECOND agent is its OWN full-price $50/mo subscription
+          now — no bundle, no "$25 more" (Leron, binding; legacy both_monthly
+          subscribers keep their existing $75 rate, see lib/billing/membership.ts). */}
       {notOwned.length > 0 && (
         <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-5">
           <div className="text-sm font-semibold text-white">
@@ -126,7 +137,7 @@ export default function BillingClient() {
           </div>
           <p className="mt-0.5 text-xs text-gray-400">
             {ownedBots.length > 0
-              ? `Add the second strategy for +$${secondBotIncrement(ownedBots[0])}/mo — $${BOTH_PLAN.priceMonthly} total.`
+              ? 'A second strategy is its own subscription, billed separately.'
               : communityActive
                 ? `Upgrades your membership to Forge Automate — $${BOT_PLANS.spark.priceMonthly}/mo total, Community included. Starts with a 5-day free trial.`
                 : 'Starts a 5-day free trial — no charge today.'}
@@ -136,9 +147,7 @@ export default function BillingClient() {
               const plan = BOT_PLANS[b]
               const accent = b === 'flame' ? '#EE5A24' : '#3B82F6'
               const label = ownedBots.length > 0 ? `Add ${plan.name}` : communityActive ? `Add ${plan.name}` : `Open ${plan.name}`
-              const price = ownedBots.length > 0
-                ? `+$${secondBotIncrement(ownedBots[0])}/mo`
-                : `$${plan.priceMonthly}/mo total`
+              const price = `$${plan.priceMonthly}/mo`
               return (
                 <Link key={b} href={`/live/${b}/open`}
                   className="flex items-center justify-between gap-3 rounded-lg border border-forge-border bg-forge-bg/50 px-3 py-2.5 transition hover:border-white/25"

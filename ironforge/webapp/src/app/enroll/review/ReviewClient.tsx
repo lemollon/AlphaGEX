@@ -5,6 +5,7 @@ import Link from 'next/link'
 import EnrollShell from '../EnrollShell'
 import { useEnrollment } from '../useEnrollment'
 import { AGENT_CONFIG_KEY } from '../agent/AgentClient'
+import { EMBER_AGENT } from '@/lib/agents/ember'
 
 /**
  * ACT-SPARK-01 / ACT-FLAME-01 — Review and activate (July 29 handoff).
@@ -143,7 +144,16 @@ export default function ReviewClient() {
 
   const agent = preview?.snapshot.agent ?? 'spark'
   const isSpark = agent === 'spark'
-  const agentName = isSpark ? 'Spark' : 'Flame'
+  const isEmber = agent === 'ember'
+  const agentName = isSpark ? 'Spark' : isEmber ? EMBER_AGENT.name : 'Flame'
+  // Color law: Spark = spark token, Flame = brand amber, Ember = the --ember token
+  // (purple), applied inline since Tailwind has no `ember-*` scale (unlike spark/
+  // amber, which are already remapped design tokens — see tailwind.config.ts).
+  const agentAccentStyle = isSpark
+    ? undefined // the `spark-*` Tailwind classes below already cover this case
+    : isEmber
+      ? { color: EMBER_AGENT.accent }
+      : undefined // amber-* Tailwind classes cover Flame
   const pct =
     preview && preview.snapshot.buying_power_cents > 0
       ? Math.round((preview.snapshot.max_deployment_cents / preview.snapshot.buying_power_cents) * 100)
@@ -184,11 +194,16 @@ export default function ReviewClient() {
             {/* Checks banner */}
             {visibleBlockers.length === 0 ? (
               <p
-                className={`mt-5 flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm ${
-                  isSpark ? 'border-spark/40 text-gray-200' : 'border-amber-500/40 text-gray-200'
+                className={`mt-5 flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm text-gray-200 ${
+                  isSpark ? 'border-spark/40' : isEmber ? '' : 'border-amber-500/40'
                 }`}
+                style={isEmber ? { borderColor: `${EMBER_AGENT.accent}66` } : undefined}
               >
-                <span aria-hidden className={`h-2 w-2 rounded-full ${isSpark ? 'bg-spark' : 'bg-amber-500'}`} />
+                <span
+                  aria-hidden
+                  className={`h-2 w-2 rounded-full ${isSpark ? 'bg-spark' : isEmber ? '' : 'bg-amber-500'}`}
+                  style={isEmber ? { backgroundColor: EMBER_AGENT.accent } : undefined}
+                />
                 All required checks passed
               </p>
             ) : (
@@ -223,15 +238,16 @@ export default function ReviewClient() {
                 <dl className="mt-3 space-y-2.5 text-sm">
                   <div className="flex justify-between gap-3">
                     <dt className="text-gray-500">Membership</dt>
-                    <dd className="text-gray-200">Forge Automate</dd>
+                    <dd className="text-gray-200">{isEmber ? 'Ember (free)' : 'Forge Automate'}</dd>
                   </div>
                   <div className="flex justify-between gap-3">
                     <dt className="text-gray-500">Agent</dt>
                     <dd>
                       <span
-                        className={`rounded-md px-2 py-0.5 text-xs font-bold ${
-                          isSpark ? 'bg-spark text-black' : 'bg-amber-500 text-black'
+                        className={`rounded-md px-2 py-0.5 text-xs font-bold text-black ${
+                          isSpark ? 'bg-spark' : isEmber ? '' : 'bg-amber-500'
                         }`}
+                        style={isEmber ? { backgroundColor: EMBER_AGENT.accent, color: '#fff' } : undefined}
                       >
                         {agentName}
                       </span>
@@ -267,10 +283,17 @@ export default function ReviewClient() {
                     <dt className="text-gray-500">Due today</dt>
                     <dd className="text-gray-200">$0.00</dd>
                   </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-gray-500">Free trial</dt>
-                    <dd className="text-gray-200">{preview.snapshot.trial.eligible_days_total} eligible trading days</dd>
-                  </div>
+                  {isEmber ? (
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-gray-500">Free trial</dt>
+                      <dd className="text-gray-200">Always free</dd>
+                    </div>
+                  ) : (
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-gray-500">Free trial</dt>
+                      <dd className="text-gray-200">{preview.snapshot.trial.eligible_days_total} eligible trading days</dd>
+                    </div>
+                  )}
                   <div className="flex justify-between gap-3">
                     <dt className="text-gray-500">Trial begins</dt>
                     <dd className="text-gray-200">When trading is activated</dd>
@@ -278,18 +301,23 @@ export default function ReviewClient() {
                   <div className="flex justify-between gap-3">
                     <dt className="text-gray-500">After trial</dt>
                     <dd className="text-gray-200">
-                      {preview.snapshot.plan ? `$${preview.snapshot.plan.price_monthly}/month` : '—'}
+                      {isEmber
+                        ? 'Free · no card needed'
+                        : preview.snapshot.plan
+                          ? `$${preview.snapshot.plan.price_monthly}/month`
+                          : '—'}
                     </dd>
                   </div>
                   <div className="flex justify-between gap-3">
                     <dt className="text-gray-500">Membership</dt>
-                    <dd className="text-gray-200">Cancel anytime</dd>
+                    <dd className="text-gray-200">{isEmber ? 'One Ember account, $500–$2,000 capital' : 'Cancel anytime'}</dd>
                   </div>
                 </dl>
                 <p
                   className={`mt-4 rounded-lg border px-3 py-2.5 text-xs leading-relaxed ${
-                    isSpark ? 'border-spark/50 text-spark' : 'border-amber-500/50 text-amber-500'
+                    isSpark ? 'border-spark/50 text-spark' : isEmber ? '' : 'border-amber-500/50 text-amber-500'
                   }`}
+                  style={isEmber ? { borderColor: `${EMBER_AGENT.accent}80`, color: EMBER_AGENT.accent } : undefined}
                 >
                   Activation authorizes IronForge to submit and manage orders under the selected {agentName}{' '}
                   configuration.
@@ -323,9 +351,10 @@ export default function ReviewClient() {
               type="button"
               disabled={!canActivate}
               onClick={activate}
-              className={`mt-6 w-full rounded-lg px-5 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                isSpark ? 'bg-spark text-black hover:bg-spark-dark' : 'bg-amber-500 text-black hover:bg-amber-400'
+              className={`mt-6 w-full rounded-lg px-5 py-3 text-sm font-semibold text-black transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                isSpark ? 'bg-spark hover:bg-spark-dark' : isEmber ? '' : 'bg-amber-500 hover:bg-amber-400'
               }`}
+              style={isEmber ? { backgroundColor: EMBER_AGENT.accent } : undefined}
             >
               {busy ? 'Activating…' : `Activate ${agentName}`}
             </button>

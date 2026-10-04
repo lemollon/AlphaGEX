@@ -1,5 +1,5 @@
 import { customerQuery, customerExecute } from '@/lib/customers-db'
-import { LEGAL_DOCUMENTS, requiredDocumentsFor, staleDocumentCodes, isAutomatePlan, type AcceptedVersion } from './legal'
+import { LEGAL_DOCUMENTS, requiredDocumentsFor, staleDocumentCodes, isAutomatePlan, isEmberPlan, type AcceptedVersion } from './legal'
 import { isStripeConfigured, hasUsablePaymentMethod, findLiveSubscriptionForPrice, findPriceIdByLookupKey } from '@/lib/billing/stripe'
 import { COMMUNITY_PLAN } from '@/lib/billing/plans'
 import type { EnrollmentState } from './states'
@@ -262,10 +262,17 @@ export async function recordAcceptances(opts: {
     userAgent: opts.userAgent,
     signatureName: opts.signatureName ?? null,
   })
+  // Ember never collects a card — free, $500-$2,000 capital, one per person — so its
+  // legal step advances straight to setup_required (broker connect), skipping the
+  // billing screen that every other automate plan goes through. See states.ts
+  // ENROLLMENT_TRANSITIONS.legal_pending, which allows this direct edge.
+  const [nextStatus, nextStep] = isEmberPlan(opts.plan)
+    ? (['setup_required', 'setup'] as const)
+    : (['billing_pending', 'billing'] as const)
   await customerExecute(
-    `UPDATE enrollments SET status = 'billing_pending', current_step = 'billing', updated_at = now()
+    `UPDATE enrollments SET status = $3, current_step = $4, updated_at = now()
       WHERE id = $1 AND user_id = $2`,
-    [opts.enrollmentId, opts.userId],
+    [opts.enrollmentId, opts.userId, nextStatus, nextStep],
   )
   return { ok: true }
 }

@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     const brokerAccountId = String(body.broker_account_id ?? '')
 
     if (!isConfigurableAgent(agentCode)) {
-      const e = errorEnvelope('VALIDATION_FAILED', 'Choose Spark or Flame.', { field: 'agent_code' })
+      const e = errorEnvelope('VALIDATION_FAILED', 'Choose Spark, Flame or Ember.', { field: 'agent_code' })
       return NextResponse.json(e, { status: statusFor(e.code) })
     }
 

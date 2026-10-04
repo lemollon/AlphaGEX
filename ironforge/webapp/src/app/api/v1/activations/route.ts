@@ -102,9 +102,14 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const plan = BOT_PLANS[config.agent_code as 'spark' | 'flame']
+    // Ember is free — no Stripe price, no subscription, no card, ever (enrollment
+    // skipped billing entirely; see service.ts recordAcceptances and context.ts's
+    // paymentMethodValid override). Every other agent must resolve a real Stripe price
+    // before anything is written.
+    const isEmber = config.agent_code === 'ember'
+    const plan = isEmber ? null : BOT_PLANS[config.agent_code as 'spark' | 'flame']
     const priceId = plan ? await findPriceIdByLookupKey(plan.lookupKey) : null
-    if (!priceId || !ctx.stripeCustomerId) {
+    if (!isEmber && (!priceId || !ctx.stripeCustomerId)) {
       await releaseIdempotencyKey({ key: idemKey, operation: OPERATION })
       const e = errorEnvelope('NOT_CONFIGURED', 'Billing is not fully configured yet.')
       return NextResponse.json(e, { status: statusFor(e.code) })
@@ -112,12 +117,15 @@ export async function POST(req: NextRequest) {
 
     // Stripe FIRST: it is the only step that cannot be rolled back, so if it throws
     // nothing local has been written and the released key allows a clean retry.
-    const stripeSub = await createTrialingSubscription({
-      customerId: ctx.stripeCustomerId,
-      priceId,
-      userId: session.customerId,
-      bot: config.agent_code,
-    })
+    // Skipped entirely for Ember — nothing to charge, ever.
+    const stripeSub = isEmber
+      ? null
+      : await createTrialingSubscription({
+          customerId: ctx.stripeCustomerId!,
+          priceId: priceId!,
+          userId: session.customerId,
+          bot: config.agent_code,
+        })
 
     let activationId = ''
     await customerTransaction(async (run) => {
@@ -131,7 +139,9 @@ export async function POST(req: NextRequest) {
       activationId = act?.[0]?.id ?? ''
 
       // The ONE place a trial may be opened (§7) — and only from not_started, so a
-      // second activation can never hand out a second free run.
+      // second activation can never hand out a second free run. Ember has no trial
+      // clock (always free) — still a trials row, just already 'active' with nothing to
+      // convert, so other code reading this table never finds a gap.
       await run(
         `INSERT INTO trials (user_id, agent_code, activation_id, status, started_at, eligible_days_used)
          VALUES ($1, $2, $3, 'active', now(), 0)
@@ -142,15 +152,23 @@ export async function POST(req: NextRequest) {
         [session.customerId, config.agent_code, activationId],
       )
 
+      // Ember: 'active' immediately, no Stripe subscription id, no lookup key — there is
+      // nothing billed, ever. Spark/Flame: 'trialing' against the real Stripe sub.
       await run(
         `INSERT INTO customer_bot_subscriptions
            (user_id, bot, status, stripe_subscription_id, price_lookup_key, updated_at)
-         VALUES ($1, $2, 'trialing', $3, $4, now())
+         VALUES ($1, $2, $3, $4, $5, now())
          ON CONFLICT (user_id, bot) DO UPDATE
-            SET status = 'trialing',
+            SET status = EXCLUDED.status,
                 stripe_subscription_id = EXCLUDED.stripe_subscription_id,
                 updated_at = now()`,
-        [session.customerId, config.agent_code, stripeSub.id, plan.lookupKey],
+        [
+          session.customerId,
+          config.agent_code,
+          isEmber ? 'active' : 'trialing',
+          isEmber ? null : stripeSub!.id,
+          isEmber ? null : plan!.lookupKey,
+        ],
       )
 
       // Close the funnel. Without this the enrollment stayed setup_required forever, so

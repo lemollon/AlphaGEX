@@ -10,6 +10,7 @@ import { fetcher } from '@/lib/fetcher'
 import SparkyWidget from '@/components/support/SparkyWidget'
 import { clientSurface, filterNavBySurface, servesPath } from '@/lib/surface'
 import { LIVE_BOT_ACCENT, LIVE_BOT_LABEL, isLiveBot, type LiveBot } from '@/lib/live/bots'
+import { EMBER_AGENT } from '@/lib/agents/ember'
 
 /**
  * THE single customer app shell — used by every signed-in page (Live, Performance,
@@ -183,6 +184,7 @@ function AgentNavItems({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <>
+      <EmberNavItem onNavigate={onNavigate} />
       {PURCHASABLE_BOTS.map((b) => {
         const flame = LIVE_BOT_ACCENT[b] === 'flame'
         const accent = flame ? 'text-flame' : 'text-spark'
@@ -209,6 +211,35 @@ function AgentNavItems({ onNavigate }: { onNavigate?: () => void }) {
         )
       })}
     </>
+  )
+}
+
+/**
+ * Ember nav item — shown ONLY when owned (no "Add" CTA here: Ember has no in-app
+ * purchase path, it is free/1-per-person/enrollment-only, see /enroll). Separate from
+ * AgentNavItems because Ember is not a LiveBot (no `/api/{bot}/...` Postgres tables) and
+ * PURCHASABLE_BOTS' "Add" href assumes a /live/{bot}/open checkout flow that doesn't
+ * exist for a free agent.
+ */
+function EmberNavItem({ onNavigate }: { onNavigate?: () => void }) {
+  const pathname = usePathname()
+  const { data: ent } = useSWR<{ bots?: string[] }>('/api/billing/entitlements', fetcher, { shouldRetryOnError: false })
+  if (!(ent?.bots ?? []).includes('ember')) return null
+  const active = pathname.startsWith('/agents/ember')
+  return (
+    <Link href="/agents/ember" onClick={onNavigate}
+      aria-current={active ? 'page' : undefined}
+      className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
+        active
+          ? 'border-l-2 bg-black/20 font-medium'
+          : 'border-l-2 border-transparent text-gray-400 hover:text-white'
+      }`}
+      style={active ? { borderColor: EMBER_AGENT.accent, color: EMBER_AGENT.accent } : undefined}>
+      {strategyGlyph('text-gray-400')}
+      <span>{EMBER_AGENT.name}</span>
+      <span className="ml-auto rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-wider"
+        style={{ backgroundColor: `${EMBER_AGENT.accent}26`, color: EMBER_AGENT.accent }}>Active</span>
+    </Link>
   )
 }
 

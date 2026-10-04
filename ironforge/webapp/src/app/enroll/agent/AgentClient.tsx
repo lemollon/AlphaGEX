@@ -6,6 +6,7 @@ import EnrollShell from '../EnrollShell'
 import { useEnrollment } from '../useEnrollment'
 import { SELECTED_ACCOUNT_KEY } from '../broker/BrokerClient'
 import { BOT_PLANS, botTagline } from '@/lib/billing/plans'
+import { EMBER_AGENT } from '@/lib/agents/ember'
 
 /**
  * AGENT-01 — Choose Spark or Flame (July 29 handoff).
@@ -69,7 +70,7 @@ export default function AgentClient() {
     })()
   }, [enrollment, call, router, setError])
 
-  async function select(agent: 'spark' | 'flame') {
+  async function select(agent: 'spark' | 'flame' | 'ember') {
     if (!account) return
     setBusy(true)
     setError(null)
@@ -80,7 +81,12 @@ export default function AgentClient() {
         body: JSON.stringify({ agent_code: agent, broker_account_id: account.id, config: {} }),
       })
       if (d.status !== 'valid') {
-        const detail = Array.isArray(d.violations) && d.violations.length ? ` ${d.violations.join(' ')}` : ''
+        // d.violations is [{ field, message }] (ValidationResult) — carries Ember's
+        // $500–$2,000 balance-range message when that's the reason.
+        const messages = Array.isArray(d.violations)
+          ? d.violations.map((v: { message?: string }) => v?.message).filter(Boolean)
+          : []
+        const detail = messages.length ? ` ${messages.join(' ')}` : ''
         setError(`Your setup needs attention before review.${detail}`)
         setBusy(false)
         return
@@ -97,6 +103,15 @@ export default function AgentClient() {
     }
   }
 
+  // The plan step already picked which bot this enrollment is for (and billed/skipped
+  // billing accordingly) — show only the matching tile when it's known, so a customer
+  // can't configure a config for a bot they didn't choose. Falls back to showing every
+  // tile for an older enrollment with no selected_plan on record.
+  const plan = enrollment?.selected_plan
+  const showSpark = plan == null || plan === 'spark'
+  const showFlame = plan == null || plan === 'flame'
+  const showEmber = plan == null || plan === 'ember'
+
   return (
     <EnrollShell
       headline="Choose your trading agent."
@@ -104,9 +119,13 @@ export default function AgentClient() {
       maxWidthClass="max-w-3xl"
     >
       <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-6 lg:p-8">
-        <h2 className="text-2xl font-bold text-white">Choose Spark or Flame</h2>
+        <h2 className="text-2xl font-bold text-white">
+          {plan === 'ember' ? 'Set up Ember' : 'Choose Spark or Flame'}
+        </h2>
         <p className="mt-1 text-sm text-gray-400">
-          Both agents use rules-based iron condor strategies with different risk profiles.
+          {plan === 'ember'
+            ? 'Ember runs the same rules-based approach, sized for smaller accounts.'
+            : 'Both agents use rules-based iron condor strategies with different risk profiles.'}
         </p>
         {account?.mask ? (
           <p className="mt-2 text-xs text-gray-500">
@@ -123,7 +142,7 @@ export default function AgentClient() {
         ) : null}
 
         {account ? (
-          <div className="mt-6 grid gap-5 md:grid-cols-2">
+          <div className="mt-6 grid gap-5 md:grid-cols-3">
           {/*
             ONE STRATEGY AT TWO CLOCKS — this is the screen where a customer picks
             which bot trades their money, so the copy has to be true.
@@ -146,6 +165,7 @@ export default function AgentClient() {
             cadence are read from BOT_PLANS so this cannot drift from checkout.
           */}
             {/* Spark */}
+            {showSpark ? (
             <div className="flex flex-col rounded-xl border border-spark/60 bg-black/20 p-6">
               {/* Badge states WHEN, not a risk grade — see the block comment above. */}
               <span className="self-start rounded-md bg-spark px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white">
@@ -177,8 +197,10 @@ export default function AgentClient() {
                 Select Spark
               </button>
             </div>
+            ) : null}
 
             {/* Flame */}
+            {showFlame ? (
             <div className="flex flex-col rounded-xl border border-amber-500/60 bg-black/20 p-6">
               <span className="self-start rounded-md bg-amber-500 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-black">
                 Afternoon entry
@@ -217,6 +239,40 @@ export default function AgentClient() {
                 Select Flame
               </button>
             </div>
+            ) : null}
+
+            {/* Ember */}
+            {showEmber ? (
+            <div className="flex flex-col rounded-xl border p-6 bg-black/20" style={{ borderColor: `${EMBER_AGENT.accent}60` }}>
+              <span
+                className="self-start rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white"
+                style={{ backgroundColor: EMBER_AGENT.accent }}
+              >
+                Free
+              </span>
+              <h3 className="mt-3 text-2xl font-bold" style={{ color: EMBER_AGENT.accent }}>{EMBER_AGENT.name}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-gray-300">{EMBER_AGENT.blurb}</p>
+              <p className="mt-4 text-[10px] font-bold uppercase tracking-wider text-gray-500">Best for</p>
+              <p className="mt-1 text-sm text-gray-400">First-time investors with $500–$2,000 to trade with.</p>
+              <ul className="mt-4 space-y-2 border-t border-forge-border pt-4">
+                {[...EMBER_AGENT.tags, 'Defined risk on every trade'].map((f) => (
+                  <li key={f} className="flex items-start gap-2 text-sm text-gray-300">
+                    <span aria-hidden className="mt-0.5 font-bold" style={{ color: EMBER_AGENT.accent }}>✓</span>
+                    {f}
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => select('ember')}
+                className="mt-auto w-full rounded-lg px-5 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ backgroundColor: EMBER_AGENT.accent }}
+              >
+                Select Ember
+              </button>
+            </div>
+            ) : null}
           </div>
         ) : null}
 

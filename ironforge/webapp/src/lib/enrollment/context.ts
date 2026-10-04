@@ -104,9 +104,16 @@ export async function loadActivationContext(
   // rule as the live page — an error must never read as permission to trade.
   const pause = await getProductionPauseState(config.agent_code).catch(() => ({ paused: true }))
   const accepted = await acceptedVersionsFor(userId)
-  const paymentMethodValid = user?.stripe_customer_id
-    ? await hasUsablePaymentMethod(user.stripe_customer_id)
-    : false
+  // Ember is free — no card is ever collected (enrollment skips billing entirely, see
+  // service.ts recordAcceptances), so there is no Stripe payment method to check. The
+  // generic PAYMENT_METHOD_INVALID gate would otherwise permanently block activation
+  // for every Ember customer.
+  const paymentMethodValid =
+    config.agent_code === 'ember'
+      ? true
+      : user?.stripe_customer_id
+        ? await hasUsablePaymentMethod(user.stripe_customer_id)
+        : false
 
   const snapshot: ActivationSnapshot = {
     userId,

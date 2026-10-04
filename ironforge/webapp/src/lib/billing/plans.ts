@@ -97,7 +97,16 @@ export function botTagline(slug: BotSlug): string {
   return structure.charAt(0).toUpperCase() + structure.slice(1)
 }
 
-/** The two-bot bundle — offered as an upsell, priced below 2× a single bot. */
+/**
+ * The two-bot bundle. LEGACY / NOT FOR SALE as of 2026-10-04 (Leron, binding) — no new
+ * enrollment or checkout path may open this price. A customer wanting Spark AND Flame
+ * now buys two separate $49.99/mo subscriptions (see plan/route.ts, checkout/route.ts,
+ * PlanClient.tsx — none of them reference this constant any more for a NEW purchase).
+ *
+ * Still exported and still read by webhook.ts / membership.ts / membership-sync.ts /
+ * apple-products.ts so an EXISTING both_monthly subscriber keeps being recognised and
+ * entitled correctly — do not remove.
+ */
 export const BOTH_PLAN = {
   lookupKey: 'both_monthly',
   priceMonthly: 75,

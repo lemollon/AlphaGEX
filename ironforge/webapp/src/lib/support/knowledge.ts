@@ -28,12 +28,16 @@ export const SUPPORT_KB: KbEntry[] = [
     // "Community ($15/mo)" — the price was $10, the same discrepancy caught in Stripe —
     // and "Forge Starter". A support bot quoting a price we do not charge is the worst
     // place for this to be wrong.
-    a: `Three tiers: ${MARKETING_TIERS.community.name} ($${MARKETING_TIERS.community.priceMonthly}/mo — chat + education, no trading bot), ${MARKETING_TIERS.starter.name} ($${MARKETING_TIERS.starter.priceMonthly}/mo — one automated strategy), and ${MARKETING_TIERS.pro.name} ($${MARKETING_TIERS.pro.priceMonthly}/mo — both strategies). Every bot plan includes Community. See ironforge.trade/pricing.`,
+    //
+    // "Forge Pro" (MARKETING_TIERS.pro / BOTH_PLAN) dropped from this answer 2026-10-04
+    // (Leron, binding) — it is legacy/not-for-sale, so Sparky must not advertise it to a
+    // new customer as something they can buy. Spark and Flame are each sold separately.
+    a: `Three agents, each its own subscription: Spark and Flame are $${MARKETING_TIERS.starter.priceMonthly}/mo each (5-day free trial), and Ember is free (one account per person, $500–$2,000 trading capital). ${MARKETING_TIERS.community.name} ($${MARKETING_TIERS.community.priceMonthly}/mo — chat + education, no trading bot) is included with every agent and can also be bought on its own. See ironforge.trade/pricing.`,
   },
   {
     topic: 'plans',
     q: 'How much is a second strategy / the bundle?',
-    a: 'From Community only, activating your FIRST strategy upgrades your membership to $50/mo total (Community stays included — it is not $10 + $50). Adding a SECOND strategy is +$25/mo, lifting a single-strategy subscription to the $75 bundle covering both Spark and Flame. You can add either from /account/billing.',
+    a: 'From Community only, activating your FIRST strategy upgrades your membership to $50/mo total (Community stays included — it is not $10 + $50). A SECOND strategy is its own separate $50/mo subscription — there is no bundle discount for new signups. You can add either from /account/billing.',
   },
   {
     topic: 'plans',
