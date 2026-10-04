@@ -2,57 +2,38 @@
 
 import EnrollShell from '../EnrollShell'
 import { useEnrollment } from '../useEnrollment'
-import { MARKETING_TIERS, TRIAL_DAYS } from '@/lib/billing/plans'
+import { COMMUNITY_PLAN, BOT_PLANS, BOTH_PLAN } from '@/lib/billing/plans'
 
 /**
- * PLAN-01 — Choose membership (July 29 handoff).
+ * PLAN-01 — Choose your plan.
  *
- * Two tiles: Forge Community vs Forge Automate. "Forge Automate $50" is
- * PRESENTATION of the automate FAMILY — billing stays per-bot (spark/flame are both
- * $50/mo); the AGENT-01 choice decides which Stripe price is actually subscribed at
- * activation. The enrollment persists selected_plan='automate' here and the agent is
- * never a second plan write.
+ * Four direct tiles: Community, Spark, Flame, Both agents — the same four options
+ * mobile's app/enroll/plan.tsx has always shown. Replaces the July 29 two-tile
+ * "Forge Automate" design (Leron, 2026-10-04): that design persisted
+ * selected_plan='automate' as a family placeholder and deferred the actual
+ * bot choice to agent setup, which Apple's In-App Purchase can't do — you pay for
+ * a specific product at purchase time, not a deferred-choice family. Web and
+ * mobile now pick the real plan up front, same as checkout already bills it.
  *
- * Prices and names come from lib/billing/plans.ts, never frontend constants, so this
- * tile can't quote a number Stripe no longer charges.
+ * Prices come from lib/billing/plans.ts, never a frontend constant, so a tile
+ * can't quote a number Stripe no longer charges.
  */
 
-const COMMUNITY_FEATURES = [
-  'AI market briefings',
-  'Daily market commentary',
-  'Member discussions',
-  'Educational content',
-  'Trade reviews',
-  'Community access',
-]
+type PlanSlug = 'community' | 'spark' | 'flame' | 'both'
 
-const AUTOMATE_FEATURES = [
-  'Automated execution',
-  'Risk-managed strategy',
-  'Connected brokerage',
-  'Real-time monitoring',
-  'Trade history',
-  'Performance dashboard',
-]
-
-function FeatureList({ items, checkClass }: { items: string[]; checkClass: string }) {
-  return (
-    <ul className="mt-4 grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
-      {items.map((f) => (
-        <li key={f} className="flex items-start gap-2 text-sm text-gray-300">
-          <span aria-hidden className={`mt-0.5 font-bold ${checkClass}`}>✓</span>
-          {f}
-        </li>
-      ))}
-    </ul>
-  )
+interface TileSpec {
+  slug: PlanSlug
+  name: string
+  blurb: string
+  price: number
+  accent: string
 }
 
 export default function PlanClient() {
   const { enrollment, busy, setBusy, error, setError, call, router } = useEnrollment('plan')
 
-  async function choose(plan: 'community' | 'automate') {
-    if (!enrollment) return
+  async function choose(plan: PlanSlug) {
+    if (!enrollment || busy) return
     setBusy(true)
     setError(null)
     try {
@@ -69,14 +50,45 @@ export default function PlanClient() {
     }
   }
 
+  const tiles: TileSpec[] = [
+    {
+      slug: 'community',
+      name: COMMUNITY_PLAN.name,
+      blurb: 'Chat, education, and market commentary. No trading bot.',
+      price: COMMUNITY_PLAN.priceMonthly,
+      accent: '#F59E0B', // amber, matches the prior Community tile
+    },
+    {
+      slug: 'spark',
+      name: BOT_PLANS.spark.name,
+      blurb: BOT_PLANS.spark.blurb,
+      price: BOT_PLANS.spark.priceMonthly,
+      accent: BOT_PLANS.spark.accent,
+    },
+    {
+      slug: 'flame',
+      name: BOT_PLANS.flame.name,
+      blurb: BOT_PLANS.flame.blurb,
+      price: BOT_PLANS.flame.priceMonthly,
+      accent: BOT_PLANS.flame.accent,
+    },
+    {
+      slug: 'both',
+      name: 'Both agents',
+      blurb: 'Spark and Flame together, one bundle price.',
+      price: BOTH_PLAN.priceMonthly,
+      accent: '#F59E0B',
+    },
+  ]
+
   return (
     <EnrollShell
       headline="Choose how you enter the Forge."
-      subline="Start with Community or unlock automated execution."
+      subline="Pick the agent (or agents) you want running, or start with Community."
       maxWidthClass="max-w-3xl"
     >
       <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-6 lg:p-8">
-        <h2 className="text-2xl font-bold text-white">Choose your membership</h2>
+        <h2 className="text-2xl font-bold text-white">Choose your plan</h2>
         <p className="mt-1 text-sm text-gray-400">Select the experience that fits how you want to use IronForge.</p>
 
         {error ? (
@@ -88,64 +100,28 @@ export default function PlanClient() {
         ) : null}
 
         {enrollment ? (
-          <div className="mt-6 grid gap-5 md:grid-cols-2">
-            {/* Forge Community — orange outline + accents per the approved reference (UAT-009) */}
-            <div className="flex flex-col rounded-xl border border-amber-500/50 bg-black/20 p-6">
-              <h3 className="text-xl font-bold">
-                <span className="text-white">Forge </span>
-                <span className="text-amber-500">Community</span>
-              </h3>
-              <p className="mt-1 text-sm text-gray-400">The foundation.</p>
-              <FeatureList items={COMMUNITY_FEATURES} checkClass="text-amber-500" />
-              <div className="mt-auto pt-6">
-                <div className="border-t border-forge-border pt-5">
-                  <span className="text-3xl font-bold text-white">${MARKETING_TIERS.community.priceMonthly}</span>
-                  <span className="ml-1 text-sm text-gray-500">/month</span>
+          <div className="mt-6 flex flex-col gap-4">
+            {tiles.map((tile) => (
+              <button
+                key={tile.slug}
+                type="button"
+                disabled={busy}
+                onClick={() => choose(tile.slug)}
+                className="flex w-full items-center justify-between gap-4 rounded-xl border bg-black/20 p-6 text-left transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ borderColor: `${tile.accent}80` }}
+              >
+                <div>
+                  <h3 className="text-lg font-bold text-white">{tile.name}</h3>
+                  <p className="mt-1 text-sm text-gray-400">{tile.blurb}</p>
                 </div>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => choose('community')}
-                  className="mt-4 w-full rounded-lg bg-amber-500 px-5 py-3 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Join Community
-                </button>
-                {/* Mirrors the Automate card's caption line so both bottom blocks are the
-                    same height — without it the two dividers and price baselines sit at
-                    different heights (mt-auto pins blocks of DIFFERENT sizes). */}
-                <p className="mt-2 text-center text-xs text-gray-500">Cancel anytime.</p>
-              </div>
-            </div>
-
-            {/* Forge Automate */}
-            <div className="relative flex flex-col rounded-xl border border-emerald-500/50 bg-black/20 p-6">
-              <span className="absolute -top-3 right-5 rounded-full border border-emerald-500/50 bg-emerald-950 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-400">
-                {TRIAL_DAYS} trading day free trial
-              </span>
-              {/* Fully green per the approved reference (UAT-009) — heading + checks
-                  included, not just outline/badge/CTA. */}
-              <h3 className="text-xl font-bold">
-                <span className="text-white">Forge </span>
-                <span className="text-emerald-400">Automate</span>
-              </h3>
-              <p className="mt-1 text-sm text-gray-400">Everything in Forge Community, plus:</p>
-              <FeatureList items={AUTOMATE_FEATURES} checkClass="text-emerald-400" />
-              <div className="mt-auto pt-6">
-                <div className="border-t border-forge-border pt-5">
-                  <span className="text-3xl font-bold text-white">${MARKETING_TIERS.starter.priceMonthly}</span>
-                  <span className="ml-1 text-sm text-gray-500">/month</span>
+                <div className="shrink-0 text-right">
+                  <span className="text-2xl font-bold" style={{ color: tile.accent }}>
+                    ${tile.price}
+                  </span>
+                  <span className="ml-1 text-sm text-gray-500">/mo</span>
                 </div>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => choose('automate')}
-                  className="mt-4 w-full rounded-lg bg-emerald-500 px-5 py-3 text-sm font-semibold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Start {TRIAL_DAYS}-Day Free Trial
-                </button>
-                <p className="mt-2 text-center text-xs text-gray-500">No long-term commitment. Cancel anytime.</p>
-              </div>
-            </div>
+              </button>
+            ))}
           </div>
         ) : null}
       </div>
