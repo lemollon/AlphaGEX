@@ -64,6 +64,140 @@ _MAX_WORKERS = 10
 _CACHE_TTL = 300
 _cache: dict[str, Any] = {"ts": 0.0, "payload": None}
 
+# ── ThetaData options-liquidity gate (2026-10-05) ────────────────────────
+# TV's /top-setups roster is a liquid/optionable filter only in the sense
+# that TV itself covers the name — it is NOT a tradable-chain-volume filter,
+# and its payload has no volume/liquidity field at all. Confirmed live via
+# ThetaData the day this gate was built: of TV's ~50-name roster, median
+# single-day option volume (nearest listed expiration, summed across the
+# whole chain) was only ~42 contracts, and 26 of 50 names had under 50
+# contracts/day. Only a handful cleared 500+/day. Without this gate the
+# scanner routinely surfaces walls built on markets nobody could actually
+# trade into. Tune this threshold here if production experience says it's
+# too tight or too loose — this exact number is a judgment call, not a
+# measured edge.
+MIN_LIQUID_VOLUME_PER_DAY = 500
+
+_THETA_BASE = "http://127.0.0.1:25510"  # NEVER localhost (::1 -> HTTP 476)
+_THETA_HEADERS = {"Host": "127.0.0.1:25510", "Connection": "close"}
+_THETA_TIMEOUT = 20
+
+# ticker -> (volume or None, checked_at monotonic). 12h TTL: liquidity is a
+# structural property of a name, not something that moves intraday, so
+# there's no need to re-hit ThetaData every scan cycle.
+_LIQUIDITY_CACHE_TTL = 12 * 3600
+_liquidity_cache: dict[str, tuple[Optional[float], float]] = {}
+
+
+def _theta_get(path: str, params: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Single ThetaData Terminal call. Returns the parsed JSON body, or None
+    for anything that is NOT a confirmed-empty 472/empty-response (i.e. a
+    genuine connection failure, timeout, or malformed body) — the caller is
+    responsible for telling "no data" (472 / empty response, handled inline
+    at the call site) apart from "unknown" (this None)."""
+    try:
+        resp = requests.get(
+            f"{_THETA_BASE}{path}",
+            params=params,
+            headers=_THETA_HEADERS,
+            timeout=_THETA_TIMEOUT,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[wall_scanner] thetadata %s failed: %r", path, exc)
+        return None
+
+    if resp.status_code == 200:
+        try:
+            return resp.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[wall_scanner] thetadata %s bad json: %r", path, exc)
+            return None
+    if resp.status_code == 472:
+        # Documented Terminal convention: no data for THIS request. A real
+        # fact (zero), not an error — the caller treats this as volume 0.0.
+        return {"response": []}
+
+    logger.debug("[wall_scanner] thetadata %s http %s", path, resp.status_code)
+    return None
+
+
+def _last_completed_session(today: Optional[datetime] = None) -> str:
+    """Most recently completed trading session as YYYYMMDD. Simple weekday
+    walk-back — exact holiday precision doesn't matter for a liquidity gate,
+    this only needs to land on a day the chain plausibly traded."""
+    now = today or datetime.now(dt_timezone.utc)
+    d = now.date()
+    # Before/at today's session is "in progress" or hasn't started -- step
+    # back to the prior weekday regardless, then walk off weekends.
+    from datetime import timedelta
+    d = d - timedelta(days=1)
+    while d.weekday() >= 5:  # Sat=5, Sun=6
+        d = d - timedelta(days=1)
+    return d.strftime("%Y%m%d")
+
+
+def _thetadata_chain_volume(ticker: str) -> Optional[float]:
+    """Total whole-chain contract volume on `ticker`'s nearest listed
+    expiration, for the most recently completed trading session. None means
+    genuinely unknown (ThetaData unreachable / malformed response) — never
+    conflated with a confirmed 0.0 (no expirations listed, or a 472/empty
+    volume response are both real, legitimately-illiquid zeros)."""
+    exp_payload = _theta_get("/v2/list/expirations", {"root": ticker})
+    if exp_payload is None:
+        return None
+    expirations = exp_payload.get("response") if isinstance(exp_payload, dict) else None
+    if not expirations:
+        return 0.0  # confirmed fact: no listed expirations at all
+
+    today_int = int(datetime.now(dt_timezone.utc).strftime("%Y%m%d"))
+    upcoming = sorted(e for e in expirations if isinstance(e, int) and e >= today_int)
+    nearest_exp = upcoming[0] if upcoming else sorted(expirations)[-1]
+
+    session = _last_completed_session()
+    chain_payload = _theta_get(
+        "/v2/bulk_hist/option/ohlc",
+        {
+            "root": ticker,
+            "exp": nearest_exp,
+            "start_date": session,
+            "end_date": session,
+            "ivl": 60000,
+        },
+    )
+    if chain_payload is None:
+        return None
+    entries = chain_payload.get("response") if isinstance(chain_payload, dict) else None
+    if not entries:
+        return 0.0  # confirmed fact: 472/empty -- no chain volume that session
+
+    total = 0.0
+    for entry in entries:
+        ticks = entry.get("ticks") if isinstance(entry, dict) else None
+        if not ticks:
+            continue
+        for tick in ticks:
+            try:
+                total += float(tick[4])
+            except (IndexError, TypeError, ValueError):
+                continue
+    return total
+
+
+def _liquidity_ok(ticker: str) -> Optional[bool]:
+    """Cached/fresh liquidity verdict for `ticker`. None propagates an
+    unknown volume (ThetaData unreachable) rather than coercing it to False
+    -- callers decide separately how to treat an unknown."""
+    now = time.monotonic()
+    cached = _liquidity_cache.get(ticker)
+    if cached is not None and (now - cached[1]) < _LIQUIDITY_CACHE_TTL:
+        volume = cached[0]
+    else:
+        volume = _thetadata_chain_volume(ticker)
+        _liquidity_cache[ticker] = (volume, now)
+    if volume is None:
+        return None
+    return volume >= MIN_LIQUID_VOLUME_PER_DAY
+
 # ── History (for "is OI/GEX building at the wall") ──────────────────────
 # One row per ticker per capture, for whichever wall was closest at that
 # moment. A wall's STRIKE can itself change between captures (the tightest
@@ -205,7 +339,43 @@ def fetch_universe(limit: int = _UNIVERSE_LIMIT) -> list[str]:
     tickers = [it.get("ticker") for it in items if isinstance(it, dict) and it.get("ticker")]
     if not tickers:
         logger.warning("[wall_scanner] /top-setups: items[] present but empty of tickers, len=%d", len(items))
-    return sorted(set(tickers))
+        return []
+    tickers = sorted(set(tickers))
+    return _filter_liquid_universe(tickers)
+
+
+def _filter_liquid_universe(tickers: list[str]) -> list[str]:
+    """Gate TV's raw roster through a real ThetaData chain-volume check,
+    concurrently (same ThreadPoolExecutor/_MAX_WORKERS shape run_scan() uses
+    -- one concurrency idiom in this file, not two). Infrastructure failure
+    (ThetaData unreachable for every candidate) must never blank the
+    scanner, so that case falls back to the unfiltered TV roster rather than
+    returning an empty universe."""
+    verdicts: dict[str, Optional[bool]] = {}
+    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
+        futures = {pool.submit(_liquidity_ok, t): t for t in tickers}
+        for fut in as_completed(futures):
+            t = futures[fut]
+            try:
+                verdicts[t] = fut.result()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[wall_scanner] liquidity check %s raised: %r", t, exc)
+                verdicts[t] = None
+
+    if all(v is None for v in verdicts.values()):
+        logger.warning(
+            "[wall_scanner] liquidity gate: ThetaData unreachable for all %d candidates, "
+            "falling back to unfiltered TV roster",
+            len(tickers),
+        )
+        return tickers
+
+    passed = [t for t in tickers if verdicts.get(t) is True]
+    logger.info(
+        "[wall_scanner] liquidity gate: %d of %d TV tickers passed (>= %d contracts/day)",
+        len(passed), len(tickers), MIN_LIQUID_VOLUME_PER_DAY,
+    )
+    return passed
 
 
 def _top_walls(points: list[dict[str, Any]], spot: float, side: str, n: int = 3) -> list[dict[str, Any]]:
@@ -255,6 +425,14 @@ def scan_ticker(ticker: str) -> dict[str, Any]:
     payload = _get(f"/tickers/{ticker}/curves/gex_by_strike", {"exp": "nearest"})
     if payload is None:
         return {"ticker": ticker, "available": False}
+
+    # Same cached value the universe gate (fetch_universe -> _liquidity_ok)
+    # already populated for this scan cycle -- reuse it rather than paying a
+    # second ThetaData round trip. A ticker that somehow reaches here without
+    # a cache entry (shouldn't normally happen, the gate runs first) is
+    # fetched fresh so this field is never silently null.
+    cached = _liquidity_cache.get(ticker)
+    near_exp_chain_volume = cached[0] if cached is not None else _thetadata_chain_volume(ticker)
 
     data = payload.get("data", payload) if isinstance(payload, dict) else None
     points = data.get("points") if isinstance(data, dict) else None
@@ -314,6 +492,10 @@ def scan_ticker(ticker: str) -> dict[str, Any]:
         "call_oi_sum": totals.get("call_oi_sum"),
         "put_oi_sum": totals.get("put_oi_sum"),
         "put_call_oi": totals.get("put_call_oi"),
+        # Real options-liquidity context (2026-10-05 gate) -- nearest-
+        # expiration whole-chain volume for the most recent completed
+        # session, from ThetaData, not TV (TV has no volume field).
+        "near_exp_chain_volume": near_exp_chain_volume,
         "gamma_flip_price": flip,
         "gamma_regime": gamma_regime,
         # 1-day options-implied expected move, half-width in dollars — lets

@@ -361,6 +361,9 @@ export default function WallScannerPage() {
                             {row.put_call_oi != null && (
                               <div style={S.small}>P/C {row.put_call_oi.toFixed(2)}</div>
                             )}
+                            {row.near_exp_chain_volume != null && (
+                              <div style={S.small}>chain vol {abbrev(row.near_exp_chain_volume)}</div>
+                            )}
                           </td>
                           <td style={{ ...S.td, ...S.mono }}>{abbrev(row.gex_value_per_1pct, '$')}</td>
                           <td style={S.td}>
