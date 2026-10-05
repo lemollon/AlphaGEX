@@ -198,7 +198,7 @@ REQUIREMENTS = {
         "gamma_expiry_png",
         "sector_credit_png",
         "dark_theme"
-        ,"surface_png", "term_structure_png", "volume_profile_png"
+        ,"surface_png", "term_structure_png", "volume_profile_png", "delivery_manifest"
     ],
     "futures_context": [
         "es_mes", "nq", "overnight_range", "basis", "index_confirmation"
@@ -225,7 +225,7 @@ REQUIREMENTS["adaptation_rules"] = ["activate", "cancel", "switch", "stand_aside
 REQUIREMENTS["data_integrity"] = ["contract", "source_clocks", "coverage", "historical_fields",
     "unavailable_fields", "producer_failures", "model_prose_policy", "execution_scope", "format"]
 REQUIRED_BLOCKS = tuple(REQUIREMENTS)
-CONTRACT_VERSION = "2026-10-03.2"
+CONTRACT_VERSION = "2026-10-05.2"
 FLOW_SOURCE = "Tradier live trades with contemporaneous Tradier bid/ask"
 LIVE_MAX_AGE_SECONDS = 90
 CHART_FORMAT = "PNG"
@@ -378,6 +378,20 @@ def validate_rendered_report(payload):
                     errors.append(field + ": PNG not embedded")
     if "```mermaid" in markdown.lower():
         errors.append("Mermaid is prohibited")
+    manifest=blocks.get('visuals',{}).get('delivery_manifest',{})
+    if manifest.get('status') in ('live','historical'):
+        value=manifest.get('value') or {}
+        assets=value.get('images') or []
+        expected=set((payload.get('chart_urls') or {}).keys())
+        if not expected or {a.get('name') for a in assets}!=expected or len(assets)!=len(expected):
+            errors.append('visuals.delivery_manifest: missing/duplicate persisted images')
+        for asset in assets:
+            if (asset.get('validated') is not True or asset.get('content_type')!='image/png'
+                    or not re.fullmatch(r'[a-f0-9]{64}',str(asset.get('sha256') or ''))
+                    or str(asset.get('sha256',''))[:32]!=asset.get('chart_id')
+                    or asset.get('width',0)<1000 or asset.get('height',0)<600
+                    or asset.get('size_bytes',0)<=0):
+                errors.append('visuals.delivery_manifest: invalid persisted image proof')
     check["errors"] = errors
     check["publishable"] = not errors
     check["complete_live_data"] = check["complete_live_data"] and not errors
