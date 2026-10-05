@@ -4,6 +4,7 @@ import { useMemo, useState, useEffect } from 'react'
 import Link from 'next/link'
 import { US_STATES } from '@/lib/us-states'
 import HomeLink from '@/components/HomeLink'
+import ContinueWithGoogle from '@/components/ContinueWithGoogle'
 import EnrollShell from '@/app/enroll/EnrollShell'
 import type { Promo } from '@/lib/promo'
 import {
@@ -255,8 +256,24 @@ export default function SignupClient() {
     >
       <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-6 lg:p-8">
         <h1 className="text-2xl font-bold text-white">Create your account</h1>
-        <p className="mt-1 text-sm leading-relaxed text-gray-400">Enter your information to get started.</p>
-        <div className="fire-divider my-5" />
+        <p className="mt-1 text-sm leading-relaxed text-gray-400">
+          Start with your name and email, or continue with Google.
+        </p>
+
+        <div className="mt-5">
+          <ContinueWithGoogle next="/enroll" />
+          <p className="mt-2 text-center text-[11px] leading-relaxed text-gray-500">
+            By continuing, you confirm you are at least 18, understand IronForge provides
+            automated trade execution technology and{' '}
+            <span className="font-medium text-amber-500">does not provide financial, investment, tax, or legal advice</span>,
+            and agree to receive electronic communications about your account.
+          </p>
+        </div>
+        <div className="my-5 flex items-center gap-3 text-xs text-gray-500">
+          <span className="h-px flex-1 bg-white/10" />
+          or use email
+          <span className="h-px flex-1 bg-white/10" />
+        </div>
 
             <form onSubmit={onSubmit} noValidate className="space-y-4">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

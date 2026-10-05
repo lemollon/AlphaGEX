@@ -183,6 +183,13 @@ export function isPublicPath(pathname: string): boolean {
   // password, refresh/logout check the presented refresh token, me checks the bearer, and
   // policy returns constants only. Same shape as /api/auth/customer-me.
   if (pathname.startsWith('/api/auth/mobile/')) return true
+  // Google SSO (web only): /start mints its own signed state+PKCE cookie, /callback verifies
+  // that cookie + the id_token signature before it does anything, and /status returns a config
+  // boolean only. All three must be reachable with NO session — a caller arriving at /callback
+  // has, at most, the OAuth state cookie, never an IronForge session cookie. Without this the
+  // customer-cookie gate 401'd every successful Google approval, the same #3180 lesson as the
+  // Tradier/SnapTrade brokerage callbacks above.
+  if (pathname.startsWith('/api/auth/google/')) return true
   // Versioned legal document pages (/legal/risk, /legal/refund-policy, ...). Public for
   // the same reason /terms and /privacy are: partners and prospects must be able to read
   // them before signing in, and the enrollment "Review" actions open them directly.
