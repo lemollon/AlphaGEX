@@ -1281,7 +1281,7 @@ def build_gamma_snapshot(symbol: str, now: datetime | None = None,
         "chain_timestamp": (chain["source_timestamp"].isoformat()
                             if chain.get("source_timestamp") else None),
         "chain_age_seconds": round(chain_age, 1) if chain_age is not None else None,
-        "source": f"{chain.get('gamma_source', 'ThetaData options')} + OPRA OI + {spot.get('source', 'Tradier ETF spot')}",
+        "source": f"{chain.get('gamma_source', 'Tradier options')} + OPRA OI + {spot.get('source', 'Tradier ETF spot')}",
         "oi_timestamp": (chain["oi_timestamp"].isoformat()
                          if chain.get("oi_timestamp") else None),
         "oi_matched_rows": chain.get("matched_rows"),
@@ -1307,7 +1307,7 @@ def persist_snapshot(snapshot: dict[str, Any]) -> None:
     params = {
         "symbol": snapshot["symbol"], "captured": captured.replace(tzinfo=None),
         "date": captured.astimezone(CT).date(), "spot": snapshot.get("spot"),
-        "source": snapshot.get("source") or "unknown",
+        "source": snapshot.get("source") or "Tradier",
         "source_ts": chain_ts.replace(tzinfo=None) if chain_ts else None,
         "confidence": snapshot.get("confidence") or "LOW",
         "n": snapshot.get("n_rows"), "g": snapshot.get("net_gex_b"),
@@ -1338,7 +1338,7 @@ def persist_vol(vol: dict[str, Any], now: datetime | None = None) -> None:
                 "(symbol,captured_at,price,source,source_timestamp,age_seconds,fresh,reason) "
                 "VALUES (:s,:c,:p,:src,:st,:a,:f,:r) ON CONFLICT(symbol,captured_at) DO NOTHING"),
                 {"s": symbol, "c": now.replace(tzinfo=None), "p": item.get("price"),
-                 "src": vol.get("source") or "ThetaData",
+                 "src": vol.get("source") or "Tradier",
                  "st": ts.replace(tzinfo=None) if ts else None,
                  "a": item.get("age_seconds"), "f": bool(item.get("fresh")),
                  "r": item.get("reason")})
@@ -1360,7 +1360,7 @@ def persist_surface(surface: dict[str, Any]) -> None:
     params = {
         "symbol": surface["symbol"], "captured": captured.replace(tzinfo=None),
         "date": captured.astimezone(CT).date(), "spot": surface.get("spot"),
-        "source": surface.get("source") or "ThetaData implied-volatility snapshots",
+        "source": surface.get("source") or "Tradier",
         "source_ts": source_ts.replace(tzinfo=None) if source_ts else None,
         "confidence": surface.get("confidence") or "LOW", "n": surface.get("n_rows"),
         "atm": surface.get("atm_iv"), "atm_dte": surface.get("atm_reference_dte"),
@@ -1406,7 +1406,7 @@ def persist_trade_quote_flow(flow: dict[str, Any]) -> None:
             "ON CONFLICT(symbol,captured_at) DO NOTHING"),
             {"symbol": flow["symbol"], "captured": captured.replace(tzinfo=None),
              "date": captured.astimezone(CT).date(),
-             "source": flow.get("source") or "ThetaData OPRA trade + NBBO",
+             "source": flow.get("source") or "Tradier",
              "source_ts": source_ts.replace(tzinfo=None) if source_ts else None,
              "confidence": flow.get("confidence") or "LOW", "n": flow.get("n_trades"),
              "buckets": json.dumps(flow.get("buckets") or {}), "reason": flow.get("reason"),
