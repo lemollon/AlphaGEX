@@ -1009,6 +1009,17 @@ CREATE TABLE IF NOT EXISTS customer_notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_customer_notifications_feed ON customer_notifications(user_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_customer_notifications_unread ON customer_notifications(user_id) WHERE read_at IS NULL;
+
+-- Google SSO ("Continue with Google", OAuth 2.0 + PKCE). auth_user_id already existed
+-- as a UNIQUE provider-identity slot but was never wired to anything — Google sign-in
+-- stores 'google:<sub>' there, namespaced so a future second provider can share the
+-- column without a collision. A Google account has no password and (at account-
+-- creation time) no phone/state collected — those three were NOT NULL for the
+-- email/password form's KYC fields, so a Google-created row needs them nullable.
+ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+ALTER TABLE users ALTER COLUMN phone DROP NOT NULL;
+ALTER TABLE users ALTER COLUMN state DROP NOT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'password';
 `
 
 let _ensured: Promise<void> | null = null
