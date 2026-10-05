@@ -1,6 +1,6 @@
 """Shared report assembly, persistent evidence, real charts and delivery artifacts.
 
-Collectors are isolated from the minute Theta IV pipeline. Read endpoints never
+Collectors are isolated from the minute market-data pipeline. Read endpoints never
 trigger trades or send notifications. Every field is mapped to observed evidence.
 """
 from __future__ import annotations
@@ -199,7 +199,7 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
         put('expected_move',field,vals or None,source='Recorded morning baseline vs current underlying',ts=min([ms._parse_ts(r.get('source_timestamp')) for r in surface.values() if ms._parse_ts(r.get('source_timestamp'))],default=None),reason='No comparable morning baseline')
     for field,key in {'net_gex':'net_gex_b','flip':'gamma_flip','walls':'walls','expiry_buckets':'buckets','coverage':'n_rows'}.items():blocks['gamma'][field]=merge_symbols(gamma,[key],now)
     put('gamma','scope_comparability','Bounded near-spot <=60DTE estimated dealer gamma; compare only matching coverage. OI is daily, not intraminute.')
-    for field in ('theta_provenance','exchange_timestamp','retrieval_timestamp','age','classified_coverage','unclassified_coverage',
+    for field in ('provider_provenance','exchange_timestamp','retrieval_timestamp','age','classified_coverage','unclassified_coverage',
                   'calls_bought','calls_sold','puts_bought','puts_sold','expiry_buckets'):
         vals={};stamps=[]
         for s,r in flow.items():
@@ -207,16 +207,16 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
             if r.get('confidence')=='LOW' or not ts or not ev.get('buckets'):continue
             stamps.append(ts)
             if field in ('calls_bought','calls_sold','puts_bought','puts_sold'):vals[s]={b:v.get(field) for b,v in ev['buckets'].items()}
-            else:vals[s]={'theta_provenance':ev.get('source'),'exchange_timestamp':ts.isoformat(),'retrieval_timestamp':ev.get('retrieval_timestamp'),
+            else:vals[s]={'provider_provenance':ev.get('source'),'exchange_timestamp':ts.isoformat(),'retrieval_timestamp':ev.get('retrieval_timestamp'),
                'age':(now-ts).total_seconds(),'classified_coverage':ev.get('classified_contract_fraction'),
                'unclassified_coverage':{'contracts':ev.get('unclassified_contracts'),'premium':ev.get('unclassified_premium')},'expiry_buckets':ev['buckets']}.get(field)
-        blocks['flow'][field]=observation(vals or None,'ThetaData trades + contemporaneous quotes; representative expiries / 120s window',min(stamps) if stamps else None,now)
+        blocks['flow'][field]=observation(vals or None,'Tradier report flow; classification requires contemporaneous trade+quote evidence',min(stamps) if stamps else None,now)
     for field,key in {'expiries':'expiration','strikes':'strike','contracts':'contracts','premium':'premium','prints':'print_count',
                       'contemporaneous_bid_ask':'latest_print','initiation_estimate':'initiation'}.items():
         vals={s:[{key:r.get(key)} for r in (row.get('evidence') or {}).get('concentrations') or []] for s,row in flow.items()}
         vals={s:v for s,v in vals.items() if v}
         ts=min([ms._parse_ts(row.get('source_timestamp')) for row in flow.values() if ms._parse_ts(row.get('source_timestamp'))],default=None)
-        put('forward_strikes',field,vals or None,source='ThetaData observed strike concentrations',ts=ts,reason='No verified forward prints')
+        put('forward_strikes',field,vals or None,source='Tradier observed strike concentrations',ts=ts,reason='No verified forward prints')
     assets=cross.get('assets') or {}
     relative={s:(r['price']/r['prev_close']-1)*100 for s,r in assets.items() if number(r.get('price')) and number(r.get('prev_close'))}
     cross_ts=min([ms._parse_ts(r.get('source_timestamp')) for r in assets.values() if ms._parse_ts(r.get('source_timestamp'))],default=None)
@@ -301,7 +301,7 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
     for field in REQUIREMENTS['event_study']:
         value=study.get(field)
         if field=='validated_statistics':value={k:study.get(k) for k in ('validated_statistics','stall_fraction','wilson_95_interval','minimum_sample','loss_clusters','reason','failures')}
-        put('event_study',field,value,source='Frozen historical ThetaData 1-minute event study',ts=study.get('captured_at'),reason=study.get('reason'))
+        put('event_study',field,value,source='Frozen historical 1-minute event study; source provenance retained',ts=study.get('captured_at'),reason=study.get('reason'))
     for field in REQUIREMENTS['morning_comparison']:
         put('morning_comparison',field,comparison if comparison and any(r.get('morning_timestamp') for r in comparison.values()) else None,
             source='Persisted morning and prior-hour report baselines',ts=now,reason='First report: no earlier comparable baseline')

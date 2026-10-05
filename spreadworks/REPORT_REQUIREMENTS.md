@@ -1,7 +1,7 @@
 # Permanent options report requirements
 
 The executable contract is `backend/report_contract.py`; inference and display
-rules are `backend/report_policy.py`. Version `2026-10-03.2` retains all 179
+rules are `backend/report_policy.py`. Version `2026-10-05.1` retains all 179
 original fields and adds day/near-forward/forward plans, horizon comparisons,
 adaptation rules and data integrity: **32 sections and 237 required fields**.
 Every delivered report carries its policy version and SHA-256 schema/rule hash.
@@ -88,3 +88,6 @@ schema/prose corruption, exact-expiry forward evidence, frozen baseline math,
 wrong-setup activation, paper/flow reconciliation, optional collector isolation,
 PNG embeds and delivery leases. New requirements need corresponding producer,
 renderer, integrity and failure-path checks plus a deliberate version change.
+
+## Provider policy (2026-10-05)
+Morning, market-open and intraday share Tradier-only market collectors. No ThetaData fallback or cached ThetaData report observations are allowed. Surface IV and gamma use explicitly labeled Black-Scholes estimates from fresh two-sided Tradier BBO, not refreshed receipt clocks or stale vendor Greeks. Daily OI publication time is unavailable and is never described as intraminute inventory. Representative expiries and quote qualification coverage are disclosed. Tradier REST does not supply contemporaneous option trade+NBBO evidence: initiation remains unavailable until such evidence exists; chain volume is never substituted. Independent macro, news and Trading Volatility products retain their own provenance.

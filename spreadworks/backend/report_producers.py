@@ -134,7 +134,7 @@ def volume_profile(trades,bin_size,start,end):
     if not math.isfinite(bin_size) or bin_size<=0:raise ValueError('Invalid price bin')
     bins=defaultdict(float);timestamps=[];count=rejected=0
     for trade in trades:
-        p,size=number(trade.get('price')),number(trade.get('size'));ts=ms._theta_ts(trade.get('timestamp'))
+        p,size=number(trade.get('price')),number(trade.get('size'));ts=ms._parse_ts(trade.get('timestamp'))
         if not ts or not start<=ts<=end or not p or p<=0 or not size or size<=0:rejected+=1;continue
         bins[int(math.floor((p+1e-9)/bin_size))]+=size;timestamps.append(ts);count+=1
     if not bins:return {'reason':'No valid timestamped trades','source_timestamp':None}
@@ -150,27 +150,30 @@ def volume_profile(trades,bin_size,start,end):
       'bins':[{'price':(i+.5)*bin_size,'volume':v} for i,v in grid.items()],
       'total_volume':total,'trade_count':count,'rejected_rows':rejected,'source_timestamp':max(timestamps).isoformat(),
       'window_start':start.isoformat(),'window_end':end.isoformat(),
-      'method':f'Observed consolidated ThetaData prints; {bin_size:g} bins; contiguous 70% value area. Rolling 30-minute window, not full session. Provider trade conditions retained.'}
+      'method':f'Observed Tradier tick timesales; {bin_size:g} bins; contiguous 70% value area. Rolling 30-minute window, not full session. Provider trade conditions retained.'}
 
 def collect_profile(symbol,now,previous=None):
     et=now.astimezone(ET)
     if et.weekday()>=5 or not time(9,30)<=et.time().replace(tzinfo=None)<time(16):
         return {'reason':'Regular equity session is closed','source_timestamp':None}
     previous=previous or {}
+    if "Tradier" not in str(previous.get("method", "")): previous={}
     previous_end=ms._parse_ts(previous.get('window_end'))
     same_session=previous_end is not None and previous_end.astimezone(ET).date()==et.date()
     start=previous_end if same_session else datetime.combine(et.date(),time(9,30),ET).astimezone(UTC)
     end=min(now.replace(microsecond=0),start+timedelta(minutes=30))
     if end<=start:return previous or {'reason':'No completed tape window yet','source_timestamp':None}
     try:
-        rows=ms._theta_rows('/v3/stock/history/trade',{'symbol':symbol,'date':et.date().isoformat(),
-          'start_time':start.astimezone(ET).strftime('%H:%M:%S'),'end_time':end.astimezone(ET).strftime('%H:%M:%S'),'venue':'utp_cta'},timeout=30)
-        rows=[r for r in rows if (ts:=ms._theta_ts(r.get('timestamp'))) is not None and ts<end]
+        data=(tradier('/timesales',{'symbol':symbol,'interval':'tick',
+          'start':start.astimezone(ET).strftime('%Y-%m-%d %H:%M:%S'),
+          'end':end.astimezone(ET).strftime('%Y-%m-%d %H:%M:%S')}).get('series') or {}).get('data') or []
+        if isinstance(data,dict):data=[data]
+        rows=[dict(price=r.get('price'),size=r.get('volume'),timestamp=datetime.fromtimestamp(r['timestamp'],UTC)) for r in data if r.get('timestamp')]
         result=volume_profile(rows,.10 if symbol=='SPY' else .25,start,end)
         if result.get('source_timestamp') and same_session and previous.get('bins'):
             result=merge_profiles(previous,result,.10 if symbol=='SPY' else .25)
         if result.get('source_timestamp'):
-            result['method']='Cumulative observed consolidated RTH trades; fixed price bins; contiguous 70% value area; provider conditions retained; no bar-volume approximation'
+            result['method']='Cumulative observed Tradier RTH tick trades; fixed price bins; contiguous 70% value area; provider conditions retained; no bar-volume approximation'
             result['coverage_start']=result['window_start'];result['coverage_end']=end.isoformat()
             result['catchup_pending']=(now-end).total_seconds()>90
         return result
@@ -261,7 +264,7 @@ def collect_study(now):
     from .db import engine
     if engine is None:return dict(historical_stall_study([]),reason='Database not configured')
     with engine.begin() as c:
-        c.execute(text('CREATE TABLE IF NOT EXISTS sw_report_study_bars (symbol TEXT NOT NULL, session_date TEXT NOT NULL, payload_json TEXT NOT NULL, PRIMARY KEY(symbol,session_date))'))
+        c.execute(text('CREATE TABLE IF NOT EXISTS sw_report_tradier_study_bars (symbol TEXT NOT NULL, session_date TEXT NOT NULL, payload_json TEXT NOT NULL, PRIMARY KEY(symbol,session_date))'))
     deadline=monotonic_time.monotonic()+90
     frames=[];failures=[];day=now.astimezone(ET).date()-timedelta(days=1);dates=[]
     from .economic_events import is_market_holiday
@@ -271,7 +274,7 @@ def collect_study(now):
     for symbol in ('SPY','QQQ'):
         for day in dates:
             with engine.begin() as c:
-                cached=c.execute(text('SELECT payload_json FROM sw_report_study_bars WHERE symbol=:symbol AND session_date=:date'),{'symbol':symbol,'date':day.isoformat()}).fetchone()
+                cached=c.execute(text('SELECT payload_json FROM sw_report_tradier_study_bars WHERE symbol=:symbol AND session_date=:date'),{'symbol':symbol,'date':day.isoformat()}).fetchone()
             if cached:
                 frames.append((symbol,day.isoformat(),json.loads(cached[0])))
                 continue
@@ -279,15 +282,17 @@ def collect_study(now):
                 failures.append({'reason':'90-second study work budget exhausted; captured sessions are checkpointed for next tick'})
                 continue
             try:
-                rows=ms._theta_rows('/v3/stock/history/ohlc',{'symbol':symbol,'date':day.isoformat(),'interval':'1m',
-                 'start_time':'09:30:00','end_time':'16:00:00','venue':'utp_cta'},timeout=30)
+                rows=(tradier('/timesales',{'symbol':symbol,'interval':'1min',
+                 'start':day.isoformat()+' 09:30','end':day.isoformat()+' 16:00'}).get('series') or {}).get('data') or []
+                if isinstance(rows,dict):rows=[rows]
+                rows=[dict(r,timestamp=datetime.fromtimestamp(r['timestamp'],UTC)) for r in rows if r.get('timestamp')]
                 bars=[]
                 for row in rows:
-                    ts=ms._theta_ts(row.get('timestamp'))
+                    ts=ms._parse_ts(row.get('timestamp'))
                     if ts and all(number(row.get(k)) is not None for k in ('high','low','close')):bars.append(dict(row,timestamp=ts.timestamp()))
                 if len(bars)>=40:
                     with engine.begin() as c:
-                        c.execute(text('INSERT INTO sw_report_study_bars (symbol,session_date,payload_json) VALUES (:symbol,:date,:payload) ON CONFLICT(symbol,session_date) DO NOTHING'),{'symbol':symbol,'date':day.isoformat(),'payload':json.dumps(bars)})
+                        c.execute(text('INSERT INTO sw_report_tradier_study_bars (symbol,session_date,payload_json) VALUES (:symbol,:date,:payload) ON CONFLICT(symbol,session_date) DO NOTHING'),{'symbol':symbol,'date':day.isoformat(),'payload':json.dumps(bars)})
                 frames.append((symbol,day.isoformat(),bars))
             except requests.HTTPError as e:
                 failures.append({'symbol':symbol,'date':day.isoformat(),'status':e.response.status_code})
