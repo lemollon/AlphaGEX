@@ -985,6 +985,30 @@ CREATE TABLE IF NOT EXISTS email_events (
   received_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_email_events_email ON email_events(lower(email), event_type);
+
+-- Notification HISTORY feed (10.4 gap audit: the app.html notifications sheet and
+-- dashboard bell show a past-events feed, but only /preferences and /devices existed
+-- to back it). ONE row per customer per event actually pushed — written from inside
+-- dispatchToCustomers (lib/push/dispatch.ts), the single place every push category
+-- (trade_opened/closed/approval, brokerage_health, billing, community) already funnels
+-- through, so this is never a second, divergent notification trigger. 'kind' mirrors
+-- NotificationCategory; 'data' carries the same deep-link payload the push itself sends
+-- (route/params/amount) so the feed can reuse the existing tap-routing logic instead of
+-- inventing new navigation. Title/body are the UNREDACTED copy — this feed is read
+-- in-app behind the customer's own auth, not a lock screen, so APP-035's redaction
+-- (which only governs the OS push banner) does not apply here.
+CREATE TABLE IF NOT EXISTS customer_notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  data JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  read_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_customer_notifications_feed ON customer_notifications(user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_notifications_unread ON customer_notifications(user_id) WHERE read_at IS NULL;
 `
 
 let _ensured: Promise<void> | null = null

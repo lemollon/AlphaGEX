@@ -168,6 +168,18 @@ export async function dispatchToCustomers(
       showAmountsOnLockscreen: prefs.show_amounts_on_lockscreen === true,
       sound: prefs.sound !== false,
     })
+
+    // History feed row (10.4 gap audit). ONE per customer per event, written right
+    // alongside the actual push send — never a second trigger. title/body are the
+    // event's own unredacted copy (not `base`'s lock-screen-redacted body); `data` is
+    // the exact deep-link payload the push carries, so the feed's tap handler can
+    // reuse routeFor() instead of a parallel navigation table.
+    await customerExecute(
+      `INSERT INTO customer_notifications (user_id, kind, title, body, data)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [userId, event.category, event.title, event.body, JSON.stringify(base.data)],
+    ).catch(() => {})
+
     const messages = devices.map((d) => ({ ...base, to: d.expo_push_token }))
     const tickets = await sendExpoPush(messages)
 
