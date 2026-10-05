@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { View, Text, ScrollView, RefreshControl, Pressable, StyleSheet, Alert, Platform, Linking } from 'react-native'
+import { View, Text, ScrollView, RefreshControl, Pressable, StyleSheet, Alert, Platform, Linking, AppState, type AppStateStatus } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
@@ -7,6 +7,8 @@ import useSWR from 'swr'
 import { useRouter } from 'expo-router'
 import * as WebBrowser from 'expo-web-browser'
 import { api, ApiError } from '@/api/client'
+import { streamPositions } from '@/api/positionsStream'
+import { mergeAgentsTrade } from '@/live/positions-merge'
 import type {
   LiveSummary,
   LiveAgent,
@@ -70,6 +72,76 @@ export default function ForgeScreen() {
   const conns = useSWR<BrokerageConnections>('/api/brokerage/connections', (p: string) =>
     api<BrokerageConnections>(p),
   )
+
+  // Sub-5s positions/P&L push (dev-handoff /ws/positions contract) — additive on
+  // top of the 60s /api/live/agents poll above, never a replacement for it: state,
+  // account and stats still come from that poll, this only pushes `trade` (open
+  // positions + unrealized P&L) into the same cache faster. Foreground-only —
+  // paused the instant the app backgrounds, reconnected on resume — and the 60s
+  // poll keeps the screen live on its own if this never connects at all (no
+  // EventSource in React Native; see api/positionsStream.ts for the pure-JS
+  // `expo/fetch` reader, same pattern api/sparky.ts already uses for Ask Sparky).
+  useEffect(() => {
+    let stopped = false
+    let controller: AbortController | null = null
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    let retryCount = 0
+
+    const disconnect = () => {
+      controller?.abort()
+      controller = null
+      if (retryTimer) clearTimeout(retryTimer)
+      retryTimer = undefined
+    }
+
+    const connect = () => {
+      if (stopped || AppState.currentState !== 'active') return
+      controller = new AbortController()
+      streamPositions(
+        {
+          onPositions: (pushed) => {
+            retryCount = 0
+            void agents.mutate(
+              (current) =>
+                current ? { ...current, agents: mergeAgentsTrade(current.agents, pushed) } : current,
+              { revalidate: false },
+            )
+          },
+        },
+        controller.signal,
+      )
+        .catch(() => {
+          // The 60s poll above keeps the screen live either way — this only
+          // decides how soon to try the fast path again.
+        })
+        .finally(() => {
+          if (stopped || AppState.currentState !== 'active') return
+          const delay = Math.min(30_000, 1_000 * 2 ** retryCount)
+          retryCount += 1
+          retryTimer = setTimeout(connect, delay)
+        })
+    }
+
+    connect()
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      if (next === 'active') {
+        disconnect()
+        retryCount = 0
+        connect()
+      } else {
+        disconnect()
+      }
+    })
+
+    return () => {
+      stopped = true
+      sub.remove()
+      disconnect()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- agents.mutate is a
+    // stable reference for this key for the lifetime of the screen (SWR).
+  }, [])
+
   // Same key/fetcher as the Account tab's membership card — SWR shares the cache, so
   // this costs nothing extra there. Only needed to decide what the payment-due banner
   // does on iOS (Apple IAP handoff §4): never open Stripe, and only offer Apple's own
