@@ -158,6 +158,18 @@ EOD_LOOKBACK_DAYS = 10       # calendar days back to find the last session close
 _SCHEDULER: dict = {"ref": None}
 REACTIVE_JOB_ID = "squeeze_reactive_scan"
 
+# 2026-10-05: KILL SWITCH, Leron's explicit call. This job's 450-symbol
+# per-tick ThetaData batch was the single biggest confirmed ThetaData
+# consumer during today's production incident (repeated "ThetaData session
+# recovery cooldown" errors), every 5 min during the whole session. This
+# directly feeds REFLEX's live signal (/api/spreadworks/squeeze-reactive/
+# state) -- disabling it means REFLEX sees no new entries AND no new exit
+# signals until this is flipped back True. That's the accepted, safe
+# failure mode (REFLEX just goes quiet, never places a bad trade) -- not a
+# silent side effect. Job stays registered (so nothing errors); the job
+# body below no-ops immediately instead.
+REACTIVE_SCAN_ENABLED = False
+
 SIGNALS_TABLE = "squeeze_reactive_signals"
 SCAN_LOG_TABLE = "squeeze_reactive_scan_log"
 
@@ -794,6 +806,9 @@ def register_squeeze_reactive_alerts(scheduler, app) -> None:
                 or os.getenv("DISCORD_WEBHOOK_URL", "").strip())
 
     async def scan_reactive_squeeze():
+        if not REACTIVE_SCAN_ENABLED:
+            logger.debug("[SqueezeReactive] scan disabled (REACTIVE_SCAN_ENABLED=False), no-op")
+            return
         try:
             now_ct = datetime.now(CT)
             if now_ct.weekday() >= 5:
