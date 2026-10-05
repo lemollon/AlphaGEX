@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { View, Text, ScrollView, Pressable, Switch, StyleSheet } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
-import { useRouter } from 'expo-router'
+import { View, Text, ScrollView, Switch, StyleSheet } from 'react-native'
+import { Stack, useRouter } from 'expo-router'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { api } from '@/api/client'
@@ -9,6 +8,7 @@ import { space, type, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Card, SectionLabel, Loading, ErrorState } from '@/components/ui'
+import { Sheet, SheetHeader } from '@/components/Sheet'
 
 /**
  * Notification preferences — APP-036.
@@ -138,51 +138,52 @@ export default function NotificationsScreen() {
   }
 
   return (
-    <SafeAreaView style={s.screen} edges={['top']}>
-      <View style={s.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="Back">
-          <Ionicons name="chevron-back" size={26} color={color.text} />
-        </Pressable>
-        <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 18 }]}>
-          Notifications
-        </Text>
-      </View>
-
-      {loading ? (
-        <Loading label="Loading preferences…" />
-      ) : error || !prefs ? (
-        <ErrorState message={error ?? 'Preferences unavailable.'} onRetry={load} />
-      ) : (
-        <ScrollView contentContainerStyle={{ padding: space.lg }}>
-          {GROUPS.map((group) => (
-            <View key={group.label} style={{ marginBottom: space.xl }}>
-              <SectionLabel>{group.label}</SectionLabel>
-              <Card>
-                {group.rows.map((row, i) => (
-                  <View key={row.key} style={[s.row, i > 0 && s.rowDivider]}>
-                    <View style={{ flex: 1, paddingRight: space.md }}>
-                      <Text style={[type.body, { color: color.text }]}>{row.label}</Text>
-                      <Text style={[type.label, { color: color.muted, marginTop: 2 }]}>{row.detail}</Text>
-                    </View>
-                    <Switch
-                      value={prefs[row.key]}
-                      disabled={pending.has(row.key)}
-                      onValueChange={(v) => toggle(row.key, v)}
-                      trackColor={{ true: color.accent, false: color.border }}
-                    />
+    <>
+      <Stack.Screen
+        options={{ presentation: 'transparentModal', animation: 'fade', contentStyle: { backgroundColor: 'transparent' } }}
+      />
+      <Sheet onClose={() => router.back()}>
+        {(close) => (
+          <>
+            <SheetHeader title="Notifications" onClose={close} />
+            {loading ? (
+              <Loading label="Loading preferences…" />
+            ) : error || !prefs ? (
+              <ErrorState message={error ?? 'Preferences unavailable.'} onRetry={load} />
+            ) : (
+              <ScrollView contentContainerStyle={{ padding: space.lg }}>
+                {GROUPS.map((group) => (
+                  <View key={group.label} style={{ marginBottom: space.xl }}>
+                    <SectionLabel>{group.label}</SectionLabel>
+                    <Card>
+                      {group.rows.map((row, i) => (
+                        <View key={row.key} style={[s.row, i > 0 && s.rowDivider]}>
+                          <View style={{ flex: 1, paddingRight: space.md }}>
+                            <Text style={[type.body, { color: color.text }]}>{row.label}</Text>
+                            <Text style={[type.label, { color: color.muted, marginTop: 2 }]}>{row.detail}</Text>
+                          </View>
+                          <Switch
+                            value={prefs[row.key]}
+                            disabled={pending.has(row.key)}
+                            onValueChange={(v) => toggle(row.key, v)}
+                            trackColor={{ true: color.accent, false: color.border }}
+                          />
+                        </View>
+                      ))}
+                    </Card>
                   </View>
                 ))}
-              </Card>
-            </View>
-          ))}
 
-          <View style={s.securityRow}>
-            <Ionicons name="shield-checkmark-outline" size={18} color={color.muted} />
-            <Text style={[type.label, { color: color.muted }]}>Security notices are always on.</Text>
-          </View>
-        </ScrollView>
-      )}
-    </SafeAreaView>
+                <View style={s.securityRow}>
+                  <Ionicons name="shield-checkmark-outline" size={18} color={color.muted} />
+                  <Text style={[type.label, { color: color.muted }]}>Security notices are always on.</Text>
+                </View>
+              </ScrollView>
+            )}
+          </>
+        )}
+      </Sheet>
+    </>
   )
 }
 

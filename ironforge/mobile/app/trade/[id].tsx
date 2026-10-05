@@ -1,20 +1,18 @@
 import { useEffect, useMemo } from 'react'
-import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
-import { useLocalSearchParams, useRouter } from 'expo-router'
+import { View, Text, ScrollView, StyleSheet } from 'react-native'
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import useSWR from 'swr'
-// Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
-import Ionicons from '@expo/vector-icons/Ionicons'
 import { api, ApiError } from '@/api/client'
 import type { TradeDetailResponse } from '@/api/types'
 import { space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Card, SectionLabel, Money, OutcomeBadge, AgentBadge, Loading, ErrorState } from '@/components/ui'
+import { Sheet, SheetHeader } from '@/components/Sheet'
 import { track } from '@/analytics/track'
 
 /**
- * Trade detail — APP-019/022.
+ * Trade detail sheet — APP-019/022, mobile addendum §2 "Trade sheet".
  *
  * Every field below can legitimately be null: the server only ever fills a field
  * from a column that actually exists for this trade, never fabricates one, so
@@ -36,25 +34,31 @@ export default function TradeDetailScreen() {
   }, [data?.trade])
 
   return (
-    <SafeAreaView style={s.screen} edges={['top']}>
-      <View style={s.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="Back">
-          <Ionicons name="chevron-back" size={26} color={color.text} />
-        </Pressable>
-        <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 18 }]}>Trade Detail</Text>
-      </View>
-
-      {isLoading ? (
-        <Loading label="Loading trade…" />
-      ) : error || !data ? (
-        <ErrorState
-          message={error instanceof ApiError ? error.humanMessage : 'Could not load this trade.'}
-          onRetry={() => mutate()}
-        />
-      ) : (
-        <Content data={data} />
-      )}
-    </SafeAreaView>
+    <>
+      <Stack.Screen
+        options={{ presentation: 'transparentModal', animation: 'fade', contentStyle: { backgroundColor: 'transparent' } }}
+      />
+      <Sheet
+        accent={data?.trade ? agentAccent(data.trade.bot) : undefined}
+        onClose={() => router.back()}
+      >
+        {(close) => (
+          <>
+            <SheetHeader title="Trade" onClose={close} />
+            {isLoading ? (
+              <Loading label="Loading trade…" />
+            ) : error || !data ? (
+              <ErrorState
+                message={error instanceof ApiError ? error.humanMessage : 'Could not load this trade.'}
+                onRetry={() => mutate()}
+              />
+            ) : (
+              <Content data={data} />
+            )}
+          </>
+        )}
+      </Sheet>
+    </>
   )
 }
 
