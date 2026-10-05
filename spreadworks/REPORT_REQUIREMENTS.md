@@ -1,9 +1,9 @@
 # Permanent options report requirements
 
 The executable contract is `backend/report_contract.py`; inference and display
-rules are `backend/report_policy.py`. Version `2026-10-05.1` retains all 179
+rules are `backend/report_policy.py`. Version `2026-10-05.2` retains all 179
 original fields and adds day/near-forward/forward plans, horizon comparisons,
-adaptation rules and data integrity: **32 sections and 237 required fields**.
+adaptation rules, data integrity and persisted visual delivery: **32 sections and 238 required fields**.
 Every delivered report carries its policy version and SHA-256 schema/rule hash.
 
 ## Reader experience
@@ -15,6 +15,31 @@ The original panels and data points remain present. Missing observations have
 source-specific reasons; dated last-known observations retain their clocks.
 Arbitrary model narrative is stored only for diagnosis and cannot introduce
 facts into the canonical rendered report.
+
+## Durable chart delivery
+
+All report kinds use the same persisted PNG bytes. Before publication, chart
+bytes are read back from Postgres, decoded and checked against their SHA-256
+identity, dimensions and dark palette; the delivery manifest is a required field.
+The HTML embeds verified PNG bytes as data URIs, so charts require no separate
+image requests. Missing/corrupt stored images show one explicit delivery error,
+never a broken image tag. Old stored reports use the same repaired view path.
+
+`/reports/{id}/assets` returns verified PNG bytes, checksums, sizes, observation
+clocks and plotted-data flags. `/charts.pdf` and `/portable.zip` are portable
+backups. The ZIP contains the full HTML/Markdown, PNGs, manifest and chart PDF.
+The HTML and PDF remain viewable offline. A partial/corrupt image batch returns
+503 from export routes rather than silently claiming successful delivery.
+
+ChatGPT delivery must use `scripts/materialize_options_report.py` to decode the
+asset JSON (or the same persisted bytes from the read-only Postgres fallback),
+validate every selected image and atomically write current-conversation files.
+Use only panels with observed data. Inspect PNGs and save them as durable
+attachments before linking them; temporary sandbox paths alone are not proof of
+upload success. Retain the downloadable chart PDF and canonical report link in
+each delivery. If attachment upload fails, disclose it and use those portable
+backups. External ChatGPT upload availability cannot be guaranteed by backend
+code; never claim an upload succeeded from a valid local PNG alone.
 
 ## Day and forward plans
 
