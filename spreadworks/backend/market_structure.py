@@ -1778,17 +1778,27 @@ def _cached_vol_payload(now: datetime | None = None) -> dict[str, Any]:
             f"SELECT DISTINCT ON (symbol) symbol,price,source,source_timestamp,reason "
             f"FROM {VOL_TABLE} ORDER BY symbol,captured_at DESC"), {}).fetchall()
     indices: dict[str, Any] = {}
-    for symbol, price, _source, source_timestamp, reason in rows:
+    sources_seen: set[str] = set()
+    for symbol, price, source, source_timestamp, reason in rows:
         stamp = source_timestamp.replace(tzinfo=UTC) if source_timestamp and source_timestamp.tzinfo is None else source_timestamp
         age = (now - stamp).total_seconds() if stamp else None
         fresh = price is not None and age is not None and 0 <= age <= STALE_SECONDS
-        indices[symbol] = {"symbol": symbol, "price": price,
+        indices[symbol] = {"symbol": symbol, "price": price, "source": source,
                            "source_timestamp": stamp.isoformat() if stamp else None,
                            "age_seconds": round(age, 1) if age is not None else None,
                            "fresh": fresh,
                            "reason": reason or (None if fresh else "stale_persisted_quote")}
+        if source:
+            sources_seen.add(source)
+    # 2026-10-05: this used to hardcode "Persisted ThetaData index snapshot
+    # price" regardless of what was actually persisted -- silently wrong
+    # once Tradier became the primary source (the real per-row `source`
+    # column was being read into `_source` and discarded). Now reflects
+    # whatever source(s) the persisted rows actually carry.
+    label = "none" if not sources_seen else (
+        sources_seen.pop() if len(sources_seen) == 1 else " + ".join(sorted(sources_seen)))
     return {"available": any(item["fresh"] for item in indices.values()),
-            "source": "Persisted ThetaData index snapshot price",
+            "source": f"Persisted ({label})",
             "retrieved_at": now.isoformat(), "indices": indices}
 
 def register(scheduler: Any, app: Any | None = None) -> bool:
