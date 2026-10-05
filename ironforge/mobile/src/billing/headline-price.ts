@@ -18,6 +18,6 @@ export function headlinePriceLabel(opts: {
   stripePrice: number | null | undefined
 }): string | null {
   if (opts.iapEnabled && opts.iapProduct) return `${opts.iapProduct.displayPrice}/month`
-  if (opts.stripePrice != null) return `$${opts.stripePrice}/month`
+  if (opts.stripePrice != null) return `$${opts.stripePrice.toFixed(2)}/month`
   return null
 }

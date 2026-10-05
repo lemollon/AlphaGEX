@@ -37,7 +37,7 @@ export const SUPPORT_KB: KbEntry[] = [
   {
     topic: 'plans',
     q: 'How much is a second strategy / the bundle?',
-    a: 'From Community only, activating your FIRST strategy upgrades your membership to $50/mo total (Community stays included — it is not $10 + $50). A SECOND strategy is its own separate $50/mo subscription — there is no bundle discount for new signups. You can add either from /account/billing.',
+    a: `From Community only, activating your FIRST strategy upgrades your membership to $${MARKETING_TIERS.starter.priceMonthly}/mo total (Community stays included — it is not $${MARKETING_TIERS.community.priceMonthly} + $${MARKETING_TIERS.starter.priceMonthly}). A SECOND strategy is its own separate $${MARKETING_TIERS.starter.priceMonthly}/mo subscription — there is no bundle discount for new signups. You can add either from /account/billing.`,
   },
   {
     topic: 'plans',

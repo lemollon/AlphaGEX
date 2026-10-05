@@ -24,7 +24,7 @@ export const dynamic = 'force-dynamic'
  *
  * Where they land (cutover 7/30, revised for UAT-007):
  *   - EXISTING strategy owner with ?bot= intent → that bot's Open Account page, which
- *     still owns the second-bot bundle upgrade ($75 total, not a second $50 sub).
+ *     still owns the second-bot bundle upgrade ($75 total, not a second $49.99 sub).
  *   - everyone else signed-in → SignedInGate: an explicit "continue as {email} / sign
  *     out & create a new account" choice. The old silent redirect to /enroll swallowed
  *     a genuine create-account intent into the previous user's session — a new tester

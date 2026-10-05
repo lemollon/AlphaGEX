@@ -17,7 +17,7 @@ export interface Promo {
   plan: string
   /** Active bots included at the promo price. */
   bots: number
-  /** Monthly price in whole dollars at the promo rate. */
+  /** Monthly price in dollars at the promo rate. */
   price: number
   /** The list price this beats (for the strike-through), or null. */
   listPrice: number | null
@@ -30,7 +30,7 @@ export interface Promo {
 }
 
 /**
- * FORGE50 — founding offer: Forge Pro (2 bots) at the Starter price, $50/mo,
+ * FORGE50 — founding offer: Forge Pro (2 bots) at the Starter price, $49.99/mo,
  * locked while the subscription stays active.
  */
 const PROMOS: Record<string, Promo> = {
@@ -38,10 +38,10 @@ const PROMOS: Record<string, Promo> = {
     code: 'FORGE50',
     plan: 'Forge Pro',
     bots: 2,
-    price: 50,
-    listPrice: 100,
-    headline: '2 active bots for $50/month',
-    terms: 'Founding rate — $50/mo for 2 bots, locked for as long as your subscription stays active.',
+    price: 49.99,
+    listPrice: 99.98,
+    headline: '2 active bots for $49.99/month',
+    terms: 'Founding rate — $49.99/mo for 2 bots, locked for as long as your subscription stays active.',
     scarcity: 'Founding members — first 100 only',
   },
 }

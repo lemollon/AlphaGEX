@@ -56,7 +56,7 @@ export const BOT_PLANS: Record<BotSlug, BotPlan> = {
     structure: 'same-day (0DTE) SPY put credit spreads',
     cadence: 'each morning',
     blurb: botBlurb('Spark', 'same-day (0DTE) SPY put credit spreads', 'each morning'),
-    priceMonthly: 50,
+    priceMonthly: 49.99,
     lookupKey: 'spark_monthly',
     accent: '#3B82F6', // Spark blue
     mascot: '/home/spark-mascot-glow.png',
@@ -71,7 +71,7 @@ export const BOT_PLANS: Record<BotSlug, BotPlan> = {
     structure: 'same-day (0DTE) SPY put credit spreads',
     cadence: 'each afternoon',
     blurb: botBlurb('Flame', 'same-day (0DTE) SPY put credit spreads', 'each afternoon'),
-    priceMonthly: 50,
+    priceMonthly: 49.99,
     lookupKey: 'flame_monthly',
     accent: '#EE5A24', // Flame / brand orange
     mascot: '/home/flame-mascot-glow.png',
@@ -124,9 +124,9 @@ export const COMMUNITY_PLAN = {
   name: 'Forge Community',
   lookupKey: 'community_monthly',
   // DISPLAY price. The amount actually charged comes from the Stripe price
-  // behind lookupKey 'community_monthly' — if that is still set to 15, the site
-  // will advertise $10 and bill $15. Change both together.
-  priceMonthly: 10,
+  // behind lookupKey 'community_monthly' — if that is still set to a different
+  // amount, the site will advertise one number and bill another. Change both together.
+  priceMonthly: 9.99,
 }
 export function isCommunityKey(v: string | null | undefined): boolean {
   return v === COMMUNITY_KEY
