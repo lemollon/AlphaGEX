@@ -27,11 +27,12 @@ from fastapi import APIRouter
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from .bots.gamma_regime import (GAMMA_DAILY_TABLE, PCT_WINDOW,
+from .bots.gamma_regime import (DEEP_SHORT_B, GAMMA_DAILY_TABLE, PCT_WINDOW,
                                 attach_forward_returns, break_sample_for,
-                                capture_health, data_freshness, job_status,
-                                signal_history, signal_summary, squeeze_outlook,
-                                squeeze_signal, trade_ticket, vix_history)
+                                capture_health, data_freshness, episode_table,
+                                job_status, signal_history, signal_summary,
+                                squeeze_outlook, squeeze_signal, trade_ticket,
+                                vix_history)
 from .db import engine as _global_engine
 
 logger = logging.getLogger("spreadworks.routes_squeeze")
@@ -239,6 +240,20 @@ async def state(sessions: str | None = None):
         logger.warning("[routes_squeeze] vix_history failed: %r", e)
         vh = []
 
+    # The falsification tables: every session gamma closed below −$10B / −$12.5B,
+    # with the forward max move at 1/3/5 sessions. Recomputed live every call —
+    # see episode_table()'s own docstring for why there's no caching or snapshot.
+    try:
+        episode_tables = {
+            "t10": episode_table(ENGINE, -10.0),
+            "t125": episode_table(ENGINE, DEEP_SHORT_B),
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[routes_squeeze] episode_table failed: %r", e)
+        episode_tables = {"t10": {"episodes": [], "summary": {}},
+                          "t125": {"episodes": [], "summary": {}},
+                          "reason": f"episode_table error: {e}"}
+
     try:
         from .call_log import record_call
         # 🚨 data_ts is the row the verdict CAME FROM, not the moment we asked.
@@ -281,6 +296,7 @@ async def state(sessions: str | None = None):
         "signal_history": sh,
         "signal_summary": summary,
         "fwd_coverage": fwd_coverage,
+        "episode_tables": episode_tables,
         "advisory_only": True,
     }
 

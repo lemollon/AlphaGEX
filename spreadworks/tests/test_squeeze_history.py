@@ -15,8 +15,8 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from backend.bots.gamma_regime import (DEEP_SHORT_B, PCT_WINDOW, data_freshness,
-                                       sessions_between, signal_history,
-                                       signal_summary, vix_history)
+                                       episode_table, sessions_between,
+                                       signal_history, signal_summary, vix_history)
 from backend.bots.vix_regime import VIX_DAILY_TABLE, ensure_vix_table
 from backend.bots.gamma_regime import GAMMA_DAILY_TABLE, ensure_gamma_table
 
@@ -958,4 +958,50 @@ def test_forward_return_survives_a_missing_spy_table(engine):
     from backend.bots.gamma_regime import attach_forward_returns
     with pytest.raises(Exception):
         attach_forward_returns(engine, [{"trade_date": date(2026, 8, 20)}])
+
+
+# --------------------------------------------------------------------------
+# episode_table — the "falsification table": every session gamma closed
+# below a threshold, with the forward max at 1/3/5 sessions. Resolvable only
+# once enough future closes exist.
+# --------------------------------------------------------------------------
+def test_episode_table_resolves_includes_excludes(spy_engine):
+    """One sqlite engine, three outcomes: a qualifying episode with a full
+    5-session forward window gets correct fwd_1d/3d/5d_max + fwd_5d + rip;
+    a qualifying episode too close to the end of stored SPY data is excluded
+    and counted in excluded_unresolved, never zero-filled; a session whose
+    gamma never crosses the threshold is never included at all."""
+    days = _weekdays(date(2026, 8, 31), 10)
+    closes = [100.0, 101.0, 100.0, 102.0, 103.0, 99.0, 105.0, 104.0, 106.0, 107.0]
+    gex = [5.0, 5.0, -11.0, 5.0, 5.0, -5.0, 5.0, 5.0, -12.0, 5.0]   # in $B
+
+    _seed(spy_engine, days, lambda d: gex[days.index(d)] * 1e9)
+    _seed_spy(spy_engine, dict(zip(days, closes)))
+
+    out = episode_table(spy_engine, -10.0)
+    episodes, summary = out["episodes"], out["summary"]
+
+    # (a) days[2]: gamma -11B <= -10B, full 5-session forward window resolvable
+    assert len(episodes) == 1
+    ep = episodes[0]
+    assert ep["trade_date"] == days[2].isoformat()
+    assert ep["net_gex_b"] == pytest.approx(-11.0)
+    assert ep["fwd_1d_max"] == pytest.approx(102.0 / 100.0 - 1)
+    assert ep["fwd_3d_max"] == pytest.approx(103.0 / 100.0 - 1)
+    assert ep["fwd_5d_max"] == pytest.approx(105.0 / 100.0 - 1)
+    assert ep["fwd_5d"] == pytest.approx(104.0 / 100.0 - 1)
+    assert ep["rip"] is True   # fwd_5d_max (5%) >= RIP_THRESHOLD (3%)
+
+    # (b) days[8]: gamma -12B <= -10B but only 1 session of SPY closes follows
+    # it — excluded, not zero-filled, and counted
+    assert all(e["trade_date"] != days[8].isoformat() for e in episodes)
+    assert summary["excluded_unresolved"] == 1
+
+    # (c) days[5]: gamma -5B never crosses -10B — never included, never counted
+    assert all(e["trade_date"] != days[5].isoformat() for e in episodes)
+
+    assert summary["n"] == 1
+    assert summary["rip_n"] == 1
+    assert summary["rip_pct"] == pytest.approx(1.0)
+    assert summary["n_negative_fwd_5d"] == 0
 

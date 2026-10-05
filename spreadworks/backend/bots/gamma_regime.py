@@ -1118,6 +1118,98 @@ def attach_forward_returns(engine: Engine, rows: list[dict[str, Any]]) -> dict[s
     return coverage
 
 
+RIP_THRESHOLD = 0.03  # +3% forward 5-day move — matches the page's existing "rip" definition
+EPISODE_HORIZONS = (1, 3, 5)
+
+
+def episode_table(engine: Engine, threshold_b: float) -> dict[str, Any]:
+    """Every sw_gamma_daily session where net_gex_b <= threshold_b ("FALSIFICATION
+    TABLE" episodes), with the forward MAX close at 1/3/5 trading sessions forward
+    (as a % over the episode's own close, using the realized close sequence in
+    sw_spy_daily — never an intraday high, which isn't stored) and the plain
+    forward-5-session return. Mirrors attach_forward_returns' own trading-session-
+    sequence construction (position in sw_spy_daily's own ordered close list, never
+    a calendar offset).
+
+    An episode is included ONLY when its own full 5-session forward window is
+    resolvable against currently-stored SPY closes (the 1- and 3-session windows
+    are always resolvable whenever the 5-session one is, since 5 is the largest
+    horizon) — the newest few qualifying sessions are silently excluded until
+    enough future closes exist, counted in the returned summary's
+    `excluded_unresolved`, never zero-filled or guessed.
+
+    No caching, no stored snapshot: this is a single cheap query over the full
+    (currently ~1,500-row) daily tables, recomputed fresh on every call, so a new
+    qualifying session appears automatically the next time this is called after
+    its own 15:05 CT capture runs — there is no separate regeneration step.
+
+    Every qualifying session is its own episode — never deduplicated or clustered,
+    matching the page's own prior documented convention ("every qualifying session
+    is shown, not a curated subset").
+    """
+    with engine.begin() as conn:
+        gamma_rows = conn.execute(text(
+            f"SELECT trade_date, net_gex FROM {GAMMA_DAILY_TABLE} "
+            "WHERE net_gex IS NOT NULL ORDER BY trade_date"
+        )).fetchall()
+        spy_rows = conn.execute(text(
+            f"SELECT trade_date, close FROM {SPY_DAILY_TABLE} "
+            "WHERE close IS NOT NULL ORDER BY trade_date"
+        )).fetchall()
+
+    def _d(x: Any) -> date:
+        return x if isinstance(x, date) else date.fromisoformat(str(x))
+
+    spy = sorted((_d(r[0]), float(r[1])) for r in spy_rows)
+    ordered_dates = [d for d, _ in spy]
+    close_by_date = dict(spy)
+    pos = {d: i for i, d in enumerate(ordered_dates)}
+    max_h = max(EPISODE_HORIZONS)
+
+    episodes: list[dict[str, Any]] = []
+    excluded_unresolved = 0
+    for d_raw, net_gex in gamma_rows:
+        gamma_b = float(net_gex) / 1e9
+        if gamma_b > threshold_b:
+            continue
+        d = _d(d_raw)
+        i = pos.get(d)
+        c0 = close_by_date.get(d)
+        if i is None or c0 is None:
+            continue   # no SPY close on file for the episode's own session -- never guessed
+        if i + max_h >= len(ordered_dates):
+            excluded_unresolved += 1   # forward window not resolvable yet, not a loss
+            continue
+        fwd: dict[str, Any] = {}
+        for h in EPISODE_HORIZONS:
+            window_closes = [close_by_date[ordered_dates[i + k]] for k in range(1, h + 1)]
+            fwd[f"fwd_{h}d_max"] = (max(window_closes) / c0) - 1
+        fwd_5d = (close_by_date[ordered_dates[i + 5]] / c0) - 1
+        episodes.append({
+            "trade_date": d.isoformat(),
+            "net_gex_b": gamma_b,
+            **fwd,
+            "fwd_5d": fwd_5d,
+            "rip": fwd["fwd_5d_max"] >= RIP_THRESHOLD,
+        })
+
+    n = len(episodes)
+    rip_n = sum(1 for e in episodes if e["rip"])
+    fwd5_vals = [e["fwd_5d"] for e in episodes]
+    summary = {
+        "threshold_b": threshold_b,
+        "n": n,
+        "excluded_unresolved": excluded_unresolved,
+        "rip_n": rip_n,
+        "rip_pct": (rip_n / n) if n else None,
+        "mean_fwd_5d": (sum(fwd5_vals) / n) if n else None,
+        "best_fwd_5d": max(fwd5_vals) if fwd5_vals else None,
+        "worst_fwd_5d": min(fwd5_vals) if fwd5_vals else None,
+        "n_negative_fwd_5d": sum(1 for v in fwd5_vals if v < 0),
+    }
+    return {"episodes": episodes, "summary": summary}
+
+
 def signal_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Track-record roll-up over `signal_history` rows.
 

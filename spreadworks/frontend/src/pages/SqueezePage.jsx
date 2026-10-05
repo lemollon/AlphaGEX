@@ -207,45 +207,6 @@ const CALENDAR_EVIDENCE = [
   { event: 'Monthly opex day', rate: '4.35%', mult: '0.43x', n: 23, tone: 'suppressive' },
 ];
 
-// Falsification — EVERY session (not a curated subset) where net gamma's
-// OWN SAME-DAY close broke below −$12.5B, 2020-2026. [date, net gamma, fwd
-// 5d, 5d max, >+3% rip]. The "vs flip" column from the old −$10B-era table
-// is gone — it needed the dealer gamma flip-point reconciliation (a full
-// option-chain computation), which isn't available outside the live capture
-// job, and approximating it would be a guess wearing a number's clothes.
-// 19 more 2026 sessions qualify but are excluded here because their 5-session
-// forward window runs past the SPY price series' own 2025-12-12 end date —
-// not cherry-picked, just not yet resolvable.
-const FALSIFICATION_EPISODES = [
-  ['2023-03-10', '−12.64B', '+1.44%', '+2.64%', false],
-  ['2023-03-15', '−12.57B', '+1.11%', '+2.86%', false],
-  ['2023-08-17', '−13.71B', '+0.14%', '+1.55%', false],
-  ['2023-09-21', '−14.75B', '−0.67%', '+0.19%', false],
-  ['2023-09-26', '−14.54B', '−1.01%', '+0.62%', false],
-  ['2023-09-27', '−13.34B', '−0.33%', '+0.58%', false],
-  ['2023-10-03', '−12.56B', '+3.07%', '+3.07%', true],
-  ['2023-10-19', '−13.19B', '−3.25%', '−0.66%', false],
-  ['2023-10-26', '−12.74B', '+4.41%', '+4.41%', true],
-  ['2025-01-02', '−17.68B', '−0.71%', '+1.83%', false],
-  ['2025-01-10', '−12.61B', '+2.94%', '+2.94%', false],
-  ['2025-02-27', '−14.27B', '−2.11%', '+1.56%', false],
-  ['2025-03-03', '−12.85B', '−3.97%', '−0.12%', false],
-  ['2025-03-04', '−14.17B', '−3.63%', '+1.08%', false],
-  ['2025-03-06', '−15.03B', '−3.72%', '+0.56%', false],
-  ['2025-03-07', '−12.63B', '−2.28%', '−2.28%', false],
-  ['2025-03-10', '−15.87B', '+1.17%', '+1.17%', false],
-  ['2025-03-11', '−15.05B', '+0.92%', '+2.02%', false],
-  ['2025-03-12', '−15.33B', '+1.48%', '+1.48%', false],
-  ['2025-03-13', '−16.52B', '+2.55%', '+2.85%', false],
-  ['2025-03-14', '−14.35B', '+0.51%', '+0.77%', false],
-  ['2025-03-17', '−12.75B', '+1.53%', '+1.53%', false],
-  ['2025-03-18', '−17.20B', '+2.88%', '+2.88%', false],
-  ['2025-03-19', '−16.20B', '+0.56%', '+1.78%', false],
-  ['2025-03-20', '−17.47B', '+0.58%', '+2.07%', false],
-  ['2025-04-03', '−14.68B', '−2.26%', '+2.22%', false],
-  ['2025-11-20', '−14.28B', '+4.73%', '+4.73%', true],
-];
-
 // Hover "i" circle with an absolutely-positioned tooltip. Mirrors
 // RiskAdvisorPage's InfoTip exactly.
 function InfoTip({ text }) {
@@ -325,6 +286,66 @@ function Fold({ title, meta, children, open: init = false, persistKey }) {
 function oneIn(p) {
   if (p == null || p <= 0) return null;
   return Math.max(1, Math.round(1 / p));
+}
+
+// The falsification table, live from episode_table() on the backend — every
+// session gamma closed below `label`'s threshold, with the forward max move
+// at 1/3/5 sessions. Recomputed on every /state fetch; no hardcoded episodes,
+// no re-run date. `tableData` is `data.episode_tables?.[tableKey]`, shaped
+// exactly as episode_table() returns ({ episodes: [...], summary: {...} }).
+function EpisodeTable({ tableKey, label, tableData }) {
+  const episodes = tableData?.episodes || [];
+  const summary = tableData?.summary || {};
+  return (
+    <Fold title={`What happened every time gamma went below ${label}`}
+          meta={`${summary?.n ?? '—'} episodes · live`}>
+      <div style={{ ...S.small, marginBottom: 10 }}>
+        The evidence above is what supports the signal. This is what breaks it — if deep short
+        gamma were a squeeze setup, this table would be mostly green. Every qualifying session
+        is shown, not a curated subset (more recent sessions are excluded when their forward
+        window isn't resolvable yet against the price series' own data cutoff).
+      </div>
+      {episodes.length ? (
+        <>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 620, marginBottom: 10 }}>
+              <thead>
+                <tr>
+                  <th style={S.th}>episode start</th><th style={S.th}>net gamma</th>
+                  <th style={S.th}>fwd 1d max</th><th style={S.th}>fwd 3d max</th>
+                  <th style={S.th}>fwd 5d</th><th style={S.th}>5d max</th><th style={S.th}>&gt;+3% rip</th>
+                </tr>
+              </thead>
+              <tbody>
+                {episodes.map((e) => (
+                  <tr key={`${tableKey}-${e.trade_date}`}>
+                    <td style={S.td}>{e.trade_date}</td>
+                    <td style={S.td}>{signedBn(e.net_gex_b)}</td>
+                    <td style={S.td}>{signedPct(e.fwd_1d_max)}</td>
+                    <td style={S.td}>{signedPct(e.fwd_3d_max)}</td>
+                    <td style={{ ...S.td, color: e.fwd_5d >= 0 ? GREEN : RED, fontWeight: 700 }}>{signedPct(e.fwd_5d)}</td>
+                    <td style={S.td}>{signedPct(e.fwd_5d_max)}</td>
+                    <td style={{ ...S.td, color: e.rip ? AMBER : DIM, fontWeight: e.rip ? 700 : 400 }}>{e.rip ? 'YES' : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={S.small}>
+            All {summary.n} qualifying episodes shown{summary.excluded_unresolved
+              ? ` (${summary.excluded_unresolved} more recent session(s) excluded — forward window not resolvable yet)`
+              : ''}. {summary.rip_n} of {summary.n} produced a 5-day rip of +3% or more
+            {' '}({pct(summary.rip_pct)}), mean forward 5-day {signedPct(summary.mean_fwd_5d)}, best{' '}
+            {signedPct(summary.best_fwd_5d)}, worst {signedPct(summary.worst_fwd_5d)}. Read as "get long"
+            it was wrong {summary.n_negative_fwd_5d} times out of {summary.n} (forward 5-day return
+            finished negative).
+          </div>
+        </>
+      ) : (
+        <div style={S.small}>no qualifying episodes on file yet</div>
+      )}
+    </Fold>
+  );
 }
 
 export default function SqueezePage() {
@@ -794,6 +815,508 @@ export default function SqueezePage() {
           })() : <div style={S.small}>no history yet — needs the 15:05 CT capture job to run and 60 sessions before the percentile is defined</div>}
         </div>
 
+        {/* WHAT TO WATCH — trigger levels, which leg is missing, fuel, pin,
+            calendar. Built from the 15:05 capture; the live recompute is
+            shown beside it, never instead of it. */}
+        {(() => {
+          const outlook = data.outlook || {};
+          const legs = outlook.legs || {};
+          const cal = outlook.calendar || {};
+          const pColor = PROXIMITY_COLOR[outlook.proximity] || GREY;
+          const gammaPctNow = data.gamma_pct != null ? Math.min(100, Math.max(0, data.gamma_pct * 100)) : null;
+          const fuelPct = outlook.fuel != null ? Math.abs(outlook.fuel) * 100 : null;
+          const fuelTopDecile = fuelPct != null && Math.abs(outlook.fuel) >= FUEL_TOP_DECILE;
+
+          if (outlook.reason) {
+            return (
+              <div style={{ ...S.card, opacity: 0.6 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={S.cardTitle}>What to watch</span>
+                  <span style={{ ...S.small, marginLeft: 'auto' }}>official reading: 15:05 CT capture</span>
+                </div>
+                <div style={{ fontSize: 13.5, color: '#c6cbd8' }}>Outlook unavailable</div>
+                <div style={{ ...S.small, marginTop: 6 }}>{outlook.reason}</div>
+              </div>
+            );
+          }
+
+          return (
+            <div style={S.card}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                <span style={S.cardTitle}>What to watch</span>
+                <span style={{ ...S.small, marginLeft: 'auto' }}>official reading: 15:05 CT capture</span>
+              </div>
+
+              {outlook.proximity && (
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: pColor, marginBottom: 4 }}>
+                  {PROXIMITY_LABEL[outlook.proximity] || outlook.proximity}
+                  <InfoTip text="Which zone the percentile is in. OVERSOLD is the squeeze prerequisite; OVERBOUGHT is the safest measured state to sell into." />
+                </div>
+              )}
+              {outlook.proximity && (
+                <div style={{ fontSize: 13, color: '#c6cbd8', marginBottom: 12 }}>
+                  {PROXIMITY_COPY[outlook.proximity] || ''}
+                </div>
+              )}
+
+              {/* Live recompute — same maths, this minute's gamma. */}
+              {(() => {
+                const lo = intraday?.live_outlook;
+                if (!lo || !lo.proximity) return null;
+                const same = lo.proximity === outlook.proximity;
+                const c = PROXIMITY_COLOR[lo.proximity] || GREY;
+                return (
+                  <div style={{
+                    padding: '9px 11px', borderRadius: 8, marginBottom: 12,
+                    background: '#0e1220',
+                    border: `1px solid ${same ? '#1c2233' : `${AMBER}55`}`,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ ...S.small, letterSpacing: '.05em', textTransform: 'uppercase' }}>
+                        right now
+                      </span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: c }}>
+                        {PROXIMITY_LABEL[lo.proximity] || lo.proximity}
+                      </span>
+                      {!same && (
+                        <span style={{ fontSize: 13, fontWeight: 700, color: AMBER }}>
+                          ≠ the 15:05 reading
+                        </span>
+                      )}
+                      <span style={{ ...S.small, marginLeft: 'auto' }}>
+                        recomputed every 60s from the live chain
+                      </span>
+                    </div>
+                    <div style={{ ...S.small, marginTop: 3, lineHeight: 1.5 }}>
+                      {lo.gap_to_oversold_b != null && (
+                        <>gamma {signedBn(intraday.net_gex_b)} ·{' '}
+                        {lo.gap_to_oversold_b <= 0
+                          ? <b style={{ color: AMBER }}>already through the oversold trigger</b>
+                          : <>{bn(lo.gap_to_oversold_b)} from oversold</>}</>
+                      )}
+                      {lo.legs?.vix_ratio != null && (
+                        <> · VIX ratio {lo.legs.vix_ratio.toFixed(2)}
+                        {lo.legs.vix_at_highs
+                          ? <b style={{ color: AMBER }}> — at its highs</b>
+                          : <> ({(0.95 - lo.legs.vix_ratio).toFixed(2)} short of 0.95)</>}</>
+                      )}
+                    </div>
+                    <div style={{ ...S.small, marginTop: 3 }}>
+                      Advisory. The verdict above is still the 15:05 capture — this is
+                      where the levels sit this minute, not a new call.
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 1 — how close are we */}
+              <div style={{ ...S.small, marginBottom: 4 }}>
+                How close are we — gamma percentile
+                <InfoTip text="Where net dealer gamma sits within its own trailing 60 sessions. The rank is a much stronger signal than the level: a −$4B print can be oversold in a calm month and unremarkable in a volatile one." />
+              </div>
+              <div style={{ position: 'relative', height: 24, background: '#0e1220', border: '1px solid #232a3d', borderRadius: 6 }}>
+                <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '20%', background: AMBER, opacity: 0.18 }} />
+                <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '20%', background: GREEN, opacity: 0.18 }} />
+                {gammaPctNow != null && (
+                  <div style={{ position: 'absolute', left: `calc(${gammaPctNow.toFixed(1)}% - 1px)`, top: -3, bottom: -3, width: 2, background: '#e6e9f2' }} />
+                )}
+              </div>
+              {/* The moving "current" label gets its OWN row under the bar and
+                  the two fixed trigger labels the row below it — sharing a row
+                  put "current 86.7%" straight through the overbought label
+                  exactly when the reading was interesting. */}
+              <div style={{ position: 'relative', marginTop: 4, height: 18, overflow: 'hidden' }}>
+                {gammaPctNow != null && (
+                  <span style={{
+                    ...S.small, color: '#c6cbd8', position: 'absolute',
+                    left: `${Math.min(92, Math.max(8, gammaPctNow)).toFixed(1)}%`,
+                    transform: 'translateX(-50%)', whiteSpace: 'nowrap',
+                  }}>
+                    current {pct(data.gamma_pct)}
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+                <span style={S.small}>oversold ≤ {signedBn(outlook.oversold_trigger_b)}</span>
+                <span style={S.small}>overbought ≥ {signedBn(outlook.overbought_trigger_b)}</span>
+              </div>
+              {outlook.pct_trend_5d != null && (() => {
+                const falling = outlook.pct_trend_5d < 0;
+                const nearOversold = outlook.proximity === 'OVERSOLD' || outlook.proximity === 'APPROACHING_OVERSOLD';
+                const nearOverbought = outlook.proximity === 'OVERBOUGHT' || outlook.proximity === 'APPROACHING_OVERBOUGHT';
+                const showDestination = falling ? nearOversold : nearOverbought;
+                return (
+                  <div style={{ ...S.small, marginBottom: 12 }}>
+                    percentile {falling ? 'falling' : 'rising'} {Math.abs(outlook.pct_trend_5d * 100).toFixed(1)}pts over 5 sessions
+                    {showDestination && (falling ? ' — moving toward the squeeze zone' : ' — moving away from the squeeze zone')}
+                  </div>
+                );
+              })()}
+
+              {/* 2 — what would have to happen */}
+              <div style={{ ...S.small, marginBottom: 4 }}>What would have to happen</div>
+              <div style={{ fontSize: 13, marginBottom: 4 }}>
+                {outlook.gap_to_oversold_b == null || outlook.oversold_trigger_b == null ? '—'
+                  : outlook.gap_to_oversold_b > 0
+                    ? <>Squeeze trigger — gamma must fall to <b>{signedBn(outlook.oversold_trigger_b)}</b> ({bn(outlook.gap_to_oversold_b)} away)</>
+                    : <>Squeeze trigger — already through {signedBn(outlook.oversold_trigger_b)} (gamma at {bn(data.net_gex_b)})</>}
+              </div>
+              <div style={{ fontSize: 13, marginBottom: 12 }}>
+                {outlook.gap_to_overbought_b == null || outlook.overbought_trigger_b == null ? '—'
+                  : outlook.gap_to_overbought_b > 0
+                    ? <>Overbought trigger — gamma must rise to <b>{signedBn(outlook.overbought_trigger_b)}</b> ({bn(outlook.gap_to_overbought_b)} away)</>
+                    : <>Overbought trigger — already through {signedBn(outlook.overbought_trigger_b)} (gamma at {bn(data.net_gex_b)})</>}
+              </div>
+
+              {/* 3 — which leg is missing */}
+              <div style={{ ...S.small, marginBottom: 4 }}>Which leg is missing — SQUEEZE WATCH needs both</div>
+              {[
+                { ok: legs.gamma_oversold, label: 'Gamma oversold (≤ 20th percentile)' },
+                { ok: legs.vix_at_highs, label: 'VIX at highs (ratio ≥ 0.95)',
+                  sub: legs.vix_at_highs === false && legs.vix_ratio != null && legs.vix_gap != null
+                    ? `VIX ratio ${legs.vix_ratio.toFixed(2)} — needs to rise ${legs.vix_gap.toFixed(2)} to clear 0.95`
+                    : null },
+              ].map((row, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: i === 0 ? 0 : 6 }}>
+                  <span style={{ fontWeight: 700, color: row.ok == null ? GREY : row.ok ? GREEN : RED, width: 14, flexShrink: 0 }}>
+                    {row.ok == null ? '−' : row.ok ? '✓' : '✗'}
+                  </span>
+                  <div>
+                    <div style={{ fontSize: 13 }}>{row.label}</div>
+                    {row.sub && <div style={{ ...S.small, color: AMBER, marginTop: 2 }}>{row.sub}</div>}
+                  </div>
+                </div>
+              ))}
+
+              {/* 4 — fuel: forced dealer hedging vs a normal day's volume */}
+              <div style={{ ...S.small, marginTop: 16, marginBottom: 4 }}>
+                Fuel — forced hedging vs a normal day's volume
+                <InfoTip text="Forced dealer hedging per 1% move, as a share of a normal day's dollar volume. net_gex is literally dollars-per-1%-move, so its size against SPY's own liquidity says whether dealer flow can dominate the tape. Median 9.4%; top sextile 17.5–56.8%." />
+              </div>
+              <div style={{ fontSize: 13, marginBottom: 12 }}>
+                {fuelPct == null ? (
+                  <>
+                    <span>—</span>
+                    {outlook.fuel_reason && <span style={S.small}> ({outlook.fuel_reason})</span>}
+                  </>
+                ) : (
+                  <>
+                    <b style={{ color: fuelTopDecile ? AMBER : '#c6cbd8' }}>{fuelPct.toFixed(1)}%</b>
+                    {' '}— dealers must trade {fuelPct.toFixed(1)}% of a normal day's volume per 1% move,
+                    {outlook.fuel > 0 ? ' an accelerant (short gamma)' : ' a dampener (long gamma)'}
+                    {fuelTopDecile && <span style={{ color: AMBER, fontWeight: 700 }}> · top decile</span>}
+                    {outlook.adv_b != null && <span style={S.small}> · {bn(outlook.adv_b)}/day avg volume</span>}
+                  </>
+                )}
+              </div>
+
+              {/* 5 — pin strength */}
+              <div style={{ ...S.small, marginBottom: 4 }}>
+                Pin strength
+                <InfoTip text="How hard dealer hedging is damping the tape, read off the same percentile as the verdict. Higher means more pinning. Zero squeezes have ever started in the top quartile." />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <span style={{ fontWeight: 700, fontSize: 13, color: PIN_COLOR[outlook.pin_strength] || GREY }}>
+                  {PIN_LABEL[outlook.pin_strength] || '—'}
+                </span>
+                <span style={S.small}>{PIN_COPY[outlook.pin_strength] || ''}</span>
+              </div>
+
+              {/* 6 — calendar strip: only flags that are actually true render. */}
+              <div style={{ ...S.small, marginBottom: 4 }}>Scheduled flow today</div>
+              {(() => {
+                const activeFlags = CALENDAR_FLAGS.filter(({ key }) => !!cal[key]);
+                if (!activeFlags.length) {
+                  return <div style={{ ...S.small, marginBottom: 4 }}>No scheduled flow today.</div>;
+                }
+                return (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                    {activeFlags.map(({ key, label, tone }) => {
+                      const color = tone === 'supportive' ? AMBER : GREEN;
+                      return (
+                        <span key={key} style={{
+                          fontSize: 13, fontWeight: 700, padding: '3px 8px', borderRadius: 999,
+                          background: color + '22',
+                          border: `1px solid ${color}66`,
+                          color,
+                        }}>
+                          {label}
+                        </span>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+              {cal.month_end && (
+                <div style={S.small}>
+                  Month end raises squeeze odds 2.52x on oversold days — but was 0-for-9 in both
+                  2024 and 0-for-9 in 2025. A tilt, never a trigger.
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* TODAY'S INTRADAY GAMMA PATH — a SEPARATE chart on purpose. The
+            daily chart is one point per session and IS the signal. This is
+            a 1-minute path through today (tightened from 10-minute
+            2026-10-04) and is NOT — an intraday sample lands in the wrong
+            percentile zone 21.6% of the time against its own close. */}
+        {(() => {
+          const rows = (ipath?.rows || []).filter((r) => r.net_gex_b != null);
+          const today = rows.length ? rows[rows.length - 1].trade_date : null;
+          const pts = rows.filter((r) => r.trade_date === today)
+            .map((r) => ({ ...r, label: hhmm(r.minute_ct) }));
+          return (
+            <div style={S.card}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                <span style={S.cardTitle}>Gamma through today — every minute</span>
+                <ContextTag />
+                {pts.length > 0 && (
+                  <IntradayCadence count={pts.length}
+                                   lastMinute={pts[pts.length - 1].minute_ct} />
+                )}
+              </div>
+              {pts.length >= 2 ? (
+                (() => {
+                  // THE Y-DOMAIN MUST CONTAIN THE TRIGGERS. A bare autoscale
+                  // fits the day's wiggle and pushes the oversold line clean
+                  // off the chart, so the one number that decides the zone is
+                  // invisible exactly when gamma is nowhere near it.
+                  const os = data.outlook?.oversold_trigger_b;
+                  const ob = data.outlook?.overbought_trigger_b;
+                  const gs = pts.map((r) => r.net_gex_b).filter((v) => v != null);
+                  const cand = [...gs, os, ob, 0].filter((v) => v != null);
+                  const lo = Math.min(...cand), hi = Math.max(...cand);
+                  const pad = Math.max(0.4, (hi - lo) * 0.12);
+                  const last = pts[pts.length - 1];
+                  const first = pts[0];
+                  const prior = data.net_gex_b;   // the 15:05 reading in force
+                  const dayMove = last?.net_gex_b != null && first?.net_gex_b != null
+                    ? last.net_gex_b - first.net_gex_b : null;
+                  const spotMove = last?.spot != null && first?.spot != null
+                    ? last.spot - first.spot : null;
+                  return (
+                    <>
+                    <div style={{ width: '100%', height: 250, overflowX: 'auto', minWidth: 0 }}>
+                      <ResponsiveContainer>
+                        <ComposedChart data={pts} margin={{ top: 12, right: 58, left: -8, bottom: 0 }}>
+                          {os != null && (
+                            <ReferenceArea y1={lo - pad} y2={os} yAxisId="g"
+                                           fill={AMBER} fillOpacity={0.09} />
+                          )}
+                          {ob != null && (
+                            <ReferenceArea y1={ob} y2={hi + pad} yAxisId="g"
+                                           fill={GREEN} fillOpacity={0.09} />
+                          )}
+                          <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#5b6478' }}
+                                 interval="preserveStartEnd" minTickGap={40} />
+                          <YAxis yAxisId="g" domain={[lo - pad, hi + pad]}
+                                 tick={{ fontSize: 11, fill: '#5b6478' }}
+                                 tickFormatter={(v) => `${v.toFixed(0)}B`} />
+                          <YAxis yAxisId="px" orientation="right" hide
+                                 domain={['dataMin - 0.6', 'dataMax + 0.6']} />
+                          <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 13 }}
+                                   labelFormatter={(l) => `${l} CT`}
+                                   formatter={(v, n) => [n === 'SPY'
+                                     ? `$${Number(v).toFixed(2)}`
+                                     : `$${Number(v).toFixed(2)}B`, n]} />
+                          <ReferenceLine yAxisId="g" y={0} stroke="#232a3d" />
+                          {prior != null && (
+                            <ReferenceLine yAxisId="g" y={prior} stroke="#8b93a7"
+                                           strokeDasharray="2 4"
+                                           label={{ value: `15:05 ${signedBn(prior)}`,
+                                                    position: 'insideTopLeft',
+                                                    fill: '#8b93a7', fontSize: 11 }} />
+                          )}
+                          {os != null && (
+                            <ReferenceLine yAxisId="g" y={os} stroke={AMBER} strokeDasharray="3 3"
+                                           label={{ value: `oversold ${signedBn(os)}`,
+                                                    position: 'insideBottomLeft',
+                                                    fill: AMBER, fontSize: 11 }} />
+                          )}
+                          {ob != null && ob <= hi + pad && (
+                            <ReferenceLine yAxisId="g" y={ob} stroke={GREEN} strokeDasharray="3 3"
+                                           label={{ value: `overbought ${signedBn(ob)}`,
+                                                    position: 'insideTopLeft',
+                                                    fill: GREEN, fontSize: 11 }} />
+                          )}
+                          <Line yAxisId="px" dataKey="spot" name="SPY" stroke="#d6d3d1"
+                                strokeWidth={1} dot={false} isAnimationActive={false}
+                                connectNulls />
+                          <Line yAxisId="g" dataKey="net_gex_b" name="net gamma ($B)"
+                                stroke={LIVE} strokeWidth={2} dot={false}
+                                isAnimationActive={false} connectNulls
+                                label={({ index, x, y }) => (index === pts.length - 1 ? (
+                                  <text x={Number(x) + 6} y={Number(y) + 4} fill={LIVE}
+                                        fontSize={11} fontWeight={700}>
+                                    {signedBn(last.net_gex_b)}
+                                  </text>
+                                ) : null)} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 8, fontSize: 13 }}>
+                      <span style={{ color: DIM }}>
+                        since 08:30 gamma{' '}
+                        <b style={{ color: dayMove == null ? DIM : dayMove < 0 ? AMBER : GREEN }}>
+                          {dayMove == null ? '—'
+                            : `${dayMove < 0 ? '−' : '+'}$${Math.abs(dayMove).toFixed(2)}B`}
+                        </b>
+                        {spotMove != null && (
+                          <> · SPY <b style={{ color: '#c6cbd8' }}>
+                            {spotMove < 0 ? '−' : '+'}${Math.abs(spotMove).toFixed(2)}
+                          </b></>
+                        )}
+                      </span>
+                      {os != null && last?.net_gex_b != null && (
+                        <span style={{ color: DIM }}>
+                          {last.net_gex_b <= os
+                            ? <b style={{ color: AMBER }}>through the oversold trigger right now</b>
+                            : <>still <b style={{ color: '#c6cbd8' }}>
+                                ${(last.net_gex_b - os).toFixed(2)}B
+                              </b> above the oversold trigger</>}
+                        </span>
+                      )}
+                    </div>
+                    </>
+                  );
+                })()
+              ) : (
+                <div style={{ ...S.caption, marginTop: 6 }}>
+                  {ipath?.reason || 'Nothing recorded yet today — points land every minute '
+                    + 'between 08:30 and 15:00 CT.'}
+                </div>
+              )}
+              <div style={{ ...S.caption, marginTop: 10 }}>
+                The <b style={{ color: LIVE }}>purple line</b> is net dealer gamma, recomputed from
+                the live chain every minute. The <b style={{ color: '#d6d3d1' }}>pale
+                line</b> is SPY on a hidden right axis — net gamma measured at spot moves when spot
+                moves, so the two together tell you whether dealers repositioned or price just slid
+                down a fixed curve. The <b style={{ color: '#8b93a7' }}>grey dashed line</b> is the
+                15:05 reading the verdict is currently using.
+                {' '}<b style={{ color: '#c6cbd8' }}>Watch it; do not trade off it</b> — sampled
+                intraday, gamma lands in a different zone than its own close 21.6% of the time.
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* VIX LEG CHART */}
+        {(() => {
+          const vh = inRange(data.vix_history).map(v => ({ ...v, label: v.trade_date.slice(5) }));
+          const lastVix = vh.length ? vh[vh.length - 1] : null;
+          return (
+            <div style={S.card}>
+              <div style={S.cardTitle}>
+                The VIX leg — VIX ÷ its own 20-session max
+                <InfoTip text="VIX divided by its own maximum over the previous 20 sessions. It measures where VIX sits in its recent range, not its level, so a flat VIX reads 1.00 by construction." />
+              </div>
+              <ChartMeta {...vixChartMeta(data, lastVix)} />
+              {vh.length ? (
+                <div style={{ width: '100%', height: 200, overflowX: 'auto', minWidth: 0 }}>
+                  <ResponsiveContainer>
+                    <ComposedChart data={vh} margin={{ top: 6, right: 12, left: -8, bottom: 0 }}>
+                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#5b6478' }} interval="preserveStartEnd" minTickGap={40} />
+                      {/* The ratio is NOT capped at 1.0 — a session that sets a new
+                          high prints above it, and those are the SQUEEZE_WATCH
+                          sessions. */}
+                      <YAxis yAxisId="ratio" tick={{ fontSize: 11, fill: '#5b6478' }}
+                             domain={[0, (dataMax) => Math.max(1.05, Math.ceil(dataMax * 20) / 20)]}
+                             tickFormatter={v => Number(v).toFixed(2)} />
+                      <YAxis yAxisId="lvl" orientation="right" tick={{ fontSize: 11, fill: '#5b6478' }}
+                             domain={['dataMin - 2', 'dataMax + 2']} tickFormatter={v => Number(v).toFixed(0)} />
+                      <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 13 }}
+                               formatter={(v, name) => [Number.isFinite(Number(v)) ? Number(v).toFixed(2) : '—', name]} />
+                      <Legend wrapperStyle={{ fontSize: 13, width: '100%' }}
+                              formatter={v => <span style={{ color: '#8b93a7' }}>{v}</span>} />
+                      <ReferenceLine yAxisId="ratio" y={0.95} stroke={AMBER} strokeDasharray="4 4"
+                                     label={{ value: '0.95 — at highs', position: 'insideTopRight', fill: AMBER, fontSize: 11 }} />
+                      <ReferenceLine yAxisId="ratio" y={0.90} stroke="#7dd3fc" strokeDasharray="4 4"
+                                     label={{ value: '0.90 — EBB gate', position: 'insideBottomRight', fill: '#7dd3fc', fontSize: 11 }} />
+                      <Line yAxisId="ratio" dataKey="ratio" name="VIX ratio" stroke="#f0abfc" dot={false} strokeWidth={1.8} connectNulls />
+                      <Line yAxisId="lvl" dataKey="vix" name="VIX level" stroke="#64748b" dot={false} strokeWidth={1.1} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : <div style={S.small}>no VIX history yet</div>}
+              <div style={{ ...S.caption, marginTop: 8 }}>
+                <b style={{ color: '#f0abfc' }}>The pink line</b> is today’s VIX divided by the highest VIX
+                of the last 20 sessions — 1.00 means today is the most fearful of those 20.{' '}
+                <b style={{ color: '#64748b' }}>The grey line</b> is the plain VIX level, on the right.
+                SQUEEZE WATCH needs the pink line at or above <b style={{ color: AMBER }}>0.95</b> while gamma
+                is oversold. Fading fear is what kills the setup.{' '}
+                <b style={{ color: '#7dd3fc' }}>0.90</b> is the gate EBB uses with real money — a
+                different job on the same number; don’t read one as confirming the other.
+                <br />
+                <span style={{ color: '#7c8599' }}>
+                  A flat VIX would read 1.00 by construction. Over 1,598 sessions that is a theoretical
+                  hole, not a real one: of 161 firings, 9 came on a flat window and only 4 cleared 0.95
+                  without also setting a new 20-session high. Median VIX at a firing is 22.3.
+                </span>
+              </div>
+              {/* VIX RATIO THROUGH TODAY — the missing leg is the one worth
+                  watching live; on a daily chart you find out after the close. */}
+              {(() => {
+                const rows = (ipath?.rows || []).filter((r) => r.vix_ratio != null);
+                const day = rows.length ? rows[rows.length - 1].trade_date : null;
+                const pts = rows.filter((r) => r.trade_date === day).map((r) => ({
+                  ...r, label: hhmm(r.minute_ct),
+                }));
+                if (pts.length < 2) return null;
+                const last = pts[pts.length - 1];
+                return (
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #1c2233' }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 13, fontWeight: 700 }}>
+                        The VIX leg through today — every minute
+                      </span>
+                      <ContextTag />
+                      <span style={S.small}>
+                        ratio <b style={{ color: '#c6cbd8' }}>{last.vix_ratio.toFixed(2)}</b>
+                        {last.vix ? ` · VIX ${last.vix.toFixed(2)}` : ''}
+                      </span>
+                      <IntradayCadence count={pts.length} lastMinute={last.minute_ct} />
+                    </div>
+                    <div style={{ width: '100%', height: 150, overflowX: 'auto', minWidth: 0, marginTop: 6 }}>
+                      <ResponsiveContainer>
+                        <ComposedChart data={pts} margin={{ top: 8, right: 12, left: -8, bottom: 0 }}>
+                          <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#5b6478' }}
+                                 interval="preserveStartEnd" minTickGap={40} />
+                          <YAxis tick={{ fontSize: 11, fill: '#5b6478' }}
+                                 domain={[(d) => Math.min(0.6, d), (d) => Math.max(1.0, d)]}
+                                 tickFormatter={(v) => v.toFixed(2)} />
+                          <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 13 }}
+                                   formatter={(v) => [Number(v).toFixed(3), 'VIX ratio']} />
+                          <ReferenceLine y={0.95} stroke={AMBER} strokeDasharray="4 4"
+                                         label={{ value: '0.95 — squeeze leg', position: 'insideTopRight',
+                                                  fill: AMBER, fontSize: 11 }} />
+                          <ReferenceLine y={0.90} stroke="#7dd3fc" strokeDasharray="2 4" />
+                          <Line dataKey="vix_ratio" name="VIX ratio" stroke="#e879f9"
+                                strokeWidth={1.8} dot={false} isAnimationActive={false} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div style={{ ...S.caption, marginTop: 8 }}>
+                      Live VIX divided by its own trailing 20-session max.{' '}
+                      <b style={{ color: '#c6cbd8' }}>The denominator excludes today</b> — if it
+                      included the live tick, a new high would divide itself and pin the ratio at
+                      1.00 exactly when it mattered. The verdict still uses the prior close.
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          );
+        })()}
+
+        {/* FALSIFICATION TABLES — live, backend-computed. Own top-level
+            Folds, not nested in "How this signal has done": every session
+            that breaches each threshold, auto-including new qualifying
+            sessions as new daily gamma data arrives. */}
+        <EpisodeTable tableKey="t10" label="−$10B" tableData={data.episode_tables?.t10} />
+        <EpisodeTable tableKey="t125" label="−$12.5B" tableData={data.episode_tables?.t125} />
+
         {/* ── 4. ONE FOLD, everything else. Collapsed by default — the three
             sections above are the page; this is the proof underneath it.
             Order inside: call history first (the closest thing to a
@@ -1021,248 +1544,6 @@ export default function SqueezePage() {
 
           <TapeShape data={tape} />
 
-          {/* WHAT TO WATCH — trigger levels, which leg is missing, fuel, pin,
-              calendar. Built from the 15:05 capture; the live recompute is
-              shown beside it, never instead of it. */}
-          {(() => {
-            const outlook = data.outlook || {};
-            const legs = outlook.legs || {};
-            const cal = outlook.calendar || {};
-            const pColor = PROXIMITY_COLOR[outlook.proximity] || GREY;
-            const gammaPctNow = data.gamma_pct != null ? Math.min(100, Math.max(0, data.gamma_pct * 100)) : null;
-            const fuelPct = outlook.fuel != null ? Math.abs(outlook.fuel) * 100 : null;
-            const fuelTopDecile = fuelPct != null && Math.abs(outlook.fuel) >= FUEL_TOP_DECILE;
-
-            if (outlook.reason) {
-              return (
-                <div style={{ ...S.card, opacity: 0.6 }}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                    <span style={S.cardTitle}>What to watch</span>
-                    <span style={{ ...S.small, marginLeft: 'auto' }}>official reading: 15:05 CT capture</span>
-                  </div>
-                  <div style={{ fontSize: 13.5, color: '#c6cbd8' }}>Outlook unavailable</div>
-                  <div style={{ ...S.small, marginTop: 6 }}>{outlook.reason}</div>
-                </div>
-              );
-            }
-
-            return (
-              <div style={S.card}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={S.cardTitle}>What to watch</span>
-                  <span style={{ ...S.small, marginLeft: 'auto' }}>official reading: 15:05 CT capture</span>
-                </div>
-
-                {outlook.proximity && (
-                  <div style={{ fontSize: 13.5, fontWeight: 700, color: pColor, marginBottom: 4 }}>
-                    {PROXIMITY_LABEL[outlook.proximity] || outlook.proximity}
-                    <InfoTip text="Which zone the percentile is in. OVERSOLD is the squeeze prerequisite; OVERBOUGHT is the safest measured state to sell into." />
-                  </div>
-                )}
-                {outlook.proximity && (
-                  <div style={{ fontSize: 13, color: '#c6cbd8', marginBottom: 12 }}>
-                    {PROXIMITY_COPY[outlook.proximity] || ''}
-                  </div>
-                )}
-
-                {/* Live recompute — same maths, this minute's gamma. */}
-                {(() => {
-                  const lo = intraday?.live_outlook;
-                  if (!lo || !lo.proximity) return null;
-                  const same = lo.proximity === outlook.proximity;
-                  const c = PROXIMITY_COLOR[lo.proximity] || GREY;
-                  return (
-                    <div style={{
-                      padding: '9px 11px', borderRadius: 8, marginBottom: 12,
-                      background: '#0e1220',
-                      border: `1px solid ${same ? '#1c2233' : `${AMBER}55`}`,
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ ...S.small, letterSpacing: '.05em', textTransform: 'uppercase' }}>
-                          right now
-                        </span>
-                        <span style={{ fontSize: 13, fontWeight: 700, color: c }}>
-                          {PROXIMITY_LABEL[lo.proximity] || lo.proximity}
-                        </span>
-                        {!same && (
-                          <span style={{ fontSize: 13, fontWeight: 700, color: AMBER }}>
-                            ≠ the 15:05 reading
-                          </span>
-                        )}
-                        <span style={{ ...S.small, marginLeft: 'auto' }}>
-                          recomputed every 60s from the live chain
-                        </span>
-                      </div>
-                      <div style={{ ...S.small, marginTop: 3, lineHeight: 1.5 }}>
-                        {lo.gap_to_oversold_b != null && (
-                          <>gamma {signedBn(intraday.net_gex_b)} ·{' '}
-                          {lo.gap_to_oversold_b <= 0
-                            ? <b style={{ color: AMBER }}>already through the oversold trigger</b>
-                            : <>{bn(lo.gap_to_oversold_b)} from oversold</>}</>
-                        )}
-                        {lo.legs?.vix_ratio != null && (
-                          <> · VIX ratio {lo.legs.vix_ratio.toFixed(2)}
-                          {lo.legs.vix_at_highs
-                            ? <b style={{ color: AMBER }}> — at its highs</b>
-                            : <> ({(0.95 - lo.legs.vix_ratio).toFixed(2)} short of 0.95)</>}</>
-                        )}
-                      </div>
-                      <div style={{ ...S.small, marginTop: 3 }}>
-                        Advisory. The verdict above is still the 15:05 capture — this is
-                        where the levels sit this minute, not a new call.
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* 1 — how close are we */}
-                <div style={{ ...S.small, marginBottom: 4 }}>
-                  How close are we — gamma percentile
-                  <InfoTip text="Where net dealer gamma sits within its own trailing 60 sessions. The rank is a much stronger signal than the level: a −$4B print can be oversold in a calm month and unremarkable in a volatile one." />
-                </div>
-                <div style={{ position: 'relative', height: 24, background: '#0e1220', border: '1px solid #232a3d', borderRadius: 6 }}>
-                  <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '20%', background: AMBER, opacity: 0.18 }} />
-                  <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '20%', background: GREEN, opacity: 0.18 }} />
-                  {gammaPctNow != null && (
-                    <div style={{ position: 'absolute', left: `calc(${gammaPctNow.toFixed(1)}% - 1px)`, top: -3, bottom: -3, width: 2, background: '#e6e9f2' }} />
-                  )}
-                </div>
-                {/* The moving "current" label gets its OWN row under the bar and
-                    the two fixed trigger labels the row below it — sharing a row
-                    put "current 86.7%" straight through the overbought label
-                    exactly when the reading was interesting. */}
-                <div style={{ position: 'relative', marginTop: 4, height: 18, overflow: 'hidden' }}>
-                  {gammaPctNow != null && (
-                    <span style={{
-                      ...S.small, color: '#c6cbd8', position: 'absolute',
-                      left: `${Math.min(92, Math.max(8, gammaPctNow)).toFixed(1)}%`,
-                      transform: 'translateX(-50%)', whiteSpace: 'nowrap',
-                    }}>
-                      current {pct(data.gamma_pct)}
-                    </span>
-                  )}
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-                  <span style={S.small}>oversold ≤ {signedBn(outlook.oversold_trigger_b)}</span>
-                  <span style={S.small}>overbought ≥ {signedBn(outlook.overbought_trigger_b)}</span>
-                </div>
-                {outlook.pct_trend_5d != null && (() => {
-                  const falling = outlook.pct_trend_5d < 0;
-                  const nearOversold = outlook.proximity === 'OVERSOLD' || outlook.proximity === 'APPROACHING_OVERSOLD';
-                  const nearOverbought = outlook.proximity === 'OVERBOUGHT' || outlook.proximity === 'APPROACHING_OVERBOUGHT';
-                  const showDestination = falling ? nearOversold : nearOverbought;
-                  return (
-                    <div style={{ ...S.small, marginBottom: 12 }}>
-                      percentile {falling ? 'falling' : 'rising'} {Math.abs(outlook.pct_trend_5d * 100).toFixed(1)}pts over 5 sessions
-                      {showDestination && (falling ? ' — moving toward the squeeze zone' : ' — moving away from the squeeze zone')}
-                    </div>
-                  );
-                })()}
-
-                {/* 2 — what would have to happen */}
-                <div style={{ ...S.small, marginBottom: 4 }}>What would have to happen</div>
-                <div style={{ fontSize: 13, marginBottom: 4 }}>
-                  {outlook.gap_to_oversold_b == null || outlook.oversold_trigger_b == null ? '—'
-                    : outlook.gap_to_oversold_b > 0
-                      ? <>Squeeze trigger — gamma must fall to <b>{signedBn(outlook.oversold_trigger_b)}</b> ({bn(outlook.gap_to_oversold_b)} away)</>
-                      : <>Squeeze trigger — already through {signedBn(outlook.oversold_trigger_b)} (gamma at {bn(data.net_gex_b)})</>}
-                </div>
-                <div style={{ fontSize: 13, marginBottom: 12 }}>
-                  {outlook.gap_to_overbought_b == null || outlook.overbought_trigger_b == null ? '—'
-                    : outlook.gap_to_overbought_b > 0
-                      ? <>Overbought trigger — gamma must rise to <b>{signedBn(outlook.overbought_trigger_b)}</b> ({bn(outlook.gap_to_overbought_b)} away)</>
-                      : <>Overbought trigger — already through {signedBn(outlook.overbought_trigger_b)} (gamma at {bn(data.net_gex_b)})</>}
-                </div>
-
-                {/* 3 — which leg is missing */}
-                <div style={{ ...S.small, marginBottom: 4 }}>Which leg is missing — SQUEEZE WATCH needs both</div>
-                {[
-                  { ok: legs.gamma_oversold, label: 'Gamma oversold (≤ 20th percentile)' },
-                  { ok: legs.vix_at_highs, label: 'VIX at highs (ratio ≥ 0.95)',
-                    sub: legs.vix_at_highs === false && legs.vix_ratio != null && legs.vix_gap != null
-                      ? `VIX ratio ${legs.vix_ratio.toFixed(2)} — needs to rise ${legs.vix_gap.toFixed(2)} to clear 0.95`
-                      : null },
-                ].map((row, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: i === 0 ? 0 : 6 }}>
-                    <span style={{ fontWeight: 700, color: row.ok == null ? GREY : row.ok ? GREEN : RED, width: 14, flexShrink: 0 }}>
-                      {row.ok == null ? '−' : row.ok ? '✓' : '✗'}
-                    </span>
-                    <div>
-                      <div style={{ fontSize: 13 }}>{row.label}</div>
-                      {row.sub && <div style={{ ...S.small, color: AMBER, marginTop: 2 }}>{row.sub}</div>}
-                    </div>
-                  </div>
-                ))}
-
-                {/* 4 — fuel: forced dealer hedging vs a normal day's volume */}
-                <div style={{ ...S.small, marginTop: 16, marginBottom: 4 }}>
-                  Fuel — forced hedging vs a normal day's volume
-                  <InfoTip text="Forced dealer hedging per 1% move, as a share of a normal day's dollar volume. net_gex is literally dollars-per-1%-move, so its size against SPY's own liquidity says whether dealer flow can dominate the tape. Median 9.4%; top sextile 17.5–56.8%." />
-                </div>
-                <div style={{ fontSize: 13, marginBottom: 12 }}>
-                  {fuelPct == null ? (
-                    <>
-                      <span>—</span>
-                      {outlook.fuel_reason && <span style={S.small}> ({outlook.fuel_reason})</span>}
-                    </>
-                  ) : (
-                    <>
-                      <b style={{ color: fuelTopDecile ? AMBER : '#c6cbd8' }}>{fuelPct.toFixed(1)}%</b>
-                      {' '}— dealers must trade {fuelPct.toFixed(1)}% of a normal day's volume per 1% move,
-                      {outlook.fuel > 0 ? ' an accelerant (short gamma)' : ' a dampener (long gamma)'}
-                      {fuelTopDecile && <span style={{ color: AMBER, fontWeight: 700 }}> · top decile</span>}
-                      {outlook.adv_b != null && <span style={S.small}> · {bn(outlook.adv_b)}/day avg volume</span>}
-                    </>
-                  )}
-                </div>
-
-                {/* 5 — pin strength */}
-                <div style={{ ...S.small, marginBottom: 4 }}>
-                  Pin strength
-                  <InfoTip text="How hard dealer hedging is damping the tape, read off the same percentile as the verdict. Higher means more pinning. Zero squeezes have ever started in the top quartile." />
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                  <span style={{ fontWeight: 700, fontSize: 13, color: PIN_COLOR[outlook.pin_strength] || GREY }}>
-                    {PIN_LABEL[outlook.pin_strength] || '—'}
-                  </span>
-                  <span style={S.small}>{PIN_COPY[outlook.pin_strength] || ''}</span>
-                </div>
-
-                {/* 6 — calendar strip: only flags that are actually true render. */}
-                <div style={{ ...S.small, marginBottom: 4 }}>Scheduled flow today</div>
-                {(() => {
-                  const activeFlags = CALENDAR_FLAGS.filter(({ key }) => !!cal[key]);
-                  if (!activeFlags.length) {
-                    return <div style={{ ...S.small, marginBottom: 4 }}>No scheduled flow today.</div>;
-                  }
-                  return (
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
-                      {activeFlags.map(({ key, label, tone }) => {
-                        const color = tone === 'supportive' ? AMBER : GREEN;
-                        return (
-                          <span key={key} style={{
-                            fontSize: 13, fontWeight: 700, padding: '3px 8px', borderRadius: 999,
-                            background: color + '22',
-                            border: `1px solid ${color}66`,
-                            color,
-                          }}>
-                            {label}
-                          </span>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
-                {cal.month_end && (
-                  <div style={S.small}>
-                    Month end raises squeeze odds 2.52x on oversold days — but was 0-for-9 in both
-                    2024 and 0-for-9 in 2025. A tilt, never a trigger.
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-
           {/* LIVE INTRADAY — context only, never the verdict. */}
           {(() => {
             const iv = intraday || {};
@@ -1318,259 +1599,6 @@ export default function SqueezePage() {
                     )}
                   </>
                 )}
-              </div>
-            );
-          })()}
-
-          {/* TODAY'S INTRADAY GAMMA PATH — a SEPARATE chart on purpose. The
-              daily chart is one point per session and IS the signal. This is
-              a 1-minute path through today (tightened from 10-minute
-              2026-10-04) and is NOT — an intraday sample lands in the wrong
-              percentile zone 21.6% of the time against its own close. */}
-          {(() => {
-            const rows = (ipath?.rows || []).filter((r) => r.net_gex_b != null);
-            const today = rows.length ? rows[rows.length - 1].trade_date : null;
-            const pts = rows.filter((r) => r.trade_date === today)
-              .map((r) => ({ ...r, label: hhmm(r.minute_ct) }));
-            return (
-              <div style={S.card}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={S.cardTitle}>Gamma through today — every minute</span>
-                  <ContextTag />
-                  {pts.length > 0 && (
-                    <IntradayCadence count={pts.length}
-                                     lastMinute={pts[pts.length - 1].minute_ct} />
-                  )}
-                </div>
-                {pts.length >= 2 ? (
-                  (() => {
-                    // THE Y-DOMAIN MUST CONTAIN THE TRIGGERS. A bare autoscale
-                    // fits the day's wiggle and pushes the oversold line clean
-                    // off the chart, so the one number that decides the zone is
-                    // invisible exactly when gamma is nowhere near it.
-                    const os = data.outlook?.oversold_trigger_b;
-                    const ob = data.outlook?.overbought_trigger_b;
-                    const gs = pts.map((r) => r.net_gex_b).filter((v) => v != null);
-                    const cand = [...gs, os, ob, 0].filter((v) => v != null);
-                    const lo = Math.min(...cand), hi = Math.max(...cand);
-                    const pad = Math.max(0.4, (hi - lo) * 0.12);
-                    const last = pts[pts.length - 1];
-                    const first = pts[0];
-                    const prior = data.net_gex_b;   // the 15:05 reading in force
-                    const dayMove = last?.net_gex_b != null && first?.net_gex_b != null
-                      ? last.net_gex_b - first.net_gex_b : null;
-                    const spotMove = last?.spot != null && first?.spot != null
-                      ? last.spot - first.spot : null;
-                    return (
-                      <>
-                      <div style={{ width: '100%', height: 250, overflowX: 'auto', minWidth: 0 }}>
-                        <ResponsiveContainer>
-                          <ComposedChart data={pts} margin={{ top: 12, right: 58, left: -8, bottom: 0 }}>
-                            {os != null && (
-                              <ReferenceArea y1={lo - pad} y2={os} yAxisId="g"
-                                             fill={AMBER} fillOpacity={0.09} />
-                            )}
-                            {ob != null && (
-                              <ReferenceArea y1={ob} y2={hi + pad} yAxisId="g"
-                                             fill={GREEN} fillOpacity={0.09} />
-                            )}
-                            <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#5b6478' }}
-                                   interval="preserveStartEnd" minTickGap={40} />
-                            <YAxis yAxisId="g" domain={[lo - pad, hi + pad]}
-                                   tick={{ fontSize: 11, fill: '#5b6478' }}
-                                   tickFormatter={(v) => `${v.toFixed(0)}B`} />
-                            <YAxis yAxisId="px" orientation="right" hide
-                                   domain={['dataMin - 0.6', 'dataMax + 0.6']} />
-                            <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 13 }}
-                                     labelFormatter={(l) => `${l} CT`}
-                                     formatter={(v, n) => [n === 'SPY'
-                                       ? `$${Number(v).toFixed(2)}`
-                                       : `$${Number(v).toFixed(2)}B`, n]} />
-                            <ReferenceLine yAxisId="g" y={0} stroke="#232a3d" />
-                            {prior != null && (
-                              <ReferenceLine yAxisId="g" y={prior} stroke="#8b93a7"
-                                             strokeDasharray="2 4"
-                                             label={{ value: `15:05 ${signedBn(prior)}`,
-                                                      position: 'insideTopLeft',
-                                                      fill: '#8b93a7', fontSize: 11 }} />
-                            )}
-                            {os != null && (
-                              <ReferenceLine yAxisId="g" y={os} stroke={AMBER} strokeDasharray="3 3"
-                                             label={{ value: `oversold ${signedBn(os)}`,
-                                                      position: 'insideBottomLeft',
-                                                      fill: AMBER, fontSize: 11 }} />
-                            )}
-                            {ob != null && ob <= hi + pad && (
-                              <ReferenceLine yAxisId="g" y={ob} stroke={GREEN} strokeDasharray="3 3"
-                                             label={{ value: `overbought ${signedBn(ob)}`,
-                                                      position: 'insideTopLeft',
-                                                      fill: GREEN, fontSize: 11 }} />
-                            )}
-                            <Line yAxisId="px" dataKey="spot" name="SPY" stroke="#d6d3d1"
-                                  strokeWidth={1} dot={false} isAnimationActive={false}
-                                  connectNulls />
-                            <Line yAxisId="g" dataKey="net_gex_b" name="net gamma ($B)"
-                                  stroke={LIVE} strokeWidth={2} dot={false}
-                                  isAnimationActive={false} connectNulls
-                                  label={({ index, x, y }) => (index === pts.length - 1 ? (
-                                    <text x={Number(x) + 6} y={Number(y) + 4} fill={LIVE}
-                                          fontSize={11} fontWeight={700}>
-                                      {signedBn(last.net_gex_b)}
-                                    </text>
-                                  ) : null)} />
-                          </ComposedChart>
-                        </ResponsiveContainer>
-                      </div>
-                      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 8, fontSize: 13 }}>
-                        <span style={{ color: DIM }}>
-                          since 08:30 gamma{' '}
-                          <b style={{ color: dayMove == null ? DIM : dayMove < 0 ? AMBER : GREEN }}>
-                            {dayMove == null ? '—'
-                              : `${dayMove < 0 ? '−' : '+'}$${Math.abs(dayMove).toFixed(2)}B`}
-                          </b>
-                          {spotMove != null && (
-                            <> · SPY <b style={{ color: '#c6cbd8' }}>
-                              {spotMove < 0 ? '−' : '+'}${Math.abs(spotMove).toFixed(2)}
-                            </b></>
-                          )}
-                        </span>
-                        {os != null && last?.net_gex_b != null && (
-                          <span style={{ color: DIM }}>
-                            {last.net_gex_b <= os
-                              ? <b style={{ color: AMBER }}>through the oversold trigger right now</b>
-                              : <>still <b style={{ color: '#c6cbd8' }}>
-                                  ${(last.net_gex_b - os).toFixed(2)}B
-                                </b> above the oversold trigger</>}
-                          </span>
-                        )}
-                      </div>
-                      </>
-                    );
-                  })()
-                ) : (
-                  <div style={{ ...S.caption, marginTop: 6 }}>
-                    {ipath?.reason || 'Nothing recorded yet today — points land every minute '
-                      + 'between 08:30 and 15:00 CT.'}
-                  </div>
-                )}
-                <div style={{ ...S.caption, marginTop: 10 }}>
-                  The <b style={{ color: LIVE }}>purple line</b> is net dealer gamma, recomputed from
-                  the live chain every minute. The <b style={{ color: '#d6d3d1' }}>pale
-                  line</b> is SPY on a hidden right axis — net gamma measured at spot moves when spot
-                  moves, so the two together tell you whether dealers repositioned or price just slid
-                  down a fixed curve. The <b style={{ color: '#8b93a7' }}>grey dashed line</b> is the
-                  15:05 reading the verdict is currently using.
-                  {' '}<b style={{ color: '#c6cbd8' }}>Watch it; do not trade off it</b> — sampled
-                  intraday, gamma lands in a different zone than its own close 21.6% of the time.
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* VIX LEG CHART */}
-          {(() => {
-            const vh = inRange(data.vix_history).map(v => ({ ...v, label: v.trade_date.slice(5) }));
-            const lastVix = vh.length ? vh[vh.length - 1] : null;
-            return (
-              <div style={S.card}>
-                <div style={S.cardTitle}>
-                  The VIX leg — VIX ÷ its own 20-session max
-                  <InfoTip text="VIX divided by its own maximum over the previous 20 sessions. It measures where VIX sits in its recent range, not its level, so a flat VIX reads 1.00 by construction." />
-                </div>
-                <ChartMeta {...vixChartMeta(data, lastVix)} />
-                {vh.length ? (
-                  <div style={{ width: '100%', height: 200, overflowX: 'auto', minWidth: 0 }}>
-                    <ResponsiveContainer>
-                      <ComposedChart data={vh} margin={{ top: 6, right: 12, left: -8, bottom: 0 }}>
-                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#5b6478' }} interval="preserveStartEnd" minTickGap={40} />
-                        {/* The ratio is NOT capped at 1.0 — a session that sets a new
-                            high prints above it, and those are the SQUEEZE_WATCH
-                            sessions. */}
-                        <YAxis yAxisId="ratio" tick={{ fontSize: 11, fill: '#5b6478' }}
-                               domain={[0, (dataMax) => Math.max(1.05, Math.ceil(dataMax * 20) / 20)]}
-                               tickFormatter={v => Number(v).toFixed(2)} />
-                        <YAxis yAxisId="lvl" orientation="right" tick={{ fontSize: 11, fill: '#5b6478' }}
-                               domain={['dataMin - 2', 'dataMax + 2']} tickFormatter={v => Number(v).toFixed(0)} />
-                        <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 13 }}
-                                 formatter={(v, name) => [Number.isFinite(Number(v)) ? Number(v).toFixed(2) : '—', name]} />
-                        <Legend wrapperStyle={{ fontSize: 13, width: '100%' }}
-                                formatter={v => <span style={{ color: '#8b93a7' }}>{v}</span>} />
-                        <ReferenceLine yAxisId="ratio" y={0.95} stroke={AMBER} strokeDasharray="4 4"
-                                       label={{ value: '0.95 — at highs', position: 'insideTopRight', fill: AMBER, fontSize: 11 }} />
-                        <ReferenceLine yAxisId="ratio" y={0.90} stroke="#7dd3fc" strokeDasharray="4 4"
-                                       label={{ value: '0.90 — EBB gate', position: 'insideBottomRight', fill: '#7dd3fc', fontSize: 11 }} />
-                        <Line yAxisId="ratio" dataKey="ratio" name="VIX ratio" stroke="#f0abfc" dot={false} strokeWidth={1.8} connectNulls />
-                        <Line yAxisId="lvl" dataKey="vix" name="VIX level" stroke="#64748b" dot={false} strokeWidth={1.1} />
-                      </ComposedChart>
-                    </ResponsiveContainer>
-                  </div>
-                ) : <div style={S.small}>no VIX history yet</div>}
-                <div style={{ ...S.caption, marginTop: 8 }}>
-                  <b style={{ color: '#f0abfc' }}>The pink line</b> is today’s VIX divided by the highest VIX
-                  of the last 20 sessions — 1.00 means today is the most fearful of those 20.{' '}
-                  <b style={{ color: '#64748b' }}>The grey line</b> is the plain VIX level, on the right.
-                  SQUEEZE WATCH needs the pink line at or above <b style={{ color: AMBER }}>0.95</b> while gamma
-                  is oversold. Fading fear is what kills the setup.{' '}
-                  <b style={{ color: '#7dd3fc' }}>0.90</b> is the gate EBB uses with real money — a
-                  different job on the same number; don’t read one as confirming the other.
-                  <br />
-                  <span style={{ color: '#7c8599' }}>
-                    A flat VIX would read 1.00 by construction. Over 1,598 sessions that is a theoretical
-                    hole, not a real one: of 161 firings, 9 came on a flat window and only 4 cleared 0.95
-                    without also setting a new 20-session high. Median VIX at a firing is 22.3.
-                  </span>
-                </div>
-                {/* VIX RATIO THROUGH TODAY — the missing leg is the one worth
-                    watching live; on a daily chart you find out after the close. */}
-                {(() => {
-                  const rows = (ipath?.rows || []).filter((r) => r.vix_ratio != null);
-                  const day = rows.length ? rows[rows.length - 1].trade_date : null;
-                  const pts = rows.filter((r) => r.trade_date === day).map((r) => ({
-                    ...r, label: hhmm(r.minute_ct),
-                  }));
-                  if (pts.length < 2) return null;
-                  const last = pts[pts.length - 1];
-                  return (
-                    <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #1c2233' }}>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 13, fontWeight: 700 }}>
-                          The VIX leg through today — every minute
-                        </span>
-                        <ContextTag />
-                        <span style={S.small}>
-                          ratio <b style={{ color: '#c6cbd8' }}>{last.vix_ratio.toFixed(2)}</b>
-                          {last.vix ? ` · VIX ${last.vix.toFixed(2)}` : ''}
-                        </span>
-                        <IntradayCadence count={pts.length} lastMinute={last.minute_ct} />
-                      </div>
-                      <div style={{ width: '100%', height: 150, overflowX: 'auto', minWidth: 0, marginTop: 6 }}>
-                        <ResponsiveContainer>
-                          <ComposedChart data={pts} margin={{ top: 8, right: 12, left: -8, bottom: 0 }}>
-                            <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#5b6478' }}
-                                   interval="preserveStartEnd" minTickGap={40} />
-                            <YAxis tick={{ fontSize: 11, fill: '#5b6478' }}
-                                   domain={[(d) => Math.min(0.6, d), (d) => Math.max(1.0, d)]}
-                                   tickFormatter={(v) => v.toFixed(2)} />
-                            <Tooltip contentStyle={{ background: '#141824', border: '1px solid #232a3d', fontSize: 13 }}
-                                     formatter={(v) => [Number(v).toFixed(3), 'VIX ratio']} />
-                            <ReferenceLine y={0.95} stroke={AMBER} strokeDasharray="4 4"
-                                           label={{ value: '0.95 — squeeze leg', position: 'insideTopRight',
-                                                    fill: AMBER, fontSize: 11 }} />
-                            <ReferenceLine y={0.90} stroke="#7dd3fc" strokeDasharray="2 4" />
-                            <Line dataKey="vix_ratio" name="VIX ratio" stroke="#e879f9"
-                                  strokeWidth={1.8} dot={false} isAnimationActive={false} />
-                          </ComposedChart>
-                        </ResponsiveContainer>
-                      </div>
-                      <div style={{ ...S.caption, marginTop: 8 }}>
-                        Live VIX divided by its own trailing 20-session max.{' '}
-                        <b style={{ color: '#c6cbd8' }}>The denominator excludes today</b> — if it
-                        included the live tick, a new high would divide itself and pin the ratio at
-                        1.00 exactly when it mattered. The verdict still uses the prior close.
-                      </div>
-                    </div>
-                  );
-                })()}
               </div>
             );
           })()}
@@ -2046,42 +2074,6 @@ export default function SqueezePage() {
             </div>
           </Fold>
 
-          {/* FALSIFICATION TABLE */}
-          <Fold title="What happened every time gamma went below −$12.5B" meta="27 episodes, 2020-2026, re-run 2026-10-04">
-            <div style={{ ...S.small, marginBottom: 10 }}>
-              The evidence above is what supports the signal. This is what breaks it — if deep short
-              gamma were a squeeze setup, this table would be mostly green. Every qualifying session
-              is shown, not a curated subset (19 more 2026 sessions qualify but are excluded — their
-              5-day forward window isn't resolvable yet against the price series' own data cutoff).
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 520, marginBottom: 10 }}>
-                <thead>
-                  <tr>
-                    <th style={S.th}>episode start</th><th style={S.th}>net gamma</th>
-                    <th style={S.th}>fwd 5d</th><th style={S.th}>5d max</th><th style={S.th}>&gt;+3% rip</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {FALSIFICATION_EPISODES.map(([date, gamma, fwd5d, max5d, rip]) => (
-                    <tr key={date}>
-                      <td style={S.td}>{date}</td>
-                      <td style={S.td}>{gamma}</td>
-                      <td style={{ ...S.td, color: fwd5d.startsWith('+') ? GREEN : RED, fontWeight: 700 }}>{fwd5d}</td>
-                      <td style={S.td}>{max5d}</td>
-                      <td style={{ ...S.td, color: rip ? AMBER : DIM, fontWeight: rip ? 700 : 400 }}>{rip ? 'YES' : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div style={S.small}>
-              All 27 qualifying episodes shown. 3 of 27 produced a 5-day rip of +3% or more (11%), mean
-              forward 5-day +0.23%, best +4.73%, worst −3.97%. Read as "get long" it was wrong 11 times
-              out of 27 (forward 5-day return finished negative). That is an amplifier, not a direction
-              call.
-            </div>
-          </Fold>
         </Fold>
       </div>
     </div>
