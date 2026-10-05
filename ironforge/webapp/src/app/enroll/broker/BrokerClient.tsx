@@ -15,7 +15,11 @@ import { useEnrollment } from '../useEnrollment'
  * failure: enable options trading (defined-risk spreads) while opening the account.
  *
  * Lanes per SnapTrade's institution matrix (support.snaptrade.com/brokerages, 7/30):
- *  - Tradier    → our direct OAuth (503 until partner creds land)
+ *  - Tradier    → our direct OAuth. LIVE (10/5): TRADIER_OAUTH_CLIENT_ID/_SECRET are
+ *                 configured and the cookie-gate bug blocking the callback (#3180) is
+ *                 fixed — the same path the mobile app already uses successfully. This
+ *                 is the design's recommended/default brokerage, so it's listed first
+ *                 and tagged "Official partner" rather than "coming soon."
  *  - tastytrade → SnapTrade hosted portal; multi-leg options trading is GA there,
  *                 so this is a REAL lane today
  *  - Robinhood  → SnapTrade DATA-ONLY (no trading of any kind); connect works but
@@ -71,7 +75,7 @@ const TILES: readonly Tile[] = [
     key: 'tradier',
     name: 'Tradier',
     connect: { kind: 'oauth' },
-    status: { label: 'Partner · coming soon', tone: 'coming', canConnect: false },
+    status: { label: 'Official partner', tone: 'good', canConnect: true },
     openUrl: 'https://tradier.com/signup',
     openNote: 'Choose a margin account and request options level 3 (spreads) during signup.',
   },
