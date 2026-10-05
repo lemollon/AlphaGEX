@@ -82,23 +82,40 @@ export function Wordmark({ height = 26 }: { height?: number }) {
  * own preferences list is real data either way.
  */
 export function AppHeader() {
-  const { colors: color } = useTheme()
+  const { colors: color, scheme, setPreference } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   const { alert, status, onPress } = useNotificationBell()
+  // Design-spec §Mobile app "App bar every tab: wordmark, dark-mode toggle, bell" —
+  // a one-tap light/dark swap living next to the bell on all four tabs, same spot the
+  // app.html prototype's `.th-sun`/`.th-moon` pair occupies. This flips the SAVED
+  // preference straight to the opposite scheme ('system' is still reachable from the
+  // fuller Appearance picker on the Account tab); persistence is ThemeContext's job,
+  // already wired through preference.ts.
   return (
     <View style={s.header}>
       <Wordmark />
-      <Pressable
-        onPress={() => (status === 'granted' ? router.push('/notifications') : onPress())}
-        hitSlop={12}
-        accessibilityRole="button"
-        accessibilityLabel={alert ? 'Notifications, action needed' : 'Notifications'}
-        style={s.bell}
-      >
-        <Ionicons name="notifications-outline" size={24} color={color.text} />
-        {alert ? <View style={s.dot} /> : null}
-      </Pressable>
+      <View style={s.iconGroup}>
+        <Pressable
+          onPress={() => setPreference(scheme === 'dark' ? 'light' : 'dark')}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel={scheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          style={s.iconBtn}
+        >
+          <Ionicons name={scheme === 'dark' ? 'sunny-outline' : 'moon-outline'} size={20} color={color.text} />
+        </Pressable>
+        <Pressable
+          onPress={() => (status === 'granted' ? router.push('/notifications') : onPress())}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel={alert ? 'Notifications, action needed' : 'Notifications'}
+          style={s.bell}
+        >
+          <Ionicons name="notifications-outline" size={24} color={color.text} />
+          {alert ? <View style={s.dot} /> : null}
+        </Pressable>
+      </View>
     </View>
   )
 }
@@ -125,6 +142,8 @@ const makeStyles = (color: ColorTokens) =>
       fontFamily: font.display,
       letterSpacing: 0.5,
     },
+    iconGroup: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+    iconBtn: { padding: space.xs },
     bell: { padding: space.xs },
     dot: {
       position: 'absolute',

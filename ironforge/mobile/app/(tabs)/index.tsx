@@ -15,8 +15,11 @@ import type {
   LiveAgents,
   LiveOpenPosition,
   HomeData,
+  LivePerformance,
   BrokerageConnections,
   MembershipResponse,
+  MobileMe,
+  AutomationPauseResponse,
 } from '@/api/types'
 import { space, radius, type, font, agentAccent, color as staticColor } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
@@ -25,10 +28,15 @@ import { Card, Money, Balance, SectionLabel, Loading, Empty, ErrorState, Button 
 import { StatRow } from '@/components/StatRow'
 import { AppHeader, Mascot } from '@/components/Brand'
 import { PnlChart } from '@/components/PnlChart'
+import { AccountChart } from '@/components/AccountChart'
 import { brokerLabel, maskTail, soleConnection } from '@/api/brokerage'
 import { totalCapital } from '@/live/capital'
 import { agentStatItems } from '@/live/card-stats'
 import { formatPeriodValue, periodTone, type PeriodTone } from '@/live/period-stats'
+import { periodSeries, HERO_PERIOD_LABEL, HERO_PERIOD_TILE_LABEL, type HeroPeriod, type AccountPoint } from '@/live/account-series'
+import { greetingForHour } from '@/live/greeting'
+import { agentDetailHref, type AgentBot } from '@/agents/routes'
+import { AGENT_LABEL, AGENT_BLURB } from '@/agents/copy'
 import {
   deriveLifecycleNodes,
   lifecycleFillFraction,
@@ -43,18 +51,23 @@ import {
 import { pickBanner, bannerActionHref, billingBannerMode } from '@/alerts/banner'
 import { manageSubscriptionUrl } from '@/billing/store-policy'
 
+const ALL_BOTS: AgentBot[] = ['spark', 'flame', 'ember']
+
 /**
- * Forge — UX-002 (APP-011/012/013/016) and UX-003 (APP-051).
+ * Forge — UX-002 (APP-011/012/013/016), UX-003 (APP-051) and the 10.4 redesign's
+ * Forge tab (handoff/ironforge-10.4-addendum.md §2): greeting + market pill, a
+ * hero card (account value, period P&L, a scrubbable chart, 2x2 period tiles,
+ * capital row), a "Live now" strip for open trades, and "Your agents" rows for
+ * everything else (owned, status-only; unowned, an "Add" row).
  *
  * Agents come from /api/live/agents, which fans out over every bot the viewer owns and
- * returns each one's own state, account and trade. Before that endpoint existed this
- * screen composed /api/live/summary + /api/live/trade, which between them could only ever
- * describe ONE agent — so the mockup's two side-by-side tiles were unbuildable and this
- * file said so.
- *
- * /api/live/summary is still fetched, for the period row and the market clock; those are
- * viewer-level, not per-agent. Polling stays conservative: 60s for summary and agents,
- * never the 4s the web uses, which on a phone is a battery and cellular-data problem.
+ * returns each one's own state, account and trade — /api/live/summary still covers the
+ * viewer-level pieces (period row, market clock), and /api/live/performance adds the
+ * hero chart's Week/Month/Lifetime series from real closed-trade equity (see
+ * live/account-series.ts for exactly how, and why it is a calendar- not trading-day
+ * window). Every number on this screen traces to one of those endpoints, or to
+ * /api/auth/mobile/me (first name) and /api/v1/automation/pause (the Paused pill) —
+ * nothing here is invented, unlike the app.html prototype's seeded example data.
  */
 export default function ForgeScreen() {
   const { colors: color } = useTheme()
@@ -69,8 +82,23 @@ export default function ForgeScreen() {
   const agents = useSWR<LiveAgents>('/api/live/agents', (p: string) => api<LiveAgents>(p), {
     refreshInterval: 60_000,
   })
+  // Week/Month/Lifetime hero-chart series — a slower-moving number than the live
+  // poll above (it only changes when a trade closes), so a long refresh interval
+  // is honest rather than wasteful.
+  const performance = useSWR<LivePerformance>('/api/live/performance', (p: string) =>
+    api<LivePerformance>(p),
+    { refreshInterval: 300_000 },
+  )
   const conns = useSWR<BrokerageConnections>('/api/brokerage/connections', (p: string) =>
     api<BrokerageConnections>(p),
+  )
+  // First name for the greeting — same key the Account tab already fetches, so this
+  // costs nothing extra there (SWR shares the cache).
+  const me = useSWR<MobileMe>('/api/auth/mobile/me', (p: string) => api<MobileMe>(p))
+  // Whether every owned agent is paused — the market pill's "Paused" state, same
+  // activations the Agents overview and per-agent Pause switch already read.
+  const pause = useSWR<AutomationPauseResponse>('/api/v1/automation/pause', (p: string) =>
+    api<AutomationPauseResponse>(p),
   )
 
   // Sub-5s positions/P&L push (dev-handoff /ws/positions contract) — additive on
@@ -154,11 +182,18 @@ export default function ForgeScreen() {
   const [dismissedCaution, setDismissedCaution] = useState(false)
   const platform = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web'
 
+  // Hero chart state — which period is charted, and the point under a finger while
+  // dragging (mobile addendum §2 step 3: "tap a period tile to chart it, drag to
+  // explore"). Scrubbing never mutates server data, just what the hero reads.
+  const [heroPeriod, setHeroPeriod] = useState<HeroPeriod>('today')
+  const [scrub, setScrub] = useState<AccountPoint | null>(null)
+
   const refreshing = summary.isValidating || agents.isValidating
   const reload = () => {
     summary.mutate()
     home.mutate()
     agents.mutate()
+    performance.mutate()
   }
 
   if (summary.isLoading) return <Shell><Loading label="Loading your account…" /></Shell>
@@ -255,6 +290,47 @@ export default function ForgeScreen() {
     if (url) await Linking.openURL(url).catch(() => {})
   }
 
+  // Greeting + market pill (mobile addendum §2 Forge tab step 1).
+  const firstName = me.data?.customer?.firstName
+  const greeting = firstName ? `${greetingForHour(new Date().getHours())}, ${firstName}` : greetingForHour(new Date().getHours())
+  const ownedBots = list.map((a) => a.bot)
+  const allPaused =
+    ownedBots.length > 0 &&
+    ownedBots.every((bot) => pause.data?.activations.find((a) => a.agent === bot)?.paused)
+  const pillLabel = allPaused ? 'Paused' : data.market.open ? 'Market open' : data.market.label
+  const pillTone = allPaused ? color.warn : data.market.open ? color.pos : color.muted
+
+  // Hero chart + period figures — same four numbers the period tiles show.
+  const periodValues: Record<HeroPeriod, number | null> = {
+    today: data.account.today_pnl,
+    week: home.data?.wealth.weekly_income ?? null,
+    month: home.data?.wealth.monthly_income ?? null,
+    life: home.data?.wealth.lifetime_income ?? null,
+  }
+  const heroSeries = periodSeries(heroPeriod, data.intraday, performance.data?.equity_curve)
+  const heroValue = scrub ? scrub.v : capital.value
+  const heroChangeValue = periodValues[heroPeriod]
+  const heroLineColor = (() => {
+    const last = heroSeries[heroSeries.length - 1]
+    const first = heroSeries[0]
+    if (!last || !first) return color.pos
+    return last.v >= first.v ? color.pos : color.neg
+  })()
+
+  // Capital available / held — only from a REAL buying-power figure, and only when
+  // there is exactly one connected brokerage account to attribute it to (same "exactly
+  // one, or nothing" rule soleConnection uses for the broker label — two accounts would
+  // mean guessing whose buying power this is). "Held" is account value minus that
+  // available balance — arithmetic on two real numbers, not a fabricated third one.
+  const soleAccounts = conns.data?.connections?.length === 1 ? conns.data.connections[0].accounts : []
+  const soleAccount = soleAccounts.length === 1 ? soleAccounts[0] : null
+  const availableCapital = soleAccount?.buying_power_cents != null ? soleAccount.buying_power_cents / 100 : null
+  const heldCapital = availableCapital != null && capital.value != null ? capital.value - availableCapital : null
+
+  const liveAgents = list.filter((a) => a.trade?.active)
+  const idleAgents = list.filter((a) => !a.trade?.active)
+  const unownedBots = ALL_BOTS.filter((b) => !ownedBots.includes(b))
+
   return (
     <Shell>
       <ScrollView
@@ -283,37 +359,111 @@ export default function ForgeScreen() {
           />
         ) : null}
 
-        <Card>
-          <SectionLabel>Total Account Capital</SectionLabel>
-          <Balance value={capital.value} />
-          {capital.note ? (
-            <Text style={[type.label, { color: color.muted, marginTop: space.xs }]}>
-              {capital.note}
+        <View style={s.titleRow}>
+          <View>
+            <Text style={[type.label, { color: color.muted }]}>{greeting}</Text>
+            <Text style={[type.title, { color: color.text, fontFamily: font.display, marginTop: 2 }]}>
+              Forge
             </Text>
-          ) : null}
-          {/* Paper accounts must say so, every time — never let paper read as real money. */}
-          {data.account.mode === 'paper' && data.account.disclosure ? (
-            <Text style={[type.label, { color: color.warn, marginTop: space.sm }]}>
-              {data.account.disclosure}
-            </Text>
-          ) : null}
-
-          <View style={s.periodRow}>
-            <Period label="Today" value={data.account.today_pnl} />
-            <Period label="This Week" value={home.data?.wealth.weekly_income ?? null} />
-            <Period label="This Month" value={home.data?.wealth.monthly_income ?? null} />
-            <Period label="Lifetime" value={home.data?.wealth.lifetime_income ?? null} />
           </View>
+          <View style={[s.marketPill, { backgroundColor: `${pillTone}22` }]}>
+            <View style={[s.dot, { backgroundColor: pillTone }]} />
+            <Text style={[type.label, { color: pillTone, fontFamily: font.bodyMedium }]}>{pillLabel}</Text>
+          </View>
+        </View>
+
+        <Card style={{ marginTop: space.lg }}>
+          <Text style={[type.label, { color: color.muted }]} numberOfLines={1}>
+            {scrub ? formatPointStamp(scrub.t, heroPeriod) : 'Account value'}
+          </Text>
+          <Balance value={heroValue} />
+          <Text style={[type.body, { marginTop: space.xs, fontFamily: font.bodyMedium }]}>
+            {scrub ? (
+              <Text style={{ color: color.muted }}>Drag to explore</Text>
+            ) : (
+              <>
+                <Text style={{ color: periodToneColor(periodTone(heroChangeValue), color) }}>
+                  {formatPeriodValue(heroChangeValue)}
+                </Text>
+                <Text style={{ color: color.muted }}> {HERO_PERIOD_LABEL[heroPeriod]}</Text>
+              </>
+            )}
+          </Text>
+
+          <View style={{ marginTop: space.md }}>
+            {heroSeries.length >= 2 ? (
+              <AccountChart series={heroSeries} color={heroLineColor} onScrub={setScrub} />
+            ) : (
+              <View style={s.chartEmpty}>
+                <Text style={[type.label, { color: color.muted }]}>
+                  No history yet for this period.
+                </Text>
+              </View>
+            )}
+          </View>
+
+          <View style={s.periodTiles}>
+            {(['today', 'week', 'month', 'life'] as HeroPeriod[]).map((p) => (
+              <Pressable
+                key={p}
+                onPress={() => {
+                  setHeroPeriod(p)
+                  setScrub(null)
+                }}
+                accessibilityRole="button"
+                accessibilityState={{ selected: heroPeriod === p }}
+                style={[s.periodTile, heroPeriod === p && { backgroundColor: color.bg, borderColor: color.text }]}
+              >
+                <Text style={[type.label, { color: color.muted }]}>{HERO_PERIOD_TILE_LABEL[p]}</Text>
+                <Text
+                  style={[
+                    s.periodTileValue,
+                    { color: periodToneColor(periodTone(periodValues[p]), color) },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {formatPeriodValue(periodValues[p])}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {availableCapital != null ? (
+            <View style={s.capitalRow}>
+              <View style={s.capitalCol}>
+                <Text style={[type.label, { color: color.muted }]}>Capital available</Text>
+                <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, marginTop: 2 }]}>
+                  {formatDollars(availableCapital)}
+                </Text>
+              </View>
+              <View style={[s.capitalCol, s.capitalColDivider]}>
+                <Text style={[type.label, { color: color.muted }]}>Held in trades</Text>
+                <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, marginTop: 2 }]}>
+                  {heldCapital != null ? formatDollars(heldCapital) : '—'}
+                </Text>
+              </View>
+            </View>
+          ) : null}
         </Card>
 
+        {liveAgents.length > 0 ? (
+          <>
+            <View style={[s.rowBetween, { marginTop: space.xl, marginBottom: space.md }]}>
+              <SectionLabel>Live now</SectionLabel>
+              <Text style={[type.label, { color: color.muted }]}>Updates every few seconds</Text>
+            </View>
+            {liveAgents.map((a) => (
+              <AgentTile
+                key={a.bot}
+                agent={a}
+                connection={list.length === 1 ? soleConnection(conns.data) : null}
+              />
+            ))}
+          </>
+        ) : null}
+
         <View style={[s.rowBetween, { marginTop: space.xl, marginBottom: space.md }]}>
-          <SectionLabel>Active Positions</SectionLabel>
-          <View style={s.rowCenter}>
-            <View style={[s.dot, { backgroundColor: data.market.open ? color.pos : color.muted }]} />
-            <Text style={[type.body, { color: data.market.open ? color.pos : color.textDim }]}>
-              {data.market.label}
-            </Text>
-          </View>
+          <SectionLabel>Your agents</SectionLabel>
         </View>
 
         {agents.isLoading ? (
@@ -323,19 +473,39 @@ export default function ForgeScreen() {
             title="No agents running"
             detail="Activate an agent and connect a brokerage account to see positions here."
           />
-        ) : (
-          list.map((a) => (
+        ) : idleAgents.length === 0 ? null : (
+          idleAgents.map((a) => (
             <AgentTile
               key={a.bot}
               agent={a}
-              // Only attributable when there is exactly one connection — see soleConnection().
               connection={list.length === 1 ? soleConnection(conns.data) : null}
             />
           ))
         )}
+
+        {unownedBots.map((bot) => (
+          <AddAgentRow key={bot} bot={bot} onPress={() => router.push(agentDetailHref(bot))} />
+        ))}
+
+        <Text style={s.disclosure}>
+          Options involve risk, including loss of money invested.
+        </Text>
       </ScrollView>
     </Shell>
   )
+}
+
+/** "{Today/Past week/...} · {date}" — the hero label while scrubbing. */
+function formatPointStamp(t: number, period: HeroPeriod): string {
+  const d = new Date(t)
+  if (period === 'today') {
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+  }
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function formatDollars(v: number): string {
+  return `$${Math.round(v).toLocaleString('en-US')}`
 }
 
 /**
@@ -381,12 +551,6 @@ function AlertBanner({
   )
 }
 
-/**
- * One shared size, format and baseline for all four figures — Today included —
- * so the row reads as a single line rather than Today looking like a
- * different kind of number from the other three. Whole dollars, a sign only
- * when non-zero, and a dash reserved for "could not load" (period-stats.ts).
- */
 function periodToneColor(tone: PeriodTone, color: ColorTokens): string {
   const map: Record<PeriodTone, string> = {
     pos: color.pos,
@@ -397,21 +561,32 @@ function periodToneColor(tone: PeriodTone, color: ColorTokens): string {
   return map[tone]
 }
 
-function Period({ label, value }: { label: string; value: number | null }) {
+/** "Add {Agent}" row for a bot this viewer doesn't own yet (mobile addendum §2
+ *  Forge tab step 7: "unowned-agent rows → add sheet"). Links to the existing
+ *  /agents/{bot} screen rather than a bottom sheet — that screen already owns the
+ *  real entitlement/eligibility/pricing flow (see src/agents/eligibility.ts),
+ *  and a second, Forge-local copy of that logic (with a hardcoded "$50/mo" tag,
+ *  the way the app.html prototype does it) would be guessing at a billing-
+ *  sensitive number this screen has no real source for. */
+function AddAgentRow({ bot, onPress }: { bot: AgentBot; onPress: () => void }) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
+  const accent = agentAccent(bot)
   return (
-    <View style={{ flex: 1, alignItems: 'center' }}>
-      <Text
-        style={[type.label, s.periodLabel, { color: color.muted }]}
-        numberOfLines={1}
-      >
-        {label.toUpperCase()}
-      </Text>
-      <Text style={[s.periodValue, { color: periodToneColor(periodTone(value), color) }]} numberOfLines={1}>
-        {formatPeriodValue(value)}
-      </Text>
-    </View>
+    <Pressable onPress={onPress} accessibilityRole="button" style={[s.addRow, { borderColor: color.border }]}>
+      <View style={[s.addAvatar, { backgroundColor: `${accent}22` }]}>
+        <Mascot bot={bot} size={28} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+          {`Add ${AGENT_LABEL[bot]}`}
+        </Text>
+        <Text style={[type.label, { color: color.muted, marginTop: 2 }]} numberOfLines={1}>
+          {AGENT_BLURB[bot]}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={17} color={color.muted} />
+    </Pressable>
   )
 }
 
@@ -806,21 +981,78 @@ const makeStyles = (color: ColorTokens) =>
     padding: space.md,
     marginBottom: space.lg,
   },
-  periodRow: {
+  titleRow: {
     flexDirection: 'row',
-    marginTop: space.xl,
-    borderTopColor: color.border,
-    borderTopWidth: 1,
-    paddingTop: space.lg,
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
   },
-  // Fixed label height so a longer word ("This Month") never wraps and pushes
-  // the value below it out of line with the other three columns' baseline.
-  periodLabel: { height: 14, marginBottom: space.xs },
-  periodValue: {
+  marketPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    marginTop: 2,
+  },
+  chartEmpty: {
+    height: 150,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  periodTiles: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.xs,
+    marginTop: space.lg,
+  },
+  periodTile: {
+    flexBasis: '48%',
+    flexGrow: 1,
+    borderWidth: 1,
+    borderColor: color.border,
+    borderRadius: radius.md,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.md,
+  },
+  periodTileValue: {
     fontSize: 16,
     lineHeight: 20,
     fontFamily: font.bodyBold,
     fontVariant: ['tabular-nums'],
+    marginTop: 2,
+  },
+  capitalRow: {
+    flexDirection: 'row',
+    marginTop: space.lg,
+    borderTopColor: color.border,
+    borderTopWidth: 1,
+    paddingTop: space.lg,
+  },
+  capitalCol: { flex: 1 },
+  capitalColDivider: { borderLeftWidth: 1, borderLeftColor: color.border, paddingLeft: space.lg },
+  disclosure: {
+    ...type.label,
+    color: color.muted,
+    textAlign: 'center',
+    marginTop: space.xl,
+    paddingHorizontal: space.md,
+  },
+  addRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    borderWidth: 1,
+    borderRadius: radius.lg,
+    padding: space.md,
+    marginBottom: space.md,
+  },
+  addAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   rowCenter: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
