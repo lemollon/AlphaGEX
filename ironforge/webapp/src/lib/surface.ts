@@ -53,6 +53,10 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/agents/spark',
   '/agents/flame',
   '/home',
+  // Real member landing page (dev-handoff §6) — tabbed Overview/Community/
+  // History/Settings shell that /performance, /community, /account/trades and
+  // /settings now redirect into.
+  '/dashboard',
   '/performance',
   '/track-record',
   '/bot-ledger',

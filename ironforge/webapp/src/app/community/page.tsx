@@ -1,13 +1,13 @@
-import type { Metadata } from 'next'
-import CommunityClient from './CommunityClient'
+import { redirect } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
 
-export const metadata: Metadata = {
-  title: 'Forge Community — IronForge',
-  description: 'A place for disciplined traders to learn, share ideas, and grow together.',
-}
-
+/**
+ * /community is superseded by the /dashboard Community tab (dev-handoff §6:
+ * a single tabbed page). CommunityBody (the extracted feed component) now
+ * renders inline there; redirecting rather than deleting keeps every
+ * existing link and bookmark to /community working.
+ */
 export default function CommunityPage() {
-  return <CommunityClient />
+  redirect('/dashboard?tab=community')
 }

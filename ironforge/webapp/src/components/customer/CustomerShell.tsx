@@ -11,6 +11,7 @@ import SparkyWidget from '@/components/support/SparkyWidget'
 import { clientSurface, filterNavBySurface, servesPath } from '@/lib/surface'
 import { LIVE_BOT_ACCENT, LIVE_BOT_LABEL, isLiveBot, type LiveBot } from '@/lib/live/bots'
 import { EMBER_AGENT } from '@/lib/agents/ember'
+import DashboardHeaderBar from './DashboardHeaderBar'
 
 /**
  * THE single customer app shell — used by every signed-in page (Live, Performance,
@@ -76,7 +77,7 @@ function Icon({ d, className = 'h-5 w-5 shrink-0' }: { d: string; className?: st
 
 function LogoLockup() {
   return (
-    <Link href="/performance" aria-label="IronForge dashboard">
+    <Link href="/dashboard" aria-label="IronForge dashboard">
       <Wordmark markClass="h-8 w-auto" textClass="text-lg" />
     </Link>
   )
@@ -370,12 +371,16 @@ export default function CustomerShell({
 
   return (
     <div className="if-dash min-h-screen bg-[var(--bg)]">
-      {/* Mobile top bar — hamburger on the LEFT, then wordmark (consistent everywhere). */}
-      <div className="flex items-center gap-4 border-b border-[var(--line)] bg-[var(--bg)] px-4 py-3 lg:hidden">
+      {/* Mobile top bar — hamburger on the LEFT, then wordmark, then the same
+          header controls (pause-all, theme, bell, avatar) the desktop rail gets
+          via DashboardHeaderBar below — the dev-handoff header is global, not
+          overview-only, so it must render on every signed-in page/breakpoint. */}
+      <div className="flex items-center gap-3 border-b border-[var(--line)] bg-[var(--bg)] px-4 py-3 lg:hidden">
         <button onClick={() => setMenuOpen(true)} className="-ml-1 p-1 text-[var(--muted)] transition-colors hover:text-[var(--fg)]" aria-label="Open menu">
           <Icon className="h-6 w-6" d={ICONS.menu} />
         </button>
-        <Link href="/"><Wordmark markClass="h-6 w-auto" textClass="text-lg" /></Link>
+        <Link href="/" className="min-w-0 flex-1"><Wordmark markClass="h-6 w-auto" textClass="text-lg" /></Link>
+        <DashboardHeaderBar compact />
       </div>
       <MobileNavDrawer open={menuOpen} onClose={() => setMenuOpen(false)}
         membership={membership} planVariant={planVariant} strategy={strategy} />
@@ -393,6 +398,12 @@ export default function CustomerShell({
       </aside>
 
       <div className="lg:pl-60">
+        {/* Desktop header row — Pause all/Resume all, theme toggle, notification
+            bell, avatar menu (dev-handoff §6 header spec; gap-audit MISSING rows).
+            Hidden on mobile, where the same controls live in the top bar above. */}
+        <div className="hidden items-center justify-end gap-2 border-b border-[var(--line)] bg-[var(--bg)] px-4 py-2.5 lg:flex">
+          <DashboardHeaderBar />
+        </div>
         <div className={`mx-auto ${maxWidthClass} px-4 py-5`}>{children}</div>
       </div>
 
