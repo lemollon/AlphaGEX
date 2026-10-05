@@ -8,7 +8,7 @@ describe('promo', () => {
       expect(p).not.toBeNull()
       expect(p!.code).toBe('FORGE50')
       expect(p!.bots).toBe(2)
-      expect(p!.price).toBe(50)
+      expect(p!.price).toBe(49.99)
     }
   })
 

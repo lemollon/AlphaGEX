@@ -17,7 +17,7 @@ import { EMBER_AGENT } from '@/lib/agents/ember'
  *
  * "Both agents" removed 2026-10-04 (Leron, binding) — no bundle plan for new
  * enrollments. A customer wanting Spark AND Flame runs this flow twice (two separate
- * $50/mo subscriptions); legacy both_monthly subscribers keep their existing bundle
+ * $49.99/mo subscriptions); legacy both_monthly subscribers keep their existing bundle
  * (see lib/billing/plans.ts BOTH_PLAN, lib/billing/membership.ts resolvePlan).
  *
  * Prices come from lib/billing/plans.ts, never a frontend constant, so a tile

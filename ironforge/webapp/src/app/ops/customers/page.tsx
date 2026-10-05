@@ -174,7 +174,7 @@ export default function OpsCustomersPage() {
                         </div>
                         {c.promoCode && (
                           <div className="mt-1 inline-flex items-center gap-1 rounded border border-amber-600/40 bg-amber-950/30 px-1.5 py-0.5 text-[11px] font-semibold text-amber-400">
-                            PROMO {c.promoCode} · honour 2 bots @ $50/mo
+                            PROMO {c.promoCode} · honour 2 bots @ $49.99/mo
                           </div>
                         )}
                       </div>

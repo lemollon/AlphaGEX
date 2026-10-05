@@ -126,8 +126,8 @@ export default function BillingClient() {
       </div>
 
       {/* Add / open a strategy. Pricing ladder (UAT-011, revised 2026-10-04): Community
-          only = $10; Community + FIRST agent = an UPGRADE to $50/mo TOTAL (Automate
-          includes Community). A SECOND agent is its OWN full-price $50/mo subscription
+          only = $9.99; Community + FIRST agent = an UPGRADE to $49.99/mo TOTAL (Automate
+          includes Community). A SECOND agent is its OWN full-price $49.99/mo subscription
           now — no bundle, no "$25 more" (Leron, binding; legacy both_monthly
           subscribers keep their existing $75 rate, see lib/billing/membership.ts). */}
       {notOwned.length > 0 && (
