@@ -20,9 +20,10 @@ def item(value=1,age=0):
 
 def test_schema_retains_all_legacy_fields_and_new_strategy_policy():
     assert len(REQUIREMENTS)==32
-    assert sum(map(len,REQUIREMENTS.values()))==237
+    assert sum(map(len,REQUIREMENTS.values()))==238
+    assert 'delivery_manifest' in REQUIREMENTS['visuals']
     assert all(n in REQUIREMENTS for n in ('day_strategy','near_forward_strategy','forward_strategy','horizon_comparison','adaptation_rules','data_integrity'))
-    assert len(REQUIREMENTS['visuals'])==13
+    assert len(REQUIREMENTS['visuals'])==14
 
 @pytest.mark.parametrize('name,field',[(n,f) for n,fs in REQUIREMENTS.items() for f in fs])
 def test_any_omitted_contract_field_is_rejected(name,field):
