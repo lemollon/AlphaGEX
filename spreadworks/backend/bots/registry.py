@@ -1331,6 +1331,116 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "discord_alerts": False,
         },
     },
+    # MONARCH-A / MONARCH-B — PAPER-ONLY forward validation of the two
+    # best-available-but-UNCONFIRMED cells from TRIAGE 29
+    # (dev/meltup/triage29_wing_delta_sweep.py, PREREG/RESULT docs in the
+    # same dir). SPY 0DTE symmetric ATM butterfly, calls-only, body at the
+    # nearest-listed strike to spot (NOT a gamma-magnet center), wings
+    # targeted at a FIXED DELTA instead of RIVER/SURGE/RIPPLE's fixed
+    # %-of-straddle distance. monarch_a = 0.05-delta wings, monarch_b =
+    # 0.25-delta wings — same construction otherwise, run side by side on
+    # two SEPARATE $10,000 paper accounts (compare_with overlays them on one
+    # equity chart in the frontend, same pattern as RIPPLE/SPLASH).
+    #
+    # 🚨 BOTH holdout point estimates' bootstrap CIs cross zero (2025-26,
+    # real NBBO fills) — this is explicitly NOT a confirmed edge. The point
+    # of running this live is to find out whether it's real; a paper win
+    # streak alone does not confirm it. NEVER promote either to real money
+    # off a backtest or a short paper run — see the monarch memory notes for
+    # the full placebo/multiplicity history this is meant to resolve.
+    #
+    # FILL CONVENTION: real NBBO, no mid. Wings bought at ASK, body sold x2
+    # at BID (strategies/delta_butterfly.build_delta_butterfly_signal) —
+    # identical to the backtest's build_day_ladder(). The scanner passes
+    # mid_fill=False for this strategy so the executor's simulated
+    # half-spread is never layered on top of a fill that already crossed
+    # the real book.
+    #
+    # VIX GATE: mid-tercile only, cutoffs FROZEN on the 2023-01-01..2024-12-31
+    # fit window (VIX close at 10:30 ET, vix_minute.duckdb) — see
+    # strategies/delta_butterfly.MONARCH_VIX_Q1/Q2. Do not re-tune on live
+    # data.
+    #
+    # ENTRY WINDOW: the backtest's entry is a single 10:30:00 ET print
+    # (09:30:00 CT). The live window below (09:29-09:34 CT) is an ASSUMPTION
+    # — a few minutes of margin for the 1-minute scan cadence and any single
+    # missed/failed cycle — not itself validated. one_entry_per_day=True
+    # caps it to one fill regardless of how many scans land inside it.
+    #
+    # SETTLEMENT: settle_at_expiry=True + pt_ladder=False — no stop, no
+    # profit target, hold to the scanner's same-day cash-settlement pass
+    # (scanner._settlement_value: intrinsic value vs the official close).
+    # This is the live equivalent of the backtest's "reverse direction at
+    # settlement, real intrinsic value at expiry, not a market order."
+    #
+    # SIZING: the research brief did not specify a per-trade sizing rule for
+    # the forward test beyond "$10,000 paper capital per strategy" — ASSUMED
+    # here as a flat 1 contract/day (max_contracts=1, bp_pct=0.20 headroom)
+    # rather than importing the OLDER 15-delta MONARCH memory's half-Kelly
+    # 3.1%-of-equity sizing, which was fit to a different (now-superseded)
+    # cell. Revisit if Leron wants Kelly sizing applied to these two cells
+    # specifically.
+    "monarch_a": {
+        "display": "MONARCH-A",
+        "strategy": "delta_butterfly",
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": None,
+        "one_entry_per_day": True,
+        "settle_at_expiry": True,
+        "pt_ladder": False,
+        "compare_with": "monarch_b",
+        "defaults": {
+            "starting_capital": 10000.0,
+            "enabled": False,   # PAPER ONLY — explicitly disarmed. Do not
+                                 # flip to True without re-reading the caveat
+                                 # above; this flag never touches a broker.
+            "max_contracts": 1,
+            "bp_pct": 0.20,
+            "sd_mult": 1.0,      # schema-required, unused by delta_butterfly
+            # The one knob that distinguishes monarch_a from monarch_b.
+            # Read directly off this registry entry (see scanner.py /
+            # routes.py comments) — never a live-tunable bot_config column.
+            "wing_delta_target": 0.05,
+            "pt_pct": 1.0,       # unreachable by construction — see strategy
+            "sl_pct": 3.0,       # module docstring; hold is to settlement
+            "entry_start_ct": "09:29",
+            "entry_end_ct": "09:34",
+            "eod_close_ct": "14:45",  # unused for settle_at_expiry bots
+            "discord_alerts": False,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+        },
+    },
+    "monarch_b": {
+        "display": "MONARCH-B",
+        "strategy": "delta_butterfly",
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": None,
+        "one_entry_per_day": True,
+        "settle_at_expiry": True,
+        "pt_ladder": False,
+        "compare_with": "monarch_a",
+        "defaults": {
+            "starting_capital": 10000.0,
+            "enabled": False,   # PAPER ONLY — explicitly disarmed. Do not
+                                 # flip to True without re-reading the caveat
+                                 # above; this flag never touches a broker.
+            "max_contracts": 1,
+            "bp_pct": 0.20,
+            "sd_mult": 1.0,      # schema-required, unused by delta_butterfly
+            "wing_delta_target": 0.25,
+            "pt_pct": 1.0,       # unreachable by construction — see strategy
+            "sl_pct": 3.0,       # module docstring; hold is to settlement
+            "entry_start_ct": "09:29",
+            "entry_end_ct": "09:34",
+            "eod_close_ct": "14:45",  # unused for settle_at_expiry bots
+            "discord_alerts": False,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+        },
+    },
 }
 
 

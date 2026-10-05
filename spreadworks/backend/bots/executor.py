@@ -39,7 +39,8 @@ from .strategies import CREDIT_STRATEGIES, LONG_OPTION_STRATEGIES
 # long calendars, each also >= 0). A computed negative unwind value for these
 # can only be quote noise — clamped in compute_mtm.
 NET_LONG_DEBIT_STRATEGIES = frozenset(
-    {"long_butterfly", "pin_drift_combo"} | set(LONG_OPTION_STRATEGIES)
+    {"long_butterfly", "delta_butterfly", "pin_drift_combo"}
+    | set(LONG_OPTION_STRATEGIES)
 )
 
 # Default half-spread crossed per leg per side, $/share. 0.02 is a realistic

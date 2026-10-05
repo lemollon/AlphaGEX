@@ -36,6 +36,7 @@ from .strategies import CREDIT_STRATEGIES, LONG_OPTION_STRATEGIES
 UPDRAFT_FAMILY = LONG_OPTION_STRATEGIES
 from .strategies.iron_butterfly import build_iron_butterfly_signal
 from .strategies.long_butterfly import build_long_butterfly_signal
+from .strategies.delta_butterfly import build_delta_butterfly_signal
 from .strategies.iron_condor import build_iron_condor_signal
 from .strategies.double_calendar import build_double_calendar_signal
 from .strategies.double_diagonal import build_double_diagonal_signal
@@ -634,6 +635,25 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
                 diag.append(f"chain_unavailable: ticker={ticker} dte={front_dte}")
             return None, None
         sig = build_long_butterfly_signal(chain=chain, config=config, equity=equity, diag=diag)
+        return sig, chain
+    if strategy == "delta_butterfly":
+        # MONARCH (monarch_a 0.05-delta / monarch_b 0.25-delta). Unlike
+        # long_butterfly, this needs the live clock to compute time-to-close
+        # for its BS-delta fallback (see delta_butterfly._time_to_close).
+        chain = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
+        if chain is None:
+            if diag is not None:
+                diag.append(f"chain_unavailable: ticker={ticker} dte={front_dte}")
+            return None, None
+        # wing_delta_target (0.05 for monarch_a, 0.25 for monarch_b) is a
+        # FROZEN per-bot constant, not a live-tunable bp_pct/sd_mult-style
+        # knob — the bot_config TABLE has a fixed column set it never joins
+        # (same reasoning as UPDRAFT's mode/flow_max/r30_min, see above), so
+        # it is read straight off the registry, never off `config`.
+        reg_defaults = (BOT_REGISTRY.get(bot, {}).get("defaults") or {})
+        delta_config = {**config, "wing_delta_target": reg_defaults.get("wing_delta_target", 0.05)}
+        sig = build_delta_butterfly_signal(chain=chain, config=delta_config, equity=equity,
+                                           now_ct=now_ct, diag=diag)
         return sig, chain
     if strategy == "iron_condor":
         chain = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
@@ -1321,12 +1341,26 @@ def _evaluate_entry(
     # position row as usual).
     store_mode = (getattr(signal, "mode", None)
                   if reg_mode in ("tempest", "astra3") else reg_mode)
+    # Single-long option signals (updraft family) and MONARCH's delta
+    # butterfly already carry a debit that crossed the real NBBO (ask on the
+    # longs, bid on the shorts) — do not fetch another quote and charge a
+    # second simulated half-spread on top of a fill that is already real.
+    _already_crossed_real_book = meta["strategy"] in ("updraft", "delta_butterfly")
+    # MONARCH audit trail: the wing-delta target (which cell this trade is),
+    # the wing's realized delta at selection, and the live VIX read at entry
+    # are not native position columns — capture them in notes so the trade
+    # log satisfies "log every trade: ... real quoted bid/ask at entry" with
+    # the full picture, not just the generic debit/strikes every bot logs.
+    open_notes = (
+        f"wing_delta_target={signal.wing_delta_target:.2f} "
+        f"realized_delta={signal.realized_delta:.4f} vix_at_entry={signal.vix_at_entry:.2f}"
+        if meta["strategy"] == "delta_butterfly" else None
+    )
     pid = open_position(
         engine, bot, store_mode or meta["strategy"], signal, now_ct,
-        # Single-long option signals already carry the displayed ask as debit.
-        # Do not fetch another quote and charge a second half-spread.
-        mid_fill=False if meta["strategy"] == "updraft" else True,
-        slippage_total=(None if meta["strategy"] == "updraft" else
+        notes=open_notes,
+        mid_fill=not _already_crossed_real_book,
+        slippage_total=(None if _already_crossed_real_book else
                         _slippage_total(chain_provider, signal.ticker,
                                         signal.legs(), cfg)))
     if bool(cfg.get("discord_alerts")):

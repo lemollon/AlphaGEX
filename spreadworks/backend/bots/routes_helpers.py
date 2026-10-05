@@ -89,7 +89,13 @@ class LiveTradierChainProvider:
                  # 30-minute call/put imbalance (see bots/flow_store.py).
                  # Every other strategy ignores the extra key.
                  "volume": o.get("volume") or 0,
-                 "open_interest": o.get("open_interest") or 0}
+                 "open_interest": o.get("open_interest") or 0,
+                 # Real broker-computed delta — already fetched (greeks=true
+                 # above), just never passed through before. Only MONARCH
+                 # (delta_butterfly) reads this; every other strategy ignores
+                 # the extra key. None when Tradier omits greeks for a strike
+                 # (delta_butterfly falls back to its own BS-implied delta).
+                 "delta": (o.get("greeks") or {}).get("delta")}
                 for o in data
             ],
             # Per-expiration GEX structure (pin / magnets / walls / regime).
