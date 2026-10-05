@@ -71,4 +71,48 @@ describe('google-oauth-cookie (state + PKCE verifier cookie)', () => {
     const sig = await hmacB64url(SECRET, payload)
     expect(await verifyGoogleOAuthState(`${payload}.${sig}`)).toBeNull()
   })
+
+  it('carries the 3 consents through the cookie (the /signup round trip)', async () => {
+    const consents = { ageConfirmed: true, noAdviceAcknowledged: true, electronicCommConsent: true }
+    const token = await signGoogleOAuthState({ state: 'abc', verifier: 'v-123', next: '/enroll', consents })
+    const claims = await verifyGoogleOAuthState(token)
+    expect(claims!.consents).toEqual(consents)
+  })
+
+  it('leaves consents undefined for the /login round trip (nothing to carry)', async () => {
+    const token = await signGoogleOAuthState({ state: 'abc', verifier: 'v-123', next: '/enroll' })
+    const claims = await verifyGoogleOAuthState(token)
+    expect(claims!.consents).toBeUndefined()
+  })
+
+  it('rejects a tampered consents block (one flag flipped, original signature)', async () => {
+    const consents = { ageConfirmed: true, noAdviceAcknowledged: true, electronicCommConsent: true }
+    const token = await signGoogleOAuthState({ state: 'abc', verifier: 'v-123', next: '/enroll', consents })
+    const [, sig] = token.split('.')
+    const forgedPayload = Buffer.from(
+      JSON.stringify({
+        state: 'abc',
+        verifier: 'v-123',
+        next: '/enroll',
+        consents: { ageConfirmed: true, noAdviceAcknowledged: true, electronicCommConsent: false },
+        exp: Date.now() + 10_000,
+      }),
+    ).toString('base64url')
+    expect(await verifyGoogleOAuthState(`${forgedPayload}.${sig}`)).toBeNull()
+  })
+
+  it('rejects a malformed consents shape (not all 3 booleans present)', async () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        state: 'abc',
+        verifier: 'v-123',
+        next: '/enroll',
+        consents: { ageConfirmed: true, noAdviceAcknowledged: true },
+        exp: Date.now() + 10_000,
+      }),
+    ).toString('base64url')
+    const { hmacB64url } = await import('@/lib/auth/onboarding')
+    const sig = await hmacB64url(SECRET, payload)
+    expect(await verifyGoogleOAuthState(`${payload}.${sig}`)).toBeNull()
+  })
 })

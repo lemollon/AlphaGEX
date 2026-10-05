@@ -21,6 +21,12 @@ vi.mock('@/lib/auth/google-oauth-cookie', () => ({
   googleOAuthCookieOptions: () => ({ httpOnly: true, path: '/api/auth/google' }),
 }))
 
+vi.mock('@/lib/auth/google-pending-signup-cookie', () => ({
+  signGooglePendingSignupState: vi.fn(async () => 'pending-signup-cookie-value'),
+  GOOGLE_PENDING_SIGNUP_COOKIE: 'ironforge_google_pending_signup',
+  googlePendingSignupCookieOptions: () => ({ httpOnly: true, path: '/' }),
+}))
+
 const mockSession: Record<string, unknown> & { save: ReturnType<typeof vi.fn> } = {
   save: vi.fn(async () => undefined),
 }
@@ -37,6 +43,7 @@ vi.mock('@/lib/auth/create-customer', () => ({
 import { customerQuery, customerExecute } from '@/lib/customers-db'
 import { verifyGoogleIdToken } from '@/lib/auth/google-oauth'
 import { verifyGoogleOAuthState } from '@/lib/auth/google-oauth-cookie'
+import { signGooglePendingSignupState } from '@/lib/auth/google-pending-signup-cookie'
 import { createCustomerAccount } from '@/lib/auth/create-customer'
 import { GET } from '../callback/route'
 
@@ -94,8 +101,12 @@ describe('GET /api/auth/google/callback', () => {
     expect(mockSession.customerId).toBeUndefined()
   })
 
-  it('creates a new customer when no account matches the Google identity or email', async () => {
+  it('creates a new customer immediately when the signup round trip already carries all 3 consents', async () => {
     ;(customerQuery as any).mockResolvedValue([]) // neither by auth_user_id nor by email
+    ;(verifyGoogleOAuthState as any).mockResolvedValue({
+      ...SAVED_STATE,
+      consents: { ageConfirmed: true, noAdviceAcknowledged: true, electronicCommConsent: true },
+    })
     const res = await GET(req('?code=abc&state=csrf-state'))
 
     expect(createCustomerAccount).toHaveBeenCalledWith(
@@ -107,10 +118,43 @@ describe('GET /api/auth/google/callback', () => {
         phone: null,
         state: null,
         emailVerified: true,
+        ageConfirmed: true,
+        noAdviceAcknowledged: true,
+        electronicCommConsent: true,
       }),
     )
     expect(mockSession.customerId).toBe('new-user-uuid')
     expect(res.headers.get('location')).toContain('/enroll')
+    expect(signGooglePendingSignupState).not.toHaveBeenCalled()
+  })
+
+  it('never creates an account on an implied yes — routes a brand-new Google identity with NO consents to the consent page', async () => {
+    // SAVED_STATE (default mock) carries no `consents` — the shape a /login-
+    // initiated round trip produces, since /login's button sends none.
+    ;(customerQuery as any).mockResolvedValue([])
+    const res = await GET(req('?code=abc&state=csrf-state'))
+
+    expect(createCustomerAccount).not.toHaveBeenCalled()
+    expect(mockSession.customerId).toBeUndefined()
+    expect(signGooglePendingSignupState).toHaveBeenCalledWith(
+      expect.objectContaining({ sub: 'google-sub-1', email: 'dana.reyes@gmail.com', next: '/enroll' }),
+    )
+    expect(res.status).toBe(307)
+    expect(res.headers.get('location')).toContain('/signup/google-consent')
+    // The OAuth round-trip cookie is cleared either way — this is a new leg, not a retry.
+    expect(res.headers.get('set-cookie')).toContain('ironforge_google_oauth=')
+  })
+
+  it('still refuses to create an account when consents are present but incomplete (defense in depth)', async () => {
+    ;(customerQuery as any).mockResolvedValue([])
+    ;(verifyGoogleOAuthState as any).mockResolvedValue({
+      ...SAVED_STATE,
+      consents: { ageConfirmed: true, noAdviceAcknowledged: true, electronicCommConsent: false },
+    })
+    const res = await GET(req('?code=abc&state=csrf-state'))
+
+    expect(createCustomerAccount).not.toHaveBeenCalled()
+    expect(res.headers.get('location')).toContain('/signup/google-consent')
   })
 
   it('signs in (no account creation) when the Google identity is already linked', async () => {

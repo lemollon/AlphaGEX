@@ -14,6 +14,18 @@ describe('isPublicPath', () => {
     expect(isPublicPath('/signup')).toBe(true)
     expect(isPublicPath('/api/auth/signup')).toBe(true)
   })
+  it('treats the Google one-time consent screen and its completion API as public (no session exists yet)', () => {
+    expect(isPublicPath('/signup/google-consent')).toBe(true)
+    expect(isPublicPath('/api/auth/google/complete-signup')).toBe(true)
+    expect(
+      decideAccess({
+        pathname: '/signup/google-consent',
+        isApi: false,
+        hasSession: false,
+        hasServiceToken: false,
+      }),
+    ).toBe('allow')
+  })
   it('treats the pricing page as public', () => {
     expect(isPublicPath('/pricing')).toBe(true)
   })

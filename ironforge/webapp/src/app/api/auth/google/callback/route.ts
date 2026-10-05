@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { publicOrigin } from '@/lib/public-origin'
-import { normalizeEmail, isValidUsername } from '@/lib/signup-validation'
+import { normalizeEmail } from '@/lib/signup-validation'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { isCustomerPath } from '@/lib/auth/access'
 import {
@@ -15,7 +15,13 @@ import {
   GOOGLE_OAUTH_COOKIE,
   googleOAuthCookieOptions,
 } from '@/lib/auth/google-oauth-cookie'
+import {
+  signGooglePendingSignupState,
+  GOOGLE_PENDING_SIGNUP_COOKIE,
+  googlePendingSignupCookieOptions,
+} from '@/lib/auth/google-pending-signup-cookie'
 import { createCustomerAccount, writeAudit, clientIpFromHeaders } from '@/lib/auth/create-customer'
+import { uniqueUsername } from '@/lib/auth/username'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
 
 export const runtime = 'nodejs'
@@ -35,9 +41,14 @@ export const dynamic = 'force-dynamic'
  *   - an existing, EMAIL-VERIFIED account with a matching email       → link + sign in
  *   - an existing account whose OWN email is unverified               → refuse (never
  *     auto-link to an unverified mailbox someone else may have typo'd in)
- *   - no match at all                                                 → create via the
+ *   - no match, consents already captured (from /signup)              → create via the
  *     SAME createCustomerAccount() the password signup route uses, no password,
  *     auth_provider='google', and continue into /enroll
+ *   - no match, consents NOT captured (from /login — nothing to carry)  → do NOT
+ *     create an account on an implied yes. Seal the verified identity into the
+ *     short-lived google-pending-signup-cookie and send the browser to
+ *     /signup/google-consent, which asks for the same 3 boxes before anything is
+ *     written to the database.
  */
 interface UserRow {
   id: string
@@ -50,24 +61,6 @@ function safeNext(raw: string): string {
   if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/enroll'
   const path = raw.split('?')[0].split('#')[0]
   return path === '/enroll' || isCustomerPath(path) ? path : '/enroll'
-}
-
-async function uniqueUsername(base: string): Promise<string> {
-  const candidates = [
-    base,
-    ...Array.from({ length: 4 }, () => `${base}${Math.floor(100 + Math.random() * 900)}`),
-  ]
-  for (const candidate of candidates) {
-    if (!isValidUsername(candidate)) continue
-    const rows = await customerQuery<{ id: string }>(
-      `SELECT id FROM users WHERE lower(username) = lower($1) LIMIT 1`,
-      [candidate],
-    )
-    if (rows.length === 0) return candidate
-  }
-  // Astronomically unlikely to be reached, but a username MUST exist — never block
-  // account creation on a naming collision.
-  return `member${Date.now().toString(36)}`
 }
 
 export async function GET(req: NextRequest) {
@@ -144,6 +137,29 @@ export async function GET(req: NextRequest) {
         user = existing
         await writeAudit(user.id, 'GOOGLE_ACCOUNT_LINKED', ip, ua, {})
       } else {
+        const c = saved.consents
+        const allConsented = Boolean(c?.ageConfirmed && c?.noAdviceAcknowledged && c?.electronicCommConsent)
+
+        if (!allConsented) {
+          // Login's "Continue with Google" carries no consents at all, and a
+          // signup round trip can only reach here with all 3 true (the button is
+          // disabled otherwise) — so an incomplete set means this did NOT start on
+          // /signup with the boxes checked. Never create the account on an implied
+          // yes: seal the verified Google identity into the short-lived pending
+          // cookie and hand the browser to the one-time consent page instead.
+          const pendingCookie = await signGooglePendingSignupState({
+            sub: claims.sub,
+            email,
+            givenName: claims.givenName,
+            familyName: claims.familyName,
+            next: safeNext(saved.next),
+          })
+          const dest = new URL('/signup/google-consent', publicOrigin(req))
+          const res = NextResponse.redirect(dest)
+          res.cookies.set(GOOGLE_PENDING_SIGNUP_COOKIE, pendingCookie, googlePendingSignupCookieOptions())
+          return clearCookie(res)
+        }
+
         const username = await uniqueUsername(deriveUsernameBase(claims))
         const { userId } = await createCustomerAccount({
           firstName: claims.givenName || 'Member',
@@ -160,13 +176,13 @@ export async function GET(req: NextRequest) {
           referralCode: null,
           promoCode: null,
           intendedPlan: null,
-          // The "Continue with Google" button sits under the same age/no-advice/
-          // electronic-communication disclosure shown on the password form (see
-          // SignupClient) — continuing IS the affirmation, same as clicking
-          // "Create Account" there.
-          ageConfirmed: true,
-          noAdviceAcknowledged: true,
-          electronicCommConsent: true,
+          // Captured on /signup itself — the SAME 3 checkboxes the password form
+          // requires, carried here through the signed OAuth cookie (see
+          // google/start/route.ts). Never hardcoded true: an incomplete set is
+          // caught above, before this line is reached.
+          ageConfirmed: c!.ageConfirmed,
+          noAdviceAcknowledged: c!.noAdviceAcknowledged,
+          electronicCommConsent: c!.electronicCommConsent,
           emailVerified: true,
           ip,
           userAgent: ua,

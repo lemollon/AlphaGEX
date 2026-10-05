@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { US_STATES } from '@/lib/us-states'
 import HomeLink from '@/components/HomeLink'
 import ContinueWithGoogle from '@/components/ContinueWithGoogle'
+import Consent from '@/components/ConsentCheckbox'
 import EnrollShell from '@/app/enroll/EnrollShell'
 import type { Promo } from '@/lib/promo'
 import {
@@ -260,14 +261,31 @@ export default function SignupClient() {
           Start with your name and email, or continue with Google.
         </p>
 
+        {/* Consent checkboxes — required for BOTH signup methods below. Google's
+            button stays disabled until all 3 are checked; no implied consent. */}
+        <div className="mt-5 space-y-3">
+          <Consent checked={form.ageConfirmed} error={errors.ageConfirmed} onChange={(v) => set('ageConfirmed', v)}>
+            I am at least 18 years old and legally able to open and manage a brokerage account.
+          </Consent>
+          <Consent checked={form.noAdviceAcknowledged} error={errors.noAdviceAcknowledged} onChange={(v) => set('noAdviceAcknowledged', v)}>
+            I understand IronForge provides automated trade execution technology and{' '}
+            <span className="font-medium text-amber-500">does not provide financial, investment, tax, or legal advice</span>.
+          </Consent>
+          <Consent checked={form.electronicCommConsent} error={errors.electronicCommConsent} onChange={(v) => set('electronicCommConsent', v)}>
+            I agree to receive <span className="font-medium text-amber-500">electronic communications</span> related to my account, billing, legal notices, and platform activity.
+          </Consent>
+        </div>
+
         <div className="mt-5">
-          <ContinueWithGoogle next="/enroll" />
-          <p className="mt-2 text-center text-[11px] leading-relaxed text-gray-500">
-            By continuing, you confirm you are at least 18, understand IronForge provides
-            automated trade execution technology and{' '}
-            <span className="font-medium text-amber-500">does not provide financial, investment, tax, or legal advice</span>,
-            and agree to receive electronic communications about your account.
-          </p>
+          <ContinueWithGoogle
+            next="/enroll"
+            requireConsents
+            consents={{
+              ageConfirmed: form.ageConfirmed,
+              noAdviceAcknowledged: form.noAdviceAcknowledged,
+              electronicCommConsent: form.electronicCommConsent,
+            }}
+          />
         </div>
         <div className="my-5 flex items-center gap-3 text-xs text-gray-500">
           <span className="h-px flex-1 bg-white/10" />
@@ -361,20 +379,6 @@ export default function SignupClient() {
                 ) : null}
               </div>
 
-              {/* Consent checkboxes */}
-              <div className="space-y-3 pt-1">
-                <Consent checked={form.ageConfirmed} error={errors.ageConfirmed} onChange={(v) => set('ageConfirmed', v)}>
-                  I am at least 18 years old and legally able to open and manage a brokerage account.
-                </Consent>
-                <Consent checked={form.noAdviceAcknowledged} error={errors.noAdviceAcknowledged} onChange={(v) => set('noAdviceAcknowledged', v)}>
-                  I understand IronForge provides automated trade execution technology and{' '}
-                  <span className="font-medium text-amber-500">does not provide financial, investment, tax, or legal advice</span>.
-                </Consent>
-                <Consent checked={form.electronicCommConsent} error={errors.electronicCommConsent} onChange={(v) => set('electronicCommConsent', v)}>
-                  I agree to receive <span className="font-medium text-amber-500">electronic communications</span> related to my account, billing, legal notices, and platform activity.
-                </Consent>
-              </div>
-
               {serverError && (
                 <p className="rounded-md border border-red-700/40 bg-red-950/30 px-3 py-2 text-xs text-red-300">{serverError}</p>
               )}
@@ -400,20 +404,6 @@ export default function SignupClient() {
             </form>
       </div>
     </EnrollShell>
-  )
-}
-
-function Consent({ checked, error, onChange, children }: { checked: boolean; error?: string; onChange: (v: boolean) => void; children: React.ReactNode }) {
-  return (
-    <label className="flex cursor-pointer items-start gap-2.5 text-xs leading-relaxed text-gray-400">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className={`mt-0.5 h-4 w-4 shrink-0 rounded border bg-black/40 accent-amber-600 ${error ? 'border-red-600' : 'border-white/20'}`}
-      />
-      <span>{children}</span>
-    </label>
   )
 }
 
