@@ -1924,6 +1924,19 @@ async def lifespan(app: FastAPI):
         logger.warning("[SpreadWorks] squeeze reactive alerts failed to "
                        "register: %r", _sra_exc)
 
+    # CINDER: SPY 1DTE debit call spread signal (GEX + VIX-ratio + VIX/VIX3M
+    # term structure, 5-day cooldown). Repeating scan every 5 min,
+    # 09:30-16:00 ET weekdays, entry attempted only in the 11:25-11:35 ET
+    # window. Separate from every squeeze signal above -- own tables, own
+    # job. Import-guarded; signal-only, advisory only -- a separate local
+    # execution bot reads its endpoint and places real orders.
+    try:
+        from .cinder_signal import register_cinder_alerts
+        register_cinder_alerts(scheduler, app)
+    except Exception as _cinder_exc:  # noqa: BLE001
+        logger.warning("[SpreadWorks] CINDER alerts failed to register: %r",
+                       _cinder_exc)
+
     # Canonical live market structure: persist fresh Tradier VIX-family data
     # and ORATS+Tradier gamma maps every minute. Durable captures let report
     # consumers recover through Postgres if the public Render URL is blocked.
@@ -2081,6 +2094,16 @@ try:
 except Exception as _squeeze_react_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] Squeeze reactive routes failed to load: %r", _squeeze_react_exc)
+
+# CINDER signal (cinder_signal.py) -- read-only open position (with its live
+# current spread value + target-hit flag) + recent closed signal history.
+# Sibling to the squeeze routes above, not a replacement. Advisory only.
+try:
+    from .routes_cinder import router as cinder_router
+    app.include_router(cinder_router)
+except Exception as _cinder_route_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] CINDER routes failed to load: %r", _cinder_route_exc)
 
 # Wall Scanner (backend/bots/wall_scanner.py) — descriptive-only $/% distance
 # to the nearest GEX call/put wall for GME + 7 tickers. NO directional call
