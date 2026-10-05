@@ -78,6 +78,18 @@ _cache: dict[str, Any] = {"ts": 0.0, "payload": None}
 # measured edge.
 MIN_LIQUID_VOLUME_PER_DAY = 500
 
+# 2026-10-05: KILL SWITCH. Hard-disabled after this gate correlated with a
+# production crash loop (spreadworks-backend 502s) even after the
+# probe-first/short-TTL hotfix -- the scheduled wall_scanner_capture job
+# appears to run once right at process startup, and a slow/hanging
+# ThetaData probe at exactly that moment is suspected of delaying the
+# app's readiness past Render's own health-check window. fetch_universe()
+# falls back to TV's raw, unfiltered roster while this is False. Flip back
+# to True only after the gate is hardened to run off the startup path
+# (e.g. skip entirely on a job's first post-boot firing, or a hard
+# wall-clock timeout independent of ThetaData's own retry logic).
+LIQUIDITY_GATE_ENABLED = False
+
 _THETA_BASE = "http://127.0.0.1:25510"  # NEVER localhost (::1 -> HTTP 476)
 _THETA_HEADERS = {"Host": "127.0.0.1:25510", "Connection": "close"}
 _THETA_TIMEOUT = 20
@@ -86,6 +98,9 @@ _THETA_TIMEOUT = 20
 # structural property of a name, not something that moves intraday, so
 # there's no need to re-hit ThetaData every scan cycle.
 _LIQUIDITY_CACHE_TTL = 12 * 3600
+# A cached UNKNOWN (ThetaData was unreachable) gets a much shorter TTL --
+# see _liquidity_ok()'s own docstring, 2026-10-05.
+_LIQUIDITY_UNKNOWN_CACHE_TTL = 5 * 60
 _liquidity_cache: dict[str, tuple[Optional[float], float]] = {}
 
 
@@ -186,11 +201,24 @@ def _thetadata_chain_volume(ticker: str) -> Optional[float]:
 def _liquidity_ok(ticker: str) -> Optional[bool]:
     """Cached/fresh liquidity verdict for `ticker`. None propagates an
     unknown volume (ThetaData unreachable) rather than coercing it to False
-    -- callers decide separately how to treat an unknown."""
+    -- callers decide separately how to treat an unknown.
+
+    A cached UNKNOWN (volume is None) uses a much shorter TTL
+    (_LIQUIDITY_UNKNOWN_CACHE_TTL) than a cached real volume -- a confirmed
+    liquid/illiquid verdict is stable for hours, but "ThetaData was
+    unreachable a moment ago" must not block re-probing for the full 12h
+    once the Terminal recovers, or this gate would keep believing it's still
+    down long after it's back."""
     now = time.monotonic()
     cached = _liquidity_cache.get(ticker)
-    if cached is not None and (now - cached[1]) < _LIQUIDITY_CACHE_TTL:
-        volume = cached[0]
+    if cached is not None:
+        cached_volume, cached_at = cached
+        ttl = _LIQUIDITY_UNKNOWN_CACHE_TTL if cached_volume is None else _LIQUIDITY_CACHE_TTL
+        if (now - cached_at) < ttl:
+            volume = cached_volume
+        else:
+            volume = _thetadata_chain_volume(ticker)
+            _liquidity_cache[ticker] = (volume, now)
     else:
         volume = _thetadata_chain_volume(ticker)
         _liquidity_cache[ticker] = (volume, now)
@@ -341,6 +369,8 @@ def fetch_universe(limit: int = _UNIVERSE_LIMIT) -> list[str]:
         logger.warning("[wall_scanner] /top-setups: items[] present but empty of tickers, len=%d", len(items))
         return []
     tickers = sorted(set(tickers))
+    if not LIQUIDITY_GATE_ENABLED:
+        return tickers
     return _filter_liquid_universe(tickers)
 
 
@@ -350,7 +380,29 @@ def _filter_liquid_universe(tickers: list[str]) -> list[str]:
     -- one concurrency idiom in this file, not two). Infrastructure failure
     (ThetaData unreachable for every candidate) must never blank the
     scanner, so that case falls back to the unfiltered TV roster rather than
-    returning an empty universe."""
+    returning an empty universe.
+
+    2026-10-05: a SINGLE cheap probe runs FIRST, before the 10-way concurrent
+    sweep over all 50 candidates. The in-memory _liquidity_cache resets on
+    every process restart, and this gate runs inside the scheduled capture
+    job -- during a real ThetaData outage, a restarting instance was piling
+    10 concurrent fresh connection attempts onto an already-struggling
+    Terminal on every single restart, which plausibly made the outage worse
+    and contributed to a production incident (spreadworks-backend 502s).
+    One failed probe now skips the other 49 calls entirely for this cycle.
+    """
+    if not tickers:
+        return tickers
+    probe_ticker = tickers[0]
+    if _liquidity_ok(probe_ticker) is None:
+        logger.warning(
+            "[wall_scanner] liquidity gate: probe ticker %s unreachable, "
+            "skipping the other %d candidates this cycle, falling back to "
+            "unfiltered TV roster",
+            probe_ticker, len(tickers) - 1,
+        )
+        return tickers
+
     verdicts: dict[str, Optional[bool]] = {}
     with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
         futures = {pool.submit(_liquidity_ok, t): t for t in tickers}

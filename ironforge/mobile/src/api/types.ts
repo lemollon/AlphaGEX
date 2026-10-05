@@ -676,3 +676,50 @@ export interface EmberStatusResponse {
   status: EmberStatusRow | null
   error?: string
 }
+
+// ---- Notification history (10.4 gap audit) ----
+
+/** Mirrors the webapp's NotificationCategory (lib/push/types.ts) — kept as a plain
+ *  string here rather than a union so an older/newer build never fails to render a
+ *  row whose kind this client doesn't know about yet. */
+export type NotificationKind =
+  | 'trade_opened'
+  | 'trade_closed'
+  | 'trade_approval'
+  | 'brokerage_health'
+  | 'billing'
+  | 'community'
+  | string
+
+/** One row from GET /api/v1/notifications. `data` is the same deep-link payload the
+ *  push itself carried (route/params/amount/trade_id/agent/kind) — see render.ts on
+ *  the server — so a tapped row can reuse routeFor() instead of a second nav table. */
+export interface NotificationItem {
+  id: string
+  kind: NotificationKind
+  title: string
+  body: string
+  data: {
+    trade_id?: string
+    agent?: string
+    kind?: string
+    amount?: number
+    [key: string]: unknown
+  } | null
+  created_at: string
+  read_at: string | null
+}
+
+/** GET /api/v1/notifications — cursor-paginated, newest first. */
+export interface NotificationsPageResponse {
+  ok: true
+  notifications: NotificationItem[]
+  next_cursor: string | null
+  unread_count: number
+}
+
+/** POST /api/v1/notifications/read */
+export interface NotificationsReadResponse {
+  ok: true
+  unread_count: number
+}

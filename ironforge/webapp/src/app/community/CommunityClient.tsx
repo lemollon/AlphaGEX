@@ -174,7 +174,10 @@ function MessageRow({ msg, canReact, onReact }: {
 const EMOJI_CHOICES = ['🔥','👍','👌','📈','📉','💰','👀','🧠',
   '😂','😅','🤔','👏','✅','⚡','🚀','🚨']
 
-export default function CommunityClient() {
+/** The Community feed body, extracted so it can render inline as the
+ *  /dashboard "Community" tab (dev-handoff §6 single tabbed page) as well as
+ *  standalone at /community (which now redirects to /dashboard?tab=community). */
+export function CommunityBody() {
   const [channel, setChannel] = useState('all-chat')
   const [draft, setDraft] = useState('')
   const [sendError, setSendError] = useState<string | null>(null)
@@ -312,7 +315,7 @@ export default function CommunityClient() {
   ]
 
   return (
-    <CustomerShell membership={summary?.membership ?? null} planVariant="active" maxWidthClass="max-w-[1280px]">
+    <>
       <div className="grid items-start gap-4 lg:grid-cols-[1fr_300px]">
         {/* ── Chat column ── */}
         <div className="flex h-[calc(100vh-6.5rem)] min-h-[480px] flex-col rounded-xl border border-[var(--line)] bg-[var(--bg)]">
@@ -547,6 +550,18 @@ export default function CommunityClient() {
           </div>
         </div>
       </div>
+    </>
+  )
+}
+
+/** Standalone /community route — now just CustomerShell + the extracted body.
+ *  /community redirects to /dashboard?tab=community, which renders the same
+ *  CommunityBody inline; this keeps direct links/bookmarks to /community working. */
+export default function CommunityClient() {
+  const { data: summary } = useSWR<LiveSummary>('/api/live/summary', fetcher, { refreshInterval: 120_000 })
+  return (
+    <CustomerShell membership={summary?.membership ?? null} planVariant="active" maxWidthClass="max-w-[1280px]">
+      <CommunityBody />
     </CustomerShell>
   )
 }

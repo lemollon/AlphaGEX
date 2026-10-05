@@ -29,6 +29,7 @@ export type ActivationBlockerCode =
   | 'KILL_SWITCH_ENGAGED'
   | 'ACKNOWLEDGMENTS_MISSING'
   | 'PREVIEW_STALE'
+  | 'EMBER_ALREADY_ACTIVE'
 
 export interface ActivationBlocker {
   code: ActivationBlockerCode
@@ -59,6 +60,14 @@ export interface ActivationInput {
    * current state — buying power moved, account or agent changed (§4, §12 Stale review).
    */
   previewCurrent: boolean
+  /**
+   * Ember is one account per person (design spec §3, §5 step 3). True only when this
+   * agent is Ember AND the same person — matched on email, not just this user row —
+   * already holds another active or trialing Ember activation. Never set for Spark/Flame;
+   * context.ts always passes an explicit false there, so this never fails closed for the
+   * agents it doesn't apply to.
+   */
+  emberConflict: boolean
 }
 
 /**
@@ -155,6 +164,16 @@ export function evaluateActivation(input: Partial<ActivationInput>): ActivationD
     add({
       code: 'PREVIEW_STALE',
       message: 'Something changed while you were reviewing. Please review the updated summary.',
+      remediable: true,
+    })
+  }
+  // Opt-in, not fail-closed: absent/undefined reads as "no conflict found" so this
+  // never blocks Spark/Flame activations, which never set it.
+  if (input.emberConflict === true) {
+    add({
+      code: 'EMBER_ALREADY_ACTIVE',
+      message: 'You already have an Ember account. Each person may have only one — choose Spark or Flame to add another agent.',
+      field: 'agent_config',
       remediable: true,
     })
   }

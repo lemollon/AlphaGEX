@@ -64,8 +64,19 @@ export default function LegalClient() {
     })()
   }, [enrollment, call, router, setError])
 
-  const allOpened = docs.length > 0 && docs.every((d) => opened[d.code])
+  const openedCount = docs.filter((d) => opened[d.code]).length
+  const allOpened = docs.length > 0 && openedCount === docs.length
   const canSubmit = allOpened && agreed && signature.trim().length >= 2 && !busy
+
+  // Design spec §5 step 2: "'Accept all' link toggles every box. Progress line: 'X of
+  // 6 accepted.'" (gap audit "Agreements gating" PARTIAL/S — previously neither
+  // existed). "Accept all" here is a one-click alias for the single aggregate
+  // checkbox below, not a bypass of reading each document — it only has anything to
+  // do once every document has actually been opened.
+  function acceptAll() {
+    if (!allOpened) return
+    setAgreed(true)
+  }
 
   async function accept() {
     if (!enrollment) return
@@ -101,6 +112,12 @@ export default function LegalClient() {
 
       {docs.length > 0 ? (
         <>
+          <div className="nav-row" style={{ borderTop: 'none', paddingTop: 0, marginBottom: 10 }}>
+            <span className="help">{openedCount} of {docs.length} reviewed</span>
+            <button type="button" onClick={acceptAll} disabled={!allOpened || agreed} className="link">
+              Accept all
+            </button>
+          </div>
           <div className="card">
             {docs.map((d) => (
               <div key={d.code} className="ack" style={{ gridTemplateColumns: '1fr auto' }}>
