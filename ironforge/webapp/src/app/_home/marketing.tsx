@@ -396,15 +396,16 @@ export function FinalCTA({ source }: { source: MarketingSource }) {
         </div>
         {/* These two lines are the only prices on the page, and both are DERIVED.
             A literal "$10/month" here is precisely how the retired /pricing page
-            and the homepage came to disagree; plans.ts is the single source and
-            the Stripe price behind community_monthly must match it. */}
+            and the homepage came to disagree; plans.ts is the single source.
+            Community is free as of 2026-10-05 (COMMUNITY_PLAN.priceMonthly === 0) —
+            no Stripe price backs it for new members any more. */}
         <div className="mt-5 flex flex-col items-center justify-center gap-3 border-t border-[#2B2B2B] pt-4 sm:flex-row sm:gap-0">
           <Link
             href="/pricing"
             className="flex items-center gap-2 text-[13px] text-gray-300 transition-colors hover:text-white"
           >
             <PersonIcon className="h-[18px] w-[18px] text-amber-500" />
-            {MARKETING_TIERS.community.name} starts at ${MARKETING_TIERS.community.priceMonthly}/month.
+            {MARKETING_TIERS.community.name} is free.
           </Link>
           <span className="mx-6 hidden h-4 w-px bg-[#2B2B2B] sm:block" aria-hidden />
           <Link

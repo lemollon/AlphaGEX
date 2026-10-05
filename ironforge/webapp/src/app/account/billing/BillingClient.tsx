@@ -103,7 +103,7 @@ export default function BillingClient() {
               </div>
             )}
             {ownedBots.length === 0 && communityActive && (
-              <div className="mt-1 text-xs text-gray-400">{COMMUNITY_PLAN.name} · ${COMMUNITY_PLAN.priceMonthly}/mo</div>
+              <div className="mt-1 text-xs text-gray-400">{COMMUNITY_PLAN.name} · Free</div>
             )}
           </div>
           {hasPlan ? (
@@ -125,11 +125,12 @@ export default function BillingClient() {
         {error && <p className="mt-3 rounded-md border border-red-700/40 bg-red-950/30 px-3 py-2 text-sm text-red-300">{error}</p>}
       </div>
 
-      {/* Add / open a strategy. Pricing ladder (UAT-011, revised 2026-10-04): Community
-          only = $9.99; Community + FIRST agent = an UPGRADE to $49.99/mo TOTAL (Automate
-          includes Community). A SECOND agent is its OWN full-price $49.99/mo subscription
-          now — no bundle, no "$25 more" (Leron, binding; legacy both_monthly
-          subscribers keep their existing $75 rate, see lib/billing/membership.ts). */}
+      {/* Add / open a strategy. Pricing ladder (UAT-011, revised 2026-10-04; Community
+          made free 2026-10-05): Community only = free; adding a FIRST agent is just the
+          agent's own $49.99/mo (Automate includes Community — nothing on top). A SECOND
+          agent is its OWN full-price $49.99/mo subscription — no bundle, no "$25 more"
+          (Leron, binding; legacy both_monthly subscribers keep their existing $75 rate,
+          see lib/billing/membership.ts). */}
       {notOwned.length > 0 && (
         <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-5">
           <div className="text-sm font-semibold text-white">
@@ -169,12 +170,12 @@ export default function BillingClient() {
             <div>
               <div className="text-sm font-semibold text-white">Just want the community?</div>
               <p className="mt-0.5 text-xs text-gray-400">
-                Chat, market insights, and education — no trading bot. ${COMMUNITY_PLAN.priceMonthly}/mo, cancel anytime.
+                Chat, market insights, and education — no trading bot. Free, no card required.
               </p>
             </div>
             <button onClick={joinCommunity} disabled={busy}
               className="shrink-0 rounded-lg border border-amber-500 px-4 py-2.5 text-sm font-semibold text-amber-500 transition hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-60">
-              {busy ? 'Opening…' : `Join for $${COMMUNITY_PLAN.priceMonthly}/mo`}
+              {busy ? 'Joining…' : 'Join for free'}
             </button>
           </div>
         </div>

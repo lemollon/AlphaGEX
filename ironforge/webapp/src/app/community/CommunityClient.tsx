@@ -8,7 +8,6 @@ import type { LiveSummary } from '@/lib/live/types'
 import type { CommunityFeed, CommunityMessage } from '@/lib/community/store'
 import CustomerShell from '@/components/customer/CustomerShell'
 import CheckoutNotice from '@/components/customer/CheckoutNotice'
-import { COMMUNITY_PLAN } from '@/lib/billing/plans'
 
 /** Forge Community — chat-first center column + right info rail (per the
  *  approved design). Realtime via 4s SWR polling; no websockets in this stack. */
@@ -247,7 +246,8 @@ export default function CommunityClient() {
     }
   }
 
-  // Start Stripe Checkout for the standalone $15 Community plan, then redirect to Stripe.
+  // Community is free — this writes the entitlement directly (no Stripe, no card) and
+  // redirects back here once joined.
   async function joinCommunity() {
     if (joining) return
     setJoining(true)
@@ -402,14 +402,14 @@ export default function CommunityClient() {
                 <div className="flex flex-col gap-2 rounded-lg border border-[var(--warn)]/40 bg-[var(--warn-soft)] px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="text-sm text-[var(--fg)]">
                     <span className="font-semibold text-[var(--accent)]">Join the Forge Community</span> to post —{' '}
-                    <span className="font-semibold text-[var(--fg)]">${COMMUNITY_PLAN.priceMonthly}/mo</span>. Every strategy plan includes it.
+                    <span className="font-semibold text-[var(--fg)]">free</span>. Every strategy plan includes it.
                   </div>
                   <button
                     onClick={() => void joinCommunity()}
                     disabled={joining}
                     className="shrink-0 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-[var(--accent-ink)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {joining ? 'Opening…' : `Join for $${COMMUNITY_PLAN.priceMonthly}/mo`}
+                    {joining ? 'Joining…' : 'Join for free'}
                   </button>
                 </div>
               ) : (

@@ -53,6 +53,22 @@ export function checkMembership(): Promise<MembershipCheck> {
   return api<MembershipCheck>('/api/billing/membership')
 }
 
+/**
+ * Community is free as of 2026-10-05 (Leron, binding) — no StoreKit purchase, no
+ * Stripe, on either platform. Same route the web /enroll/billing screen posts to
+ * (webapp/src/app/api/billing/checkout/route.ts); for `bot: 'community'` that route
+ * no longer opens a Stripe session at all — it writes the entitlement directly and
+ * returns `{ ok, url }`. The `url` is a web/bridge destination this screen does not
+ * need: the caller follows up with resumeEnrollment() and routes forward itself, same
+ * as checkWebSubscription() already does.
+ */
+export function joinCommunityFree(): Promise<{ ok: true; url: string }> {
+  return api<{ ok: true; url: string }>('/api/billing/checkout', {
+    method: 'POST',
+    body: { bot: 'community', return_to: 'enroll' },
+  })
+}
+
 /** Same route the web /enroll/broker and mobile Agents screen already use. */
 export function getBrokerConnections(): Promise<BrokerConnectionsResponse> {
   return api<BrokerConnectionsResponse>('/api/brokerage/connections')

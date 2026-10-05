@@ -66,9 +66,10 @@ export default function TermsPage() {
         <p>
           {/* Prices read from MARKETING_TIERS so the terms can never quote a number the
               site or Stripe no longer charges. This paragraph said Community $10 +
-              "Forge Automate" $50 while /pricing said $15 / Starter / Pro. */}
-          Paid plans are billed monthly through Stripe. {MARKETING_TIERS.community.name} is billed at $
-          {MARKETING_TIERS.community.priceMonthly} per month upon activation. {MARKETING_TIERS.starter.name} (one
+              "Forge Automate" $50 while /pricing said $15 / Starter / Pro. Community
+              is free as of 2026-10-05 — no Stripe subscription, no recurring charge. */}
+          {MARKETING_TIERS.community.name} is free — no payment method and no recurring charge.
+          Paid plans are billed monthly through Stripe. {MARKETING_TIERS.starter.name} (one
           bot, ${MARKETING_TIERS.starter.priceMonthly} per month) and {MARKETING_TIERS.pro.name} (two bots, $
           {MARKETING_TIERS.pro.priceMonthly} per month) each include a {TRIAL_DAYS} trading-day free trial; unless
           you cancel before the trial ends, the plan converts to its monthly price. You authorize us to charge your selected payment

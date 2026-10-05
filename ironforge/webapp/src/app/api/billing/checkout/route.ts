@@ -18,7 +18,6 @@ import {
   getBotPlan,
   TRIAL_DAYS,
   COMMUNITY_KEY,
-  COMMUNITY_PLAN,
   isCommunityKey,
 } from '@/lib/billing/plans'
 import { getEnrollmentForUser } from '@/lib/enrollment/service'
@@ -162,73 +161,47 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, url: setupUrl })
     }
 
-    // ── Community: standalone $15 chat/education plan, no bot, no bundle, no trial ──
+    // ── Community: FREE as of 2026-10-05 (Leron, binding) — no Stripe, no card, ever.
+    // No bundle, no trial (there is nothing to trial). This endpoint keeps its name and
+    // shape (POST bot:'community' -> {ok, url}) so every existing caller (the /enroll
+    // funnel, the legacy /community join CTA, /account/billing) needs no restructuring,
+    // but it no longer talks to Stripe for a NEW member — it writes the entitlement row
+    // directly, same as Ember's free grant. Existing PAID community_monthly subscribers
+    // are untouched by this branch (the idempotent check below returns before any write).
     if (isCommunity) {
       const origin = publicOrigin(req)
       const existing = await customerQuery<{ status: string }>(
         `SELECT status FROM customer_bot_subscriptions WHERE user_id = $1 AND bot = $2 LIMIT 1`,
         [user.id, COMMUNITY_KEY],
       )
-      // Already a member → idempotent, just send them into the community (or the
-      // enrollment completion page when the funnel initiated this).
+      // Already a member (free or a grandfathered paid subscriber) → idempotent, just
+      // send them into the community (or the enrollment completion page).
       if (existing.some((s) => ['trialing', 'active', 'past_due'].includes(s.status))) {
         return NextResponse.json({
           ok: true,
-          url: billingReturn(origin, client, returnTo === 'enroll' ? '/enroll/broker' : '/community', { welcome: 'community' }),
+          url: billingReturn(origin, client, returnTo === 'enroll' ? '/enroll/done' : '/community', { welcome: 'community' }),
         })
       }
 
-      const communityPriceId = await findPriceIdByLookupKey(COMMUNITY_PLAN.lookupKey)
-      if (!communityPriceId) {
-        return NextResponse.json(
-          { ok: false, error: 'Community isn’t available yet. Please try again shortly.' },
-          { status: 503 },
-        )
-      }
-
-      const communityArgs = {
-        priceId: communityPriceId,
-        userId: user.id,
-        bot: COMMUNITY_KEY,
-        trialDays: 0, // charge immediately — it's a low-cost access plan, not a strategy trial
-        // The /enroll funnel returns to its own completion/billing pages so the
-        // server-owned enrollment can advance; the legacy join button keeps /community.
-        successUrl:
-          returnTo === 'enroll'
-            ? billingReturn(origin, client, '/enroll/broker', { welcome: 'community', session_id: '{CHECKOUT_SESSION_ID}' })
-            : billingReturn(origin, client, '/community', { welcome: 'community', session_id: '{CHECKOUT_SESSION_ID}' }),
-        // Back to where the join button is — NOT to wherever the tiers happen to be
-        // listed. Abandoning checkout used to throw a signed-in customer out to the
-        // marketing homepage and drop the ?canceled flag on the way.
-        cancelUrl:
-          returnTo === 'enroll'
-            ? billingReturn(origin, client, '/enroll/broker', { checkout: 'canceled' })
-            : billingReturn(origin, client, '/community', { canceled: 'community' }),
-      }
-
-      let communityCustomerId = await getOrCreateCustomer({
-        existingId: user.stripe_customer_id,
-        email: user.email,
-        userId: user.id,
-      })
-      await persistCustomer(communityCustomerId)
-
-      let communityUrl: string
-      try {
-        ;({ url: communityUrl } = await createSubscriptionCheckout({ customerId: communityCustomerId, ...communityArgs }))
-      } catch (e) {
-        if (!isMissingCustomerError(e)) throw e
-        communityCustomerId = await createCustomer({ email: user.email, userId: user.id })
-        await persistCustomer(communityCustomerId)
-        ;({ url: communityUrl } = await createSubscriptionCheckout({ customerId: communityCustomerId, ...communityArgs }))
-      }
-
       await customerExecute(
-        `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'CHECKOUT_STARTED', $2)`,
+        `INSERT INTO customer_bot_subscriptions (user_id, bot, status, stripe_subscription_id, price_lookup_key, updated_at)
+         VALUES ($1, $2, 'active', NULL, NULL, now())
+         ON CONFLICT (user_id, bot) DO UPDATE SET
+           status = 'active', stripe_subscription_id = NULL, price_lookup_key = NULL, updated_at = now()`,
+        [user.id, COMMUNITY_KEY],
+      )
+      await customerExecute(
+        `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'COMMUNITY_JOINED_FREE', $2)`,
         [user.id, JSON.stringify({ bot: COMMUNITY_KEY })],
       ).catch(() => {})
 
-      return NextResponse.json({ ok: true, url: communityUrl })
+      // No Stripe round trip, so no successUrl/cancelUrl distinction — just land them
+      // where a completed join always has: the enrollment completion page, or /community
+      // for the legacy join CTA.
+      return NextResponse.json({
+        ok: true,
+        url: billingReturn(origin, client, returnTo === 'enroll' ? '/enroll/done' : '/community', { welcome: 'community' }),
+      })
     }
 
     // Non-community: guaranteed a real bot by the top-of-handler validation.

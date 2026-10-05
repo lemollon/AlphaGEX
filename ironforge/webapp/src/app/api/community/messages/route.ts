@@ -59,11 +59,11 @@ export async function POST(req: NextRequest) {
     if (!session.customerId) {
       return NextResponse.json({ error: 'Log in to join the conversation.' }, { status: 401 })
     }
-    // Posting requires a live membership — a bot subscription OR the $15 Community plan.
-    // Reading the feed stays open (a locked preview); this is what makes Community sellable.
+    // Posting requires a live membership — a bot subscription OR the free Community plan.
+    // Reading the feed stays open (a locked preview); joining to post costs nothing.
     if (!(await hasActiveMembership(session.customerId))) {
       return NextResponse.json(
-        { code: 'MEMBERSHIP_REQUIRED', error: 'Join the Forge Community to post — $15/mo.' },
+        { code: 'MEMBERSHIP_REQUIRED', error: 'Join the Forge Community to post — it’s free.' },
         { status: 402 },
       )
     }

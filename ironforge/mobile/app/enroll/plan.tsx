@@ -81,6 +81,10 @@ export default function PlanScreen() {
           <PlanTile
             name={catalog.community.name}
             blurb="Chat, education, and market commentary. No trading bot."
+            // Free as of 2026-10-05 (Leron, binding) — same zero-price convention as
+            // Ember: show "Free" rather than "$0/mo". Derived from the server's own
+            // price_monthly (not hardcoded) so this can never drift from plans.ts.
+            priceLabel={catalog.community.price_monthly === 0 ? 'Free' : undefined}
             price={catalog.community.price_monthly}
             accent={color.accent}
             onPress={() => choose('community')}

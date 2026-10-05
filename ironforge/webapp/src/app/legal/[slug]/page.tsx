@@ -190,9 +190,9 @@ const DOCS: Record<string, DocPage> = {
         </p>
         <LegalSection heading="Billing">
           <p>
-            Memberships are billed monthly in advance through Stripe. {MARKETING_TIERS.community.name} is
-            billed at ${MARKETING_TIERS.community.priceMonthly}/month starting at enrollment. Automated-trading
-            memberships (${MARKETING_TIERS.starter.priceMonthly}/month for one agent) begin with a{' '}
+            {MARKETING_TIERS.community.name} is free — no payment method is collected and there is
+            no recurring charge. Automated-trading memberships are billed monthly in advance through
+            Stripe (${MARKETING_TIERS.starter.priceMonthly}/month for one agent) and begin with a{' '}
             {TRIAL_DAYS} eligible trading-day free trial that starts only when you activate
             automated trading; your card is required at setup but is not charged until the
             trial ends.

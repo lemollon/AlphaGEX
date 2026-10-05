@@ -113,20 +113,26 @@ export const BOTH_PLAN = {
 }
 
 /**
- * Community — chat + education access, no trading bot. A standalone paid tier: someone can buy it
- * without a bot, and it's included implicitly for anyone who owns a bot. Tracked as a
- * customer_bot_subscriptions row with bot = COMMUNITY_KEY (the table's `bot` column is free-text).
- * No free trial — it's low-cost, immediate access.
+ * Community — chat + education access, no trading bot. FREE as of 2026-10-05 (Leron,
+ * binding) — every NEW signup joins at $0, no Stripe subscription, same as Ember's
+ * `priceMonthly: 0` pattern. `lookupKey` is kept ONLY so existing paid subscribers
+ * (who bought community_monthly before this change) keep resolving correctly in
+ * webhook.ts / membership.ts / membership-sync.ts / apple-products.ts — no NEW checkout
+ * session may ever be opened against it again (see api/billing/checkout/route.ts and
+ * api/ops/billing-sync-prices/route.ts, which no longer targets it). Tracked as a
+ * customer_bot_subscriptions row with bot = COMMUNITY_KEY (the table's `bot` column is
+ * free-text); a free join writes that row directly with stripe_subscription_id = NULL.
  */
 export const COMMUNITY_KEY = 'community'
 export const COMMUNITY_PLAN = {
   key: COMMUNITY_KEY,
   name: 'Forge Community',
   lookupKey: 'community_monthly',
-  // DISPLAY price. The amount actually charged comes from the Stripe price
-  // behind lookupKey 'community_monthly' — if that is still set to a different
-  // amount, the site will advertise one number and bill another. Change both together.
-  priceMonthly: 9.99,
+  // Free for every new signup. NOT the amount Stripe would charge any more — see the
+  // free/legacy note above. Existing paid subscribers are untouched; read
+  // GET /api/ops/community-paid-subscribers for who that is.
+  priceMonthly: 0,
+  free: true,
 }
 export function isCommunityKey(v: string | null | undefined): boolean {
   return v === COMMUNITY_KEY
@@ -161,11 +167,11 @@ export const TRIAL_DAYS = 5
  * problem, so all copy now reads from here.
  *
  * STARTER/PRO are derived from the Stripe-backed plans above so a marketing number can
- * never drift from what checkout actually bills. COMMUNITY is now Stripe-backed too
- * (COMMUNITY_PLAN, lookup key community_monthly) and sellable through checkout.
+ * never drift from what checkout actually bills. COMMUNITY is free as of 2026-10-05
+ * (COMMUNITY_PLAN.priceMonthly === 0, COMMUNITY_PLAN.free === true) — no new checkout.
  */
 export const MARKETING_TIERS = {
-  /** Community/education tier — no bot execution. Billed via COMMUNITY_PLAN ($15/mo). */
+  /** Community/education tier — no bot execution. Free (COMMUNITY_PLAN). */
   community: { name: COMMUNITY_PLAN.name, priceMonthly: COMMUNITY_PLAN.priceMonthly },
   /** One automated bot. Same price checkout bills for a single bot. */
   // Display name for the one-bot tier. Renamed Starter -> Automate 2026-07-29 to match
