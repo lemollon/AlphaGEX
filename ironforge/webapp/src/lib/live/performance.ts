@@ -2,6 +2,13 @@ import { dbQuery, botTable, num, int, escapeSql, dteMode } from '@/lib/db'
 import { scopeFilter, resolveAccountMode, type LiveBot } from './viewer'
 import { LIVE_BOT_LABEL, LIVE_BOT_ACCENT } from './bots'
 import { getSandboxAccountBalances } from '@/lib/tradier'
+import {
+  sumTradingDayWindow,
+  dailyResultBars,
+  agentLead,
+  cumulativePnlSeries,
+  type PnlPoint,
+} from './trading-days'
 
 /**
  * Customer Performance page payload — the viewer's all-time history, COMBINED
@@ -25,13 +32,22 @@ export interface BotPerf {
   trades: number
   /** All-time return on the pooled starting capital, percent. null when no base. */
   return_pct: number | null
-  /** Realised P&L over the trailing 7 / 30 days (the Wealth-Snapshot KPIs,
-   *  now shown on Performance and switchable per strategy). */
+  /** Realised P&L over the last 5 / 21 TRADING days, including today
+   *  (dev-handoff §6 KPI contract — not a Monday-reset calendar week or a
+   *  1st-of-month calendar reset; see trading-days.ts). */
   weekly: number
   monthly: number
   /** This bot's own cumulative-realised equity curve, so the per-strategy
    *  toggle switches the chart, not just the numbers. */
   curve: EquityPoint[]
+  /** Last 20 trading days as zero-filled {day, pnl} bars (Daily results chart). */
+  daily_bars: Array<{ day: string; pnl: number }>
+  /** Agent lead tile: "Days the trade kept its credit: X of Y". Null when the
+   *  agent has no closed trade yet. */
+  lead: { kept: number; total: number } | null
+  /** Cumulative-from-zero P&L series per chart range (dev-handoff: "single
+   *  cumulative line from 0", not an equity curve — see cumulativePnlSeries). */
+  pnl_ranges: { '1D': PnlPoint[]; '1W': PnlPoint[]; '1M': PnlPoint[]; ALL: PnlPoint[] }
 }
 
 export interface EquityPoint {
@@ -51,11 +67,15 @@ export interface PerformanceData {
     wins: number
     losses: number
     best_day: number | null
-    /** Combined trailing 7 / 30-day realised P&L (Wealth-Snapshot KPIs). */
+    /** Combined last-5 / last-21-trading-day realised P&L (dev-handoff KPIs). */
     weekly: number
     monthly: number
   }
   equity_curve: EquityPoint[]
+  /** Combined last 20 trading days as zero-filled {day, pnl} bars. */
+  daily_bars: Array<{ day: string; pnl: number }>
+  /** Combined cumulative-from-zero P&L series per chart range. */
+  pnl_ranges: { '1D': PnlPoint[]; '1W': PnlPoint[]; '1M': PnlPoint[]; ALL: PnlPoint[] }
   as_of: string
 }
 
@@ -80,15 +100,8 @@ export function winRatePct(wins: number, trades: number): number | null {
   return trades > 0 ? Math.round((wins / trades) * 1000) / 10 : null
 }
 
-/** Sum P&L of points whose timestamp is within the trailing `days`. */
-function trailing(points: Array<{ t: number; pnl: number }>, days: number, nowMs: number): number {
-  const cut = nowMs - days * 86_400_000
-  const s = points.reduce((a, p) => (p.t >= cut ? a + p.pnl : a), 0)
-  return Math.round(s * 100) / 100
-}
-
 /** Base per-bot stats before getPerformance enriches with curve + trailing KPIs. */
-type BasePerf = Omit<BotPerf, 'return_pct' | 'weekly' | 'monthly' | 'curve'>
+type BasePerf = Omit<BotPerf, 'return_pct' | 'weekly' | 'monthly' | 'curve' | 'daily_bars' | 'lead' | 'pnl_ranges'>
 
 interface RawBot {
   perf: BasePerf
@@ -198,17 +211,27 @@ export async function getPerformance(
   isOperator = false,
 ): Promise<PerformanceData> {
   const raws = await Promise.all(bots.map((b) => loadBot(b, persons[b] ?? null, isOperator)))
-  const nowMs = Date.now()
+  const asOf = new Date()
   // Enrich each bot with its own curve + trailing KPIs so the per-strategy
   // toggle on the Performance page switches the chart and the income tiles.
+  // "Past week"/"Past month" are 5/21 TRADING days (dev-handoff §6), not a
+  // calendar week or calendar month.
   const perfBots = raws.map((r) => ({
     ...r.perf,
     return_pct: r.perf.starting_capital > 0
       ? Math.round((r.perf.total_pnl / r.perf.starting_capital) * 10000) / 100
       : null,
-    weekly: trailing(r.points, 7, nowMs),
-    monthly: trailing(r.points, 30, nowMs),
+    weekly: sumTradingDayWindow(r.points, 5, asOf),
+    monthly: sumTradingDayWindow(r.points, 21, asOf),
     curve: buildCurve(r.points, r.perf.starting_capital),
+    daily_bars: dailyResultBars(r.points, 20, asOf),
+    lead: agentLead(r.points),
+    pnl_ranges: {
+      '1D': cumulativePnlSeries(r.points, 1, asOf),
+      '1W': cumulativePnlSeries(r.points, 5, asOf),
+      '1M': cumulativePnlSeries(r.points, 21, asOf),
+      ALL: cumulativePnlSeries(r.points, null, asOf),
+    },
   }))
 
   const round2 = (v: number) => Math.round(v * 100) / 100
@@ -238,6 +261,8 @@ export async function getPerformance(
   }
   if (curve.length) curve.unshift({ t: new Date(all[0].t).toISOString(), equity: round2(startingCapital) })
 
+  const combinedPoints = all.map((p) => ({ t: p.t, day: p.day, pnl: p.pnl }))
+
   return {
     bots: perfBots,
     combined: {
@@ -250,10 +275,21 @@ export async function getPerformance(
       wins,
       losses: totalTrades - wins,
       best_day: bestDay,
+      // Combined weekly/monthly are the SUM of each bot's own trading-day
+      // window, not a window recomputed on the merged points — two bots can
+      // trade on different days, so "the last 5 trading days" isn't a single
+      // shared set across them the way it is for a single bot.
       weekly: round2(perfBots.reduce((s, b) => s + b.weekly, 0)),
       monthly: round2(perfBots.reduce((s, b) => s + b.monthly, 0)),
     },
     equity_curve: curve,
+    daily_bars: dailyResultBars(combinedPoints, 20, asOf),
+    pnl_ranges: {
+      '1D': cumulativePnlSeries(combinedPoints, 1, asOf),
+      '1W': cumulativePnlSeries(combinedPoints, 5, asOf),
+      '1M': cumulativePnlSeries(combinedPoints, 21, asOf),
+      ALL: cumulativePnlSeries(combinedPoints, null, asOf),
+    },
     as_of: new Date().toISOString(),
   }
 }

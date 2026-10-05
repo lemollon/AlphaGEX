@@ -44,7 +44,10 @@ const RANGES = [
   { key: 'all', label: 'All Time', days: 0 },
 ] as const
 
-export default function TradeHistoryClient() {
+/** Trade History body, extracted so it can render inline as the /dashboard
+ *  "History" tab (dev-handoff §6) as well as standalone at /account/trades
+ *  (which now redirects to /dashboard?tab=history). */
+export function TradeHistoryBody() {
   const { data, error } = useSWR<Resp>('/api/live/trades', fetcher, { refreshInterval: 60_000, shouldRetryOnError: false })
   const [q, setQ] = useState('')
   const [strategy, setStrategy] = useState<'all' | string>('all')
@@ -53,8 +56,6 @@ export default function TradeHistoryClient() {
   const isEmpty = data && 'empty' in data && data.empty
   const isErr = (data && 'error' in data) || (error && !data)
   const trades = data && 'trades' in data ? data.trades : []
-  const allowedBots = (data && 'viewer' in data ? data.viewer.allowedBots : []) as LiveBot[]
-  const paperBots = (data && 'viewer' in data ? data.viewer.paperBots : []) as LiveBot[]
 
   const strategies = useMemo(() => Array.from(new Set(trades.map((t) => t.strategy))), [trades])
 
@@ -74,7 +75,7 @@ export default function TradeHistoryClient() {
   }, [trades, strategy, range, q])
 
   return (
-    <CustomerShell membership={null} bots={allowedBots} paperBots={paperBots}>
+    <>
           {/* breadcrumb */}
           <div className="flex items-center gap-2 text-sm">
             <Link href="/live" className="font-semibold text-[var(--accent)] hover:opacity-80">Live</Link>
@@ -176,6 +177,17 @@ export default function TradeHistoryClient() {
               </p>
             </>
           )}
+    </>
+  )
+}
+
+/** Standalone /account/trades route — now just CustomerShell + the extracted
+ *  body. /account/trades redirects to /dashboard?tab=history, which renders
+ *  the same TradeHistoryBody inline; this keeps direct links/bookmarks working. */
+export default function TradeHistoryClient() {
+  return (
+    <CustomerShell membership={null}>
+      <TradeHistoryBody />
     </CustomerShell>
   )
 }

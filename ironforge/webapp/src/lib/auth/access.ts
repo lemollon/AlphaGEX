@@ -87,6 +87,13 @@ const PUBLIC_EXACT = new Set<string>([
  */
 const CUSTOMER_EXACT = new Set<string>([
   '/home',
+  // The real member landing page (dev-handoff §6) — tabbed Overview/Community/
+  // History/Settings shell. Previously unlisted here, which is exactly why the
+  // gap audit found "/dashboard 302s to /ops/login": with no entry in this set
+  // OR in PUBLIC_EXACT, decideAccess fell through to the generic
+  // 'redirect-login' branch, which sends a BROWSER request to the OPERATOR
+  // door — a customer has no operator session and can never pass it.
+  '/dashboard',
   '/live',
   // Per-bot "Open Account" (subscribe) pages — render the customer's own setup + pricing.
   '/live/spark/open',

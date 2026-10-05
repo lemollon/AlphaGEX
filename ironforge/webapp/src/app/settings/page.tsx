@@ -1,13 +1,14 @@
-import type { Metadata } from 'next'
-import SettingsClient from './SettingsClient'
+import { redirect } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
 
-export const metadata: Metadata = {
-  title: 'Settings — IronForge',
-  description: 'Membership, brokerage connections, and security.',
-}
-
+/**
+ * /settings is superseded by the /dashboard Settings tab (dev-handoff §6: a
+ * single tabbed page). SettingsBody (automation toggles, alerts, and the
+ * billing/brokerage/security links) now renders inline there; redirecting
+ * rather than deleting keeps every existing link and bookmark to /settings
+ * working.
+ */
 export default function SettingsPage() {
-  return <SettingsClient />
+  redirect('/dashboard?tab=settings')
 }
