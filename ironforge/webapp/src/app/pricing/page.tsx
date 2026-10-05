@@ -3,7 +3,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import MarketingShell from '@/components/marketing/MarketingShell'
 import { getAgent } from '@/lib/marketing/agents'
-import { BOT_PLANS, COMMUNITY_PLAN } from '@/lib/billing/plans'
+import { BOT_PLANS } from '@/lib/billing/plans'
 
 export const metadata: Metadata = {
   title: 'Pricing — IronForge',
@@ -34,7 +34,7 @@ const FAQ = [
   },
   {
     q: 'Does Forge Community cost extra?',
-    a: 'No. Community is included with Spark, Flame and Ember at no extra cost.',
+    a: 'No. Community is free — on its own or included with Spark, Flame and Ember at no extra cost.',
   },
   {
     q: 'What happens after the free trial?',
@@ -188,10 +188,12 @@ export default function PricingPage() {
         <div className="card plan">
           <div className="plan-top">
             <h3>Community</h3>
-            <span className="tag">No bot required</span>
+            <span className="tag" style={{ background: 'var(--up-soft)', color: 'var(--up)' }}>
+              Free
+            </span>
           </div>
           <div className="price">
-            <b>${COMMUNITY_PLAN.priceMonthly}</b>
+            <b>$0</b>
             <span>/ month</span>
           </div>
           <p className="muted">Market talk, briefings and education — without an automated agent.</p>
@@ -214,7 +216,7 @@ export default function PricingPage() {
             </li>
           </ul>
           <Link className="btn btn-lg btn-block" href="/signup?bot=community&source=site&placement=tier_card">
-            Join Community
+            Join Community — Free
           </Link>
         </div>
       </div>

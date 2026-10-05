@@ -25,6 +25,10 @@ export const APPLE_PRODUCTS: AppleProduct[] = [
   { productId: 'ironforge.both.monthly', lookupKey: 'both_monthly', bots: ['spark', 'flame'], bundle: true },
   { productId: 'ironforge.spark.monthly', lookupKey: 'spark_monthly', bots: ['spark'], bundle: false },
   { productId: 'ironforge.flame.monthly', lookupKey: 'flame_monthly', bots: ['flame'], bundle: false },
+  // LEGACY as of 2026-10-05 (Leron, binding) — Community is free; this StoreKit product
+  // must never be purchasable for a NEW member (mobile's plan picker skips billing for
+  // community entirely, see ironforge/mobile). Kept here only so an entitlement an
+  // existing Apple subscriber already holds keeps resolving via productIdFor/planFor.
   { productId: 'ironforge.community.monthly', lookupKey: 'community_monthly', bots: ['community'], bundle: false },
 ]
 

@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
   }
   if (!(await hasActiveMembership(customerId))) {
     return NextResponse.json(
-      { code: 'MEMBERSHIP_REQUIRED', error: 'Join the Forge Community to use AI assist — $15/mo.' },
+      { code: 'MEMBERSHIP_REQUIRED', error: 'Join the Forge Community to use AI assist — it’s free.' },
       { status: 402 },
     )
   }

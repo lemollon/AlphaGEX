@@ -60,6 +60,11 @@ export const APPLE_PRODUCTS: AppleProduct[] = [
   { productId: 'ironforge.both.monthly', lookupKey: 'both_monthly', bots: ['spark', 'flame'], bundle: true },
   { productId: 'ironforge.spark.monthly', lookupKey: 'spark_monthly', bots: ['spark'], bundle: false },
   { productId: 'ironforge.flame.monthly', lookupKey: 'flame_monthly', bots: ['flame'], bundle: false },
+  // LEGACY as of 2026-10-05 (Leron, binding) — Community is free on iOS and Android.
+  // Choosing Community in enroll/plan.tsx no longer resolves an Apple product or
+  // starts a StoreKit purchase at all (see enroll/billing.tsx); this entry stays
+  // ONLY so an existing paying Apple subscriber's entitlement keeps resolving via
+  // productIdFor/planFor on restore-purchases / server-side verify.
   { productId: 'ironforge.community.monthly', lookupKey: 'community_monthly', bots: ['community'], bundle: false },
 ]
 

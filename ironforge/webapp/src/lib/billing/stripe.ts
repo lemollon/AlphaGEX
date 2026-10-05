@@ -443,8 +443,8 @@ export async function createSubscriptionCheckout(opts: {
   successUrl: string
   cancelUrl: string
 }): Promise<{ id: string; url: string }> {
-  // Stripe rejects trial_period_days below 1, so only include it for a real trial
-  // (bot plans pass 5; Community passes 0 = charge immediately, no trial).
+  // Stripe rejects trial_period_days below 1, so only include it for a real trial.
+  // Community no longer calls this function at all (free, no Stripe) — bot plans pass 5.
   const subscription_data: Record<string, unknown> = {
     metadata: { ironforge_user_id: opts.userId, bot: opts.bot },
   }
@@ -518,10 +518,15 @@ export async function retrieveSubscription(id: string): Promise<StripeSubscripti
  * bundle price when it ends. No new card entry is needed — the payment method is already on file.
  */
 /**
- * Upgrades a Community-only subscription ($10) in place to a single-bot Automate price
- * ($50 total — Community is included in Automate), rather than opening a second parallel
- * subscription (which double-billed $60/mo and matched no advertised total — UAT-011).
+ * Upgrades a GRANDFATHERED, still-paying Community-only subscription in place to a
+ * single-bot Automate price ($50 total — Community is included in Automate), rather
+ * than opening a second parallel subscription (which double-billed $60/mo and matched
+ * no advertised total — UAT-011). Community is free for new members as of 2026-10-05,
+ * so a free member has no Stripe subscription to upgrade here — this path only ever
+ * fires for the pre-existing paid community_monthly subscribers callers check for via
+ * `communitySub?.stripe_subscription_id` (see billing/checkout/route.ts).
  *
+
  * The 5-day agent trial rides on the upgrade (product decision 7/31): trial_end is set,
  * proration is 'none' — the member keeps the Community period they already paid for, the
  * $50 rate starts when the trial ends. metadata.bot is overwritten to the new slug so the

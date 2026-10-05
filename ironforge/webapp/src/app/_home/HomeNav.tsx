@@ -36,9 +36,10 @@ const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
 ]
 
 // Links that require a MEMBERSHIP — any live subscription, a strategy or Community
-// itself. Community is a $10 product, so advertising it to someone who has bought
-// nothing points at a door they cannot walk through. Discovery is unaffected: the
-// homepage membership section is where Community is actually sold, and it links there.
+// itself. Community is free but still requires joining, so advertising it to someone
+// who hasn't joined anything points at a door they cannot walk through yet. Discovery
+// is unaffected: the homepage membership section is where Community is actually
+// joined, and it links there.
 const MEMBER_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/community', label: 'Community' },
 ]

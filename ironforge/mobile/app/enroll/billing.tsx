@@ -12,7 +12,7 @@ import { useTheme } from '@/theme/ThemeContext'
 import { Button, Loading } from '@/components/ui'
 import { EnrollShell } from '@/enroll/Shell'
 import { useEnrollment } from '@/enroll/useEnrollment'
-import { getLegal, acceptLegal, checkMembership, resumeEnrollment, getPlanCatalog } from '@/enroll/api'
+import { getLegal, acceptLegal, checkMembership, resumeEnrollment, getPlanCatalog, joinCommunityFree } from '@/enroll/api'
 import { routeForNextStep, PAGE_RANK } from '@/enroll/steps'
 import type { PlanCatalog } from '@/enroll/types'
 
@@ -46,9 +46,12 @@ import type { PlanCatalog } from '@/enroll/types'
  * verify -> finishTransaction), this screen re-resumes the enrollment and follows
  * next_step forward — same call as "I already subscribed on the web" makes.
  *
- * Community's clickwrap (Terms/Privacy/Refund — no standalone legal screen) is
- * recorded here, same point in the funnel as the web billing submit, before any of
- * the actions below is offered.
+ * Community is FREE as of 2026-10-05 (Leron, binding) — no StoreKit purchase, no
+ * Stripe, on iOS OR Android. Its clickwrap (Terms/Privacy/Refund — no standalone
+ * legal screen) is recorded here, same point in the funnel as the web billing
+ * submit, then a single "Join Community — Free" action calls joinCommunityFree()
+ * (writes the entitlement directly, no payment rail involved) and continues
+ * forward — no IAP block, no "I already subscribed on the web" check, no price.
  *
  * PRICING CHANGE (Leron, 2026-10-04, binding): no "Both" bundle any more, and
  * `ironforge.both.monthly` is never offered for a NEW purchase — Spark and Flame
@@ -78,6 +81,7 @@ export default function BillingScreen() {
   const [purchasingId, setPurchasingId] = useState<string | null>(null)
   const [restoring, setRestoring] = useState(false)
   const [legal, setLegal] = useState<{ terms: string; privacy: string } | null>(null)
+  const [joiningCommunity, setJoiningCommunity] = useState(false)
 
   const isCommunity = enrollment?.selected_plan === 'community'
   const isEmber = enrollment?.selected_plan === 'ember'
@@ -166,6 +170,30 @@ export default function BillingScreen() {
   }
 
   /**
+   * Community is free — record the clickwrap, write the entitlement (no Stripe, no
+   * StoreKit), then follow the server's next_step forward exactly like
+   * checkWebSubscription() does for a real purchase.
+   */
+  async function joinCommunity() {
+    if (!enrollment || joiningCommunity) return
+    setJoiningCommunity(true)
+    setError(null)
+    try {
+      await acceptCommunityClickwrap()
+      await joinCommunityFree()
+      const d = await resumeEnrollment()
+      const canonical = routeForNextStep(d.next_step, d.enrollment.selected_plan)
+      if (canonical.rank > PAGE_RANK.billing) {
+        router.push(canonical.route as never)
+      }
+    } catch (e) {
+      setError(e instanceof ApiError ? e.humanMessage : (e as Error).message)
+    } finally {
+      setJoiningCommunity(false)
+    }
+  }
+
+  /**
    * The StoreKit purchase reached the same finish line "I already subscribed on the
    * web" does: re-resume so the server re-derives billing_pending's next transition
    * from the freshly-written subscription row, then follow next_step forward.
@@ -188,15 +216,11 @@ export default function BillingScreen() {
 
   async function onSubscribe(productId: string) {
     if (!customerId || purchasingId || busy) return
+    // Community is free (2026-10-05) and never reaches this button in the UI below —
+    // this guard is defense in depth so `ironforge.community.monthly` can never be
+    // purchased via StoreKit even if something upstream still resolves its product id.
+    if (isCommunity) return
     setError(null)
-    if (isCommunity) {
-      try {
-        await acceptCommunityClickwrap()
-      } catch (e) {
-        setError((e as Error).message)
-        return
-      }
-    }
     setPurchasingId(productId)
     try {
       // The result arrives asynchronously through the purchase-updated listener
@@ -301,12 +325,37 @@ export default function BillingScreen() {
         <Loading label="Loading…" />
       ) : isEmber ? (
         <Loading label="Ember is free — continuing…" />
+      ) : isCommunity ? (
+        // Free as of 2026-10-05 (Leron, binding) — no StoreKit, no Stripe, on either
+        // platform. No "Due after setup" headline either: there is no due amount.
+        <>
+          <Text style={[type.body, { color: color.textDim, marginBottom: space.lg }]}>
+            {planInfo?.name ?? 'Forge Community'} is free — no card, no subscription.
+          </Text>
+
+          <View style={{ marginBottom: space.xl }}>
+            <Text style={[type.label, { color: color.muted }]}>Due today</Text>
+            <Text style={[type.title, { color: color.text, fontFamily: font.display }]}>Free</Text>
+          </View>
+
+          <Button label="Join Community — Free" onPress={joinCommunity} busy={joiningCommunity} />
+
+          <Text style={[type.label, { color: color.muted, marginTop: space.md, lineHeight: 18 }]}>
+            By continuing, you accept the{' '}
+            {legal ? (
+              <Text style={{ color: color.accent }} onPress={() => openLegal(legal.terms)}>
+                Terms of Service
+              </Text>
+            ) : (
+              'Terms of Service'
+            )}{' '}
+            and Privacy Policy.
+          </Text>
+        </>
       ) : (
         <>
           <Text style={[type.body, { color: color.textDim, marginBottom: space.lg }]}>
-            {isCommunity
-              ? 'Your Forge Community membership begins as soon as billing is set up.'
-              : 'Your trial begins only after brokerage, agent, and activation are complete — never at billing.'}
+            Your trial begins only after brokerage, agent, and activation are complete — never at billing.
           </Text>
 
           {headlinePrice != null ? (

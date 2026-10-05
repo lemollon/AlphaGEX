@@ -153,8 +153,7 @@ export function MembershipSection() {
           <div className="mt-auto border-t border-white/10 pt-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="text-white">
-                <span className="text-[30px] font-extrabold">${MARKETING_TIERS.community.priceMonthly}</span>
-                <span className="ml-1 text-sm text-gray-400">/month</span>
+                <span className="text-[30px] font-extrabold">Free</span>
               </div>
               <Link
                 href="/signup?plan=community&source=pricing&placement=tier_card"
@@ -163,7 +162,7 @@ export function MembershipSection() {
                 Join Community
               </Link>
             </div>
-            <p className="mt-3 text-xs text-gray-500">Cancel anytime.</p>
+            <p className="mt-3 text-xs text-gray-500">No card required.</p>
           </div>
         </div>
 

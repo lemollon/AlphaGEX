@@ -36,6 +36,7 @@ export const ALLOWED_APP_ROUTES = [
   '/settings',
   '/onboarding/brokerage',
   '/enroll/broker',
+  '/enroll/done',
 ] as const
 
 export type AppRoute = (typeof ALLOWED_APP_ROUTES)[number]

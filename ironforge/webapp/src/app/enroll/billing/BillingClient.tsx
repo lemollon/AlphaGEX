@@ -9,19 +9,21 @@ import { PAGE_RANK, routeForNextStep } from '../steps'
 import { MARKETING_TIERS, TRIAL_DAYS } from '@/lib/billing/plans'
 
 /**
- * BILL-COMM-01 / BILL-AUTO-01 — billing (July 29 handoff).
+ * BILL-COMM-01 / BILL-AUTO-01 — billing (July 29 handoff; Community made free 2026-10-05).
  *
  * Payment fields are HOSTED BY STRIPE (accepted deviation from the embedded-field
- * mockups): this screen is the order summary + the binding acceptance language, and
- * the CTA redirects to Stripe Checkout. Community pays $10 today (subscription mode);
- * Automate saves a card at $0 due (setup mode via the server-validated
- * `enrollment_setup` intent — the trial begins only at activation, never here).
+ * mockups) for Automate ONLY: Automate saves a card at $0 due (setup mode via the
+ * server-validated `enrollment_setup` intent — the trial begins only at activation,
+ * never here). Community is FREE — no card, no Stripe, ever (Leron, binding): this
+ * screen records the clickwrap, then POST /api/billing/checkout writes the free
+ * entitlement directly and hands back an internal url, not a Stripe redirect.
  *
  * Community has no standalone legal screen: its Terms / Privacy / Refund acceptance
- * is recorded as a clickwrap at THIS submit, before the Stripe redirect.
+ * is recorded as a clickwrap at THIS submit, before the free-join call.
  *
- * Returning from Stripe (?checkout=success) re-resumes; the server re-derives billing
- * completion from Stripe state directly, so this works even before the webhook lands.
+ * Returning from Stripe (?checkout=success, Automate only) re-resumes; the server
+ * re-derives billing completion from Stripe state directly, so this works even before
+ * the webhook lands.
  */
 
 interface LegalDoc {
@@ -60,9 +62,10 @@ export default function BillingClient() {
     setBusy(true)
     setError(null)
     try {
-      // Clickwrap: record the core acceptances (Terms / Privacy / Refund) BEFORE the
-      // Stripe redirect — the doc requires binding acceptance at submit, and the
-      // acceptance moving the enrollment to billing_pending is what checkout expects.
+      // Clickwrap: record the core acceptances (Terms / Privacy / Refund) BEFORE
+      // joining — the doc requires binding acceptance at submit. Community is free, so
+      // this call writes the entitlement directly and returns an internal url; there is
+      // no card and no Stripe redirect.
       const legal = await call(`/api/v1/enrollments/${enrollment.id}/legal`)
       const codes = (legal.documents as LegalDoc[]).map((d) => d.code)
       await call(`/api/v1/enrollments/${enrollment.id}/acceptances`, {
@@ -77,7 +80,7 @@ export default function BillingClient() {
       })
       window.location.assign(d.url)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not start checkout.')
+      setError(e instanceof Error ? e.message : 'Could not join Community.')
       setBusy(false)
     }
   }
@@ -101,7 +104,7 @@ export default function BillingClient() {
 
   const headline = isCommunity ? 'One final step.' : 'Prepare to automate.'
   const subline = isCommunity
-    ? 'Set up billing to activate your Forge Community membership.'
+    ? 'Accept the agreements below to activate your free Forge Community membership.'
     : 'Add a payment method, then complete your trading setup.'
 
   return (
@@ -127,9 +130,9 @@ export default function BillingClient() {
             <h3>Order summary</h3>
             {isCommunity ? (
               <div className="today" style={{ marginTop: 14 }}>
-                <div><span>Forge Community</span><span>${MARKETING_TIERS.community.priceMonthly.toFixed(2)}/month</span></div>
-                <div><span className="help">Community included · Renews monthly · No free trial</span><span /></div>
-                <div><span>Due today</span><span>${MARKETING_TIERS.community.priceMonthly.toFixed(2)}</span></div>
+                <div><span>Forge Community</span><span><b>Free</b></span></div>
+                <div><span className="help">No card · No Stripe subscription · Cancel anytime</span><span /></div>
+                <div><span>Due today</span><span>$0.00</span></div>
               </div>
             ) : (
               <div className="today" style={{ marginTop: 14 }}>
@@ -138,25 +141,29 @@ export default function BillingClient() {
                 <div><span>Due today</span><span>$0.00</span></div>
               </div>
             )}
-            {!isCommunity ? (
+            {isCommunity ? (
+              <span className="badge ok" style={{ marginTop: 12, display: 'inline-block' }}>Free · No card required</span>
+            ) : (
               <span className="badge ok" style={{ marginTop: 12, display: 'inline-block' }}>Card required · No charge today</span>
+            )}
+            {!isCommunity ? (
+              <p className="powered" style={{ marginTop: 14 }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                  <rect x="5" y="10.5" width="14" height="9" rx="2" />
+                  <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" />
+                </svg>
+                Payments are securely processed by Stripe.
+              </p>
             ) : null}
-            <p className="powered" style={{ marginTop: 14 }}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                <rect x="5" y="10.5" width="14" height="9" rx="2" />
-                <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" />
-              </svg>
-              Payments are securely processed by Stripe.
-            </p>
           </div>
 
           {isCommunity ? (
             <>
               <button type="button" disabled={busy} onClick={payCommunity} className="btn btn-accent btn-block btn-lg" style={{ marginTop: 20 }}>
-                {busy ? 'Starting checkout…' : `Pay $${MARKETING_TIERS.community.priceMonthly} & Join Community`}
+                {busy ? 'Joining…' : 'Join Community — Free'}
               </button>
               <p className="help" style={{ marginTop: 12, lineHeight: 1.5 }}>
-                By continuing, you agree to recurring monthly billing until canceled and accept the{' '}
+                By continuing, you accept the{' '}
                 <Link href="/terms" target="_blank" className="link">Terms of Service</Link>,{' '}
                 <Link href="/privacy" target="_blank" className="link">Privacy Policy</Link>, and{' '}
                 <Link href="/legal/refund-policy" target="_blank" className="link">Refund Policy</Link>.
