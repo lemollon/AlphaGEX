@@ -7,7 +7,7 @@
 //      inside its own verdict window.
 // No account-size language anywhere — every economics line is a per-unit
 // number, never a dollar target scaled to a balance. Nothing here places a
-// trade; this is read-only, same discipline as /hunt and /wall-scanner.
+// trade; this is read-only, same discipline as /wall-scanner.
 import { useCallback, useEffect, useState } from 'react';
 import { Target, Calendar, TrendingDown, Eye, AlertTriangle } from 'lucide-react';
 import { API_URL } from '../lib/api';

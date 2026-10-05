@@ -16,7 +16,6 @@ const BotDashboard = lazy(() => import('./pages/BotDashboard'));
 const FleetPage = lazy(() => import('./pages/FleetPage'));
 const SqueezePage = lazy(() => import('./pages/SqueezePage'));
 const TsunamiPage = lazy(() => import('./pages/TsunamiPage'));
-const HuntPage = lazy(() => import('./pages/HuntPage'));
 const SqueezeHuntPage = lazy(() => import('./pages/SqueezeHuntPage'));
 const WallScannerPage = lazy(() => import('./pages/WallScannerPage'));
 const OpportunityPage = lazy(() => import('./pages/OpportunityPage'));
@@ -196,7 +195,6 @@ function NavBar() {
               highlighted too. */}
           <RouteBtn to="/bots"            icon={<Cpu size={14} />}  label="Bots" />
           <RouteBtn to="/squeeze"         icon={<Zap size={14} />} label="Squeeze" />
-          <RouteBtn to="/hunt"            icon={<Crosshair size={14} />} label="Hunt" />
           <RouteBtn to="/squeeze-hunt"            icon={<Crosshair size={14} />} label="Squeeze Hunt" />
           <RouteBtn to="/wall-scanner"     icon={<Ruler size={14} />} label="Wall Scanner" />
           <RouteBtn to="/opportunity"      icon={<Target size={14} />} label="Opportunity" />
@@ -418,7 +416,6 @@ export default function App() {
             <Route path="/" element={<BuilderPage />} />
             <Route path="/positions" element={<PositionsPage />} />
             <Route path="/squeeze" element={<SqueezePage />} />
-            <Route path="/hunt" element={<HuntPage />} />
             <Route path="/squeeze-hunt" element={<SqueezeHuntPage />} />
             <Route path="/wall-scanner" element={<WallScannerPage />} />
             <Route path="/opportunity" element={<OpportunityPage />} />
