@@ -1,140 +1,122 @@
-import { useEffect, useMemo, useState } from 'react'
-import { View, Text, ScrollView, Switch, StyleSheet } from 'react-native'
+import { useMemo } from 'react'
+import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native'
 import { Stack, useRouter } from 'expo-router'
+import useSWRInfinite from 'swr/infinite'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { api } from '@/api/client'
-import { space, type, font } from '@/theme/tokens'
+import type { NotificationItem, NotificationsReadResponse } from '@/api/types'
+import {
+  getNotificationsKey,
+  mergeNotificationPages,
+  hasMoreNotificationPages,
+  latestUnreadCount,
+  type NotificationsPage,
+} from '@/notifications/history'
+import { routeFor } from '@/notifications/route-for'
+import { tradeDetailHref } from '@/ledger/detail'
+import { agentDetailHref } from '@/agents/routes'
+import { space, radius, type, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
-import { Card, SectionLabel, Loading, ErrorState } from '@/components/ui'
+import { Card, Loading, Empty, ErrorState } from '@/components/ui'
 import { Sheet, SheetHeader } from '@/components/Sheet'
 
 /**
- * Notification preferences — APP-036.
+ * Notifications — the real HISTORY feed (10.4 gap audit).
  *
- * Every toggle PUTs immediately (optimistic, rolled back on failure) rather than
- * batching behind a Save button — this is a settings screen someone visits once and
- * leaves; a forgotten unsaved toggle would mean the preference silently never took
- * effect. Security notices (session revoked, password changed, new device) are not
- * a toggle here at all — they are the one category a customer cannot turn off, so
- * showing it as a switch that does nothing would be a lie.
+ * The app.html design's notifications sheet shows past events (trade opened/closed,
+ * daily summary) with no API behind it — grepped at the time: only
+ * /api/notifications/preferences and /devices existed. GET /api/v1/notifications now
+ * backs this screen with real rows, written server-side from inside dispatchToCustomers
+ * (the same function that sends every push) — so this feed is never out of sync with
+ * what was actually sent, and never invented example data.
+ *
+ * The preference toggles that used to live at this route moved to
+ * app/notification-preferences.tsx, one tap away via the "Notification settings" link
+ * below — unchanged in every other respect.
  */
-type Preferences = {
-  trade_opened: boolean
-  trade_closed: boolean
-  trade_approval: boolean
-  brokerage_health: boolean
-  billing: boolean
-  community: boolean
-  show_amounts_on_lockscreen: boolean
-  sound: boolean
-  weekly_summary: boolean
+const ICON_FOR_KIND: Record<string, React.ComponentProps<typeof Ionicons>['name']> = {
+  trade_opened: 'flash-outline',
+  trade_closed: 'checkmark-circle-outline',
+  trade_approval: 'alert-circle-outline',
+  brokerage_health: 'link-outline',
+  billing: 'card-outline',
+  community: 'chatbubbles-outline',
 }
 
-type PrefKey = keyof Preferences
-
-interface PreferencesResponse {
-  ok: boolean
-  preferences: Preferences
+function iconForKind(kind: string): React.ComponentProps<typeof Ionicons>['name'] {
+  return ICON_FOR_KIND[kind] ?? 'notifications-outline'
 }
 
-const GROUPS: Array<{ label: string; rows: Array<{ key: PrefKey; label: string; detail: string }> }> = [
-  {
-    label: 'Trades',
-    rows: [
-      { key: 'trade_opened', label: 'Trade opened', detail: 'When an agent opens a new position.' },
-      { key: 'trade_closed', label: 'Trade closed', detail: 'When a position hits its target, stop, or expires.' },
-      {
-        key: 'trade_approval',
-        label: 'Trade needs your approval',
-        detail: 'Time-sensitive — expires in 5 minutes.',
-      },
-      { key: 'sound', label: 'Sound', detail: 'Play a sound with trade and account alerts.' },
-      {
-        key: 'weekly_summary',
-        label: 'Weekly summary',
-        detail: 'A recap of the week’s trades. Off by default.',
-      },
-    ],
-  },
-  {
-    label: 'Brokerage',
-    rows: [
-      {
-        key: 'brokerage_health',
-        label: 'Connection needs attention',
-        detail: 'Your brokerage link is degraded or disconnected.',
-      },
-    ],
-  },
-  {
-    label: 'Billing',
-    rows: [{ key: 'billing', label: 'Billing', detail: 'Payment issues and membership changes.' }],
-  },
-  {
-    label: 'Community',
-    rows: [{ key: 'community', label: 'Community', detail: 'Replies and activity in the community feed.' }],
-  },
-  {
-    label: 'Privacy',
-    rows: [
-      {
-        key: 'show_amounts_on_lockscreen',
-        label: 'Show dollar amounts on lock screen',
-        detail: 'Off by default — P&L stays hidden until you unlock your phone.',
-      },
-    ],
-  },
-]
+/** "9:42 AM" today, "Yesterday", or "Sep 3" further back — same convention as the
+ *  Forge hero chart's scrub label (formatPointStamp in app/(tabs)/index.tsx). */
+function formatWhen(iso: string): string {
+  const d = new Date(iso)
+  const now = new Date()
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+  }
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday'
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
 
 export default function NotificationsScreen() {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
-  const [prefs, setPrefs] = useState<Preferences | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [pending, setPending] = useState<Set<PrefKey>>(new Set())
 
-  async function load() {
-    setLoading(true)
-    setError(null)
+  const { data, error, isLoading, isValidating, size, setSize, mutate } = useSWRInfinite<NotificationsPage>(
+    getNotificationsKey(),
+    (p: string) => api<NotificationsPage>(p),
+    { refreshInterval: 60_000 },
+  )
+
+  const notifications = mergeNotificationPages(data)
+  const canLoadMore = hasMoreNotificationPages(data)
+  const loadingMore = isValidating && size > 0 && !!data && data.length < size
+  const unreadCount = latestUnreadCount(data)
+
+  async function markAllRead() {
+    if (unreadCount === 0) return
+    const now = new Date().toISOString()
+    mutate(
+      (pages) =>
+        pages?.map((p) => ({
+          ...p,
+          unread_count: 0,
+          notifications: p.notifications.map((n) => ({ ...n, read_at: n.read_at ?? now })),
+        })),
+      { revalidate: false },
+    )
     try {
-      const res = await api<PreferencesResponse>('/api/notifications/preferences')
-      setPrefs(res.preferences)
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setLoading(false)
+      await api<NotificationsReadResponse>('/api/v1/notifications/read', { method: 'POST', body: { all: true } })
+    } catch {
+      // Best-effort — a failed mark-all leaves the dot wrong until the next 60s poll
+      // corrects it, same tolerance as every other optimistic toggle in this app.
     }
   }
 
-  useEffect(() => {
-    load()
-  }, [])
-
-  async function toggle(key: PrefKey, value: boolean) {
-    if (!prefs) return
-    const previous = prefs
-    setPrefs({ ...prefs, [key]: value })
-    setPending((p) => new Set(p).add(key))
-    try {
-      const res = await api<PreferencesResponse>('/api/notifications/preferences', {
-        method: 'PUT',
-        body: { [key]: value },
-      })
-      setPrefs(res.preferences)
-    } catch {
-      // Roll back — the server never saw the change, so the switch must not claim it did.
-      setPrefs(previous)
-    } finally {
-      setPending((p) => {
-        const next = new Set(p)
-        next.delete(key)
-        return next
-      })
+  function openNotification(item: NotificationItem) {
+    if (!item.read_at) {
+      const now = new Date().toISOString()
+      mutate(
+        (pages) =>
+          pages?.map((p) => ({
+            ...p,
+            unread_count: Math.max(0, p.unread_count - 1),
+            notifications: p.notifications.map((n) => (n.id === item.id ? { ...n, read_at: now } : n)),
+          })),
+        { revalidate: false },
+      )
+      api<NotificationsReadResponse>('/api/v1/notifications/read', { method: 'POST', body: { id: item.id } }).catch(
+        () => {},
+      )
     }
+    const href = routeFor(item.data, { tradeDetailHref, agentDetailHref })
+    if (href) router.push(href as never)
   }
 
   return (
@@ -145,41 +127,91 @@ export default function NotificationsScreen() {
       <Sheet onClose={() => router.back()}>
         {(close) => (
           <>
-            <SheetHeader title="Notifications" onClose={close} />
-            {loading ? (
-              <Loading label="Loading preferences…" />
-            ) : error || !prefs ? (
-              <ErrorState message={error ?? 'Preferences unavailable.'} onRetry={load} />
+            <SheetHeader
+              title="Notifications"
+              right={
+                unreadCount > 0 ? (
+                  <Pressable onPress={markAllRead} accessibilityRole="button" style={{ marginRight: space.sm }}>
+                    <Text style={[type.label, { color: color.accent, fontFamily: font.bodyMedium }]}>
+                      Mark all read
+                    </Text>
+                  </Pressable>
+                ) : null
+              }
+              onClose={close}
+            />
+            {isLoading && !data ? (
+              <Loading label="Loading notifications…" />
+            ) : error && !data ? (
+              <ErrorState message={String((error as Error).message)} onRetry={() => mutate()} />
+            ) : notifications.length === 0 ? (
+              <Empty
+                title="No notifications yet"
+                detail="Trade activity, brokerage alerts, and billing updates will show up here."
+              />
             ) : (
-              <ScrollView contentContainerStyle={{ padding: space.lg }}>
-                {GROUPS.map((group) => (
-                  <View key={group.label} style={{ marginBottom: space.xl }}>
-                    <SectionLabel>{group.label}</SectionLabel>
-                    <Card>
-                      {group.rows.map((row, i) => (
-                        <View key={row.key} style={[s.row, i > 0 && s.rowDivider]}>
-                          <View style={{ flex: 1, paddingRight: space.md }}>
-                            <Text style={[type.body, { color: color.text }]}>{row.label}</Text>
-                            <Text style={[type.label, { color: color.muted, marginTop: 2 }]}>{row.detail}</Text>
-                          </View>
-                          <Switch
-                            value={prefs[row.key]}
-                            disabled={pending.has(row.key)}
-                            onValueChange={(v) => toggle(row.key, v)}
-                            trackColor={{ true: color.accent, false: color.border }}
-                          />
+              <ScrollView
+                contentContainerStyle={{ padding: space.lg }}
+                onScroll={({ nativeEvent }) => {
+                  const { layoutMeasurement, contentOffset, contentSize } = nativeEvent
+                  const nearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 200
+                  if (nearBottom && canLoadMore && !loadingMore) setSize(size + 1)
+                }}
+                scrollEventThrottle={200}
+              >
+                <Card style={{ padding: 0 }}>
+                  {notifications.map((item, i) => (
+                    <Pressable
+                      key={item.id}
+                      onPress={() => openNotification(item)}
+                      style={[s.row, i > 0 && s.rowDivider]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${item.title}. ${item.body}${item.read_at ? '' : '. Unread'}`}
+                    >
+                      <View style={s.iconWrap}>
+                        <Ionicons name={iconForKind(item.kind)} size={20} color={color.textDim} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <View style={s.titleRow}>
+                          <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium, flex: 1 }]}>
+                            {item.title}
+                          </Text>
+                          {!item.read_at ? <View style={s.unreadDot} /> : null}
                         </View>
-                      ))}
-                    </Card>
-                  </View>
-                ))}
-
-                <View style={s.securityRow}>
-                  <Ionicons name="shield-checkmark-outline" size={18} color={color.muted} />
-                  <Text style={[type.label, { color: color.muted }]}>Security notices are always on.</Text>
-                </View>
+                        <Text style={[type.label, { color: color.muted, marginTop: 2 }]} numberOfLines={2}>
+                          {item.body}
+                        </Text>
+                        <Text style={[type.label, { color: color.muted, marginTop: 4 }]}>{formatWhen(item.created_at)}</Text>
+                      </View>
+                    </Pressable>
+                  ))}
+                </Card>
+                {canLoadMore ? (
+                  <Pressable
+                    onPress={() => setSize(size + 1)}
+                    disabled={loadingMore}
+                    style={[s.loadMore, loadingMore && { opacity: 0.5 }]}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+                      {loadingMore ? 'Loading…' : 'Load more'}
+                    </Text>
+                  </Pressable>
+                ) : null}
               </ScrollView>
             )}
+
+            <Pressable
+              onPress={() => {
+                close()
+                router.push('/notification-preferences')
+              }}
+              style={s.settingsRow}
+              accessibilityRole="button"
+            >
+              <Ionicons name="settings-outline" size={16} color={color.muted} />
+              <Text style={[type.label, { color: color.muted }]}>Notification settings</Text>
+            </Pressable>
           </>
         )}
       </Sheet>
@@ -189,24 +221,33 @@ export default function NotificationsScreen() {
 
 const makeStyles = (color: ColorTokens) =>
   StyleSheet.create({
-    screen: { flex: 1, backgroundColor: color.bg },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: space.md,
-      paddingHorizontal: space.lg,
-      paddingVertical: space.md,
-      borderBottomColor: color.border,
-      borderBottomWidth: 1,
-    },
-    row: { flexDirection: 'row', alignItems: 'center', paddingVertical: space.md },
+    row: { flexDirection: 'row', gap: space.md, paddingVertical: space.md, paddingHorizontal: space.lg },
     rowDivider: { borderTopWidth: 1, borderTopColor: color.border },
-    securityRow: {
+    iconWrap: {
+      width: 34,
+      height: 34,
+      borderRadius: radius.md,
+      backgroundColor: color.bg,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    titleRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+    unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.accent },
+    loadMore: {
+      alignItems: 'center',
+      paddingVertical: space.md,
+      marginTop: space.md,
+      borderWidth: 1,
+      borderColor: color.border,
+      borderRadius: radius.md,
+    },
+    settingsRow: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: space.sm,
       justifyContent: 'center',
-      marginTop: space.sm,
-      marginBottom: space.xl,
+      paddingVertical: space.md,
+      borderTopWidth: 1,
+      borderTopColor: color.border,
     },
   })

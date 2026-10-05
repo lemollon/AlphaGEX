@@ -22,6 +22,7 @@ import { space, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { useNotificationBell } from '@/notifications/bell'
+import { useUnreadNotificationsCount } from '@/notifications/useUnreadCount'
 
 const MARK = require('../../assets/brand/ironforge-mark.png')
 
@@ -68,24 +69,23 @@ export function Wordmark({ height = 26 }: { height?: number }) {
  * Persistent app header (present on all four tabs in UX-002/004/005/006).
  *
  * The bell owns its own state via useNotificationBell so all four screens stay
- * identical without repeating the wiring. The dot means one true, actionable thing —
- * alerts are off — never a decorative unread badge, because a dot that is always on
- * teaches people to ignore it.
+ * identical without repeating the wiring. The permission half of the dot means one
+ * true, actionable thing — alerts are off. The 10.4 gap audit added a second, equally
+ * true reason for the same dot: unread rows in the real notification history feed
+ * (GET /api/v1/notifications, see src/notifications/useUnreadCount.ts) — never a
+ * decorative badge, since a dot that is always on teaches people to ignore it.
  *
  * Mobile addendum §2 "Notifications sheet": tapping the bell opens the notifications
  * sheet. The contextual permission ask (APP-033 — explain value before the OS prompt)
  * still comes first when permission hasn't been decided yet or was denied; only once
- * alerts are already on does the bell open the sheet, which doubles as both screens
- * the design calls for — there is no separate "recent activity" feed in the API
- * (grepped: only /api/notifications/preferences and /devices exist), so showing
- * invented example notifications here would violate the no-fake-data rule. The sheet's
- * own preferences list is real data either way.
+ * alerts are already on does the bell open the history feed at app/notifications.tsx.
  */
 export function AppHeader() {
   const { colors: color, scheme, setPreference } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
   const { alert, status, onPress } = useNotificationBell()
+  const unreadCount = useUnreadNotificationsCount()
   // Design-spec §Mobile app "App bar every tab: wordmark, dark-mode toggle, bell" —
   // a one-tap light/dark swap living next to the bell on all four tabs, same spot the
   // app.html prototype's `.th-sun`/`.th-moon` pair occupies. This flips the SAVED
@@ -109,11 +109,13 @@ export function AppHeader() {
           onPress={() => (status === 'granted' ? router.push('/notifications') : onPress())}
           hitSlop={12}
           accessibilityRole="button"
-          accessibilityLabel={alert ? 'Notifications, action needed' : 'Notifications'}
+          accessibilityLabel={
+            alert ? 'Notifications, action needed' : unreadCount > 0 ? 'Notifications, unread' : 'Notifications'
+          }
           style={s.bell}
         >
           <Ionicons name="notifications-outline" size={24} color={color.text} />
-          {alert ? <View style={s.dot} /> : null}
+          {alert || unreadCount > 0 ? <View style={s.dot} /> : null}
         </Pressable>
       </View>
     </View>
