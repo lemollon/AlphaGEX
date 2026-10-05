@@ -142,7 +142,17 @@ def test_theta_index_timestamp_is_eastern(monkeypatch):
     assert spot["age_seconds"] == 10
 
 
-def test_index_permission_denial_preserves_fresh_tradier_vix(monkeypatch):
+def test_tradier_is_primary_vol_source_thetadata_only_fills_gaps(monkeypatch):
+    """2026-10-05: Tradier is now the PRIMARY source for all 5 vol symbols
+    (Leron's explicit call after a ThetaData outage). This test's own name
+    and setup predate that change -- it used to simulate a ThetaData 403 to
+    exercise the VIX-only fallback path. Updated to verify the new real
+    behavior: Tradier's batch quote is tried first; ThetaData is only
+    consulted per-symbol for whatever Tradier's response didn't include
+    (here, everything except VIX, since the mock quote response only
+    returns a VIX row) -- and when THAT also fails, those symbols are still
+    present in `indices` (not silently dropped, unlike the old VIX-only
+    fallback shape), just marked unavailable with a reason."""
     now = datetime.now(timezone.utc)
     denied = requests.Response()
     denied.status_code = 403
@@ -162,12 +172,54 @@ def test_index_permission_denial_preserves_fresh_tradier_vix(monkeypatch):
                         lambda *args, **kwargs: QuoteResponse())
     result = market_structure.fetch_vol_indices(now)
     assert result["available"] is True
-    assert result["source"] == "Tradier VIX quote"
-    assert result["provider_error"] == "ThetaData index permission denied"
     assert result["indices"]["VIX"]["price"] == 16.2
-    assert "VIX9D" not in result["indices"]
+    assert result["indices"]["VIX"]["source"] == "Tradier"
+    assert result["indices"]["VIX"]["fresh"] is True
+    # ThetaData was tried (and, per the mock, failed) for the 4 symbols
+    # Tradier's response didn't carry -- present, not dropped, marked unavailable.
+    for sym in ("VIX1D", "VIX9D", "VIX3M", "VVIX"):
+        assert result["indices"][sym]["price"] is None
+        assert result["indices"][sym]["fresh"] is False
+        assert result["indices"][sym]["source"] == "ThetaData"
+    assert "Tradier" in result["source"]
+    # fetch_spot() is a separate function, untouched by this change -- its
+    # own ThetaData-403 behavior still holds.
     assert market_structure.fetch_spot("SPX", now)["reason"] == (
         "ThetaData index permission denied")
+
+
+def test_tradier_wins_over_thetadata_when_both_would_succeed(monkeypatch):
+    """Priority proof, not just fallback-on-failure: when Tradier returns a
+    fresh quote for a symbol, ThetaData is never even called for it, even
+    though ThetaData here is mocked to also succeed with a DIFFERENT price
+    (999.0) -- if ThetaData's value ever won out, this test would catch it."""
+    now = datetime.now(timezone.utc)
+    all_symbols = ("VIX", "VIX1D", "VIX9D", "VIX3M", "VVIX")
+
+    def theta_would_also_succeed(symbols):
+        # Should never be called for symbols Tradier already covered.
+        assert set(symbols) <= set(all_symbols) - {"VIX"}
+        return {s: {"timestamp": now.isoformat(), "price": "999.0"} for s in symbols}
+    monkeypatch.setattr(market_structure, "_index_prices", theta_would_also_succeed)
+    monkeypatch.setattr(market_structure, "_token", lambda name: "test-token")
+
+    class QuoteResponse:
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {"quotes": {"quote": [
+                {"symbol": s, "last": 16.2 + i,
+                 "trade_date": int(now.timestamp() * 1000)}
+                for i, s in enumerate(all_symbols)
+            ]}}
+
+    monkeypatch.setattr(market_structure.requests, "get",
+                        lambda *args, **kwargs: QuoteResponse())
+    result = market_structure.fetch_vol_indices(now)
+    for sym in all_symbols:
+        assert result["indices"][sym]["source"] == "Tradier"
+        assert result["indices"][sym]["price"] != 999.0
+    assert result["source"] == "Tradier"
 
 
 def test_index_gamma_can_use_fresh_theta_option_underlying(monkeypatch):

@@ -260,71 +260,97 @@ def _quote_timestamp(q: dict[str, Any]) -> datetime | None:
     return None
 
 
-def fetch_vol_indices(now: datetime | None = None) -> dict[str, Any]:
-    """Fetch ThetaData indices, preserving a fresh Tradier VIX if it is denied."""
-    now = now or datetime.now(UTC)
+def _tradier_vol_quotes(symbols: tuple[str, ...]) -> dict[str, dict[str, Any]]:
+    """Batch Tradier quote fetch for volatility-index symbols -- same
+    endpoint/shape fetch_cross_asset() already uses. Returns {symbol: raw
+    quote}, empty dict on no token or any request failure; caller treats a
+    missing entry as "Tradier doesn't have this one" (falls through to
+    ThetaData), never as a fatal error on its own."""
+    token = _token("TRADIER_TOKEN") or _token("TRADIER_API_KEY")
+    if not token:
+        return {}
     try:
-        by_symbol = _index_prices(VOL_SYMBOLS)
+        response = requests.get(
+            TRADIER_QUOTES, params={"symbols": ",".join(symbols)},
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=15,
+        )
+        response.raise_for_status()
     except Exception as exc:  # noqa: BLE001
-        reason = "ThetaData index permission denied" if (
-            isinstance(exc, requests.HTTPError) and exc.response is not None
-            and exc.response.status_code == 403
-        ) else f"ThetaData index failure: {type(exc).__name__}"
-        # The independent Tradier VIX quote is still useful for spot-vol
-        # confirmation. Label it explicitly; do not substitute it for an
-        # index spot in the ThetaData option-gamma calculation.
-        token = _token("TRADIER_TOKEN") or _token("TRADIER_API_KEY")
-        if token:
-            try:
-                response = requests.get(
-                    TRADIER_QUOTES, params={"symbols": "VIX"},
-                    headers={"Authorization": f"Bearer {token}",
-                             "Accept": "application/json"}, timeout=15,
-                )
-                response.raise_for_status()
-                quote = (response.json().get("quotes") or {}).get("quote") or {}
-                if isinstance(quote, list):
-                    quote = quote[0] if quote else {}
-                stamp = _quote_timestamp(quote)
-                price = _f(quote, "last")
-                checked_at = datetime.now(UTC)
-                age = (checked_at - stamp).total_seconds() if stamp else None
-                if price is not None and age is not None and 0 <= age <= STALE_SECONDS:
-                    return {
-                        "available": True, "source": "Tradier VIX quote",
-                        "provider_error": reason, "retrieved_at": checked_at.isoformat(),
-                        "indices": {"VIX": {
-                            "symbol": "VIX", "price": price,
-                            "source_timestamp": stamp.isoformat(),
-                            "age_seconds": round(age, 1), "fresh": True,
-                            "reason": None,
-                        }},
-                    }
-            except Exception as fallback_exc:  # noqa: BLE001
-                logger.warning("[MarketStructure] Tradier VIX fallback failed: %s",
-                               type(fallback_exc).__name__)
-        return {"available": False, "reason": reason, "indices": {}}
+        logger.warning("[MarketStructure] Tradier vol-index quote failed: %s",
+                       type(exc).__name__)
+        return {}
+    raw = (response.json().get("quotes") or {}).get("quote") or []
+    if isinstance(raw, dict):
+        raw = [raw]
+    return {str(q.get("symbol", "")).upper(): q for q in raw if isinstance(q, dict)}
+
+
+def fetch_vol_indices(now: datetime | None = None) -> dict[str, Any]:
+    """Tradier is the PRIMARY source for all 5 vol-index symbols (2026-10-05,
+    Leron's explicit call: "make tradier the main source" -- a ThetaData
+    outage took CINDER's term-structure leg down with it, since only VIX had
+    a Tradier fallback before this, not VIX3M/VIX1D/VIX9D/VVIX).
+
+    ThetaData's index snapshot is now consulted ONLY per-symbol, for
+    whichever symbol Tradier's own batch quote didn't return (no token,
+    request failure, or a symbol Tradier simply doesn't carry) -- never the
+    other way around. Output shape is unchanged from before (indices[symbol]
+    = {price, source_timestamp, age_seconds, fresh, reason, ...}) so
+    persist_vol()/scanner.py/cinder_signal.py's own readers need no change.
+    """
+    now = now or datetime.now(UTC)
+    tradier_quotes = _tradier_vol_quotes(VOL_SYMBOLS)
+
     out: dict[str, Any] = {}
+    missing_from_tradier: list[str] = []
     for symbol in VOL_SYMBOLS:
-        row = by_symbol.get(symbol)
-        price = _f(row, "price") if row else None
-        if price is None:
-            out[symbol] = {"symbol": symbol,
-                              "price": None, "fresh": False, "reason": "missing_quote"}
+        quote = tradier_quotes.get(symbol)
+        if quote is None:
+            missing_from_tradier.append(symbol)
             continue
-        stamp = _theta_ts(row.get("timestamp"))
+        stamp = _quote_timestamp(quote)
+        price = _f(quote, "last")
         age = (now - stamp).total_seconds() if stamp else None
-        fresh = age is not None and 0 <= age <= STALE_SECONDS
+        fresh = price is not None and age is not None and 0 <= age <= STALE_SECONDS
         out[symbol] = {
-            "symbol": symbol,
-            "price": price,
+            "symbol": symbol, "price": price, "source": "Tradier",
             "source_timestamp": stamp.isoformat() if stamp else None,
             "age_seconds": round(age, 1) if age is not None else None,
             "fresh": fresh,
-            "reason": None if fresh else ("missing_timestamp" if stamp is None else "stale_quote"),
+            "reason": None if fresh else (
+                "missing_quote" if price is None else
+                ("missing_timestamp" if stamp is None else "stale_quote")),
         }
+
+    if missing_from_tradier:
+        try:
+            theta_rows = _index_prices(tuple(missing_from_tradier))
+        except Exception as exc:  # noqa: BLE001
+            theta_rows = {}
+            logger.warning("[MarketStructure] ThetaData fallback for %s failed: %s",
+                           missing_from_tradier, type(exc).__name__)
+        for symbol in missing_from_tradier:
+            row = theta_rows.get(symbol)
+            price = _f(row, "price") if row else None
+            if price is None:
+                out[symbol] = {"symbol": symbol, "price": None, "source": "ThetaData",
+                               "fresh": False, "reason": "missing_quote"}
+                continue
+            stamp = _theta_ts(row.get("timestamp"))
+            age = (now - stamp).total_seconds() if stamp else None
+            fresh = age is not None and 0 <= age <= STALE_SECONDS
+            out[symbol] = {
+                "symbol": symbol, "price": price, "source": "ThetaData",
+                "source_timestamp": stamp.isoformat() if stamp else None,
+                "age_seconds": round(age, 1) if age is not None else None,
+                "fresh": fresh,
+                "reason": None if fresh else ("missing_timestamp" if stamp is None else "stale_quote"),
+            }
+
     return {"available": any(v.get("fresh") for v in out.values()),
-            "source": "ThetaData index snapshot price",
+            "source": ("Tradier" if not missing_from_tradier
+                       else f"Tradier + ThetaData fallback ({', '.join(missing_from_tradier)})"),
             "retrieved_at": now.isoformat(), "indices": out}
 
 
