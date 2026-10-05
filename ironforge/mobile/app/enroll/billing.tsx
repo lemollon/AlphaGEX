@@ -6,6 +6,7 @@ import type { MobileMe } from '@/api/types'
 import { canPurchaseInApp } from '@/billing/store-policy'
 import { productIdFor } from '@/billing/apple-products'
 import { initIap, teardownIap, loadProducts, purchase as purchaseProduct, restorePurchases, type IapProduct } from '@/billing/apple-iap'
+import { headlinePriceLabel } from '@/billing/headline-price'
 import { space, type, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import { Button, Loading } from '@/components/ui'
@@ -289,6 +290,11 @@ export default function BillingScreen() {
   const iapProduct = iapProductId ? iapProducts.find((p) => p.productId === iapProductId) : undefined
   const planInfo = planLabel(enrollment?.selected_plan ?? null, catalog)
 
+  // Same number the Subscribe button quotes (iapProduct.displayPrice) once StoreKit
+  // has loaded on iOS — never the Stripe price on that platform. Showing $50 here
+  // next to a $49.99 button is an App Review risk (Guideline 3.1.1/3.1.2).
+  const headlinePrice = headlinePriceLabel({ iapEnabled, iapProduct, stripePrice: price ?? null })
+
   return (
     <EnrollShell title="Billing" step={5} error={error}>
       {!enrollment ? (
@@ -303,10 +309,10 @@ export default function BillingScreen() {
               : 'Your trial begins only after brokerage, agent, and activation are complete — never at billing.'}
           </Text>
 
-          {price != null ? (
+          {headlinePrice != null ? (
             <View style={{ marginBottom: space.xl }}>
               <Text style={[type.label, { color: color.muted }]}>Due after setup</Text>
-              <Text style={[type.title, { color: color.text, fontFamily: font.display }]}>${price}/month</Text>
+              <Text style={[type.title, { color: color.text, fontFamily: font.display }]}>{headlinePrice}</Text>
             </View>
           ) : null}
 

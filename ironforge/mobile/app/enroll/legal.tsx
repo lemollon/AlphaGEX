@@ -77,6 +77,9 @@ export default function LegalScreen() {
       router.push('/enroll/billing')
     } catch (e) {
       setError(e instanceof ApiError ? e.humanMessage : (e as Error).message)
+    } finally {
+      // The screen stays mounted under the next one; a stuck busy flag would
+      // lock it when the customer comes back.
       setBusy(false)
     }
   }

@@ -56,6 +56,11 @@ export default function PlanScreen() {
       router.push(canonical.route as never)
     } catch (e) {
       setError(e instanceof ApiError ? e.humanMessage : (e as Error).message)
+    } finally {
+      // This screen stays mounted underneath /enroll/legal (a stack push never
+      // unmounts the screen beneath it) — without resetting busy here, a customer
+      // who goes back after a SUCCESSFUL choice finds every tile permanently
+      // disabled and can never pick a different plan (TestFlight build 23 bug).
       setBusy(false)
     }
   }
