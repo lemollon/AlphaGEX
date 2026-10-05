@@ -16,6 +16,7 @@ from .report_contract import REQUIREMENTS, prepare_report_delivery, validate_ren
 from .report_producers import observation, unavailable, number, collect_breadth, collect_profile, collect_macro, collect_study, stored_futures, UTC, ET
 from .report_ledger import scorecard, qualify_package, mark_open_positions
 from .report_policy import build_strategy_blocks, finite_tree, render_opening_html
+from .report_assets import DELIVERY_VERSION, inspect_png, chart_id_from_ref, portable_pdf, portable_zip
 logger=logging.getLogger(__name__)
 router=APIRouter(prefix='/api/spreadworks/reports',tags=['Full Options Reports'])
 CT=ZoneInfo('America/Chicago')
@@ -456,13 +457,23 @@ async def assemble_report(app,*,kind='intraday',plan=None,now=None):
     blocks['visuals']['image_inspection']=observation(inspection,'Decoded PNG dimensions, palette, and plotted-data checks',now,now)
     blocks['visuals']['dark_theme']=observation({'background':'#0B1220','panels':'#111827','text':'#E5E7EB','renderer':'Matplotlib PNG; no Mermaid or generated imagery'},'Chart renderer configuration',now,now)
     payload['chart_urls']=image_refs
+    # Verify persisted bytes, not just the pre-upload image or a syntactically valid URL.
+    assets,failures=stored_chart_assets(image_refs)
+    if failures:raise ValueError('Persisted chart verification failed: '+str(failures))
+    blocks['visuals']['delivery_manifest']=observation(
+        {'version':DELIVERY_VERSION,'transport':'self-contained HTML, verified PNG assets, PDF and ZIP',
+         'images':[{k:v for k,v in asset.items() if k!='png_base64'} for asset in assets]},
+        'Persistent report chart byte/checksum round-trip',now,now)
     prepare_report_delivery(payload)
     payload['report_validation']=validate_rendered_report(payload)
     if not payload['report_validation']['publishable']:
         raise ValueError('Final report renderer rejected: '+str(payload['report_validation']['errors']))
     payload['report_completeness']='COMPLETE' if payload['report_validation']['complete_live_data'] else 'INCOMPLETE'
     report_id=hashlib.sha256(encoded({'time':now.isoformat(),'kind':kind,'blocks':blocks}).encode()).hexdigest()[:24]
-    payload.update(report_id=report_id,report_url=f'{PUBLIC_BASE}/{report_id}/view',markdown_url=f'{PUBLIC_BASE}/{report_id}.md')
+    payload.update(report_id=report_id,report_url=f'{PUBLIC_BASE}/{report_id}/view',markdown_url=f'{PUBLIC_BASE}/{report_id}.md',
+                   chart_assets_url=f'{PUBLIC_BASE}/{report_id}/assets',
+                   chart_pdf_url=f'{PUBLIC_BASE}/{report_id}/charts.pdf',
+                   portable_report_url=f'{PUBLIC_BASE}/{report_id}/portable.zip')
     with engine.begin() as c:
         c.execute(text('INSERT INTO sw_full_reports (report_id,generated_at,kind,payload_json) VALUES (:id,:now,:kind,:payload) ON CONFLICT(report_id) DO NOTHING'),
                   {'id':report_id,'now':now.replace(tzinfo=None),'kind':kind,'payload':encoded(payload)})
@@ -497,7 +508,26 @@ def get_chart(chart_id:str):
     with engine.begin() as c:
         row=c.execute(text('SELECT png_base64 FROM sw_report_charts WHERE chart_id=:id'),{'id':chart_id}).fetchone()
     if not row:raise HTTPException(404)
-    return Response(base64.b64decode(row[0]),media_type='image/png',headers={'Cache-Control':'public, max-age=31536000, immutable'})
+    png=base64.b64decode(row[0],validate=True);inspect_png(png,chart_id)
+    return Response(png,media_type='image/png',headers={'Cache-Control':'public, max-age=31536000, immutable','X-Content-Type-Options':'nosniff'})
+
+def stored_chart_assets(refs):
+    """One DB read; all report kinds and old reports get the same durable delivery."""
+    ids={name:chart_id_from_ref(ref) for name,ref in refs.items()}
+    if not ids:return [],{'images':'Report contains no chart references'}
+    with engine.begin() as c:
+        from sqlalchemy import bindparam
+        query=text('SELECT chart_id,png_base64 FROM sw_report_charts WHERE chart_id IN :ids').bindparams(bindparam('ids',expanding=True))
+        rows=dict(c.execute(query,{'ids':list(ids.values())}).all())
+    assets=[];failures={}
+    for name,chart_id in ids.items():
+        try:
+            if not re.fullmatch(r'[a-z][a-z0-9_]*',name):raise ValueError('Invalid chart name')
+            data=base64.b64decode(rows[chart_id],validate=True)
+            assets.append(dict(name=name,chart_id=chart_id,filename=name+'.png',png_base64=rows[chart_id],**inspect_png(data,chart_id)))
+        except (KeyError,ValueError,OSError) as exc:
+            failures[name]='Persisted image missing or corrupt: '+type(exc).__name__
+    return assets,failures
 
 def stored_report(report_id):
     if not re.fullmatch(r'[a-f0-9]{24}',report_id):raise HTTPException(404)
@@ -510,10 +540,38 @@ def stored_report(report_id):
 @router.get('/{report_id}.md')
 def get_markdown(report_id:str):return Response(stored_report(report_id)['report_markdown'],media_type='text/markdown')
 
+@router.get('/{report_id}/assets')
+def get_assets(report_id:str):
+    payload=stored_report(report_id);assets,failures=stored_chart_assets(payload.get('chart_urls') or {})
+    inspection=(payload.get('report_blocks',{}).get('visuals',{}).get('image_inspection',{}).get('value') or [])
+    plotted={row['panel']:row.get('observed_data_plotted',False) for row in inspection}
+    for asset in assets:
+        field=payload.get('report_blocks',{}).get('visuals',{}).get(asset['name']+'_png',{})
+        asset.update(source_timestamp=field.get('source_timestamp'),data_status=field.get('status','unavailable'),
+                     has_observed_data=plotted.get(asset['name'],False))
+    return {'report_id':report_id,'generated_at':payload['generated_at'],'delivery_version':DELIVERY_VERSION,
+            'complete':not failures,'failures':failures,'images':assets}
+
+@router.get('/{report_id}/charts.pdf')
+def get_chart_pdf(report_id:str):
+    assets=get_assets(report_id)
+    if not assets['complete']:raise HTTPException(503,detail=assets['failures'])
+    return Response(portable_pdf(assets['images']),media_type='application/pdf',
+                    headers={'Content-Disposition':f'attachment; filename="options-report-{report_id}-charts.pdf"'})
+
+@router.get('/{report_id}/portable.zip')
+def get_portable_report(report_id:str):
+    payload=stored_report(report_id);assets=get_assets(report_id)
+    if not assets['complete']:raise HTTPException(503,detail=assets['failures'])
+    return Response(portable_zip(payload,assets['images'],report_view(report_id)),media_type='application/zip',
+                    headers={'Content-Disposition':f'attachment; filename="options-report-{report_id}.zip"'})
+
 @router.get('/{report_id}/view',response_class=HTMLResponse)
 def report_view(report_id:str):
     payload=stored_report(report_id);parts=[]
     images=payload.get('chart_urls') or {}
+    assets,failures=stored_chart_assets(images)
+    inline={asset['name']:'data:image/png;base64,'+asset['png_base64'] for asset in assets}
     groups={'expected_move':'market_map','smile':'smile_term','flow':'flow','gamma':'gamma_expiry',
             'surface':'surface',
             'sector_credit':'sector_credit','event_calendar':'event_risk','paper_scorecard':'paper_equity_drawdown',
@@ -527,9 +585,12 @@ def report_view(report_id:str):
             rows.append(f'<details><summary>{html.escape(field.replace("_"," "))} <small>{html.escape(item["status"].upper())}</small></summary><pre>{html.escape(content)}</pre><p>{html.escape(str(item.get("source") or ""))} {html.escape(clock)} | age {item.get("age_seconds","n/a")}s</p></details>')
         chart_names=[groups.get(name)]
         if name=='surface':chart_names+=['term_structure']
-        image=''.join(f'<img src="{html.escape(images[n],quote=True)}" alt="{html.escape(n)} chart">' for n in chart_names if n in images)
+        image=''.join(f'<img src="{inline[n]}" alt="{html.escape(n)} chart" decoding="async">' if n in inline
+                      else f'<p role="alert">VISUAL DELIVERY FAILED: {html.escape(n or "chart")}. {html.escape(failures.get(n,""))}</p>'
+                      for n in chart_names if n in images)
         parts.append(f'<section><h2>{html.escape(name.replace("_"," ").title())}</h2>{image}{"".join(rows)}</section>')
-    return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Full Options Report</title><style>body{background:#0B1220;color:#E5E7EB;font:16px/1.6 system-ui;max-width:1000px;margin:auto;padding:24px}section{padding:20px 0;margin:20px 0}h1,h2{color:#E5E7EB}table{width:100%;table-layout:fixed;border-collapse:collapse}td,th{padding:12px 8px;border-bottom:1px solid #374151;text-align:left;overflow-wrap:anywhere;vertical-align:top}th{width:32%}img{max-width:100%}details{border-top:1px solid #374151;padding:12px 0}summary{cursor:pointer;overflow-wrap:anywhere}small{color:#FBBF24}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#E5E7EB}p{color:#AEB8CB}a{color:#22D3EE}</style></head><body>'+f'<h1>{html.escape(payload["kind"].title())} Options Sentiment</h1><p>{html.escape(payload["generated_at"])} | {payload["report_completeness"]} | Immutable snapshot; clocks are as of generation.</p><a href="{payload["markdown_url"]}">Download complete report</a>'+render_opening_html(payload)+''.join(parts)+'</body></html>'
+    downloads=f'<p><a href="{PUBLIC_BASE}/{report_id}/charts.pdf">Download chart PDF</a> · <a href="{PUBLIC_BASE}/{report_id}/portable.zip">Download offline report</a></p>'
+    return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Full Options Report</title><style>body{background:#0B1220;color:#E5E7EB;font:16px/1.6 system-ui;max-width:1000px;margin:auto;padding:24px}section{padding:20px 0;margin:20px 0}h1,h2{color:#E5E7EB}table{width:100%;table-layout:fixed;border-collapse:collapse}td,th{padding:12px 8px;border-bottom:1px solid #374151;text-align:left;overflow-wrap:anywhere;vertical-align:top}th{width:32%}img{max-width:100%}details{border-top:1px solid #374151;padding:12px 0}summary{cursor:pointer;overflow-wrap:anywhere}small{color:#FBBF24}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#E5E7EB}p{color:#AEB8CB}a{color:#22D3EE}</style></head><body>'+f'<h1>{html.escape(payload["kind"].title())} Options Sentiment</h1><p>{html.escape(payload["generated_at"])} | {payload["report_completeness"]} | Immutable snapshot; clocks are as of generation.</p><a href="{payload["markdown_url"]}">Download complete report</a>'+downloads+render_opening_html(payload)+''.join(parts)+'</body></html>'
 
 def claim_delivery(kind,now):
     """Atomic per-checkpoint lease. Successful sends are never normally resent."""

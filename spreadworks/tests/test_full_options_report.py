@@ -107,10 +107,76 @@ async def test_full_assembly_all_fields_dark_png_embed_and_durable_view(db,monke
     assert image.size==(1440,780);assert image.convert('RGB').getpixel((0,0))==(11,18,32)
     assert 'Observed IV provider' in report.report_view(result['report_id'])
     assert report.latest_report()['report_id']==result['report_id']
+    view=report.report_view(result['report_id'])
+    assert 'src="data:image/png;base64,' in view
+    assert 'src="https://' not in view
+    assets=report.get_assets(result['report_id'])
+    assert assets['complete'];assert len(assets['images'])==11
+    assert all(row['validated'] and row['sha256'][:32]==row['chart_id'] for row in assets['images'])
+    assert report.get_chart_pdf(result['report_id']).body.startswith(b'%PDF-')
+    import zipfile
+    archive=zipfile.ZipFile(io.BytesIO(report.get_portable_report(result['report_id']).body))
+    assert {'report.html','report.md','manifest.json','charts.pdf'}<=set(archive.namelist())
+    assert 'src="https://' not in archive.read('report.html').decode()
+    assert len([name for name in archive.namelist() if name.endswith('.png')])==11
     # Preparing delivery again preserves embeds; callers cannot bypass rendered checks.
     from backend.report_contract import prepare_report_delivery
     assert prepare_report_delivery(result)['publishable']
     assert result['report_markdown'].count(result['chart_urls']['smile_term'])==2  # field value plus image
+
+
+@pytest.mark.asyncio
+@freeze_time(NOW)
+async def test_persisted_missing_and_corrupt_images_never_emit_broken_tags(db,monkeypatch):
+    monkeypatch.setattr(report,'cached_core',lambda now:core())
+    monkeypatch.setattr(report,'_plan_and_runtime',lambda now:({},{}))
+    monkeypatch.setattr(report,'scheduled_events',lambda now:([now.date()],[]))
+    result=await report.assemble_report(SimpleNamespace(),kind='intraday')
+    chart_id=result['chart_urls']['market_map'].split('/')[-1][:-4]
+    with db.begin() as c:c.execute(text('DELETE FROM sw_report_charts WHERE chart_id=:id'),{'id':chart_id})
+    assets=report.get_assets(result['report_id'])
+    assert not assets['complete'];assert 'market_map' in assets['failures']
+    view=report.report_view(result['report_id'])
+    assert 'VISUAL DELIVERY FAILED' in view;assert 'src="https://' not in view
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc:report.get_chart_pdf(result['report_id'])
+    assert exc.value.status_code==503
+    chart_id=result['chart_urls']['smile_term'].split('/')[-1][:-4]
+    with db.begin() as c:c.execute(text('UPDATE sw_report_charts SET png_base64=:bad WHERE chart_id=:id'),{'id':chart_id,'bad':'bm90IGEgcG5n'})
+    assert 'smile_term' in report.get_assets(result['report_id'])['failures']
+
+
+def test_materialize_checks_bytes_before_emitting_paths(tmp_path):
+    import base64,hashlib,importlib.util
+    from pathlib import Path
+    script=Path(__file__).resolve().parents[2]/'scripts'/'materialize_options_report.py'
+    spec=importlib.util.spec_from_file_location('materialize_report',script)
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    output=io.BytesIO();Image.new('RGB',(1440,780),(11,18,32)).save(output,format='PNG')
+    png=output.getvalue();sha=hashlib.sha256(png).hexdigest()
+    row=dict(name='market_map',chart_id=sha[:32],sha256=sha,size_bytes=len(png),png_base64=base64.b64encode(png).decode(),has_observed_data=True)
+    data=dict(report_id='a'*24,generated_at=NOW.isoformat(),complete=True,failures={},images=[row])
+    out=module.materialize(data,tmp_path/'good',['market_map'])
+    assert Path(out['images'][0]['local_path']).read_bytes()==png
+    assert Path(out['pdf_path']).read_bytes().startswith(b'%PDF-')
+    assert 'data:image/png;base64,' in Path(out['html_path']).read_text()
+    assert out['attachment_persistence_required']
+    data['images'][0]['sha256']='b'*64
+    with pytest.raises(ValueError,match='manifest/bytes'):module.materialize(data,tmp_path/'bad')
+    assert not (tmp_path/'bad').exists()
+
+
+@pytest.mark.asyncio
+@freeze_time(NOW)
+async def test_delivery_manifest_cannot_claim_incomplete_assets_are_ready(db,monkeypatch):
+    monkeypatch.setattr(report,'cached_core',lambda now:core())
+    monkeypatch.setattr(report,'_plan_and_runtime',lambda now:({},{}))
+    monkeypatch.setattr(report,'scheduled_events',lambda now:([now.date()],[]))
+    result=await report.assemble_report(SimpleNamespace(),kind='morning')
+    result['report_blocks']['visuals']['delivery_manifest']['value']['images'].pop()
+    check=validate_rendered_report(result)
+    assert not check['publishable']
+    assert any('missing/duplicate persisted images' in err for err in check['errors'])
 
 
 def test_missing_clocks_never_become_live_context():
