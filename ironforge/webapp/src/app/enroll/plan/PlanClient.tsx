@@ -53,6 +53,11 @@ export default function PlanClient() {
       router.push(plan === 'community' ? '/enroll/billing' : '/enroll/legal')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save your selection.')
+    } finally {
+      // Next's router cache can keep this page's state alive across a back
+      // navigation. Without resetting busy here, a customer who goes back after a
+      // SUCCESSFUL choice finds every tile permanently disabled (`disabled={busy}`
+      // below) and can never pick a different plan.
       setBusy(false)
     }
   }
