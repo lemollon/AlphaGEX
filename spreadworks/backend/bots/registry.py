@@ -1520,7 +1520,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         },
         "defaults": {
             "starting_capital": 500.0,
-            "enabled": False,   # PAPER ONLY — explicitly disarmed
+            "enabled": True,    # PAPER ONLY — armed to scan/paper-trade 2026-10-05
             "max_contracts": 1,
             "bp_pct": 0.80,
             "sd_mult": 1.0,      # schema-required, unused by vertical_debit

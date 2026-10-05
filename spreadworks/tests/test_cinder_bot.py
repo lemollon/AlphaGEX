@@ -38,10 +38,10 @@ def test_cinder_registered():
     assert b["params"]["spread_abs"] == 10.0
 
 
-def test_cinder_defaults_are_500_paper_disarmed():
+def test_cinder_defaults_are_500_paper_armed():
     d = get_bot("cinder")["defaults"]
     assert d["starting_capital"] == 500.0
-    assert d["enabled"] is False
+    assert d["enabled"] is True
     assert d["max_contracts"] == 1
     # pt_pct=1.0 against a debit-spread's max_loss_per base means the exit
     # target is "spread value = 2x entry debit" — cinder_signal.py's own
@@ -119,7 +119,7 @@ def test_cinder_config_seeds_the_macro_gate_columns():
     assert float(cfg["live_vix_ratio_max"]) == 0.90
     assert int(cfg["require_vix_contango"]) == 1
     assert int(cfg["entry_cooldown_days"]) == 5
-    assert bool(cfg["enabled"]) is False
+    assert bool(cfg["enabled"]) is True
     assert float(cfg["starting_capital"]) == 500.0
 
 

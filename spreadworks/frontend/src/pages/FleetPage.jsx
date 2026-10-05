@@ -84,6 +84,7 @@ const FILTERS = [
 ];
 
 const SORTS = [
+  { id: 'balance', label: 'Account balance' },
   { id: 'today', label: "Today's P&L" },
   { id: 'total', label: 'Total P&L' },
   { id: 'open', label: 'Open positions' },
@@ -92,13 +93,21 @@ const SORTS = [
   { id: 'name', label: 'Name' },
 ];
 
+// REFLEX renders separately, above the grid, outside useFleet() entirely (see
+// the "featured" block below) — it never reaches this list. CINDER and the
+// two MONARCH bots DO come through the API, so they're pinned here instead:
+// always first, in this exact order, ahead of whatever the sort dropdown
+// says, for every filter/search combination. The pin only reorders — a bot
+// that the active filter/search/ticker already excludes stays excluded.
+const PINNED_BOTS = ['cinder', 'monarch_a', 'monarch_b'];
+
 export default function FleetPage() {
   const { bots, loading, error, updatedAt, refetch } = useFleet();
   const { stats, riskState } = useFleetStats();
   const { isOpen } = useMarketHours();
   const [filter, setFilter] = useState('all');
   const [tickerFilter, setTickerFilter] = useState('all');
-  const [sort, setSort] = useState('today');
+  const [sort, setSort] = useState('balance');
   const [query, setQuery] = useState('');
 
   // Derived per-bot numbers, computed once so the cards, the sort and the
@@ -173,14 +182,29 @@ export default function FleetPage() {
     });
     const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : -Infinity);
     const numZero = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-    return [...out].sort((a, b) => {
+    const sorter = (a, b) => {
       if (sort === 'name') return a._name.localeCompare(b._name);
       if (sort === 'open') return (b.open_positions || 0) - (a.open_positions || 0);
       if (sort === 'total') return num(b._total) - num(a._total);
       if (sort === 'risk') return numZero(b._risk) - numZero(a._risk);
       if (sort === 'dd') return numZero(b._dd) - numZero(a._dd);
-      return num(b._today) - num(a._today);
+      if (sort === 'today') return num(b._today) - num(a._today);
+      // 'balance' (the default) — current account balance/equity, highest first.
+      return num(b._mtm) - num(a._mtm);
+    };
+
+    // Pin CINDER / MONARCH-A / MONARCH-B first, in that fixed order, ahead of
+    // the sort dropdown — a filter/search match still gates whether a pinned
+    // bot shows up at all, it just never competes with the dropdown for
+    // position once it's in view. Everything else sorts per `sorter` above.
+    const pinned = [];
+    const rest = [];
+    out.forEach(r => {
+      const idx = PINNED_BOTS.indexOf(r.bot);
+      if (idx === -1) rest.push(r);
+      else pinned[idx] = r;
     });
+    return [...pinned.filter(Boolean), ...rest.sort(sorter)];
   }, [rows, filter, tickerFilter, sort, query, stats]);
 
   const riskHeadline = riskState?.headline;
