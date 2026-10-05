@@ -1441,6 +1441,107 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "use_gex_walls": False,
         },
     },
+    # CINDER — SPY 1DTE debit call spread, PAPER mirror of the already-LIVE
+    # `backend/cinder_signal.py` signal module (2026-10-05).
+    #
+    # 🚨 NAMING COLLISION, FLAGGED FOR THE OPERATOR: `backend/cinder_signal.py`
+    # + `backend/routes_cinder.py` already run this exact idea as a scheduled,
+    # ARMED live-signal job (every 5 min, 08:00-15:55 CT) that feeds a
+    # separate real-money Robinhood execution bot via its own
+    # `cinder_signals` table and `/api/spreadworks/cinder/state` route — see
+    # that module's docstring (10 trades, 2024-2026, 90% WR, +12.32 total
+    # units). THIS registry entry is a SEPARATE, independent $500 PAPER bot
+    # that reimplements the same documented rule inside the shared
+    # scanner/executor framework (its own cinder_positions/cinder_config
+    # tables) purely so the strategy shows up on the normal fleet page with
+    # a normal paper equity curve. It shares NO table, NO code path, and NO
+    # position with cinder_signal.py and never touches it. Two things named
+    # CINDER in the product is a real point of operator confusion this
+    # agent cannot resolve unilaterally (it would mean renaming or
+    # restructuring the already-live module) — flagged, not fixed.
+    #
+    # STRATEGY (ported from cinder_signal.py's own frozen rule, read-only —
+    # nothing here imports that module): long the ATM SPY call, short the
+    # call $10 higher, next-session (1DTE) expiry. Entry gated on ALL THREE,
+    # once a day in an 11:25-11:35 ET window (10:25-10:35 CT):
+    #   1. GEX: prior-session net_gex_b (gamma_regime.gamma_state) <= -10bn.
+    #   2. Live VIX ratio (routes_squeeze.live_vix_ratio) < 0.90.
+    #   3. Term structure: live VIX < VIX3M (normal contango), read fresh
+    #      from market_structure.fetch_vol_indices() — a live call, not a
+    #      read of cinder_signal.py's sw_live_vol_indices table.
+    # Cooldown: no new entry within 5 CALENDAR days of this bot's own last
+    # entry (entry_cooldown_days — distinct from cooldown_min's MINUTE-based
+    # gate used by the intraday burst bots). All four gates are new,
+    # bot-agnostic scanner.py fields (see "MACRO ENTRY GATES") that are
+    # no-ops for every bot that leaves them unset.
+    #
+    # EXIT: target = 2.0x entry debit. For a debit spread the sizing math
+    # (strategies/vertical_spread.build_vertical_signal) bases pt_target_pnl
+    # on max_loss_per = the debit paid, so pt_pct=1.0 means "close when the
+    # spread's mark gains 100% of the debit" — i.e. spread value = 2x debit,
+    # exactly cinder_signal.py's TARGET_MULTIPLE. No separate stop: a debit
+    # spread cannot lose more than the debit paid, so sl_pct=1.0 is already
+    # unreachable by construction (the TIDE/SPLASH "can't lose more than the
+    # debit" convention) — matches the spec's "no stop, EOD fallback only".
+    # `bull_call_spread` is in monitor.MULTI_DAY_STRATEGIES, so decide_exit
+    # never same-day-EOD-closes it; it force-closes once the scan date
+    # reaches front_expiration (PRE_EXPIRY) if the 2x target never fired.
+    # ASSUMPTION, flagged: this closes at the FIRST scan on the expiration
+    # day rather than cinder_signal.py's narrow 15:55-16:00 ET fallback
+    # window — the generic multi-day exit has no "wait until near the
+    # close" concept and every other bot on this exit path (UNDERTOW, DELTA,
+    # EBB-style verticals) uses the same first-scan convention. Building a
+    # one-off "only check near the close on the last day" path for this one
+    # bot was judged out of proportion for a 10-trade, PAPER/UNCONFIRMED
+    # strategy; revisit if this bot graduates toward a real backtest.
+    #
+    # SIZING, ASSUMED (not specified by the backtest, which reports "units"
+    # not dollars): max_contracts=1, bp_pct=0.80 of the $500 account. A $10
+    # debit spread with an ATM long leg commonly prices a few dollars to
+    # several tens of dollars; 0.80 x $500 = $400 of headroom sizes to 1
+    # contract for any debit up to $400 and skips the day (sizing_below_one)
+    # on anything pricier, rather than fabricating a tighter number with no
+    # backtest to support it.
+    "cinder": {
+        "display": "CINDER",
+        "strategy": "bull_call_spread",
+        "ticker": "SPY",
+        "front_dte": 1,
+        "back_dte": None,
+        "one_entry_per_day": True,
+        "params": {
+            "spread_abs": 10.0,
+            # Standard quote-quality hygiene (every other vertical in this
+            # registry other than the frozen ASTRA-3 spec applies one) —
+            # not part of cinder_signal.py's own spec, which only requires
+            # a quoted ask/bid; ASSUMED here for consistency.
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+        },
+        "defaults": {
+            "starting_capital": 500.0,
+            "enabled": False,   # PAPER ONLY — explicitly disarmed
+            "max_contracts": 1,
+            "bp_pct": 0.80,
+            "sd_mult": 1.0,      # schema-required, unused by vertical_debit
+            "pt_pct": 1.0,       # = 2.0x entry debit, see header above
+            "sl_pct": 1.0,       # unreachable by construction (debit spread)
+            "entry_start_ct": "10:25",
+            "entry_end_ct": "10:35",
+            "eod_close_ct": "14:45",  # unused — MULTI_DAY_STRATEGIES exit path
+            "allow_stacking": False,
+            "max_concurrent_positions": 1,
+            "discord_alerts": False,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            # Macro entry gates (scanner.py "MACRO ENTRY GATES") — the three
+            # legs of cinder_signal.py's frozen trigger, ported read-only.
+            "gex_ceiling_b": -10.0,
+            "live_vix_ratio_max": 0.90,
+            "require_vix_contango": 1,
+            "entry_cooldown_days": 5,
+        },
+    },
 }
 
 
