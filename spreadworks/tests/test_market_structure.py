@@ -133,15 +133,6 @@ def test_theta_standard_iv_calculates_gamma_when_pro_unavailable(monkeypatch):
     assert all(row["gamma"] > 0 for row in result["rows"])
 
 
-def test_theta_index_timestamp_is_eastern(monkeypatch):
-    monkeypatch.setattr(market_structure, "_index_prices", lambda symbols: {
-        "SPX": {"timestamp": "2026-09-29T10:00:00", "price": "7700.5"}})
-    spot = market_structure.fetch_spot(
-        "SPX", datetime(2026, 9, 29, 14, 0, 10, tzinfo=timezone.utc))
-    assert spot["fresh"] is True
-    assert spot["age_seconds"] == 10
-
-
 def test_tradier_is_primary_vol_source_thetadata_only_fills_gaps(monkeypatch):
     """2026-10-05: Tradier is now the PRIMARY source for all 5 vol symbols
     (Leron's explicit call after a ThetaData outage). This test's own name
@@ -180,13 +171,8 @@ def test_tradier_is_primary_vol_source_thetadata_only_fills_gaps(monkeypatch):
     for sym in ("VIX1D", "VIX9D", "VIX3M", "VVIX"):
         assert result["indices"][sym]["price"] is None
         assert result["indices"][sym]["fresh"] is False
-        assert result["indices"][sym]["source"] == "ThetaData"
+        assert result["indices"][sym]["source"] == "Tradier"
     assert "Tradier" in result["source"]
-    # fetch_spot() is a separate function, untouched by this change -- its
-    # own ThetaData-403 behavior still holds.
-    assert market_structure.fetch_spot("SPX", now)["reason"] == (
-        "ThetaData index permission denied")
-
 
 def test_tradier_wins_over_thetadata_when_both_would_succeed(monkeypatch):
     """Priority proof, not just fallback-on-failure: when Tradier returns a
@@ -222,28 +208,10 @@ def test_tradier_wins_over_thetadata_when_both_would_succeed(monkeypatch):
     assert result["source"] == "Tradier"
 
 
-def test_index_gamma_can_use_fresh_theta_option_underlying(monkeypatch):
-    now = datetime.now(timezone.utc)
-    rows = [{"underlying_price": 7700.0, "timestamp": now,
-             "strike": 7700.0, "dte": 0, "gamma": 0.01,
-             "callOpenInterest": 100, "putOpenInterest": 0}
-            for _ in range(100)]
-    chain = {"rows": rows, "source_timestamp": now, "oi_timestamp": now,
-             "matched_rows": 100, "recent_greeks_rows": 100,
-             "gamma_source": "ThetaData Standard IV, locally calculated gamma"}
-    monkeypatch.setattr(market_structure, "fetch_spot", lambda s, n: {
-        "fresh": False, "reason": "ThetaData index permission denied"})
-    monkeypatch.setattr(market_structure, "fetch_theta_chain", lambda s, n: chain)
-    result = market_structure.build_gamma_snapshot("SPX", now)
-    assert result["available"] is True
-    assert result["spot"] == 7700.0
-    assert result["spot_source"] == "ThetaData option-chain underlying price"
-
-    rows[0]["underlying_price"] = 8000.0
-    rejected = market_structure.build_gamma_snapshot("SPX", now)
-    assert rejected["available"] is False
-    assert rejected["reason"] == "ThetaData index permission denied"
-
+def test_index_gamma_rejects_missing_tradier_spot(monkeypatch):
+    monkeypatch.setattr(market_structure, 'fetch_spot', lambda *a: {'fresh':False,'reason':'missing_quote'})
+    monkeypatch.setattr(market_structure, 'fetch_tradier_chain', lambda *a: {'rows':[],'reason':'missing_quote'})
+    assert not market_structure.build_gamma_snapshot('SPX')['available']
 
 @freeze_time("2026-10-02T14:45:00Z")
 def test_iv_only_surface_builds_term_skew_and_expected_move(monkeypatch):
@@ -268,7 +236,7 @@ def test_iv_only_surface_builds_term_skew_and_expected_move(monkeypatch):
         "price": 750.0, "fresh": True, "source_timestamp": now,
         "source": "Tradier ETF quote",
     })
-    monkeypatch.setattr(market_structure, "_theta_rows", lambda path, params: payload)
+    monkeypatch.setattr(market_structure, "_surface_rows", lambda *a, **k: ([dict(r, strike=float(r["strike"]), iv=float(r["implied_vol"]), dte=(datetime.fromisoformat(r["expiration"]).date()-now.date()).days, timestamp=now-timedelta(seconds=30)) for r in payload],None))
     monkeypatch.setattr(market_structure, "fetch_intraday_realized_volatility",
                         lambda symbol, current: {"available": True,
                                                  "realized_vol_60m": 0.12,
@@ -293,24 +261,12 @@ def test_iv_only_surface_builds_term_skew_and_expected_move(monkeypatch):
 
 
 def test_iv_snapshot_without_provider_timestamp_is_rejected(monkeypatch):
-    now = datetime(2026, 10, 2, 14, 45, tzinfo=timezone.utc)
-    payload = []
-    for strike in range(735, 767, 2):
-        for right in ("call", "put"):
-            payload.append({
-                "expiration": "2026-10-16", "strike": str(strike),
-                "right": right, "implied_vol": "0.18",
-            })
-    monkeypatch.setattr(market_structure, "fetch_spot", lambda symbol, current: {
-        "price": 750.0, "fresh": True, "source_timestamp": now,
-    })
-    monkeypatch.setattr(market_structure, "_theta_rows", lambda path, params: payload)
-    monkeypatch.setattr(market_structure, "fetch_intraday_realized_volatility",
-                        lambda symbol, current: {"available": False,
-                                                 "reason": "insufficient_intraday_bars"})
-    result = market_structure.build_volatility_surface("SPY", now)
-    assert result["available"] is False
-    assert result["reason"] == "thin_theta_iv_snapshot_after_retry"
+    from backend import tradier_report_source as src
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(market_structure,'fetch_spot',lambda *a:dict(price=100,fresh=True,source_timestamp=now))
+    monkeypatch.setattr(src,'get',lambda path,params: {'expirations':{'date':[(now+timedelta(days=1)).date().isoformat()]}} if path=='/options/expirations' else {'options':{'option':[dict(strike=100,bid=1,ask=1.1,option_type='call')]}})
+    valid, reason=market_structure._surface_rows('SPY',now)
+    assert valid==[] and reason=='No qualified fresh Tradier BBO rows'
 
 
 def test_realized_volatility_uses_fresh_rth_one_minute_tape():
@@ -350,26 +306,6 @@ def test_surface_read_explains_day_and_forward_volatility_pricing():
 
 
 @freeze_time("2026-10-02T15:00:30Z")
-def test_trade_quote_flow_uses_same_print_nbbo_for_initiation(monkeypatch):
-    now = datetime(2026, 10, 2, 15, 0, 30, tzinfo=timezone.utc)
-    rows = []
-    for i in range(10):
-        rows.append({"expiration": "2026-10-16", "right": "call",
-                     "timestamp": "2026-10-02T11:00:20", "price": "1.10", "strike": "770",
-                     "bid": "1.00", "ask": "1.10", "size": "20"})
-        rows.append({"expiration": "2026-10-16", "right": "put",
-                     "timestamp": "2026-10-02T11:00:20", "price": "1.00", "strike": "770",
-                     "bid": "1.00", "ask": "1.10", "size": "20"})
-    monkeypatch.setattr(market_structure, "_theta_rows", lambda path, params, timeout=25: rows)
-    result = market_structure.fetch_trade_quote_flow("SPY", now)
-    assert result["available"] is True
-    mid = result["buckets"]["6_20dte"]
-    assert mid["call_initiation"] == "LIKELY_BUYER_INITIATED"
-    assert mid["put_initiation"] == "LIKELY_SELLER_INITIATED"
-    assert "opening/closing" in result["guardrail"]
-
-
-
 def test_register_arms_minute_capture_and_initializes_tables(monkeypatch):
     calls = []
     jobs = []

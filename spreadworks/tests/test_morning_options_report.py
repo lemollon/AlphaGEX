@@ -9,6 +9,14 @@ from backend import morning_options_report as report
 
 UTC = timezone.utc
 
+@pytest.fixture(autouse=True)
+def isolate_live_collectors(monkeypatch):
+    from backend import market_structure as ms
+    from backend import tradier_report_source as src
+    monkeypatch.setattr(ms,'fetch_spot',lambda *a,**k: {'fresh':False,'reason':'No live quote in unit test'})
+    monkeypatch.setattr(src,'get',lambda *a,**k: (_ for _ in ()).throw(RuntimeError('No live requests in unit test')))
+
+
 
 def _evidence(symbol: str) -> dict:
     return {

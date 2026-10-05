@@ -323,34 +323,10 @@ def fetch_vol_indices(now: datetime | None = None) -> dict[str, Any]:
                 ("missing_timestamp" if stamp is None else "stale_quote")),
         }
 
-    if missing_from_tradier:
-        try:
-            theta_rows = _index_prices(tuple(missing_from_tradier))
-        except Exception as exc:  # noqa: BLE001
-            theta_rows = {}
-            logger.warning("[MarketStructure] ThetaData fallback for %s failed: %s",
-                           missing_from_tradier, type(exc).__name__)
-        for symbol in missing_from_tradier:
-            row = theta_rows.get(symbol)
-            price = _f(row, "price") if row else None
-            if price is None:
-                out[symbol] = {"symbol": symbol, "price": None, "source": "ThetaData",
-                               "fresh": False, "reason": "missing_quote"}
-                continue
-            stamp = _theta_ts(row.get("timestamp"))
-            age = (now - stamp).total_seconds() if stamp else None
-            fresh = age is not None and 0 <= age <= STALE_SECONDS
-            out[symbol] = {
-                "symbol": symbol, "price": price, "source": "ThetaData",
-                "source_timestamp": stamp.isoformat() if stamp else None,
-                "age_seconds": round(age, 1) if age is not None else None,
-                "fresh": fresh,
-                "reason": None if fresh else ("missing_timestamp" if stamp is None else "stale_quote"),
-            }
-
-    return {"available": any(v.get("fresh") for v in out.values()),
-            "source": ("Tradier" if not missing_from_tradier
-                       else f"Tradier + ThetaData fallback ({', '.join(missing_from_tradier)})"),
+    for symbol in missing_from_tradier:
+        out[symbol] = {"symbol": symbol, "price": None, "source": "Tradier",
+                       "fresh": False, "reason": "Tradier missing quote; ThetaData fallback disabled"}
+    return {"available": any(v.get("fresh") for v in out.values()), "source": "Tradier",
             "retrieved_at": now.isoformat(), "indices": out}
 
 
@@ -420,23 +396,6 @@ def persist_cross_asset(payload: dict[str, Any], now: datetime | None = None) ->
 
 def fetch_spot(symbol: str, now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
-    if symbol in INDEX_SYMBOLS:
-        try:
-            row = _index_prices((symbol,)).get(symbol)
-            price = _f(row, "price") if row else None
-            stamp = _theta_ts(row.get("timestamp")) if row else None
-            age = (now - stamp).total_seconds() if stamp else None
-            fresh = price is not None and age is not None and 0 <= age <= STALE_SECONDS
-            return {"price": price, "fresh": fresh, "source_timestamp": stamp,
-                    "age_seconds": age, "source": "ThetaData index snapshot price",
-                    "reason": None if fresh else "stale_or_missing_index_price"}
-        except Exception as exc:  # noqa: BLE001
-            reason = "ThetaData index permission denied" if (
-                isinstance(exc, requests.HTTPError) and exc.response is not None
-                and exc.response.status_code == 403
-            ) else f"ThetaData index failure: {type(exc).__name__}"
-            return {"price": None, "fresh": False,
-                    "reason": reason}
     token = _token("TRADIER_TOKEN") or _token("TRADIER_API_KEY")
     if not token:
         return {"price": None, "fresh": False, "reason": "TRADIER_TOKEN missing"}
@@ -617,56 +576,9 @@ def _option_delta(spot: float, strike: float, iv: float, dte: int, right: str) -
     return call_delta if right == "call" else call_delta - 1.0
 
 
-def _surface_rows(symbol: str, now: datetime, *, background: bool = False) -> tuple[list[dict[str, Any]], str | None]:
-    """Read the ThetaData endpoint that is included with the current plan.
-
-    Do not route this through the all-Greeks endpoint.  That add-on is denied
-    on the deployed account, while the IV snapshot endpoint is explicitly
-    authorized and is sufficient for ATM IV, term structure, skew and an
-    IV-based one-day expected move.
-    """
-    params = {"symbol": symbol, "expiration": "*", "max_dte": 365,
-              "strike_range": 60}
-    if background:
-        params["background"] = "true"
-    # Receipt time does not refresh the option's NBBO or its underlying.
-    # Require the provider clocks; otherwise this could relabel yesterday's IV live.
-    # Retry one thin response immediately; this removes a transient provider
-    # sampling gap without loosening the live-snapshot requirement.
-    for attempt in range(1 if background else 2):
-        try:
-            raw_rows = _theta_rows("/v3/option/snapshot/greeks/implied_volatility", params)
-        except Exception as exc:  # noqa: BLE001
-            if background or (isinstance(exc, requests.HTTPError) and exc.response.status_code in (401,403,429,503)):
-                return [], f"theta_iv_snapshot_failure:{type(exc).__name__}"
-            if attempt == 1:
-                return [], f"theta_iv_snapshot_failure:{type(exc).__name__}"
-            continue
-        received_at = datetime.now(UTC)
-        records: list[dict[str, Any]] = []
-        for item in raw_rows:
-            strike = _f(item, "strike")
-            right = str(item.get("right", "")).strip().lower()
-            iv = _iv(item.get("implied_vol"))
-            expiry = str(item.get("expiration", ""))
-            quote_at = _theta_ts(item.get("timestamp"))
-            underlying_at = _theta_ts(item.get("underlying_timestamp"))
-            if not quote_at or not 0 <= (received_at - quote_at).total_seconds() <= STALE_SECONDS:
-                continue
-            if underlying_at and not 0 <= (received_at - underlying_at).total_seconds() <= STALE_SECONDS:
-                continue
-            if strike is None or right not in {"call", "put"} or iv is None:
-                continue
-            try:
-                dte = (datetime.fromisoformat(expiry).date() - now.astimezone(ET).date()).days
-            except ValueError:
-                continue
-            if 0 <= dte <= 365:
-                records.append({"strike": strike, "right": right, "iv": iv, "expiration": expiry,
-                                "dte": dte, "timestamp": min(quote_at, underlying_at) if underlying_at else quote_at})
-        if len(records) >= 20:
-            return records, None
-    return [], "thin_theta_iv_snapshot_after_retry"
+def _surface_rows(symbol, now, *, background=False):
+    from .tradier_report_source import option_rows
+    return option_rows(symbol, now)
 
 
 def _timesales_timestamp(value: Any) -> datetime | None:
@@ -895,7 +807,7 @@ def summarize_flow_evidence(rows: list[dict[str, Any]], session_now: datetime,
             classified_premium += premium
         stamps.append(stamp)
     return {
-        "source": "ThetaData live trades + contemporaneous ThetaData quotes",
+        "source": "Tradier verified trades + contemporaneous quotes",
         "retrieval_timestamp": retrieved_at.isoformat(),
         "window_start": min(stamps).isoformat() if stamps else None,
         "window_end": max(stamps).isoformat() if stamps else None,
@@ -910,100 +822,34 @@ def summarize_flow_evidence(rows: list[dict[str, Any]], session_now: datetime,
     }
 
 
-def fetch_trade_quote_flow(symbol: str, now: datetime | None = None) -> dict[str, Any]:
-    """Read recent OPRA trade+NBBO records and summarize live option flow.
-
-    ThetaData pairs each OPRA print with the NBBO available at that trade, so
-    at-ask/at-bid classification is evidence-based.  This remains a trade-side
-    read only: it cannot identify opening/closing, institutions, or multi-leg
-    structures and the returned guardrail is intentionally report-visible.
-    """
+def fetch_trade_quote_flow(symbol, now=None):
+    # Tradier REST tick timesales does not supply contemporaneous option NBBO.
+    # Never relabel chain volume or a later quote as buyer/seller initiation.
     now = now or datetime.now(UTC)
-    symbol = symbol.upper()
-    now_et = now.astimezone(ET)
-    if now_et.weekday() >= 5 or not (dtime(9, 30) <= now_et.time() < dtime(16, 0)):
-        return {"symbol": symbol, "available": False, "confidence": "LOW",
-                "reason": "market_closed", "captured_at": now.isoformat()}
-    start = now_et - timedelta(minutes=2)
-    selected = _flow_expiration_candidates(now_et)
-    rows: list[dict[str, Any]] = []
-    failures: list[str] = []
-    # Theta's historical trade+quote service is most reliable with one
-    # explicit expiration.  Four representative ETF weekly horizons keep this
-    # live enough for the report without pulling an unbounded full chain.
-    for expiry in selected:
-        try:
-            rows.extend(_theta_rows("/v3/option/history/trade_quote", {
-                "symbol": symbol, "expiration": expiry, "strike": "*", "right": "both",
-                "date": now_et.date().isoformat(),
-                "start_time": start.strftime("%H:%M:%S"),
-                "end_time": now_et.strftime("%H:%M:%S"),
-                "max_dte": 60, "strike_range": 12, "exclusive": "true",
-            }, timeout=12))
-        except Exception as exc:  # noqa: BLE001
-            status = getattr(getattr(exc, "response", None), "status_code", None)
-            failures.append(f"{expiry}:{type(exc).__name__}" + (f":HTTP{status}" if status else ""))
-            # Repeating the same rejected credential/entitlement cannot recover
-            # another expiry and only monopolizes the shared provider queue.
-            if status in {401, 403}:
-                break
-    if not rows:
-        return {"symbol": symbol, "available": False, "confidence": "LOW",
-                "reason": f"theta_trade_quote_failure:{','.join(failures) or 'empty'}",
-                "captured_at": datetime.now(UTC).isoformat()}
-    buckets: dict[str, dict[str, Any]] = {
-        key: {"call_contracts": 0, "put_contracts": 0,
-              "call_ask_contracts": 0, "call_bid_contracts": 0,
-              "put_ask_contracts": 0, "put_bid_contracts": 0,
-              "call_notional": 0.0, "put_notional": 0.0}
-        for key in ("0dte", "1_5dte", "6_20dte", "21_60dte")
-    }
-    newest: datetime | None = None
-    accepted = 0
-    for row in rows:
-        expiry = str(row.get("expiration") or "")
-        right = str(row.get("right") or "").lower()
-        stamp = _theta_ts(row.get("timestamp"))
-        price, bid, ask, size = (_f(row, "price"), _f(row, "bid"),
-                                 _f(row, "ask"), _f(row, "size"))
-        if not expiry or right not in {"call", "put"} or stamp is None or size is None or size <= 0:
-            continue
-        try:
-            bucket = _flow_bucket((datetime.fromisoformat(expiry).date() - now_et.date()).days)
-        except ValueError:
-            continue
-        if bucket is None:
-            continue
-        contracts = int(size)
-        stats = buckets[bucket]
-        stats[f"{right}_contracts"] += contracts
-        stats[f"{right}_notional"] += contracts * (price or 0.0) * 100.0
-        side = _classify_trade_side(price, bid, ask)
-        if side in {"ask", "bid"}:
-            stats[f"{right}_{side}_contracts"] += contracts
-        newest = max(newest, stamp) if newest else stamp
-        accepted += 1
-    completed_at = datetime.now(UTC)
-    age = (completed_at - newest).total_seconds() if newest else None
-    fresh = newest is not None and age is not None and 0 <= age <= STALE_SECONDS
-    for stats in buckets.values():
-        stats["call_initiation"] = _initiation_read(
-            stats["call_ask_contracts"], stats["call_bid_contracts"], stats["call_contracts"])
-        stats["put_initiation"] = _initiation_read(
-            stats["put_ask_contracts"], stats["put_bid_contracts"], stats["put_contracts"])
-    evidence = summarize_flow_evidence(rows, now_et, completed_at)
-    return {
-        "symbol": symbol, "available": bool(fresh and accepted),
-        "captured_at": completed_at.isoformat(),
-        "source": "ThetaData live trades + contemporaneous ThetaData quotes",
-        "source_timestamp": newest.isoformat() if newest else None,
-        "age_seconds": round(age, 1) if age is not None else None,
-        "confidence": "HIGH" if fresh and accepted >= 20 else "LOW",
-        "n_trades": accepted, "buckets": buckets, "evidence": evidence,
-        "guardrail": ("LIKELY buyer/seller initiated is estimated from a ThetaData print and its attached quote. "
-                      "It does not establish opening/closing, institution, or multi-leg structure."),
-        "reason": None if fresh and accepted else ("stale_or_empty_trade_quote_flow"),
-    }
+    return {"symbol": symbol, "available": False, "confidence": "LOW", "source": "Tradier",
+            "captured_at": now.isoformat(), "source_timestamp": None, "n_trades": 0,
+            "buckets": {}, "evidence": {},
+            "reason": "FLOW DATA UNAVAILABLE (Tradier live): contemporaneous option trade+NBBO evidence is not provided by the configured REST feed"}
+
+
+def fetch_tradier_chain(symbol, now=None, max_dte=None, strike_range=None):
+    now = now or datetime.now(UTC)
+    records, reason = _surface_rows(symbol, now)
+    spot = fetch_spot(symbol, now)
+    rows = []
+    for r in records:
+        if max_dte is not None and r['dte'] > max_dte: continue
+        if r.get('open_interest') is None: continue
+        right = r['right']
+        row = dict(r, callOpenInterest=r['open_interest'] if right == 'call' else 0,
+                   putOpenInterest=r['open_interest'] if right == 'put' else 0,
+                   callMidIv=r['iv'] if right == 'call' else None,
+                   putMidIv=r['iv'] if right == 'put' else None, residualRate=0.05)
+        row['gamma'] = _row_gamma(row, spot.get('price') or 0, right)
+        if row['gamma'] is not None: rows.append(row)
+    return {'rows': rows, 'reason': reason, 'source_timestamp': min((r['timestamp'] for r in rows), default=None),
+            'oi_timestamp': None, 'matched_rows': len(rows), 'recent_greeks_rows': len(rows),
+            'gamma_source': 'Tradier fresh BBO, locally modeled IV/gamma; provider daily OI (publication time unavailable)'}
 
 
 def _atm_ivs_by_dte(records: list[dict[str, Any]], spot: float) -> dict[int, float]:
@@ -1158,7 +1004,7 @@ def _surface_smile(records: list[dict[str, Any]], spot: float) -> dict[str, Any]
         "atm_strike": float(atm["strike"]), "call_25d_iv": float(call["iv"]),
         "call_strike": float(call["strike"]), "call_delta": float(call["_delta"]),
         "skew": float(put["iv"]) - float(call["iv"]),
-        "method": "Observed ThetaData IV; nearest locally calculated 25-delta wings at the same DTE; no interpolation",
+        "method": "Tradier BBO modeled IV; nearest locally calculated 25-delta wings at the same DTE; no interpolation",
     }
 
 
@@ -1208,7 +1054,7 @@ def build_volatility_surface(symbol: str, now: datetime | None = None, *, backgr
     em_dollars = price * em_pct / 100.0 if em_pct else None
     return {
         "symbol": symbol, "available": confidence != "LOW", "captured_at": captured_at.isoformat(),
-        "spot": price, "source": "ThetaData implied-volatility snapshots (authorized)",
+        "spot": price, "source": "Tradier fresh option BBO; locally modeled Black-Scholes IV",
         "source_timestamp": source_ts.isoformat(), "age_seconds": round(age, 1),
         "confidence": confidence, "n_rows": len(rows), "atm_iv": atm_iv,
         "atm_reference_dte": reference_dte, "skew_25d": skew,
@@ -1403,15 +1249,10 @@ def build_gamma_snapshot(symbol: str, now: datetime | None = None,
 
     def load_chain() -> dict[str, Any]:
         if max_dte is None and strike_range is None:
-            return fetch_theta_chain(symbol, now)
-        return fetch_theta_chain(symbol, now, max_dte=max_dte,
+            return fetch_tradier_chain(symbol, now)
+        return fetch_tradier_chain(symbol, now, max_dte=max_dte,
                                  strike_range=strike_range)
 
-    if symbol in INDEX_SYMBOLS and not spot.get("fresh"):
-        chain = load_chain()
-        chain_spot = _spot_from_theta_chain(chain, datetime.now(UTC))
-        if chain_spot:
-            spot = chain_spot
     if not spot.get("fresh"):
         return {"symbol": symbol, "available": False, "confidence": "LOW",
                 "reason": (chain or {}).get("reason") or spot.get("reason"),
@@ -1662,7 +1503,7 @@ def _latest_gamma(symbol: str, *, verified_only: bool = False) -> dict[str, Any]
         row = conn.execute(text(
             f"SELECT captured_at,spot,source,source_timestamp,confidence,n_rows,"
             "net_gex_b,gamma_flip,call_wall,put_wall,bucket_json,wall_json,reason "
-            f"FROM {GAMMA_TABLE} WHERE symbol=:s "
+            f"FROM {GAMMA_TABLE} WHERE symbol=:s AND source LIKE 'Tradier%' "
             + ("AND confidence IN ('HIGH','MEDIUM') AND net_gex_b IS NOT NULL " if verified_only else "")
             + "ORDER BY captured_at DESC LIMIT 1"),
             {"s": symbol}).fetchone()
@@ -1688,7 +1529,7 @@ def _latest_surface(symbol: str, *, verified_only: bool = False) -> dict[str, An
             "iv_6_20dte,iv_21_365dte,expected_move_pct_1d,expected_move_dollars_1d,"
             "expected_move_low,expected_move_high,realized_vol_60m,realized_vol_bars,"
             "realized_vol_source_timestamp,realized_vol_bar_timestamp,iv_minus_realized_vol,reason,surface_json "
-            f"FROM {SURFACE_TABLE} WHERE symbol=:s "
+            f"FROM {SURFACE_TABLE} WHERE symbol=:s AND source LIKE 'Tradier%' "
             + ("AND confidence IN ('HIGH','MEDIUM') AND atm_iv IS NOT NULL " if verified_only else "")
             + "ORDER BY captured_at DESC LIMIT 1"),
             {"s": symbol}).fetchone()
@@ -1730,7 +1571,7 @@ def _latest_trade_quote_flow(symbol: str, *, verified_only: bool = False) -> dic
     with engine.begin() as conn:
         row = conn.execute(text(
             f"SELECT captured_at,source,source_timestamp,confidence,n_trades,bucket_json,reason,evidence_json "
-            f"FROM {FLOW_TABLE} WHERE symbol=:symbol "
+            f"FROM {FLOW_TABLE} WHERE symbol=:symbol AND source LIKE 'Tradier%' "
             + ("AND confidence IN ('HIGH','MEDIUM') AND n_trades>0 " if verified_only else "")
             + "ORDER BY captured_at DESC LIMIT 1"),
             {"symbol": symbol}).fetchone()
@@ -1776,7 +1617,7 @@ def _cached_vol_payload(now: datetime | None = None) -> dict[str, Any]:
     with engine.begin() as conn:
         rows = conn.execute(text(
             f"SELECT DISTINCT ON (symbol) symbol,price,source,source_timestamp,reason "
-            f"FROM {VOL_TABLE} ORDER BY symbol,captured_at DESC"), {}).fetchall()
+            f"FROM {VOL_TABLE} WHERE source LIKE 'Tradier%' ORDER BY symbol,captured_at DESC"), {}).fetchall()
     indices: dict[str, Any] = {}
     sources_seen: set[str] = set()
     for symbol, price, source, source_timestamp, reason in rows:

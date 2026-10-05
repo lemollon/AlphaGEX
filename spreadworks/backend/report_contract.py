@@ -53,7 +53,7 @@ REQUIREMENTS = {
         "scope_comparability"
     ],
     "flow": [
-        "theta_provenance",
+        "provider_provenance",
         "exchange_timestamp",
         "retrieval_timestamp",
         "age",
@@ -226,7 +226,7 @@ REQUIREMENTS["data_integrity"] = ["contract", "source_clocks", "coverage", "hist
     "unavailable_fields", "producer_failures", "model_prose_policy", "execution_scope", "format"]
 REQUIRED_BLOCKS = tuple(REQUIREMENTS)
 CONTRACT_VERSION = "2026-10-03.2"
-FLOW_SOURCE = "ThetaData live trades with contemporaneous ThetaData bid/ask"
+FLOW_SOURCE = "Tradier live trades with contemporaneous Tradier bid/ask"
 LIVE_MAX_AGE_SECONDS = 90
 CHART_FORMAT = "PNG"
 PROHIBITED_VISUALS = ("mermaid", "ascii", "decorative_ai")

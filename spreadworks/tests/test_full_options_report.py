@@ -63,7 +63,7 @@ def test_breadth_scope_dedup_missing_52week_and_stale_denominator():
 
 
 def test_true_profile_volume_conservation_and_contiguous_value_area():
-    ts=NOW.astimezone(p.ET).replace(tzinfo=None).isoformat()
+    ts=NOW.isoformat()
     rows=[{'timestamp':ts,'price':100.02,'size':50},{'timestamp':ts,'price':100.12,'size':200},{'timestamp':ts,'price':100.32,'size':50},
           {'timestamp':ts,'price':float('nan'),'size':100}]
     result=p.volume_profile(rows,.1,NOW-timedelta(minutes=30),NOW)
@@ -121,27 +121,6 @@ def test_missing_clocks_never_become_live_context():
 
 def ledger_empty():
     return {'entry_ready_alerts':0,'trade_details':[],'exceptions':[],'fill_rules':'test','loss_clusters':[]}
-
-@freeze_time(NOW)
-@pytest.mark.parametrize('offset',[None,-91,1])
-def test_iv_receipt_cannot_refresh_missing_stale_or_future_nbbo(monkeypatch,offset):
-    from backend import market_structure as ms
-    rows=[{'strike':100+i,'right':'call','implied_vol':.2,'expiration':'2026-10-09',
-           **({'timestamp':(NOW+timedelta(seconds=offset)).astimezone(p.ET).replace(tzinfo=None).isoformat()} if offset is not None else {})} for i in range(25)]
-    monkeypatch.setattr(ms,'_theta_rows',lambda path,params:rows)
-    valid,reason=ms._surface_rows('SPY',NOW)
-    assert valid==[];assert reason=='thin_theta_iv_snapshot_after_retry'
-
-@freeze_time(NOW)
-def test_iv_preserves_oldest_actual_quote_underlying_clock(monkeypatch):
-    from backend import market_structure as ms
-    rows=[{'strike':100+i,'right':'call','implied_vol':.2,'expiration':'2026-10-09',
-           'timestamp':(NOW-timedelta(seconds=20)).astimezone(p.ET).replace(tzinfo=None).isoformat(),
-           'underlying_timestamp':(NOW-timedelta(seconds=30)).astimezone(p.ET).replace(tzinfo=None).isoformat()} for i in range(25)]
-    monkeypatch.setattr(ms,'_theta_rows',lambda path,params:rows)
-    valid,reason=ms._surface_rows('SPY',NOW)
-    assert len(valid)==25;assert reason is None
-    assert all(row['timestamp']==NOW-timedelta(seconds=30) for row in valid)
 
 
 def test_session_profile_checkpoint_merges_observed_bins_without_new_trades():
