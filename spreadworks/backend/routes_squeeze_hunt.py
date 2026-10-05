@@ -12,10 +12,11 @@ GET  /api/spreadworks/squeeze-hunt/signals   Today's alert-like symbols
 GET  /api/spreadworks/squeeze-hunt/tape      Intraday dollar-vol pace by sweep
 GET  /api/spreadworks/squeeze-hunt/lottery   Confirmed lottery-setup entries, last N days
 GET  /api/spreadworks/squeeze-hunt/lottery/rejected  Candidates the MECHANISM gate rejected
+GET  /api/spreadworks/squeeze-hunt/premarket Latest day's PREREG #2 premarket movers
 
 Data source: the app's own Postgres, tables `sw_hunt_signals`,
 `sw_hunt_tape`, `sw_hunt_lottery`, `sw_hunt_lottery_shadow`, `sw_hunt_si`,
-`sw_hunt_running`. These are
+`sw_hunt_running`, `sw_hunt_premarket`. These are
 a one-way display mirror of the research warehouse's DuckDB, pushed after
 every sweep by `research/sync_to_postgres.py` in the squeeze repo. DuckDB
 stays the source of truth; nothing on this page writes back to it.
@@ -354,3 +355,52 @@ def squeeze_hunt_lottery_rejected() -> dict[str, Any]:
         })
 
     return {"rows": out, "count": len(out)}
+
+
+@router.get("/premarket")
+def squeeze_hunt_premarket() -> dict[str, Any]:
+    """PREREG #2 premarket-turnover scanner (`research/premarket_velocity_scan.py`
+    in the squeeze repo, the 08:35 CT `SqueezePremarket0835` task), latest
+    scan day only. Sorted by `premarket_move` descending — the biggest
+    observed premarket mover first, because that is the only ranking signal
+    this scan actually produces; nothing here is a predictive score."""
+    try:
+        rows = _query(
+            """
+            SELECT symbol, signal_ts, signal_date, premarket_turnover, premarket_move,
+                   premarket_vol, premarket_last_px, prior_close, shares_outstanding,
+                   has_options, sweep, entry_bid, entry_ask, spread_pct, tradeable
+            FROM sw_hunt_premarket
+            WHERE signal_date = (SELECT MAX(signal_date) FROM sw_hunt_premarket)
+            ORDER BY premarket_move DESC
+            """
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("[squeeze-hunt] premarket query failed: %r", exc)
+        raise HTTPException(status_code=503, detail=f"squeeze mirror unreachable: {exc!r}")
+
+    out = []
+    signal_date = None
+    for (symbol, signal_ts, sig_date, premarket_turnover, premarket_move,
+         premarket_vol, premarket_last_px, prior_close, shares_outstanding,
+         has_options, sweep, entry_bid, entry_ask, spread_pct, tradeable) in rows:
+        signal_date = sig_date.isoformat() if sig_date else signal_date
+        out.append({
+            "symbol": symbol,
+            "signal_ts": signal_ts.isoformat() if signal_ts else None,
+            "signal_date": sig_date.isoformat() if sig_date else None,
+            "premarket_turnover": premarket_turnover,
+            "premarket_move": premarket_move,
+            "premarket_vol": premarket_vol,
+            "premarket_last_px": premarket_last_px,
+            "prior_close": prior_close,
+            "shares_outstanding": shares_outstanding,
+            "has_options": has_options,
+            "sweep": sweep,
+            "entry_bid": entry_bid,
+            "entry_ask": entry_ask,
+            "spread_pct": spread_pct,
+            "tradeable": tradeable,
+        })
+
+    return {"rows": out, "count": len(out), "signal_date": signal_date}

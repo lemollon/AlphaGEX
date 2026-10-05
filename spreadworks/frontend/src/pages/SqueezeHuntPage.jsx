@@ -981,6 +981,129 @@ function RejectedLottery({ rows, loading, error }) {
   );
 }
 
+/* ── Premarket movers — PREREG #2 scanner, biggest move first ─────────
+   The ONLY ranking signal this scan produces is the observed premarket
+   move itself — the backend already sorts by premarket_move DESC off the
+   latest signal_date, and this table renders that order as-is. Never
+   re-sort it client-side. */
+
+function PremarketRow({ r }) {
+  const move = r.premarket_move != null ? r.premarket_move * 100 : null;
+  const turnover = r.premarket_turnover != null ? r.premarket_turnover * 100 : null;
+  const spread = r.spread_pct != null ? r.spread_pct * 100 : null;
+  return (
+    <tr className="border-t border-white/5 hover:bg-white/[0.03]">
+      <td className="px-3 py-2.5">
+        <span className="font-bold text-[13px] text-text-primary sw-mono">{r.symbol}</span>
+      </td>
+      <td
+        className="px-3 py-2.5 text-right sw-mono text-[13px] font-semibold"
+        style={{ color: (move || 0) >= 0 ? THEME.green : THEME.red }}
+      >
+        {pct(move)}
+      </td>
+      <td className="px-3 py-2.5 text-right sw-mono text-[12.5px] text-text-secondary">
+        {pctPlain(turnover)}
+      </td>
+      <td className="px-3 py-2.5 text-right sw-mono text-[12.5px] text-text-secondary">
+        {r.entry_ask != null ? `$${r.entry_ask.toFixed(2)}` : '—'}
+      </td>
+      <td className="px-3 py-2.5 text-right sw-mono text-[12.5px]" style={{ color: spreadColor(spread) }}>
+        {pctPlain(spread)}
+      </td>
+      <td className="px-3 py-2.5 text-center">
+        {r.tradeable ? (
+          <Pill label="TRADEABLE" color={THEME.green} />
+        ) : (
+          <Pill label="NOT TRADEABLE" color={THEME.dim} />
+        )}
+      </td>
+    </tr>
+  );
+}
+
+const PREMARKET_COL_HEAD = 'px-3 py-2 text-[10px] uppercase tracking-[0.1em] font-semibold text-text-tertiary';
+
+function PremarketTable({ rows }) {
+  return (
+    <table className="w-full min-w-[640px] table-fixed">
+      <colgroup>
+        <col style={{ width: '18%' }} />
+        <col style={{ width: '16%' }} />
+        <col style={{ width: '18%' }} />
+        <col style={{ width: '16%' }} />
+        <col style={{ width: '14%' }} />
+        <col style={{ width: '18%' }} />
+      </colgroup>
+      <thead>
+        <tr className="border-b border-white/5">
+          <th className={`${PREMARKET_COL_HEAD} text-left`}>Symbol</th>
+          <th className={`${PREMARKET_COL_HEAD} text-right`}>
+            <span style={TIP_STYLE} title="Premarket move vs prior close — the only ranking signal this scan produces. Biggest mover first.">
+              Premarket move
+            </span>
+          </th>
+          <th className={`${PREMARKET_COL_HEAD} text-right`}>
+            <span style={TIP_STYLE} title="Premarket volume as a percent of shares outstanding — how much of the float already turned over before the open.">
+              Float turnover
+            </span>
+          </th>
+          <th className={`${PREMARKET_COL_HEAD} text-right`}>Ask</th>
+          <th className={`${PREMARKET_COL_HEAD} text-right`}>
+            <span style={TIP_STYLE} title="Bid/ask spread as a percent of price at the time of the scan.">
+              Spread
+            </span>
+          </th>
+          <th className={`${PREMARKET_COL_HEAD} text-center`}>
+            <span style={TIP_STYLE} title="Whether this name cleared the scan's own tradeability check (spread, quotes) at scan time — record only, no capital.">
+              Tradeable
+            </span>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <PremarketRow key={r.symbol} r={r} />
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function PremarketMovers({ rows, loading, error, signalDate }) {
+  return (
+    <div className="mt-6">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2.5">
+        <h2 className="text-[13px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+          Premarket movers
+        </h2>
+        <span className="text-[12px] text-text-tertiary sw-mono">{rows.length}</span>
+        {signalDate && <span className="text-[12px] text-text-tertiary sw-mono">· {signalDate}</span>}
+      </div>
+      <p className="mb-2.5 text-[11px] text-text-tertiary leading-relaxed max-w-[900px]">
+        PREREG #2 premarket-turnover scan (08:35 CT) — names with at least 15% of float traded premarket and a
+        10%+ move vs prior close. Sorted by the size of that move, biggest first — that is the only ranking
+        signal this scan has; nothing here is a predictive score. Record only, same rule as the rest of this
+        page.
+      </p>
+      <div
+        className="rounded-lg sw-glass overflow-x-auto"
+        style={{ boxShadow: 'inset 0 0 0 1px rgba(148,163,184,0.10)' }}
+      >
+        {loading ? (
+          <div className="px-5 py-8 text-center text-text-tertiary text-[13px]">Loading…</div>
+        ) : error ? (
+          <div className="px-5 py-8 text-center text-[13px]" style={{ color: THEME.red }}>{error}</div>
+        ) : !rows.length ? (
+          <div className="px-5 py-8 text-center text-text-tertiary text-[13px]">No premarket movers on record yet.</div>
+        ) : (
+          <PremarketTable rows={rows} />
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── Page ─────────────────────────────────────────────────────────── */
 
 export default function SqueezeHuntPage() {
@@ -997,6 +1120,11 @@ export default function SqueezeHuntPage() {
   const [rejectedRows, setRejectedRows] = useState([]);
   const [rejectedLoading, setRejectedLoading] = useState(true);
   const [rejectedError, setRejectedError] = useState(null);
+
+  const [premarketRows, setPremarketRows] = useState([]);
+  const [premarketSignalDate, setPremarketSignalDate] = useState(null);
+  const [premarketLoading, setPremarketLoading] = useState(true);
+  const [premarketError, setPremarketError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -1062,6 +1190,37 @@ export default function SqueezeHuntPage() {
         if (!cancelled) setRejectedError(e.message || 'load failed');
       } finally {
         if (!cancelled) setRejectedLoading(false);
+      }
+    }
+    load();
+    const iv = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, []);
+
+  // Premarket movers, polled independently of everything above — same
+  // reasoning as the lottery pair: a mirror outage here must not blank the
+  // rest of the page.
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetch(`${API_BASE}/api/spreadworks/squeeze-hunt/premarket`);
+        if (!res.ok) throw new Error(`premarket ${res.status}`);
+        const data = await res.json();
+        if (!cancelled) {
+          // The backend already sorts by premarket_move DESC — pass the
+          // rows through untouched, never re-sorted here.
+          setPremarketRows(data.rows || []);
+          setPremarketSignalDate(data.signal_date || null);
+          setPremarketError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setPremarketError(e.message || 'load failed');
+      } finally {
+        if (!cancelled) setPremarketLoading(false);
       }
     }
     load();
@@ -1191,6 +1350,13 @@ export default function SqueezeHuntPage() {
 
           <LotteryLedger rows={lotteryRows} loading={lotteryLoading} error={lotteryError} />
           <RejectedLottery rows={rejectedRows} loading={rejectedLoading} error={rejectedError} />
+
+          <PremarketMovers
+            rows={premarketRows}
+            loading={premarketLoading}
+            error={premarketError}
+            signalDate={premarketSignalDate}
+          />
 
           {siSettlementDate && (
             <p className="mt-2.5 mb-6 text-[11px] text-text-tertiary leading-relaxed max-w-[900px]">
