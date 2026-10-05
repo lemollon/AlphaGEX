@@ -78,6 +78,18 @@ _cache: dict[str, Any] = {"ts": 0.0, "payload": None}
 # measured edge.
 MIN_LIQUID_VOLUME_PER_DAY = 500
 
+# 2026-10-05: KILL SWITCH. Hard-disabled after this gate correlated with a
+# production crash loop (spreadworks-backend 502s) even after the
+# probe-first/short-TTL hotfix -- the scheduled wall_scanner_capture job
+# appears to run once right at process startup, and a slow/hanging
+# ThetaData probe at exactly that moment is suspected of delaying the
+# app's readiness past Render's own health-check window. fetch_universe()
+# falls back to TV's raw, unfiltered roster while this is False. Flip back
+# to True only after the gate is hardened to run off the startup path
+# (e.g. skip entirely on a job's first post-boot firing, or a hard
+# wall-clock timeout independent of ThetaData's own retry logic).
+LIQUIDITY_GATE_ENABLED = False
+
 _THETA_BASE = "http://127.0.0.1:25510"  # NEVER localhost (::1 -> HTTP 476)
 _THETA_HEADERS = {"Host": "127.0.0.1:25510", "Connection": "close"}
 _THETA_TIMEOUT = 20
@@ -357,6 +369,8 @@ def fetch_universe(limit: int = _UNIVERSE_LIMIT) -> list[str]:
         logger.warning("[wall_scanner] /top-setups: items[] present but empty of tickers, len=%d", len(items))
         return []
     tickers = sorted(set(tickers))
+    if not LIQUIDITY_GATE_ENABLED:
+        return tickers
     return _filter_liquid_universe(tickers)
 
 
