@@ -91,6 +91,19 @@ export default function BotGlyph({ kind, size = 18, strokeWidth = 1.6, className
     );
   }
 
+  if (kind === 'butterfly') {
+    // MONARCH-A/B = the butterfly structure itself (long-short2-long wings).
+    // Two symmetric wings off a central body, read at a glance as the
+    // option structure the bot trades, not a literal insect.
+    return (
+      <svg {...common}>
+        <path d="M12 6v14" />
+        <path d="M12 9c-1.5-4-6-5.5-7.5-3S4 11 8 11.5c-3 1-4.5 4-2.5 6.5S11 19 12 15" />
+        <path d="M12 9c1.5-4 6-5.5 7.5-3S20 11 16 11.5c3 1 4.5 4 2.5 6.5S13 19 12 15" />
+      </svg>
+    );
+  }
+
   if (kind === 'sprout') {
     // MEADOW = a seedling sprouting two leaves from the ground. Reads as
     // growth/meadow — distinct from the water/wind glyphs of the siblings.

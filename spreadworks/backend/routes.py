@@ -1240,6 +1240,14 @@ def _bot_preview(
     elif strategy_name == "long_butterfly":
         from .bots.strategies.long_butterfly import build_long_butterfly_signal
         sig = build_long_butterfly_signal(chain=chain_for_bot, config=cfg, equity=10000.0, diag=diag)
+    elif strategy_name == "delta_butterfly":
+        from .bots.strategies.delta_butterfly import build_delta_butterfly_signal
+        # wing_delta_target lives only in the registry (fixed bot_config
+        # columns never carry it — see scanner._build_signal's same note).
+        preview_cfg = {**cfg, "wing_delta_target":
+                       (meta.get("defaults") or {}).get("wing_delta_target", 0.05)}
+        sig = build_delta_butterfly_signal(chain=chain_for_bot, config=preview_cfg, equity=10000.0,
+                                           now_ct=None, diag=diag)
     # DC/DD need a back chain — skip bot-preview when we don't have it readily
     # in this single-expiration helper. Caller passes only `front_options`.
 
@@ -2327,6 +2335,7 @@ STRATEGY_LABELS = {
     "butterfly": "Butterfly",
     "iron_butterfly": "Iron Butterfly",
     "long_butterfly": "Long Butterfly",
+    "delta_butterfly": "Delta-Targeted Butterfly",
 }
 
 # Strategies where entry_price represents a credit received (entry_cost < 0).

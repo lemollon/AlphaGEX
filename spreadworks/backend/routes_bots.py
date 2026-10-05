@@ -586,11 +586,13 @@ def get_position_payoff(bot: str, position_id: str):
             {"exp": exp},
             r, sigma, entry_cost, n,
         )
-    elif strategy == "long_butterfly":
+    elif strategy in ("long_butterfly", "delta_butterfly"):
         # Single-type 1-2-1 long fly. Both wings are the SAME type as the body,
         # so _leg(side, type) can't tell the lower wing from the upper — resolve
         # by strike ordering instead. Reuses the existing "butterfly" payoff
-        # model (buy 1 lower, sell 2 middle, buy 1 upper).
+        # model (buy 1 lower, sell 2 middle, buy 1 upper). delta_butterfly
+        # (MONARCH) emits the identical 4-leg shape as long_butterfly — only
+        # the entry construction differs — so the same payoff model applies.
         opt_type = legs[0].get("type", "call")
         long_strikes = sorted(float(lg["strike"]) for lg in legs if lg.get("side") == "long")
         short_strikes = [float(lg["strike"]) for lg in legs if lg.get("side") == "short"]

@@ -5,7 +5,8 @@ def test_bots_registered():
     assert set(BOT_REGISTRY.keys()) == {"surge", "splash", "ripple", "tide", "drift", "flow", "meadow", "undertow",
              "delta", "ebb", "ebb_pm", "updraft", "backdraft", "reversal", "embreach", "embreachq",
              "afterburn", "weekender", "flashpoint", "thermal", "wildfire",
-             "afterglow", "ember", "squall", "tempest", "astra3"}
+             "afterglow", "ember", "squall", "tempest", "astra3",
+             "monarch_a", "monarch_b"}
 
 
 def test_ripple_defaults():
@@ -142,9 +143,43 @@ def test_get_bot_unknown_raises():
 
 def test_list_bots_returns_keys():
     assert sorted(list_bots()) == ["afterburn", "afterglow", "astra3", "backdraft", "delta", "drift", "ebb", "ebb_pm", "ember",
-             "embreach", "embreachq", "flashpoint", "flow", "meadow", "reversal",
+             "embreach", "embreachq", "flashpoint", "flow", "meadow", "monarch_a", "monarch_b", "reversal",
          "ripple", "splash", "squall", "surge", "tempest", "thermal", "tide",
          "undertow", "updraft", "weekender", "wildfire"]
+
+
+def test_monarch_defaults(db_session):
+    # MONARCH-A/B — PAPER-ONLY forward validation of two UNCONFIRMED TRIAGE 29
+    # cells. Same SPY 0DTE ATM butterfly construction, differing only in wing
+    # delta target. Both must ship disarmed — this is the one invariant that
+    # must never silently flip.
+    from backend.bots.registry import get_bot
+    from sqlalchemy import text
+    a = get_bot("monarch_a")
+    b = get_bot("monarch_b")
+    for bot, target, peer in ((a, 0.05, "monarch_b"), (b, 0.25, "monarch_a")):
+        assert bot["strategy"] == "delta_butterfly"
+        assert bot["ticker"] == "SPY"
+        assert bot["front_dte"] == 0
+        assert bot["back_dte"] is None
+        assert bot["one_entry_per_day"] is True
+        assert bot["pt_ladder"] is False
+        assert bot["settle_at_expiry"] is True
+        assert bot["compare_with"] == peer
+        assert bot["defaults"]["wing_delta_target"] == target
+        assert bot["defaults"]["starting_capital"] == 10000.0
+        # PAPER ONLY — the one line that must never silently become True.
+        assert bot["defaults"]["enabled"] is False
+        assert bot["defaults"]["max_contracts"] == 1
+
+    eng = db_session.get_bind()
+    for table in ("monarch_a_config", "monarch_b_config"):
+        row = eng.connect().execute(
+            text(f"SELECT enabled, starting_capital FROM {table} WHERE id=1")
+        ).mappings().first()
+        assert row is not None
+        assert bool(row["enabled"]) is False
+        assert float(row["starting_capital"]) == 10000.0
 
 
 def test_undertow_registered():
