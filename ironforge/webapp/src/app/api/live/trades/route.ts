@@ -11,8 +11,10 @@ export const dynamic = 'force-dynamic'
  * viewer with no mapped bots gets { empty: true }, never another account's data.
  *
  * Query params (all optional): limit (default 50, max 200), cursor (opaque, from a
- * prior response's next_cursor), bot (spark|flame), days (30|90 — omitted = all
- * time), q (free-text search over ticker/close reason/agent name/date).
+ * prior response's next_cursor), bot (spark|flame), days (any positive integer —
+ * the mobile Ledger redesign's Week/Month/3 months chips send 5/21/63, the web
+ * Ledger's Last 30/90 Days send 30/90; omitted or non-positive = all time), q
+ * (free-text search over ticker/close reason/agent name/date).
  *
  * No-param calls stay backward compatible: the response still has a `trades` array
  * (now page 1 of 50, not up to 300 per bot) plus the two new pagination fields.
@@ -34,7 +36,8 @@ export async function GET(req: NextRequest) {
     const limitParam = sp.get('limit')
 
     const bot: LiveBot | null = isLiveBot(botParam) && viewer.allowedBots.includes(botParam) ? botParam : null
-    const days: 30 | 90 | null = daysParam === '30' ? 30 : daysParam === '90' ? 90 : null
+    const daysNum = daysParam ? Number(daysParam) : NaN
+    const days: number | null = Number.isFinite(daysNum) && daysNum > 0 ? daysNum : null
 
     const result = await getCustomerTradesPage(
       viewer.allowedBots,

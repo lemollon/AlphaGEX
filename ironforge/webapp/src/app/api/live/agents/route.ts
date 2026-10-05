@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getLiveSummary, getLiveTrade } from '@/lib/live/summary'
 import { getLifetimeStats } from '@/lib/live/home'
-import { loadBotTrades } from '@/lib/live/trades-history'
+import { loadBotTrades, computeAgentPeriodKpis, last20DailyBars } from '@/lib/live/trades-history'
 import { computeCardStats, type CardStats } from '@/lib/live/card-stats'
 import { resolveLiveViewer, LIVE_BOT_LABEL, type LiveBot } from '@/lib/live/viewer'
 
@@ -83,6 +83,23 @@ export async function GET(req: NextRequest) {
               )
             : null
 
+        // Agent sheet KPI 2x2 + "last 20 trading days" bars (mobile addendum §2
+        // "Agent sheet"). Reuses the SAME `trades`/`lifetime` settled results
+        // the Forge card stats row above already fetched — no extra queries.
+        // Both halves must load, same reasoning as `stats` above.
+        const kpis =
+          lifetime.status === 'fulfilled' && trades.status === 'fulfilled'
+            ? computeAgentPeriodKpis(
+                trades.value.map((tr) => ({ close_date: tr.close_date, pnl: tr.pnl })),
+                lifetime.value.total_realized_pnl,
+                s?.account?.today_pnl ?? null,
+              )
+            : null
+        const daily20 =
+          trades.status === 'fulfilled'
+            ? last20DailyBars(trades.value.map((tr) => ({ close_date: tr.close_date, pnl: tr.pnl })))
+            : null
+
         return {
           bot,
           label: LIVE_BOT_LABEL[bot] ?? bot,
@@ -91,6 +108,8 @@ export async function GET(req: NextRequest) {
           account: s?.account ?? null,
           trade: t,
           stats,
+          kpis,
+          daily20,
           error:
             summary.status === 'rejected'
               ? 'state'

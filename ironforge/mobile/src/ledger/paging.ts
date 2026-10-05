@@ -14,9 +14,14 @@ import type { HistoryTrade, TradesTotals } from '@/api/types'
 export const LEDGER_PAGE_SIZE = 30
 
 export interface LedgerFilters {
-  /** 'all' | 'spark' | 'flame' — mirrors the AGENTS control in ledger.tsx. */
+  /** 'all' | 'spark' | 'flame' — mirrors the AGENTS control in ledger.tsx.
+   *  ('ember' is filtered client-side from a separate endpoint, never sent
+   *  here — see ledger.tsx's useEmberLedger.) */
   agent: string
-  /** '30' | '90' | 'all' — mirrors the RANGES control in ledger.tsx. */
+  /** A day-count string ('5' Week / '21' Month / '63' 3 months, per the 10.4
+   *  redesign's RANGES in ledger.tsx) or 'all' for all time. Any positive
+   *  integer string is accepted — the server (GET /api/live/trades) no
+   *  longer restricts this to 30/90. */
   range: string
   /** Free-text search, already trimmed or not — trimmed here. */
   query: string
@@ -35,7 +40,8 @@ export function ledgerPageKey(filters: LedgerFilters, cursor: string | null): st
   const params = new URLSearchParams()
   params.set('limit', String(LEDGER_PAGE_SIZE))
   if (filters.agent !== 'all') params.set('bot', filters.agent)
-  if (filters.range === '30' || filters.range === '90') params.set('days', filters.range)
+  const days = Number(filters.range)
+  if (filters.range !== 'all' && Number.isFinite(days) && days > 0) params.set('days', String(days))
   const q = filters.query.trim()
   if (q) params.set('q', q)
   if (cursor) params.set('cursor', cursor)
@@ -113,4 +119,83 @@ export function hasMoreLedgerPages(pages: Array<LedgerPage | undefined> | undefi
   if (!pages || pages.length === 0) return true
   const last = pages[pages.length - 1]
   return !!last?.next_cursor
+}
+
+// ---- 10.4 redesign additions: day-grouping, local totals, range chips ----
+
+/**
+ * The Ledger redesign's range chips (10.4 app.html `.chips[aria-label=Range]`:
+ * Week/Month/3 months/All time) — Week=5 and Month=21 are TRADING-day counts
+ * per the mobile addendum, sent straight through as a `days=N` server filter
+ * the same way the original 30/90-day chips already did.
+ */
+export const LEDGER_RANGES = [
+  { key: '5', label: 'Week' },
+  { key: '21', label: 'Month' },
+  { key: '63', label: '3 months' },
+  { key: 'all', label: 'All time' },
+] as const
+
+/** One day's trades, grouped for the Ledger's day-header rows — newest day
+ *  first, trades within a day in whatever order they arrived (the server and
+ *  the Ember adapter both already hand back newest-trade-first). */
+export interface LedgerDayGroup {
+  /** YYYY-MM-DD, the group key. */
+  date: string
+  /** Sum of pnl across every trade in the group — shown beside the day header. */
+  net: number
+  trades: HistoryTrade[]
+}
+
+/** Groups an already-sorted (newest close_date first) trade list into
+ *  per-day buckets without re-sorting — a stable grouping, not a re-ranking,
+ *  so ties the server already broke (same-day trades) keep their order. */
+export function groupTradesByDay(trades: HistoryTrade[]): LedgerDayGroup[] {
+  const groups: LedgerDayGroup[] = []
+  const byDate = new Map<string, LedgerDayGroup>()
+  for (const t of trades) {
+    let g = byDate.get(t.close_date)
+    if (!g) {
+      g = { date: t.close_date, net: 0, trades: [] }
+      byDate.set(t.close_date, g)
+      groups.push(g)
+    }
+    g.trades.push(t)
+    g.net = Math.round((g.net + t.pnl) * 100) / 100
+  }
+  return groups
+}
+
+/**
+ * The Ledger summary card's totals computed CLIENT-side from a trade list
+ * already in hand — used for the Ember path (a separate, un-paginated
+ * endpoint with no server-computed `totals`) with the exact same formula
+ * the server's computeTradesTotals (trades-history.ts) uses for Spark/Flame,
+ * so the two paths never disagree about what "Up %" means.
+ */
+export function totalsFromTrades(trades: HistoryTrade[]): Required<TradesTotals> {
+  const completed_trades = trades.length
+  const wins = trades.reduce((a, t) => (t.pnl > 0 ? a + 1 : a), 0)
+  const net_pnl = Math.round(trades.reduce((a, t) => a + t.pnl, 0) * 100) / 100
+  const win_rate =
+    completed_trades === 0 ? null : Math.round((wins / completed_trades) * 1000) / 10
+  return { completed_trades, win_rate, net_pnl }
+}
+
+/** The CT calendar-date cutoff for a LEDGER_RANGES key N days back from `now`
+ *  (inclusive of today), or null for 'all' — used to filter the Ember trade
+ *  list client-side the same way `days=N` filters the server-side list. */
+export function rangeCutoffDate(rangeKey: string, now: Date = new Date()): string | null {
+  if (rangeKey === 'all') return null
+  const days = Number(rangeKey)
+  if (!Number.isFinite(days) || days <= 0) return null
+  const cutoff = new Date(now.getTime() - (days - 1) * 86_400_000)
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(cutoff)
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00'
+  return `${get('year')}-${get('month')}-${get('day')}`
 }
