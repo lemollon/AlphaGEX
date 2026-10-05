@@ -23,6 +23,13 @@ const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
     'An IronForge account already uses that email but has not verified it yet. Check your inbox, or reset your password.',
   server_error: 'Something went wrong signing in with Google. Please try again.',
   unavailable: 'Google sign-in is temporarily unavailable. Please try again shortly.',
+  consent_expired: 'That confirmation link expired. Please continue with Google again.',
+}
+
+export interface GoogleButtonConsents {
+  ageConfirmed: boolean
+  noAdviceAcknowledged: boolean
+  electronicCommConsent: boolean
 }
 
 /**
@@ -32,8 +39,22 @@ const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
  * Hidden entirely when the server has not configured GOOGLE_CLIENT_ID/SECRET
  * (checked via the public /api/auth/google/status probe), so a half-configured
  * deployment never shows a button whose click 404s.
+ *
+ * On /signup, `consents` + `requireConsents` gate the button itself: until all 3
+ * boxes are ticked, this renders a disabled, inert button instead of a navigable
+ * `<a>` — the SAME 3 consents the password form requires, applied to this method
+ * too, never an implied yes from clicking through. /login passes neither prop; its
+ * button stays a plain link (a sign-IN surface collects no consent).
  */
-export default function ContinueWithGoogle({ next }: { next?: string }) {
+export default function ContinueWithGoogle({
+  next,
+  consents,
+  requireConsents,
+}: {
+  next?: string
+  consents?: GoogleButtonConsents
+  requireConsents?: boolean
+}) {
   const [enabled, setEnabled] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -48,17 +69,48 @@ export default function ContinueWithGoogle({ next }: { next?: string }) {
 
   if (!enabled) return null
 
-  const href = `/api/auth/google/start${next ? `?next=${encodeURIComponent(next)}` : ''}`
+  const allConsented = Boolean(
+    consents?.ageConfirmed && consents?.noAdviceAcknowledged && consents?.electronicCommConsent,
+  )
+  const blocked = Boolean(requireConsents) && !allConsented
+
+  const params = new URLSearchParams()
+  if (next) params.set('next', next)
+  if (consents) {
+    params.set('ageConfirmed', consents.ageConfirmed ? '1' : '0')
+    params.set('noAdvice', consents.noAdviceAcknowledged ? '1' : '0')
+    params.set('commConsent', consents.electronicCommConsent ? '1' : '0')
+  }
+  const qs = params.toString()
+  const href = `/api/auth/google/start${qs ? `?${qs}` : ''}`
+
+  const glyphAndLabel = (
+    <>
+      <GoogleGlyph />
+      Continue with Google
+    </>
+  )
 
   return (
     <div className="space-y-2">
-      <a
-        href={href}
-        className="flex w-full items-center justify-center gap-2 rounded-md border border-white/15 bg-white px-4 py-2.5 text-sm font-semibold text-gray-800 transition hover:bg-gray-100"
-      >
-        <GoogleGlyph />
-        Continue with Google
-      </a>
+      {blocked ? (
+        <button
+          type="button"
+          disabled
+          aria-disabled="true"
+          title="Check the 3 boxes above to continue with Google"
+          className="flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-md border border-white/15 bg-white/40 px-4 py-2.5 text-sm font-semibold text-gray-500"
+        >
+          {glyphAndLabel}
+        </button>
+      ) : (
+        <a
+          href={href}
+          className="flex w-full items-center justify-center gap-2 rounded-md border border-white/15 bg-white px-4 py-2.5 text-sm font-semibold text-gray-800 transition hover:bg-gray-100"
+        >
+          {glyphAndLabel}
+        </a>
+      )}
       {error && <p className="text-center text-xs text-red-400">{error}</p>}
     </div>
   )

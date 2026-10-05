@@ -68,6 +68,9 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/enroll',
   '/login',
   '/signup',
+  // One-time consent screen for a Google sign-in that would create a new
+  // account (see google/callback/route.ts) — reachable with no session.
+  '/signup/google-consent',
   '/forgot-password',
   '/reset-password',
   '/change-password',

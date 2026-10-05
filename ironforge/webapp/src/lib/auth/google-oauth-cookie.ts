@@ -21,6 +21,21 @@ import { safeEqual } from '@/lib/auth/session'
 export const GOOGLE_OAUTH_COOKIE = 'ironforge_google_oauth'
 export const GOOGLE_OAUTH_TTL_MS = 10 * 60 * 1000 // 10 minutes — matches the brokerage OAuth state TTL
 
+/**
+ * The 3 explicit consents, captured on /signup BEFORE the visitor ever leaves for
+ * Google — never implied by clicking the button. Absent (undefined) means this
+ * round trip started from /login, which asks for none of them; the callback then
+ * routes a brand-new account through /signup/google-consent instead of trusting
+ * an implied yes. Present means /start received real query-string flags reflecting
+ * the checkboxes' state at click time (google/start/route.ts parses them — never
+ * defaults a missing or malformed flag to true).
+ */
+export interface GoogleOAuthConsents {
+  ageConfirmed: boolean
+  noAdviceAcknowledged: boolean
+  electronicCommConsent: boolean
+}
+
 export interface GoogleOAuthState {
   /** CSRF value, echoed back in Google's redirect query string. */
   state: string
@@ -28,6 +43,7 @@ export interface GoogleOAuthState {
   verifier: string
   /** Allowlisted destination after sign-in, e.g. '/enroll'. Resolved server-side at /start. */
   next: string
+  consents?: GoogleOAuthConsents
   exp: number
 }
 
@@ -64,6 +80,17 @@ export async function verifyGoogleOAuthState(
     if (!claims || typeof claims.state !== 'string' || !claims.state) return null
     if (typeof claims.verifier !== 'string' || !claims.verifier) return null
     if (typeof claims.next !== 'string') return null
+    if (claims.consents !== undefined) {
+      const c = claims.consents
+      if (
+        typeof c !== 'object' || c === null ||
+        typeof c.ageConfirmed !== 'boolean' ||
+        typeof c.noAdviceAcknowledged !== 'boolean' ||
+        typeof c.electronicCommConsent !== 'boolean'
+      ) {
+        return null
+      }
+    }
     if (typeof claims.exp !== 'number' || now >= claims.exp) return null
     return claims
   } catch {

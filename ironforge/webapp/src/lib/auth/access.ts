@@ -28,6 +28,12 @@ const PUBLIC_EXACT = new Set<string>([
   '/waitlist',
   '/login',
   '/signup',
+  // One-time consent screen for a Google sign-in that would create a new account
+  // (see google/callback/route.ts). Reached with, at most, the signed
+  // google-pending-signup cookie — never an IronForge session of any kind — so it
+  // must be public exactly like /signup itself, or an unauthenticated visitor
+  // bounces to /ops/login (the OPERATOR door) instead of finishing sign-up.
+  '/signup/google-consent',
   '/pricing',
   // 10.4 marketing redesign: agent grid/compare and the team/values page —
   // same public-marketing treatment as /how-it-works and /pricing above.
