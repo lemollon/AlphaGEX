@@ -1576,7 +1576,7 @@ def _latest_trade_quote_flow(symbol: str, *, verified_only: bool = False) -> dic
             + "ORDER BY captured_at DESC LIMIT 1"),
             {"symbol": symbol}).fetchone()
     if not row:
-        return None
+        return None if verified_only else fetch_trade_quote_flow(symbol)
     keys = ("captured_at", "source", "source_timestamp", "confidence", "n_trades",
             "bucket_json", "reason", "evidence_json")
     result = dict(zip(keys, row))
@@ -1767,7 +1767,7 @@ def trade_quote_flow_symbol(symbol: str):
     if symbol not in {"SPY", "QQQ"}:
         return {"available": False, "reason": "trade-quote flow supports SPY and QQQ", "symbol": symbol}
     row = _latest_trade_quote_flow(symbol)
-    return {"available": row is not None, "symbol": symbol, "flow": row}
+    return {"available": bool(row and row.get("confidence") in {"HIGH", "MEDIUM"} and row.get("source_timestamp")), "symbol": symbol, "flow": row}
 
 
 @router.get("/flow/latest/{symbol}")
@@ -1776,7 +1776,7 @@ def latest_trade_quote_flow_symbol(symbol: str):
     if symbol not in {"SPY", "QQQ"}:
         return {"available": False, "reason": "trade-quote flow supports SPY and QQQ", "symbol": symbol}
     row = _latest_trade_quote_flow(symbol)
-    return {"available": row is not None, "symbol": symbol, "flow": row}
+    return {"available": bool(row and row.get("confidence") in {"HIGH", "MEDIUM"} and row.get("source_timestamp")), "symbol": symbol, "flow": row}
 
 
 @router.get("/cross-asset")
