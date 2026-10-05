@@ -321,10 +321,10 @@ function EpisodeTable({ tableKey, label, tableData }) {
                   <tr key={`${tableKey}-${e.trade_date}`}>
                     <td style={S.td}>{e.trade_date}</td>
                     <td style={S.td}>{signedBn(e.net_gex_b)}</td>
-                    <td style={S.td}>{signedPct(e.fwd_1d_max)}</td>
-                    <td style={S.td}>{signedPct(e.fwd_3d_max)}</td>
+                    <td style={{ ...S.td, color: e.fwd_1d_max >= 0 ? GREEN : RED, fontWeight: 700 }}>{signedPct(e.fwd_1d_max)}</td>
+                    <td style={{ ...S.td, color: e.fwd_3d_max >= 0 ? GREEN : RED, fontWeight: 700 }}>{signedPct(e.fwd_3d_max)}</td>
                     <td style={{ ...S.td, color: e.fwd_5d >= 0 ? GREEN : RED, fontWeight: 700 }}>{signedPct(e.fwd_5d)}</td>
-                    <td style={S.td}>{signedPct(e.fwd_5d_max)}</td>
+                    <td style={{ ...S.td, color: e.fwd_5d_max >= 0 ? GREEN : RED, fontWeight: 700 }}>{signedPct(e.fwd_5d_max)}</td>
                     <td style={{ ...S.td, color: e.rip ? AMBER : DIM, fontWeight: e.rip ? 700 : 400 }}>{e.rip ? 'YES' : '—'}</td>
                   </tr>
                 ))}
