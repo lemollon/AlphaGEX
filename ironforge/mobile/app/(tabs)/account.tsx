@@ -4,10 +4,12 @@ import * as Clipboard from 'expo-clipboard'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import * as WebBrowser from 'expo-web-browser'
 import { useRouter } from 'expo-router'
-import useSWR from 'swr'
+import useSWR, { mutate as globalMutate } from 'swr'
 import Constants from 'expo-constants'
+// Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
+import Ionicons from '@expo/vector-icons/Ionicons'
 import { api, API_BASE, ApiError } from '@/api/client'
-import type { MobileMe, MembershipResponse } from '@/api/types'
+import type { MobileMe, MembershipResponse, AutomationPauseResponse, AutomationActivation } from '@/api/types'
 import { signOut, biometricsAvailable, isBiometricEnabled, setBiometricEnabled } from '@/auth/session'
 import { unregisterPushDevice } from '@/notifications/push'
 import { canManageBillingInApp, manageSubscriptionUrl } from '@/billing/store-policy'
@@ -66,6 +68,16 @@ export default function AccountScreen() {
   const { data: billing } = useSWR<MembershipResponse>('/api/billing/membership', (p: string) =>
     api<MembershipResponse>(p),
   )
+  // "Pause all agents" (10.4 app.html Account tab, flagged MISSING in the gap
+  // audit — only a per-agent pause existed). The server already supports a
+  // bulk pause/resume: POST /api/v1/automation/pause with no `agent` field
+  // updates every one of this customer's activations at once (see the route's
+  // `agent ?? 'all'` audit-log fallback) — no backend change needed, just a
+  // control that calls it that way.
+  const pauseSWR = useSWR<AutomationPauseResponse>('/api/v1/automation/pause', (p: string) =>
+    api<AutomationPauseResponse>(p),
+  )
+  const [pausingAll, setPausingAll] = useState(false)
   const [bioAvailable, setBioAvailable] = useState(false)
   const [bioOn, setBioOn] = useState(false)
 
@@ -127,6 +139,47 @@ export default function AccountScreen() {
     Alert.alert(
       'No email app found',
       `${SUPPORT_EMAIL} has been copied to your clipboard.`,
+    )
+  }
+
+  async function togglePauseAll(nextPaused: boolean) {
+    setPausingAll(true)
+    try {
+      const res = await api<AutomationPauseResponse>('/api/v1/automation/pause', {
+        method: 'POST',
+        body: { paused: nextPaused },
+      })
+      pauseSWR.mutate(res, { revalidate: false })
+      // Same shared SWR cache key the Forge tab and each agent sheet poll — this is
+      // what makes both reflect the bulk change without either screen doing anything.
+      void globalMutate('/api/live/agents')
+      Alert.alert(
+        nextPaused ? 'All agents paused' : 'All agents resumed',
+        nextPaused
+          ? "No agent will open a new trade. Any open trade stays protected and closes by the end of its session."
+          : 'Your agents can open new trades again.',
+      )
+    } catch (e) {
+      Alert.alert('Could not update', e instanceof ApiError ? e.humanMessage : (e as Error).message)
+    } finally {
+      setPausingAll(false)
+    }
+  }
+
+  function confirmPauseAll(nextPaused: boolean) {
+    Alert.alert(
+      nextPaused ? 'Pause all agents?' : 'Resume all agents?',
+      nextPaused
+        ? "Pausing stops new trades. An open trade stays protected and closes by the end of its session."
+        : 'Your agents will be able to open new trades again.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: nextPaused ? 'Pause all' : 'Resume all',
+          style: nextPaused ? 'destructive' : 'default',
+          onPress: () => void togglePauseAll(nextPaused),
+        },
+      ],
     )
   }
 
@@ -408,6 +461,23 @@ export default function AccountScreen() {
           />
         </Card>
 
+        {(pauseSWR.data?.activations.length ?? 0) > 0 ? (
+          <Pressable
+            onPress={() => confirmPauseAll(!allAgentsPaused(pauseSWR.data?.activations))}
+            disabled={pausingAll}
+            style={[s.pauseAllBtn, { opacity: pausingAll ? 0.5 : 1 }]}
+          >
+            <Ionicons name="pause-circle-outline" size={18} color={color.neg} />
+            <Text style={[type.body, { color: color.neg, fontFamily: font.bodyMedium, marginLeft: space.sm }]}>
+              {pausingAll
+                ? 'Working…'
+                : allAgentsPaused(pauseSWR.data?.activations)
+                  ? 'Resume all agents'
+                  : 'Pause all agents'}
+            </Text>
+          </Pressable>
+        ) : null}
+
         <Pressable onPress={doSignOut} style={s.signOut}>
           <Text style={[type.body, { color: color.neg, fontFamily: font.bodyMedium }]}>Log Out</Text>
         </Pressable>
@@ -418,6 +488,13 @@ export default function AccountScreen() {
       </ScrollView>
     </Shell>
   )
+}
+
+/** True only when there is at least one activation AND every one of them is
+ *  paused — an empty list is "nothing to resume", not "everything paused". */
+function allAgentsPaused(activations: AutomationActivation[] | undefined): boolean {
+  if (!activations || activations.length === 0) return false
+  return activations.every((a) => a.paused)
 }
 
 function appearanceLabel(pref: AppearancePreference): string {
@@ -521,6 +598,16 @@ const makeStyles = (color: ColorTokens) =>
     borderRadius: radius.pill,
     paddingHorizontal: space.md,
     paddingVertical: space.xs,
+  },
+  pauseAllBtn: {
+    marginTop: space.xl,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: color.neg,
+    borderRadius: radius.md,
+    paddingVertical: space.md,
   },
   signOut: { marginTop: space.xxl, alignItems: 'center', paddingVertical: space.md },
   })

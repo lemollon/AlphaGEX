@@ -10,6 +10,7 @@
  * The mascots are the APPROVED art copied out of webapp/public, not new drawings:
  *   home/spark-mascot-glow.png -> assets/brand/mascot-spark.png
  *   home/flame-mascot-glow.png -> assets/brand/mascot-flame.png
+ *   marketing/ember-mascot.webp -> assets/brand/mascot-ember.webp
  * Never regenerate these. They are signed off and they are what the mockups show.
  */
 import { useMemo } from 'react'
@@ -28,6 +29,7 @@ const MARK = require('../../assets/brand/ironforge-mark.png')
 const MASCOTS: Record<string, number> = {
   spark: require('../../assets/brand/mascot-spark.png'),
   flame: require('../../assets/brand/mascot-flame.png'),
+  ember: require('../../assets/brand/mascot-ember.webp'),
 }
 
 export const SPARKY_AVATAR = require('../../assets/brand/sparky-avatar.png')

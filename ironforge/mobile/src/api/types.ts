@@ -322,6 +322,13 @@ export interface LiveAgent {
   account: LiveSummary['account'] | null
   trade: LiveTrade | null
   stats: AgentCardStats | null
+  /** Agent sheet KPI 2x2 grid — null when its source queries failed, absent
+   *  entirely when talking to a server from before this field existed. */
+  kpis?: AgentPeriodKpis | null
+  /** Agent sheet "last 20 trading days" bars — null on a query failure
+   *  (distinct from an empty array, which means no closed trades yet), absent
+   *  entirely against an older server. */
+  daily20?: AgentDailyBar[] | null
   error: 'state' | 'trade' | null
 }
 
@@ -411,6 +418,29 @@ export interface DeletionRequestResponse {
 export interface TradesTotals {
   completed_trades: number
   win_rate: number | null
+  /** Sum of realized_pnl over the same filtered population — the Ledger
+   *  redesign's 3-col summary card (Net P&L / Trades / Up%). Optional for
+   *  the same forward/backward-compat reason as other additive fields in
+   *  this file — an installed app can be newer than the API it talks to. */
+  net_pnl?: number
+}
+
+/** Agent sheet KPI 2x2 grid (mobile addendum §2 "Agent sheet") — Today comes
+ *  from the agent's own account.today_pnl (includes an open position's
+ *  unrealized P&L), null only when that half of the server failed. Week and
+ *  Month are calendar CT, matching the Forge tab's own period tiles. */
+export interface AgentPeriodKpis {
+  today: number | null
+  week: number
+  month: number
+  life: number
+}
+
+/** "Last 20 trading days" bar chart (mobile addendum §2 "Agent sheet"),
+ *  oldest to newest. */
+export interface AgentDailyBar {
+  date: string
+  pnl: number
 }
 
 /**
@@ -602,4 +632,47 @@ export interface ThreadReplies {
 export interface AssistResponse {
   ok: true
   suggestion: string
+}
+
+// ---- EMBER (PR #3177, mirrors webapp's lib/ember-trades.ts) ----
+//
+// EMBER's own trade book, synced in read-only from REFLEX by reflex_sync.py.
+// This is NOT a read of the customer's brokerage account — see
+// EmberWorkspaceClient.tsx on web for the matching copy/reasoning this mobile
+// wiring must stay consistent with.
+
+/** One REFLEX symbol|signal_date slot — may still be open (closed_at null). */
+export interface EmberTradeRow {
+  id: number
+  opened_at: string | null
+  closed_at: string | null
+  symbol: string
+  legs: unknown
+  /** NUMERIC columns come back as strings from pg — parse before formatting. */
+  qty: string | null
+  entry_price: string | null
+  exit_price: string | null
+  pnl: string | null
+  status: string
+  source_ref: string
+}
+
+export interface EmberStatusRow {
+  state: string | null
+  last_heartbeat: string | null
+  open_positions: unknown
+}
+
+/** GET /api/ember/trades — 403 (not 401) when signed in but not entitled. */
+export interface EmberTradesResponse {
+  ok: boolean
+  trades: EmberTradeRow[]
+  error?: string
+}
+
+/** GET /api/ember/status — same 403-not-401 contract as /api/ember/trades. */
+export interface EmberStatusResponse {
+  ok: boolean
+  status: EmberStatusRow | null
+  error?: string
 }

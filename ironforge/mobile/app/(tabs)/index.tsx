@@ -20,6 +20,11 @@ import type {
   MembershipResponse,
   MobileMe,
   AutomationPauseResponse,
+  EntitlementsResponse,
+  EmberTradesResponse,
+  EmberStatusResponse,
+  EmberTradeRow,
+  EmberStatusRow,
 } from '@/api/types'
 import { space, radius, type, font, agentAccent, color as staticColor } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
@@ -35,6 +40,7 @@ import { agentStatItems } from '@/live/card-stats'
 import { formatPeriodValue, periodTone, type PeriodTone } from '@/live/period-stats'
 import { periodSeries, HERO_PERIOD_LABEL, HERO_PERIOD_TILE_LABEL, type HeroPeriod, type AccountPoint } from '@/live/account-series'
 import { greetingForHour } from '@/live/greeting'
+import { emberClosedTradesToHistory } from '@/ledger/ember'
 import { agentDetailHref, type AgentBot } from '@/agents/routes'
 import { AGENT_LABEL, AGENT_BLURB } from '@/agents/copy'
 import {
@@ -95,6 +101,23 @@ export default function ForgeScreen() {
   // First name for the greeting — same key the Account tab already fetches, so this
   // costs nothing extra there (SWR shares the cache).
   const me = useSWR<MobileMe>('/api/auth/mobile/me', (p: string) => api<MobileMe>(p))
+  // Ember ownership (#3177) — /api/live/agents never includes Ember (it has no
+  // {bot}_positions table; LIVE_BOTS is spark/flame only), so an Ember owner's
+  // row would otherwise be mis-derived as "unowned" from `list` below and show
+  // an "Add Ember" tile despite already owning it. Same key the Account tab and
+  // the agent sheet already fetch — SWR shares the cache.
+  const entitlements = useSWR<EntitlementsResponse>('/api/billing/entitlements', (p: string) =>
+    api<EntitlementsResponse>(p),
+  )
+  const ownsEmber = (entitlements.data?.bots ?? []).includes('ember')
+  const emberTrades = useSWR<EmberTradesResponse>(ownsEmber ? '/api/ember/trades' : null, (p: string) =>
+    api<EmberTradesResponse>(p),
+    { refreshInterval: 60_000, shouldRetryOnError: false },
+  )
+  const emberStatus = useSWR<EmberStatusResponse>(ownsEmber ? '/api/ember/status' : null, (p: string) =>
+    api<EmberStatusResponse>(p),
+    { refreshInterval: 60_000, shouldRetryOnError: false },
+  )
   // Whether every owned agent is paused — the market pill's "Paused" state, same
   // activations the Agents overview and per-agent Pause switch already read.
   const pause = useSWR<AutomationPauseResponse>('/api/v1/automation/pause', (p: string) =>
@@ -329,7 +352,11 @@ export default function ForgeScreen() {
 
   const liveAgents = list.filter((a) => a.trade?.active)
   const idleAgents = list.filter((a) => !a.trade?.active)
-  const unownedBots = ALL_BOTS.filter((b) => !ownedBots.includes(b))
+  // Ember is never in `ownedBots` (it is not in `list` — see the ownsEmber note
+  // above) — exclude it from "unowned" separately rather than folding it into
+  // ownedBots, since ember has none of the LiveAgent shape the rest of this
+  // screen's rows read from.
+  const unownedBots = ALL_BOTS.filter((b) => !ownedBots.includes(b) && !(b === 'ember' && ownsEmber))
 
   return (
     <Shell>
@@ -402,29 +429,36 @@ export default function ForgeScreen() {
             )}
           </View>
 
-          <View style={s.periodTiles}>
-            {(['today', 'week', 'month', 'life'] as HeroPeriod[]).map((p) => (
-              <Pressable
-                key={p}
-                onPress={() => {
-                  setHeroPeriod(p)
-                  setScrub(null)
-                }}
-                accessibilityRole="button"
-                accessibilityState={{ selected: heroPeriod === p }}
-                style={[s.periodTile, heroPeriod === p && { backgroundColor: color.bg, borderColor: color.text }]}
-              >
-                <Text style={[type.label, { color: color.muted }]}>{HERO_PERIOD_TILE_LABEL[p]}</Text>
-                <Text
-                  style={[
-                    s.periodTileValue,
-                    { color: periodToneColor(periodTone(periodValues[p]), color) },
-                  ]}
-                  numberOfLines={1}
-                >
-                  {formatPeriodValue(periodValues[p])}
-                </Text>
-              </Pressable>
+          {/* 2x2 grid, exactly — two fixed rows of two tiles (mobile addendum §2
+              Forge tab: "2x2 period tiles"), not a flex-wrap row that happens to
+              break after two on most screens. */}
+          <View style={s.periodGrid}>
+            {([['today', 'week'], ['month', 'life']] as HeroPeriod[][]).map((row, ri) => (
+              <View key={ri} style={s.periodRow}>
+                {row.map((p) => (
+                  <Pressable
+                    key={p}
+                    onPress={() => {
+                      setHeroPeriod(p)
+                      setScrub(null)
+                    }}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: heroPeriod === p }}
+                    style={[s.periodTile, heroPeriod === p && { backgroundColor: color.bg, borderColor: color.text }]}
+                  >
+                    <Text style={[type.label, { color: color.muted }]}>{HERO_PERIOD_TILE_LABEL[p]}</Text>
+                    <Text
+                      style={[
+                        s.periodTileValue,
+                        { color: periodToneColor(periodTone(periodValues[p]), color) },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {formatPeriodValue(periodValues[p])}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
             ))}
           </View>
 
@@ -468,12 +502,12 @@ export default function ForgeScreen() {
 
         {agents.isLoading ? (
           <Text style={[type.label, { color: color.muted }]}>Loading your agents…</Text>
-        ) : list.length === 0 ? (
+        ) : list.length === 0 && !ownsEmber ? (
           <Empty
             title="No agents running"
             detail="Activate an agent and connect a brokerage account to see positions here."
           />
-        ) : idleAgents.length === 0 ? null : (
+        ) : (
           idleAgents.map((a) => (
             <AgentTile
               key={a.bot}
@@ -482,6 +516,14 @@ export default function ForgeScreen() {
             />
           ))
         )}
+
+        {ownsEmber ? (
+          <EmberAgentRow
+            trades={emberTrades.data?.trades ?? []}
+            status={emberStatus.data?.status ?? null}
+            onPress={() => router.push(agentDetailHref('ember'))}
+          />
+        ) : null}
 
         {unownedBots.map((bot) => (
           <AddAgentRow key={bot} bot={bot} onPress={() => router.push(agentDetailHref(bot))} />
@@ -588,6 +630,67 @@ function AddAgentRow({ bot, onPress }: { bot: AgentBot; onPress: () => void }) {
       <Ionicons name="chevron-forward" size={17} color={color.muted} />
     </Pressable>
   )
+}
+
+/**
+ * Ember's "Your agents" row (#3177) — Ember has no LiveAgent (no
+ * {bot}_positions table, see the ownsEmber note above `index.tsx`'s SWR
+ * calls), so it cannot use AgentTile's state/trade shape. This is a simpler
+ * row sized the same as AddAgentRow but for an OWNED agent: avatar, status
+ * from /api/ember/status, today's realized P&L from /api/ember/trades
+ * (summed over trades CLOSED today CT — Ember carries no live-unrealized
+ * figure for an open position, so "today" here is realized-only, unlike
+ * Spark/Flame's today_pnl which folds in an open position's unrealized P&L).
+ */
+function EmberAgentRow({
+  trades,
+  status,
+  onPress,
+}: {
+  trades: EmberTradeRow[]
+  status: EmberStatusRow | null
+  onPress: () => void
+}) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
+  const accent = agentAccent('ember')
+  const history = emberClosedTradesToHistory(trades)
+  const today = todayCtDateString()
+  const closedToday = history.filter((t) => t.close_date === today)
+  const todayPnl = closedToday.length > 0 ? closedToday.reduce((a, t) => a + t.pnl, 0) : null
+  const openCount = Array.isArray(status?.open_positions) ? (status!.open_positions as unknown[]).length : 0
+  const statusLabel = status ? (openCount > 0 ? 'Trade open' : 'Waiting') : 'Waiting'
+
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button" style={[s.addRow, { borderColor: accent }]}>
+      <View style={[s.addAvatar, { backgroundColor: `${accent}22` }]}>
+        <Mascot bot="ember" size={28} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[type.body, { color: accent, fontFamily: font.bodyBold }]}>Ember</Text>
+        <Text style={[type.label, { color: color.muted, marginTop: 2 }]}>
+          {statusLabel}
+          {openCount > 0 ? ` · ${openCount} open` : ''}
+        </Text>
+      </View>
+      <View style={{ alignItems: 'flex-end' }}>
+        <Money value={todayPnl} />
+        <Text style={[type.label, { color: color.muted, marginTop: 1 }]}>today</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={17} color={color.muted} style={{ marginLeft: space.sm }} />
+    </Pressable>
+  )
+}
+
+function todayCtDateString(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00'
+  return `${get('year')}-${get('month')}-${get('day')}`
 }
 
 /**
@@ -1000,15 +1103,16 @@ const makeStyles = (color: ColorTokens) =>
     alignItems: 'center',
     justifyContent: 'center',
   },
-  periodTiles: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: space.xs,
+  periodGrid: {
     marginTop: space.lg,
+    gap: space.xs,
+  },
+  periodRow: {
+    flexDirection: 'row',
+    gap: space.xs,
   },
   periodTile: {
-    flexBasis: '48%',
-    flexGrow: 1,
+    flex: 1,
     borderWidth: 1,
     borderColor: color.border,
     borderRadius: radius.md,

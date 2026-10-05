@@ -217,6 +217,11 @@ export function paginateSorted<T extends SortedRow>(
 export interface TradesTotals {
   completed_trades: number
   win_rate: number | null
+  /** Sum of realized_pnl over the same filtered population — the mobile
+   *  Ledger redesign's 3-col summary card (Net P&L / Trades / Up%, 10.4
+   *  app.html's `.sum` block). Always a number, never null — an empty
+   *  population nets to 0, same as `completed_trades: 0`. */
+  net_pnl: number
 }
 
 /**
@@ -231,14 +236,143 @@ export interface TradesTotals {
 export function computeTradesTotals(rows: Array<{ realized_pnl: unknown }>): TradesTotals {
   const completed_trades = rows.length
   const wins = rows.reduce((a, r) => (num(r.realized_pnl) > 0 ? a + 1 : a), 0)
-  return { completed_trades, win_rate: winRatePct(wins, completed_trades) }
+  const net_pnl = r2(rows.reduce((a, r) => a + num(r.realized_pnl), 0))
+  return { completed_trades, win_rate: winRatePct(wins, completed_trades), net_pnl }
+}
+
+// ---- Per-agent period KPIs + daily bars (mobile Agent sheet, 10.4 addendum) ----
+
+export interface AgentPeriodKpis {
+  today: number | null
+  week: number
+  month: number
+  life: number
+}
+
+export interface DailyBar {
+  /** YYYY-MM-DD, CT — same convention as HistoryTrade.close_date. */
+  date: string
+  pnl: number
+}
+
+/**
+ * Today/Past week/Past month/Lifetime for ONE agent (mobile addendum §2 Agent
+ * sheet: "Today/Past week/Past month/Lifetime" 2x2 KPI grid). `today` comes
+ * from the caller (the same `account.today_pnl` the Forge hero card already
+ * uses, which includes an open position's unrealized P&L) — this function
+ * only buckets CLOSED trades, which can never include today's still-open
+ * leg. Week/Month are CALENDAR week/month in Central Time (the same zone
+ * HistoryTrade.close_date is already expressed in), matching the Forge tab's
+ * existing "past week"/"past month" period tiles (home.ts's weekly_income /
+ * monthly_income) rather than inventing a second, trading-day definition the
+ * rest of the app doesn't use. `life` is the caller's own lifetime total
+ * (getLifetimeStats' unbounded SUM, which — unlike `trades` here — is not
+ * capped at loadBotTrades' 300-row limit), never re-derived from `trades`.
+ */
+export function computeAgentPeriodKpis(
+  trades: Array<{ close_date: string; pnl: number }>,
+  lifetimeTotal: number,
+  todayPnl: number | null,
+  now: Date = new Date(),
+): AgentPeriodKpis {
+  const todayDate = ctDateString(now)
+  const weekStart = ctDateString(startOfWeekCT(now))
+  const monthStart = ctDateString(startOfMonthCT(now))
+
+  let week = 0
+  let month = 0
+  for (const t of trades) {
+    if (t.close_date >= weekStart) week += t.pnl
+    if (t.close_date >= monthStart) month += t.pnl
+  }
+  // "Today" in the week/month totals too — a trade that closed earlier today
+  // is already counted by the >= weekStart/monthStart comparisons above
+  // (today's date is never before the start of its own week/month); the open
+  // position's unrealized P&L, carried only in `todayPnl`, is not.
+  if (todayPnl != null) {
+    week += todayPnl
+    month += todayPnl
+  }
+
+  return {
+    today: todayPnl,
+    week: r2(week),
+    month: r2(month),
+    life: r2(lifetimeTotal),
+  }
+}
+
+/**
+ * "Last 20 trading days" bar chart (mobile addendum §2 Agent sheet). A
+ * "trading day" here is a day the agent actually closed at least one
+ * position — `trades` (loadBotTrades) only ever contains such days, so this
+ * is exact for however much history that 300-row-capped query covers; it is
+ * an approximation only in the (rare, long-tenured) case where more than 300
+ * closed trades have landed across more than 20 of this agent's most recent
+ * trading days, which cannot happen for any account this young. Oldest to
+ * newest, left-to-right, matching the chart's reading direction.
+ */
+export function last20DailyBars(trades: Array<{ close_date: string; pnl: number }>): DailyBar[] {
+  const byDate = new Map<string, number>()
+  for (const t of trades) {
+    byDate.set(t.close_date, r2((byDate.get(t.close_date) ?? 0) + t.pnl))
+  }
+  const dates = Array.from(byDate.keys()).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0)) // newest first
+  return dates
+    .slice(0, 20)
+    .reverse() // oldest -> newest
+    .map((date) => ({ date, pnl: byDate.get(date)! }))
+}
+
+const CT_ZONE = 'America/Chicago'
+
+function ctDateString(instant: Date): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: CT_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(instant)
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00'
+  return `${get('year')}-${get('month')}-${get('day')}`
+}
+
+/** Monday of the CT week containing `instant`, as a Date at CT midnight (only
+ *  its Y/M/D, via ctDateString above, is ever read). */
+function startOfWeekCT(instant: Date): Date {
+  const label = new Intl.DateTimeFormat('en-US', { timeZone: CT_ZONE, weekday: 'short' }).format(instant)
+  const isoDow = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(label) + 1
+  return new Date(instant.getTime() - (isoDow - 1) * 86_400_000)
+}
+
+/** The 1st of the CT month containing `instant` — only used via ctDateString,
+ *  so an approximate instant (not reanchored to CT midnight) is sufficient:
+ *  shifting by up to a few hours never changes which calendar day-of-month
+ *  it formats to in the common case this guards (comparing date STRINGS). */
+function startOfMonthCT(instant: Date): Date {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: CT_ZONE, year: 'numeric', month: '2-digit' }).formatToParts(
+    instant,
+  )
+  const year = Number(parts.find((p) => p.type === 'year')?.value)
+  const month = Number(parts.find((p) => p.type === 'month')?.value)
+  // UTC-anchored guess is fine here — only its Y/M/D ever gets read back out
+  // via ctDateString, and a same-day UTC instant never crosses a CT day
+  // boundary far enough to change the 1st-of-month date string.
+  return new Date(Date.UTC(year, month - 1, 1, 12, 0, 0))
 }
 
 export interface TradesPageFilters {
   limit?: number
   cursor?: string | null
   bot?: LiveBot | null
-  days?: 30 | 90 | null
+  /**
+   * A rolling window in days, or null/omitted for all time. Historically only
+   * 30 | 90 (the original two Ledger range chips); the mobile Ledger redesign
+   * added Week (5) / Month (21) / 3 months (63), so this now accepts any
+   * positive integer — the route validates/bounds it, this just trusts its
+   * caller the same way `limit` already does.
+   */
+  days?: number | null
   q?: string | null
 }
 
@@ -310,7 +444,7 @@ async function loadMergedRows(
   bots: LiveBot[],
   persons: Record<string, string | null>,
   isOperator: boolean,
-  filters: { bot: LiveBot | null; days: 30 | 90 | null; q: string | null },
+  filters: { bot: LiveBot | null; days: number | null; q: string | null },
 ): Promise<MergedRow[]> {
   const targetBots = filters.bot ? bots.filter((b) => b === filters.bot) : bots
   if (targetBots.length === 0) return []
@@ -378,7 +512,11 @@ export async function getCustomerTradesPage(
 ): Promise<TradesPage> {
   const limit = Math.min(Math.max(1, int(filters.limit) || 50), 200)
   const botFilter = filters.bot && bots.includes(filters.bot) ? filters.bot : null
-  const days = filters.days === 30 || filters.days === 90 ? filters.days : null
+  // Bounded to [1, 3650] — a positive, sane window. Anything else (0,
+  // negative, NaN, absent) means "all time", same as the original 30/90-only
+  // contract.
+  const daysNum = Number(filters.days)
+  const days = Number.isFinite(daysNum) && daysNum > 0 ? Math.min(Math.round(daysNum), 3650) : null
   const q = filters.q?.trim() || null
 
   const rawRows = await loadMergedRows(bots, persons, isOperator, { bot: botFilter, days, q })

@@ -19,6 +19,8 @@ import type {
   AgentConfigResponse,
   ActivationPreviewResponse,
   ActivationResponse,
+  EmberTradesResponse,
+  EmberStatusResponse,
 } from '@/api/types'
 import { space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
@@ -26,6 +28,7 @@ import type { ColorTokens } from '@/theme/palette'
 import { Card, SectionLabel, Money, Loading, ErrorState } from '@/components/ui'
 import { Mascot } from '@/components/Brand'
 import { Sheet, SheetHeader } from '@/components/Sheet'
+import { Confetti } from '@/components/Confetti'
 import { soleConnection, brokerLabel, maskTail } from '@/api/brokerage'
 import { track } from '@/analytics/track'
 import { agentAction, type AgentActionKind } from '@/agents/eligibility'
@@ -148,6 +151,15 @@ export default function AgentDetailScreen() {
             {RISK_SUMMARY}
           </Text>
         </Card>
+
+        {/* Ember's own trade book/status (#3177) — shown to any Ember OWNER
+            regardless of automation-activation state: Ember's execution
+            (REFLEX) is a separate always-on sleeve, not gated the same way
+            Spark/Flame's pause/resume activation rows are, so this must not
+            wait on `action.kind` reaching 'active'/'paused'. */}
+        {bot === 'ember' && (entitlementsSWR.data?.bots ?? []).includes('ember') ? (
+          <EmberWorkspaceSection />
+        ) : null}
 
         {action.kind === 'active' || action.kind === 'paused' ? (
           <CurrentAgentSection
@@ -302,6 +314,8 @@ function CurrentAgentSection({
         )}
       </Card>
 
+      <PerformanceSection liveAgent={liveAgent} accent={accent} />
+
       <PauseResumeControl
         bot={bot}
         label={label}
@@ -312,6 +326,169 @@ function CurrentAgentSection({
       />
     </>
   )
+}
+
+/**
+ * Agent sheet KPI 2x2 + "last 20 trading days" bars (mobile addendum §2
+ * "Agent sheet": "Today/Past week/Past month/Lifetime" 2x2 grid plus a
+ * 20-trading-day bar chart with a wins caption). Sourced from GET
+ * /api/live/agents' `kpis`/`daily20` (added alongside this screen — see
+ * webapp's trades-history.ts computeAgentPeriodKpis/last20DailyBars), which
+ * reuse the same closed-trade query the Forge card stats row already runs,
+ * so this costs nothing extra on the wire.
+ *
+ * Renders nothing when `kpis` is absent (an app talking to a server from
+ * before this field existed) rather than a row of fabricated zeros.
+ */
+function PerformanceSection({ liveAgent, accent }: { liveAgent: LiveAgent | null; accent: string }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
+  const kpis = liveAgent?.kpis
+  if (kpis === undefined) return null
+
+  return (
+    <Card style={{ marginTop: space.lg }}>
+      <SectionLabel>Performance</SectionLabel>
+      {kpis === null ? (
+        <Text style={[type.body, { color: color.warn, marginTop: space.sm }]}>
+          Performance is unavailable right now.
+        </Text>
+      ) : (
+        <>
+          <View style={s.kpiGrid}>
+            <View style={s.kpiRow}>
+              <KpiTile label="Today" value={kpis.today} />
+              <KpiTile label="Past week" value={kpis.week} />
+            </View>
+            <View style={s.kpiRow}>
+              <KpiTile label="Past month" value={kpis.month} />
+              <KpiTile label="Lifetime" value={kpis.life} />
+            </View>
+          </View>
+
+          {liveAgent?.daily20 && liveAgent.daily20.length > 0 ? (
+            <>
+              <View style={s.divider} />
+              <View style={s.rowBetween}>
+                <Text style={[type.label, { color: color.muted }]}>Last 20 trading days</Text>
+                <Text style={[type.label, { color: color.muted }]}>
+                  {liveAgent.daily20.filter((d) => d.pnl > 0).length} of {liveAgent.daily20.length} days up
+                </Text>
+              </View>
+              <DailyBars days={liveAgent.daily20} accent={accent} />
+            </>
+          ) : null}
+        </>
+      )}
+    </Card>
+  )
+}
+
+function KpiTile({ label, value }: { label: string; value: number | null }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
+  return (
+    <View style={s.kpiTile}>
+      <Text style={[type.label, { color: color.muted }]}>{label}</Text>
+      <Money value={value} size="title" />
+    </View>
+  )
+}
+
+/** A minimal up/down bar chart, oldest to newest left-to-right, centered on a
+ *  zero line — plain Views (no SVG) since every bar is a flat rectangle. */
+function DailyBars({ days, accent }: { days: Array<{ date: string; pnl: number }>; accent: string }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
+  const maxAbs = Math.max(1, ...days.map((d) => Math.abs(d.pnl)))
+  return (
+    <View style={s.barsRow} accessibilityLabel={`Daily results over the last ${days.length} trading days`}>
+      {days.map((d) => {
+        const pct = Math.max(4, (Math.abs(d.pnl) / maxAbs) * 100)
+        const up = d.pnl >= 0
+        return (
+          <View key={d.date} style={s.barCol}>
+            <View style={s.barHalfTop}>
+              {up ? <View style={[s.bar, { height: `${pct}%`, backgroundColor: color.pos }]} /> : null}
+            </View>
+            <View style={s.barZero} />
+            <View style={s.barHalfBottom}>
+              {!up ? <View style={[s.bar, { height: `${pct}%`, backgroundColor: color.neg }]} /> : null}
+            </View>
+          </View>
+        )
+      })}
+    </View>
+  )
+}
+
+/**
+ * Ember's own trade book + status (PR #3177), inline on its agent sheet —
+ * mirrors webapp's EmberWorkspaceClient.tsx (same endpoints, same "this is
+ * Ember's OWN book, not your brokerage account" framing). Ember's execution
+ * (REFLEX) has no pause/resume via /api/v1/automation/pause and no per-trade
+ * strike/leg detail to show, so this is additive to — not a replacement for
+ * — the generic CurrentAgentSection above it.
+ */
+function EmberWorkspaceSection() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
+  const tradesSWR = useSWR<EmberTradesResponse>('/api/ember/trades', (p: string) => api<EmberTradesResponse>(p), {
+    refreshInterval: 60_000,
+    shouldRetryOnError: false,
+  })
+  const statusSWR = useSWR<EmberStatusResponse>('/api/ember/status', (p: string) => api<EmberStatusResponse>(p), {
+    refreshInterval: 60_000,
+    shouldRetryOnError: false,
+  })
+  const trades = tradesSWR.data?.trades ?? []
+  const status = statusSWR.data?.status ?? null
+  const openCount = Array.isArray(status?.open_positions) ? (status!.open_positions as unknown[]).length : 0
+
+  return (
+    <Card style={{ marginTop: space.lg }}>
+      <SectionLabel>Ember&apos;s trade book</SectionLabel>
+      <View style={s.rowBetween}>
+        <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+          {status ? `Ember is ${status.state ?? 'reporting'}` : 'Waiting on Ember’s first report'}
+        </Text>
+        <Text style={[type.label, { color: color.muted }]}>{openCount} open</Text>
+      </View>
+      <Text style={[type.label, { color: color.muted, marginTop: space.xs }]}>
+        Last update: {formatHeartbeat(status?.last_heartbeat ?? null)}
+      </Text>
+
+      <View style={s.divider} />
+      {trades.length === 0 ? (
+        <Text style={[type.body, { color: color.textDim }]}>
+          Ember hasn&apos;t opened a position yet. Its trades show up here from Ember&apos;s own
+          book, not your brokerage account&apos;s overall activity.
+        </Text>
+      ) : (
+        trades.slice(0, 10).map((t) => {
+          const pnl = t.pnl != null ? Number(t.pnl) : null
+          return (
+            <View key={t.id} style={s.rowBetween}>
+              <View>
+                <Text style={[type.body, { color: color.text }]}>{t.symbol}</Text>
+                <Text style={[type.label, { color: color.muted }]}>
+                  {t.status === 'closed' ? formatHeartbeat(t.closed_at) : 'Open'}
+                </Text>
+              </View>
+              <Money value={pnl} />
+            </View>
+          )
+        })
+      )}
+    </Card>
+  )
+}
+
+function formatHeartbeat(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
 /** Pause / Resume — APP-028/029. */
@@ -519,6 +696,9 @@ function ActivationFlow({
   const [preview, setPreview] = useState<ActivationPreviewResponse | null>(null)
   const [activated, setActivated] = useState<ActivationResponse | null>(null)
   const [idemKey] = useState(() => generateIdempotencyKey())
+  // Confetti (mobile addendum §2 "Add-agent sheet": "confetti in agent color on
+  // success") — fires once, the moment `step` reaches 'done', then clears itself.
+  const [showConfetti, setShowConfetti] = useState(false)
 
   if (eligibleAccounts.length === 0) {
     return <SetupRequiredSection bot={bot} label={label} />
@@ -572,6 +752,7 @@ function ActivationFlow({
       void globalMutate('/api/live/agents')
       void globalMutate('/api/v1/automation/pause')
       setStep('done')
+      setShowConfetti(true)
     } catch (e) {
       setFailure(e instanceof ApiError ? e.humanMessage : (e as Error).message)
     } finally {
@@ -707,26 +888,31 @@ function ActivationFlow({
 
   if (step === 'done' && activated) {
     return (
-      <Card style={{ marginTop: space.lg }}>
-        <View style={s.rowCenter}>
-          <Ionicons name="checkmark-circle" size={22} color={color.pos} />
-          <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, marginLeft: space.sm }]}>
-            {label} activated
+      <View style={{ marginTop: space.lg }}>
+        <Card>
+          <View style={s.rowCenter}>
+            <Ionicons name="checkmark-circle" size={22} color={color.pos} />
+            <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, marginLeft: space.sm }]}>
+              {label} activated
+            </Text>
+          </View>
+          <Text style={[type.body, { color: color.textDim, marginTop: space.md }]}>
+            {activated.account_mask
+              ? `Trading on ${maskTail(activated.account_mask)}. `
+              : ''}
+            Your trial is now active.
           </Text>
-        </View>
-        <Text style={[type.body, { color: color.textDim, marginTop: space.md }]}>
-          {activated.account_mask
-            ? `Trading on ${maskTail(activated.account_mask)}. `
-            : ''}
-          Your trial is now active.
-        </Text>
-        <Pressable
-          onPress={() => router.replace('/agents')}
-          style={[s.primaryBtn, { marginTop: space.lg }]}
-        >
-          <Text style={[type.body, { color: color.bg, fontFamily: font.bodyBold }]}>Done</Text>
-        </Pressable>
-      </Card>
+          <Pressable
+            onPress={() => router.replace('/agents')}
+            style={[s.primaryBtn, { marginTop: space.lg }]}
+          >
+            <Text style={[type.body, { color: color.bg, fontFamily: font.bodyBold }]}>Done</Text>
+          </Pressable>
+        </Card>
+        {showConfetti ? (
+          <Confetti colors={[agentAccent(bot), color.pos, color.text]} onDone={() => setShowConfetti(false)} />
+        ) : null}
+      </View>
     )
   }
 
@@ -778,6 +964,28 @@ function generateIdempotencyKey(): string {
 
 const makeStyles = (color: ColorTokens) =>
   StyleSheet.create({
+  kpiGrid: { marginTop: space.md, gap: space.xs },
+  kpiRow: { flexDirection: 'row', gap: space.xs },
+  kpiTile: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: color.border,
+    borderRadius: radius.md,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.md,
+  },
+  barsRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    height: 90,
+    marginTop: space.sm,
+    gap: 2,
+  },
+  barCol: { flex: 1, justifyContent: 'center' },
+  barHalfTop: { flex: 1, justifyContent: 'flex-end' },
+  barHalfBottom: { flex: 1, justifyContent: 'flex-start' },
+  barZero: { height: 1, backgroundColor: color.border },
+  bar: { width: '100%', borderRadius: 3, minHeight: 2 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

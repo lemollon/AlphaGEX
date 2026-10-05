@@ -6,6 +6,9 @@ import {
   ledgerTotal,
   ledgerTotals,
   hasMoreLedgerPages,
+  groupTradesByDay,
+  totalsFromTrades,
+  rangeCutoffDate,
   type LedgerFilters,
   type LedgerPage,
 } from '@/ledger/paging'
@@ -187,5 +190,62 @@ describe('hasMoreLedgerPages', () => {
     expect(hasMoreLedgerPages([{ trades: [], next_cursor: 'c1', total: 10 }, { trades: [], next_cursor: null, total: 10 }])).toBe(
       false,
     )
+  })
+})
+
+describe('groupTradesByDay', () => {
+  it('groups consecutive same-day trades under one header with a summed net', () => {
+    const groups = groupTradesByDay([
+      trade('1', '2026-09-03'),
+      { ...trade('2', '2026-09-03'), pnl: -4.34 },
+      trade('3', '2026-09-01'),
+    ])
+    expect(groups).toHaveLength(2)
+    expect(groups[0]).toMatchObject({ date: '2026-09-03', net: 8 })
+    expect(groups[0].trades.map((t) => t.id)).toEqual(['1', '2'])
+    expect(groups[1]).toMatchObject({ date: '2026-09-01', net: 12.34 })
+  })
+
+  it('empty input returns an empty array', () => {
+    expect(groupTradesByDay([])).toEqual([])
+  })
+
+  it('preserves the input order — a stable grouping, not a re-sort', () => {
+    // Out-of-order on purpose: the function must not silently re-sort by date.
+    const groups = groupTradesByDay([trade('1', '2026-09-01'), trade('2', '2026-09-03')])
+    expect(groups.map((g) => g.date)).toEqual(['2026-09-01', '2026-09-03'])
+  })
+})
+
+describe('totalsFromTrades', () => {
+  it('matches the server formula: completed count, win% (1 decimal), net pnl', () => {
+    const trades = [
+      { ...trade('1', '2026-09-03'), pnl: 12.34 },
+      { ...trade('2', '2026-09-02'), pnl: -2.34 },
+      { ...trade('3', '2026-09-01'), pnl: 5 },
+    ]
+    expect(totalsFromTrades(trades)).toEqual({ completed_trades: 3, win_rate: 66.7, net_pnl: 15 })
+  })
+
+  it('null win_rate and 0 net_pnl for an empty list', () => {
+    expect(totalsFromTrades([])).toEqual({ completed_trades: 0, win_rate: null, net_pnl: 0 })
+  })
+})
+
+describe('rangeCutoffDate', () => {
+  const now = new Date('2026-10-05T18:00:00Z') // Monday, CT midday
+
+  it('"all" has no cutoff', () => {
+    expect(rangeCutoffDate('all', now)).toBeNull()
+  })
+
+  it('"5" (Week) cuts off 4 days back, inclusive of today — 5 calendar days total', () => {
+    expect(rangeCutoffDate('5', now)).toBe('2026-10-01')
+  })
+
+  it('a non-numeric or non-positive key is treated as no cutoff', () => {
+    expect(rangeCutoffDate('nonsense', now)).toBeNull()
+    expect(rangeCutoffDate('0', now)).toBeNull()
+    expect(rangeCutoffDate('-5', now)).toBeNull()
   })
 })
