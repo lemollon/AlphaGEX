@@ -100,6 +100,31 @@ export async function loadActivationContext(
     [userId],
   ))[0]
 
+  // Ember one-per-person (design spec §3, §5 step 3): matched on email, not just this
+  // user row, so a second signup with a different account but the same email can't
+  // open a second free Ember account. Only ever queried for Ember — Spark/Flame always
+  // get an explicit `false` below, never left unset.
+  const emberConflict =
+    config.agent_code === 'ember'
+      ? Boolean(
+          (
+            await customerQuery<{ conflict: boolean }>(
+              `SELECT EXISTS (
+                 SELECT 1
+                   FROM customer_bot_subscriptions cbs
+                   JOIN users other ON other.id = cbs.user_id
+                   JOIN users me ON me.id = $1
+                  WHERE cbs.bot = 'ember'
+                    AND cbs.status IN ('active', 'trialing')
+                    AND other.id <> me.id
+                    AND lower(other.email) = lower(me.email)
+               ) AS conflict`,
+              [userId],
+            )
+          )[0]?.conflict,
+        )
+      : false
+
   // Kill-switch read FAILS CLOSED: an unreadable pause state counts as engaged. The same
   // rule as the live page — an error must never read as permission to trade.
   const pause = await getProductionPauseState(config.agent_code).catch(() => ({ paused: true }))
@@ -141,6 +166,7 @@ export async function loadActivationContext(
       accountIneligibleReason: account?.ineligible_reason ?? undefined,
       agentConfig: config.status as never,
       killSwitchEngaged: pause.paused === true,
+      emberConflict,
     },
   }
 }

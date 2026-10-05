@@ -49,6 +49,7 @@ const BLOCKER_ROUTE: Record<string, string> = {
   BROKERAGE_NOT_CONNECTED: '/enroll/broker',
   BROKER_ACCOUNT_INELIGIBLE: '/enroll/broker',
   AGENT_CONFIG_NOT_VALID: '/enroll/agent',
+  EMBER_ALREADY_ACTIVE: '/enroll/plan',
 }
 
 function usd(cents: number): string {
@@ -122,7 +123,10 @@ export default function ReviewClient() {
         } catch {
           /* nothing to clean */
         }
-        router.push(`/agents/${body.agent}?welcome=${body.agent}`)
+        // The design's 3-card done screen (§5), not straight into the agent workspace —
+        // gap audit "Done screen ... Paid agents never reach it." The done page itself
+        // links on to /agents/{agent} once the customer picks "Open your dashboard".
+        router.push(`/enroll/done?welcome=${body.agent}`)
         return
       }
       // Blocked: render every blocker; PREVIEW_STALE additionally refreshes the

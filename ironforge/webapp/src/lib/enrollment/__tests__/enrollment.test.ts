@@ -67,6 +67,7 @@ const READY: ActivationInput = {
   riskAcknowledged: true,
   authorizationAcknowledged: true,
   previewCurrent: true,
+  emberConflict: false,
 }
 
 describe('activation predicate (§4)', () => {
@@ -131,6 +132,22 @@ describe('activation predicate (§4)', () => {
   it('marks a platform kill switch NOT remediable — never tell a customer to retry it', () => {
     const d = evaluateActivation({ ...READY, killSwitchEngaged: true })
     expect(d.blockers.find((b) => b.code === 'KILL_SWITCH_ENGAGED')!.remediable).toBe(false)
+  })
+
+  it('blocks a second Ember activation for the same person (one Ember account per person)', () => {
+    const d = evaluateActivation({ ...READY, emberConflict: true })
+    expect(d.ok).toBe(false)
+    const b = d.blockers.find((b) => b.code === 'EMBER_ALREADY_ACTIVE')
+    expect(b).toBeDefined()
+    expect(b!.remediable).toBe(true)
+  })
+
+  it('never blocks Spark/Flame on emberConflict — context.ts only ever sets it for Ember', () => {
+    expect(evaluateActivation({ ...READY, emberConflict: false })).toEqual({ ok: true, blockers: [] })
+  })
+
+  it('FAILS CLOSED empty-input count stays 9 — emberConflict is opt-in, not fail-closed', () => {
+    expect(evaluateActivation({}).blockers.length).toBe(9)
   })
 })
 

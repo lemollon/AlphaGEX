@@ -107,3 +107,14 @@ export function staleDocumentCodes(
     .filter((d) => !have.has(`${d.code}@${d.version}`))
     .map((d) => d.code)
 }
+
+/**
+ * Case-insensitive, whitespace-normalized match between a typed e-signature and the
+ * account's name on file (design spec §5 step 2: "must case-insensitively match
+ * account name" — gap audit "E-signature match" PARTIAL/S; previously the acceptances
+ * route only length-checked the signature and never compared it to anything).
+ */
+export function signatureMatchesName(signature: string, firstName: string, lastName: string): boolean {
+  const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase()
+  return norm(signature) === norm(`${firstName} ${lastName}`)
+}

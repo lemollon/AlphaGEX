@@ -5,10 +5,14 @@
  * Email is the canonical dedupe key.
  */
 
-export const CONSENT_VERSION = 'waitlist-v1-2026-08-01'
+// v2 (10/5): wording corrected to match the design spec verbatim ("messages", not
+// "communications" — gap audit "Waitlist consent copy" PARTIAL/S). Version bumped
+// alongside the text change so a stored consent record always names the exact copy
+// the member agreed to.
+export const CONSENT_VERSION = 'waitlist-v2-2026-10-05'
 export const WAITLIST_SOURCE = 'ironforge.trade/waitlist'
 export const CONSENT_COPY =
-  'I agree to receive IronForge launch updates and account-related communications by email and phone.'
+  'I agree to receive IronForge launch updates and account-related messages by email and phone.'
 
 /** Approved trading-capital ranges (radio cards). Slug ↔ label; never labeled as income. */
 export const CAPITAL_RANGES = [
