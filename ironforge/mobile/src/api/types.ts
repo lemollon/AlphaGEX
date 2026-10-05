@@ -153,6 +153,42 @@ export interface HomeData {
   as_of: string
 }
 
+/**
+ * GET /api/live/performance — mirrors webapp/src/lib/live/performance.ts's
+ * PerformanceData exactly. Only `equity_curve` and `combined` are read today
+ * (the Forge hero chart's Week/Month/Lifetime source, built from real closed
+ * trades — never a fabricated series); `bots` is kept so the shape matches
+ * the server one-for-one and a later screen can read per-bot curves without
+ * a second hand-mirrored type.
+ */
+export interface LiveEquityPoint {
+  t: string
+  equity: number
+}
+
+export interface LivePerformance {
+  empty?: boolean
+  bots: Array<{
+    bot: string
+    label: string
+    weekly: number
+    monthly: number
+    curve: LiveEquityPoint[]
+  }>
+  combined: {
+    starting_capital: number
+    account_value: number
+    total_pnl: number
+    total_return_pct: number | null
+    win_rate: number | null
+    total_trades: number
+    weekly: number
+    monthly: number
+  }
+  equity_curve: LiveEquityPoint[]
+  as_of: string
+}
+
 export type OutcomeKind = 'profit' | 'auto' | 'stop' | 'manual' | 'expired' | 'other'
 
 export interface HistoryTrade {
