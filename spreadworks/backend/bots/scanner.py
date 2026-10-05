@@ -47,6 +47,7 @@ from .strategies.updraft import (build_updraft_signal,
                                  DEFAULT_PARAMS as UPDRAFT_PARAMS)
 from . import flow_store
 from .vix_regime import vix_decay_ratio, ensure_vix_table, record_vix
+from .gamma_regime import gamma_state
 from .strategies.setups import detect_setup, compute_indicators, DEFAULT_SETUP_PARAMS
 from .strategies.vertical_spread import build_vertical_signal, DEFAULT_VERTICAL_PARAMS
 from . import ai_rationale
@@ -1163,6 +1164,91 @@ def _evaluate_entry(
                         "reason": (f"vix_decay_ratio={vr['ratio']:.3f} > {ceiling:.2f} "
                                    f"(prior {vr['prior_date']} vix={vr['prior_vix']:.2f} "
                                    f"/ 20d max {vr['window_max']:.2f})")}
+
+    # MACRO ENTRY GATES (2026-10-05, CINDER). Three independent, bot-agnostic
+    # pre-entry conditions. Unset (None/""/0/False) on every field is a
+    # no-op, so no bot other than CINDER is affected.
+    #
+    # 🚨 NAMING NOTE: this paper bot is DIFFERENT from and has NO data
+    # coupling to `backend/cinder_signal.py` — an already-LIVE, already
+    # scheduled signal module (same SPY 1DTE debit-call-spread idea) that
+    # feeds a separate real-money Robinhood execution bot via its own
+    # `cinder_signals` table and `/api/spreadworks/cinder/state` route. That
+    # module is money-adjacent and is intentionally left untouched. This
+    # gate only READS gamma_regime.gamma_state, routes_squeeze.live_vix_ratio,
+    # and a fresh market_structure.fetch_vol_indices() live quote — none of
+    # which write to or belong to cinder_signal.py's tables — and writes
+    # only to THIS bot's own standard bot_positions/bot_config rows.
+    gex_ceiling = cfg.get("gex_ceiling_b")
+    if gex_ceiling is not None and str(gex_ceiling) != "":
+        try:
+            ceiling = float(gex_ceiling)
+        except (TypeError, ValueError):
+            ceiling = 0.0
+        st = gamma_state(engine, now_ct.date())
+        net_gex_b = st.get("net_gex_b")
+        if net_gex_b is None:
+            return {"outcome": "BLOCKED_GEX_UNKNOWN",
+                    "reason": st.get("reason") or "net_gex_b_unavailable"}
+        if net_gex_b > ceiling:
+            return {"outcome": "BLOCKED_GEX_ABOVE_CEILING",
+                    "reason": f"net_gex_b={net_gex_b:.2f} > ceiling {ceiling:.2f}"}
+
+    vix_ratio_max = cfg.get("live_vix_ratio_max")
+    require_contango = bool(cfg.get("require_vix_contango") or False)
+    if (vix_ratio_max is not None and str(vix_ratio_max) != "") or require_contango:
+        from .. import market_structure
+        from ..routes_squeeze import live_vix_ratio
+        vol = market_structure.fetch_vol_indices(now=now_ct)
+        indices = (vol or {}).get("indices") or {}
+        vix_row = indices.get("VIX") or {}
+        vix3m_row = indices.get("VIX3M") or {}
+        vix_now = vix_row.get("price") if vix_row.get("fresh") else None
+        vix3m_now = vix3m_row.get("price") if vix3m_row.get("fresh") else None
+
+        if vix_ratio_max is not None and str(vix_ratio_max) != "":
+            try:
+                ratio_ceiling = float(vix_ratio_max)
+            except (TypeError, ValueError):
+                ratio_ceiling = 0.0
+            if vix_now is None:
+                return {"outcome": "BLOCKED_VIX_LIVE_UNKNOWN",
+                        "reason": "live VIX quote unavailable or stale"}
+            ratio = live_vix_ratio(vix_now)
+            if ratio is None:
+                return {"outcome": "BLOCKED_VIX_LIVE_UNKNOWN",
+                        "reason": "insufficient trailing VIX history for live_vix_ratio"}
+            if ratio >= ratio_ceiling:
+                return {"outcome": "BLOCKED_VIX_LIVE_ELEVATED",
+                        "reason": f"live_vix_ratio={ratio:.3f} >= {ratio_ceiling:.2f}"}
+
+        if require_contango:
+            if vix_now is None or vix3m_now is None:
+                return {"outcome": "BLOCKED_TERM_STRUCTURE_UNKNOWN",
+                        "reason": "live VIX/VIX3M quote unavailable or stale"}
+            if vix_now >= vix3m_now:
+                return {"outcome": "BLOCKED_TERM_STRUCTURE_BACKWARDATED",
+                        "reason": f"VIX={vix_now:.2f} >= VIX3M={vix3m_now:.2f}"}
+
+    # Calendar-day cooldown (CINDER = 5 days) — distinct from cooldown_min's
+    # MINUTE-based intraday-burst gate above: this is keyed off the CALENDAR
+    # DATE of the bot's own last entry, for bots that trade at most a
+    # handful of times a year.
+    cooldown_days = cfg.get("entry_cooldown_days")
+    if cooldown_days is not None and str(cooldown_days) != "":
+        try:
+            days_needed = int(cooldown_days)
+        except (TypeError, ValueError):
+            days_needed = 0
+        if days_needed > 0:
+            last_entry = _last_entry_time(engine, bot)
+            if last_entry is not None:
+                last_ct = _position_time_ct(last_entry, now_ct, engine.dialect.name)
+                elapsed_days = (now_ct.date() - last_ct.date()).days
+                if elapsed_days < days_needed:
+                    return {"outcome": "BLOCKED_COOLDOWN_DAYS",
+                            "reason": f"cooldown: elapsed_days={elapsed_days} "
+                                      f"need={days_needed}"}
 
     # Concurrent-position cap — never hold more than max_concurrent_positions
     # open at once (0 = unlimited, mirrors max_contracts). Bounds stacked

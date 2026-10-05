@@ -38,6 +38,11 @@ export const BOT_REGISTRY = {
   // caveat. Never arm real money on either from this page.
   monarch_a: { display: 'MONARCH-A', strategy: 'delta_butterfly', ticker: 'SPY', version: 'v1.0' },
   monarch_b: { display: 'MONARCH-B', strategy: 'delta_butterfly', ticker: 'SPY', version: 'v1.0' },
+  // CINDER — $500 PAPER mirror of the SPY 1DTE debit call spread rule from
+  // registry.py (GEX + live VIX ratio + VIX/VIX3M term structure gates, 2x
+  // target). Distinct from the already-LIVE backend/cinder_signal.py module
+  // of the same name — see registry.py's "NAMING COLLISION" comment.
+  cinder: { display: 'CINDER', strategy: 'bull_call_spread', ticker: 'SPY', version: 'v1.0' },
 };
 
 export const STRATEGY_LABEL = {
@@ -65,6 +70,7 @@ export const STRATEGY_LABEL = {
   vertical_debit:        'Debit Vertical',
   vertical_credit:       'Credit Vertical',
   bull_put_spread:       'Put Credit Spread (0DTE)',
+  bull_call_spread:      'Debit Call Spread (1DTE)',
   reactive_momentum:     'Reactive Momentum (stocks)',
 };
 
@@ -310,5 +316,15 @@ export const BOT_THEME = {
     primaryRing: 'rgba(6,182,212,0.30)',
     glow:        'rgba(6,182,212,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(6,182,212,0.22) 0%, rgba(6,182,212,0.03) 100%)',
+  },
+  cinder: {
+    // CINDER = a glowing ember — glyph reuse ('wave') is the established
+    // convention most bots share; color alone carries the identity here.
+    glyph:       'wave',
+    primary:     '#fdba74',                    // orange-300 (ember glow)
+    primarySoft: 'rgba(253,186,116,0.10)',
+    primaryRing: 'rgba(253,186,116,0.30)',
+    glow:        'rgba(253,186,116,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(253,186,116,0.22) 0%, rgba(253,186,116,0.03) 100%)',
   },
 };

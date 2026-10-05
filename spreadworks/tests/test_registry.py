@@ -6,7 +6,7 @@ def test_bots_registered():
              "delta", "ebb", "ebb_pm", "updraft", "backdraft", "reversal", "embreach", "embreachq",
              "afterburn", "weekender", "flashpoint", "thermal", "wildfire",
              "afterglow", "ember", "squall", "tempest", "astra3",
-             "monarch_a", "monarch_b"}
+             "monarch_a", "monarch_b", "cinder"}
 
 
 def test_ripple_defaults():
@@ -142,7 +142,7 @@ def test_get_bot_unknown_raises():
 
 
 def test_list_bots_returns_keys():
-    assert sorted(list_bots()) == ["afterburn", "afterglow", "astra3", "backdraft", "delta", "drift", "ebb", "ebb_pm", "ember",
+    assert sorted(list_bots()) == ["afterburn", "afterglow", "astra3", "backdraft", "cinder", "delta", "drift", "ebb", "ebb_pm", "ember",
              "embreach", "embreachq", "flashpoint", "flow", "meadow", "monarch_a", "monarch_b", "reversal",
          "ripple", "splash", "squall", "surge", "tempest", "thermal", "tide",
          "undertow", "updraft", "weekender", "wildfire"]
