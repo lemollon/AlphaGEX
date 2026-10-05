@@ -21,6 +21,20 @@ function req(path: string, headers: Record<string, string> = {}) {
 }
 
 describe('middleware gate', () => {
+  it('lets broker OAuth callbacks through with no cookie (state-authenticated)', async () => {
+    vi.mocked(getIronSession).mockResolvedValue({} as never)
+    for (const p of ['/api/onboarding/brokerage/tradier/callback?code=x&state=y', '/api/onboarding/brokerage/callback?state=y']) {
+      const res = await middleware(req(p))
+      expect(res.status).not.toBe(401)
+    }
+  })
+
+  it('still 401s other onboarding APIs with no cookie', async () => {
+    vi.mocked(getIronSession).mockResolvedValue({} as never)
+    const res = await middleware(req('/api/onboarding/brokerage/tradier/connect'))
+    expect(res.status).toBe(401)
+  })
+
   it('401s a gated API route with no session', async () => {
     vi.mocked(getIronSession).mockResolvedValue({} as never)
     const res = await middleware(req('/api/spark/status'))
