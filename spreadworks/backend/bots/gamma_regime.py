@@ -1207,6 +1207,10 @@ def episode_table(engine: Engine, threshold_b: float) -> dict[str, Any]:
         "worst_fwd_5d": min(fwd5_vals) if fwd5_vals else None,
         "n_negative_fwd_5d": sum(1 for v in fwd5_vals if v < 0),
     }
+    # Display order: most recent episode first -- built ascending above (it has
+    # to be, each one needs its own trailing position in ordered_dates), reversed
+    # only here, after the summary stats (which don't care about order) are done.
+    episodes.reverse()
     return {"episodes": episodes, "summary": summary}
 
 
