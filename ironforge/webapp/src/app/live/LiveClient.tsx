@@ -8,6 +8,7 @@ import { LIVE_BOT_LABEL, type LiveBot } from '@/lib/live/bots'
 import { botTagline } from '@/lib/billing/plans'
 import { accentFor } from './components/accent'
 import { isSwingActive } from '@/lib/live/swing'
+import { useLivePositionsStream } from './useLivePositionsStream'
 import LiveHeader from './components/LiveHeader'
 import CustomerShell from '@/components/customer/CustomerShell'
 import CheckoutNotice from '@/components/customer/CheckoutNotice'
@@ -67,6 +68,13 @@ export default function LiveClient({ account }: { account: LiveBot }) {
   const { data: trade, error: tradeError } = useSWR<LiveTrade>(
     tradeKey, fetcher, { refreshInterval: 30_000 },
   )
+  // Sub-5s positions/P&L push (dev-handoff /ws/positions contract, served as
+  // SSE — see route for why). Additive on top of the 30s poll above: writes
+  // straight into the same `tradeKey` cache, so every reader of `trade`
+  // below benefits without a second data path to keep in sync. Only once the
+  // viewer's own account state has resolved to a real (non-empty) account —
+  // see the hook for why.
+  useLivePositionsStream(`/api/v1/stream/positions?account=${account}`, tradeKey, !!summary && !summary.empty)
   const [pausePending, setPausePending] = useState(false)
   // The whole surface takes the active bot's identity colour (Spark blue / Flame orange).
   const accent = accentFor(account)
