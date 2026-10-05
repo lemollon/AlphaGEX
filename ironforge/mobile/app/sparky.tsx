@@ -11,12 +11,12 @@ import {
   Linking,
   StyleSheet,
 } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
-import { useRouter } from 'expo-router'
+import { Stack, useRouter } from 'expo-router'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { streamSparky, SparkyUnavailableError, type SparkyTurn } from '@/api/sparky'
 import { SPARKY_AVATAR } from '@/components/Brand'
+import { Sheet, SheetHeader } from '@/components/Sheet'
 import { SUPPORT_EMAIL, supportMailto } from '@/support/contact'
 import { space, radius, type, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
@@ -78,86 +78,92 @@ export default function SparkyScreen() {
   }, [draft, streaming, turns])
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
-      <View style={s.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="Back">
-          <Ionicons name="chevron-back" size={26} color={color.text} />
-        </Pressable>
-        <Image source={SPARKY_AVATAR} style={s.avatar} resizeMode="contain" />
-        <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 18 }]}>
-          Ask Sparky
-        </Text>
-        <View style={s.aiTag}>
-          <Text style={[type.label, { color: color.spark, fontFamily: font.bodyMedium }]}>AI</Text>
-        </View>
-      </View>
+    <>
+      <Stack.Screen
+        options={{ presentation: 'transparentModal', animation: 'fade', contentStyle: { backgroundColor: 'transparent' } }}
+      />
+      <Sheet accent={color.spark} onClose={() => router.back()}>
+        {(close) => (
+          <>
+            <SheetHeader
+              title="Ask Sparky"
+              left={<Image source={SPARKY_AVATAR} style={s.avatar} resizeMode="contain" />}
+              right={
+                <View style={s.aiTag}>
+                  <Text style={[type.label, { color: color.spark, fontFamily: font.bodyMedium }]}>AI</Text>
+                </View>
+              }
+              onClose={close}
+            />
+            <KeyboardAvoidingView
+              style={{ flex: 1 }}
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              keyboardVerticalOffset={8}
+            >
+              <ScrollView
+                ref={scroller}
+                contentContainerStyle={{ padding: space.lg, paddingBottom: space.xl }}
+                onContentSizeChange={() => scroller.current?.scrollToEnd({ animated: true })}
+              >
+                <View style={s.disclosure}>
+                  <Ionicons name="information-circle-outline" size={16} color={color.textDim} />
+                  <Text style={[type.label, { color: color.textDim, flex: 1 }]}>
+                    Sparky is an AI assistant. It can help with your account, your agent and how
+                    IronForge works — it does not give trading advice and cannot place or change trades.
+                  </Text>
+                </View>
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={8}
-      >
-        <ScrollView
-          ref={scroller}
-          contentContainerStyle={{ padding: space.lg, paddingBottom: space.xl }}
-          onContentSizeChange={() => scroller.current?.scrollToEnd({ animated: true })}
-        >
-          <View style={s.disclosure}>
-            <Ionicons name="information-circle-outline" size={16} color={color.textDim} />
-            <Text style={[type.label, { color: color.textDim, flex: 1 }]}>
-              Sparky is an AI assistant. It can help with your account, your agent and how
-              IronForge works — it does not give trading advice and cannot place or change trades.
-            </Text>
-          </View>
+                {turns.length === 0 ? (
+                  <View style={s.empty}>
+                    <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+                      What can I help with?
+                    </Text>
+                    <Text style={[type.body, { color: color.textDim, marginTop: space.sm, textAlign: 'center' }]}>
+                      Ask about your membership, your brokerage connection, or what your agent is doing
+                      right now.
+                    </Text>
+                  </View>
+                ) : (
+                  turns.map((t, i) => <Bubble key={i} turn={t} streaming={streaming && i === turns.length - 1} />)
+                )}
 
-          {turns.length === 0 ? (
-            <View style={s.empty}>
-              <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
-                What can I help with?
-              </Text>
-              <Text style={[type.body, { color: color.textDim, marginTop: space.sm, textAlign: 'center' }]}>
-                Ask about your membership, your brokerage connection, or what your agent is doing
-                right now.
-              </Text>
-            </View>
-          ) : (
-            turns.map((t, i) => <Bubble key={i} turn={t} streaming={streaming && i === turns.length - 1} />)
-          )}
+                {error ? (
+                  <View style={s.errorBox}>
+                    <Text style={[type.body, { color: color.neg }]}>{error}</Text>
+                    <Pressable onPress={() => void Linking.openURL(supportMailto('Sparky could not help'))}>
+                      <Text style={[type.label, { color: color.accent, marginTop: space.sm }]}>
+                        Email {SUPPORT_EMAIL} instead
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </ScrollView>
 
-          {error ? (
-            <View style={s.errorBox}>
-              <Text style={[type.body, { color: color.neg }]}>{error}</Text>
-              <Pressable onPress={() => void Linking.openURL(supportMailto('Sparky could not help'))}>
-                <Text style={[type.label, { color: color.accent, marginTop: space.sm }]}>
-                  Email {SUPPORT_EMAIL} instead
-                </Text>
-              </Pressable>
-            </View>
-          ) : null}
-        </ScrollView>
-
-        <View style={s.composer}>
-          <TextInput
-            value={draft}
-            onChangeText={setDraft}
-            placeholder="Ask Sparky…"
-            placeholderTextColor={color.muted}
-            style={s.input}
-            multiline
-            editable={!streaming}
-          />
-          <Pressable
-            onPress={send}
-            disabled={streaming || !draft.trim()}
-            accessibilityRole="button"
-            accessibilityLabel="Send"
-            style={[s.send, (streaming || !draft.trim()) && { opacity: 0.5 }]}
-          >
-            <Ionicons name="send" size={18} color={color.text} />
-          </Pressable>
-        </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+              <View style={s.composer}>
+                <TextInput
+                  value={draft}
+                  onChangeText={setDraft}
+                  placeholder="Ask Sparky…"
+                  placeholderTextColor={color.muted}
+                  style={s.input}
+                  multiline
+                  editable={!streaming}
+                />
+                <Pressable
+                  onPress={send}
+                  disabled={streaming || !draft.trim()}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send"
+                  style={[s.send, (streaming || !draft.trim()) && { opacity: 0.5 }]}
+                >
+                  <Ionicons name="send" size={18} color={color.text} />
+                </Pressable>
+              </View>
+            </KeyboardAvoidingView>
+          </>
+        )}
+      </Sheet>
+    </>
   )
 }
 

@@ -14,6 +14,7 @@
  */
 import { useMemo } from 'react'
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native'
+import { useRouter } from 'expo-router'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts (~3 MB,
 // MaterialCommunityIcons alone is 1.3 MB). Ionicons is the only set used.
 import Ionicons from '@expo/vector-icons/Ionicons'
@@ -70,16 +71,26 @@ export function Wordmark({ height = 26 }: { height?: number }) {
  * identical without repeating the wiring. The dot means one true, actionable thing —
  * alerts are off — never a decorative unread badge, because a dot that is always on
  * teaches people to ignore it.
+ *
+ * Mobile addendum §2 "Notifications sheet": tapping the bell opens the notifications
+ * sheet. The contextual permission ask (APP-033 — explain value before the OS prompt)
+ * still comes first when permission hasn't been decided yet or was denied; only once
+ * alerts are already on does the bell open the sheet, which doubles as both screens
+ * the design calls for — there is no separate "recent activity" feed in the API
+ * (grepped: only /api/notifications/preferences and /devices exist), so showing
+ * invented example notifications here would violate the no-fake-data rule. The sheet's
+ * own preferences list is real data either way.
  */
 export function AppHeader() {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
-  const { alert, onPress } = useNotificationBell()
+  const router = useRouter()
+  const { alert, status, onPress } = useNotificationBell()
   return (
     <View style={s.header}>
       <Wordmark />
       <Pressable
-        onPress={onPress}
+        onPress={() => (status === 'granted' ? router.push('/notifications') : onPress())}
         hitSlop={12}
         accessibilityRole="button"
         accessibilityLabel={alert ? 'Notifications, action needed' : 'Notifications'}

@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import { View, Text, ScrollView, Pressable, StyleSheet, Alert } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
-import { useRouter, useLocalSearchParams } from 'expo-router'
+import { Stack, useRouter, useLocalSearchParams } from 'expo-router'
 import * as WebBrowser from 'expo-web-browser'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
@@ -26,6 +25,7 @@ import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Card, SectionLabel, Money, Loading, ErrorState } from '@/components/ui'
 import { Mascot } from '@/components/Brand'
+import { Sheet, SheetHeader } from '@/components/Sheet'
 import { soleConnection, brokerLabel, maskTail } from '@/api/brokerage'
 import { track } from '@/analytics/track'
 import { agentAction, type AgentActionKind } from '@/agents/eligibility'
@@ -121,33 +121,15 @@ export default function AgentDetailScreen() {
   })
 
   return (
-    <Shell bot={bot} router={router}>
+    <Shell
+      bot={bot}
+      router={router}
+      left={<Mascot bot={bot} size={36} />}
+      subtitle={liveAgent?.state?.headline ?? action.label}
+      dotColor={liveAgent?.state ? dotColorFor(liveAgent.state.dot, color) : color.muted}
+    >
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}>
-        <View style={s.rowCenter}>
-          <Mascot bot={bot} size={44} />
-          <View style={{ flex: 1 }}>
-            <Text style={[type.title, { color: color.text, fontFamily: font.display }]}>
-              {label}
-            </Text>
-            <View style={s.rowCenter}>
-              <View
-                style={[
-                  s.dot,
-                  {
-                    backgroundColor: liveAgent?.state
-                      ? dotColorFor(liveAgent.state.dot, color)
-                      : color.muted,
-                  },
-                ]}
-              />
-              <Text style={[type.label, { color: color.textDim }]}>
-                {liveAgent?.state?.headline ?? action.label}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        <Card style={{ marginTop: space.lg }}>
+        <Card>
           <SectionLabel>How it works</SectionLabel>
           <Text style={[type.body, { color: color.textDim }]}>{AGENT_DESCRIPTION[bot]}</Text>
           <Text style={[type.body, { color: color.textDim, marginTop: space.md }]}>
@@ -190,29 +172,51 @@ export default function AgentDetailScreen() {
   )
 }
 
+/**
+ * Agent sheet chrome (mobile addendum §2 "Agent sheet"): agent-color accent border,
+ * mascot + status header, close "X". Presented as a `transparentModal` route so the
+ * tab underneath stays visible and sliding this away (drag, scrim tap, or Android
+ * back) reveals it exactly where it was.
+ */
 function Shell({
   bot,
   router,
   children,
+  left,
+  subtitle,
+  dotColor,
 }: {
   bot: AgentBot
   router: ReturnType<typeof useRouter>
   children: React.ReactNode
+  left?: React.ReactNode
+  subtitle?: string
+  dotColor?: string
 }) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
-      <View style={s.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="Back">
-          <Ionicons name="chevron-back" size={26} color={color.text} />
-        </Pressable>
-        <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 18 }]}>
-          {AGENT_LABEL[bot]}
-        </Text>
-      </View>
-      {children}
-    </SafeAreaView>
+    <>
+      <Stack.Screen
+        options={{ presentation: 'transparentModal', animation: 'fade', contentStyle: { backgroundColor: 'transparent' } }}
+      />
+      <Sheet accent={agentAccent(bot)} onClose={() => router.back()}>
+        {(close) => (
+          <>
+            <SheetHeader
+              title={AGENT_LABEL[bot]}
+              subtitle={subtitle}
+              left={left}
+              right={
+                dotColor ? <View style={[s.dot, { backgroundColor: dotColor, marginRight: space.sm }]} /> : null
+              }
+              onClose={close}
+            />
+            {children}
+          </>
+        )}
+      </Sheet>
+    </>
   )
 }
 
@@ -648,6 +652,9 @@ function ActivationFlow({
         <ReviewRow label="Account" value={s1.account_mask ? maskTail(s1.account_mask) : 'Not available'} />
         {s1.plan ? (
           <ReviewRow label="Plan" value={`${s1.plan.name} — $${s1.plan.price_monthly}/mo`} />
+        ) : null}
+        {s1.trial ? (
+          <ReviewRow label="Free trial" value={`${s1.trial.eligible_days_total} trading days`} />
         ) : null}
         {s1.buying_power_cents != null ? (
           <ReviewRow label="Buying power" value={`$${(s1.buying_power_cents / 100).toLocaleString()}`} />

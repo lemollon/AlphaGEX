@@ -17,7 +17,7 @@ import * as Notifications from 'expo-notifications'
 
 type Status = 'unknown' | 'granted' | 'undetermined' | 'denied'
 
-export function useNotificationBell(): { alert: boolean; onPress: () => void } {
+export function useNotificationBell(): { alert: boolean; status: Status; onPress: () => void } {
   const [status, setStatus] = useState<Status>('unknown')
 
   useEffect(() => {
@@ -73,5 +73,5 @@ export function useNotificationBell(): { alert: boolean; onPress: () => void } {
   }, [status])
 
   // Never flash a dot before we know the answer.
-  return { alert: status === 'undetermined' || status === 'denied', onPress }
+  return { alert: status === 'undetermined' || status === 'denied', status, onPress }
 }
