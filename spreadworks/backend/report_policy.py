@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 UTC = timezone.utc
 CT = ZoneInfo("America/Chicago")
-POLICY_VERSION = "2026-10-05.1"
+POLICY_VERSION = "2026-10-05.2"
 PRESENTATION = ("Today’s mission", "30-second scoreboard", "Today vs forward")
 RULES = ("Tradier-only report market data; reject legacy ThetaData records","fresh BBO <=90s", "retain frozen morning expected move", "no 0DTE forward inference",
          "no model prose in canonical delivery", "no implicit mock data", "no broker orders")
