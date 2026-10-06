@@ -41,6 +41,14 @@ const SECTIONS = [
     blurb: 'Change your password.',
     icon: 'M8 11V7a4 4 0 1 1 8 0v4M5 11h14v9H5z',
   },
+  // db-controls #203: "brokerage, plan and agreements links" — the first two
+  // already have sections above; this was the missing third.
+  {
+    href: '/legal',
+    title: 'Agreements & Disclosures',
+    blurb: 'Terms, risk disclosure, and the other documents you signed.',
+    icon: 'M9 12h6m-6 4h6M7 4h10a2 2 0 0 1 2 2v14l-3-2-3 2-3-2-3 2V6a2 2 0 0 1 2-2Z',
+  },
 ] as const
 
 function ToggleSwitch({ on, onChange, disabled }: { on: boolean; onChange: () => void; disabled?: boolean }) {

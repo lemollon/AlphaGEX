@@ -222,6 +222,18 @@ export default function BrokerClient() {
             >
               {t.status.canConnect ? 'Connect account' : t.status.tone === 'coming' ? 'Coming soon' : 'Not available'}
             </button>
+            {/* en-4 #121: "If either isn't available ... 'Coming soon' with a notify-me
+                option." Automated trading isn't live for this tile — offer notice of
+                when it is, rather than a dead end. */}
+            {!t.status.canConnect ? (
+              <a
+                href={`mailto:support@ironforge.trade?subject=${encodeURIComponent(`Notify me when ${t.name} supports automated trading`)}`}
+                className="link"
+                style={{ marginTop: 8, fontSize: '.8rem', display: 'block' }}
+              >
+                Notify me when available →
+              </a>
+            ) : null}
             <button type="button" onClick={() => setOpenGuide((k) => (k === t.key ? null : t.key))} className="link" style={{ marginTop: 10, fontSize: '.8rem' }}>
               Don&rsquo;t have one? Open an account
             </button>
@@ -310,9 +322,17 @@ export default function BrokerClient() {
 
       {conns === null && !error ? <div className="card pad" style={{ height: 96, marginTop: 20 }} /> : null}
 
+      {/* en-4 #116: "Permissions shown before connecting: view balances, view
+          positions, place and cancel option orders, never withdraw." */}
       <div className="check-row ok" style={{ marginTop: 20, display: 'block' }}>
-        <strong>Secure brokerage authorization.</strong> You will sign in directly with your broker. IronForge
-        cannot withdraw funds or transfer cash.
+        <strong>Secure brokerage authorization.</strong> You will sign in directly with your broker and grant
+        IronForge permission to:
+        <ul style={{ marginTop: 8, marginBottom: 0, display: 'grid', gap: 4, paddingLeft: 18 }}>
+          <li>View your account balances</li>
+          <li>View your open positions</li>
+          <li>Place and cancel option orders</li>
+        </ul>
+        <p style={{ marginTop: 8, fontWeight: 600 }}>IronForge can never withdraw funds or transfer cash.</p>
         <p className="help" style={{ marginTop: 6 }}>Recommended: use a dedicated brokerage account for IronForge automation.</p>
       </div>
 
