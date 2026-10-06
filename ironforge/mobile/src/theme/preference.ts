@@ -14,9 +14,10 @@ function isAppearancePreference(v: string | null): v is AppearancePreference {
 }
 
 /**
- * `null` means "nothing saved yet" — the caller must default to 'dark' (the brand
- * default), never to 'system'. Defaulting new/existing customers to 'system' would
- * flip anyone whose phone is in light mode to a light app they never asked for.
+ * `null` means "nothing saved yet" — per #222 the caller defaults that to 'system'
+ * (follow the OS), not 'dark'. A customer who already has an actual saved choice —
+ * 'system', 'light', or 'dark' — always gets exactly that back; this only changes
+ * what a customer who has never touched the appearance setting sees.
  */
 export async function loadAppearancePreference(): Promise<AppearancePreference | null> {
   const stored = await getItem(APPEARANCE_STORAGE_KEY)
