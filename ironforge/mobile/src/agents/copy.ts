@@ -69,6 +69,18 @@ export const TRADING_SCHEDULE: Record<AgentBot, string> = {
     'Trades all day during market hours (8:30 AM–3:00 PM CT). Any position already open continues to be managed by the agent’s risk rules until it closes.',
 }
 
+/**
+ * Short "next session" phrase for the Forge tab's "Live now" empty state
+ * (mobile addendum §2: "Empty state names the next session ('Spark trades at
+ * 8:30 AM, Flame at midday')") — a terse version of TRADING_SCHEDULE above,
+ * same source windows, built for one short sentence rather than a paragraph.
+ */
+export const NEXT_SESSION_SHORT: Record<AgentBot, string> = {
+  spark: 'at 8:30 AM',
+  flame: 'at midday',
+  ember: 'all day',
+}
+
 /** Ember's account rule (design-spec §3/§4, verbatim quantities) — surfaced
  *  wherever Spark/Flame's $X/month price would otherwise appear. */
 export const EMBER_LIMITS = {
