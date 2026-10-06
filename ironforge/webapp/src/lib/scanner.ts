@@ -5923,7 +5923,27 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   // Each book gets an equal, NON-TRANSFERABLE third. Letting one borrow from the
   // others concentrates the account in whichever market happens to be trading,
   // which is the opposite of why three books exist.
-  const perBook = (balance * botCfg.bp_pct) / FLAME_BOOKS.length
+  //
+  // 🚨 2026-10-06 fix: this room check used to size off the PAPER ledger's
+  // `balance` alone. PR #3152 (2026-10-02) correctly rebased that paper
+  // balance down to its $2,000 seed (it had drifted to ~$5,100 and was
+  // overstating paper returns) -- but the live order below (line ~6161) only
+  // runs if THIS SAME gate passes, and nothing here ever consulted the real
+  // broker account. Every live attempt since 10/2 died as `no_room` against a
+  // $2,000-tier number while the real account sat at ~$4,200 with room to
+  // spare. For an armed production bot, size the room check off real broker
+  // equity instead; the paper ledger itself is untouched and still records
+  // off its own seed.
+  let roomBalance = balance
+  if (bot.name === 'flame' && canPlaceLiveOrders(bot.name)) {
+    try {
+      const prodCap = await getAllocatedCapitalForAccount('Flame', 'production')
+      if (prodCap) roomBalance = Math.max(balance, prodCap.equity)
+    } catch (e) {
+      console.warn('[scanner] FLAME production equity lookup for room check failed (falling back to paper balance):', e)
+    }
+  }
+  const perBook = (roomBalance * botCfg.bp_pct) / FLAME_BOOKS.length
 
   const out: string[] = []
   for (const ticker of FLAME_BOOKS) {
