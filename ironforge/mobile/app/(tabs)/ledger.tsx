@@ -62,7 +62,10 @@ export default function LedgerScreen() {
   const router = useRouter()
   const [query, setQuery] = useState('')
   const [agent, setAgent] = useState<string>('all')
-  const [range, setRange] = useState<string>('5')
+  // 10.4 design `ledger()`: the Month chip (`st.ledgerRange==='21'`) is selected by
+  // default, not Week — the chips and their order already matched; only the
+  // default selection was off.
+  const [range, setRange] = useState<string>('21')
   // Styled sheet for a tapped Ember trade — there is no /api/live/trades/[id]
   // equivalent for Ember (PR #3177 only shipped the list + status), so this opens
   // a sheet built entirely from the row the list already fetched, rather than a
