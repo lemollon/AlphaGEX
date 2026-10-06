@@ -6,6 +6,13 @@ import {
   shouldForgeReply,
   type ForgeSlot,
 } from './forge-ai'
+import type {
+  CommunityMessage,
+  CommunityFeed,
+  ThreadRepliesResponse,
+  BlockedMember,
+} from '@ironforge/shared/api-types'
+import type { SenderType } from './sender'
 
 /**
  * Forge Community data layer — all tables live in the customers DB
@@ -17,74 +24,17 @@ import {
 export const FORGE_NAME = 'Forge'
 export const DEFAULT_CHANNEL = 'all-chat'
 
-/**
- * Who authored a post (#248). 'member' | 'sparky' | 'flame_ai' are the typed
- * values written going forward — set at insert time, never guessed from the
- * display name. 'USER' | 'FORGE' | 'SYSTEM' are the legacy values that already
- * exist on rows written before this migration; they are kept, not backfilled,
- * so old posts keep rendering with the badge they always had.
- */
-export type SenderType = 'USER' | 'FORGE' | 'SYSTEM' | 'member' | 'sparky' | 'flame_ai'
+// Wire shapes now live in the shared types module (#225) — re-exported under
+// their original names so every existing `@/lib/community/store` import keeps
+// working unchanged.
+export type { CommunityMessage, CommunityFeed }
 
-export interface CommunityMessage {
-  id: string
-  sender_name: string
-  sender_type: SenderType
-  message: string
-  created_at: string
-  reactions: Array<{ emoji: string; count: number; mine: boolean }>
-  /** The viewer wrote this. Report/block controls hide on your own posts. */
-  mine: boolean
-  /** Author is a real user who can be blocked (false for FORGE/SYSTEM posts). */
-  blockable: boolean
-  /**
-   * The channel the post was written in. Carried on every message because the
-   * aggregate view shows posts from every channel at once, and UX-005 tags each one
-   * with where it came from — without this the chips would have nothing to read.
-   */
-  channel_slug: string
-  channel_name: string
-  /**
-   * Number of replies under this post (APP-055). Only meaningful on top-level feed
-   * rows — the feed excludes replies themselves, so a reply's own count would always
-   * read as "replies to a reply", which the UI never shows.
-   */
-  reply_count: number
-  /**
-   * The message this is a reply to. Undefined/null on every row the feed returns
-   * (the feed is top-level only); set on rows returned by getReplies().
-   */
-  parent_id?: string | null
-}
-
-export interface CommunityFeed {
-  channels: Array<{ slug: string; name: string }>
-  messages: CommunityMessage[]
-  online_count: number
-  members: Array<{ name: string; you: boolean }>
-}
-
-/**
- * Whether a post/reply was authored by an AI persona rather than a member (#248).
- * New rows carry the typed sender_type directly — no string-sniffing. Old rows
- * (pre-migration 'FORGE'/'SYSTEM') render exactly as they always did.
- */
-export function isAiSender(senderType: string): boolean {
-  return senderType === 'FORGE' || senderType === 'SYSTEM' || senderType === 'sparky' || senderType === 'flame_ai'
-}
-
-/**
- * Whether a post was authored specifically by Sparky rather than the generic
- * Forge AI. Typed rows answer this directly; untyped/legacy rows fall back to
- * the old name-substring heuristic so they keep rendering as before.
- */
-export function isSparkySender(message: { sender_type: string; sender_name: string }): boolean {
-  if (message.sender_type === 'sparky') return true
-  if (message.sender_type === 'flame_ai' || message.sender_type === 'FORGE' || message.sender_type === 'SYSTEM') {
-    return false
-  }
-  return message.sender_name.toLowerCase().includes('sparky')
-}
+// isAiSender/isSparkySender/SenderType moved to ./sender.ts (#248) — that file
+// has zero other imports, unlike this one, so a client component can import a
+// real value from it without pulling the server-only data layer (and
+// next/headers, transitively) into the browser bundle. Re-exported here too
+// so existing server-side `@/lib/community/store` importers are unaffected.
+export { isAiSender, isSparkySender, type SenderType } from './sender'
 
 export async function getChannelId(slug: string): Promise<string | null> {
   const rows = await customerQuery<{ id: string }>(
@@ -195,7 +145,7 @@ export async function getReplies(
   parentId: string,
   viewerUserId: string | null,
   opts: { cursor?: string | null; limit?: number } = {},
-): Promise<{ replies: CommunityMessage[]; next_cursor: string | null }> {
+): Promise<ThreadRepliesResponse> {
   const limit = Math.min(Math.max(Number(opts.limit) || 30, 1), 100)
   const rows = await customerQuery<any>(
     `SELECT m.id, m.user_id, m.sender_name, m.sender_type, m.message, m.created_at, m.parent_id,
@@ -542,7 +492,7 @@ export async function unblockUser(blockerId: string, blockedId: string): Promise
  */
 export async function listBlocked(
   blockerId: string,
-): Promise<Array<{ user_id: string; display_name: string; created_at: string }>> {
+): Promise<BlockedMember[]> {
   const rows = await customerQuery<{ blocked_id: string; display_name: string | null; created_at: string }>(
     `SELECT b.blocked_id,
             (SELECT m.sender_name FROM community_messages m

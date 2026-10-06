@@ -1,6 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  experimental: {
+    // ironforge/shared (the #225 shared API types module) lives one level above
+    // this project's root. Next refuses to resolve imports outside its root
+    // directory by default — this is the documented opt-out.
+    externalDir: true,
+  },
   async headers() {
     return [
       {
