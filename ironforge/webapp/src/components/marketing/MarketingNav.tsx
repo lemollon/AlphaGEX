@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import MarketingThemeToggle from './MarketingThemeToggle'
+import { useWaitlistModal } from './WaitlistModal'
 
 const PRIMARY_LINKS = [
   { href: '/', label: 'Home' },
@@ -20,6 +21,7 @@ const PRIMARY_LINKS = [
 export default function MarketingNav() {
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
+  const { openWaitlist } = useWaitlistModal()
 
   return (
     <header className="nav">
@@ -39,9 +41,9 @@ export default function MarketingNav() {
           <Link className="btn login" href="/login">
             Log in
           </Link>
-          <Link className="btn wl" href="/waitlist">
+          <button type="button" className="btn wl" onClick={openWaitlist}>
             Join waitlist
-          </Link>
+          </button>
           <Link className="btn btn-accent join" href="/signup?source=site&placement=nav">
             Create account
           </Link>
@@ -71,9 +73,15 @@ export default function MarketingNav() {
         <Link href="/about" onClick={() => setOpen(false)}>
           About
         </Link>
-        <Link href="/waitlist" onClick={() => setOpen(false)}>
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(false)
+            openWaitlist()
+          }}
+        >
           Join the waitlist
-        </Link>
+        </button>
         <Link href="/login" onClick={() => setOpen(false)}>
           Log in
         </Link>
