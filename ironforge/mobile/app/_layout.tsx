@@ -29,6 +29,8 @@ import { Loading } from '@/components/ui'
 import { Wordmark } from '@/components/Brand'
 import { ToastHost } from '@/components/ToastHost'
 import { TradeBannerHost } from '@/components/TradeBannerHost'
+import { StepUpHost } from '@/components/StepUpHost'
+import { ConnectivityBanner } from '@/components/ConnectivityBanner'
 
 /**
  * Root layout + auth gate + foreground lock (APP-007 / APP-008 / APP-010).
@@ -273,6 +275,8 @@ function RootLayoutInner() {
       />
       {signedIn && !lockState.locked ? <TradeBannerHost /> : null}
       <ToastHost />
+      {signedIn && !lockState.locked ? <StepUpHost /> : null}
+      <ConnectivityBanner />
       {signedIn && lockState.locked ? (
         <View style={s.overlay}>
           <Wordmark height={32} />

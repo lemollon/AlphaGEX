@@ -79,6 +79,20 @@ export async function registerPushDevice(): Promise<void> {
     const previous = await getItem(PUSH_TOKEN_KEY)
     if (previous === token) return
 
+    // locale/tz (#270) — read via the JS engine's own Intl (Hermes ships ICU data by
+    // default), not expo-localization: that would be a new native dependency, and
+    // this pass adds none. Best-effort; a resolution failure on an unusual device
+    // must never block registering the push token itself.
+    let locale: string | undefined
+    let tz: string | undefined
+    try {
+      const resolved = Intl.DateTimeFormat().resolvedOptions()
+      locale = resolved.locale
+      tz = resolved.timeZone
+    } catch {
+      // Intl unavailable on this engine — registration still proceeds without it.
+    }
+
     await api('/api/notifications/devices', {
       method: 'POST',
       body: {
@@ -88,6 +102,8 @@ export async function registerPushDevice(): Promise<void> {
         // the OS build id is the fallback that actually identifies the handset.
         deviceId: Device.modelId ?? Device.osBuildId ?? undefined,
         appVersion: Constants.expoConfig?.version,
+        locale,
+        tz,
       },
     })
     await setItem(PUSH_TOKEN_KEY, token)

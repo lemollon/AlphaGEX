@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { View, Text, ScrollView, RefreshControl, Pressable, StyleSheet, Alert, Platform, Linking, AppState, type AppStateStatus } from 'react-native'
+import { useScrollToTop } from '@react-navigation/native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
@@ -40,6 +41,7 @@ import { agentDetailHref, type AgentBot } from '@/agents/routes'
 import { AGENT_LABEL, AGENT_BLURB } from '@/agents/copy'
 import { pickBanner, bannerActionHref, billingBannerMode } from '@/alerts/banner'
 import { manageSubscriptionUrl } from '@/billing/store-policy'
+import { isStale, staleLabel } from '@/live/staleness'
 
 const ALL_BOTS: AgentBot[] = ['spark', 'flame', 'ember']
 
@@ -63,14 +65,32 @@ export default function ForgeScreen() {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
+  // Re-tap-tab-to-scroll-to-top (#231).
+  const scrollRef = useRef<ScrollView>(null)
+  useScrollToTop(scrollRef)
+  // "Updated x seconds ago" (#268) — stamped on every successful summary/agents
+  // refresh, whichever lands last (the 60s poll OR the faster positions push
+  // below). Not tied to any ONE request's loading state: the point is "how long
+  // since this screen's numbers were last confirmed fresh", not "is a fetch in
+  // flight right now".
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number>(() => Date.now())
+  // Ticks once a second ONLY so the "Updated x seconds ago" text (once stale) keeps
+  // counting up without a real data refresh — the figure itself never depends on `now`.
+  const [now, setNow] = useState<number>(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1_000)
+    return () => clearInterval(id)
+  }, [])
   const summary = useSWR<LiveSummary>('/api/live/summary', (p: string) => api<LiveSummary>(p), {
     refreshInterval: 60_000,
+    onSuccess: () => setLastUpdatedAt(Date.now()),
   })
   const home = useSWR<HomeData>('/api/live/home', (p: string) => api<HomeData>(p), {
     refreshInterval: 60_000,
   })
   const agents = useSWR<LiveAgents>('/api/live/agents', (p: string) => api<LiveAgents>(p), {
     refreshInterval: 60_000,
+    onSuccess: () => setLastUpdatedAt(Date.now()),
   })
   // Week/Month/Lifetime hero-chart series — a slower-moving number than the live
   // poll above (it only changes when a trade closes), so a long refresh interval
@@ -131,6 +151,7 @@ export default function ForgeScreen() {
         {
           onPositions: (pushed) => {
             retryCount = 0
+            setLastUpdatedAt(Date.now())
             void agents.mutate(
               (current) =>
                 current ? { ...current, agents: mergeAgentsTrade(current.agents, pushed) } : current,
@@ -155,6 +176,15 @@ export default function ForgeScreen() {
     connect()
     const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
       if (next === 'active') {
+        // Refetch summary/positions (#267) BEFORE reconnecting the push stream — a
+        // phone backgrounded for minutes (or hours) coming back to a push-only
+        // reconnect would leave the screen showing whatever it had when it went to
+        // sleep until the next 60s poll happened to land. Firing these now means the
+        // numbers are already correct the instant the stream (re)connects, not up to
+        // a minute later.
+        void summary.mutate()
+        void agents.mutate()
+        void performance.mutate()
         disconnect()
         retryCount = 0
         connect()
@@ -342,6 +372,7 @@ export default function ForgeScreen() {
   return (
     <Shell>
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={reload} tintColor={color.accent} />
@@ -400,7 +431,12 @@ export default function ForgeScreen() {
 
           <View style={{ marginTop: space.md }}>
             {heroSeries.length >= 2 ? (
-              <AccountChart series={heroSeries} color={heroLineColor} onScrub={setScrub} />
+              <AccountChart
+                series={heroSeries}
+                color={heroLineColor}
+                onScrub={setScrub}
+                periodLabel={HERO_PERIOD_LABEL[heroPeriod]}
+              />
             ) : (
               <View style={s.chartEmpty}>
                 <Text style={[type.label, { color: color.muted }]}>
@@ -468,7 +504,9 @@ export default function ForgeScreen() {
           <>
             <View style={[s.rowBetween, { marginTop: space.xl, marginBottom: space.md }]}>
               <SectionLabel>Live now</SectionLabel>
-              <Text style={[type.label, { color: color.muted }]}>Updates every few seconds</Text>
+              <Text style={[type.label, { color: isStale(lastUpdatedAt, now) ? color.warn : color.muted }]}>
+                {isStale(lastUpdatedAt, now) ? staleLabel(lastUpdatedAt, now) : 'Updates every few seconds'}
+              </Text>
             </View>
             {liveAgents.map((a) =>
               a.trade?.active ? (

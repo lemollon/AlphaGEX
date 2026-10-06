@@ -7,6 +7,7 @@ import { ForgeIcon, LedgerIcon, CommunityIcon, AccountIcon } from '@/components/
 import { registerPushDevice, usePushNavigation } from '@/notifications/push'
 import { useScreenTracking } from '@/analytics/screen-tracking'
 import { initMonitoring } from '@/monitoring/sentry'
+import { useCommunityUnreadCount } from '@/community/unread'
 
 /**
  * Crash reporting has to be live before anything under the tabs can throw. The tabs
@@ -26,6 +27,11 @@ initMonitoring()
  */
 export default function TabsLayout() {
   const { colors: color } = useTheme()
+  // Community unread badge (#229) — a real server count (community/unread.ts), not
+  // the 0-hit placeholder tabBarBadge used to be. Capped at "9+" display-side so a
+  // customer back after a long absence never sees an overflowing three-digit pill.
+  const unreadCommunity = useCommunityUnreadCount()
+  const communityBadge = unreadCommunity > 0 ? (unreadCommunity > 9 ? '9+' : String(unreadCommunity)) : undefined
   // Push device registration (APP-034) — safe to call every time the tabs mount or
   // the app returns to the foreground; it no-ops when the token has not changed.
   // Tap routing (usePushNavigation) and automatic screen views live here too, since
@@ -66,7 +72,7 @@ export default function TabsLayout() {
       />
       <Tabs.Screen
         name="community"
-        options={{ title: 'Community', tabBarIcon: CommunityIcon }}
+        options={{ title: 'Community', tabBarIcon: CommunityIcon, tabBarBadge: communityBadge }}
       />
       <Tabs.Screen
         name="account"

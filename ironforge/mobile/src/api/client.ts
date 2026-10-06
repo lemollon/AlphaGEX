@@ -17,6 +17,7 @@
 import Constants from 'expo-constants'
 import { setItem, getItem, deleteItem, AFTER_FIRST_UNLOCK } from '@/api/storage'
 import { ApiError } from '@/api/errors'
+import { reportNetworkSuccess, reportNetworkFailure } from '@/live/connectivity'
 
 export { ApiError }
 
@@ -166,11 +167,21 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Pro
   if (token) headers.authorization = `Bearer ${token}`
   if (opts.body !== undefined) headers['content-type'] = 'application/json'
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...opts,
-    headers,
-    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-  })
+  // Offline handling (#294): a network-layer failure (fetch itself rejecting — no
+  // connection, DNS, timeout) reports here directly, distinct from an ordinary HTTP
+  // error status below, which proves the request actually reached the server.
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...opts,
+      headers,
+      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    })
+  } catch (e) {
+    reportNetworkFailure()
+    throw e
+  }
+  reportNetworkSuccess()
 
   if (res.status === 401 && !opts._retried && !opts.stepUpToken) {
     const fresh = await refreshAccessToken()
