@@ -29,6 +29,8 @@ import { Card, SectionLabel, Money, Loading, ErrorState } from '@/components/ui'
 import { Mascot } from '@/components/Brand'
 import { Sheet, SheetHeader } from '@/components/Sheet'
 import { Confetti } from '@/components/Confetti'
+import { LiveTradeCard } from '@/components/LiveTradeCard'
+import { showToast } from '@/notifications/toast'
 import { soleConnection, brokerLabel, maskTail } from '@/api/brokerage'
 import { track } from '@/analytics/track'
 import { agentAction, type AgentActionKind } from '@/agents/eligibility'
@@ -40,7 +42,6 @@ import {
   TRADING_SCHEDULE,
   RISK_SUMMARY,
 } from '@/agents/copy'
-import { formatPausedAt } from '@/agents/time'
 
 function dotColorFor(dot: string, color: ColorTokens): string {
   const map: Record<string, string> = {
@@ -314,6 +315,16 @@ function CurrentAgentSection({
         )}
       </Card>
 
+      {/* Embedded live-trade chart/progress/stage footer (10.4 design agentSheet()'s
+          reproduced liveCard) — the SAME component the Forge tab's "Live now" strip
+          uses, so the sheet is never a second, drifted description of the same open
+          position. */}
+      {trade?.active ? (
+        <View style={{ marginTop: space.lg }}>
+          <LiveTradeCard bot={bot} label={label} accent={accent} trade={trade} />
+        </View>
+      ) : null}
+
       <PerformanceSection liveAgent={liveAgent} accent={accent} />
 
       <PauseResumeControl
@@ -526,16 +537,12 @@ function PauseResumeControl({
       void globalMutate('/api/live/agents')
       track(nextPaused ? 'agent_pause_confirmed' : 'agent_resume_confirmed', { agent: bot })
 
-      const row = res.activations.find((a) => a.agent === bot)
-      const when = formatPausedAt(row?.paused_at ?? null)
-      Alert.alert(
-        nextPaused ? 'Trading paused' : 'Trading resumed',
-        nextPaused
-          ? `${label} will not open new trades.${when ? ` Effective ${when}.` : ''} Open positions continue to be managed by the agent's risk rules.`
-          : `${label} can open new trades again.${when ? ` Effective ${when}.` : ''}`,
-      )
+      // Floating snackbar (10.4 design `toast()` — "Spark paused"), not a blocking
+      // native dialog: the pause/resume itself already asked for confirmation via
+      // confirmToggle below, so this is just quick feedback that it happened.
+      showToast(nextPaused ? `${label} paused` : `${label} resumed`)
     } catch (e) {
-      Alert.alert('Could not update', e instanceof ApiError ? e.humanMessage : (e as Error).message)
+      showToast(e instanceof ApiError ? e.humanMessage : (e as Error).message)
     } finally {
       setPending(false)
     }
@@ -589,18 +596,17 @@ function PauseResumeControl({
     <Pressable
       onPress={() => (paused ? void handleResumeTap() : confirmToggle(true))}
       disabled={pending || !activation}
+      // Full-width FILLED pill (10.4 design `.btn-c`/`.btn-stop` — "Pause {Name}" is
+      // agent-accent, "Resume {Name}" is the up colour), not the bordered ghost this
+      // used to be — see fidelity audit "Pause/Resume button".
       style={[
-        s.actionBtn,
-        { borderColor: paused ? color.pos : accent, opacity: pending || !activation ? 0.5 : 1 },
+        s.pauseResumeBtn,
+        { backgroundColor: paused ? color.pos : accent, opacity: pending || !activation ? 0.5 : 1 },
       ]}
     >
-      <Text
-        style={[
-          type.body,
-          { color: paused ? color.pos : accent, fontFamily: font.bodyMedium },
-        ]}
-      >
-        {pending ? 'Working…' : paused ? 'Resume trading' : 'Pause new trading'}
+      <Ionicons name="pause" size={16} color={color.bg} />
+      <Text style={[type.body, { color: color.bg, fontFamily: font.bodyBold }]}>
+        {pending ? 'Working…' : paused ? `Resume ${label}` : `Pause ${label}`}
       </Text>
     </Pressable>
   )
@@ -1005,6 +1011,15 @@ const makeStyles = (color: ColorTokens) =>
     borderRadius: radius.md,
     paddingVertical: space.md,
     alignItems: 'center',
+  },
+  pauseResumeBtn: {
+    marginTop: space.lg,
+    flexDirection: 'row',
+    gap: space.sm,
+    borderRadius: radius.pill,
+    paddingVertical: space.md,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   primaryBtn: {
     marginTop: space.lg,
