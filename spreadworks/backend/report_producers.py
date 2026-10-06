@@ -109,9 +109,9 @@ async def collect_breadth(now,vwap_symbols):
         universe=await asyncio.to_thread(spy_constituents,now)
         quotes=await asyncio.to_thread(batch_quotes,universe['symbols'])
         observed=datetime.now(UTC);et=observed.astimezone(ET);historical=None
-        if et.weekday()>=5 or et.time().replace(tzinfo=None)>=time(16):
+        if et.weekday()>=5 or et.time().replace(tzinfo=None)>=time(16) or et.time().replace(tzinfo=None)<time(9,30):
             from .economic_events import is_market_holiday
-            historical=et.date() if et.weekday()<5 else et.date()-timedelta(days=1)
+            historical=et.date() if et.weekday()<5 and et.time().replace(tzinfo=None)>=time(16) else et.date()-timedelta(days=1)
             while historical.weekday()>=5 or is_market_holiday(historical):historical-=timedelta(days=1)
         result=summarize_breadth(quotes,universe['symbols'],observed,historical_session=historical)
         result['quote_scope']='Last observed issue quotes for '+historical.isoformat()+'; timestamps are not synchronous closes' if historical else 'Fresh observed issue quotes'
@@ -161,21 +161,33 @@ def collect_profile(symbol,now,previous=None):
     previous_end=ms._parse_ts(previous.get('window_end'))
     same_session=previous_end is not None and previous_end.astimezone(ET).date()==et.date()
     start=previous_end if same_session else datetime.combine(et.date(),time(9,30),ET).astimezone(UTC)
-    end=min(now.replace(microsecond=0),start+timedelta(minutes=30))
+    recent_start=max(datetime.combine(et.date(),time(9,30),ET).astimezone(UTC),now.replace(microsecond=0)-timedelta(minutes=30))
+    coverage_gap=start<recent_start
+    if coverage_gap:start=recent_start
+    end=now.replace(microsecond=0)
     if end<=start:return previous or {'reason':'No completed tape window yet','source_timestamp':None}
     try:
         data=(tradier('/timesales',{'symbol':symbol,'interval':'tick',
           'start':start.astimezone(ET).strftime('%Y-%m-%d %H:%M:%S'),
           'end':end.astimezone(ET).strftime('%Y-%m-%d %H:%M:%S')}).get('series') or {}).get('data') or []
         if isinstance(data,dict):data=[data]
-        rows=[dict(price=r.get('price'),size=r.get('volume'),timestamp=datetime.fromtimestamp(r['timestamp'],UTC)) for r in data if r.get('timestamp')]
+        rows=[]
+        for r in data:
+            raw=number(r.get('timestamp'));stamp=None
+            if raw is not None:
+                try:stamp=datetime.fromtimestamp(raw/1000 if raw>1e11 else raw,UTC)
+                except (ValueError,OverflowError,OSError):pass
+            if stamp is None:stamp=ms._timesales_timestamp(r.get('time'))
+            if stamp and (not same_session or coverage_gap or stamp>start):rows.append(dict(price=r.get('price'),size=r.get('volume'),timestamp=stamp))
         result=volume_profile(rows,.10 if symbol=='SPY' else .25,start,end)
-        if result.get('source_timestamp') and same_session and previous.get('bins'):
+        if result.get('source_timestamp') and same_session and not coverage_gap and previous.get('bins'):
             result=merge_profiles(previous,result,.10 if symbol=='SPY' else .25)
         if result.get('source_timestamp'):
             result['method']='Cumulative observed Tradier RTH tick trades; fixed price bins; contiguous 70% value area; provider conditions retained; no bar-volume approximation'
             result['coverage_start']=result['window_start'];result['coverage_end']=end.isoformat()
-            result['catchup_pending']=(now-end).total_seconds()>90
+            result['catchup_pending']=False
+            result['coverage_gap']=coverage_gap
+            if coverage_gap:result['method']='Recent rolling 30-minute Tradier tick profile; earlier session tape is not included; contiguous 70% value area'
         return result
     except Exception as e:return {'reason':'Trade profile failed: '+type(e).__name__,'source_timestamp':None}
 

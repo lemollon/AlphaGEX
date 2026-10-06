@@ -641,7 +641,7 @@ def _realized_volatility_from_bars(
         "realized_vol_60m": realized,
         "bars": len(returns),
         "window_minutes": min(window_minutes, len(returns)),
-        "source_timestamp": now.isoformat(),
+        "source_timestamp": last_bar_at.isoformat(),
         "bar_timestamp": last_bar_at.isoformat(),
         "bar_age_seconds": round(bar_age, 1),
         "method": "Trailing 60 one-minute log-return stdev × sqrt(252 × 390)",
@@ -1015,7 +1015,7 @@ def _surface_skew(records: list[dict[str, Any]], spot: float) -> tuple[float | N
 
 
 def build_volatility_surface(symbol: str, now: datetime | None = None, *, background: bool = False) -> dict[str, Any]:
-    """Build a fresh, IV-only surface from the authorized ThetaData feed."""
+    """Build an observed, modeled IV surface from authorized Tradier BBO."""
     now = now or datetime.now(UTC)
     symbol = symbol.upper()
     spot = fetch_spot(symbol, now)
@@ -1050,13 +1050,31 @@ def build_volatility_surface(symbol: str, now: datetime | None = None, *, backgr
         term_6_20dte, term_21_365dte,
     )
     captured_at = datetime.now(UTC)
+    field_clocks={}
+    def atm_clock(lo,hi):
+        selected=[]
+        for dte in atm_by_dte:
+            if lo<=dte<=hi:
+                for right in ('call','put'):
+                    candidates=[r for r in rows if r['dte']==dte and r['right']==right]
+                    if candidates:selected.append(min(candidates,key=lambda r:abs(r['strike']-price))['timestamp'])
+        spot_clock=spot.get('source_timestamp')
+        if spot_clock:selected.append(spot_clock)
+        return min(selected).isoformat() if selected else source_ts.isoformat()
+    if reference_dte is not None:
+        for key in ('atm_iv','expected_move_pct_1d','expected_move_dollars_1d','expected_move_low','expected_move_high','expected_move_method','spot','atm_reference_dte'):field_clocks[key]=atm_clock(reference_dte,reference_dte)
+    for key,lo,hi in [('iv_0dte',0,0),('iv_1_5dte',1,5),('iv_6_20dte',6,20),('iv_21_365dte',21,365)]:field_clocks[key]=atm_clock(lo,hi)
+    if realized.get('source_timestamp'):
+        field_clocks['realized_vol_60m']=realized['source_timestamp']
+        combined=min(_parse_ts(field_clocks.get('atm_iv')), _parse_ts(realized['source_timestamp'])).isoformat()
+        field_clocks['iv_minus_realized_vol']=combined;field_clocks['surface_read']=combined
     em_pct = atm_iv * math.sqrt(1.0 / 252.0) * 100.0 if atm_iv else None
     em_dollars = price * em_pct / 100.0 if em_pct else None
     return {
         "symbol": symbol, "available": confidence != "LOW", "captured_at": captured_at.isoformat(),
         "spot": price, "source": "Tradier fresh option BBO; locally modeled Black-Scholes IV",
         "source_timestamp": source_ts.isoformat(), "age_seconds": round(age, 1),
-        "confidence": confidence, "n_rows": len(rows), "atm_iv": atm_iv,
+        "confidence": confidence, "field_timestamps": field_clocks, "n_rows": len(rows), "atm_iv": atm_iv,
         "atm_reference_dte": reference_dte, "skew_25d": skew,
         "skew_reference_dte": skew_dte, "smile": _surface_smile(rows, price), "iv_0dte": term_0dte,
         "iv_1_5dte": term_1_5dte,
@@ -1066,6 +1084,7 @@ def build_volatility_surface(symbol: str, now: datetime | None = None, *, backgr
         "expected_move_low": price - em_dollars if em_dollars else None,
         "expected_move_high": price + em_dollars if em_dollars else None,
         "expected_move_method": "ATM IV × sqrt(1/252), using nearest positive-DTE expiration",
+        "iv_rv_comparison": {"atm_iv": atm_iv,"realized_vol_60m":realized_vol,"iv_minus_realized_vol":atm_iv-realized_vol if atm_iv is not None and realized_vol is not None else None,"realized_vol_source_timestamp":realized.get("source_timestamp"),"source_timestamp":min(source_ts,_parse_ts(realized["source_timestamp"])).isoformat() if realized.get("source_timestamp") else None},
         "realized_vol_60m": realized_vol,
         "realized_vol_bars": realized.get("bars"),
         "realized_vol_source_timestamp": realized.get("source_timestamp"),
@@ -1377,7 +1396,7 @@ def persist_surface(surface: dict[str, Any]) -> None:
         "iv_minus_rv": surface.get("iv_minus_realized_vol"),
         "reason": surface.get("reason"),
         "surface_json": json.dumps({key: surface.get(key) for key in
-                                    ("smile", "surface_points", "surface_read", "expected_move_method")}),
+                                    ("smile", "surface_points", "surface_read", "expected_move_method", "field_timestamps", "iv_rv_comparison")}),
     }
     with engine.begin() as conn:
         conn.execute(text(
@@ -1514,7 +1533,7 @@ def _latest_gamma(symbol: str, *, verified_only: bool = False) -> dict[str, Any]
     d = dict(zip(keys, row))
     for k in ("captured_at", "source_timestamp"):
         if d[k] is not None:
-            d[k] = d[k].isoformat()
+            d[k] = _parse_ts(d[k]).isoformat()
     d["buckets"] = json.loads(d.pop("bucket_json") or "{}")
     d["walls"] = json.loads(d.pop("wall_json") or "{}")
     return d
@@ -1545,7 +1564,7 @@ def _latest_surface(symbol: str, *, verified_only: bool = False) -> dict[str, An
     for key in ("captured_at", "source_timestamp", "realized_vol_source_timestamp",
                 "realized_vol_bar_timestamp"):
         if result[key] is not None:
-            result[key] = result[key].isoformat()
+            result[key] = _parse_ts(result[key]).isoformat()
     return result
 
 
@@ -1582,7 +1601,7 @@ def _latest_trade_quote_flow(symbol: str, *, verified_only: bool = False) -> dic
     result = dict(zip(keys, row))
     for key in ("captured_at", "source_timestamp"):
         if result[key] is not None:
-            result[key] = result[key].isoformat()
+            result[key] = _parse_ts(result[key]).isoformat()
     result["buckets"] = json.loads(result.pop("bucket_json") or "{}")
     result["evidence"] = json.loads(result.pop("evidence_json") or "{}")
     result["guardrail"] = (
@@ -1617,7 +1636,7 @@ def _cached_vol_payload(now: datetime | None = None) -> dict[str, Any]:
     with engine.begin() as conn:
         rows = conn.execute(text(
             f"SELECT DISTINCT ON (symbol) symbol,price,source,source_timestamp,reason "
-            f"FROM {VOL_TABLE} WHERE source LIKE 'Tradier%' ORDER BY symbol,captured_at DESC"), {}).fetchall()
+            f"FROM {VOL_TABLE} WHERE source LIKE 'Tradier%' AND price>0 AND source_timestamp IS NOT NULL ORDER BY symbol,captured_at DESC"), {}).fetchall()
     indices: dict[str, Any] = {}
     sources_seen: set[str] = set()
     for symbol, price, source, source_timestamp, reason in rows:

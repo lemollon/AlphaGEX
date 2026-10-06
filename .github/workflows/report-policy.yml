@@ -23,4 +23,7 @@ jobs:
           spreadworks/tests/test_full_options_report.py
           spreadworks/tests/test_report_evidence_integrity.py
           spreadworks/tests/test_morning_options_report.py
-          spreadworks/tests/test_market_structure.py -q
+          spreadworks/tests/test_market_structure.py
+          spreadworks/tests/test_report_refresh.py
+          spreadworks/tests/test_tradier_report_source.py
+          spreadworks/tests/test_intraday_watch.py -q

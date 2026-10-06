@@ -1,9 +1,9 @@
 # Permanent options report requirements
 
 The executable contract is `backend/report_contract.py`; inference and display
-rules are `backend/report_policy.py`. Version `2026-10-05.2` retains all 179
+rules are `backend/report_policy.py`. Version `2026-10-05.3` retains all 179
 original fields and adds day/near-forward/forward plans, horizon comparisons,
-adaptation rules, data integrity and persisted visual delivery: **32 sections and 238 required fields**.
+adaptation rules, data integrity and persisted visual delivery: **32 sections and 241 required fields**.
 Every delivered report carries its policy version and SHA-256 schema/rule hash.
 
 ## Reader experience
@@ -104,7 +104,7 @@ python -m pytest spreadworks/tests/test_report_policy.py \
   spreadworks/tests/test_full_options_report.py \
   spreadworks/tests/test_report_evidence_integrity.py \
   spreadworks/tests/test_morning_options_report.py \
-  spreadworks/tests/test_market_structure.py -q
+  spreadworks/tests/test_market_structure.py spreadworks/tests/test_report_refresh.py spreadworks/tests/test_tradier_report_source.py spreadworks/tests/test_intraday_watch.py -q
 ```
 
 The independent strict report-policy CI job must pass without `|| true`.
@@ -116,3 +116,28 @@ renderer, integrity and failure-path checks plus a deliberate version change.
 
 ## Provider policy (2026-10-05)
 Morning, market-open and intraday share Tradier-only market collectors. No ThetaData fallback or cached ThetaData report observations are allowed. Surface IV and gamma use explicitly labeled Black-Scholes estimates from fresh two-sided Tradier BBO, not refreshed receipt clocks or stale vendor Greeks. Daily OI publication time is unavailable and is never described as intraminute inventory. Representative expiries and quote qualification coverage are disclosed. Tradier REST does not supply contemporaneous option trade+NBBO evidence: initiation remains unavailable until such evidence exists; chain volume is never substituted. Independent macro, news and Trading Volatility products retain their own provenance.
+
+## Refresh-first and last-known evidence (2026-10-05.3)
+
+Both report kinds refresh context before the final core refresh. Each producer
+gets a bounded deadline and one retry; exchange clocks never become request
+receipt times. Record every attempt in the required integrity field. Retain a
+verified prior observation on failure, with LAST KNOWN, its original update date,
+time and age. Partial refreshes retain older per-metric clocks instead of erasing
+observed RV/skew/term values. No historical quote qualifies a live entry.
+
+Compare named morning fields separately: price location, frozen same-session
+move consumption, range, stall evidence and setup state. Never reuse yesterday's
+expected move as today's frozen budget. Charts carry their actual source clocks.
+Profile recovery uses a current bounded tape window and discloses incomplete
+session coverage; it must not sit hours behind while claiming a session profile.
+
+Every ENTRY_READY alert must reconcile to a modeled paper fill or a persisted
+blocked outcome. Old alerts without recorded outcomes stay unresolved, never
+retroactively filled. No completed trades means undefined win rate/average P&L.
+
+Holding periods count completed close-to-close trading sessions: 10 is roughly
+two trading weeks, 20 roughly a month. Any performance comparison must use the
+same verified cohort and fill/cost methodology; it is not forward assurance.
+
+Stored UTC database clocks must regain their explicit UTC offset on reads; restoring timezone identity must never reset the original observation time or age. The strict CI job includes the refresh, source and scanner regression suites.

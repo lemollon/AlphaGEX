@@ -13,6 +13,11 @@ NOW=datetime(2026,10,2,15,0,tzinfo=UTC)
 
 @pytest.fixture
 def db(monkeypatch):
+    from backend import report_refresh
+    async def context(*args):return []
+    async def core_refresh(core):return core,[]
+    monkeypatch.setattr(report_refresh,'refresh_context',context)
+    monkeypatch.setattr(report_refresh,'refresh_core',core_refresh)
     eng=create_engine('sqlite://',connect_args={'check_same_thread':False},poolclass=StaticPool)
     monkeypatch.setattr(report,'engine',eng);monkeypatch.setattr(ledger,'engine',eng)
     report.ensure_tables();ledger.ensure_tables()
@@ -70,6 +75,38 @@ def test_true_profile_volume_conservation_and_contiguous_value_area():
     assert result['total_volume']==300;assert sum(r['volume'] for r in result['bins'])==300
     assert result['val']<=result['poc']<=result['vah'];assert result['rejected_rows']==1
     assert 'not full session' in result['method']
+
+def test_profile_restart_fetches_recent_tape_and_parses_string_millisecond_epoch(monkeypatch):
+    previous={'method':'Tradier observed tape','window_end':(NOW-timedelta(hours=2)).isoformat(),'bins':[]}
+    seen=[]
+    def provider(path,params):
+        seen.append(params)
+        return {'series':{'data':[{'timestamp':str(int((NOW-timedelta(seconds=2)).timestamp()*1000)),'price':100.1,'volume':50}]}}
+    monkeypatch.setattr(p,'tradier',provider)
+    result=p.collect_profile('SPY',NOW,previous)
+    assert result['total_volume']==50 and result['coverage_gap']
+    assert result['source_timestamp']==(NOW-timedelta(seconds=2)).isoformat()
+    assert result['window_start']==(NOW-timedelta(minutes=30)).isoformat()
+    assert 'earlier session tape is not included' in result['method']
+
+def test_every_entry_ready_alert_has_a_paper_outcome_without_fake_fills(db):
+    setup={'setup_id':'NEW','symbol':'SPY'}
+    ledger.record_trigger(setup,'ENTRY_READY',{},NOW)
+    assert not ledger.record_entry(setup,{},NOW)
+    ledger.record_trigger(dict(setup,setup_id='LEGACY'),'ENTRY_READY',{},NOW)
+    card=ledger.scorecard()
+    assert card['entry_ready_alerts']==2 and card['fills']==0 and card['win_rate'] is None
+    assert {r['outcome'] for r in card['fill_reconciliation']}=={'BLOCKED','UNRESOLVED'}
+    assert 'no valid fills' in card['sample_status']
+
+def test_yesterdays_expected_move_cannot_be_consumed_as_today_budget():
+    current=core()
+    baseline={'generated_at':NOW.isoformat(),'evidence':{'surface':{'SPY':dict(current['surface']['SPY'],source_timestamp=(NOW-timedelta(days=1)).isoformat())}}}
+    comparison=report.market_comparison(current,baseline)
+    assert not comparison['SPY']['baseline_session_matches']
+    blocks=report.report_blocks(current,{}, {},{},ledger_empty(),{},comparison,[],NOW)
+    assert blocks['expected_move']['budget_used']['status']=='unavailable'
+    assert blocks['morning_comparison']['price_location']['value']!=blocks['morning_comparison']['stall_risk']['value']
 
 
 def test_study_frozen_forward_window_rejects_gap_and_no_option_pnl_claim():

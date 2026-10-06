@@ -16,6 +16,7 @@ RULES=('One simulated structure per qualified ENTRY_READY setup/date. Enter at f
 
 def ensure_tables():
     with engine.begin() as c:
+        c.execute(text('CREATE TABLE IF NOT EXISTS sw_report_fill_attempts (event_key TEXT PRIMARY KEY, observed_at TIMESTAMP NOT NULL, outcome TEXT NOT NULL, reason TEXT NOT NULL)'))
         c.execute(text('''CREATE TABLE IF NOT EXISTS sw_report_trigger_events (
           event_key TEXT PRIMARY KEY, observed_at TIMESTAMP NOT NULL,
           setup_id TEXT NOT NULL, state TEXT NOT NULL, payload_json TEXT NOT NULL)'''))
@@ -71,16 +72,25 @@ def qualify_package(selection,now):
         if executable_size is not None and executable_size<=0:return None
     return dict(selection,payoff=package_payoff(selection),qualification='Fresh per-leg BBO; conditional advisory package, not a submitted order')
 
+def record_fill_attempt(setup,now,outcome,reason):
+    ensure_tables()
+    key=f"{now.astimezone(ET).date()}:{setup['setup_id']}"
+    with engine.begin() as c:
+        c.execute(text('INSERT INTO sw_report_fill_attempts (event_key,observed_at,outcome,reason) VALUES (:key,:now,:outcome,:reason) ON CONFLICT(event_key) DO UPDATE SET observed_at=excluded.observed_at,outcome=excluded.outcome,reason=excluded.reason'),{'key':key,'now':now.replace(tzinfo=None),'outcome':outcome,'reason':reason})
+
 def record_entry(setup,selection,now):
+    def blocked(reason):
+        record_fill_attempt(setup,now,'BLOCKED',reason);return False
     package=qualify_package(selection,now)
-    if not package:return False
+    if not package:return blocked('No qualified fresh per-leg BBO: missing selection, stale/crossed quote, blocked liquidity or invalid executable side')
     # Calendars require an IV/time-dependent liquidation model; defer rather than force vertical exits.
-    if package.get('strategy') in ('calendar','double_calendar'):return False
+    if package.get('strategy') in ('calendar','double_calendar'):return blocked('Calendar has no configured IV/time-dependent paper liquidation model')
     credit=number(package.get('natural_credit'));debit=number(package.get('natural_debit'))
-    if credit is None and debit is None:return False
+    if credit is None and debit is None:return blocked('Qualified package has no recorded executable natural debit/credit')
     n=len(package['legs']);entry=(credit if credit is not None else -debit)-.02*n
     risk=number(package.get('max_risk'))
-    if risk is None or risk<=0:return False
+    if risk is None:risk=number((package.get('payoff') or {}).get('max_risk'))
+    if risk is None or risk<=0:return blocked('No positive bounded maximum risk from the qualified package payoff')
     event=f"{now.astimezone(ET).date()}:{setup['setup_id']}"
     payload={'package':package,'entry_cash_per_share':entry,'entry_fees':.65*n,
              'quantity':1,'max_risk':risk+.02*n*100+.65*n*2,
@@ -93,6 +103,7 @@ def record_entry(setup,selection,now):
         result=c.execute(text(f'''INSERT INTO {TABLE} (event_key,setup_id,symbol,entered_at,state,payload_json)
            VALUES (:event,:setup,:symbol,:now,'OPEN',:payload) ON CONFLICT(event_key) DO NOTHING'''),
            {'event':event,'setup':setup['setup_id'],'symbol':setup['symbol'],'now':now.replace(tzinfo=None),'payload':json.dumps(payload)})
+    record_fill_attempt(setup,now,'FILLED' if result.rowcount>0 else 'ALREADY_FILLED','Modeled fresh natural BBO with configured adverse slippage and fees; no live execution')
     return result.rowcount>0
 
 def liquidation_value(package,quotes,now):
@@ -149,6 +160,7 @@ def scorecard():
     with engine.begin() as c:
         rows=c.execute(text(f'SELECT event_key,setup_id,symbol,entered_at,exited_at,state,payload_json FROM {TABLE} ORDER BY entered_at')).fetchall()
         events=c.execute(text('SELECT event_key,state,observed_at,payload_json FROM sw_report_trigger_events ORDER BY observed_at')).fetchall()
+        attempts={r[0]:{'updated_at':_parse_ts(r[1]).isoformat(),'outcome':r[2],'reason':r[3]} for r in c.execute(text('SELECT event_key,observed_at,outcome,reason FROM sw_report_fill_attempts')).fetchall()}
     trades=[]
     for event,setup,symbol,entered,exited,state,raw in rows:
         trades.append(dict(json.loads(raw),event_key=event,setup_id=setup,symbol=symbol,
@@ -165,7 +177,14 @@ def scorecard():
         elif run:clusters.append(run);run=[]
     if run:clusters.append(run)
     trigger_events=[dict(json.loads(raw),event_key=key,state=state,observed_at=_parse_ts(observed).isoformat()) for key,state,observed,raw in events]
-    return {'entry_ready_alerts':sum(e['state']=='ENTRY_READY' for e in trigger_events),'trigger_events':trigger_events,
+    reconciliation=[]
+    trade_keys={t['event_key'] for t in trades}
+    for e in trigger_events:
+        if e['state']!='ENTRY_READY':continue
+        key=e['event_key'].rsplit(':',1)[0]
+        result=attempts.get(key) or {'outcome':'FILLED' if key in trade_keys else 'UNRESOLVED','reason':'Persistent paper fill exists' if key in trade_keys else 'No contemporaneous fill outcome was recorded; cannot reconstruct a historical fill'}
+        reconciliation.append(dict(result,event_key=key,alert_time=e['observed_at']))
+    return {'fill_reconciliation':reconciliation,'entry_ready_alerts':sum(e['state']=='ENTRY_READY' for e in trigger_events),'trigger_events':trigger_events,
       'fills':len(trades),'closed':len(closed),'wins_losses':{'wins':len(wins),'losses':len(losses)},
       'realized_pnl':round(equity,2),'cumulative_pnl':round(equity,2),'win_rate':len(wins)/len(closed) if closed else None,
       'average_win_loss':{'win':sum(wins)/len(wins) if wins else None,'loss':sum(losses)/len(losses) if losses else None},
@@ -173,4 +192,4 @@ def scorecard():
       'slippage_costs':{'adverse_per_leg_per_side':.02,'fee_per_contract_per_leg_per_side':.65},
       'exceptions':[{'event_key':t['event_key'],'reason':t['exception']} for t in trades if t.get('exception')],
       'trade_details':trades,'loss_clusters':[r for r in clusters if len(r)>=2],
-      'sample_status':'No qualifying alerts recorded yet' if not trades else 'Forward paper observations; no historical fill reconstruction'}
+      'sample_status':('No ENTRY_READY alerts recorded; zero fills are expected' if not reconciliation else 'ENTRY_READY alerts exist but no valid fills; see fill reconciliation') if not trades else 'Forward paper observations; no historical fill reconstruction'}
