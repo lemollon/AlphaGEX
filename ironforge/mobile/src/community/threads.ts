@@ -1,5 +1,5 @@
 import type { CommunityFeedV2, CommunityMessageV2, ThreadReplies } from '@/api/types'
-import { FLAME } from './reactions'
+import { FLAME, HEART } from './reactions'
 
 /**
  * Thread state helpers (APP-055 / APP-031 reply part).
@@ -71,33 +71,41 @@ export function bumpReplyCount(
 }
 
 /**
- * Toggle the flame on one reply inside an open thread.
+ * Toggle one reaction emoji on one reply inside an open thread.
  *
- * Same rules as applyFlame() in reactions.ts (never negative, drop a zero-count
+ * Same rules as applyReaction() in reactions.ts (never negative, drop a zero-count
  * entry rather than leaving a stale one), scoped to a thread's replies array
- * instead of a feed's messages — the two lists never share a cache key, so the
- * feed's flame toggle can't reach a reply and this can't reach the feed. Prevents
- * a duplicate flame the same way applyFlame does: toggling is idempotent per tap,
- * so two rapid taps on an already-mine flame both apply the SAME removal, they
- * don't stack a second entry.
+ * instead of a feed's messages — the two lists never share a cache key, so a
+ * reply's reaction toggle can't reach the parent feed and vice versa.
  */
-export function applyFlameToReply(
+function applyReplyReaction(
   cur: ThreadReplies | undefined,
   id: string,
+  emoji: string,
 ): ThreadReplies | undefined {
   if (!cur) return cur
   return {
     ...cur,
     replies: cur.replies.map((r) => {
       if (r.id !== id) return r
-      const rest = (r.reactions ?? []).filter((x) => x.emoji !== FLAME)
-      const flame = (r.reactions ?? []).find((x) => x.emoji === FLAME)
-      const mine = !(flame?.mine ?? false)
-      const count = Math.max(0, (flame?.count ?? 0) + (mine ? 1 : -1))
+      const rest = (r.reactions ?? []).filter((x) => x.emoji !== emoji)
+      const current = (r.reactions ?? []).find((x) => x.emoji === emoji)
+      const mine = !(current?.mine ?? false)
+      const count = Math.max(0, (current?.count ?? 0) + (mine ? 1 : -1))
       return {
         ...r,
-        reactions: count > 0 || mine ? [...rest, { emoji: FLAME, count, mine }] : rest,
+        reactions: count > 0 || mine ? [...rest, { emoji, count, mine }] : rest,
       }
     }),
   }
+}
+
+/** Toggle the heart on a reply — the only reaction any UI sends going forward. */
+export function applyHeartToReply(cur: ThreadReplies | undefined, id: string): ThreadReplies | undefined {
+  return applyReplyReaction(cur, id, HEART)
+}
+
+/** Kept for the pre-10.4 call sites/tests — no screen sends a new 🔥 anymore. */
+export function applyFlameToReply(cur: ThreadReplies | undefined, id: string): ThreadReplies | undefined {
+  return applyReplyReaction(cur, id, FLAME)
 }

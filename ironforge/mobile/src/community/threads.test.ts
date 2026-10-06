@@ -2,11 +2,12 @@ import { describe, it, expect } from 'vitest'
 import {
   appendOptimisticReply,
   applyFlameToReply,
+  applyHeartToReply,
   bumpReplyCount,
   reconcileReply,
   removeReply,
 } from '@/community/threads'
-import { FLAME } from '@/community/reactions'
+import { FLAME, HEART } from '@/community/reactions'
 import type { CommunityFeedV2, CommunityMessageV2, ThreadReplies } from '@/api/types'
 
 function reply(over: Partial<CommunityMessageV2> = {}): CommunityMessageV2 {
@@ -154,5 +155,22 @@ describe('applyFlameToReply — duplicate flame prevented', () => {
 
   it('is a no-op on an undefined thread', () => {
     expect(applyFlameToReply(undefined, 'r1')).toBeUndefined()
+  })
+})
+
+describe('applyHeartToReply — the 10.4 redesign reaction', () => {
+  it('adds my heart from nothing, independent of any legacy flame', () => {
+    const out = applyHeartToReply(
+      thread(reply({ id: 'r1', reactions: [{ emoji: FLAME, count: 3, mine: false }] })),
+      'r1',
+    )
+    expect(out!.replies[0].reactions).toContainEqual({ emoji: HEART, count: 1, mine: true })
+    expect(out!.replies[0].reactions).toContainEqual({ emoji: FLAME, count: 3, mine: false })
+  })
+
+  it('a second tap removes it rather than stacking a second heart', () => {
+    const once = applyHeartToReply(thread(reply({ id: 'r1' })), 'r1')
+    const twice = applyHeartToReply(once, 'r1')
+    expect(twice!.replies[0].reactions!.find((x) => x.emoji === HEART)).toBeUndefined()
   })
 })

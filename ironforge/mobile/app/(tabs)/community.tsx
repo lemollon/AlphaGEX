@@ -13,6 +13,9 @@ import {
   ActivityIndicator,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import Svg, { Path } from 'react-native-svg'
+// Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
+import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR from 'swr'
 import { api, ApiError } from '@/api/client'
 import type {
@@ -27,11 +30,11 @@ import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Card, Loading, Empty, ErrorState } from '@/components/ui'
 import { AppHeader, Mascot, SPARKY_AVATAR } from '@/components/Brand'
-import { applyFlame, FLAME } from '@/community/reactions'
+import { applyHeart, FLAME, HEART } from '@/community/reactions'
 import { initials, channelAccent, bubbleTint } from '@/community/identity'
 import {
   appendOptimisticReply,
-  applyFlameToReply,
+  applyHeartToReply,
   bumpReplyCount,
   reconcileReply,
   removeReply,
@@ -201,18 +204,18 @@ export default function CommunityScreen() {
   }
 
   /**
-   * Toggle the flame (APP-055). Optimistic, then reconciled against the server.
-   *
-   * 🔥 not ❤️ on purpose: APP-055 says "one flame reaction per post", and the server's
-   * ALLOWED_EMOJI is 👍🔥💯😂🎯🙌 — it has no heart to send. The mockup's red heart is
-   * the outlier, and the client cannot invent an emoji the endpoint rejects.
+   * Toggle the heart (APP-055, 10.4 redesign — every design screenshot's reaction
+   * icon is a heart). Optimistic, then reconciled against the server. The server's
+   * ALLOWED_EMOJI now includes ❤️ specifically for this; a post's pre-existing 🔥
+   * rows (from before this change) still render via ReactionRow below, just as a
+   * read-only legacy count — this is the only reaction any UI here still SENDS.
    */
-  async function toggleFlame(id: string) {
-    await mutate((cur) => applyFlame(cur, id), { revalidate: false })
+  async function toggleHeart(id: string) {
+    await mutate((cur) => applyHeart(cur, id), { revalidate: false })
     try {
       await api('/api/community/reactions', {
         method: 'POST',
-        body: { message_id: id, emoji: FLAME },
+        body: { message_id: id, emoji: HEART },
       })
     } catch (e) {
       Alert.alert('Could not react', (e as Error).message)
@@ -345,7 +348,7 @@ export default function CommunityScreen() {
                     {m.message}
                   </Text>
                   <View style={s.rowCenter}>
-                    <FlameRow message={m} onPress={() => void toggleFlame(m.id)} />
+                    <ReactionRow message={m} onPress={() => void toggleHeart(m.id)} />
                     <Pressable
                       onPress={() => setThreadFor(m)}
                       hitSlop={8}
@@ -353,10 +356,11 @@ export default function CommunityScreen() {
                       accessibilityLabel={
                         (m.reply_count ?? 0) > 0 ? `${m.reply_count} replies` : 'Reply'
                       }
-                      style={s.replyBtn}
+                      style={[s.replyBtn, s.reactBtn]}
                     >
+                      <Ionicons name="chatbubble-outline" size={16} color={color.textDim} />
                       <Text style={[type.label, { color: color.textDim, fontFamily: font.bodyMedium }]}>
-                        {(m.reply_count ?? 0) > 0 ? `💬 ${m.reply_count}` : 'Reply'}
+                        {(m.reply_count ?? 0) > 0 ? m.reply_count : 'Reply'}
                       </Text>
                     </Pressable>
                   </View>
@@ -698,10 +702,10 @@ function ThreadSheet({
     }
   }
 
-  async function toggleReplyFlame(id: string) {
-    await mutate((cur) => applyFlameToReply(cur, id), { revalidate: false })
+  async function toggleReplyHeart(id: string) {
+    await mutate((cur) => applyHeartToReply(cur, id), { revalidate: false })
     try {
-      await api('/api/community/reactions', { method: 'POST', body: { message_id: id, emoji: FLAME } })
+      await api('/api/community/reactions', { method: 'POST', body: { message_id: id, emoji: HEART } })
     } catch (e) {
       Alert.alert('Could not react', (e as Error).message)
     } finally {
@@ -771,7 +775,7 @@ function ThreadSheet({
                   <Text style={[type.body, { color: color.textDim, marginTop: space.xs, fontSize: 14 }]}>
                     {r.message}
                   </Text>
-                  <FlameRow message={r} onPress={() => void toggleReplyFlame(r.id)} />
+                  <ReactionRow message={r} onPress={() => void toggleReplyHeart(r.id)} />
                 </View>
               </View>
             ))
@@ -819,12 +823,16 @@ function Avatar({ message }: { message: CommunityMessage }) {
   const { colors: color, scheme } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   if (message.sender_type !== 'USER') {
-    // Sparky answers in threads, Forge posts market updates — different faces.
+    // Sparky answers in threads, Forge posts market updates — different faces. Forge
+    // posts previously fell back to Flame's mascot, which wrongly implied Flame
+    // specifically authored a generic platform update (fidelity audit "AI-generated
+    // post avatar" — design shows a neutral black square + forge glyph, `cav('forge')`,
+    // never an agent's own face).
     const isSparky = message.sender_name.toLowerCase().includes('sparky')
     return isSparky ? (
       <Image source={SPARKY_AVATAR} style={s.avatarImg} resizeMode="contain" />
     ) : (
-      <Mascot bot="flame" size={40} />
+      <ForgeAvatar />
     )
   }
   return (
@@ -832,6 +840,36 @@ function Avatar({ message }: { message: CommunityMessage }) {
       <Text style={[type.label, { color: color.text, fontFamily: font.bodyBold }]}>
         {initials(message.sender_name)}
       </Text>
+    </View>
+  )
+}
+
+/**
+ * The generic "Forge" (platform/AI) post avatar — a near-black square with the forge
+ * shield glyph in the brand accent (design `.cav.forge`, `--av` background), always
+ * this fixed look regardless of light/dark theme, same as the design's own `--av` token.
+ */
+function ForgeAvatar() {
+  const { colors: color } = useTheme()
+  return (
+    <View style={{ width: 40, height: 40, borderRadius: 11, backgroundColor: '#0B0B0F', alignItems: 'center', justifyContent: 'center' }}>
+      <Svg width={22} height={22} viewBox="0 0 24 24">
+        <Path
+          d="M12 3l7.5 3v5.5c0 4.6-3.1 8.3-7.5 9.5-4.4-1.2-7.5-4.9-7.5-9.5V6L12 3z"
+          stroke={color.accent}
+          strokeWidth={1.8}
+          strokeLinejoin="round"
+          fill="none"
+        />
+        <Path
+          d="M8 14l2.5-2.5 2 2L16 10"
+          stroke={color.accent}
+          strokeWidth={1.8}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+        />
+      </Svg>
     </View>
   )
 }
@@ -855,22 +893,29 @@ function CategoryChip({ message }: { message: CommunityMessage }) {
   )
 }
 
-function FlameRow({ message, onPress }: { message: CommunityMessage; onPress: () => void }) {
+/**
+ * The reaction row (10.4 design: a heart icon + count). Also renders any legacy 🔥
+ * count this message already carries from before the redesign — read-only, never a
+ * second tappable control — so a reaction placed under the old UI keeps displaying
+ * rather than silently vanishing once nobody can add to it anymore.
+ */
+function ReactionRow({ message, onPress }: { message: CommunityMessage; onPress: () => void }) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
-  const flame = (message.reactions ?? []).find((r) => r.emoji === FLAME)
-  const count = flame?.count ?? 0
-  const mine = flame?.mine ?? false
+  const heart = (message.reactions ?? []).find((r) => r.emoji === HEART)
+  const count = heart?.count ?? 0
+  const mine = heart?.mine ?? false
+  const legacyFlame = (message.reactions ?? []).find((r) => r.emoji === FLAME)
   return (
     <View style={s.reactRow}>
       <Pressable
         onPress={onPress}
         hitSlop={8}
         accessibilityRole="button"
-        accessibilityLabel={mine ? 'Remove your flame' : 'Add a flame'}
+        accessibilityLabel={mine ? 'Remove your heart' : 'Add a heart'}
         style={s.reactBtn}
       >
-        <Text style={{ fontSize: 15, opacity: mine ? 1 : 0.45 }}>{FLAME}</Text>
+        <Text style={{ fontSize: 15, opacity: mine ? 1 : 0.45 }}>{HEART}</Text>
         <Text
           style={[
             type.label,
@@ -880,6 +925,12 @@ function FlameRow({ message, onPress }: { message: CommunityMessage; onPress: ()
           {count}
         </Text>
       </Pressable>
+      {legacyFlame && legacyFlame.count > 0 ? (
+        <View style={[s.reactBtn, { opacity: 0.6 }]} accessibilityLabel={`${legacyFlame.count} legacy flame reactions`}>
+          <Text style={{ fontSize: 13 }}>{FLAME}</Text>
+          <Text style={[type.label, { color: color.muted }]}>{legacyFlame.count}</Text>
+        </View>
+      ) : null}
     </View>
   )
 }
@@ -959,7 +1010,7 @@ const makeStyles = (color: ColorTokens) =>
     paddingBottom: space.xl,
   },
   sheetRow: { paddingVertical: space.md },
-  reactRow: { flexDirection: 'row', alignItems: 'center', marginTop: space.md },
+  reactRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, marginTop: space.md },
   reactBtn: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   replyBtn: { marginTop: space.md, marginLeft: space.md, paddingVertical: space.xs },
   chipScroll: { marginVertical: space.lg },

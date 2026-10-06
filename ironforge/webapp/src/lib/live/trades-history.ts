@@ -567,6 +567,10 @@ export interface TradeDetail {
   exit_reason_code: ExitReasonCode | null
   exit_reason_text: string | null
   monitoring_message: string | null
+  /** This trade's own minute-bucketed P&L history from `{bot}_position_snapshots`
+   *  (the mobile trade sheet's sparkline) — null when no snapshot rows exist for
+   *  this position_id (an older trade predating that table, for example). */
+  series: Array<{ timestamp: string; pnl: number }> | null
 }
 
 export interface TradeDetailResponse {
@@ -709,6 +713,32 @@ export async function getCustomerTradeDetail(
 
     const exit = classifyExitReason(r.close_reason)
 
+    // This trade's own P&L history (mobile trade sheet's sparkline) — the SAME
+    // position_snapshots table the live summary reads for an open position's mini
+    // chart (summary.ts), just without the "today only" restriction: a closed trade
+    // can be from any past date. Non-fatal on failure (an older row/table state) —
+    // the sheet renders with no chart rather than taking the whole trade down.
+    let series: Array<{ timestamp: string; pnl: number }> | null = null
+    try {
+      const snapRows = await dbQuery<{ bucket: unknown; pnl: unknown }>(
+        `SELECT date_trunc('minute', snapshot_time) AS bucket,
+                AVG(unrealized_pnl) AS pnl
+           FROM ${botTable(bot, 'position_snapshots')}
+          WHERE position_id = $1 AND unrealized_pnl IS NOT NULL
+          GROUP BY bucket
+          ORDER BY bucket ASC`,
+        [id],
+      )
+      if (snapRows.length > 0) {
+        series = snapRows.map((sr) => ({
+          timestamp: String(sr.bucket),
+          pnl: Math.round(num(sr.pnl) * 100) / 100,
+        }))
+      }
+    } catch {
+      // Table created on first use — a trade from before it existed simply has none.
+    }
+
     return {
       trade,
       detail: {
@@ -725,6 +755,7 @@ export async function getCustomerTradeDetail(
         // position state machine (state.ts), not a column on this closed
         // row, so there is nothing here to source it from.
         monitoring_message: null,
+        series,
       },
     }
   }

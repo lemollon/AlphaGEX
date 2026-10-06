@@ -416,6 +416,27 @@ export async function hasUsablePaymentMethod(customerId: string): Promise<boolea
 }
 
 /**
+ * The customer's most recent card on file, as a DISPLAY-ONLY masked summary — brand
+ * and last4, nothing else. Never the full number (Stripe never returns it over the API
+ * either). Used by the Account tab's "Payment method" row (fidelity audit) — read-only,
+ * no mutation, same gated-degradation pattern as hasUsablePaymentMethod above.
+ */
+export async function getDefaultPaymentMethod(
+  customerId: string,
+): Promise<{ brand: string; last4: string } | null> {
+  try {
+    const res = await stripeRequest<
+      StripeList<{ card?: { brand?: string; last4?: string } }>
+    >('GET', '/payment_methods', { customer: customerId, type: 'card', limit: 1 })
+    const card = res.data?.[0]?.card
+    if (!card?.last4) return null
+    return { brand: card.brand ?? 'card', last4: card.last4 }
+  } catch {
+    return null
+  }
+}
+
+/**
  * Create the subscription in `trialing`, with the trial end far out.
  *
  * The far date is a HOLD, not the real trial length: our ledger decides when five

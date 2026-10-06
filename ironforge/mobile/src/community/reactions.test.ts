@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { applyFlame, FLAME } from '@/community/reactions'
+import { applyFlame, applyHeart, FLAME, HEART } from '@/community/reactions'
 import type { CommunityFeed, CommunityMessage } from '@/api/types'
 
 function msg(over: Partial<CommunityMessage> = {}): CommunityMessage {
@@ -74,7 +74,35 @@ describe('applyFlame', () => {
     expect(flameOn(out)).toBeUndefined()
   })
 
-  it('sends the flame, never a heart — the server would reject one', () => {
+  it('is kept for legacy 🔥 rows — no screen sends a new flame reaction anymore', () => {
     expect(FLAME).toBe('🔥')
+  })
+})
+
+const heartOn = (f: CommunityFeed | undefined, id = 'm1') =>
+  f?.messages.find((m) => m.id === id)?.reactions.find((r) => r.emoji === HEART)
+
+describe('applyHeart — the 10.4 redesign reaction (server ALLOWED_EMOJI now includes ❤️)', () => {
+  it('adds my heart from nothing', () => {
+    const r = heartOn(applyHeart(feed(msg()), 'm1'))
+    expect(r).toEqual({ emoji: HEART, count: 1, mine: true })
+  })
+
+  it('round-trips: two taps return to the original state', () => {
+    const start = feed(msg({ reactions: [{ emoji: HEART, count: 4, mine: false }] }))
+    const twice = applyHeart(applyHeart(start, 'm1'), 'm1')
+    expect(heartOn(twice)).toEqual({ emoji: HEART, count: 4, mine: false })
+  })
+
+  it('never below zero', () => {
+    const r = heartOn(applyHeart(feed(msg({ reactions: [{ emoji: HEART, count: 0, mine: true }] })), 'm1'))
+    expect(r).toBeUndefined()
+  })
+
+  it('toggling the heart leaves an existing legacy flame reaction untouched', () => {
+    const start = feed(msg({ reactions: [{ emoji: FLAME, count: 6, mine: false }] }))
+    const out = applyHeart(start, 'm1')
+    expect(out!.messages[0].reactions).toContainEqual({ emoji: FLAME, count: 6, mine: false })
+    expect(heartOn(out)).toEqual({ emoji: HEART, count: 1, mine: true })
   })
 })

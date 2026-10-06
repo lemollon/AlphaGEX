@@ -22,6 +22,14 @@ import { space, radius, type, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 
+/** 10.4 design `sugg` chips — exact copy, shown only on the empty state. */
+const SUGGESTIONS = [
+  'How am I doing this week?',
+  'What happens if I pause?',
+  'When do my agents trade?',
+  'How do I cancel?',
+] as const
+
 /**
  * Ask Sparky — APP-032.
  *
@@ -43,39 +51,42 @@ export default function SparkyScreen() {
   const [error, setError] = useState<string | null>(null)
   const scroller = useRef<ScrollView>(null)
 
-  const send = useCallback(async () => {
-    const text = draft.trim()
-    if (!text || streaming) return
+  const send = useCallback(
+    async (overrideText?: string) => {
+      const text = (overrideText ?? draft).trim()
+      if (!text || streaming) return
 
-    const next: SparkyTurn[] = [...turns, { role: 'user', content: text }]
-    setTurns([...next, { role: 'assistant', content: '' }])
-    setDraft('')
-    setError(null)
-    setStreaming(true)
+      const next: SparkyTurn[] = [...turns, { role: 'user', content: text }]
+      setTurns([...next, { role: 'assistant', content: '' }])
+      setDraft('')
+      setError(null)
+      setStreaming(true)
 
-    try {
-      await streamSparky(next, (delta) => {
-        // Append to the trailing assistant turn as chunks land.
-        setTurns((prev) => {
-          const copy = [...prev]
-          const last = copy[copy.length - 1]
-          if (last?.role === 'assistant') copy[copy.length - 1] = { ...last, content: last.content + delta }
-          return copy
+      try {
+        await streamSparky(next, (delta) => {
+          // Append to the trailing assistant turn as chunks land.
+          setTurns((prev) => {
+            const copy = [...prev]
+            const last = copy[copy.length - 1]
+            if (last?.role === 'assistant') copy[copy.length - 1] = { ...last, content: last.content + delta }
+            return copy
+          })
         })
-      })
-    } catch (e) {
-      const msg =
-        e instanceof SparkyUnavailableError ? e.message : (e as Error).message || 'Something went wrong.'
-      setError(msg)
-      // Drop the empty assistant bubble rather than leaving a blank message behind.
-      setTurns((prev) => {
-        const last = prev[prev.length - 1]
-        return last?.role === 'assistant' && !last.content ? prev.slice(0, -1) : prev
-      })
-    } finally {
-      setStreaming(false)
-    }
-  }, [draft, streaming, turns])
+      } catch (e) {
+        const msg =
+          e instanceof SparkyUnavailableError ? e.message : (e as Error).message || 'Something went wrong.'
+        setError(msg)
+        // Drop the empty assistant bubble rather than leaving a blank message behind.
+        setTurns((prev) => {
+          const last = prev[prev.length - 1]
+          return last?.role === 'assistant' && !last.content ? prev.slice(0, -1) : prev
+        })
+      } finally {
+        setStreaming(false)
+      }
+    },
+    [draft, streaming, turns],
+  )
 
   return (
     <>
@@ -122,6 +133,21 @@ export default function SparkyScreen() {
                       Ask about your membership, your brokerage connection, or what your agent is doing
                       right now.
                     </Text>
+                    {/* Zero-effort canned prompts (10.4 design `.sugg`) — exact copy from
+                        the prototype's suggestion chips. */}
+                    <View style={s.sugg}>
+                      {SUGGESTIONS.map((q) => (
+                        <Pressable
+                          key={q}
+                          onPress={() => void send(q)}
+                          disabled={streaming}
+                          accessibilityRole="button"
+                          style={s.suggChip}
+                        >
+                          <Text style={[type.label, { color: color.text, fontFamily: font.bodyMedium }]}>{q}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
                   </View>
                 ) : (
                   turns.map((t, i) => <Bubble key={i} turn={t} streaming={streaming && i === turns.length - 1} />)
@@ -150,7 +176,7 @@ export default function SparkyScreen() {
                   editable={!streaming}
                 />
                 <Pressable
-                  onPress={send}
+                  onPress={() => void send()}
                   disabled={streaming || !draft.trim()}
                   accessibilityRole="button"
                   accessibilityLabel="Send"
@@ -217,6 +243,21 @@ const makeStyles = (color: ColorTokens) =>
     marginBottom: space.lg,
   },
   empty: { alignItems: 'center', paddingVertical: space.xxl, paddingHorizontal: space.lg },
+  sugg: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.sm,
+    justifyContent: 'center',
+    marginTop: space.lg,
+  },
+  suggChip: {
+    borderWidth: 1,
+    borderColor: color.border,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    backgroundColor: color.card,
+  },
   bubble: {
     borderRadius: radius.lg,
     padding: space.md,
