@@ -127,7 +127,12 @@ export function PnlChart({
     return (
       <View style={s.wrap}>
         <Header status={status} current={current} accent={accent} />
-        <View style={[s.plot, s.emptyPlot]}>
+        <View
+          style={[s.plot, s.emptyPlot]}
+          accessible
+          accessibilityRole="image"
+          accessibilityLabel={`${status} P&L chart. Waiting for the first few minutes of this trade.`}
+        >
           <Text style={[type.label, { color: color.muted }]}>
             Waiting for the first few minutes of this trade.
           </Text>
@@ -142,6 +147,14 @@ export function PnlChart({
   const zeroY = timeGeom ? timeGeom.y(0) : indexGeom!.zeroY
   const touchX = touch != null ? px(touch) : 0
 
+  // Coordinator follow-up: every chart needs an accessibilityLabel stating the
+  // period total — a VoiceOver/TalkBack user cannot drag a finger across an SVG
+  // to scrub it, so the chart needs to simply SAY the number instead. "Period
+  // total" here is the same `current` value Header already renders.
+  const accessibilityLabel = `${status} P&L chart. ${
+    current != null ? `Currently ${formatPnl(current)}.` : 'No current value yet.'
+  }`
+
   return (
     <View style={s.wrap}>
       <Header status={status} current={current} accent={accent} />
@@ -149,6 +162,9 @@ export function PnlChart({
       <View
         style={s.plot}
         onLayout={onLayout}
+        accessible
+        accessibilityRole="image"
+        accessibilityLabel={accessibilityLabel}
         onStartShouldSetResponder={() => true}
         onMoveShouldSetResponder={() => true}
         onResponderGrant={(e) => showTouch(e.nativeEvent.locationX)}
