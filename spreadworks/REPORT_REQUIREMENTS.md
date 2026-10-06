@@ -104,7 +104,7 @@ python -m pytest spreadworks/tests/test_report_policy.py \
   spreadworks/tests/test_full_options_report.py \
   spreadworks/tests/test_report_evidence_integrity.py \
   spreadworks/tests/test_morning_options_report.py \
-  spreadworks/tests/test_market_structure.py -q
+  spreadworks/tests/test_market_structure.py spreadworks/tests/test_report_refresh.py spreadworks/tests/test_tradier_report_source.py spreadworks/tests/test_intraday_watch.py -q
 ```
 
 The independent strict report-policy CI job must pass without `|| true`.
@@ -139,3 +139,5 @@ retroactively filled. No completed trades means undefined win rate/average P&L.
 Holding periods count completed close-to-close trading sessions: 10 is roughly
 two trading weeks, 20 roughly a month. Any performance comparison must use the
 same verified cohort and fill/cost methodology; it is not forward assurance.
+
+Stored UTC database clocks must regain their explicit UTC offset on reads; restoring timezone identity must never reset the original observation time or age. The strict CI job includes the refresh, source and scanner regression suites.
