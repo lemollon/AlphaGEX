@@ -15,8 +15,9 @@ from zoneinfo import ZoneInfo
 
 UTC = timezone.utc
 CT = ZoneInfo("America/Chicago")
-POLICY_VERSION = "2026-10-05.2"
+POLICY_VERSION = "2026-10-05.3"
 PRESENTATION = ("Today’s mission", "30-second scoreboard", "Today vs forward")
+HOLDING_PERIODS = {10: "Approximately two trading weeks", 20: "Approximately one trading month"}
 RULES = ("Tradier-only report market data; reject legacy ThetaData records","fresh BBO <=90s", "retain frozen morning expected move", "no 0DTE forward inference",
          "no model prose in canonical delivery", "no implicit mock data", "no broker orders")
 
@@ -71,7 +72,7 @@ def normalize_item(item, now):
     item["age_seconds"] = round((now-clock).total_seconds(), 1)
     if item["status"] == "live" and item["age_seconds"] > 90:
         item["status"] = "historical"
-        item["reason"] = "Source aged before publication; retained as historical context"
+        item["reason"] = "LAST KNOWN: original source update retained; contextual only, not an executable live quote"
     # Nested observations keep their own clocks (macro/futures, for example).
     def nested(value):
         if isinstance(value, dict):
@@ -125,6 +126,7 @@ def add_integrity(blocks, payload, now=None):
     values={"contract":policy_identity(),"source_clocks":source_rows,"coverage":payload.get("collector_coverage") or {},
         "historical_fields":historical,"unavailable_fields":unavailable,
         "producer_failures":payload.get("producer_failures") or {},
+        "refresh_attempts":payload.get("refresh_attempts") or [],
         "model_prose_policy":"Canonical report is rendered from validated observations; model prose is diagnostic only.",
         "execution_scope":"Advisory and report paper simulations only; no broker orders. Empty samples have no win rate.",
         "format":{"sections":"Versioned full contract","opening":PRESENTATION,"theme":"dark",
@@ -180,6 +182,11 @@ def build_strategy_blocks(blocks, core, plan, runtime, paper, morning, prior, no
         # Never turn a freshly computed summary into freshly observed market data.
         clock=min(stamps) if stamps else None
         thesis=pressure or (blocks["risk_on_defensive"]["verdict"].get("value") if not forward else None)
+        if forward and not pressure and points:
+            thesis={'direction':'INCONCLUSIVE: no verified directional trade-time flow',
+                'volatility_context':{s:{'median_iv':sorted(float(p['iv']) for p in rows)[len(rows)//2],
+                    'expiries':sorted({p['expiration'] for p in rows})} for s,rows in points.items()},
+                'meaning':'Observed expiry-specific option pricing supplies forward risk context. It does not prove bullish or defensive positioning.'}
         matched=[]
         if packages.get("status")=="live":
             for package in packages.get("value") or []:
@@ -230,7 +237,12 @@ def display(item):
     if item.get("status")=="unavailable":
         return "UNAVAILABLE — "+str(item.get("reason") or "No verified observation")+("; unverified estimate: "+json.dumps(value,ensure_ascii=False,default=str) if value is not None else "")
     text=json.dumps(value,ensure_ascii=False,default=str) if isinstance(value,(dict,list)) else str(value)
-    return text+" ["+item["status"].upper()+"; "+str(item.get("source_timestamp"))+"; age "+str(item.get("age_seconds"))+"s]"
+    stamp=parse_clock(item.get('source_timestamp'))
+    clock=stamp.astimezone(CT).strftime('%Y-%m-%d %I:%M:%S %p CT') if stamp else str(item.get('source_timestamp'))
+    age=float(item.get('age_seconds') or 0)
+    age_text=f'{age:.0f}s' if age<120 else f'{age/60:.1f} min' if age<7200 else f'{age/3600:.1f} hours' if age<172800 else f'{age/86400:.1f} days'
+    label='LIVE NOW' if item['status']=='live' else 'LAST KNOWN — CONTEXT ONLY ('+('MEDIUM' if age<3600 else 'LOW')+' contextual reliability)'
+    return text+' ['+label+'; updated '+clock+'; age '+age_text+']'
 
 def scoreboard(blocks):
     def get(name,field):return display(blocks.get(name,{}).get(field,{}))
@@ -254,6 +266,10 @@ def render_markdown(payload):
         lines.append("### "+name.replace("_"," ").title())
         for field in fields:lines.append("- **"+field+"**: "+display(blocks[name][field]))
     for name,url in (payload.get("chart_urls") or {}).items():lines.append("!["+name.replace("_"," ").title()+"]("+url+")")
+    lines.extend(['**BOTTOM LINE**',
+        'Regime: '+display(blocks['risk_on_defensive']['verdict']),
+        'Opportunity / premium: '+display(blocks['premium_selling']['suitability']),
+        'Next test: recorded entry confirmation plus fresh per-leg BBO; dated context alone cannot activate a trade.'])
     return "\n\n".join(lines)
 
 def validate_semantics(payload,now):

@@ -108,7 +108,12 @@ def merge_symbols(rows,keys,now):
     values={};stamps=[];sources=[];missing=[]
     for symbol,row in rows.items():
         value={key:row.get(key) for key in keys}
-        ts=ms._parse_ts(row.get('source_timestamp'))
+        field_clocks=[ms._parse_ts((row.get('field_timestamps') or {}).get(key)) for key in keys]
+        field_clocks=[s for s in field_clocks if s]
+        if 'iv_minus_realized_vol' in keys or 'surface_read' in keys:
+            rv_clock=ms._parse_ts(row.get('realized_vol_source_timestamp'))
+            if rv_clock:field_clocks.append(rv_clock)
+        ts=min(field_clocks) if field_clocks else ms._parse_ts(row.get('source_timestamp'))
         if row.get('confidence')=='LOW' or not ts or all(v is None for v in value.values()) or not finite_tree(value):
             missing.append(symbol+': '+str(row.get('reason') or 'Missing '+','.join(keys)+' or valid source clock'))
             continue
@@ -128,6 +133,7 @@ def market_comparison(core,baseline):
              'frozen_expected_move':number(old.get('expected_move_dollars_1d')),
              'frozen_lower':number(old.get('expected_move_low')),'frozen_upper':number(old.get('expected_move_high')),
              'baseline_source_timestamp':old.get('source_timestamp'),
+             'baseline_session_matches':bool(ms._parse_ts(old.get('source_timestamp')) and ms._parse_ts(row.get('source_timestamp')) and ms._parse_ts(old['source_timestamp']).astimezone(CT).date()==ms._parse_ts(row['source_timestamp']).astimezone(CT).date()),
              'current_source_timestamp':row.get('source_timestamp')}
     return result
 
@@ -175,7 +181,8 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
     for field,key in {'atm_iv':'atm_iv','skew_25d':'skew_25d','term_0dte':'iv_0dte','term_1_5dte':'iv_1_5dte',
                      'term_6_20dte':'iv_6_20dte','term_21plus':'iv_21_365dte','interpretation':'surface_read'}.items():
         blocks['surface'][field]=merge_symbols(surface,[key],now)
-    blocks['surface']['iv_vs_realized']=merge_symbols(surface,['atm_iv','realized_vol_60m','iv_minus_realized_vol','realized_vol_source_timestamp'],now)
+    rv_rows={s:dict(r,**(r.get('iv_rv_comparison') or {})) if (r.get('iv_rv_comparison') or {}).get('realized_vol_60m') is not None else r for s,r in surface.items()}
+    blocks['surface']['iv_vs_realized']=merge_symbols(rv_rows,['atm_iv','realized_vol_60m','iv_minus_realized_vol','realized_vol_source_timestamp'],now)
     indices=vol.get('indices') or {}
     for field in ('vix_family',):
         vals={s:r for s,r in indices.items() if r.get('price') is not None}
@@ -194,7 +201,7 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
         vals={}
         for s,r in comparison.items():
             base=r.get('morning_spot');current=r.get('current_spot');em=number(r.get('frozen_expected_move'))
-            if base and current and em and em>0:vals[s]={'absolute_move_fraction':abs(current-base)/em,'signed_change':current-base,
+            if base and current and em and em>0 and r.get('baseline_session_matches'):vals[s]={'absolute_move_fraction':abs(current-base)/em,'signed_change':current-base,
                 'frozen_expected_move_dollars':em,'frozen_lower':r.get('frozen_lower'),'frozen_upper':r.get('frozen_upper'),
                 'reference':'Frozen first morning expected-move estimate; current IV shown separately'}
         put('expected_move',field,vals or None,source='Recorded morning baseline vs current underlying',ts=min([ms._parse_ts(r.get('source_timestamp')) for r in surface.values() if ms._parse_ts(r.get('source_timestamp'))],default=None),reason='No comparable morning baseline')
@@ -211,7 +218,7 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
             else:vals[s]={'provider_provenance':ev.get('source'),'exchange_timestamp':ts.isoformat(),'retrieval_timestamp':ev.get('retrieval_timestamp'),
                'age':(now-ts).total_seconds(),'classified_coverage':ev.get('classified_contract_fraction'),
                'unclassified_coverage':{'contracts':ev.get('unclassified_contracts'),'premium':ev.get('unclassified_premium')},'expiry_buckets':ev['buckets']}.get(field)
-        blocks['flow'][field]=observation(vals or None,'Tradier report flow; classification requires contemporaneous trade+quote evidence',min(stamps) if stamps else None,now)
+        blocks['flow'][field]=observation(vals or None,'Tradier report flow; classification requires contemporaneous trade+quote evidence',min(stamps) if stamps else None,now,reason='FLOW DATA UNAVAILABLE (Tradier live): '+ '; '.join(sorted({str(r.get('reason') or 'No verified trade-time bid/ask print evidence') for r in flow.values()})) if not vals else None)
     for field,key in {'expiries':'expiration','strikes':'strike','contracts':'contracts','premium':'premium','prints':'print_count',
                       'contemporaneous_bid_ask':'latest_print','initiation_estimate':'initiation'}.items():
         vals={s:[{key:r.get(key)} for r in (row.get('evidence') or {}).get('concentrations') or []] for s,row in flow.items()}
@@ -292,7 +299,9 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
     for field,extract in package_fields.items():
         value=[{'setup_id':p['setup_id'],'strategy':p['strategy'],'value':extract(p)} for p in packages]
         put('contract_packages',field,value or None,source='Watcher fresh per-leg chain qualification',ts=min([ms._parse_ts(l['exchange_timestamp']) for p in packages for l in p['legs']],default=None),reason='No freshly qualified conditional package; options closed or trigger/chain pending')
-    for field in REQUIREMENTS['paper_scorecard']:put('paper_scorecard',field,paper.get(field),source='Forward report-alert simulation ledger query')
+    for field in REQUIREMENTS['paper_scorecard']:
+        reason='No completed paper trades: win rate is undefined; this is not performance evidence' if field=='win_rate' and paper.get('win_rate') is None else None
+        put('paper_scorecard',field,paper.get(field),source='Forward report-alert simulation ledger query',reason=reason)
     for field in REQUIREMENTS['trigger_accountability']:
         value={'registered_triggers':setup_list,'verified_occurrence':paper['entry_ready_alerts'],
                'confirmation_sequence':paper.get('trigger_events') or [],
@@ -303,9 +312,23 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
         value=study.get(field)
         if field=='validated_statistics':value={k:study.get(k) for k in ('validated_statistics','stall_fraction','wilson_95_interval','minimum_sample','loss_clusters','reason','failures')}
         put('event_study',field,value,source='Frozen historical 1-minute event study; source provenance retained',ts=study.get('captured_at'),reason=study.get('reason'))
+    # Each comparison measures its named field, never duplicates a price delta.
+    from .report_policy import HOLDING_PERIODS, business_dates
+    holding_dates=business_dates(now.astimezone(CT).date(),21)
+    put('event_study','holding_period_context',{'periods':{str(n):{'sessions':n,'label':label,'measurement':'Close-to-close underlying return; not option P&L','illustrative_exit_date':holding_dates[n].isoformat()} for n,label in HOLDING_PERIODS.items()},'comparison_rule':'Compare 10 versus 20 sessions only within the same verified entry cohort, costs and sample; unverified performance figures are not asserted as measured returns.'},source='Trading-session horizon definition')
     for field in REQUIREMENTS['morning_comparison']:
-        put('morning_comparison',field,comparison if comparison and any(r.get('morning_timestamp') for r in comparison.values()) else None,
-            source='Persisted morning and prior-hour report baselines',ts=now,reason='First report: no earlier comparable baseline')
+        values={}
+        for symbol,row in comparison.items():
+            old=((core.get('baseline_blocks') or {}).get(field) or {}).get(symbol)
+            prior=((core.get('prior_blocks') or {}).get(field) or {}).get(symbol)
+            if field=='morning_timestamp':values[symbol]=row.get('morning_timestamp')
+            elif field=='price_location':values[symbol]={'morning_spot':row.get('morning_spot'),'now_spot':row.get('current_spot'),'change_pct':row.get('price_change_pct'),'morning_updated_at':row.get('baseline_source_timestamp'),'now_updated_at':row.get('current_source_timestamp')}
+            elif field=='move_usage':values[symbol]={'morning':old,'prior_hour':prior,'now':blocks['expected_move']['budget_used'].get('value',{}).get(symbol),'same_session_reference':row.get('baseline_session_matches')}
+            elif field=='chop_status':values[symbol]={'morning':old,'prior_hour':prior,'now':{k:blocks['range_stall'][k].get('value',{}).get(symbol) for k in ('chop_low','midpoint','chop_high','first_touch_watch')}}
+            elif field=='stall_risk':values[symbol]={'morning':old,'prior_hour':prior,'now':states.get(symbol),'confirmation':'Touch alone remains WATCH; no validated probability is inferred'}
+            elif field=='setup_status':values[symbol]={'morning':old,'prior_hour':prior,'now':[{'setup_id':r.get('setup_id'),'state':r.get('state')} for r in (runtime.get('per_symbol_state') or {}).get(symbol,[])]}
+        stamps=[ms._parse_ts(r.get('current_source_timestamp')) for r in comparison.values()];stamps=[s for s in stamps if s]
+        put('morning_comparison',field,values or None,source='Distinct persisted baseline-to-now observations',ts=min(stamps) if stamps else None,reason='First report: no earlier comparable baseline')
     for field in REQUIREMENTS['scanner']:
         value={'minute_cadence':runtime.get('poll_interval_seconds'),'heartbeat':runtime.get('worker_heartbeat'),
                'registered_setups':runtime.get('active_setup_count'),'delivery_status':{'enabled':runtime.get('discord_enabled'),'configured':runtime.get('discord_configured'),'last_alert':runtime.get('last_alert')}}.get(field)
@@ -388,18 +411,29 @@ async def assemble_report(app,*,kind='intraday',plan=None,now=None):
             read_failures[name]=type(exc).__name__
             logger.warning('[FullReport] optional read failed %s: %s',name,type(exc).__name__)
             return default
-    core=await read('core',lambda:cached_core(started),{'surface':{'SPY':{},'QQQ':{}},'gamma':{},'flow':{},'volatility':{},'cross_asset':{'assets':{}},'futures':{}},timeout=60)
-    context={name:await read(name,lambda n=name:load_evidence(n),{'reason':'Stored evidence read failed for '+name}) for name in ('breadth','macro','profile_SPY','profile_QQQ','study','candidate_surfaces')}
+    from .report_refresh import refresh_context, refresh_core
     stored_plan,runtime=await read('plan_runtime',lambda:_plan_and_runtime(started),({},{}))
     plan=plan if plan is not None else stored_plan
+    refresh_attempts=await refresh_context(started,plan)
+    core=await read('core',lambda:cached_core(datetime.now(UTC)),{'surface':{'SPY':{},'QQQ':{}},'gamma':{},'flow':{},'volatility':{},'cross_asset':{'assets':{}},'futures':{}},timeout=60)
+    context={name:await read(name,lambda n=name:load_evidence(n),{'reason':'Stored evidence read failed for '+name}) for name in ('breadth','macro','profile_SPY','profile_QQQ','study','candidate_surfaces')}
     paper=await read('paper',scorecard,{'entry_ready_alerts':None,'trade_details':[],'exceptions':[{'reason':'Paper ledger unavailable'}],
         'fill_rules':'Ledger failed; no paper performance or open risk may be inferred','loss_clusters':[]})
     morning,prior=await read('baselines',lambda:previous_reports(started),({},{}))
     days,events=await read('calendar',lambda:scheduled_events(started),([],[]))
+    core,core_attempts=await refresh_core(core)
+    refresh_attempts.extend(core_attempts)
     now=datetime.now(UTC)
     comparison=market_comparison(core,morning)
     prior_comparison=market_comparison(core,prior)
-    core.update(comparison=comparison,prior_comparison=prior_comparison)
+    def comparable(baseline):
+        b=baseline.get('report_blocks') or {};result={}
+        for field,section,key in [('move_usage','expected_move','budget_used'),('chop_status','range_stall','chop_low'),('stall_risk','range_stall','actual_rejection'),('setup_status','entry_watches','status')]:
+            item=b.get(section,{}).get(key,{});value=item.get('value')
+            if isinstance(value,list) and all(isinstance(r,dict) and r.get('symbol') for r in value):result[field]={symbol:[r for r in value if r['symbol']==symbol] for symbol in ('SPY','QQQ')}
+            else:result[field]=value if isinstance(value,dict) else {'SPY':value,'QQQ':value}
+        return result
+    core.update(comparison=comparison,prior_comparison=prior_comparison,baseline_blocks=comparable(morning),prior_blocks=comparable(prior))
     blocks=report_blocks(core,context,plan,runtime,paper,context['study'],comparison,events,now)
     if kind=='morning' and not morning:
         morning={'generated_at':now.isoformat(),'evidence':core,'report_blocks':blocks}
@@ -413,10 +447,11 @@ async def assemble_report(app,*,kind='intraday',plan=None,now=None):
     if 'paper' in read_failures:
         for name in ('paper_scorecard','trigger_accountability','position_management'):
             blocks[name]={field:unavailable('Paper ledger unavailable: '+read_failures['paper']) for field in REQUIREMENTS[name]}
-    evidence=dict(core,profiles={s:context['profile_'+s] for s in ('SPY','QQQ')},paper=paper,comparison=comparison,events=events)
+    evidence=dict(core,generated_at=now.isoformat(),profiles={s:context['profile_'+s] for s in ('SPY','QQQ')},paper=paper,comparison=comparison,events=events)
     headline=blocks['risk_on_defensive']['verdict'].get('value') or 'Directional verdict pending verified fresh evidence'
     payload={'generated_at':now.isoformat(),'kind':kind,'advisory_only':True,'report_blocks':blocks,'evidence':evidence,
              'report_markdown':f'# {kind.title()} Options Report\n\n**{headline}**\n\nSource clocks and historical labels are preserved. Conditional watches are advisory; paper fills are simulated.',
+             'refresh_attempts':refresh_attempts,
              'producer_status':{name:context[name].get('reason') or context[name].get('captured_at') or 'No capture yet' for name in context},
              'producer_failures':dict(core.get('failures') or {},**read_failures,**{name:{k:row.get(k) for k in ('reason','last_attempt','failures') if row.get(k)} for name,row in context.items() if row.get('reason') or row.get('last_attempt') or row.get('failures')}),
              'collector_coverage':{'breadth':'SPY constituents; VWAP candidate sample','profile':'Cumulative observed RTH tape, checkpointed in bounded windows; coverage timestamps disclosed','flow':'Representative expirations / 120-second window','futures':'Broker MES/MNQ observations where recorded; delayed continuous ES/NQ fallback'}}
@@ -582,6 +617,7 @@ def report_view(report_id:str):
             val=item.get('value')
             content=json.dumps(val,indent=2,ensure_ascii=False) if isinstance(val,(dict,list)) else str(val) if val is not None else item.get('reason') or 'Unavailable'
             clock=item.get('source_timestamp') or ''
+            if item.get('status')=='historical':clock='LAST KNOWN — updated '+clock+'; age '+str(item.get('age_seconds'))+'s; context only'
             rows.append(f'<details><summary>{html.escape(field.replace("_"," "))} <small>{html.escape(item["status"].upper())}</small></summary><pre>{html.escape(content)}</pre><p>{html.escape(str(item.get("source") or ""))} {html.escape(clock)} | age {item.get("age_seconds","n/a")}s</p></details>')
         chart_names=[groups.get(name)]
         if name=='surface':chart_names+=['term_structure']
@@ -589,8 +625,10 @@ def report_view(report_id:str):
                       else f'<p role="alert">VISUAL DELIVERY FAILED: {html.escape(n or "chart")}. {html.escape(failures.get(n,""))}</p>'
                       for n in chart_names if n in images)
         parts.append(f'<section><h2>{html.escape(name.replace("_"," ").title())}</h2>{image}{"".join(rows)}</section>')
+    from .report_policy import display
+    bottom='<section><h2>BOTTOM LINE</h2>'+''.join('<p>'+html.escape(line)+'</p>' for line in ['Regime: '+display(payload['report_blocks']['risk_on_defensive']['verdict']),'Opportunity / premium: '+display(payload['report_blocks']['premium_selling']['suitability']),'Next test: recorded entry confirmation plus fresh per-leg BBO; dated context alone cannot activate a trade.'])+'</section>'
     downloads=f'<p><a href="{PUBLIC_BASE}/{report_id}/charts.pdf">Download chart PDF</a> · <a href="{PUBLIC_BASE}/{report_id}/portable.zip">Download offline report</a></p>'
-    return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Full Options Report</title><style>body{background:#0B1220;color:#E5E7EB;font:16px/1.6 system-ui;max-width:1000px;margin:auto;padding:24px}section{padding:20px 0;margin:20px 0}h1,h2{color:#E5E7EB}table{width:100%;table-layout:fixed;border-collapse:collapse}td,th{padding:12px 8px;border-bottom:1px solid #374151;text-align:left;overflow-wrap:anywhere;vertical-align:top}th{width:32%}img{max-width:100%}details{border-top:1px solid #374151;padding:12px 0}summary{cursor:pointer;overflow-wrap:anywhere}small{color:#FBBF24}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#E5E7EB}p{color:#AEB8CB}a{color:#22D3EE}</style></head><body>'+f'<h1>{html.escape(payload["kind"].title())} Options Sentiment</h1><p>{html.escape(payload["generated_at"])} | {payload["report_completeness"]} | Immutable snapshot; clocks are as of generation.</p><a href="{payload["markdown_url"]}">Download complete report</a>'+downloads+render_opening_html(payload)+''.join(parts)+'</body></html>'
+    return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Full Options Report</title><style>body{background:#0B1220;color:#E5E7EB;font:16px/1.6 system-ui;max-width:1000px;margin:auto;padding:24px}section{padding:20px 0;margin:20px 0}h1,h2{color:#E5E7EB}table{width:100%;table-layout:fixed;border-collapse:collapse}td,th{padding:12px 8px;border-bottom:1px solid #374151;text-align:left;overflow-wrap:anywhere;vertical-align:top}th{width:32%}img{max-width:100%}details{border-top:1px solid #374151;padding:12px 0}summary{cursor:pointer;overflow-wrap:anywhere}small{color:#FBBF24}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#E5E7EB}p{color:#AEB8CB}a{color:#22D3EE}</style></head><body>'+f'<h1>{html.escape(payload["kind"].title())} Options Sentiment</h1><p>{html.escape(payload["generated_at"])} | {payload["report_completeness"]} | Immutable snapshot; clocks are as of generation.</p><a href="{payload["markdown_url"]}">Download complete report</a>'+downloads+render_opening_html(payload)+''.join(parts)+bottom+'</body></html>'
 
 def claim_delivery(kind,now):
     """Atomic per-checkpoint lease. Successful sends are never normally resent."""

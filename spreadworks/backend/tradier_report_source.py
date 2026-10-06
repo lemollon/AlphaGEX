@@ -8,6 +8,7 @@ from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 import requests
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 UTC=timezone.utc
 ET=ZoneInfo('America/New_York')
@@ -51,8 +52,11 @@ def option_rows(symbol,now):
             candidates=[e for e in expiries if lo<=(datetime.fromisoformat(e).date()-now.astimezone(ET).date()).days<=hi]
             if candidates:selected.append(min(candidates))
         rows=[]
-        for expiry in selected:
-            data=(get('/options/chains',{'symbol':symbol,'expiration':expiry,'greeks':'false'}).get('options') or {}).get('option') or []
+        def chain(expiry):
+            try:return expiry,(get('/options/chains',{'symbol':symbol,'expiration':expiry,'greeks':'false'}).get('options') or {}).get('option') or []
+            except Exception:return expiry,[]
+        with ThreadPoolExecutor(max_workers=3) as pool:chains=list(pool.map(chain,selected))
+        for expiry,data in chains:
             if isinstance(data,dict):data=[data]
             received=datetime.now(UTC)
             for q in data:

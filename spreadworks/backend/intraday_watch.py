@@ -1690,11 +1690,11 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
                         await asyncio.to_thread(record_trigger, setup, result.state, proof, now)
                     except Exception as exc:
                         logger.exception("[IntradayWatch] trigger evidence recording failed: %s", type(exc).__name__)
-                    if result.state == "ENTRY_READY" and option_selection:
+                    if result.state == "ENTRY_READY":
                         try:
                             from .report_ledger import record_entry
                             await asyncio.to_thread(record_entry,
-                                dict(setup, current_price=market.get("price")), option_selection, now)
+                                dict(setup, current_price=market.get("price")), option_selection or {}, now)
                         except Exception as exc:
                             logger.exception("[IntradayWatch] report paper entry failed: %s", type(exc).__name__)
                     attempted_alerts.add(event_key)

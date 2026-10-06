@@ -134,6 +134,7 @@ REQUIREMENTS = {
         "liquidity"
     ],
     "paper_scorecard": [
+        "fill_reconciliation",
         "entry_ready_alerts",
         "fills",
         "closed",
@@ -175,6 +176,7 @@ REQUIREMENTS = {
         "delivery_status"
     ],
     "event_study": [
+        "holding_period_context",
         "frozen_method",
         "sample_size",
         "validated_statistics"
@@ -223,9 +225,9 @@ REQUIREMENTS["horizon_comparison"] = ["morning_baseline", "prior_checkpoint", "c
 REQUIREMENTS["adaptation_rules"] = ["activate", "cancel", "switch", "stand_aside",
     "existing_positions", "reassessment"]
 REQUIREMENTS["data_integrity"] = ["contract", "source_clocks", "coverage", "historical_fields",
-    "unavailable_fields", "producer_failures", "model_prose_policy", "execution_scope", "format"]
+    "unavailable_fields", "producer_failures", "model_prose_policy", "execution_scope", "format", "refresh_attempts"]
 REQUIRED_BLOCKS = tuple(REQUIREMENTS)
-CONTRACT_VERSION = "2026-10-05.2"
+CONTRACT_VERSION = "2026-10-05.3"
 FLOW_SOURCE = "Tradier live trades with contemporaneous Tradier bid/ask"
 LIVE_MAX_AGE_SECONDS = 90
 CHART_FORMAT = "PNG"
