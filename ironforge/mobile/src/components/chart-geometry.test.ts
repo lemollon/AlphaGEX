@@ -8,6 +8,7 @@ import {
   formatPnl,
   formatAxisDollar,
   formatAxisTime,
+  pnlChartRenderState,
   type Point,
 } from '@/components/chart-geometry'
 
@@ -240,5 +241,30 @@ describe('formatAxisTime — the 30-minute axis labels, CT, design-compact', () 
     // 2026-01-15 is standard time (CST, UTC-6) — no DST ambiguity.
     expect(formatAxisTime(new Date('2026-01-15T15:30:00Z').getTime())).toBe('9:30a')
     expect(formatAxisTime(new Date('2026-01-15T18:00:00Z').getTime())).toBe('12p')
+  })
+})
+
+describe('pnlChartRenderState — the null-geometry crash guard (#3208 follow-up)', () => {
+  it('is too_few_samples under 2 points, regardless of geometry', () => {
+    expect(pnlChartRenderState(0, null, null)).toBe('too_few_samples')
+    expect(pnlChartRenderState(1, { x: () => 0 }, null)).toBe('too_few_samples')
+  })
+
+  it('is loading when neither geometry exists yet — the actual value on a first render, on native exactly as much as web, since RN has no synchronous layout', () => {
+    expect(pnlChartRenderState(5, null, null)).toBe('loading')
+  })
+
+  it('is ready once either geometry is computed, never needing both at once', () => {
+    expect(pnlChartRenderState(5, { x: () => 0 }, null)).toBe('ready')
+    expect(pnlChartRenderState(5, null, { x: () => 0 })).toBe('ready')
+    expect(pnlChartRenderState(5, { x: () => 0 }, { x: () => 0 })).toBe('ready')
+  })
+
+  it('reproduces the real crash scenario: chartGeometry(width<=0) really does return null', () => {
+    // The bug this guards against was not hypothetical — this is the exact call
+    // PnlChart makes on its first render, before onLayout has ever fired.
+    const g = chartGeometry(series(1, 2, 3), 0, H, PAD)
+    expect(g).toBeNull()
+    expect(pnlChartRenderState(3, g, null)).toBe('loading')
   })
 })

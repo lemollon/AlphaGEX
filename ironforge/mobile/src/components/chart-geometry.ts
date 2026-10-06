@@ -205,3 +205,26 @@ export function formatPnl(v: number): string {
     maximumFractionDigits: 2,
   })}`
 }
+
+/**
+ * Which of PnlChart's three render branches applies, given its sample count and
+ * the two geometry computations. Pulled out as a pure function (no renderer
+ * needed — see vitest.config.ts's note on why logic lives in plain .ts modules)
+ * because 'loading' was previously an un-guarded crash: `chartGeometry`/
+ * `timeChartGeometry` both return `null` for `width <= 0` (seeded below), which
+ * is the ACTUAL value on every component's first render — RN has no synchronous
+ * layout, so `onLayout` has not fired yet. The old code went straight from the
+ * `sampleCount < 2` check to `indexGeom!.zeroY`, which threw the instant a chart
+ * with 2+ samples rendered before its first layout pass — on native, not just web.
+ */
+export type PnlChartRenderState = 'too_few_samples' | 'loading' | 'ready'
+
+export function pnlChartRenderState(
+  sampleCount: number,
+  indexGeom: unknown,
+  timeGeom: unknown,
+): PnlChartRenderState {
+  if (sampleCount < 2) return 'too_few_samples'
+  if (!indexGeom && !timeGeom) return 'loading'
+  return 'ready'
+}
