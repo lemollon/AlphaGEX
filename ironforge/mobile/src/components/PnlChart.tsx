@@ -17,13 +17,20 @@
  *    point — a bubble that rides the line is exactly what a thumb parks on top of.
  *    Only the dashed guide and the on-line marker move with the finger. On release
  *    both fade out over 150ms instead of snapping away, so it never reads as a glitch.
+ *  - When `autoCloseAt` is known (a live trade), the x-axis is the session's real
+ *    clock (10.4 design `drawTradeChart`): a dollar axis on the left, a tick every 30
+ *    minutes, and the untraded remainder of the session shaded through the scheduled
+ *    close. A closed trade's sheet never passes `autoCloseAt` — there is no "rest of
+ *    session" left to shade — and falls back to the original index-spaced chart.
  */
 import { useMemo, useRef, useState } from 'react'
 import { Animated, View, Text, StyleSheet, type LayoutChangeEvent } from 'react-native'
-import Svg, { Polyline, Line, Circle } from 'react-native-svg'
+import Svg, { Polyline, Line, Circle, Rect, Text as SvgText } from 'react-native-svg'
 import {
   chartGeometry,
+  timeChartGeometry,
   nearestIndex,
+  nearestTimeIndex,
   tooltipX,
   formatPnl,
   type Point as SparkPointType,
@@ -37,6 +44,8 @@ export type SparkPoint = SparkPointType
 
 const HEIGHT = 88
 const PAD_Y = 10
+// Left gutter for the dollar-axis labels — only reserved in time-axis mode.
+const AXIS_GUTTER = 30
 
 // The tooltip box's fixed geometry — pinned to the top of the plot, so the guide
 // below it always starts from the same place regardless of which sample is touched.
@@ -53,12 +62,15 @@ export function PnlChart({
   accent,
   status,
   current,
+  autoCloseAt,
 }: {
   series: SparkPoint[]
   accent: string
   /** "Monitoring", "Profit Target / Stop Loss" — the trade's lifecycle label. */
   status: string
   current: number | null
+  /** The session's scheduled close — present only for a trade still open. */
+  autoCloseAt?: string | null
 }) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
@@ -73,14 +85,27 @@ export function PnlChart({
 
   const onLayout = (e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)
 
+  const timeAxis = autoCloseAt !== undefined
+  const gutter = timeAxis ? AXIS_GUTTER : 0
+  const chartWidth = Math.max(0, width - gutter)
+
   // The maths lives in components/chart-geometry.ts so the one rule that matters — the
   // y-domain always contains zero — is covered by tests rather than by a comment.
-  const geom = useMemo(() => chartGeometry(series, width, HEIGHT, PAD_Y), [series, width])
+  const indexGeom = useMemo(
+    () => (timeAxis ? null : chartGeometry(series, width, HEIGHT, PAD_Y)),
+    [series, width, timeAxis],
+  )
+  const timeGeom = useMemo(
+    () => (timeAxis ? timeChartGeometry(series, autoCloseAt, chartWidth, HEIGHT, PAD_Y) : null),
+    [series, chartWidth, timeAxis, autoCloseAt],
+  )
 
   const active = touch != null ? series[touch] : null
 
   function showTouch(x: number) {
-    const idx = nearestIndex(x, width, series.length)
+    const idx = timeGeom
+      ? nearestTimeIndex(Math.max(0, Math.min(chartWidth, x - gutter)), timeGeom, series)
+      : nearestIndex(x, width, series.length)
     setTouch(idx)
     // A new touch shows immediately, even mid-fade from the last one.
     opacity.stopAnimation()
@@ -111,6 +136,12 @@ export function PnlChart({
     )
   }
 
+  // Pixel x/y for the active (touched) sample and "now" — whichever geometry is active.
+  const px = (i: number) => (timeGeom ? timeGeom.x(new Date(series[i].timestamp).getTime()) + gutter : indexGeom!.x(i))
+  const py = (i: number) => (timeGeom ? timeGeom.y(series[i].pnl) : indexGeom!.y(series[i].pnl))
+  const zeroY = timeGeom ? timeGeom.y(0) : indexGeom!.zeroY
+  const touchX = touch != null ? px(touch) : 0
+
   return (
     <View style={s.wrap}>
       <Header status={status} current={current} accent={accent} />
@@ -125,20 +156,106 @@ export function PnlChart({
         onResponderRelease={releaseTouch}
         onResponderTerminate={releaseTouch}
       >
-        {geom ? (
+        {timeGeom ? (
+          <Svg width={width} height={HEIGHT}>
+            {/* Rest of session — the untraded remainder up to the scheduled close
+                (10.4 design `drawTradeChart`'s shaded rect). Never drawn when the
+                close has already passed "now". */}
+            {timeGeom.sessionEndX != null && timeGeom.sessionEndX > timeGeom.nowX ? (
+              <Rect
+                x={timeGeom.nowX + gutter}
+                y={PAD_Y}
+                width={Math.max(0, timeGeom.sessionEndX - timeGeom.nowX)}
+                height={HEIGHT - PAD_Y * 2}
+                fill={color.border}
+                opacity={0.35}
+                rx={4}
+              />
+            ) : null}
+            {/* Dollar gridlines — zero solid, every other dashed (10.4 design). */}
+            {timeGeom.yTicks.map((t) => (
+              <Line
+                key={`y-${t.pos}`}
+                x1={gutter}
+                x2={width}
+                y1={t.pos}
+                y2={t.pos}
+                stroke={color.border}
+                strokeWidth={1}
+                strokeDasharray={Math.abs(t.pos - zeroY) < 0.5 ? undefined : '2 4'}
+              />
+            ))}
+            {timeGeom.yTicks.map((t) => (
+              <SvgText
+                key={`yl-${t.pos}`}
+                x={gutter - 6}
+                y={t.pos + 3}
+                fontSize={9.5}
+                fill={color.muted}
+                textAnchor="end"
+              >
+                {t.label}
+              </SvgText>
+            ))}
+            {/* 30-minute time ticks across the session (10.4 design). */}
+            {timeGeom.timeTicks.map((t) => (
+              <SvgText
+                key={`t-${t.pos}`}
+                x={t.pos + gutter}
+                y={HEIGHT - 3}
+                fontSize={9}
+                fill={color.muted}
+                textAnchor="middle"
+              >
+                {t.label}
+              </SvgText>
+            ))}
+            <Polyline
+              points={series.map((p, i) => `${px(i).toFixed(2)},${py(i).toFixed(2)}`).join(' ')}
+              fill="none"
+              stroke={accent}
+              strokeWidth={1.8}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+            <Circle cx={px(series.length - 1)} cy={py(series.length - 1)} r={3.5} fill={accent} />
+            {active && touch != null ? (
+              <>
+                <AnimatedLine
+                  x1={touchX}
+                  y1={TIP_TOP + TIP_HEIGHT}
+                  x2={touchX}
+                  y2={zeroY}
+                  stroke={accent}
+                  strokeWidth={1}
+                  opacity={opacity.interpolate({ inputRange: [0, 1], outputRange: [0, 0.6] })}
+                />
+                <AnimatedCircle
+                  cx={touchX}
+                  cy={py(touch)}
+                  r={4}
+                  fill={color.bg}
+                  stroke={accent}
+                  strokeWidth={2}
+                  opacity={opacity}
+                />
+              </>
+            ) : null}
+          </Svg>
+        ) : indexGeom ? (
           <Svg width={width} height={HEIGHT}>
             {/* Breakeven $0 */}
             <Line
               x1={0}
-              y1={geom.zeroY}
+              y1={indexGeom.zeroY}
               x2={width}
-              y2={geom.zeroY}
+              y2={indexGeom.zeroY}
               stroke={color.border}
               strokeWidth={1}
               strokeDasharray="4 4"
             />
             <Polyline
-              points={geom.points}
+              points={indexGeom.points}
               fill="none"
               stroke={accent}
               strokeWidth={1.8}
@@ -147,8 +264,8 @@ export function PnlChart({
             />
             {/* Now */}
             <Circle
-              cx={geom.x(series.length - 1)}
-              cy={geom.y(series[series.length - 1].pnl)}
+              cx={indexGeom.x(series.length - 1)}
+              cy={indexGeom.y(series[series.length - 1].pnl)}
               r={3.5}
               fill={accent}
             />
@@ -157,17 +274,17 @@ export function PnlChart({
                 {/* Guide drops from the pinned tooltip box down to the zero baseline —
                     never the full chart height, and never through the box above it. */}
                 <AnimatedLine
-                  x1={geom.x(touch)}
+                  x1={indexGeom.x(touch)}
                   y1={TIP_TOP + TIP_HEIGHT}
-                  x2={geom.x(touch)}
-                  y2={geom.zeroY}
+                  x2={indexGeom.x(touch)}
+                  y2={indexGeom.zeroY}
                   stroke={accent}
                   strokeWidth={1}
                   opacity={opacity.interpolate({ inputRange: [0, 1], outputRange: [0, 0.6] })}
                 />
                 <AnimatedCircle
-                  cx={geom.x(touch)}
-                  cy={geom.y(active.pnl)}
+                  cx={indexGeom.x(touch)}
+                  cy={indexGeom.y(active.pnl)}
                   r={4}
                   fill={color.bg}
                   stroke={accent}
@@ -179,9 +296,10 @@ export function PnlChart({
           </Svg>
         ) : null}
 
-        {/* Sits ON the dashed line, as in UX-003 — not floated in a corner. */}
-        {geom ? (
-          <Text style={[s.beLabel, type.label, { top: Math.max(0, geom.zeroY - 15) }]}>
+        {/* Sits ON the dashed line, as in UX-003 — not floated in a corner. Only in the
+            index-axis mode; the time axis already labels zero on its own $ gridline. */}
+        {indexGeom && !timeGeom ? (
+          <Text style={[s.beLabel, type.label, { top: Math.max(0, indexGeom.zeroY - 15) }]}>
             Breakeven $0
           </Text>
         ) : null}
@@ -192,7 +310,7 @@ export function PnlChart({
               s.tip,
               // Pinned to the top of the chart, slid inward near either edge so it
               // never clips — the point itself only ever moves the guide and marker.
-              { left: tooltipX(geom?.x(touch) ?? 0, TIP_WIDTH, width, TIP_INSET), opacity },
+              { left: tooltipX(touchX, TIP_WIDTH, width, TIP_INSET), opacity },
             ]}
           >
             <Text style={[type.label, { color: color.textDim }]}>
@@ -210,10 +328,12 @@ export function PnlChart({
         ) : null}
       </View>
 
-      <View style={s.axis}>
-        <Text style={[type.label, { color: color.muted }]}>Open</Text>
-        <Text style={[type.label, { color: color.muted }]}>Now</Text>
-      </View>
+      {!timeGeom ? (
+        <View style={s.axis}>
+          <Text style={[type.label, { color: color.muted }]}>Open</Text>
+          <Text style={[type.label, { color: color.muted }]}>Now</Text>
+        </View>
+      ) : null}
     </View>
   )
 }
