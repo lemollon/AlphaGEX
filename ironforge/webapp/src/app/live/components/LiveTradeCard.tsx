@@ -224,7 +224,7 @@ export default function LiveTradeCard({
                           width={48}
                           tickCount={3}
                         />
-                        <ReferenceLine y={0} stroke="#78716c" strokeDasharray="4 4" />
+                        <ReferenceLine y={0} stroke="#78716c" />
                         {/* "Rest of session" shading from now to the close (db-open #173). */}
                         {restOfSessionStart != null && chartDomainEnd != null && chartDomainEnd > restOfSessionStart && (
                           <ReferenceArea

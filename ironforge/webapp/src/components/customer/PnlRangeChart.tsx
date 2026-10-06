@@ -20,7 +20,7 @@ const RANGES = [
   { key: 'ALL', label: 'All' },
 ] as const
 
-type RangeKey = (typeof RANGES)[number]['key']
+export type RangeKey = (typeof RANGES)[number]['key']
 
 function fmtTick(iso: string, range: RangeKey): string {
   const d = new Date(iso)
@@ -34,11 +34,19 @@ function fmtTick(iso: string, range: RangeKey): string {
 export default function PnlRangeChart({
   ranges,
   title,
+  range: controlledRange,
+  onRangeChange,
 }: {
   ranges: { '1D': PnlPoint[]; '1W': PnlPoint[]; '1M': PnlPoint[]; ALL: PnlPoint[] }
   title?: string
+  /** Controlled range (db-kpi #161 — a KPI tile elsewhere on the page can drive this
+   *  chart too). Omit both props to keep the chart's own internal 1D/1W/1M/All state. */
+  range?: RangeKey
+  onRangeChange?: (r: RangeKey) => void
 }) {
-  const [range, setRange] = useState<RangeKey>('1W')
+  const [internalRange, setInternalRange] = useState<RangeKey>('1W')
+  const range = controlledRange ?? internalRange
+  const setRange = onRangeChange ?? setInternalRange
   const series = ranges[range] ?? []
   const end = series.length ? series[series.length - 1].pnl : 0
   const up = end >= 0
@@ -90,7 +98,8 @@ export default function PnlRangeChart({
                 domain={['auto', 'auto']}
                 width={72}
               />
-              <ReferenceLine y={0} stroke="#78716c" strokeDasharray="4 4" />
+              {/* db-charts #165: "Zero baseline is solid; other gridlines dashed." */}
+              <ReferenceLine y={0} stroke="#78716c" />
               <Tooltip
                 contentStyle={{ backgroundColor: '#1c1917', border: '1px solid #292524', borderRadius: 8, fontSize: 12 }}
                 labelFormatter={(iso: string) => fmtTick(iso, range)}
