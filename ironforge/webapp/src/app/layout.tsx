@@ -58,21 +58,23 @@ export const metadata: Metadata = {
     title: 'IronForge',
     description:
       'Autonomous, defined-risk options bots for SPY that run in your own Tradier account.',
-    // Interim asset (retired-mark-free) — no dedicated 1200x630 OG card has
-    // been exported yet (ds-assets #27, oi-assets #310: mascot/logo exports
-    // are an open, non-code design item). Resolved against metadataBase
-    // above, so this is never localhost.
-    images: ['/favicon.svg'],
+    // A real 1200x630 raster card, not SVG — Facebook, X, LinkedIn and
+    // iMessage link previews don't reliably render SVG og:image (the SVG
+    // favicon.svg this briefly pointed at would have re-broken social
+    // sharing). Text-only wordmark, matching the retired-mark lockup used
+    // sitewide. Resolved against metadataBase above, so this is never
+    // localhost.
+    images: [{ url: '/og-image.png', width: 1200, height: 630, alt: 'IronForge' }],
   },
   // No public page below sets its own `twitter` key, so every one of them
   // inherits this (ds-site #72's "verify on every public page" half) — same
-  // wordmark asset as openGraph above, same metadataBase resolution.
+  // raster card as openGraph above, same metadataBase resolution.
   twitter: {
     card: 'summary_large_image',
     title: 'IronForge',
     description:
       'Autonomous, defined-risk options bots for SPY that run in your own Tradier account.',
-    images: ['/favicon.svg'],
+    images: ['/og-image.png'],
   },
 }
 
