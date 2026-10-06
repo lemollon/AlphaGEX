@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { US_STATES } from '@/lib/us-states'
 import { CAPITAL_RANGES, CONSENT_COPY, validateWaitlistClient } from '@/lib/waitlist'
+import { useWaitlistModal } from '@/components/marketing/WaitlistModal'
+import { track } from '@/lib/analytics/track'
 
 /**
  * 10.4 restyle (gap audit "Waitlist as in-page modal" PARTIAL/L + 3 copy/behavior
@@ -38,6 +40,7 @@ function formatPhoneDisplay(raw: string): string {
  * waitlist modal (ps-ctas "Join the waitlist -> Opens waitlist modal, no navigation").
  */
 export function WaitlistForm() {
+  const { placement } = useWaitlistModal()
   const [form, setForm] = useState<Form>(EMPTY)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -72,7 +75,11 @@ export function WaitlistForm() {
     if (busy) return
     setServerError(null)
     const clientErrs = validateWaitlistClient(form)
-    if (Object.keys(clientErrs).length > 0) { setErrors(clientErrs); return }
+    if (Object.keys(clientErrs).length > 0) {
+      setErrors(clientErrs)
+      track('waitlist_error', { placement, field: Object.keys(clientErrs)[0] })
+      return
+    }
     setBusy(true)
     try {
       const res = await fetch('/api/waitlist', {
@@ -81,12 +88,22 @@ export function WaitlistForm() {
         body: JSON.stringify({ ...form, company: '', campaign: campaignRef.current }), // company = honeypot
       })
       const data = await res.json().catch(() => ({}))
-      if (res.ok && data.ok) { setDone({ existing: Boolean(data.existing) }); return }
-      if (res.status === 422 && data.fieldErrors) { setErrors(data.fieldErrors); return }
+      if (res.ok && data.ok) {
+        track('waitlist_submit', { placement, capitalRange: form.tradingCapitalRange })
+        setDone({ existing: Boolean(data.existing) })
+        return
+      }
+      if (res.status === 422 && data.fieldErrors) {
+        setErrors(data.fieldErrors)
+        track('waitlist_error', { placement, field: Object.keys(data.fieldErrors)[0] })
+        return
+      }
       setServerError(data.message || 'We could not save your request. Please try again.')
+      track('waitlist_error', { placement, field: 'server' })
     } catch {
       // Network failure: retain values, offer retry (handoff §3).
       setServerError('Network error — your details are still here. Please try again.')
+      track('waitlist_error', { placement, field: 'network' })
     } finally {
       setBusy(false)
     }

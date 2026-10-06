@@ -12,6 +12,7 @@ import { clientSurface, filterNavBySurface, servesPath } from '@/lib/surface'
 import { LIVE_BOT_ACCENT, LIVE_BOT_LABEL, isLiveBot, type LiveBot } from '@/lib/live/bots'
 import { EMBER_AGENT } from '@/lib/agents/ember'
 import DashboardHeaderBar from './DashboardHeaderBar'
+import LegalReacceptGate from './LegalReacceptGate'
 
 /**
  * THE single customer app shell — used by every signed-in page (Live, Performance,
@@ -183,9 +184,9 @@ function PlanCard({ membership, variant }: { membership: PlanCardData | null; va
         <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${none ? 'text-[var(--muted)]' : 'text-[var(--accent)]'}`}
           d="M12 2l8 3v6c0 5.25-3.4 9.74-8 11-4.6-1.26-8-5.75-8-11V5z" />
         <div>
-          <div className={`font-display text-base leading-tight ${none ? 'text-[var(--muted)]' : 'text-[var(--accent)]'}`}>{plan}</div>
+          <div className={`font-display text-base leading-tight ${none ? 'text-[var(--muted)]' : 'text-[var(--accent-text)]'}`}>{plan}</div>
           {none ? (
-            <a href="/account/billing" className="text-xs text-[var(--accent)] hover:opacity-80">
+            <a href="/account/billing" className="text-xs text-[var(--accent-text)] hover:opacity-80">
               Choose a plan
             </a>
           ) : variant === 'trial' && trial ? (
@@ -194,7 +195,7 @@ function PlanCard({ membership, variant }: { membership: PlanCardData | null; va
             /* Audit M11: this used to render as a GREEN CHECK — "✓ Payment due" in
                emerald — the exact state that needs attention dressed as success.
                Amber warning + a direct path to fix the card. */
-            <a href="/account/billing" className="flex items-center gap-1 text-xs font-semibold text-[var(--accent)] hover:opacity-80">
+            <a href="/account/billing" className="flex items-center gap-1 text-xs font-semibold text-[var(--accent-text)] hover:opacity-80">
               <Icon className="h-3.5 w-3.5" d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
               Payment due — update card
             </a>
@@ -330,7 +331,7 @@ function NavItems({ onNavigate, strategy }: { onNavigate?: () => void; strategy?
       <Link key={item.label} href={item.href} onClick={onNavigate}
         className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
           active
-            ? 'border-l-2 border-[var(--accent)] bg-[var(--accent)]/10 font-medium text-[var(--accent)]'
+            ? 'border-l-2 border-[var(--accent)] bg-[var(--accent)]/10 font-medium text-[var(--accent-text)]'
             : 'border-l-2 border-transparent text-[var(--muted)] hover:text-[var(--fg)]'
         }`}>
         <Icon d={item.icon} />
@@ -345,7 +346,7 @@ function NavItems({ onNavigate, strategy }: { onNavigate?: () => void; strategy?
           surface — /spark 404s there and operator chrome shouldn't reach customers. */}
       {isOperator && servesPath(surface, '/spark') ? (
         <Link href="/spark" onClick={onNavigate}
-          className="flex items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm font-semibold text-[var(--accent)] transition-colors hover:opacity-80">
+          className="flex items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm font-semibold text-[var(--accent-text)] transition-colors hover:opacity-80">
           <Icon d={ICONS.ops} />
           <span>Ops</span>
         </Link>
@@ -436,6 +437,7 @@ export default function CustomerShell({
   const strategy: StrategyNav = { bots, activeBot, paperBots, onSwitch }
 
   return (
+    <LegalReacceptGate>
     <div className="if-dash min-h-screen bg-[var(--bg)]">
       {/* Mobile top bar — hamburger on the LEFT, then wordmark, then the same
           header controls (pause-all, theme, bell, avatar) the desktop rail gets
@@ -477,5 +479,6 @@ export default function CustomerShell({
       {/* Sparky support — floating, dismissible, on every signed-in page (hides itself on /support). */}
       <SparkyWidget />
     </div>
+    </LegalReacceptGate>
   )
 }

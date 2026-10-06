@@ -199,7 +199,7 @@ export function BrokerageSection() {
           accessibilityRole="button"
           style={[s.outlineBtn, busy && { opacity: 0.5 }]}
         >
-          <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+          <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
             {busy ? 'Opening…' : 'Connect Another Brokerage'}
           </Text>
         </Pressable>

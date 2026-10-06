@@ -1039,6 +1039,27 @@ ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
 ALTER TABLE users ALTER COLUMN phone DROP NOT NULL;
 ALTER TABLE users ALTER COLUMN state DROP NOT NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'password';
+
+-- First-party product analytics (dev-handoff events table, POST /api/v1/events).
+-- user_id is nullable because most of these events fire pre-login (marketing CTAs,
+-- the waitlist modal, the first enrollment steps) — anon_id (a client-generated UUID,
+-- never derived from IP/UA) is the join key for that case, the same way page_views
+-- uses a rotating visitor hash for the SAME reason. 'surface' distinguishes web from
+-- the two native shells so one funnel query can cover all three. No column here may
+-- ever hold a card/account/broker number, an email, or a phone — enforced at the
+-- route layer (route.ts strips those before this INSERT), not just by convention.
+CREATE TABLE IF NOT EXISTS analytics_events (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID,
+  anon_id TEXT,
+  event TEXT NOT NULL,
+  props JSONB,
+  surface TEXT NOT NULL DEFAULT 'web',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_analytics_events_event_day ON analytics_events(event, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_analytics_events_user ON analytics_events(user_id) WHERE user_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_analytics_events_anon ON analytics_events(anon_id) WHERE anon_id IS NOT NULL;
 `
 
 let _ensured: Promise<void> | null = null

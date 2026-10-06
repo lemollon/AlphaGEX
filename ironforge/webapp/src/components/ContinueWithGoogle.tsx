@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { track } from '@/lib/analytics/track'
 
 function GoogleGlyph() {
   return (
@@ -106,6 +107,7 @@ export default function ContinueWithGoogle({
       ) : (
         <a
           href={href}
+          onClick={() => track('enroll_sso', { provider: 'google' })}
           className="flex w-full items-center justify-center gap-2 rounded-md border border-white/15 bg-white px-4 py-2.5 text-sm font-semibold text-gray-800 transition hover:bg-gray-100"
         >
           {glyphAndLabel}

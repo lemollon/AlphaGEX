@@ -31,6 +31,7 @@ import { BrokerageSection } from '@/components/BrokerageSection'
 import { AGENT_LABEL } from '@/agents/copy'
 import { agentDetailHref, type AgentBot } from '@/agents/routes'
 import { showToast } from '@/notifications/toast'
+import { trackEvent } from '@/analytics/trackEvent'
 
 const ALL_BOTS: AgentBot[] = ['spark', 'flame', 'ember']
 
@@ -199,6 +200,7 @@ export default function AccountScreen() {
       // Same shared SWR cache key the Forge tab and each agent sheet poll — this is
       // what makes both reflect the bulk change without either screen doing anything.
       void globalMutate('/api/live/agents')
+      if (nextPaused) trackEvent('pause_all')
       Alert.alert(
         nextPaused ? 'All agents paused' : 'All agents resumed',
         nextPaused
@@ -406,7 +408,7 @@ export default function AccountScreen() {
           */}
           {canManageBillingInApp(platform) ? (
             <Pressable onPress={openBilling} style={s.outlineBtn}>
-              <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+              <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
                 Manage Membership and Billing (opens secure Stripe portal)
               </Text>
             </Pressable>
@@ -419,7 +421,7 @@ export default function AccountScreen() {
                 }}
                 style={s.outlineBtn}
               >
-                <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+                <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
                   Manage subscription
                 </Text>
               </Pressable>
@@ -546,7 +548,11 @@ export default function AccountScreen() {
             </View>
             <Switch
               value={scheme === 'dark'}
-              onValueChange={(on) => setPreference(on ? 'dark' : 'light')}
+              onValueChange={(on) => {
+                const pref = on ? 'dark' : 'light'
+                setPreference(pref)
+                trackEvent('theme_toggle', { theme: pref })
+              }}
               trackColor={{ true: color.accent, false: color.border }}
             />
           </View>

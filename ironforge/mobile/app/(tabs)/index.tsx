@@ -42,6 +42,7 @@ import { AGENT_LABEL, AGENT_BLURB } from '@/agents/copy'
 import { pickBanner, bannerActionHref, billingBannerMode } from '@/alerts/banner'
 import { manageSubscriptionUrl } from '@/billing/store-policy'
 import { isStale, staleLabel } from '@/live/staleness'
+import { trackEvent } from '@/analytics/trackEvent'
 
 const ALL_BOTS: AgentBot[] = ['spark', 'flame', 'ember']
 
@@ -434,7 +435,12 @@ export default function ForgeScreen() {
               <AccountChart
                 series={heroSeries}
                 color={heroLineColor}
-                onScrub={setScrub}
+                onScrub={(point) => {
+                  // Fires once per scrub gesture, not once per point under the
+                  // finger — setScrub already runs on every frame of the drag.
+                  if (point && !scrub) trackEvent('chart_scrub')
+                  setScrub(point)
+                }}
                 periodLabel={HERO_PERIOD_LABEL[heroPeriod]}
               />
             ) : (
@@ -457,6 +463,7 @@ export default function ForgeScreen() {
                     key={p}
                     onPress={() => {
                       setHeroPeriod(p)
+                      trackEvent('period_select', { period: p })
                       setScrub(null)
                     }}
                     accessibilityRole="button"

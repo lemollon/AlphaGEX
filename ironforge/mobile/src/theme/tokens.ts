@@ -23,14 +23,21 @@ export const color = {
   border: '#24242A',
   muted: '#9A9AA5',
 
-  // Brand. The wordmark orange differs from the UI accent — Brand.tsx hardcodes
-  // #FD5301 and calls it "the marketing accent"; #EE5A24 is amber-500, used for
-  // interactive orange in the app chrome. UNCHANGED by the 10.4 redesign: both are
-  // locked theme-invariant (see palette.ts "unchanged by request" + its test) —
-  // the design doc's own --accent varies by theme (#f0600d light / #ff7124 dark),
-  // which this app deliberately does not adopt, to avoid relitigating that lock.
+  // Brand. `wordmark` (#FD5301, Brand.tsx's web twin hardcodes the same hex) is a
+  // separate, unused-in-render token kept for parity with the web palette; Brand.tsx's
+  // actual "FORGE" text and the interactive orange throughout app chrome both read
+  // `accent`. Previously #EE5A24 (amber-500), locked theme-invariant on the theory that
+  // the design doc's own --accent (#f0600d light / #ff7124 dark) shouldn't be
+  // relitigated. Leron lifted that lock 2026-10: `accent` now carries the design's
+  // EXACT per-theme hex for fills/buttons/icons/chart-strokes/pills/progress-bars.
+  // `accentText` is a second, deeper-value token for small text and text links —
+  // in LIGHT mode --accent only clears ~2.95-3.29:1 against light surfaces (fails
+  // WCAG AA 4.5:1), so light.accentText darkens it; in this DARK palette --accent
+  // already clears 6-7:1 against every dark surface it renders on, so accentText
+  // stays identical. See palette.ts for the per-theme split and contrast numbers.
   wordmark: '#FD5301',
-  accent: '#EE5A24',
+  accent: '#FF7124',
+  accentText: '#FF7124',
 
   // Agent identity. Spark/Flame updated to the 10.4 dark tokens (--spark/--flame).
   // Ember joins as the third customer-facing agent (10.4 §3: free, 1 per person,

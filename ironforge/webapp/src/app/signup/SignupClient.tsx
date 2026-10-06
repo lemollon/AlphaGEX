@@ -7,6 +7,7 @@ import HomeLink from '@/components/HomeLink'
 import ContinueWithGoogle from '@/components/ContinueWithGoogle'
 import Consent from '@/components/ConsentCheckbox'
 import EnrollShell from '@/app/enroll/EnrollShell'
+import { trackEnrollStepComplete } from '@/lib/analytics/enroll'
 import type { Promo } from '@/lib/promo'
 import {
   checkPassword,
@@ -232,6 +233,7 @@ export default function SignupClient() {
         setServerError(data.error || 'Something went wrong creating your account. Please try again.')
         return
       }
+      trackEnrollStepComplete('account')
       setSubmittedEmail(result.normalized.email)
     } catch {
       setServerError('Something went wrong creating your account. Please try again.')

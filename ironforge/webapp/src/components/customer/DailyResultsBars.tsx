@@ -50,7 +50,7 @@ export default function DailyResultsBars({ bars }: { bars: Array<{ day: string; 
 
   return (
     <section className="rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-4">
-      <h3 className="text-xs font-semibold uppercase tracking-widest text-[var(--accent)]">
+      <h3 className="text-xs font-semibold uppercase tracking-widest text-[var(--accent-text)]">
         Daily Results · Last {bars.length} Trading Days
       </h3>
       {hasData ? (

@@ -31,6 +31,7 @@ import { ToastHost } from '@/components/ToastHost'
 import { TradeBannerHost } from '@/components/TradeBannerHost'
 import { StepUpHost } from '@/components/StepUpHost'
 import { ConnectivityBanner } from '@/components/ConnectivityBanner'
+import { LegalReacceptGate } from '@/components/LegalReacceptGate'
 
 /**
  * Root layout + auth gate + foreground lock (APP-007 / APP-008 / APP-010).
@@ -274,6 +275,7 @@ function RootLayoutInner() {
         }}
       />
       {signedIn && !lockState.locked ? <TradeBannerHost /> : null}
+      {signedIn && !lockState.locked ? <LegalReacceptGate /> : null}
       <ToastHost />
       {signedIn && !lockState.locked ? <StepUpHost /> : null}
       <ConnectivityBanner />

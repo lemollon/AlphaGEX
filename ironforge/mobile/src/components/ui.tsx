@@ -429,7 +429,7 @@ export function ProgressBar({ step, total }: { step: number; total: number }) {
   return (
     <View>
       <Text
-        style={[type.section, { color: color.accent, fontFamily: font.bodyBold, marginBottom: space.sm }]}
+        style={[type.section, { color: color.accentText, fontFamily: font.bodyBold, marginBottom: space.sm }]}
         maxFontSizeMultiplier={MAX_FONT_SCALE}
       >
         STEP {step} OF {total}
