@@ -258,6 +258,28 @@ CREATE TABLE IF NOT EXISTS community_pending_messages (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Sparky conversation memory (#264). POST /api/sparky/chat is stateful — the
+-- client sends only {message, conversationId}, not the whole transcript, so
+-- the history has to live somewhere server-side. /api/support/chat (the
+-- older, stateless, client-resends-history route) is untouched and keeps
+-- working for app builds that still call it.
+CREATE TABLE IF NOT EXISTS sparky_conversations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sparky_conversations_user ON sparky_conversations(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS sparky_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id UUID NOT NULL REFERENCES sparky_conversations(id) ON DELETE CASCADE,
+  role TEXT NOT NULL,                                -- user | assistant
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sparky_messages_conversation ON sparky_messages(conversation_id, created_at);
+
 -- Dedupe ledger for Forge's scheduled community posts (one row per slot).
 CREATE TABLE IF NOT EXISTS community_forge_posts (
   slot_key TEXT PRIMARY KEY,                         -- e.g. 2026-07-09-premarket

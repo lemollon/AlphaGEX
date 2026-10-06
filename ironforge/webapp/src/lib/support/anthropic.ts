@@ -22,6 +22,50 @@ export interface ChatMessage {
 }
 
 /**
+ * One full (non-streaming) completion — for POST /api/sparky/chat (#264), which
+ * answers plain JSON `{reply, conversationId}` rather than SSE deltas. Separate
+ * function from streamAnthropic() rather than collecting that generator's
+ * output, since a non-streaming caller has no reason to ask Anthropic to
+ * stream in the first place.
+ */
+export async function completeAnthropic(opts: {
+  system: string
+  messages: ChatMessage[]
+  maxTokens?: number
+  signal?: AbortSignal
+}): Promise<string> {
+  const key = process.env.ANTHROPIC_API_KEY?.trim()
+  if (!key) throw new Error('ANTHROPIC_API_KEY not configured')
+
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': ANTHROPIC_VERSION,
+    },
+    body: JSON.stringify({
+      model: SUPPORT_MODEL,
+      max_tokens: opts.maxTokens ?? 800,
+      system: opts.system,
+      messages: opts.messages,
+    }),
+    signal: opts.signal,
+  })
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`Anthropic ${res.status}: ${detail.slice(0, 300)}`)
+  }
+
+  const data = await res.json()
+  const blocks = Array.isArray(data?.content) ? data.content : []
+  const text = blocks.map((b: any) => b?.text ?? '').join('').trim()
+  if (!text) throw new Error('Anthropic returned empty content')
+  return text
+}
+
+/**
  * Stream a completion from Anthropic, yielding plain text deltas as they arrive.
  * Parses the SSE stream and surfaces only `text_delta` content. Throws on a non-2xx
  * response so the caller can send an error event.
