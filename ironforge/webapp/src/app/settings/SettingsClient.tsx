@@ -75,6 +75,10 @@ interface Activation { activation_id: string; agent: string; paused: boolean }
 function AutomationSection() {
   const { data } = useSWR<{ ok: boolean; activations: Activation[] }>('/api/v1/automation/pause', fetcher, { shouldRetryOnError: false })
   const [pending, setPending] = useState<string | null>(null)
+  // Ember excluded until its execution (REFLEX) actually enforces the pause
+  // flag — same reasoning as EMBER_PAUSE_UI_ENABLED in EmberWorkspaceClient.tsx.
+  // The server still accepts agent=ember (route.ts); this is a display-only cut.
+  const activations = data?.activations.filter((a) => a.agent !== 'ember')
 
   async function toggle(agent: string, currentlyPaused: boolean) {
     setPending(agent)
@@ -90,21 +94,21 @@ function AutomationSection() {
     }
   }
 
-  if (data && data.activations.length === 0) return null
+  if (activations && activations.length === 0) return null
 
   return (
     <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-5">
       <h2 className="text-sm font-semibold text-[var(--fg)]">Automation</h2>
       <p className="mt-0.5 text-xs text-[var(--muted)]">Turn an agent's trading on or off. Any open trade stays protected and closes by the end of its session.</p>
       <div className="mt-4 space-y-3">
-        {!data ? (
+        {!activations ? (
           <div className="h-10 animate-pulse rounded-lg bg-[var(--bg-2)]" />
         ) : (
-          data.activations.map((a) => (
+          activations.map((a) => (
             <div key={a.activation_id} className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-[var(--fg)]">
-                  {a.agent === 'ember' ? 'Ember' : LIVE_BOT_LABEL[a.agent as LiveBot] ?? a.agent}
+                  {LIVE_BOT_LABEL[a.agent as LiveBot] ?? a.agent}
                 </div>
                 <div className="text-xs text-[var(--muted)]">{a.paused ? 'Paused — not taking new trades' : 'Active — trading normally'}</div>
               </div>

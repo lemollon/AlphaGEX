@@ -18,6 +18,18 @@ interface PauseResp { ok: boolean; activations: Activation[] }
 const PAUSE_KEY = '/api/v1/automation/pause'
 
 /**
+ * HIDDEN pending a product/legal decision (Leron, 2026-10-06, relayed via the
+ * coordinator): a Pause control that doesn't actually stop trading is
+ * misleading. The server flag (`/api/v1/automation/pause` now accepts
+ * `agent=ember`) stays live — see that route's comment — but this component
+ * must render nothing for a customer until Ember's execution (REFLEX,
+ * dev/meltup/ember/run_reflex.py — a separate, already-armed sleeve outside
+ * this webapp) is actually wired to read and honor that flag. Flip this back
+ * to `true` only once REFLEX enforces the pause, not before.
+ */
+const EMBER_PAUSE_UI_ENABLED = false
+
+/**
  * Ember's Pause control (handoff #178 — "0 'pause' in EmberWorkspaceClient").
  * Wired to the same `/api/v1/automation/pause` flag Settings' Automation
  * section uses for Spark/Flame — see that route's comment on `agent === 'ember'`.
@@ -27,8 +39,9 @@ const PAUSE_KEY = '/api/v1/automation/pause'
  * not yet an enforced stop. Never touches REFLEX itself.
  */
 function EmberPauseControl() {
-  const { data } = useSWR<PauseResp>(PAUSE_KEY, fetcher, { shouldRetryOnError: false })
+  const { data } = useSWR<PauseResp>(EMBER_PAUSE_UI_ENABLED ? PAUSE_KEY : null, fetcher, { shouldRetryOnError: false })
   const [pending, setPending] = useState(false)
+  if (!EMBER_PAUSE_UI_ENABLED) return null
   const activation = data?.activations.find((a) => a.agent === 'ember')
   if (!activation) return null
 
