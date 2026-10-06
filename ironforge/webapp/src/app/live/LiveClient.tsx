@@ -300,7 +300,7 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                 </div>
               ) : (
                 <div className="order-7 grid gap-4 lg:grid-cols-[11fr_9fr]">
-                  <LiveTradeCard trade={trade ?? null} error={Boolean(tradeError)} state={summary?.state ?? null} accent={accent} accountValue={summary?.account?.value ?? null} />
+                  <LiveTradeCard trade={trade ?? null} error={Boolean(tradeError)} state={summary?.state ?? null} accent={accent} accountValue={summary?.account?.value ?? null} nextOpenLabel={summary?.market?.next_open_label ?? null} />
                   <NowTimelineCard state={summary?.state ?? null} openedAt={trade?.opened_at ?? null} accent={accent} />
                 </div>
               )}
