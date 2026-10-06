@@ -88,6 +88,11 @@ export interface LiveSummary {
     value: number | null
     today_pnl: number | null
     today_pnl_pct: number | null
+    /** db-dash #205: same pair /performance's combined call already returns —
+     *  added here so an agent's own page (`/agents/{bot}`, reading this summary
+     *  directly) doesn't disagree with Overview about what's available. */
+    capital_available: number | null
+    held_for_open_trades: number | null
     source: 'tradier' | 'paper_account'
     /**
      * 'paper' = simulated money. The UI MUST render the paper badge/disclosure
