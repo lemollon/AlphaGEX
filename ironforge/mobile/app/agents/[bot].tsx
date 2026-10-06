@@ -26,6 +26,7 @@ import { space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Card, SectionLabel, Money, Loading, ErrorState } from '@/components/ui'
+import { formatPnl } from '@/components/chart-geometry'
 import { Mascot } from '@/components/Brand'
 import { Sheet, SheetHeader } from '@/components/Sheet'
 import { Confetti } from '@/components/Confetti'
@@ -417,8 +418,14 @@ function DailyBars({ days, accent }: { days: Array<{ date: string; pnl: number }
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const maxAbs = Math.max(1, ...days.map((d) => Math.abs(d.pnl)))
+  const total = days.reduce((sum, d) => sum + d.pnl, 0)
   return (
-    <View style={s.barsRow} accessibilityLabel={`Daily results over the last ${days.length} trading days`}>
+    <View
+      style={s.barsRow}
+      accessible
+      accessibilityRole="image"
+      accessibilityLabel={`Daily results over the last ${days.length} trading days. Total ${formatPnl(total)}.`}
+    >
       {days.map((d) => {
         const pct = Math.max(4, (Math.abs(d.pnl) / maxAbs) * 100)
         const up = d.pnl >= 0
@@ -507,6 +514,18 @@ function formatHeartbeat(iso: string | null): string {
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
+/**
+ * HIDDEN for Ember pending a product/legal decision (Leron, 2026-10-06, relayed
+ * via the coordinator) — same gate as webapp's EmberWorkspaceClient.tsx
+ * EMBER_PAUSE_UI_ENABLED. A Pause control that doesn't actually stop trading is
+ * misleading: `/api/v1/automation/pause` now accepts `agent=ember` (handoff
+ * #178), but that only flips the customer's own `activations.status` row —
+ * Ember's actual execution (REFLEX, dev/meltup/ember/run_reflex.py, a separate
+ * already-armed sleeve) does not read it. Flip this back to `true` only once
+ * REFLEX enforces the pause, not before. Spark/Flame are unaffected.
+ */
+const EMBER_PAUSE_UI_ENABLED = false
+
 /** Pause / Resume — APP-028/029. */
 function PauseResumeControl({
   bot,
@@ -526,6 +545,7 @@ function PauseResumeControl({
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const [pending, setPending] = useState(false)
+  if (bot === 'ember' && !EMBER_PAUSE_UI_ENABLED) return null
   const paused = activation?.paused ?? false
   const accent = agentAccent(bot)
 
