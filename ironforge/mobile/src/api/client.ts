@@ -35,6 +35,23 @@ export class AuthExpiredError extends Error {
   }
 }
 
+/**
+ * `fetch()` only rejects for a network-level failure — no connectivity, DNS,
+ * or (the case this exists for) `react-native-ssl-public-key-pinning`
+ * refusing the TLS handshake because the server's certificate chain no
+ * longer matches the pinned hashes in security/ssl-pinning.ts. Left
+ * unwrapped, that rejection is a raw native exception string ("Exception in
+ * HostFunction: ...", "java.io.IOException: Certificate pinning failure")
+ * surfacing wherever a screen's `catch (e) { ... (e as Error).message }`
+ * happens to render it — every screen in this app follows that exact
+ * pattern (see billing.tsx, account.tsx). Converting it here, once, means
+ * every caller already shows something a customer can act on instead of a
+ * crash-ish string, with no per-screen change needed.
+ */
+function throwSecureConnectionError(): never {
+  throw new Error('Secure connection to IronForge failed. Check your connection and try again.')
+}
+
 export interface TokenPair {
   accessToken: string
   refreshToken: string
@@ -179,7 +196,11 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Pro
 
   // Offline handling (#294): a network-layer failure (fetch itself rejecting — no
   // connection, DNS, timeout) reports here directly, distinct from an ordinary HTTP
-  // error status below, which proves the request actually reached the server.
+  // error status below, which proves the request actually reached the server. This
+  // is also the case react-native-ssl-public-key-pinning triggers on a pin mismatch
+  // (security/ssl-pinning.ts), so it gets the same clear "secure connection failed"
+  // message as every other network-layer failure here — never a raw native
+  // exception string.
   let res: Response
   try {
     res = await fetch(`${API_BASE}${path}`, {
@@ -187,9 +208,9 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Pro
       headers,
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     })
-  } catch (e) {
+  } catch {
     reportNetworkFailure()
-    throw e
+    throwSecureConnectionError()
   }
   reportNetworkSuccess()
 
@@ -214,7 +235,7 @@ export async function apiPublic<T = unknown>(path: string, body: unknown): Promi
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify(body),
-  })
+  }).catch(throwSecureConnectionError)
   const json = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok) {
     throw new Error((json?.error as string) ?? `Request failed (${res.status})`)

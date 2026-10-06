@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, ScrollView, Pressable, Switch, StyleSheet, Alert, Linking, Platform } from 'react-native'
+import { usePreventScreenCapture } from 'expo-screen-capture'
 import { useScrollToTop } from '@react-navigation/native'
 import * as Clipboard from 'expo-clipboard'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -63,6 +64,11 @@ const ALL_BOTS: AgentBot[] = ['spark', 'flame', 'ember']
  * non-subscribers is exactly the bug that was deleted when Stripe landed.
  */
 export default function AccountScreen() {
+  // Dev handoff mobile Security checklist: block screenshots/screen recording
+  // on the billing screen. This whole tab is the only screen that renders the
+  // membership/billing card (plan, price, payment method last 4) — there is
+  // no separate /account/billing route to scope this to more narrowly.
+  usePreventScreenCapture()
   const { colors: color, scheme, setPreference } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
