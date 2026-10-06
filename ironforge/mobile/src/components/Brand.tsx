@@ -1,11 +1,13 @@
 /**
  * Brand chrome — the app header and the agent mascots (APP-001, APP-003, APP-012).
  *
- * The wordmark is a 1:1 mirror of the web's src/components/Brand.tsx: the IF mark as a
- * raster asset, then IRON in white and FORGE in the marketing accent (#EE5A24). It is
- * deliberately TEXT rather than a second logo image — the web calls its Wordmark "the
- * single source of truth… do not reintroduce a second mark image", and rendering the
- * letters means the lockup can never go soft on a 3x screen.
+ * The wordmark is TEXT only — "IRON" in white, "FORGE" in the marketing accent
+ * (#EE5A24) — matching the design doc's app bar exactly (`.wm` — "IRON<b>FORGE</b>",
+ * no icon). The app used to also render a raster "1F" mark (assets/brand/
+ * ironforge-mark.png) beside the text; that asset predates the current design and
+ * has been retired (coordinator follow-up, 2026-10-06) — the design's own app bar
+ * has never shown a mark, only the lockup. Rendering the letters means the
+ * wordmark can never go soft on a 3x screen the way a raster image could.
  *
  * The mascots are the APPROVED art copied out of webapp/public, not new drawings:
  *   home/spark-mascot-glow.png -> assets/brand/mascot-spark.png
@@ -25,8 +27,6 @@ import type { ColorTokens } from '@/theme/palette'
 import { useNotificationBell } from '@/notifications/bell'
 import { useUnreadNotificationsCount } from '@/notifications/useUnreadCount'
 
-const MARK = require('../../assets/brand/ironforge-mark.png')
-
 const MASCOTS: Record<string, number> = {
   spark: require('../../assets/brand/mascot-spark.png'),
   flame: require('../../assets/brand/mascot-flame.png'),
@@ -35,30 +35,12 @@ const MASCOTS: Record<string, number> = {
 
 export const SPARKY_AVATAR = require('../../assets/brand/sparky-avatar.png')
 
-/** The IF mark + IRONFORGE lockup. */
+/** The IRONFORGE wordmark, text only — see the file comment above. */
 export function Wordmark({ height = 26 }: { height?: number }) {
-  const { colors: color, scheme } = useTheme()
+  const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
-  // ironforge-mark.png draws its "I" in solid white on a transparent canvas — reads
-  // fine against the dark theme's near-black bg, but is nearly invisible against the
-  // light theme's near-white one. A small dark backdrop behind just the mark restores
-  // the same contrast the dark theme gets for free, without touching the asset itself.
-  const markPadding = height * 0.12
   return (
     <View style={s.lockup}>
-      <View
-        style={
-          scheme === 'light'
-            ? {
-                backgroundColor: color.text,
-                borderRadius: 4,
-                padding: markPadding,
-              }
-            : undefined
-        }
-      >
-        <Image source={MARK} style={{ height, width: height * 1.15 }} resizeMode="contain" />
-      </View>
       <Text style={[s.word, { fontSize: height * 0.78 }]}>
         <Text style={{ color: color.text }}>IRON</Text>
         <Text style={{ color: color.accentText }}>FORGE</Text>
