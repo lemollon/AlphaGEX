@@ -1,10 +1,12 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import useSWR, { mutate as globalMutate } from 'swr'
 import useSWRImmutable from 'swr/immutable'
 import { fetcher } from '@/lib/fetcher'
 import type { LiveSummary } from '@/lib/live/types'
+import { LIVE_BOT_LABEL, type LiveBot } from '@/lib/live/bots'
 import type { CommunityFeed, CommunityMessage } from '@/lib/community/store'
 import CustomerShell from '@/components/customer/CustomerShell'
 import CheckoutNotice from '@/components/customer/CheckoutNotice'
@@ -91,14 +93,55 @@ function ReplyRow({ reply, canReact }: { reply: CommunityMessage; canReact: bool
 
 /**
  * Minimal thread view (APP-055) — a reply count that expands into the replies
- * themselves. Read-only on web by design: posting a reply is the mobile flow
- * (mobile is the priority for threads); the web page just needs a way to SEE them.
+ * themselves, plus a reply composer (db-community #192: "threaded replies" —
+ * previously read-only on web). Posts through the same POST /api/community/messages
+ * the top-level composer uses, with `parent_id` set; the server already validates
+ * the parent is visible in this channel (isReplyTargetVisible) and moderates before
+ * persisting, same as any other post.
  */
-function ThreadPanel({ parentId, canReact }: { parentId: string; canReact: boolean }) {
-  const { data, error } = useSWR<{ replies: CommunityMessage[] }>(
+function ThreadPanel({
+  parentId, channel, canReact, loggedIn, onReplyPosted,
+}: {
+  parentId: string
+  channel: string
+  canReact: boolean
+  loggedIn: boolean
+  /** Bumps the parent feed's reply_count without a full refetch. */
+  onReplyPosted: () => void
+}) {
+  const { data, error, mutate } = useSWR<{ replies: CommunityMessage[] }>(
     `/api/community/messages/${parentId}/replies`, fetcher,
   )
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
   const hasAi = data?.replies.some((r) => r.sender_type !== 'USER')
+
+  async function sendReply() {
+    const message = draft.trim()
+    if (!message || sending) return
+    setSending(true)
+    setSendError(null)
+    try {
+      const res = await fetch('/api/community/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel, message, parent_id: parentId }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || 'Failed to send reply.')
+      }
+      setDraft('')
+      await mutate()
+      onReplyPosted()
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : 'Failed to send reply.')
+    } finally {
+      setSending(false)
+    }
+  }
+
   return (
     <div className="mt-2 space-y-2 border-l-2 border-[var(--line)] pl-3">
       {error ? (
@@ -117,6 +160,24 @@ function ThreadPanel({ parentId, canReact }: { parentId: string; canReact: boole
           )}
         </>
       )}
+      {loggedIn && (
+        <div className="flex items-center gap-1.5 pt-1">
+          <input
+            value={draft}
+            onChange={(e) => { setDraft(e.target.value); setSendError(null) }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendReply() } }}
+            placeholder="Reply…"
+            maxLength={500}
+            disabled={sending}
+            className="h-7 min-w-0 flex-1 rounded-md border border-[var(--line)] bg-[var(--bg)] px-2 text-[11px] text-[var(--fg)] placeholder-[var(--muted)] outline-none transition-colors focus:border-[var(--accent)]/50 disabled:opacity-60"
+          />
+          <button type="button" onClick={() => void sendReply()} disabled={sending || !draft.trim()}
+            className="shrink-0 rounded-md bg-[var(--accent)] px-2.5 py-1 text-[11px] font-semibold text-[var(--accent-ink)] transition hover:brightness-105 disabled:opacity-50">
+            Reply
+          </button>
+        </div>
+      )}
+      {sendError && <div className="text-[11px] text-[var(--bad)]">{sendError}</div>}
     </div>
   )
 }
@@ -185,10 +246,13 @@ function ReportControl({ messageId }: { messageId: string }) {
   )
 }
 
-function MessageRow({ msg, canReact, onReact }: {
+function MessageRow({ msg, channel, canReact, loggedIn, onReact, onReplyPosted }: {
   msg: CommunityMessage
+  channel: string
   canReact: boolean
+  loggedIn: boolean
   onReact: (id: string, emoji: string) => void
+  onReplyPosted: () => void
 }) {
   const [threadOpen, setThreadOpen] = useState(false)
   return (
@@ -202,6 +266,10 @@ function MessageRow({ msg, canReact, onReact }: {
           )}
           <span className="text-[10px] text-[var(--muted)]">{timeLabel(msg.created_at)}</span>
         </div>
+        {/* db-community #194: "optional AI disclosure" on AI-authored posts. */}
+        {msg.sender_type === 'FORGE' && (
+          <div className="text-[10px] text-[var(--muted)]">AI-generated market update</div>
+        )}
         <div className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--fg)]">{msg.message}</div>
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           {msg.reactions.map((r) => (
@@ -237,7 +305,15 @@ function MessageRow({ msg, canReact, onReact }: {
             </>
           )}
         </div>
-        {threadOpen && <ThreadPanel parentId={msg.id} canReact={canReact} />}
+        {threadOpen && (
+          <ThreadPanel
+            parentId={msg.id}
+            channel={channel}
+            canReact={canReact}
+            loggedIn={loggedIn}
+            onReplyPosted={onReplyPosted}
+          />
+        )}
       </div>
     </div>
   )
@@ -273,6 +349,16 @@ export function CommunityBody() {
   const { data: me } = useSWRImmutable<CustomerMe>('/api/auth/customer-me', fetcher, { shouldRetryOnError: false })
   const { data: summary } = useSWR<LiveSummary>('/api/live/summary', fetcher, { refreshInterval: 120_000 })
   const loggedIn = Boolean(me?.ok)
+  const ownedBots = (summary?.viewer?.allowedBots ?? []).filter(
+    (b): b is LiveBot => b === 'spark' || b === 'flame',
+  )
+  const todaysBriefing = (() => {
+    const todayCt = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+    const forgeToday = feed?.messages.filter(
+      (m) => m.sender_type === 'FORGE' && new Date(m.created_at).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }) === todayCt,
+    )
+    return forgeToday?.length ? forgeToday[forgeToday.length - 1] : null
+  })()
 
   useEffect(() => {
     setWelcomeDismissed(typeof window !== 'undefined' && localStorage.getItem('forge-welcome-dismissed') === '1')
@@ -466,7 +552,15 @@ export function CommunityBody() {
                 </div>
               ) : (
                 feed.messages.map((m) => (
-                  <MessageRow key={m.id} msg={m} canReact={loggedIn} onReact={handleReact} />
+                  <MessageRow
+                    key={m.id}
+                    msg={m}
+                    channel={channel}
+                    canReact={loggedIn}
+                    loggedIn={loggedIn}
+                    onReact={handleReact}
+                    onReplyPosted={() => void mutate()}
+                  />
                 ))
               )}
             </div>
@@ -498,7 +592,7 @@ export function CommunityBody() {
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void handleSend() } }}
                   placeholder={loggedIn ? 'Message Forge Community...' : 'Log in to join the conversation'}
                   disabled={!loggedIn && me !== undefined}
-                  maxLength={2000}
+                  maxLength={500}
                   className="h-9 min-w-0 flex-1 rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 text-sm text-[var(--fg)] placeholder-[var(--muted)] outline-none transition-colors focus:border-[var(--accent)]/50 disabled:opacity-60"
                 />
                 <div className="relative hidden sm:block">
@@ -539,6 +633,39 @@ export function CommunityBody() {
 
         {/* ── Right rail ── */}
         <div className="flex flex-col gap-4">
+          {/* db-community #195: "Today's briefing (AI)" — the most recent Forge AI
+              post from TODAY, if any. Reuses the feed already fetched above; no
+              separate briefing concept exists server-side, so this never shows a
+              stale day-old post as today's. */}
+          {todaysBriefing && (
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-4">
+              <RailHeader>Today&rsquo;s Briefing</RailHeader>
+              <div className="mt-2 flex items-center gap-1.5">
+                <span className="rounded bg-[var(--accent)] px-1 py-px text-[9px] font-bold leading-none text-[var(--accent-ink)]">AI</span>
+                <span className="text-[10px] text-[var(--muted)]">{timeLabel(todaysBriefing.created_at)}</span>
+              </div>
+              <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--muted)]">
+                {todaysBriefing.message}
+              </p>
+            </div>
+          )}
+
+          {/* db-community #195: "your agents in the chat" — reuses the live summary
+              already fetched above (viewer.allowedBots), not a new endpoint. */}
+          {ownedBots.length > 0 && (
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-4">
+              <RailHeader>Your Agents</RailHeader>
+              <div className="mt-3 space-y-2">
+                {ownedBots.map((b) => (
+                  <Link key={b} href={`/agents/${b}`} className="flex items-center gap-2 hover:opacity-80">
+                    <span className={`h-2 w-2 rounded-full ${b === 'flame' ? 'bg-flame' : 'bg-spark'}`} />
+                    <span className="text-xs font-medium text-[var(--fg)]">{LIVE_BOT_LABEL[b]}</span>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)] p-4">
             <RailHeader>About Forge AI</RailHeader>
             <div className="mt-3 flex items-start gap-3">
