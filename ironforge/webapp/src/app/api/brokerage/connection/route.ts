@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCustomerIdentity } from '@/lib/auth/customer-identity'
+import { requireIdentityWithStepUp } from '@/lib/auth/mobile-step-up'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { decryptSecret } from '@/lib/crypto/secret-box'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
@@ -11,6 +11,10 @@ export const dynamic = 'force-dynamic'
  * Disconnects a brokerage authorization for the logged-in customer (dashboard action).
  * Removes it at SnapTrade, marks the local rows removed, and clears brokerage_connected when
  * no active connection remains. Customer-session-guarded; path is on the public allowlist.
+ *
+ * Mobile callers must present a step-up token (MOBILE_SESSION_POLICY.stepUpActions
+ * includes 'brokerage_disconnect') — see mobile-step-up.ts. The web dashboard cookie
+ * flow is unaffected; step-up is a mobile-only requirement.
  */
 
 interface UserRow {
@@ -20,7 +24,10 @@ interface UserRow {
 }
 
 export async function DELETE(req: NextRequest) {
-  const identity = await getCustomerIdentity()
+  const { identity, error } = await requireIdentityWithStepUp()
+  if (error === 'step_up_required') {
+    return NextResponse.json({ ok: false, error: 'step_up_required' }, { status: 401 })
+  }
   // Cookie OR mobile bearer. Shape preserved so the checks below read unchanged.
   const session = { customerId: identity?.customerId ?? null }
   if (!session.customerId) return NextResponse.json({ ok: false }, { status: 401 })

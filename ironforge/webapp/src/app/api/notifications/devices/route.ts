@@ -35,13 +35,15 @@ export async function POST(req: NextRequest) {
   // Without the user_id reassignment the previous owner would keep receiving that
   // handset's notifications — a cross-tenant leak dressed up as a stale row.
   await customerExecute(
-    `INSERT INTO push_devices (user_id, expo_push_token, device_id, platform, app_version)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO push_devices (user_id, expo_push_token, device_id, platform, app_version, locale, tz)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      ON CONFLICT (expo_push_token) DO UPDATE
        SET user_id = EXCLUDED.user_id,
            device_id = EXCLUDED.device_id,
            platform = EXCLUDED.platform,
            app_version = EXCLUDED.app_version,
+           locale = EXCLUDED.locale,
+           tz = EXCLUDED.tz,
            enabled = TRUE,
            disabled_reason = NULL,
            failure_count = 0,
@@ -53,6 +55,8 @@ export async function POST(req: NextRequest) {
       body.deviceId ? String(body.deviceId).slice(0, 200) : null,
       platform,
       body.appVersion ? String(body.appVersion).slice(0, 32) : null,
+      body.locale ? String(body.locale).slice(0, 35) : null,
+      body.tz ? String(body.tz).slice(0, 60) : null,
     ],
   )
 
