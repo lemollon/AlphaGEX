@@ -1882,8 +1882,12 @@ async function monitorPosition(bot: BotDef, ct: Date): Promise<{ status: string;
         )
       }
       // db-controls #202 — "big moves on an open trade". Independent of the
-      // snapshot write above (never gated on it succeeding); see notifyBigMove.
-      await notifyBigMove(bot.name, pos, r.value.unrealizedPnl)
+      // snapshot write above (never gated on it succeeding) and NEVER awaited
+      // (fire-and-forget, same contract as notifyTradeOpened/Closed below) —
+      // notifyBigMove already catches everything internally, but `void` here
+      // is what guarantees a slow push/DB call cannot add latency to this
+      // monitor cycle, on top of that.
+      void notifyBigMove(bot.name, pos, r.value.unrealizedPnl)
     }),
   )
 
@@ -11201,6 +11205,7 @@ export const _testing = {
   buildFlameD2Features,
   SPARK_V2_RELAXED_VIX_CEILING,
   tryOpenFlamePutSpread,
+  notifyBigMove,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },
   get _scanStartedAt() { return _scanStartedAt },
