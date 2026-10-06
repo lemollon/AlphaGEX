@@ -379,6 +379,26 @@ export async function findLiveSubscriptionForPrice(
   return null
 }
 
+/**
+ * EMBEDDED billing (10/5 reorder) — a SetupIntent so the enrollment's Billing step can
+ * collect a card with Stripe Elements/Payment Element instead of a hosted-Checkout
+ * redirect, with $0 due today, EXACTLY like createSetupCheckout() above (setup mode,
+ * card only). A SetupIntent — not a subscription — is deliberate: creating a
+ * subscription now (even `default_incomplete`) would start Stripe's own billing clock
+ * at card entry, contradicting "the trial begins only after brokerage+agent+activation"
+ * (§7), which createTrialingSubscription() below still enforces by creating the real
+ * subscription ONLY inside the activation transaction. usage:'off_session' is what
+ * lets that later subscription charge this same saved card without the customer
+ * present.
+ */
+export async function createSetupIntent(opts: { customerId: string }): Promise<{ id: string; client_secret: string }> {
+  return stripeRequest<{ id: string; client_secret: string }>('POST', '/setup_intents', {
+    customer: opts.customerId,
+    payment_method_types: ['card'],
+    usage: 'off_session',
+  })
+}
+
 /** A payment method actually attached to this customer — the §4 "payment method is valid" input. */
 export async function hasUsablePaymentMethod(customerId: string): Promise<boolean> {
   try {
@@ -404,6 +424,27 @@ export async function hasUsablePaymentMethod(customerId: string): Promise<boolea
  * upgrade path sees the same number and the same reasoning, not three independent guesses.
  */
 export const TRIAL_HOLD_DAYS = 60
+
+/**
+ * The customer's most recent card on file, as a DISPLAY-ONLY masked summary — brand
+ * and last4, nothing else. Never the full number (Stripe never returns it over the API
+ * either). Used by the Account tab's "Payment method" row (fidelity audit) — read-only,
+ * no mutation, same gated-degradation pattern as hasUsablePaymentMethod above.
+ */
+export async function getDefaultPaymentMethod(
+  customerId: string,
+): Promise<{ brand: string; last4: string } | null> {
+  try {
+    const res = await stripeRequest<
+      StripeList<{ card?: { brand?: string; last4?: string } }>
+    >('GET', '/payment_methods', { customer: customerId, type: 'card', limit: 1 })
+    const card = res.data?.[0]?.card
+    if (!card?.last4) return null
+    return { brand: card.brand ?? 'card', last4: card.last4 }
+  } catch {
+    return null
+  }
+}
 
 /**
  * Create the subscription in `trialing`, with the trial end far out.

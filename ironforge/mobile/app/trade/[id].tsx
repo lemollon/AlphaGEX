@@ -9,6 +9,7 @@ import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Card, SectionLabel, Money, OutcomeBadge, AgentBadge, Loading, ErrorState } from '@/components/ui'
 import { Sheet, SheetHeader } from '@/components/Sheet'
+import { PnlChart } from '@/components/PnlChart'
 import { track } from '@/analytics/track'
 
 /**
@@ -87,6 +88,19 @@ function Content({ data }: { data: TradeDetailResponse }) {
             {trade.pnl_pct != null ? `${trade.pnl_pct >= 0 ? '+' : ''}${trade.pnl_pct}%` : '—'}
           </Text>
         </View>
+
+        {/* P&L sparkline (10.4 design closed-trade sheet) — this trade's own real
+            minute-bucketed history, same source as the live chart; omitted entirely
+            (not a flat/fabricated line) for a trade with no snapshot rows. */}
+        {detail.series && detail.series.length >= 2 ? (
+          <PnlChart
+            series={detail.series}
+            accent={agentAccent(trade.bot)}
+            status={trade.outcome}
+            current={trade.pnl}
+          />
+        ) : null}
+
         <View style={[s.rowBetween, { marginTop: space.lg }]}>
           <Field label="Contracts" value={String(trade.contracts)} />
           <Field label="Credit" value={trade.credit != null ? `$${trade.credit.toFixed(2)}` : '—'} />

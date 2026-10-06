@@ -7,7 +7,7 @@ import {
   ensureLegalDocumentsSeeded,
   getOpenEnrollment,
   createOrResumeEnrollment,
-  nextStepFor,
+  resolveNextStepWeb,
   setEnrollmentPlan,
   getEnrollmentForUser,
   consumeIntendedPlan,
@@ -30,7 +30,8 @@ export const metadata: Metadata = {
  *  - open enrollment       → resume at the server-owned step (§3 DONE-01)
  *  - owns a strategy       → /live (their product; never re-enter the funnel)
  *  - active community only → /community
- *  - nothing yet           → start a fresh enrollment at the plan screen
+ *  - nothing yet           → start a fresh enrollment at the agreements screen (10/5
+ *                            reorder: Agreements now runs before Choose agent)
  *
  * Without the ownership checks, every returning paying customer would be handed a
  * brand-new draft enrollment and a plan-selection screen for a membership they
@@ -41,14 +42,14 @@ export default async function EnrollPage() {
   const session = await getCustomerSession()
   if (!session.customerId) redirect('/login?next=/enroll')
 
-  let route = '/enroll/plan'
+  let route = '/enroll/legal'
   if (isCustomersDbConfigured()) {
     try {
       await ensureLegalDocumentsSeeded()
       const open = await getOpenEnrollment(session.customerId)
       if (open) {
         const enrollment = await advanceBillingIfComplete(open)
-        route = routeForNextStep(nextStepFor(enrollment), enrollment.selected_plan).route
+        route = routeForNextStep(await resolveNextStepWeb(enrollment, session.customerId)).route
       } else if (await ownsStrategy(session.customerId)) {
         route = '/live'
       } else if (await hasActiveMembership(session.customerId)) {
@@ -66,7 +67,7 @@ export default async function EnrollPage() {
             if (refreshed) enrollment = refreshed
           }
         }
-        route = routeForNextStep(nextStepFor(enrollment), enrollment.selected_plan).route
+        route = routeForNextStep(await resolveNextStepWeb(enrollment, session.customerId)).route
       }
     } catch {
       // Fall through to the first screen; it resumes client-side and surfaces errors.

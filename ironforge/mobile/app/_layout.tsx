@@ -27,6 +27,8 @@ import { ThemeProvider, useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Loading } from '@/components/ui'
 import { Wordmark } from '@/components/Brand'
+import { ToastHost } from '@/components/ToastHost'
+import { TradeBannerHost } from '@/components/TradeBannerHost'
 
 /**
  * Root layout + auth gate + foreground lock (APP-007 / APP-008 / APP-010).
@@ -269,6 +271,8 @@ function RootLayoutInner() {
           contentStyle: { backgroundColor: color.bg },
         }}
       />
+      {signedIn && !lockState.locked ? <TradeBannerHost /> : null}
+      <ToastHost />
       {signedIn && lockState.locked ? (
         <View style={s.overlay}>
           <Wordmark height={32} />

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isCustomersDbConfigured } from '@/lib/customers-db'
-import { advanceBillingIfComplete, createOrResumeEnrollment, ensureLegalDocumentsSeeded, nextStepFor } from '@/lib/enrollment/service'
+import { advanceBillingIfComplete, createOrResumeEnrollment, ensureLegalDocumentsSeeded, nextStepFor, resolveNextStepWeb } from '@/lib/enrollment/service'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
 import { isEnrollmentClosed, enrollmentClosedResponse } from '@/lib/enrollment-mode'
 
@@ -17,6 +17,12 @@ export const dynamic = 'force-dynamic'
  *
  * Path note: the spec writes /v1/...; this app serves everything under /api, so the
  * routes are /api/v1/... The contract is otherwise as specified.
+ *
+ * ORDER (10/5 reorder): a cookie-sourced caller is the web app, which now runs
+ * account -> legal -> plan (Choose agent) -> broker -> billing -> review, so its
+ * `next_step` comes from resolveNextStepWeb. A bearer-sourced caller is the mobile
+ * app, which keeps its existing plan -> legal -> billing -> broker -> agent -> review
+ * sequence — nextStepFor is untouched and is exactly what it got before this reorder.
  */
 export async function POST(req: NextRequest) {
   // Enrollment closed: do not begin a new enrollment intent (handoff §4/§11).
@@ -45,13 +51,16 @@ export async function POST(req: NextRequest) {
         typeof body.source === 'string' ? body.source.slice(0, 60) : undefined,
       ),
     )
+    const nextStep = identity?.source === 'bearer'
+      ? nextStepFor(enrollment)
+      : await resolveNextStepWeb(enrollment, session.customerId)
     return NextResponse.json({
       enrollment: {
         id: enrollment.id,
         selected_plan: enrollment.selected_plan,
         status: enrollment.status,
       },
-      next_step: nextStepFor(enrollment),
+      next_step: nextStep,
     })
   } catch (e) {
     const env = redactProviderError('v1/enrollments', e, 'INTERNAL', 'Something went wrong. Please try again.')

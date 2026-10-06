@@ -13,13 +13,11 @@ import type {
   LiveSummary,
   LiveAgent,
   LiveAgents,
-  LiveOpenPosition,
   HomeData,
   LivePerformance,
   BrokerageConnections,
   MembershipResponse,
   MobileMe,
-  AutomationPauseResponse,
   EntitlementsResponse,
   EmberTradesResponse,
   EmberStatusResponse,
@@ -30,30 +28,16 @@ import { space, radius, type, font, agentAccent, color as staticColor } from '@/
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Card, Money, Balance, SectionLabel, Loading, Empty, ErrorState, Button } from '@/components/ui'
-import { StatRow } from '@/components/StatRow'
 import { AppHeader, Mascot } from '@/components/Brand'
-import { PnlChart } from '@/components/PnlChart'
 import { AccountChart } from '@/components/AccountChart'
-import { brokerLabel, maskTail, soleConnection } from '@/api/brokerage'
+import { LiveTradeCard } from '@/components/LiveTradeCard'
 import { totalCapital } from '@/live/capital'
-import { agentStatItems } from '@/live/card-stats'
 import { formatPeriodValue, periodTone, type PeriodTone } from '@/live/period-stats'
 import { periodSeries, HERO_PERIOD_LABEL, HERO_PERIOD_TILE_LABEL, type HeroPeriod, type AccountPoint } from '@/live/account-series'
 import { greetingForHour } from '@/live/greeting'
 import { emberClosedTradesToHistory } from '@/ledger/ember'
 import { agentDetailHref, type AgentBot } from '@/agents/routes'
 import { AGENT_LABEL, AGENT_BLURB } from '@/agents/copy'
-import {
-  deriveLifecycleNodes,
-  lifecycleFillFraction,
-  formatLocalClock,
-  minutesSince,
-  formatElapsedMinutes,
-  formatTargetStopCaption,
-  formatAutoCloseCaption,
-  formatSettleAtCloseCaption,
-  isSettleAtExpiryBot,
-} from '@/live/lifecycle'
 import { pickBanner, bannerActionHref, billingBannerMode } from '@/alerts/banner'
 import { manageSubscriptionUrl } from '@/billing/store-policy'
 
@@ -117,11 +101,6 @@ export default function ForgeScreen() {
   const emberStatus = useSWR<EmberStatusResponse>(ownsEmber ? '/api/ember/status' : null, (p: string) =>
     api<EmberStatusResponse>(p),
     { refreshInterval: 60_000, shouldRetryOnError: false },
-  )
-  // Whether every owned agent is paused — the market pill's "Paused" state, same
-  // activations the Agents overview and per-agent Pause switch already read.
-  const pause = useSWR<AutomationPauseResponse>('/api/v1/automation/pause', (p: string) =>
-    api<AutomationPauseResponse>(p),
   )
 
   // Sub-5s positions/P&L push (dev-handoff /ws/positions contract) — additive on
@@ -318,11 +297,12 @@ export default function ForgeScreen() {
   const firstName = me.data?.customer?.firstName
   const greeting = firstName ? `${greetingForHour(new Date().getHours())}, ${firstName}` : greetingForHour(new Date().getHours())
   const ownedBots = list.map((a) => a.bot)
-  const allPaused =
-    ownedBots.length > 0 &&
-    ownedBots.every((bot) => pause.data?.activations.find((a) => a.agent === bot)?.paused)
-  const pillLabel = allPaused ? 'Paused' : data.market.open ? 'Market open' : data.market.label
-  const pillTone = allPaused ? color.warn : data.market.open ? color.pos : color.muted
+  // 10.4 design: the top pill shows ONLY market status (Market open / Market closed) —
+  // automation-paused is its own, separate signal shown per-agent (the compact row's
+  // "Paused" status, the agent sheet's pill) rather than overloading this one element
+  // with two unrelated facts. See fidelity audit "Greeting + market pill".
+  const pillLabel = data.market.open ? 'Market open' : data.market.label
+  const pillTone = data.market.open ? color.pos : color.muted
 
   // Hero chart + period figures — same four numbers the period tiles show.
   const periodValues: Record<HeroPeriod, number | null> = {
@@ -463,22 +443,25 @@ export default function ForgeScreen() {
             ))}
           </View>
 
-          {availableCapital != null ? (
-            <View style={s.capitalRow}>
-              <View style={s.capitalCol}>
-                <Text style={[type.label, { color: color.muted }]}>Capital available</Text>
-                <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, marginTop: 2 }]}>
-                  {formatDollars(availableCapital)}
-                </Text>
-              </View>
-              <View style={[s.capitalCol, s.capitalColDivider]}>
-                <Text style={[type.label, { color: color.muted }]}>Held in trades</Text>
-                <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, marginTop: 2 }]}>
-                  {heldCapital != null ? formatDollars(heldCapital) : '—'}
-                </Text>
-              </View>
+          {/* Always rendered (10.4 design: the capital row is a fixed part of the hero
+              card). A multi-account or disconnected customer sees honest "—"
+              placeholders here rather than the row disappearing outright — the row's
+              PRESENCE is part of the layout contract, even when there is no single
+              account to attribute a number to. */}
+          <View style={s.capitalRow}>
+            <View style={s.capitalCol}>
+              <Text style={[type.label, { color: color.muted }]}>Capital available</Text>
+              <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, marginTop: 2 }]}>
+                {availableCapital != null ? formatDollars(availableCapital) : '—'}
+              </Text>
             </View>
-          ) : null}
+            <View style={[s.capitalCol, s.capitalColDivider]}>
+              <Text style={[type.label, { color: color.muted }]}>Held in trades</Text>
+              <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, marginTop: 2 }]}>
+                {heldCapital != null ? formatDollars(heldCapital) : '—'}
+              </Text>
+            </View>
+          </View>
         </Card>
 
         {liveAgents.length > 0 ? (
@@ -487,13 +470,18 @@ export default function ForgeScreen() {
               <SectionLabel>Live now</SectionLabel>
               <Text style={[type.label, { color: color.muted }]}>Updates every few seconds</Text>
             </View>
-            {liveAgents.map((a) => (
-              <AgentTile
-                key={a.bot}
-                agent={a}
-                connection={list.length === 1 ? soleConnection(conns.data) : null}
-              />
-            ))}
+            {liveAgents.map((a) =>
+              a.trade?.active ? (
+                <LiveTradeCard
+                  key={a.bot}
+                  bot={a.bot}
+                  label={a.label}
+                  accent={agentAccent(a.bot)}
+                  trade={a.trade}
+                  onPress={() => router.push(agentDetailHref(a.bot as AgentBot))}
+                />
+              ) : null,
+            )}
           </>
         ) : null}
 
@@ -510,11 +498,7 @@ export default function ForgeScreen() {
           />
         ) : (
           idleAgents.map((a) => (
-            <AgentTile
-              key={a.bot}
-              agent={a}
-              connection={list.length === 1 ? soleConnection(conns.data) : null}
-            />
+            <AgentRow key={a.bot} agent={a} onPress={() => router.push(agentDetailHref(a.bot as AgentBot))} />
           ))
         )}
 
@@ -695,374 +679,42 @@ function todayCtDateString(): string {
 }
 
 /**
- * One agent tile with its lifecycle stepper, or — when the chart control is on — the
- * intraday P&L chart for the same trade (APP-051).
+ * Compact "Your agents" row (10.4 design `.arow`) — avatar, name + status, today's
+ * P&L, chevron. One owned agent per row, idle (no open trade right now — those get
+ * LiveTradeCard above instead). Replaces the old full-size stats Card every agent
+ * used to render here regardless of whether it had anything live to show; the same
+ * balance/growth/last-10/best-trade figures this row no longer repeats inline are
+ * one tap away on the agent sheet (PerformanceSection there already shows them).
  */
-function AgentTile({
-  agent,
-  connection,
-}: {
-  agent: LiveAgent
-  connection: ReturnType<typeof soleConnection>
-}) {
+function AgentRow({ agent, onPress }: { agent: LiveAgent; onPress: () => void }) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const accent = agentAccent(agent.bot)
-  const [showChart, setShowChart] = useState(false)
-
   const state = agent.state
-  const trade = agent.trade
-  const hasSeries = (trade?.spark_series?.length ?? 0) > 0
+  // Real server copy when available (CustomerState.headline, e.g. "Waiting for next
+  // session") — never a locally re-derived status string guessing at what the server
+  // already said authoritatively.
+  const status = agent.error === 'state' || !state ? 'Status unavailable' : state.headline
+  const todayPnl = agent.trade?.today_result?.pnl ?? null
 
   return (
-    <Card style={{ borderColor: accent, marginBottom: space.lg }}>
-      <View style={s.rowBetween}>
-        <View style={s.rowCenter}>
-          <Mascot bot={agent.bot} size={38} />
-          <View>
-            <View style={s.rowCenter}>
-              <Text
-                style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 18 }]}
-              >
-                {agent.label}
-              </Text>
-              {state ? (
-                <View style={[s.pill, { borderColor: state.paused ? color.warn : color.pos }]}>
-                  <Text style={[type.label, { color: state.paused ? color.warn : color.pos }]}>
-                    {state.paused ? 'Paused' : 'Active'}
-                  </Text>
-                </View>
-              ) : null}
-              {agent.paper ? (
-                <View style={[s.pill, { borderColor: color.warn }]}>
-                  <Text style={[type.label, { color: color.warn }]}>Paper</Text>
-                </View>
-              ) : null}
-            </View>
-            {connection ? (
-              <Text style={[type.label, { color: color.textDim, marginTop: 2 }]}>
-                {brokerLabel(connection.broker ?? connection.provider)}
-                {connection.mask ? `  ${maskTail(connection.mask)}` : ''}
-              </Text>
-            ) : null}
-          </View>
-        </View>
-
-        {/* Chart toggle (APP-051). Hidden when there is no series, rather than offering a
-            control that opens an empty panel. */}
-        {hasSeries ? (
-          <Pressable
-            onPress={() => setShowChart((v) => !v)}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel={showChart ? 'Show trade progress' : "Show today's profit and loss chart"}
-            style={[
-              s.chartBtn,
-              { borderColor: accent, backgroundColor: showChart ? `${accent}22` : 'transparent' },
-            ]}
-          >
-            <Ionicons name={showChart ? 'list-outline' : 'trending-up'} size={18} color={accent} />
-          </Pressable>
-        ) : null}
-      </View>
-
-      {/* Capital (live balance, "Started: $X" sub-line) / Growth / Last 10 / Best Trade —
-          LIFETIME, no filter (handoff/ledger-kpis.md PART 2). `agent.stats` is null only
-          when the server couldn't compute it (both source queries must succeed);
-          agentStatItems turns that into an honest "—" per column rather than throwing or
-          hiding the row. No separate per-tile loading state: this tile does not mount
-          until agents.data has already loaded (see the agents.isLoading gate above it). */}
-      <View style={s.statsPanel}>
-        <StatRow variant="card" items={agentStatItems(agent.stats, false)} />
-      </View>
-
-      {/* One agent failing must not blank the other — the server settles them separately,
-          so a broken half says so instead of rendering as "nothing happening". */}
-      {agent.error === 'state' || !state ? (
-        <Text style={[type.label, { color: color.warn, marginTop: space.md }]}>
-          Status is unavailable for {agent.label} right now.
+    <Pressable onPress={onPress} accessibilityRole="button" style={[s.arow, { borderColor: color.border }]}>
+      <Mascot bot={agent.bot} size={38} />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={[type.body, { color: accent, fontFamily: font.bodyBold }]} numberOfLines={1}>
+          {agent.label}
         </Text>
-      ) : (
-        <>
-          <Text
-            style={[type.body, { color: color.text, marginTop: space.md, fontFamily: font.bodyMedium }]}
-          >
-            {state.headline}
-          </Text>
-          <Text style={[type.label, { color: color.textDim, marginTop: space.xs }]}>
-            {state.subtitle}
-          </Text>
-        </>
-      )}
-
-      {/* Lifecycle line (UAT round two, mock #1) — same "has an open position"
-          condition as the Target/Stop chart below it, so it never renders
-          against a closed/no-trade tile. */}
-      {trade?.active ? (
-        <LifecycleLine
-          accent={accent}
-          bot={agent.bot}
-          openedAt={trade.opened_at}
-          targetDollars={trade.target_dollars ?? null}
-          stopDollars={trade.stop_dollars ?? null}
-          autoCloseAt={trade.auto_close_at ?? null}
-        />
-      ) : null}
-
-      {agent.error === 'trade' ? (
-        <Text style={[type.label, { color: color.warn, marginTop: space.lg }]}>
-          Position details are unavailable right now.
+        <Text style={[type.label, { color: color.muted, marginTop: 2 }]} numberOfLines={1}>
+          {status}
         </Text>
-      ) : trade?.active ? (
-        <>
-          <View style={s.divider} />
-          {/*
-                One P&L row PER TRADE, and there can be more than one: SPARK swings, so
-                a leg opened yesterday is still open beside today's. The scalar fields
-                only ever describe positions[0], which is exactly how the web page once
-                hid a live position holding real money.
-
-                No dot rail under the row any more — the LifecycleLine above already
-                walks Opened → Monitoring → Target/Stop → Auto Close for this position,
-                and a second copy of the same four steps read as duplicate (UAT, 9/8).
-                The row keeps what the lifecycle line does not show: the trade's own
-                unrealized P&L, and the chart when the toggle is on.
-
-                Falls back to the single-trade shape when `positions` is absent, so an
-                app newer than its API still renders.
-              */}
-              {(trade.positions?.length ?? 0) > 0 ? (
-                trade.positions!.map((p, i) => (
-                  <TradeRow
-                    key={p.position_id || String(i)}
-                    index={i}
-                    position={p}
-                    accent={accent}
-                    // Only the newest trade can be at Target/Stop or Auto Close — the
-                    // agent state describes it. Every other open leg is, by definition
-                    // of still being open, being monitored.
-                    step={i === 0 ? (state?.timeline_step ?? 1) : 1}
-                    showChart={showChart}
-                  />
-                ))
-              ) : showChart ? (
-                // Legacy path: no per-position payload, so the only series available is
-                // the agent's whole day. Correct when one trade is open, which is the
-                // only case that can reach here.
-                <PnlChart
-                  series={trade.spark_series}
-                  accent={accent}
-                  status={stepLabel(state?.timeline_step ?? null)}
-                  current={trade.unrealized_pnl}
-                />
-              ) : (
-                <View style={s.rowBetween}>
-                  <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
-                    Open position
-                  </Text>
-                  <Money value={trade.unrealized_pnl} size="title" />
-                </View>
-              )}
-        </>
-      ) : trade?.today_result ? (
-        <>
-          <View style={s.divider} />
-          <View style={s.rowBetween}>
-            <Text style={[type.body, { color: color.textDim }]}>Today&apos;s result</Text>
-            <Money value={trade.today_result.pnl} size="title" />
-          </View>
-        </>
-      ) : (
-        <Text style={[type.label, { color: color.muted, marginTop: space.lg }]}>
-          No position open right now.
-        </Text>
-      )}
-    </Card>
-  )
-}
-
-/**
- * The open-position lifecycle line — UAT round two, mock #1
- * ("Open-position lifecycle with the real open time"). Four nodes on one
- * track: Opened → Monitoring → Target/Stop → Auto Close.
- *
- * State derivation and every caption are pure functions in live/lifecycle.ts
- * (tested there); this is presentation only, plus the once-a-minute tick that
- * keeps "N min" current without the customer having to pull to refresh.
- *
- * This is the ONLY step rail on the card. The older per-trade Stepper (which read
- * CustomerState.timeline_step and showed "Target / Stop" as current once a position
- * was being monitored) was removed 9/8 after UAT flagged it as a duplicate of this
- * line. Monitoring itself is the current node for as long as the position is open,
- * since Target/Stop and Auto Close describe outcomes the backend cannot yet
- * detect live.
- */
-function LifecycleLine({
-  accent,
-  bot,
-  openedAt,
-  targetDollars,
-  stopDollars,
-  autoCloseAt,
-}: {
-  accent: string
-  bot: string
-  openedAt: string | null
-  targetDollars: number | null
-  stopDollars: number | null
-  autoCloseAt: string | null
-}) {
-  const { colors: color } = useTheme()
-  const s = useMemo(() => makeStyles(color), [color])
-  // Forces a re-render once a minute so the Monitoring caption ("37 min")
-  // ticks forward on its own — the position doesn't otherwise change shape
-  // between 60s agent polls.
-  const [, setTick] = useState(0)
-  useEffect(() => {
-    const id = setInterval(() => setTick((n) => n + 1), 60_000)
-    return () => clearInterval(id)
-  }, [])
-
-  const settleAtExpiry = isSettleAtExpiryBot(bot)
-  const nodes = deriveLifecycleNodes(false, bot)
-  const fillPct = lifecycleFillFraction(nodes) * 75 // track spans the middle 75% of the row
-  // FLAME/SPARK hold every position to settlement — no stop, no early auto-close —
-  // so their last two captions say that plainly rather than reusing the generic
-  // "$target / −$stop" and "by 2:45 PM" copy that describes a different strategy.
-  const captions = [
-    formatLocalClock(openedAt) ?? '—',
-    openedAt ? formatElapsedMinutes(minutesSince(openedAt)) : '—',
-    settleAtExpiry ? 'Hold to close' : formatTargetStopCaption(targetDollars, stopDollars),
-    settleAtExpiry ? formatSettleAtCloseCaption(autoCloseAt) : formatAutoCloseCaption(autoCloseAt),
-  ]
-
-  return (
-    <View style={s.lifecycle} accessibilityLabel="Trade lifecycle">
-      {/* Track first so it paints BEHIND the node dots, not over them. */}
-      <View style={s.lifecycleTrack} />
-      <View style={[s.lifecycleFill, { width: `${fillPct}%`, backgroundColor: accent }]} />
-      <View style={s.lifecycleNodes}>
-        {nodes.map((node, i) => {
-          const nodeColor =
-            node.status === 'done' ? color.pos : node.status === 'current' ? accent : color.border
-          return (
-            <View
-              key={node.label}
-              style={s.lifecycleNode}
-              accessible
-              accessibilityRole="text"
-              accessibilityLabel={`${node.label}, ${node.status}, ${captions[i]}`}
-            >
-              <View
-                style={[
-                  s.lifecycleHalo,
-                  node.status === 'current' ? { backgroundColor: `${accent}2E` } : null,
-                ]}
-              >
-                <View
-                  style={[
-                    s.lifecycleDot,
-                    {
-                      borderColor: nodeColor,
-                      backgroundColor: node.status === 'future' ? color.card : nodeColor,
-                    },
-                  ]}
-                >
-                  {node.status === 'done' ? (
-                    <Ionicons name="checkmark" size={12} color={color.bg} />
-                  ) : null}
-                </View>
-              </View>
-              <Text
-                style={[
-                  type.label,
-                  {
-                    color: node.status === 'future' ? color.muted : nodeColor,
-                    fontFamily: font.bodyMedium,
-                    marginTop: space.xs,
-                    textAlign: 'center',
-                  },
-                ]}
-              >
-                {node.label}
-              </Text>
-              <Text style={[type.label, { color: color.muted, marginTop: 1, textAlign: 'center' }]}>
-                {captions[i]}
-              </Text>
-            </View>
-          )
-        })}
       </View>
-    </View>
-  )
-}
-
-/**
- * One open trade: title, its own P&L, and — when the chart toggle is on — its own
- * intraday chart. UX-002 also drew a step rail here; that went 9/8 because the
- * LifecycleLine above the divider already shows the same four steps for the position.
- *
- * Titled "Trade 1 / Trade 2" as the approved layout does, but a leg held overnight
- * also says which day it is on. The mockup's invented data had no swung legs; the real
- * product does, and a customer looking at two identical-looking rows needs to know one
- * of them is yesterday's.
- */
-function TradeRow({
-  index,
-  position,
-  accent,
-  step,
-  showChart,
-}: {
-  index: number
-  position: LiveOpenPosition
-  accent: string
-  step: number | null
-  showChart: boolean
-}) {
-  const { colors: color } = useTheme()
-  const s = useMemo(() => makeStyles(color), [color])
-  // Each trade draws its OWN series. Draws nothing under the row when this position
-  // has no marks yet — a position opened before the scanner started recording them
-  // has nothing to plot, and an empty chart frame says less than the P&L figure does.
-  const series = position.series ?? []
-  const chart = showChart && series.length > 1
-  return (
-    <View style={index > 0 ? { marginTop: space.lg } : undefined}>
-      <View style={s.rowBetween}>
-        <View>
-          <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
-            {`Trade ${index + 1}`}
-          </Text>
-          {position.held_overnight ? (
-            <Text style={[type.label, { color: color.textDim, marginTop: 1 }]}>
-              {`Opened ${position.opened_date_label} · Day ${position.day_number}`}
-            </Text>
-          ) : null}
-        </View>
-        {/* null P&L renders as "—", never $0.00 — quotes were unavailable, not flat. */}
-        <Money value={position.unrealized_pnl} size="title" />
+      <View style={{ alignItems: 'flex-end' }}>
+        <Money value={todayPnl} />
+        <Text style={[type.label, { color: color.muted, marginTop: 1 }]}>today</Text>
       </View>
-      {chart ? (
-        <PnlChart
-          series={series}
-          accent={accent}
-          status={stepLabel(step)}
-          current={position.unrealized_pnl}
-        />
-      ) : null}
-    </View>
+      <Ionicons name="chevron-forward" size={17} color={color.muted} style={{ marginLeft: space.sm }} />
+    </Pressable>
   )
-}
-
-/** timeline_step is 0..4; there are four labels, so a step of 4 rests on the last.
- *  Only the chart's status caption reads these now — the per-trade dot rail that
- *  drew them is gone (see LifecycleLine). */
-const STEP_LABELS: readonly string[] = ['Opened', 'Monitoring', 'Target / Stop', 'Auto Close']
-
-function stepLabel(step: number | null): string {
-  const i = Math.min(Math.max(step ?? 0, 0), STEP_LABELS.length - 1)
-  return STEP_LABELS[i]
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -1168,49 +820,15 @@ const makeStyles = (color: ColorTokens) =>
     paddingHorizontal: space.md,
     paddingVertical: space.xs,
   },
-  chartBtn: {
-    borderWidth: 1,
-    borderRadius: radius.md,
-    width: 38,
-    height: 38,
+  // Compact idle-agent row (10.4 design `.arow`) — same shape as addRow (avatar +
+  // name column + trailing content), kept as its own style rather than reusing
+  // addRow directly since the two carry different border-colour semantics
+  // (addRow is themed per-agent, arow is a plain divider row).
+  arow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // Inset panel background: color.bg reads darker than the card's own color.card,
-  // matching the approved mock's slightly-recessed --card-2 without a new token.
-  statsPanel: {
-    marginTop: space.md,
-    backgroundColor: color.bg,
-    borderWidth: 1,
-    borderColor: color.border,
-    borderRadius: radius.lg,
+    gap: space.md,
+    borderBottomWidth: 1,
     paddingVertical: space.md,
-  },
-  divider: { height: 1, backgroundColor: color.border, marginVertical: space.lg },
-  lifecycle: { marginTop: space.md, position: 'relative' },
-  lifecycleNodes: { flexDirection: 'row' },
-  lifecycleNode: { flex: 1, alignItems: 'center' },
-  // 32px halo around a 24px dot — the "soft halo" ring is a plain tinted
-  // circle behind the dot rather than a CSS box-shadow, which RN has no
-  // equivalent for; only the current node gets a non-transparent halo.
-  lifecycleHalo: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  lifecycleDot: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  // Positioned to cross through the halo's vertical center (16px) minus half
-  // the line's own height, so the 3px track visually threads through every dot.
-  lifecycleTrack: {
-    position: 'absolute',
-    top: 14.5,
-    left: '12.5%',
-    right: '12.5%',
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: color.border,
-  },
-  lifecycleFill: {
-    position: 'absolute',
-    top: 14.5,
-    left: '12.5%',
-    height: 3,
-    borderRadius: 2,
   },
   })

@@ -9,18 +9,17 @@ import { BOT_PLANS, botTagline } from '@/lib/billing/plans'
 import { EMBER_AGENT } from '@/lib/agents/ember'
 
 /**
- * AGENT-01 — Choose Spark or Flame (July 29 handoff).
+ * AGENT-01 — RESUME FALLBACK (10/5 reorder).
  *
- * Selecting an agent creates a DRAFT configuration with the rule-schema defaults
- * (config: {} → server defaults apply) against the account chosen at BROKER-01 — it
- * never activates anything, and the footnote says so. There is no separate configure
- * screen: the approved flow has none, and the review screen renders the server-computed
- * deployment limits as display-only truth.
- *
- * FLOW ORDER NOTE. The handoff's §2 sequence puts Agent before Brokerage; here the
- * account comes first because the built agent-config API computes limits from a real
- * account's buying power at draft time — a deliberate, documented deviation that keeps
- * the review numbers live instead of hypothetical.
+ * The web order now mints the agent config automatically the moment a brokerage
+ * account is chosen (broker/BrokerClient.tsx, via the same shared
+ * createAgentConfigDraft() this screen used to call directly) — Choose agent already
+ * happened earlier (the /enroll/plan screen, now titled "Choose agent"), so this
+ * screen is no longer a rail step of its own. It stays live as the fallback a
+ * customer lands on if that auto-creation failed (e.g. Ember's $500-$2,000 gate
+ * against this account) or if a stale/changed account/config needs re-deriving —
+ * "any account or agent change invalidates the activation review" (§3 AGENT-02) still
+ * needs somewhere to send a customer to fix it. Still never activates anything.
  *
  * Color law: Spark = the `spark` token (blue-* is remapped to neutral in Tailwind);
  * Flame = brand orange (amber-*).
@@ -121,7 +120,7 @@ export default function AgentClient() {
           : 'Select the risk profile that best fits how you want to trade.'
       }
       maxWidthClass="max-w-3xl"
-      step="agent"
+      step="broker"
       enrollment={enrollment}
     >
         {account?.mask ? (

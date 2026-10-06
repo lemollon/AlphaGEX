@@ -14,11 +14,13 @@
  */
 
 export const color = {
-  // Surfaces — updated 2026-10 to the 10.4 redesign's dark tokens (--bg/--bg-2/
-  // --line), handoff/ironforge-10.4-design-spec.md §1.
-  bg: '#0D0D0F',
-  card: '#161619',
-  border: '#25252A',
+  // Surfaces — snapped 2026-10 to the design CSS's exact dark :root values
+  // (ironforge-10.4-css/ironforge-app.css --bg/--card/--line) rather than the
+  // near-identical hand-picked hexes this used to carry. Pure surface colour,
+  // not text — no AA re-check needed (WCAG 1.4.11 non-text contrast only).
+  bg: '#0B0B0D',
+  card: '#121215',
+  border: '#24242A',
   muted: '#9A9AA5',
 
   // Brand. The wordmark orange differs from the UI accent — Brand.tsx hardcodes

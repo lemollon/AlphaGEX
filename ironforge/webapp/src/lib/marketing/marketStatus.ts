@@ -16,6 +16,22 @@ export function isMarketOpenNow(now: Date = new Date()): boolean {
   return minutes >= 8 * 60 + 30 && minutes < 15 * 60
 }
 
+/**
+ * Status badge wording, matching the design's states ("Market open",
+ * "Pre-market", "After hours", "Market closed") driven by the same
+ * weekday-only approximation as `isMarketOpenNow` — not a real exchange
+ * calendar, never used for trading decisions.
+ */
+export function marketStatusLabel(now: Date = new Date()): string {
+  const ct = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+  const day = ct.getDay()
+  if (day === 0 || day === 6) return 'Market closed'
+  const minutes = ct.getHours() * 60 + ct.getMinutes()
+  if (minutes < 8 * 60 + 30) return 'Pre-market'
+  if (minutes < 15 * 60) return 'Market open'
+  return 'After hours'
+}
+
 /** Minutes since midnight CT — drives the how-it-works live timeline's "now" step. */
 export function minutesSinceMidnightCT(now: Date = new Date()): number {
   const ct = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }))

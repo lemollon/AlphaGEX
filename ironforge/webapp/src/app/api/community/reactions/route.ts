@@ -6,7 +6,10 @@ import { toggleReaction } from '@/lib/community/store'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const ALLOWED_EMOJI = new Set(['👍', '🔥', '💯', '😂', '🎯', '🙌'])
+// ❤️ added for the 10.4 redesign (fidelity audit "Reaction") — the prototype's
+// reaction icon is a heart, not fire. 🔥 stays allowed/rendered so every reaction a
+// customer already placed under the old UI keeps working and keeps displaying.
+const ALLOWED_EMOJI = new Set(['👍', '🔥', '❤️', '💯', '😂', '🎯', '🙌'])
 
 export async function POST(req: NextRequest) {
   try {

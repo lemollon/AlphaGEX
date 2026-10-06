@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, ScrollView, Pressable, StyleSheet, Alert } from 'react-native'
 import { Stack, useRouter, useLocalSearchParams } from 'expo-router'
 import * as WebBrowser from 'expo-web-browser'
@@ -29,6 +29,8 @@ import { Card, SectionLabel, Money, Loading, ErrorState } from '@/components/ui'
 import { Mascot } from '@/components/Brand'
 import { Sheet, SheetHeader } from '@/components/Sheet'
 import { Confetti } from '@/components/Confetti'
+import { LiveTradeCard } from '@/components/LiveTradeCard'
+import { showToast } from '@/notifications/toast'
 import { soleConnection, brokerLabel, maskTail } from '@/api/brokerage'
 import { track } from '@/analytics/track'
 import { agentAction, type AgentActionKind } from '@/agents/eligibility'
@@ -40,7 +42,6 @@ import {
   TRADING_SCHEDULE,
   RISK_SUMMARY,
 } from '@/agents/copy'
-import { formatPausedAt } from '@/agents/time'
 
 function dotColorFor(dot: string, color: ColorTokens): string {
   const map: Record<string, string> = {
@@ -314,6 +315,16 @@ function CurrentAgentSection({
         )}
       </Card>
 
+      {/* Embedded live-trade chart/progress/stage footer (10.4 design agentSheet()'s
+          reproduced liveCard) — the SAME component the Forge tab's "Live now" strip
+          uses, so the sheet is never a second, drifted description of the same open
+          position. */}
+      {trade?.active ? (
+        <View style={{ marginTop: space.lg }}>
+          <LiveTradeCard bot={bot} label={label} accent={accent} trade={trade} />
+        </View>
+      ) : null}
+
       <PerformanceSection liveAgent={liveAgent} accent={accent} />
 
       <PauseResumeControl
@@ -526,16 +537,12 @@ function PauseResumeControl({
       void globalMutate('/api/live/agents')
       track(nextPaused ? 'agent_pause_confirmed' : 'agent_resume_confirmed', { agent: bot })
 
-      const row = res.activations.find((a) => a.agent === bot)
-      const when = formatPausedAt(row?.paused_at ?? null)
-      Alert.alert(
-        nextPaused ? 'Trading paused' : 'Trading resumed',
-        nextPaused
-          ? `${label} will not open new trades.${when ? ` Effective ${when}.` : ''} Open positions continue to be managed by the agent's risk rules.`
-          : `${label} can open new trades again.${when ? ` Effective ${when}.` : ''}`,
-      )
+      // Floating snackbar (10.4 design `toast()` — "Spark paused"), not a blocking
+      // native dialog: the pause/resume itself already asked for confirmation via
+      // confirmToggle below, so this is just quick feedback that it happened.
+      showToast(nextPaused ? `${label} paused` : `${label} resumed`)
     } catch (e) {
-      Alert.alert('Could not update', e instanceof ApiError ? e.humanMessage : (e as Error).message)
+      showToast(e instanceof ApiError ? e.humanMessage : (e as Error).message)
     } finally {
       setPending(false)
     }
@@ -589,18 +596,17 @@ function PauseResumeControl({
     <Pressable
       onPress={() => (paused ? void handleResumeTap() : confirmToggle(true))}
       disabled={pending || !activation}
+      // Full-width FILLED pill (10.4 design `.btn-c`/`.btn-stop` — "Pause {Name}" is
+      // agent-accent, "Resume {Name}" is the up colour), not the bordered ghost this
+      // used to be — see fidelity audit "Pause/Resume button".
       style={[
-        s.actionBtn,
-        { borderColor: paused ? color.pos : accent, opacity: pending || !activation ? 0.5 : 1 },
+        s.pauseResumeBtn,
+        { backgroundColor: paused ? color.pos : accent, opacity: pending || !activation ? 0.5 : 1 },
       ]}
     >
-      <Text
-        style={[
-          type.body,
-          { color: paused ? color.pos : accent, fontFamily: font.bodyMedium },
-        ]}
-      >
-        {pending ? 'Working…' : paused ? 'Resume trading' : 'Pause new trading'}
+      <Ionicons name="pause" size={16} color={color.bg} />
+      <Text style={[type.body, { color: color.bg, fontFamily: font.bodyBold }]}>
+        {pending ? 'Working…' : paused ? `Resume ${label}` : `Pause ${label}`}
       </Text>
     </Pressable>
   )
@@ -669,9 +675,31 @@ function SwitchSection({
 }
 
 type EligibleAccount = { account: BrokerageAccount; connection: BrokerageConnection }
-type ActivationStep = 'select' | 'ack' | 'review' | 'done'
 
-/** Add — APP-025/026/027: account selection -> acknowledgements -> review -> confirm. */
+/**
+ * Add — the 10.4 design's SINGLE screen (fidelity audit "Add-agent sheet"): pitch,
+ * price/trial/due-today/community facts, inline risk + authorization
+ * acknowledgements, one "Start free trial" button — not the old 4-step wizard
+ * (select account -> ack -> review -> confirm) as four separate screens.
+ *
+ * Collapsing the STEPS does not collapse the SERVER CONTRACT: this still calls the
+ * exact same three endpoints, in the exact same order, with the exact same payload,
+ * that the old wizard did —
+ *   POST /api/v1/agent-configs          (account_id -> config_id)
+ *   POST /api/v1/activations/preview    (config_id -> snapshot + blockers + preview_hash)
+ *   POST /api/v1/activations            (config_id + both acks + preview_hash -> activation)
+ * — it only changes WHEN the first two fire: automatically, the moment an account is
+ * known, instead of waiting for a "Continue" tap, so the facts/blockers are already on
+ * screen by the time someone reaches the checkboxes. A real blocker from the preview
+ * (an unfunded account, a missing authorization, whatever the server decided) still
+ * blocks activation and still routes to the same "Finish setup on the web" handoff —
+ * nothing here bypasses that decision or invents a local substitute for it.
+ *
+ * With exactly one eligible account (the common case) it is auto-selected and no
+ * picker ever shows, per spec. With more than one, a compact inline picker — the
+ * prototype never defines this case, since its mock data never has two — stays above
+ * the single-screen content and re-triggers the same auto-preview-fetch on change.
+ */
 function ActivationFlow({
   bot,
   label,
@@ -684,7 +712,6 @@ function ActivationFlow({
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
-  const [step, setStep] = useState<ActivationStep>('select')
   const [accountId, setAccountId] = useState<string | null>(
     eligibleAccounts.length === 1 ? eligibleAccounts[0].account.id : null,
   )
@@ -697,25 +724,24 @@ function ActivationFlow({
   const [activated, setActivated] = useState<ActivationResponse | null>(null)
   const [idemKey] = useState(() => generateIdempotencyKey())
   // Confetti (mobile addendum §2 "Add-agent sheet": "confetti in agent color on
-  // success") — fires once, the moment `step` reaches 'done', then clears itself.
+  // success") — fires once, the moment activation succeeds, then clears itself.
   const [showConfetti, setShowConfetti] = useState(false)
-
-  if (eligibleAccounts.length === 0) {
-    return <SetupRequiredSection bot={bot} label={label} />
-  }
+  // Which accountId the preview on screen (or in flight) belongs to — guards the
+  // auto-fetch effect below from re-firing for the account it already fetched, while
+  // still re-firing the moment a multi-account picker changes the selection.
+  const previewedFor = useRef<string | null>(null)
 
   function openWebHandoff() {
     void WebBrowser.openBrowserAsync(`${API_BASE}/agents/${bot}`)
   }
 
-  async function proceedToReview() {
-    if (!accountId) return
+  async function loadPreview(id: string) {
     setBusy(true)
     setFailure(null)
     try {
       const cfg = await api<AgentConfigResponse>('/api/v1/agent-configs', {
         method: 'POST',
-        body: { agent_code: bot, broker_account_id: accountId, config: {} },
+        body: { agent_code: bot, broker_account_id: id, config: {} },
       })
       setConfigId(cfg.id)
       const prev = await api<ActivationPreviewResponse>('/api/v1/activations/preview', {
@@ -723,13 +749,24 @@ function ActivationFlow({
         body: { config_id: cfg.id },
       })
       setPreview(prev)
-      setStep('review')
     } catch (e) {
       setFailure(e instanceof ApiError ? e.humanMessage : (e as Error).message)
     } finally {
       setBusy(false)
     }
   }
+
+  // Auto-fetch the preview the instant an account is known — this is what makes the
+  // facts/blockers already be on screen instead of behind a "Continue" tap.
+  useEffect(() => {
+    if (!accountId || previewedFor.current === accountId) return
+    previewedFor.current = accountId
+    setConfigId(null)
+    setPreview(null)
+    void loadPreview(accountId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadPreview is stable
+    // for this component's lifetime; accountId is the only real dependency.
+  }, [accountId])
 
   async function confirmActivate() {
     if (!configId || !preview) return
@@ -751,7 +788,6 @@ function ActivationFlow({
       setActivated(res)
       void globalMutate('/api/live/agents')
       void globalMutate('/api/v1/automation/pause')
-      setStep('done')
       setShowConfetti(true)
     } catch (e) {
       setFailure(e instanceof ApiError ? e.humanMessage : (e as Error).message)
@@ -760,133 +796,11 @@ function ActivationFlow({
     }
   }
 
-  if (step === 'select') {
-    return (
-      <Card style={{ marginTop: space.lg }}>
-        <SectionLabel>Choose an account</SectionLabel>
-        {eligibleAccounts.map(({ account, connection }) => {
-          const selected = account.id === accountId
-          return (
-            <Pressable
-              key={account.id}
-              onPress={() => setAccountId(account.id)}
-              style={[s.selectRow, selected && { borderColor: color.accent }]}
-            >
-              <Ionicons
-                name={selected ? 'radio-button-on' : 'radio-button-off'}
-                size={20}
-                color={selected ? color.accent : color.muted}
-              />
-              <Text style={[type.body, { color: color.text, marginLeft: space.sm }]}>
-                {brokerLabel(connection.broker ?? connection.provider)}
-                {account.mask ? `  ${maskTail(account.mask)}` : ''}
-              </Text>
-            </Pressable>
-          )
-        })}
-        <Pressable
-          onPress={() => setStep('ack')}
-          disabled={!accountId}
-          style={[s.primaryBtn, { opacity: accountId ? 1 : 0.5 }]}
-        >
-          <Text style={[type.body, { color: color.bg, fontFamily: font.bodyBold }]}>Continue</Text>
-        </Pressable>
-      </Card>
-    )
+  if (eligibleAccounts.length === 0) {
+    return <SetupRequiredSection bot={bot} label={label} />
   }
 
-  if (step === 'ack') {
-    return (
-      <Card style={{ marginTop: space.lg }}>
-        <SectionLabel>Before you continue</SectionLabel>
-        <CheckRow
-          checked={riskAck}
-          onToggle={() => setRiskAck((v) => !v)}
-          label="I understand automated options trading involves risk, including the risk of loss."
-        />
-        <CheckRow
-          checked={authAck}
-          onToggle={() => setAuthAck((v) => !v)}
-          label={`I authorize ${label} to place trades in my selected brokerage account.`}
-        />
-        {failure ? (
-          <Text style={[type.body, { color: color.neg, marginTop: space.md }]}>{failure}</Text>
-        ) : null}
-        <Pressable
-          onPress={() => void proceedToReview()}
-          disabled={!riskAck || !authAck || busy}
-          style={[s.primaryBtn, { opacity: riskAck && authAck && !busy ? 1 : 0.5 }]}
-        >
-          <Text style={[type.body, { color: color.bg, fontFamily: font.bodyBold }]}>
-            {busy ? 'Loading review…' : 'Continue to review'}
-          </Text>
-        </Pressable>
-      </Card>
-    )
-  }
-
-  if (step === 'review' && preview) {
-    const s1 = preview.snapshot
-    return (
-      <Card style={{ marginTop: space.lg }}>
-        <SectionLabel>Review</SectionLabel>
-        <ReviewRow label="Account" value={s1.account_mask ? maskTail(s1.account_mask) : 'Not available'} />
-        {s1.plan ? (
-          <ReviewRow label="Plan" value={`${s1.plan.name} — $${s1.plan.price_monthly}/mo`} />
-        ) : null}
-        {s1.trial ? (
-          <ReviewRow label="Free trial" value={`${s1.trial.eligible_days_total} trading days`} />
-        ) : null}
-        {s1.buying_power_cents != null ? (
-          <ReviewRow label="Buying power" value={`$${(s1.buying_power_cents / 100).toLocaleString()}`} />
-        ) : null}
-        {s1.max_deployment_cents != null ? (
-          <ReviewRow
-            label="Max deployment"
-            value={`$${(s1.max_deployment_cents / 100).toLocaleString()}`}
-          />
-        ) : null}
-
-        {preview.blockers.length > 0 ? (
-          <>
-            <Text style={[type.label, { color: color.warn, marginTop: space.lg }]}>
-              A few things need to be finished before {label} can be activated:
-            </Text>
-            {preview.blockers.map((b, i) => (
-              <Text key={b.code + i} style={[type.body, { color: color.textDim, marginTop: space.xs }]}>
-                • {b.message}
-              </Text>
-            ))}
-            <Pressable
-              onPress={openWebHandoff}
-              style={[s.primaryBtn, { backgroundColor: color.accent, marginTop: space.lg }]}
-            >
-              <Text style={[type.body, { color: color.bg, fontFamily: font.bodyBold }]}>
-                Finish setup on the web
-              </Text>
-            </Pressable>
-          </>
-        ) : (
-          <>
-            {failure ? (
-              <Text style={[type.body, { color: color.neg, marginTop: space.md }]}>{failure}</Text>
-            ) : null}
-            <Pressable
-              onPress={() => void confirmActivate()}
-              disabled={busy}
-              style={[s.primaryBtn, { marginTop: space.lg, opacity: busy ? 0.5 : 1 }]}
-            >
-              <Text style={[type.body, { color: color.bg, fontFamily: font.bodyBold }]}>
-                {busy ? 'Activating…' : `Activate ${label}`}
-              </Text>
-            </Pressable>
-          </>
-        )}
-      </Card>
-    )
-  }
-
-  if (step === 'done' && activated) {
+  if (activated) {
     return (
       <View style={{ marginTop: space.lg }}>
         <Card>
@@ -897,9 +811,7 @@ function ActivationFlow({
             </Text>
           </View>
           <Text style={[type.body, { color: color.textDim, marginTop: space.md }]}>
-            {activated.account_mask
-              ? `Trading on ${maskTail(activated.account_mask)}. `
-              : ''}
+            {activated.account_mask ? `Trading on ${maskTail(activated.account_mask)}. ` : ''}
             Your trial is now active.
           </Text>
           <Pressable
@@ -916,7 +828,115 @@ function ActivationFlow({
     )
   }
 
-  return null
+  const s1 = preview?.snapshot ?? null
+  const hasBlockers = (preview?.blockers.length ?? 0) > 0
+  const canSubmit = !!accountId && !!preview && !hasBlockers && riskAck && authAck && !busy
+
+  return (
+    <Card style={{ marginTop: space.lg }}>
+      <SectionLabel>{`Add ${label}`}</SectionLabel>
+      <Text style={[type.body, { color: color.textDim, marginTop: space.xs }]}>
+        {AGENT_DESCRIPTION[bot]}
+      </Text>
+
+      {eligibleAccounts.length > 1 ? (
+        <View style={{ marginTop: space.lg }}>
+          <Text style={[type.label, { color: color.muted, marginBottom: space.xs }]}>Account</Text>
+          {eligibleAccounts.map(({ account, connection }) => {
+            const selected = account.id === accountId
+            return (
+              <Pressable
+                key={account.id}
+                onPress={() => setAccountId(account.id)}
+                style={[s.selectRow, selected && { borderColor: color.accent }]}
+              >
+                <Ionicons
+                  name={selected ? 'radio-button-on' : 'radio-button-off'}
+                  size={20}
+                  color={selected ? color.accent : color.muted}
+                />
+                <Text style={[type.body, { color: color.text, marginLeft: space.sm }]}>
+                  {brokerLabel(connection.broker ?? connection.provider)}
+                  {account.mask ? `  ${maskTail(account.mask)}` : ''}
+                </Text>
+              </Pressable>
+            )
+          })}
+        </View>
+      ) : null}
+
+      {!preview ? (
+        <Text style={[type.body, { color: color.muted, marginTop: space.lg }]}>
+          {busy ? 'Loading your trial details…' : 'Choose an account to continue.'}
+        </Text>
+      ) : (
+        <>
+          <ReviewRow
+            label="Account"
+            value={s1?.account_mask ? maskTail(s1.account_mask) : 'Not available'}
+          />
+          {s1?.plan ? <ReviewRow label="Price" value={`$${s1.plan.price_monthly}/month`} /> : null}
+          {s1?.trial ? (
+            <ReviewRow label="Free trial" value={`${s1.trial.eligible_days_total} trading days`} />
+          ) : null}
+          <ReviewRow label="Due today" value="$0.00" />
+          <ReviewRow label="Community" value="Already included" />
+
+          {hasBlockers ? (
+            <>
+              <Text style={[type.label, { color: color.warn, marginTop: space.lg }]}>
+                A few things need to be finished before {label} can be activated:
+              </Text>
+              {preview!.blockers.map((b, i) => (
+                <Text key={b.code + i} style={[type.body, { color: color.textDim, marginTop: space.xs }]}>
+                  • {b.message}
+                </Text>
+              ))}
+              <Pressable
+                onPress={openWebHandoff}
+                style={[s.primaryBtn, { backgroundColor: color.accent, marginTop: space.lg }]}
+              >
+                <Text style={[type.body, { color: color.bg, fontFamily: font.bodyBold }]}>
+                  Finish setup on the web
+                </Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              {/* Inline acknowledgements (10.4 design: right on the single screen, not
+                  a separate step). */}
+              <View style={{ marginTop: space.lg }}>
+                <CheckRow
+                  checked={riskAck}
+                  onToggle={() => setRiskAck((v) => !v)}
+                  label="I understand automated options trading involves risk, including the risk of loss."
+                />
+                <CheckRow
+                  checked={authAck}
+                  onToggle={() => setAuthAck((v) => !v)}
+                  label={`I authorize ${label} to place trades in my selected brokerage account.`}
+                />
+              </View>
+
+              {failure ? (
+                <Text style={[type.body, { color: color.neg, marginTop: space.md }]}>{failure}</Text>
+              ) : null}
+
+              <Pressable
+                onPress={() => void confirmActivate()}
+                disabled={!canSubmit}
+                style={[s.primaryBtn, { marginTop: space.lg, opacity: canSubmit ? 1 : 0.5 }]}
+              >
+                <Text style={[type.body, { color: color.bg, fontFamily: font.bodyBold }]}>
+                  {busy ? 'Starting…' : 'Start free trial'}
+                </Text>
+              </Pressable>
+            </>
+          )}
+        </>
+      )}
+    </Card>
+  )
 }
 
 function ReviewRow({ label, value }: { label: string; value: string }) {
@@ -1005,6 +1025,15 @@ const makeStyles = (color: ColorTokens) =>
     borderRadius: radius.md,
     paddingVertical: space.md,
     alignItems: 'center',
+  },
+  pauseResumeBtn: {
+    marginTop: space.lg,
+    flexDirection: 'row',
+    gap: space.sm,
+    borderRadius: radius.pill,
+    paddingVertical: space.md,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   primaryBtn: {
     marginTop: space.lg,

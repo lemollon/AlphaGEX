@@ -21,6 +21,15 @@ import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Card, Loading, Empty, ErrorState } from '@/components/ui'
 import { Sheet, SheetHeader } from '@/components/Sheet'
+import { Mascot } from '@/components/Brand'
+
+/** Rows whose `data.agent` names a real agent get that agent's mascot (10.4 design:
+ *  "agent mascot avatar for agent events") instead of the generic glyph below. */
+const KNOWN_AGENTS = new Set(['spark', 'flame', 'ember'])
+function agentForNotification(item: NotificationItem): string | null {
+  const a = item.data?.agent
+  return typeof a === 'string' && KNOWN_AGENTS.has(a) ? a : null
+}
 
 /**
  * Notifications — the real HISTORY feed (10.4 gap audit).
@@ -168,9 +177,15 @@ export default function NotificationsScreen() {
                       accessibilityRole="button"
                       accessibilityLabel={`${item.title}. ${item.body}${item.read_at ? '' : '. Unread'}`}
                     >
-                      <View style={s.iconWrap}>
-                        <Ionicons name={iconForKind(item.kind)} size={20} color={color.textDim} />
-                      </View>
+                      {agentForNotification(item) ? (
+                        <View style={s.iconWrap}>
+                          <Mascot bot={agentForNotification(item)!} size={28} />
+                        </View>
+                      ) : (
+                        <View style={s.iconWrap}>
+                          <Ionicons name={iconForKind(item.kind)} size={20} color={color.textDim} />
+                        </View>
+                      )}
                       <View style={{ flex: 1 }}>
                         <View style={s.titleRow}>
                           <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium, flex: 1 }]}>
