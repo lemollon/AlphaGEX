@@ -1533,7 +1533,7 @@ def _latest_gamma(symbol: str, *, verified_only: bool = False) -> dict[str, Any]
     d = dict(zip(keys, row))
     for k in ("captured_at", "source_timestamp"):
         if d[k] is not None:
-            d[k] = d[k].isoformat()
+            d[k] = _parse_ts(d[k]).isoformat()
     d["buckets"] = json.loads(d.pop("bucket_json") or "{}")
     d["walls"] = json.loads(d.pop("wall_json") or "{}")
     return d
@@ -1564,7 +1564,7 @@ def _latest_surface(symbol: str, *, verified_only: bool = False) -> dict[str, An
     for key in ("captured_at", "source_timestamp", "realized_vol_source_timestamp",
                 "realized_vol_bar_timestamp"):
         if result[key] is not None:
-            result[key] = result[key].isoformat()
+            result[key] = _parse_ts(result[key]).isoformat()
     return result
 
 
@@ -1601,7 +1601,7 @@ def _latest_trade_quote_flow(symbol: str, *, verified_only: bool = False) -> dic
     result = dict(zip(keys, row))
     for key in ("captured_at", "source_timestamp"):
         if result[key] is not None:
-            result[key] = result[key].isoformat()
+            result[key] = _parse_ts(result[key]).isoformat()
     result["buckets"] = json.loads(result.pop("bucket_json") or "{}")
     result["evidence"] = json.loads(result.pop("evidence_json") or "{}")
     result["guardrail"] = (

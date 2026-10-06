@@ -54,3 +54,29 @@ def test_session_horizons_are_close_to_close_and_not_calendar_days():
     assert set(policy.HOLDING_PERIODS)=={10,20}
     days=policy.business_dates(NOW.date(),21)
     assert (days[10]-days[0]).days>=14 and (days[20]-days[0]).days>=28
+
+
+@pytest.mark.parametrize('loader',[ms._latest_surface,ms._latest_gamma,ms._latest_trade_quote_flow])
+def test_persisted_utc_clocks_regain_timezone_without_becoming_fresh(monkeypatch,loader):
+    # Writers explicitly store UTC in PostgreSQL timestamp-without-time-zone columns.
+    stamp=(NOW-timedelta(hours=12)).replace(tzinfo=None)
+    class Connection:
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def execute(self,sql,params):
+            columns=str(sql).split('SELECT ',1)[1].split('FROM ',1)[0].split(',')
+            data={'captured_at':stamp,'source_timestamp':stamp,'realized_vol_source_timestamp':stamp,
+                  'realized_vol_bar_timestamp':stamp,'source':'Tradier BBO','confidence':'MEDIUM',
+                  'atm_iv':.2,'net_gex_b':1.,'n_rows':100,'n_trades':5}
+            self.values=tuple(data.get(c.strip(),'{}' if c.strip().endswith('_json') else None) for c in columns)
+            return self
+        def fetchone(self):return self.values
+    class Engine:
+        def begin(self):return Connection()
+    monkeypatch.setattr(ms,'engine',Engine())
+    monkeypatch.setattr(ms,'ensure_tables',lambda:None)
+    row=loader('SPY',verified_only=True)
+    assert row['source_timestamp']==(NOW-timedelta(hours=12)).isoformat()
+    assert refresh.verified(row)
+    item=policy.observed(.2,'Tradier',row['source_timestamp'],NOW)
+    assert item['status']=='historical' and item['age_seconds']==12*3600
