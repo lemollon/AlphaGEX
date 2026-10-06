@@ -34,7 +34,7 @@ type Preferences = {
   community: boolean
   show_amounts_on_lockscreen: boolean
   sound: boolean
-  weekly_summary: boolean
+  daily_summary: boolean
 }
 
 type PrefKey = keyof Preferences
@@ -57,9 +57,11 @@ const GROUPS: Array<{ label: string; rows: Array<{ key: PrefKey; label: string; 
       },
       { key: 'sound', label: 'Sound', detail: 'Play a sound with trade and account alerts.' },
       {
-        key: 'weekly_summary',
-        label: 'Weekly summary',
-        detail: 'A recap of the week’s trades. Off by default.',
+        // #255: daily, not weekly — a recap every trading day rather than once a
+        // week. Existing weekly opt-ins are migrated server-side to daily.
+        key: 'daily_summary',
+        label: 'Daily summary',
+        detail: 'A recap of today’s trades, after the close. Off by default.',
       },
     ],
   },

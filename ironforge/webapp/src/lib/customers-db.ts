@@ -812,6 +812,12 @@ ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS weekly_summary BOOLEAN N
 -- same reasoning as weekly_summary above (no sender exists yet; defaults OFF).
 ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS big_move BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS daily_summary BOOLEAN NOT NULL DEFAULT FALSE;
+-- #255: the mobile app now offers "Daily summary" where it used to offer "Weekly
+-- summary" — existing weekly opt-ins are migrated forward to daily rather than
+-- silently going quiet. Narrowed to rows not already on daily, so this is a no-op
+-- on every boot after the first; web's own Settings screen still offers both
+-- toggles independently and is untouched by this.
+UPDATE notification_prefs SET daily_summary = TRUE WHERE weekly_summary = TRUE AND daily_summary = FALSE;
 
 -- Dedupe + state ledger. The PK makes "once per eligible event" an atomic
 -- INSERT ... ON CONFLICT DO NOTHING RETURNING — the same idiom already proven by
