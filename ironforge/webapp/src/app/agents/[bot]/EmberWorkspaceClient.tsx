@@ -1,6 +1,7 @@
 'use client'
 
-import useSWR from 'swr'
+import useSWR, { mutate } from 'swr'
+import { useState } from 'react'
 import Link from 'next/link'
 import { fetcher } from '@/lib/fetcher'
 import CustomerShell, { type PlanCardData } from '@/components/customer/CustomerShell'
@@ -11,6 +12,51 @@ interface SummaryResp { membership?: PlanCardData | null }
 interface EntitlementsResp { bots?: string[] }
 interface TradesResp { ok: boolean; trades: EmberTradeRow[] }
 interface StatusResp { ok: boolean; status: EmberStatusRow | null }
+interface Activation { activation_id: string; agent: string; paused: boolean }
+interface PauseResp { ok: boolean; activations: Activation[] }
+
+const PAUSE_KEY = '/api/v1/automation/pause'
+
+/**
+ * Ember's Pause control (handoff #178 — "0 'pause' in EmberWorkspaceClient").
+ * Wired to the same `/api/v1/automation/pause` flag Settings' Automation
+ * section uses for Spark/Flame — see that route's comment on `agent === 'ember'`.
+ * This only flips `activations.status`; Ember's actual execution (REFLEX,
+ * dev/meltup/ember/run_reflex.py — a separate, already-armed sleeve) does not
+ * read this table today, so pausing here is the customer's on-record request,
+ * not yet an enforced stop. Never touches REFLEX itself.
+ */
+function EmberPauseControl() {
+  const { data } = useSWR<PauseResp>(PAUSE_KEY, fetcher, { shouldRetryOnError: false })
+  const [pending, setPending] = useState(false)
+  const activation = data?.activations.find((a) => a.agent === 'ember')
+  if (!activation) return null
+
+  async function toggle() {
+    setPending(true)
+    try {
+      await fetch(PAUSE_KEY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paused: !activation!.paused, agent: 'ember' }),
+      })
+      await mutate(PAUSE_KEY)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      disabled={pending}
+      className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-xs font-semibold text-[var(--fg)] transition-colors hover:bg-[var(--bg-2)] disabled:opacity-50"
+    >
+      {activation.paused ? 'Resume Ember' : 'Pause Ember'}
+    </button>
+  )
+}
 
 function signed(v: number): string {
   const a = Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -125,6 +171,7 @@ export default function EmberWorkspaceClient() {
                 Open positions:{' '}
                 {Array.isArray(status?.open_positions) ? (status!.open_positions as unknown[]).length : 0}
               </span>
+              <EmberPauseControl />
             </div>
           </div>
 
