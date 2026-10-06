@@ -12,6 +12,7 @@ const TOKEN_KEYS: (keyof ColorTokens)[] = [
   'textMuted',
   'wordmark',
   'accent',
+  'accentText',
   'spark',
   'flame',
   'ember',
@@ -34,6 +35,7 @@ describe('dark palette', () => {
     expect(dark.muted).toBe(darkTokens.muted)
     expect(dark.wordmark).toBe(darkTokens.wordmark)
     expect(dark.accent).toBe(darkTokens.accent)
+    expect(dark.accentText).toBe(darkTokens.accentText)
     expect(dark.spark).toBe(darkTokens.spark)
     expect(dark.flame).toBe(darkTokens.flame)
     expect(dark.ember).toBe(darkTokens.ember)
@@ -60,9 +62,14 @@ describe('light palette', () => {
     }
   })
 
-  it('keeps the wordmark and accent orange unchanged from dark', () => {
+  it('keeps the wordmark unchanged from dark', () => {
     expect(light.wordmark).toBe(dark.wordmark)
-    expect(light.accent).toBe(dark.accent)
+  })
+
+  it('accent orange now varies by theme (2026-10 decision lifting the old unchanged-by-request lock)', () => {
+    expect(light.accent).not.toBe(dark.accent)
+    expect(light.accent.toUpperCase()).toBe('#F0600D')
+    expect(dark.accent.toUpperCase()).toBe('#FF7124')
   })
 
   it('has near-white backgrounds and near-black text', () => {
@@ -106,8 +113,17 @@ describe('light palette WCAG AA text contrast (>= 4.5:1 on white card)', () => {
     ['spark', light.spark],
     ['flame', light.flame],
     ['ember', light.ember],
+    ['accentText', light.accentText],
   ])('%s clears 4.5:1 against a white card', (_name, hex) => {
     expect(contrastRatio(hex, white)).toBeGreaterThanOrEqual(4.5)
+  })
+
+  // `accent` itself is deliberately excluded above — it's the design's exact
+  // per-theme fill/icon/chart-stroke colour, not a text colour, and it does NOT
+  // clear 4.5:1 against white (that's what accentText is for).
+  it('accentText also clears 4.5:1 against --accent-soft, the worst-case tinted badge background', () => {
+    const accentSoft = '#FFF0E6'
+    expect(contrastRatio(light.accentText, accentSoft)).toBeGreaterThanOrEqual(4.5)
   })
 })
 
@@ -162,8 +178,13 @@ describe('resolveTone', () => {
     expect(resolveTone('#123456', 'light')).toBe('#123456')
   })
 
-  it('accent and wordmark are unchanged either way (same value in both palettes)', () => {
-    expect(resolveTone(dark.accent, 'light')).toBe(light.accent)
+  it('wordmark is unchanged either way (same value in both palettes)', () => {
     expect(resolveTone(dark.wordmark, 'light')).toBe(light.wordmark)
   })
+
+  // No resolveTone(dark.accent, ...) case here: dark.accent/dark.accentText/dark.flame
+  // all collapse to the same #FF7124 (the design's own dark --accent and --flame share
+  // one hex), so the reverse map can only resolve that hex to one light-side winner
+  // (flame). `accent`/`accentText` are read directly off getPalette(scheme), never
+  // through resolveTone, so this is correct and not a bug — see palette.ts's note.
 })

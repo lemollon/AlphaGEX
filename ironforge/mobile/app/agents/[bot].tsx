@@ -626,7 +626,7 @@ function SetupRequiredSection({ bot, label }: { bot: AgentBot; label: string }) 
         onPress={() => void WebBrowser.openBrowserAsync(`${API_BASE}/account/brokerage`)}
         style={[s.actionBtn, { borderColor: color.accent, marginTop: space.lg }]}
       >
-        <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+        <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
           Connect a brokerage on the web
         </Text>
       </Pressable>
@@ -666,7 +666,7 @@ function SwitchSection({
         onPress={() => void WebBrowser.openBrowserAsync(`${API_BASE}/agents/${bot}`)}
         style={[s.actionBtn, { borderColor: color.accent, marginTop: space.lg }]}
       >
-        <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+        <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
           Manage on the web
         </Text>
       </Pressable>

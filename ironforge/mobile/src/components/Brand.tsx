@@ -61,7 +61,7 @@ export function Wordmark({ height = 26 }: { height?: number }) {
       </View>
       <Text style={[s.word, { fontSize: height * 0.78 }]}>
         <Text style={{ color: color.text }}>IRON</Text>
-        <Text style={{ color: color.accent }}>FORGE</Text>
+        <Text style={{ color: color.accentText }}>FORGE</Text>
       </Text>
     </View>
   )

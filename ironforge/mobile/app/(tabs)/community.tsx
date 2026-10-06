@@ -606,7 +606,7 @@ function BlockedSheet({
             <View key={m.user_id} style={[s.sheetRow, s.rowBetween]}>
               <Text style={[type.body, { color: color.text }]}>{m.display_name}</Text>
               <Pressable onPress={() => onUnblock(m)} hitSlop={8} accessibilityRole="button">
-                <Text style={[type.label, { color: color.accent }]}>Unblock</Text>
+                <Text style={[type.label, { color: color.accentText }]}>Unblock</Text>
               </Pressable>
             </View>
           ))
@@ -921,7 +921,7 @@ function ReactionRow({ message, onPress }: { message: CommunityMessage; onPress:
         <Text
           style={[
             type.label,
-            { color: mine ? color.accent : color.muted, fontFamily: font.bodyMedium },
+            { color: mine ? color.accentText : color.muted, fontFamily: font.bodyMedium },
           ]}
         >
           {count}

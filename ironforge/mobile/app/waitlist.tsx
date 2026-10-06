@@ -332,7 +332,7 @@ function StatePickerModal({
         <ScrollView style={{ maxHeight: 360 }}>
           {US_STATES.map((st) => (
             <Pressable key={st} onPress={() => onSelect(st)} style={s.sheetRow}>
-              <Text style={[type.body, { color: st === selected ? color.accent : color.text }]}>{st}</Text>
+              <Text style={[type.body, { color: st === selected ? color.accentText : color.text }]}>{st}</Text>
             </Pressable>
           ))}
         </ScrollView>
@@ -383,7 +383,7 @@ const makeStyles = (color: ColorTokens) =>
     },
     sectionLabel: {
       ...type.section,
-      color: color.accent,
+      color: color.accentText,
       fontFamily: font.bodyBold,
       marginTop: space.lg,
       marginBottom: space.md,

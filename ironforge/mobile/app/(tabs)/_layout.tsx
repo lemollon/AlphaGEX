@@ -51,7 +51,9 @@ export default function TabsLayout() {
           height: 88,
           paddingTop: 8,
         },
-        tabBarActiveTintColor: color.accent,
+        // Custom tab icons (icons.tsx) take `focused`, not the tint React Navigation
+        // passes to `tabBarIcon` — so this tint only ever paints the tab LABEL text.
+        tabBarActiveTintColor: color.accentText,
         tabBarInactiveTintColor: color.muted,
         tabBarLabelStyle: { fontFamily: font.bodyMedium, fontSize: 11 },
       }}

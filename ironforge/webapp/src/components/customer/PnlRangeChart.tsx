@@ -56,7 +56,7 @@ export default function PnlRangeChart({
   return (
     <section className="rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-[var(--accent)]">
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-[var(--accent-text)]">
           {title ?? 'P&L'}
         </h3>
         <div className="flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--bg-2)] p-1">

@@ -20,7 +20,7 @@ interface CustomerMe {
 }
 
 const AVATAR_STYLES = [
-  'bg-[var(--accent)]/20 text-[var(--accent)]',
+  'bg-[var(--accent)]/20 text-[var(--accent-text)]',
   'bg-[var(--up)]/20 text-[var(--up)]',
   'bg-spark/20 text-spark',
   'bg-stone-500/30 text-stone-300',
@@ -276,7 +276,7 @@ function MessageRow({ msg, channel, canReact, loggedIn, onReact, onReplyPosted }
             <button key={r.emoji} disabled={!canReact}
               onClick={() => onReact(msg.id, r.emoji)}
               className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
-                r.mine ? 'border-[var(--accent)]/50 bg-[var(--accent)]/10 text-[var(--accent)]' : 'border-[var(--line)] bg-[var(--bg)] text-[var(--muted)]'
+                r.mine ? 'border-[var(--accent)]/50 bg-[var(--accent)]/10 text-[var(--accent-text)]' : 'border-[var(--line)] bg-[var(--bg)] text-[var(--muted)]'
               } ${canReact ? 'hover:border-[var(--accent)]/50' : 'cursor-default'}`}>
               <span>{r.emoji}</span>
               <span>{r.count}</span>
@@ -294,7 +294,7 @@ function MessageRow({ msg, channel, canReact, loggedIn, onReact, onReplyPosted }
           )}
           {(msg.reply_count ?? 0) > 0 && (
             <button type="button" onClick={() => setThreadOpen((v) => !v)}
-              className="text-[11px] font-medium text-[var(--accent)] hover:opacity-80">
+              className="text-[11px] font-medium text-[var(--accent-text)] hover:opacity-80">
               {threadOpen ? 'Hide replies' : `${msg.reply_count} ${msg.reply_count === 1 ? 'reply' : 'replies'}`}
             </button>
           )}
@@ -508,7 +508,7 @@ export function CommunityBody() {
                 <img src="/forge-mascot.png" alt="Forge" className="h-12 w-12 shrink-0 rounded-lg bg-[var(--av)] object-cover" />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-semibold text-[var(--fg)]">
-                    Welcome to <span className="text-[var(--accent)]">Forge Community</span>
+                    Welcome to <span className="text-[var(--accent-text)]">Forge Community</span>
                   </div>
                   <div className="mt-0.5 text-xs leading-relaxed text-[var(--muted)]">
                     A place for disciplined traders to learn, share ideas, and grow together.
@@ -571,7 +571,7 @@ export function CommunityBody() {
               {needsMembership ? (
                 <div className="flex flex-col gap-2 rounded-lg border border-[var(--warn)]/40 bg-[var(--warn-soft)] px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="text-sm text-[var(--fg)]">
-                    <span className="font-semibold text-[var(--accent)]">Join the Forge Community</span> to post —{' '}
+                    <span className="font-semibold text-[var(--accent-text)]">Join the Forge Community</span> to post —{' '}
                     <span className="font-semibold text-[var(--fg)]">free</span>. Every strategy plan includes it.
                   </div>
                   <button
@@ -675,7 +675,7 @@ export function CommunityBody() {
                 Forge is your AI-powered guide. Sharing trade ideas, market news, and insights throughout the day.
               </p>
             </div>
-            <a href="mailto:support@ironforge.trade?subject=About%20Forge%20AI" className="mt-3 inline-block text-xs font-medium text-[var(--accent)] hover:opacity-80">
+            <a href="mailto:support@ironforge.trade?subject=About%20Forge%20AI" className="mt-3 inline-block text-xs font-medium text-[var(--accent-text)] hover:opacity-80">
               Learn More →
             </a>
           </div>
@@ -696,7 +696,7 @@ export function CommunityBody() {
                 </div>
               ))}
             </div>
-            <a href="/terms" className="mt-3 inline-block text-xs font-medium text-[var(--accent)] hover:opacity-80">
+            <a href="/terms" className="mt-3 inline-block text-xs font-medium text-[var(--accent-text)] hover:opacity-80">
               View Full Guidelines
             </a>
           </div>
@@ -721,7 +721,7 @@ export function CommunityBody() {
             </div>
             {feed && feed.members.length > 6 && (
               <button type="button" onClick={() => setShowAllMembers((v) => !v)}
-                className="mt-3 text-xs font-medium text-[var(--accent)] transition-colors hover:opacity-80">
+                className="mt-3 text-xs font-medium text-[var(--accent-text)] transition-colors hover:opacity-80">
                 {showAllMembers ? 'Show fewer' : `View All Members (${feed.members.length})`}
               </button>
             )}
@@ -740,7 +740,7 @@ export function CommunityBody() {
               Forge can help with most questions. For anything else, our team is here.
             </p>
             <a href="mailto:support@ironforge.trade"
-              className="mt-3 flex items-center justify-center gap-2 rounded-lg border border-[var(--accent)] px-3 py-2 text-xs font-medium text-[var(--accent)] transition-colors hover:bg-[var(--accent)]/10">
+              className="mt-3 flex items-center justify-center gap-2 rounded-lg border border-[var(--accent)] px-3 py-2 text-xs font-medium text-[var(--accent-text)] transition-colors hover:bg-[var(--accent)]/10">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
                 strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
                 <rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-10 6L2 7" />

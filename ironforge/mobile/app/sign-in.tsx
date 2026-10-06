@@ -127,7 +127,7 @@ export default function SignInScreen() {
         </View>
 
         <Pressable onPress={() => router.push('/waitlist')} style={s.waitlistButton}>
-          <Text style={[type.body, { color: color.accent, fontFamily: font.bodyBold }]}>
+          <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyBold }]}>
             Join the Waitlist
           </Text>
         </Pressable>
@@ -144,7 +144,7 @@ export default function SignInScreen() {
             hitSlop={8}
             accessibilityRole="link"
           >
-            <Text style={[type.body, { color: color.accent, fontFamily: font.bodyBold }]}>
+            <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyBold }]}>
               Create one
             </Text>
           </Pressable>

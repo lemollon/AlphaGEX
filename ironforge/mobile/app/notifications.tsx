@@ -141,7 +141,7 @@ export default function NotificationsScreen() {
               right={
                 unreadCount > 0 ? (
                   <Pressable onPress={markAllRead} accessibilityRole="button" style={{ marginRight: space.sm }}>
-                    <Text style={[type.label, { color: color.accent, fontFamily: font.bodyMedium }]}>
+                    <Text style={[type.label, { color: color.accentText, fontFamily: font.bodyMedium }]}>
                       Mark all read
                     </Text>
                   </Pressable>
