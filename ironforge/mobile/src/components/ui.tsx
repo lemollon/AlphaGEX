@@ -15,6 +15,16 @@ import { space, radius, type, font, outcomeColor } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 
+/**
+ * Dynamic Type ceiling (mobile fidelity #281 — "no clipping" up to 200% system
+ * text scaling). RN's `allowFontScaling` is on by default with NO ceiling, so an
+ * iOS "Larger Text" accessibility setting beyond 200% (it goes well past that) can
+ * still overflow these fixed-width badges, buttons and currency figures. Every
+ * Text below caps at this multiplier — full Dynamic Type support up to 200%,
+ * never uncapped growth past it.
+ */
+const MAX_FONT_SCALE = 2
+
 export function Card({ children, style }: { children: ReactNode; style?: object }) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
@@ -24,7 +34,11 @@ export function Card({ children, style }: { children: ReactNode; style?: object 
 export function SectionLabel({ children }: { children: ReactNode }) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
-  return <Text style={s.sectionLabel}>{String(children).toUpperCase()}</Text>
+  return (
+    <Text style={s.sectionLabel} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+      {String(children).toUpperCase()}
+    </Text>
+  )
 }
 
 /** Money, always signed, always green/red. Never agent colour — that reads as branding. */
@@ -37,23 +51,45 @@ export function Money({
 }) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
-  if (value == null) return <Text style={[s.dim, type[size]]}>—</Text>
+  if (value == null) {
+    return (
+      <Text style={[s.dim, type[size]]} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+        —
+      </Text>
+    )
+  }
   const sign = value >= 0 ? '+' : '-'
   const text = `${sign}$${Math.abs(value).toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`
   const tone = value >= 0 ? color.pos : color.neg
-  return <Text style={[type[size], { color: tone, fontFamily: font.bodyBold }]}>{text}</Text>
+  return (
+    <Text
+      style={[type[size], { color: tone, fontFamily: font.bodyBold }]}
+      maxFontSizeMultiplier={MAX_FONT_SCALE}
+    >
+      {text}
+    </Text>
+  )
 }
 
 /** Plain currency with no sign — for a balance, where +/- would be nonsense. */
 export function Balance({ value }: { value: number | null | undefined }) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
-  if (value == null) return <Text style={[s.dim, type.hero]}>—</Text>
+  if (value == null) {
+    return (
+      <Text style={[s.dim, type.hero]} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+        —
+      </Text>
+    )
+  }
   return (
-    <Text style={[type.hero, { color: color.text, fontFamily: font.display }]}>
+    <Text
+      style={[type.hero, { color: color.text, fontFamily: font.display }]}
+      maxFontSizeMultiplier={MAX_FONT_SCALE}
+    >
       ${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
     </Text>
   )
@@ -66,7 +102,12 @@ export function OutcomeBadge({ kind, label }: { kind: string; label: string }) {
   const c = outcomeColor[kind] ? resolveTone(outcomeColor[kind]) : color.textDim
   return (
     <View style={[s.badge, { borderColor: c }]}>
-      <Text style={[type.label, { color: c, fontFamily: font.bodyMedium }]}>{label}</Text>
+      <Text
+        style={[type.label, { color: c, fontFamily: font.bodyMedium }]}
+        maxFontSizeMultiplier={MAX_FONT_SCALE}
+      >
+        {label}
+      </Text>
     </View>
   )
 }
@@ -76,7 +117,12 @@ export function AgentBadge({ name, accent }: { name: string; accent: string }) {
   const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={[s.badge, { borderColor: accent }]}>
-      <Text style={[type.label, { color: accent, fontFamily: font.bodyMedium }]}>{name}</Text>
+      <Text
+        style={[type.label, { color: accent, fontFamily: font.bodyMedium }]}
+        maxFontSizeMultiplier={MAX_FONT_SCALE}
+      >
+        {name}
+      </Text>
     </View>
   )
 }
@@ -122,13 +168,21 @@ export function Row({
       ) : null}
       <View style={{ flex: 1 }}>
         <View style={s.rowHead}>
-          <Text style={[type.body, { color: tint ?? color.text, fontFamily: font.bodyMedium }]}>
+          <Text
+            style={[type.body, { color: tint ?? color.text, fontFamily: font.bodyMedium }]}
+            maxFontSizeMultiplier={MAX_FONT_SCALE}
+          >
             {label}
           </Text>
           {badge}
         </View>
         {detail ? (
-          <Text style={[type.label, { color: color.muted, marginTop: 2 }]}>{detail}</Text>
+          <Text
+            style={[type.label, { color: color.muted, marginTop: 2 }]}
+            maxFontSizeMultiplier={MAX_FONT_SCALE}
+          >
+            {detail}
+          </Text>
         ) : null}
       </View>
       <Ionicons name="chevron-forward" size={17} color={color.muted} />
@@ -142,7 +196,12 @@ export function Loading({ label = 'Loading…' }: { label?: string }) {
   return (
     <View style={s.centered}>
       <ActivityIndicator color={color.accent} />
-      <Text style={[s.dim, type.body, { marginTop: space.md }]}>{label}</Text>
+      <Text
+        style={[s.dim, type.body, { marginTop: space.md }]}
+        maxFontSizeMultiplier={MAX_FONT_SCALE}
+      >
+        {label}
+      </Text>
     </View>
   )
 }
@@ -156,8 +215,18 @@ export function Empty({ title, detail }: { title: string; detail: string }) {
   const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={s.centered}>
-      <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>{title}</Text>
-      <Text style={[s.dim, type.body, { marginTop: space.sm, textAlign: 'center' }]}>{detail}</Text>
+      <Text
+        style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}
+        maxFontSizeMultiplier={MAX_FONT_SCALE}
+      >
+        {title}
+      </Text>
+      <Text
+        style={[s.dim, type.body, { marginTop: space.sm, textAlign: 'center' }]}
+        maxFontSizeMultiplier={MAX_FONT_SCALE}
+      >
+        {detail}
+      </Text>
     </View>
   )
 }
@@ -168,12 +237,25 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry: () 
   const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={s.centered}>
-      <Text style={[type.body, { color: color.neg, fontFamily: font.bodyMedium }]}>
+      <Text
+        style={[type.body, { color: color.neg, fontFamily: font.bodyMedium }]}
+        maxFontSizeMultiplier={MAX_FONT_SCALE}
+      >
         Something went wrong
       </Text>
-      <Text style={[s.dim, type.body, { marginTop: space.sm, textAlign: 'center' }]}>{message}</Text>
+      <Text
+        style={[s.dim, type.body, { marginTop: space.sm, textAlign: 'center' }]}
+        maxFontSizeMultiplier={MAX_FONT_SCALE}
+      >
+        {message}
+      </Text>
       <Pressable onPress={onRetry} style={s.retry}>
-        <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>Try again</Text>
+        <Text
+          style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}
+          maxFontSizeMultiplier={MAX_FONT_SCALE}
+        >
+          Try again
+        </Text>
       </Pressable>
     </View>
   )
@@ -221,6 +303,7 @@ export function Button({
             color: variant === 'secondary' ? color.text : color.text,
           },
         ]}
+        maxFontSizeMultiplier={MAX_FONT_SCALE}
       >
         {busy ? '…' : label}
       </Text>
@@ -238,13 +321,26 @@ export function TextField({
   const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={{ marginBottom: space.lg }}>
-      <Text style={[type.label, { color: color.textDim, marginBottom: space.xs }]}>{label}</Text>
+      <Text
+        style={[type.label, { color: color.textDim, marginBottom: space.xs }]}
+        maxFontSizeMultiplier={MAX_FONT_SCALE}
+      >
+        {label}
+      </Text>
       <TextInput
         placeholderTextColor={color.muted}
         style={[s.input, error ? { borderColor: color.neg } : undefined]}
+        maxFontSizeMultiplier={MAX_FONT_SCALE}
         {...inputProps}
       />
-      {error ? <Text style={[type.label, { color: color.neg, marginTop: space.xs }]}>{error}</Text> : null}
+      {error ? (
+        <Text
+          style={[type.label, { color: color.neg, marginTop: space.xs }]}
+          maxFontSizeMultiplier={MAX_FONT_SCALE}
+        >
+          {error}
+        </Text>
+      ) : null}
     </View>
   )
 }
@@ -290,7 +386,10 @@ export function CodeInput({
               error && { borderColor: color.neg },
             ]}
           >
-            <Text style={[type.title, { color: color.text, fontFamily: font.display }]}>
+            <Text
+              style={[type.title, { color: color.text, fontFamily: font.display }]}
+              maxFontSizeMultiplier={MAX_FONT_SCALE}
+            >
               {value[i] ?? ''}
             </Text>
           </View>
@@ -308,7 +407,12 @@ export function CodeInput({
         style={s.codeHiddenInput}
       />
       {error ? (
-        <Text style={[type.label, { color: color.neg, marginTop: space.sm, textAlign: 'center' }]}>{error}</Text>
+        <Text
+          style={[type.label, { color: color.neg, marginTop: space.sm, textAlign: 'center' }]}
+          maxFontSizeMultiplier={MAX_FONT_SCALE}
+        >
+          {error}
+        </Text>
       ) : null}
     </View>
   )
@@ -324,7 +428,10 @@ export function ProgressBar({ step, total }: { step: number; total: number }) {
   const s = useMemo(() => makeStyles(color), [color])
   return (
     <View>
-      <Text style={[type.section, { color: color.accentText, fontFamily: font.bodyBold, marginBottom: space.sm }]}>
+      <Text
+        style={[type.section, { color: color.accentText, fontFamily: font.bodyBold, marginBottom: space.sm }]}
+        maxFontSizeMultiplier={MAX_FONT_SCALE}
+      >
         STEP {step} OF {total}
       </Text>
       <View style={s.progressTrack}>

@@ -29,6 +29,8 @@ import { Loading } from '@/components/ui'
 import { Wordmark } from '@/components/Brand'
 import { ToastHost } from '@/components/ToastHost'
 import { TradeBannerHost } from '@/components/TradeBannerHost'
+import { StepUpHost } from '@/components/StepUpHost'
+import { ConnectivityBanner } from '@/components/ConnectivityBanner'
 import { LegalReacceptGate } from '@/components/LegalReacceptGate'
 
 /**
@@ -275,6 +277,8 @@ function RootLayoutInner() {
       {signedIn && !lockState.locked ? <TradeBannerHost /> : null}
       {signedIn && !lockState.locked ? <LegalReacceptGate /> : null}
       <ToastHost />
+      {signedIn && !lockState.locked ? <StepUpHost /> : null}
+      <ConnectivityBanner />
       {signedIn && lockState.locked ? (
         <View style={s.overlay}>
           <Wordmark height={32} />

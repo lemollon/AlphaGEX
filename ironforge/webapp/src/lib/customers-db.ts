@@ -277,6 +277,14 @@ CREATE TABLE IF NOT EXISTS community_blocks (
   CHECK (blocker_id <> blocked_id)
 );
 
+-- Per-viewer "last seen the community feed" marker (mobile fidelity #229, the
+-- Community tab's unread badge). One row per user: everything posted after
+-- last_read_at, by someone else, counts as unread — see GET /api/community/unread.
+CREATE TABLE IF NOT EXISTS community_reads (
+  user_id UUID PRIMARY KEY REFERENCES users(id),
+  last_read_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Billing (Stripe subscriptions; see lib/billing/*). A customer subscribes to a
 -- bot ("spark"/"flame") or the "both" bundle via Stripe Checkout. stripe_customer_id
 -- is the one Stripe Customer per user; one subscription row per bot they run.
@@ -772,6 +780,12 @@ CREATE TABLE IF NOT EXISTS push_devices (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_push_devices_user ON push_devices(user_id) WHERE enabled;
+-- locale/tz (mobile fidelity #270) — the device's own IETF locale ("en-US") and
+-- IANA zone ("America/Chicago"), sent at registration. Nothing reads these yet; they
+-- exist so a future send-time/localization feature has real per-device data instead
+-- of having to backfill it from nothing.
+ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS locale TEXT;
+ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS tz TEXT;
 
 -- Per-customer category switches. show_amounts_on_lockscreen defaults FALSE so a
 -- customer who never opens settings does not get their P&L on a locked screen in

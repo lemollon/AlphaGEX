@@ -432,6 +432,44 @@ function toHistoryTrade(
   }
 }
 
+/** Plain-English win/loss words a customer might type that never appear verbatim
+ *  in close_reason (which only has 'profit_target', 'stop_loss', etc.) — mapped
+ *  straight to the P&L sign rather than a text match. */
+const WIN_WORDS = ['win', 'wins', 'won', 'winner', 'winners', 'winning', 'profit', 'profitable', 'up', 'gain', 'gains']
+const LOSS_WORDS = ['loss', 'losses', 'lost', 'loser', 'losers', 'losing', 'down']
+
+/**
+ * The Ledger search box's matching rule (#242 — "Agent/date/outcome/amount", the
+ * free-text query used to match ticker/close_reason/date only). Agent and date
+ * were effectively covered already (the bot label and the formatted close date
+ * are both in the OR below); this adds the two that were not:
+ *   - outcome as plain English ("win"/"loss"), not just the raw close_reason
+ *     token search already covers ("profit"/"stop"/"manual"/"expired" match
+ *     close_reason directly, e.g. 'profit_target', with no change needed here)
+ *   - amount: a numeric query matches against the realized P&L figure itself
+ */
+function searchClause(q: string, label: string): string {
+  const esc = escapeSql(q)
+  const clauses = [
+    `ticker ILIKE '%${esc}%'`,
+    `close_reason ILIKE '%${esc}%'`,
+    `'${escapeSql(label)}' ILIKE '%${esc}%'`,
+    `to_char((close_time AT TIME ZONE 'America/Chicago')::date, 'YYYY-MM-DD') ILIKE '%${esc}%'`,
+  ]
+  const word = q.trim().toLowerCase()
+  if (WIN_WORDS.includes(word)) clauses.push('realized_pnl > 0')
+  if (LOSS_WORDS.includes(word)) clauses.push('realized_pnl < 0')
+  // A query that is purely a dollar figure (digits, optional $ and one decimal
+  // point) matches the realized P&L's own text — "50" finds a $50.00 AND a
+  // $150.25 trade, same ILIKE substring behavior as every other clause here.
+  const amountQuery = q.trim().replace(/^\$/, '')
+  if (/^\d+(\.\d+)?$/.test(amountQuery)) {
+    const escAmount = escapeSql(amountQuery)
+    clauses.push(`ABS(realized_pnl)::numeric::text ILIKE '%${escAmount}%'`)
+  }
+  return clauses.join(' OR ')
+}
+
 /**
  * ONE SQL statement — a UNION ALL of every target bot's identically-scoped
  * SELECT, ordered by the exact key paginateSorted expects. Doing the merge
@@ -455,11 +493,7 @@ async function loadMergedRows(
     const scope = scopeFilter(bot, persons[bot] ?? null, isOperator)
     const daysFilter = filters.days ? `AND close_time >= NOW() - INTERVAL '${int(filters.days)} days'` : ''
     const label = LIVE_BOT_LABEL[bot] ?? bot.toUpperCase()
-    const qFilter = filters.q
-      ? `AND (ticker ILIKE '%${escapeSql(filters.q)}%' OR close_reason ILIKE '%${escapeSql(filters.q)}%' ` +
-        `OR '${escapeSql(label)}' ILIKE '%${escapeSql(filters.q)}%' ` +
-        `OR to_char((close_time AT TIME ZONE 'America/Chicago')::date, 'YYYY-MM-DD') ILIKE '%${escapeSql(filters.q)}%')`
-      : ''
+    const qFilter = filters.q ? `AND (${searchClause(filters.q, label)})` : ''
     return `SELECT '${bot}' AS bot_key, position_id, ticker, contracts, total_credit, realized_pnl, close_reason,
               open_time, close_time,
               to_char((close_time AT TIME ZONE 'America/Chicago')::date, 'YYYY-MM-DD') AS ct_date

@@ -24,11 +24,20 @@ export function AccountChart({
   series,
   color: lineColor,
   onScrub,
+  periodLabel,
 }: {
   series: AccountPoint[]
   color: string
   /** Called with the touched point while dragging, and `null` on release. */
   onScrub: (point: AccountPoint | null) => void
+  /**
+   * The period this chart covers, e.g. "today" — folded into the accessibility
+   * label (mobile fidelity #282, "states the period total"). A VoiceOver/
+   * TalkBack user cannot drag a finger across an SVG to scrub it the way a
+   * sighted customer can, so the chart needs to simply SAY the number instead:
+   * start/end value and the net change over the period, in one sentence.
+   */
+  periodLabel: string
 }) {
   const { colors: color } = useTheme()
   const [width, setWidth] = useState(0)
@@ -42,6 +51,13 @@ export function AccountChart({
     // reads honestly as "nothing to show yet" rather than a broken line.
     return <View style={[s.plot, { height: HEIGHT }]} />
   }
+
+  const first = series[0].v
+  const last = series[series.length - 1].v
+  const change = last - first
+  const changeLabel =
+    change > 0 ? `up $${change.toFixed(2)}` : change < 0 ? `down $${Math.abs(change).toFixed(2)}` : 'unchanged'
+  const accessibilityLabel = `Account value chart, ${periodLabel}. Started at $${first.toFixed(2)}, now $${last.toFixed(2)}, ${changeLabel}.`
 
   function move(x: number) {
     const idx = nearestAccountIndex(x, width, series.length)
@@ -58,6 +74,9 @@ export function AccountChart({
     <View
       style={[s.plot, { height: HEIGHT }]}
       onLayout={onLayout}
+      accessible
+      accessibilityRole="image"
+      accessibilityLabel={accessibilityLabel}
       onStartShouldSetResponder={() => true}
       onMoveShouldSetResponder={() => true}
       onResponderGrant={(e) => move(e.nativeEvent.locationX)}

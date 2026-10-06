@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, ScrollView, TextInput, Pressable, RefreshControl, ActivityIndicator, StyleSheet } from 'react-native'
+import { useScrollToTop } from '@react-navigation/native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import useSWR from 'swr'
@@ -60,6 +61,10 @@ export default function LedgerScreen() {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
+  // Re-tap-tab-to-scroll-to-top (#231) — the standard React Navigation hook, which
+  // listens for a second tap on this tab's own icon while it is already focused.
+  const scrollRef = useRef<ScrollView>(null)
+  useScrollToTop(scrollRef)
   const [query, setQuery] = useState('')
   const [agent, setAgent] = useState<string>('all')
   // 10.4 design `ledger()`: the Month chip (`st.ledgerRange==='21'`) is selected by
@@ -168,6 +173,7 @@ export default function LedgerScreen() {
   return (
     <Shell>
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}
         refreshControl={
           <RefreshControl
