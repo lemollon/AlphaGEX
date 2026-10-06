@@ -40,10 +40,11 @@ export default function AgentCard({ agent, placement }: { agent: MarketingAgent;
       </dl>
       <span className="limit">
         <b>{agent.note}</b>
+        {agent.communityIncluded && ' Community included.'}
       </span>
       <div className="agent-actions">
         <Link className="pick" href={`/signup?bot=${agent.planParam}&source=site&placement=${placement}`}>
-          {agent.isFree ? `Start ${agent.name} free` : 'Start free trial'}
+          {agent.isFree ? `Start ${agent.name} free` : `Choose ${agent.name}`}
         </Link>
         <Link className="pick alt" href={`/agents#${agent.slug}`}>
           Details

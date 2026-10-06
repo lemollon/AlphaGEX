@@ -4,23 +4,30 @@ import { useState } from 'react'
 
 type Scenario = 'climb' | 'dip' | 'chop'
 
-/**
- * Illustrative-only paths (viewBox 0 0 560 290) — made up to demonstrate the
- * rule ("size only climbs after a new high"), not real account data.
- */
-const SCENARIOS: Record<Scenario, { value: string; step: string }> = {
-  climb: {
-    value: 'M10 230 L90 200 L170 205 L250 160 L330 140 L410 110 L490 90 L550 70',
-    step: 'M10 250 H170 V220 H330 V180 H490 V150 H550',
-  },
-  dip: {
-    value: 'M10 200 L90 150 L170 120 L250 180 L330 230 L410 200 L490 170 L550 160',
-    step: 'M10 240 H170 V180 H550',
-  },
-  chop: {
-    value: 'M10 180 L90 140 L170 190 L250 150 L330 195 L410 145 L490 185 L550 150',
-    step: 'M10 230 H250 V210 H550',
-  },
+/** Plot area, in viewBox units (0 0 560 290) — leaves room at left for y-axis
+ * labels and below for the x-axis label, matching the design. */
+const PLOT_LEFT = 44
+const PLOT_RIGHT = 550
+const PLOT_TOP = 20
+const PLOT_BOTTOM = 250
+const Y_MIN = 90
+const Y_MAX = 150
+const Y_TICKS = [150, 140, 130, 120, 110, 100, 90]
+const X_POINTS = [44, 116, 189, 261, 333, 406, 478, 550]
+
+/** Maps an account-value tick (90-150) to its SVG y-coordinate. */
+function vy(value: number): number {
+  return PLOT_BOTTOM - ((value - Y_MIN) / (Y_MAX - Y_MIN)) * (PLOT_BOTTOM - PLOT_TOP)
+}
+
+/** Illustrative-only value paths — made up to demonstrate the rule ("size only
+ * climbs after a new high"), not real account data. Each is a sequence of
+ * account-value ticks across 8 trading days; the step line is the running
+ * high, floored to the nearest 10 — same rule the copy below describes. */
+const SCENARIO_VALUES: Record<Scenario, number[]> = {
+  climb: [100, 104, 103, 112, 110, 121, 119, 131],
+  dip: [100, 108, 115, 95, 90, 98, 105, 112],
+  chop: [100, 107, 101, 108, 103, 111, 105, 109],
 }
 
 const CHIPS: Array<{ id: Scenario; label: string }> = [
@@ -29,10 +36,25 @@ const CHIPS: Array<{ id: Scenario; label: string }> = [
   { id: 'chop', label: 'Choppy weeks' },
 ]
 
+function toPath(values: number[]): string {
+  return values.map((v, i) => `${i === 0 ? 'M' : 'L'}${X_POINTS[i]},${vy(v).toFixed(1)}`).join(' ')
+}
+
 /** The Ladder chart — /how-it-works `#ladder`. */
 export default function LadderChart() {
   const [scenario, setScenario] = useState<Scenario>('climb')
-  const paths = SCENARIOS[scenario]
+  const values = SCENARIO_VALUES[scenario]
+
+  // Step line = running high so far, floored to the nearest 10 — "size only climbs after a new high."
+  let runningHigh = values[0]
+  const stepValues = values.map((v) => {
+    runningHigh = Math.max(runningHigh, v)
+    return Math.floor(runningHigh / 10) * 10
+  })
+
+  const valuePath = toPath(values)
+  const stepPath = toPath(stepValues)
+  const areaPath = `${valuePath} L${X_POINTS[X_POINTS.length - 1]},${PLOT_BOTTOM} L${X_POINTS[0]},${PLOT_BOTTOM} Z`
 
   return (
     <div className="card card-pad">
@@ -55,8 +77,27 @@ export default function LadderChart() {
         role="img"
         aria-label="Account value moves up and down while size steps only rise at new highs"
       >
-        <path d={paths.step} fill="none" stroke="var(--accent)" strokeWidth={2.5} strokeLinejoin="round" />
-        <path d={paths.value} fill="none" stroke="var(--spark)" strokeWidth={2} strokeLinecap="round" />
+        {Y_TICKS.map((t) => (
+          <g key={t}>
+            <line
+              x1={PLOT_LEFT}
+              x2={PLOT_RIGHT}
+              y1={vy(t)}
+              y2={vy(t)}
+              stroke="var(--line)"
+              strokeWidth={1}
+            />
+            <text x={PLOT_LEFT - 8} y={vy(t) + 4} textAnchor="end" className="ladder-axis-label">
+              {t}
+            </text>
+          </g>
+        ))}
+        <path d={areaPath} fill="var(--spark)" fillOpacity={0.08} stroke="none" />
+        <path d={stepPath} fill="none" stroke="var(--accent)" strokeWidth={2.5} strokeLinejoin="round" />
+        <path d={valuePath} fill="none" stroke="var(--spark)" strokeWidth={2} strokeLinecap="round" />
+        <text x={PLOT_LEFT} y={PLOT_BOTTOM + 22} className="ladder-axis-label">
+          Trading days →
+        </text>
       </svg>
       <div className="seg" role="group" aria-label="Scenario">
         {CHIPS.map((c) => (

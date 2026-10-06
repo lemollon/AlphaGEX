@@ -43,6 +43,8 @@ export interface MarketingAgent {
   price: string
   per: string
   note: string
+  /** Appends " Community included." (unbolded) after the bold `note`. */
+  communityIncluded?: boolean
   isFree: boolean
   /** `?plan=` query value for Create account / Start trial CTAs. */
   planParam: AgentSlug
@@ -64,7 +66,8 @@ export const AGENTS: MarketingAgent[] = [
     ],
     price: formatMonthly(BOT_PLANS.spark.priceMonthly),
     per: 'per month',
-    note: '5 trading days free',
+    note: '5 trading days free.',
+    communityIncluded: true,
     isFree: false,
     planParam: 'spark',
   },
@@ -83,7 +86,8 @@ export const AGENTS: MarketingAgent[] = [
     ],
     price: formatMonthly(BOT_PLANS.flame.priceMonthly),
     per: 'per month',
-    note: '5 trading days free',
+    note: '5 trading days free.',
+    communityIncluded: true,
     isFree: false,
     planParam: 'flame',
   },

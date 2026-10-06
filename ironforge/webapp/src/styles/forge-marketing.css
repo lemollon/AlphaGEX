@@ -136,6 +136,9 @@ html[data-theme="dark"] .ifw-marketing .theme .moon{display:block}
 .ifw-marketing .hc-legend b{color:var(--fg);font-weight:600}
 .ifw-marketing .hc-wrap{position:relative;padding:6px 10px 0}
 .ifw-marketing #dayChart{display:block;width:100%;height:auto;touch-action:pan-y}
+.ifw-marketing .hc-session-label{font:600 12px/1 var(--sans);fill:var(--fg)}
+.ifw-marketing .hc-line-label{font:600 11px/1 var(--sans)}
+.ifw-marketing .hc-axis-label{font:11px/1 var(--sans);fill:var(--muted)}
 .ifw-marketing .hc-tip{position:absolute;pointer-events:none;background:var(--bg);border:1px solid var(--line-2);border-radius:8px;padding:8px 10px;font-size:.8rem;line-height:1.35;box-shadow:0 6px 20px rgba(0,0,0,.12);white-space:nowrap;transform:translate(-50%,-100%)}
 .ifw-marketing .hc-tip b{display:block;font-weight:600}
 .ifw-marketing .hc-tip span{color:var(--muted)}
@@ -248,6 +251,7 @@ html[data-theme="dark"] .ifw-marketing .theme .moon{display:block}
 .ifw-marketing .legend{display:flex;gap:14px}
 .ifw-marketing .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
 .ifw-marketing #ladderSvg{display:block;width:100%;height:auto}
+.ifw-marketing .ladder-axis-label{font:11px/1 var(--sans);fill:var(--muted)}
 .ifw-marketing .seg{display:inline-flex;gap:6px;flex-wrap:wrap;margin-top:12px}
 .ifw-marketing .fine{font-size:.78rem;color:var(--muted);margin-top:10px}
 .ifw-marketing .rule-list{display:grid;border-top:1px solid var(--line)}
