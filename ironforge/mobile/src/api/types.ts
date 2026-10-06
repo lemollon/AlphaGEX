@@ -361,6 +361,14 @@ export interface MembershipResponse {
   } | null
 }
 
+/** GET /api/billing/payment-method — masked card on file (fidelity audit "Payment
+ *  method row"). `paymentMethod` is null for every normal reason: no card on file,
+ *  billed through Apple instead of Stripe, or billing not provisioned. */
+export interface PaymentMethodResponse {
+  ok: boolean
+  paymentMethod: { brand: string; last4: string } | null
+}
+
 export interface ProfileResponse {
   ok: boolean
   profile: {

@@ -9,7 +9,13 @@ import Constants from 'expo-constants'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { api, API_BASE, ApiError } from '@/api/client'
-import type { MobileMe, MembershipResponse, AutomationPauseResponse, AutomationActivation } from '@/api/types'
+import type {
+  MobileMe,
+  MembershipResponse,
+  PaymentMethodResponse,
+  AutomationPauseResponse,
+  AutomationActivation,
+} from '@/api/types'
 import { signOut, biometricsAvailable, isBiometricEnabled, setBiometricEnabled } from '@/auth/session'
 import { unregisterPushDevice } from '@/notifications/push'
 import { canManageBillingInApp, manageSubscriptionUrl } from '@/billing/store-policy'
@@ -69,6 +75,13 @@ export default function AccountScreen() {
   // Early Access" placeholder with no price and no date.
   const { data: billing } = useSWR<MembershipResponse>('/api/billing/membership', (p: string) =>
     api<MembershipResponse>(p),
+  )
+  // Payment method row (fidelity audit) — only meaningful for a Stripe-billed
+  // membership; Apple IAP has no Stripe card to show, so this is never fetched there.
+  const stripeBilled = billing?.membership != null && billing.membership.provider !== 'apple'
+  const { data: paymentMethod } = useSWR<PaymentMethodResponse>(
+    stripeBilled ? '/api/billing/payment-method' : null,
+    (p: string) => api<PaymentMethodResponse>(p),
   )
   // "Pause all agents" (10.4 app.html Account tab, flagged MISSING in the gap
   // audit — only a per-agent pause existed). The server already supports a
@@ -353,6 +366,16 @@ export default function AccountScreen() {
               </Text>
             )
           ) : null}
+          {stripeBilled && paymentMethod?.paymentMethod ? (
+            <View style={[s.rowBetween, { marginTop: space.lg }]}>
+              <View style={s.rowCenter}>
+                <Ionicons name="card-outline" size={18} color={color.textDim} />
+                <Text style={[type.body, { color: color.text, marginLeft: space.sm }]}>
+                  {capitalize(paymentMethod.paymentMethod.brand)} •••• {paymentMethod.paymentMethod.last4}
+                </Text>
+              </View>
+            </View>
+          ) : null}
           {billing?.membership?.provider !== 'apple' ? (
             <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
               Securely managed through Stripe
@@ -608,6 +631,11 @@ function formatBillingDate(d: string): string {
     day: 'numeric',
     year: 'numeric',
   })
+}
+
+/** Stripe's card.brand is lowercase ("visa", "mastercard") — title-case it for display. */
+function capitalize(s: string): string {
+  return s.length > 0 ? s[0].toUpperCase() + s.slice(1) : s
 }
 
 function memberSince(iso: string): string {

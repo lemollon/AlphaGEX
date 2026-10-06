@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import Svg, { Path } from 'react-native-svg'
 import useSWR from 'swr'
 import { api, ApiError } from '@/api/client'
 import type {
@@ -819,12 +820,16 @@ function Avatar({ message }: { message: CommunityMessage }) {
   const { colors: color, scheme } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   if (message.sender_type !== 'USER') {
-    // Sparky answers in threads, Forge posts market updates — different faces.
+    // Sparky answers in threads, Forge posts market updates — different faces. Forge
+    // posts previously fell back to Flame's mascot, which wrongly implied Flame
+    // specifically authored a generic platform update (fidelity audit "AI-generated
+    // post avatar" — design shows a neutral black square + forge glyph, `cav('forge')`,
+    // never an agent's own face).
     const isSparky = message.sender_name.toLowerCase().includes('sparky')
     return isSparky ? (
       <Image source={SPARKY_AVATAR} style={s.avatarImg} resizeMode="contain" />
     ) : (
-      <Mascot bot="flame" size={40} />
+      <ForgeAvatar />
     )
   }
   return (
@@ -832,6 +837,36 @@ function Avatar({ message }: { message: CommunityMessage }) {
       <Text style={[type.label, { color: color.text, fontFamily: font.bodyBold }]}>
         {initials(message.sender_name)}
       </Text>
+    </View>
+  )
+}
+
+/**
+ * The generic "Forge" (platform/AI) post avatar — a near-black square with the forge
+ * shield glyph in the brand accent (design `.cav.forge`, `--av` background), always
+ * this fixed look regardless of light/dark theme, same as the design's own `--av` token.
+ */
+function ForgeAvatar() {
+  const { colors: color } = useTheme()
+  return (
+    <View style={{ width: 40, height: 40, borderRadius: 11, backgroundColor: '#0B0B0F', alignItems: 'center', justifyContent: 'center' }}>
+      <Svg width={22} height={22} viewBox="0 0 24 24">
+        <Path
+          d="M12 3l7.5 3v5.5c0 4.6-3.1 8.3-7.5 9.5-4.4-1.2-7.5-4.9-7.5-9.5V6L12 3z"
+          stroke={color.accent}
+          strokeWidth={1.8}
+          strokeLinejoin="round"
+          fill="none"
+        />
+        <Path
+          d="M8 14l2.5-2.5 2 2L16 10"
+          stroke={color.accent}
+          strokeWidth={1.8}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+        />
+      </Svg>
     </View>
   )
 }
