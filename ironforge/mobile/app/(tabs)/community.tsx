@@ -10,7 +10,6 @@ import {
   Alert,
   Modal,
   StyleSheet,
-  ActivityIndicator,
   Animated,
   AccessibilityInfo,
 } from 'react-native'
@@ -21,10 +20,9 @@ import Svg, { Path } from 'react-native-svg'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR from 'swr'
-import { api, ApiError } from '@/api/client'
+import { api } from '@/api/client'
 import { getItem, setItem } from '@/api/storage'
 import type {
-  AssistResponse,
   BlockedMember,
   CommunityFeedV2,
   CommunityMessageV2,
@@ -97,10 +95,12 @@ export default function CommunityScreen() {
   // per WP-F scope: expo-router nesting under app/(tabs)/community/ would touch the
   // tab layout, and a modal here does not.
   const [threadFor, setThreadFor] = useState<CommunityMessage | null>(null)
-  // AI assist (APP-031): the suggestion is held separately from the draft so the
-  // member can compare "Use" vs "Keep mine" instead of the draft silently changing.
-  const [assisting, setAssisting] = useState(false)
-  const [assistSuggestion, setAssistSuggestion] = useState<string | null>(null)
+  // Composer topic (10.4 design `#cTopic` select) — independent of which tab is
+  // being VIEWED (`channel` above): a member can be looking at "All" and still
+  // post into a specific real topic. `null` until a member picks one; defaults
+  // to the first real channel once the channel list has loaded.
+  const [composerTopic, setComposerTopic] = useState<string | null>(null)
+  const [topicPickerOpen, setTopicPickerOpen] = useState(false)
   // 10.4 design: a dismiss "X", not a navigation — starts hidden (not shown) until
   // the stored flag resolves, so a returning member never sees a one-frame flash of
   // a card they already dismissed.
@@ -118,6 +118,14 @@ export default function CommunityScreen() {
     (p: string) => api(p),
     { refreshInterval: 30_000 },
   )
+
+  // "All" aggregates every channel for reading — it is never itself a topic to
+  // post INTO, same as the design's `#cTopic` select, which never lists "All"
+  // among its options (ironforge-app.html TOPICS).
+  const channels = data?.channels ?? []
+  const realChannels = channels.filter((c) => c.slug !== 'all-chat')
+  const topicSlug = composerTopic ?? realChannels[0]?.slug ?? 'general'
+  const topicName = channels.find((c) => c.slug === topicSlug)?.name ?? 'Topic'
 
   /**
    * The viewer's own block list. Not polled — it only changes when this screen
@@ -186,9 +194,10 @@ export default function CommunityScreen() {
     setPosting(true)
     setPostError(null)
     try {
-      await api('/api/community/messages', { method: 'POST', body: { channel, message } })
+      // Posts into the composer's own topic (#cTopic), not whichever tab is
+      // currently being viewed — see the topicSlug/realChannels note above.
+      await api('/api/community/messages', { method: 'POST', body: { channel: topicSlug, message } })
       setDraft('')
-      setAssistSuggestion(null)
       mutate()
       trackEvent('community_post')
     } catch (e) {
@@ -200,35 +209,6 @@ export default function CommunityScreen() {
       )
     } finally {
       setPosting(false)
-    }
-  }
-
-  /**
-   * AI assist (APP-031). Sends the current draft to be tightened/clarified — never
-   * to add a trade idea or a number that isn't already there (server-enforced, see
-   * webapp's /api/community/assist). The result sits beside the draft until the
-   * member chooses "Use" or "Keep mine"; it never overwrites what they typed.
-   */
-  async function askAssist() {
-    const text = draft.trim()
-    if (!text || assisting) return
-    setAssisting(true)
-    setAssistSuggestion(null)
-    try {
-      const res = await api<AssistResponse>('/api/community/assist', {
-        method: 'POST',
-        body: { draft: text, channel },
-      })
-      setAssistSuggestion(res.suggestion)
-    } catch (e) {
-      Alert.alert(
-        'AI assist unavailable',
-        e instanceof ApiError && e.status === 402
-          ? 'An active membership is required for AI assist.'
-          : (e as Error).message,
-      )
-    } finally {
-      setAssisting(false)
     }
   }
 
@@ -264,7 +244,6 @@ export default function CommunityScreen() {
     )
   }
 
-  const channels = data?.channels ?? []
   const messages = data?.messages ?? []
 
   return (
@@ -426,60 +405,32 @@ export default function CommunityScreen() {
         {postError ? (
           <Text style={[type.label, { color: color.neg, marginBottom: space.sm }]}>{postError}</Text>
         ) : null}
-        {assistSuggestion ? (
-          <View style={s.assistBox}>
-            <Text style={[type.label, { color: color.spark, fontFamily: font.bodyBold, marginBottom: space.xs }]}>
-              AI assist
-            </Text>
-            <Text style={[type.body, { color: color.text }]}>{assistSuggestion}</Text>
-            <View style={[s.rowCenter, { marginTop: space.sm }]}>
-              <Pressable
-                onPress={() => {
-                  setDraft(assistSuggestion)
-                  setAssistSuggestion(null)
-                }}
-                style={s.assistUseBtn}
-              >
-                <Text style={[type.label, { color: color.bg, fontFamily: font.bodyBold }]}>Use</Text>
-              </Pressable>
-              <Pressable onPress={() => setAssistSuggestion(null)} hitSlop={8}>
-                <Text style={[type.label, { color: color.textDim }]}>Keep mine</Text>
-              </Pressable>
-            </View>
-          </View>
-        ) : null}
         <View style={s.rowCenter}>
-          {/* 10.4 design composer is one row: input + send (its topic `<select>` is
-              already covered above by the channel chips, which also target the post).
-              The "+" attach control is dropped entirely — there has never been an
-              upload endpoint under /api/community/*, so it opened a "coming soon"
-              sheet with no function to preserve. */}
+          {/* 10.4 design composer: topic select + input + send. The "+" AI-assist
+              button that used to sit here is retired — the design's composer has
+              no such control. The attach "+" is dropped entirely too — there has
+              never been an upload endpoint under /api/community/*. */}
+          <Pressable
+            onPress={() => setTopicPickerOpen(true)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={`Topic: ${topicName}. Change topic`}
+            style={s.topicBtn}
+          >
+            <Text style={[type.label, { color: color.textDim, fontFamily: font.bodyMedium }]} numberOfLines={1}>
+              {topicName}
+            </Text>
+            <Ionicons name="chevron-down" size={14} color={color.muted} />
+          </Pressable>
           <TextInput
             value={draft}
-            onChangeText={(t) => {
-              setDraft(t)
-              setAssistSuggestion(null)
-            }}
+            onChangeText={setDraft}
             placeholder="Share with the community..."
             placeholderTextColor={color.muted}
             style={s.input}
             maxLength={500}
             multiline
           />
-          <Pressable
-            onPress={askAssist}
-            disabled={assisting || !draft.trim()}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel="AI assist — tighten my message"
-            style={[s.plusBtn, { opacity: assisting || !draft.trim() ? 0.4 : 1 }]}
-          >
-            {assisting ? (
-              <ActivityIndicator size="small" color={color.spark} />
-            ) : (
-              <Text style={{ fontSize: 16 }}>✨</Text>
-            )}
-          </Pressable>
           <Pressable onPress={send} disabled={posting || !draft.trim()} style={s.send}>
             <Text style={{ color: color.text, fontSize: 16 }}>{posting ? '…' : '➤'}</Text>
           </Pressable>
@@ -488,6 +439,17 @@ export default function CommunityScreen() {
           AI monitored · Community standards active
         </Text>
       </View>
+
+      <Sheet
+        visible={topicPickerOpen}
+        title="Post to"
+        options={realChannels.map((c) => ({ label: c.name, value: c.slug }))}
+        onSelect={(v) => {
+          setComposerTopic(v)
+          setTopicPickerOpen(false)
+        }}
+        onClose={() => setTopicPickerOpen(false)}
+      />
 
       <Sheet
         visible={menuFor != null}
@@ -1108,30 +1070,17 @@ const makeStyles = (color: ColorTokens) =>
     alignItems: 'center',
     justifyContent: 'center',
   },
-  plusBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  topicBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    maxWidth: 92,
+    height: 44,
+    paddingHorizontal: space.sm,
+    borderRadius: radius.md,
     borderWidth: 1,
     borderColor: color.border,
-    alignItems: 'center',
-    justifyContent: 'center',
     marginRight: space.sm,
-  },
-  assistBox: {
-    borderWidth: 1,
-    borderColor: color.spark,
-    borderRadius: radius.md,
-    padding: space.md,
-    marginBottom: space.md,
-    backgroundColor: color.bg,
-  },
-  assistUseBtn: {
-    backgroundColor: color.spark,
-    borderRadius: radius.sm,
-    paddingHorizontal: space.md,
-    paddingVertical: space.xs,
-    marginRight: space.md,
   },
   threadHeader: {
     flexDirection: 'row',
