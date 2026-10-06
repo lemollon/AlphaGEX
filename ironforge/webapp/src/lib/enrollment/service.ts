@@ -126,14 +126,14 @@ export async function setEnrollmentPlan(id: string, userId: string, plan: string
 
 /** Versions this user has ALREADY accepted, for staleness comparison. */
 export async function acceptedVersionsFor(userId: string): Promise<AcceptedVersion[]> {
-  const rows = await customerQuery<{ code: string; version: string }>(
-    `SELECT d.code, d.version
+  const rows = await customerQuery<{ code: string; version: string; accepted_at: Date }>(
+    `SELECT d.code, d.version, a.accepted_at
        FROM legal_acceptances a
        JOIN legal_documents d ON d.id = a.document_id
       WHERE a.user_id = $1`,
     [userId],
   )
-  return rows
+  return rows.map((r) => ({ code: r.code, version: r.version, acceptedAt: r.accepted_at }))
 }
 
 export interface LegalRequirement {

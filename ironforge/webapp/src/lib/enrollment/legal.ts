@@ -88,6 +88,9 @@ export function requiredDocumentsFor(plan: string | null | undefined): LegalDocu
 export interface AcceptedVersion {
   code: string
   version: string
+  /** When this specific (code, version) was accepted — the Review step's
+   *  "Agreements" row timestamp (en-6 #128: "Agreements (signer + timestamp)"). */
+  acceptedAt?: Date
 }
 
 /**

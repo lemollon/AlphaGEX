@@ -46,6 +46,11 @@ export interface ActivationContext {
   stripeCustomerId: string | null
   /** Needed to offer "resend the verification email" right on the review screen (§4). */
   email: string
+  /** Most recent legal acceptance timestamp, ISO — the Review step's "Agreements"
+   *  row (en-6 #128: "Agreements (signer + timestamp)"). Display-only: deliberately
+   *  NOT part of `snapshot` below, since that object is what the consent hash binds
+   *  to and a clock value has no business changing what a customer is authorizing. */
+  legalSignedAt: string | null
   snapshot: ActivationSnapshot
   hash: string
   /** Everything except the two acknowledgments and the client's preview hash, which are per-request. */
@@ -207,11 +212,17 @@ export async function loadActivationContext(
     legalVersions: accepted.map((a) => `${a.code}@${a.version}`),
   }
 
+  const acceptedTimestamps = accepted.map((a) => a.acceptedAt).filter((d): d is Date => d != null)
+  const legalSignedAt = acceptedTimestamps.length
+    ? new Date(Math.max(...acceptedTimestamps.map((d) => d.getTime()))).toISOString()
+    : null
+
   return {
     config,
     account,
     stripeCustomerId: user?.stripe_customer_id ?? null,
     email: user?.email ?? '',
+    legalSignedAt,
     snapshot,
     hash: previewHash(snapshot),
     inputs: {
