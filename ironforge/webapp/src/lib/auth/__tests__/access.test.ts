@@ -80,6 +80,13 @@ describe('isCustomerPath', () => {
 })
 
 describe('decideAccess', () => {
+  it('lets an anonymous visitor reach enrollment step 1 (/enroll/account) but not later steps', () => {
+    const base = { isApi: false, hasSession: false, hasCustomerSession: false, hasServiceToken: false }
+    expect(decideAccess({ ...base, pathname: '/enroll/account' })).toBe('allow')
+    expect(decideAccess({ ...base, pathname: '/enroll/legal' })).toBe('redirect-customer-login')
+    expect(decideAccess({ ...base, pathname: '/enroll' })).toBe('redirect-customer-login')
+  })
+
   const base = { pathname: '/spark', isApi: false, hasSession: false, hasServiceToken: false }
   it('allows when a valid service token is present', () => {
     expect(decideAccess({ ...base, isApi: true, pathname: '/api/spark/status', hasServiceToken: true })).toBe('allow')
