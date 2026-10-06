@@ -37,7 +37,7 @@ function trade(id: string, close_date: string): HistoryTrade {
 
 describe('ledgerPageKey', () => {
   it('builds page 1 for the default (all agents, 30 days, no search) filter', () => {
-    expect(ledgerPageKey(ALL, null)).toBe('/api/live/trades?limit=30&days=30')
+    expect(ledgerPageKey(ALL, null)).toBe('/api/live/trades?limit=50&days=30')
   })
 
   it('adds bot, days and q only when set', () => {
@@ -63,7 +63,7 @@ describe('ledgerPageKey', () => {
 describe('getLedgerKey', () => {
   it('page 0 ignores previousPageData and never carries a cursor', () => {
     const getKey = getLedgerKey(ALL)
-    expect(getKey(0, null)).toBe('/api/live/trades?limit=30&days=30')
+    expect(getKey(0, null)).toBe('/api/live/trades?limit=50&days=30')
   })
 
   it('later pages use the previous page\'s next_cursor', () => {

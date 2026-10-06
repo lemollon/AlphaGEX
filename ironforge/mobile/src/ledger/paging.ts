@@ -11,7 +11,10 @@
  */
 import type { HistoryTrade, TradesTotals } from '@/api/types'
 
-export const LEDGER_PAGE_SIZE = 30
+// #246: 50, matching the server's own default (GET /api/live/trades: "limit
+// (default 50, max 200)") — was 30, an app-side number smaller than what the
+// server already hands back by default.
+export const LEDGER_PAGE_SIZE = 50
 
 export interface LedgerFilters {
   /** 'all' | 'spark' | 'flame' — mirrors the AGENTS control in ledger.tsx.
