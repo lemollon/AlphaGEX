@@ -196,10 +196,12 @@ export function isPublicPath(pathname: string): boolean {
   // customer-cookie gate 401'd every successful Google approval, the same #3180 lesson as the
   // Tradier/SnapTrade brokerage callbacks above.
   if (pathname.startsWith('/api/auth/google/')) return true
-  // Versioned legal document pages (/legal/risk, /legal/refund-policy, ...). Public for
-  // the same reason /terms and /privacy are: partners and prospects must be able to read
-  // them before signing in, and the enrollment "Review" actions open them directly.
-  if (pathname.startsWith('/legal/')) return true
+  // Versioned legal document pages (/legal/risk, /legal/refund-policy, ...), and the
+  // /legal index that lists all of them (db-controls #203 — Settings' "Agreements &
+  // Disclosures" link). Public for the same reason /terms and /privacy are: partners
+  // and prospects must be able to read them before signing in, and the enrollment
+  // "Review" actions open them directly.
+  if (pathname === '/legal' || pathname.startsWith('/legal/')) return true
   // All /api/brokerage/* routes are middleware-open and self-guarded in-route
   // (webhook → shared secret, customer routes → customer session, internal → service
   // token). The webhook has no session of any kind, so it cannot be customer-gated.

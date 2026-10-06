@@ -11,7 +11,8 @@ import HomePageBody from '@/components/marketing/HomePageBody'
  */
 
 export const metadata: Metadata = {
-  title: 'IronForge — Automated options trading, run by rules.',
+  // ps-seo #70: exact spec string — middle dot, no trailing period.
+  title: 'IronForge · Automated options trading, run by rules',
   description:
     'Pick an agent. It trades in your own brokerage account by the same written rules every day, and you follow along from the app.',
 }

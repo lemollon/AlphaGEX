@@ -117,7 +117,10 @@ export default function HomePageBody() {
         <PutSpreadHeroCard />
       </div>
 
-      <section className="sec" id="home-agents-grid">
+      {/* id is the real anchor target for the nav's "Agents" link and the
+          scrollspy (ps-nav #40/#42: "Agents ... scroll to #home-agents on the
+          home page") — it belongs on the agent grid, not the stat strip below. */}
+      <section className="sec" id="home-agents">
         <div className="wrap">
           <div className="sec-head">
             <div>
@@ -138,7 +141,7 @@ export default function HomePageBody() {
         </div>
       </section>
 
-      <section className="sec" id="home-agents" style={{ paddingBlock: 0 }}>
+      <section className="sec" id="home-stats" style={{ paddingBlock: 0 }}>
         <div className="wrap stats">
           <Link className="stat" href="/how-it-works#ladder">
             <small>Live trading since</small>

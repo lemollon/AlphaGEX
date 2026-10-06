@@ -41,6 +41,14 @@ const SECTIONS = [
     blurb: 'Change your password.',
     icon: 'M8 11V7a4 4 0 1 1 8 0v4M5 11h14v9H5z',
   },
+  // db-controls #203: "brokerage, plan and agreements links" — the first two
+  // already have sections above; this was the missing third.
+  {
+    href: '/legal',
+    title: 'Agreements & Disclosures',
+    blurb: 'Terms, risk disclosure, and the other documents you signed.',
+    icon: 'M9 12h6m-6 4h6M7 4h10a2 2 0 0 1 2 2v14l-3-2-3 2-3-2-3 2V6a2 2 0 0 1 2-2Z',
+  },
 ] as const
 
 function ToggleSwitch({ on, onChange, disabled }: { on: boolean; onChange: () => void; disabled?: boolean }) {
@@ -115,9 +123,11 @@ function AutomationSection() {
 const ALERT_ROWS: Array<{ key: string; label: string; blurb: string }> = [
   { key: 'trade_opened', label: 'Trade opened', blurb: 'Notify me when an agent opens a new trade.' },
   { key: 'trade_closed', label: 'Trade closed', blurb: 'Notify me when a trade closes, win or loss.' },
+  { key: 'big_move', label: 'Big moves', blurb: 'Notify me about a large swing on an open trade.' },
   { key: 'trade_approval', label: 'Trade needs approval', blurb: 'Notify me when a trade is waiting on my OK.' },
   { key: 'brokerage_health', label: 'Brokerage health', blurb: 'Notify me if a connected broker disconnects or needs attention.' },
   { key: 'billing', label: 'Billing', blurb: 'Notify me about payment issues or upcoming charges.' },
+  { key: 'daily_summary', label: 'Daily summary', blurb: 'A recap of today’s results, once a day.' },
   { key: 'weekly_summary', label: 'Weekly summary', blurb: 'A recap of the week’s results, once a week.' },
   { key: 'community', label: 'Community activity', blurb: 'Notify me about replies and mentions in Forge Community.' },
 ]

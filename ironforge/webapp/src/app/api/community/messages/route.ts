@@ -71,8 +71,9 @@ export async function POST(req: NextRequest) {
     const channelSlug = typeof body.channel === 'string' ? body.channel : DEFAULT_CHANNEL
     const message = typeof body.message === 'string' ? body.message.trim() : ''
     if (!message) return NextResponse.json({ error: 'Message is empty.' }, { status: 400 })
-    if (message.length > 2000) {
-      return NextResponse.json({ error: 'Message is too long (2000 characters max).' }, { status: 400 })
+    // db-community #190/#249: "composer ... 500-character limit", web and mobile alike.
+    if (message.length > 500) {
+      return NextResponse.json({ error: 'Message is too long (500 characters max).' }, { status: 400 })
     }
 
     const channelId = await getChannelId(channelSlug)

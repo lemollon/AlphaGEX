@@ -37,6 +37,7 @@ interface Preview {
     plan: { name: string; price_monthly: number } | null
     trial: { eligible_days_total: number }
     email: string
+    legal_signed_at: string | null
   }
   can_activate: boolean
   blockers: Blocker[]
@@ -56,6 +57,16 @@ const BLOCKER_ROUTE: Record<string, string> = {
 
 function usd(cents: number): string {
   return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+}
+
+function formatSignedAt(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return '—'
+  return d.toLocaleString('en-US', {
+    timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  }) + ' CT'
 }
 
 export default function ReviewClient() {
@@ -267,6 +278,19 @@ export default function ReviewClient() {
               <div className="card pad">
                 <h3>Trading setup</h3>
                 <dl className="rv" style={{ marginTop: 10, gap: 10, display: 'grid' }}>
+                  {/* Account — no Edit link: account creation happens on /signup, before
+                      this rail starts, and there is no in-rail step to return to (documented
+                      deviation, see EnrollShell.tsx). Shown for completeness (en-6 #128). */}
+                  <div className="sum-row"><dt>Account</dt><dd>{preview.snapshot.email || '—'}</dd></div>
+                  <div className="sum-row">
+                    <dt>Agreements</dt>
+                    <dd>
+                      Signed {formatSignedAt(preview.snapshot.legal_signed_at)}
+                      <Link href="/enroll/legal" className="link" style={{ marginLeft: 8, fontSize: '.78rem' }}>
+                        Edit
+                      </Link>
+                    </dd>
+                  </div>
                   <div className="sum-row"><dt>Membership</dt><dd>{isEmber ? 'Ember (free)' : 'Forge Automate'}</dd></div>
                   <div className="sum-row">
                     <dt>Agent</dt>
@@ -280,10 +304,21 @@ export default function ReviewClient() {
                       >
                         {agentName}
                       </span>
+                      <Link href="/enroll/agent" className="link" style={{ marginLeft: 8, fontSize: '.78rem' }}>
+                        Edit
+                      </Link>
                     </dd>
                   </div>
                   <div className="sum-row"><dt>Strategy</dt><dd>Rules-based iron condor</dd></div>
-                  <div className="sum-row"><dt>Brokerage account</dt><dd className="mono">{preview.snapshot.account_mask || '—'}</dd></div>
+                  <div className="sum-row">
+                    <dt>Brokerage account</dt>
+                    <dd>
+                      <span className="mono">{preview.snapshot.account_mask || '—'}</span>
+                      <Link href="/enroll/broker" className="link" style={{ marginLeft: 8, fontSize: '.78rem' }}>
+                        Change
+                      </Link>
+                    </dd>
+                  </div>
                   <div className="sum-row"><dt>Account eligibility</dt><dd style={{ color: 'var(--up)' }}>✓ Options enabled</dd></div>
                   <div className="sum-row">
                     <dt>Maximum capital deployment</dt>
@@ -314,9 +349,16 @@ export default function ReviewClient() {
                         : preview.snapshot.plan
                           ? `$${preview.snapshot.plan.price_monthly}/month`
                           : '—'}
+                      {!isEmber && (
+                        <Link href="/enroll/billing" className="link" style={{ marginLeft: 8, fontSize: '.78rem' }}>
+                          Edit
+                        </Link>
+                      )}
                     </dd>
                   </div>
                   <div className="sum-row"><dt>Membership</dt><dd>{isEmber ? 'One Ember account, $500–$2,000 capital' : 'Cancel anytime'}</dd></div>
+                  {/* Community — no Edit: included with every agent, not a choice (en-3 #113). */}
+                  <div className="sum-row"><dt>Community</dt><dd>Forge Community included</dd></div>
                 </dl>
                 <p
                   className="help"
@@ -368,7 +410,7 @@ export default function ReviewClient() {
                 color: '#fff',
               }}
             >
-              {busy ? 'Activating…' : `Activate ${agentName}`}
+              {busy ? 'Entering the Forge…' : 'Enter the Forge'}
             </button>
             <p className="help" style={{ marginTop: 10, textAlign: 'center' }}>
               Trading will begin only when {agentName} identifies an eligible opportunity. You can pause automation at

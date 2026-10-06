@@ -40,6 +40,8 @@ const config: Config = {
         // --font-sans / --font-display are injected by next/font in app/layout.tsx
         sans: ['var(--font-sans)', 'ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
         display: ['var(--font-display)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        // Wordmark + agent-name-on-card face (ds-type: "Barlow Condensed 700").
+        brand: ['var(--brand)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
       },
       colors: {
         // Brand accent rides amber-*. VIVID vermilion-orange (Leron's repeated

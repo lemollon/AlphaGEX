@@ -2,11 +2,33 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import MarketStatusBadge from './MarketStatusBadge'
 import { AGENTS } from '@/lib/marketing/agents'
+import { defaultHeroTab, heroAgentStripState, isMarketOpenNow, minutesSinceMidnightCT } from '@/lib/marketing/marketStatus'
 
 type Tab = 'spark' | 'flame'
+
+const MARKET_OPEN_MIN = 8 * 60 + 30 // 8:30 AM CT — matches AXIS_TICKS' left edge (x=10)
+const MARKET_CLOSE_MIN = 15 * 60 // 3:00 PM CT — matches AXIS_TICKS' right edge (x=510)
+const CHART_X_START = 10
+const CHART_X_END = 510
+const VIEWBOX_WIDTH = 520
+
+/** Minutes-since-midnight CT -> chart x (viewBox units), clamped to the session. */
+function minutesToChartX(minutes: number): number {
+  const clamped = Math.min(Math.max(minutes, MARKET_OPEN_MIN), MARKET_CLOSE_MIN)
+  const frac = (clamped - MARKET_OPEN_MIN) / (MARKET_CLOSE_MIN - MARKET_OPEN_MIN)
+  return CHART_X_START + frac * (CHART_X_END - CHART_X_START)
+}
+
+function formatNowLabel(minutes: number): string {
+  const h24 = Math.floor(minutes / 60)
+  const m = minutes % 60
+  const period = h24 >= 12 ? 'PM' : 'AM'
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12
+  return `${h12}:${String(m).padStart(2, '0')} ${period} Central`
+}
 
 /** Chart x-axis ticks, in viewBox units (0 0 520 290) — 8:30 AM through 3 PM. */
 const AXIS_TICKS: Array<{ x: number; label: string; anchor: 'start' | 'middle' | 'end' }> = [
@@ -58,10 +80,31 @@ const EXPLAIN = [
 /** Hero card — "How a put spread works" tabs, home page only. */
 export default function PutSpreadHeroCard() {
   const [tab, setTab] = useState<Tab>('spark')
+  const [nowMinutes, setNowMinutes] = useState<number | null>(null)
+  const [nowTipOpen, setNowTipOpen] = useState(false)
+  const didInitTab = useRef(false)
+
+  // Default tab follows the current Central time on first paint (ps-hero #46)
+  // — but only once, and never once the visitor has clicked a tab themselves.
+  useEffect(() => {
+    if (didInitTab.current) return
+    didInitTab.current = true
+    setTab(defaultHeroTab())
+  }, [])
+
+  useEffect(() => {
+    const tick = () => setNowMinutes(minutesSinceMidnightCT())
+    tick()
+    const id = setInterval(tick, 30_000)
+    return () => clearInterval(id)
+  }, [])
+
   const path = PATHS[tab]
   const session = SESSION[tab]
   const agent = AGENTS.find((a) => a.slug === tab)!
   const colorVar = tab === 'spark' ? 'var(--spark)' : 'var(--flame)'
+  const showNowMarker = nowMinutes != null && isMarketOpenNow()
+  const nowX = nowMinutes != null ? minutesToChartX(nowMinutes) : null
 
   return (
     <div className="card" aria-label="How a trading day plays out">
@@ -156,7 +199,31 @@ export default function PutSpreadHeroCard() {
               {t.label}
             </text>
           ))}
+
+          {/* "Now" marker during market hours — hover or tap for the time and zone (ps-hero #48). */}
+          {showNowMarker && nowX != null && (
+            <g
+              className="hc-now"
+              onMouseEnter={() => setNowTipOpen(true)}
+              onMouseLeave={() => setNowTipOpen(false)}
+              onClick={() => setNowTipOpen((v) => !v)}
+              style={{ cursor: 'pointer' }}
+            >
+              <line x1={nowX} x2={nowX} y1={0} y2={250} stroke="var(--fg)" strokeWidth={1} strokeDasharray="2 3" opacity={0.55} />
+              <circle cx={nowX} cy={250} r={4} fill="var(--fg)" />
+            </g>
+          )}
         </svg>
+        {showNowMarker && nowX != null && nowTipOpen && nowMinutes != null && (
+          <div
+            className="hc-tip"
+            role="status"
+            style={{ left: `${(nowX / VIEWBOX_WIDTH) * 100}%`, top: '2px' }}
+          >
+            <b>Now</b>
+            <span>{formatNowLabel(nowMinutes)}</span>
+          </div>
+        )}
       </div>
       <div className="hc-explain">
         {EXPLAIN.map((e) => (
@@ -170,17 +237,26 @@ export default function PutSpreadHeroCard() {
         ))}
       </div>
       <div className="hc-agents">
-        {AGENTS.map((a) => (
-          <Link key={a.slug} className="hc-agent" href={`/agents#${a.slug}`}>
-            <Image src={a.mascot} alt="" width={34} height={34} />
-            <div>
-              <b>{a.name}</b>
-              <div className="state">
-                {a.slug === 'ember' ? <span className="muted">Smaller accounts</span> : a.tagline}
+        {AGENTS.map((a) => {
+          // Live state once mounted ("Trading now" / "Starts …" / "Done for
+          // today" — ps-hero #49); the static tagline covers SSR/first paint
+          // so there's no clock-dependent hydration mismatch.
+          const live =
+            nowMinutes != null && (a.slug === 'spark' || a.slug === 'flame')
+              ? heroAgentStripState(a.slug)
+              : null
+          return (
+            <Link key={a.slug} className="hc-agent" href={`/agents#${a.slug}`}>
+              <Image src={a.mascot} alt="" width={34} height={34} />
+              <div>
+                <b>{a.name}</b>
+                <div className="state">
+                  {a.slug === 'ember' ? <span className="muted">Smaller accounts</span> : live ?? a.tagline}
+                </div>
               </div>
-            </div>
-          </Link>
-        ))}
+            </Link>
+          )
+        })}
       </div>
       <p className="hc-cap">Simplified illustration of a put spread at the end of a session. Not trading results.</p>
     </div>

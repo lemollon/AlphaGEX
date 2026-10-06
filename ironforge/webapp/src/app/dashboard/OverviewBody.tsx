@@ -8,9 +8,10 @@ import { fetcher } from '@/lib/fetcher'
 import { formatDollarPnl } from '@/lib/format'
 import { BOT_COLORS } from '@/lib/botColors'
 import type { LiveBot } from '@/lib/live/bots'
+import type { LiveSummary } from '@/lib/live/types'
 import type { PerformanceData } from '@/lib/live/performance'
 import { BOT_PLANS } from '@/lib/billing/plans'
-import PnlRangeChart from '@/components/customer/PnlRangeChart'
+import PnlRangeChart, { type RangeKey as PnlRangeKey } from '@/components/customer/PnlRangeChart'
 import DailyResultsBars from '@/components/customer/DailyResultsBars'
 import AgentLeadTile from '@/components/customer/AgentLeadTile'
 import SparkMascot from '../live/components/SparkMascot'
@@ -24,6 +25,17 @@ function formatMoney(v: number | null | undefined): string {
   return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+/** Time-of-day greeting in Central time — no name field exists on the summary
+ *  payload to personalize with, so this stays generic rather than fabricate one. */
+function greeting(): string {
+  const ctHour = Number(
+    new Date().toLocaleString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', hour12: false }),
+  )
+  if (ctHour < 12) return 'Good morning'
+  if (ctHour < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
 /**
  * Overview tab (dev-handoff §6): greeting/market status → KPI row → P&L
  * chart → Daily results → your agents. This is the enhanced successor to
@@ -33,12 +45,28 @@ function formatMoney(v: number | null | undefined): string {
  */
 export default function OverviewBody() {
   const { data, error } = useSWR<PerfResponse>('/api/live/performance', fetcher, { refreshInterval: 60_000 })
+  // Separate, already-used-elsewhere endpoint — just for the market status pill
+  // (db-ia #144: "Greeting + market status"). Cached/shared with other dashboard
+  // tabs that fetch the same key, so this adds no extra network cost in practice.
+  const { data: summary } = useSWR<LiveSummary>('/api/live/summary', fetcher, { refreshInterval: 60_000 })
 
   const allowedBots = (data?.viewer?.allowedBots ?? []) as LiveBot[]
 
   return (
     <>
-      <h1 className="text-2xl font-bold text-[var(--fg)]">Overview</h1>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="text-2xl font-bold text-[var(--fg)]">{greeting()}</h1>
+        {summary?.market?.label && (
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+              summary.market.open ? 'bg-emerald-500/15 text-emerald-400' : 'bg-forge-border/60 text-forge-muted'
+            }`}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${summary.market.open ? 'bg-emerald-400' : 'bg-forge-muted'}`} />
+            {summary.market.label}
+          </span>
+        )}
+      </div>
       <p className="mt-1 text-sm text-[var(--muted)]">Your all-time results across every strategy you own.</p>
 
       {data && 'empty' in data && data.empty ? (
@@ -107,6 +135,10 @@ function OverviewContent({ data, allowedBots }: { data: PerformanceData; allowed
   const { bots, combined, equity_curve } = data
   const [sel, setSel] = useState<'all' | LiveBot>('all')
   const active = sel !== 'all' ? bots.find((b) => b.bot === sel) : undefined
+  // db-kpi #161: "Clicking a period tile also switches the chart." Lifted up here
+  // (rather than kept as PnlRangeChart's own internal state) so the KPI tiles above
+  // the chart can drive it too, not just its own 1D/1W/1M/All buttons.
+  const [chartRange, setChartRange] = useState<PnlRangeKey>('1W')
 
   const view = active
     ? {
@@ -201,10 +233,12 @@ function OverviewContent({ data, allowedBots }: { data: PerformanceData; allowed
           value={view.today_pnl != null ? formatDollarPnl(view.today_pnl) : '—'}
           valueClass={view.today_pnl != null ? (view.today_pnl >= 0 ? 'text-[var(--up)]' : 'text-[var(--bad)]') : undefined}
           sub="Realized + unrealized on open trades"
+          onClick={() => setChartRange('1D')}
+          active={chartRange === '1D'}
         />
-        <StatTile label="Past Week" value={formatDollarPnl(view.weekly)} valueClass={view.weekly >= 0 ? 'text-[var(--up)]' : 'text-[var(--bad)]'} sub="Last 5 trading days" />
-        <StatTile label="Past Month" value={formatDollarPnl(view.monthly)} valueClass={view.monthly >= 0 ? 'text-[var(--up)]' : 'text-[var(--bad)]'} sub="Last 21 trading days" />
-        <StatTile label="Lifetime P&L" value={formatDollarPnl(view.total_pnl)} valueClass={positive ? 'text-[var(--up)]' : 'text-[var(--bad)]'} />
+        <StatTile label="Past Week" value={formatDollarPnl(view.weekly)} valueClass={view.weekly >= 0 ? 'text-[var(--up)]' : 'text-[var(--bad)]'} sub="Last 5 trading days" onClick={() => setChartRange('1W')} active={chartRange === '1W'} />
+        <StatTile label="Past Month" value={formatDollarPnl(view.monthly)} valueClass={view.monthly >= 0 ? 'text-[var(--up)]' : 'text-[var(--bad)]'} sub="Last 21 trading days" onClick={() => setChartRange('1M')} active={chartRange === '1M'} />
+        <StatTile label="Lifetime P&L" value={formatDollarPnl(view.total_pnl)} valueClass={positive ? 'text-[var(--up)]' : 'text-[var(--bad)]'} onClick={() => setChartRange('ALL')} active={chartRange === 'ALL'} />
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -238,7 +272,12 @@ function OverviewContent({ data, allowedBots }: { data: PerformanceData; allowed
       )}
       {active && <AgentLeadTile label={active.label} lead={active.lead} accentClass={active.accent === 'flame' ? 'text-flame' : 'text-spark'} />}
 
-      <PnlRangeChart ranges={view.pnl_ranges} title={active ? `P&L · ${active.label}` : 'P&L'} />
+      <PnlRangeChart
+        ranges={view.pnl_ranges}
+        title={active ? `P&L · ${active.label}` : 'P&L'}
+        range={chartRange}
+        onRangeChange={setChartRange}
+      />
       <DailyResultsBars bars={view.daily_bars} />
 
       {/* Equity curve — the account's actual balance history, distinct from the
@@ -318,9 +357,26 @@ function TogglePill({ label, active, onClick, accent, paper }: { label: string; 
   )
 }
 
-function StatTile({ label, value, sub, valueClass }: { label: string; value: string; sub?: string; valueClass?: string }) {
+function StatTile({ label, value, sub, valueClass, onClick, active }: {
+  label: string
+  value: string
+  sub?: string
+  valueClass?: string
+  /** db-kpi #161: when present, the tile is clickable and drives the P&L chart's range. */
+  onClick?: () => void
+  active?: boolean
+}) {
   return (
-    <div className="rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-4">
+    <div
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } } : undefined}
+      aria-pressed={onClick ? active : undefined}
+      className={`rounded-xl border bg-[var(--bg)]/80 p-4 text-left ${
+        onClick ? 'cursor-pointer transition-colors hover:border-[var(--line-2)]' : ''
+      } ${active ? 'border-[var(--accent)]' : 'border-[var(--line)]'}`}
+    >
       <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">{label}</div>
       <div className={`mt-1.5 font-mono text-2xl font-bold ${valueClass ?? 'text-[var(--fg)]'}`}>{value}</div>
       {sub && <div className="mt-1 text-xs text-[var(--muted)]">{sub}</div>}

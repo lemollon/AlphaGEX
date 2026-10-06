@@ -94,6 +94,8 @@ export default function PlanClient() {
       blurb: BOT_PLANS.spark.blurb,
       price: BOT_PLANS.spark.priceMonthly,
       accent: BOT_PLANS.spark.accent,
+      // en-3 #113: "Radio cards ... and a 'Forge Community is included' note."
+      note: 'Forge Community included',
     },
     {
       slug: 'flame',
@@ -101,6 +103,7 @@ export default function PlanClient() {
       blurb: BOT_PLANS.flame.blurb,
       price: BOT_PLANS.flame.priceMonthly,
       accent: BOT_PLANS.flame.accent,
+      note: 'Forge Community included',
     },
     {
       slug: 'ember',

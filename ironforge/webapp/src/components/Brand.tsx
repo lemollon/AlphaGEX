@@ -24,7 +24,7 @@ export function Wordmark({
   return (
     <div className="flex items-center gap-2.5">
       {showMark ? <IFMark className={markClass} /> : null}
-      <span className={`${textClass} font-bold uppercase tracking-tight`}>
+      <span className={`${textClass} font-brand font-bold uppercase tracking-tight`}>
         <span className="text-white">IRON</span>
         <span className="text-amber-500">FORGE</span>
       </span>

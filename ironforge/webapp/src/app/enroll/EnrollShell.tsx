@@ -62,6 +62,11 @@ export default function EnrollShell({
 }) {
   const railIndex = step ? RAIL.findIndex((r) => r.step === step) : -1
   const progressPct = railIndex >= 0 ? Math.round(((railIndex + 1) / RAIL.length) * 100) : 0
+  // en-5 #126: "Ember skips this step; the rail shows 'Not needed for Ember.'"
+  // Billing is skipped entirely for Ember (service.ts isEmberPlan) — the rail
+  // sub-label says so instead of the generic "Secured by Stripe".
+  const isEmber = enrollment?.selected_plan === 'ember'
+  const rail = isEmber ? RAIL.map((r) => (r.step === 'billing' ? { ...r, sub: 'Not needed for Ember' } : r)) : RAIL
 
   return (
     <div className="if-enroll">
@@ -96,7 +101,7 @@ export default function EnrollShell({
         {railIndex >= 0 ? (
           <nav className="rail" aria-label="Enrollment steps">
             <div className="rail-h">Setting up IronForge</div>
-            {RAIL.map((r, i) => {
+            {rail.map((r, i) => {
               const state = i < railIndex ? 'done' : i === railIndex ? 'cur' : 'skip'
               const content = (
                 <>
