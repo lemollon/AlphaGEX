@@ -68,6 +68,11 @@ export function Money({
     <Text
       style={[type[size], { color: tone, fontFamily: font.bodyBold }]}
       maxFontSizeMultiplier={MAX_FONT_SCALE}
+      // A dollar amount must never break across lines ("+$2,380.4 / 0" in a
+      // narrow KPI tile) — shrink to fit instead.
+      numberOfLines={1}
+      adjustsFontSizeToFit
+      minimumFontScale={0.7}
     >
       {text}
     </Text>
