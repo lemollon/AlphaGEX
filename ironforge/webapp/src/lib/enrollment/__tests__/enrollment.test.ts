@@ -68,6 +68,7 @@ const READY: ActivationInput = {
   authorizationAcknowledged: true,
   previewCurrent: true,
   emberConflict: false,
+  emailVerified: true,
 }
 
 describe('activation predicate (§4)', () => {
@@ -79,7 +80,7 @@ describe('activation predicate (§4)', () => {
     const d = evaluateActivation({})
     expect(d.ok).toBe(false)
     // Every single gate should object, not just the first.
-    expect(d.blockers.length).toBe(9)
+    expect(d.blockers.length).toBe(10)
   })
 
   it.each([
@@ -92,6 +93,7 @@ describe('activation predicate (§4)', () => {
     ['kill switch', { killSwitchEngaged: true }, 'KILL_SWITCH_ENGAGED'],
     ['acks', { riskAcknowledged: false }, 'ACKNOWLEDGMENTS_MISSING'],
     ['preview', { previewCurrent: false }, 'PREVIEW_STALE'],
+    ['email', { emailVerified: false }, 'EMAIL_NOT_VERIFIED'],
   ])('%s alone blocks activation', (_label, patch, code) => {
     const d = evaluateActivation({ ...READY, ...patch })
     expect(d.ok).toBe(false)
@@ -146,8 +148,16 @@ describe('activation predicate (§4)', () => {
     expect(evaluateActivation({ ...READY, emberConflict: false })).toEqual({ ok: true, blockers: [] })
   })
 
-  it('FAILS CLOSED empty-input count stays 9 — emberConflict is opt-in, not fail-closed', () => {
-    expect(evaluateActivation({}).blockers.length).toBe(9)
+  it('FAILS CLOSED empty-input count stays 10 — emberConflict is opt-in, not fail-closed', () => {
+    expect(evaluateActivation({}).blockers.length).toBe(10)
+  })
+
+  it('blocks go-live until the email is verified (en-1: not required to enroll, required before go-live)', () => {
+    const d = evaluateActivation({ ...READY, emailVerified: false })
+    expect(d.ok).toBe(false)
+    const b = d.blockers.find((b) => b.code === 'EMAIL_NOT_VERIFIED')
+    expect(b).toBeDefined()
+    expect(b!.remediable).toBe(true)
   })
 })
 
