@@ -93,7 +93,9 @@ import { getCTNow } from './pt-tiers'
 import { runTrialDayClose, marketDateKey, isAfterTrialCloseTime } from './enrollment/trial-close'
 import { mirrorOpenToCustomers, mirrorFlintOpenToCustomers, mirrorCloseToCustomers, retryFailedCustomerCloses } from './customer-executor/executor'
 import { buildTradeOpenedEvent, buildTradeClosedEvent } from './push/trade-events'
+import { buildBigMoveEvent, buildDailySummaryEvent, bigMoveTier, positionRangePct } from './push/alert-events'
 import { dispatchToCustomers } from './push/dispatch'
+import { getLiveSummary } from './live/summary'
 import { isXspTicker, isXspSwapMode, decideXspSwap, XSP_TICKER } from './xsp-swap'
 import { settleXspSwapLegsForBot } from './xsp-swap-db'
 import type { LiveBot } from './live/bots'
@@ -191,6 +193,43 @@ async function notifyTradeClosed(botName: string, positionId: string, realizedPn
     console.warn(`[scanner] ${botName.toUpperCase()} trade_closed push failed: ${e instanceof Error ? e.message : e}`)
   }
 }
+
+/**
+ * Fire the big_move push (db-controls #202) when an open position's own MTM has
+ * swung past BIG_MOVE_PNL_PCT_THRESHOLD in either direction. Read-only: this
+ * computes its percentage from numbers the monitor loop already produced
+ * (unrealizedPnl, total_credit, the put strikes) and writes nothing to the
+ * position or any order — it rides alongside the position_snapshots write the
+ * same way notifyTradeOpened/Closed ride alongside the open/close paths. Same
+ * never-throws contract as those two.
+ */
+async function notifyBigMove(botName: string, pos: Record<string, any>, unrealizedPnl: number): Promise<void> {
+  if (!PUSH_BOTS.has(botName)) return
+  try {
+    const contracts = int(pos.contracts)
+    const totalCredit = num(pos.total_credit)
+    if (contracts <= 0 || !(totalCredit > 0)) return
+    const spreadWidth = num(pos.put_short_strike) - num(pos.put_long_strike)
+    const maxProfitDollars = contracts * totalCredit * 100
+    const riskDollars = contracts * (spreadWidth - totalCredit) * 100
+    const pnlPct = positionRangePct(unrealizedPnl, maxProfitDollars, riskDollars)
+    if (pnlPct == null || !bigMoveTier(pnlPct)) return
+    const customerIds = await customerIdsForBot(botName)
+    if (customerIds.length === 0) return
+    await dispatchToCustomers(
+      buildBigMoveEvent({
+        bot: botName as LiveBot,
+        positionId: String(pos.position_id),
+        pnlPct,
+        occurredAt: new Date().toISOString(),
+      }),
+      customerIds,
+    )
+  } catch (e) {
+    console.warn(`[scanner] ${botName.toUpperCase()} big_move push failed: ${e instanceof Error ? e.message : e}`)
+  }
+}
+
 import {
   getQuote,
   getOptionExpirations,
@@ -1842,6 +1881,9 @@ async function monitorPosition(bot: BotDef, ct: Date): Promise<{ status: string;
           e,
         )
       }
+      // db-controls #202 — "big moves on an open trade". Independent of the
+      // snapshot write above (never gated on it succeeding); see notifyBigMove.
+      await notifyBigMove(bot.name, pos, r.value.unrealizedPnl)
     }),
   )
 
@@ -10256,11 +10298,18 @@ let _waitlistDripBootRan = false
 // schedule is a thing that can be forgotten at launch. The route stays for manual re-runs.
 const TRIAL_CLOSE_INTERVAL_MS = 15 * 60 * 1000 // 15 minutes
 let _trialCloseIntervalId: ReturnType<typeof setInterval> | null = null
+let _dailySummaryIntervalId: ReturnType<typeof setInterval> | null = null
 let _trialCloseRunning = false
 // CT market date already closed by this process. Belt to the DB's braces: the ledger is
 // idempotent per market date anyway, this just avoids the query 90× a day.
 let _trialCloseLastDate: string | null = null
 let _volAlertsRunning = false
+let _dailySummaryRunning = false
+// CT calendar date the daily_summary push already ran for. Same belt-and-braces
+// reasoning as _trialCloseLastDate — buildDailySummaryEvent's own eventKey is
+// already idempotent per (customer, date), this just avoids re-querying every
+// bot's daily_perf once a minute for the rest of the EOD window.
+let _dailySummaryLastDate: string | null = null
 // Per-signal active/inactive streaks for alert debounce (in-memory; resets on
 // restart, which at worst costs one debounce window). Kills the 5-min flap.
 let _volSignalStreaks: Record<string, SignalStreak> = {}
@@ -10515,6 +10564,91 @@ function safeTrialDayClose(): void {
     .finally(() => { _trialCloseRunning = false })
 }
 
+/**
+ * Aggregate each customer's `today_pnl` across every live bot they own (SAME
+ * number getLiveSummary already computes for the Live page's "Today's Result"
+ * tile — no new P&L math) and dispatch one daily_summary push per customer.
+ *
+ * `ironforge_customer_bots` is the trading DB's customer→(bot, person) map
+ * (same table resolveLiveViewer/customerIdsForBot read); a customer with no
+ * `person` mapped yet is skipped, same fail-closed rule personFilter() uses
+ * everywhere else. A customer whose every owned bot returns a null today_pnl
+ * (nothing computable) gets no push that day — never a fabricated $0.00.
+ */
+async function dispatchDailySummaries(ct: Date, dateKey: string): Promise<{ customers: number; sent: number }> {
+  const rows = await query<{ customer_id: string; bot: string; person: string | null }>(
+    `SELECT customer_id, bot, person FROM ironforge_customer_bots WHERE customer_id IS NOT NULL`,
+  )
+  const byCustomer = new Map<string, Array<{ bot: string; person: string }>>()
+  for (const r of rows) {
+    if (!r.person || !PUSH_BOTS.has(r.bot)) continue
+    const list = byCustomer.get(r.customer_id) ?? []
+    list.push({ bot: r.bot, person: r.person })
+    byCustomer.set(r.customer_id, list)
+  }
+
+  const dateLabel = ct.toLocaleDateString('en-US', { timeZone: 'America/Chicago', weekday: 'long' })
+  let sent = 0
+  for (const [customerId, mappings] of Array.from(byCustomer.entries())) {
+    let totalPnl = 0
+    let any = false
+    for (const m of mappings) {
+      try {
+        const summary = await getLiveSummary(m.bot as LiveBot, { person: m.person })
+        if (summary.account.today_pnl != null) {
+          totalPnl += summary.account.today_pnl
+          any = true
+        }
+      } catch (e) {
+        console.warn(`[scanner] daily summary: getLiveSummary(${m.bot}) failed for a customer: ${e instanceof Error ? e.message : e}`)
+      }
+    }
+    if (!any) continue
+    const event = buildDailySummaryEvent({
+      pnl: Math.round(totalPnl * 100) / 100,
+      dateLabel,
+      dateKey,
+      occurredAt: new Date().toISOString(),
+    })
+    const r = await dispatchToCustomers(event, [customerId])
+    sent += r.sent
+  }
+  return { customers: byCustomer.size, sent }
+}
+
+/**
+ * Fire-and-forget daily-summary push (db-controls #202). Re-entrancy guarded,
+ * never throws, no-ops when the customers DB isn't configured. Independent of
+ * the trade loop — same shape as safeTrialDayClose just above.
+ *
+ * Fires once the session has actually closed (marketCloseMinuteCT handles
+ * early-close half-days the same way the rest of this file's EOD logic does),
+ * with a few minutes' buffer so the EOD safety sweep's closes have already
+ * landed in daily_perf before getLiveSummary reads today_pnl. At most once per
+ * CT date per process.
+ */
+function safeDailySummaryDispatch(): void {
+  if (_dailySummaryRunning) return
+  if (!isCustomersDbConfigured()) return
+
+  const ct = getCTNow()
+  if (ctHHMM(ct) < marketCloseMinuteCT(ct) + 6) return
+  const today = marketDateKey(ct)
+  if (_dailySummaryLastDate === today) return
+
+  _dailySummaryRunning = true
+  dispatchDailySummaries(ct, today)
+    .then((r) => {
+      _dailySummaryLastDate = today
+      console.log(`[scanner] daily summary ${today}: customers=${r.customers} sent=${r.sent}`)
+    })
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] safeDailySummaryDispatch error: ${msg}`)
+    })
+    .finally(() => { _dailySummaryRunning = false })
+}
+
 /** Fire-and-forget Attio retry-queue drain. Re-entrancy guarded, never throws,
  *  no-ops when Attio isn't configured. Independent of the trade loop. */
 function safeDrainAttioQueue(): void {
@@ -10688,6 +10822,12 @@ function startScannerLocked(): void {
   _trialCloseIntervalId = setInterval(safeTrialDayClose, TRIAL_CLOSE_INTERVAL_MS)
   setTimeout(safeTrialDayClose, 45_000)
 
+  // Daily summary push (db-controls #202) — same 15-min cadence and self-gating
+  // shape as trial day-close just above; self-gates to after the session's own
+  // close (marketCloseMinuteCT + 6min), so ticks during the day are a no-op.
+  _dailySummaryIntervalId = setInterval(safeDailySummaryDispatch, TRIAL_CLOSE_INTERVAL_MS)
+  setTimeout(safeDailySummaryDispatch, 60_000)
+
   // Phase B customer-executor safety net: re-drive stuck customer closes
   // (close_failed / stale close_pending) during market hours. Self-gating,
   // re-entrancy guarded, never throws — rides the same 15-min cadence.
@@ -10702,6 +10842,7 @@ function startScannerLocked(): void {
   console.log('[scanner] crm outbox drain registered (30s), id:', _crmOutboxIntervalId)
   console.log('[scanner] waitlist drip drain registered (30s), id:', _waitlistDripIntervalId)
   console.log('[scanner] trial day-close registered (15m, gated to >=15:05 CT), id:', _trialCloseIntervalId)
+  console.log('[scanner] daily summary push registered (15m, gated to after close), id:', _dailySummaryIntervalId)
 }
 
 /**
