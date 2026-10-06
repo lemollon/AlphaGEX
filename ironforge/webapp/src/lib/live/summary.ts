@@ -106,7 +106,12 @@ export async function getLiveSummary(
       // be able to answer. Filtering here made "row exists but inactive" and "no
       // row at all" indistinguishable — both returned zero rows and both rendered
       // as "trading is temporarily disabled".
-      `SELECT starting_capital, is_active
+      // buying_power/collateral_in_use added for db-dash #205: the per-bot summary
+      // (this function) returned account.value/today_pnl only, while /performance's
+      // combined getPerformance() already carries capital_available/held_for_open_trades
+      // off the SAME columns (see capRows in performance.ts). Reading them here too
+      // closes that gap rather than inventing a second formula.
+      `SELECT starting_capital, is_active, buying_power, collateral_in_use
        FROM ${botTable(BOT, 'paper_account')}
        WHERE TRUE ${dteFilter} ${prodFilter}
        ORDER BY id DESC LIMIT 1`,
@@ -281,6 +286,12 @@ export async function getLiveSummary(
   let accountValue: number | null = null
   let todayPnl: number | null = null
   let source: 'tradier' | 'paper_account' = 'paper_account'
+  // db-dash #205: same broker-first, ledger-fallback pair as accountValue/todayPnl
+  // just below — computed alongside them so the three numbers can never disagree
+  // about which source (Tradier vs the paper ledger) they came from.
+  let capitalAvailable: number | null = accountRows[0]?.buying_power != null ? num(accountRows[0].buying_power) : null
+  let heldForOpenTrades: number | null =
+    accountRows[0]?.collateral_in_use != null ? num(accountRows[0].collateral_in_use) : null
   // FLAME's live account is credentialed from env. 🚨 Without this branch the
   // customer page derived FLAME's value from the DB ledger while the operator
   // console read Tradier — the same number rendered two different ways, which
@@ -292,6 +303,8 @@ export async function getLiveSummary(
       accountValue = Math.round(num(det.total_equity) * 100) / 100
       todayPnl = Math.round((num(det.close_pl) + num(det.open_pl)) * 100) / 100
       source = 'tradier'
+      capitalAvailable = num(det.option_buying_power)
+      heldForOpenTrades = Math.round(Math.max(0, accountValue - capitalAvailable) * 100) / 100
     }
   }
   if (source !== 'tradier' && prodBals.length > 0) {
@@ -301,6 +314,8 @@ export async function getLiveSummary(
       prodBals.reduce((a, b) => a + num(b.day_pnl) + num(b.unrealized_pnl), 0) * 100,
     ) / 100
     source = 'tradier'
+    capitalAvailable = Math.round(prodBals.reduce((a, b) => a + num(b.option_buying_power), 0) * 100) / 100
+    heldForOpenTrades = Math.round(Math.max(0, accountValue - capitalAvailable) * 100) / 100
   } else if (source !== 'tradier') {
     const startingCapital = num(accountRows[0]?.starting_capital)
     if (startingCapital > 0) {
@@ -448,6 +463,8 @@ export async function getLiveSummary(
       value: accountValue,
       today_pnl: todayPnl,
       today_pnl_pct: todayPnlPct,
+      capital_available: capitalAvailable,
+      held_for_open_trades: heldForOpenTrades,
       source,
       mode: mode ?? resolveAccountMode(BOT),
       disclosure: paper ? paperDisclosure(BOT) : null,

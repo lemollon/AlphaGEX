@@ -56,11 +56,11 @@ export const AGENTS: MarketingAgent[] = [
     name: 'Spark',
     colorVar: '--spark',
     mascot: '/marketing/spark-mascot.webp',
-    tagline: 'Morning session',
+    tagline: 'Morning session (8:30 AM–noon CT)',
     tags: ['morning'],
     desc: 'Trades the opening hours, when the market moves the most. More opportunity, slightly more risk.',
     rows: [
-      { label: 'Session', value: 'Morning' },
+      { label: 'Session', value: 'Morning (8:30 AM–noon CT)' },
       { label: 'Approach', value: 'Put spreads' },
       { label: 'Risk', value: 'Slightly higher', riskLevel: 3 },
     ],
@@ -76,11 +76,11 @@ export const AGENTS: MarketingAgent[] = [
     name: 'Flame',
     colorVar: '--flame',
     mascot: '/marketing/flame-mascot.webp',
-    tagline: 'Afternoon session',
+    tagline: 'Afternoon session (noon–3:00 PM CT)',
     tags: ['afternoon', 'calm'],
     desc: 'Waits for the morning rush to settle and trades the calmer afternoon. Less volatility, smoother ride.',
     rows: [
-      { label: 'Session', value: 'Afternoon' },
+      { label: 'Session', value: 'Afternoon (noon–3:00 PM CT)' },
       { label: 'Approach', value: 'Put spreads' },
       { label: 'Risk', value: 'Lower volatility', riskLevel: 2 },
     ],
@@ -122,17 +122,12 @@ export function getAgent(slug: AgentSlug): MarketingAgent {
 export const AGENT_COMPARE_ROWS: Array<{ label: string; spark: string; flame: string; ember: string }> = [
   {
     label: 'When it trades',
-    // Leron, 2026-10-06 (binding): Ember has no fixed window — it can trade all
-    // day during market hours, so this is no longer a placeholder. Spark/Flame's
-    // windows are spelled out alongside it for the same reason — a vague "Morning
-    // session" next to Ember's exact hours would read as if Ember were the only
-    // one with a real schedule. Display copy only; the entry-window code (Spark
-    // 10:05-10:20 AM / Flame 1:05-1:10 PM, see SPARK_FLAME_CURRENT_STATE) is
-    // unchanged — this row has always described the broader session, not the
-    // scanner's precise entry minute.
-    spark: 'Morning, 8:30 AM–noon CT',
-    flame: 'Afternoon, noon–3:00 PM CT',
-    ember: 'All day, market hours (8:30 AM–3:00 PM CT)',
+    spark: 'Morning session (8:30 AM–noon CT)',
+    flame: 'Afternoon session (noon–3:00 PM CT)',
+    // Ember has no fixed entry window — it trades all day during market hours
+    // (early-close days end at the actual close). Decided by Leron 2026-10-06,
+    // replacing the earlier "To be announced" placeholder (oi-#296/#297).
+    ember: 'All day during market hours (8:30 AM–3:00 PM CT)',
   },
   { label: 'Approach', spark: 'Put spreads', flame: 'Put spreads', ember: 'Steady growth' },
   {

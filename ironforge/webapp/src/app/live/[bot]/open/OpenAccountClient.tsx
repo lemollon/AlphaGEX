@@ -132,9 +132,16 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
             {ownsOther && (
               <p className="mt-2 text-sm text-[var(--muted)]">
                 You already run {BOT_PLANS[otherBotSlug(bot)].name}. {plan.name} is billed separately —
-                ${displayPrice} / month, its own 5-day free trial.
+                ${displayPrice} / month, its own 5 trading days free.
               </p>
             )}
+            {/* db-dash #185: "Forge Community already included" — shown on the design's
+                add-agent sheet bullet list (dev-handoff: "pitch, bullets, 'Forge Community
+                already included'") and missing here entirely. Community ships with every
+                agent, Spark/Flame/Ember alike — never a separate purchase. */}
+            <p className="mt-2 text-sm font-medium" style={{ color: accent }}>
+              Forge Community already included.
+            </p>
           </div>
         </div>
 
@@ -201,6 +208,7 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
               `${plan.name} will trade through a dedicated brokerage account.`,
               `Using a separate account keeps ${plan.name} activity independent from your other bots.`,
               'You can choose an existing connected brokerage or add a new one.',
+              'Forge Community already included.',
             ].map((t) => (
               <li key={t} className="flex items-start gap-2">
                 <svg className="mt-0.5 h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke={accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" opacity="0.5" /><path d="M8 12.5l2.5 2.5L16 9.5" /></svg>
@@ -209,7 +217,8 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
             ))}
           </ul>
           <p className="mt-3 text-sm text-[var(--muted)]">
-            {plan.name} is billed <span className="font-medium" style={{ color: accent }}>${displayPrice} / month</span> after a 5-day free trial —
+            5 trading days free, $0 due today. {plan.name} is billed{' '}
+            <span className="font-medium" style={{ color: accent }}>${displayPrice} / month</span> after that —
             a separate subscription from any other strategy you run.
           </p>
         </div>

@@ -15,6 +15,7 @@ import PnlRangeChart, { type RangeKey as PnlRangeKey } from '@/components/custom
 import DailyResultsBars from '@/components/customer/DailyResultsBars'
 import AgentLeadTile from '@/components/customer/AgentLeadTile'
 import SparkMascot from '../live/components/SparkMascot'
+import { OpenTradesSection, RecentTradesSection } from './OverviewTradeWidgets'
 
 type PerfResponse =
   | ({ empty?: false; viewer: { allowedBots: LiveBot[]; paperBots: LiveBot[] } } & PerformanceData)
@@ -224,6 +225,11 @@ function OverviewContent({ data, allowedBots }: { data: PerformanceData; allowed
           </div>
         </div>
       </section>
+
+      {/* db-dash #148/#150: open-trade card + recent-trades list, right on
+          Overview — previously only visible after drilling into an agent page. */}
+      <OpenTradesSection bots={active ? [active.bot] : bots.map((b) => b.bot)} />
+      <RecentTradesSection />
 
       {/* KPI row — dev-handoff §6 contract: Today / Past week (5 trading days) /
           Past month (21 trading days) / Lifetime. */}

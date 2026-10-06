@@ -6,12 +6,13 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { fetcher } from '@/lib/fetcher'
 import CustomerShell from '@/components/customer/CustomerShell'
 import type { LiveSummary } from '@/lib/live/types'
-import { LIVE_BOT_LABEL, LIVE_BOTS } from '@/lib/live/bots'
+import { LIVE_BOT_LABEL, LIVE_BOTS, type LiveBot } from '@/lib/live/bots'
 import { EMBER_AGENT } from '@/lib/agents/ember'
 import OverviewBody from './OverviewBody'
 import { CommunityBody } from '@/app/community/CommunityClient'
 import { TradeHistoryBody } from '@/app/account/trades/TradeHistoryClient'
 import { SettingsBody } from '@/app/settings/SettingsClient'
+import type { LiveTrade } from '@/lib/live/types'
 
 /**
  * `/dashboard` — the real member landing page (dev-handoff §6): a single
@@ -39,6 +40,18 @@ const INLINE_TABS: Array<{ key: TabKey; label: string }> = [
 ]
 
 interface Entitlements { bots?: string[] }
+
+type TradeResp = ({ empty?: false } & LiveTrade) | { empty: true }
+
+/** db-dash #151: "Dashed +Add tab done; no dot" — a green dot on an owned
+ *  agent's tab when it has a live open trade. Same `/api/live/trade?account=`
+ *  read OverviewTradeWidgets uses; SWR dedupes the identical key so this adds
+ *  no extra network cost when Overview is also mounted. */
+function TabOpenDot({ bot }: { bot: LiveBot }) {
+  const { data } = useSWR<TradeResp>(`/api/live/trade?account=${bot}`, fetcher, { refreshInterval: 30_000 })
+  if (!data || ('empty' in data && data.empty) || !data.active) return null
+  return <span className="h-1.5 w-1.5 rounded-full bg-[var(--up)]" aria-label="Open trade" />
+}
 
 export default function DashboardClient() {
   const router = useRouter()
@@ -81,6 +94,7 @@ export default function DashboardClient() {
                   ? (b === 'flame' ? 'border-flame/30 text-flame hover:bg-flame/10' : 'border-spark/30 text-spark hover:bg-spark/10')
                   : 'border-dashed border-[var(--line-2)] text-[var(--muted)] hover:text-[var(--fg)]'
               }`}>
+              {isOwned && <TabOpenDot bot={b} />}
               {LIVE_BOT_LABEL[b]}
               {!isOwned && <span className="text-xs">+ Add</span>}
             </Link>
