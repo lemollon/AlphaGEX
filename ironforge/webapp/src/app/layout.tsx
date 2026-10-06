@@ -50,26 +50,31 @@ export const metadata: Metadata = {
   title: 'IronForge',
   description:
     'Autonomous, defined-risk options bots for SPY that run in your own Tradier account — every position has a capped max loss, sized and exited by rule. Join the IronForge early-access waitlist.',
-  icons: { icon: '/ironforge-mark.png', apple: '/apple-touch-icon.png' },
+  // The old "1F" raster mark is RETIRED sitewide (dev-handoff gap audit) —
+  // favicon.svg is the polished vector lockup already in /public but never
+  // wired into metadata anywhere.
+  icons: { icon: '/favicon.svg', apple: '/apple-touch-icon.png' },
   openGraph: {
     title: 'IronForge',
     description:
       'Autonomous, defined-risk options bots for SPY that run in your own Tradier account.',
-    // Reuses the existing wordmark asset — no dedicated OG card has been
-    // exported yet (ds-assets #27, oi-assets #310: mascot/logo exports are
-    // an open item). Replace with a proper 1200x630 OG card once designed.
-    // Resolved against metadataBase above, so this is never localhost.
-    images: ['/ironforge-mark.png'],
+    // A real 1200x630 raster card, not SVG — Facebook, X, LinkedIn and
+    // iMessage link previews don't reliably render SVG og:image (the SVG
+    // favicon.svg this briefly pointed at would have re-broken social
+    // sharing). Text-only wordmark, matching the retired-mark lockup used
+    // sitewide. Resolved against metadataBase above, so this is never
+    // localhost.
+    images: [{ url: '/og-image.png', width: 1200, height: 630, alt: 'IronForge' }],
   },
   // No public page below sets its own `twitter` key, so every one of them
   // inherits this (ds-site #72's "verify on every public page" half) — same
-  // wordmark asset as openGraph above, same metadataBase resolution.
+  // raster card as openGraph above, same metadataBase resolution.
   twitter: {
     card: 'summary_large_image',
     title: 'IronForge',
     description:
       'Autonomous, defined-risk options bots for SPY that run in your own Tradier account.',
-    images: ['/ironforge-mark.png'],
+    images: ['/og-image.png'],
   },
 }
 

@@ -8,6 +8,7 @@ import { useEnrollment } from '../useEnrollment'
 import { AGENT_CONFIG_KEY } from '../agent/AgentClient'
 import { track } from '@/lib/analytics/track'
 import { trackEnrollStepComplete } from '@/lib/analytics/enroll'
+import { EMBER_AGENT } from '@/lib/agents/ember'
 
 /**
  * BROKER-01 — Connect brokerage (10/5 reorder: step 4, right after Choose agent).
@@ -57,6 +58,7 @@ interface Conn {
   provider: string
   status: string
   accounts: BrokerAccount[]
+  authorization_id: string | null
 }
 
 /** sessionStorage key the agent screen reads the selected account from. */
@@ -115,6 +117,10 @@ export default function BrokerClient() {
   const [confirmedMask, setConfirmedMask] = useState<string | null>(null)
   /** Which tile's "Open new account" guidance is showing. */
   const [openGuide, setOpenGuide] = useState<string | null>(null)
+  /** Dedicated Ember $500-$2,000 banner (gap audit "Broker step — Ember banner"
+   *  PARTIAL — previously only a generic ineligible_reason string). */
+  const [emberBanner, setEmberBanner] = useState<string | null>(null)
+  const [disconnecting, setDisconnecting] = useState<string | null>(null)
 
   const oauthError = params.get('error') === '1'
   const oauthIncomplete = params.get('incomplete') === '1'
@@ -175,6 +181,7 @@ export default function BrokerClient() {
     if (!enrollment || !selected) return
     setBusy(true)
     setError(null)
+    setEmberBanner(null)
     try {
       const d = await call(`/api/v1/enrollments/${enrollment.id}/broker-account`, {
         method: 'PUT',
@@ -189,10 +196,16 @@ export default function BrokerClient() {
         /* the agent screen (fallback) re-derives the selection/config if this is lost */
       }
       if (!d.config_id) {
-        // The server could not mint a config from this account (e.g. Ember's
-        // $500-$2,000 gate failed against its buying power) — fall back to the
-        // dedicated AGENT-01 screen, which surfaces the violation.
-        if (enrollment.selected_plan === 'ember') track('ember_balance_block')
+        // The server could not mint a valid config from this account. Ember's
+        // $500-$2,000 band gets a dedicated banner right here so the customer can pick
+        // a different account without leaving the step; any other agent falls back to
+        // the AGENT-01 screen, which surfaces the violation.
+        if (enrollment.selected_plan === 'ember') {
+          track('ember_balance_block')
+          setEmberBanner(d.violation || EMBER_AGENT.balanceOutOfRangeCopy)
+          setBusy(false)
+          return
+        }
         router.push('/enroll/agent')
         return
       }
@@ -201,6 +214,29 @@ export default function BrokerClient() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not select that account.')
       setBusy(false)
+    }
+  }
+
+  /** "Disconnect and choose another brokerage" (gap audit PARTIAL — not present once
+   *  an account is connected). Removes the authorization and reloads the account list
+   *  so the broker tiles become selectable again. */
+  async function disconnect(authorizationId: string) {
+    setDisconnecting(authorizationId)
+    setError(null)
+    try {
+      await call('/api/brokerage/connection', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ authorizationId }),
+      })
+      setSelected(null)
+      setConfirmedMask(null)
+      setEmberBanner(null)
+      await loadAccounts()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not disconnect that brokerage.')
+    } finally {
+      setDisconnecting(null)
     }
   }
 
@@ -219,6 +255,16 @@ export default function BrokerClient() {
       {oauthError ? <p className="err" style={{ marginBottom: 14 }}>The connection could not be completed. Nothing was changed — you can try again.</p> : null}
       {oauthIncomplete ? <p className="help" style={{ marginBottom: 14 }}>The connection was not finished. You can retry whenever you&rsquo;re ready.</p> : null}
       {error ? <p className="err" style={{ marginBottom: 14 }}>{error}</p> : null}
+
+      {/* Dedicated Ember $500-$2,000 banner — a generic ineligible_reason string isn't
+          enough here because the fix is specific: a different account, or a different
+          agent. */}
+      {emberBanner ? (
+        <div className="check-row bad" style={{ marginBottom: 14, display: 'block' }}>
+          <strong>This account doesn&rsquo;t fit Ember.</strong>
+          <p style={{ marginTop: 4 }}>{emberBanner}</p>
+        </div>
+      ) : null}
 
       <h3 className="rail-h">Supported brokerages</h3>
       <div className="bk-card" style={{ gridTemplateColumns: 'repeat(2, 1fr)', display: 'grid', marginTop: 12 }}>
@@ -284,7 +330,22 @@ export default function BrokerClient() {
       {/* Connected accounts + selection */}
       {hasConnections ? (
         <div style={{ marginTop: 20 }}>
-          <h3 className="rail-h">Your accounts</h3>
+          <div className="nav-row" style={{ borderTop: 'none', paddingTop: 0 }}>
+            <h3 className="rail-h" style={{ margin: 0 }}>Your accounts</h3>
+            {/* "Disconnect and choose another brokerage" (gap audit PARTIAL — not
+                present once an account is connected). */}
+            {(conns ?? []).filter((c) => c.authorization_id).map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                disabled={busy || disconnecting === c.authorization_id}
+                onClick={() => disconnect(c.authorization_id!)}
+                className="link"
+              >
+                {disconnecting === c.authorization_id ? 'Disconnecting…' : 'Disconnect and choose another brokerage'}
+              </button>
+            ))}
+          </div>
           {accounts.length === 0 ? (
             <p className="help" style={{ marginTop: 8 }}>No accounts came back from your brokerage yet. Try reconnecting.</p>
           ) : (

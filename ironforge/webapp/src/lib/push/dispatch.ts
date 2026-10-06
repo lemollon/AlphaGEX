@@ -38,8 +38,14 @@ interface DeviceRow {
 /** Preferences with the schema defaults applied when the customer has no row yet. */
 async function loadPrefs(userId: string): Promise<PrefRow> {
   const rows = await customerQuery<PrefRow>(
+    // big_move/daily_summary were missing here (bug found 2026-10-06): both
+    // categories exist in CATEGORY_PREF_COLUMN and notification_prefs, but
+    // without them in this SELECT, prefs[column] was always undefined — so
+    // the Guard 1 check below (`!== true`) skipped every big_move and
+    // daily_summary push as "pref_off" even when the customer had turned it
+    // on. See push/__tests__/dispatch.test.ts.
     `SELECT trade_opened, trade_closed, trade_approval, brokerage_health, billing,
-            community, show_amounts_on_lockscreen, sound
+            community, big_move, daily_summary, show_amounts_on_lockscreen, sound
        FROM notification_prefs WHERE user_id = $1 LIMIT 1`,
     [userId],
   )
@@ -51,6 +57,10 @@ async function loadPrefs(userId: string): Promise<PrefRow> {
       brokerage_health: true,
       billing: true,
       community: false,
+      // Matches notification_prefs' own column defaults (customers-db.ts) and
+      // the Settings API's defaults (api/notifications/preferences/route.ts).
+      big_move: false,
+      daily_summary: false,
       show_amounts_on_lockscreen: false,
       sound: true,
     }

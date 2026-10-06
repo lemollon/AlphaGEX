@@ -63,6 +63,7 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/community',
   '/support',
   '/account/trades',
+  '/account/approvals',
   '/account/billing',
   '/account/brokerage',
   '/enroll',

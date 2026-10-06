@@ -88,7 +88,7 @@ import {
 import { eventCalendarRefresh } from './eventCalendar/refresh'
 import { isEventBlackoutActive } from './eventCalendar/gate'
 import { forgeBriefingsTick } from './forgeBriefings/tick'
-import { isCustomersDbConfigured } from './customers-db'
+import { isCustomersDbConfigured, customerQuery } from './customers-db'
 import { getCTNow } from './pt-tiers'
 import { runTrialDayClose, marketDateKey, isAfterTrialCloseTime } from './enrollment/trial-close'
 import { mirrorOpenToCustomers, mirrorFlintOpenToCustomers, mirrorCloseToCustomers, retryFailedCustomerCloses } from './customer-executor/executor'
@@ -309,7 +309,7 @@ import { drainWaitlistDrip } from './waitlist-drip/drain'
 import { autoEnrollWaitlistDrip, autostartConfig } from './waitlist-drip/autostart'
 import { provisionObjectAttributes } from './crm/provision'
 import { isAttioConfigured as isAttioCrmConfigured } from './crm/client'
-import { isEmailConfigured } from './email'
+import { isEmailConfigured, sendDailySummaryEmail } from './email'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -10608,14 +10608,37 @@ async function dispatchDailySummaries(ct: Date, dateKey: string): Promise<{ cust
       }
     }
     if (!any) continue
+    const pnlRounded = Math.round(totalPnl * 100) / 100
     const event = buildDailySummaryEvent({
-      pnl: Math.round(totalPnl * 100) / 100,
+      pnl: pnlRounded,
       dateLabel,
       dateKey,
       occurredAt: new Date().toISOString(),
     })
     const r = await dispatchToCustomers(event, [customerId])
     sent += r.sent
+
+    // ALSO sent as email after the close (gap audit) — gated on the same
+    // notification_prefs.daily_summary opt-in the push respects, read directly
+    // here rather than through dispatchToCustomers' push-only pipeline (which
+    // requires a registered device; email does not).
+    if (isEmailConfigured() && isCustomersDbConfigured()) {
+      try {
+        const prefRows = await customerQuery<{ daily_summary: boolean; email: string; first_name: string }>(
+          `SELECT u.email, u.first_name, COALESCE(np.daily_summary, FALSE) AS daily_summary
+             FROM users u
+             LEFT JOIN notification_prefs np ON np.user_id = u.id
+            WHERE u.id = $1 LIMIT 1`,
+          [customerId],
+        )
+        const row = prefRows[0]
+        if (row?.daily_summary && row.email) {
+          await sendDailySummaryEmail({ to: row.email, firstName: row.first_name, dateLabel, pnl: pnlRounded })
+        }
+      } catch (e) {
+        console.warn(`[scanner] daily summary email failed for a customer: ${e instanceof Error ? e.message : e}`)
+      }
+    }
   }
   return { customers: byCustomer.size, sent }
 }

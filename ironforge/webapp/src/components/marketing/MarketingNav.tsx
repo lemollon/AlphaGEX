@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import MarketingThemeToggle from './MarketingThemeToggle'
 import { useWaitlistModal } from './WaitlistModal'
@@ -31,6 +31,13 @@ export default function MarketingNav() {
   const [open, setOpen] = useState(false)
   const { openWaitlist } = useWaitlistModal()
   const { activeId, lockAndSet } = useHomeScrollSpy(isHome)
+
+  // section_view (ps-events): defined and allowlisted but never fired from any
+  // component (dev-handoff gap audit PARTIAL) — the scrollspy already knows
+  // exactly which home section is in view, so this is that caller.
+  useEffect(() => {
+    if (activeId) track('section_view', { section: activeId })
+  }, [activeId])
 
   function homeAnchorClick(anchor: string) {
     return (e: React.MouseEvent) => {
