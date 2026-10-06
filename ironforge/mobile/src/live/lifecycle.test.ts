@@ -9,6 +9,8 @@ import {
   formatAutoCloseCaption,
   formatSettleAtCloseCaption,
   isSettleAtExpiryBot,
+  liveProgressFraction,
+  liveCardStage,
 } from '@/live/lifecycle'
 
 describe('deriveLifecycleNodes', () => {
@@ -177,5 +179,56 @@ describe('formatSettleAtCloseCaption', () => {
 
   it('falls back to the bare label on an invalid timestamp', () => {
     expect(formatSettleAtCloseCaption('not-a-date')).toBe('Settles at close')
+  })
+})
+
+describe('liveProgressFraction', () => {
+  const opened = '2026-01-15T15:00:00.000Z'
+  const close = '2026-01-15T21:00:00.000Z' // 6-hour session
+
+  it('is 0 right at open and 1 right at close', () => {
+    expect(liveProgressFraction(opened, close, new Date(opened).getTime())).toBe(0)
+    expect(liveProgressFraction(opened, close, new Date(close).getTime())).toBe(1)
+  })
+
+  it('is the elapsed fraction of the session midway through', () => {
+    const halfway = new Date(opened).getTime() + 3 * 60 * 60 * 1000
+    expect(liveProgressFraction(opened, close, halfway)).toBeCloseTo(0.5, 5)
+  })
+
+  it('clamps to 1 when still open past the expected close', () => {
+    const late = new Date(close).getTime() + 60 * 60 * 1000
+    expect(liveProgressFraction(opened, close, late)).toBe(1)
+  })
+
+  it('returns null with no real auto-close instant — never a fabricated bar', () => {
+    expect(liveProgressFraction(opened, null)).toBeNull()
+    expect(liveProgressFraction(opened, undefined)).toBeNull()
+    expect(liveProgressFraction(null, close)).toBeNull()
+  })
+})
+
+describe('liveCardStage', () => {
+  const opened = '2026-01-15T15:00:00.000Z'
+  const close = '2026-01-15T21:00:00.000Z'
+
+  it('stage 0 ("Opened") inside the first 20 minutes', () => {
+    const t = new Date(opened).getTime() + 5 * 60_000
+    expect(liveCardStage(opened, close, t)).toBe(0)
+  })
+
+  it('stage 1 ("Monitoring") in the middle of the session', () => {
+    const t = new Date(opened).getTime() + 3 * 60 * 60_000
+    expect(liveCardStage(opened, close, t)).toBe(1)
+  })
+
+  it('stage 2 ("Auto close") inside the last 15 minutes before close', () => {
+    const t = new Date(close).getTime() - 5 * 60_000
+    expect(liveCardStage(opened, close, t)).toBe(2)
+  })
+
+  it('stays at stage 1 with no known close instant, once past the opening window', () => {
+    const t = new Date(opened).getTime() + 60 * 60_000
+    expect(liveCardStage(opened, null, t)).toBe(1)
   })
 })

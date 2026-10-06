@@ -130,6 +130,48 @@ export function formatAutoCloseCaption(autoCloseAt: string | null | undefined): 
 }
 
 /**
+ * Elapsed-time progress fraction (0..1) for the Live-now card's bar (10.4 design
+ * `.bar i` — "the open trade's elapsed time, as a fraction of its own expected
+ * session"). `null` when there is no real auto-close instant to measure against
+ * (a swung leg, or a bot that never reports one) — the caller renders no bar
+ * rather than a fabricated one, same honesty rule as every other "—" in this file.
+ * Clamped to [0, 1]: a device clock a few seconds ahead of the close instant, or
+ * a position still open past its expected close, must not overflow the bar.
+ */
+export function liveProgressFraction(
+  openedAt: string | null,
+  autoCloseAt: string | null | undefined,
+  nowMs: number = Date.now(),
+): number | null {
+  if (!openedAt || !autoCloseAt) return null
+  const opened = new Date(openedAt).getTime()
+  const close = new Date(autoCloseAt).getTime()
+  if (Number.isNaN(opened) || Number.isNaN(close) || close <= opened) return null
+  return Math.max(0, Math.min(1, (nowMs - opened) / (close - opened)))
+}
+
+/**
+ * The Live-now card's 3-stage footer (10.4 design `.stages`: Opened / Monitoring /
+ * Auto close) — a coarser read than the 4-node LifecycleLine elsewhere on the same
+ * tile, mirroring the prototype's own `liveCard()` stage math exactly: the first 20
+ * minutes read as "just opened", the last 15 minutes before auto-close read as
+ * "closing soon", everything between is "being monitored". Returns 0/1/2 — the
+ * caller's own stage label array indexes into this directly.
+ */
+export function liveCardStage(
+  openedAt: string | null,
+  autoCloseAt: string | null | undefined,
+  nowMs: number = Date.now(),
+): 0 | 1 | 2 {
+  const elapsed = openedAt ? minutesSince(openedAt, nowMs) : 0
+  const closeAt = autoCloseAt ? new Date(autoCloseAt).getTime() : null
+  const leftMin = closeAt != null && !Number.isNaN(closeAt) ? Math.max(0, (closeAt - nowMs) / 60_000) : null
+  if (elapsed < 20) return 0
+  if (leftMin != null && leftMin < 15) return 2
+  return 1
+}
+
+/**
  * The settle-at-close caption for FLAME/SPARK — "Settles at close (3:00 PM CT)".
  * Always CT, never the viewer's local time: "at close" means the CT session
  * close (noon CT on an early-close half-day), and showing it converted to the
