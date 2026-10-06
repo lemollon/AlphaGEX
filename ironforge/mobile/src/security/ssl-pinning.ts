@@ -24,18 +24,47 @@
  *                 issuer: C=US, O=Google Trust Services, CN=WE1
  *   intermediate  C=US, O=Google Trust Services, CN=WE1        <- PRIMARY pin
  *                 issuer: C=US, O=Google Trust Services LLC, CN=GTS Root R4
- *   root          C=US, O=Google Trust Services LLC, CN=GTS Root R4  <- BACKUP pin
+ *   root          C=US, O=Google Trust Services LLC, CN=GTS Root R4  <- backup pin
  *                 issuer: C=BE, O=GlobalSign nv-sa, CN=GlobalSign Root CA
  *
  * The PRIMARY pin targets the INTERMEDIATE (WE1), not the leaf: Google
  * reissues ironforge.trade's leaf certificate every ~90 days from the same
  * WE1 intermediate, so pinning the leaf would brick the app on every routine
- * renewal. The BACKUP pin targets the ROOT (GTS Root R4) rather than a second
- * intermediate: GTS Root R4 is the shared anchor for WE1 AND its sibling
- * intermediate WE2, so this backup also survives Google moving issuance from
- * WE1 to WE2, which is the one rotation a same-leaf-same-intermediate pin set
- * would NOT survive. Only a deliberate move off Google Trust Services
- * entirely (not a renewal) breaks both pins at once.
+ * renewal.
+ *
+ * ---- Why FOUR backup pins, not one ----
+ *
+ * Render (IronForge's host) can issue ironforge.trade's certificate from
+ * EITHER Google Trust Services OR Let's Encrypt, depending on which ACME
+ * provider handles the renewal — this is Render's own infra choice, not
+ * something this app controls or can predict per-renewal. Pinning only the
+ * current GTS chain would mean the very next renewal, if it happened to land
+ * on Let's Encrypt, bricks the app outright. So the backup set covers BOTH
+ * CA families' roots, not just the current one's:
+ *
+ *   - GTS_ROOT_R4   — anchors WE1 AND its ECDSA sibling intermediate WE2
+ *   - GTS_ROOT_R1   — anchors Google Trust Services' RSA intermediates
+ *                     (WR1/WR2), in case Google ever issues the RSA leaf
+ *                     instead of the current ECDSA one
+ *   - ISRG_ROOT_X1  — anchors Let's Encrypt's RSA intermediates (R-series),
+ *                     the chain most clients (incl. older Android) see
+ *   - ISRG_ROOT_X2  — anchors Let's Encrypt's ECDSA intermediates (E-series)
+ *
+ * All four were downloaded as the actual root certificates and hashed
+ * locally — never copied from memory or a third-party list:
+ *
+ *   GTS Root R4   -> https://pki.goog/repo/certs/gtsr4.pem  (same cert seen
+ *                    in this domain's live chain above)
+ *   GTS Root R1   -> https://pki.goog/repo/certs/gtsr1.pem
+ *   ISRG Root X1  -> https://letsencrypt.org/certs/isrgrootx1.pem
+ *   ISRG Root X2  -> https://letsencrypt.org/certs/isrg-root-x2.pem
+ *
+ * Pinning ROOTS (not a second tier of intermediates) for the backups means
+ * this set survives ANY intermediate rotation within either CA, and even
+ * Render switching ACME providers between GTS and Let's Encrypt on a future
+ * renewal — the only way all five pins fail at once is ironforge.trade's
+ * certificate coming from a CA outside both families entirely, which would
+ * itself be a deliberate infra change worth knowing about.
  *
  * ---- Rotation ----
  *
@@ -50,6 +79,10 @@
  *     | openssl pkey -pubin -outform der \
  *     | openssl dgst -sha256 -binary | openssl enc -base64
  *
+ * For a CA's published root (rather than a leaf's live chain), download the
+ * root's own PEM from that CA's repository (see the URLs above) and run the
+ * same `openssl x509 -in root.pem -pubkey ...` pipeline against it.
+ *
  * Ship the new hash set alongside the OLD one for one release before dropping
  * the old pair (this is a native change — it ships in a store build, never an
  * OTA update, so there is a real rollout tail of installs still on the prior
@@ -63,6 +96,9 @@ import {
 
 const GTS_WE1_INTERMEDIATE_SPKI = 'kIdp6NNEd8wsugYyyIYFsi1ylMCED3hZbSR8ZFsa/A4='
 const GTS_ROOT_R4_SPKI = 'mEflZT5enoR1FuXLgYYGqnVEoZvmf9c2bVBpiOjYQ0c='
+const GTS_ROOT_R1_SPKI = 'hxqRlPTu1bMS/0DITB1SSu0vd4u/8l8TjPgfaAp63Gc='
+const ISRG_ROOT_X1_SPKI = 'C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M='
+const ISRG_ROOT_X2_SPKI = 'diGVwiVYbubAI3RW4hB9xU8e/CH2GnkuvVFZE8zmgzI='
 
 export const PINNED_API_HOST = 'ironforge.trade'
 
@@ -89,7 +125,13 @@ export async function initializeApiPinning(): Promise<void> {
     await initializeSslPinning({
       [PINNED_API_HOST]: {
         includeSubdomains: false,
-        publicKeyHashes: [GTS_WE1_INTERMEDIATE_SPKI, GTS_ROOT_R4_SPKI],
+        publicKeyHashes: [
+          GTS_WE1_INTERMEDIATE_SPKI,
+          GTS_ROOT_R4_SPKI,
+          GTS_ROOT_R1_SPKI,
+          ISRG_ROOT_X1_SPKI,
+          ISRG_ROOT_X2_SPKI,
+        ],
       },
     })
   } catch (err) {
