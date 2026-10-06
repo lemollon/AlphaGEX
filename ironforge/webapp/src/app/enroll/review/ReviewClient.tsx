@@ -36,12 +36,14 @@ interface Preview {
     buying_power_cents: number
     plan: { name: string; price_monthly: number } | null
     trial: { eligible_days_total: number }
+    email: string
   }
   can_activate: boolean
   blockers: Blocker[]
 }
 
-/** Where each remediable blocker is fixed. */
+/** Where each remediable blocker is fixed. EMAIL_NOT_VERIFIED is handled in-place below
+ *  (resend link), not a route — there is no separate "verify your email" enrollment step. */
 const BLOCKER_ROUTE: Record<string, string> = {
   MEMBERSHIP_NOT_ACTIVE: '/enroll/billing',
   PAYMENT_METHOD_INVALID: '/enroll/billing',
@@ -64,6 +66,7 @@ export default function ReviewClient() {
   const [authAck, setAuthAck] = useState(false)
   const [staleNotice, setStaleNotice] = useState(false)
   const [blockers, setBlockers] = useState<Blocker[]>([])
+  const [resendState, setResendState] = useState<'idle' | 'sending' | 'sent'>('idle')
   // ONE key per screen visit — reused across retries of this same activation intent.
   const idemKey = useRef<string>(crypto.randomUUID())
 
@@ -146,6 +149,20 @@ export default function ReviewClient() {
     }
   }
 
+  async function resendVerification() {
+    if (!preview?.snapshot.email || resendState === 'sending') return
+    setResendState('sending')
+    try {
+      await fetch('/api/auth/resend-verification', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: preview.snapshot.email }),
+      })
+    } finally {
+      setResendState('sent')
+    }
+  }
+
   const agent = preview?.snapshot.agent ?? 'spark'
   const isSpark = agent === 'spark'
   const isEmber = agent === 'ember'
@@ -211,7 +228,23 @@ export default function ReviewClient() {
                   {visibleBlockers.map((b) => (
                     <li key={b.code} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline' }}>
                       <span>{b.message}</span>
-                      {b.remediable && BLOCKER_ROUTE[b.code] ? (
+                      {b.code === 'EMAIL_NOT_VERIFIED' ? (
+                        resendState === 'sent' ? (
+                          <span style={{ fontSize: '.78rem', color: 'var(--up)' }}>
+                            Verification email sent — check your inbox, then come back here.
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={resendVerification}
+                            disabled={resendState === 'sending'}
+                            className="link"
+                            style={{ fontSize: '.78rem', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
+                          >
+                            {resendState === 'sending' ? 'Sending…' : 'Resend verification email →'}
+                          </button>
+                        )
+                      ) : b.remediable && BLOCKER_ROUTE[b.code] ? (
                         <Link href={BLOCKER_ROUTE[b.code]} className="link" style={{ fontSize: '.78rem' }}>
                           Fix this →
                         </Link>

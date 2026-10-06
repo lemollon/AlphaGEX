@@ -31,7 +31,13 @@ function formatPhoneDisplay(raw: string): string {
   return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`
 }
 
-export default function WaitlistClient() {
+/**
+ * The waitlist form card itself (fields, validation, submit, success state) — pulled
+ * out of the page body so the SAME component renders both at the standalone /waitlist
+ * route (kept working for direct links and bookmarks) and inside the site-wide
+ * waitlist modal (ps-ctas "Join the waitlist -> Opens waitlist modal, no navigation").
+ */
+export function WaitlistForm() {
   const [form, setForm] = useState<Form>(EMPTY)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -91,15 +97,7 @@ export default function WaitlistClient() {
   const showEmberNote = form.tradingCapitalRange === 'under_5000'
 
   return (
-    <>
-      <div className="wrap page-head">
-        <h1>Join the waitlist</h1>
-        <p>Be the first to know when IronForge opens the next onboarding wave.</p>
-      </div>
-
-      <section className="sec">
-        <div className="wrap" style={{ maxWidth: 680, marginInline: 'auto' }}>
-          <div className="card" style={{ overflow: 'hidden' }}>
+    <div className="card" style={{ overflow: 'hidden' }}>
             {done ? (
               <div className="success" style={{ justifyItems: 'center', textAlign: 'center' }}>
                 <span className="ok">
@@ -207,7 +205,24 @@ export default function WaitlistClient() {
                 </form>
               </div>
             )}
-          </div>
+    </div>
+  )
+}
+
+/** The standalone /waitlist page body (ps-ctas: the page itself must keep working
+ *  for direct links and bookmarks, even though every in-site CTA now opens the modal
+ *  instead — see WaitlistModal.tsx). */
+export default function WaitlistClient() {
+  return (
+    <>
+      <div className="wrap page-head">
+        <h1>Join the waitlist</h1>
+        <p>Be the first to know when IronForge opens the next onboarding wave.</p>
+      </div>
+
+      <section className="sec">
+        <div className="wrap" style={{ maxWidth: 680, marginInline: 'auto' }}>
+          <WaitlistForm />
         </div>
       </section>
     </>

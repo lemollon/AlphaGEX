@@ -274,6 +274,19 @@ export async function POST(req: NextRequest) {
            updated_at = now()`,
         [user.id, plan.slug, status, sub.id, plan.lookupKey, periodEnd],
       )
+      // Same trading-day trial ledger the full enrollment funnel opens (gap audit
+      // #184/#216) — upgradeCommunityToBot set Stripe's trial_end to a far HOLD, not
+      // the real length; this is what lets trial-close.ts end it after exactly
+      // TRIAL_ELIGIBLE_DAYS eligible trading days. Guarded on 'not_started' so this can
+      // never reopen a trial this person already used for this agent.
+      await customerExecute(
+        `INSERT INTO trials (user_id, agent_code, activation_id, status, started_at, eligible_days_used)
+         VALUES ($1, $2, NULL, 'active', now(), 0)
+         ON CONFLICT (user_id, agent_code) DO UPDATE
+            SET status = 'active', started_at = now(), updated_at = now()
+          WHERE trials.status = 'not_started'`,
+        [user.id, plan.slug],
+      ).catch((e) => console.error('[billing/checkout] trials ledger insert failed:', e))
       await customerExecute(
         `UPDATE customer_bot_subscriptions SET status = 'canceled', updated_at = now()
           WHERE user_id = $1 AND bot = $2`,

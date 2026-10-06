@@ -358,6 +358,9 @@ export interface MembershipResponse {
      * treated the same as 'stripe' on iOS (plain sentence, no link).
      */
     provider: 'stripe' | 'apple' | null
+    /** db-states "Trial ending ... Banner 1 trading day before trial end" (gap audit
+     *  #212). Absent on older servers — callers must treat missing as false. */
+    trial_ending_soon?: boolean
   } | null
 }
 

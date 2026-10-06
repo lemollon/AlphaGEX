@@ -30,6 +30,7 @@ export type ActivationBlockerCode =
   | 'ACKNOWLEDGMENTS_MISSING'
   | 'PREVIEW_STALE'
   | 'EMBER_ALREADY_ACTIVE'
+  | 'EMAIL_NOT_VERIFIED'
 
 export interface ActivationBlocker {
   code: ActivationBlockerCode
@@ -68,6 +69,13 @@ export interface ActivationInput {
    * agents it doesn't apply to.
    */
   emberConflict: boolean
+  /**
+   * "Send email verification in the background; do not block enrollment on it ...
+   * but require it before go-live" (en-1). Fails closed: absent/undefined reads as
+   * NOT verified, so a caller that forgets to pass it gets a refusal, same as every
+   * other gate in this predicate.
+   */
+  emailVerified: boolean
 }
 
 /**
@@ -164,6 +172,14 @@ export function evaluateActivation(input: Partial<ActivationInput>): ActivationD
     add({
       code: 'PREVIEW_STALE',
       message: 'Something changed while you were reviewing. Please review the updated summary.',
+      remediable: true,
+    })
+  }
+  if (input.emailVerified !== true) {
+    add({
+      code: 'EMAIL_NOT_VERIFIED',
+      message: 'Verify your email address before you can go live.',
+      field: 'email',
       remediable: true,
     })
   }

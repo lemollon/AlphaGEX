@@ -6,6 +6,7 @@ import { useState } from 'react'
 import AgentCard from './AgentCard'
 import AppStoreBadges from './AppStoreBadges'
 import PutSpreadHeroCard from './PutSpreadHeroCard'
+import { useWaitlistModal } from './WaitlistModal'
 import { AGENTS, type MarketingAgent } from '@/lib/marketing/agents'
 
 type Filter = 'all' | 'morning' | 'afternoon' | 'small' | 'new' | 'calm'
@@ -53,6 +54,7 @@ const STEPS = [
 export default function HomePageBody() {
   const [filter, setFilter] = useState<Filter>('all')
   const visible = AGENTS.filter((a) => matches(a, filter))
+  const { openWaitlist } = useWaitlistModal()
 
   return (
     <>
@@ -84,9 +86,9 @@ export default function HomePageBody() {
             <Link className="btn btn-accent btn-lg" href="/signup?source=site&placement=hero">
               Create account
             </Link>
-            <Link className="btn btn-lg" href="/waitlist">
+            <button type="button" className="btn btn-lg" onClick={openWaitlist}>
               Join the waitlist
-            </Link>
+            </button>
           </div>
           <div className="ticks">
             <span>
@@ -249,9 +251,9 @@ export default function HomePageBody() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <Link className="btn btn-lg" href="/waitlist">
+            <button type="button" className="btn btn-lg" onClick={openWaitlist}>
               Join the waitlist
-            </Link>
+            </button>
             <Link className="btn btn-accent btn-lg" href="/signup?source=site&placement=final_cta">
               Create account
             </Link>

@@ -8,6 +8,7 @@
 
 import { customerQuery } from '@/lib/customers-db'
 import { BOT_PLANS, BOTH_PLAN, COMMUNITY_PLAN, COMMUNITY_KEY, type BotSlug } from '@/lib/billing/plans'
+import { TRIAL_ELIGIBLE_DAYS } from '@/lib/enrollment/trading-days'
 
 const LIVE_STATUSES = ['trialing', 'active', 'past_due']
 
@@ -75,6 +76,10 @@ export interface MembershipResponse {
     next_billing_date: string | null
     bots: string[]
     provider: 'stripe' | 'apple'
+    /** db-states "Trial ending ... Banner 1 trading day before trial end" (gap audit
+     *  #212), mirrored from lib/live/membership.ts's web card so the app and the web
+     *  dashboard agree on the same trading-day ledger, not two different clocks. */
+    trial_ending_soon: boolean
   } | null
 }
 
@@ -111,6 +116,20 @@ export async function buildMembershipResponse(customerId: string): Promise<Membe
     live.find((r) => r.status === 'trialing')?.status ??
     live[0].status
 
+  let trialEndingSoon = false
+  if (status === 'trialing') {
+    const ledger = await customerQuery<{ eligible_days_used: string | null }>(
+      `SELECT eligible_days_used::text FROM trials
+        WHERE user_id = $1 AND status = 'active'
+        ORDER BY started_at DESC LIMIT 1`,
+      [customerId],
+    ).catch(() => [] as Array<{ eligible_days_used: string | null }>)
+    if (ledger[0]) {
+      const used = Math.min(TRIAL_ELIGIBLE_DAYS, Math.max(0, Number(ledger[0].eligible_days_used ?? 0)))
+      trialEndingSoon = TRIAL_ELIGIBLE_DAYS - used <= 1
+    }
+  }
+
   return {
     ok: true,
     configured: true,
@@ -127,6 +146,7 @@ export async function buildMembershipResponse(customerId: string): Promise<Membe
       // one active tier at a time (one subscription group on iOS), so a mixed live set is
       // not expected in practice, but Apple wins the label if it ever happens.
       provider: live.some((r) => r.provider === 'apple') ? 'apple' : 'stripe',
+      trial_ending_soon: trialEndingSoon,
     },
   }
 }

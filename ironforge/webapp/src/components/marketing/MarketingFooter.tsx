@@ -1,8 +1,12 @@
+'use client'
+
 import Link from 'next/link'
 import AppStoreBadges from './AppStoreBadges'
+import { useWaitlistModal } from './WaitlistModal'
 
 /** Footer shared by every 10.4 marketing page — copy and links verbatim from the design. */
 export default function MarketingFooter() {
+  const { openWaitlist } = useWaitlistModal()
   return (
     <footer>
       <div className="wrap foot">
@@ -68,7 +72,9 @@ export default function MarketingFooter() {
               <Link href="/login">Log in</Link>
             </li>
             <li>
-              <Link href="/waitlist">Join the waitlist</Link>
+              <button type="button" className="footer-link-btn" onClick={openWaitlist}>
+                Join the waitlist
+              </button>
             </li>
             <li>
               <Link href="/about">About</Link>

@@ -153,6 +153,25 @@ export async function POST(req: NextRequest) {
               currentPeriodEnd: null,
               priceLookupKey: bundle ? BOTH_PLAN.lookupKey : undefined,
             })
+            // Open the SAME trading-day trial ledger the full enrollment funnel opens
+            // (gap audit #184/#216: "adding a second agent starts a 5 CALENDAR-day
+            // trial, not 5 trading days"). createSubscriptionCheckout sets Stripe's
+            // trial_end to a far HOLD, not the real length — this ledger is what ends
+            // it after exactly TRIAL_ELIGIBLE_DAYS eligible trading days (trial-close.ts
+            // calls endTrialNow on it, same as every other trial). Guarded on
+            // 'not_started' like the activation route's insert, so this can never
+            // reopen a trial this person already used for this agent, and it is a
+            // no-op (not an error) when a trials row already exists in any other state.
+            if (subscriptionId && isUuid(userId)) {
+              await customerExecute(
+                `INSERT INTO trials (user_id, agent_code, activation_id, status, started_at, eligible_days_used)
+                 VALUES ($1, $2, NULL, 'active', now(), 0)
+                 ON CONFLICT (user_id, agent_code) DO UPDATE
+                    SET status = 'active', started_at = now(), updated_at = now()
+                  WHERE trials.status = 'not_started'`,
+                [userId, bot],
+              ).catch((e) => console.error('[billing/webhook] trials ledger insert failed:', e))
+            }
           }
           if (eventId) {
             await emitMembershipEvent({

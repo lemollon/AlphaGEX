@@ -119,6 +119,9 @@ function OverviewContent({ data, allowedBots }: { data: PerformanceData; allowed
         weekly: active.weekly,
         monthly: active.monthly,
         best_day: null as number | null,
+        capital_available: active.capital_available,
+        held_for_open_trades: active.held_for_open_trades,
+        today_pnl: active.today_pnl,
         curve: active.curve,
         daily_bars: active.daily_bars,
         pnl_ranges: active.pnl_ranges,
@@ -135,6 +138,9 @@ function OverviewContent({ data, allowedBots }: { data: PerformanceData; allowed
         weekly: combined.weekly,
         monthly: combined.monthly,
         best_day: combined.best_day,
+        capital_available: combined.capital_available,
+        held_for_open_trades: combined.held_for_open_trades,
+        today_pnl: combined.today_pnl,
         curve: equity_curve,
         daily_bars: data.daily_bars,
         pnl_ranges: data.pnl_ranges,
@@ -190,9 +196,23 @@ function OverviewContent({ data, allowedBots }: { data: PerformanceData; allowed
       {/* KPI row — dev-handoff §6 contract: Today / Past week (5 trading days) /
           Past month (21 trading days) / Lifetime. */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatTile
+          label="Today"
+          value={view.today_pnl != null ? formatDollarPnl(view.today_pnl) : '—'}
+          valueClass={view.today_pnl != null ? (view.today_pnl >= 0 ? 'text-[var(--up)]' : 'text-[var(--bad)]') : undefined}
+          sub="Realized + unrealized on open trades"
+        />
         <StatTile label="Past Week" value={formatDollarPnl(view.weekly)} valueClass={view.weekly >= 0 ? 'text-[var(--up)]' : 'text-[var(--bad)]'} sub="Last 5 trading days" />
         <StatTile label="Past Month" value={formatDollarPnl(view.monthly)} valueClass={view.monthly >= 0 ? 'text-[var(--up)]' : 'text-[var(--bad)]'} sub="Last 21 trading days" />
         <StatTile label="Lifetime P&L" value={formatDollarPnl(view.total_pnl)} valueClass={positive ? 'text-[var(--up)]' : 'text-[var(--bad)]'} />
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatTile
+          label="Capital available"
+          value={view.capital_available != null ? formatMoney(view.capital_available) : '—'}
+          sub={view.held_for_open_trades != null ? `${formatMoney(view.held_for_open_trades)} held for open trades` : undefined}
+        />
         <StatTile label="Lifetime Return" value={pctLabel(view.return_pct)} valueClass={(view.return_pct ?? 0) >= 0 ? 'text-[var(--up)]' : 'text-[var(--bad)]'} sub="All time" />
       </div>
 

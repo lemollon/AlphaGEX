@@ -13,7 +13,8 @@ import { canManageBillingInApp } from '@/billing/store-policy'
  * least urgent), per SPEC.md:
  *
  *   brokerage disconnected/auth expired > agent standing aside (BLOCKED) >
- *   ACTION_REQUIRED > membership payment due > paused > market no_trading > caution
+ *   ACTION_REQUIRED > membership payment due > paused > trial ending > market
+ *   no_trading > caution
  */
 export type BannerSeverity =
   | 'brokerage'
@@ -21,6 +22,7 @@ export type BannerSeverity =
   | 'action_required'
   | 'payment'
   | 'paused'
+  | 'trial_ending'
   | 'no_trading'
   | 'caution'
 
@@ -40,6 +42,10 @@ export interface BannerInput {
   connections: BrokerageConnections | undefined
   agents: LiveAgent[]
   membershipBadge: string | undefined
+  /** db-states "Trial ending ... Banner 1 trading day before trial end" (gap audit
+   *  #212). True only while the trial is live and has 1 eligible trading day or less
+   *  left — never true once converted or canceled. */
+  trialEndingSoon: boolean | undefined
   marketCondition: 'good' | 'caution' | 'no_trading' | undefined
   conditionLine: string | undefined
 }
@@ -105,6 +111,20 @@ export function pickBanner(input: BannerInput): Banner | null {
       color: color.muted,
       text: paused.state?.check_line ?? `${paused.label} is paused — no new trades will open.`,
       action: { label: 'View', target: 'agent', bot: paused.bot },
+      dismissible: false,
+    }
+  }
+
+  if (input.trialEndingSoon) {
+    // Not dismissible, unlike 'caution' — SPEC.md's rule is "only 'caution' may be
+    // dismissed; every more urgent banner persists," and the customer needs to see
+    // this on every visit until they've actually added a payment method, not just
+    // until they've tapped the X once.
+    return {
+      severity: 'trial_ending',
+      color: color.warn,
+      text: 'Your free trial ends after today’s session. Add a payment method to keep trading.',
+      action: { label: 'Manage Billing', target: 'billing' },
       dismissible: false,
     }
   }
