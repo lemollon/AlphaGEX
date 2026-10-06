@@ -695,6 +695,9 @@ export interface NotificationItem {
     trade_id?: string
     agent?: string
     kind?: string
+    /** #269: a precomputed in-app href, same priority as trade_id/agent/kind
+     *  below — see routeFor() and render.ts's deriveLink(). */
+    link?: string
     amount?: number
     [key: string]: unknown
   } | null

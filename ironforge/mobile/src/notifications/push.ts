@@ -144,8 +144,12 @@ export function usePushNavigation(): void {
 
   useEffect(() => {
     function handle(data: unknown) {
-      const nav = data as PushNavData
-      trackEvent('push_open', { type: typeof nav?.kind === 'string' ? nav.kind : 'unknown' })
+      const nav = data as PushNavData & { type?: unknown }
+      // #269: `type` is the push's actual category (trade_closed, billing, community,
+      // …) — a real answer for every push, unlike `kind`, which routeFor() only ever
+      // sets for brokerage_health/billing and the analytics event otherwise saw as
+      // 'unknown' for everything else.
+      trackEvent('push_open', { type: typeof nav?.type === 'string' ? nav.type : 'unknown' })
       const href = routeFor(nav, { tradeDetailHref, agentDetailHref })
       if (href) router.push(href)
     }

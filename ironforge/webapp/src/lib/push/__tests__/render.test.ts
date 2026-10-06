@@ -133,3 +133,53 @@ describe('deep-link nav keys (mobile route-for.ts)', () => {
     expect(msg.data.agent).toBeUndefined()
   })
 })
+
+describe('type/link payload (#269)', () => {
+  it('carries the category as `type` on every push', () => {
+    for (const category of CATEGORIES) {
+      const msg = renderNotification(evt({ category }), { showAmountsOnLockscreen: false })
+      expect(msg.data.type).toBe(category)
+    }
+  })
+
+  it('prefers a trade_id link over an agent link', () => {
+    const msg = renderNotification(evt({ routeParams: { tradeId: 'POS-1', account: 'flame' } }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(msg.data.link).toBe('/trade/POS-1')
+  })
+
+  it('falls back to an agent link when there is no trade_id', () => {
+    const msg = renderNotification(evt({ routeParams: { account: 'flame' } }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(msg.data.link).toBe('/agents/flame')
+  })
+
+  it('links brokerage_health and billing to the account tab', () => {
+    const brokerage = renderNotification(evt({ category: 'brokerage_health', routeParams: {} }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(brokerage.data.link).toBe('/account')
+
+    const billing = renderNotification(evt({ category: 'billing', routeParams: {} }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(billing.data.link).toBe('/account')
+  })
+
+  it('omits link when the payload carries none of trade_id/agent/kind — never a broken href', () => {
+    const msg = renderNotification(evt({ category: 'community', routeParams: {} }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(msg.data.link).toBeUndefined()
+  })
+
+  it('still carries trade_id/agent/kind alongside link — an older app build (fallback) still routes', () => {
+    const msg = renderNotification(evt({ routeParams: { tradeId: 'POS-1' } }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(msg.data.link).toBe('/trade/POS-1')
+    expect(msg.data.trade_id).toBe('POS-1')
+  })
+})
