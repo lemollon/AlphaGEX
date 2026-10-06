@@ -196,8 +196,21 @@ export default function CommunityScreen() {
     try {
       // Posts into the composer's own topic (#cTopic), not whichever tab is
       // currently being viewed — see the topicSlug/realChannels note above.
-      await api('/api/community/messages', { method: 'POST', body: { channel: topicSlug, message } })
+      const res = await api<{ status?: string; message?: string }>('/api/community/messages', {
+        method: 'POST',
+        body: { channel: topicSlug, message },
+      })
       setDraft('')
+      if (res.status === 'pending') {
+        // #218: moderation fails closed — held for review, not published, not
+        // an error. A plain Alert (not the red postError text) since nothing
+        // went wrong.
+        Alert.alert(
+          'Posting is delayed',
+          res.message ?? 'Your message is being reviewed and will appear shortly.',
+        )
+        return
+      }
       mutate()
       trackEvent('community_post')
     } catch (e) {
@@ -666,11 +679,21 @@ function ThreadSheet({
     }
     await mutate((cur) => appendOptimisticReply(cur, optimistic), { revalidate: false })
     try {
-      const res = await api<{ messageId: string | null }>('/api/community/messages', {
-        method: 'POST',
-        body: { channel, message, parent_id: parent.id },
-      })
+      const res = await api<{ messageId: string | null; status?: string; message?: string }>(
+        '/api/community/messages',
+        { method: 'POST', body: { channel, message, parent_id: parent.id } },
+      )
       setDraft('')
+      if (res.status === 'pending') {
+        // #218: moderation fails closed — held for review, not published. Roll
+        // back the optimistic reply (it isn't actually live) and say so plainly.
+        await mutate((cur) => removeReply(cur, tempId), { revalidate: false })
+        Alert.alert(
+          'Posting is delayed',
+          res.message ?? 'Your reply is being reviewed and will appear shortly.',
+        )
+        return
+      }
       onReplyPosted()
       await mutate(
         (cur) => reconcileReply(cur, tempId, { ...optimistic, id: res.messageId ?? tempId }),

@@ -219,6 +219,27 @@ export async function insertMessage(opts: {
   return rows[0]?.id ?? null
 }
 
+/**
+ * Holds a post that moderation could not clear because the scorer itself
+ * failed (#218 — fails closed). Separate table from community_messages: a
+ * pending row must never appear in getFeed()/getReplies() until something
+ * actually clears it.
+ */
+export async function insertPendingMessage(opts: {
+  channelId: string
+  userId: string | null
+  senderName: string
+  message: string
+  parentId?: string | null
+  reason: string
+}): Promise<void> {
+  await customerExecute(
+    `INSERT INTO community_pending_messages (channel_id, user_id, sender_name, message, parent_id, reason)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [opts.channelId, opts.userId, opts.senderName, opts.message, opts.parentId ?? null, opts.reason],
+  )
+}
+
 export async function toggleReaction(messageId: string, userId: string, emoji: string): Promise<'added' | 'removed'> {
   const removed = await customerExecute(
     `DELETE FROM community_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3`,

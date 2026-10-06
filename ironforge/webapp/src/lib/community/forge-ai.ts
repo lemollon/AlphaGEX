@@ -124,6 +124,14 @@ export interface ModerationVerdict {
   ok: boolean
   category?: string
   score?: number
+  /**
+   * The scorer itself failed or returned something unusable — not a rejection.
+   * #218: moderation fails CLOSED, not open. A post MUST be checked against
+   * community guidelines before it publishes (design doc §11 acceptance
+   * criterion); an outage is not grounds to skip that check and publish
+   * anyway. Only set when `ok` is false.
+   */
+  pending?: boolean
 }
 
 /** Fast local pre-filter — catches the obvious cases with zero latency. */
@@ -194,7 +202,9 @@ export async function moderateMessage(message: string): Promise<ModerationVerdic
       maxTokens: 120,
     })
     const jsonMatch = raw.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) return { ok: true }
+    // #218: a response we can't parse is not a verdict — hold the post rather
+    // than guess it's clean.
+    if (!jsonMatch) return { ok: false, pending: true, category: 'MODERATION_UNAVAILABLE' }
     const scores = JSON.parse(jsonMatch[0]) as Record<string, number>
     for (const [category, threshold] of THRESHOLDS) {
       const score = Number(scores[category] ?? 0)
@@ -204,7 +214,10 @@ export async function moderateMessage(message: string): Promise<ModerationVerdic
     }
     return { ok: true }
   } catch {
-    // Fail-open: a moderation outage must not take the chat down.
-    return { ok: true }
+    // #218: fail CLOSED, not open — a moderation outage holds the post as
+    // pending instead of publishing it unchecked. This is different from the
+    // isForgeConfigured() branch above: that is a deliberate, standing
+    // local-pattern-only mode, not an outage.
+    return { ok: false, pending: true, category: 'MODERATION_UNAVAILABLE' }
   }
 }

@@ -109,3 +109,70 @@ describe('moderateMessage — existing profanity path is unaffected', () => {
     expect(v.category).toBe('PROFANITY_DETECTED')
   })
 })
+
+/**
+ * #218: moderation fails CLOSED, not open. A post that trips none of the local
+ * patterns (above) and reaches the AI scorer must be HELD, not auto-approved,
+ * if that scorer is unreachable or returns something unusable — the opposite
+ * of the old behaviour, which published anyway on any scorer failure.
+ */
+describe('moderateMessage — fails closed when the scorer errors (#218)', () => {
+  const originalFetch = global.fetch
+
+  beforeEach(() => {
+    // Only the "configured" branch reaches the network — these tests need a key.
+    process.env.CLAUDE_API_KEY = 'test-key'
+  })
+
+  afterEach(() => {
+    global.fetch = originalFetch
+  })
+
+  it('holds the post as pending, not approved, when the API call throws', async () => {
+    global.fetch = (async () => {
+      throw new Error('network down')
+    }) as typeof fetch
+    const v = await moderateMessage('A perfectly normal message about today\'s range.')
+    expect(v.ok).toBe(false)
+    expect(v.pending).toBe(true)
+    expect(v.category).toBe('MODERATION_UNAVAILABLE')
+  })
+
+  it('holds the post as pending, not approved, when the API returns a non-2xx', async () => {
+    global.fetch = (async () =>
+      new Response('rate limited', { status: 429 })) as typeof fetch
+    const v = await moderateMessage('A perfectly normal message about today\'s range.')
+    expect(v.ok).toBe(false)
+    expect(v.pending).toBe(true)
+  })
+
+  it('holds the post as pending, not approved, when the response has no parseable JSON', async () => {
+    global.fetch = (async () =>
+      new Response(JSON.stringify({ content: [{ type: 'text', text: 'not json at all' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch
+    const v = await moderateMessage('A perfectly normal message about today\'s range.')
+    expect(v.ok).toBe(false)
+    expect(v.pending).toBe(true)
+    expect(v.category).toBe('MODERATION_UNAVAILABLE')
+  })
+
+  it('still approves normally when the scorer responds cleanly', async () => {
+    global.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          content: [
+            {
+              type: 'text',
+              text: '{"profanity":0,"threat":0,"harassment":0,"personal_attack":0,"spam":0,"financial_advice":0,"promotion":0,"account_details":0}',
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )) as typeof fetch
+    const v = await moderateMessage('A perfectly normal message about today\'s range.')
+    expect(v.ok).toBe(true)
+    expect(v.pending).toBeUndefined()
+  })
+})

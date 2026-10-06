@@ -116,6 +116,10 @@ function ThreadPanel({
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
+  // #218: moderation fails closed — the server holds the post (202) rather than
+  // publishing it unchecked or rejecting it outright. Kept separate from
+  // sendError so this never renders in the "something went wrong" colour.
+  const [pendingNotice, setPendingNotice] = useState<string | null>(null)
   const hasAi = data?.replies.some((r) => isAiSender(r.sender_type))
 
   async function sendReply() {
@@ -123,16 +127,20 @@ function ThreadPanel({
     if (!message || sending) return
     setSending(true)
     setSendError(null)
+    setPendingNotice(null)
     try {
       const res = await fetch('/api/community/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channel, message, parent_id: parentId }),
       })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || 'Failed to send reply.')
+      const body = await res.json().catch(() => ({}))
+      if (res.status === 202) {
+        setDraft('')
+        setPendingNotice(body.message || 'Posting is delayed — your reply is being reviewed and will appear shortly.')
+        return
       }
+      if (!res.ok) throw new Error(body.error || 'Failed to send reply.')
       setDraft('')
       await mutate()
       onReplyPosted()
@@ -179,6 +187,7 @@ function ThreadPanel({
         </div>
       )}
       {sendError && <div className="text-[11px] text-[var(--bad)]">{sendError}</div>}
+      {pendingNotice && <div className="text-[11px] text-[var(--muted)]">{pendingNotice}</div>}
     </div>
   )
 }
@@ -331,6 +340,10 @@ export function CommunityBody() {
   const [channel, setChannel] = useState('all-chat')
   const [draft, setDraft] = useState('')
   const [sendError, setSendError] = useState<string | null>(null)
+  // #218: moderation fails closed — the server holds the post (202) rather than
+  // publishing it unchecked or rejecting it outright. Kept separate from
+  // sendError so this never renders in the "something went wrong" colour.
+  const [pendingNotice, setPendingNotice] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   // Set when the server says posting needs a paid membership (402). Turns the composer
   // into a "Join the Community — $15/mo" checkout CTA instead of a dead error.
@@ -385,6 +398,7 @@ export function CommunityBody() {
     if (!loggedIn) { window.location.href = '/login'; return }
     setSending(true)
     setSendError(null)
+    setPendingNotice(null)
     try {
       const res = await fetch('/api/community/messages', {
         method: 'POST',
@@ -396,10 +410,14 @@ export function CommunityBody() {
         setNeedsMembership(true)
         return
       }
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || 'Failed to send message.')
+      const body = await res.json().catch(() => ({}))
+      if (res.status === 202) {
+        // #218: held for review, not published and not an error.
+        setDraft('')
+        setPendingNotice(body.message || 'Posting is delayed — your message is being reviewed and will appear shortly.')
+        return
       }
+      if (!res.ok) throw new Error(body.error || 'Failed to send message.')
       setDraft('')
       await mutate()
     } catch (e) {
@@ -569,6 +587,7 @@ export function CommunityBody() {
             {/* Composer */}
             <div className="border-t border-[var(--line)] py-3">
               {sendError && <div className="mb-2 text-xs text-[var(--bad)]">{sendError}</div>}
+              {pendingNotice && <div className="mb-2 text-xs text-[var(--muted)]">{pendingNotice}</div>}
               {needsMembership ? (
                 <div className="flex flex-col gap-2 rounded-lg border border-[var(--warn)]/40 bg-[var(--warn-soft)] px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="text-sm text-[var(--fg)]">

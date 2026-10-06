@@ -237,7 +237,24 @@ CREATE TABLE IF NOT EXISTS community_moderation_events (
   message_excerpt TEXT,
   category TEXT NOT NULL,
   score NUMERIC,
-  action TEXT NOT NULL,                              -- REJECTED | WARNING
+  action TEXT NOT NULL,                              -- REJECTED | WARNING | PENDING
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- #218: moderation fails CLOSED. When the AI scorer itself errors (outage, a
+-- non-2xx, or an unparseable response), the post is held here instead of
+-- publishing unchecked to community_messages — the content is never lost,
+-- just not live until a human (or a later retry) clears it. No reviewer UI
+-- ships with this table yet; it exists so "never silently publish" has
+-- somewhere real to hold the message rather than discarding it.
+CREATE TABLE IF NOT EXISTS community_pending_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  channel_id UUID NOT NULL REFERENCES community_channels(id),
+  user_id UUID REFERENCES users(id),
+  sender_name TEXT NOT NULL,
+  message TEXT NOT NULL,
+  parent_id UUID REFERENCES community_messages(id),
+  reason TEXT NOT NULL,                              -- moderateMessage()'s category, e.g. MODERATION_UNAVAILABLE
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
