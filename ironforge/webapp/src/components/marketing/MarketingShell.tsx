@@ -2,6 +2,7 @@ import MarketingIcons from './MarketingIcons'
 import MarketingNav from './MarketingNav'
 import MarketingFooter from './MarketingFooter'
 import { WaitlistModalProvider } from './WaitlistModal'
+import AgentCardHighlight from './AgentCardHighlight'
 
 /**
  * Wraps every 10.4 marketing page in the `.ifw-marketing` scope that
@@ -21,6 +22,7 @@ export default function MarketingShell({ children }: { children: React.ReactNode
   return (
     <div className="ifw-marketing">
       <MarketingIcons />
+      <AgentCardHighlight />
       <WaitlistModalProvider>
         <MarketingNav />
         <main>{children}</main>

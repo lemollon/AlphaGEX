@@ -5,11 +5,17 @@ import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import MarketingThemeToggle from './MarketingThemeToggle'
 import { useWaitlistModal } from './WaitlistModal'
+import { useHomeScrollSpy } from './useHomeScrollSpy'
 
+// On the home page, "Agents" and "How it works" scroll to the page's own
+// #home-agents/#home-how sections instead of navigating away (ps-nav #40).
+// From any other page they still link to the full dedicated pages — the
+// home-page sections and the agent/step "Compare all / Learn more" links
+// cover deep linking into those.
 const PRIMARY_LINKS = [
-  { href: '/', label: 'Home' },
-  { href: '/agents', label: 'Agents' },
-  { href: '/how-it-works', label: 'How it works' },
+  { href: '/', label: 'Home', homeAnchor: null },
+  { href: '/agents', label: 'Agents', homeAnchor: 'home-agents' },
+  { href: '/how-it-works', label: 'How it works', homeAnchor: 'home-how' },
 ]
 
 /**
@@ -20,8 +26,19 @@ const PRIMARY_LINKS = [
  */
 export default function MarketingNav() {
   const pathname = usePathname()
+  const isHome = pathname === '/'
   const [open, setOpen] = useState(false)
   const { openWaitlist } = useWaitlistModal()
+  const { activeId, lockAndSet } = useHomeScrollSpy(isHome)
+
+  function homeAnchorClick(anchor: string) {
+    return (e: React.MouseEvent) => {
+      e.preventDefault()
+      lockAndSet(anchor)
+      document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      window.history.replaceState(null, '', `#${anchor}`)
+    }
+  }
 
   return (
     <header className="nav">
@@ -30,11 +47,26 @@ export default function MarketingNav() {
           IRON<b>FORGE</b>
         </Link>
         <nav className="links" aria-label="Primary">
-          {PRIMARY_LINKS.map((l) => (
-            <Link key={l.href} href={l.href} aria-current={pathname === l.href ? 'page' : undefined}>
-              {l.label}
-            </Link>
-          ))}
+          {PRIMARY_LINKS.map((l) =>
+            isHome && l.homeAnchor ? (
+              <a
+                key={l.href}
+                href={`#${l.homeAnchor}`}
+                aria-current={activeId === l.homeAnchor ? 'true' : undefined}
+                onClick={homeAnchorClick(l.homeAnchor)}
+              >
+                {l.label}
+              </a>
+            ) : (
+              <Link
+                key={l.href}
+                href={l.homeAnchor ? `/#${l.homeAnchor}` : l.href}
+                aria-current={pathname === l.href ? 'page' : undefined}
+              >
+                {l.label}
+              </Link>
+            )
+          )}
         </nav>
         <div className="nav-r">
           <MarketingThemeToggle />
@@ -62,11 +94,24 @@ export default function MarketingNav() {
         </div>
       </div>
       <div className="wrap drawer" id="marketing-drawer" hidden={!open}>
-        {PRIMARY_LINKS.map((l) => (
-          <Link key={l.href} href={l.href} onClick={() => setOpen(false)}>
-            {l.label}
-          </Link>
-        ))}
+        {PRIMARY_LINKS.map((l) =>
+          isHome && l.homeAnchor ? (
+            <a
+              key={l.href}
+              href={`#${l.homeAnchor}`}
+              onClick={(e) => {
+                setOpen(false)
+                homeAnchorClick(l.homeAnchor!)(e)
+              }}
+            >
+              {l.label}
+            </a>
+          ) : (
+            <Link key={l.href} href={l.homeAnchor ? `/#${l.homeAnchor}` : l.href} onClick={() => setOpen(false)}>
+              {l.label}
+            </Link>
+          )
+        )}
         <Link href="/pricing" onClick={() => setOpen(false)}>
           Pricing
         </Link>
