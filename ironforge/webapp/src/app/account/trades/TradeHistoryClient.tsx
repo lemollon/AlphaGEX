@@ -17,7 +17,7 @@ const OUTCOME_CLASS: Record<OutcomeKind, string> = {
   profit: 'text-[var(--up)]',
   auto: 'text-spark',
   stop: 'text-[var(--bad)]',
-  manual: 'text-[var(--accent)]',
+  manual: 'text-[var(--accent-text)]',
   expired: 'text-[var(--muted)]',
   other: 'text-[var(--muted)]',
 }
@@ -78,7 +78,7 @@ export function TradeHistoryBody() {
     <>
           {/* breadcrumb */}
           <div className="flex items-center gap-2 text-sm">
-            <Link href="/live" className="font-semibold text-[var(--accent)] hover:opacity-80">Live</Link>
+            <Link href="/live" className="font-semibold text-[var(--accent-text)] hover:opacity-80">Live</Link>
             <span className="text-[var(--muted)]">›</span>
             <span className="text-[var(--muted)]">Trade History</span>
           </div>
@@ -87,7 +87,7 @@ export function TradeHistoryBody() {
             <div>
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl font-bold text-[var(--fg)]">Trade History</h1>
-                <span className="rounded-md border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-2.5 py-1 text-xs font-semibold text-[var(--accent)]">All Trades</span>
+                <span className="rounded-md border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-2.5 py-1 text-xs font-semibold text-[var(--accent-text)]">All Trades</span>
               </div>
               <p className="mt-1 text-sm text-[var(--muted)]">Review recent and historical trades across your strategies.</p>
             </div>

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import MarketStatusBadge from './MarketStatusBadge'
 import { AGENTS } from '@/lib/marketing/agents'
 import { defaultHeroTab, heroAgentStripState, isMarketOpenNow, minutesSinceMidnightCT } from '@/lib/marketing/marketStatus'
+import { track } from '@/lib/analytics/track'
 
 type Tab = 'spark' | 'flame'
 
@@ -121,7 +122,10 @@ export default function PutSpreadHeroCard() {
               className="hc-tab"
               role="tab"
               aria-selected={tab === t}
-              onClick={() => setTab(t)}
+              onClick={() => {
+                setTab(t)
+                track('hero_chart_tab', { agent: t })
+              }}
               type="button"
             >
               <Image src={a.mascot} alt="" width={22} height={22} />

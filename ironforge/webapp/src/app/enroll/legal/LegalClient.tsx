@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import EnrollShell from '../EnrollShell'
 import { useEnrollment } from '../useEnrollment'
+import { track } from '@/lib/analytics/track'
+import { trackEnrollStepComplete } from '@/lib/analytics/enroll'
 
 /**
  * LEGAL-AUTO-01 — Agreements (10/5 reorder: step 2, BEFORE Choose agent).
@@ -31,11 +33,21 @@ interface LegalDoc {
   accepted: boolean
 }
 
-/** Row subtitles from the approved screen. Fallback: no subtitle. */
+/**
+ * Row subtitles. TERMS, RISK and PRIVACY are the exact `doc` summary strings
+ * from IronForge_Enrollment_10.4.html's AGREEMENTS array — the one place
+ * either source document supplies verbatim enrollment-step copy. The other
+ * four codes have no verbatim source text in either the design prototype or
+ * the dev handoff (which lists only docId + title for them), so they keep
+ * their prior placeholder subtitles rather than inventing legal copy.
+ */
 const DOC_SUBTITLES: Record<string, string> = {
-  TERMS: 'Platform terms and member responsibilities',
-  RISK: 'Risks associated with options and automated trading',
-  PRIVACY: 'How IronForge collects and protects information',
+  TERMS:
+    'By creating an account you agree to use IronForge for your own personal accounts, keep your login secure, and follow these terms. Subscriptions renew monthly until cancelled. You can cancel anytime from your dashboard.',
+  RISK:
+    'Options are complex and not suitable for every investor. Spreads limit risk to a defined amount, but you can still lose some or all of the capital used for a trade. Past performance, real or hypothetical, does not guarantee future results. Backtested results are hypothetical.',
+  PRIVACY:
+    'We collect the information you give us during enrollment and the brokerage data needed to place and monitor trades. We do not sell your personal information. Brokerage credentials are never stored by IronForge; access uses secure tokens you can revoke.',
   ADVICE_DISCLAIMER: 'IronForge does not provide individualized advice',
   ELECTRONIC_CONSENT: 'Consent to receive and sign records electronically',
   TRADING_AUTH: 'Authorization to submit orders through your brokerage',
@@ -78,6 +90,7 @@ export default function LegalClient() {
   function acceptAll() {
     if (!allOpened) return
     setAgreed(true)
+    track('legal_accept_all')
   }
 
   async function accept() {
@@ -93,6 +106,7 @@ export default function LegalClient() {
           signature_name: signature.trim(),
         }),
       })
+      trackEnrollStepComplete('legal')
       router.push('/enroll/plan')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not record your agreement.')

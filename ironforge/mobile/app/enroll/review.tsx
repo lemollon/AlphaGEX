@@ -124,7 +124,7 @@ export default function ReviewScreen() {
                 >
                   <Text style={[type.body, { color: color.text }]}>{b.message}</Text>
                   {b.remediable && BLOCKER_ROUTE[b.code] ? (
-                    <Text style={[type.label, { color: color.accent, fontFamily: font.bodyBold, marginTop: 2 }]}>
+                    <Text style={[type.label, { color: color.accentText, fontFamily: font.bodyBold, marginTop: 2 }]}>
                       Fix this →
                     </Text>
                   ) : null}

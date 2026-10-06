@@ -108,6 +108,7 @@ const config: Config = {
             accent: 'var(--accent)',
             accentInk: 'var(--accent-ink)',
             accentSoft: 'var(--accent-soft)',
+            accentText: 'var(--accent-text)',
             up: 'var(--up)',
             upSoft: 'var(--up-soft)',
             warn: 'var(--warn)',

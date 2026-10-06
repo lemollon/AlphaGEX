@@ -190,7 +190,7 @@ export default function DeleteAccountScreen() {
               disabled={busy}
               style={[s.outlineBtn, busy && { opacity: 0.4 }]}
             >
-              <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+              <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
                 {busy ? 'Working…' : 'Cancel deletion request'}
               </Text>
             </Pressable>
@@ -220,7 +220,7 @@ function Bullet({ children }: { children: React.ReactNode }) {
   const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={s.bullet}>
-      <Text style={[type.body, { color: color.accent }]}>•</Text>
+      <Text style={[type.body, { color: color.accentText }]}>•</Text>
       <Text style={[type.body, { color: color.textDim, flex: 1, marginLeft: space.sm }]}>
         {children}
       </Text>

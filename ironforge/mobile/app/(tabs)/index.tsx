@@ -40,6 +40,7 @@ import { agentDetailHref, type AgentBot } from '@/agents/routes'
 import { AGENT_LABEL, AGENT_BLURB } from '@/agents/copy'
 import { pickBanner, bannerActionHref, billingBannerMode } from '@/alerts/banner'
 import { manageSubscriptionUrl } from '@/billing/store-policy'
+import { trackEvent } from '@/analytics/trackEvent'
 
 const ALL_BOTS: AgentBot[] = ['spark', 'flame', 'ember']
 
@@ -400,7 +401,16 @@ export default function ForgeScreen() {
 
           <View style={{ marginTop: space.md }}>
             {heroSeries.length >= 2 ? (
-              <AccountChart series={heroSeries} color={heroLineColor} onScrub={setScrub} />
+              <AccountChart
+                series={heroSeries}
+                color={heroLineColor}
+                onScrub={(point) => {
+                  // Fires once per scrub gesture, not once per point under the
+                  // finger — setScrub already runs on every frame of the drag.
+                  if (point && !scrub) trackEvent('chart_scrub')
+                  setScrub(point)
+                }}
+              />
             ) : (
               <View style={s.chartEmpty}>
                 <Text style={[type.label, { color: color.muted }]}>
@@ -421,6 +431,7 @@ export default function ForgeScreen() {
                     key={p}
                     onPress={() => {
                       setHeroPeriod(p)
+                      trackEvent('period_select', { period: p })
                       setScrub(null)
                     }}
                     accessibilityRole="button"

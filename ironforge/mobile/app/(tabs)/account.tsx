@@ -29,6 +29,7 @@ import { SUPPORT_EMAIL, supportMailto } from '@/support/contact'
 import { BrokerageSection } from '@/components/BrokerageSection'
 import { AGENT_LABEL } from '@/agents/copy'
 import { showToast } from '@/notifications/toast'
+import { trackEvent } from '@/analytics/trackEvent'
 
 /**
  * Account — UX-006 (APP-037/038/039/040/043/044/058/059/060).
@@ -184,6 +185,7 @@ export default function AccountScreen() {
       // Same shared SWR cache key the Forge tab and each agent sheet poll — this is
       // what makes both reflect the bulk change without either screen doing anything.
       void globalMutate('/api/live/agents')
+      if (nextPaused) trackEvent('pause_all')
       Alert.alert(
         nextPaused ? 'All agents paused' : 'All agents resumed',
         nextPaused
@@ -391,7 +393,7 @@ export default function AccountScreen() {
           */}
           {canManageBillingInApp(platform) ? (
             <Pressable onPress={openBilling} style={s.outlineBtn}>
-              <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+              <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
                 Manage Membership and Billing (opens secure Stripe portal)
               </Text>
             </Pressable>
@@ -404,7 +406,7 @@ export default function AccountScreen() {
                 }}
                 style={s.outlineBtn}
               >
-                <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+                <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
                   Manage subscription
                 </Text>
               </Pressable>
@@ -594,10 +596,14 @@ function openAppearancePicker(
   setPreference: (pref: AppearancePreference) => void,
 ) {
   const mark = (pref: AppearancePreference) => (pref === current ? `${appearanceLabel(pref)}  ✓` : appearanceLabel(pref))
+  function choose(pref: AppearancePreference) {
+    setPreference(pref)
+    trackEvent('theme_toggle', { theme: pref })
+  }
   Alert.alert('Appearance', 'Choose how IronForge looks on this device.', [
-    { text: mark('system'), onPress: () => setPreference('system') },
-    { text: mark('light'), onPress: () => setPreference('light') },
-    { text: mark('dark'), onPress: () => setPreference('dark') },
+    { text: mark('system'), onPress: () => choose('system') },
+    { text: mark('light'), onPress: () => choose('light') },
+    { text: mark('dark'), onPress: () => choose('dark') },
     { text: 'Cancel', style: 'cancel' },
   ])
 }

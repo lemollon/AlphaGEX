@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { WaitlistForm } from '@/app/waitlist/WaitlistClient'
+import { track } from '@/lib/analytics/track'
 
 /**
  * Site-wide waitlist modal (ps-ctas "Join the waitlist -> Opens waitlist modal, no
@@ -14,7 +15,11 @@ import { WaitlistForm } from '@/app/waitlist/WaitlistClient'
  */
 
 interface WaitlistModalContextValue {
-  openWaitlist: () => void
+  openWaitlist: (placement?: string) => void
+  /** The placement the modal was last opened from, read by WaitlistForm when it
+   *  fires waitlist_submit/waitlist_error — avoids threading a prop through every
+   *  call site just for an analytics tag. */
+  placement: string
 }
 
 const WaitlistModalContext = createContext<WaitlistModalContextValue | null>(null)
@@ -24,22 +29,25 @@ export function useWaitlistModal(): WaitlistModalContextValue {
   // Falls back to a no-op rather than throwing: a CTA rendered outside MarketingShell
   // (there shouldn't be one, but a future page is cheap insurance) just does nothing
   // instead of crashing the page.
-  return ctx ?? { openWaitlist: () => {} }
+  return ctx ?? { openWaitlist: () => {}, placement: 'page' }
 }
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 export function WaitlistModalProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false)
+  const [placement, setPlacement] = useState('page')
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
-  const openWaitlist = useCallback(() => {
+  const openWaitlist = useCallback((p?: string) => {
     // Captures whatever CTA was just activated (button/link), so closing the modal
     // puts focus back exactly where the customer was — the "return focus" half of the
     // ds-a11y requirement.
     returnFocusRef.current = document.activeElement as HTMLElement | null
     setOpen(true)
+    if (p) setPlacement(p)
+    track('waitlist_open', p ? { placement: p } : undefined)
   }, [])
 
   const close = useCallback(() => {
@@ -76,7 +84,7 @@ export function WaitlistModalProvider({ children }: { children: React.ReactNode 
   }, [open, close])
 
   return (
-    <WaitlistModalContext.Provider value={{ openWaitlist }}>
+    <WaitlistModalContext.Provider value={{ openWaitlist, placement }}>
       {children}
       {open ? (
         <div

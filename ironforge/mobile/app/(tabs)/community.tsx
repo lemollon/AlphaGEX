@@ -32,6 +32,7 @@ import type { ColorTokens } from '@/theme/palette'
 import { Card, Loading, Empty, ErrorState } from '@/components/ui'
 import { AppHeader, Mascot, SPARKY_AVATAR } from '@/components/Brand'
 import { applyHeart, FLAME, HEART } from '@/community/reactions'
+import { trackEvent } from '@/analytics/trackEvent'
 import { initials, channelAccent, bubbleTint } from '@/community/identity'
 import {
   appendOptimisticReply,
@@ -174,6 +175,7 @@ export default function CommunityScreen() {
       setDraft('')
       setAssistSuggestion(null)
       mutate()
+      trackEvent('community_post')
     } catch (e) {
       const msg = (e as Error).message
       setPostError(
@@ -224,6 +226,7 @@ export default function CommunityScreen() {
    */
   async function toggleHeart(id: string) {
     await mutate((cur) => applyHeart(cur, id), { revalidate: false })
+    trackEvent('community_like')
     try {
       await api('/api/community/reactions', {
         method: 'POST',
@@ -606,7 +609,7 @@ function BlockedSheet({
             <View key={m.user_id} style={[s.sheetRow, s.rowBetween]}>
               <Text style={[type.body, { color: color.text }]}>{m.display_name}</Text>
               <Pressable onPress={() => onUnblock(m)} hitSlop={8} accessibilityRole="button">
-                <Text style={[type.label, { color: color.accent }]}>Unblock</Text>
+                <Text style={[type.label, { color: color.accentText }]}>Unblock</Text>
               </Pressable>
             </View>
           ))
@@ -695,6 +698,7 @@ function ThreadSheet({
         (cur) => reconcileReply(cur, tempId, { ...optimistic, id: res.messageId ?? tempId }),
         { revalidate: false },
       )
+      trackEvent('community_reply')
     } catch (e) {
       await mutate((cur) => removeReply(cur, tempId), { revalidate: false })
       const msg = (e as Error).message
@@ -706,6 +710,7 @@ function ThreadSheet({
 
   async function toggleReplyHeart(id: string) {
     await mutate((cur) => applyHeartToReply(cur, id), { revalidate: false })
+    trackEvent('community_like')
     try {
       await api('/api/community/reactions', { method: 'POST', body: { message_id: id, emoji: HEART } })
     } catch (e) {
@@ -921,7 +926,7 @@ function ReactionRow({ message, onPress }: { message: CommunityMessage; onPress:
         <Text
           style={[
             type.label,
-            { color: mine ? color.accent : color.muted, fontFamily: font.bodyMedium },
+            { color: mine ? color.accentText : color.muted, fontFamily: font.bodyMedium },
           ]}
         >
           {count}

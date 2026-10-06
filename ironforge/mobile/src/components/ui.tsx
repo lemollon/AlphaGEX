@@ -324,7 +324,7 @@ export function ProgressBar({ step, total }: { step: number; total: number }) {
   const s = useMemo(() => makeStyles(color), [color])
   return (
     <View>
-      <Text style={[type.section, { color: color.accent, fontFamily: font.bodyBold, marginBottom: space.sm }]}>
+      <Text style={[type.section, { color: color.accentText, fontFamily: font.bodyBold, marginBottom: space.sm }]}>
         STEP {step} OF {total}
       </Text>
       <View style={s.progressTrack}>

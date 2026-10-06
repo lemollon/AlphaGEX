@@ -5,6 +5,8 @@ import EnrollShell from '../EnrollShell'
 import { useEnrollment } from '../useEnrollment'
 import { COMMUNITY_PLAN, BOT_PLANS } from '@/lib/billing/plans'
 import { EMBER_AGENT } from '@/lib/agents/ember'
+import { track } from '@/lib/analytics/track'
+import { trackEnrollStepComplete } from '@/lib/analytics/enroll'
 
 /**
  * PLAN-01 — "Choose agent" (10/5 reorder: step 3, right after Agreements).
@@ -55,6 +57,8 @@ export default function PlanClient() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ plan }),
       })
+      track('agent_selected', { agent: plan })
+      trackEnrollStepComplete('plan')
       if (plan === 'community') {
         // Free join, no card, ever — legal is already accepted (step 2 ran before
         // this screen), so there is nothing left to confirm. Same free-entitlement
