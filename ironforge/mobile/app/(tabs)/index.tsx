@@ -270,6 +270,7 @@ export default function ForgeScreen() {
     connections: conns.data,
     agents: list,
     membershipBadge: data.membership?.badge,
+    trialEndingSoon: billing.data?.membership?.trial_ending_soon,
     marketCondition: data.market.condition,
     conditionLine: data.market.condition_line,
   })

@@ -21,6 +21,15 @@ export interface MembershipCard {
   plan: string
   badge: string
   trial?: { label: string; day: number; total_days: number; ends_label: string } | null
+  /** True with 1 eligible trading day (or less) remaining in the free trial (db-states
+   *  "Trial ending ... Banner 1 trading day before trial end"). Never true once the
+   *  trial has converted or there is no trial at all. */
+  trialEndingSoon?: boolean
+  /** True when any subscription on this account is past_due — Stripe's own word for a
+   *  failed charge (dunning). The executor's OPENABLE_STATUSES gate already blocks new
+   *  trades on this status (see customer-executor/contracts.ts); this flag only drives
+   *  the banner telling the customer why. */
+  paymentFailed?: boolean
 }
 
 /** Shown when we genuinely do not know — never a plan name we haven't verified. */
@@ -72,7 +81,12 @@ export async function getMembership(customerId: string | null): Promise<Membersh
       return { plan: 'IronForge Membership', badge: rows.length > 0 ? 'Inactive' : 'No plan', trial: null }
     }
 
-    const card: MembershipCard = { plan: planNameFor(live), badge: badgeFor(live), trial: null }
+    const card: MembershipCard = {
+      plan: planNameFor(live),
+      badge: badgeFor(live),
+      trial: null,
+      paymentFailed: live.some((r) => r.status === 'past_due'),
+    }
 
     if (live.every((r) => r.status === 'trialing')) {
       // Trading-day LEDGER first. A v2 activation creates the subscription trialing
@@ -88,12 +102,14 @@ export async function getMembership(customerId: string | null): Promise<Membersh
 
       if (ledger[0]) {
         const used = Math.min(TRIAL_ELIGIBLE_DAYS, Math.max(0, Number(ledger[0].eligible_days_used ?? 0)))
+        const remaining = TRIAL_ELIGIBLE_DAYS - used
         card.trial = {
           label: trialLabel(used),
           day: Math.min(TRIAL_ELIGIBLE_DAYS, used + 1),
           total_days: TRIAL_ELIGIBLE_DAYS,
           ends_label: 'Counts eligible trading days only',
         }
+        card.trialEndingSoon = remaining <= 1
         return card
       }
 
@@ -110,6 +126,7 @@ export async function getMembership(customerId: string | null): Promise<Membersh
           total_days: TRIAL_DAYS,
           ends_label: `Ends ${ends.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
         }
+        card.trialEndingSoon = daysLeft <= 1
       }
     }
     return card

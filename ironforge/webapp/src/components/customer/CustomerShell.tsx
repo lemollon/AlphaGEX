@@ -87,6 +87,72 @@ export interface PlanCardData {
   plan: string
   badge: string
   trial?: { label: string; day: number; total_days: number; ends_label: string } | null
+  trialEndingSoon?: boolean
+  paymentFailed?: boolean
+}
+
+/**
+ * db-states "Trial ending / payment failed" banner (gap audit #212). Shown on every
+ * signed-in page because CustomerShell is the one place every one of them renders
+ * through. Payment-failed takes priority — it is the state that is actually blocking
+ * trading (the executor already refuses new orders on a past_due subscription; see
+ * lib/customer-executor/contracts.ts OPENABLE_STATUSES) — trial-ending is informational.
+ * Dismissible for the day only: the condition is re-read from the server on every page
+ * load, so dismissing never hides a real block past today.
+ */
+function TrialAndBillingBanner({ membership }: { membership: PlanCardData | null }) {
+  const paymentFailed = membership?.paymentFailed === true
+  const trialEndingSoon = !paymentFailed && membership?.trialEndingSoon === true
+  const active = paymentFailed || trialEndingSoon
+  const todayKey = active ? `if-banner-dismissed-${paymentFailed ? 'payment' : 'trial'}-${new Date().toDateString()}` : null
+  const [dismissed, setDismissed] = useState(false)
+
+  useEffect(() => {
+    if (!todayKey) {
+      setDismissed(false)
+      return
+    }
+    try {
+      setDismissed(sessionStorage.getItem(todayKey) === '1')
+    } catch {
+      setDismissed(false)
+    }
+  }, [todayKey])
+
+  if (!active || dismissed) return null
+
+  function dismiss() {
+    try { sessionStorage.setItem(todayKey!, '1') } catch { /* best-effort */ }
+    setDismissed(true)
+  }
+
+  return (
+    <div
+      role="alert"
+      className="flex items-center justify-between gap-3 border-b px-4 py-2.5 text-sm"
+      style={
+        paymentFailed
+          ? { borderColor: 'var(--bad)', background: 'color-mix(in srgb, var(--bad) 12%, var(--bg))', color: 'var(--bad)' }
+          : { borderColor: 'var(--warn)', background: 'color-mix(in srgb, var(--warn) 12%, var(--bg))', color: 'var(--warn)' }
+      }
+    >
+      <span className="font-medium">
+        {paymentFailed
+          ? 'Your last payment failed. New trades are paused until your card is updated.'
+          : membership.trial?.label === 'Trial complete'
+            ? 'Your free trial has ended.'
+            : 'Your free trial ends after today’s session.'}
+      </span>
+      <span className="flex items-center gap-3 whitespace-nowrap">
+        <Link href="/account/billing" className="font-semibold underline hover:opacity-80">
+          {paymentFailed ? 'Update payment method' : 'Add a payment method'}
+        </Link>
+        <button onClick={dismiss} aria-label="Dismiss" className="text-current opacity-70 hover:opacity-100">
+          <Icon className="h-4 w-4" d={ICONS.close} />
+        </button>
+      </span>
+    </div>
+  )
 }
 
 /** Optional strategy switcher shown under "Live" — /live passes bots + onSwitch. */
@@ -404,6 +470,7 @@ export default function CustomerShell({
         <div className="hidden items-center justify-end gap-2 border-b border-[var(--line)] bg-[var(--bg)] px-4 py-2.5 lg:flex">
           <DashboardHeaderBar />
         </div>
+        <TrialAndBillingBanner membership={membership} />
         <div className={`mx-auto ${maxWidthClass} px-4 py-5`}>{children}</div>
       </div>
 

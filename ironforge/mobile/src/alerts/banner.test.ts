@@ -21,6 +21,7 @@ const base: BannerInput = {
   connections: { ok: true, connections: [] },
   agents: [],
   membershipBadge: undefined,
+  trialEndingSoon: undefined,
   marketCondition: 'good',
   conditionLine: '',
 }
@@ -115,6 +116,23 @@ describe('pickBanner', () => {
     })
     expect(r?.severity).toBe('paused')
     expect(r?.text).toBe('Flame is paused.')
+  })
+
+  it('trial ending beats market condition but loses to payment and paused', () => {
+    const r = pickBanner({ ...base, trialEndingSoon: true, marketCondition: 'no_trading' })
+    expect(r?.severity).toBe('trial_ending')
+    expect(r?.action).toEqual({ label: 'Manage Billing', target: 'billing' })
+    expect(r?.dismissible).toBe(false)
+
+    const beatenByPayment = pickBanner({ ...base, trialEndingSoon: true, membershipBadge: 'Payment due' })
+    expect(beatenByPayment?.severity).toBe('payment')
+
+    const beatenByPaused = pickBanner({
+      ...base,
+      trialEndingSoon: true,
+      agents: [agent('flame', { state: { key: 'PAUSED' } as any })],
+    })
+    expect(beatenByPaused?.severity).toBe('paused')
   })
 
   it('no_trading beats caution', () => {
