@@ -68,7 +68,7 @@ function RailHeader({ children }: { children: React.ReactNode }) {
 }
 
 /** One reply's row inside a thread panel — same avatar/AI-tag treatment as the top-level feed. */
-function ReplyRow({ reply }: { reply: CommunityMessage }) {
+function ReplyRow({ reply, canReact }: { reply: CommunityMessage; canReact: boolean }) {
   return (
     <div className="flex gap-2">
       <Avatar message={reply} size="h-6 w-6" />
@@ -81,6 +81,9 @@ function ReplyRow({ reply }: { reply: CommunityMessage }) {
           <span className="text-[10px] text-[var(--muted)]">{timeLabel(reply.created_at)}</span>
         </div>
         <div className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--muted)]">{reply.message}</div>
+        {canReact && reply.blockable && !reply.mine && (
+          <div className="mt-0.5"><ReportControl messageId={reply.id} /></div>
+        )}
       </div>
     </div>
   )
@@ -91,7 +94,7 @@ function ReplyRow({ reply }: { reply: CommunityMessage }) {
  * themselves. Read-only on web by design: posting a reply is the mobile flow
  * (mobile is the priority for threads); the web page just needs a way to SEE them.
  */
-function ThreadPanel({ parentId }: { parentId: string }) {
+function ThreadPanel({ parentId, canReact }: { parentId: string; canReact: boolean }) {
   const { data, error } = useSWR<{ replies: CommunityMessage[] }>(
     `/api/community/messages/${parentId}/replies`, fetcher,
   )
@@ -106,7 +109,7 @@ function ThreadPanel({ parentId }: { parentId: string }) {
         <div className="text-[11px] text-[var(--muted)]">No replies yet.</div>
       ) : (
         <>
-          {data.replies.map((r) => <ReplyRow key={r.id} reply={r} />)}
+          {data.replies.map((r) => <ReplyRow key={r.id} reply={r} canReact={canReact} />)}
           {hasAi && (
             <div className="text-[10px] text-[var(--muted)]">
               AI updates are general market context, not personalized advice.
@@ -114,6 +117,70 @@ function ThreadPanel({ parentId }: { parentId: string }) {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+/** Reason codes the API accepts (lib/community/store.ts REPORT_REASONS), paired with
+ *  the plain-language label shown in the picker. */
+const REPORT_REASON_LABELS: Array<[string, string]> = [
+  ['SPAM', 'Spam'],
+  ['HARASSMENT', 'Harassment'],
+  ['HATE', 'Hate'],
+  ['ADVICE', 'Unsolicited advice'],
+  ['OTHER', 'Other'],
+]
+
+/** Report control (db-community "Members can report posts" — gap audit #197). Wired to
+ *  the existing POST /api/community/reports, which already exists and already has a web
+ *  caller count of zero per the audit; this is that caller. Hidden on your own posts and
+ *  on AI/system posts (CommunityMessage.mine / .blockable already encode exactly that). */
+function ReportControl({ messageId }: { messageId: string }) {
+  const [open, setOpen] = useState(false)
+  const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+
+  async function submit(reason: string) {
+    setState('sending')
+    try {
+      const res = await fetch('/api/community/reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message_id: messageId, reason }),
+      })
+      if (!res.ok) throw new Error('report failed')
+      setState('sent')
+      setOpen(false)
+    } catch {
+      setState('error')
+    }
+  }
+
+  if (state === 'sent') {
+    return <span className="text-[11px] text-[var(--muted)]">Reported</span>
+  }
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)}
+        className="text-[11px] text-[var(--muted)] opacity-60 transition-opacity hover:opacity-100 hover:text-[var(--fg)]">
+        Report
+      </button>
+    )
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <span className="text-[11px] text-[var(--muted)]">Report as:</span>
+      {REPORT_REASON_LABELS.map(([code, label]) => (
+        <button key={code} type="button" disabled={state === 'sending'} onClick={() => submit(code)}
+          className="rounded-full border border-[var(--line)] px-2 py-0.5 text-[11px] text-[var(--muted)] hover:border-[var(--bad)]/50 hover:text-[var(--bad)]">
+          {label}
+        </button>
+      ))}
+      <button type="button" onClick={() => setOpen(false)} className="text-[11px] text-[var(--muted)] hover:opacity-80">
+        Cancel
+      </button>
+      {state === 'error' && <span className="text-[11px] text-[var(--bad)]">Couldn&apos;t send — try again</span>}
     </div>
   )
 }
@@ -163,8 +230,14 @@ function MessageRow({ msg, canReact, onReact }: {
               {threadOpen ? 'Hide replies' : `${msg.reply_count} ${msg.reply_count === 1 ? 'reply' : 'replies'}`}
             </button>
           )}
+          {canReact && msg.blockable && !msg.mine && (
+            <>
+              <span className="text-[var(--line)]">·</span>
+              <ReportControl messageId={msg.id} />
+            </>
+          )}
         </div>
-        {threadOpen && <ThreadPanel parentId={msg.id} />}
+        {threadOpen && <ThreadPanel parentId={msg.id} canReact={canReact} />}
       </div>
     </div>
   )
