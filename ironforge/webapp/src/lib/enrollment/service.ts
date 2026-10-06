@@ -57,6 +57,24 @@ export async function getOpenEnrollment(userId: string): Promise<EnrollmentRow |
 }
 
 /**
+ * Legal-before-brokerage, SERVER-enforced (dev-handoff "real security/compliance
+ * gap" — only the page redirect blocked this before; a direct API call sequence
+ * could skip consent entirely).
+ *
+ * Scoped to an OPEN enrollment ONLY — `getOpenEnrollment` already excludes
+ * 'complete'/'abandoned' rows, so an existing customer reconnecting or adding a
+ * brokerage from Account Settings (no open enrollment; they finished legal the first
+ * time) is never blocked by this. A brand-new or mid-funnel enrollment that has not
+ * yet accepted every required document for its (possibly still-null) plan is.
+ */
+export async function legalCompleteForOpenEnrollment(userId: string): Promise<boolean> {
+  const enrollment = await getOpenEnrollment(userId)
+  if (!enrollment) return true
+  const { outstanding } = await legalRequirementsFor(enrollment.selected_plan ?? 'automate', userId)
+  return outstanding.length === 0
+}
+
+/**
  * Create or RESUME. One open enrollment per user by design — "Create/resume intent"
  * (§6) — so a customer who abandons and returns continues rather than forking a second
  * funnel whose plan and acceptances disagree with the first.

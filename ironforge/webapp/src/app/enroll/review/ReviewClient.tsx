@@ -191,6 +191,27 @@ export default function ReviewClient() {
       ? Math.round((preview.snapshot.max_deployment_cents / preview.snapshot.buying_power_cents) * 100)
       : null
   const visibleBlockers = blockers.filter((b) => b.code !== 'ACKNOWLEDGMENTS_MISSING' && b.code !== 'PREVIEW_STALE')
+  // Design §5 step 6 "Pre-launch checks": a fixed, ALWAYS-ITEMIZED list — never
+  // collapsed to one line when everything passes (gap audit PARTIAL — previously
+  // collapsed). Each row maps to whichever real blocker code(s) would clear it.
+  const blockerByCode = new Map(visibleBlockers.map((b) => [b.code, b]))
+  const preLaunchChecks: Array<{ label: string; ok: boolean; blocker: Blocker | null }> = preview
+    ? [
+        { label: 'Account verified', ok: !blockerByCode.has('EMAIL_NOT_VERIFIED'), blocker: blockerByCode.get('EMAIL_NOT_VERIFIED') ?? null },
+        { label: 'Agreements signed', ok: !!preview.snapshot.legal_signed_at && !blockerByCode.has('LEGAL_ACCEPTANCE_STALE'), blocker: blockerByCode.get('LEGAL_ACCEPTANCE_STALE') ?? null },
+        {
+          label: 'Brokerage connected',
+          ok: !blockerByCode.has('BROKERAGE_NOT_CONNECTED') && !blockerByCode.has('BROKER_ACCOUNT_INELIGIBLE'),
+          blocker: blockerByCode.get('BROKERAGE_NOT_CONNECTED') ?? blockerByCode.get('BROKER_ACCOUNT_INELIGIBLE') ?? null,
+        },
+        {
+          label: 'Billing ready',
+          ok: isEmber || (!blockerByCode.has('MEMBERSHIP_NOT_ACTIVE') && !blockerByCode.has('PAYMENT_METHOD_INVALID')),
+          blocker: blockerByCode.get('MEMBERSHIP_NOT_ACTIVE') ?? blockerByCode.get('PAYMENT_METHOD_INVALID') ?? null,
+        },
+        { label: 'Agent configured', ok: !blockerByCode.has('AGENT_CONFIG_NOT_VALID'), blocker: blockerByCode.get('AGENT_CONFIG_NOT_VALID') ?? null },
+      ]
+    : []
   // Gate on the server's own verdict (audit minor): the button used to be live even
   // while "Before you can activate:" listed blockers, so clicking just re-rendered
   // the same list. can_activate is the authority; ACKNOWLEDGMENTS_MISSING is the only
@@ -217,71 +238,95 @@ export default function ReviewClient() {
 
         {preview ? (
           <>
-            {/* Checks banner */}
-            {visibleBlockers.length === 0 ? (
-              <p className="check-row ok" style={{ marginTop: 20 }}>
-                <span
-                  aria-hidden
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    display: 'inline-block',
-                    background: isSpark ? 'var(--spark)' : isEmber ? EMBER_AGENT.accent : 'var(--flame)',
-                  }}
-                />
-                All required checks passed
-              </p>
-            ) : (
-              <div className="check-row bad" style={{ display: 'block', marginTop: 20 }}>
-                <p style={{ fontWeight: 600 }}>Before you can activate:</p>
-                <ul style={{ marginTop: 8, display: 'grid', gap: 6 }}>
-                  {visibleBlockers.map((b) => (
-                    <li key={b.code} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline' }}>
-                      <span>{b.message}</span>
-                      {b.code === 'EMAIL_NOT_VERIFIED' ? (
-                        resendState === 'sent' ? (
-                          <span style={{ fontSize: '.78rem', color: 'var(--up)' }}>
-                            Verification email sent — check your inbox, then come back here.
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={resendVerification}
-                            disabled={resendState === 'sending'}
-                            className="link"
-                            style={{ fontSize: '.78rem', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
-                          >
-                            {resendState === 'sending' ? 'Sending…' : 'Resend verification email →'}
-                          </button>
-                        )
-                      ) : b.remediable && BLOCKER_ROUTE[b.code] ? (
-                        <Link href={BLOCKER_ROUTE[b.code]} className="link" style={{ fontSize: '.78rem' }}>
-                          Fix this →
-                        </Link>
-                      ) : !b.remediable ? (
-                        /* Non-remediable (e.g. KILL_SWITCH_ENGAGED, a platform pause):
-                           there's no self-service fix, but a dead end with no next
-                           action is worse (audit M12). Point to support. */
-                        <a href="/support" className="link" style={{ fontSize: '.78rem' }}>
-                          Contact support →
-                        </a>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
+            {/* Pre-launch checks — ALWAYS itemized (design §5 step 6), never collapsed
+                to a single line when everything passes. */}
+            <div className="card pad" style={{ marginTop: 20 }}>
+              <h3 style={{ marginBottom: 10 }}>Pre-launch checks</h3>
+              <div style={{ display: 'grid', gap: 6 }}>
+                {preLaunchChecks.map((c) => (
+                  <div key={c.label} className={`check-row ${c.ok ? 'ok' : 'bad'}`} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline' }}>
+                    <span
+                      aria-hidden
+                      style={{ width: 8, height: 8, borderRadius: '50%', display: 'inline-block', background: c.ok ? 'var(--up)' : 'var(--bad)' }}
+                    />
+                    <span>{c.label}{!c.ok ? ' · go back and finish this step' : ''}</span>
+                    {!c.ok && c.blocker?.code === 'EMAIL_NOT_VERIFIED' ? (
+                      resendState === 'sent' ? (
+                        <span style={{ fontSize: '.78rem', color: 'var(--up)' }}>
+                          Verification email sent — check your inbox, then come back here.
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={resendVerification}
+                          disabled={resendState === 'sending'}
+                          className="link"
+                          style={{ fontSize: '.78rem', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
+                        >
+                          {resendState === 'sending' ? 'Sending…' : 'Resend verification email →'}
+                        </button>
+                      )
+                    ) : !c.ok && c.blocker && BLOCKER_ROUTE[c.blocker.code] ? (
+                      <Link href={BLOCKER_ROUTE[c.blocker.code]} className="link" style={{ fontSize: '.78rem' }}>
+                        Fix this →
+                      </Link>
+                    ) : null}
+                  </div>
+                ))}
               </div>
-            )}
+            </div>
+
+            {/* Any blocker outside the 5 fixed checks above (e.g. a non-remediable
+                platform pause, or Ember's one-per-person conflict) still needs its own
+                row — the fixed checklist doesn't name every possible blocker code. */}
+            {(() => {
+              const named = new Set(preLaunchChecks.map((c) => c.blocker?.code).filter(Boolean))
+              const extra = visibleBlockers.filter((b) => !named.has(b.code))
+              if (extra.length === 0) return null
+              return (
+                <div className="check-row bad" style={{ display: 'block', marginTop: 10 }}>
+                  <ul style={{ display: 'grid', gap: 6 }}>
+                    {extra.map((b) => (
+                      <li key={b.code} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline' }}>
+                        <span>{b.message}</span>
+                        {b.remediable && BLOCKER_ROUTE[b.code] ? (
+                          <Link href={BLOCKER_ROUTE[b.code]} className="link" style={{ fontSize: '.78rem' }}>
+                            Fix this →
+                          </Link>
+                        ) : !b.remediable ? (
+                          /* Non-remediable (e.g. KILL_SWITCH_ENGAGED, a platform pause):
+                             there's no self-service fix, but a dead end with no next
+                             action is worse (audit M12). Point to support. */
+                          <a href="/support" className="link" style={{ fontSize: '.78rem' }}>
+                            Contact support →
+                          </a>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )
+            })()}
 
             <div className="row2" style={{ marginTop: 20 }}>
               {/* Trading setup */}
               <div className="card pad">
                 <h3>Trading setup</h3>
                 <dl className="rv" style={{ marginTop: 10, gap: 10, display: 'grid' }}>
-                  {/* Account — no Edit link: account creation happens on /signup, before
-                      this rail starts, and there is no in-rail step to return to (documented
-                      deviation, see EnrollShell.tsx). Shown for completeness (en-6 #128). */}
-                  <div className="sum-row"><dt>Account</dt><dd>{preview.snapshot.email || '—'}</dd></div>
+                  {/* Account — Edit points at Settings (gap audit MISSING): account
+                      creation happens on /signup, before this rail starts, and there is
+                      no in-rail step to return to (en-6 #128), but "no destination at
+                      all" is worse than routing to where name/email are actually
+                      managed today. */}
+                  <div className="sum-row">
+                    <dt>Account</dt>
+                    <dd>
+                      {preview.snapshot.email || '—'}
+                      <Link href="/settings" className="link" style={{ marginLeft: 8, fontSize: '.78rem' }}>
+                        Edit
+                      </Link>
+                    </dd>
+                  </div>
                   <div className="sum-row">
                     <dt>Agreements</dt>
                     <dd>

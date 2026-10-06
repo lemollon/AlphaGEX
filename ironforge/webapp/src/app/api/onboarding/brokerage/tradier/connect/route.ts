@@ -4,6 +4,7 @@ import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isTradierOAuthConfigured, buildAuthorizeUrl, tradierPkceEnabled } from '@/lib/tradier-oauth'
 import { createOAuthState } from '@/lib/enrollment/oauth-state'
 import { isCustomersDbConfigured, customerExecute } from '@/lib/customers-db'
+import { legalCompleteForOpenEnrollment } from '@/lib/enrollment/service'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -31,6 +32,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { ok: false, error: 'Tradier connection is temporarily unavailable. Please try again shortly.' },
       { status: 503 },
+    )
+  }
+
+  // Legal-before-brokerage, server-enforced (not just the page redirect). Only an
+  // OPEN enrollment can be blocked here — an existing customer with no open
+  // enrollment already finished legal and is unaffected.
+  if (!(await legalCompleteForOpenEnrollment(uid))) {
+    return NextResponse.json(
+      { ok: false, error: 'Please review and accept the required agreements before connecting a brokerage.' },
+      { status: 409 },
     )
   }
 
