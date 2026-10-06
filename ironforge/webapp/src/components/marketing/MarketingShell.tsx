@@ -1,5 +1,3 @@
-import { GeistSans } from 'geist/font/sans'
-import { GeistMono } from 'geist/font/mono'
 import MarketingIcons from './MarketingIcons'
 import MarketingNav from './MarketingNav'
 import MarketingFooter from './MarketingFooter'
@@ -14,16 +12,14 @@ import { WaitlistModalProvider } from './WaitlistModal'
  * whole marketing site, not one per page (ps-ctas "Join the waitlist -> Opens
  * waitlist modal, no navigation").
  *
- * Geist (body/UI) and Geist Mono (clock/numeric displays) are loaded here via
- * next/font (the `geist` package, built on `next/font/local`) and scoped to
- * these public pages only — `forge-tokens.css`'s `--sans`/`--mono` pick up
- * the `--font-geist-sans`/`--font-geist-mono` variables set by these classes.
- * Dashboard/enroll keep their existing Inter/Oswald typography untouched.
- * The Barlow Condensed wordmark (`--brand`) is unaffected.
+ * Geist, Geist Mono and Barlow Condensed are loaded once at the app root
+ * (src/app/layout.tsx) so `forge-tokens.css`'s `--sans`/`--mono`/`--brand`
+ * resolve the same way on marketing, enrollment and the customer dashboard —
+ * not just here. This wrapper only adds the `.ifw-marketing` scope.
  */
 export default function MarketingShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className={`ifw-marketing ${GeistSans.variable} ${GeistMono.variable}`}>
+    <div className="ifw-marketing">
       <MarketingIcons />
       <WaitlistModalProvider>
         <MarketingNav />

@@ -38,10 +38,15 @@ export function formatGreek(n: number | null | undefined, decimals = 4): string 
   return `${sign}${n.toFixed(decimals)}`
 }
 
-/** Format as dollar P&L with sign. null → "--", +$125.50, -$42.00 */
+/**
+ * Format as dollar P&L with sign. null → "--", +$125.50, −$42.00
+ *
+ * Negatives use the true minus sign (U+2212), not the ASCII hyphen — the
+ * design system calls this out explicitly (ds-kpi: "a true minus sign").
+ */
 export function formatDollarPnl(n: number | null | undefined): string {
   if (n == null || isNaN(n)) return '--'
-  const sign = n > 0 ? '+' : n < 0 ? '-' : ''
+  const sign = n > 0 ? '+' : n < 0 ? '−' : ''
   const abs = Math.abs(n)
   return `${sign}${currencyFmt2.format(abs).replace('-', '')}`
 }

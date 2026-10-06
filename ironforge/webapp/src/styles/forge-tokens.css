@@ -13,8 +13,8 @@
   --spark:#1f7ae0;--flame:#f0600d;--ember:#b52fe0;
   --av:#0b0b0f;
   --c-spark:#1f7ae0;--c-flame:#f0600d;
-  --warn:#b7791f;--bad:#d23a2a;
-  --brand:"Barlow Condensed","Arial Narrow",sans-serif;
+  --warn:#b7791f;--bad:#d23a2a;--down:var(--bad);
+  --brand:var(--font-barlow-condensed,"Barlow Condensed"),"Arial Narrow",sans-serif;
   --sans:var(--font-geist-sans,"Geist"),"Segoe UI",system-ui,-apple-system,sans-serif;
   --mono:var(--font-geist-mono,"Geist Mono"),ui-monospace,Menlo,monospace;
   --r:12px;--r-sm:8px;
