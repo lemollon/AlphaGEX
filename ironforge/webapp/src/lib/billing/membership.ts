@@ -80,6 +80,21 @@ export interface MembershipResponse {
      *  #212), mirrored from lib/live/membership.ts's web card so the app and the web
      *  dashboard agree on the same trading-day ledger, not two different clocks. */
     trial_ending_soon: boolean
+    /**
+     * Per-agent breakdown (gap audit MISSING — "One blended total for multi-agent
+     * owners, no per-bot breakdown"). resolvePlan()'s blended `plan`/`price_monthly`
+     * above stays as-is for the single-line summary; this is the itemized view for a
+     * customer who owns more than one agent, each with its own price and trial clock.
+     */
+    agents: Array<{
+      bot: string
+      name: string
+      price_monthly: number
+      status: string
+      badge: string
+      next_billing_date: string | null
+      trial_ending_soon: boolean
+    }>
   } | null
 }
 
@@ -130,6 +145,40 @@ export async function buildMembershipResponse(customerId: string): Promise<Membe
     }
   }
 
+  // Per-agent breakdown — one row per owned trading bot, each with ITS OWN trial
+  // clock (trials.agent_code scopes the ledger per bot; resolvePlan()'s blended
+  // total above has no concept of "this one's trial ends tomorrow but that one
+  // just started").
+  const agents = await Promise.all(
+    live
+      .filter((r): r is SubRow & { bot: BotSlug } => r.bot === 'spark' || r.bot === 'flame')
+      .map(async (r) => {
+        const plan = BOT_PLANS[r.bot]
+        let agentTrialEndingSoon = false
+        if (r.status === 'trialing') {
+          const ledger = await customerQuery<{ eligible_days_used: string | null }>(
+            `SELECT eligible_days_used::text FROM trials
+              WHERE user_id = $1 AND agent_code = $2 AND status = 'active'
+              ORDER BY started_at DESC LIMIT 1`,
+            [customerId, r.bot],
+          ).catch(() => [] as Array<{ eligible_days_used: string | null }>)
+          if (ledger[0]) {
+            const used = Math.min(TRIAL_ELIGIBLE_DAYS, Math.max(0, Number(ledger[0].eligible_days_used ?? 0)))
+            agentTrialEndingSoon = TRIAL_ELIGIBLE_DAYS - used <= 1
+          }
+        }
+        return {
+          bot: r.bot,
+          name: plan.name,
+          price_monthly: plan.priceMonthly,
+          status: r.status,
+          badge: badgeFor(r.status),
+          next_billing_date: r.current_period_end,
+          trial_ending_soon: agentTrialEndingSoon,
+        }
+      }),
+  )
+
   return {
     ok: true,
     configured: true,
@@ -147,6 +196,7 @@ export async function buildMembershipResponse(customerId: string): Promise<Membe
       // not expected in practice, but Apple wins the label if it ever happens.
       provider: live.some((r) => r.provider === 'apple') ? 'apple' : 'stripe',
       trial_ending_soon: trialEndingSoon,
+      agents,
     },
   }
 }
