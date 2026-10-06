@@ -17,6 +17,7 @@
 import Constants from 'expo-constants'
 import { setItem, getItem, deleteItem, AFTER_FIRST_UNLOCK } from '@/api/storage'
 import { ApiError } from '@/api/errors'
+import { reportNetworkSuccess, reportNetworkFailure } from '@/live/connectivity'
 
 export { ApiError }
 
@@ -143,6 +144,15 @@ export async function refreshAccessToken(): Promise<string | null> {
   return refreshInFlight
 }
 
+/**
+ * Capability header announcing "this build understands step-up and will present a
+ * step-up token on a gated route" (webapp's lib/auth/mobile-step-up.ts). Sent on
+ * EVERY authenticated call, not just the gated ones — the server decides per-route
+ * whether step-up applies at all; this header only tells it which protocol this
+ * client speaks. MUST match STEP_UP_CAPABLE_HEADER in that file exactly.
+ */
+const STEP_UP_CAPABLE_HEADER = 'x-ironforge-stepup'
+
 export interface ApiOptions extends Omit<RequestInit, 'body'> {
   body?: unknown
   /** Step-up token for a sensitive action (MOBILE_SESSION_POLICY.stepUpActions). */
@@ -161,16 +171,27 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Pro
 
   const headers: Record<string, string> = {
     accept: 'application/json',
+    [STEP_UP_CAPABLE_HEADER]: '1',
     ...((opts.headers as Record<string, string>) ?? {}),
   }
   if (token) headers.authorization = `Bearer ${token}`
   if (opts.body !== undefined) headers['content-type'] = 'application/json'
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...opts,
-    headers,
-    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-  })
+  // Offline handling (#294): a network-layer failure (fetch itself rejecting — no
+  // connection, DNS, timeout) reports here directly, distinct from an ordinary HTTP
+  // error status below, which proves the request actually reached the server.
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...opts,
+      headers,
+      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    })
+  } catch (e) {
+    reportNetworkFailure()
+    throw e
+  }
+  reportNetworkSuccess()
 
   if (res.status === 401 && !opts._retried && !opts.stepUpToken) {
     const fresh = await refreshAccessToken()

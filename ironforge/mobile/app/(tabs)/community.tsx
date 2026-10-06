@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from 'react-native'
+import { useFocusEffect, useScrollToTop } from '@react-navigation/native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import Svg, { Path } from 'react-native-svg'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
@@ -34,6 +35,7 @@ import { AppHeader, Mascot, SPARKY_AVATAR } from '@/components/Brand'
 import { applyHeart, FLAME, HEART } from '@/community/reactions'
 import { trackEvent } from '@/analytics/trackEvent'
 import { initials, channelAccent, bubbleTint } from '@/community/identity'
+import { markCommunityRead } from '@/community/unread'
 import {
   appendOptimisticReply,
   applyHeartToReply,
@@ -70,6 +72,16 @@ const WELCOME_DISMISSED_KEY = 'ironforge.community.welcomeDismissed'
 export default function CommunityScreen() {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
+  // Re-tap-tab-to-scroll-to-top (#231).
+  const scrollRef = useRef<ScrollView>(null)
+  useScrollToTop(scrollRef)
+  // Community unread badge (#229) — mark read every time this tab gains focus, not
+  // just on first mount, so re-visiting after new posts land clears the badge again.
+  useFocusEffect(
+    useCallback(() => {
+      void markCommunityRead()
+    }, []),
+  )
   const [channel, setChannel] = useState('all-chat')
   const [draft, setDraft] = useState('')
   const [posting, setPosting] = useState(false)
@@ -255,6 +267,7 @@ export default function CommunityScreen() {
   return (
     <Shell>
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={{ padding: space.lg }}
         refreshControl={
           <RefreshControl refreshing={isValidating} onRefresh={() => mutate()} tintColor={color.accent} />

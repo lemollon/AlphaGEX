@@ -731,6 +731,9 @@ function ActivationFlow({
   const [idemKey] = useState(() => generateIdempotencyKey())
   // Confetti (mobile addendum §2 "Add-agent sheet": "confetti in agent color on
   // success") — fires once, the moment activation succeeds, then clears itself.
+  // Single agent hue (design fidelity audit, App — "Add-agent confetti"): the
+  // shipped version mixed in color.pos and color.text, which reads as a generic
+  // success burst rather than THIS agent's own color.
   const [showConfetti, setShowConfetti] = useState(false)
   // Which accountId the preview on screen (or in flight) belongs to — guards the
   // auto-fetch effect below from re-firing for the account it already fetched, while
@@ -834,7 +837,7 @@ function ActivationFlow({
           </Pressable>
         </Card>
         {showConfetti ? (
-          <Confetti colors={[agentAccent(bot), color.pos, color.text]} onDone={() => setShowConfetti(false)} />
+          <Confetti colors={[agentAccent(bot)]} onDone={() => setShowConfetti(false)} />
         ) : null}
       </View>
     )

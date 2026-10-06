@@ -252,6 +252,44 @@ export async function toggleReaction(messageId: string, userId: string, emoji: s
   return 'added'
 }
 
+/**
+ * Unread count for the tab badge (#229) — every top-level message NOT authored by
+ * this viewer, posted after their stored `last_read_at`, across every channel (the
+ * badge is one number for the whole tab, not per-channel). Capped display-side by
+ * the caller; this returns the real count so a customer who has been away for days
+ * does not see a misleadingly small number.
+ *
+ * Replies count too (parent_id IS NOT NULL is not excluded here) — a new reply in a
+ * thread you're part of is exactly the kind of thing the badge exists to surface,
+ * unlike the top-level-only feed list.
+ */
+export async function getUnreadCount(viewerId: string): Promise<number> {
+  const rows = await customerQuery<{ count: string }>(
+    `SELECT COUNT(*)::text AS count
+       FROM community_messages m
+      WHERE m.user_id IS DISTINCT FROM $1::uuid
+        AND m.created_at > COALESCE(
+          (SELECT last_read_at FROM community_reads WHERE user_id = $1::uuid),
+          'epoch'::timestamptz
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM community_blocks b
+           WHERE b.blocker_id = $1::uuid AND b.blocked_id = m.user_id
+        )`,
+    [viewerId],
+  )
+  return Number(rows[0]?.count ?? 0)
+}
+
+/** Marks the feed read as of now — called when the Community tab is opened/focused. */
+export async function markRead(viewerId: string): Promise<void> {
+  await customerExecute(
+    `INSERT INTO community_reads (user_id, last_read_at) VALUES ($1, now())
+     ON CONFLICT (user_id) DO UPDATE SET last_read_at = now()`,
+    [viewerId],
+  )
+}
+
 export async function touchPresence(userId: string, displayName: string): Promise<void> {
   await customerExecute(
     `INSERT INTO community_presence (user_id, display_name, last_seen)

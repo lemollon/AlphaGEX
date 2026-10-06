@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, ScrollView, Pressable, Switch, StyleSheet, Alert, Linking, Platform } from 'react-native'
+import { useScrollToTop } from '@react-navigation/native'
 import * as Clipboard from 'expo-clipboard'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import * as WebBrowser from 'expo-web-browser'
@@ -15,21 +16,24 @@ import type {
   PaymentMethodResponse,
   AutomationPauseResponse,
   AutomationActivation,
+  EntitlementsResponse,
 } from '@/api/types'
 import { signOut, biometricsAvailable, isBiometricEnabled, setBiometricEnabled } from '@/auth/session'
 import { unregisterPushDevice } from '@/notifications/push'
 import { canManageBillingInApp, manageSubscriptionUrl } from '@/billing/store-policy'
-import { space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
-import type { AppearancePreference } from '@/theme/palette'
 import { Card, SectionLabel, Row, Loading, ErrorState } from '@/components/ui'
 import { AppHeader, Mascot, SPARKY_AVATAR } from '@/components/Brand'
 import { SUPPORT_EMAIL, supportMailto } from '@/support/contact'
 import { BrokerageSection } from '@/components/BrokerageSection'
 import { AGENT_LABEL } from '@/agents/copy'
+import { agentDetailHref, type AgentBot } from '@/agents/routes'
 import { showToast } from '@/notifications/toast'
 import { trackEvent } from '@/analytics/trackEvent'
+
+const ALL_BOTS: AgentBot[] = ['spark', 'flame', 'ember']
 
 /**
  * Account — UX-006 (APP-037/038/039/040/043/044/058/059/060).
@@ -59,9 +63,12 @@ import { trackEvent } from '@/analytics/trackEvent'
  * non-subscribers is exactly the bug that was deleted when Stripe landed.
  */
 export default function AccountScreen() {
-  const { colors: color, preference, setPreference } = useTheme()
+  const { colors: color, scheme, setPreference } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
+  // Re-tap-tab-to-scroll-to-top (#231).
+  const scrollRef = useRef<ScrollView>(null)
+  useScrollToTop(scrollRef)
   // The fetcher's return type must be explicit. With no third (config) argument, SWR's
   // overloads let TypeScript read `(p: string) => api(p)` — which resolves to
   // Promise<unknown> — as a config object instead of a fetcher, and the call fails to
@@ -92,6 +99,14 @@ export default function AccountScreen() {
   // control that calls it that way.
   const pauseSWR = useSWR<AutomationPauseResponse>('/api/v1/automation/pause', (p: string) =>
     api<AutomationPauseResponse>(p),
+  )
+  // Ember ownership (#3177) — /api/v1/automation/pause never includes Ember (it has no
+  // spark/flame-style activation row; see automation/pause/route.ts's agent allowlist),
+  // so the inline agent list below needs this separately to know whether to render
+  // Ember as an owned row or an "Add Ember" row. Same cache key the Forge tab and the
+  // agent sheet already fetch — SWR shares it.
+  const entitlementsSWR = useSWR<EntitlementsResponse>('/api/billing/entitlements', (p: string) =>
+    api<EntitlementsResponse>(p),
   )
   const [pausingAll, setPausingAll] = useState(false)
   // In-flight guard per agent (10.4 design `.lrow` inline switch) — a Set rather than
@@ -267,7 +282,7 @@ export default function AccountScreen() {
 
   return (
     <Shell>
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}>
+      <ScrollView ref={scrollRef} contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}>
         <Text style={s.title}>Account</Text>
 
         <Card>
@@ -433,32 +448,76 @@ export default function AccountScreen() {
           ) : null}
         </Card>
 
-        {/* Inline per-agent pause/resume (10.4 design Account tab `.lrow` + Switch) —
-            one row per activation, still under "Agents and Billing" rather than a
-            separate "Trading" heading the design never has. */}
-        {(pauseSWR.data?.activations.length ?? 0) > 0 ? (
-          <Card style={{ marginTop: space.md }}>
-            {pauseSWR.data!.activations.map((a, i) => (
-              <View key={a.agent} style={[s.agentRow, i > 0 && s.agentRowDivider]}>
-                <Mascot bot={a.agent} size={30} />
-                <View style={{ flex: 1, marginLeft: space.md }}>
-                  <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
-                    {AGENT_LABEL[a.agent as keyof typeof AGENT_LABEL] ?? a.agent}
-                  </Text>
-                  <Text style={[type.label, { color: color.muted, marginTop: 1 }]}>
-                    {a.paused ? 'Paused' : 'Trading'}
-                  </Text>
+        {/* Inline per-agent rows (10.4 design Account tab `.lrow` + Switch,
+            ironforge-app.html line ~663-664) — one row per OWNED agent with its
+            pause/resume switch, PLUS an inline "Add {Agent}" row for anything this
+            viewer does not yet own, all in the same card. Previously only the
+            owned-agent switches existed; there was no way to add Spark/Flame/Ember
+            without leaving Account for the Forge tab or /agents. Pricing is
+            deliberately not repeated here — MembershipResponse carries one price for
+            the whole membership, not a verified per-agent figure, and the card above
+            already shows the real number once rather than risking a second, possibly
+            misleading one per row. */}
+        {(() => {
+          const ownedAgentBots = new Set(
+            (pauseSWR.data?.activations ?? []).map((a) => a.agent as AgentBot),
+          )
+          const ownsEmber = (entitlementsSWR.data?.bots ?? []).includes('ember')
+          if (ownsEmber) ownedAgentBots.add('ember')
+          const addableBots = ALL_BOTS.filter((b) => !ownedAgentBots.has(b))
+          if (ownedAgentBots.size === 0 && addableBots.length === 0) return null
+          return (
+            <Card style={{ marginTop: space.md }}>
+              {(pauseSWR.data?.activations ?? []).map((a, i) => (
+                <View key={a.agent} style={[s.agentRow, i > 0 && s.agentRowDivider]}>
+                  <Mascot bot={a.agent} size={30} />
+                  <View style={{ flex: 1, marginLeft: space.md }}>
+                    <Text
+                      style={[
+                        type.body,
+                        { color: agentAccent(a.agent as AgentBot), fontFamily: font.bodyBold },
+                      ]}
+                    >
+                      {AGENT_LABEL[a.agent as keyof typeof AGENT_LABEL] ?? a.agent}
+                    </Text>
+                    <Text style={[type.label, { color: color.muted, marginTop: 1 }]}>
+                      {a.paused ? 'Paused' : 'Trading'} · Community included
+                    </Text>
+                  </View>
+                  <Switch
+                    value={!a.paused}
+                    disabled={togglingAgents.has(a.agent)}
+                    onValueChange={(on) => void toggleAgent(a.agent, !on)}
+                    trackColor={{ true: color.accent, false: color.border }}
+                  />
                 </View>
-                <Switch
-                  value={!a.paused}
-                  disabled={togglingAgents.has(a.agent)}
-                  onValueChange={(on) => void toggleAgent(a.agent, !on)}
-                  trackColor={{ true: color.accent, false: color.border }}
-                />
-              </View>
-            ))}
-          </Card>
-        ) : null}
+              ))}
+              {addableBots.map((bot, i) => (
+                <Pressable
+                  key={bot}
+                  onPress={() => router.push(agentDetailHref(bot))}
+                  accessibilityRole="button"
+                  style={[s.agentRow, (i > 0 || ownedAgentBots.size > 0) && s.agentRowDivider]}
+                >
+                  <Mascot bot={bot} size={30} />
+                  <View style={{ flex: 1, marginLeft: space.md }}>
+                    <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]}>
+                      {`Add ${AGENT_LABEL[bot]}`}
+                    </Text>
+                    <Text style={[type.label, { color: color.muted, marginTop: 1 }]} numberOfLines={1}>
+                      {bot === 'ember' ? 'Free · one account per person' : 'Community included'}
+                    </Text>
+                  </View>
+                  <View style={[s.addTag, { borderColor: color.border }]}>
+                    <Text style={[type.label, { color: color.textDim, fontFamily: font.bodyMedium }]}>
+                      Add
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+            </Card>
+          )
+        })()}
 
         <BrokerageSection />
 
@@ -475,12 +534,28 @@ export default function AccountScreen() {
             onPress={() => router.push('/notifications')}
             first
           />
-          <Row
-            icon="contrast-outline"
-            label="Appearance"
-            detail={appearanceDetail(preference)}
-            onPress={() => openAppearancePicker(preference, setPreference)}
-          />
+          {/* 10.4 design (ironforge-app.html `#dmSw`): an inline Switch, not the
+              Alert.alert System/Light/Dark picker this used to be. The design's own
+              row is a plain binary "Dark mode" toggle with no inline System option,
+              so flipping it always sets an explicit preference — same as the design's
+              setTheme(checked?'dark':'light'). 'system' as a stored preference is
+              still supported (ThemeContext/preference.ts); this row just never writes
+              it, matching the one control the design actually shows here. */}
+          <View style={[s.rowBetween, s.row, s.rowDivider]}>
+            <View style={s.rowCenter}>
+              <Ionicons name="moon-outline" size={18} color={color.textDim} />
+              <Text style={[type.body, { color: color.text }]}>Dark mode</Text>
+            </View>
+            <Switch
+              value={scheme === 'dark'}
+              onValueChange={(on) => {
+                const pref = on ? 'dark' : 'light'
+                setPreference(pref)
+                trackEvent('theme_toggle', { theme: pref })
+              }}
+              trackColor={{ true: color.accent, false: color.border }}
+            />
+          </View>
         </Card>
 
         {/* 10.4 design "Help" — Ask Sparky, Email support and (folded in here, under
@@ -571,41 +646,6 @@ export default function AccountScreen() {
 function allAgentsPaused(activations: AutomationActivation[] | undefined): boolean {
   if (!activations || activations.length === 0) return false
   return activations.every((a) => a.paused)
-}
-
-function appearanceLabel(pref: AppearancePreference): string {
-  if (pref === 'light') return 'Light'
-  if (pref === 'dark') return 'Dark'
-  return 'System'
-}
-
-/** Row detail text — the current choice, shown right on the row so a customer never
- *  has to open the picker just to see what's selected. */
-function appearanceDetail(pref: AppearancePreference): string {
-  return appearanceLabel(pref)
-}
-
-/**
- * A three-way choice with no destructive option doesn't need a bespoke modal —
- * Alert.alert's button list is the same pattern BrokerageSection's `manage()` already
- * uses for "pick one of a few named actions". The current choice gets a checkmark so
- * the picker itself shows what's selected, not just the row behind it.
- */
-function openAppearancePicker(
-  current: AppearancePreference,
-  setPreference: (pref: AppearancePreference) => void,
-) {
-  const mark = (pref: AppearancePreference) => (pref === current ? `${appearanceLabel(pref)}  ✓` : appearanceLabel(pref))
-  function choose(pref: AppearancePreference) {
-    setPreference(pref)
-    trackEvent('theme_toggle', { theme: pref })
-  }
-  Alert.alert('Appearance', 'Choose how IronForge looks on this device.', [
-    { text: mark('system'), onPress: () => choose('system') },
-    { text: mark('light'), onPress: () => choose('light') },
-    { text: mark('dark'), onPress: () => choose('dark') },
-    { text: 'Cancel', style: 'cancel' },
-  ])
 }
 
 /** past_due is the one status that needs the customer to act, so it reads as a warning. */
@@ -701,4 +741,10 @@ const makeStyles = (color: ColorTokens) =>
   signOut: { marginTop: space.xxl, alignItems: 'center', paddingVertical: space.md },
   agentRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: space.md },
   agentRowDivider: { borderTopWidth: 1, borderTopColor: color.border },
+  addTag: {
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    paddingHorizontal: space.sm,
+    paddingVertical: 4,
+  },
   })
