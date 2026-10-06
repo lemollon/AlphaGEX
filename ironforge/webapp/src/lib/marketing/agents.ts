@@ -120,7 +120,20 @@ export function getAgent(slug: AgentSlug): MarketingAgent {
 
 /** Side-by-side compare table rows (Agents page), verbatim from the design. */
 export const AGENT_COMPARE_ROWS: Array<{ label: string; spark: string; flame: string; ember: string }> = [
-  { label: 'When it trades', spark: 'Morning session', flame: 'Afternoon session', ember: 'To be announced' },
+  {
+    label: 'When it trades',
+    // Leron, 2026-10-06 (binding): Ember has no fixed window — it can trade all
+    // day during market hours, so this is no longer a placeholder. Spark/Flame's
+    // windows are spelled out alongside it for the same reason — a vague "Morning
+    // session" next to Ember's exact hours would read as if Ember were the only
+    // one with a real schedule. Display copy only; the entry-window code (Spark
+    // 10:05-10:20 AM / Flame 1:05-1:10 PM, see SPARK_FLAME_CURRENT_STATE) is
+    // unchanged — this row has always described the broader session, not the
+    // scanner's precise entry minute.
+    spark: 'Morning, 8:30 AM–noon CT',
+    flame: 'Afternoon, noon–3:00 PM CT',
+    ember: 'All day, market hours (8:30 AM–3:00 PM CT)',
+  },
   { label: 'Approach', spark: 'Put spreads', flame: 'Put spreads', ember: 'Steady growth' },
   {
     label: 'Market conditions',
