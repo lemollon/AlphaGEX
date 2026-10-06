@@ -1,8 +1,9 @@
-import { customerQuery, customerExecute } from '@/lib/customers-db'
+import { customerQuery, customerExecute, isCustomersDbConfigured } from '@/lib/customers-db'
 import {
   generateForgeReply,
   generateScheduledPost,
   isForgeConfigured,
+  moderateMessage,
   shouldForgeReply,
   type ForgeSlot,
 } from './forge-ai'
@@ -238,6 +239,135 @@ export async function insertPendingMessage(opts: {
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [opts.channelId, opts.userId, opts.senderName, opts.message, opts.parentId ?? null, opts.reason],
   )
+}
+
+export interface PendingMessage {
+  id: string
+  channel_id: string
+  channel_slug: string
+  channel_name: string
+  user_id: string | null
+  sender_name: string
+  message: string
+  parent_id: string | null
+  reason: string
+  created_at: string
+}
+
+function mapPendingRow(r: any): PendingMessage {
+  return {
+    id: String(r.id),
+    channel_id: String(r.channel_id),
+    channel_slug: String(r.channel_slug),
+    channel_name: String(r.channel_name),
+    user_id: r.user_id != null ? String(r.user_id) : null,
+    sender_name: String(r.sender_name),
+    message: String(r.message),
+    parent_id: r.parent_id != null ? String(r.parent_id) : null,
+    reason: String(r.reason),
+    created_at: new Date(r.created_at).toISOString(),
+  }
+}
+
+const PENDING_SELECT = `SELECT p.id, p.channel_id, c.slug AS channel_slug, c.name AS channel_name,
+         p.user_id, p.sender_name, p.message, p.parent_id, p.reason, p.created_at
+    FROM community_pending_messages p
+    JOIN community_channels c ON c.id = p.channel_id`
+
+/** Held posts (#218), oldest first — both the retry job and the operator
+ *  list/approve/reject endpoint read through this one function. */
+export async function listPendingMessages(limit = 50): Promise<PendingMessage[]> {
+  const rows = await customerQuery<any>(`${PENDING_SELECT} ORDER BY p.created_at ASC LIMIT $1`, [limit])
+  return rows.map(mapPendingRow)
+}
+
+export async function getPendingMessage(id: string): Promise<PendingMessage | null> {
+  const rows = await customerQuery<any>(`${PENDING_SELECT} WHERE p.id = $1::uuid`, [id])
+  return rows[0] ? mapPendingRow(rows[0]) : null
+}
+
+async function deletePendingMessage(id: string): Promise<void> {
+  await customerExecute(`DELETE FROM community_pending_messages WHERE id = $1::uuid`, [id])
+}
+
+/**
+ * Approve a held post — writes it into community_messages (same as any other
+ * member post) and removes it from the pending table. Used by both the retry
+ * job (once the scorer clears it) and the operator "Approve" action.
+ */
+export async function publishPendingMessage(p: PendingMessage): Promise<string | null> {
+  const messageId = await insertMessage({
+    channelId: p.channel_id,
+    userId: p.user_id,
+    senderName: p.sender_name,
+    senderType: 'member',
+    message: p.message,
+    parentId: p.parent_id,
+  })
+  await deletePendingMessage(p.id)
+  if (p.user_id) await touchPresence(p.user_id, p.sender_name).catch(() => undefined)
+  // Same async Forge reply a normal post triggers — a held post that finally
+  // clears moderation should not behave differently once it's live.
+  void maybeForgeReply({
+    channelId: p.channel_id,
+    senderName: p.sender_name,
+    message: p.message,
+    parentMessageId: messageId,
+  })
+  return messageId
+}
+
+/** Reject a held post — logs it the same way a same-session rejection does, then
+ *  removes it from the pending table. Used by the retry job (scorer finally
+ *  answered REJECTED) and the operator "Reject" action. */
+export async function rejectPendingMessage(
+  p: PendingMessage,
+  verdict: { category?: string; score?: number } = {},
+): Promise<void> {
+  await customerExecute(
+    `INSERT INTO community_moderation_events (user_id, message_excerpt, category, score, action)
+     VALUES ($1, $2, $3, $4, 'REJECTED')`,
+    [p.user_id, p.message.slice(0, 200), verdict.category ?? 'OPERATOR_REJECTED', verdict.score ?? null],
+  ).catch(() => undefined)
+  await deletePendingMessage(p.id)
+}
+
+/**
+ * Re-scores every held post against the AI moderator (#218's retry half — a
+ * held post must not be stuck forever). Fire-and-forget, called from
+ * scanner.ts's own side interval, same shape as the Attio/CRM retry drains —
+ * never on the trading path. Capped per run so a large backlog cannot turn
+ * one tick into a long-running batch; the next tick picks up where this one
+ * left off.
+ *
+ * A post whose scorer error persists is left in the table — not auto-
+ * published (would defeat "fails closed") and not auto-rejected (would
+ * discard content nobody has actually judged objectionable). The operator
+ * list/approve/reject endpoint is the backstop for a post that stays stuck
+ * because the scorer itself stays down.
+ */
+export async function retryPendingModeration(
+  limit = 20,
+): Promise<{ checked: number; published: number; rejected: number; stillPending: number }> {
+  const pending = await listPendingMessages(limit)
+  let published = 0
+  let rejected = 0
+  let stillPending = 0
+  for (const p of pending) {
+    const verdict = await moderateMessage(p.message)
+    if (verdict.ok) {
+      await publishPendingMessage(p)
+      published++
+    } else if (!verdict.pending) {
+      // The scorer gave a real answer this time, and it's REJECTED.
+      await rejectPendingMessage(p, { category: verdict.category, score: verdict.score })
+      rejected++
+    } else {
+      // Scorer is still erroring — leave it for the next tick.
+      stillPending++
+    }
+  }
+  return { checked: pending.length, published, rejected, stillPending }
 }
 
 export async function toggleReaction(messageId: string, userId: string, emoji: string): Promise<'added' | 'removed'> {
