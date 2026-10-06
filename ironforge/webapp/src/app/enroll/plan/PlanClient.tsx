@@ -1,12 +1,13 @@
 'use client'
 
+import Link from 'next/link'
 import EnrollShell from '../EnrollShell'
 import { useEnrollment } from '../useEnrollment'
 import { COMMUNITY_PLAN, BOT_PLANS } from '@/lib/billing/plans'
 import { EMBER_AGENT } from '@/lib/agents/ember'
 
 /**
- * PLAN-01 — Choose your plan.
+ * PLAN-01 — "Choose agent" (10/5 reorder: step 3, right after Agreements).
  *
  * Four direct tiles: Community, Spark, Flame, Ember — the real plans this deployment
  * sells. Replaces the July 29 two-tile "Forge Automate" design (Leron, 2026-10-04):
@@ -23,6 +24,11 @@ import { EMBER_AGENT } from '@/lib/agents/ember'
  * Prices come from lib/billing/plans.ts, never a frontend constant, so a tile
  * can't quote a number Stripe no longer charges. Ember is free and not Stripe-backed —
  * its price/limits come from lib/agents/ember.ts.
+ *
+ * Community finalizes RIGHT HERE (free join — Leron, 2026-10-05) rather than visiting
+ * a billing screen for it: legal is already accepted (it now runs before this screen),
+ * so there is nothing left to confirm. Spark/Flame/Ember continue to Connect brokerage
+ * next — billing (Stripe) now comes AFTER brokerage, matching the 10.4 design's rail.
  */
 
 type PlanSlug = 'community' | 'spark' | 'flame' | 'ember'
@@ -49,8 +55,20 @@ export default function PlanClient() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ plan }),
       })
-      // Community has no standalone legal screen — its clickwrap lives at billing.
-      router.push(plan === 'community' ? '/enroll/billing' : '/enroll/legal')
+      if (plan === 'community') {
+        // Free join, no card, ever — legal is already accepted (step 2 ran before
+        // this screen), so there is nothing left to confirm. Same free-entitlement
+        // write BillingClient's payCommunity() uses, just invoked right here instead
+        // of after a trip to a billing screen.
+        const d = await call('/api/billing/checkout', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ bot: 'community', return_to: 'enroll' }),
+        })
+        window.location.assign(d.url)
+        return
+      }
+      router.push('/enroll/broker')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save your selection.')
     } finally {
@@ -96,8 +114,8 @@ export default function PlanClient() {
 
   return (
     <EnrollShell
-      headline="Choose how you enter the Forge."
-      subline="Pick the agent (or agents) you want running, or start with Community."
+      headline="Choose your agent."
+      subline="Pick the agent you want running, or start with Community."
       maxWidthClass="max-w-3xl"
       step="plan"
       enrollment={enrollment}
@@ -137,6 +155,10 @@ export default function PlanClient() {
           ))}
         </div>
       ) : null}
+
+      <div className="nav-row">
+        <Link href="/enroll/legal" className="btn">← Back to agreements</Link>
+      </div>
     </EnrollShell>
   )
 }

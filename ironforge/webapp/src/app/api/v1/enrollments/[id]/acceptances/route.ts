@@ -57,7 +57,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     // the member's typed full legal name. Community acceptance is clickwrap at billing
     // submit and carries no signature. Server-enforced; a pre-checked box or an empty
     // string is not consent evidence.
-    if (isAutomatePlan(enrollment.selected_plan)) {
+    //
+    // `?? 'automate'`: the web order runs Agreements BEFORE Choose agent (10/5
+    // reorder), so `selected_plan` is legitimately null here on every normal web
+    // visit — treat that the same as 'automate' (require the signature) rather than
+    // isAutomatePlan(null)'s existing "unknown plan" answer of false, which would
+    // silently skip the e-signature for everyone until they'd chosen a plan.
+    if (isAutomatePlan(enrollment.selected_plan ?? 'automate')) {
       if (signatureName.length < 2) {
         const e = errorEnvelope(
           'VALIDATION_FAILED',
@@ -117,7 +123,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       // The missing codes are the remediable detail — which documents, not just "some".
       return NextResponse.json({ ...e, missing: result.missing }, { status: statusFor(e.code) })
     }
-    return NextResponse.json({ ok: true, next_step: 'billing' })
+    return NextResponse.json({ ok: true, next_step: result.nextStep })
   } catch (e) {
     const env = redactProviderError('v1/acceptances', e, 'INTERNAL', 'Something went wrong. Please try again.')
     return NextResponse.json(env, { status: statusFor(env.code) })

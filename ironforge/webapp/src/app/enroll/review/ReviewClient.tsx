@@ -343,7 +343,9 @@ export default function ReviewClient() {
             </p>
 
             <div className="nav-row">
-              <Link href="/enroll/agent" className="btn">← Back to agent selection</Link>
+              <Link href={isEmber ? '/enroll/broker' : '/enroll/billing'} className="btn">
+                {isEmber ? '← Back to brokerage' : '← Back to billing'}
+              </Link>
             </div>
           </>
         ) : null}

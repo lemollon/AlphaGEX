@@ -5,9 +5,10 @@ import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import EnrollShell from '../EnrollShell'
 import { useEnrollment } from '../useEnrollment'
+import { AGENT_CONFIG_KEY } from '../agent/AgentClient'
 
 /**
- * BROKER-01 — Connect brokerage (July 29 handoff + 7/30 dual-path directive).
+ * BROKER-01 — Connect brokerage (10/5 reorder: step 4, right after Choose agent).
  *
  * EVERY broker tile offers TWO doors: "Connect account" for a customer who already
  * has one, and "Open new account ↗" (broker's own signup, new tab) for one who
@@ -33,6 +34,13 @@ import { useEnrollment } from '../useEnrollment'
  * an explicit choice; none shows the remediable reason for each. Selection goes through
  * PUT /v1/enrollments/{id}/broker-account, which re-validates ownership + eligibility
  * server-side.
+ *
+ * Selecting an account also MINTS the agent config now (server-side, same validation
+ * as AGENT-01 — see lib/enrollment/agent-config-service.ts): the dedicated AGENT-01
+ * screen no longer sits between this step and Billing in the web order, so there is
+ * nothing left for a customer to configure here beyond picking the account. The
+ * response carries `config_id`; it rides sessionStorage under the same key AGENT-01
+ * and ReviewClient already use, so ReviewClient needs no change to find it.
  */
 
 interface BrokerAccount {
@@ -160,10 +168,18 @@ export default function BrokerClient() {
       setConfirmedMask(d.broker_account?.display_mask ?? null)
       try {
         sessionStorage.setItem(SELECTED_ACCOUNT_KEY, selected)
+        if (d.config_id) sessionStorage.setItem(AGENT_CONFIG_KEY, d.config_id)
       } catch {
-        /* agent screen falls back to re-deriving the selection */
+        /* the agent screen (fallback) re-derives the selection/config if this is lost */
       }
-      router.push('/enroll/agent')
+      if (!d.config_id) {
+        // The server could not mint a config from this account (e.g. Ember's
+        // $500-$2,000 gate failed against its buying power) — fall back to the
+        // dedicated AGENT-01 screen, which surfaces the violation.
+        router.push('/enroll/agent')
+        return
+      }
+      router.push(enrollment.selected_plan === 'ember' ? '/enroll/review' : '/enroll/billing')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not select that account.')
       setBusy(false)
@@ -301,7 +317,7 @@ export default function BrokerClient() {
       </div>
 
       <div className="nav-row">
-        <Link href="/enroll/billing" className="btn">← Back</Link>
+        <Link href="/enroll/plan" className="btn">← Back to agent selection</Link>
       </div>
 
       <p className="help" style={{ marginTop: 18, textAlign: 'center' }}>
