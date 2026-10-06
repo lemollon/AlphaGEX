@@ -11,7 +11,10 @@ import {
   Modal,
   StyleSheet,
   ActivityIndicator,
+  Animated,
+  AccessibilityInfo,
 } from 'react-native'
+import * as Haptics from 'expo-haptics'
 import { useFocusEffect, useScrollToTop } from '@react-navigation/native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import Svg, { Path } from 'react-native-svg'
@@ -925,16 +928,36 @@ function ReactionRow({ message, onPress }: { message: CommunityMessage; onPress:
   const count = heart?.count ?? 0
   const mine = heart?.mine ?? false
   const legacyFlame = (message.reactions ?? []).find((r) => r.emoji === FLAME)
+  // Like scale-pop + haptic (#250) — a quick tactile "that landed" on every tap,
+  // not just when the heart turns on, since unliking is the same deliberate tap.
+  const scale = useRef(new Animated.Value(1)).current
+
+  function handlePress() {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+    AccessibilityInfo.isReduceMotionEnabled?.()
+      .then((reduced) => {
+        if (reduced) return
+        Animated.sequence([
+          Animated.spring(scale, { toValue: 1.3, speed: 40, bounciness: 12, useNativeDriver: true }),
+          Animated.spring(scale, { toValue: 1, speed: 20, bounciness: 8, useNativeDriver: true }),
+        ]).start()
+      })
+      .catch(() => {})
+    onPress()
+  }
+
   return (
     <View style={s.reactRow}>
       <Pressable
-        onPress={onPress}
+        onPress={handlePress}
         hitSlop={8}
         accessibilityRole="button"
         accessibilityLabel={mine ? 'Remove your heart' : 'Add a heart'}
         style={s.reactBtn}
       >
-        <Text style={{ fontSize: 15, opacity: mine ? 1 : 0.45 }}>{HEART}</Text>
+        <Animated.Text style={{ fontSize: 15, opacity: mine ? 1 : 0.45, transform: [{ scale }] }}>
+          {HEART}
+        </Animated.Text>
         <Text
           style={[
             type.label,
