@@ -85,7 +85,7 @@ def test_partial_expiration_is_identified_for_alert_gate():
     from pathlib import Path
     from datetime import date, timedelta
     from typing import Any
-    source = Path('spreadworks/backend/bots/gamma_regime.py').read_text()
+    source = (Path(__file__).resolve().parents[1] / 'backend/bots/gamma_regime.py').read_text()
     tree = ast.parse(source)
     functions = [n for n in tree.body if isinstance(n, ast.FunctionDef)
                  and n.name in ('compute_net_gex', 'fetch_net_gex')]
