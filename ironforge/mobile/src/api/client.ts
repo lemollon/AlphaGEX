@@ -34,6 +34,23 @@ export class AuthExpiredError extends Error {
   }
 }
 
+/**
+ * `fetch()` only rejects for a network-level failure — no connectivity, DNS,
+ * or (the case this exists for) `react-native-ssl-public-key-pinning`
+ * refusing the TLS handshake because the server's certificate chain no
+ * longer matches the pinned hashes in security/ssl-pinning.ts. Left
+ * unwrapped, that rejection is a raw native exception string ("Exception in
+ * HostFunction: ...", "java.io.IOException: Certificate pinning failure")
+ * surfacing wherever a screen's `catch (e) { ... (e as Error).message }`
+ * happens to render it — every screen in this app follows that exact
+ * pattern (see billing.tsx, account.tsx). Converting it here, once, means
+ * every caller already shows something a customer can act on instead of a
+ * crash-ish string, with no per-screen change needed.
+ */
+function throwSecureConnectionError(): never {
+  throw new Error('Secure connection to IronForge failed. Check your connection and try again.')
+}
+
 export interface TokenPair {
   accessToken: string
   refreshToken: string
@@ -170,7 +187,7 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Pro
     ...opts,
     headers,
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-  })
+  }).catch(throwSecureConnectionError)
 
   if (res.status === 401 && !opts._retried && !opts.stepUpToken) {
     const fresh = await refreshAccessToken()
@@ -193,7 +210,7 @@ export async function apiPublic<T = unknown>(path: string, body: unknown): Promi
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify(body),
-  })
+  }).catch(throwSecureConnectionError)
   const json = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok) {
     throw new Error((json?.error as string) ?? `Request failed (${res.status})`)

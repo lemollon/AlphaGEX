@@ -70,6 +70,34 @@ cellular-data problem on a phone.
   "Forge Automate" card that rendered identically for payers, trialers, and
   non-subscribers is precisely the bug deleted when Stripe landed.
 
+## Security hardening (native — ships in a store build, never OTA)
+
+**Screenshot / screen-recording block.** `expo-screen-capture`'s
+`usePreventScreenCapture()` is scoped per-screen (not global) to the two
+screens that show billing/payment information: `app/enroll/billing.tsx` (the
+subscribe/purchase step) and `app/(tabs)/account.tsx` (membership card +
+payment method last 4 — there is no separate `/account/billing` route to
+scope this more narrowly). Prevention turns off automatically on unmount, so
+no other screen is affected.
+
+**Certificate (public-key) pinning.** `react-native-ssl-public-key-pinning`
+pins `ironforge.trade` only — see `src/security/ssl-pinning.ts` for the full
+reasoning, the current SPKI hashes, and exact rotation commands. Short
+version: pin the WE1 intermediate (current issuer) **and** GTS Root R4
+(backup, same CA family) so a routine leaf renewal — or Google moving
+issuance from WE1 to its sibling WE2 — never bricks the app; only a
+deliberate move off Google Trust Services breaks both at once. Apple, Stripe,
+Expo's OTA server, and Sentry are never pinned — this app doesn't own their
+certificate chains, and none of them are reached through `fetch` anyway
+(StoreKit, expo-updates, @sentry/react-native, or the system browser each
+handle their own TLS). A pin mismatch fails closed (the request is blocked)
+and surfaces as "Secure connection to IronForge failed" — see
+`throwSecureConnectionError` in `src/api/client.ts` and the toast wired in
+`app/_layout.tsx` — never a raw native exception or a crash.
+
+Both changes add native modules, so the next iOS/Android build is required
+before either takes effect; an OTA update cannot carry them.
+
 ## Before the first store submission
 
 1. Apple Team ID + Android release SHA-256 → fill `well-known/*.template`, copy into

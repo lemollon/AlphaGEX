@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { View, Text, Platform } from 'react-native'
+import { usePreventScreenCapture } from 'expo-screen-capture'
 import * as WebBrowser from 'expo-web-browser'
 import { ApiError, api, API_BASE } from '@/api/client'
 import type { MobileMe } from '@/api/types'
@@ -69,6 +70,11 @@ import type { PlanCatalog } from '@/enroll/types'
  * this catches the case where a customer's navigation stack lands here directly).
  */
 export default function BillingScreen() {
+  // Dev handoff mobile Security checklist: block screenshots/screen recording
+  // on the payment/billing screen. Scoped to this screen only via the hook's
+  // mount lifetime — prevention turns off the moment this screen unmounts,
+  // never leaking onto the rest of the enrollment funnel.
+  usePreventScreenCapture()
   const { colors: color } = useTheme()
   const { enrollment, busy, setBusy, error, setError, router } = useEnrollment('billing')
   const [catalog, setCatalog] = useState<PlanCatalog | null>(null)

@@ -29,6 +29,18 @@ import { Loading } from '@/components/ui'
 import { Wordmark } from '@/components/Brand'
 import { ToastHost } from '@/components/ToastHost'
 import { TradeBannerHost } from '@/components/TradeBannerHost'
+import { initializeApiPinning, onApiPinningError } from '@/security/ssl-pinning'
+import { showToast } from '@/notifications/toast'
+
+/**
+ * Certificate pinning has to be live before anything in this app can make a
+ * network call — sign-in, password reset, and the whole enrollment funnel all
+ * mount OUTSIDE app/(tabs), which is as far as monitoring/sentry.ts's own
+ * "as early as possible" hook (that layout's module top) reaches. This file
+ * is the first module IronForge's JS bundle runs, so it is the only place
+ * that can guarantee api/client.ts's fetch calls are pinned before they fire.
+ */
+void initializeApiPinning()
 
 /**
  * Root layout + auth gate + foreground lock (APP-007 / APP-008 / APP-010).
@@ -192,6 +204,20 @@ function RootLayoutInner() {
       })
     })
     return () => sub.remove()
+  }, [])
+
+  /**
+   * A pin mismatch means the TLS handshake itself failed (MITM, an
+   * unexpected CA, or a cert rotation nobody updated the pinned hashes for)
+   * — react-native-ssl-public-key-pinning already blocks the connection on
+   * its own; this just makes sure the person sees a sentence they can act
+   * on instead of nothing (silent fetch failure) or a raw native exception
+   * string surfacing wherever the next `catch` happens to render it.
+   */
+  useEffect(() => {
+    return onApiPinningError(() => {
+      showToast('Secure connection to IronForge failed. Please try again later.')
+    })
   }, [])
 
   /** Only worth checking once the lock is actually showing. */
