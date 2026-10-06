@@ -31,6 +31,8 @@ import { SUPPORT_EMAIL, supportMailto } from '@/support/contact'
 import { BrokerageSection } from '@/components/BrokerageSection'
 import { AGENT_LABEL } from '@/agents/copy'
 import { agentDetailHref, type AgentBot } from '@/agents/routes'
+import { getPlanCatalog } from '@/enroll/api'
+import type { PlanCatalog } from '@/enroll/types'
 import { showToast } from '@/notifications/toast'
 import { trackEvent } from '@/analytics/trackEvent'
 
@@ -114,6 +116,10 @@ export default function AccountScreen() {
   const entitlementsSWR = useSWR<EntitlementsResponse>('/api/billing/entitlements', (p: string) =>
     api<EntitlementsResponse>(p),
   )
+  // Per-agent price/trial rows (#253) — the real catalogue, same unauthenticated
+  // route /enroll/plan.tsx reads, cached indefinitely by SWR's default dedupe since
+  // prices change by redeploy, not by anything this screen does.
+  const { data: catalog } = useSWR<PlanCatalog>('/api/public/plans', () => getPlanCatalog())
   const [pausingAll, setPausingAll] = useState(false)
   // In-flight guard per agent (10.4 design `.lrow` inline switch) — a Set rather than
   // one shared boolean so flipping Spark's switch does not disable Flame's.
@@ -459,11 +465,12 @@ export default function AccountScreen() {
             pause/resume switch, PLUS an inline "Add {Agent}" row for anything this
             viewer does not yet own, all in the same card. Previously only the
             owned-agent switches existed; there was no way to add Spark/Flame/Ember
-            without leaving Account for the Forge tab or /agents. Pricing is
-            deliberately not repeated here — MembershipResponse carries one price for
-            the whole membership, not a verified per-agent figure, and the card above
-            already shows the real number once rather than risking a second, possibly
-            misleading one per row. */}
+            without leaving Account for the Forge tab or /agents.
+            Price/trial (#253) come from real sources only: the public plan
+            catalogue (GET /api/public/plans, the same unauthenticated route
+            /enroll/plan.tsx reads) for price_monthly and trial_days, and the
+            membership row already fetched above for trial state — never a
+            hardcoded or guessed number. */}
         {(() => {
           const ownedAgentBots = new Set(
             (pauseSWR.data?.activations ?? []).map((a) => a.agent as AgentBot),
@@ -474,53 +481,75 @@ export default function AccountScreen() {
           if (ownedAgentBots.size === 0 && addableBots.length === 0) return null
           return (
             <Card style={{ marginTop: space.md }}>
-              {(pauseSWR.data?.activations ?? []).map((a, i) => (
-                <View key={a.agent} style={[s.agentRow, i > 0 && s.agentRowDivider]}>
-                  <Mascot bot={a.agent} size={30} />
-                  <View style={{ flex: 1, marginLeft: space.md }}>
-                    <Text
-                      style={[
-                        type.body,
-                        { color: agentAccent(a.agent as AgentBot), fontFamily: font.bodyBold },
-                      ]}
-                    >
-                      {AGENT_LABEL[a.agent as keyof typeof AGENT_LABEL] ?? a.agent}
-                    </Text>
-                    <Text style={[type.label, { color: color.muted, marginTop: 1 }]}>
-                      {a.paused ? 'Paused' : 'Trading'} · Community included
-                    </Text>
+              {(pauseSWR.data?.activations ?? []).map((a, i) => {
+                const priceLabel = agentPriceLabel(a.agent, catalog)
+                const inTrial =
+                  billing?.membership?.status === 'trialing' && (billing.membership.bots ?? []).includes(a.agent)
+                const subtitle = [
+                  priceLabel,
+                  inTrial ? (billing?.membership?.trial_ending_soon ? 'Trial ending soon' : 'Trial') : null,
+                  a.paused ? 'Paused' : 'Trading',
+                  'Community included',
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
+                return (
+                  <View key={a.agent} style={[s.agentRow, i > 0 && s.agentRowDivider]}>
+                    <Mascot bot={a.agent} size={30} />
+                    <View style={{ flex: 1, marginLeft: space.md }}>
+                      <Text
+                        style={[
+                          type.body,
+                          { color: agentAccent(a.agent as AgentBot), fontFamily: font.bodyBold },
+                        ]}
+                      >
+                        {AGENT_LABEL[a.agent as keyof typeof AGENT_LABEL] ?? a.agent}
+                      </Text>
+                      <Text style={[type.label, { color: color.muted, marginTop: 1 }]} numberOfLines={1}>
+                        {subtitle}
+                      </Text>
+                    </View>
+                    <Switch
+                      value={!a.paused}
+                      disabled={togglingAgents.has(a.agent)}
+                      onValueChange={(on) => void toggleAgent(a.agent, !on)}
+                      trackColor={{ true: color.accent, false: color.border }}
+                    />
                   </View>
-                  <Switch
-                    value={!a.paused}
-                    disabled={togglingAgents.has(a.agent)}
-                    onValueChange={(on) => void toggleAgent(a.agent, !on)}
-                    trackColor={{ true: color.accent, false: color.border }}
-                  />
-                </View>
-              ))}
-              {addableBots.map((bot, i) => (
-                <Pressable
-                  key={bot}
-                  onPress={() => router.push(agentDetailHref(bot))}
-                  accessibilityRole="button"
-                  style={[s.agentRow, (i > 0 || ownedAgentBots.size > 0) && s.agentRowDivider]}
-                >
-                  <Mascot bot={bot} size={30} />
-                  <View style={{ flex: 1, marginLeft: space.md }}>
-                    <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]}>
-                      {`Add ${AGENT_LABEL[bot]}`}
-                    </Text>
-                    <Text style={[type.label, { color: color.muted, marginTop: 1 }]} numberOfLines={1}>
-                      {bot === 'ember' ? 'Free · one account per person' : 'Community included'}
-                    </Text>
-                  </View>
-                  <View style={[s.addTag, { borderColor: color.border }]}>
-                    <Text style={[type.label, { color: color.textDim, fontFamily: font.bodyMedium }]}>
-                      Add
-                    </Text>
-                  </View>
-                </Pressable>
-              ))}
+                )
+              })}
+              {addableBots.map((bot, i) => {
+                const priceLabel = agentPriceLabel(bot, catalog)
+                const subtitle =
+                  bot === 'ember'
+                    ? 'Free · one account per person'
+                    : [priceLabel, catalog ? `${catalog.trial_days}-day free trial` : null, 'Community included']
+                        .filter(Boolean)
+                        .join(' · ')
+                return (
+                  <Pressable
+                    key={bot}
+                    onPress={() => router.push(agentDetailHref(bot))}
+                    accessibilityRole="button"
+                    style={[s.agentRow, (i > 0 || ownedAgentBots.size > 0) && s.agentRowDivider]}
+                  >
+                    <Mascot bot={bot} size={30} />
+                    <View style={{ flex: 1, marginLeft: space.md }}>
+                      <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]}>
+                        {`Add ${AGENT_LABEL[bot]}`}
+                      </Text>
+                      <Text style={[type.label, { color: color.muted, marginTop: 1 }]} numberOfLines={1}>
+                        {subtitle}
+                      </Text>
+                    </View>
+                    <View style={[s.addTag, { borderColor: color.border }]}>
+                      <Text style={[type.label, { color: color.textDim, fontFamily: font.bodyMedium }]}>
+                        Add
+                      </Text>
+                    </View>
+                  </Pressable>
+                )
+              })}
             </Card>
           )
         })()}
@@ -652,6 +681,18 @@ export default function AccountScreen() {
 function allAgentsPaused(activations: AutomationActivation[] | undefined): boolean {
   if (!activations || activations.length === 0) return false
   return activations.every((a) => a.paused)
+}
+
+/**
+ * The real monthly price for one agent (#253) — Ember is genuinely free (no Apple
+ * product, no Stripe price, see src/billing/apple-products.ts), Spark/Flame come
+ * from the public plan catalogue. Returns null while the catalogue is still
+ * loading rather than a placeholder number.
+ */
+function agentPriceLabel(bot: string, catalog: PlanCatalog | undefined): string | null {
+  if (bot === 'ember') return 'Free'
+  const entry = catalog?.bots.find((b) => b.slug === bot)
+  return entry ? `$${entry.price_monthly}/month` : null
 }
 
 /** past_due is the one status that needs the customer to act, so it reads as a warning. */
