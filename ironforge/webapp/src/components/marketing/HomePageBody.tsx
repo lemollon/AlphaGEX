@@ -8,6 +8,7 @@ import AppStoreBadges from './AppStoreBadges'
 import PutSpreadHeroCard from './PutSpreadHeroCard'
 import { useWaitlistModal } from './WaitlistModal'
 import { AGENTS, type MarketingAgent } from '@/lib/marketing/agents'
+import { track } from '@/lib/analytics/track'
 
 type Filter = 'all' | 'morning' | 'afternoon' | 'small' | 'new' | 'calm'
 
@@ -65,7 +66,10 @@ export default function HomePageBody() {
               key={chip.id}
               className="chip"
               aria-pressed={filter === chip.id}
-              onClick={() => setFilter(chip.id)}
+              onClick={() => {
+                setFilter(chip.id)
+                track('agent_filter', { filter: chip.id })
+              }}
               type="button"
             >
               {chip.dot && <span className="dot" style={{ background: chip.dot }} />}
@@ -83,10 +87,21 @@ export default function HomePageBody() {
             follow along from the app.
           </p>
           <div className="hero-actions">
-            <Link className="btn btn-accent btn-lg" href="/signup?source=site&placement=hero">
+            <Link
+              className="btn btn-accent btn-lg"
+              href="/signup?source=site&placement=hero"
+              onClick={() => track('cta_click', { cta: 'create_account', placement: 'hero' })}
+            >
               Create account
             </Link>
-            <button type="button" className="btn btn-lg" onClick={openWaitlist}>
+            <button
+              type="button"
+              className="btn btn-lg"
+              onClick={() => {
+                track('cta_click', { cta: 'waitlist', placement: 'hero' })
+                openWaitlist('hero')
+              }}
+            >
               Join the waitlist
             </button>
           </div>
@@ -254,10 +269,21 @@ export default function HomePageBody() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button type="button" className="btn btn-lg" onClick={openWaitlist}>
+            <button
+              type="button"
+              className="btn btn-lg"
+              onClick={() => {
+                track('cta_click', { cta: 'waitlist', placement: 'final_cta' })
+                openWaitlist('final_cta')
+              }}
+            >
               Join the waitlist
             </button>
-            <Link className="btn btn-accent btn-lg" href="/signup?source=site&placement=final_cta">
+            <Link
+              className="btn btn-accent btn-lg"
+              href="/signup?source=site&placement=final_cta"
+              onClick={() => track('cta_click', { cta: 'create_account', placement: 'final_cta' })}
+            >
               Create account
             </Link>
           </div>

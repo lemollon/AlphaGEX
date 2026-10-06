@@ -12,6 +12,7 @@ import { clientSurface, filterNavBySurface, servesPath } from '@/lib/surface'
 import { LIVE_BOT_ACCENT, LIVE_BOT_LABEL, isLiveBot, type LiveBot } from '@/lib/live/bots'
 import { EMBER_AGENT } from '@/lib/agents/ember'
 import DashboardHeaderBar from './DashboardHeaderBar'
+import LegalReacceptGate from './LegalReacceptGate'
 
 /**
  * THE single customer app shell — used by every signed-in page (Live, Performance,
@@ -436,6 +437,7 @@ export default function CustomerShell({
   const strategy: StrategyNav = { bots, activeBot, paperBots, onSwitch }
 
   return (
+    <LegalReacceptGate>
     <div className="if-dash min-h-screen bg-[var(--bg)]">
       {/* Mobile top bar — hamburger on the LEFT, then wordmark, then the same
           header controls (pause-all, theme, bell, avatar) the desktop rail gets
@@ -477,5 +479,6 @@ export default function CustomerShell({
       {/* Sparky support — floating, dismissible, on every signed-in page (hides itself on /support). */}
       <SparkyWidget />
     </div>
+    </LegalReacceptGate>
   )
 }

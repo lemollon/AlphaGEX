@@ -1,5 +1,9 @@
+'use client'
+
+import { useEffect } from 'react'
 import Link from 'next/link'
 import { Wordmark } from '@/components/Brand'
+import { trackEnrollStepView } from '@/lib/analytics/enroll'
 import type { EnrollPageStep } from './steps'
 import type { EnrollmentSummary } from './useEnrollment'
 
@@ -60,6 +64,13 @@ export default function EnrollShell({
   enrollment?: EnrollmentSummary | null
   children: React.ReactNode
 }) {
+  // en-events: fires once per step mount, paired with trackEnrollStepComplete()
+  // called by whichever client component owns that step's "Continue" action.
+  useEffect(() => {
+    if (step) trackEnrollStepView(step)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step])
+
   const railIndex = step ? RAIL.findIndex((r) => r.step === step) : -1
   const progressPct = railIndex >= 0 ? Math.round(((railIndex + 1) / RAIL.length) * 100) : 0
   // en-5 #126: "Ember skips this step; the rail shows 'Not needed for Ember.'"

@@ -6,6 +6,8 @@ import { useSearchParams } from 'next/navigation'
 import EnrollShell from '../EnrollShell'
 import { useEnrollment } from '../useEnrollment'
 import { AGENT_CONFIG_KEY } from '../agent/AgentClient'
+import { track } from '@/lib/analytics/track'
+import { trackEnrollStepComplete } from '@/lib/analytics/enroll'
 
 /**
  * BROKER-01 — Connect brokerage (10/5 reorder: step 4, right after Choose agent).
@@ -116,6 +118,18 @@ export default function BrokerClient() {
 
   const oauthError = params.get('error') === '1'
   const oauthIncomplete = params.get('incomplete') === '1'
+  const oauthConnected = params.get('connected') === '1'
+
+  // Fire the round-trip outcome exactly once per landing — not every re-render —
+  // and only when the URL actually carries one of these query params. provider is
+  // best-effort from the broker param SnapTrade/Tradier callbacks echo back.
+  useEffect(() => {
+    const provider = params.get('broker') ?? params.get('provider') ?? 'unknown'
+    if (oauthConnected) track('broker_connect_success', { provider })
+    else if (oauthError) track('broker_connect_error', { provider })
+    else if (oauthIncomplete) track('broker_connect_cancel', { provider })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [oauthConnected, oauthError, oauthIncomplete])
 
   const loadAccounts = useCallback(async () => {
     const d = await call('/api/brokerage/connections')
@@ -135,6 +149,7 @@ export default function BrokerClient() {
   async function connect(tile: Tile) {
     setBusy(true)
     setError(null)
+    track('broker_connect_start', { provider: tile.key })
     try {
       const d =
         tile.connect.kind === 'oauth'
@@ -151,6 +166,7 @@ export default function BrokerClient() {
       window.location.assign(d.redirectURI)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start the connection.')
+      track('broker_connect_error', { provider: tile.key })
       setBusy(false)
     }
   }
@@ -176,9 +192,11 @@ export default function BrokerClient() {
         // The server could not mint a config from this account (e.g. Ember's
         // $500-$2,000 gate failed against its buying power) — fall back to the
         // dedicated AGENT-01 screen, which surfaces the violation.
+        if (enrollment.selected_plan === 'ember') track('ember_balance_block')
         router.push('/enroll/agent')
         return
       }
+      trackEnrollStepComplete('broker')
       router.push(enrollment.selected_plan === 'ember' ? '/enroll/review' : '/enroll/billing')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not select that account.')

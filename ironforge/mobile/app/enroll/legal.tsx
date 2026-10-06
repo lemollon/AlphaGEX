@@ -11,11 +11,21 @@ import { useEnrollment } from '@/enroll/useEnrollment'
 import { getLegal, acceptLegal } from '@/enroll/api'
 import type { LegalRequirement } from '@/enroll/types'
 
-/** Row subtitles from the approved screen — mirrors webapp/src/app/enroll/legal/LegalClient.tsx. */
+/**
+ * Row subtitles — mirrors webapp/src/app/enroll/legal/LegalClient.tsx. TERMS,
+ * RISK and PRIVACY are the exact `doc` summary strings from
+ * IronForge_Enrollment_10.4.html's AGREEMENTS array, the only verbatim
+ * enrollment-step copy either source document supplies. The other four codes
+ * have no verbatim source text anywhere, so they keep their prior
+ * placeholder subtitles.
+ */
 const DOC_SUBTITLES: Record<string, string> = {
-  TERMS: 'Platform terms and member responsibilities',
-  RISK: 'Risks associated with options and automated trading',
-  PRIVACY: 'How IronForge collects and protects information',
+  TERMS:
+    'By creating an account you agree to use IronForge for your own personal accounts, keep your login secure, and follow these terms. Subscriptions renew monthly until cancelled. You can cancel anytime from your dashboard.',
+  RISK:
+    'Options are complex and not suitable for every investor. Spreads limit risk to a defined amount, but you can still lose some or all of the capital used for a trade. Past performance, real or hypothetical, does not guarantee future results. Backtested results are hypothetical.',
+  PRIVACY:
+    'We collect the information you give us during enrollment and the brokerage data needed to place and monitor trades. We do not sell your personal information. Brokerage credentials are never stored by IronForge; access uses secure tokens you can revoke.',
   ADVICE_DISCLAIMER: 'IronForge does not provide individualized advice',
   ELECTRONIC_CONSENT: 'Consent to receive and sign records electronically',
   TRADING_AUTH: 'Authorization to submit orders through your brokerage',

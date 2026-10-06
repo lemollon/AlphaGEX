@@ -11,6 +11,7 @@ import { Card, SectionLabel, Money, OutcomeBadge, AgentBadge, Loading, ErrorStat
 import { Sheet, SheetHeader } from '@/components/Sheet'
 import { PnlChart } from '@/components/PnlChart'
 import { track } from '@/analytics/track'
+import { trackEvent } from '@/analytics/trackEvent'
 
 /**
  * Trade detail sheet — APP-019/022, mobile addendum §2 "Trade sheet".
@@ -31,7 +32,10 @@ export default function TradeDetailScreen() {
   )
 
   useEffect(() => {
-    if (data?.trade) track('trade_detail_opened', { outcome_kind: data.trade.outcome_kind })
+    if (data?.trade) {
+      track('trade_detail_opened', { outcome_kind: data.trade.outcome_kind })
+      trackEvent('trade_sheet_open')
+    }
   }, [data?.trade])
 
   return (
