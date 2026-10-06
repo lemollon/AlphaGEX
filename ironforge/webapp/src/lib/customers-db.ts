@@ -793,6 +793,11 @@ CREATE TABLE IF NOT EXISTS notification_prefs (
 -- this column only exists so the Account-tab row has something real to write to).
 ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS sound BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS weekly_summary BOOLEAN NOT NULL DEFAULT FALSE;
+-- db-controls #202: the dev-handoff spec's Alerts section lists "big moves on an open
+-- trade" and "daily summary" alongside trade opened/closed — same additive pattern and
+-- same reasoning as weekly_summary above (no sender exists yet; defaults OFF).
+ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS big_move BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS daily_summary BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Dedupe + state ledger. The PK makes "once per eligible event" an atomic
 -- INSERT ... ON CONFLICT DO NOTHING RETURNING — the same idiom already proven by

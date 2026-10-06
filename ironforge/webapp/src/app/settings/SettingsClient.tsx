@@ -123,9 +123,11 @@ function AutomationSection() {
 const ALERT_ROWS: Array<{ key: string; label: string; blurb: string }> = [
   { key: 'trade_opened', label: 'Trade opened', blurb: 'Notify me when an agent opens a new trade.' },
   { key: 'trade_closed', label: 'Trade closed', blurb: 'Notify me when a trade closes, win or loss.' },
+  { key: 'big_move', label: 'Big moves', blurb: 'Notify me about a large swing on an open trade.' },
   { key: 'trade_approval', label: 'Trade needs approval', blurb: 'Notify me when a trade is waiting on my OK.' },
   { key: 'brokerage_health', label: 'Brokerage health', blurb: 'Notify me if a connected broker disconnects or needs attention.' },
   { key: 'billing', label: 'Billing', blurb: 'Notify me about payment issues or upcoming charges.' },
+  { key: 'daily_summary', label: 'Daily summary', blurb: 'A recap of today’s results, once a day.' },
   { key: 'weekly_summary', label: 'Weekly summary', blurb: 'A recap of the week’s results, once a week.' },
   { key: 'community', label: 'Community activity', blurb: 'Notify me about replies and mentions in Forge Community.' },
 ]

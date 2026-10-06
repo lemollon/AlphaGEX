@@ -22,6 +22,9 @@ const BOOL_COLUMNS = [
   'show_amounts_on_lockscreen',
   'sound',
   'weekly_summary',
+  // db-controls #202: "big moves on an open trade" + "daily summary".
+  'big_move',
+  'daily_summary',
 ] as const
 
 const DEFAULTS: Record<string, boolean> = {
@@ -34,6 +37,8 @@ const DEFAULTS: Record<string, boolean> = {
   show_amounts_on_lockscreen: false,
   sound: true,
   weekly_summary: false,
+  big_move: false,
+  daily_summary: false,
 }
 
 export async function GET() {
