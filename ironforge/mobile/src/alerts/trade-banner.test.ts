@@ -21,6 +21,7 @@ describe('tradeBannerFromNotification', () => {
       title: 'Spark opened a trade',
       subtitle: '3 contracts',
       href: '/trade/abc123',
+      kind: 'trade_opened',
     })
   })
 
@@ -35,6 +36,7 @@ describe('tradeBannerFromNotification', () => {
       title: 'Flame closed a trade',
       subtitle: '+$120.00',
       href: '/agents/flame',
+      kind: 'trade_closed',
     })
   })
 

@@ -14,6 +14,8 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import Svg, { Path } from 'react-native-svg'
+// Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
+import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR from 'swr'
 import { api, ApiError } from '@/api/client'
 import type {
@@ -354,10 +356,11 @@ export default function CommunityScreen() {
                       accessibilityLabel={
                         (m.reply_count ?? 0) > 0 ? `${m.reply_count} replies` : 'Reply'
                       }
-                      style={s.replyBtn}
+                      style={[s.replyBtn, s.reactBtn]}
                     >
+                      <Ionicons name="chatbubble-outline" size={16} color={color.textDim} />
                       <Text style={[type.label, { color: color.textDim, fontFamily: font.bodyMedium }]}>
-                        {(m.reply_count ?? 0) > 0 ? `💬 ${m.reply_count}` : 'Reply'}
+                        {(m.reply_count ?? 0) > 0 ? m.reply_count : 'Reply'}
                       </Text>
                     </Pressable>
                   </View>

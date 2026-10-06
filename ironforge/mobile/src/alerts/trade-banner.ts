@@ -32,6 +32,7 @@ export interface TradeBanner {
   title: string
   subtitle: string
   href: string | null
+  kind: 'trade_opened' | 'trade_closed'
 }
 
 const AGENT_BOTS: readonly AgentBot[] = ['spark', 'flame', 'ember']
@@ -58,5 +59,6 @@ export function tradeBannerFromNotification(n: TradeBannerNotification): TradeBa
     title: n.title?.trim() || (kind === 'trade_opened' ? 'Trade opened' : 'Trade closed'),
     subtitle: n.body?.trim() || '',
     href,
+    kind,
   }
 }

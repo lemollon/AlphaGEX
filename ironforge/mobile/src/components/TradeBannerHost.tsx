@@ -16,7 +16,8 @@ import { useRouter } from 'expo-router'
 import * as Notifications from 'expo-notifications'
 import { tradeBannerFromNotification, type TradeBanner } from '@/alerts/trade-banner'
 import { Mascot } from '@/components/Brand'
-import { space, radius, type, font } from '@/theme/tokens'
+import { Confetti } from '@/components/Confetti'
+import { space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 
 /** Design's prototype banner lingers roughly this long before sliding back out. */
@@ -26,6 +27,10 @@ export function TradeBannerHost() {
   const { colors: color } = useTheme()
   const router = useRouter()
   const [banner, setBanner] = useState<TradeBanner | null>(null)
+  // Confetti on trade CLOSE only (design `confetti()` fires alongside the close
+  // banner, never the open one) — agent-color + pos + text, same palette the
+  // add-agent success screen already uses.
+  const [confetti, setConfetti] = useState<string[] | null>(null)
   const translateY = useRef(new Animated.Value(-140)).current
   const opacity = useRef(new Animated.Value(0)).current
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -45,6 +50,9 @@ export function TradeBannerHost() {
   function show(next: TradeBanner) {
     if (hideTimer.current) clearTimeout(hideTimer.current)
     setBanner(next)
+    if (next.kind === 'trade_closed') {
+      setConfetti([agentAccent(next.bot ?? ''), color.pos, color.text])
+    }
     translateY.stopAnimation()
     opacity.stopAnimation()
     Animated.parallel([
@@ -70,36 +78,44 @@ export function TradeBannerHost() {
     if (href) router.push(href)
   }
 
-  if (!banner) return null
+  if (!banner && !confetti) return null
 
   return (
-    <Animated.View
-      pointerEvents="box-none"
-      style={[styles.wrap, { opacity, transform: [{ translateY }] }]}
-    >
-      <Pressable
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={`${banner.title}. ${banner.subtitle}`}
-        style={[styles.card, { backgroundColor: color.card, borderColor: color.border }]}
-      >
-        {banner.bot ? (
-          <View style={[styles.avatar, { backgroundColor: color.bg }]}>
-            <Mascot bot={banner.bot} size={28} />
-          </View>
-        ) : null}
-        <View style={{ flex: 1 }}>
-          <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]} numberOfLines={1}>
-            {banner.title}
-          </Text>
-          {banner.subtitle ? (
-            <Text style={[type.label, { color: color.textDim, marginTop: 2 }]} numberOfLines={1}>
-              {banner.subtitle}
-            </Text>
-          ) : null}
-        </View>
-      </Pressable>
-    </Animated.View>
+    <>
+      {banner ? (
+        <Animated.View
+          pointerEvents="box-none"
+          style={[styles.wrap, { opacity, transform: [{ translateY }] }]}
+        >
+          <Pressable
+            onPress={onPress}
+            accessibilityRole="button"
+            accessibilityLabel={`${banner.title}. ${banner.subtitle}`}
+            style={[styles.card, { backgroundColor: color.card, borderColor: color.border }]}
+          >
+            {banner.bot ? (
+              <View style={[styles.avatar, { backgroundColor: color.bg }]}>
+                <Mascot bot={banner.bot} size={28} />
+              </View>
+            ) : null}
+            <View style={{ flex: 1 }}>
+              <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]} numberOfLines={1}>
+                {banner.title}
+              </Text>
+              {banner.subtitle ? (
+                <Text style={[type.label, { color: color.textDim, marginTop: 2 }]} numberOfLines={1}>
+                  {banner.subtitle}
+                </Text>
+              ) : null}
+            </View>
+          </Pressable>
+        </Animated.View>
+      ) : null}
+      {/* Full-screen burst — a sibling of the banner strip above, not nested inside
+          its narrow `wrap`, so the particles are not clipped to the banner's own
+          bounds. */}
+      {confetti ? <Confetti colors={confetti} onDone={() => setConfetti(null)} /> : null}
+    </>
   )
 }
 
