@@ -15,8 +15,8 @@
   --c-spark:#1f7ae0;--c-flame:#f0600d;
   --warn:#b7791f;--bad:#d23a2a;
   --brand:"Barlow Condensed","Arial Narrow",sans-serif;
-  --sans:"Geist","Segoe UI",system-ui,-apple-system,sans-serif;
-  --mono:"Geist Mono",ui-monospace,Menlo,monospace;
+  --sans:var(--font-geist-sans,"Geist"),"Segoe UI",system-ui,-apple-system,sans-serif;
+  --mono:var(--font-geist-mono,"Geist Mono"),ui-monospace,Menlo,monospace;
   --r:12px;--r-sm:8px;
   --wrap:1200px;
 }

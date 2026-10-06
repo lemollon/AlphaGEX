@@ -115,6 +115,27 @@ export default function HomePageBody() {
         <PutSpreadHeroCard />
       </div>
 
+      <section className="sec" id="home-agents-grid">
+        <div className="wrap">
+          <div className="sec-head">
+            <div>
+              <h2>Agents</h2>
+              <p>Each agent follows its own rules, sized by the Ladder.</p>
+            </div>
+            <Link className="link" href="/agents#compare">
+              Compare all →
+            </Link>
+          </div>
+          <div className="agents">
+            {visible.length === 0 ? (
+              <p className="empty">No agents match that filter.</p>
+            ) : (
+              visible.map((agent) => <AgentCard key={agent.slug} agent={agent} placement="home" />)
+            )}
+          </div>
+        </div>
+      </section>
+
       <section className="sec" id="home-agents" style={{ paddingBlock: 0 }}>
         <div className="wrap stats">
           <Link className="stat" href="/how-it-works#ladder">
@@ -155,27 +176,6 @@ export default function HomePageBody() {
                 <p>{s.body}</p>
               </Link>
             ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="sec" id="home-agents-grid">
-        <div className="wrap">
-          <div className="sec-head">
-            <div>
-              <h2>Agents</h2>
-              <p>Each agent follows its own rules, sized by the Ladder.</p>
-            </div>
-            <Link className="link" href="/agents#compare">
-              Compare all →
-            </Link>
-          </div>
-          <div className="agents">
-            {visible.length === 0 ? (
-              <p className="empty">No agents match that filter.</p>
-            ) : (
-              visible.map((agent) => <AgentCard key={agent.slug} agent={agent} placement="home" />)
-            )}
           </div>
         </div>
       </section>

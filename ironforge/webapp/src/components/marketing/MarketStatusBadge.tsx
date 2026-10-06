@@ -1,24 +1,25 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { isMarketOpenNow } from '@/lib/marketing/marketStatus'
+import { marketStatusLabel } from '@/lib/marketing/marketStatus'
 
-/** "Checking" during SSR/hydration, then "Market open" / "Market closed", live. */
+/** "Checking" during SSR/hydration, then the live market-clock state, matching the design's wording
+ * ("Market open" / "Pre-market" / "After hours" / "Market closed"). */
 export default function MarketStatusBadge() {
-  const [open, setOpen] = useState<boolean | null>(null)
+  const [label, setLabel] = useState<string | null>(null)
 
   useEffect(() => {
-    const tick = () => setOpen(isMarketOpenNow())
+    const tick = () => setLabel(marketStatusLabel())
     tick()
     const id = setInterval(tick, 30_000)
     return () => clearInterval(id)
   }, [])
 
-  const label = open === null ? 'Checking' : open ? 'Market open' : 'Market closed'
+  const open = label === 'Market open'
   return (
     <span className={`status${open ? ' on' : ''}`}>
       <i />
-      <span>{label}</span>
+      <span>{label ?? 'Checking'}</span>
     </span>
   )
 }
