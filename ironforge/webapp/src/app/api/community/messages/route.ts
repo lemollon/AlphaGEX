@@ -9,6 +9,7 @@ import {
   getDisplayName,
   getFeed,
   insertMessage,
+  insertPendingMessage,
   isReplyTargetVisible,
   maybeForgeReply,
   maybePostScheduledUpdate,
@@ -89,6 +90,32 @@ export async function POST(req: NextRequest) {
 
     // Moderation executes BEFORE persistence (design doc acceptance criterion).
     const verdict = await moderateMessage(message)
+    if (!verdict.ok && verdict.pending) {
+      // #218: the scorer errored — hold the post instead of either publishing it
+      // unchecked or treating it as a rejection the poster needs to fix. Content
+      // is preserved in community_pending_messages, not discarded.
+      const senderName = await getDisplayName(session.customerId)
+      await insertPendingMessage({
+        channelId,
+        userId: session.customerId,
+        senderName,
+        message,
+        parentId,
+        reason: verdict.category ?? 'MODERATION_UNAVAILABLE',
+      })
+      await customerExecute(
+        `INSERT INTO community_moderation_events (user_id, message_excerpt, category, score, action)
+         VALUES ($1, $2, $3, $4, 'PENDING')`,
+        [session.customerId, message.slice(0, 200), verdict.category ?? 'MODERATION_UNAVAILABLE', verdict.score ?? null],
+      ).catch(() => undefined)
+      return NextResponse.json(
+        {
+          status: 'pending',
+          message: 'Posting is delayed — your message is being reviewed and will appear shortly.',
+        },
+        { status: 202 },
+      )
+    }
     if (!verdict.ok) {
       await customerExecute(
         `INSERT INTO community_moderation_events (user_id, message_excerpt, category, score, action)
@@ -106,7 +133,7 @@ export async function POST(req: NextRequest) {
       channelId,
       userId: session.customerId,
       senderName,
-      senderType: 'USER',
+      senderType: 'member',
       message,
       parentId,
     })

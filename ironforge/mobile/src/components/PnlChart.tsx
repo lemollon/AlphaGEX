@@ -33,6 +33,7 @@ import {
   nearestTimeIndex,
   tooltipX,
   formatPnl,
+  pnlChartRenderState,
   type Point as SparkPointType,
 } from '@/components/chart-geometry'
 import { formatLocalClock } from '@/live/lifecycle'
@@ -120,17 +121,50 @@ export function PnlChart({
     )
   }
 
+  const renderState = pnlChartRenderState(series.length, indexGeom, timeGeom)
+
   // One sample is not a chart. Say so rather than drawing a dot and calling it a line.
   // With no series, there is also nothing for a touch to snap to — no responder is
   // attached below, so the tooltip can never show.
-  if (series.length < 2) {
+  if (renderState === 'too_few_samples') {
     return (
       <View style={s.wrap}>
         <Header status={status} current={current} accent={accent} />
-        <View style={[s.plot, s.emptyPlot]}>
+        <View
+          style={[s.plot, s.emptyPlot]}
+          accessible
+          accessibilityRole="image"
+          accessibilityLabel={`${status} P&L chart. Waiting for the first few minutes of this trade.`}
+        >
           <Text style={[type.label, { color: color.muted }]}>
             Waiting for the first few minutes of this trade.
           </Text>
+        </View>
+      </View>
+    )
+  }
+
+  // #3208 follow-up: geometry not ready yet — `width` hasn't been measured by
+  // onLayout on this very first render (RN has no synchronous layout; this is
+  // the normal case, not an edge case, and happens on native exactly as much
+  // as on web). Both chartGeometry() and timeChartGeometry() return null for
+  // width <= 0, and the code below this point dereferences `indexGeom!`/
+  // `timeGeom` unconditionally — rendering straight through here used to
+  // throw. onLayout stays wired on this branch (unlike the one above, which
+  // legitimately never needs a measurement) so the chart escapes the instant
+  // real geometry exists.
+  if (renderState === 'loading') {
+    return (
+      <View style={s.wrap}>
+        <Header status={status} current={current} accent={accent} />
+        <View
+          style={[s.plot, s.emptyPlot]}
+          onLayout={onLayout}
+          accessible
+          accessibilityRole="image"
+          accessibilityLabel={`${status} P&L chart. Loading.`}
+        >
+          <Text style={[type.label, { color: color.muted }]}>Loading chart…</Text>
         </View>
       </View>
     )
@@ -142,6 +176,14 @@ export function PnlChart({
   const zeroY = timeGeom ? timeGeom.y(0) : indexGeom!.zeroY
   const touchX = touch != null ? px(touch) : 0
 
+  // Coordinator follow-up: every chart needs an accessibilityLabel stating the
+  // period total — a VoiceOver/TalkBack user cannot drag a finger across an SVG
+  // to scrub it, so the chart needs to simply SAY the number instead. "Period
+  // total" here is the same `current` value Header already renders.
+  const accessibilityLabel = `${status} P&L chart. ${
+    current != null ? `Currently ${formatPnl(current)}.` : 'No current value yet.'
+  }`
+
   return (
     <View style={s.wrap}>
       <Header status={status} current={current} accent={accent} />
@@ -149,6 +191,9 @@ export function PnlChart({
       <View
         style={s.plot}
         onLayout={onLayout}
+        accessible
+        accessibilityRole="image"
+        accessibilityLabel={accessibilityLabel}
         onStartShouldSetResponder={() => true}
         onMoveShouldSetResponder={() => true}
         onResponderGrant={(e) => showTouch(e.nativeEvent.locationX)}

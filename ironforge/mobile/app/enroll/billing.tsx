@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { View, Text, Platform } from 'react-native'
-import { usePreventScreenCapture } from 'expo-screen-capture'
+import { usePreventScreenCapture } from '@/security/screen-capture'
 import * as WebBrowser from 'expo-web-browser'
 import { ApiError, api, API_BASE } from '@/api/client'
 import type { MobileMe } from '@/api/types'

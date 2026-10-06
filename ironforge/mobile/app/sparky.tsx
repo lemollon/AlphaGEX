@@ -14,7 +14,7 @@ import {
 import { Stack, useRouter } from 'expo-router'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
-import { streamSparky, SparkyUnavailableError, type SparkyTurn } from '@/api/sparky'
+import { sendSparkyMessage, SparkyUnavailableError, type SparkyTurn } from '@/api/sparky'
 import { SPARKY_AVATAR } from '@/components/Brand'
 import { Sheet, SheetHeader } from '@/components/Sheet'
 import { SUPPORT_EMAIL, supportMailto } from '@/support/contact'
@@ -38,9 +38,10 @@ const SUGGESTIONS = [
  * AI-authored message to be visibly labelled, and this whole screen is AI-authored.
  * The disclosure sits above the first message where it cannot be scrolled past unseen.
  *
- * History is screen-local. `/api/support/chat` is stateless and persists no transcript,
- * so there is nothing to load and nothing left behind on sign-out — which is also the
- * simplest possible answer to "conversation history scoped to the signed-in member".
+ * History is server-side now (#264, POST /api/sparky/chat {message, conversationId}),
+ * not screen-local — but this screen still starts a new conversationId every time it
+ * mounts (the ref resets with the component), so reopening the sheet still begins a
+ * visually fresh chat even though the server could resume the prior one if asked to.
  */
 export default function SparkyScreen() {
   const { colors: color } = useTheme()
@@ -48,31 +49,36 @@ export default function SparkyScreen() {
   const router = useRouter()
   const [turns, setTurns] = useState<SparkyTurn[]>([])
   const [draft, setDraft] = useState('')
-  const [streaming, setStreaming] = useState(false)
+  const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const scroller = useRef<ScrollView>(null)
+  // #264: the server now keeps the conversation's history (sparky_conversations/
+  // sparky_messages) — the client only ever sends ONE new message plus the id it
+  // got back last time, never the whole transcript. A ref, not state: it must
+  // not trigger a re-render, and `send` reads the latest value synchronously.
+  const conversationIdRef = useRef<string | null>(null)
 
   const send = useCallback(
     async (overrideText?: string) => {
       const text = (overrideText ?? draft).trim()
-      if (!text || streaming) return
+      if (!text || sending) return
 
       trackEvent('sparky_question', { mode: overrideText ? 'suggested' : 'typed' })
-      const next: SparkyTurn[] = [...turns, { role: 'user', content: text }]
-      setTurns([...next, { role: 'assistant', content: '' }])
+      setTurns((prev) => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '' }])
       setDraft('')
       setError(null)
-      setStreaming(true)
+      setSending(true)
 
       try {
-        await streamSparky(next, (delta) => {
-          // Append to the trailing assistant turn as chunks land.
-          setTurns((prev) => {
-            const copy = [...prev]
-            const last = copy[copy.length - 1]
-            if (last?.role === 'assistant') copy[copy.length - 1] = { ...last, content: last.content + delta }
-            return copy
-          })
+        const res = await sendSparkyMessage(text, conversationIdRef.current)
+        conversationIdRef.current = res.conversationId
+        // Fill the trailing (placeholder) assistant turn with the full reply —
+        // one JSON response, not streamed deltas.
+        setTurns((prev) => {
+          const copy = [...prev]
+          const last = copy[copy.length - 1]
+          if (last?.role === 'assistant') copy[copy.length - 1] = { ...last, content: res.reply }
+          return copy
         })
       } catch (e) {
         const msg =
@@ -84,10 +90,10 @@ export default function SparkyScreen() {
           return last?.role === 'assistant' && !last.content ? prev.slice(0, -1) : prev
         })
       } finally {
-        setStreaming(false)
+        setSending(false)
       }
     },
-    [draft, streaming, turns],
+    [draft, sending],
   )
 
   return (
@@ -103,7 +109,7 @@ export default function SparkyScreen() {
               left={<Image source={SPARKY_AVATAR} style={s.avatar} resizeMode="contain" />}
               right={
                 <View style={s.aiTag}>
-                  <Text style={[type.label, { color: color.spark, fontFamily: font.bodyMedium }]}>AI</Text>
+                  <Text style={[type.label, { color: color.sparkText, fontFamily: font.bodyMedium }]}>AI</Text>
                 </View>
               }
               onClose={close}
@@ -142,7 +148,7 @@ export default function SparkyScreen() {
                         <Pressable
                           key={q}
                           onPress={() => void send(q)}
-                          disabled={streaming}
+                          disabled={sending}
                           accessibilityRole="button"
                           style={s.suggChip}
                         >
@@ -152,7 +158,7 @@ export default function SparkyScreen() {
                     </View>
                   </View>
                 ) : (
-                  turns.map((t, i) => <Bubble key={i} turn={t} streaming={streaming && i === turns.length - 1} />)
+                  turns.map((t, i) => <Bubble key={i} turn={t} pending={sending && i === turns.length - 1} />)
                 )}
 
                 {error ? (
@@ -175,14 +181,14 @@ export default function SparkyScreen() {
                   placeholderTextColor={color.muted}
                   style={s.input}
                   multiline
-                  editable={!streaming}
+                  editable={!sending}
                 />
                 <Pressable
                   onPress={() => void send()}
-                  disabled={streaming || !draft.trim()}
+                  disabled={sending || !draft.trim()}
                   accessibilityRole="button"
                   accessibilityLabel="Send"
-                  style={[s.send, (streaming || !draft.trim()) && { opacity: 0.5 }]}
+                  style={[s.send, (sending || !draft.trim()) && { opacity: 0.5 }]}
                 >
                   <Ionicons name="send" size={18} color={color.text} />
                 </Pressable>
@@ -195,7 +201,7 @@ export default function SparkyScreen() {
   )
 }
 
-function Bubble({ turn, streaming }: { turn: SparkyTurn; streaming: boolean }) {
+function Bubble({ turn, pending }: { turn: SparkyTurn; pending: boolean }) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const mine = turn.role === 'user'
@@ -204,12 +210,12 @@ function Bubble({ turn, streaming }: { turn: SparkyTurn; streaming: boolean }) {
       {!mine ? (
         <View style={s.bubbleHead}>
           <Image source={SPARKY_AVATAR} style={s.bubbleAvatar} resizeMode="contain" />
-          <Text style={[type.label, { color: color.spark, fontFamily: font.bodyMedium }]}>Sparky AI</Text>
+          <Text style={[type.label, { color: color.sparkText, fontFamily: font.bodyMedium }]}>Sparky AI</Text>
         </View>
       ) : null}
       <Text style={[type.body, { color: mine ? color.text : color.textDim }]}>
         {turn.content}
-        {streaming && !turn.content ? 'Thinking…' : ''}
+        {pending && !turn.content ? 'Thinking…' : ''}
       </Text>
     </View>
   )

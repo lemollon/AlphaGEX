@@ -5,7 +5,20 @@
  *
  * If a field here drifts from the server, the screen renders undefined rather than
  * throwing, so treat every optional as genuinely optional.
+ *
+ * The Community types below (#225) are the exception: they now come from
+ * ironforge/shared/api-types.ts, the one real shared module between this app
+ * and the webapp — see that file's comment for why Community specifically was
+ * the first migration, and tsconfig.json's "paths" / metro.config.js's
+ * watchFolders for how this app resolves it.
  */
+import type {
+  CommunitySenderType,
+  CommunityMessage as SharedCommunityMessage,
+  CommunityFeed as SharedCommunityFeed,
+  ThreadRepliesResponse,
+  BlockedMember as SharedBlockedMember,
+} from '@ironforge/shared/api-types'
 
 export type CustomerStateKey =
   | 'WORKING_WAITING'
@@ -208,46 +221,13 @@ export interface HistoryTrade {
   outcome_kind: OutcomeKind
 }
 
-export interface CommunityMessage {
-  id: string
-  sender_name: string
-  sender_type: 'USER' | 'FORGE' | 'SYSTEM'
-  message: string
-  created_at: string
-  reactions: Array<{ emoji: string; count: number; mine: boolean }>
-  /**
-   * The channel the post was written in. UX-005 tags every post in the aggregate
-   * "All" view with where it came from. Optional for the same forward/backward
-   * compatibility reason as `mine` below — an installed app may be older or newer
-   * than the API it is talking to, and a missing field must not fail the payload.
-   */
-  channel_slug?: string
-  channel_name?: string
-  /**
-   * The viewer wrote this — report/block are hidden on your own posts.
-   *
-   * Optional because an installed app can be OLDER than the API it talks to and
-   * vice versa: a field the server may not send yet must not make the payload
-   * fail to type. Absent is treated as "not mine", so the controls still render.
-   */
-  mine?: boolean
-  /** Author is a real member who can be blocked (false for Forge/system posts). */
-  blockable?: boolean
-}
-
-/** GET /api/community/blocks — the viewer's own block list. */
-export interface BlockedMember {
-  user_id: string
-  display_name: string
-  created_at: string
-}
-
-export interface CommunityFeed {
-  channels: Array<{ slug: string; name: string }>
-  messages: CommunityMessage[]
-  online_count: number
-  members: Array<{ name: string; you: boolean }>
-}
+// Community wire types now live in ironforge/shared/api-types.ts (#225) — the
+// names below are re-exported unchanged so every existing `@/api/types` import
+// in this app keeps working.
+export type { CommunitySenderType }
+export type CommunityMessage = SharedCommunityMessage
+export type BlockedMember = SharedBlockedMember
+export type CommunityFeed = SharedCommunityFeed
 
 /**
  * GET /api/brokerage/connections (APP-040/041).
@@ -626,29 +606,19 @@ export interface ActivationResponse {
 }
 
 // ---- WP-F types ----
-// New fields extend the base CommunityMessage/CommunityFeed above rather than editing
-// them in place (shared file — see src/api/types.ts ownership note). Both new fields
-// are optional for the same forward/backward-compat reason as `mine`/`blockable`
-// above: an installed app can be older or newer than the API it's talking to.
+// CommunityMessageV2/CommunityFeedV2 used to extend the base types above with
+// `reply_count`/`parent_id` locally. Both fields now live on the shared
+// CommunityMessage itself (#225), so these are plain aliases kept only so
+// existing imports of the V2 names keep resolving.
 
 /** A Community post carrying thread data (APP-055) — reply count and, on a reply, its parent. */
-export interface CommunityMessageV2 extends CommunityMessage {
-  /** How many replies this post has. Only meaningful on top-level feed rows. */
-  reply_count?: number
-  /** The message this is a reply to. Present on rows returned by GET .../replies. */
-  parent_id?: string | null
-}
+export type CommunityMessageV2 = CommunityMessage
 
 /** GET /api/community/messages?channel=… response, with thread-carrying messages. */
-export interface CommunityFeedV2 extends Omit<CommunityFeed, 'messages'> {
-  messages: CommunityMessageV2[]
-}
+export type CommunityFeedV2 = CommunityFeed
 
 /** GET /api/community/messages/[id]/replies?cursor&limit — one thread, oldest first. */
-export interface ThreadReplies {
-  replies: CommunityMessageV2[]
-  next_cursor: string | null
-}
+export type ThreadReplies = ThreadRepliesResponse
 
 /** POST /api/community/assist {draft, channel} — AI-assist composer suggestion (APP-031). */
 export interface AssistResponse {
@@ -725,6 +695,9 @@ export interface NotificationItem {
     trade_id?: string
     agent?: string
     kind?: string
+    /** #269: a precomputed in-app href, same priority as trade_id/agent/kind
+     *  below — see routeFor() and render.ts's deriveLink(). */
+    link?: string
     amount?: number
     [key: string]: unknown
   } | null

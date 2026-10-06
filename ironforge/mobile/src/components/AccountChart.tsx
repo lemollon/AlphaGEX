@@ -5,14 +5,14 @@
  * week / Past month / Lifetime — done by the caller, which swaps `series`);
  * drag across this chart to scrub it.
  *
- * No haptic tick on scrub: the design calls for one, but expo-haptics is not
- * an installed dependency and adding one is out of scope for this pass (no
- * native dependency changes). The visual guide + marker still track the
- * finger; only the buzz is missing.
+ * A light haptic tick fires each time the scrub crosses into a new point
+ * (#235) — not on every pixel of finger movement, which would buzz
+ * continuously and feel like noise rather than a tick per data point.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { View, StyleSheet, type LayoutChangeEvent } from 'react-native'
 import Svg, { Polyline, Line, Circle } from 'react-native-svg'
+import * as Haptics from 'expo-haptics'
 import { accountChartGeometry, nearestAccountIndex } from '@/components/account-chart-geometry'
 import type { AccountPoint } from '@/live/account-series'
 import { useTheme } from '@/theme/ThemeContext'
@@ -42,6 +42,10 @@ export function AccountChart({
   const { colors: color } = useTheme()
   const [width, setWidth] = useState(0)
   const [touch, setTouch] = useState<number | null>(null)
+  // A ref, not state: responder-move events fire faster than React re-renders,
+  // so reading `touch` (state) here could still see the PREVIOUS point and
+  // double-tick. The ref is updated synchronously on every move.
+  const lastTickIndex = useRef<number | null>(null)
 
   const onLayout = (e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)
   const geom = useMemo(() => accountChartGeometry(series, width, HEIGHT, PAD_Y), [series, width])
@@ -61,11 +65,16 @@ export function AccountChart({
 
   function move(x: number) {
     const idx = nearestAccountIndex(x, width, series.length)
+    if (idx !== lastTickIndex.current) {
+      lastTickIndex.current = idx
+      void Haptics.selectionAsync()
+    }
     setTouch(idx)
     onScrub(series[idx])
   }
 
   function release() {
+    lastTickIndex.current = null
     setTouch(null)
     onScrub(null)
   }

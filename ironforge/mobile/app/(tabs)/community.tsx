@@ -10,18 +10,19 @@ import {
   Alert,
   Modal,
   StyleSheet,
-  ActivityIndicator,
+  Animated,
+  AccessibilityInfo,
 } from 'react-native'
+import * as Haptics from 'expo-haptics'
 import { useFocusEffect, useScrollToTop } from '@react-navigation/native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import Svg, { Path } from 'react-native-svg'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR from 'swr'
-import { api, ApiError } from '@/api/client'
+import { api } from '@/api/client'
 import { getItem, setItem } from '@/api/storage'
 import type {
-  AssistResponse,
   BlockedMember,
   CommunityFeedV2,
   CommunityMessageV2,
@@ -34,7 +35,7 @@ import { Card, Loading, Empty, ErrorState } from '@/components/ui'
 import { AppHeader, Mascot, SPARKY_AVATAR } from '@/components/Brand'
 import { applyHeart, FLAME, HEART } from '@/community/reactions'
 import { trackEvent } from '@/analytics/trackEvent'
-import { initials, channelAccent, bubbleTint } from '@/community/identity'
+import { initials, channelAccent, bubbleTint, isAiSender, isSparkySender } from '@/community/identity'
 import { markCommunityRead } from '@/community/unread'
 import {
   appendOptimisticReply,
@@ -94,10 +95,12 @@ export default function CommunityScreen() {
   // per WP-F scope: expo-router nesting under app/(tabs)/community/ would touch the
   // tab layout, and a modal here does not.
   const [threadFor, setThreadFor] = useState<CommunityMessage | null>(null)
-  // AI assist (APP-031): the suggestion is held separately from the draft so the
-  // member can compare "Use" vs "Keep mine" instead of the draft silently changing.
-  const [assisting, setAssisting] = useState(false)
-  const [assistSuggestion, setAssistSuggestion] = useState<string | null>(null)
+  // Composer topic (10.4 design `#cTopic` select) — independent of which tab is
+  // being VIEWED (`channel` above): a member can be looking at "All" and still
+  // post into a specific real topic. `null` until a member picks one; defaults
+  // to the first real channel once the channel list has loaded.
+  const [composerTopic, setComposerTopic] = useState<string | null>(null)
+  const [topicPickerOpen, setTopicPickerOpen] = useState(false)
   // 10.4 design: a dismiss "X", not a navigation — starts hidden (not shown) until
   // the stored flag resolves, so a returning member never sees a one-frame flash of
   // a card they already dismissed.
@@ -115,6 +118,14 @@ export default function CommunityScreen() {
     (p: string) => api(p),
     { refreshInterval: 30_000 },
   )
+
+  // "All" aggregates every channel for reading — it is never itself a topic to
+  // post INTO, same as the design's `#cTopic` select, which never lists "All"
+  // among its options (ironforge-app.html TOPICS).
+  const channels = data?.channels ?? []
+  const realChannels = channels.filter((c) => c.slug !== 'all-chat')
+  const topicSlug = composerTopic ?? realChannels[0]?.slug ?? 'general'
+  const topicName = channels.find((c) => c.slug === topicSlug)?.name ?? 'Topic'
 
   /**
    * The viewer's own block list. Not polled — it only changes when this screen
@@ -183,9 +194,23 @@ export default function CommunityScreen() {
     setPosting(true)
     setPostError(null)
     try {
-      await api('/api/community/messages', { method: 'POST', body: { channel, message } })
+      // Posts into the composer's own topic (#cTopic), not whichever tab is
+      // currently being viewed — see the topicSlug/realChannels note above.
+      const res = await api<{ status?: string; message?: string }>('/api/community/messages', {
+        method: 'POST',
+        body: { channel: topicSlug, message },
+      })
       setDraft('')
-      setAssistSuggestion(null)
+      if (res.status === 'pending') {
+        // #218: moderation fails closed — held for review, not published, not
+        // an error. A plain Alert (not the red postError text) since nothing
+        // went wrong.
+        Alert.alert(
+          'Posting is delayed',
+          res.message ?? 'Your message is being reviewed and will appear shortly.',
+        )
+        return
+      }
       mutate()
       trackEvent('community_post')
     } catch (e) {
@@ -197,35 +222,6 @@ export default function CommunityScreen() {
       )
     } finally {
       setPosting(false)
-    }
-  }
-
-  /**
-   * AI assist (APP-031). Sends the current draft to be tightened/clarified — never
-   * to add a trade idea or a number that isn't already there (server-enforced, see
-   * webapp's /api/community/assist). The result sits beside the draft until the
-   * member chooses "Use" or "Keep mine"; it never overwrites what they typed.
-   */
-  async function askAssist() {
-    const text = draft.trim()
-    if (!text || assisting) return
-    setAssisting(true)
-    setAssistSuggestion(null)
-    try {
-      const res = await api<AssistResponse>('/api/community/assist', {
-        method: 'POST',
-        body: { draft: text, channel },
-      })
-      setAssistSuggestion(res.suggestion)
-    } catch (e) {
-      Alert.alert(
-        'AI assist unavailable',
-        e instanceof ApiError && e.status === 402
-          ? 'An active membership is required for AI assist.'
-          : (e as Error).message,
-      )
-    } finally {
-      setAssisting(false)
     }
   }
 
@@ -261,7 +257,6 @@ export default function CommunityScreen() {
     )
   }
 
-  const channels = data?.channels ?? []
   const messages = data?.messages ?? []
 
   return (
@@ -334,8 +329,8 @@ export default function CommunityScreen() {
           <Empty title="Nothing here yet" detail="Be the first to post in this channel." />
         ) : (
           messages.map((m) => {
-            // Your own posts, and Forge's, have nothing to report or block.
-            const reportable = m.mine !== true && m.sender_type === 'USER'
+            // Your own posts, and AI posts, have nothing to report or block.
+            const reportable = m.mine !== true && !isAiSender(m.sender_type)
             return (
             <Pressable
               key={m.id}
@@ -357,9 +352,9 @@ export default function CommunityScreen() {
                       <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]}>
                         {m.sender_name}
                       </Text>
-                      {m.sender_type !== 'USER' ? (
+                      {isAiSender(m.sender_type) ? (
                         <View style={s.aiTag}>
-                          <Text style={[type.label, { color: color.spark }]}>AI</Text>
+                          <Text style={[type.label, { color: color.sparkText }]}>AI</Text>
                         </View>
                       ) : null}
                       <Text style={[type.label, { color: color.muted }]}>{time(m.created_at)}</Text>
@@ -423,60 +418,32 @@ export default function CommunityScreen() {
         {postError ? (
           <Text style={[type.label, { color: color.neg, marginBottom: space.sm }]}>{postError}</Text>
         ) : null}
-        {assistSuggestion ? (
-          <View style={s.assistBox}>
-            <Text style={[type.label, { color: color.spark, fontFamily: font.bodyBold, marginBottom: space.xs }]}>
-              AI assist
-            </Text>
-            <Text style={[type.body, { color: color.text }]}>{assistSuggestion}</Text>
-            <View style={[s.rowCenter, { marginTop: space.sm }]}>
-              <Pressable
-                onPress={() => {
-                  setDraft(assistSuggestion)
-                  setAssistSuggestion(null)
-                }}
-                style={s.assistUseBtn}
-              >
-                <Text style={[type.label, { color: color.bg, fontFamily: font.bodyBold }]}>Use</Text>
-              </Pressable>
-              <Pressable onPress={() => setAssistSuggestion(null)} hitSlop={8}>
-                <Text style={[type.label, { color: color.textDim }]}>Keep mine</Text>
-              </Pressable>
-            </View>
-          </View>
-        ) : null}
         <View style={s.rowCenter}>
-          {/* 10.4 design composer is one row: input + send (its topic `<select>` is
-              already covered above by the channel chips, which also target the post).
-              The "+" attach control is dropped entirely — there has never been an
-              upload endpoint under /api/community/*, so it opened a "coming soon"
-              sheet with no function to preserve. */}
+          {/* 10.4 design composer: topic select + input + send. The "+" AI-assist
+              button that used to sit here is retired — the design's composer has
+              no such control. The attach "+" is dropped entirely too — there has
+              never been an upload endpoint under /api/community/*. */}
+          <Pressable
+            onPress={() => setTopicPickerOpen(true)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={`Topic: ${topicName}. Change topic`}
+            style={s.topicBtn}
+          >
+            <Text style={[type.label, { color: color.textDim, fontFamily: font.bodyMedium }]} numberOfLines={1}>
+              {topicName}
+            </Text>
+            <Ionicons name="chevron-down" size={14} color={color.muted} />
+          </Pressable>
           <TextInput
             value={draft}
-            onChangeText={(t) => {
-              setDraft(t)
-              setAssistSuggestion(null)
-            }}
+            onChangeText={setDraft}
             placeholder="Share with the community..."
             placeholderTextColor={color.muted}
             style={s.input}
             maxLength={500}
             multiline
           />
-          <Pressable
-            onPress={askAssist}
-            disabled={assisting || !draft.trim()}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel="AI assist — tighten my message"
-            style={[s.plusBtn, { opacity: assisting || !draft.trim() ? 0.4 : 1 }]}
-          >
-            {assisting ? (
-              <ActivityIndicator size="small" color={color.spark} />
-            ) : (
-              <Text style={{ fontSize: 16 }}>✨</Text>
-            )}
-          </Pressable>
           <Pressable onPress={send} disabled={posting || !draft.trim()} style={s.send}>
             <Text style={{ color: color.text, fontSize: 16 }}>{posting ? '…' : '➤'}</Text>
           </Pressable>
@@ -485,6 +452,17 @@ export default function CommunityScreen() {
           AI monitored · Community standards active
         </Text>
       </View>
+
+      <Sheet
+        visible={topicPickerOpen}
+        title="Post to"
+        options={realChannels.map((c) => ({ label: c.name, value: c.slug }))}
+        onSelect={(v) => {
+          setComposerTopic(v)
+          setTopicPickerOpen(false)
+        }}
+        onClose={() => setTopicPickerOpen(false)}
+      />
 
       <Sheet
         visible={menuFor != null}
@@ -676,7 +654,7 @@ function ThreadSheet({
   }, [parent?.id])
 
   const replies = data?.replies ?? []
-  const hasAi = parent?.sender_type !== 'USER' || replies.some((r) => r.sender_type !== 'USER')
+  const hasAi = (parent ? isAiSender(parent.sender_type) : false) || replies.some((r) => isAiSender(r.sender_type))
 
   async function send() {
     if (!parent) return
@@ -688,7 +666,7 @@ function ThreadSheet({
     const optimistic: CommunityMessage = {
       id: tempId,
       sender_name: 'You',
-      sender_type: 'USER',
+      sender_type: 'member',
       message,
       created_at: new Date().toISOString(),
       reactions: [],
@@ -701,11 +679,21 @@ function ThreadSheet({
     }
     await mutate((cur) => appendOptimisticReply(cur, optimistic), { revalidate: false })
     try {
-      const res = await api<{ messageId: string | null }>('/api/community/messages', {
-        method: 'POST',
-        body: { channel, message, parent_id: parent.id },
-      })
+      const res = await api<{ messageId: string | null; status?: string; message?: string }>(
+        '/api/community/messages',
+        { method: 'POST', body: { channel, message, parent_id: parent.id } },
+      )
       setDraft('')
+      if (res.status === 'pending') {
+        // #218: moderation fails closed — held for review, not published. Roll
+        // back the optimistic reply (it isn't actually live) and say so plainly.
+        await mutate((cur) => removeReply(cur, tempId), { revalidate: false })
+        Alert.alert(
+          'Posting is delayed',
+          res.message ?? 'Your reply is being reviewed and will appear shortly.',
+        )
+        return
+      }
       onReplyPosted()
       await mutate(
         (cur) => reconcileReply(cur, tempId, { ...optimistic, id: res.messageId ?? tempId }),
@@ -755,9 +743,9 @@ function ThreadSheet({
                     <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]}>
                       {parent.sender_name}
                     </Text>
-                    {parent.sender_type !== 'USER' ? (
+                    {isAiSender(parent.sender_type) ? (
                       <View style={s.aiTag}>
-                        <Text style={[type.label, { color: color.spark }]}>AI</Text>
+                        <Text style={[type.label, { color: color.sparkText }]}>AI</Text>
                       </View>
                     ) : null}
                     <Text style={[type.label, { color: color.muted }]}>{time(parent.created_at)}</Text>
@@ -785,9 +773,9 @@ function ThreadSheet({
                     <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 13 }]}>
                       {r.sender_name}
                     </Text>
-                    {r.sender_type !== 'USER' ? (
+                    {isAiSender(r.sender_type) ? (
                       <View style={s.aiTag}>
-                        <Text style={[type.label, { color: color.spark }]}>AI</Text>
+                        <Text style={[type.label, { color: color.sparkText }]}>AI</Text>
                       </View>
                     ) : null}
                     <Text style={[type.label, { color: color.muted }]}>{time(r.created_at)}</Text>
@@ -842,14 +830,13 @@ function ThreadSheet({
 function Avatar({ message }: { message: CommunityMessage }) {
   const { colors: color, scheme } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
-  if (message.sender_type !== 'USER') {
+  if (isAiSender(message.sender_type)) {
     // Sparky answers in threads, Forge posts market updates — different faces. Forge
     // posts previously fell back to Flame's mascot, which wrongly implied Flame
     // specifically authored a generic platform update (fidelity audit "AI-generated
     // post avatar" — design shows a neutral black square + forge glyph, `cav('forge')`,
     // never an agent's own face).
-    const isSparky = message.sender_name.toLowerCase().includes('sparky')
-    return isSparky ? (
+    return isSparkySender(message) ? (
       <Image source={SPARKY_AVATAR} style={s.avatarImg} resizeMode="contain" />
     ) : (
       <ForgeAvatar />
@@ -926,16 +913,36 @@ function ReactionRow({ message, onPress }: { message: CommunityMessage; onPress:
   const count = heart?.count ?? 0
   const mine = heart?.mine ?? false
   const legacyFlame = (message.reactions ?? []).find((r) => r.emoji === FLAME)
+  // Like scale-pop + haptic (#250) — a quick tactile "that landed" on every tap,
+  // not just when the heart turns on, since unliking is the same deliberate tap.
+  const scale = useRef(new Animated.Value(1)).current
+
+  function handlePress() {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+    AccessibilityInfo.isReduceMotionEnabled?.()
+      .then((reduced) => {
+        if (reduced) return
+        Animated.sequence([
+          Animated.spring(scale, { toValue: 1.3, speed: 40, bounciness: 12, useNativeDriver: true }),
+          Animated.spring(scale, { toValue: 1, speed: 20, bounciness: 8, useNativeDriver: true }),
+        ]).start()
+      })
+      .catch(() => {})
+    onPress()
+  }
+
   return (
     <View style={s.reactRow}>
       <Pressable
-        onPress={onPress}
+        onPress={handlePress}
         hitSlop={8}
         accessibilityRole="button"
         accessibilityLabel={mine ? 'Remove your heart' : 'Add a heart'}
         style={s.reactBtn}
       >
-        <Text style={{ fontSize: 15, opacity: mine ? 1 : 0.45 }}>{HEART}</Text>
+        <Animated.Text style={{ fontSize: 15, opacity: mine ? 1 : 0.45, transform: [{ scale }] }}>
+          {HEART}
+        </Animated.Text>
         <Text
           style={[
             type.label,
@@ -1086,30 +1093,17 @@ const makeStyles = (color: ColorTokens) =>
     alignItems: 'center',
     justifyContent: 'center',
   },
-  plusBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  topicBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    maxWidth: 92,
+    height: 44,
+    paddingHorizontal: space.sm,
+    borderRadius: radius.md,
     borderWidth: 1,
     borderColor: color.border,
-    alignItems: 'center',
-    justifyContent: 'center',
     marginRight: space.sm,
-  },
-  assistBox: {
-    borderWidth: 1,
-    borderColor: color.spark,
-    borderRadius: radius.md,
-    padding: space.md,
-    marginBottom: space.md,
-    backgroundColor: color.bg,
-  },
-  assistUseBtn: {
-    backgroundColor: color.spark,
-    borderRadius: radius.sm,
-    paddingHorizontal: space.md,
-    paddingVertical: space.xs,
-    marginRight: space.md,
   },
   threadHeader: {
     flexDirection: 'row',

@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS community_messages (
   channel_id UUID NOT NULL REFERENCES community_channels(id),
   user_id UUID REFERENCES users(id),
   sender_name TEXT NOT NULL,
-  sender_type VARCHAR(25) NOT NULL DEFAULT 'USER',   -- USER | FORGE | SYSTEM
+  sender_type VARCHAR(25) NOT NULL DEFAULT 'member', -- member | sparky | flame_ai (legacy rows: USER | FORGE | SYSTEM)
   message TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -237,9 +237,48 @@ CREATE TABLE IF NOT EXISTS community_moderation_events (
   message_excerpt TEXT,
   category TEXT NOT NULL,
   score NUMERIC,
-  action TEXT NOT NULL,                              -- REJECTED | WARNING
+  action TEXT NOT NULL,                              -- REJECTED | WARNING | PENDING
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- #218: moderation fails CLOSED. When the AI scorer itself errors (outage, a
+-- non-2xx, or an unparseable response), the post is held here instead of
+-- publishing unchecked to community_messages — the content is never lost,
+-- just not live until a human (or a later retry) clears it. No reviewer UI
+-- ships with this table yet; it exists so "never silently publish" has
+-- somewhere real to hold the message rather than discarding it.
+CREATE TABLE IF NOT EXISTS community_pending_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  channel_id UUID NOT NULL REFERENCES community_channels(id),
+  user_id UUID REFERENCES users(id),
+  sender_name TEXT NOT NULL,
+  message TEXT NOT NULL,
+  parent_id UUID REFERENCES community_messages(id),
+  reason TEXT NOT NULL,                              -- moderateMessage()'s category, e.g. MODERATION_UNAVAILABLE
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Sparky conversation memory (#264). POST /api/sparky/chat is stateful — the
+-- client sends only {message, conversationId}, not the whole transcript, so
+-- the history has to live somewhere server-side. /api/support/chat (the
+-- older, stateless, client-resends-history route) is untouched and keeps
+-- working for app builds that still call it.
+CREATE TABLE IF NOT EXISTS sparky_conversations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sparky_conversations_user ON sparky_conversations(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS sparky_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id UUID NOT NULL REFERENCES sparky_conversations(id) ON DELETE CASCADE,
+  role TEXT NOT NULL,                                -- user | assistant
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sparky_messages_conversation ON sparky_messages(conversation_id, created_at);
 
 -- Dedupe ledger for Forge's scheduled community posts (one row per slot).
 CREATE TABLE IF NOT EXISTS community_forge_posts (
@@ -812,6 +851,12 @@ ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS weekly_summary BOOLEAN N
 -- same reasoning as weekly_summary above (no sender exists yet; defaults OFF).
 ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS big_move BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS daily_summary BOOLEAN NOT NULL DEFAULT FALSE;
+-- #255: the mobile app now offers "Daily summary" where it used to offer "Weekly
+-- summary" — existing weekly opt-ins are migrated forward to daily rather than
+-- silently going quiet. Narrowed to rows not already on daily, so this is a no-op
+-- on every boot after the first; web's own Settings screen still offers both
+-- toggles independently and is untouched by this.
+UPDATE notification_prefs SET daily_summary = TRUE WHERE weekly_summary = TRUE AND daily_summary = FALSE;
 
 -- Dedupe + state ledger. The PK makes "once per eligible event" an atomic
 -- INSERT ... ON CONFLICT DO NOTHING RETURNING — the same idiom already proven by

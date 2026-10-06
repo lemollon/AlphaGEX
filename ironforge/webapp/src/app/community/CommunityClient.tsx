@@ -8,6 +8,7 @@ import { fetcher } from '@/lib/fetcher'
 import type { LiveSummary } from '@/lib/live/types'
 import { LIVE_BOT_LABEL, type LiveBot } from '@/lib/live/bots'
 import type { CommunityFeed, CommunityMessage } from '@/lib/community/store'
+import { isAiSender } from '@/lib/community/sender'
 import CustomerShell from '@/components/customer/CustomerShell'
 import CheckoutNotice from '@/components/customer/CheckoutNotice'
 
@@ -39,7 +40,7 @@ function initialsOf(name: string): string {
 }
 
 function Avatar({ message, size = 'h-8 w-8' }: { message: Pick<CommunityMessage, 'sender_name' | 'sender_type'>; size?: string }) {
-  if (message.sender_type !== 'USER') {
+  if (isAiSender(message.sender_type)) {
     // eslint-disable-next-line @next/next/no-img-element
     return <img src="/forge-mascot-sm.png" alt="Forge" className={`${size} shrink-0 rounded-full bg-[var(--av)] ring-1 ring-[var(--accent)]/60`} />
   }
@@ -77,7 +78,7 @@ function ReplyRow({ reply, canReact }: { reply: CommunityMessage; canReact: bool
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="text-[11px] font-semibold text-[var(--fg)]">{reply.sender_name}</span>
-          {reply.sender_type !== 'USER' && (
+          {isAiSender(reply.sender_type) && (
             <span className="rounded bg-[var(--accent)] px-1 py-px text-[9px] font-bold leading-none text-[var(--accent-ink)]">AI</span>
           )}
           <span className="text-[10px] text-[var(--muted)]">{timeLabel(reply.created_at)}</span>
@@ -115,23 +116,31 @@ function ThreadPanel({
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
-  const hasAi = data?.replies.some((r) => r.sender_type !== 'USER')
+  // #218: moderation fails closed — the server holds the post (202) rather than
+  // publishing it unchecked or rejecting it outright. Kept separate from
+  // sendError so this never renders in the "something went wrong" colour.
+  const [pendingNotice, setPendingNotice] = useState<string | null>(null)
+  const hasAi = data?.replies.some((r) => isAiSender(r.sender_type))
 
   async function sendReply() {
     const message = draft.trim()
     if (!message || sending) return
     setSending(true)
     setSendError(null)
+    setPendingNotice(null)
     try {
       const res = await fetch('/api/community/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channel, message, parent_id: parentId }),
       })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || 'Failed to send reply.')
+      const body = await res.json().catch(() => ({}))
+      if (res.status === 202) {
+        setDraft('')
+        setPendingNotice(body.message || 'Posting is delayed — your reply is being reviewed and will appear shortly.')
+        return
       }
+      if (!res.ok) throw new Error(body.error || 'Failed to send reply.')
       setDraft('')
       await mutate()
       onReplyPosted()
@@ -178,6 +187,7 @@ function ThreadPanel({
         </div>
       )}
       {sendError && <div className="text-[11px] text-[var(--bad)]">{sendError}</div>}
+      {pendingNotice && <div className="text-[11px] text-[var(--muted)]">{pendingNotice}</div>}
     </div>
   )
 }
@@ -313,13 +323,13 @@ function MessageRow({ msg, channel, canReact, loggedIn, onReact, onReplyPosted, 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="text-xs font-semibold text-[var(--fg)]">{msg.sender_name}</span>
-          {msg.sender_type === 'FORGE' && (
+          {isAiSender(msg.sender_type) && (
             <span className="rounded bg-[var(--accent)] px-1 py-px text-[9px] font-bold leading-none text-[var(--accent-ink)]">AI</span>
           )}
           <span className="text-[10px] text-[var(--muted)]">{timeLabel(msg.created_at)}</span>
         </div>
         {/* db-community #194: "optional AI disclosure" on AI-authored posts. */}
-        {msg.sender_type === 'FORGE' && (
+        {isAiSender(msg.sender_type) && (
           <div className="text-[10px] text-[var(--muted)]">AI-generated market update</div>
         )}
         <div className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--fg)]">{msg.message}</div>
@@ -384,6 +394,10 @@ export function CommunityBody() {
   const [channel, setChannel] = useState('all-chat')
   const [draft, setDraft] = useState('')
   const [sendError, setSendError] = useState<string | null>(null)
+  // #218: moderation fails closed — the server holds the post (202) rather than
+  // publishing it unchecked or rejecting it outright. Kept separate from
+  // sendError so this never renders in the "something went wrong" colour.
+  const [pendingNotice, setPendingNotice] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   // Set when the server says posting needs a paid membership (402). Turns the composer
   // into a "Join the Community — $15/mo" checkout CTA instead of a dead error.
@@ -409,7 +423,7 @@ export function CommunityBody() {
   const todaysBriefing = (() => {
     const todayCt = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
     const forgeToday = feed?.messages.filter(
-      (m) => m.sender_type === 'FORGE' && new Date(m.created_at).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }) === todayCt,
+      (m) => isAiSender(m.sender_type) && new Date(m.created_at).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }) === todayCt,
     )
     return forgeToday?.length ? forgeToday[forgeToday.length - 1] : null
   })()
@@ -438,6 +452,7 @@ export function CommunityBody() {
     if (!loggedIn) { window.location.href = '/login'; return }
     setSending(true)
     setSendError(null)
+    setPendingNotice(null)
     try {
       const res = await fetch('/api/community/messages', {
         method: 'POST',
@@ -449,10 +464,14 @@ export function CommunityBody() {
         setNeedsMembership(true)
         return
       }
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || 'Failed to send message.')
+      const body = await res.json().catch(() => ({}))
+      if (res.status === 202) {
+        // #218: held for review, not published and not an error.
+        setDraft('')
+        setPendingNotice(body.message || 'Posting is delayed — your message is being reviewed and will appear shortly.')
+        return
       }
+      if (!res.ok) throw new Error(body.error || 'Failed to send message.')
       setDraft('')
       await mutate()
     } catch (e) {
@@ -623,6 +642,7 @@ export function CommunityBody() {
             {/* Composer */}
             <div className="border-t border-[var(--line)] py-3">
               {sendError && <div className="mb-2 text-xs text-[var(--bad)]">{sendError}</div>}
+              {pendingNotice && <div className="mb-2 text-xs text-[var(--muted)]">{pendingNotice}</div>}
               {needsMembership ? (
                 <div className="flex flex-col gap-2 rounded-lg border border-[var(--warn)]/40 bg-[var(--warn-soft)] px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="text-sm text-[var(--fg)]">

@@ -76,6 +76,21 @@ function deriveNavKeys(event: NotificationEvent): { trade_id?: string; agent?: s
   return nav
 }
 
+/**
+ * #269: a ready-made in-app href, computed server-side with the EXACT SAME priority
+ * the app's own routeFor() (src/notifications/route-for.ts) applies to trade_id/
+ * agent/kind — trade is more specific than agent, agent more specific than kind.
+ * A newer app build routes on this directly; an older build that has never heard of
+ * `link` still works unchanged, since trade_id/agent/kind keep shipping alongside it
+ * (routeFor() is the fallback, not replaced).
+ */
+function deriveLink(nav: { trade_id?: string; agent?: string; kind?: string }): string | null {
+  if (nav.trade_id) return `/trade/${nav.trade_id}`
+  if (nav.agent) return `/agents/${nav.agent}`
+  if (nav.kind === 'brokerage' || nav.kind === 'billing') return '/account'
+  return null
+}
+
 export function renderNotification(
   event: NotificationEvent,
   prefs: RenderPrefs,
@@ -89,6 +104,8 @@ export function renderNotification(
   const body = mayShowAmount
     ? `${event.body} ${formatAmount(event.amount as number)}`
     : event.body
+  const nav = deriveNavKeys(event)
+  const link = deriveLink(nav)
 
   return {
     to: '', // filled per-device by dispatch
@@ -113,7 +130,10 @@ export function renderNotification(
       // app is behind biometrics, so showing it after unlock is fine. Only the visible
       // title/body are redacted.
       ...(typeof event.amount === 'number' ? { amount: event.amount } : {}),
-      ...deriveNavKeys(event),
+      ...nav,
+      // #269: alongside, never instead of, the trade_id/agent/kind fields above —
+      // an app build that only knows those still routes correctly.
+      ...(link ? { link } : {}),
     },
   }
 }

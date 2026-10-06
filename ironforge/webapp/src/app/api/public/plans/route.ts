@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { COMMUNITY_PLAN, BOT_PLANS, BOTH_PLAN, TRIAL_DAYS } from '@/lib/billing/plans'
+import type { PlanCatalog } from '@ironforge/shared/api-types'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,19 +18,17 @@ export const dynamic = 'force-dynamic'
  * what that file already exports, so a price can never drift between the two callers.
  */
 export async function GET() {
-  return NextResponse.json(
-    {
-      community: { key: COMMUNITY_PLAN.key, name: COMMUNITY_PLAN.name, price_monthly: COMMUNITY_PLAN.priceMonthly },
-      bots: Object.values(BOT_PLANS).map((p) => ({
-        slug: p.slug,
-        name: p.name,
-        blurb: p.blurb,
-        price_monthly: p.priceMonthly,
-        accent: p.accent,
-      })),
-      both: { price_monthly: BOTH_PLAN.priceMonthly },
-      trial_days: TRIAL_DAYS,
-    },
-    { headers: { 'Cache-Control': 'public, max-age=300' } },
-  )
+  const payload: PlanCatalog = {
+    community: { key: COMMUNITY_PLAN.key, name: COMMUNITY_PLAN.name, price_monthly: COMMUNITY_PLAN.priceMonthly },
+    bots: Object.values(BOT_PLANS).map((p) => ({
+      slug: p.slug,
+      name: p.name,
+      blurb: p.blurb,
+      price_monthly: p.priceMonthly,
+      accent: p.accent,
+    })),
+    both: { price_monthly: BOTH_PLAN.priceMonthly },
+    trial_days: TRIAL_DAYS,
+  }
+  return NextResponse.json(payload, { headers: { 'Cache-Control': 'public, max-age=300' } })
 }

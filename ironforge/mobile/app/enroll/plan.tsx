@@ -95,7 +95,10 @@ export default function PlanScreen() {
               name={spark.name}
               blurb={spark.blurb}
               price={spark.price_monthly}
-              accent={color.spark}
+              // PlanTile's `accent` colours the price TEXT too (not just the border),
+              // same as the community tile above — the deep text-safe variant, same
+              // pattern as accentText.
+              accent={color.sparkText}
               onPress={() => choose('spark')}
               disabled={busy}
             />
@@ -105,7 +108,7 @@ export default function PlanScreen() {
               name={flame.name}
               blurb={flame.blurb}
               price={flame.price_monthly}
-              accent={color.flame}
+              accent={color.flameText}
               onPress={() => choose('flame')}
               disabled={busy}
             />

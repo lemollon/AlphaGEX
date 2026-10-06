@@ -1,12 +1,15 @@
 /**
  * In-app enrollment (UAT #6, PR A) — response shapes mirrored from the webapp's
  * enrollment v1 API (webapp/src/lib/enrollment/service.ts, .../legal.ts,
- * .../activation.ts) and the additive public plan catalogue
- * (webapp/src/app/api/public/plans/route.ts).
+ * .../activation.ts).
  *
  * Hand-written mirror, same convention as src/api/types.ts — no shared package between
  * the two apps, so a drift here renders "undefined" rather than throwing.
+ *
+ * PlanCatalog is the exception (#225): it now comes from the real shared module,
+ * ironforge/shared/api-types.ts, re-exported below under its original name.
  */
+import type { PlanCatalog as SharedPlanCatalog } from '@ironforge/shared/api-types'
 
 /** The server's own vocabulary — see webapp lib/enrollment/service.ts nextStepFor(). */
 export type EnrollmentNextStep = 'plan' | 'legal' | 'billing' | 'setup' | 'done'
@@ -54,12 +57,7 @@ export interface GetLegalResponse extends LegalBlock {
 export type AcceptancesResponse = { ok: true; next_step: 'billing' } | { ok: false; missing: string[]; message?: string }
 
 /** GET /api/public/plans — additive, read-only plan catalogue (no auth, no PII). */
-export interface PlanCatalog {
-  community: { key: string; name: string; price_monthly: number }
-  bots: Array<{ slug: 'spark' | 'flame'; name: string; blurb: string; price_monthly: number; accent: string }>
-  both: { price_monthly: number }
-  trial_days: number
-}
+export type PlanCatalog = SharedPlanCatalog
 
 /** GET /api/billing/membership — used by "I already subscribed on the web" (billing step). */
 export interface MembershipCheck {

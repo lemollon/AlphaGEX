@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { initials, channelAccent, bubbleTint, NEUTRAL_ACCENT } from './identity'
+import { initials, channelAccent, bubbleTint, NEUTRAL_ACCENT, isAiSender, isSparkySender } from './identity'
 
 describe('initials', () => {
   it('takes first and last initial, as UX-005 shows', () => {
@@ -60,5 +60,35 @@ describe('bubbleTint', () => {
 
   it('does not throw on an empty name', () => {
     expect(typeof bubbleTint('')).toBe('string')
+  })
+})
+
+describe('isAiSender', () => {
+  it('is true for the typed values the server sets on new AI rows (#248)', () => {
+    expect(isAiSender('sparky')).toBe(true)
+    expect(isAiSender('flame_ai')).toBe(true)
+  })
+
+  it('is true for the legacy values on rows written before the migration', () => {
+    expect(isAiSender('FORGE')).toBe(true)
+    expect(isAiSender('SYSTEM')).toBe(true)
+  })
+
+  it('is false for a member, typed or legacy', () => {
+    expect(isAiSender('member')).toBe(false)
+    expect(isAiSender('USER')).toBe(false)
+  })
+})
+
+describe('isSparkySender', () => {
+  it('trusts the typed value over the name', () => {
+    expect(isSparkySender({ sender_type: 'sparky', sender_name: 'Forge' })).toBe(true)
+    expect(isSparkySender({ sender_type: 'flame_ai', sender_name: 'Sparky' })).toBe(false)
+  })
+
+  it('falls back to the old name heuristic for an untyped legacy row', () => {
+    expect(isSparkySender({ sender_type: 'FORGE', sender_name: 'Sparky' })).toBe(false)
+    expect(isSparkySender({ sender_type: 'SOMETHING_UNKNOWN', sender_name: 'Sparky helper' })).toBe(true)
+    expect(isSparkySender({ sender_type: 'SOMETHING_UNKNOWN', sender_name: 'Forge' })).toBe(false)
   })
 })

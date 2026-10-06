@@ -8,9 +8,12 @@
  *
  * Renders synchronously on the DARK palette (the brand default) so there is never a
  * flash of the wrong theme while the stored preference loads from SecureStore; once
- * it resolves (or resolves to nothing, i.e. no preference ever saved) the provider
- * re-renders with the correct scheme. 'system' with no preference saved is NOT the
- * default — see preference.ts.
+ * it resolves, the provider re-renders with the correct scheme. #222: a customer who
+ * has never set a preference defaults to 'system' (follow the OS) once that load
+ * resolves — the DARK first paint above is purely to avoid a flash before we know
+ * that, not a claim that dark is the ongoing default. A customer with an existing
+ * saved choice ('system', 'light', or 'dark') always keeps exactly that — see
+ * preference.ts's loadAppearancePreference().
  */
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useColorScheme } from 'react-native'
@@ -47,7 +50,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false
     loadAppearancePreference().then((stored) => {
-      if (!cancelled && stored) setPreferenceState(stored)
+      // #222: nothing saved yet (a new install, or an existing one from before this
+      // default changed) follows the OS. A customer who has an actual saved choice —
+      // including an explicit 'dark' from before this change — always keeps it.
+      if (!cancelled) setPreferenceState(stored ?? 'system')
     })
     return () => {
       cancelled = true

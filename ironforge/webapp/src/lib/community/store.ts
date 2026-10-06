@@ -1,11 +1,19 @@
-import { customerQuery, customerExecute } from '@/lib/customers-db'
+import { customerQuery, customerExecute, isCustomersDbConfigured } from '@/lib/customers-db'
 import {
   generateForgeReply,
   generateScheduledPost,
   isForgeConfigured,
+  moderateMessage,
   shouldForgeReply,
   type ForgeSlot,
 } from './forge-ai'
+import type {
+  CommunityMessage,
+  CommunityFeed,
+  ThreadRepliesResponse,
+  BlockedMember,
+} from '@ironforge/shared/api-types'
+import type { SenderType } from './sender'
 
 /**
  * Forge Community data layer — all tables live in the customers DB
@@ -17,43 +25,17 @@ import {
 export const FORGE_NAME = 'Forge'
 export const DEFAULT_CHANNEL = 'all-chat'
 
-export interface CommunityMessage {
-  id: string
-  sender_name: string
-  sender_type: 'USER' | 'FORGE' | 'SYSTEM'
-  message: string
-  created_at: string
-  reactions: Array<{ emoji: string; count: number; mine: boolean }>
-  /** The viewer wrote this. Report/block controls hide on your own posts. */
-  mine: boolean
-  /** Author is a real user who can be blocked (false for FORGE/SYSTEM posts). */
-  blockable: boolean
-  /**
-   * The channel the post was written in. Carried on every message because the
-   * aggregate view shows posts from every channel at once, and UX-005 tags each one
-   * with where it came from — without this the chips would have nothing to read.
-   */
-  channel_slug: string
-  channel_name: string
-  /**
-   * Number of replies under this post (APP-055). Only meaningful on top-level feed
-   * rows — the feed excludes replies themselves, so a reply's own count would always
-   * read as "replies to a reply", which the UI never shows.
-   */
-  reply_count: number
-  /**
-   * The message this is a reply to. Undefined/null on every row the feed returns
-   * (the feed is top-level only); set on rows returned by getReplies().
-   */
-  parent_id?: string | null
-}
+// Wire shapes now live in the shared types module (#225) — re-exported under
+// their original names so every existing `@/lib/community/store` import keeps
+// working unchanged.
+export type { CommunityMessage, CommunityFeed }
 
-export interface CommunityFeed {
-  channels: Array<{ slug: string; name: string }>
-  messages: CommunityMessage[]
-  online_count: number
-  members: Array<{ name: string; you: boolean }>
-}
+// isAiSender/isSparkySender/SenderType moved to ./sender.ts (#248) — that file
+// has zero other imports, unlike this one, so a client component can import a
+// real value from it without pulling the server-only data layer (and
+// next/headers, transitively) into the browser bundle. Re-exported here too
+// so existing server-side `@/lib/community/store` importers are unaffected.
+export { isAiSender, isSparkySender, type SenderType } from './sender'
 
 export async function getChannelId(slug: string): Promise<string | null> {
   const rows = await customerQuery<{ id: string }>(
@@ -164,7 +146,7 @@ export async function getReplies(
   parentId: string,
   viewerUserId: string | null,
   opts: { cursor?: string | null; limit?: number } = {},
-): Promise<{ replies: CommunityMessage[]; next_cursor: string | null }> {
+): Promise<ThreadRepliesResponse> {
   const limit = Math.min(Math.max(Number(opts.limit) || 30, 1), 100)
   const rows = await customerQuery<any>(
     `SELECT m.id, m.user_id, m.sender_name, m.sender_type, m.message, m.created_at, m.parent_id,
@@ -225,7 +207,7 @@ export async function insertMessage(opts: {
   channelId: string
   userId: string | null
   senderName: string
-  senderType: 'USER' | 'FORGE' | 'SYSTEM'
+  senderType: SenderType
   message: string
   /** Reply target (APP-055). Undefined/null = top-level post. */
   parentId?: string | null
@@ -236,6 +218,156 @@ export async function insertMessage(opts: {
     [opts.channelId, opts.userId, opts.senderName, opts.senderType, opts.message, opts.parentId ?? null],
   )
   return rows[0]?.id ?? null
+}
+
+/**
+ * Holds a post that moderation could not clear because the scorer itself
+ * failed (#218 — fails closed). Separate table from community_messages: a
+ * pending row must never appear in getFeed()/getReplies() until something
+ * actually clears it.
+ */
+export async function insertPendingMessage(opts: {
+  channelId: string
+  userId: string | null
+  senderName: string
+  message: string
+  parentId?: string | null
+  reason: string
+}): Promise<void> {
+  await customerExecute(
+    `INSERT INTO community_pending_messages (channel_id, user_id, sender_name, message, parent_id, reason)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [opts.channelId, opts.userId, opts.senderName, opts.message, opts.parentId ?? null, opts.reason],
+  )
+}
+
+export interface PendingMessage {
+  id: string
+  channel_id: string
+  channel_slug: string
+  channel_name: string
+  user_id: string | null
+  sender_name: string
+  message: string
+  parent_id: string | null
+  reason: string
+  created_at: string
+}
+
+function mapPendingRow(r: any): PendingMessage {
+  return {
+    id: String(r.id),
+    channel_id: String(r.channel_id),
+    channel_slug: String(r.channel_slug),
+    channel_name: String(r.channel_name),
+    user_id: r.user_id != null ? String(r.user_id) : null,
+    sender_name: String(r.sender_name),
+    message: String(r.message),
+    parent_id: r.parent_id != null ? String(r.parent_id) : null,
+    reason: String(r.reason),
+    created_at: new Date(r.created_at).toISOString(),
+  }
+}
+
+const PENDING_SELECT = `SELECT p.id, p.channel_id, c.slug AS channel_slug, c.name AS channel_name,
+         p.user_id, p.sender_name, p.message, p.parent_id, p.reason, p.created_at
+    FROM community_pending_messages p
+    JOIN community_channels c ON c.id = p.channel_id`
+
+/** Held posts (#218), oldest first — both the retry job and the operator
+ *  list/approve/reject endpoint read through this one function. */
+export async function listPendingMessages(limit = 50): Promise<PendingMessage[]> {
+  const rows = await customerQuery<any>(`${PENDING_SELECT} ORDER BY p.created_at ASC LIMIT $1`, [limit])
+  return rows.map(mapPendingRow)
+}
+
+export async function getPendingMessage(id: string): Promise<PendingMessage | null> {
+  const rows = await customerQuery<any>(`${PENDING_SELECT} WHERE p.id = $1::uuid`, [id])
+  return rows[0] ? mapPendingRow(rows[0]) : null
+}
+
+async function deletePendingMessage(id: string): Promise<void> {
+  await customerExecute(`DELETE FROM community_pending_messages WHERE id = $1::uuid`, [id])
+}
+
+/**
+ * Approve a held post — writes it into community_messages (same as any other
+ * member post) and removes it from the pending table. Used by both the retry
+ * job (once the scorer clears it) and the operator "Approve" action.
+ */
+export async function publishPendingMessage(p: PendingMessage): Promise<string | null> {
+  const messageId = await insertMessage({
+    channelId: p.channel_id,
+    userId: p.user_id,
+    senderName: p.sender_name,
+    senderType: 'member',
+    message: p.message,
+    parentId: p.parent_id,
+  })
+  await deletePendingMessage(p.id)
+  if (p.user_id) await touchPresence(p.user_id, p.sender_name).catch(() => undefined)
+  // Same async Forge reply a normal post triggers — a held post that finally
+  // clears moderation should not behave differently once it's live.
+  void maybeForgeReply({
+    channelId: p.channel_id,
+    senderName: p.sender_name,
+    message: p.message,
+    parentMessageId: messageId,
+  })
+  return messageId
+}
+
+/** Reject a held post — logs it the same way a same-session rejection does, then
+ *  removes it from the pending table. Used by the retry job (scorer finally
+ *  answered REJECTED) and the operator "Reject" action. */
+export async function rejectPendingMessage(
+  p: PendingMessage,
+  verdict: { category?: string; score?: number } = {},
+): Promise<void> {
+  await customerExecute(
+    `INSERT INTO community_moderation_events (user_id, message_excerpt, category, score, action)
+     VALUES ($1, $2, $3, $4, 'REJECTED')`,
+    [p.user_id, p.message.slice(0, 200), verdict.category ?? 'OPERATOR_REJECTED', verdict.score ?? null],
+  ).catch(() => undefined)
+  await deletePendingMessage(p.id)
+}
+
+/**
+ * Re-scores every held post against the AI moderator (#218's retry half — a
+ * held post must not be stuck forever). Fire-and-forget, called from
+ * scanner.ts's own side interval, same shape as the Attio/CRM retry drains —
+ * never on the trading path. Capped per run so a large backlog cannot turn
+ * one tick into a long-running batch; the next tick picks up where this one
+ * left off.
+ *
+ * A post whose scorer error persists is left in the table — not auto-
+ * published (would defeat "fails closed") and not auto-rejected (would
+ * discard content nobody has actually judged objectionable). The operator
+ * list/approve/reject endpoint is the backstop for a post that stays stuck
+ * because the scorer itself stays down.
+ */
+export async function retryPendingModeration(
+  limit = 20,
+): Promise<{ checked: number; published: number; rejected: number; stillPending: number }> {
+  const pending = await listPendingMessages(limit)
+  let published = 0
+  let rejected = 0
+  let stillPending = 0
+  for (const p of pending) {
+    const verdict = await moderateMessage(p.message)
+    if (verdict.ok) {
+      await publishPendingMessage(p)
+      published++
+    } else if (!verdict.pending) {
+      // The scorer gave a real answer this time, and it's REJECTED.
+      await rejectPendingMessage(p, { category: verdict.category, score: verdict.score })
+      rejected++
+    } else {
+      // Scorer is still erroring — leave it for the next tick.
+      stillPending++
+    }
+  }
+  return { checked: pending.length, published, rejected, stillPending }
 }
 
 export async function toggleReaction(messageId: string, userId: string, emoji: string): Promise<'added' | 'removed'> {
@@ -324,7 +456,7 @@ export async function seedWelcomeMessage(): Promise<void> {
     channelId,
     userId: null,
     senderName: FORGE_NAME,
-    senderType: 'FORGE',
+    senderType: 'flame_ai',
     message:
       "Welcome to the Forge Community! 🔥 I'm Forge — your AI guide here. I share market observations, answer questions, and keep the conversation disciplined. Say hi, introduce yourself, and let's have a great trading day. Protect the forge.",
   })
@@ -366,7 +498,7 @@ export async function maybePostScheduledUpdate(): Promise<void> {
     if (!channelId) return
     const text = await generateScheduledPost(due.slot)
     const messageId = await insertMessage({
-      channelId, userId: null, senderName: FORGE_NAME, senderType: 'FORGE', message: text,
+      channelId, userId: null, senderName: FORGE_NAME, senderType: 'flame_ai', message: text,
     })
     await customerExecute(
       `UPDATE community_forge_posts SET message_id = $2 WHERE slot_key = $1`,
@@ -410,7 +542,7 @@ export async function maybeForgeReply(opts: {
       channelId: opts.channelId,
       userId: null,
       senderName: FORGE_NAME,
-      senderType: 'FORGE',
+      senderType: 'flame_ai',
       message: reply,
       parentId: opts.parentMessageId ?? null,
     })
@@ -511,7 +643,7 @@ export async function unblockUser(blockerId: string, blockedId: string): Promise
  */
 export async function listBlocked(
   blockerId: string,
-): Promise<Array<{ user_id: string; display_name: string; created_at: string }>> {
+): Promise<BlockedMember[]> {
   const rows = await customerQuery<{ blocked_id: string; display_name: string | null; created_at: string }>(
     `SELECT b.blocked_id,
             (SELECT m.sender_name FROM community_messages m

@@ -304,6 +304,7 @@ import { ensureVolAlertsTable, upsertRegimeDaily, recordLadderTransitions, markN
 import { sendVolAlertEmail } from './email'
 import { sendVolAlertSms, sendOpsPush } from './sms'
 import { drainAttioSyncQueue, isAttioConfigured } from './attio'
+import { retryPendingModeration } from './community/store'
 import { drainCrmOutbox, requeuePhoneRejectedDeadLetters } from './crm/outbox'
 import { drainWaitlistDrip } from './waitlist-drip/drain'
 import { autoEnrollWaitlistDrip, autostartConfig } from './waitlist-drip/autostart'
@@ -10278,6 +10279,12 @@ const ATTIO_RETRY_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
  * the only delivery path. Most ticks are a single indexed query returning zero rows.
  */
 const CRM_OUTBOX_INTERVAL_MS = 30 * 1000
+// #218 held-post retry — re-scores every community_pending_messages row against the AI
+// moderator every few minutes so a scorer outage does not leave a post stuck forever.
+// Own interval, isolated from the trade loop, same shape as the Attio/CRM drains below.
+const PENDING_MODERATION_RETRY_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
+let _pendingModerationRetryIntervalId: ReturnType<typeof setInterval> | null = null
+let _pendingModerationRetryRunning = false
 let _attioRetryIntervalId: ReturnType<typeof setInterval> | null = null
 let _attioRetryRunning = false
 let _crmOutboxRunning = false
@@ -10676,6 +10683,30 @@ function safeDailySummaryDispatch(): void {
     .finally(() => { _dailySummaryRunning = false })
 }
 
+/**
+ * Fire-and-forget held-post retry (#218). Re-entrancy guarded, never throws,
+ * no-ops when the customers DB isn't configured. Independent of the trade
+ * loop — community moderation has nothing to do with any bot's positions.
+ */
+function safePendingModerationRetry(): void {
+  if (_pendingModerationRetryRunning) return
+  if (!isCustomersDbConfigured()) return
+  _pendingModerationRetryRunning = true
+  retryPendingModeration()
+    .then((r) => {
+      if (r.checked > 0) {
+        console.log(
+          `[scanner] pending moderation retry: checked=${r.checked} published=${r.published} rejected=${r.rejected} stillPending=${r.stillPending}`,
+        )
+      }
+    })
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] safePendingModerationRetry error: ${msg}`)
+    })
+    .finally(() => { _pendingModerationRetryRunning = false })
+}
+
 /** Fire-and-forget Attio retry-queue drain. Re-entrancy guarded, never throws,
  *  no-ops when Attio isn't configured. Independent of the trade loop. */
 function safeDrainAttioQueue(): void {
@@ -10817,6 +10848,12 @@ function startScannerLocked(): void {
   _attioRetryIntervalId = setInterval(safeDrainAttioQueue, ATTIO_RETRY_INTERVAL_MS)
   setTimeout(safeDrainAttioQueue, 30_000)
 
+  // #218 held-post moderation retry — own 5-min interval, isolated from the trade
+  // loop. Kick one run shortly after startup so a post held before a restart
+  // doesn't wait a full interval to be re-checked.
+  _pendingModerationRetryIntervalId = setInterval(safePendingModerationRetry, PENDING_MODERATION_RETRY_INTERVAL_MS)
+  setTimeout(safePendingModerationRetry, 20_000)
+
   // CRM outbox drain — own 30s interval (AC-CRM-001's 60-second budget), isolated from the
   // trade loop. Kicked at 5s so a deploy doesn't add half a minute to the first lead's latency.
   _crmOutboxIntervalId = setInterval(safeDrainCrmOutbox, CRM_OUTBOX_INTERVAL_MS)
@@ -10866,6 +10903,7 @@ function startScannerLocked(): void {
   console.log('[scanner] INFERNO fast monitor registered (20s), id:', _infernoFastMonitorIntervalId)
   console.log('[scanner] vol-alerts checker registered (5m), id:', _volAlertsIntervalId)
   console.log('[scanner] attio retry drain registered (10m), id:', _attioRetryIntervalId)
+  console.log('[scanner] pending moderation retry registered (5m), id:', _pendingModerationRetryIntervalId)
   console.log('[scanner] crm outbox drain registered (30s), id:', _crmOutboxIntervalId)
   console.log('[scanner] waitlist drip drain registered (30s), id:', _waitlistDripIntervalId)
   console.log('[scanner] trial day-close registered (15m, gated to >=15:05 CT), id:', _trialCloseIntervalId)

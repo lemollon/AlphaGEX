@@ -38,7 +38,7 @@ import { periodSeries, HERO_PERIOD_LABEL, HERO_PERIOD_TILE_LABEL, type HeroPerio
 import { greetingForHour } from '@/live/greeting'
 import { emberClosedTradesToHistory } from '@/ledger/ember'
 import { agentDetailHref, type AgentBot } from '@/agents/routes'
-import { AGENT_LABEL, AGENT_BLURB } from '@/agents/copy'
+import { AGENT_LABEL, AGENT_BLURB, NEXT_SESSION_SHORT } from '@/agents/copy'
 import { pickBanner, bannerActionHref, billingBannerMode } from '@/alerts/banner'
 import { manageSubscriptionUrl } from '@/billing/store-policy'
 import { isStale, staleLabel } from '@/live/staleness'
@@ -507,7 +507,7 @@ export default function ForgeScreen() {
           </View>
         </Card>
 
-        {liveAgents.length > 0 ? (
+        {list.length > 0 ? (
           <>
             <View style={[s.rowBetween, { marginTop: space.xl, marginBottom: space.md }]}>
               <SectionLabel>Live now</SectionLabel>
@@ -515,17 +515,29 @@ export default function ForgeScreen() {
                 {isStale(lastUpdatedAt, now) ? staleLabel(lastUpdatedAt, now) : 'Updates every few seconds'}
               </Text>
             </View>
-            {liveAgents.map((a) =>
-              a.trade?.active ? (
+            {liveAgents.length > 0 ? (
+              liveAgents.map((a) => (
                 <LiveTradeCard
                   key={a.bot}
                   bot={a.bot}
                   label={a.label}
                   accent={agentAccent(a.bot)}
-                  trade={a.trade}
+                  trade={a.trade!}
                   onPress={() => router.push(agentDetailHref(a.bot as AgentBot))}
                 />
-              ) : null,
+              ))
+            ) : (
+              // Mobile addendum §2: "Empty state names the next session ('Spark
+              // trades at 8:30 AM, Flame at midday')" — no open trade right now,
+              // every owned agent's own session instead of a silent gap.
+              <Card>
+                <Text style={[type.body, { color: color.textDim }]}>
+                  No trade open right now. {list
+                    .map((a) => `${a.label} trades ${NEXT_SESSION_SHORT[a.bot as AgentBot] ?? 'during market hours'}`)
+                    .join(', ')}
+                  .
+                </Text>
+              </Card>
             )}
           </>
         ) : null}

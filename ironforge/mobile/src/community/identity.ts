@@ -68,3 +68,29 @@ export function bubbleTint(name: string, scheme: 'light' | 'dark' = 'dark'): str
   const tints = scheme === 'light' ? BUBBLE_TINTS_LIGHT : BUBBLE_TINTS_DARK
   return tints[hash % tints.length]
 }
+
+/**
+ * Whether a post/reply was authored by an AI persona rather than a member (#248).
+ *
+ * 'sparky' and 'flame_ai' are the typed values the server sets at insert time
+ * going forward — no string-sniffing needed. 'FORGE' and 'SYSTEM' are the
+ * legacy values already sitting on rows written before this migration; they
+ * are honoured exactly as before so old posts keep the badge they always had.
+ */
+export function isAiSender(senderType: string): boolean {
+  return senderType === 'FORGE' || senderType === 'SYSTEM' || senderType === 'sparky' || senderType === 'flame_ai'
+}
+
+/**
+ * Whether a post was authored specifically by Sparky (distinct avatar) rather
+ * than the generic Forge AI. Typed rows answer this directly; untyped/legacy
+ * rows fall back to the old name-substring heuristic this replaces, so they
+ * keep rendering exactly as before.
+ */
+export function isSparkySender(message: { sender_type: string; sender_name: string }): boolean {
+  if (message.sender_type === 'sparky') return true
+  if (message.sender_type === 'flame_ai' || message.sender_type === 'FORGE' || message.sender_type === 'SYSTEM') {
+    return false
+  }
+  return message.sender_name.toLowerCase().includes('sparky')
+}

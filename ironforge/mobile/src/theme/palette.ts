@@ -36,8 +36,17 @@ export interface ColorTokens {
    *  progress-bars use `accent` itself, never this. */
   accentText: string
   spark: string
+  /** Deeper/brighter Spark for small text — same pattern as accentText (#3202).
+   *  Fills/icons/chart-strokes/borders use `spark` itself, never this. */
+  sparkText: string
   flame: string
+  /** Deeper/brighter Flame for small text — same pattern as accentText (#3202).
+   *  Fills/icons/chart-strokes/borders use `flame` itself, never this. */
+  flameText: string
   ember: string
+  /** Deeper/brighter Ember for small text — same pattern as accentText (#3202).
+   *  Fills/icons/chart-strokes/borders use `ember` itself, never this. */
+  emberText: string
   pos: string
   positive: string
   neg: string
@@ -62,8 +71,11 @@ export const dark: ColorTokens = {
   accent: darkColor.accent,
   accentText: darkColor.accentText,
   spark: darkColor.spark,
+  sparkText: darkColor.spark,
   flame: darkColor.flame,
+  flameText: darkColor.flame,
   ember: darkColor.ember,
+  emberText: darkColor.ember,
   pos: darkColor.pos,
   positive: darkColor.pos,
   neg: darkColor.neg,
@@ -80,24 +92,33 @@ export const dark: ColorTokens = {
  * these render on); all text-weight tokens clear 4.5:1, all decorative/border tokens
  * are exempt (WCAG 1.4.11 non-text).
  *   pos     #0A8548  4.71:1     neg   #D93025  4.77:1     warn  #9C6B14  4.64:1
- *   spark   #2563EB  5.17:1     flame #B33900  6.00:1     ember #B52FE0  4.72:1
+ *   sparkText #2563EB 5.17:1    flameText #B33900 6.00:1  emberText #B52FE0 4.72:1
  *   text    #111114 18.85:1     textDim/muted #6E6E78  5.04:1
  *   accentText #BB4B0A  5.09:1 vs white, 4.57:1 vs --accent-soft (the worst case
  *     tinted-badge background it also has to clear — see tokens.ts)
  *
  * bg/card/border updated 2026-10 to the 10.4 redesign's light surface tokens
  * (--bg-2/--bg/--line, handoff/ironforge-10.4-design-spec.md §1) — those three are
- * decorative, not text, so no contrast re-check was needed. spark/flame/pos/neg/warn
- * stay at their EXISTING contrast-tuned hexes rather than the design doc's raw light
- * tokens (#1f7ae0/#f0600d/#0f9f6e/#d23a2a/#b7791f) — those fail 4.5:1 on a white card
- * (4.27/3.29/3.38/—/3.64 measured), so adopting them verbatim would regress the WCAG
- * AA guarantee below. wordmark stays locked per the note above. `accent` ITSELF is
- * the design's exact light-mode hex (#F0600D, binding 2026-10 decision, see
- * tokens.ts) — it only clears ~3.29:1 against white and is not expected to; fills,
- * buttons, icons, chart strokes, pills and progress bars use it regardless, and
- * `accentText` (a flat 80%-value darkening of the same hue) is the token that
- * carries the AA guarantee for small text and text links. muted/textMuted collapse
- * onto the design's single --muted token, which happens to clear 4.5:1.
+ * decorative, not text, so no contrast re-check was needed. pos/neg/warn stay at
+ * their EXISTING contrast-tuned hexes rather than the design doc's raw light tokens
+ * (#0f9f6e/#d23a2a/#b7791f) — those fail 4.5:1 on a white card (3.38/—/3.64
+ * measured), so adopting them verbatim would regress the WCAG AA guarantee below;
+ * no deeper-text variant was requested for those, unlike spark/flame/ember below.
+ * wordmark stays locked per the note above.
+ *
+ * spark/flame/ember (coordinator follow-up, same pattern as accent/accentText from
+ * #3202): `accent` ITSELF is the design's exact light-mode hex (#F0600D, binding
+ * 2026-10 decision, see tokens.ts) — it only clears ~3.29:1 against white and is not
+ * expected to; fills, buttons, icons, chart strokes, pills and progress bars use it
+ * regardless, and `accentText` (a flat 80%-value darkening of the same hue) carries
+ * the AA guarantee for small text and text links. spark/flame/ember now follow the
+ * identical split: the base token is the design's EXACT raw hue (#1F7AE0/#F0600D —
+ * ember's design hue, #B52FE0, already happened to pass AA, so it needed no
+ * darkening), for fills/icons/chart-strokes/borders only; …Text is the deeper value
+ * this file previously used as the ONLY spark/flame/ember hex (before this change
+ * clearing 4.5:1+ on white, see table above) and is now reserved for small text and
+ * text links. muted/textMuted collapse onto the design's single --muted token, which
+ * happens to clear 4.5:1.
  */
 export const light: ColorTokens = {
   bg: '#F6F6F7',
@@ -110,9 +131,12 @@ export const light: ColorTokens = {
   wordmark: '#FD5301',
   accent: '#F0600D',
   accentText: '#BB4B0A',
-  spark: '#2563EB',
-  flame: '#B33900',
+  spark: '#1F7AE0',
+  sparkText: '#2563EB',
+  flame: '#F0600D',
+  flameText: '#B33900',
   ember: '#B52FE0',
+  emberText: '#B52FE0',
   pos: '#0A8548',
   positive: '#0A8548',
   neg: '#D93025',
@@ -156,13 +180,21 @@ export function resolveScheme(
  * already-resolved `theme.colors.x` value, or a one-off literal) passes through
  * unchanged, so this is safe to call on anything.
  *
- * NOTE: dark.accent, dark.accentText and dark.flame are all #FF7124 (the design's own
- * dark --accent and --flame share one hex, tokens.ts) — this map can only keep one
- * light-side winner per duplicated dark hex, and `flame` wins since it's declared last
- * in ColorTokens. Nothing in this codebase feeds `color.accent`/`color.accentText`
- * through resolveTone (they're read directly off the active `getPalette(scheme)`
- * result, never off a dark-canonical function return), so this is not exercised —
- * don't add a resolveTone(dark.accent, ...) test/call expecting light.accent back.
+ * NOTE: dark.accent, dark.accentText, dark.flame AND (as of the spark/flame/ember
+ * text-variant split above) dark.flameText are all #FF7124 — this map can only keep
+ * one light-side winner per duplicated dark hex, and `flameText` now wins since it's
+ * declared last in ColorTokens (previously `flame`). Same story for dark.spark/
+ * dark.sparkText (#5AA6FF, sparkText wins) and dark.ember/dark.emberText (#DD63FF,
+ * emberText wins). In every one of these three pairs the winning field's LIGHT value
+ * is unchanged from what the map resolved to before this split (…Text was carved out
+ * of the exact hex the base token used to hold), so this is not a behavior change for
+ * src/components/ui.tsx's OutcomeBadge — the one real caller that feeds a dark
+ * agent-color hex (outcomeColor.auto = color.spark, tokens.ts) through resolveTone().
+ * Nothing in this codebase feeds `color.accent`/`color.accentText` through
+ * resolveTone (they're read directly off the active `getPalette(scheme)` result,
+ * never off a dark-canonical function return), so that collision specifically
+ * remains unexercised — don't add a resolveTone(dark.accent, ...) test/call
+ * expecting light.accent back.
  */
 const LIGHT_FOR_DARK_HEX: Record<string, string> = {}
 for (const key of Object.keys(dark) as (keyof ColorTokens)[]) {

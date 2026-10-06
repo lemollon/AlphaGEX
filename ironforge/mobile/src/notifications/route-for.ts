@@ -9,12 +9,19 @@
  * payload, which always wins over a generic account-tab payload. A trade_closed push
  * could plausibly carry both `trade_id` and `agent` — the trade is the more specific
  * destination, so it goes first.
+ *
+ * #269: the server now also sends a precomputed `link` alongside, never instead of,
+ * trade_id/agent/kind (lib/push/render.ts's deriveLink() — the exact same priority as
+ * below, computed once, server-side). A recognized `link` is used directly; the
+ * trade_id/agent/kind fields are the fallback for an older server build that has
+ * never heard of `link`, or a `link` value this build does not recognize.
  */
 
 export interface PushNavData {
   trade_id?: unknown
   agent?: unknown
   kind?: unknown
+  link?: unknown
 }
 
 export type AgentBot = 'spark' | 'flame'
@@ -23,6 +30,17 @@ const AGENT_BOTS: readonly AgentBot[] = ['spark', 'flame']
 
 function isAgentBot(v: unknown): v is AgentBot {
   return typeof v === 'string' && (AGENT_BOTS as readonly string[]).includes(v)
+}
+
+/** Every href shape this app can actually open — same set routeFor() itself can
+ *  produce below. A `link` outside this list falls through to the field-by-field
+ *  fallback rather than being trusted verbatim. */
+const KNOWN_LINK_PREFIXES = ['/trade/', '/agents/']
+
+function isKnownLink(v: unknown): v is string {
+  if (typeof v !== 'string' || !v || !v.startsWith('/') || v.startsWith('//')) return false
+  if (v === '/account') return true
+  return KNOWN_LINK_PREFIXES.some((p) => v.startsWith(p) && v.length > p.length)
 }
 
 /**
@@ -38,6 +56,8 @@ export function routeFor(
   },
 ): string | null {
   if (!data) return null
+
+  if (isKnownLink(data.link)) return data.link
 
   if (typeof data.trade_id === 'string' && data.trade_id.length > 0) {
     return hrefs.tradeDetailHref(data.trade_id)
