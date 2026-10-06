@@ -18,9 +18,11 @@ import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import type { AppearancePreference } from '@/theme/palette'
 import { Card, SectionLabel, Row, Loading, ErrorState } from '@/components/ui'
-import { AppHeader, SPARKY_AVATAR } from '@/components/Brand'
+import { AppHeader, Mascot, SPARKY_AVATAR } from '@/components/Brand'
 import { SUPPORT_EMAIL, supportMailto } from '@/support/contact'
 import { BrokerageSection } from '@/components/BrokerageSection'
+import { AGENT_LABEL } from '@/agents/copy'
+import { showToast } from '@/notifications/toast'
 
 /**
  * Account — UX-006 (APP-037/038/039/040/043/044/058/059/060).
@@ -78,6 +80,9 @@ export default function AccountScreen() {
     api<AutomationPauseResponse>(p),
   )
   const [pausingAll, setPausingAll] = useState(false)
+  // In-flight guard per agent (10.4 design `.lrow` inline switch) — a Set rather than
+  // one shared boolean so flipping Spark's switch does not disable Flame's.
+  const [togglingAgents, setTogglingAgents] = useState<Set<string>>(new Set())
   const [bioAvailable, setBioAvailable] = useState(false)
   const [bioOn, setBioOn] = useState(false)
 
@@ -163,6 +168,34 @@ export default function AccountScreen() {
       Alert.alert('Could not update', e instanceof ApiError ? e.humanMessage : (e as Error).message)
     } finally {
       setPausingAll(false)
+    }
+  }
+
+  /**
+   * One agent's inline switch (10.4 design Account tab `.lrow` + Switch) — the SAME
+   * pause endpoint the agent sheet's PauseResumeControl calls, just reached with one
+   * tap instead of opening the sheet. Design's switch toggles instantly (no confirm
+   * step), so this mirrors that directly — the sheet's own control keeps its
+   * confirmation dialog for the drill-down path, this does not duplicate it.
+   */
+  async function toggleAgent(bot: string, nextPaused: boolean) {
+    setTogglingAgents((prev) => new Set(prev).add(bot))
+    try {
+      const res = await api<AutomationPauseResponse>('/api/v1/automation/pause', {
+        method: 'POST',
+        body: { paused: nextPaused, agent: bot },
+      })
+      pauseSWR.mutate(res, { revalidate: false })
+      void globalMutate('/api/live/agents')
+      showToast(`${AGENT_LABEL[bot as keyof typeof AGENT_LABEL] ?? bot} ${nextPaused ? 'paused' : 'resumed'}`)
+    } catch (e) {
+      showToast(e instanceof ApiError ? e.humanMessage : (e as Error).message)
+    } finally {
+      setTogglingAgents((prev) => {
+        const next = new Set(prev)
+        next.delete(bot)
+        return next
+      })
     }
   }
 
@@ -347,6 +380,33 @@ export default function AccountScreen() {
             onPress={() => router.push('/notifications')}
           />
         </Card>
+
+        {/* Inline per-agent pause/resume (10.4 design Account tab `.lrow` + Switch) —
+            one row per activation, right here rather than only reachable through the
+            agent sheet. */}
+        {(pauseSWR.data?.activations.length ?? 0) > 0 ? (
+          <Card style={{ marginTop: space.md }}>
+            {pauseSWR.data!.activations.map((a, i) => (
+              <View key={a.agent} style={[s.agentRow, i > 0 && s.agentRowDivider]}>
+                <Mascot bot={a.agent} size={30} />
+                <View style={{ flex: 1, marginLeft: space.md }}>
+                  <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+                    {AGENT_LABEL[a.agent as keyof typeof AGENT_LABEL] ?? a.agent}
+                  </Text>
+                  <Text style={[type.label, { color: color.muted, marginTop: 1 }]}>
+                    {a.paused ? 'Paused' : 'Trading'}
+                  </Text>
+                </View>
+                <Switch
+                  value={!a.paused}
+                  disabled={togglingAgents.has(a.agent)}
+                  onValueChange={(on) => void toggleAgent(a.agent, !on)}
+                  trackColor={{ true: color.accent, false: color.border }}
+                />
+              </View>
+            ))}
+          </Card>
+        ) : null}
 
         <View style={{ marginTop: space.xl }}>
           <SectionLabel>Appearance</SectionLabel>
@@ -610,4 +670,6 @@ const makeStyles = (color: ColorTokens) =>
     paddingVertical: space.md,
   },
   signOut: { marginTop: space.xxl, alignItems: 'center', paddingVertical: space.md },
+  agentRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: space.md },
+  agentRowDivider: { borderTopWidth: 1, borderTopColor: color.border },
   })
