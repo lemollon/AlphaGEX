@@ -64,6 +64,7 @@ export default function LiveTradeCard({
   state,
   accent,
   accountValue = null,
+  nextOpenLabel = null,
 }: {
   trade: LiveTrade | null
   error: boolean
@@ -71,6 +72,9 @@ export default function LiveTradeCard({
   accent: AccentTheme
   /** Account equity, for the "% of account at risk" figure. null renders "—". */
   accountValue?: number | null
+  /** db-dash #174: "Next session time or 'Paused'" — summary.market.next_open_label,
+   *  e.g. "Opens Monday 8:30 AM CT". null while the market is open. */
+  nextOpenLabel?: string | null
 }) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [nowMs, setNowMs] = useState<number | null>(null)
@@ -328,9 +332,16 @@ export default function LiveTradeCard({
 
           {!trade?.active && !trade?.today_result && trade && (
             <p className="mt-4 text-sm text-gray-400">
-              {state?.key === 'WORKING_WAITING' && state.dot === 'gray'
-                ? 'Markets are closed — Spark opens trades only during market hours.'
-                : 'Spark will show the trade here the moment one opens.'}
+              {/* db-dash #174: a paused agent and a closed market read as the same
+                  generic line before this — "Paused" and the actual next-session
+                  time are both real, different things a customer needs to know. */}
+              {state?.paused
+                ? 'Trading is paused. Resume from Settings when you’re ready.'
+                : state?.key === 'WORKING_WAITING' && state.dot === 'gray'
+                  ? nextOpenLabel
+                    ? `Markets are closed — ${nextOpenLabel[0].toLowerCase()}${nextOpenLabel.slice(1)}.`
+                    : 'Markets are closed — Spark opens trades only during market hours.'
+                  : 'Spark will show the trade here the moment one opens.'}
             </p>
           )}
         </>

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import { View, Text, ScrollView, TextInput, Pressable, RefreshControl, StyleSheet } from 'react-native'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { View, Text, ScrollView, TextInput, Pressable, RefreshControl, ActivityIndicator, StyleSheet } from 'react-native'
+import { useScrollToTop } from '@react-navigation/native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import useSWR from 'swr'
@@ -60,6 +61,10 @@ export default function LedgerScreen() {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
+  // Re-tap-tab-to-scroll-to-top (#231) — the standard React Navigation hook, which
+  // listens for a second tap on this tab's own icon while it is already focused.
+  const scrollRef = useRef<ScrollView>(null)
+  useScrollToTop(scrollRef)
   const [query, setQuery] = useState('')
   const [agent, setAgent] = useState<string>('all')
   // 10.4 design `ledger()`: the Month chip (`st.ledgerRange==='21'`) is selected by
@@ -168,6 +173,7 @@ export default function LedgerScreen() {
   return (
     <Shell>
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}
         refreshControl={
           <RefreshControl
@@ -283,17 +289,14 @@ export default function LedgerScreen() {
                 </Card>
               </View>
             ))}
-            {agent !== 'ember' && canLoadMore ? (
-              <Pressable
-                onPress={() => setSize(size + 1)}
-                disabled={loadingMore}
-                style={[s.loadMore, loadingMore && { opacity: 0.5 }]}
-                accessibilityRole="button"
-              >
-                <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
-                  {loadingMore ? 'Loading…' : 'Load more'}
-                </Text>
-              </Pressable>
+            {/* Load-on-scroll only (notifications.tsx pattern): older rows load silently
+                from the onScroll near-bottom check above. A spinner rather than a
+                tappable button keeps that invisible, while still telling a member
+                mid-fetch that more is on the way. */}
+            {agent !== 'ember' && loadingMore ? (
+              <View style={s.loadMore}>
+                <ActivityIndicator size="small" color={color.muted} />
+              </View>
             ) : null}
           </>
         )}
@@ -518,11 +521,8 @@ const makeStyles = (color: ColorTokens) =>
     marginTop: space.lg,
   },
   loadMore: {
-    borderWidth: 1,
-    borderColor: color.border,
-    borderRadius: radius.md,
-    paddingVertical: space.md,
     alignItems: 'center',
+    paddingVertical: space.md,
     marginTop: space.sm,
   },
   })

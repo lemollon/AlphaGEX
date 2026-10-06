@@ -15,6 +15,7 @@ import PnlRangeChart, { type RangeKey as PnlRangeKey } from '@/components/custom
 import DailyResultsBars from '@/components/customer/DailyResultsBars'
 import AgentLeadTile from '@/components/customer/AgentLeadTile'
 import SparkMascot from '../live/components/SparkMascot'
+import { OpenTradesSection, RecentTradesSection } from './OverviewTradeWidgets'
 
 type PerfResponse =
   | ({ empty?: false; viewer: { allowedBots: LiveBot[]; paperBots: LiveBot[] } } & PerformanceData)
@@ -98,7 +99,7 @@ function ActivateCard() {
 
       <div className="mt-5 grid gap-3">
         <div className="flex items-start gap-3 rounded-lg border border-[var(--line)] bg-[var(--bg)]/50 p-4">
-          <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/15 text-xs font-bold text-[var(--accent)]">1</span>
+          <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/15 text-xs font-bold text-[var(--accent-text)]">1</span>
           <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold text-[var(--fg)]">Connect a brokerage</div>
             <p className="mt-0.5 text-xs text-[var(--muted)]">Link the account your strategy will trade through. Takes a minute.</p>
@@ -108,7 +109,7 @@ function ActivateCard() {
 
         <div className="rounded-lg border border-[var(--line)] bg-[var(--bg)]/50 p-4">
           <div className="flex items-start gap-3">
-            <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/15 text-xs font-bold text-[var(--accent)]">2</span>
+            <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/15 text-xs font-bold text-[var(--accent-text)]">2</span>
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold text-[var(--fg)]">Open a strategy account</div>
               <p className="mt-0.5 text-xs text-[var(--muted)]">Starts a 5-day free trial — no charge today, cancel anytime.</p>
@@ -225,6 +226,11 @@ function OverviewContent({ data, allowedBots }: { data: PerformanceData; allowed
         </div>
       </section>
 
+      {/* db-dash #148/#150: open-trade card + recent-trades list, right on
+          Overview — previously only visible after drilling into an agent page. */}
+      <OpenTradesSection bots={active ? [active.bot] : bots.map((b) => b.bot)} />
+      <RecentTradesSection />
+
       {/* KPI row — dev-handoff §6 contract: Today / Past week (5 trading days) /
           Past month (21 trading days) / Lifetime. */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -284,7 +290,7 @@ function OverviewContent({ data, allowedBots }: { data: PerformanceData; allowed
           cumulative-from-zero P&L chart above. */}
       {view.curve.length >= 2 && (
         <section className="rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-widest text-[var(--accent)]">
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-[var(--accent-text)]">
             Equity Curve{active ? ` · ${active.label}` : ''}
           </h3>
           <EquityCurveMini curve={view.curve} hex={curveHex} baseline={view.starting_capital} />
@@ -293,7 +299,7 @@ function OverviewContent({ data, allowedBots }: { data: PerformanceData; allowed
 
       {/* Your agents — owned + add-agent cards. */}
       <section className="rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-4">
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-[var(--accent)]">Your Agents</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-[var(--accent-text)]">Your Agents</h3>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {(['spark', 'flame'] as LiveBot[]).map((b) => {
             const owned = allowedBots.includes(b)
@@ -345,7 +351,7 @@ function TogglePill({ label, active, onClick, accent, paper }: { label: string; 
     ? 'border-flame/40 bg-flame/15 text-flame'
     : accent === 'spark'
       ? 'border-spark/40 bg-spark/15 text-spark'
-      : 'border-[var(--accent)]/40 bg-[var(--accent)]/15 text-[var(--accent)]'
+      : 'border-[var(--accent)]/40 bg-[var(--accent)]/15 text-[var(--accent-text)]'
   return (
     <button type="button" onClick={onClick}
       className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${

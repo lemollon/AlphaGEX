@@ -1,12 +1,22 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { AppState, type AppStateStatus } from 'react-native'
-import { Tabs } from 'expo-router'
+import { Tabs, usePathname } from 'expo-router'
 import { font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import { ForgeIcon, LedgerIcon, CommunityIcon, AccountIcon } from '@/components/icons'
 import { registerPushDevice, usePushNavigation } from '@/notifications/push'
 import { useScreenTracking } from '@/analytics/screen-tracking'
+import { trackEvent } from '@/analytics/trackEvent'
 import { initMonitoring } from '@/monitoring/sentry'
+import { useCommunityUnreadCount } from '@/community/unread'
+
+/** Route segment -> the dev-handoff's tab name (mb-events `tab_view`). */
+const TAB_FOR_PATH: Record<string, string> = {
+  '/': 'forge',
+  '/ledger': 'ledger',
+  '/community': 'community',
+  '/account': 'account',
+}
 
 /**
  * Crash reporting has to be live before anything under the tabs can throw. The tabs
@@ -26,12 +36,37 @@ initMonitoring()
  */
 export default function TabsLayout() {
   const { colors: color } = useTheme()
+  // Community unread badge (#229) — a real server count (community/unread.ts), not
+  // the 0-hit placeholder tabBarBadge used to be. Capped at "9+" display-side so a
+  // customer back after a long absence never sees an overflowing three-digit pill.
+  const unreadCommunity = useCommunityUnreadCount()
+  const communityBadge = unreadCommunity > 0 ? (unreadCommunity > 9 ? '9+' : String(unreadCommunity)) : undefined
   // Push device registration (APP-034) — safe to call every time the tabs mount or
   // the app returns to the foreground; it no-ops when the token has not changed.
   // Tap routing (usePushNavigation) and automatic screen views live here too, since
   // the tabs are the one layout every signed-in screen sits under.
   usePushNavigation()
   useScreenTracking()
+
+  // mb-events `app_open` — once per cold start into the signed-in app, not
+  // once per tab switch (tab_view below covers that).
+  const firedAppOpen = useRef(false)
+  useEffect(() => {
+    if (firedAppOpen.current) return
+    firedAppOpen.current = true
+    trackEvent('app_open')
+  }, [])
+
+  // mb-events `tab_view(tab)` — fires on every tab change, separate from the
+  // generic screen_view useScreenTracking() already sends for APP-048.
+  const pathname = usePathname()
+  const lastTab = useRef<string | null>(null)
+  useEffect(() => {
+    const tab = TAB_FOR_PATH[pathname]
+    if (!tab || lastTab.current === tab) return
+    lastTab.current = tab
+    trackEvent('tab_view', { tab })
+  }, [pathname])
 
   useEffect(() => {
     void registerPushDevice()
@@ -51,7 +86,9 @@ export default function TabsLayout() {
           height: 88,
           paddingTop: 8,
         },
-        tabBarActiveTintColor: color.accent,
+        // Custom tab icons (icons.tsx) take `focused`, not the tint React Navigation
+        // passes to `tabBarIcon` — so this tint only ever paints the tab LABEL text.
+        tabBarActiveTintColor: color.accentText,
         tabBarInactiveTintColor: color.muted,
         tabBarLabelStyle: { fontFamily: font.bodyMedium, fontSize: 11 },
       }}
@@ -66,7 +103,7 @@ export default function TabsLayout() {
       />
       <Tabs.Screen
         name="community"
-        options={{ title: 'Community', tabBarIcon: CommunityIcon }}
+        options={{ title: 'Community', tabBarIcon: CommunityIcon, tabBarBadge: communityBadge }}
       />
       <Tabs.Screen
         name="account"

@@ -277,6 +277,14 @@ CREATE TABLE IF NOT EXISTS community_blocks (
   CHECK (blocker_id <> blocked_id)
 );
 
+-- Per-viewer "last seen the community feed" marker (mobile fidelity #229, the
+-- Community tab's unread badge). One row per user: everything posted after
+-- last_read_at, by someone else, counts as unread — see GET /api/community/unread.
+CREATE TABLE IF NOT EXISTS community_reads (
+  user_id UUID PRIMARY KEY REFERENCES users(id),
+  last_read_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Billing (Stripe subscriptions; see lib/billing/*). A customer subscribes to a
 -- bot ("spark"/"flame") or the "both" bundle via Stripe Checkout. stripe_customer_id
 -- is the one Stripe Customer per user; one subscription row per bot they run.
@@ -772,6 +780,12 @@ CREATE TABLE IF NOT EXISTS push_devices (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_push_devices_user ON push_devices(user_id) WHERE enabled;
+-- locale/tz (mobile fidelity #270) — the device's own IETF locale ("en-US") and
+-- IANA zone ("America/Chicago"), sent at registration. Nothing reads these yet; they
+-- exist so a future send-time/localization feature has real per-device data instead
+-- of having to backfill it from nothing.
+ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS locale TEXT;
+ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS tz TEXT;
 
 -- Per-customer category switches. show_amounts_on_lockscreen defaults FALSE so a
 -- customer who never opens settings does not get their P&L on a locked screen in
@@ -1025,6 +1039,27 @@ ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
 ALTER TABLE users ALTER COLUMN phone DROP NOT NULL;
 ALTER TABLE users ALTER COLUMN state DROP NOT NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'password';
+
+-- First-party product analytics (dev-handoff events table, POST /api/v1/events).
+-- user_id is nullable because most of these events fire pre-login (marketing CTAs,
+-- the waitlist modal, the first enrollment steps) — anon_id (a client-generated UUID,
+-- never derived from IP/UA) is the join key for that case, the same way page_views
+-- uses a rotating visitor hash for the SAME reason. 'surface' distinguishes web from
+-- the two native shells so one funnel query can cover all three. No column here may
+-- ever hold a card/account/broker number, an email, or a phone — enforced at the
+-- route layer (route.ts strips those before this INSERT), not just by convention.
+CREATE TABLE IF NOT EXISTS analytics_events (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID,
+  anon_id TEXT,
+  event TEXT NOT NULL,
+  props JSONB,
+  surface TEXT NOT NULL DEFAULT 'web',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_analytics_events_event_day ON analytics_events(event, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_analytics_events_user ON analytics_events(user_id) WHERE user_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_analytics_events_anon ON analytics_events(anon_id) WHERE anon_id IS NOT NULL;
 `
 
 let _ensured: Promise<void> | null = null

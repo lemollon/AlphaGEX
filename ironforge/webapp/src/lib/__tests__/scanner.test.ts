@@ -58,8 +58,17 @@ vi.mock('../customer-executor/executor', () => ({
   retryFailedCustomerCloses: vi.fn().mockResolvedValue(undefined),
 }))
 
+// Mock the push dispatch module so tests can control whether it throws —
+// specifically to prove notifyBigMove's fire-and-forget contract (db-controls
+// #202 safety review): a throwing alert dispatcher must never escape into the
+// scan cycle that rides alongside it.
+vi.mock('../push/dispatch', () => ({
+  dispatchToCustomers: vi.fn().mockResolvedValue({ sent: 0, skipped: 0, reasons: [] }),
+}))
+
 import { _testing } from '../scanner'
 import { query } from '../db'
+import { dispatchToCustomers } from '../push/dispatch'
 
 const {
   ctHHMM,
@@ -83,6 +92,7 @@ const {
   closeFlintAtRiskBeforeBell,
   settleFlintExpired,
   assignmentGuardWindow,
+  notifyBigMove,
 } = _testing
 
 /* ------------------------------------------------------------------ */
@@ -1549,5 +1559,71 @@ describe('FLINT guard is early-close aware end to end (2026-11-27 half day)', ()
     expect(result).toBe('')
     expect(queryMock).not.toHaveBeenCalled() // bails before even reading flint_positions
     expect(customerExecutor.mirrorCloseToCustomers).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * db-controls #202 safety review (coordinator follow-up): "the new big_move
+ * hook in scanner.ts must never affect trading" — verified two ways. (1) its
+ * call site rides the monitor loop as `void notifyBigMove(...)`, never
+ * `await`ed, so a slow dispatcher cannot add latency to the scan cycle. (2)
+ * even called directly and awaited, as this test does, a throwing push
+ * dispatcher must resolve cleanly rather than reject — proving the function's
+ * own try/catch, independent of the fire-and-forget call site.
+ */
+describe('notifyBigMove — a throwing alert dispatcher never escapes', () => {
+  const queryMock = vi.mocked(query)
+  const dispatchMock = vi.mocked(dispatchToCustomers)
+
+  // contracts=1, total_credit=$1.00, width=5 (short 10 / long 5) -> maxProfit
+  // $100, maxLoss $400. unrealizedPnl=$60 -> +60% of maxProfit, past the 50%
+  // threshold, so notifyBigMove reaches the dispatch call every time.
+  const POS = {
+    position_id: 'SPARK-TEST-1',
+    contracts: 1,
+    total_credit: 1.0,
+    put_short_strike: 10,
+    put_long_strike: 5,
+  }
+
+  beforeEach(() => {
+    queryMock.mockReset()
+    dispatchMock.mockReset()
+  })
+
+  it('swallows a rejected dispatchToCustomers and still resolves', async () => {
+    queryMock.mockResolvedValueOnce([{ customer_id: 'cust-1' }]) // customerIdsForBot
+    dispatchMock.mockRejectedValueOnce(new Error('dispatch boom'))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(notifyBigMove('spark', POS, 60)).resolves.toBeUndefined()
+    expect(dispatchMock).toHaveBeenCalledTimes(1)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('big_move push failed'))
+
+    warnSpy.mockRestore()
+  })
+
+  it('swallows a thrown error from the customer lookup itself and still resolves', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db boom')) // customerIdsForBot's own query
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(notifyBigMove('spark', POS, 60)).resolves.toBeUndefined()
+    expect(dispatchMock).not.toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('big_move push failed'))
+
+    warnSpy.mockRestore()
+  })
+
+  it('never calls dispatch for a bot outside PUSH_BOTS, regardless of P&L', async () => {
+    await expect(notifyBigMove('inferno', POS, 60)).resolves.toBeUndefined()
+    expect(queryMock).not.toHaveBeenCalled()
+    expect(dispatchMock).not.toHaveBeenCalled()
+  })
+
+  it('never calls dispatch when the move has not crossed the threshold', async () => {
+    // unrealizedPnl=$10 -> +10% of maxProfit — under the 50% bar.
+    await expect(notifyBigMove('spark', POS, 10)).resolves.toBeUndefined()
+    expect(queryMock).not.toHaveBeenCalled()
+    expect(dispatchMock).not.toHaveBeenCalled()
   })
 })

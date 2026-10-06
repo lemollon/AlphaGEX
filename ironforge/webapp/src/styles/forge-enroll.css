@@ -51,11 +51,11 @@
 .if-enroll .rs.done:hover{background:var(--bg-2)}
 .if-enroll .rs.done .dot{background:var(--fg);border-color:var(--fg);color:var(--bg)}
 .if-enroll .rs.cur{color:var(--fg);background:var(--bg-2)}
-.if-enroll .rs.cur .dot{border-color:var(--accent);color:var(--accent)}
+.if-enroll .rs.cur .dot{border-color:var(--accent);color:var(--accent-text)}
 .if-enroll .rs.skip{opacity:.55}
 .if-enroll .panel{min-width:0}
 .if-enroll .step-h{display:grid;gap:8px;margin-bottom:26px}
-.if-enroll .step-h .k{font:500 .78rem/1 var(--mono);color:var(--accent)}
+.if-enroll .step-h .k{font:500 .78rem/1 var(--mono);color:var(--accent-text)}
 .if-enroll .step-h p{color:var(--muted);max-width:60ch}
 .if-enroll .side{position:sticky;top:76px;display:grid;gap:12px}
 @media (max-width:1080px){.if-enroll .shell{grid-template-columns:200px minmax(0,1fr)}.if-enroll .side{display:none}}
@@ -126,7 +126,7 @@
 .if-enroll .bk-card{display:grid;gap:16px}
 .if-enroll .bk-head{display:flex;gap:14px;align-items:center}
 .if-enroll .bk-head .bk-logo{width:48px;height:48px;font-size:1.1rem}
-.if-enroll .badge{font-size:.74rem;font-weight:600;padding:4px 9px;border-radius:999px;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
+.if-enroll .badge{font-size:.74rem;font-weight:600;padding:4px 9px;border-radius:999px;background:var(--accent-soft);color:var(--accent-text);white-space:nowrap}
 .if-enroll .badge.ok{background:var(--up-soft);color:var(--up)}
 .if-enroll .badge.grey{background:var(--bg-2);color:var(--muted)}
 .if-enroll .perm{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;font-size:.86rem}

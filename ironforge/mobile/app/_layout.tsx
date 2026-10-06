@@ -31,6 +31,9 @@ import { ToastHost } from '@/components/ToastHost'
 import { TradeBannerHost } from '@/components/TradeBannerHost'
 import { initializeApiPinning, onApiPinningError } from '@/security/ssl-pinning'
 import { showToast } from '@/notifications/toast'
+import { StepUpHost } from '@/components/StepUpHost'
+import { ConnectivityBanner } from '@/components/ConnectivityBanner'
+import { LegalReacceptGate } from '@/components/LegalReacceptGate'
 
 /**
  * Certificate pinning has to be live before anything in this app can make a
@@ -298,7 +301,10 @@ function RootLayoutInner() {
         }}
       />
       {signedIn && !lockState.locked ? <TradeBannerHost /> : null}
+      {signedIn && !lockState.locked ? <LegalReacceptGate /> : null}
       <ToastHost />
+      {signedIn && !lockState.locked ? <StepUpHost /> : null}
+      <ConnectivityBanner />
       {signedIn && lockState.locked ? (
         <View style={s.overlay}>
           <Wordmark height={32} />

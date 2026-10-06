@@ -349,7 +349,7 @@ export default function BillingScreen() {
           <Text style={[type.label, { color: color.muted, marginTop: space.md, lineHeight: 18 }]}>
             By continuing, you accept the{' '}
             {legal ? (
-              <Text style={{ color: color.accent }} onPress={() => openLegal(legal.terms)}>
+              <Text style={{ color: color.accentText }} onPress={() => openLegal(legal.terms)}>
                 Terms of Service
               </Text>
             ) : (
@@ -413,11 +413,11 @@ export default function BillingScreen() {
                     {legal ? (
                       <>
                         {' '}
-                        <Text style={{ color: color.accent }} onPress={() => openLegal(legal.terms)}>
+                        <Text style={{ color: color.accentText }} onPress={() => openLegal(legal.terms)}>
                           Terms of Use
                         </Text>
                         {' and '}
-                        <Text style={{ color: color.accent }} onPress={() => openLegal(legal.privacy)}>
+                        <Text style={{ color: color.accentText }} onPress={() => openLegal(legal.privacy)}>
                           Privacy Policy
                         </Text>
                         {' apply.'}

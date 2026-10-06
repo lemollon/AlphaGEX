@@ -21,6 +21,7 @@ import { SUPPORT_EMAIL, supportMailto } from '@/support/contact'
 import { space, radius, type, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
+import { trackEvent } from '@/analytics/trackEvent'
 
 /** 10.4 design `sugg` chips — exact copy, shown only on the empty state. */
 const SUGGESTIONS = [
@@ -56,6 +57,7 @@ export default function SparkyScreen() {
       const text = (overrideText ?? draft).trim()
       if (!text || streaming) return
 
+      trackEvent('sparky_question', { mode: overrideText ? 'suggested' : 'typed' })
       const next: SparkyTurn[] = [...turns, { role: 'user', content: text }]
       setTurns([...next, { role: 'assistant', content: '' }])
       setDraft('')
@@ -157,7 +159,7 @@ export default function SparkyScreen() {
                   <View style={s.errorBox}>
                     <Text style={[type.body, { color: color.neg }]}>{error}</Text>
                     <Pressable onPress={() => void Linking.openURL(supportMailto('Sparky could not help'))}>
-                      <Text style={[type.label, { color: color.accent, marginTop: space.sm }]}>
+                      <Text style={[type.label, { color: color.accentText, marginTop: space.sm }]}>
                         Email {SUPPORT_EMAIL} instead
                       </Text>
                     </Pressable>

@@ -33,7 +33,7 @@
 .ifw-marketing .sec-head{display:flex;justify-content:space-between;align-items:end;gap:16px;flex-wrap:wrap;margin-bottom:20px}
 .ifw-marketing .sec-head p{color:var(--muted);margin-top:6px;max-width:60ch}
 .ifw-marketing .link{color:var(--fg);font-weight:500;text-decoration:none;white-space:nowrap}
-.ifw-marketing .link:hover{color:var(--accent)}
+.ifw-marketing .link:hover{color:var(--accent-text)}
 /* buttons */
 .ifw-marketing .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font:600 .9rem/1 var(--sans);padding:11px 18px;border-radius:999px;border:1px solid var(--line-2);background:var(--bg);color:var(--fg);text-decoration:none;cursor:pointer;transition:background .15s,border-color .15s}
 .ifw-marketing .btn:hover{background:var(--bg-2)}
@@ -47,7 +47,7 @@
 .ifw-marketing .nav{position:sticky;top:env(safe-area-inset-top,0px);z-index:30;background:var(--bg);border-bottom:1px solid var(--line);margin-inline:-16px;padding-inline:16px}
 .ifw-marketing .nav .wrap{display:flex;align-items:center;gap:28px;height:60px}
 .ifw-marketing .wordmark{font:700 1.4rem/1 var(--brand);letter-spacing:.14em;text-decoration:none}
-.ifw-marketing .wordmark b{color:var(--accent);font-weight:700}
+.ifw-marketing .wordmark b{color:var(--accent-text);font-weight:700}
 .ifw-marketing .links{display:flex;gap:22px;margin-right:auto}
 .ifw-marketing .links a{text-decoration:none;color:var(--muted);font-weight:500;font-size:.9rem;padding-block:19px;border-bottom:2px solid transparent}
 .ifw-marketing .links a:hover{color:var(--fg)}
@@ -211,7 +211,7 @@ html[data-theme="dark"] .ifw-marketing .theme .moon{display:block}
 /* steps */
 .ifw-marketing .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
 .ifw-marketing .step{padding:20px;display:grid;gap:8px;align-content:start}
-.ifw-marketing .step .n{font:500 .8rem/1 var(--mono);color:var(--accent)}
+.ifw-marketing .step .n{font:500 .8rem/1 var(--mono);color:var(--accent-text)}
 .ifw-marketing .step p{color:var(--muted);font-size:.92rem}
 @media (max-width:800px){.ifw-marketing .steps{grid-template-columns:1fr}}
 /* compare table */
@@ -279,7 +279,7 @@ html[data-theme="dark"] .ifw-marketing .theme .moon{display:block}
 .ifw-marketing .plan{padding:24px;display:grid;gap:16px;align-content:start}
 .ifw-marketing .plan.feat-plan{border-color:var(--fg)}
 .ifw-marketing .plan-top{display:flex;justify-content:space-between;align-items:center;gap:10px}
-.ifw-marketing .tag{font-size:.75rem;font-weight:600;padding:5px 10px;border-radius:999px;background:var(--accent-soft);color:var(--accent)}
+.ifw-marketing .tag{font-size:.75rem;font-weight:600;padding:5px 10px;border-radius:999px;background:var(--accent-soft);color:var(--accent-text)}
 .ifw-marketing .price{display:flex;align-items:baseline;gap:6px}
 .ifw-marketing .price b{font-size:2.4rem;font-weight:600;letter-spacing:-.03em}
 .ifw-marketing .price span{color:var(--muted)}
@@ -308,7 +308,7 @@ html[data-theme="dark"] .ifw-marketing .theme .moon{display:block}
 .ifw-marketing .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .ifw-marketing .field{display:grid;gap:5px}
 .ifw-marketing label, .ifw-marketing legend{font-size:.85rem;font-weight:500}
-.ifw-marketing .req{color:var(--accent)}
+.ifw-marketing .req{color:var(--accent-text)}
 .ifw-marketing input, .ifw-marketing select{width:100%;font:400 .95rem/1.2 var(--sans);color:var(--fg);background:var(--bg);border:1px solid var(--line-2);border-radius:var(--r-sm);padding:11px 12px}
 .ifw-marketing input:focus, .ifw-marketing select:focus{outline:none;border-color:var(--fg)}
 .ifw-marketing .err{font-size:.8rem;color:#d23a2a;min-height:0}
@@ -353,10 +353,10 @@ html[data-theme="dark"] .ifw-marketing .theme .moon{display:block}
 .ifw-marketing .foot h4{font-size:.8rem;font-weight:500;color:var(--muted);margin:0 0 10px}
 .ifw-marketing .foot ul{list-style:none;padding:0;margin:0;display:grid;gap:8px;font-size:.9rem}
 .ifw-marketing .foot a{text-decoration:none}
-.ifw-marketing .foot a:hover{color:var(--accent)}
+.ifw-marketing .foot a:hover{color:var(--accent-text)}
 /* "Join the waitlist" opens the modal, not a link — same look, no button chrome. */
 .ifw-marketing .foot button.footer-link-btn{background:none;border:0;padding:0;margin:0;font:inherit;color:inherit;text-decoration:none;cursor:pointer;text-align:left}
-.ifw-marketing .foot button.footer-link-btn:hover{color:var(--accent)}
+.ifw-marketing .foot button.footer-link-btn:hover{color:var(--accent-text)}
 .ifw-marketing .disclose{grid-column:1/-1;font-size:.78rem;line-height:1.7;color:var(--muted);border-top:1px solid var(--line);padding-top:20px}
 @media (max-width:860px){.ifw-marketing .foot{grid-template-columns:1fr 1fr}}
 @media (max-width:480px){.ifw-marketing .foot{grid-template-columns:1fr}}

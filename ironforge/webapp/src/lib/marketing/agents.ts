@@ -56,11 +56,11 @@ export const AGENTS: MarketingAgent[] = [
     name: 'Spark',
     colorVar: '--spark',
     mascot: '/marketing/spark-mascot.webp',
-    tagline: 'Morning session',
+    tagline: 'Morning session (8:30 AM–noon CT)',
     tags: ['morning'],
     desc: 'Trades the opening hours, when the market moves the most. More opportunity, slightly more risk.',
     rows: [
-      { label: 'Session', value: 'Morning' },
+      { label: 'Session', value: 'Morning (8:30 AM–noon CT)' },
       { label: 'Approach', value: 'Put spreads' },
       { label: 'Risk', value: 'Slightly higher', riskLevel: 3 },
     ],
@@ -76,11 +76,11 @@ export const AGENTS: MarketingAgent[] = [
     name: 'Flame',
     colorVar: '--flame',
     mascot: '/marketing/flame-mascot.webp',
-    tagline: 'Afternoon session',
+    tagline: 'Afternoon session (noon–3:00 PM CT)',
     tags: ['afternoon', 'calm'],
     desc: 'Waits for the morning rush to settle and trades the calmer afternoon. Less volatility, smoother ride.',
     rows: [
-      { label: 'Session', value: 'Afternoon' },
+      { label: 'Session', value: 'Afternoon (noon–3:00 PM CT)' },
       { label: 'Approach', value: 'Put spreads' },
       { label: 'Risk', value: 'Lower volatility', riskLevel: 2 },
     ],
@@ -120,7 +120,15 @@ export function getAgent(slug: AgentSlug): MarketingAgent {
 
 /** Side-by-side compare table rows (Agents page), verbatim from the design. */
 export const AGENT_COMPARE_ROWS: Array<{ label: string; spark: string; flame: string; ember: string }> = [
-  { label: 'When it trades', spark: 'Morning session', flame: 'Afternoon session', ember: 'To be announced' },
+  {
+    label: 'When it trades',
+    spark: 'Morning session (8:30 AM–noon CT)',
+    flame: 'Afternoon session (noon–3:00 PM CT)',
+    // Ember has no fixed entry window — it trades all day during market hours
+    // (early-close days end at the actual close). Decided by Leron 2026-10-06,
+    // replacing the earlier "To be announced" placeholder (oi-#296/#297).
+    ember: 'All day during market hours (8:30 AM–3:00 PM CT)',
+  },
   { label: 'Approach', spark: 'Put spreads', flame: 'Put spreads', ember: 'Steady growth' },
   {
     label: 'Market conditions',

@@ -8,6 +8,8 @@ import { useEnrollment } from '../useEnrollment'
 import { PAGE_RANK, routeForNextStep } from '../steps'
 import StripeCardForm from './StripeCardForm'
 import { MARKETING_TIERS, TRIAL_DAYS } from '@/lib/billing/plans'
+import { track } from '@/lib/analytics/track'
+import { trackEnrollStepComplete } from '@/lib/analytics/enroll'
 
 /**
  * BILL-COMM-01 / BILL-AUTO-01 — Billing (10/5 reorder: step 5, right after Connect
@@ -141,6 +143,8 @@ export default function BillingClient() {
     try {
       const r = await resume()
       if (!r) return
+      track('billing_trial_started', { agent: r.enrollment.selected_plan ?? undefined })
+      trackEnrollStepComplete('billing')
       const canonical = routeForNextStep(r.next_step, r.enrollment.selected_plan)
       router.push(canonical.route)
     } catch (e) {

@@ -7,7 +7,7 @@
 export default function AgentLeadTile({
   label,
   lead,
-  accentClass = 'text-[var(--accent)]',
+  accentClass = 'text-[var(--accent-text)]',
 }: {
   label: string
   lead: { kept: number; total: number } | null

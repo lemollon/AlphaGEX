@@ -65,4 +65,6 @@ export const forgeSpace = space
 
 /** Re-exported for call sites that want one import for "everything 10.4". */
 export const forgeAccent = darkColor.accent
+/** Deeper/brighter accent for small text and text links — see tokens.ts. */
+export const forgeAccentText = darkColor.accentText
 export { legacyRadius }

@@ -25,6 +25,7 @@ import useSWR from 'swr'
 import { api } from '@/api/client'
 import type { BrokerageConnection, BrokerageConnections, LiveAgents } from '@/api/types'
 import { brokerLabel, health, maskTail, type HealthKey } from '@/api/brokerage'
+import { requestStepUp } from '@/auth/stepUp'
 import { assignedAgentLabels } from '@/agents/assignment'
 import { space, radius, type, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
@@ -58,14 +59,23 @@ export function BrokerageSection() {
   )
   const [busy, setBusy] = useState(false)
 
-  /** Opens the server-created portal. `broker` prefills it for a reconnect. */
+  /**
+   * Opens the server-created portal. `broker` prefills it for a reconnect.
+   *
+   * Face ID + password step-up (APP-010 / mobile fidelity #273) gates this — it is
+   * 'brokerage_connect' from MOBILE_SESSION_POLICY.stepUpActions, matching the
+   * server's non-enroll branch in /api/onboarding/brokerage/connect. A cancelled or
+   * failed step-up aborts before any network call to SnapTrade.
+   */
   async function openPortal(broker?: string) {
     if (busy) return
+    const stepUpToken = await requestStepUp('brokerage_connect')
+    if (!stepUpToken) return
     setBusy(true)
     try {
       const res = await api<{ ok: boolean; redirectURI?: string; error?: string }>(
         '/api/onboarding/brokerage/connect',
-        { method: 'POST', body: broker ? { broker } : {} },
+        { method: 'POST', body: broker ? { broker } : {}, stepUpToken },
       )
       if (!res.redirectURI) throw new Error(res.error ?? 'Could not start the connection.')
       await WebBrowser.openAuthSessionAsync(res.redirectURI, RETURN_URL)
@@ -110,11 +120,15 @@ export function BrokerageSection() {
 
   async function disconnect(c: BrokerageConnection) {
     if (busy) return
+    // Face ID + password step-up (APP-010 / mobile fidelity #273) — 'brokerage_disconnect'.
+    const stepUpToken = await requestStepUp('brokerage_disconnect')
+    if (!stepUpToken) return
     setBusy(true)
     try {
       await api('/api/brokerage/connection', {
         method: 'DELETE',
         body: { authorizationId: c.authorization_id },
+        stepUpToken,
       })
     } catch (e) {
       Alert.alert('Could not disconnect', (e as Error).message)
@@ -185,7 +199,7 @@ export function BrokerageSection() {
           accessibilityRole="button"
           style={[s.outlineBtn, busy && { opacity: 0.5 }]}
         >
-          <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+          <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
             {busy ? 'Opening…' : 'Connect Another Brokerage'}
           </Text>
         </Pressable>

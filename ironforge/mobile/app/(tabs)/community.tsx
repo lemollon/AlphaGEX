@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from 'react-native'
+import { useFocusEffect, useScrollToTop } from '@react-navigation/native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import Svg, { Path } from 'react-native-svg'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
@@ -32,7 +33,9 @@ import type { ColorTokens } from '@/theme/palette'
 import { Card, Loading, Empty, ErrorState } from '@/components/ui'
 import { AppHeader, Mascot, SPARKY_AVATAR } from '@/components/Brand'
 import { applyHeart, FLAME, HEART } from '@/community/reactions'
+import { trackEvent } from '@/analytics/trackEvent'
 import { initials, channelAccent, bubbleTint } from '@/community/identity'
+import { markCommunityRead } from '@/community/unread'
 import {
   appendOptimisticReply,
   applyHeartToReply,
@@ -69,6 +72,16 @@ const WELCOME_DISMISSED_KEY = 'ironforge.community.welcomeDismissed'
 export default function CommunityScreen() {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
+  // Re-tap-tab-to-scroll-to-top (#231).
+  const scrollRef = useRef<ScrollView>(null)
+  useScrollToTop(scrollRef)
+  // Community unread badge (#229) — mark read every time this tab gains focus, not
+  // just on first mount, so re-visiting after new posts land clears the badge again.
+  useFocusEffect(
+    useCallback(() => {
+      void markCommunityRead()
+    }, []),
+  )
   const [channel, setChannel] = useState('all-chat')
   const [draft, setDraft] = useState('')
   const [posting, setPosting] = useState(false)
@@ -174,6 +187,7 @@ export default function CommunityScreen() {
       setDraft('')
       setAssistSuggestion(null)
       mutate()
+      trackEvent('community_post')
     } catch (e) {
       const msg = (e as Error).message
       setPostError(
@@ -224,6 +238,7 @@ export default function CommunityScreen() {
    */
   async function toggleHeart(id: string) {
     await mutate((cur) => applyHeart(cur, id), { revalidate: false })
+    trackEvent('community_like')
     try {
       await api('/api/community/reactions', {
         method: 'POST',
@@ -252,6 +267,7 @@ export default function CommunityScreen() {
   return (
     <Shell>
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={{ padding: space.lg }}
         refreshControl={
           <RefreshControl refreshing={isValidating} onRefresh={() => mutate()} tintColor={color.accent} />
@@ -606,7 +622,7 @@ function BlockedSheet({
             <View key={m.user_id} style={[s.sheetRow, s.rowBetween]}>
               <Text style={[type.body, { color: color.text }]}>{m.display_name}</Text>
               <Pressable onPress={() => onUnblock(m)} hitSlop={8} accessibilityRole="button">
-                <Text style={[type.label, { color: color.accent }]}>Unblock</Text>
+                <Text style={[type.label, { color: color.accentText }]}>Unblock</Text>
               </Pressable>
             </View>
           ))
@@ -695,6 +711,7 @@ function ThreadSheet({
         (cur) => reconcileReply(cur, tempId, { ...optimistic, id: res.messageId ?? tempId }),
         { revalidate: false },
       )
+      trackEvent('community_reply')
     } catch (e) {
       await mutate((cur) => removeReply(cur, tempId), { revalidate: false })
       const msg = (e as Error).message
@@ -706,6 +723,7 @@ function ThreadSheet({
 
   async function toggleReplyHeart(id: string) {
     await mutate((cur) => applyHeartToReply(cur, id), { revalidate: false })
+    trackEvent('community_like')
     try {
       await api('/api/community/reactions', { method: 'POST', body: { message_id: id, emoji: HEART } })
     } catch (e) {
@@ -921,7 +939,7 @@ function ReactionRow({ message, onPress }: { message: CommunityMessage; onPress:
         <Text
           style={[
             type.label,
-            { color: mine ? color.accent : color.muted, fontFamily: font.bodyMedium },
+            { color: mine ? color.accentText : color.muted, fontFamily: font.bodyMedium },
           ]}
         >
           {count}

@@ -7,6 +7,7 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR from 'swr'
 import { api, ApiError } from '@/api/client'
 import type { DeletionStatusResponse, DeletionRequestResponse } from '@/api/types'
+import { requestStepUp } from '@/auth/stepUp'
 import { space, radius, type, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
@@ -66,11 +67,17 @@ export default function DeleteAccountScreen() {
   }
 
   async function requestDelete() {
+    // Face ID + password step-up (APP-010 / mobile fidelity #273) — this cancels
+    // billing in the same request (stepUpActions' 'billing_cancel'), so it is gated
+    // the same way brokerage disconnect is.
+    const stepUpToken = await requestStepUp('billing_cancel')
+    if (!stepUpToken) return
     setBusy(true)
     setFailure(null)
     try {
       const res = await api<DeletionRequestResponse>('/api/account/deletion-request', {
         method: 'POST',
+        stepUpToken,
       })
       // Re-read state rather than trusting the response shape: `alreadyRequested` and a
       // fresh request return different bodies, and the GET is the one source of truth
@@ -190,7 +197,7 @@ export default function DeleteAccountScreen() {
               disabled={busy}
               style={[s.outlineBtn, busy && { opacity: 0.4 }]}
             >
-              <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+              <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
                 {busy ? 'Working…' : 'Cancel deletion request'}
               </Text>
             </Pressable>
@@ -220,7 +227,7 @@ function Bullet({ children }: { children: React.ReactNode }) {
   const s = useMemo(() => makeStyles(color), [color])
   return (
     <View style={s.bullet}>
-      <Text style={[type.body, { color: color.accent }]}>•</Text>
+      <Text style={[type.body, { color: color.accentText }]}>•</Text>
       <Text style={[type.body, { color: color.textDim, flex: 1, marginLeft: space.sm }]}>
         {children}
       </Text>

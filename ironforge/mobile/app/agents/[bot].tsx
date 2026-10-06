@@ -33,6 +33,7 @@ import { LiveTradeCard } from '@/components/LiveTradeCard'
 import { showToast } from '@/notifications/toast'
 import { soleConnection, brokerLabel, maskTail } from '@/api/brokerage'
 import { track } from '@/analytics/track'
+import { trackEvent } from '@/analytics/trackEvent'
 import { agentAction, type AgentActionKind } from '@/agents/eligibility'
 import type { AgentBot } from '@/agents/routes'
 import {
@@ -72,6 +73,10 @@ export default function AgentDetailScreen() {
     params.bot === 'flame' ? 'flame' : params.bot === 'ember' ? 'ember' : 'spark'
   ) as AgentBot
   const label = AGENT_LABEL[bot]
+
+  useEffect(() => {
+    trackEvent('agent_sheet_open', { agent: bot })
+  }, [bot])
 
   const agentsSWR = useSWR<LiveAgents>('/api/live/agents', (p: string) => api<LiveAgents>(p))
   const entitlementsSWR = useSWR<EntitlementsResponse>('/api/billing/entitlements', (p: string) =>
@@ -536,6 +541,7 @@ function PauseResumeControl({
       // reflect the new paused state without that screen doing anything itself.
       void globalMutate('/api/live/agents')
       track(nextPaused ? 'agent_pause_confirmed' : 'agent_resume_confirmed', { agent: bot })
+      trackEvent(nextPaused ? 'agent_pause' : 'agent_resume', { agent: bot })
 
       // Floating snackbar (10.4 design `toast()` — "Spark paused"), not a blocking
       // native dialog: the pause/resume itself already asked for confirmation via
@@ -626,7 +632,7 @@ function SetupRequiredSection({ bot, label }: { bot: AgentBot; label: string }) 
         onPress={() => void WebBrowser.openBrowserAsync(`${API_BASE}/account/brokerage`)}
         style={[s.actionBtn, { borderColor: color.accent, marginTop: space.lg }]}
       >
-        <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+        <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
           Connect a brokerage on the web
         </Text>
       </Pressable>
@@ -666,7 +672,7 @@ function SwitchSection({
         onPress={() => void WebBrowser.openBrowserAsync(`${API_BASE}/agents/${bot}`)}
         style={[s.actionBtn, { borderColor: color.accent, marginTop: space.lg }]}
       >
-        <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+        <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
           Manage on the web
         </Text>
       </Pressable>
@@ -725,11 +731,19 @@ function ActivationFlow({
   const [idemKey] = useState(() => generateIdempotencyKey())
   // Confetti (mobile addendum §2 "Add-agent sheet": "confetti in agent color on
   // success") — fires once, the moment activation succeeds, then clears itself.
+  // Single agent hue (design fidelity audit, App — "Add-agent confetti"): the
+  // shipped version mixed in color.pos and color.text, which reads as a generic
+  // success burst rather than THIS agent's own color.
   const [showConfetti, setShowConfetti] = useState(false)
   // Which accountId the preview on screen (or in flight) belongs to — guards the
   // auto-fetch effect below from re-firing for the account it already fetched, while
   // still re-firing the moment a multi-account picker changes the selection.
   const previewedFor = useRef<string | null>(null)
+
+  useEffect(() => {
+    trackEvent('add_agent_start', { agent: bot })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per sheet mount.
+  }, [])
 
   function openWebHandoff() {
     void WebBrowser.openBrowserAsync(`${API_BASE}/agents/${bot}`)
@@ -789,6 +803,7 @@ function ActivationFlow({
       void globalMutate('/api/live/agents')
       void globalMutate('/api/v1/automation/pause')
       setShowConfetti(true)
+      trackEvent('add_agent_complete', { agent: bot })
     } catch (e) {
       setFailure(e instanceof ApiError ? e.humanMessage : (e as Error).message)
     } finally {
@@ -822,7 +837,7 @@ function ActivationFlow({
           </Pressable>
         </Card>
         {showConfetti ? (
-          <Confetti colors={[agentAccent(bot), color.pos, color.text]} onDone={() => setShowConfetti(false)} />
+          <Confetti colors={[agentAccent(bot)]} onDone={() => setShowConfetti(false)} />
         ) : null}
       </View>
     )

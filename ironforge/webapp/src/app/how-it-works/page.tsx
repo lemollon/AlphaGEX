@@ -124,7 +124,7 @@ export default function HowItWorksPage() {
           <div className="feats">
             {GETTING_STARTED.map((s) => (
               <div className="card feat" key={s.n}>
-                <span className="num" style={{ color: 'var(--accent)', fontSize: '.8rem' }}>
+                <span className="num" style={{ color: 'var(--accent-text)', fontSize: '.8rem' }}>
                   {s.n}
                 </span>
                 <b>{s.title}</b>

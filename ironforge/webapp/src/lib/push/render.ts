@@ -24,6 +24,8 @@ const CHANNEL: Record<NotificationCategory, string> = {
   brokerage_health: 'account',
   billing: 'account',
   community: 'community',
+  big_move: 'trades',
+  daily_summary: 'account',
 }
 
 /** Approvals expire in 5 minutes; a push that outlives the decision is noise. */
@@ -34,6 +36,8 @@ const TTL_SEC: Record<NotificationCategory, number> = {
   brokerage_health: 1800,
   billing: 86400,
   community: 3600,
+  big_move: 1800,
+  daily_summary: 86400,
 }
 
 export function formatAmount(n: number): string {

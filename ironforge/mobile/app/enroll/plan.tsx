@@ -86,7 +86,7 @@ export default function PlanScreen() {
             // price_monthly (not hardcoded) so this can never drift from plans.ts.
             priceLabel={catalog.community.price_monthly === 0 ? 'Free' : undefined}
             price={catalog.community.price_monthly}
-            accent={color.accent}
+            accent={color.accentText}
             onPress={() => choose('community')}
             disabled={busy}
           />

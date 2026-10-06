@@ -58,14 +58,15 @@ export const ACCOUNT_REQUIREMENTS =
 
 export const TRADING_SCHEDULE: Record<AgentBot, string> = {
   spark:
-    'Looks for a new position each morning while the market is open. It does not enter new trades outside that window. Any position already open continues to be managed by the agent’s risk rules until it closes.',
+    'Looks for a new position each morning while the market is open, 8:30 AM–noon CT. It does not enter new trades outside that window. Any position already open continues to be managed by the agent’s risk rules until it closes.',
   flame:
-    'Looks for a new position each afternoon while the market is open. It does not enter new trades outside that window. Any position already open continues to be managed by the agent’s risk rules until it closes.',
-  // The design doc's own agent-identity table lists Ember's session as "To be
-  // confirmed" (one prototype screen contradicts this with a concrete 9–2 CT window
-  // that the design handoff itself flags as unresolved) — this stays unresolved
-  // rather than guessing a schedule the product hasn't committed to.
-  ember: 'Session to be confirmed. Any position already open continues to be managed by the agent’s risk rules until it closes.',
+    'Looks for a new position each afternoon while the market is open, noon–3:00 PM CT. It does not enter new trades outside that window. Any position already open continues to be managed by the agent’s risk rules until it closes.',
+  // Leron, 2026-10-06 (binding): Ember has no fixed window — it can trade all day
+  // during market hours. This replaces the earlier "Session to be confirmed" copy,
+  // which is no longer accurate (that placeholder predates this decision). Display
+  // copy only — Ember's own engine schedule is unchanged by this line.
+  ember:
+    'Trades all day during market hours (8:30 AM–3:00 PM CT). Any position already open continues to be managed by the agent’s risk rules until it closes.',
 }
 
 /** Ember's account rule (design-spec §3/§4, verbatim quantities) — surfaced
