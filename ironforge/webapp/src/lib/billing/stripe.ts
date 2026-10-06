@@ -379,6 +379,26 @@ export async function findLiveSubscriptionForPrice(
   return null
 }
 
+/**
+ * EMBEDDED billing (10/5 reorder) — a SetupIntent so the enrollment's Billing step can
+ * collect a card with Stripe Elements/Payment Element instead of a hosted-Checkout
+ * redirect, with $0 due today, EXACTLY like createSetupCheckout() above (setup mode,
+ * card only). A SetupIntent — not a subscription — is deliberate: creating a
+ * subscription now (even `default_incomplete`) would start Stripe's own billing clock
+ * at card entry, contradicting "the trial begins only after brokerage+agent+activation"
+ * (§7), which createTrialingSubscription() below still enforces by creating the real
+ * subscription ONLY inside the activation transaction. usage:'off_session' is what
+ * lets that later subscription charge this same saved card without the customer
+ * present.
+ */
+export async function createSetupIntent(opts: { customerId: string }): Promise<{ id: string; client_secret: string }> {
+  return stripeRequest<{ id: string; client_secret: string }>('POST', '/setup_intents', {
+    customer: opts.customerId,
+    payment_method_types: ['card'],
+    usage: 'off_session',
+  })
+}
+
 /** A payment method actually attached to this customer — the §4 "payment method is valid" input. */
 export async function hasUsablePaymentMethod(customerId: string): Promise<boolean> {
   try {

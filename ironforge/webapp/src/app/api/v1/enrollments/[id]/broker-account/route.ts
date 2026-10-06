@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
 import { getEnrollmentForUser } from '@/lib/enrollment/service'
+import { isEmberPlan } from '@/lib/enrollment/legal'
+import { createAgentConfigDraft } from '@/lib/enrollment/agent-config-service'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
 import { isUuid } from '@/lib/enrollment/ids'
 import { isEnrollmentClosed, enrollmentClosedResponse } from '@/lib/enrollment-mode'
@@ -23,6 +25,17 @@ export const dynamic = 'force-dynamic'
  * or agent change invalidates the activation review" (§3 AGENT-02). Silently keeping a
  * config that was validated against a different account is how an activation snapshot
  * stops describing what will actually happen.
+ *
+ * WEB ORDER (10/5 reorder): the web funnel now runs account -> legal -> agent (choose
+ * plan) -> broker -> billing -> review — AGENT-01's own screen no longer sits between
+ * broker and billing, so THIS is where the web order mints the agent_configs row (via
+ * the shared createAgentConfigDraft, identical validation to AGENT-01) and advances the
+ * enrollment out of legal_pending (billing_pending for Spark/Flame, setup_required
+ * direct for Ember — same branch service.ts already uses after legal). Gated on
+ * `identity.source === 'cookie'` (a browser session; the mobile app authenticates with
+ * a bearer token) AND `status === 'legal_pending'`, so the APP ORDER — which reaches
+ * this route much later, while status is already 'setup_required' from its own
+ * billing-then-broker sequence — takes neither branch and is byte-for-byte unchanged.
  */
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   // Enrollment closed: never create/attach a brokerage record from a blocked
@@ -93,16 +106,48 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
         WHERE user_id = $1 AND status = 'valid' AND (broker_account_id IS DISTINCT FROM $2)`,
       [session.customerId, account.id],
     )
-    await customerExecute(
-      `UPDATE enrollments SET current_step = 'agent', updated_at = now()
-        WHERE id = $1 AND user_id = $2`,
-      [params.id, session.customerId],
-    )
+
+    // Web order only (see the class comment): mint the config here and advance past
+    // legal_pending. See the doc comment above for why this never fires for the app.
+    const isWebOrder = identity?.source === 'cookie' && enrollment.status === 'legal_pending' && enrollment.selected_plan != null
+    let configId: string | null = null
+    let nextStep = 'agent'
+
+    if (isWebOrder) {
+      const draft = await createAgentConfigDraft({
+        userId: session.customerId,
+        agentCode: enrollment.selected_plan!,
+        brokerAccountId: account.id,
+      })
+      if (draft.ok) {
+        configId = draft.id
+        const ember = isEmberPlan(enrollment.selected_plan)
+        await customerExecute(
+          `UPDATE enrollments SET status = $3, current_step = $4, updated_at = now()
+            WHERE id = $1 AND user_id = $2 AND status = 'legal_pending'`,
+          [params.id, session.customerId, ember ? 'setup_required' : 'billing_pending', ember ? 'setup' : 'billing'],
+        )
+        nextStep = ember ? 'setup' : 'billing'
+      }
+      // draft.ok === false (e.g. Ember's $500-$2,000 gate failed against this account's
+      // buying power): fall through to the app-order bookkeeping below so the customer
+      // is not left with no record at all — ReviewClient/AgentClient's existing
+      // fallback chain surfaces the violation.
+    }
+
+    if (!isWebOrder || !configId) {
+      await customerExecute(
+        `UPDATE enrollments SET current_step = 'agent', updated_at = now()
+          WHERE id = $1 AND user_id = $2`,
+        [params.id, session.customerId],
+      )
+    }
 
     return NextResponse.json({
       ok: true,
       broker_account: { id: account.id, display_mask: account.display_mask },
-      next_step: 'agent',
+      config_id: configId,
+      next_step: configId ? nextStep : 'agent',
     })
   } catch (e) {
     const env = redactProviderError('v1/broker-account', e, 'INTERNAL', 'Could not select that account. Please try again.')

@@ -6,24 +6,33 @@ import { useSearchParams } from 'next/navigation'
 import EnrollShell from '../EnrollShell'
 import { useEnrollment } from '../useEnrollment'
 import { PAGE_RANK, routeForNextStep } from '../steps'
+import StripeCardForm from './StripeCardForm'
 import { MARKETING_TIERS, TRIAL_DAYS } from '@/lib/billing/plans'
 
 /**
- * BILL-COMM-01 / BILL-AUTO-01 — billing (July 29 handoff; Community made free 2026-10-05).
+ * BILL-COMM-01 / BILL-AUTO-01 — Billing (10/5 reorder: step 5, right after Connect
+ * brokerage; Community made free 2026-10-05).
  *
- * Payment fields are HOSTED BY STRIPE (accepted deviation from the embedded-field
- * mockups) for Automate ONLY: Automate saves a card at $0 due (setup mode via the
- * server-validated `enrollment_setup` intent — the trial begins only at activation,
- * never here). Community is FREE — no card, no Stripe, ever (Leron, binding): this
- * screen records the clickwrap, then POST /api/billing/checkout writes the free
- * entitlement directly and hands back an internal url, not a Stripe redirect.
+ * Automate (Spark/Flame; Ember never reaches this screen — see plan/PlanClient.tsx
+ * and broker/BrokerClient.tsx): an EMBEDDED Stripe Elements Payment Element,
+ * server-created via a SetupIntent (POST /api/billing/setup-intent) — $0 due today,
+ * the trial begins only at activation, never here (unchanged from before this
+ * reorder; see lib/billing/stripe.ts createSetupIntent). Falls back to the previous
+ * hosted-Checkout redirect (saveAutomateCard) when
+ * NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is not configured on this deployment, so a
+ * missing env var degrades gracefully instead of breaking enrollment.
  *
- * Community has no standalone legal screen: its Terms / Privacy / Refund acceptance
- * is recorded as a clickwrap at THIS submit, before the free-join call.
+ * Community branch is effectively a RESUME FALLBACK now — PlanClient finalizes the
+ * free join immediately after the "Choose agent" screen, so a normal flow never
+ * visits this screen for Community. An enrollment migrated from before this reorder
+ * (or any resumed Community row that never got the fast-forward) still lands here and
+ * still works: it records the Terms/Privacy/Refund clickwrap, then
+ * POST /api/billing/checkout writes the free entitlement and hands back an internal
+ * url, not a Stripe redirect.
  *
- * Returning from Stripe (?checkout=success, Automate only) re-resumes; the server
- * re-derives billing completion from Stripe state directly, so this works even before
- * the webhook lands.
+ * Returning from Stripe (?checkout=success, hosted-Checkout fallback only) re-resumes;
+ * the server re-derives billing completion from Stripe state directly, so this works
+ * even before the webhook lands.
  */
 
 interface LegalDoc {
@@ -32,16 +41,22 @@ interface LegalDoc {
   contentUri: string
 }
 
+const STRIPE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+
 export default function BillingClient() {
   const { enrollment, busy, setBusy, error, setError, call, resume, router } = useEnrollment('billing')
   const params = useSearchParams()
   const checkout = params.get('checkout')
   const [finalizing, setFinalizing] = useState(checkout === 'success')
+  const [clientSecret, setClientSecret] = useState<string | null>(null)
+  const [loadingSecret, setLoadingSecret] = useState(false)
 
   const isCommunity = enrollment?.selected_plan === 'community'
+  const canEmbed = Boolean(STRIPE_PUBLISHABLE_KEY)
 
-  // Back from Stripe: follow the server's position FORWARD. The resume endpoint checks
-  // Stripe directly (webhook-lag immune), so success normally advances immediately.
+  // Back from Stripe (hosted-Checkout fallback): follow the server's position FORWARD.
+  // The resume endpoint checks Stripe directly (webhook-lag immune), so success
+  // normally advances immediately.
   useEffect(() => {
     if (checkout !== 'success' || !enrollment) return
     ;(async () => {
@@ -56,6 +71,21 @@ export default function BillingClient() {
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkout, enrollment?.id])
+
+  // Fetch the SetupIntent client_secret as soon as it's clear this is the embedded
+  // Automate path — never for Community, never when the fallback env var is unset.
+  useEffect(() => {
+    if (!enrollment || isCommunity || !canEmbed || finalizing || clientSecret) return
+    setLoadingSecret(true)
+    call('/api/billing/setup-intent', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enrollment_id: enrollment.id }),
+    })
+      .then((d) => setClientSecret(d.client_secret))
+      .catch((e) => setError(e instanceof Error ? e.message : 'Could not start billing setup.'))
+      .finally(() => setLoadingSecret(false))
+  }, [enrollment, isCommunity, canEmbed, finalizing, clientSecret, call, setError])
 
   async function payCommunity() {
     if (!enrollment) return
@@ -85,6 +115,7 @@ export default function BillingClient() {
     }
   }
 
+  /** Fallback only — used when NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is not configured. */
   async function saveAutomateCard() {
     if (!enrollment) return
     setBusy(true)
@@ -102,10 +133,28 @@ export default function BillingClient() {
     }
   }
 
+  /** The embedded form's card was saved — re-resume so the server (which re-derives
+   *  billing completion from Stripe directly) advances us to Review. */
+  async function onCardSaved() {
+    setBusy(true)
+    setError(null)
+    try {
+      const r = await resume()
+      if (!r) return
+      const canonical = routeForNextStep(r.next_step, r.enrollment.selected_plan)
+      router.push(canonical.route)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Your card was saved, but we could not continue automatically. Please try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const headline = isCommunity ? 'One final step.' : 'Prepare to automate.'
   const subline = isCommunity
     ? 'Accept the agreements below to activate your free Forge Community membership.'
-    : 'Add a payment method, then complete your trading setup.'
+    : 'Add a payment method to finish setting up your trading agent.'
+  const backHref = isCommunity ? '/enroll/plan' : '/enroll/broker'
 
   return (
     <EnrollShell headline={headline} subline={subline} maxWidthClass="max-w-3xl" step="billing" enrollment={enrollment}>
@@ -169,19 +218,30 @@ export default function BillingClient() {
                 <Link href="/legal/refund-policy" target="_blank" className="link">Refund Policy</Link>.
               </p>
             </>
+          ) : canEmbed ? (
+            <div className="card pad" style={{ marginTop: 20 }}>
+              <h3>Payment method</h3>
+              {loadingSecret && !clientSecret ? <div style={{ height: 120 }} /> : null}
+              {clientSecret && STRIPE_PUBLISHABLE_KEY ? (
+                <StripeCardForm publishableKey={STRIPE_PUBLISHABLE_KEY} clientSecret={clientSecret} onSaved={onCardSaved} />
+              ) : null}
+              <p className="help" style={{ marginTop: 12 }}>
+                Your trial begins only after you activate trading on the next screen.
+              </p>
+            </div>
           ) : (
             <>
               <button type="button" disabled={busy} onClick={saveAutomateCard} className="btn btn-accent btn-block btn-lg" style={{ marginTop: 20 }}>
                 {busy ? 'Starting checkout…' : 'Save Payment & Continue'}
               </button>
               <p className="help" style={{ marginTop: 12 }}>
-                Your trial begins only after you connect a brokerage, configure an agent, and activate trading.
+                Your trial begins only after you activate trading on the next screen.
               </p>
             </>
           )}
 
           <div className="nav-row">
-            <Link href="/enroll/plan" className="btn">← Back</Link>
+            <Link href={backHref} className="btn">← Back</Link>
           </div>
         </>
       ) : null}

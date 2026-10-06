@@ -37,7 +37,12 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json(e, { status: statusFor(e.code) })
     }
     await ensureLegalDocumentsSeeded()
-    const legal = await legalRequirementsFor(enrollment.selected_plan, session.customerId)
+    // `?? 'automate'`: the web order runs this screen BEFORE Choose agent (10/5
+    // reorder), so selected_plan is legitimately null on a normal web visit — show the
+    // full automate-family superset (reusing the existing 'automate' family value)
+    // rather than requiredDocumentsFor(null)'s unrelated "unknown plan" fallback of
+    // core-only (see legal.test.ts, which that fallback must keep returning).
+    const legal = await legalRequirementsFor(enrollment.selected_plan ?? 'automate', session.customerId)
     return NextResponse.json(
       { enrollment_id: enrollment.id, selected_plan: enrollment.selected_plan, ...legal },
       { headers: { 'Cache-Control': 'no-store' } },

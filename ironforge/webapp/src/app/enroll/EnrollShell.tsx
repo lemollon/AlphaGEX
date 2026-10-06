@@ -10,23 +10,25 @@ import type { EnrollmentSummary } from './useEnrollment'
  * summary on the right — same visual system as the public site, scoped under
  * `.if-enroll` (src/styles/forge-enroll.css) so it never touches marketing.
  *
- * Rail order follows this deployment's REAL flow (plan -> legal -> billing ->
- * broker -> agent -> review), not the design mock's account-first order — the
- * mock's screens don't exist 1:1 here (account creation happens at /signup
- * before /enroll even starts, and billing is hosted-Stripe-redirect, not an
- * embedded card form). Visual language matches; step sequence matches the
- * shipped funnel, since "restyle, don't change logic" rules out reordering it.
+ * ORDER (10/5 reorder, Leron): Create account -> Agreements -> Choose agent ->
+ * Connect brokerage -> Billing -> Review & enter — the exact rail order and titles
+ * from IronForge_Enrollment_10.4.html. Account creation (/signup, now also reachable
+ * at /enroll/account) is step 1 of the rail; billing is an embedded Stripe Elements
+ * form (src/app/enroll/billing/StripeCardForm.tsx), not a hosted-Checkout redirect,
+ * falling back to the old redirect only when no publishable key is configured. This
+ * is a WEB-ONLY rail — the mobile app keeps its own existing order over the same API
+ * (see lib/enrollment/service.ts resolveNextStepWeb vs nextStepFor).
  *
  * At narrow widths the rail collapses to a thin progress bar (`.mprog`) and the
  * side summary hides — same breakpoints as the design CSS.
  */
 
 const RAIL: Array<{ step: EnrollPageStep; label: string; sub: string }> = [
-  { step: 'plan', label: 'Choose plan', sub: 'Spark, Flame, Ember or Community' },
+  { step: 'account', label: 'Create account', sub: 'Your login' },
   { step: 'legal', label: 'Agreements', sub: 'Review and sign' },
-  { step: 'billing', label: 'Billing', sub: 'Secured by Stripe' },
+  { step: 'plan', label: 'Choose agent', sub: 'Spark, Flame, Ember or Community' },
   { step: 'broker', label: 'Connect brokerage', sub: 'Tradier and more' },
-  { step: 'agent', label: 'Configure agent', sub: 'Confirm your setup' },
+  { step: 'billing', label: 'Billing', sub: 'Secured by Stripe' },
   { step: 'review', label: 'Review & enter', sub: 'Final check' },
 ]
 

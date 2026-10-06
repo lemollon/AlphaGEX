@@ -251,9 +251,10 @@ export default function SignupClient() {
     // and the /api/auth/signup contract are exactly what already runs in production.
     <EnrollShell
       headline="Built for disciplined execution."
-      subline="Create your account, choose your membership, and complete setup."
+      subline="Create your account, then review the agreements and choose your agent."
       topRight="login"
       maxWidthClass="max-w-2xl"
+      step="account"
     >
       <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-6 lg:p-8">
         <h1 className="text-2xl font-bold text-white">Create your account</h1>

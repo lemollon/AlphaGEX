@@ -6,7 +6,7 @@ import EnrollShell from '../EnrollShell'
 import { useEnrollment } from '../useEnrollment'
 
 /**
- * LEGAL-AUTO-01 — Automate legal review (July 29 handoff).
+ * LEGAL-AUTO-01 — Agreements (10/5 reorder: step 2, BEFORE Choose agent).
  *
  * Seven documents, each with a Review action that opens the versioned content page.
  * The aggregate acceptance checkbox enables only after EVERY required document has
@@ -14,6 +14,13 @@ import { useEnrollment } from '../useEnrollment'
  * re-review what the record shows they already agreed to). Acceptance requires an
  * explicit electronic signature: the member's typed full legal name. The server
  * enforces both again (§ "a pre-checked control is not consent").
+ *
+ * No plan is known yet at this screen (it now runs before Choose agent), so the API
+ * requires/returns the full automate-family superset unconditionally — reusing the
+ * existing 'automate' family value server-side (GET .../legal, POST .../acceptances)
+ * rather than a plan-conditional set. Accepting the superset up front trivially
+ * satisfies whatever narrower set the eventual plan choice (including Community)
+ * turns out to need, so there is no second legal touch later in the funnel.
  */
 
 interface LegalDoc {
@@ -44,11 +51,6 @@ export default function LegalClient() {
 
   useEffect(() => {
     if (!enrollment) return
-    // Community never sees this screen — its clickwrap lives at billing.
-    if (enrollment.selected_plan === 'community') {
-      router.replace('/enroll/billing')
-      return
-    }
     ;(async () => {
       try {
         const d = await call(`/api/v1/enrollments/${enrollment.id}/legal`)
@@ -91,7 +93,7 @@ export default function LegalClient() {
           signature_name: signature.trim(),
         }),
       })
-      router.push('/enroll/billing')
+      router.push('/enroll/plan')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not record your agreement.')
       setBusy(false)
@@ -101,7 +103,7 @@ export default function LegalClient() {
   return (
     <EnrollShell
       headline="Know what you’re authorizing."
-      subline="Review the required agreements before continuing with Forge Automate."
+      subline="Review the required agreements before you choose your agent."
       maxWidthClass="max-w-3xl"
       step="legal"
       enrollment={enrollment}
@@ -167,8 +169,7 @@ export default function LegalClient() {
             <p className="help">Your signature and acceptance date will be recorded electronically.</p>
           </div>
 
-          <div className="nav-row">
-            <Link href="/enroll/plan" className="btn">← Back</Link>
+          <div className="nav-row" style={{ justifyContent: 'flex-end' }}>
             <button type="button" disabled={!canSubmit} onClick={accept} className="btn btn-accent btn-lg">
               {busy ? 'Saving…' : 'Accept & Continue'}
             </button>
