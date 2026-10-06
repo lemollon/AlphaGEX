@@ -335,6 +335,44 @@ export async function sendTradeApprovalEmail(params: {
   }
 }
 
+function dailySummaryHtml(firstName: string, dateLabel: string, pnl: number): string {
+  const name = firstName ? esc(firstName) : 'there'
+  const up = pnl >= 0
+  const amount = `${up ? '+' : '-'}$${Math.abs(pnl).toFixed(2)}`
+  const color = up ? '#2FCF93' : '#FF6B5A'
+  return `<!doctype html><html><body style="margin:0;background:#0B0B0D;font-family:Arial,Helvetica,sans-serif;color:#e5e5e5">
+  <div style="max-width:480px;margin:0 auto;padding:32px 24px">
+    <h1 style="font-size:20px;color:#ffffff;margin:0 0 8px">Daily summary</h1>
+    <p style="color:#a3a3a3;font-size:14px;line-height:1.6">Hi ${name}, your agents finished ${esc(dateLabel)} at</p>
+    <p style="margin:16px 0;font-size:32px;color:${color};font-weight:bold">${amount}</p>
+    <p style="margin:28px 0">
+      <a href="https://ironforge.trade/home" style="display:inline-block;background:#E8531F;color:#ffffff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 24px;border-radius:6px">See today&rsquo;s results</a>
+    </p>
+    <p style="color:#525252;font-size:11px;margin-top:28px">You're receiving this because daily summary alerts are turned on for your account. Turn them off anytime from Settings.</p>
+  </div></body></html>`
+}
+
+/**
+ * Daily summary — ALSO sent as email after the close (gap audit: previously push
+ * only), using the generic sendEmail() sender rather than its own provider call.
+ * Caller (scanner.ts dispatchDailySummaries) gates this on the same
+ * notification_prefs.daily_summary opt-in the push already respects, so turning the
+ * alert off in Settings silences both channels, not just one.
+ */
+export async function sendDailySummaryEmail(params: {
+  to: string
+  firstName: string
+  dateLabel: string
+  pnl: number
+}): Promise<SendResult> {
+  const sign = params.pnl >= 0 ? '+' : '-'
+  return sendEmail({
+    to: params.to,
+    subject: `IronForge daily summary: ${sign}$${Math.abs(params.pnl).toFixed(2)}`,
+    html: dailySummaryHtml(params.firstName, params.dateLabel, params.pnl),
+  })
+}
+
 /* ------------------------------------------------------------------ */
 /*  Operator vol-regime alert email                                    */
 /* ------------------------------------------------------------------ */
