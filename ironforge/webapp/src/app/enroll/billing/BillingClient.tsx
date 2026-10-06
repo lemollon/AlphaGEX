@@ -55,6 +55,8 @@ export default function BillingClient() {
 
   const isCommunity = enrollment?.selected_plan === 'community'
   const canEmbed = Boolean(STRIPE_PUBLISHABLE_KEY)
+  // "Card saved" recap (gap audit MISSING — previously advanced straight to Review).
+  const [savedCard, setSavedCard] = useState<{ brand: string; last4: string } | null>(null)
 
   // Back from Stripe (hosted-Checkout fallback): follow the server's position FORWARD.
   // The resume endpoint checks Stripe directly (webhook-lag immune), so success
@@ -135,9 +137,27 @@ export default function BillingClient() {
     }
   }
 
-  /** The embedded form's card was saved — re-resume so the server (which re-derives
-   *  billing completion from Stripe directly) advances us to Review. */
+  /** The embedded form's card was saved. Show the "card saved" recap (gap audit
+   *  MISSING) rather than advancing straight to Review — `continueToReview` below is
+   *  what actually re-resumes and moves on. */
   async function onCardSaved() {
+    setBusy(true)
+    setError(null)
+    try {
+      const d = await call('/api/billing/payment-method')
+      setSavedCard(d.paymentMethod ?? { brand: 'card', last4: '••••' })
+    } catch {
+      // The card is already saved with Stripe regardless — show a generic recap
+      // rather than block the customer behind a read that failed.
+      setSavedCard({ brand: 'card', last4: '••••' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** Recap confirmed — re-resume so the server (which re-derives billing completion
+   *  from Stripe directly) advances us to Review. */
+  async function continueToReview() {
     setBusy(true)
     setError(null)
     try {
@@ -222,6 +242,19 @@ export default function BillingClient() {
                 <Link href="/legal/refund-policy" target="_blank" className="link">Refund Policy</Link>.
               </p>
             </>
+          ) : canEmbed && savedCard ? (
+            <div className="card pad" style={{ marginTop: 20 }}>
+              <h3>Payment method saved</h3>
+              <div className="check-row ok" style={{ marginTop: 14 }}>
+                <strong>
+                  {savedCard.brand.charAt(0).toUpperCase() + savedCard.brand.slice(1)} ending in {savedCard.last4}
+                </strong>
+                <p style={{ marginTop: 4 }}>Saved securely with Stripe. You will not be charged today.</p>
+              </div>
+              <button type="button" disabled={busy} onClick={continueToReview} className="btn btn-accent btn-block btn-lg" style={{ marginTop: 16 }}>
+                {busy ? 'Continuing…' : 'Continue to Review'}
+              </button>
+            </div>
           ) : canEmbed ? (
             <div className="card pad" style={{ marginTop: 20 }}>
               <h3>Payment method</h3>

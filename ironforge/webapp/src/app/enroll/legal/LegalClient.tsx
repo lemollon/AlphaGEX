@@ -58,7 +58,9 @@ export default function LegalClient() {
   const { enrollment, busy, setBusy, error, setError, call, router } = useEnrollment('legal')
   const [docs, setDocs] = useState<LegalDoc[]>([])
   const [opened, setOpened] = useState<Record<string, boolean>>({})
-  const [agreed, setAgreed] = useState(false)
+  // Design §5 step 2: a checkbox PER document, not one aggregate — "Accept all" is a
+  // one-click alias that checks every box, it does not replace them.
+  const [accepted, setAccepted] = useState<Record<string, boolean>>({})
   const [signature, setSignature] = useState('')
 
   useEffect(() => {
@@ -68,10 +70,12 @@ export default function LegalClient() {
         const d = await call(`/api/v1/enrollments/${enrollment.id}/legal`)
         const documents: LegalDoc[] = d.documents ?? []
         setDocs(documents)
-        // Already-accepted documents count as reviewed.
+        // Already-accepted documents count as reviewed AND pre-checked — a customer
+        // must not re-review or re-check what the record shows they already agreed to.
         const seen: Record<string, boolean> = {}
         for (const doc of documents) if (doc.accepted) seen[doc.code] = true
         setOpened((o) => ({ ...seen, ...o }))
+        setAccepted((a) => ({ ...seen, ...a }))
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Could not load the agreements.')
       }
@@ -80,17 +84,27 @@ export default function LegalClient() {
 
   const openedCount = docs.filter((d) => opened[d.code]).length
   const allOpened = docs.length > 0 && openedCount === docs.length
-  const canSubmit = allOpened && agreed && signature.trim().length >= 2 && !busy
+  const acceptedCount = docs.filter((d) => accepted[d.code]).length
+  const allAccepted = docs.length > 0 && acceptedCount === docs.length
+  const canSubmit = allOpened && allAccepted && signature.trim().length >= 2 && !busy
+  const today = new Date()
+  const todayStr = today.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
 
   // Design spec §5 step 2: "'Accept all' link toggles every box. Progress line: 'X of
   // 6 accepted.'" (gap audit "Agreements gating" PARTIAL/S — previously neither
-  // existed). "Accept all" here is a one-click alias for the single aggregate
-  // checkbox below, not a bypass of reading each document — it only has anything to
-  // do once every document has actually been opened.
+  // existed). "Accept all" only has anything to do once every document has actually
+  // been opened — it is not a bypass of reading each one.
   function acceptAll() {
     if (!allOpened) return
-    setAgreed(true)
+    const next: Record<string, boolean> = {}
+    for (const d of docs) next[d.code] = true
+    setAccepted(next)
     track('legal_accept_all')
+  }
+
+  function toggleDoc(code: string) {
+    if (!opened[code]) return
+    setAccepted((a) => ({ ...a, [code]: !a[code] }))
   }
 
   async function accept() {
@@ -129,46 +143,41 @@ export default function LegalClient() {
       {docs.length > 0 ? (
         <>
           <div className="nav-row" style={{ borderTop: 'none', paddingTop: 0, marginBottom: 10 }}>
-            <span className="help">{openedCount} of {docs.length} reviewed</span>
-            <button type="button" onClick={acceptAll} disabled={!allOpened || agreed} className="link">
+            <span className="help">{acceptedCount} of {docs.length} accepted</span>
+            <button type="button" onClick={acceptAll} disabled={!allOpened || allAccepted} className="link">
               Accept all
             </button>
           </div>
           <div className="card">
             {docs.map((d) => (
-              <div key={d.code} className="ack" style={{ gridTemplateColumns: '1fr auto' }}>
+              <label key={d.code} className="ack" style={{ gridTemplateColumns: '22px 1fr auto', cursor: opened[d.code] ? 'pointer' : 'not-allowed' }}>
+                <input
+                  type="checkbox"
+                  checked={!!accepted[d.code]}
+                  disabled={!opened[d.code]}
+                  onChange={() => toggleDoc(d.code)}
+                  style={{ width: 18, height: 18, marginTop: 2 }}
+                  aria-label={`I agree to ${d.title}`}
+                />
                 <div>
                   <b>{d.title}</b>
                   <p>{DOC_SUBTITLES[d.code] ?? `Version ${d.version}`}</p>
+                  {!opened[d.code] ? <span className="help" style={{ display: 'block', marginTop: 2 }}>Review this document to enable its checkbox.</span> : null}
                 </div>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  {opened[d.code] ? <span aria-hidden className="num" style={{ color: 'var(--up)', fontWeight: 700 }}>✓</span> : null}
-                  <Link
-                    href={d.contentUri}
-                    target="_blank"
-                    onClick={() => setOpened((o) => ({ ...o, [d.code]: true }))}
-                    className="link"
-                  >
-                    Review
-                  </Link>
-                </span>
-              </div>
+                <Link
+                  href={d.contentUri}
+                  target="_blank"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setOpened((o) => ({ ...o, [d.code]: true }))
+                  }}
+                  className="link"
+                >
+                  Review
+                </Link>
+              </label>
             ))}
           </div>
-
-          <label className="field" style={{ gridTemplateColumns: '22px 1fr', display: 'grid', marginTop: 20, alignItems: 'start' }}>
-            <input
-              type="checkbox"
-              checked={agreed}
-              disabled={!allOpened}
-              onChange={(e) => setAgreed(e.target.checked)}
-              style={{ width: 18, height: 18, marginTop: 2 }}
-            />
-            <span style={{ fontWeight: 400 }}>
-              I have opened, reviewed, and agree to all required agreements.
-              {!allOpened ? <span className="help" style={{ display: 'block', marginTop: 2 }}>Review each document above to enable this.</span> : null}
-            </span>
-          </label>
 
           <div className="field" style={{ marginTop: 20 }}>
             <label htmlFor="signature">Electronic signature</label>
@@ -181,6 +190,12 @@ export default function LegalClient() {
               autoComplete="name"
             />
             <p className="help">Your signature and acceptance date will be recorded electronically.</p>
+            {/* Live stamp — updates as the customer types, before the server round-trip
+                that actually records signed_at (gap audit "live 'Signed {date}' stamp"
+                MISSING). */}
+            <div className="stamp" aria-live="polite" style={{ marginTop: 8, fontSize: '.82rem', color: signature.trim().length >= 2 ? 'var(--up)' : 'var(--muted)' }}>
+              {signature.trim().length >= 2 ? `Signed ${signature.trim()} — ${todayStr}` : 'Not signed yet'}
+            </div>
           </div>
 
           <div className="nav-row" style={{ justifyContent: 'flex-end' }}>

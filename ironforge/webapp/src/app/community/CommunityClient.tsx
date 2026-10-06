@@ -256,13 +256,65 @@ function ReportControl({ messageId }: { messageId: string }) {
   )
 }
 
-function MessageRow({ msg, channel, canReact, loggedIn, onReact, onReplyPosted }: {
+/** Block control (dashboard audit "Community 'Block member' UI wired to existing
+ *  /api/community/blocks" — the API and backend (one-directional, viewer-scoped)
+ *  already existed; this is its first web caller, mirroring ReportControl's
+ *  pattern. Hidden on your own posts and on AI/system posts, same gate as Report. */
+function BlockControl({ messageId, senderName, onBlocked }: { messageId: string; senderName: string; onBlocked: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [state, setState] = useState<'idle' | 'sending' | 'error'>('idle')
+
+  async function submit() {
+    setState('sending')
+    try {
+      const res = await fetch('/api/community/blocks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message_id: messageId }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || 'block failed')
+      }
+      setOpen(false)
+      onBlocked()
+    } catch {
+      setState('error')
+    }
+  }
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)}
+        className="text-[11px] text-[var(--muted)] opacity-60 transition-opacity hover:opacity-100 hover:text-[var(--fg)]">
+        Block
+      </button>
+    )
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <span className="text-[11px] text-[var(--muted)]">Block {senderName}? You won&apos;t see their posts.</span>
+      <button type="button" disabled={state === 'sending'} onClick={submit}
+        className="rounded-full border border-[var(--line)] px-2 py-0.5 text-[11px] text-[var(--muted)] hover:border-[var(--bad)]/50 hover:text-[var(--bad)]">
+        {state === 'sending' ? 'Blocking…' : 'Block'}
+      </button>
+      <button type="button" onClick={() => setOpen(false)} className="text-[11px] text-[var(--muted)] hover:opacity-80">
+        Cancel
+      </button>
+      {state === 'error' && <span className="text-[11px] text-[var(--bad)]">Couldn&apos;t block — try again</span>}
+    </div>
+  )
+}
+
+function MessageRow({ msg, channel, canReact, loggedIn, onReact, onReplyPosted, onBlocked }: {
   msg: CommunityMessage
   channel: string
   canReact: boolean
   loggedIn: boolean
   onReact: (id: string, emoji: string) => void
   onReplyPosted: () => void
+  onBlocked: () => void
 }) {
   const [threadOpen, setThreadOpen] = useState(false)
   return (
@@ -312,6 +364,8 @@ function MessageRow({ msg, channel, canReact, loggedIn, onReact, onReplyPosted }
             <>
               <span className="text-[var(--line)]">·</span>
               <ReportControl messageId={msg.id} />
+              <span className="text-[var(--line)]">·</span>
+              <BlockControl messageId={msg.id} senderName={msg.sender_name} onBlocked={onBlocked} />
             </>
           )}
         </div>
@@ -579,6 +633,7 @@ export function CommunityBody() {
                     loggedIn={loggedIn}
                     onReact={handleReact}
                     onReplyPosted={() => void mutate()}
+                    onBlocked={() => void mutate()}
                   />
                 ))
               )}

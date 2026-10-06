@@ -9,7 +9,16 @@ import { BOT_PLANS, COMMUNITY_PLAN, COMMUNITY_KEY } from '@/lib/billing/plans'
 
 interface SummaryResp { membership?: PlanCardData | null }
 interface EntitlementsResp { bots?: string[] }
-interface MembershipResp { membership?: { price_monthly: number } | null }
+interface AgentBilling {
+  bot: string
+  name: string
+  price_monthly: number
+  status: string
+  badge: string
+  next_billing_date: string | null
+  trial_ending_soon: boolean
+}
+interface MembershipResp { membership?: { price_monthly: number; agents?: AgentBilling[] } | null }
 
 /**
  * Billing home — the real "Manage Membership" destination (the rail item used to
@@ -31,6 +40,7 @@ export default function BillingClient() {
 
   const membership = summary?.membership ?? null
   const priceMonthly = billingMembership?.membership?.price_monthly ?? null
+  const agents = billingMembership?.membership?.agents ?? []
   const owned = entitlements?.bots ?? []
   // Community is tracked in the same table but is not a trading bot — split it out so it
   // never counts as a "second strategy" (which would misprice the plan as Pro).
@@ -104,6 +114,31 @@ export default function BillingClient() {
             )}
             {ownedBots.length === 0 && communityActive && (
               <div className="mt-1 text-xs text-gray-400">{COMMUNITY_PLAN.name} · Free</div>
+            )}
+            {/* Per-agent price/trial breakdown for multi-agent owners (gap audit
+                MISSING — the blended total above has no way to say "Spark's trial
+                ends tomorrow" when Flame just started). */}
+            {agents.length > 1 && (
+              <div className="mt-3 grid gap-1.5">
+                {agents.map((a) => (
+                  <div key={a.bot} className="flex items-center justify-between gap-3 rounded-lg border border-forge-border/60 bg-forge-bg/40 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-white">{a.name}</span>
+                      <span className={`rounded-full border px-2 py-0.5 text-[10px] ${a.status === 'past_due' ? 'border-red-700/40 text-red-300' : 'border-forge-border text-gray-400'}`}>
+                        {a.badge}
+                      </span>
+                      {a.trial_ending_soon && (
+                        <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-400">
+                          Trial ending soon
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs font-medium text-gray-300">
+                      ${a.price_monthly}/mo{a.next_billing_date ? ` · renews ${a.next_billing_date}` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
           {hasPlan ? (

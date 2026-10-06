@@ -4,6 +4,7 @@ import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/c
 import { getEnrollmentForUser } from '@/lib/enrollment/service'
 import { isEmberPlan } from '@/lib/enrollment/legal'
 import { createAgentConfigDraft } from '@/lib/enrollment/agent-config-service'
+import type { Violation } from '@/lib/enrollment/agent-rules'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
 import { isUuid } from '@/lib/enrollment/ids'
 import { isEnrollmentClosed, enrollmentClosedResponse } from '@/lib/enrollment-mode'
@@ -112,6 +113,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     const isWebOrder = identity?.source === 'cookie' && enrollment.status === 'legal_pending' && enrollment.selected_plan != null
     let configId: string | null = null
     let nextStep = 'agent'
+    let violationMessage: string | null = null
 
     if (isWebOrder) {
       const draft = await createAgentConfigDraft({
@@ -119,7 +121,13 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
         agentCode: enrollment.selected_plan!,
         brokerAccountId: account.id,
       })
-      if (draft.ok) {
+      // Only a VALID config may advance the enrollment — draft.ok merely means the
+      // draft row was persisted (it is, even when invalid, so a resumed customer has
+      // something to come back to). A draft config with violations (e.g. Ember's
+      // $500-$2,000 band failing against this account's buying power) must not
+      // silently advance past legal_pending — that would mint a status the dedicated
+      // banner below could never surface.
+      if (draft.ok && draft.status === 'valid') {
         configId = draft.id
         const ember = isEmberPlan(enrollment.selected_plan)
         await customerExecute(
@@ -128,11 +136,13 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
           [params.id, session.customerId, ember ? 'setup_required' : 'billing_pending', ember ? 'setup' : 'billing'],
         )
         nextStep = ember ? 'setup' : 'billing'
+      } else if (draft.ok) {
+        const violations = draft.violations as Violation[]
+        violationMessage = violations[0]?.message ?? null
       }
-      // draft.ok === false (e.g. Ember's $500-$2,000 gate failed against this account's
-      // buying power): fall through to the app-order bookkeeping below so the customer
-      // is not left with no record at all — ReviewClient/AgentClient's existing
-      // fallback chain surfaces the violation.
+      // draft.ok === false (account/agent not found): fall through to the app-order
+      // bookkeeping below so the customer is not left with no record at all —
+      // ReviewClient/AgentClient's existing fallback chain surfaces the violation.
     }
 
     if (!isWebOrder || !configId) {
@@ -148,6 +158,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       broker_account: { id: account.id, display_mask: account.display_mask },
       config_id: configId,
       next_step: configId ? nextStep : 'agent',
+      violation: violationMessage,
     })
   } catch (e) {
     const env = redactProviderError('v1/broker-account', e, 'INTERNAL', 'Could not select that account. Please try again.')

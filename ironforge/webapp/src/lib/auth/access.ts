@@ -34,6 +34,11 @@ const PUBLIC_EXACT = new Set<string>([
   // must be public exactly like /signup itself, or an unauthenticated visitor
   // bounces to /ops/login (the OPERATOR door) instead of finishing sign-up.
   '/signup/google-consent',
+  // Enrollment STEP 1 (Create account) since the 10/5 reorder — /signup redirects here,
+  // so it must be reachable by a visitor who has no account yet. Every LATER /enroll/*
+  // step stays customer-gated via isCustomerPath(); the page itself handles a signed-in
+  // visitor (SignedInGate). Leaving it gated sent every new visitor to /login.
+  '/enroll/account',
   '/pricing',
   // 10.4 marketing redesign: agent grid/compare and the team/values page —
   // same public-marketing treatment as /how-it-works and /pricing above.
@@ -111,6 +116,9 @@ const CUSTOMER_EXACT = new Set<string>([
   '/community',
   '/support',
   '/account/trades',
+  // Trade-approval queue (gap audit "Account/Trade Approvals: dead code — never
+  // mounted") — the real mount point for TradeApprovalsClient.
+  '/account/approvals',
   '/account/billing',
   // Which brokerage accounts a person has linked, with masks and buying power — their
   // own money, so gated on identity like the rest of /account.

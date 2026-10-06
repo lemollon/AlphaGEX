@@ -86,7 +86,11 @@ export default function PnlRangeChart({
       </div>
 
       {series.length >= 2 ? (
-        <div className="mt-3 h-[220px]">
+        <div
+          className="mt-3 h-[220px]"
+          role="img"
+          aria-label={`${title ?? 'P&L'} chart, ${range === 'ALL' ? 'all time' : `last ${range.toLowerCase()}`}, currently ${formatDollarPnl(end)}`}
+        >
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={series} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
               <XAxis dataKey="t" tickFormatter={(v: string) => fmtTick(v, range)} stroke="#44403c" tick={{ fill: '#a8a29e', fontSize: 11 }} minTickGap={56} />
@@ -110,10 +114,14 @@ export default function PnlRangeChart({
           </ResponsiveContainer>
         </div>
       ) : (
-        <p className="mt-3 pb-2 text-sm text-[var(--muted)]">
+        <p className="mt-3 text-sm text-[var(--muted)]">
           {range === '1D' ? 'No trade has closed in this range yet today.' : 'No closed trades in this range yet.'}
         </p>
       )}
+
+      {/* Design §"Profit & loss" chart footer — a second static span alongside the
+       *  period label (gap audit MISSING). */}
+      <p className="mt-2 pb-1 text-xs text-[var(--muted)]">Includes any open trade</p>
     </section>
   )
 }
