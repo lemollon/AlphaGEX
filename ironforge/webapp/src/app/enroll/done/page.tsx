@@ -7,6 +7,7 @@ import { customerQuery, isCustomersDbConfigured } from '@/lib/customers-db'
 import { BOT_PLANS } from '@/lib/billing/plans'
 import { EMBER_AGENT } from '@/lib/agents/ember'
 import EnrollShell from '../EnrollShell'
+import EnrollCompleteBeacon from './EnrollCompleteBeacon'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -83,6 +84,7 @@ export default async function EnrollDonePage({
 
   return (
     <EnrollShell headline={headline} subline={subline} topRight="none">
+      <EnrollCompleteBeacon agent={agent} />
       <div className="done-wrap">
         <span className="badge ok">Membership active</span>
         <h1>You&rsquo;re in.</h1>

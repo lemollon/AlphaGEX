@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 import MarketingThemeToggle from './MarketingThemeToggle'
 import { useWaitlistModal } from './WaitlistModal'
 import { useHomeScrollSpy } from './useHomeScrollSpy'
+import { track } from '@/lib/analytics/track'
 
 // On the home page, "Agents" and "How it works" scroll to the page's own
 // #home-agents/#home-how sections instead of navigating away (ps-nav #40).
@@ -73,10 +74,21 @@ export default function MarketingNav() {
           <Link className="btn login" href="/login">
             Log in
           </Link>
-          <button type="button" className="btn wl" onClick={openWaitlist}>
+          <button
+            type="button"
+            className="btn wl"
+            onClick={() => {
+              track('cta_click', { cta: 'waitlist', placement: 'nav' })
+              openWaitlist('nav')
+            }}
+          >
             Join waitlist
           </button>
-          <Link className="btn btn-accent join" href="/signup?source=site&placement=nav">
+          <Link
+            className="btn btn-accent join"
+            href="/signup?source=site&placement=nav"
+            onClick={() => track('cta_click', { cta: 'create_account', placement: 'nav' })}
+          >
             Create account
           </Link>
           <button
@@ -122,7 +134,8 @@ export default function MarketingNav() {
           type="button"
           onClick={() => {
             setOpen(false)
-            openWaitlist()
+            track('cta_click', { cta: 'waitlist', placement: 'nav' })
+            openWaitlist('nav')
           }}
         >
           Join the waitlist

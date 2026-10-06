@@ -33,6 +33,7 @@ import { LiveTradeCard } from '@/components/LiveTradeCard'
 import { showToast } from '@/notifications/toast'
 import { soleConnection, brokerLabel, maskTail } from '@/api/brokerage'
 import { track } from '@/analytics/track'
+import { trackEvent } from '@/analytics/trackEvent'
 import { agentAction, type AgentActionKind } from '@/agents/eligibility'
 import type { AgentBot } from '@/agents/routes'
 import {
@@ -72,6 +73,10 @@ export default function AgentDetailScreen() {
     params.bot === 'flame' ? 'flame' : params.bot === 'ember' ? 'ember' : 'spark'
   ) as AgentBot
   const label = AGENT_LABEL[bot]
+
+  useEffect(() => {
+    trackEvent('agent_sheet_open', { agent: bot })
+  }, [bot])
 
   const agentsSWR = useSWR<LiveAgents>('/api/live/agents', (p: string) => api<LiveAgents>(p))
   const entitlementsSWR = useSWR<EntitlementsResponse>('/api/billing/entitlements', (p: string) =>
@@ -536,6 +541,7 @@ function PauseResumeControl({
       // reflect the new paused state without that screen doing anything itself.
       void globalMutate('/api/live/agents')
       track(nextPaused ? 'agent_pause_confirmed' : 'agent_resume_confirmed', { agent: bot })
+      trackEvent(nextPaused ? 'agent_pause' : 'agent_resume', { agent: bot })
 
       // Floating snackbar (10.4 design `toast()` — "Spark paused"), not a blocking
       // native dialog: the pause/resume itself already asked for confirmation via
@@ -731,6 +737,11 @@ function ActivationFlow({
   // still re-firing the moment a multi-account picker changes the selection.
   const previewedFor = useRef<string | null>(null)
 
+  useEffect(() => {
+    trackEvent('add_agent_start', { agent: bot })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per sheet mount.
+  }, [])
+
   function openWebHandoff() {
     void WebBrowser.openBrowserAsync(`${API_BASE}/agents/${bot}`)
   }
@@ -789,6 +800,7 @@ function ActivationFlow({
       void globalMutate('/api/live/agents')
       void globalMutate('/api/v1/automation/pause')
       setShowConfetti(true)
+      trackEvent('add_agent_complete', { agent: bot })
     } catch (e) {
       setFailure(e instanceof ApiError ? e.humanMessage : (e as Error).message)
     } finally {

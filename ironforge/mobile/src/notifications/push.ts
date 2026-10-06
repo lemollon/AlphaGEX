@@ -30,6 +30,7 @@ import { getItem, setItem, deleteItem } from '@/api/storage'
 import { tradeDetailHref } from '@/ledger/detail'
 import { agentDetailHref } from '@/agents/routes'
 import { routeFor, type PushNavData } from '@/notifications/route-for'
+import { trackEvent } from '@/analytics/trackEvent'
 
 const PUSH_TOKEN_KEY = 'ironforge.pushToken'
 
@@ -127,7 +128,9 @@ export function usePushNavigation(): void {
 
   useEffect(() => {
     function handle(data: unknown) {
-      const href = routeFor(data as PushNavData, { tradeDetailHref, agentDetailHref })
+      const nav = data as PushNavData
+      trackEvent('push_open', { type: typeof nav?.kind === 'string' ? nav.kind : 'unknown' })
+      const href = routeFor(nav, { tradeDetailHref, agentDetailHref })
       if (href) router.push(href)
     }
 

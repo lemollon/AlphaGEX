@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import AppStoreBadges from './AppStoreBadges'
 import { useWaitlistModal } from './WaitlistModal'
+import { track } from '@/lib/analytics/track'
 
 /** Footer shared by every 10.4 marketing page — copy and links verbatim from the design. */
 export default function MarketingFooter() {
@@ -66,13 +67,25 @@ export default function MarketingFooter() {
           <h4>Account</h4>
           <ul>
             <li>
-              <Link href="/signup?source=site&placement=footer">Create account</Link>
+              <Link
+                href="/signup?source=site&placement=footer"
+                onClick={() => track('cta_click', { cta: 'create_account', placement: 'footer' })}
+              >
+                Create account
+              </Link>
             </li>
             <li>
               <Link href="/login">Log in</Link>
             </li>
             <li>
-              <button type="button" className="footer-link-btn" onClick={openWaitlist}>
+              <button
+                type="button"
+                className="footer-link-btn"
+                onClick={() => {
+                  track('cta_click', { cta: 'waitlist', placement: 'footer' })
+                  openWaitlist('footer')
+                }}
+              >
                 Join the waitlist
               </button>
             </li>
