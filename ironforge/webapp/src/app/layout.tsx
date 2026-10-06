@@ -33,7 +33,20 @@ const barlowCondensed = Barlow_Condensed({
   variable: '--font-barlow-condensed',
 })
 
+/**
+ * Resolves every relative URL in `metadata` below (icons, openGraph.images,
+ * twitter.images) against a real origin. Without this, Next.js falls back to
+ * inferring one itself — which in production resolved to `http://localhost:3000`
+ * (ds-site #72: a live check on 2026-10-06 found that exact value in
+ * ironforge.trade's `<meta property="og:image">`, breaking every social-share
+ * preview — Slack, X, Facebook, iMessage — of any link on the site). Always a
+ * real https origin: NEXT_PUBLIC_SITE_URL first, then the production domain —
+ * never localhost, even as a fallback.
+ */
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://ironforge.trade'
+
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: 'IronForge',
   description:
     'Autonomous, defined-risk options bots for SPY that run in your own Tradier account — every position has a capped max loss, sized and exited by rule. Join the IronForge early-access waitlist.',
@@ -45,6 +58,17 @@ export const metadata: Metadata = {
     // Reuses the existing wordmark asset — no dedicated OG card has been
     // exported yet (ds-assets #27, oi-assets #310: mascot/logo exports are
     // an open item). Replace with a proper 1200x630 OG card once designed.
+    // Resolved against metadataBase above, so this is never localhost.
+    images: ['/ironforge-mark.png'],
+  },
+  // No public page below sets its own `twitter` key, so every one of them
+  // inherits this (ds-site #72's "verify on every public page" half) — same
+  // wordmark asset as openGraph above, same metadataBase resolution.
+  twitter: {
+    card: 'summary_large_image',
+    title: 'IronForge',
+    description:
+      'Autonomous, defined-risk options bots for SPY that run in your own Tradier account.',
     images: ['/ironforge-mark.png'],
   },
 }
