@@ -32,6 +32,7 @@ export const ALLOWED_APP_ROUTES = [
   '/account',
   '/account/billing',
   '/account/trades',
+  '/account/approvals',
   '/account/brokerage',
   '/settings',
   '/onboarding/brokerage',

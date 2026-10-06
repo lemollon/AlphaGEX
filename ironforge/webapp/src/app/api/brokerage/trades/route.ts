@@ -161,7 +161,7 @@ export async function POST(req: NextRequest) {
           to: u.email,
           firstName: u.first_name,
           summary: `${action} ${units} ${symbol} (${orderType})`,
-          approveUrl: `${publicOrigin(req)}/account/trades`,
+          approveUrl: `${publicOrigin(req)}/account/approvals`,
         })
       })
       .catch((e) => console.error('[trades:create] notify failed:', e))
@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
         // look like a new event and defeat the dedupe entirely.
         eventKey: `trade_approval:${inserted[0].id}`,
         occurredAt: new Date().toISOString(),
-        route: '/account/trades',
+        route: '/account/approvals',
         routeParams: { approvalId: String(inserted[0].id) },
         title: 'Trade awaiting your approval',
         // No amount: the summary is instrument-only, and the money stays behind the

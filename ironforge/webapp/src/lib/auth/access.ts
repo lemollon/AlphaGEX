@@ -116,6 +116,9 @@ const CUSTOMER_EXACT = new Set<string>([
   '/community',
   '/support',
   '/account/trades',
+  // Trade-approval queue (gap audit "Account/Trade Approvals: dead code — never
+  // mounted") — the real mount point for TradeApprovalsClient.
+  '/account/approvals',
   '/account/billing',
   // Which brokerage accounts a person has linked, with masks and buying power — their
   // own money, so gated on identity like the rest of /account.
