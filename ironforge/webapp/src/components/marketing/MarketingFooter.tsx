@@ -96,7 +96,9 @@ export default function MarketingFooter() {
               <Link href="/privacy">Privacy Policy</Link>
             </li>
             <li>
-              <Link href="/terms">Risk Disclosure</Link>
+              {/* Gap audit: this pointed at /terms — the dedicated risk doc
+                  (lib/enrollment/legal.ts RISK code) lives at /legal/risk. */}
+              <Link href="/legal/risk">Risk Disclosure</Link>
             </li>
           </ul>
         </div>

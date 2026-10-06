@@ -358,8 +358,9 @@ function EquityCurveMini({ curve, hex, baseline }: { curve: PerformanceData['equ
     const d = new Date(iso)
     return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' })
   }
+  const currentEquity = curve.length ? curve[curve.length - 1].equity : baseline
   return (
-    <div className="mt-3 h-[220px]">
+    <div className="mt-3 h-[220px]" role="img" aria-label={`Equity curve chart, currently ${fmtMoney(currentEquity)}`}>
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={curve} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
           <XAxis dataKey="t" tickFormatter={fmtDate} stroke="#44403c" tick={{ fill: '#a8a29e', fontSize: 11 }} minTickGap={56} />

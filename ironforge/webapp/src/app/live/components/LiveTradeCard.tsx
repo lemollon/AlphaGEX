@@ -205,7 +205,11 @@ export default function LiveTradeCard({
                   )}
                 </div>
                 {showChart && (
-                  <div className="h-[120px] min-w-0 flex-1">
+                  <div
+                    className="h-[120px] min-w-0 flex-1"
+                    role="img"
+                    aria-label={`Trade P&L chart, currently ${formatDollarPnl(outcomePnl)}`}
+                  >
                     <ResponsiveContainer width="100%" height="100%">
                       <ComposedChart data={chartData} margin={{ top: 6, right: 4, bottom: 0, left: 4 }}>
                         {/* Dollar axis + 30-min time ticks (db-open #173, previously hidden). */}

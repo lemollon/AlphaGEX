@@ -75,8 +75,9 @@ function MiniChart({ series, up }: { series: Array<{ timestamp: string; pnl: num
   if (series.length < 2) return null
   const data = series.map((p) => ({ pnl: p.pnl }))
   const color = up ? '#4ade80' : '#f87171'
+  const last = series[series.length - 1].pnl
   return (
-    <div className="h-8 w-20 shrink-0">
+    <div className="h-8 w-20 shrink-0" role="img" aria-label={`Trade P&L sparkline, currently ${signedFull(last)}`}>
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
           <Area type="monotone" dataKey="pnl" stroke={color} strokeWidth={1.5} fill={color} fillOpacity={0.12} isAnimationActive={false} dot={false} />

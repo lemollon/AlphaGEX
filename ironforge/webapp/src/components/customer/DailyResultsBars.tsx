@@ -54,7 +54,11 @@ export default function DailyResultsBars({ bars }: { bars: Array<{ day: string; 
         Daily Results · Last {bars.length} Trading Days
       </h3>
       {hasData ? (
-        <div className="mt-3 h-[140px]">
+        <div
+          className="mt-3 h-[140px]"
+          role="img"
+          aria-label={`Daily results chart, last ${bars.length} trading days, most recent day ${formatDollarPnl(bars[bars.length - 1].pnl)}`}
+        >
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={bars} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
               <XAxis
