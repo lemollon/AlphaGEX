@@ -144,6 +144,15 @@ export async function refreshAccessToken(): Promise<string | null> {
   return refreshInFlight
 }
 
+/**
+ * Capability header announcing "this build understands step-up and will present a
+ * step-up token on a gated route" (webapp's lib/auth/mobile-step-up.ts). Sent on
+ * EVERY authenticated call, not just the gated ones — the server decides per-route
+ * whether step-up applies at all; this header only tells it which protocol this
+ * client speaks. MUST match STEP_UP_CAPABLE_HEADER in that file exactly.
+ */
+const STEP_UP_CAPABLE_HEADER = 'x-ironforge-stepup'
+
 export interface ApiOptions extends Omit<RequestInit, 'body'> {
   body?: unknown
   /** Step-up token for a sensitive action (MOBILE_SESSION_POLICY.stepUpActions). */
@@ -162,6 +171,7 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Pro
 
   const headers: Record<string, string> = {
     accept: 'application/json',
+    [STEP_UP_CAPABLE_HEADER]: '1',
     ...((opts.headers as Record<string, string>) ?? {}),
   }
   if (token) headers.authorization = `Bearer ${token}`
