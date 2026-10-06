@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, ScrollView, Pressable, Switch, StyleSheet, Alert, Linking, Platform } from 'react-native'
-import { usePreventScreenCapture } from 'expo-screen-capture'
+import { usePreventScreenCapture } from '@/security/screen-capture'
 import { useScrollToTop } from '@react-navigation/native'
 import * as Clipboard from 'expo-clipboard'
 import { SafeAreaView } from 'react-native-safe-area-context'
