@@ -396,6 +396,16 @@ export async function hasUsablePaymentMethod(customerId: string): Promise<boolea
 }
 
 /**
+ * Generous upper bound for every "trial" Stripe subscription this app creates — never
+ * the real trial length. The trading-day ledger (lib/enrollment/trial-close.ts) decides
+ * when TRIAL_ELIGIBLE_DAYS eligible trading days have passed and calls endTrialNow()
+ * well before this date arrives. One shared constant so a reader comparing the main
+ * enrollment path, the legacy add-agent Checkout path and the Community-to-Automate
+ * upgrade path sees the same number and the same reasoning, not three independent guesses.
+ */
+export const TRIAL_HOLD_DAYS = 60
+
+/**
  * Create the subscription in `trialing`, with the trial end far out.
  *
  * The far date is a HOLD, not the real trial length: our ledger decides when five
@@ -413,7 +423,7 @@ export async function createTrialingSubscription(opts: {
   /** Generous upper bound; the ledger ends it earlier. */
   holdDays?: number
 }): Promise<{ id: string; status: string }> {
-  const holdDays = opts.holdDays ?? 60
+  const holdDays = opts.holdDays ?? TRIAL_HOLD_DAYS
   const trialEnd = Math.floor(Date.now() / 1000) + holdDays * 24 * 60 * 60
   return stripeRequest<{ id: string; status: string }>('POST', '/subscriptions', {
     customer: opts.customerId,
@@ -443,12 +453,24 @@ export async function createSubscriptionCheckout(opts: {
   successUrl: string
   cancelUrl: string
 }): Promise<{ id: string; url: string }> {
-  // Stripe rejects trial_period_days below 1, so only include it for a real trial.
-  // Community no longer calls this function at all (free, no Stripe) — bot plans pass 5.
+  // trialDays > 0 only ever means "this plan has a free trial at all" (Community no
+  // longer calls this function — free, no Stripe — so every real caller passes the
+  // bot plans' 5). The LENGTH of that trial is never Stripe's own calendar clock
+  // (trial_period_days starts counting the instant this Checkout session completes,
+  // weekends and holidays included — gap audit #184/#216, "adding a second agent
+  // starts a 5 CALENDAR-day trial, not 5 trading days"). trial_end as an explicit far
+  // HOLD timestamp, same technique as createTrialingSubscription, is what lets the
+  // webhook's trials-ledger insert (checkout.session.completed) and trial-close.ts's
+  // daily job end it after exactly TRIAL_ELIGIBLE_DAYS eligible TRADING days instead.
   const subscription_data: Record<string, unknown> = {
     metadata: { ironforge_user_id: opts.userId, bot: opts.bot },
   }
-  if (opts.trialDays > 0) subscription_data.trial_period_days = opts.trialDays
+  if (opts.trialDays > 0) {
+    subscription_data.trial_end = Math.floor(Date.now() / 1000) + TRIAL_HOLD_DAYS * 24 * 60 * 60
+    // Same reasoning as createTrialingSubscription: without this, Stripe may void the
+    // subscription at trial_end if no default payment method is attached yet.
+    subscription_data.trial_settings = { end_behavior: { missing_payment_method: 'cancel' } }
+  }
 
   const session = await stripeRequest<{ id: string; url: string }>('POST', '/checkout/sessions', {
     mode: 'subscription',
@@ -540,9 +562,15 @@ export async function upgradeCommunityToBot(opts: {
   bot: string
   trialDays: number
 }): Promise<StripeSubscription> {
+  // Same HOLD-not-length fix as createSubscriptionCheckout (gap audit #184/#216):
+  // opts.trialDays (5) used to be multiplied straight into the timestamp, which is
+  // exactly a 5-CALENDAR-day trial by another name. The caller still writes a trials
+  // ledger row for this upgrade (checkout/route.ts) so the trading-day job ends it at
+  // the right time instead.
   return stripeRequest<StripeSubscription>('POST', `/subscriptions/${encodeURIComponent(opts.subscriptionId)}`, {
     items: [{ id: opts.itemId, price: opts.botPriceId }],
-    trial_end: Math.floor(Date.now() / 1000) + opts.trialDays * 86_400,
+    trial_end: Math.floor(Date.now() / 1000) + TRIAL_HOLD_DAYS * 86_400,
+    trial_settings: { end_behavior: { missing_payment_method: 'cancel' } },
     proration_behavior: 'none',
     metadata: { ironforge_user_id: opts.userId, bot: opts.bot },
   })
