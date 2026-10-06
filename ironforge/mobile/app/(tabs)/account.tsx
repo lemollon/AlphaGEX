@@ -609,7 +609,7 @@ export default function AccountScreen() {
             first
             badge={
               <View style={s.aiTag}>
-                <Text style={[type.label, { color: color.spark, fontFamily: font.bodyMedium }]}>
+                <Text style={[type.label, { color: color.sparkText, fontFamily: font.bodyMedium }]}>
                   AI
                 </Text>
               </View>

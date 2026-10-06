@@ -103,7 +103,7 @@ export default function SparkyScreen() {
               left={<Image source={SPARKY_AVATAR} style={s.avatar} resizeMode="contain" />}
               right={
                 <View style={s.aiTag}>
-                  <Text style={[type.label, { color: color.spark, fontFamily: font.bodyMedium }]}>AI</Text>
+                  <Text style={[type.label, { color: color.sparkText, fontFamily: font.bodyMedium }]}>AI</Text>
                 </View>
               }
               onClose={close}
@@ -204,7 +204,7 @@ function Bubble({ turn, streaming }: { turn: SparkyTurn; streaming: boolean }) {
       {!mine ? (
         <View style={s.bubbleHead}>
           <Image source={SPARKY_AVATAR} style={s.bubbleAvatar} resizeMode="contain" />
-          <Text style={[type.label, { color: color.spark, fontFamily: font.bodyMedium }]}>Sparky AI</Text>
+          <Text style={[type.label, { color: color.sparkText, fontFamily: font.bodyMedium }]}>Sparky AI</Text>
         </View>
       ) : null}
       <Text style={[type.body, { color: mine ? color.text : color.textDim }]}>

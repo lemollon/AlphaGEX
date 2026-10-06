@@ -341,7 +341,7 @@ export default function CommunityScreen() {
                       </Text>
                       {isAiSender(m.sender_type) ? (
                         <View style={s.aiTag}>
-                          <Text style={[type.label, { color: color.spark }]}>AI</Text>
+                          <Text style={[type.label, { color: color.sparkText }]}>AI</Text>
                         </View>
                       ) : null}
                       <Text style={[type.label, { color: color.muted }]}>{time(m.created_at)}</Text>
@@ -722,7 +722,7 @@ function ThreadSheet({
                     </Text>
                     {isAiSender(parent.sender_type) ? (
                       <View style={s.aiTag}>
-                        <Text style={[type.label, { color: color.spark }]}>AI</Text>
+                        <Text style={[type.label, { color: color.sparkText }]}>AI</Text>
                       </View>
                     ) : null}
                     <Text style={[type.label, { color: color.muted }]}>{time(parent.created_at)}</Text>
@@ -752,7 +752,7 @@ function ThreadSheet({
                     </Text>
                     {isAiSender(r.sender_type) ? (
                       <View style={s.aiTag}>
-                        <Text style={[type.label, { color: color.spark }]}>AI</Text>
+                        <Text style={[type.label, { color: color.sparkText }]}>AI</Text>
                       </View>
                     ) : null}
                     <Text style={[type.label, { color: color.muted }]}>{time(r.created_at)}</Text>

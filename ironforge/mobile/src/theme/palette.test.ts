@@ -14,8 +14,11 @@ const TOKEN_KEYS: (keyof ColorTokens)[] = [
   'accent',
   'accentText',
   'spark',
+  'sparkText',
   'flame',
+  'flameText',
   'ember',
+  'emberText',
   'pos',
   'positive',
   'neg',
@@ -37,8 +40,11 @@ describe('dark palette', () => {
     expect(dark.accent).toBe(darkTokens.accent)
     expect(dark.accentText).toBe(darkTokens.accentText)
     expect(dark.spark).toBe(darkTokens.spark)
+    expect(dark.sparkText).toBe(darkTokens.spark)
     expect(dark.flame).toBe(darkTokens.flame)
+    expect(dark.flameText).toBe(darkTokens.flame)
     expect(dark.ember).toBe(darkTokens.ember)
+    expect(dark.emberText).toBe(darkTokens.ember)
     expect(dark.pos).toBe(darkTokens.pos)
     expect(dark.neg).toBe(darkTokens.neg)
     expect(dark.warn).toBe(darkTokens.warn)
@@ -70,6 +76,13 @@ describe('light palette', () => {
     expect(light.accent).not.toBe(dark.accent)
     expect(light.accent.toUpperCase()).toBe('#F0600D')
     expect(dark.accent.toUpperCase()).toBe('#FF7124')
+  })
+
+  it('spark/flame are the design\'s exact light-mode hues, same pattern as accent (#3202 follow-up)', () => {
+    expect(light.spark.toUpperCase()).toBe('#1F7AE0')
+    expect(light.flame.toUpperCase()).toBe('#F0600D')
+    // Ember's design hue already happened to clear 4.5:1, so it needed no change.
+    expect(light.ember.toUpperCase()).toBe('#B52FE0')
   })
 
   it('has near-white backgrounds and near-black text', () => {
@@ -110,17 +123,18 @@ describe('light palette WCAG AA text contrast (>= 4.5:1 on white card)', () => {
     ['pos', light.pos],
     ['neg', light.neg],
     ['warn', light.warn],
-    ['spark', light.spark],
-    ['flame', light.flame],
-    ['ember', light.ember],
+    ['sparkText', light.sparkText],
+    ['flameText', light.flameText],
+    ['emberText', light.emberText],
     ['accentText', light.accentText],
   ])('%s clears 4.5:1 against a white card', (_name, hex) => {
     expect(contrastRatio(hex, white)).toBeGreaterThanOrEqual(4.5)
   })
 
-  // `accent` itself is deliberately excluded above — it's the design's exact
-  // per-theme fill/icon/chart-stroke colour, not a text colour, and it does NOT
-  // clear 4.5:1 against white (that's what accentText is for).
+  // `accent`/`spark`/`flame`/`ember` themselves are deliberately excluded above —
+  // they're the design's exact per-theme fill/icon/chart-stroke colours, not text
+  // colours, and spark/flame do NOT clear 4.5:1 against white (that's what
+  // sparkText/flameText are for; emberText happens to equal ember — see palette.ts).
   it('accentText also clears 4.5:1 against --accent-soft, the worst-case tinted badge background', () => {
     const accentSoft = '#FFF0E6'
     expect(contrastRatio(light.accentText, accentSoft)).toBeGreaterThanOrEqual(4.5)
@@ -182,9 +196,9 @@ describe('resolveTone', () => {
     expect(resolveTone(dark.wordmark, 'light')).toBe(light.wordmark)
   })
 
-  // No resolveTone(dark.accent, ...) case here: dark.accent/dark.accentText/dark.flame
-  // all collapse to the same #FF7124 (the design's own dark --accent and --flame share
-  // one hex), so the reverse map can only resolve that hex to one light-side winner
-  // (flame). `accent`/`accentText` are read directly off getPalette(scheme), never
-  // through resolveTone, so this is correct and not a bug — see palette.ts's note.
+  // No resolveTone(dark.accent, ...) case here: dark.accent/dark.accentText/dark.flame/
+  // dark.flameText all collapse to the same #FF7124, so the reverse map can only
+  // resolve that hex to one light-side winner (flameText, as of the spark/flame/ember
+  // text-variant split). `accent`/`accentText` are read directly off getPalette(scheme),
+  // never through resolveTone, so this is correct and not a bug — see palette.ts's note.
 })
