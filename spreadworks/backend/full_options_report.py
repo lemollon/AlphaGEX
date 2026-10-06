@@ -7,8 +7,8 @@ from __future__ import annotations
 import asyncio, base64, hashlib, html, json, logging, re
 from datetime import datetime, timedelta, time, timezone
 from zoneinfo import ZoneInfo
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response, HTMLResponse
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response, HTMLResponse, JSONResponse
 from sqlalchemy import text
 from .db import engine, SessionLocal
 from . import market_structure as ms
@@ -514,6 +514,16 @@ async def assemble_report(app,*,kind='intraday',plan=None,now=None):
                   {'id':report_id,'now':now.replace(tzinfo=None),'kind':kind,'payload':encoded(payload)})
     return payload
 
+@router.get('/history')
+def report_history(limit: int = Query(24, ge=1, le=100),
+                   offset: int = Query(0, ge=0),
+                   kind: str | None = Query(None, pattern='^(morning|market_open|intraday)$'),
+                   trading_date: str | None = Query(None, pattern=r'^\d{4}-\d{2}-\d{2}$')):
+    """Read the durable published archive without collecting data or sending alerts."""
+    from .report_archive import load_archive
+    return JSONResponse(load_archive(engine, limit, offset, kind, trading_date),
+                        headers={'Cache-Control': 'no-store'})
+
 @router.get('/latest')
 def latest_report():
     ensure_tables()
@@ -574,6 +584,11 @@ def stored_report(report_id):
 
 @router.get('/{report_id}.md')
 def get_markdown(report_id:str):return Response(stored_report(report_id)['report_markdown'],media_type='text/markdown')
+
+@router.get('/{report_id}/data')
+def report_data(report_id: str):
+    """Immutable original evidence for the web reader; retrieval never refreshes it."""
+    return JSONResponse(stored_report(report_id), headers={'Cache-Control': 'no-store'})
 
 @router.get('/{report_id}/assets')
 def get_assets(report_id:str):
