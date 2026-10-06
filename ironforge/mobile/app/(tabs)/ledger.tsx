@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { View, Text, ScrollView, TextInput, Pressable, RefreshControl, Alert, StyleSheet } from 'react-native'
+import { View, Text, ScrollView, TextInput, Pressable, RefreshControl, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import useSWR from 'swr'
@@ -29,8 +29,9 @@ import { tradeDetailHref } from '@/ledger/detail'
 import { space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
-import { Card, Money, OutcomeBadge, Loading, Empty, ErrorState } from '@/components/ui'
+import { Card, Money, OutcomeBadge, AgentBadge, Loading, Empty, ErrorState } from '@/components/ui'
 import { AppHeader, Mascot } from '@/components/Brand'
+import { Sheet, SheetHeader } from '@/components/Sheet'
 import { AGENT_LABEL } from '@/agents/copy'
 import type { AgentBot } from '@/agents/routes'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
@@ -62,6 +63,11 @@ export default function LedgerScreen() {
   const [query, setQuery] = useState('')
   const [agent, setAgent] = useState<string>('all')
   const [range, setRange] = useState<string>('5')
+  // Styled sheet for a tapped Ember trade — there is no /api/live/trades/[id]
+  // equivalent for Ember (PR #3177 only shipped the list + status), so this opens
+  // a sheet built entirely from the row the list already fetched, rather than a
+  // route that would have nothing further to load.
+  const [emberSheetTrade, setEmberSheetTrade] = useState<HistoryTrade | null>(null)
 
   const entitlements = useSWR<EntitlementsResponse>('/api/billing/entitlements', (p: string) =>
     api<EntitlementsResponse>(p),
@@ -141,19 +147,7 @@ export default function LedgerScreen() {
 
   function openTrade(t: HistoryTrade) {
     if (t.bot === 'ember') {
-      // No /api/live/trades/[id]-equivalent detail endpoint exists for Ember yet
-      // (PR #3177 only shipped the list + status) — an honest inline summary
-      // from data already on screen, rather than a route to a sheet with
-      // nothing to fetch.
-      Alert.alert(
-        `${formatDate(t.close_date)} · Ember`,
-        [
-          `Result: ${t.pnl >= 0 ? '+' : ''}$${Math.abs(t.pnl).toFixed(2)}`,
-          `Opened: ${t.opened_ct ?? '—'}`,
-          `Closed: ${t.closed_ct ?? '—'}`,
-          `Outcome: ${t.outcome}`,
-        ].join('\n'),
-      )
+      setEmberSheetTrade(t)
       return
     }
     router.push(tradeDetailHref(t.id))
@@ -301,6 +295,9 @@ export default function LedgerScreen() {
           </>
         )}
       </ScrollView>
+      {emberSheetTrade ? (
+        <EmberTradeSheet trade={emberSheetTrade} onClose={() => setEmberSheetTrade(null)} />
+      ) : null}
     </Shell>
   )
 }
@@ -365,6 +362,63 @@ function TradeRow({ trade, last, onPress }: { trade: HistoryTrade; last: boolean
         </View>
       </View>
     </Pressable>
+  )
+}
+
+/**
+ * Ember closed-trade sheet (fidelity audit "Ember row tap → trade detail") — a
+ * styled bottom sheet instead of the native Alert.alert this used to open. Built
+ * entirely from the HistoryTrade row the Ledger list already has (there is no
+ * per-trade detail endpoint for Ember yet, so no sparkline/legs/timeline here —
+ * only the fields genuinely available: result, opened/closed, contracts, outcome).
+ */
+function EmberTradeSheet({ trade, onClose }: { trade: HistoryTrade; onClose: () => void }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
+  const accent = agentAccent('ember')
+  return (
+    <Sheet accent={accent} onClose={onClose}>
+      {(close) => (
+        <>
+          <SheetHeader title="Trade" onClose={close} />
+          <View style={{ padding: space.lg, paddingTop: 0 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+              <AgentBadge name="Ember" accent={accent} />
+              <OutcomeBadge kind={trade.outcome_kind} label={trade.outcome} />
+            </View>
+            <Text style={[type.title, { color: color.text, fontFamily: font.display, marginTop: space.md }]}>
+              {formatDate(trade.close_date)}
+            </Text>
+
+            <Card style={{ marginTop: space.lg }}>
+              <Text style={[type.label, { color: color.muted }]}>Result</Text>
+              <Money value={trade.pnl} size="hero" />
+              <View style={s.emberFactsRow}>
+                <EmberFact label="Opened" value={trade.opened_ct ?? '—'} />
+                <EmberFact label="Closed" value={trade.closed_ct ?? '—'} />
+              </View>
+              <View style={s.emberFactsRow}>
+                <EmberFact label="Contracts" value={String(trade.contracts)} />
+                <EmberFact
+                  label="Credit"
+                  value={trade.credit != null ? `$${trade.credit.toFixed(2)}` : '—'}
+                />
+              </View>
+            </Card>
+          </View>
+        </>
+      )}
+    </Sheet>
+  )
+}
+
+function EmberFact({ label, value }: { label: string; value: string }) {
+  const { colors: color } = useTheme()
+  return (
+    <View style={{ flex: 1 }}>
+      <Text style={[type.label, { color: color.muted, marginBottom: 2 }]}>{label}</Text>
+      <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>{value}</Text>
+    </View>
   )
 }
 
@@ -454,6 +508,11 @@ const makeStyles = (color: ColorTokens) =>
     flexDirection: 'row',
     alignItems: 'center',
     padding: space.md,
+  },
+  emberFactsRow: {
+    flexDirection: 'row',
+    gap: space.lg,
+    marginTop: space.lg,
   },
   loadMore: {
     borderWidth: 1,

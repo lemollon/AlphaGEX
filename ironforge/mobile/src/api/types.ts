@@ -496,6 +496,17 @@ export interface TradeDetail {
   exit_reason_code: ExitReasonCode | null
   exit_reason_text: string | null
   monitoring_message: string | null
+  /**
+   * This trade's own minute-bucketed P&L history, from the same
+   * `{bot}_position_snapshots` rows the OPEN-position chart reads (see
+   * LiveOpenPosition.series) — the trade sheet's sparkline (10.4 design's
+   * closed-trade sheet). `null`/absent/empty all mean the same thing: no
+   * snapshot rows exist for this position (an older trade from before this
+   * table existed, for example) — render no chart rather than a flat line.
+   * Optional for the same forward/backward compatibility reason as every
+   * other optional field on this response.
+   */
+  series?: Array<{ timestamp: string; pnl: number }> | null
 }
 
 export interface TradeDetailResponse {
