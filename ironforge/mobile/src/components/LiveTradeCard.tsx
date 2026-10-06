@@ -18,6 +18,7 @@ import {
   formatLocalClock,
   formatElapsedMinutes,
   minutesSince,
+  minutesUntil,
   liveProgressFraction,
   liveCardStage,
 } from '@/live/lifecycle'
@@ -53,6 +54,8 @@ export function LiveTradeCard({
   const openedAt = trade.opened_at
   const autoCloseAt = trade.auto_close_at ?? null
   const elapsed = openedAt ? formatElapsedMinutes(minutesSince(openedAt)) : '—'
+  const leftMinutes = minutesUntil(autoCloseAt)
+  const left = leftMinutes != null ? formatElapsedMinutes(leftMinutes) : null
   const closeClock = formatLocalClock(autoCloseAt)
   const openClock = formatLocalClock(openedAt)
   const fraction = liveProgressFraction(openedAt, autoCloseAt)
@@ -94,7 +97,15 @@ export function LiveTradeCard({
               Open <Text style={{ color: color.text, fontFamily: font.bodyBold }}>{elapsed}</Text>
             </Text>
             <Text style={[type.label, { color: color.muted }]}>
-              {closeClock ? `by ${closeClock}` : ''}
+              {left != null ? (
+                <>
+                  <Text style={{ color: color.text, fontFamily: font.bodyBold }}>{left}</Text> left
+                </>
+              ) : closeClock ? (
+                `by ${closeClock}`
+              ) : (
+                ''
+              )}
             </Text>
           </View>
           <View style={[s.bar, { backgroundColor: color.border }]}>
@@ -110,6 +121,7 @@ export function LiveTradeCard({
         accent={accent}
         status={STAGE_LABELS[stage]}
         current={trade.unrealized_pnl}
+        autoCloseAt={autoCloseAt}
       />
 
       <View style={s.stages}>

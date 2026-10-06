@@ -59,6 +59,128 @@ export function nearestIndex(x: number, width: number, n: number): number {
   return clamp(Math.round((x / width) * (n - 1)), 0, n - 1)
 }
 
+export interface AxisTick {
+  /** Pixel position along the axis. */
+  pos: number
+  label: string
+}
+
+export interface TimeGeometry {
+  /** Pixel x for a real timestamp (ms since epoch) — NOT evenly spaced by index;
+   *  a gap in real samples is a gap on screen, same as the design's own
+   *  `drawTradeChart`. */
+  x: (ms: number) => number
+  y: (v: number) => number
+  zeroY: number
+  domain: { lo: number; hi: number }
+  /** Polyline through the real samples only — never interpolated past "now". */
+  points: string
+  /** Pixel x of the last real sample ("now"). */
+  nowX: number
+  /** Pixel x of the session's expected close, or null when unknown. */
+  sessionEndX: number | null
+  /** "Nice" dollar gridlines (10.4 design `drawTradeChart`'s 1/2/2.5/5×10ⁿ step). */
+  yTicks: AxisTick[]
+  /** One label every 30 minutes across the session, CT-formatted like the design
+   *  ("9:30a", "10a", "12:30p"). */
+  timeTicks: AxisTick[]
+}
+
+/**
+ * Time-based geometry for the live-trade chart (10.4 design `drawTradeChart`) — the x-axis
+ * is the session's actual clock, not sample index, so the plotted line sits where it really
+ * happened and the remaining time to the scheduled close can be shaded. Falls back to `null`
+ * exactly like `chartGeometry` when there is nothing to lay out.
+ */
+export function timeChartGeometry(
+  series: Point[],
+  autoCloseAt: string | null | undefined,
+  width: number,
+  height: number,
+  padY: number,
+): TimeGeometry | null {
+  if (!series.length || width <= 0 || height <= padY * 2) return null
+
+  const ts = series.map((p) => new Date(p.timestamp).getTime())
+  if (ts.some((t) => Number.isNaN(t))) return null
+  const t0 = ts[0]
+  const tNow = ts[ts.length - 1]
+  const closeMs = autoCloseAt ? new Date(autoCloseAt).getTime() : NaN
+  const tEnd = !Number.isNaN(closeMs) && closeMs > tNow ? closeMs : tNow
+  const span = Math.max(1, tEnd - t0)
+
+  const x = (ms: number) => clamp(((ms - t0) / span) * width, 0, width)
+
+  const values = series.map((p) => p.pnl)
+  const lo = Math.min(0, ...values)
+  const hi = Math.max(0, ...values)
+  const ySpan = hi - lo || 1
+  const y = (v: number) => padY + (1 - (v - lo) / ySpan) * (height - padY * 2)
+
+  return {
+    x,
+    y,
+    zeroY: y(0),
+    domain: { lo, hi },
+    points: series.map((p, i) => `${x(ts[i]).toFixed(2)},${y(p.pnl).toFixed(2)}`).join(' '),
+    nowX: x(tNow),
+    sessionEndX: !Number.isNaN(closeMs) && closeMs > t0 ? x(closeMs) : null,
+    yTicks: niceDollarTicks(lo, hi).map((v) => ({ pos: y(v), label: formatAxisDollar(v) })),
+    timeTicks: thirtyMinuteTicks(t0, tEnd).map((ms) => ({ pos: x(ms), label: formatAxisTime(ms) })),
+  }
+}
+
+/** Index of the real sample nearest a touch, snapping by its TIME-based pixel
+ *  position rather than assuming even spacing. */
+export function nearestTimeIndex(touchX: number, geom: TimeGeometry, series: Point[]): number {
+  let best = 0
+  let bestDist = Infinity
+  series.forEach((p, i) => {
+    const d = Math.abs(geom.x(new Date(p.timestamp).getTime()) - touchX)
+    if (d < bestDist) {
+      bestDist = d
+      best = i
+    }
+  })
+  return best
+}
+
+/** The design's own step rule (`drawTradeChart`): the smallest of 1/2/2.5/5×10ⁿ
+ *  at or above half the plotted span, so gridlines land on round dollar amounts. */
+function niceStep(span: number): number {
+  const raw = span / 2.5 || 1
+  const pow = Math.pow(10, Math.floor(Math.log10(raw)))
+  const candidates = [1, 2, 2.5, 5, 10].map((m) => m * pow)
+  return candidates.find((v) => v >= raw) ?? candidates[candidates.length - 1]
+}
+
+function niceDollarTicks(lo: number, hi: number): number[] {
+  const step = niceStep(hi - lo || 1)
+  const ticks: number[] = []
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) ticks.push(Math.round(v * 100) / 100)
+  return ticks
+}
+
+function thirtyMinuteTicks(startMs: number, endMs: number): number[] {
+  const STEP = 30 * 60_000
+  const ticks: number[] = []
+  for (let t = Math.ceil(startMs / STEP) * STEP; t <= endMs; t += STEP) ticks.push(t)
+  return ticks
+}
+
+/** "$36" / "−$12" — whole dollars, real minus, matching the design's gridline labels. */
+export function formatAxisDollar(v: number): string {
+  const sign = v < 0 ? '−' : ''
+  return `${sign}$${Math.round(Math.abs(v))}`
+}
+
+/** "9:30a" / "12p" — the design's own compact CT clock label for a 30-minute tick. */
+export function formatAxisTime(ms: number): string {
+  const d = new Date(ms)
+  const label = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Chicago' })
+  return label.replace(':00', '').replace(' AM', 'a').replace(' PM', 'p')
+}
+
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v))
 }

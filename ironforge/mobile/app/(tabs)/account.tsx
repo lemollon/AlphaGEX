@@ -142,6 +142,19 @@ export default function AccountScreen() {
     await WebBrowser.openBrowserAsync(`${API_BASE}${path}`)
   }
 
+  /**
+   * "Agreements and Disclosures" (10.4 design Help card) — one row reaching both
+   * documents, the same Alert.alert pattern already used for the Appearance picker,
+   * rather than two separate rows under a standalone "Legal" heading.
+   */
+  function openAgreements() {
+    Alert.alert('Agreements and Disclosures', undefined, [
+      { text: 'Terms of Service', onPress: () => void openLegal('/terms') },
+      { text: 'Privacy Policy', onPress: () => void openLegal('/privacy') },
+      { text: 'Cancel', style: 'cancel' },
+    ])
+  }
+
   async function emailSupport() {
     const url = supportMailto()
     const canOpen = await Linking.canOpenURL(url).catch(() => false)
@@ -283,19 +296,54 @@ export default function AccountScreen() {
               onPress={() => router.push('/edit-profile')}
               first
             />
+            {/* 10.4 design `.lrow` "Password & Face ID" is one row — the change-
+                password screen and the biometric switch fold under it here instead
+                of a standalone "Security" section the design never has. */}
             <Row
               icon="lock-closed-outline"
-              label="Change Password"
+              label="Password & Face ID"
               detail="Signs you out on every device"
               onPress={() => router.push('/change-password')}
             />
+            <View style={[s.rowBetween, s.row, s.rowDivider]}>
+              <View style={{ flex: 1, paddingRight: space.md }}>
+                <Text style={[type.body, { color: color.text }]}>Unlock with biometrics</Text>
+                <Text style={[type.label, { color: color.muted, marginTop: 2 }]}>
+                  {bioAvailable
+                    ? 'Use Face ID or your fingerprint instead of your password.'
+                    : 'Not available on this device.'}
+                </Text>
+              </View>
+              <Switch
+                value={bioOn}
+                disabled={!bioAvailable}
+                onValueChange={(v) => {
+                  setBioOn(v)
+                  setBiometricEnabled(v)
+                }}
+                trackColor={{ true: color.accent, false: color.border }}
+              />
+            </View>
           </View>
         </Card>
 
+        {/* 10.4 design "Agents & billing" — one heading over the agent list, the
+            membership/billing card and the payment method, not the separate
+            "Trading" + "Membership and Billing" headings this used to split them
+            into. */}
         <View style={{ marginTop: space.xl }}>
-          <SectionLabel>Membership and Billing</SectionLabel>
+          <SectionLabel>Agents and Billing</SectionLabel>
         </View>
         <Card>
+          <Row
+            icon="flash-outline"
+            label="Agents"
+            detail="View and manage Spark and Flame"
+            onPress={() => router.push('/agents')}
+            first
+          />
+        </Card>
+        <Card style={{ marginTop: space.md }}>
           <View style={s.rowBetween}>
             <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 17 }]}>
               {billing?.membership?.plan ?? (data?.hasMembership ? 'Membership' : 'No membership')}
@@ -383,30 +431,9 @@ export default function AccountScreen() {
           ) : null}
         </Card>
 
-        <BrokerageSection />
-
-        <View style={{ marginTop: space.xl }}>
-          <SectionLabel>Trading</SectionLabel>
-        </View>
-        <Card>
-          <Row
-            icon="flash-outline"
-            label="Agents"
-            detail="View and manage Spark and Flame"
-            onPress={() => router.push('/agents')}
-            first
-          />
-          <Row
-            icon="notifications-outline"
-            label="Notifications"
-            detail="Alerts and push preferences"
-            onPress={() => router.push('/notifications')}
-          />
-        </Card>
-
         {/* Inline per-agent pause/resume (10.4 design Account tab `.lrow` + Switch) —
-            one row per activation, right here rather than only reachable through the
-            agent sheet. */}
+            one row per activation, still under "Agents and Billing" rather than a
+            separate "Trading" heading the design never has. */}
         {(pauseSWR.data?.activations.length ?? 0) > 0 ? (
           <Card style={{ marginTop: space.md }}>
             {pauseSWR.data!.activations.map((a, i) => (
@@ -431,46 +458,35 @@ export default function AccountScreen() {
           </Card>
         ) : null}
 
+        <BrokerageSection />
+
+        {/* 10.4 design "Alerts & display" — Notifications and Appearance together,
+            not two separate headings. */}
         <View style={{ marginTop: space.xl }}>
-          <SectionLabel>Appearance</SectionLabel>
+          <SectionLabel>Alerts and Display</SectionLabel>
         </View>
         <Card>
+          <Row
+            icon="notifications-outline"
+            label="Notifications"
+            detail="Alerts and push preferences"
+            onPress={() => router.push('/notifications')}
+            first
+          />
           <Row
             icon="contrast-outline"
             label="Appearance"
             detail={appearanceDetail(preference)}
             onPress={() => openAppearancePicker(preference, setPreference)}
-            first
           />
         </Card>
 
+        {/* 10.4 design "Help" — Ask Sparky, Email support and (folded in here, under
+            one design-consistent row rather than the standalone "Legal" and "Danger
+            Zone" headings the design never has) the agreements/legal documents and
+            account deletion every store review still requires reachable. */}
         <View style={{ marginTop: space.xl }}>
-          <SectionLabel>Security</SectionLabel>
-        </View>
-        <Card>
-          <View style={s.rowBetween}>
-            <View style={{ flex: 1, paddingRight: space.md }}>
-              <Text style={[type.body, { color: color.text }]}>Unlock with biometrics</Text>
-              <Text style={[type.label, { color: color.muted, marginTop: 2 }]}>
-                {bioAvailable
-                  ? 'Use Face ID or your fingerprint instead of your password.'
-                  : 'Not available on this device.'}
-              </Text>
-            </View>
-            <Switch
-              value={bioOn}
-              disabled={!bioAvailable}
-              onValueChange={(v) => {
-                setBioOn(v)
-                setBiometricEnabled(v)
-              }}
-              trackColor={{ true: color.accent, false: color.border }}
-            />
-          </View>
-        </Card>
-
-        <View style={{ marginTop: space.xl }}>
-          <SectionLabel>Help and Support</SectionLabel>
+          <SectionLabel>Help</SectionLabel>
         </View>
         <Card>
           <Row
@@ -493,54 +509,29 @@ export default function AccountScreen() {
             detail={SUPPORT_EMAIL}
             onPress={emailSupport}
           />
-        </Card>
-
-        <View style={{ marginTop: space.xl }}>
-          <SectionLabel>Legal</SectionLabel>
-        </View>
-        <Card>
           {/*
-            The app had no route to the Terms or the Privacy Policy anywhere. For an app
-            carrying a member feed that is a Guideline 1.2 gap as much as a courtesy one:
-            the terms are where the no-tolerance-for-objectionable-content agreement
-            lives, and a reviewer looks for it.
-
-            System browser, not a WebView — same reason as everywhere else in this file,
-            the customer gets to see the real URL.
+            Terms and Privacy still open in the system browser, not a WebView, for the
+            same reason as everywhere else in this file — the customer sees the real
+            URL. One row reaches both, rather than a standalone "Legal" section.
           */}
           <Row
             icon="document-text-outline"
-            label="Terms of Service"
-            onPress={() => openLegal('/terms')}
-            first
+            label="Agreements and Disclosures"
+            detail="Terms of Service and Privacy Policy"
+            onPress={openAgreements}
           />
-          <Row
-            icon="lock-closed-outline"
-            label="Privacy Policy"
-            onPress={() => openLegal('/privacy')}
-          />
-        </Card>
-
-        <View style={{ marginTop: space.xl }}>
-          <SectionLabel>Danger Zone</SectionLabel>
-        </View>
-        <Card>
           {/*
-            App Store Review Guideline 5.1.1(v) requires account deletion to be initiable
-            from INSIDE the app. Google Play accepts the public /delete-account URL and
-            that is what shipped, so until now the app had no deletion path at all — one
-            of the most common first-submission rejections on iOS.
-
-            It lives under its own heading rather than in Security so it is findable, and
-            it routes to a screen that explains the consequences rather than firing an
-            Alert straight from a tap.
+            App Store Review Guideline 5.1.1(v) requires account deletion to be
+            initiable from INSIDE the app — kept reachable here instead of under its
+            own "Danger Zone" heading the design never has. Routes to a screen that
+            explains the consequences rather than firing an Alert straight from a tap.
           */}
           <Row
             icon="trash-outline"
             label="Delete Account"
             detail="Cancel your membership and permanently erase your data"
             onPress={() => router.push('/delete-account')}
-            first
+            tint={color.neg}
           />
         </Card>
 
@@ -657,6 +648,10 @@ const makeStyles = (color: ColorTokens) =>
   title: { ...type.title, color: color.text, fontFamily: font.display, marginBottom: space.lg },
   rowCenter: { flexDirection: 'row', alignItems: 'center', gap: space.lg },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  // Mirrors components/ui.tsx's Row — so a plain (non-navigating, switch-ended)
+  // row sits flush with the Row-based rows above and below it in the same Card.
+  row: { paddingVertical: space.md },
+  rowDivider: { borderTopWidth: 1, borderTopColor: color.border },
   avatar: {
     width: 56,
     height: 56,

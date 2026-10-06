@@ -4,6 +4,7 @@ import {
   lifecycleFillFraction,
   formatLocalClock,
   minutesSince,
+  minutesUntil,
   formatElapsedMinutes,
   formatTargetStopCaption,
   formatAutoCloseCaption,
@@ -104,6 +105,29 @@ describe('minutesSince', () => {
 
   it('is 0 for an invalid timestamp', () => {
     expect(minutesSince('not-a-date')).toBe(0)
+  })
+})
+
+describe('minutesUntil — the Live-now card\'s "{left} left" caption', () => {
+  it('computes minutes remaining to a real scheduled close', () => {
+    const close = new Date('2026-01-15T18:37:00.000Z').toISOString()
+    const now = new Date('2026-01-15T18:00:00.000Z').getTime()
+    expect(minutesUntil(close, now)).toBeCloseTo(37, 5)
+  })
+
+  it('never goes negative once the close instant has passed', () => {
+    const close = new Date('2026-01-15T18:00:00.000Z').toISOString()
+    const now = new Date('2026-01-15T18:10:00.000Z').getTime()
+    expect(minutesUntil(close, now)).toBe(0)
+  })
+
+  it('is null with no scheduled close to count down to', () => {
+    expect(minutesUntil(null)).toBeNull()
+    expect(minutesUntil(undefined)).toBeNull()
+  })
+
+  it('is null for an invalid timestamp', () => {
+    expect(minutesUntil('not-a-date')).toBeNull()
   })
 })
 

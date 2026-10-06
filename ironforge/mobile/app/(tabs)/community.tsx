@@ -18,6 +18,7 @@ import Svg, { Path } from 'react-native-svg'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR from 'swr'
 import { api, ApiError } from '@/api/client'
+import { getItem, setItem } from '@/api/storage'
 import type {
   AssistResponse,
   BlockedMember,
@@ -61,6 +62,10 @@ type CommunityFeed = CommunityFeedV2
  * moderation is a pre-filter, not a substitute. Reporting is open to anyone signed in
  * (reading the feed does not need a membership, so neither does flagging it).
  */
+/** The welcome card's dismissal (10.4 design `st.cWelcomeGone`) — permanent, not
+ *  per-session: once a member taps the X it never comes back on this device. */
+const WELCOME_DISMISSED_KEY = 'ironforge.community.welcomeDismissed'
+
 export default function CommunityScreen() {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
@@ -68,7 +73,7 @@ export default function CommunityScreen() {
   const [draft, setDraft] = useState('')
   const [posting, setPosting] = useState(false)
   const [postError, setPostError] = useState<string | null>(null)
-  // Two sheets, never both: the ⋯ menu, then the reason picker it opens.
+  // Two sheets, never both: the report/block menu, then the reason picker it opens.
   const [menuFor, setMenuFor] = useState<CommunityMessage | null>(null)
   const [reportFor, setReportFor] = useState<CommunityMessage | null>(null)
   const [blockedOpen, setBlockedOpen] = useState(false)
@@ -76,14 +81,21 @@ export default function CommunityScreen() {
   // per WP-F scope: expo-router nesting under app/(tabs)/community/ would touch the
   // tab layout, and a modal here does not.
   const [threadFor, setThreadFor] = useState<CommunityMessage | null>(null)
-  // The "+" composer sheet (APP-031). No upload endpoint exists under
-  // /api/community/* — see the sheet's own copy — so this never grows options
-  // beyond the "coming soon" line until a real one ships.
-  const [attachOpen, setAttachOpen] = useState(false)
   // AI assist (APP-031): the suggestion is held separately from the draft so the
   // member can compare "Use" vs "Keep mine" instead of the draft silently changing.
   const [assisting, setAssisting] = useState(false)
   const [assistSuggestion, setAssistSuggestion] = useState<string | null>(null)
+  // 10.4 design: a dismiss "X", not a navigation — starts hidden (not shown) until
+  // the stored flag resolves, so a returning member never sees a one-frame flash of
+  // a card they already dismissed.
+  const [welcomeDismissed, setWelcomeDismissed] = useState<boolean | null>(null)
+  useEffect(() => {
+    getItem(WELCOME_DISMISSED_KEY).then((v) => setWelcomeDismissed(v === '1'))
+  }, [])
+  function dismissWelcome() {
+    setWelcomeDismissed(true)
+    void setItem(WELCOME_DISMISSED_KEY, '1')
+  }
 
   const { data, error, isLoading, mutate, isValidating } = useSWR<CommunityFeed>(
     `/api/community/messages?channel=${channel}`,
@@ -250,37 +262,32 @@ export default function CommunityScreen() {
           <Text style={[type.label, { color: color.pos }]}>{data?.online_count ?? 0} online</Text>
         </View>
 
-        <Pressable onPress={showGuidelines} style={s.welcome} accessibilityRole="button">
-          <Mascot bot="flame" size={54} />
-          <View style={{ flex: 1 }}>
-            <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 17 }]}>
-              Welcome to Forge Community
-            </Text>
-            <Text style={[type.body, { color: color.textDim, marginTop: space.xs }]}>
-              Learn, share ideas, and grow together. Respect every member and protect the forge.
-            </Text>
-            <Text style={[type.label, { color: color.accent, marginTop: space.sm }]}>
-              Community Guidelines
-            </Text>
+        {/* 10.4 design `.welcome`: a static card with a dismiss "X" that hides it for
+            good (`st.cWelcomeGone`) — not a link to anywhere. Blocked-members access
+            (Google Play UGC policy) and Community Guidelines both moved to design-
+            consistent rows on the Account tab's Help card instead of living here. */}
+        {welcomeDismissed === false ? (
+          <View style={s.welcome}>
+            <Mascot bot="flame" size={54} />
+            <View style={{ flex: 1 }}>
+              <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 17 }]}>
+                Welcome to Forge Community
+              </Text>
+              <Text style={[type.body, { color: color.textDim, marginTop: space.xs }]}>
+                Learn, share ideas, and grow together. Respect every member and protect the forge.
+              </Text>
+            </View>
+            <Pressable
+              onPress={dismissWelcome}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss"
+              style={s.welcomeDismiss}
+            >
+              <Ionicons name="close" size={14} color={color.textDim} />
+            </Pressable>
           </View>
-        </Pressable>
-
-        {/*
-          Always visible, not only when the list is non-empty: a block the viewer
-          cannot find is a block they cannot undo.
-        */}
-        <Pressable
-          onPress={() => {
-            void mutateBlocks()
-            setBlockedOpen(true)
-          }}
-          style={s.blockedLink}
-          accessibilityRole="button"
-        >
-          <Text style={[type.label, { color: color.textDim }]}>
-            Blocked members{blockedCount > 0 ? ` · ${blockedCount}` : ''}
-          </Text>
-        </Pressable>
+        ) : null}
 
         {/*
           APP-054: horizontally scrollable so a 5th (or 6th, later) category never
@@ -310,9 +317,22 @@ export default function CommunityScreen() {
         {messages.length === 0 ? (
           <Empty title="Nothing here yet" detail="Be the first to post in this channel." />
         ) : (
-          messages.map((m) => (
-            <Card key={m.id} style={{ marginBottom: space.md }}>
-              {/* UX-005: avatar rail on the left, everything else indented beside it. */}
+          messages.map((m) => {
+            // Your own posts, and Forge's, have nothing to report or block.
+            const reportable = m.mine !== true && m.sender_type === 'USER'
+            return (
+            <Pressable
+              key={m.id}
+              onLongPress={reportable ? () => setMenuFor(m) : undefined}
+              disabled={!reportable}
+              accessibilityRole={reportable ? 'button' : undefined}
+              accessibilityLabel={reportable ? `Long-press for options on the post by ${m.sender_name}` : undefined}
+            >
+            <Card style={{ marginBottom: space.md }}>
+              {/* UX-005: avatar rail on the left, everything else indented beside it.
+                  10.4 design has no visible report affordance on a post — moderation
+                  stays reachable via a long-press (mobile handoff "long-press a post
+                  to report"), not a persistent "⋯" icon. */}
               <View style={s.postRow}>
                 <Avatar message={m} />
                 <View style={{ flex: 1 }}>
@@ -330,18 +350,6 @@ export default function CommunityScreen() {
                     </View>
                     <View style={s.rowCenter}>
                       <CategoryChip message={m} />
-                      {/* Your own posts, and Forge's, have nothing to report or block. */}
-                      {m.mine !== true && m.sender_type === 'USER' ? (
-                        <Pressable
-                          onPress={() => setMenuFor(m)}
-                          hitSlop={10}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Options for the post by ${m.sender_name}`}
-                          style={s.moreBtn}
-                        >
-                          <Text style={{ color: color.muted, fontSize: 18, lineHeight: 18 }}>⋯</Text>
-                        </Pressable>
-                      ) : null}
                     </View>
                   </View>
                   <Text style={[type.body, { color: color.textDim, marginTop: space.sm }]}>
@@ -367,8 +375,32 @@ export default function CommunityScreen() {
                 </View>
               </View>
             </Card>
-          ))
+            </Pressable>
+            )
+          })
         )}
+
+        {/* Community Guidelines and Blocked members (Google Play UGC policy) are
+            real, required entry points with no equivalent in the 10.4 design — kept
+            as one quiet footer row rather than styled as a feature of the feed. */}
+        <View style={s.metaFooter}>
+          <Pressable onPress={showGuidelines} hitSlop={8} accessibilityRole="button">
+            <Text style={[type.label, { color: color.muted }]}>Community Guidelines</Text>
+          </Pressable>
+          <Text style={[type.label, { color: color.muted }]}> · </Text>
+          <Pressable
+            onPress={() => {
+              void mutateBlocks()
+              setBlockedOpen(true)
+            }}
+            hitSlop={8}
+            accessibilityRole="button"
+          >
+            <Text style={[type.label, { color: color.muted }]}>
+              Blocked members{blockedCount > 0 ? ` · ${blockedCount}` : ''}
+            </Text>
+          </Pressable>
+        </View>
       </ScrollView>
 
       <View style={s.composer}>
@@ -398,15 +430,11 @@ export default function CommunityScreen() {
           </View>
         ) : null}
         <View style={s.rowCenter}>
-          <Pressable
-            onPress={() => setAttachOpen(true)}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel="Add to your post"
-            style={s.plusBtn}
-          >
-            <Text style={{ color: color.textDim, fontSize: 20, lineHeight: 20 }}>+</Text>
-          </Pressable>
+          {/* 10.4 design composer is one row: input + send (its topic `<select>` is
+              already covered above by the channel chips, which also target the post).
+              The "+" attach control is dropped entirely — there has never been an
+              upload endpoint under /api/community/*, so it opened a "coming soon"
+              sheet with no function to preserve. */}
           <TextInput
             value={draft}
             onChangeText={(t) => {
@@ -416,6 +444,7 @@ export default function CommunityScreen() {
             placeholder="Share with the community..."
             placeholderTextColor={color.muted}
             style={s.input}
+            maxLength={500}
             multiline
           />
           <Pressable
@@ -481,8 +510,6 @@ export default function CommunityScreen() {
         onUnblock={(m) => void unblock(m)}
         onClose={() => setBlockedOpen(false)}
       />
-
-      <AttachSheet visible={attachOpen} onClose={() => setAttachOpen(false)} />
 
       <ThreadSheet
         parent={threadFor}
@@ -584,31 +611,6 @@ function BlockedSheet({
             </View>
           ))
         )}
-        <Pressable onPress={onClose} style={s.sheetRow}>
-          <Text style={[type.body, { color: color.textDim }]}>Close</Text>
-        </Pressable>
-      </View>
-    </Modal>
-  )
-}
-
-/**
- * The "+" composer sheet (APP-031). There is no upload/attachment endpoint under
- * /api/community/* — grepped the webapp's api/community routes (messages,
- * reactions, reports, blocks only) — so this shows exactly one honest line
- * instead of options that would fail the moment someone tapped them.
- */
-function AttachSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const { colors: color } = useTheme()
-  const s = useMemo(() => makeStyles(color), [color])
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={s.scrim} onPress={onClose} accessibilityLabel="Dismiss" />
-      <View style={s.sheet}>
-        <Text style={[type.label, { color: color.muted, marginBottom: space.md }]}>Add to your post</Text>
-        <Text style={[type.body, { color: color.textDim, paddingVertical: space.md }]}>
-          Attachments are coming soon.
-        </Text>
         <Pressable onPress={onClose} style={s.sheetRow}>
           <Text style={[type.body, { color: color.textDim }]}>Close</Text>
         </Pressable>
@@ -993,8 +995,21 @@ const makeStyles = (color: ColorTokens) =>
     borderRadius: radius.lg,
     padding: space.lg,
   },
-  moreBtn: { paddingHorizontal: space.xs },
-  blockedLink: { alignSelf: 'flex-start', marginTop: space.md },
+  welcomeDismiss: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: color.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  metaFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: space.lg,
+  },
   scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000', opacity: 0.6 },
   sheet: {
     position: 'absolute',

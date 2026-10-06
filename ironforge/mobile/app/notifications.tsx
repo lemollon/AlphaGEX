@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native'
+import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native'
 import { Stack, useRouter } from 'expo-router'
 import useSWRInfinite from 'swr/infinite'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
@@ -201,17 +201,14 @@ export default function NotificationsScreen() {
                     </Pressable>
                   ))}
                 </Card>
-                {canLoadMore ? (
-                  <Pressable
-                    onPress={() => setSize(size + 1)}
-                    disabled={loadingMore}
-                    style={[s.loadMore, loadingMore && { opacity: 0.5 }]}
-                    accessibilityRole="button"
-                  >
-                    <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
-                      {loadingMore ? 'Loading…' : 'Load more'}
-                    </Text>
-                  </Pressable>
+                {/* 10.4 design shows no pagination control at all — older rows load
+                    silently from the onScroll near-bottom check above. A spinner
+                    rather than a tappable button keeps that invisible, while still
+                    telling a member mid-fetch that more is on the way. */}
+                {loadingMore ? (
+                  <View style={s.loadMore}>
+                    <ActivityIndicator size="small" color={color.muted} />
+                  </View>
                 ) : null}
               </ScrollView>
             )}
@@ -251,10 +248,7 @@ const makeStyles = (color: ColorTokens) =>
     loadMore: {
       alignItems: 'center',
       paddingVertical: space.md,
-      marginTop: space.md,
-      borderWidth: 1,
-      borderColor: color.border,
-      borderRadius: radius.md,
+      marginTop: space.sm,
     },
     settingsRow: {
       flexDirection: 'row',

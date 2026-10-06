@@ -94,6 +94,17 @@ export function minutesSince(openedAt: string, nowMs: number = Date.now()): numb
   return Math.max(0, (nowMs - opened) / 60_000)
 }
 
+/** Minutes remaining until `autoCloseAt`, clamped to zero — `null` when there is
+ *  no real scheduled close to count down to (a swung leg, or a bot that never
+ *  reports one). Feeds the Live-now card's "{left} left" caption (10.4 design
+ *  `.life-row`'s right-hand span) alongside `minutesSince`'s "Open {elapsed}". */
+export function minutesUntil(autoCloseAt: string | null | undefined, nowMs: number = Date.now()): number | null {
+  if (!autoCloseAt) return null
+  const close = new Date(autoCloseAt).getTime()
+  if (Number.isNaN(close)) return null
+  return Math.max(0, (close - nowMs) / 60_000)
+}
+
 /** "37 min" under an hour, "1 h 12 min" at or beyond one — the Monitoring caption. */
 export function formatElapsedMinutes(minutes: number): string {
   const m = Math.max(0, Math.round(minutes))
