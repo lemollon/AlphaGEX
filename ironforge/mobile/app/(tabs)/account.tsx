@@ -391,7 +391,7 @@ export default function AccountScreen() {
           */}
           {canManageBillingInApp(platform) ? (
             <Pressable onPress={openBilling} style={s.outlineBtn}>
-              <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+              <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
                 Manage Membership and Billing (opens secure Stripe portal)
               </Text>
             </Pressable>
@@ -404,7 +404,7 @@ export default function AccountScreen() {
                 }}
                 style={s.outlineBtn}
               >
-                <Text style={[type.body, { color: color.accent, fontFamily: font.bodyMedium }]}>
+                <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
                   Manage subscription
                 </Text>
               </Pressable>

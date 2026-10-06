@@ -75,7 +75,7 @@ export default function EnrollShell({
           <Link href="/" aria-label="IronForge home"><Wordmark markClass="h-6 w-auto" textClass="text-base" /></Link>
           {topRight === 'login' ? (
             <span className="secure">
-              Already have an account? <Link href="/login" className="link" style={{ textDecoration: 'none', color: 'var(--accent)' }}>Log in</Link>
+              Already have an account? <Link href="/login" className="link" style={{ textDecoration: 'none', color: 'var(--accent-text)' }}>Log in</Link>
             </span>
           ) : null}
           {topRight === 'save-exit' ? (

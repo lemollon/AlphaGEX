@@ -203,7 +203,7 @@
 .if-dash .post-body{flex:1;min-width:0;display:grid;gap:6px}
 .if-dash .post-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.86rem}
 .if-dash .post-meta b{font-weight:600}
-.if-dash .ai{font-size:.68rem;font-weight:700;padding:2px 6px;border-radius:5px;background:var(--accent-soft);color:var(--accent);letter-spacing:.04em}
+.if-dash .ai{font-size:.68rem;font-weight:700;padding:2px 6px;border-radius:5px;background:var(--accent-soft);color:var(--accent-text);letter-spacing:.04em}
 .if-dash .cat{margin-left:auto;font-size:.74rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
 .if-dash .post-text{font-size:.94rem;line-height:1.5;overflow-wrap:anywhere}
 .if-dash .ai-note{font-size:.76rem;color:var(--muted)}

@@ -111,7 +111,7 @@ export default function LegalScreen() {
                   }}
                   hitSlop={8}
                 >
-                  <Text style={[type.body, { color: color.accent, fontFamily: font.bodyBold }]}>Review</Text>
+                  <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyBold }]}>Review</Text>
                 </Pressable>
               </View>
             ))}
