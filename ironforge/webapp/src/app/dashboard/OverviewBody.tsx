@@ -297,24 +297,51 @@ function OverviewContent({ data, allowedBots }: { data: PerformanceData; allowed
         </section>
       )}
 
-      {/* Your agents — owned + add-agent cards. */}
+      {/* Your agents — owned + add-agent cards. Owned cards show Today/Month/
+          Lifetime $ (gap audit PARTIAL — previously name + badge only, full
+          detail lived only on the agent's own page). */}
       <section className="rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-4">
         <h3 className="text-xs font-semibold uppercase tracking-widest text-[var(--accent-text)]">Your Agents</h3>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {(['spark', 'flame'] as LiveBot[]).map((b) => {
             const owned = allowedBots.includes(b)
             const plan = BOT_PLANS[b]
+            const perf = bots.find((x) => x.bot === b)
             return (
               <Link key={b} href={owned ? `/dashboard?tab=${b}` : `/live/${b}/open`}
-                className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 transition hover:border-[var(--line-2)] ${
+                className={`flex flex-col gap-2 rounded-lg border px-3 py-2.5 transition hover:border-[var(--line-2)] ${
                   owned ? 'border-[var(--line)] bg-[var(--bg-2)]' : 'border-dashed border-[var(--line-2)]'
                 }`}>
-                <span className="text-sm font-semibold text-[var(--fg)]">{owned ? plan.name : `+ Add ${plan.name}`}</span>
-                <span className={`rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-wider ${
-                  owned ? (b === 'flame' ? 'bg-flame/15 text-flame' : 'bg-spark/15 text-spark') : 'bg-[var(--bg)] text-[var(--muted)]'
-                }`}>
-                  {owned ? 'Active' : `$${plan.priceMonthly}/mo`}
-                </span>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-semibold text-[var(--fg)]">{owned ? plan.name : `+ Add ${plan.name}`}</span>
+                  <span className={`rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-wider ${
+                    owned ? (b === 'flame' ? 'bg-flame/15 text-flame' : 'bg-spark/15 text-spark') : 'bg-[var(--bg)] text-[var(--muted)]'
+                  }`}>
+                    {owned ? 'Active' : `$${plan.priceMonthly}/mo`}
+                  </span>
+                </div>
+                {owned && perf && (
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wide text-[var(--muted)]">Today</div>
+                      <div className={`font-mono font-semibold ${perf.today_pnl == null ? 'text-[var(--muted)]' : perf.today_pnl >= 0 ? 'text-[var(--up)]' : 'text-[var(--bad)]'}`}>
+                        {formatDollarPnl(perf.today_pnl)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wide text-[var(--muted)]">Month</div>
+                      <div className={`font-mono font-semibold ${perf.monthly >= 0 ? 'text-[var(--up)]' : 'text-[var(--bad)]'}`}>
+                        {formatDollarPnl(perf.monthly)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wide text-[var(--muted)]">Lifetime</div>
+                      <div className={`font-mono font-semibold ${perf.total_pnl >= 0 ? 'text-[var(--up)]' : 'text-[var(--bad)]'}`}>
+                        {formatDollarPnl(perf.total_pnl)}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </Link>
             )
           })}

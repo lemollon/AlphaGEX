@@ -110,10 +110,14 @@ export default function PnlRangeChart({
           </ResponsiveContainer>
         </div>
       ) : (
-        <p className="mt-3 pb-2 text-sm text-[var(--muted)]">
+        <p className="mt-3 text-sm text-[var(--muted)]">
           {range === '1D' ? 'No trade has closed in this range yet today.' : 'No closed trades in this range yet.'}
         </p>
       )}
+
+      {/* Design §"Profit & loss" chart footer — a second static span alongside the
+       *  period label (gap audit MISSING). */}
+      <p className="mt-2 pb-1 text-xs text-[var(--muted)]">Includes any open trade</p>
     </section>
   )
 }

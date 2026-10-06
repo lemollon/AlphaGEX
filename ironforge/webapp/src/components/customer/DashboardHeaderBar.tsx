@@ -91,7 +91,9 @@ function PauseAllButton() {
     <div className="relative">
       <button
         type="button"
-        onClick={() => setConfirmOpen(true)}
+        // Resume is instant — no confirm sheet. Pause is the one that costs the
+        // customer something (no new trades), so only Pause asks first.
+        onClick={() => (allPaused ? apply() : setConfirmOpen(true))}
         disabled={!data || pending}
         className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 ${
           allPaused
@@ -102,15 +104,13 @@ function PauseAllButton() {
         <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5">
           {allPaused ? <path d="M8 5v14l11-7z" /> : <path d="M6 5h4v14H6zm8 0h4v14h-4z" />}
         </svg>
-        {allPaused ? 'Resume all' : 'Pause all'}
+        {pending && allPaused ? 'Resuming…' : allPaused ? 'Resume all' : 'Pause all'}
       </button>
 
-      {confirmOpen && (
+      {confirmOpen && !allPaused && (
         <div className="absolute right-0 z-30 mt-2 w-72 rounded-xl border border-[var(--line)] bg-[var(--bg)] p-4 shadow-xl">
           <p className="text-sm text-[var(--fg)]">
-            {allPaused
-              ? 'Resume automated trading on every agent you own?'
-              : 'No new trades will open until you resume. Any open trade stays protected by its protection line and closes by the end of its session.'}
+            No new trades will open until you resume. Any open trade stays protected by its protection line and closes by the end of its session.
           </p>
           <div className="mt-3 flex justify-end gap-2">
             <button type="button" onClick={() => setConfirmOpen(false)}
@@ -119,7 +119,7 @@ function PauseAllButton() {
             </button>
             <button type="button" onClick={apply} disabled={pending}
               className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-[var(--accent-ink)] hover:brightness-105 disabled:opacity-60">
-              {pending ? 'Working…' : allPaused ? 'Resume all' : 'Pause all'}
+              {pending ? 'Working…' : 'Pause all'}
             </button>
           </div>
         </div>
