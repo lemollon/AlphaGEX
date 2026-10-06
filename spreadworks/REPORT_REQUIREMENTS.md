@@ -16,6 +16,22 @@ source-specific reasons; dated last-known observations retain their clocks.
 Arbitrary model narrative is stored only for diagnosis and cannot introduce
 facts into the canonical rendered report.
 
+## Website and historical archive
+
+The private Report Desk reads the same persistent `sw_full_reports` snapshots
+and stored chart bytes as scheduled delivery. `/reports/history` provides bounded
+date/type pagination in America/Chicago and excludes diagnostic verification
+runs; `/reports/{id}/data` exposes the immutable full contract to the reader.
+Reading either route never collects market data, changes a report, sends a
+notification or executes a trade. All newly persisted morning, opening and
+intraday reports appear automatically without a second report schedule.
+The website retains all 32 sections/241 fields and reconciles all eleven chart
+categories; absent observed data receives an explicit reason, not a fake chart.
+Historical report generation and observation clocks remain separate from the
+website's retrieval time. Older ENTRY_READY states are historical alert states,
+never current execution instructions. A network failure retains the last loaded
+archive with an explicit offline notice.
+
 ## Durable chart delivery
 
 All report kinds use the same persisted PNG bytes. Before publication, chart
