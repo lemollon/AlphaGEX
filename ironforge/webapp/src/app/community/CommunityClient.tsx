@@ -7,7 +7,7 @@ import useSWRImmutable from 'swr/immutable'
 import { fetcher } from '@/lib/fetcher'
 import type { LiveSummary } from '@/lib/live/types'
 import { LIVE_BOT_LABEL, type LiveBot } from '@/lib/live/bots'
-import type { CommunityFeed, CommunityMessage } from '@/lib/community/store'
+import { isAiSender, type CommunityFeed, type CommunityMessage } from '@/lib/community/store'
 import CustomerShell from '@/components/customer/CustomerShell'
 import CheckoutNotice from '@/components/customer/CheckoutNotice'
 
@@ -39,7 +39,7 @@ function initialsOf(name: string): string {
 }
 
 function Avatar({ message, size = 'h-8 w-8' }: { message: Pick<CommunityMessage, 'sender_name' | 'sender_type'>; size?: string }) {
-  if (message.sender_type !== 'USER') {
+  if (isAiSender(message.sender_type)) {
     // eslint-disable-next-line @next/next/no-img-element
     return <img src="/forge-mascot-sm.png" alt="Forge" className={`${size} shrink-0 rounded-full bg-[var(--av)] ring-1 ring-[var(--accent)]/60`} />
   }
@@ -77,7 +77,7 @@ function ReplyRow({ reply, canReact }: { reply: CommunityMessage; canReact: bool
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="text-[11px] font-semibold text-[var(--fg)]">{reply.sender_name}</span>
-          {reply.sender_type !== 'USER' && (
+          {isAiSender(reply.sender_type) && (
             <span className="rounded bg-[var(--accent)] px-1 py-px text-[9px] font-bold leading-none text-[var(--accent-ink)]">AI</span>
           )}
           <span className="text-[10px] text-[var(--muted)]">{timeLabel(reply.created_at)}</span>
@@ -115,7 +115,7 @@ function ThreadPanel({
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
-  const hasAi = data?.replies.some((r) => r.sender_type !== 'USER')
+  const hasAi = data?.replies.some((r) => isAiSender(r.sender_type))
 
   async function sendReply() {
     const message = draft.trim()
@@ -261,13 +261,13 @@ function MessageRow({ msg, channel, canReact, loggedIn, onReact, onReplyPosted }
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="text-xs font-semibold text-[var(--fg)]">{msg.sender_name}</span>
-          {msg.sender_type === 'FORGE' && (
+          {isAiSender(msg.sender_type) && (
             <span className="rounded bg-[var(--accent)] px-1 py-px text-[9px] font-bold leading-none text-[var(--accent-ink)]">AI</span>
           )}
           <span className="text-[10px] text-[var(--muted)]">{timeLabel(msg.created_at)}</span>
         </div>
         {/* db-community #194: "optional AI disclosure" on AI-authored posts. */}
-        {msg.sender_type === 'FORGE' && (
+        {isAiSender(msg.sender_type) && (
           <div className="text-[10px] text-[var(--muted)]">AI-generated market update</div>
         )}
         <div className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--fg)]">{msg.message}</div>
@@ -355,7 +355,7 @@ export function CommunityBody() {
   const todaysBriefing = (() => {
     const todayCt = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
     const forgeToday = feed?.messages.filter(
-      (m) => m.sender_type === 'FORGE' && new Date(m.created_at).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }) === todayCt,
+      (m) => isAiSender(m.sender_type) && new Date(m.created_at).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }) === todayCt,
     )
     return forgeToday?.length ? forgeToday[forgeToday.length - 1] : null
   })()

@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
       channelId,
       userId: session.customerId,
       senderName,
-      senderType: 'USER',
+      senderType: 'member',
       message,
       parentId,
     })

@@ -208,10 +208,18 @@ export interface HistoryTrade {
   outcome_kind: OutcomeKind
 }
 
+/**
+ * Who authored a post (#248). 'member' | 'sparky' | 'flame_ai' are the typed
+ * values the server sets at insert time going forward. 'USER' | 'FORGE' |
+ * 'SYSTEM' are the legacy values that already exist on rows written before
+ * that migration — kept, not backfilled, so old posts render unchanged.
+ */
+export type CommunitySenderType = 'USER' | 'FORGE' | 'SYSTEM' | 'member' | 'sparky' | 'flame_ai'
+
 export interface CommunityMessage {
   id: string
   sender_name: string
-  sender_type: 'USER' | 'FORGE' | 'SYSTEM'
+  sender_type: CommunitySenderType
   message: string
   created_at: string
   reactions: Array<{ emoji: string; count: number; mine: boolean }>

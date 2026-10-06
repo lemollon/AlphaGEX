@@ -34,7 +34,7 @@ import { Card, Loading, Empty, ErrorState } from '@/components/ui'
 import { AppHeader, Mascot, SPARKY_AVATAR } from '@/components/Brand'
 import { applyHeart, FLAME, HEART } from '@/community/reactions'
 import { trackEvent } from '@/analytics/trackEvent'
-import { initials, channelAccent, bubbleTint } from '@/community/identity'
+import { initials, channelAccent, bubbleTint, isAiSender, isSparkySender } from '@/community/identity'
 import { markCommunityRead } from '@/community/unread'
 import {
   appendOptimisticReply,
@@ -334,8 +334,8 @@ export default function CommunityScreen() {
           <Empty title="Nothing here yet" detail="Be the first to post in this channel." />
         ) : (
           messages.map((m) => {
-            // Your own posts, and Forge's, have nothing to report or block.
-            const reportable = m.mine !== true && m.sender_type === 'USER'
+            // Your own posts, and AI posts, have nothing to report or block.
+            const reportable = m.mine !== true && !isAiSender(m.sender_type)
             return (
             <Pressable
               key={m.id}
@@ -357,7 +357,7 @@ export default function CommunityScreen() {
                       <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]}>
                         {m.sender_name}
                       </Text>
-                      {m.sender_type !== 'USER' ? (
+                      {isAiSender(m.sender_type) ? (
                         <View style={s.aiTag}>
                           <Text style={[type.label, { color: color.spark }]}>AI</Text>
                         </View>
@@ -676,7 +676,7 @@ function ThreadSheet({
   }, [parent?.id])
 
   const replies = data?.replies ?? []
-  const hasAi = parent?.sender_type !== 'USER' || replies.some((r) => r.sender_type !== 'USER')
+  const hasAi = (parent ? isAiSender(parent.sender_type) : false) || replies.some((r) => isAiSender(r.sender_type))
 
   async function send() {
     if (!parent) return
@@ -688,7 +688,7 @@ function ThreadSheet({
     const optimistic: CommunityMessage = {
       id: tempId,
       sender_name: 'You',
-      sender_type: 'USER',
+      sender_type: 'member',
       message,
       created_at: new Date().toISOString(),
       reactions: [],
@@ -755,7 +755,7 @@ function ThreadSheet({
                     <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]}>
                       {parent.sender_name}
                     </Text>
-                    {parent.sender_type !== 'USER' ? (
+                    {isAiSender(parent.sender_type) ? (
                       <View style={s.aiTag}>
                         <Text style={[type.label, { color: color.spark }]}>AI</Text>
                       </View>
@@ -785,7 +785,7 @@ function ThreadSheet({
                     <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 13 }]}>
                       {r.sender_name}
                     </Text>
-                    {r.sender_type !== 'USER' ? (
+                    {isAiSender(r.sender_type) ? (
                       <View style={s.aiTag}>
                         <Text style={[type.label, { color: color.spark }]}>AI</Text>
                       </View>
@@ -842,14 +842,13 @@ function ThreadSheet({
 function Avatar({ message }: { message: CommunityMessage }) {
   const { colors: color, scheme } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
-  if (message.sender_type !== 'USER') {
+  if (isAiSender(message.sender_type)) {
     // Sparky answers in threads, Forge posts market updates — different faces. Forge
     // posts previously fell back to Flame's mascot, which wrongly implied Flame
     // specifically authored a generic platform update (fidelity audit "AI-generated
     // post avatar" — design shows a neutral black square + forge glyph, `cav('forge')`,
     // never an agent's own face).
-    const isSparky = message.sender_name.toLowerCase().includes('sparky')
-    return isSparky ? (
+    return isSparkySender(message) ? (
       <Image source={SPARKY_AVATAR} style={s.avatarImg} resizeMode="contain" />
     ) : (
       <ForgeAvatar />

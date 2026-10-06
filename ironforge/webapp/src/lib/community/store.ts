@@ -17,10 +17,19 @@ import {
 export const FORGE_NAME = 'Forge'
 export const DEFAULT_CHANNEL = 'all-chat'
 
+/**
+ * Who authored a post (#248). 'member' | 'sparky' | 'flame_ai' are the typed
+ * values written going forward — set at insert time, never guessed from the
+ * display name. 'USER' | 'FORGE' | 'SYSTEM' are the legacy values that already
+ * exist on rows written before this migration; they are kept, not backfilled,
+ * so old posts keep rendering with the badge they always had.
+ */
+export type SenderType = 'USER' | 'FORGE' | 'SYSTEM' | 'member' | 'sparky' | 'flame_ai'
+
 export interface CommunityMessage {
   id: string
   sender_name: string
-  sender_type: 'USER' | 'FORGE' | 'SYSTEM'
+  sender_type: SenderType
   message: string
   created_at: string
   reactions: Array<{ emoji: string; count: number; mine: boolean }>
@@ -53,6 +62,28 @@ export interface CommunityFeed {
   messages: CommunityMessage[]
   online_count: number
   members: Array<{ name: string; you: boolean }>
+}
+
+/**
+ * Whether a post/reply was authored by an AI persona rather than a member (#248).
+ * New rows carry the typed sender_type directly — no string-sniffing. Old rows
+ * (pre-migration 'FORGE'/'SYSTEM') render exactly as they always did.
+ */
+export function isAiSender(senderType: string): boolean {
+  return senderType === 'FORGE' || senderType === 'SYSTEM' || senderType === 'sparky' || senderType === 'flame_ai'
+}
+
+/**
+ * Whether a post was authored specifically by Sparky rather than the generic
+ * Forge AI. Typed rows answer this directly; untyped/legacy rows fall back to
+ * the old name-substring heuristic so they keep rendering as before.
+ */
+export function isSparkySender(message: { sender_type: string; sender_name: string }): boolean {
+  if (message.sender_type === 'sparky') return true
+  if (message.sender_type === 'flame_ai' || message.sender_type === 'FORGE' || message.sender_type === 'SYSTEM') {
+    return false
+  }
+  return message.sender_name.toLowerCase().includes('sparky')
 }
 
 export async function getChannelId(slug: string): Promise<string | null> {
@@ -225,7 +256,7 @@ export async function insertMessage(opts: {
   channelId: string
   userId: string | null
   senderName: string
-  senderType: 'USER' | 'FORGE' | 'SYSTEM'
+  senderType: SenderType
   message: string
   /** Reply target (APP-055). Undefined/null = top-level post. */
   parentId?: string | null
@@ -324,7 +355,7 @@ export async function seedWelcomeMessage(): Promise<void> {
     channelId,
     userId: null,
     senderName: FORGE_NAME,
-    senderType: 'FORGE',
+    senderType: 'flame_ai',
     message:
       "Welcome to the Forge Community! 🔥 I'm Forge — your AI guide here. I share market observations, answer questions, and keep the conversation disciplined. Say hi, introduce yourself, and let's have a great trading day. Protect the forge.",
   })
@@ -366,7 +397,7 @@ export async function maybePostScheduledUpdate(): Promise<void> {
     if (!channelId) return
     const text = await generateScheduledPost(due.slot)
     const messageId = await insertMessage({
-      channelId, userId: null, senderName: FORGE_NAME, senderType: 'FORGE', message: text,
+      channelId, userId: null, senderName: FORGE_NAME, senderType: 'flame_ai', message: text,
     })
     await customerExecute(
       `UPDATE community_forge_posts SET message_id = $2 WHERE slot_key = $1`,
@@ -410,7 +441,7 @@ export async function maybeForgeReply(opts: {
       channelId: opts.channelId,
       userId: null,
       senderName: FORGE_NAME,
-      senderType: 'FORGE',
+      senderType: 'flame_ai',
       message: reply,
       parentId: opts.parentMessageId ?? null,
     })

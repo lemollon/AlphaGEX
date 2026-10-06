@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS community_messages (
   channel_id UUID NOT NULL REFERENCES community_channels(id),
   user_id UUID REFERENCES users(id),
   sender_name TEXT NOT NULL,
-  sender_type VARCHAR(25) NOT NULL DEFAULT 'USER',   -- USER | FORGE | SYSTEM
+  sender_type VARCHAR(25) NOT NULL DEFAULT 'member', -- member | sparky | flame_ai (legacy rows: USER | FORGE | SYSTEM)
   message TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
