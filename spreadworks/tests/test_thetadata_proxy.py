@@ -10,6 +10,19 @@ from fastapi.testclient import TestClient
 from thetadata_proxy import app as proxy
 
 
+def test_listed_strikes_route_validates_expiration_and_preserves_provider_values(monkeypatch):
+    calls=[]
+    def call(method,**kwargs):
+        calls.append((method,kwargs));return 'strike\n770.0\n775.0\n'
+    monkeypatch.setattr(proxy,'_call',call)
+    client=TestClient(proxy.app)
+    response=client.get('/v3/option/list/strikes',params={'symbol':'spy','expiration':'2026-10-09'})
+    assert response.status_code==200 and '775.0' in response.text
+    assert calls[0][0]=='option_list_strikes' and calls[0][1]['symbol']=='SPY'
+    assert calls[0][1]['_low_priority']
+    assert client.get('/v3/option/list/strikes',params={'symbol':'SPY','expiration':'bad'}).status_code==422
+
+
 def test_provider_permission_denied_is_reported_as_403(monkeypatch):
     class Denied(Exception):
         def code(self):
