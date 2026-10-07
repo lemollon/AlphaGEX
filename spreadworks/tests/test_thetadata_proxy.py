@@ -113,6 +113,22 @@ class FakeThetaClient:
             "bid": 1.0, "ask": 1.1,
         }])
 
+    def option_history_greeks_second_order(self, **kwargs):
+        self.calls.append(("option_history_greeks_second_order", kwargs))
+        return Frame([{
+            "symbol": "SPY", "expiration": "2026-09-21", "strike": 663.0,
+            "right": "call", "timestamp": "2026-09-21T15:59:00",
+            "vanna": 0.01, "charm": -0.002, "vomma": 0.03, "veta": -0.04,
+        }])
+
+    def option_history_greeks_third_order(self, **kwargs):
+        self.calls.append(("option_history_greeks_third_order", kwargs))
+        return Frame([{
+            "symbol": "SPY", "expiration": "2026-09-21", "strike": 663.0,
+            "right": "call", "timestamp": "2026-09-21T15:59:00",
+            "speed": 0.0001, "zomma": 0.0002, "color": -0.0003,
+        }])
+
     def option_history_trade_quote(self, **kwargs):
         self.calls.append(("option_history_trade_quote", kwargs))
         return Frame([{
@@ -201,6 +217,35 @@ def test_private_proxy_serves_compatible_stock_and_option_csv(monkeypatch):
     assert method == "option_history_quote"
     assert kwargs["expiration"].isoformat() == "2026-09-21"
     assert kwargs["start_date"].isoformat() == "2026-09-21"
+
+    for path, method_name in (
+        ("/v3/option/history/greeks/second_order", "option_history_greeks_second_order"),
+        ("/v3/option/history/greeks/third_order", "option_history_greeks_third_order"),
+    ):
+        response = client.get(path, params={
+            "symbol": "SPY", "expiration": "20260921", "strike": "*",
+            "start_date": "20260921", "end_date": "20260921", "interval": "1m",
+            "start_time": "15:59:00", "end_time": "15:59:00",
+        })
+        assert response.status_code == 200
+        method, kwargs = fake.calls[-1]
+        assert method == method_name
+        assert kwargs["expiration"].isoformat() == "2026-09-21"
+        assert kwargs["start_date"].isoformat() == "2026-09-21"
+        single_day = client.get(path, params={
+            "symbol": "SPY", "expiration": "20260921", "date": "20260921",
+        })
+        assert single_day.status_code == 200
+        assert fake.calls[-1][1]["date"].isoformat() == "2026-09-21"
+        assert client.get(path, params={
+            "symbol": "SPY", "expiration": "20260921", "date": "20260921",
+            "interval": "2m",
+        }).status_code == 422
+        assert client.get(path, params={"symbol": "SPY", "expiration": "20260921"}).status_code == 422
+    assert "vanna" in client.get("/v3/option/history/greeks/second_order", params={
+        "symbol": "SPY", "expiration": "20260921", "date": "20260921"}).text
+    assert "speed" in client.get("/v3/option/history/greeks/third_order", params={
+        "symbol": "SPY", "expiration": "20260921", "date": "20260921"}).text
 
     trade_quotes = client.get("/v3/option/history/trade_quote", params={
         "symbol": "SPY", "date": "20260921", "expiration": "*",
