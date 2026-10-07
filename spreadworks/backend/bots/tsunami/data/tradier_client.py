@@ -119,7 +119,8 @@ def get_chain_contracts(symbol: str, expiration: Optional[str] = None) -> list[d
     """Return greeks-enabled option contracts for one expiration.
 
     Each contract dict has: strike, bid, ask, open_interest, option_type,
-    gamma. Expiration defaults to the nearest one. Empty list on failure.
+    gamma, delta, theta, vega, iv. Expiration defaults to the nearest one.
+    Empty list on failure.
     """
     exp = expiration or get_nearest_expiration(symbol)
     if not exp:
@@ -148,6 +149,14 @@ def get_chain_contracts(symbol: str, expiration: Optional[str] = None) -> list[d
                     "open_interest": int(c.get("open_interest") or 0),
                     "option_type": str(c.get("option_type") or "").lower(),
                     "gamma": float(greeks.get("gamma") or 0),
+                    # Already fetched (greeks=true above) but previously
+                    # discarded. Additive only — no existing TSUNAMI gate or
+                    # trigger reads these keys yet, so nothing that already
+                    # works can break.
+                    "delta": float(greeks.get("delta") or 0),
+                    "theta": float(greeks.get("theta") or 0),
+                    "vega": float(greeks.get("vega") or 0),
+                    "iv": float(greeks.get("mid_iv") or greeks.get("smv_vol") or 0),
                 })
             except (TypeError, ValueError, KeyError):
                 continue
