@@ -454,7 +454,7 @@ async def assemble_report(app,*,kind='intraday',plan=None,now=None):
              'refresh_attempts':refresh_attempts,
              'producer_status':{name:context[name].get('reason') or context[name].get('captured_at') or 'No capture yet' for name in context},
              'producer_failures':dict(core.get('failures') or {},**read_failures,**{name:{k:row.get(k) for k in ('reason','last_attempt','failures') if row.get(k)} for name,row in context.items() if row.get('reason') or row.get('last_attempt') or row.get('failures')}),
-             'collector_coverage':{'breadth':'SPY constituents; VWAP candidate sample','profile':'Cumulative observed RTH tape, checkpointed in bounded windows; coverage timestamps disclosed','flow':'ThetaData Pro primary: <=60DTE, +/-12 strikes, trailing 120-second window; not whole-market or full-session flow; Tradier fallback unclassified','futures':'Broker MES/MNQ observations where recorded; delayed continuous ES/NQ fallback'}}
+             'collector_coverage':{'breadth':'SPY constituents; VWAP candidate sample','profile':'Cumulative observed RTH tape, checkpointed in bounded windows; coverage timestamps disclosed','flow':'ThetaData Pro primary: up to four listed expirations <=60DTE, +/-12 strikes, trailing 120-second window; completed/failed expirations in source evidence; not all-expiration, whole-market or full-session flow; Tradier fallback unclassified','futures':'Broker MES/MNQ observations where recorded; delayed continuous ES/NQ fallback'}}
     from .report_charts import chart_png
     image_refs={};inspection=[]
     for chart in ('market_map','smile_term','surface','term_structure','flow','baseline_comparison','event_risk','paper_equity_drawdown','gamma_expiry','sector_credit','volume_profile'):
