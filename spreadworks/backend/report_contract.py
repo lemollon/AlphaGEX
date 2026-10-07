@@ -227,7 +227,7 @@ REQUIREMENTS["adaptation_rules"] = ["activate", "cancel", "switch", "stand_aside
 REQUIREMENTS["data_integrity"] = ["contract", "source_clocks", "coverage", "historical_fields",
     "unavailable_fields", "producer_failures", "model_prose_policy", "execution_scope", "format", "refresh_attempts"]
 REQUIRED_BLOCKS = tuple(REQUIREMENTS)
-CONTRACT_VERSION = "2026-10-05.3"
+CONTRACT_VERSION = "2026-10-07.1"
 FLOW_SOURCE = "Tradier live trades with contemporaneous Tradier bid/ask"
 LIVE_MAX_AGE_SECONDS = 90
 CHART_FORMAT = "PNG"
