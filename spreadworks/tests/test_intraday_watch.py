@@ -608,11 +608,14 @@ def test_quote_survives_timesales_outage(monkeypatch):
 
 
 def test_missing_option_data_produces_strikes_pending(monkeypatch):
+    from backend import tradier_report_source as src
     async def fake_get(_app, path, _params):
         if path.endswith("expirations"):
             return {"expirations": {"date": ["2026-09-25"]}}
-        return {"options": {"option": []}}
+        raise AssertionError("watcher must use the shared professional chain adapter")
     monkeypatch.setattr(watch, "_tradier_get", fake_get)
+    monkeypatch.setattr(src, "professional_chain",
+                        lambda *a, **k: ([], "no qualified fresh Tradier contracts"))
     selection, reason = asyncio.run(watch.fetch_option_selection(
         object(), _setup({"type": "breakout_hold", "breakout_level": 100}), NOW))
     assert selection is None
