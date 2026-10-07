@@ -254,8 +254,14 @@ def stock_history_eod(
 
 
 @app.get("/v3/option/list/expirations")
-def option_list_expirations(symbol: str = Query(...)) -> PlainTextResponse:
-    return _csv_response(_call("option_list_expirations", symbol=_symbols(symbol)))
+def option_list_expirations(symbol: str = Query(...), background: bool = False) -> PlainTextResponse:
+    return _csv_response(_call("option_list_expirations", symbol=_symbols(symbol), _low_priority=background))
+
+
+@app.get("/v3/option/list/strikes")
+def option_list_strikes(symbol: str = Query(...), expiration: str = Query(...)) -> PlainTextResponse:
+    return _csv_response(_call("option_list_strikes", symbol=_symbol(symbol),
+                              expiration=_date(expiration, "expiration"), _low_priority=True))
 
 
 @app.get("/v3/option/snapshot/greeks/all")

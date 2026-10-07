@@ -396,7 +396,7 @@ def persist_cross_asset(payload: dict[str, Any], now: datetime | None = None) ->
                  "fresh": bool(item.get("fresh")), "reason": item.get("reason")})
 
 
-def fetch_spot(symbol: str, now: datetime | None = None) -> dict[str, Any]:
+def fetch_spot(symbol: str, now: datetime | None = None, timeout: float = 15) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     token = _token("TRADIER_TOKEN") or _token("TRADIER_API_KEY")
     if not token:
@@ -404,7 +404,7 @@ def fetch_spot(symbol: str, now: datetime | None = None) -> dict[str, Any]:
     try:
         r = requests.get(TRADIER_QUOTES, params={"symbols": symbol},
                          headers={"Authorization": f"Bearer {token}",
-                                  "Accept": "application/json"}, timeout=15)
+                                  "Accept": "application/json"}, timeout=timeout)
         r.raise_for_status()
         q = (r.json().get("quotes") or {}).get("quote") or {}
         if isinstance(q, list):
@@ -841,7 +841,7 @@ def summarize_flow_evidence(rows: list[dict[str, Any]], session_now: datetime,
         "unclassified_premium": total_premium - classified_premium,
         "concentrations": sorted(concentrations.values(), key=lambda x: x["premium"], reverse=True)[:40],
         "rejected_rows": rejected,
-        "coverage_scope": "Up to four sampled listed expirations <=60DTE, near-spot contracts; recent 120-second window; not all expirations, whole-market or full-session flow",
+        "coverage_scope": "Up to four sampled listed expirations <=60DTE, three listed strikes nearest spot per expiration, calls/puts; recent 120-second window; not all strikes/expirations, whole-market or full-session flow",
         "classification_method": "Likely initiation from regular/auto prints at preceding NBBO <=1s; midpoint/complex/unknown conditions unclassified",
         "guardrail": "No opening/closing, institutional identity, or multi-leg intent inferred",
     }
@@ -859,21 +859,51 @@ def fetch_trade_quote_flow(symbol, now=None):
               "end_time": session_now.strftime("%H:%M:%S.%f")[:-3],
               "max_dte": 60, "strike_range": 12, "exclusive": True}
     reason = "outside regular option session"
+    evidence = {}
     if session_now.weekday() < 5 and dtime(9, 30) <= session_now.time() < dtime(16):
         try:
             deadline = time.monotonic() + 25
-            listed = _theta_rows("/v3/option/list/expirations", {"symbol": symbol.upper()}, timeout=5)
+            spot = fetch_spot(symbol.upper(), requested_at, timeout=5)
+            if not spot.get("fresh") or not spot.get("price"):
+                raise RuntimeError("fresh underlying spot unavailable for contract selection")
+            listed = _theta_rows("/v3/option/list/expirations", {"symbol": symbol.upper(), "background": True}, timeout=5)
             expirations = _flow_expiration_candidates(session_now, listed)
             rows, completed, failed = [], [], {}
+            requested_contracts, completed_contracts = [], []
             for expiry in expirations:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     failed[expiry] = "collection time budget exhausted"
                     continue
                 try:
-                    rows.extend(_theta_rows("/v3/option/history/trade_quote",
-                                            dict(params, expiration=expiry), timeout=min(8, remaining)))
-                    completed.append(expiry)
+                    listed_strikes = _theta_rows("/v3/option/list/strikes",
+                                                {"symbol": symbol.upper(), "expiration": expiry},
+                                                timeout=min(5, remaining))
+                    strikes = {_f(row, "strike") for row in listed_strikes}
+                    strikes = sorted((s for s in strikes if s is not None and math.isfinite(s) and s > 0),
+                                     key=lambda s: (abs(s - spot['price']), s))[:3]
+                    if not strikes:
+                        raise RuntimeError("no listed strikes")
+                    expiry_complete = True
+                    for strike in strikes:
+                        contract = {"expiration": expiry, "strike": strike, "right": "both"}
+                        requested_contracts.append(contract)
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            failed[expiry] = "collection time budget exhausted"
+                            expiry_complete = False
+                            continue
+                        try:
+                            rows.extend(_theta_rows("/v3/option/history/trade_quote",
+                                        dict(params, expiration=expiry, strike=f"{strike:.3f}"),
+                                        timeout=min(5, remaining)))
+                            completed_contracts.append(contract)
+                        except Exception as exc:
+                            status = getattr(getattr(exc, "response", None), "status_code", None)
+                            failed[expiry] = "HTTP " + str(status) if status else type(exc).__name__
+                            expiry_complete = False
+                    if expiry_complete:
+                        completed.append(expiry)
                 except Exception as exc:
                     status = getattr(getattr(exc, "response", None), "status_code", None)
                     failed[expiry] = "HTTP " + str(status) if status else type(exc).__name__
@@ -882,7 +912,9 @@ def fetch_trade_quote_flow(symbol, now=None):
             evidence.update(requested_start=start.isoformat(), requested_end=session_now.isoformat(),
                             max_dte=60, strike_range=12, expiration=expirations, exclusive=True,
                             requested_expirations=expirations, completed_expirations=completed,
-                            failed_expirations=failed, partial_coverage=bool(failed))
+                            failed_expirations=failed, partial_coverage=bool(failed),
+                            requested_contracts=requested_contracts, completed_contracts=completed_contracts,
+                            sampled_strikes_per_expiration=3, selection_spot=spot['price'])
             stamp = _parse_ts(evidence.get("window_end"))
             age = (completed_at - stamp).total_seconds() if stamp else None
             available = bool(stamp and 0 <= age <= STALE_SECONDS and evidence["n_trades"])
@@ -904,7 +936,7 @@ def fetch_trade_quote_flow(symbol, now=None):
     # initiation. Do not relabel its chain volume or latest BBO as flow.
     return {"symbol": symbol.upper(), "available": False, "confidence": "LOW",
             "source": "Tradier fallback (unclassified)", "captured_at": completed_at.isoformat(),
-            "source_timestamp": None, "n_trades": 0, "buckets": {}, "evidence": {},
+            "source_timestamp": None, "n_trades": 0, "buckets": {}, "evidence": evidence,
             "reason": "FLOW DATA UNAVAILABLE: " + reason +
                       "; Tradier fallback lacks contemporaneous option trade+NBBO evidence",
             "primary_source": FLOW_SOURCE}

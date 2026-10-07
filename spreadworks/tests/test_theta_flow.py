@@ -9,6 +9,11 @@ from backend.report_contract import FLOW_SOURCE
 NOW = datetime(2026, 10, 7, 18, 35, tzinfo=timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def isolated_selection_spot(monkeypatch):
+    monkeypatch.setattr(ms,'fetch_spot',lambda *a,**k:{'price':770,'fresh':True})
+
+
 def tape(**changes):
     return dict(symbol='SPY', expiration='2026-10-09', strike='770', right='call',
                 trade_timestamp='2026-10-07T14:34:59.500', quote_timestamp='2026-10-07T14:34:59',
@@ -27,8 +32,10 @@ def test_live_theta_request_and_provenance_reach_policy(monkeypatch):
     assert row['source_timestamp']==(NOW-timedelta(milliseconds=500)).isoformat()
     assert row['evidence']['buckets']['1_5dte']['calls_bought']['premium']==1100
     assert calls[0][0]=='/v3/option/list/expirations'
-    params=calls[1][1]
+    assert calls[1][0]=='/v3/option/list/strikes'
+    params=calls[2][1]
     assert params['exclusive'] and params['expiration']=='2026-10-09' and params['max_dte']==60
+    assert params['strike']=='770.000'
     assert row['evidence']['completed_expirations']==['2026-10-09']
     assert params['start_time']=='14:33:00.000' and params['end_time']=='14:35:00.000'
     assert refresh.verified(row)
@@ -60,6 +67,26 @@ def test_partial_expiration_failures_preserve_real_prints_and_scope(monkeypatch)
     assert row['evidence']['failed_expirations']=={'2026-10-07':'HTTP 429'}
     assert row['evidence']['partial_coverage']
     assert all(c.get('expiration')!='*' for c in calls)
+
+
+def test_contract_requests_sample_nearest_listed_strikes_and_never_bulk(monkeypatch):
+    contracts=[]
+    def theta(path,params,**kwargs):
+        if path.endswith('/expirations'):return [{'expiration':'2026-10-09'}]
+        if path.endswith('/strikes'):return [{'strike':s} for s in [760,765,770,775,780]]
+        contracts.append(params)
+        row=tape();row['strike']=params['strike'];return [row]
+    monkeypatch.setattr(ms,'_theta_rows',theta)
+    flow=ms.fetch_trade_quote_flow('SPY',NOW)
+    assert flow['available'] and flow['n_trades']==3
+    assert [r['strike'] for r in contracts]==['770.000','765.000','775.000']
+    assert len(flow['evidence']['completed_contracts'])==3
+
+
+def test_missing_selection_spot_fails_without_requesting_option_contracts(monkeypatch):
+    monkeypatch.setattr(ms,'fetch_spot',lambda *a,**k:{'fresh':False,'price':None})
+    monkeypatch.setattr(ms,'_theta_rows',lambda *a,**k:pytest.fail('No spot for bounded selection'))
+    assert not ms.fetch_trade_quote_flow('SPY',NOW)['available']
 
 
 @pytest.mark.parametrize('changes',[
