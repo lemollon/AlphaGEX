@@ -1225,7 +1225,7 @@ async def fetch_option_selection(app, setup: dict[str, Any], now: datetime) -> t
         professional_chain, symbol, expiration.isoformat(), now
     )
     if not contracts:
-        return None, "ENTRY TRIGGER HIT — STRIKES PENDING OPTIONS DATA: " + str(chain_reason or "no qualified fresh Tradier contracts")
+        return None, "ENTRY TRIGGER HIT — STRIKES PENDING OPTIONS DATA"
     if setup["strategy"] in {"calendar", "double_calendar"}:
         later = [item for item in valid if item > expiration]
         if not later:
@@ -1235,7 +1235,7 @@ async def fetch_option_selection(app, setup: dict[str, Any], now: datetime) -> t
             professional_chain, symbol, back_expiration.isoformat(), now
         )
         if not back_contracts:
-            return None, "ENTRY TRIGGER HIT — STRIKES PENDING OPTIONS DATA: " + str(back_reason or "no qualified fresh back-expiry Tradier contracts")
+            return None, "ENTRY TRIGGER HIT — STRIKES PENDING OPTIONS DATA"
         selected = select_calendar_structure(
             setup["strategy"], contracts, back_contracts, setup,
             expiration.isoformat(), back_expiration.isoformat(),
