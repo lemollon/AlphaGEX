@@ -254,6 +254,40 @@ def option_snapshot_greeks_all(
     return response
 
 
+@app.get("/v3/option/snapshot/greeks/second_order")
+def option_snapshot_greeks_second_order(
+    symbol: str = Query(...), expiration: str = Query("*"),
+    max_dte: int = Query(365, ge=0, le=365),
+    strike_range: int = Query(60, ge=1, le=150),
+) -> PlainTextResponse:
+    """Pro-tier only: vanna, charm, vomma (volga), veta. 403s on Standard —
+    same entitlement shape as greeks/all; callers already handle that."""
+    expiry = "*" if expiration == "*" else _date(expiration, "expiration")
+    response = _csv_response(_call(
+        "option_snapshot_greeks_second_order", symbol=_symbol(symbol), expiration=expiry,
+        max_dte=max_dte, strike_range=strike_range,
+    ))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.get("/v3/option/snapshot/greeks/third_order")
+def option_snapshot_greeks_third_order(
+    symbol: str = Query(...), expiration: str = Query("*"),
+    max_dte: int = Query(365, ge=0, le=365),
+    strike_range: int = Query(60, ge=1, le=150),
+) -> PlainTextResponse:
+    """Pro-tier only: speed, zomma, color. Same entitlement shape as
+    greeks/all and greeks/second_order."""
+    expiry = "*" if expiration == "*" else _date(expiration, "expiration")
+    response = _csv_response(_call(
+        "option_snapshot_greeks_third_order", symbol=_symbol(symbol), expiration=expiry,
+        max_dte=max_dte, strike_range=strike_range,
+    ))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/v3/option/snapshot/greeks/implied_volatility")
 def option_snapshot_implied_volatility(
     symbol: str = Query(...), expiration: str = Query("*"),

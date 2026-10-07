@@ -115,6 +115,21 @@ class FakeThetaClient:
                        "timestamp": "2026-09-29T10:00:00", "gamma": 0.002,
                        "implied_vol": 0.18}])
 
+    def option_snapshot_greeks_second_order(self, **kwargs):
+        self.calls.append(("option_snapshot_greeks_second_order", kwargs))
+        return Frame([{"symbol": "SPX", "expiration": "2026-09-29",
+                       "strike": 7700, "right": "call",
+                       "timestamp": "2026-09-29T10:00:00",
+                       "vanna": 0.01, "charm": -0.002, "vomma": 0.03,
+                       "veta": -0.04}])
+
+    def option_snapshot_greeks_third_order(self, **kwargs):
+        self.calls.append(("option_snapshot_greeks_third_order", kwargs))
+        return Frame([{"symbol": "SPX", "expiration": "2026-09-29",
+                       "strike": 7700, "right": "call",
+                       "timestamp": "2026-09-29T10:00:00",
+                       "speed": 0.0001, "zomma": 0.0002, "color": -0.0003}])
+
     def option_snapshot_open_interest(self, **kwargs):
         self.calls.append(("option_snapshot_open_interest", kwargs))
         return Frame([{"symbol": "SPX", "expiration": "2026-09-29",
@@ -227,6 +242,8 @@ def test_private_proxy_exposes_live_greeks_oi_and_index_prices(monkeypatch):
     client = TestClient(proxy.app)
     for path in ("/v3/option/snapshot/greeks/all",
                  "/v3/option/snapshot/greeks/implied_volatility",
+                 "/v3/option/snapshot/greeks/second_order",
+                 "/v3/option/snapshot/greeks/third_order",
                  "/v3/option/snapshot/open_interest"):
         response = client.get(path, params={"symbol": "SPX", "expiration": "*",
                                             "max_dte": 365, "strike_range": 60})
@@ -234,10 +251,20 @@ def test_private_proxy_exposes_live_greeks_oi_and_index_prices(monkeypatch):
         assert response.headers["cache-control"] == "no-store"
         assert "2026-09-29" in response.text
         assert fake.calls[-1][1]["expiration"] == "*"
+    assert "vanna" in client.get("/v3/option/snapshot/greeks/second_order", params={
+        "symbol": "SPX", "expiration": "*"}).text
+    assert "speed" in client.get("/v3/option/snapshot/greeks/third_order", params={
+        "symbol": "SPX", "expiration": "*"}).text
     index = client.get("/v3/index/snapshot/price", params={"symbol": "SPX,NDX"})
     assert index.status_code == 200
     assert fake.calls[-1] == ("index_snapshot_price", {"symbol": ["SPX", "NDX"]})
     assert client.get("/v3/option/snapshot/greeks/all", params={
+        "symbol": "SPX", "strike_range": 500,
+    }).status_code == 422
+    assert client.get("/v3/option/snapshot/greeks/second_order", params={
+        "symbol": "SPX", "strike_range": 500,
+    }).status_code == 422
+    assert client.get("/v3/option/snapshot/greeks/third_order", params={
         "symbol": "SPX", "strike_range": 500,
     }).status_code == 422
 
