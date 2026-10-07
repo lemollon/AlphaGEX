@@ -15,10 +15,10 @@ from zoneinfo import ZoneInfo
 
 UTC = timezone.utc
 CT = ZoneInfo("America/Chicago")
-POLICY_VERSION = "2026-10-05.3"
+POLICY_VERSION = "2026-10-07.1"
 PRESENTATION = ("Today’s mission", "30-second scoreboard", "Today vs forward")
 HOLDING_PERIODS = {10: "Approximately two trading weeks", 20: "Approximately one trading month"}
-RULES = ("Tradier-only report market data; reject legacy ThetaData records","fresh BBO <=90s", "retain frozen morning expected move", "no 0DTE forward inference",
+RULES = ("ThetaData Pro trade-time NBBO flow primary; Tradier market data/fallback; reject legacy ThetaData records","fresh BBO <=90s", "retain frozen morning expected move", "no 0DTE forward inference",
          "no model prose in canonical delivery", "no implicit mock data", "no broker orders")
 
 def parse_clock(value):
@@ -57,8 +57,9 @@ def normalize_item(item, now):
         return missing("Producer supplied a nonfinite numeric value; rejected")
     if re.search(r"\b(mock|fixture|hypothetical|synthetic|invented)\b", str(item.get("source", "")), re.I):
         return missing("Mock/fixture provenance is prohibited in production reports")
-    if "thetadata" in str(item.get("source", "")).lower():
-        return missing("Legacy ThetaData observation rejected by Tradier-only report policy")
+    from .report_contract import FLOW_SOURCE
+    if "thetadata" in str(item.get("source", "")).lower() and item.get("source") != FLOW_SOURCE:
+        return missing("Unverified legacy ThetaData observation rejected; only versioned trade-time NBBO flow is authorized")
     if item.get("status") == "unavailable":
         item["reason"] = item.get("reason") or "Producer supplied no verified observation"
         return item

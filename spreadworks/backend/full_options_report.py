@@ -12,7 +12,7 @@ from fastapi.responses import Response, HTMLResponse, JSONResponse
 from sqlalchemy import text
 from .db import engine, SessionLocal
 from . import market_structure as ms
-from .report_contract import REQUIREMENTS, prepare_report_delivery, validate_rendered_report
+from .report_contract import REQUIREMENTS, prepare_report_delivery, validate_rendered_report, FLOW_SOURCE
 from .report_producers import observation, unavailable, number, collect_breadth, collect_profile, collect_macro, collect_study, stored_futures, UTC, ET
 from .report_ledger import scorecard, qualify_package, mark_open_positions
 from .report_policy import build_strategy_blocks, finite_tree, render_opening_html
@@ -218,13 +218,13 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
             else:vals[s]={'provider_provenance':ev.get('source'),'exchange_timestamp':ts.isoformat(),'retrieval_timestamp':ev.get('retrieval_timestamp'),
                'age':(now-ts).total_seconds(),'classified_coverage':ev.get('classified_contract_fraction'),
                'unclassified_coverage':{'contracts':ev.get('unclassified_contracts'),'premium':ev.get('unclassified_premium')},'expiry_buckets':ev['buckets']}.get(field)
-        blocks['flow'][field]=observation(vals or None,'Tradier report flow; classification requires contemporaneous trade+quote evidence',min(stamps) if stamps else None,now,reason='FLOW DATA UNAVAILABLE (Tradier live): '+ '; '.join(sorted({str(r.get('reason') or 'No verified trade-time bid/ask print evidence') for r in flow.values()})) if not vals else None)
+        blocks['flow'][field]=observation(vals or None,FLOW_SOURCE,min(stamps) if stamps else None,now,reason='FLOW DATA UNAVAILABLE: '+ '; '.join(sorted({str(r.get('reason') or 'No verified trade-time bid/ask print evidence') for r in flow.values()})) if not vals else None)
     for field,key in {'expiries':'expiration','strikes':'strike','contracts':'contracts','premium':'premium','prints':'print_count',
                       'contemporaneous_bid_ask':'latest_print','initiation_estimate':'initiation'}.items():
         vals={s:[{key:r.get(key)} for r in (row.get('evidence') or {}).get('concentrations') or []] for s,row in flow.items()}
         vals={s:v for s,v in vals.items() if v}
         ts=min([ms._parse_ts(row.get('source_timestamp')) for row in flow.values() if ms._parse_ts(row.get('source_timestamp'))],default=None)
-        put('forward_strikes',field,vals or None,source='Tradier observed strike concentrations',ts=ts,reason='No verified forward prints')
+        put('forward_strikes',field,vals or None,source=FLOW_SOURCE,ts=ts,reason='No verified forward prints')
     assets=cross.get('assets') or {}
     relative={s:(r['price']/r['prev_close']-1)*100 for s,r in assets.items() if number(r.get('price')) and number(r.get('prev_close'))}
     cross_ts=min([ms._parse_ts(r.get('source_timestamp')) for r in assets.values() if ms._parse_ts(r.get('source_timestamp'))],default=None)
@@ -454,7 +454,7 @@ async def assemble_report(app,*,kind='intraday',plan=None,now=None):
              'refresh_attempts':refresh_attempts,
              'producer_status':{name:context[name].get('reason') or context[name].get('captured_at') or 'No capture yet' for name in context},
              'producer_failures':dict(core.get('failures') or {},**read_failures,**{name:{k:row.get(k) for k in ('reason','last_attempt','failures') if row.get(k)} for name,row in context.items() if row.get('reason') or row.get('last_attempt') or row.get('failures')}),
-             'collector_coverage':{'breadth':'SPY constituents; VWAP candidate sample','profile':'Cumulative observed RTH tape, checkpointed in bounded windows; coverage timestamps disclosed','flow':'Representative expirations / 120-second window','futures':'Broker MES/MNQ observations where recorded; delayed continuous ES/NQ fallback'}}
+             'collector_coverage':{'breadth':'SPY constituents; VWAP candidate sample','profile':'Cumulative observed RTH tape, checkpointed in bounded windows; coverage timestamps disclosed','flow':'ThetaData Pro primary: <=60DTE, +/-12 strikes, trailing 120-second window; not whole-market or full-session flow; Tradier fallback unclassified','futures':'Broker MES/MNQ observations where recorded; delayed continuous ES/NQ fallback'}}
     from .report_charts import chart_png
     image_refs={};inspection=[]
     for chart in ('market_map','smile_term','surface','term_structure','flow','baseline_comparison','event_risk','paper_equity_drawdown','gamma_expiry','sector_credit','volume_profile'):

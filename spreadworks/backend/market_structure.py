@@ -31,6 +31,7 @@ from fastapi import APIRouter
 from sqlalchemy import text
 
 from .db import engine
+from .report_contract import FLOW_SOURCE
 
 logger = logging.getLogger(__name__)
 CT = ZoneInfo("America/Chicago")
@@ -705,6 +706,8 @@ def _classify_trade_side(price: float | None, bid: float | None, ask: float | No
     if not all(math.isfinite(x) for x in (price, bid, ask)):
         return "unclassified"
     epsilon = min(0.01, (ask - bid) * 0.05)
+    if price < bid - epsilon or price > ask + epsilon:
+        return "unclassified"
     if price >= ask - epsilon:
         return "ask"
     if price <= bid + epsilon:
@@ -752,7 +755,7 @@ def summarize_flow_evidence(rows: list[dict[str, Any]], session_now: datetime,
     stamps: list[datetime] = []
     rejected = 0
     for row in rows:
-        stamp = _theta_ts(row.get("timestamp"))
+        stamp = _theta_ts(row.get("trade_timestamp") or row.get("timestamp"))
         price, size = _f(row, "price"), _f(row, "size")
         right = str(row.get("right") or "").lower()
         expiry = str(row.get("expiration") or "")
@@ -772,13 +775,21 @@ def summarize_flow_evidence(rows: list[dict[str, Any]], session_now: datetime,
             rejected += 1
             continue
         bid, ask = _f(row, "bid"), _f(row, "ask")
+        bid = bid if bid is not None and math.isfinite(bid) else None
+        ask = ask if ask is not None and math.isfinite(ask) else None
         side = _classify_trade_side(price, bid, ask)
-        # When an explicit quote clock exists, reject invalid/late quotes.
+        # Only regular/auto-executed prints with a preceding, recent NBBO
+        # support a directional estimate. Complex/auction/unknown conditions
+        # remain in the denominator; cancellation messages are excluded.
+        condition = _f(row, "condition")
+        if condition in {40, 41, 42, 43, 44}:
+            rejected += 1
+            continue
         quote_raw = row.get("quote_timestamp")
-        if quote_raw:
-            quote_stamp = _theta_ts(quote_raw)
-            if quote_stamp is None or not 0 <= (stamp - quote_stamp).total_seconds() <= 1:
-                side = "unclassified"
+        quote_stamp = _theta_ts(quote_raw)
+        if (condition not in {0, 18} or quote_stamp is None
+                or not 0 < (stamp - quote_stamp).total_seconds() <= 1):
+            side = "unclassified"
         category = (right + "s_" + ("bought" if side == "ask" else "sold")
                     if side in {"ask", "bid"} else "unclassified")
         count = int(size)
@@ -798,7 +809,10 @@ def summarize_flow_evidence(rows: list[dict[str, Any]], session_now: datetime,
         group["print_count"] += 1
         if not group["latest_print"] or stamp.isoformat() > group["latest_print"]["timestamp"]:
             group["latest_print"] = {"price": price, "bid": bid, "ask": ask,
-                                     "timestamp": stamp.isoformat(), "quote_timestamp": quote_raw,
+                                     "timestamp": stamp.isoformat(),
+                                     "quote_timestamp": quote_stamp.isoformat() if quote_stamp else None,
+                                     "condition": condition if condition is not None and math.isfinite(condition) else None,
+                                     "exchange": row.get("exchange"), "sequence": row.get("sequence"),
                                      "side": side}
         total += count
         total_premium += premium
@@ -807,29 +821,65 @@ def summarize_flow_evidence(rows: list[dict[str, Any]], session_now: datetime,
             classified_premium += premium
         stamps.append(stamp)
     return {
-        "source": "Tradier verified trades + contemporaneous quotes",
+        "source": FLOW_SOURCE,
         "retrieval_timestamp": retrieved_at.isoformat(),
         "window_start": min(stamps).isoformat() if stamps else None,
         "window_end": max(stamps).isoformat() if stamps else None,
-        "buckets": buckets, "total_contracts": total, "total_premium": total_premium,
+        "buckets": buckets, "n_trades": sum(g["print_count"] for g in concentrations.values()),
+        "total_contracts": total, "total_premium": total_premium,
         "classified_contracts": classified, "unclassified_contracts": total - classified,
         "classified_contract_fraction": classified / total if total else None,
         "classified_premium_fraction": classified_premium / total_premium if total_premium else None,
         "unclassified_premium": total_premium - classified_premium,
         "concentrations": sorted(concentrations.values(), key=lambda x: x["premium"], reverse=True)[:40],
         "rejected_rows": rejected,
-        "coverage_scope": "Requested representative expirations; recent 120-second window; not whole-market flow",
+        "coverage_scope": "Requested <=60DTE, near-spot contracts; recent 120-second window; not whole-market or full-session flow",
+        "classification_method": "Likely initiation from regular/auto prints at preceding NBBO <=1s; midpoint/complex/unknown conditions unclassified",
+        "guardrail": "No opening/closing, institutional identity, or multi-leg intent inferred",
     }
 
 
 def fetch_trade_quote_flow(symbol, now=None):
-    # Tradier REST tick timesales does not supply contemporaneous option NBBO.
-    # Never relabel chain volume or a later quote as buyer/seller initiation.
-    now = now or datetime.now(UTC)
-    return {"symbol": symbol, "available": False, "confidence": "LOW", "source": "Tradier",
-            "captured_at": now.isoformat(), "source_timestamp": None, "n_trades": 0,
-            "buckets": {}, "evidence": {},
-            "reason": "FLOW DATA UNAVAILABLE (Tradier live): contemporaneous option trade+NBBO evidence is not provided by the configured REST feed"}
+    """Bounded ThetaData Pro tape; Tradier preserves unclassified fallback."""
+    requested_at = now or datetime.now(UTC)
+    session_now = requested_at.astimezone(ET)
+    start = max(session_now - timedelta(seconds=120),
+                session_now.replace(hour=9, minute=30, second=0, microsecond=0))
+    params = {"symbol": symbol.upper(), "expiration": "*", "strike": "*",
+              "right": "both", "date": session_now.date().isoformat(),
+              "start_time": start.strftime("%H:%M:%S.%f")[:-3],
+              "end_time": session_now.strftime("%H:%M:%S.%f")[:-3],
+              "max_dte": 60, "strike_range": 12, "exclusive": True}
+    reason = "outside regular option session"
+    if session_now.weekday() < 5 and dtime(9, 30) <= session_now.time() < dtime(16):
+        try:
+            rows = _theta_rows("/v3/option/history/trade_quote", params, timeout=30)
+            completed_at = requested_at if now is not None else datetime.now(UTC)
+            evidence = summarize_flow_evidence(rows, completed_at.astimezone(ET), completed_at)
+            evidence.update(requested_start=start.isoformat(), requested_end=session_now.isoformat(),
+                            max_dte=60, strike_range=12, expiration="*", exclusive=True)
+            stamp = _parse_ts(evidence.get("window_end"))
+            age = (completed_at - stamp).total_seconds() if stamp else None
+            available = bool(stamp and 0 <= age <= STALE_SECONDS and evidence["n_trades"])
+            if available:
+                return {"symbol": symbol.upper(), "available": True, "confidence": "MEDIUM",
+                        "source": FLOW_SOURCE, "captured_at": completed_at.isoformat(),
+                        "source_timestamp": stamp.isoformat(), "age_seconds": round(age, 1),
+                        "n_trades": evidence["n_trades"], "buckets": evidence["buckets"],
+                        "evidence": evidence, "reason": None}
+            reason = "no fresh, valid trade-time NBBO prints in requested window"
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            reason = "ThetaData trade+NBBO failure: " + ("HTTP " + str(status) if status else type(exc).__name__)
+    completed_at = requested_at if now is not None else datetime.now(UTC)
+    # Tradier's other collectors remain live; REST timesales cannot establish
+    # initiation. Do not relabel its chain volume or latest BBO as flow.
+    return {"symbol": symbol.upper(), "available": False, "confidence": "LOW",
+            "source": "Tradier fallback (unclassified)", "captured_at": completed_at.isoformat(),
+            "source_timestamp": None, "n_trades": 0, "buckets": {}, "evidence": {},
+            "reason": "FLOW DATA UNAVAILABLE: " + reason +
+                      "; Tradier fallback lacks contemporaneous option trade+NBBO evidence",
+            "primary_source": FLOW_SOURCE}
 
 
 def fetch_tradier_chain(symbol, now=None, max_dte=None, strike_range=None):
@@ -1497,6 +1547,19 @@ def capture_gamma_pair() -> dict[str, Any]:
     return {"captured": True, "captured_at": now.isoformat(), "gamma": snapshots}
 
 
+def capture_flow_pair() -> dict[str, Any]:
+    now = datetime.now(UTC)
+    now_ct = now.astimezone(CT)
+    if now_ct.weekday() >= 5 or not (dtime(8, 30) <= now_ct.time() < dtime(15)):
+        return {"captured": False, "reason": "market_closed", "captured_at": now.isoformat()}
+    flow = {}
+    for symbol in ("SPY", "QQQ"):
+        snapshot = fetch_trade_quote_flow(symbol)
+        persist_trade_quote_flow(snapshot)
+        flow[symbol] = snapshot
+    return {"captured": True, "flow": flow, "captured_at": datetime.now(UTC).isoformat()}
+
+
 def recover_critical_surface() -> dict[str, Any]:
     """Self-heal a stale/missing report surface without waiting for the next tick."""
     now = datetime.now(UTC)
@@ -1590,12 +1653,12 @@ def _latest_trade_quote_flow(symbol: str, *, verified_only: bool = False) -> dic
     with engine.begin() as conn:
         row = conn.execute(text(
             f"SELECT captured_at,source,source_timestamp,confidence,n_trades,bucket_json,reason,evidence_json "
-            f"FROM {FLOW_TABLE} WHERE symbol=:symbol AND source LIKE 'Tradier%' "
+            f"FROM {FLOW_TABLE} WHERE symbol=:symbol AND (source LIKE 'Tradier%' OR source=:flow_source) "
             + ("AND confidence IN ('HIGH','MEDIUM') AND n_trades>0 " if verified_only else "")
             + "ORDER BY captured_at DESC LIMIT 1"),
-            {"symbol": symbol}).fetchone()
+            {"symbol": symbol, "flow_source": FLOW_SOURCE}).fetchone()
     if not row:
-        return None if verified_only else fetch_trade_quote_flow(symbol)
+        return None
     keys = ("captured_at", "source", "source_timestamp", "confidence", "n_trades",
             "bucket_json", "reason", "evidence_json")
     result = dict(zip(keys, row))
@@ -1706,6 +1769,15 @@ def register(scheduler: Any, app: Any | None = None) -> bool:
         except Exception:  # noqa: BLE001
             logger.exception("[MarketStructure] bounded gamma capture failed")
 
+    def flow_tick() -> None:
+        try:
+            result = capture_flow_pair()
+            if result.get("captured"):
+                logger.info("[MarketStructure] ThetaData flow capture available=%d/2",
+                            sum(bool(r.get("available")) for r in result["flow"].values()))
+        except Exception:
+            logger.exception("[MarketStructure] isolated ThetaData flow capture failed")
+
     scheduler.add_job(
         tick, "cron", day_of_week="mon-fri", hour="8-15", minute="*",
         timezone=CT, id="market_structure_capture", replace_existing=True,
@@ -1724,6 +1796,12 @@ def register(scheduler: Any, app: Any | None = None) -> bool:
         timezone=CT, id="market_structure_gamma_capture", replace_existing=True,
         coalesce=True, max_instances=1, misfire_grace_time=45,
         next_run_time=datetime.now(UTC) + timedelta(seconds=5),
+    )
+    scheduler.add_job(
+        flow_tick, "cron", day_of_week="mon-fri", hour="8-14", minute="*", second=10,
+        timezone=CT, id="market_structure_flow_capture", replace_existing=True,
+        coalesce=True, max_instances=1, misfire_grace_time=45,
+        next_run_time=datetime.now(UTC) + timedelta(seconds=10),
     )
     logger.info(
         "[MarketStructure] registered isolated minute IV-surface/VIX and bounded SPY/QQQ gamma captures; "
@@ -1780,22 +1858,39 @@ def latest_surface_symbol(symbol: str):
     return {"available": row is not None, "symbol": symbol, "surface": row}
 
 
-@router.get("/flow/{symbol}")
-def trade_quote_flow_symbol(symbol: str):
+def _flow_response(symbol: str) -> dict[str, Any]:
     symbol = symbol.upper()
     if symbol not in {"SPY", "QQQ"}:
         return {"available": False, "reason": "trade-quote flow supports SPY and QQQ", "symbol": symbol}
     row = _latest_trade_quote_flow(symbol)
-    return {"available": bool(row and row.get("confidence") in {"HIGH", "MEDIUM"} and row.get("source_timestamp")), "symbol": symbol, "flow": row}
+    stamp = _parse_ts((row or {}).get("source_timestamp"))
+    age = (datetime.now(UTC) - stamp).total_seconds() if stamp else None
+    available = bool(row and row.get("confidence") in {"HIGH", "MEDIUM"}
+                     and age is not None and 0 <= age <= STALE_SECONDS)
+    if row:
+        row.update(available=available, age_seconds=round(age, 1) if age is not None else None)
+    return {"available": available, "symbol": symbol, "flow": row}
+
+
+@router.post("/flow/{symbol}/refresh")
+def refresh_trade_quote_flow(symbol: str):
+    """Collect/persist a bounded tape probe; no notification or broker action."""
+    symbol = symbol.upper()
+    if symbol not in {"SPY", "QQQ"}:
+        return {"available": False, "reason": "trade-quote flow supports SPY and QQQ", "symbol": symbol}
+    snapshot = fetch_trade_quote_flow(symbol)
+    persist_trade_quote_flow(snapshot)
+    return {"available": snapshot["available"], "symbol": symbol, "flow": snapshot}
+
+
+@router.get("/flow/{symbol}")
+def trade_quote_flow_symbol(symbol: str):
+    return _flow_response(symbol)
 
 
 @router.get("/flow/latest/{symbol}")
 def latest_trade_quote_flow_symbol(symbol: str):
-    symbol = symbol.upper()
-    if symbol not in {"SPY", "QQQ"}:
-        return {"available": False, "reason": "trade-quote flow supports SPY and QQQ", "symbol": symbol}
-    row = _latest_trade_quote_flow(symbol)
-    return {"available": bool(row and row.get("confidence") in {"HIGH", "MEDIUM"} and row.get("source_timestamp")), "symbol": symbol, "flow": row}
+    return _flow_response(symbol)
 
 
 @router.get("/cross-asset")

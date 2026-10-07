@@ -1,7 +1,7 @@
 # Permanent options report requirements
 
 The executable contract is `backend/report_contract.py`; inference and display
-rules are `backend/report_policy.py`. Version `2026-10-05.3` retains all 179
+rules are `backend/report_policy.py`. Version `2026-10-07.1` retains all 179
 original fields and adds day/near-forward/forward plans, horizon comparisons,
 adaptation rules, data integrity and persisted visual delivery: **32 sections and 241 required fields**.
 Every delivered report carries its policy version and SHA-256 schema/rule hash.
@@ -120,7 +120,7 @@ python -m pytest spreadworks/tests/test_report_policy.py \
   spreadworks/tests/test_full_options_report.py \
   spreadworks/tests/test_report_evidence_integrity.py \
   spreadworks/tests/test_morning_options_report.py \
-  spreadworks/tests/test_market_structure.py spreadworks/tests/test_report_refresh.py spreadworks/tests/test_tradier_report_source.py spreadworks/tests/test_intraday_watch.py -q
+  spreadworks/tests/test_market_structure.py spreadworks/tests/test_report_refresh.py spreadworks/tests/test_tradier_report_source.py spreadworks/tests/test_intraday_watch.py spreadworks/tests/test_theta_flow.py spreadworks/tests/test_thetadata_proxy.py -q
 ```
 
 The independent strict report-policy CI job must pass without `|| true`.
@@ -130,8 +130,31 @@ wrong-setup activation, paper/flow reconciliation, optional collector isolation,
 PNG embeds and delivery leases. New requirements need corresponding producer,
 renderer, integrity and failure-path checks plus a deliberate version change.
 
-## Provider policy (2026-10-05)
-Morning, market-open and intraday share Tradier-only market collectors. No ThetaData fallback or cached ThetaData report observations are allowed. Surface IV and gamma use explicitly labeled Black-Scholes estimates from fresh two-sided Tradier BBO, not refreshed receipt clocks or stale vendor Greeks. Daily OI publication time is unavailable and is never described as intraminute inventory. Representative expiries and quote qualification coverage are disclosed. Tradier REST does not supply contemporaneous option trade+NBBO evidence: initiation remains unavailable until such evidence exists; chain volume is never substituted. Independent macro, news and Trading Volatility products retain their own provenance.
+## Provider policy (2026-10-07.1)
+ThetaData Pro is the primary options-flow source for morning, market-open and
+intraday reports. The private proxy supplies actual trades paired with preceding
+NBBO quotes. The bounded collector requests SPY/QQQ, all expirations <=60DTE,
+12 strikes on each side of ATM and the trailing 120 seconds. This is not full-market
+or full-session flow, and retained top-40 concentrations are not aggregate totals.
+Only regular/auto-executed prints at a preceding NBBO <=1 second old support a
+likely initiation estimate; midpoint, missing-clock, complex/auction and unknown
+conditions remain unclassified. Cancellation messages are excluded. No opening/
+closing inventory, institutional identity or multi-leg intent is inferred.
+
+The isolated minute flow job and refresh-before-publication path persist source
+clocks, coverage, categories and exact print evidence. Aggregates must reconcile.
+The report policy accepts only the versioned ThetaData trade-time NBBO producer;
+legacy ThetaData snapshots remain rejected. Read endpoints return stored evidence
+without collecting, sending or trading; the explicit POST flow refresh probe
+collects and persists only. A stale tape is never reported live on re-read.
+
+Tradier remains the primary source for underlying/BBO/surface/gamma/index data
+and the automatic fallback when Theta flow fails. Tradier REST lacks paired
+option trade-time NBBO, so its fallback explicitly marks initiation unavailable;
+chain volume and later quotes are never substituted. A last verified flow capture
+keeps its original clock, and failure reasons remain disclosed. Daily OI is not
+intraminute inventory. Independent macro, news and Trading Volatility retain
+provenance. Existing report fields, visuals, schedules and destinations remain.
 
 ## Refresh-first and last-known evidence (2026-10-05.3)
 

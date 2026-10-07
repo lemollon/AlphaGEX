@@ -324,9 +324,9 @@ def test_register_arms_minute_capture_and_initializes_tables(monkeypatch):
 
     assert market_structure.register(Scheduler()) is True
     assert calls == ["tables"]
-    assert len(jobs) == 3
+    assert len(jobs) == 4
     assert {job[2]["id"] for job in jobs} == {
-        "market_structure_capture", "market_structure_surface_recovery", "market_structure_gamma_capture"}
+        "market_structure_capture", "market_structure_surface_recovery", "market_structure_gamma_capture", "market_structure_flow_capture"}
     func, trigger, kwargs = jobs[0]
     assert trigger == "cron"
     assert kwargs["id"] == "market_structure_capture"

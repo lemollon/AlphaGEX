@@ -13,6 +13,13 @@ UTC = timezone.utc
 def isolate_live_collectors(monkeypatch):
     from backend import market_structure as ms
     from backend import tradier_report_source as src
+    from backend import report_refresh
+    # Morning-plan unit tests do not make unrelated live macro/flow requests.
+    # Actual refresh, full assembly and flow integration have dedicated suites.
+    async def context(*args):return []
+    async def core(value):return value, []
+    monkeypatch.setattr(report_refresh, 'refresh_context', context)
+    monkeypatch.setattr(report_refresh, 'refresh_core', core)
     monkeypatch.setattr(ms,'fetch_spot',lambda *a,**k: {'fresh':False,'reason':'No live quote in unit test'})
     monkeypatch.setattr(src,'get',lambda *a,**k: (_ for _ in ()).throw(RuntimeError('No live requests in unit test')))
 

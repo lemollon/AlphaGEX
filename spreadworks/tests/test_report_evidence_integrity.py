@@ -14,7 +14,7 @@ def test_flow_midpoint_locked_crossed_and_nonfinite_are_unclassified():
 def test_flow_evidence_reconciles_categories_and_exact_prints():
     now = datetime(2026, 10, 2, 15, 0, 30, tzinfo=timezone.utc)
     base = {"expiration": "2026-10-16", "strike": "770", "right": "call",
-            "timestamp": "2026-10-02T11:00:20", "bid": "1.00", "ask": "1.10", "size": "10"}
+            "timestamp": "2026-10-02T11:00:20", "quote_timestamp": "2026-10-02T11:00:19.500", "condition": "18", "bid": "1.00", "ask": "1.10", "size": "10"}
     rows = [{**base, "price": "1.10"}, {**base, "price": "1.00"},
             {**base, "price": "1.05"}, {**base, "price": "1.10", "quote_timestamp": "2026-10-02T10:59:00"},
             {**base, "price": "nan"}, {**base, "price": "1.10", "timestamp": "2026-10-02T11:01:00"}]
