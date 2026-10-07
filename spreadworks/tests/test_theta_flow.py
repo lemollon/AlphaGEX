@@ -26,12 +26,40 @@ def test_live_theta_request_and_provenance_reach_policy(monkeypatch):
     assert row['n_trades']==1 and row['evidence']['classified_contracts']==10
     assert row['source_timestamp']==(NOW-timedelta(milliseconds=500)).isoformat()
     assert row['evidence']['buckets']['1_5dte']['calls_bought']['premium']==1100
-    params=calls[0][1]
-    assert params['exclusive'] and params['expiration']=='*' and params['max_dte']==60
+    assert calls[0][0]=='/v3/option/list/expirations'
+    params=calls[1][1]
+    assert params['exclusive'] and params['expiration']=='2026-10-09' and params['max_dte']==60
+    assert row['evidence']['completed_expirations']==['2026-10-09']
     assert params['start_time']=='14:33:00.000' and params['end_time']=='14:35:00.000'
     assert refresh.verified(row)
     item=policy.normalize_item(policy.observed(row['evidence'],FLOW_SOURCE,row['source_timestamp'],NOW),NOW)
     assert item['status']=='live' and item['source']==FLOW_SOURCE
+
+
+def test_expiration_sample_uses_only_listed_dates_in_supported_horizons():
+    rows=[{'expiration':d} for d in ['2026-10-06','2026-10-07','2026-10-09',
+          '2026-10-16','2026-10-23','2026-11-20','2026-12-18','bad']]
+    assert ms._flow_expiration_candidates(NOW.astimezone(ms.ET),rows)==[
+        '2026-10-07','2026-10-09','2026-10-23','2026-11-20']
+
+
+def test_partial_expiration_failures_preserve_real_prints_and_scope(monkeypatch):
+    calls=[]
+    def theta(path,params,**kwargs):
+        calls.append(params)
+        if path.endswith('/expirations'):
+            return [{'expiration':'2026-10-07'},{'expiration':'2026-10-09'}]
+        if params['expiration']=='2026-10-07':
+            response=requests.Response();response.status_code=429
+            raise requests.HTTPError(response=response)
+        return [tape()]
+    monkeypatch.setattr(ms,'_theta_rows',theta)
+    row=ms.fetch_trade_quote_flow('SPY',NOW)
+    assert row['available'] and row['n_trades']==1
+    assert row['evidence']['completed_expirations']==['2026-10-09']
+    assert row['evidence']['failed_expirations']=={'2026-10-07':'HTTP 429'}
+    assert row['evidence']['partial_coverage']
+    assert all(c.get('expiration')!='*' for c in calls)
 
 
 @pytest.mark.parametrize('changes',[

@@ -133,9 +133,9 @@ renderer, integrity and failure-path checks plus a deliberate version change.
 ## Provider policy (2026-10-07.1)
 ThetaData Pro is the primary options-flow source for morning, market-open and
 intraday reports. The private proxy supplies actual trades paired with preceding
-NBBO quotes. The bounded collector requests SPY/QQQ, all expirations <=60DTE,
+NBBO quotes. The bounded collector requests SPY/QQQ, up to four listed expirations <=60DTE selected near 0/3/14/45 days,
 12 strikes on each side of ATM and the trailing 120 seconds. This is not full-market
-or full-session flow, and retained top-40 concentrations are not aggregate totals.
+all expirations or full-session flow, and retained top-40 concentrations are not aggregate totals.
 Only regular/auto-executed prints at a preceding NBBO <=1 second old support a
 likely initiation estimate; midpoint, missing-clock, complex/auction and unknown
 conditions remain unclassified. Cancellation messages are excluded. No opening/

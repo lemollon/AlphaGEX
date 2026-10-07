@@ -20,6 +20,7 @@ import math
 import os
 import logging
 import statistics
+import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, time as dtime, timedelta
@@ -727,16 +728,23 @@ def _initiation_read(ask_contracts: int, bid_contracts: int, total_contracts: in
     return "MIXED"
 
 
-def _flow_expiration_candidates(session_date: datetime) -> list[str]:
-    """Choose liquid ETF weekly expirations without a separate slow lookup."""
-    candidates: list[str] = []
-    for dte in (0, 3, 14, 45):
-        expiry = (session_date + timedelta(days=dte)).date()
-        while expiry.weekday() >= 5:
-            expiry += timedelta(days=1)
-        value = expiry.isoformat()
-        if value not in candidates:
-            candidates.append(value)
+def _flow_expiration_candidates(session_date: datetime, rows: list[dict[str, Any]]) -> list[str]:
+    """Sample up to four actual listed expirations across report horizons."""
+    expiries = set()
+    for row in rows:
+        try:
+            expiry = datetime.fromisoformat(str(row.get("expiration"))).date()
+        except (ValueError, TypeError):
+            continue
+        if 0 <= (expiry - session_date.date()).days <= 60:
+            expiries.add(expiry)
+    candidates = []
+    for target in (0, 3, 14, 45):
+        if not expiries:
+            break
+        expiry = min(expiries, key=lambda d: (abs((d - session_date.date()).days - target), d))
+        if expiry.isoformat() not in candidates:
+            candidates.append(expiry.isoformat())
     return candidates
 
 
@@ -833,7 +841,7 @@ def summarize_flow_evidence(rows: list[dict[str, Any]], session_now: datetime,
         "unclassified_premium": total_premium - classified_premium,
         "concentrations": sorted(concentrations.values(), key=lambda x: x["premium"], reverse=True)[:40],
         "rejected_rows": rejected,
-        "coverage_scope": "Requested <=60DTE, near-spot contracts; recent 120-second window; not whole-market or full-session flow",
+        "coverage_scope": "Up to four sampled listed expirations <=60DTE, near-spot contracts; recent 120-second window; not all expirations, whole-market or full-session flow",
         "classification_method": "Likely initiation from regular/auto prints at preceding NBBO <=1s; midpoint/complex/unknown conditions unclassified",
         "guardrail": "No opening/closing, institutional identity, or multi-leg intent inferred",
     }
@@ -853,11 +861,28 @@ def fetch_trade_quote_flow(symbol, now=None):
     reason = "outside regular option session"
     if session_now.weekday() < 5 and dtime(9, 30) <= session_now.time() < dtime(16):
         try:
-            rows = _theta_rows("/v3/option/history/trade_quote", params, timeout=30)
+            deadline = time.monotonic() + 25
+            listed = _theta_rows("/v3/option/list/expirations", {"symbol": symbol.upper()}, timeout=5)
+            expirations = _flow_expiration_candidates(session_now, listed)
+            rows, completed, failed = [], [], {}
+            for expiry in expirations:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    failed[expiry] = "collection time budget exhausted"
+                    continue
+                try:
+                    rows.extend(_theta_rows("/v3/option/history/trade_quote",
+                                            dict(params, expiration=expiry), timeout=min(8, remaining)))
+                    completed.append(expiry)
+                except Exception as exc:
+                    status = getattr(getattr(exc, "response", None), "status_code", None)
+                    failed[expiry] = "HTTP " + str(status) if status else type(exc).__name__
             completed_at = requested_at if now is not None else datetime.now(UTC)
             evidence = summarize_flow_evidence(rows, completed_at.astimezone(ET), completed_at)
             evidence.update(requested_start=start.isoformat(), requested_end=session_now.isoformat(),
-                            max_dte=60, strike_range=12, expiration="*", exclusive=True)
+                            max_dte=60, strike_range=12, expiration=expirations, exclusive=True,
+                            requested_expirations=expirations, completed_expirations=completed,
+                            failed_expirations=failed, partial_coverage=bool(failed))
             stamp = _parse_ts(evidence.get("window_end"))
             age = (completed_at - stamp).total_seconds() if stamp else None
             available = bool(stamp and 0 <= age <= STALE_SECONDS and evidence["n_trades"])
@@ -867,7 +892,10 @@ def fetch_trade_quote_flow(symbol, now=None):
                         "source_timestamp": stamp.isoformat(), "age_seconds": round(age, 1),
                         "n_trades": evidence["n_trades"], "buckets": evidence["buckets"],
                         "evidence": evidence, "reason": None}
-            reason = "no fresh, valid trade-time NBBO prints in requested window"
+            reason = ("no listed expirations within 60DTE" if not expirations else
+                      "no fresh, valid trade-time NBBO prints in requested window")
+            if failed:
+                reason += "; expiration failures: " + ", ".join(f"{k}: {v}" for k, v in failed.items())
         except Exception as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             reason = "ThetaData trade+NBBO failure: " + ("HTTP " + str(status) if status else type(exc).__name__)
