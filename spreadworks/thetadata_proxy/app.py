@@ -134,6 +134,23 @@ def _csv(frame: Any) -> str:
     raise RuntimeError("ThetaData returned an unsupported frame")
 
 
+def _invalid_argument_detail(exc: Exception) -> str:
+    """Bounded provider validation detail, with account credentials removed."""
+    try:
+        detail = str(exc.details())
+    except Exception:
+        return "provider supplied no validation detail"
+    client = getattr(_client, "_client", None)
+    for secret in (os.getenv("THETADATA_API_KEY", ""),
+                   getattr(client, "auth_token", ""), getattr(client, "email", "")):
+        if secret:
+            detail = detail.replace(str(secret), "[redacted]")
+    detail = re.sub(r"(?i)(bearer\s+|(?:api[_ -]?key|auth[_ -]?token)\s*[:=]\s*)[^\s,;]+",
+                    r"\1[redacted]", detail)
+    detail = re.sub(r"[\w.+-]+@[\w.-]+", "[redacted-email]", detail)
+    return " ".join(detail.split())[:512]
+
+
 def _call(method: str, **kwargs: Any) -> str:
     low_priority = kwargs.pop("_low_priority", False)
     if low_priority and not CLIENT_LOCK.acquire(blocking=False):
@@ -161,6 +178,9 @@ def _call(method: str, **kwargs: Any) -> str:
         code = str(exc.code()) if callable(getattr(exc, "code", None)) else "n/a"
         LOGGER.error("ThetaData request failed method=%s error_type=%s grpc_code=%s",
                      method, type(exc).__name__, code)
+        if code == "StatusCode.INVALID_ARGUMENT":
+            LOGGER.error("ThetaData validation rejected method=%s detail=%s",
+                         method, _invalid_argument_detail(exc))
         if code not in {"StatusCode.PERMISSION_DENIED", "StatusCode.INVALID_ARGUMENT"}:
             _client.cache_clear()
         status, detail = {
