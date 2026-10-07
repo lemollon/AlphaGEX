@@ -1816,7 +1816,9 @@ def professional_options(symbol: str, expiration: str | None = None):
             "retrieval_timestamp": now.isoformat(),
         }
 
-    source_stamp = min(_parse_ts(row.get("exchange_timestamp")) for row in rows)
+    stamps=[_parse_ts(row.get("exchange_timestamp")) for row in rows]
+    stamps=[stamp for stamp in stamps if stamp is not None]
+    source_stamp=min(stamps) if stamps else None
     return {
         "available": True,
         "symbol": symbol,
