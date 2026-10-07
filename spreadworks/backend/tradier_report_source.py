@@ -273,7 +273,10 @@ def option_rows(symbol,now):
                 selected.append(min(candidates))
         rows=[]
         def chain(expiry):
-            return expiry,professional_chain(symbol,expiry,now,persist=True,max_spread_ratio=.30)
+            # Minute surface collection shares normalization but does not
+            # rewrite large full-chain blobs every minute. On-demand scans and
+            # watcher contract packages persist the chain when it matters.
+            return expiry,professional_chain(symbol,expiry,now,persist=False,max_spread_ratio=.30)
         with ThreadPoolExecutor(max_workers=3) as pool:
             chains=list(pool.map(chain,selected))
         reasons=[]
