@@ -90,12 +90,22 @@ class LiveTradierChainProvider:
                  # Every other strategy ignores the extra key.
                  "volume": o.get("volume") or 0,
                  "open_interest": o.get("open_interest") or 0,
-                 # Real broker-computed delta — already fetched (greeks=true
-                 # above), just never passed through before. Only MONARCH
-                 # (delta_butterfly) reads this; every other strategy ignores
-                 # the extra key. None when Tradier omits greeks for a strike
-                 # (delta_butterfly falls back to its own BS-implied delta).
-                 "delta": (o.get("greeks") or {}).get("delta")}
+                 # Real broker-computed Greeks — already fetched (greeks=true
+                 # above), just never passed through before. Tradier is
+                 # queried and billed for this block on every chain call; only
+                 # delta made it to this dict previously (used by MONARCH /
+                 # delta_butterfly). gamma/theta/vega/iv are added here purely
+                 # additively — no existing strategy reads these keys from a
+                 # per-option dict (gamma readers elsewhere key off the
+                 # chain-level `gex` block, not `options`), so nothing that
+                 # already works can break. None when Tradier omits greeks
+                 # for a strike (delta_butterfly falls back to its own
+                 # BS-implied delta; no other consumer yet).
+                 "delta": (g := o.get("greeks") or {}).get("delta"),
+                 "gamma": g.get("gamma"),
+                 "theta": g.get("theta"),
+                 "vega": g.get("vega"),
+                 "iv": g.get("mid_iv") or g.get("smv_vol")}
                 for o in data
             ],
             # Per-expiration GEX structure (pin / magnets / walls / regime).
