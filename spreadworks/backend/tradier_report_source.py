@@ -278,7 +278,14 @@ def option_rows(symbol,now):
             chains=list(pool.map(chain,selected))
         reasons=[]
         for expiry,(data,reason) in chains:
-            rows.extend(data)
+            # Surface/gamma analytics historically use the words call/put,
+            # while the executable selector uses C/P. Keep that interface
+            # stable rather than forcing analytics to understand order-leg
+            # notation.
+            rows.extend([
+                dict(row, right=row['option_type'], timestamp=datetime.fromisoformat(row['exchange_timestamp']))
+                for row in data
+            ])
             if reason:
                 reasons.append(str(expiry)+': '+reason)
         return rows,None if rows else ('; '.join(reasons) or 'No qualified fresh Tradier BBO rows')
