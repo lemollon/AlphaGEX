@@ -388,6 +388,82 @@ def option_history_quote(
     return _csv_response(_call("option_history_quote", **kwargs))
 
 
+@app.get("/v3/option/history/greeks/second_order")
+def option_history_greeks_second_order(
+    symbol: str = Query(...),
+    expiration: str = Query(...),
+    strike: str = Query("*"),
+    right: str = Query("both", pattern="^(call|put|both)$"),
+    interval: str = Query("1s"),
+    date_value: str | None = Query(None, alias="date"),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    start_time: str = "09:30:00",
+    end_time: str = "16:00:00",
+) -> PlainTextResponse:
+    """Pro-tier only: historical vanna, charm, vomma (volga), veta — the
+    backtest-grade counterpart to the live greeks/second_order snapshot.
+    Same date-or-range shape as option_history_quote (this is the same
+    per-day intraday-bars use case, just Greeks instead of bid/ask)."""
+    if interval not in INTERVALS:
+        raise HTTPException(status_code=422, detail="invalid interval")
+    expiry = _date(expiration, "expiration")
+    kwargs: dict[str, Any] = {
+        "symbol": _symbol(symbol),
+        "expiration": expiry,
+        "strike": strike,
+        "right": right,
+        "interval": interval,
+        "start_time": start_time,
+        "end_time": end_time,
+    }
+    if date_value:
+        kwargs["date"] = _date(date_value, "date")
+    elif start_date and end_date:
+        start, end = _date_range(start_date, end_date)
+        kwargs.update(start_date=start, end_date=end)
+    else:
+        raise HTTPException(status_code=422, detail="date or start_date/end_date required")
+    return _csv_response(_call("option_history_greeks_second_order", **kwargs))
+
+
+@app.get("/v3/option/history/greeks/third_order")
+def option_history_greeks_third_order(
+    symbol: str = Query(...),
+    expiration: str = Query(...),
+    strike: str = Query("*"),
+    right: str = Query("both", pattern="^(call|put|both)$"),
+    interval: str = Query("1s"),
+    date_value: str | None = Query(None, alias="date"),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    start_time: str = "09:30:00",
+    end_time: str = "16:00:00",
+) -> PlainTextResponse:
+    """Pro-tier only: historical speed, zomma, color. Same shape as
+    option_history_greeks_second_order."""
+    if interval not in INTERVALS:
+        raise HTTPException(status_code=422, detail="invalid interval")
+    expiry = _date(expiration, "expiration")
+    kwargs: dict[str, Any] = {
+        "symbol": _symbol(symbol),
+        "expiration": expiry,
+        "strike": strike,
+        "right": right,
+        "interval": interval,
+        "start_time": start_time,
+        "end_time": end_time,
+    }
+    if date_value:
+        kwargs["date"] = _date(date_value, "date")
+    elif start_date and end_date:
+        start, end = _date_range(start_date, end_date)
+        kwargs.update(start_date=start, end_date=end)
+    else:
+        raise HTTPException(status_code=422, detail="date or start_date/end_date required")
+    return _csv_response(_call("option_history_greeks_third_order", **kwargs))
+
+
 @app.get("/v3/option/history/trade_quote")
 def option_history_trade_quote(
     symbol: str = Query(...),
