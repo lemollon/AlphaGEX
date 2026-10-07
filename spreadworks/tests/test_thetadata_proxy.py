@@ -478,3 +478,14 @@ def test_private_proxy_allows_bounded_one_second_stock_history(monkeypatch):
     assert response.headers["x-bar-timestamp"] == "interval-start"
     assert fake.calls[-1][0] == "stock_history_ohlc"
     assert fake.calls[-1][1]["interval"] == "1s"
+
+
+def test_invalid_argument_diagnostic_preserves_reason_and_redacts_credentials(monkeypatch):
+    class Invalid(Exception):
+        def details(self):
+            return 'date must not be in the future; api_key=private-key\nBearer private-token account@example.com'
+    monkeypatch.setenv('THETADATA_API_KEY', 'private-key')
+    detail = proxy._invalid_argument_detail(Invalid())
+    assert 'date must not be in the future' in detail
+    assert all(secret not in detail for secret in ('private-key', 'private-token', 'account@example.com'))
+    assert '\n' not in detail
