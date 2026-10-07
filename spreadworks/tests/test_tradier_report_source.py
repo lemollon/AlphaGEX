@@ -17,10 +17,10 @@ def test_surface_uses_tradier_adapter(monkeypatch):
     monkeypatch.setattr(ms,'_theta_rows',lambda *a,**k: (_ for _ in ()).throw(AssertionError('Theta called')))
     assert ms._surface_rows('SPY',NOW)[0][0]['iv']==.2
 
-def test_flow_does_not_fabricate_initiation_or_call_theta(monkeypatch):
+def test_flow_falls_back_without_fabricating_initiation(monkeypatch):
     monkeypatch.setattr(ms,'_theta_rows',lambda *a,**k: (_ for _ in ()).throw(AssertionError('Theta called')))
     result=ms.fetch_trade_quote_flow('SPY',NOW)
-    assert result['source']=='Tradier' and not result['available']
+    assert result['source'].startswith('Tradier fallback') and not result['available']
     assert result['buckets']=={}
     assert 'contemporaneous' in result['reason']
 

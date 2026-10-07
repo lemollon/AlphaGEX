@@ -21,12 +21,12 @@ async def test_failed_refresh_keeps_original_last_known_clock(monkeypatch):
     old={'confidence':'MEDIUM','source':'Tradier observed options','source_timestamp':stamp,'atm_iv':.2}
     core={'surface':{'SPY':dict(old),'QQQ':dict(old)},'gamma':{},'cross_asset':{},'volatility':{}}
     def failure(*a,**k):return {'reason':'provider unavailable'}
-    for name in ('build_volatility_surface','build_gamma_snapshot','fetch_vol_indices','fetch_cross_asset'):
+    for name in ('build_volatility_surface','build_gamma_snapshot','fetch_vol_indices','fetch_cross_asset','fetch_trade_quote_flow'):
         monkeypatch.setattr(ms,name,failure)
     result,audit=await refresh.refresh_core(core)
     assert result['surface']['SPY']['source_timestamp']==stamp
     assert result['surface']['SPY']['atm_iv']==.2
-    assert len(audit)==6 and all(len(a['attempts'])==2 for a in audit)
+    assert len(audit)==8 and all(len(a['attempts'])==2 for a in audit)
     item=policy.normalize_item(dict(value=.2,status='live',source='Tradier',confidence='MEDIUM',source_timestamp=stamp),NOW)
     assert item['status']=='historical' and item['age_seconds']==900
     assert 'LAST KNOWN' in policy.display(item) and 'updated 2026-10-05' in policy.display(item)
@@ -40,7 +40,7 @@ async def test_partial_surface_refresh_preserves_metric_clock(monkeypatch):
     def surface(*a,**k):return {'source':'Tradier BBO','confidence':'MEDIUM','source_timestamp':NOW.isoformat(),'atm_iv':.25,'realized_vol_60m':None,'surface_read':{'available':False}}
     monkeypatch.setattr(ms,'build_volatility_surface',surface)
     monkeypatch.setattr(ms,'persist_surface',lambda row:None)
-    for name in ('build_gamma_snapshot','fetch_vol_indices','fetch_cross_asset'):monkeypatch.setattr(ms,name,lambda *a,**k:{'reason':'no evidence'})
+    for name in ('build_gamma_snapshot','fetch_vol_indices','fetch_cross_asset','fetch_trade_quote_flow'):monkeypatch.setattr(ms,name,lambda *a,**k:{'reason':'no evidence'})
     result,_=await refresh.refresh_core(core)
     row=result['surface']['SPY']
     assert row['atm_iv']==.25 and row['realized_vol_60m']==.1

@@ -11,9 +11,10 @@ UTC = timezone.utc
 
 def verified(row):
     from .report_policy import parse_clock, finite_tree
+    from .report_contract import FLOW_SOURCE
     return (isinstance(row, dict) and row.get('confidence', 'MEDIUM') in ('HIGH', 'MEDIUM')
-            and 'tradier' in str(row.get('source', '')).lower()
-            and 'thetadata' not in str(row.get('source', '')).lower()
+            and (row.get('source') == FLOW_SOURCE or ('tradier' in str(row.get('source', '')).lower()
+                 and 'thetadata' not in str(row.get('source', '')).lower()))
             and parse_clock(row.get('source_timestamp') or row.get('chain_timestamp'))
             and finite_tree(row))
 
@@ -64,7 +65,7 @@ async def refresh_core(core):
     from . import market_structure as ms
     audit=[]
     async def one(group, symbol, collect, persist):
-        value, record=await bounded_refresh(group+'_'+symbol, collect)
+        value, record=await bounded_refresh(group+'_'+symbol, collect, timeout=35 if group=='flow' else 25)
         audit.append(record)
         if value and verified(value):
             # Do not overwrite a newer verified exchange observation with an older response.
@@ -92,7 +93,12 @@ async def refresh_core(core):
             except Exception as exc:record['persistence_error']=type(exc).__name__
         else:
             core.setdefault(group,{}).setdefault(symbol,{})['last_refresh_attempt']=record
-    await asyncio.gather(*(one(group,symbol,collect,persist)
+    async def flow_pair():
+        # Sequential tape reads share the private Theta proxy, while independent
+        # Tradier collectors refresh concurrently rather than aging in its queue.
+        for symbol in ('SPY', 'QQQ'):
+            await one('flow', symbol, lambda s=symbol:ms.fetch_trade_quote_flow(s), ms.persist_trade_quote_flow)
+    await asyncio.gather(flow_pair(), *(one(group,symbol,collect,persist)
         for symbol in ('SPY','QQQ') for group,collect,persist in (
             ('surface',lambda s=symbol:ms.build_volatility_surface(s,datetime.now(UTC)),ms.persist_surface),
             ('gamma',lambda s=symbol:ms.build_gamma_snapshot(s,datetime.now(UTC),max_dte=ms.GAMMA_MAX_DTE,strike_range=ms.GAMMA_STRIKE_RANGE),ms.persist_snapshot))))

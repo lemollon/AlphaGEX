@@ -353,7 +353,7 @@ def option_history_trade_quote(
         "option_history_trade_quote", symbol=_symbol(symbol), expiration=expiry,
         strike=strike, right=right, date=_date(date_value, "date"),
         start_time=start_time, end_time=end_time, max_dte=max_dte,
-        strike_range=strike_range, exclusive=exclusive,
+        strike_range=strike_range, exclusive=exclusive, _low_priority=True,
     ))
 
 
