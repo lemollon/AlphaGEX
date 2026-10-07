@@ -2047,6 +2047,17 @@ except Exception as _squeeze_hunt_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] SQUEEZE HUNT routes failed to load: %r", _squeeze_hunt_exc)
 
+# TALON (PAPER-ONLY $500 small-cap squeeze stock bot) -- same one-way
+# Postgres-mirror pattern as SQUEEZE HUNT above, never touches the DuckDB
+# file directly. Import-guarded so a missing mirror table cannot take down
+# the whole API. PAPER ONLY -- this route never places a real order.
+try:
+    from .routes_talon import router as talon_router
+    app.include_router(talon_router)
+except Exception as _talon_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] TALON routes failed to load: %r", _talon_exc)
+
 # Call history — the append-only record of what Session / Squeeze / Risk
 # actually said, with SPY outcomes attached. Read-only; import-guarded.
 try:

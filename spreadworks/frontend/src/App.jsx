@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, Zap, Crosshair, Ruler, Target, ActivitySquare } from 'lucide-react';
+import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, Zap, Crosshair, Ruler, Target, ActivitySquare, LocateFixed } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import UpdateBanner from './components/UpdateBanner';
 import ChartArea from './components/ChartArea';
@@ -17,6 +17,7 @@ const FleetPage = lazy(() => import('./pages/FleetPage'));
 const SqueezePage = lazy(() => import('./pages/SqueezePage'));
 const TsunamiPage = lazy(() => import('./pages/TsunamiPage'));
 const SqueezeHuntPage = lazy(() => import('./pages/SqueezeHuntPage'));
+const TalonPage = lazy(() => import('./pages/TalonPage'));
 const WallScannerPage = lazy(() => import('./pages/WallScannerPage'));
 const OpportunityPage = lazy(() => import('./pages/OpportunityPage'));
 const ReflexPage = lazy(() => import('./pages/ReflexPage'));
@@ -196,6 +197,7 @@ function NavBar() {
           <RouteBtn to="/bots"            icon={<Cpu size={14} />}  label="Bots" />
           <RouteBtn to="/squeeze"         icon={<Zap size={14} />} label="Squeeze" />
           <RouteBtn to="/squeeze-hunt"            icon={<Crosshair size={14} />} label="Squeeze Hunt" />
+          <RouteBtn to="/talon"           icon={<LocateFixed size={14} />} label="Talon" />
           <RouteBtn to="/wall-scanner"     icon={<Ruler size={14} />} label="Wall Scanner" />
           <RouteBtn to="/opportunity"      icon={<Target size={14} />} label="Opportunity" />
           <RouteBtn to="/reflex"           icon={<ActivitySquare size={14} />} label="Reflex" />
@@ -417,6 +419,7 @@ export default function App() {
             <Route path="/positions" element={<PositionsPage />} />
             <Route path="/squeeze" element={<SqueezePage />} />
             <Route path="/squeeze-hunt" element={<SqueezeHuntPage />} />
+            <Route path="/talon" element={<TalonPage />} />
             <Route path="/wall-scanner" element={<WallScannerPage />} />
             <Route path="/opportunity" element={<OpportunityPage />} />
             <Route path="/gex-profile" element={<GexProfilePage />} />
