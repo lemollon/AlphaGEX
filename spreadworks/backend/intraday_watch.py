@@ -1218,25 +1218,24 @@ async def fetch_option_selection(app, setup: dict[str, Any], now: datetime) -> t
     expiration = _choose_expiration(valid, setup, today)
     if expiration is None:
         return None, "no expiration matched the setup preference"
-    chain = await _tradier_get(app, "/markets/options/chains", {
-        "symbol": symbol, "expiration": expiration.isoformat(), "greeks": "true",
-    })
-    rows = (chain.get("options") or {}).get("option") or []
-    if isinstance(rows, dict):
-        rows = [rows]
-    contracts = [item for raw in rows if (item := normalize_contract(raw, now)) is not None]
+    # Shared professional-chain path: the watcher, reports and ad-hoc scans now
+    # qualify the exact same Tradier BBO, modeled Greeks and exchange clocks.
+    from .tradier_report_source import professional_chain
+    contracts, chain_reason = await asyncio.to_thread(
+        professional_chain, symbol, expiration.isoformat(), now
+    )
+    if not contracts:
+        return None, "ENTRY TRIGGER HIT — STRIKES PENDING OPTIONS DATA"
     if setup["strategy"] in {"calendar", "double_calendar"}:
         later = [item for item in valid if item > expiration]
         if not later:
             return None, "ENTRY TRIGGER HIT — STRIKES PENDING OPTIONS DATA"
         back_expiration = later[0]
-        back_chain = await _tradier_get(app, "/markets/options/chains", {
-            "symbol": symbol, "expiration": back_expiration.isoformat(), "greeks": "true",
-        })
-        back_rows = (back_chain.get("options") or {}).get("option") or []
-        if isinstance(back_rows, dict):
-            back_rows = [back_rows]
-        back_contracts = [item for raw in back_rows if (item := normalize_contract(raw, now)) is not None]
+        back_contracts, back_reason = await asyncio.to_thread(
+            professional_chain, symbol, back_expiration.isoformat(), now
+        )
+        if not back_contracts:
+            return None, "ENTRY TRIGGER HIT — STRIKES PENDING OPTIONS DATA"
         selected = select_calendar_structure(
             setup["strategy"], contracts, back_contracts, setup,
             expiration.isoformat(), back_expiration.isoformat(),

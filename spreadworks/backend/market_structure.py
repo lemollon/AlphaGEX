@@ -1755,6 +1755,87 @@ def live_market_structure():
             "squeeze_note": "Intraday context only; existing 15:05 CT SQUEEZE close signal is unchanged."}
 
 
+@router.get("/professional-options/{symbol}")
+def professional_options(symbol: str, expiration: str | None = None):
+    """Fresh Tradier professional-chain view for reports and advisory scans.
+
+    This endpoint is read-only. It never routes orders. Contract BBO must be
+    <=90 seconds old and Greeks/IV are modeled from that same fresh BBO.
+    Cached rows are persisted for diagnostics/last-known context only and can
+    never qualify a live executable package once stale.
+    """
+    now = datetime.now(UTC)
+    symbol = str(symbol or "").strip().upper()
+    if not symbol or len(symbol) > 10 or any(ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-" for ch in symbol):
+        return {"available": False, "symbol": symbol, "reason": "invalid symbol"}
+
+    from .tradier_report_source import get as tradier_report_get, professional_chain
+    try:
+        raw_dates = ((tradier_report_get(
+            "/options/expirations",
+            {"symbol": symbol, "includeAllRoots": "true"},
+        ).get("expirations") or {}).get("date") or [])
+        if isinstance(raw_dates, str):
+            raw_dates = [raw_dates]
+        today = now.astimezone(ET).date()
+        valid = sorted(
+            datetime.fromisoformat(str(value)).date()
+            for value in raw_dates
+            if datetime.fromisoformat(str(value)).date() >= today
+        )
+    except Exception as exc:
+        return {
+            "available": False, "symbol": symbol,
+            "reason": f"Tradier expiration lookup failed: {type(exc).__name__}",
+            "retrieval_timestamp": now.isoformat(),
+        }
+
+    if not valid:
+        return {"available": False, "symbol": symbol, "reason": "no current expiration is available",
+                "retrieval_timestamp": now.isoformat()}
+    if expiration:
+        try:
+            selected = datetime.fromisoformat(str(expiration)).date()
+        except ValueError:
+            return {"available": False, "symbol": symbol, "reason": "expiration must be YYYY-MM-DD",
+                    "retrieval_timestamp": now.isoformat()}
+        if selected not in valid:
+            return {"available": False, "symbol": symbol, "expiration": selected.isoformat(),
+                    "reason": "requested expiration is not available",
+                    "available_expirations": [d.isoformat() for d in valid[:20]],
+                    "retrieval_timestamp": now.isoformat()}
+    else:
+        selected = valid[0]
+
+    rows, reason = professional_chain(symbol, selected.isoformat(), now, persist=True)
+    if not rows:
+        return {
+            "available": False, "symbol": symbol, "expiration": selected.isoformat(),
+            "reason": reason or "no qualified fresh Tradier contracts",
+            "available_expirations": [d.isoformat() for d in valid[:20]],
+            "retrieval_timestamp": now.isoformat(),
+        }
+
+    stamps=[_parse_ts(row.get("exchange_timestamp")) for row in rows]
+    stamps=[stamp for stamp in stamps if stamp is not None]
+    source_stamp=min(stamps) if stamps else None
+    return {
+        "available": True,
+        "symbol": symbol,
+        "expiration": selected.isoformat(),
+        "available_expirations": [d.isoformat() for d in valid[:20]],
+        "contract_count": len(rows),
+        "source": "Tradier production option chain",
+        "greeks_source": "Tradier production BBO + local Black-Scholes",
+        "oi_scope": "Tradier daily open interest; publication time unavailable",
+        "source_timestamp": source_stamp.isoformat() if source_stamp else None,
+        "retrieval_timestamp": now.isoformat(),
+        "freshness_limit_seconds": STALE_SECONDS,
+        "contracts": rows,
+        "execution_scope": "Read-only advisory data; no broker order is created or modified.",
+    }
+
+
 @router.get("/surface/{symbol}")
 def surface_symbol(symbol: str):
     symbol = symbol.upper()

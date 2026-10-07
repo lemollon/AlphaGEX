@@ -388,3 +388,23 @@ def test_capture_all_parallel_persists_failed_snapshots(monkeypatch):
     assert any(item["reason"] == "ThetaData chain failure" for item in persisted)
     assert set(out["surface"]) == {"SPY", "QQQ"}
     assert len(surfaces) == 2
+
+
+def test_professional_options_endpoint_returns_fresh_tradier_contracts(monkeypatch):
+    from backend import tradier_report_source as src
+    now=datetime.now(timezone.utc)
+    expiry=(now+timedelta(days=2)).date().isoformat()
+    monkeypatch.setattr(src,'get',lambda path,params: {'expirations':{'date':[expiry]}})
+    monkeypatch.setattr(src,'professional_chain',lambda symbol,expiration,observed,persist=True:([
+        {'symbol':'QQQOPT','underlying_symbol':symbol,'expiration':expiration,
+         'strike':760.0,'right':'C','option_type':'call','bid':1.0,'ask':1.1,'mid':1.05,
+         'delta':.55,'gamma':.04,'theta':-.2,'vega':.1,'iv':.2,'open_interest':1000,'volume':500,
+         'exchange_timestamp':observed.isoformat(),'retrieval_timestamp':observed.isoformat(),
+         'age_seconds':0,'greeks_source':'Tradier production BBO + local Black-Scholes'}
+    ],None))
+    result=market_structure.professional_options('QQQ',expiry)
+    assert result['available'] is True
+    assert result['symbol']=='QQQ' and result['expiration']==expiry
+    assert result['contract_count']==1
+    assert result['greeks_source']=='Tradier production BBO + local Black-Scholes'
+    assert result['execution_scope'].startswith('Read-only')

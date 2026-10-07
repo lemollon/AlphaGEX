@@ -1,7 +1,7 @@
 # Permanent options report requirements
 
 The executable contract is `backend/report_contract.py`; inference and display
-rules are `backend/report_policy.py`. Version `2026-10-05.3` retains all 179
+rules are `backend/report_policy.py`. Version `2026-10-07.1` retains all 179
 original fields and adds day/near-forward/forward plans, horizon comparisons,
 adaptation rules, data integrity and persisted visual delivery: **32 sections and 241 required fields**.
 Every delivered report carries its policy version and SHA-256 schema/rule hash.
@@ -132,6 +132,32 @@ renderer, integrity and failure-path checks plus a deliberate version change.
 
 ## Provider policy (2026-10-05)
 Morning, market-open and intraday share Tradier-only market collectors. No ThetaData fallback or cached ThetaData report observations are allowed. Surface IV and gamma use explicitly labeled Black-Scholes estimates from fresh two-sided Tradier BBO, not refreshed receipt clocks or stale vendor Greeks. Daily OI publication time is unavailable and is never described as intraminute inventory. Representative expiries and quote qualification coverage are disclosed. Tradier REST does not supply contemporaneous option trade+NBBO evidence: initiation remains unavailable until such evidence exists; chain volume is never substituted. Independent macro, news and Trading Volatility products retain their own provenance.
+
+## Professional Tradier contract packages (2026-10-07.1)
+
+The report, intraday watcher, and ad-hoc contract scanner share one normalized
+Tradier professional-chain adapter. A contract can qualify only from a genuine
+Tradier bid/ask pair and a fresh underlying quote whose original exchange clocks
+are no more than 90 seconds old. Receipt time never refreshes those clocks.
+
+IV, delta, gamma, theta and vega are modeled from the same fresh Tradier BBO
+midpoint and are labeled as local Black-Scholes estimates; they are not
+misrepresented as exchange-observed Greeks. Volume and open interest remain
+provider fields, with OI explicitly treated as daily inventory whose publication
+time is unavailable.
+
+The latest normalized chain is persisted in `chain_cache` for diagnostics and
+LAST KNOWN context. Persisted contracts never become executable merely because
+they were reread: ENTRY_READY and simulated fills still require a freshly
+qualified per-leg package. `/api/spreadworks/market-structure/professional-options/{symbol}`
+is read-only and exposes the same bounded contract representation for QQQ, SPY,
+NVDA and other valid optionable symbols; it creates, modifies and routes no order.
+
+Tradier REST still does not provide contemporaneous option trade-plus-NBBO
+evidence for initiation classification. Therefore professional chain access does
+not upgrade raw chain volume into buyer/seller flow: that section remains
+`FLOW DATA UNAVAILABLE (Tradier live)` unless verified trade-time quote evidence
+actually exists.
 
 ## Refresh-first and last-known evidence (2026-10-05.3)
 
