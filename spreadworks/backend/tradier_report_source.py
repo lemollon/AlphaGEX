@@ -288,6 +288,6 @@ def option_rows(symbol,now):
             ])
             if reason:
                 reasons.append(str(expiry)+': '+reason)
-        return rows,None if rows else ('; '.join(reasons) or 'No qualified fresh Tradier BBO rows')
+        return rows,None if rows else 'No qualified fresh Tradier BBO rows'
     except Exception as exc:
         return [],'Tradier chain failure: '+type(exc).__name__
