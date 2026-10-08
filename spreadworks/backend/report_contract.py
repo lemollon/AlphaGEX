@@ -230,7 +230,7 @@ REQUIREMENTS["adaptation_rules"] = ["activate", "cancel", "switch", "stand_aside
 REQUIREMENTS["data_integrity"] = ["contract", "source_clocks", "coverage", "historical_fields",
     "unavailable_fields", "producer_failures", "model_prose_policy", "execution_scope", "format", "refresh_attempts"]
 REQUIRED_BLOCKS = tuple(REQUIREMENTS)
-CONTRACT_VERSION = "2026-10-08.2"
+CONTRACT_VERSION = "2026-10-08.3"
 FLOW_SOURCE = "ThetaData Pro trade-time NBBO flow v1"
 LIVE_MAX_AGE_SECONDS = 90
 CHART_FORMAT = "PNG"
@@ -349,7 +349,8 @@ def validate_rendered_report(payload):
     if payload.get("report_policy"):
         if payload["report_policy"] != policy_identity():
             errors.append("Report policy version/hash mismatch")
-        for heading in ("Today’s mission", "30-second scoreboard", "Today vs forward"):
+        for heading in ("Today’s mission", "30-second scoreboard", "Today vs forward",
+                        "Market story", "Edge board", "Biggest traps", "If/then day plan"):
             if heading not in markdown:
                 errors.append("Missing presentation section: " + heading)
         errors.extend(validate_semantics(payload, now))
