@@ -429,10 +429,15 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
     # spot-$2, long put $5 lower, 0DTE, hold to same-day cash settlement, no
     # stop), just a second entry window later in the day — 13:05 CT lands
     # after the 13:36 re-check alert on purpose, so the entry is informed by
-    # that recheck rather than racing it. $9.57/trade, ret/DD 2.67, 5/5 blind
-    # years. The two-tranche book (ebb + ebb_pm together) runs $21.72/day at
-    # ret/DD 2.77 — this entry is additive to EBB's morning tranche, not a
-    # replacement. Single-ticker, fixed direction (bull_put_spread) — same
+    # that recheck rather than racing it. Restructured 2026-08-15 to a
+    # spot-1/$2 wing (was spot-2/$5) for better return-per-dollar-at-risk on
+    # a $3k account: $4.74/trade, 5/5 blind years (confirmed 2026-10-08 on
+    # real continuous SPY NBBO through 2026-10-07; the old $9.57 figure below
+    # was the pre-restructure number, kept here only as history). The
+    # two-tranche book (ebb + ebb_pm together) runs $16.80/trade-pair — not
+    # the $21.72 once quoted here, which was also pre-restructure — this
+    # entry is additive to EBB's morning tranche, not a replacement.
+    # Single-ticker, fixed direction (bull_put_spread) — same
     # dispatch path as EBB in scanner._build_signal.
     #
     # NO-STOP INVARIANT: same as EBB — do not add one. decide_exit()'s
