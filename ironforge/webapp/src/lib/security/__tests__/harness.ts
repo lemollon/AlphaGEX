@@ -6,16 +6,28 @@
  */
 import { vi, expect } from 'vitest'
 
-/** Two tenants with distinct ids and distinct ledger owners. */
+/**
+ * Two tenants with distinct ids and distinct ledger owners.
+ *
+ * 🚨 TENANT_A's bot MUST be one that resolves to the PRODUCTION ledger, because
+ * owner scoping only exists on that branch — a paper read is unscoped by design
+ * (one simulated house ledger per bot; see PR #2898). Point A at a paper bot and
+ * this entire suite passes vacuously while proving nothing.
+ *
+ * It was 'spark' until 2026-08-28, when SPARK was correctly redeclared as paper
+ * (it has had no production account since its ironforge_accounts row was
+ * deactivated on 2026-08-23). A is now FLAME, which tenant-isolation.test.ts
+ * forces onto the production branch by mocking canReadProductionBalance.
+ */
 export const TENANT_A = {
   customerId: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
   person: 'Alpha',
-  bot: 'spark' as const,
+  bot: 'flame' as const,
 }
 export const TENANT_B = {
   customerId: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb',
   person: 'Bravo',
-  bot: 'flame' as const,
+  bot: 'spark' as const,
 }
 
 export interface SqlCall {
