@@ -8,7 +8,9 @@ from sqlalchemy import create_engine
 from backend import full_options_report as report
 from backend.report_contract import REQUIREMENTS, validate_report, prepare_report_delivery, validate_rendered_report
 from backend.report_policy import (normalize_blocks, observed, policy_identity, build_strategy_blocks,
-                                   validate_semantics)
+                                   validate_semantics, section_summary, section_meaning, market_story,
+                                   edge_board, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
+                                   render_markdown)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -39,7 +41,8 @@ def test_renderer_discards_model_prose_preserves_all_sections_and_is_idempotent(
     first=payload['report_markdown']
     assert 'Guaranteed profit' not in first
     assert payload['report_unverified_prose'].startswith('Guaranteed profit')
-    assert all(x in first for x in ('Today’s mission','30-second scoreboard','Today vs forward'))
+    assert all(x in first for x in ('Today’s mission','30-second scoreboard','Today vs forward',
+        'Market story','Edge board','Biggest traps','If/then day plan'))
     assert prepare_report_delivery(payload)['publishable']
     assert first==payload['report_markdown']
     payload['report_policy']['sha256']='wrong'
@@ -158,6 +161,101 @@ def test_entry_ready_downgrades_when_quotes_age_at_publication():
     payload={'generated_at':NOW.isoformat(),'report_blocks':blocks}
     assert prepare_report_delivery(payload)['publishable']
     assert payload['report_blocks']['day_strategy']['status']['value']=='WATCH'
+
+def test_section_summary_cites_real_field_values_or_explicit_absence():
+    blocks=empty_blocks()
+    blocks['gamma']['net_gex']=item({'SPY':0.12,'QQQ':-3.1})
+    blocks['gamma']['flip']=item({'SPY':775.3,'QQQ':758.8})
+    summary=section_summary('gamma',blocks['gamma'])
+    assert 'net gex' in summary and 'flip' in summary
+    assert section_summary('profile',empty_blocks()['profile'])=='No verified observation yet this checkpoint.'
+
+def test_section_meaning_risk_on_defensive_reads_side_from_verdict():
+    blocks=empty_blocks()
+    blocks['risk_on_defensive']['verdict']=item('Defensive price confirmation')
+    assert 'protection' in section_meaning('risk_on_defensive',blocks['risk_on_defensive'])
+    blocks['risk_on_defensive']['verdict']=item('Risk-on confirmation')
+    assert 'upside' in section_meaning('risk_on_defensive',blocks['risk_on_defensive'])
+    blocks['risk_on_defensive']['verdict']=item('Mixed signal')
+    assert 'No clear directional bias' in section_meaning('risk_on_defensive',blocks['risk_on_defensive'])
+
+def test_section_meaning_market_control_reads_dominant_side():
+    blocks=empty_blocks()
+    blocks['market_control']['control_side']=item({'SPY':{'0dte':'inconclusive'},'QQQ':{'0dte':'inconclusive'}})
+    assert 'too thin' in section_meaning('market_control',blocks['market_control'])
+    blocks['market_control']['control_side']=item({'SPY':{'0dte':'call_sellers','1_5dte':'call_sellers'},'QQQ':{'0dte':'put_sellers'}})
+    assert 'Call sellers dominate' in section_meaning('market_control',blocks['market_control'])
+    blocks['market_control']['control_side']=item({'SPY':{'0dte':'put_sellers'}})
+    assert 'Put sellers dominate' in section_meaning('market_control',blocks['market_control'])
+
+def test_section_meaning_gamma_reads_sign():
+    blocks=empty_blocks()
+    blocks['gamma']['net_gex']=item({'SPY':0.5,'QQQ':1.2})
+    assert 'Positive gamma dampens' in section_meaning('gamma',blocks['gamma'])
+    blocks['gamma']['net_gex']=item({'SPY':-0.5,'QQQ':-1.2})
+    assert 'Negative gamma amplifies' in section_meaning('gamma',blocks['gamma'])
+    blocks['gamma']['net_gex']=item({'SPY':0.5,'QQQ':-1.2})
+    assert 'mixed' in section_meaning('gamma',blocks['gamma'])
+
+def test_section_meaning_flow_reads_classified_coverage():
+    blocks=empty_blocks()
+    blocks['flow']['classified_coverage']=item({'SPY':0.33,'QQQ':0.28})
+    assert 'too thin' in section_meaning('flow',blocks['flow'])
+    blocks['flow']['classified_coverage']=item({'SPY':0.8,'QQQ':0.7})
+    assert 'supports a directional read' in section_meaning('flow',blocks['flow'])
+
+def test_section_meaning_premium_selling_is_strategy_neutral():
+    blocks=empty_blocks()
+    blocks['premium_selling']['suitability']=item({'SPY':'PREMIUM_RICH','QQQ':'PREMIUM_RICH'})
+    meaning=section_meaning('premium_selling',blocks['premium_selling'])
+    assert 'premium sellers' in meaning and 'spread' not in meaning.lower() and 'condor' not in meaning.lower()
+    blocks['premium_selling']['suitability']=item({'SPY':'PREMIUM_CHEAP'})
+    assert 'premium buyers' in section_meaning('premium_selling',blocks['premium_selling'])
+
+def test_section_meaning_strategy_status_lookup():
+    blocks=empty_blocks()
+    blocks['day_strategy']['status']=item('ENTRY_READY')
+    assert 'verify live per-leg BBO' in section_meaning('day_strategy',blocks['day_strategy'])
+    blocks['near_forward_strategy']['status']=item('WATCH')
+    assert 'not a trade' in section_meaning('near_forward_strategy',blocks['near_forward_strategy'])
+
+def test_section_meaning_falls_back_to_static_role_for_generic_sections():
+    assert 'sizing tool' in section_meaning('expected_move',empty_blocks()['expected_move'])
+    assert 'not a standalone signal' in section_meaning('unknown_future_section',empty_blocks()['surface'])
+
+def test_market_story_edge_board_traps_and_plan_use_real_block_values():
+    blocks=empty_blocks()
+    blocks['risk_on_defensive']['verdict']=item('Defensive price confirmation')
+    blocks['premium_selling']['suitability']=item({'SPY':'PREMIUM_RICH'})
+    blocks['gamma']['net_gex']=item({'SPY':0.5})
+    assert 'Defensive price confirmation' in market_story(blocks)
+    for name in ('day_strategy','near_forward_strategy','forward_strategy'):
+        blocks[name]['trigger']=item('No registered trigger')
+        blocks[name]['invalidation']=item('No observed setup')
+        blocks[name]['status']=item('WATCH')
+    rows=edge_board(blocks)
+    assert len(rows)==3 and rows[0][0]=='day strategy' and 'WATCH' in rows[0][3]
+    blocks['event_calendar']['catalysts']={'status':'unavailable','reason':'partial calendar',
+        'value':[{'name':'CPI Report','impact':'HIGH','datetime':'2026-10-14T07:30:00-05:00'}]}
+    blocks['data_integrity']['unavailable_fields']=item([{'field':'x','reason':'y'}])
+    traps=biggest_traps(blocks)
+    assert any('CPI Report' in t for t in traps) and any('unavailable this checkpoint' in t for t in traps)
+    blocks['adaptation_rules']['activate']=item('Require the registered trigger')
+    plan=if_then_day_plan(blocks)
+    assert any(k=='Activate' and 'Require the registered trigger' in v for k,v in plan)
+
+@freeze_time(NOW)
+def test_render_markdown_adds_decision_lines_only_for_included_sections():
+    blocks=empty_blocks()
+    blocks['gamma']['net_gex']=item({'SPY':0.12})
+    payload={'generated_at':NOW.isoformat(),'kind':'intraday','report_blocks':blocks,'report_completeness':'INCOMPLETE'}
+    markdown=render_markdown(payload)
+    gamma_section=markdown.split('### Gamma')[1].split('###')[0]
+    assert 'Section summary:' in gamma_section and 'What it means for the day:' in gamma_section
+    paper_section=markdown.split('### Paper Scorecard')[1].split('###')[0]
+    assert 'Section summary:' not in paper_section and 'What it means for the day:' not in paper_section
+    assert set(SECTION_SUMMARY_SECTIONS) <= set(REQUIREMENTS)
+    assert 'paper_scorecard' not in SECTION_SUMMARY_SECTIONS
 
 def test_optional_collector_failure_preserves_other_core_sources(monkeypatch):
     from backend import market_structure as ms

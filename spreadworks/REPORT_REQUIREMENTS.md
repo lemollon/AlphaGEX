@@ -1,23 +1,44 @@
 # Permanent options report requirements
 
 The executable contract is `backend/report_contract.py`; inference and display
-rules are `backend/report_policy.py`. Version `2026-10-08.2` retains the
+rules are `backend/report_policy.py`. Version `2026-10-08.3` retains the
 day/near-forward/forward plans, horizon comparisons, adaptation rules, data
 integrity, persisted visual delivery and market control, drops `risk`/
 `session`/`hunt` from engine consensus (redundant with `risk_on_defensive`
-and `candidate_analysis`, and never actually used), and adds flow's
-`price_vix_confirmation`: **33 sections and 242 required fields**.
+and `candidate_analysis`, and never actually used), adds flow's
+`price_vix_confirmation`, and adds the decision-first narrative layer (opening
+pieces + per-section "what it means for the day"): **33 sections and 242
+required fields**, unchanged by the narrative layer since it renders from
+existing field values, not new requirements.
 Every delivered report carries its policy version and SHA-256 schema/rule hash.
 
 ## Reader experience
 
 Morning, opening and intraday reports use the same dark layout: Today's mission,
-a 30-second scoreboard, a Today vs forward table, the entire required contract,
-and eleven PNG panels. HTML shows the charts beside their corresponding topics.
-The original panels and data points remain present. Missing observations have
-source-specific reasons; dated last-known observations retain their clocks.
-Arbitrary model narrative is stored only for diagnosis and cannot introduce
-facts into the canonical rendered report.
+a 30-second scoreboard, a Today vs forward table, four decision-first opening
+panels (Market story, Edge board, Biggest traps, If/then day plan), the entire
+required contract, and eleven PNG panels. HTML shows the charts beside their
+corresponding topics. The original panels and data points remain present.
+Within the 19 sections most relevant to a same-day/forward trading decision
+(§§ risk_on_defensive, market_control, gamma, flow, premium_selling,
+day/near-forward/forward strategy, expected_move, smile, surface,
+forward_strikes, range_stall, breadth, profile, sector_credit, macro,
+futures_context, event_calendar — `SECTION_SUMMARY_SECTIONS` in
+`report_policy.py`), each section's required fields are followed by a
+"Section summary" line (a mechanical recap of up to three of that section's
+own populated field:value pairs) and a "What it means for the day" line (a
+deterministic lookup against that section's own field values — never a new
+number, never a specific structure/strategy recommendation, since the trader
+this serves runs every options strategy, not credit spreads alone). Bookkeeping
+sections (contract_packages, entry_watches, candidate_analysis,
+position_management, trigger_accountability, paper_scorecard, scanner,
+event_study, engine_consensus, morning_comparison, horizon_comparison,
+adaptation_rules, visuals, data_integrity) are deliberately excluded from this
+layer; they remain raw evidence only. Missing observations have source-specific
+reasons; dated last-known observations retain their clocks. Arbitrary model
+narrative is stored only for diagnosis and cannot introduce facts into the
+canonical rendered report — the decision-first lines above are templated code,
+not model output, and are covered by the same no-model-prose rule.
 
 ## Website and historical archive
 
@@ -117,6 +138,42 @@ direction.
 ever duplicated `risk_on_defensive.verdict`, `session` was just a
 timestamp, and `hunt` duplicated `candidate_analysis`. Only `squeeze`,
 `trading_volatility_status` and `contradictions` remain.
+
+## Decision-first narrative (2026-10-08.3)
+
+Reports stayed accurate but required the reader to manually synthesize "what
+does this mean" from 33 sections of raw evidence. Four new opening panels and
+one per-section recap close that gap, both rendered by `report_policy.py`
+(`market_story`, `edge_board`, `biggest_traps`, `if_then_day_plan`,
+`section_summary`, `section_meaning`) with zero new producer fields:
+
+- **Market story** — one line combining `risk_on_defensive.verdict`,
+  `premium_selling.suitability` and the gamma meaning below.
+- **Edge board** — a trigger/invalidation/status table for all three
+  horizons, reusing `day_strategy`/`near_forward_strategy`/`forward_strategy`.
+- **Biggest traps** — HIGH-impact `event_calendar.catalysts` entries plus the
+  live `data_integrity.unavailable_fields` count, so blind spots are named,
+  never silently absent.
+- **If/then day plan** — a direct reprint of `adaptation_rules`
+  (`activate`/`cancel`/`switch`/`stand_aside`/`existing_positions`/
+  `reassessment`), which already held this content but only appeared at the
+  bottom of the report.
+
+Within `SECTION_SUMMARY_SECTIONS` (19 of the 33 sections — see above),
+`section_summary` recaps up to three of that section's own populated fields
+verbatim, and `section_meaning` is a closed lookup against that section's own
+values: verdict text for `risk_on_defensive`, dominant classified side for
+`market_control`, net-GEX sign for `gamma`, classified-coverage magnitude for
+`flow`, rich/cheap for `premium_selling`, and the registered `status` string
+for the three strategy horizons. The remaining 11 sections (expected_move,
+smile, surface, forward_strikes, range_stall, breadth, profile, sector_credit,
+macro, futures_context, event_calendar) get a fixed, non-numeric sentence
+describing that section's role — never a reading of today's specific values —
+since they are supporting evidence, not an independent call. None of this
+recommends a specific strategy/structure: the reader trades every options
+strategy, so the lookup states only which side the evidence favors (sellers
+vs buyers, which direction), consistent with `structure`'s own existing text
+("no structure invented from directional pressure").
 
 ## Integrity and failure behavior
 

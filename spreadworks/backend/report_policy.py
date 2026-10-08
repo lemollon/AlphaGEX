@@ -15,8 +15,9 @@ from zoneinfo import ZoneInfo
 
 UTC = timezone.utc
 CT = ZoneInfo("America/Chicago")
-POLICY_VERSION = "2026-10-08.2"
-PRESENTATION = ("Today’s mission", "30-second scoreboard", "Today vs forward")
+POLICY_VERSION = "2026-10-08.3"
+PRESENTATION = ("Today’s mission", "30-second scoreboard", "Today vs forward",
+                "Market story", "Edge board", "Biggest traps", "If/then day plan")
 HOLDING_PERIODS = {10: "Approximately two trading weeks", 20: "Approximately one trading month"}
 RULES = ("ThetaData Pro trade-time NBBO flow primary; Tradier market data/fallback; reject legacy ThetaData records","fresh BBO <=90s", "retain frozen morning expected move", "no 0DTE forward inference",
          "no model prose in canonical delivery", "no implicit mock data", "no broker orders")
@@ -276,6 +277,148 @@ def scoreboard(blocks):
         ("Premium / volatility buying",get("premium_selling","suitability")),("Confidence / data quality","See the source clocks and explicit historical/unavailable fields below; no inferred high confidence."),
         ("Flow / gamma",get("flow","classified_coverage")+"; "+get("gamma","net_gex")),("Best underlying / structure",get("day_strategy","contracts"))]
 
+SECTION_SUMMARY_SECTIONS = (
+    "risk_on_defensive", "market_control", "gamma", "flow", "premium_selling",
+    "day_strategy", "near_forward_strategy", "forward_strategy",
+    "expected_move", "smile", "surface", "forward_strikes",
+    "range_stall", "breadth", "profile", "sector_credit", "macro", "futures_context", "event_calendar",
+)
+
+def section_summary(name, block):
+    """Mechanical recap of a section's own populated fields — literal field:value pairs,
+    never a model-generated sentence. Cites real data so it can't drift from the section above it.
+    """
+    parts = []
+    for field, item in block.items():
+        if len(parts) >= 3:
+            break
+        if not isinstance(item, dict) or item.get("status") == "unavailable":
+            continue
+        value = item.get("value")
+        if value is None:
+            continue
+        parts.append(field.replace("_", " ") + ": " + plain_value(value))
+    if not parts:
+        return "No verified observation yet this checkpoint."
+    return "; ".join(parts) + "."
+
+def _side_label(verdict_text):
+    t = (verdict_text or "").lower()
+    if "defensive" in t:
+        return "defensive"
+    if "risk-on" in t or "bullish" in t or "upside" in t:
+        return "risk-on"
+    return "neutral"
+
+_STATUS_MEANING = {
+    "WATCH": "No confirmed setup yet — this is a watch item, not a trade.",
+    "ENTRY_READY": "Setup is confirmed — verify live per-leg BBO before entering.",
+    "PENDING EVIDENCE": "Not enough evidence to form a thesis; wait.",
+    "OPEN PAPER": "A paper position is already open on this horizon; manage it, don't re-enter.",
+}
+
+_SECTION_ROLE = {
+    "expected_move": "Defines the day's statistical range; a sizing tool for strikes/width, not a trade signal by itself.",
+    "smile": "Shows how the market prices tail risk across strikes; wider downside skew favors put-side structures over call-side.",
+    "surface": "Cross-expiry volatility context for choosing which expiration carries the richest or cheapest premium.",
+    "forward_strikes": "Raw strike-level flow detail behind the day/forward thesis above; supporting evidence, not a new signal.",
+    "range_stall": "Tracks whether the day is building a balance area or breaking out of one; chop risk for any defined-risk structure.",
+    "breadth": "Market-wide participation context; confirms or contradicts the SPY/QQQ-only regime read above.",
+    "profile": "Shows where volume has actually transacted today; use value area edges as objective support/resistance.",
+    "sector_credit": "Cross-asset leadership and credit-market confirmation; a flagged rotation here should agree with the regime call.",
+    "macro": "Delayed rates/FX/commodity backdrop; context only, never a same-session trading signal.",
+    "futures_context": "Overnight futures positioning on delayed data; use only to frame the open, not to time entries.",
+    "event_calendar": "Known catalysts ahead; a confirmed HIGH-impact event inside the holding period should shrink size or widen the structure.",
+}
+
+def section_meaning(name, block):
+    """Deterministic "what it means for the day" line — a lookup on the section's own
+    already-computed field values, never new analysis or a fabricated number. Strategy-
+    neutral: states what the evidence favors (sellers vs buyers, which side), not which
+    specific structure (spread/condor/single) to use.
+    """
+    def val(field):
+        item = block.get(field) or {}
+        return item.get("value") if item.get("status") != "unavailable" else None
+    if name == "risk_on_defensive":
+        side = _side_label(val("verdict"))
+        return {"defensive": "Bias toward protection or put-side exposure; confirm with flow before acting.",
+                "risk-on": "Bias toward upside continuation or call-side exposure; confirm with flow before acting.",
+                "neutral": "No clear directional bias from price alone; wait for confirmation."}[side]
+    if name == "market_control":
+        sides = []
+        control = val("control_side") or {}
+        for sym_row in (control.values() if isinstance(control, dict) else []):
+            if isinstance(sym_row, dict):
+                sides.extend(str(v).lower() for v in sym_row.values())
+        if not sides or all(s == "inconclusive" for s in sides):
+            return "Dealer positioning is unclear today; classified flow coverage is too thin to say who's in control."
+        if sides.count("call_sellers") > sides.count("put_sellers"):
+            return "Call sellers dominate where classified — a sign of capped upside expectations."
+        if sides.count("put_sellers") > sides.count("call_sellers"):
+            return "Put sellers dominate where classified — a sign of downside support being sold."
+        return "Call- and put-selling are evenly split where classified; no net control."
+    if name == "gamma":
+        net = val("net_gex") or {}
+        signs = [float(v) for v in (net.values() if isinstance(net, dict) else []) if isinstance(v, (int, float))]
+        if not signs:
+            return "No verified net gamma reading this checkpoint."
+        if all(s >= 0 for s in signs):
+            return "Positive gamma dampens moves — expect range-bound price action near the flip."
+        if all(s <= 0 for s in signs):
+            return "Negative gamma amplifies moves — expect larger swings away from the flip."
+        return "Gamma sign is mixed across symbols — dampening in one, amplifying in the other."
+    if name == "flow":
+        coverage = val("classified_coverage") or {}
+        covs = [float(v) for v in (coverage.values() if isinstance(coverage, dict) else []) if isinstance(v, (int, float))]
+        if covs and max(covs) < 0.5:
+            return "Classified coverage is below half the tape — too thin to read directional conviction from flow alone."
+        return "Classified coverage supports a directional read; compare calls-bought/sold vs puts-bought/sold above."
+    if name == "premium_selling":
+        suit = val("suitability") or {}
+        labels = set(str(v) for v in (suit.values() if isinstance(suit, dict) else []))
+        if "PREMIUM_RICH" in labels:
+            return "Premium is rich versus realized move: edge favors premium sellers over premium buyers, unless price/flow confirms expansion."
+        if "PREMIUM_CHEAP" in labels:
+            return "Premium is cheap versus realized move: edge favors premium buyers over premium sellers."
+        return "Premium is fairly priced versus realized move; no edge either way from this reading alone."
+    if name in ("day_strategy", "near_forward_strategy", "forward_strategy"):
+        status = val("status")
+        return _STATUS_MEANING.get(status, "Status is " + str(status) + "; apply the adaptation rules before acting.")
+    return _SECTION_ROLE.get(name, "Supporting evidence for the sections above; not a standalone signal.")
+
+def market_story(blocks):
+    return (display(blocks["risk_on_defensive"]["verdict"]) + " "
+            + display(blocks["premium_selling"]["suitability"]) + " "
+            + section_meaning("gamma", blocks["gamma"]))
+
+def edge_board(blocks):
+    rows = []
+    for name in ("day_strategy", "near_forward_strategy", "forward_strategy"):
+        row = blocks[name]
+        rows.append((name.replace("_", " "), display(row["trigger"]), display(row["invalidation"]), display(row["status"])))
+    return rows
+
+def biggest_traps(blocks):
+    traps = []
+    catalysts = (blocks.get("event_calendar") or {}).get("catalysts") or {}
+    cv = catalysts.get("value")
+    if isinstance(cv, list):
+        for c in cv:
+            if isinstance(c, dict) and str(c.get("impact")).upper() == "HIGH":
+                traps.append(str(c.get("name")) + " on " + str(c.get("datetime")))
+    unavailable = (blocks.get("data_integrity") or {}).get("unavailable_fields") or {}
+    uv = unavailable.get("value")
+    if isinstance(uv, list) and uv:
+        traps.append(str(len(uv)) + " fields unavailable this checkpoint — known blind spots, not zeros.")
+    if not traps:
+        traps.append("No flagged high-impact catalysts or unresolved blind spots this checkpoint.")
+    return traps
+
+def if_then_day_plan(blocks):
+    rules = blocks.get("adaptation_rules") or {}
+    return [(k.replace("_", " ").title(), display(v)) for k, v in rules.items()]
+
 def render_markdown(payload):
     from .report_contract import REQUIREMENTS
     blocks=payload["report_blocks"];clock=parse_clock(payload.get("generated_at"))
@@ -288,9 +431,20 @@ def render_markdown(payload):
     lines.extend(["## Today vs forward","| Horizon | Thesis | Status |","|---|---|---|"])
     for name in ("day_strategy","near_forward_strategy","forward_strategy"):
         row=blocks[name];lines.append("| "+name.replace("_"," ")+" | "+display(row["thesis"]).replace("|","\\|")+" | "+display(row["status"]).replace("|","\\|")+" |")
+    lines.extend(["## 🧭 Market story",market_story(blocks)])
+    lines.extend(["## 🧩 Edge board","| Horizon | Trigger | Invalidation | Status |","|---|---|---|---|"])
+    for horizon,trigger,invalid,status in edge_board(blocks):
+        lines.append("| "+horizon+" | "+trigger.replace("|","\\|")+" | "+invalid.replace("|","\\|")+" | "+status.replace("|","\\|")+" |")
+    lines.append("## ⚠️ Biggest traps")
+    lines.extend("- "+t for t in biggest_traps(blocks))
+    lines.append("## 🧮 If/then day plan")
+    lines.extend("- **"+k+"**: "+v for k,v in if_then_day_plan(blocks))
     for name,fields in REQUIREMENTS.items():
         lines.append("### "+name.replace("_"," ").title())
         for field in fields:lines.append("- **"+field+"**: "+display(blocks[name][field]))
+        if name in SECTION_SUMMARY_SECTIONS:
+            lines.append("Section summary: "+section_summary(name,blocks[name]))
+            lines.append("What it means for the day: "+section_meaning(name,blocks[name]))
     for name,url in (payload.get("chart_urls") or {}).items():lines.append("!["+name.replace("_"," ").title()+"]("+url+")")
     lines.extend(['**BOTTOM LINE**',
         'Regime: '+display(blocks['risk_on_defensive']['verdict']),
