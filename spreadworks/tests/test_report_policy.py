@@ -19,11 +19,12 @@ def item(value=1,age=0):
     return observed(value,'Observed provider feed',NOW-timedelta(seconds=age),NOW)
 
 def test_schema_retains_all_legacy_fields_and_new_strategy_policy():
-    assert len(REQUIREMENTS)==32
-    assert sum(map(len,REQUIREMENTS.values()))==241
+    assert len(REQUIREMENTS)==33
+    assert sum(map(len,REQUIREMENTS.values()))==245
     assert 'delivery_manifest' in REQUIREMENTS['visuals']
-    assert all(n in REQUIREMENTS for n in ('day_strategy','near_forward_strategy','forward_strategy','horizon_comparison','adaptation_rules','data_integrity'))
+    assert all(n in REQUIREMENTS for n in ('day_strategy','near_forward_strategy','forward_strategy','horizon_comparison','adaptation_rules','data_integrity','market_control'))
     assert len(REQUIREMENTS['visuals'])==14
+    assert REQUIREMENTS['market_control']==['control_side','control_evidence','control_confidence','forward_control_outlook']
 
 @pytest.mark.parametrize('name,field',[(n,f) for n,fs in REQUIREMENTS.items() for f in fs])
 def test_any_omitted_contract_field_is_rejected(name,field):

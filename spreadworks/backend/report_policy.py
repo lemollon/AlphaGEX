@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 UTC = timezone.utc
 CT = ZoneInfo("America/Chicago")
-POLICY_VERSION = "2026-10-07.1"
+POLICY_VERSION = "2026-10-08.1"
 PRESENTATION = ("Today’s mission", "30-second scoreboard", "Today vs forward")
 HOLDING_PERIODS = {10: "Approximately two trading weeks", 20: "Approximately one trading month"}
 RULES = ("ThetaData Pro trade-time NBBO flow primary; Tradier market data/fallback; reject legacy ThetaData records","fresh BBO <=90s", "retain frozen morning expected move", "no 0DTE forward inference",

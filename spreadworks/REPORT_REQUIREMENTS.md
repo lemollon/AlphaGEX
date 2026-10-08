@@ -1,9 +1,10 @@
 # Permanent options report requirements
 
 The executable contract is `backend/report_contract.py`; inference and display
-rules are `backend/report_policy.py`. Version `2026-10-07.1` retains all 179
-original fields and adds day/near-forward/forward plans, horizon comparisons,
-adaptation rules, data integrity and persisted visual delivery: **32 sections and 241 required fields**.
+rules are `backend/report_policy.py`. Version `2026-10-08.1` retains all 179
+original fields, the day/near-forward/forward plans, horizon comparisons,
+adaptation rules, data integrity and persisted visual delivery, and adds
+market control: **33 sections and 245 required fields**.
 Every delivered report carries its policy version and SHA-256 schema/rule hash.
 
 ## Reader experience
@@ -25,7 +26,7 @@ runs; `/reports/{id}/data` exposes the immutable full contract to the reader.
 Reading either route never collects market data, changes a report, sends a
 notification or executes a trade. All newly persisted morning, opening and
 intraday reports appear automatically without a second report schedule.
-The website retains all 32 sections/241 fields and reconciles all eleven chart
+The website retains all 33 sections/245 fields and reconciles all eleven chart
 categories; absent observed data receives an explicit reason, not a fake chart.
 Historical report generation and observation clocks remain separate from the
 website's retrieval time. Older ENTRY_READY states are historical alert states,
@@ -78,6 +79,25 @@ Every report retains the first same-session morning baseline and compares the
 previous scheduled checkpoint. Verification/startup reports, other sessions and
 future timestamps are excluded. Expected-move usage uses the frozen morning
 dollar estimate and bounds; repriced current IV stays separate.
+
+## Market control (2026-10-08.1)
+
+`control_side`, `control_evidence`, `control_confidence` and
+`forward_control_outlook` answer who is in control today — call sellers, put
+sellers, or neither — and whether that reading should hold into the forward
+window. `control_side` is a deterministic read of §7 classified call-sell vs
+put-sell premium by expiry bucket: one side must exceed the other by 1.5x to
+be called, otherwise the bucket is `mixed`. The read is gated on §7's own
+`classified_contract_fraction`; below 0.5 classified coverage the bucket is
+always `inconclusive`, never a guess. `control_confidence` carries that same
+fraction with a HIGH/MEDIUM/LOW_FORCES_INCONCLUSIVE label.
+
+`forward_control_outlook` never extrapolates today's control_side on its own.
+It compares the 0DTE control_side against the forward_strategy (1–4 week)
+thesis's directional-pressure read: the same-direction case is `persists`,
+the opposite-direction case is `flips`, and a missing or balanced/unclassified
+forward read is `fades`. No control_side, or no qualifying forward pressure,
+leaves the field unavailable.
 
 ## Integrity and failure behavior
 
