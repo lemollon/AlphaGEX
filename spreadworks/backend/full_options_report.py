@@ -259,6 +259,27 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
     put('sector_credit','relative_returns',relative or None,source='Consolidated ETF quotes vs prior close',ts=cross_ts)
     put('sector_credit','leadership',sorted(relative,key=relative.get,reverse=True) if relative else None,source='Relative-return ordering',ts=cross_ts)
     put('sector_credit','credit_confirmation',{s:relative[s] for s in ('HYG','LQD','TLT') if s in relative} or None,source='Credit/bond ETF proxies; not credit spreads',ts=cross_ts)
+    # Deterministic price/VIX confirmation: does observed price direction agree with the
+    # flow-implied lean (calls_bought+puts_sold premium vs calls_sold+puts_bought premium)?
+    # VIX has no persisted prior-close baseline here, so its level is carried as context
+    # only -- the confirmation verdict itself never depends on an unmeasured VIX direction.
+    pv_confirmation={};pv_ts=[]
+    for s in ('SPY','QQQ'):
+        r=flow.get(s) or {};ev=r.get('evidence') or {};ts=ms._parse_ts(r.get('source_timestamp'))
+        if r.get('confidence')=='LOW' or not ts or not ev.get('buckets') or s not in relative:continue
+        up=sum(float((bk.get('calls_bought') or {}).get('premium') or 0)+float((bk.get('puts_sold') or {}).get('premium') or 0) for bk in ev['buckets'].values())
+        down=sum(float((bk.get('calls_sold') or {}).get('premium') or 0)+float((bk.get('puts_bought') or {}).get('premium') or 0) for bk in ev['buckets'].values())
+        if up<=0 and down<=0:continue
+        flow_lean='upside' if up>down*1.2 else 'downside' if down>up*1.2 else 'balanced'
+        price_dir='up' if relative[s]>0.05 else 'down' if relative[s]<-0.05 else 'flat'
+        read=('inconclusive' if flow_lean=='balanced' or price_dir=='flat'
+              else 'confirms' if (flow_lean=='upside')==(price_dir=='up') else 'conflicts')
+        pv_confirmation[s]={'flow_lean':flow_lean,'price_direction':price_dir,'price_change_pct':round(relative[s],3),
+            'vix_level':(indices.get('VIX') or {}).get('price'),'read':read}
+        pv_ts.append(ts)
+    put('flow','price_vix_confirmation',pv_confirmation or None,
+        source='Deterministic comparison of flow-implied lean vs observed price direction; VIX level is context only, no persisted baseline for its own direction',
+        ts=min(pv_ts) if pv_ts else None,reason='No qualifying classified flow plus fresh price observation to compare')
     breadth=context.get('breadth') or {};bts=breadth.get('source_timestamp')
     for field,keys in {'advance_decline':['advances','declines','unchanged','coverage_pct','universe'],
                        'up_down_volume':['advancing_issue_volume','declining_issue_volume','up_down_volume_ratio','volume_method'],
@@ -413,8 +434,7 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
             value[s]=actual[field]
         put('range_stall',field,value or None,source='Observed profile range + explicit confirmation rule',ts=min([ms._parse_ts(r.get('source_timestamp')) for r in profiles.values() if ms._parse_ts(r.get('source_timestamp'))],default=None))
     for field in REQUIREMENTS['engine_consensus']:
-        value={'risk':blocks['risk_on_defensive']['verdict'],'session':now.astimezone(ET).isoformat(),'squeeze':plan.get('market_regime'),
-             'hunt':plan.get('best_setup'),'trading_volatility_status':plan.get('trading_volatility'),
+        value={'squeeze':plan.get('market_regime'),'trading_volatility_status':plan.get('trading_volatility'),
              'contradictions':'Compare engine evidence and timestamps; absent engine state is not consensus'}.get(field)
         put('engine_consensus',field,value,source='Recorded independent engine states',ts=plan.get('generated_at'))
     return blocks

@@ -1,10 +1,12 @@
 # Permanent options report requirements
 
 The executable contract is `backend/report_contract.py`; inference and display
-rules are `backend/report_policy.py`. Version `2026-10-08.1` retains all 179
-original fields, the day/near-forward/forward plans, horizon comparisons,
-adaptation rules, data integrity and persisted visual delivery, and adds
-market control: **33 sections and 245 required fields**.
+rules are `backend/report_policy.py`. Version `2026-10-08.2` retains the
+day/near-forward/forward plans, horizon comparisons, adaptation rules, data
+integrity, persisted visual delivery and market control, drops `risk`/
+`session`/`hunt` from engine consensus (redundant with `risk_on_defensive`
+and `candidate_analysis`, and never actually used), and adds flow's
+`price_vix_confirmation`: **33 sections and 242 required fields**.
 Every delivered report carries its policy version and SHA-256 schema/rule hash.
 
 ## Reader experience
@@ -26,7 +28,7 @@ runs; `/reports/{id}/data` exposes the immutable full contract to the reader.
 Reading either route never collects market data, changes a report, sends a
 notification or executes a trade. All newly persisted morning, opening and
 intraday reports appear automatically without a second report schedule.
-The website retains all 33 sections/245 fields and reconciles all eleven chart
+The website retains all 33 sections/242 fields and reconciles all eleven chart
 categories; absent observed data receives an explicit reason, not a fake chart.
 Historical report generation and observation clocks remain separate from the
 website's retrieval time. Older ENTRY_READY states are historical alert states,
@@ -98,6 +100,23 @@ thesis's directional-pressure read: the same-direction case is `persists`,
 the opposite-direction case is `flips`, and a missing or balanced/unclassified
 forward read is `fades`. No control_side, or no qualifying forward pressure,
 leaves the field unavailable.
+
+## Flow price/VIX confirmation and engine consensus (2026-10-08.2)
+
+`flow.price_vix_confirmation` is now populated (it previously stayed
+unavailable — the producer never wrote it). Per symbol, it compares the
+flow-implied lean (`calls_bought`+`puts_sold` premium vs `calls_sold`+
+`puts_bought` premium, classified §7 flow only) against the observed
+price direction since prior close: `confirms` when they agree, `conflicts`
+when they disagree, `inconclusive` when either side is too thin/flat to
+call. VIX has no persisted prior-close baseline, so its level rides along
+as context only — the verdict itself never depends on an unmeasured VIX
+direction.
+
+`engine_consensus` no longer carries `risk`/`session`/`hunt`: `risk` only
+ever duplicated `risk_on_defensive.verdict`, `session` was just a
+timestamp, and `hunt` duplicated `candidate_analysis`. Only `squeeze`,
+`trading_volatility_status` and `contradictions` remain.
 
 ## Integrity and failure behavior
 

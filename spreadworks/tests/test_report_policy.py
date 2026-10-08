@@ -20,7 +20,7 @@ def item(value=1,age=0):
 
 def test_schema_retains_all_legacy_fields_and_new_strategy_policy():
     assert len(REQUIREMENTS)==33
-    assert sum(map(len,REQUIREMENTS.values()))==245
+    assert sum(map(len,REQUIREMENTS.values()))==242
     assert 'delivery_manifest' in REQUIREMENTS['visuals']
     assert all(n in REQUIREMENTS for n in ('day_strategy','near_forward_strategy','forward_strategy','horizon_comparison','adaptation_rules','data_integrity','market_control'))
     assert len(REQUIREMENTS['visuals'])==14

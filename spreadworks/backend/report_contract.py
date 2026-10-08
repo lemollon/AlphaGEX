@@ -188,10 +188,7 @@ REQUIREMENTS = {
         "validated_statistics"
     ],
     "engine_consensus": [
-        "risk",
-        "session",
         "squeeze",
-        "hunt",
         "trading_volatility_status",
         "contradictions"
     ],
@@ -233,7 +230,7 @@ REQUIREMENTS["adaptation_rules"] = ["activate", "cancel", "switch", "stand_aside
 REQUIREMENTS["data_integrity"] = ["contract", "source_clocks", "coverage", "historical_fields",
     "unavailable_fields", "producer_failures", "model_prose_policy", "execution_scope", "format", "refresh_attempts"]
 REQUIRED_BLOCKS = tuple(REQUIREMENTS)
-CONTRACT_VERSION = "2026-10-08.1"
+CONTRACT_VERSION = "2026-10-08.2"
 FLOW_SOURCE = "ThetaData Pro trade-time NBBO flow v1"
 LIVE_MAX_AGE_SECONDS = 90
 CHART_FORMAT = "PNG"
