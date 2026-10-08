@@ -40,6 +40,31 @@ def finite_tree(value):
 def missing(reason):
     return {"status": "unavailable", "reason": reason}
 
+_SYM_KEY_RE = re.compile(r"^[A-Z]{1,5}$")
+
+def plain_value(v, depth=0):
+    """Plain-text (markdown/Discord-safe, no HTML) rendering of a field value for display().
+
+    A raw json.dumps() of a per-symbol dict ({"SPY": "PREMIUM_RICH", "QQQ": ...}) is not
+    readable at a glance; render it as "SPY: PREMIUM_RICH; QQQ: ..." instead. Only shapes
+    too irregular to summarize this way fall back to a compact JSON string.
+    """
+    if v is None:
+        return "none"
+    if isinstance(v, dict):
+        if v and all(isinstance(k, str) and _SYM_KEY_RE.match(k) for k in v):
+            return "; ".join(f"{k}: {plain_value(sv, depth + 1)}" for k, sv in v.items())
+        if v and len(v) <= 10 and depth < 3:
+            return ", ".join(f"{str(k).replace('_', ' ')} {plain_value(vv, depth + 1)}" for k, vv in v.items())
+        return json.dumps(v, ensure_ascii=False, default=str)
+    if isinstance(v, list):
+        if not v:
+            return "none"
+        if len(v) <= 12 and all(not isinstance(x, (dict, list)) for x in v):
+            return ", ".join(plain_value(x, depth + 1) for x in v)
+        return json.dumps(v, ensure_ascii=False, default=str)
+    return str(v)
+
 def observed(value, source, stamp, now):
     clock = parse_clock(stamp)
     if value is None or clock is None or clock > now or not finite_tree(value):
@@ -236,8 +261,8 @@ def display(item):
     if not isinstance(item,dict):return "Unavailable"
     value=item.get("value")
     if item.get("status")=="unavailable":
-        return "UNAVAILABLE — "+str(item.get("reason") or "No verified observation")+("; unverified estimate: "+json.dumps(value,ensure_ascii=False,default=str) if value is not None else "")
-    text=json.dumps(value,ensure_ascii=False,default=str) if isinstance(value,(dict,list)) else str(value)
+        return "UNAVAILABLE — "+str(item.get("reason") or "No verified observation")+("; unverified estimate: "+plain_value(value) if value is not None else "")
+    text=plain_value(value) if isinstance(value,(dict,list)) else str(value)
     stamp=parse_clock(item.get('source_timestamp'))
     clock=stamp.astimezone(CT).strftime('%Y-%m-%d %I:%M:%S %p CT') if stamp else str(item.get('source_timestamp'))
     age=float(item.get('age_seconds') or 0)
