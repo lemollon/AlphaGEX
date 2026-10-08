@@ -226,6 +226,54 @@ def ledger_empty():
     return {'entry_ready_alerts':0,'trade_details':[],'exceptions':[],'fill_rules':'test','loss_clusters':[]}
 
 
+def flow_row(fraction,call_sell,put_sell):
+    return {'confidence':'MEDIUM','source_timestamp':NOW.isoformat(),'evidence':{
+        'classified_contract_fraction':fraction,
+        'buckets':{'0dte':{'calls_sold':{'contracts':10,'premium':call_sell},'puts_sold':{'contracts':10,'premium':put_sell},
+                            'calls_bought':{'contracts':1,'premium':1.0},'puts_bought':{'contracts':1,'premium':1.0}}}}}
+
+def test_market_control_dominance_gated_on_classified_coverage():
+    current=core()
+    current['flow']={'SPY':flow_row(.8,5000.,500.),'QQQ':flow_row(.3,5000.,500.)}
+    blocks=report.report_blocks(current,{},{},{},ledger_empty(),{},{},[],NOW)
+    sides=blocks['market_control']['control_side']['value']
+    assert sides['SPY']['0dte']=='call_sellers'
+    assert sides['QQQ']['0dte']=='inconclusive'
+    conf=blocks['market_control']['control_confidence']['value']
+    assert conf['SPY']['label']=='HIGH' and conf['QQQ']['label']=='LOW_FORCES_INCONCLUSIVE'
+    evidence=blocks['market_control']['control_evidence']['value']
+    assert evidence['SPY']['0dte']['call_sell_premium']==5000.
+
+def test_market_control_without_flow_is_unavailable():
+    blocks=report.report_blocks(core(),{},{},{},ledger_empty(),{},{},[],NOW)
+    assert blocks['market_control']['control_side']['status']=='unavailable'
+    assert blocks['market_control']['control_evidence']['status']=='unavailable'
+    assert blocks['market_control']['control_confidence']['status']=='unavailable'
+
+def test_forward_control_outlook_persists_flips_and_fades():
+    base={'market_control':{'control_side':{'status':'live','source_timestamp':NOW.isoformat(),
+            'value':{'SPY':{'0dte':'call_sellers'},'QQQ':{'0dte':'put_sellers'},'IWM':{'0dte':'mixed'}}},
+            'forward_control_outlook':{}}}
+    base['forward_strategy']={'thesis':{'value':{'SPY':{'read':'downside pressure'},'QQQ':{'read':'downside pressure'},'IWM':{'read':'upside pressure'}}}}
+    report.forward_control_outlook(base,NOW)
+    out=base['market_control']['forward_control_outlook']['value']
+    assert out['SPY']['outlook']=='persists'
+    assert out['QQQ']['outlook']=='flips'
+    assert 'IWM' not in out
+
+def test_forward_control_outlook_fades_without_confirmed_forward_read():
+    base={'market_control':{'control_side':{'status':'live','source_timestamp':NOW.isoformat(),
+            'value':{'SPY':{'0dte':'call_sellers'}}},'forward_control_outlook':{}},
+          'forward_strategy':{'thesis':{'value':{'SPY':{'read':'balanced or unclassified'}}}}}
+    report.forward_control_outlook(base,NOW)
+    assert base['market_control']['forward_control_outlook']['value']['SPY']['outlook']=='fades'
+
+def test_forward_control_outlook_unavailable_without_control_side():
+    base={'market_control':{'control_side':{'status':'unavailable'},'forward_control_outlook':{}},'forward_strategy':{'thesis':{}}}
+    report.forward_control_outlook(base,NOW)
+    assert base['market_control']['forward_control_outlook']['status']=='unavailable'
+
+
 def test_session_profile_checkpoint_merges_observed_bins_without_new_trades():
     start=NOW-timedelta(minutes=30);middle=NOW-timedelta(minutes=15)
     old=p.volume_profile([{'price':100.1,'size':50,'timestamp':(middle-timedelta(seconds=1)).isoformat()}],.1,start,middle)

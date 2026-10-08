@@ -225,6 +225,34 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
         vals={s:v for s,v in vals.items() if v}
         ts=min([ms._parse_ts(row.get('source_timestamp')) for row in flow.values() if ms._parse_ts(row.get('source_timestamp'))],default=None)
         put('forward_strikes',field,vals or None,source=FLOW_SOURCE,ts=ts,reason='No verified forward prints')
+    # Who is in control: call-seller vs put-seller premium dominance, gated on classified coverage.
+    control_rows={};control_ts=[];control_fractions={}
+    for s,r in flow.items():
+        ev=r.get('evidence') or {};ts=ms._parse_ts(r.get('source_timestamp'))
+        if r.get('confidence')=='LOW' or not ts or not ev.get('buckets'):continue
+        fraction=ev.get('classified_contract_fraction')
+        per_bucket={}
+        for bucket,cats in ev['buckets'].items():
+            call_sell=float((cats.get('calls_sold') or {}).get('premium') or 0)
+            put_sell=float((cats.get('puts_sold') or {}).get('premium') or 0)
+            if fraction is None or fraction<0.5:side='inconclusive'
+            elif call_sell<=0 and put_sell<=0:side='inconclusive'
+            elif call_sell>put_sell*1.5:side='call_sellers'
+            elif put_sell>call_sell*1.5:side='put_sellers'
+            else:side='mixed'
+            per_bucket[bucket]={'side':side,'call_sell_premium':call_sell,'put_sell_premium':put_sell}
+        if per_bucket:
+            control_rows[s]=per_bucket;control_ts.append(ts);control_fractions[s]=fraction
+    put('market_control','control_evidence',control_rows or None,source=FLOW_SOURCE,
+        ts=min(control_ts) if control_ts else None,reason='No verified classified call/put sell premium by expiry bucket')
+    sides={s:{b:v['side'] for b,v in rows.items()} for s,rows in control_rows.items()}
+    put('market_control','control_side',sides or None,
+        source='Deterministic call-sell vs put-sell premium dominance by expiry bucket, gated on Sec.7 classified coverage (<0.5 forces inconclusive)',
+        ts=min(control_ts) if control_ts else None,reason='No qualifying classified flow to score')
+    confidence_labels={s:('HIGH' if (f or 0)>=0.7 else 'MEDIUM' if (f or 0)>=0.5 else 'LOW_FORCES_INCONCLUSIVE') for s,f in control_fractions.items()}
+    confidence_values={s:{'classified_contract_fraction':control_fractions[s],'label':confidence_labels[s]} for s in confidence_labels}
+    put('market_control','control_confidence',confidence_values or None,source='Section 7 classified-contract fraction gate',
+        ts=min(control_ts) if control_ts else None,reason='No classified-coverage fraction available')
     assets=cross.get('assets') or {}
     relative={s:(r['price']/r['prev_close']-1)*100 for s,r in assets.items() if number(r.get('price')) and number(r.get('prev_close'))}
     cross_ts=min([ms._parse_ts(r.get('source_timestamp')) for r in assets.values() if ms._parse_ts(r.get('source_timestamp'))],default=None)
@@ -391,6 +419,31 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
         put('engine_consensus',field,value,source='Recorded independent engine states',ts=plan.get('generated_at'))
     return blocks
 
+def forward_control_outlook(blocks,now):
+    """Compare today's dominant option-seller side against the §29 forward (1-4wk) initiation-pressure read.
+
+    Runs after build_strategy_blocks populates forward_strategy; never infers persistence/flip
+    from today's control side alone.
+    """
+    control=blocks.get('market_control',{}).get('control_side') or {}
+    sides=control.get('value') or {}
+    forward=blocks.get('forward_strategy',{}).get('thesis') or {}
+    pressure=forward.get('value') if isinstance(forward.get('value'),dict) else {}
+    out={}
+    for symbol,buckets in sides.items():
+        side=buckets.get('0dte') or next(iter(buckets.values()),None)
+        if side not in ('call_sellers','put_sellers'):continue
+        read=(pressure.get(symbol) or {}).get('read')
+        if read in ('upside pressure','downside pressure'):
+            consistent=(side=='call_sellers' and read=='downside pressure') or (side=='put_sellers' and read=='upside pressure')
+            out[symbol]={'today_control':side,'forward_pressure_read':read,'outlook':'persists' if consistent else 'flips'}
+        else:
+            out[symbol]={'today_control':side,'forward_pressure_read':read,'outlook':'fades',
+                         'basis':'Forward (1-4wk) initiation pressure is balanced/unclassified; no confirmed read to extend today control'}
+    blocks['market_control']['forward_control_outlook']=observation(out or None,
+        'Deterministic comparison of Sec.market_control control_side vs Sec.forward_strategy thesis.read',
+        control.get('source_timestamp'),now,reason='No qualifying control side or forward pressure read to compare')
+
 def previous_reports(now):
     ensure_tables();start=datetime.combine(now.astimezone(CT).date(),time(0),CT).astimezone(UTC).replace(tzinfo=None)
     with engine.begin() as c:
@@ -444,6 +497,7 @@ async def assemble_report(app,*,kind='intraday',plan=None,now=None):
         blocks['morning_comparison']['prior_hour_timestamp']=observation(prior_stamp,'Previous stored report',now,now)
     blocks['event_calendar']['next_five_trading_days']=observation([d.isoformat() for d in days],'Trading-calendar dates, excludes known holidays',now,now)
     build_strategy_blocks(blocks,core,plan,runtime,paper,morning,prior,now)
+    forward_control_outlook(blocks,now)
     if 'paper' in read_failures:
         for name in ('paper_scorecard','trigger_accountability','position_management'):
             blocks[name]={field:unavailable('Paper ledger unavailable: '+read_failures['paper']) for field in REQUIREMENTS[name]}
