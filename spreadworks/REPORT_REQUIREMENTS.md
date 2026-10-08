@@ -133,18 +133,20 @@ is made. Morning retains its existing immutable-plan notification recovery.
 
 ## Email delivery (2026-10-08.1)
 
-`backend/report_email.py` adds SendGrid email as a second, independent
+`backend/report_email.py` adds Resend email as a second, independent
 destination for morning and intraday/market-open reports, alongside the
 existing Discord webhooks — additive only; it never blocks or replaces
 Discord delivery, and a failed/disabled send is swallowed, never raised, so
-it cannot cost a Discord delivery lease. Gated on three environment
-variables all being set: `REPORT_EMAIL_ENABLED=true`, `SENDGRID_API_KEY`,
-and `REPORT_EMAIL_TO` (comma-separated recipients); optional
-`REPORT_EMAIL_FROM` overrides the default sender, which must be a verified
-SendGrid sender identity. The email body reuses `render_opening_html` (the
-same mission/scoreboard/today-vs-forward summary the web view renders) and
-attaches the same verified chart PDF `/charts.pdf` serves, built from the
-already-persisted, already-checked image evidence — never a re-render.
+it cannot cost a Discord delivery lease. Reuses the same `RESEND_API_KEY`
+Resend account already live for IronForge's email-verification funnel
+(separate sender identity). Gated on three environment variables all being
+set: `REPORT_EMAIL_ENABLED=true`, `RESEND_API_KEY`, and `REPORT_EMAIL_TO`
+(comma-separated recipients); `REPORT_EMAIL_FROM` must be set to a verified
+sender/domain in that Resend account or sends are rejected. The email body
+reuses `render_opening_html` (the same mission/scoreboard/today-vs-forward
+summary the web view renders) and attaches the same verified chart PDF
+`/charts.pdf` serves, built from the already-persisted, already-checked
+image evidence — never a re-render.
 
 ## Regression gate
 
