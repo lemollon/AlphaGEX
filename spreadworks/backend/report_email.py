@@ -1,11 +1,13 @@
-"""SendGrid email delivery for morning/intraday reports.
+"""Resend email delivery for morning/intraday reports.
 
-Additive to the existing Discord delivery: never blocks it, never replaces it,
-and a failed/disabled send here must not fail the caller's own delivery path.
-Gated on explicit opt-in plus real SendGrid credentials; no secrets are
-hardcoded. Attaches the same verified chart PDF the report's own
-/charts.pdf route serves, built from the already-persisted, already-checked
-image evidence — never re-renders or fabricates charts for the email.
+Reuses the RESEND_API_KEY already live for IronForge's email verification
+funnel (same Resend account, separate sender). Additive to the existing
+Discord delivery: never blocks it, never replaces it, and a failed/disabled
+send here must not fail the caller's own delivery path. Gated on explicit
+opt-in plus real Resend credentials; no secrets are hardcoded. Attaches the
+same verified chart PDF the report's own /charts.pdf route serves, built
+from the already-persisted, already-checked image evidence — never
+re-rendered or fabricated for the email.
 """
 from __future__ import annotations
 import base64
@@ -22,7 +24,7 @@ logger = logging.getLogger(__name__)
 UTC = timezone.utc
 
 REPORT_EMAIL_ENABLED_ENV = "REPORT_EMAIL_ENABLED"
-SENDGRID_API_KEY_ENV = "SENDGRID_API_KEY"
+RESEND_API_KEY_ENV = "RESEND_API_KEY"
 REPORT_EMAIL_TO_ENV = "REPORT_EMAIL_TO"
 REPORT_EMAIL_FROM_ENV = "REPORT_EMAIL_FROM"
 DEFAULT_FROM = "reports@spreadworks-backend.onrender.com"
@@ -30,7 +32,7 @@ DEFAULT_FROM = "reports@spreadworks-backend.onrender.com"
 
 def report_email_enabled() -> bool:
     return (os.getenv(REPORT_EMAIL_ENABLED_ENV, "").strip().lower() in ("1", "true", "yes")
-            and bool(os.getenv(SENDGRID_API_KEY_ENV, "").strip())
+            and bool(os.getenv(RESEND_API_KEY_ENV, "").strip())
             and bool(os.getenv(REPORT_EMAIL_TO_ENV, "").strip()))
 
 
@@ -81,10 +83,10 @@ def _chart_pdf_bytes(report_id: str) -> bytes | None:
 
 
 def send_report_email_sync(payload: dict, kind: str) -> bool:
-    """Send one report email. Returns False (never raises) on any failure or when disabled."""
+    """Send one report email via Resend. Returns False (never raises) on any failure or when disabled."""
     if not report_email_enabled():
         logger.info("[ReportEmail] disabled (%s/%s/%s not fully set) — skipping",
-                    REPORT_EMAIL_ENABLED_ENV, SENDGRID_API_KEY_ENV, REPORT_EMAIL_TO_ENV)
+                    REPORT_EMAIL_ENABLED_ENV, RESEND_API_KEY_ENV, REPORT_EMAIL_TO_ENV)
         return False
     to_addrs = _recipients()
     if not to_addrs:
@@ -92,30 +94,28 @@ def send_report_email_sync(payload: dict, kind: str) -> bool:
         return False
     report_id = payload.get("report_id")
     body = {
-        "personalizations": [{"to": [{"email": a} for a in to_addrs]}],
-        "from": {"email": os.getenv(REPORT_EMAIL_FROM_ENV, "").strip() or DEFAULT_FROM},
+        "from": os.getenv(REPORT_EMAIL_FROM_ENV, "").strip() or DEFAULT_FROM,
+        "to": to_addrs,
         "subject": f"{kind.title()} Options Report — "
                    f"{str(payload.get('generated_at') or datetime.now(UTC).isoformat())[:10]} — "
                    f"{payload.get('report_completeness') or 'UNKNOWN'}",
-        "content": [{"type": "text/html", "value": _email_html(payload, kind)}],
+        "html": _email_html(payload, kind),
     }
     pdf_bytes = _chart_pdf_bytes(report_id) if report_id else None
     if pdf_bytes:
         body["attachments"] = [{
-            "content": base64.b64encode(pdf_bytes).decode(),
             "filename": f"options-report-{report_id}-charts.pdf",
-            "type": "application/pdf",
-            "disposition": "attachment",
+            "content": base64.b64encode(pdf_bytes).decode(),
         }]
     try:
         resp = requests.post(
-            "https://api.sendgrid.com/v3/mail/send",
-            headers={"Authorization": f"Bearer {os.getenv(SENDGRID_API_KEY_ENV, '').strip()}",
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {os.getenv(RESEND_API_KEY_ENV, '').strip()}",
                      "Content-Type": "application/json"},
             json=body, timeout=20,
         )
-        if resp.status_code not in (200, 202):
-            logger.warning("[ReportEmail] SendGrid rejected send: %s %s", resp.status_code, resp.text[:300])
+        if resp.status_code not in (200, 201, 202):
+            logger.warning("[ReportEmail] Resend rejected send: %s %s", resp.status_code, resp.text[:300])
             return False
         return True
     except Exception as exc:  # noqa: BLE001 — a failed send must not take down the caller's delivery job

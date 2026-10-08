@@ -1,7 +1,7 @@
 """Report email delivery: additive to Discord, never blocks it, never raises.
 
-A disabled/misconfigured sender must take the no-network path (no SendGrid
-call at all), and a SendGrid rejection or network failure must return False
+A disabled/misconfigured sender must take the no-network path (no Resend
+call at all), and a Resend rejection or network failure must return False
 rather than propagate — the calling delivery job's own lease/posted outcome
 must never ride on this module's exceptions.
 """
@@ -28,14 +28,14 @@ def minimal_payload(report_id="abc123"):
 
 
 def clear_env(monkeypatch):
-    for key in (re_mod.REPORT_EMAIL_ENABLED_ENV, re_mod.SENDGRID_API_KEY_ENV,
+    for key in (re_mod.REPORT_EMAIL_ENABLED_ENV, re_mod.RESEND_API_KEY_ENV,
                 re_mod.REPORT_EMAIL_TO_ENV, re_mod.REPORT_EMAIL_FROM_ENV):
         monkeypatch.delenv(key, raising=False)
 
 
 def test_disabled_by_default_never_touches_the_network(monkeypatch):
     clear_env(monkeypatch)
-    def boom(*a, **k): raise AssertionError("must not call SendGrid when disabled")
+    def boom(*a, **k): raise AssertionError("must not call Resend when disabled")
     monkeypatch.setattr(re_mod.requests, "post", boom)
     assert re_mod.send_report_email_sync(minimal_payload(), "morning") is False
 
@@ -44,14 +44,14 @@ def test_disabled_by_default_never_touches_the_network(monkeypatch):
 def test_any_single_missing_setting_disables_sending(monkeypatch, missing):
     clear_env(monkeypatch)
     if missing != "enabled":monkeypatch.setenv(re_mod.REPORT_EMAIL_ENABLED_ENV, "true")
-    if missing != "key":monkeypatch.setenv(re_mod.SENDGRID_API_KEY_ENV, "sg.fake")
+    if missing != "key":monkeypatch.setenv(re_mod.RESEND_API_KEY_ENV, "re_fake")
     if missing != "to":monkeypatch.setenv(re_mod.REPORT_EMAIL_TO_ENV, "leron@example.com")
     assert re_mod.report_email_enabled() is False
 
 
 def _enable(monkeypatch, to="leron@example.com,second@example.com"):
     monkeypatch.setenv(re_mod.REPORT_EMAIL_ENABLED_ENV, "true")
-    monkeypatch.setenv(re_mod.SENDGRID_API_KEY_ENV, "sg.fake-key")
+    monkeypatch.setenv(re_mod.RESEND_API_KEY_ENV, "re_fake-key")
     monkeypatch.setenv(re_mod.REPORT_EMAIL_TO_ENV, to)
 
 
@@ -62,7 +62,7 @@ def test_successful_send_attaches_the_verified_chart_pdf(monkeypatch):
     monkeypatch.setattr("backend.report_assets.portable_pdf", lambda images: b"%PDF-fake-bytes")
     calls = []
     class FakeResp:
-        status_code = 202
+        status_code = 200
         text = ""
     def fake_post(url, headers=None, json=None, timeout=None):
         calls.append((url, headers, json))
@@ -72,11 +72,11 @@ def test_successful_send_attaches_the_verified_chart_pdf(monkeypatch):
     assert re_mod.send_report_email_sync(minimal_payload(), "morning") is True
     assert len(calls) == 1
     url, headers, body = calls[0]
-    assert url == "https://api.sendgrid.com/v3/mail/send"
-    assert headers["Authorization"] == "Bearer sg.fake-key"
-    assert [p["email"] for p in body["personalizations"][0]["to"]] == ["leron@example.com", "second@example.com"]
+    assert url == "https://api.resend.com/emails"
+    assert headers["Authorization"] == "Bearer re_fake-key"
+    assert body["to"] == ["leron@example.com", "second@example.com"]
     assert body["attachments"][0]["content"] == base64.b64encode(b"%PDF-fake-bytes").decode()
-    assert "Morning Options Report" in body["content"][0]["value"]
+    assert "Morning Options Report" in body["html"]
 
 
 def test_incomplete_chart_assets_sends_without_an_attachment(monkeypatch):
@@ -85,7 +85,7 @@ def test_incomplete_chart_assets_sends_without_an_attachment(monkeypatch):
                          lambda report_id: {"complete": False, "failures": {"flow": "no data"}})
     calls = []
     class FakeResp:
-        status_code = 202
+        status_code = 200
         text = ""
     monkeypatch.setattr(re_mod.requests, "post", lambda *a, **k: (calls.append(1), FakeResp())[1])
 
@@ -93,12 +93,12 @@ def test_incomplete_chart_assets_sends_without_an_attachment(monkeypatch):
     assert calls == [1]
 
 
-def test_sendgrid_rejection_returns_false_without_raising(monkeypatch):
+def test_resend_rejection_returns_false_without_raising(monkeypatch):
     _enable(monkeypatch)
     monkeypatch.setattr("backend.full_options_report.get_assets", lambda report_id: {"complete": False})
     class FakeResp:
-        status_code = 400
-        text = "bad request"
+        status_code = 422
+        text = "unverified domain"
     monkeypatch.setattr(re_mod.requests, "post", lambda *a, **k: FakeResp())
     assert re_mod.send_report_email_sync(minimal_payload(), "morning") is False
 
@@ -115,7 +115,7 @@ def test_missing_report_id_still_sends_without_an_attachment(monkeypatch):
     _enable(monkeypatch)
     payload = minimal_payload();del payload["report_id"]
     class FakeResp:
-        status_code = 202
+        status_code = 200
         text = ""
     monkeypatch.setattr(re_mod.requests, "post", lambda *a, **k: FakeResp())
     assert re_mod.send_report_email_sync(payload, "morning") is True
