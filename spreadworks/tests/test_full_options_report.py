@@ -268,6 +268,35 @@ def test_forward_control_outlook_fades_without_confirmed_forward_read():
     report.forward_control_outlook(base,NOW)
     assert base['market_control']['forward_control_outlook']['value']['SPY']['outlook']=='fades'
 
+def test_engine_consensus_no_longer_carries_risk_session_hunt():
+    blocks=report.report_blocks(core(),{},{},{},ledger_empty(),{},{},[],NOW)
+    assert set(blocks['engine_consensus'])=={'squeeze','trading_volatility_status','contradictions'}
+
+def flow_row_directional(fraction,calls_bought,calls_sold,puts_bought,puts_sold):
+    # Bullish initiation lean = calls_bought + puts_sold premium; bearish = calls_sold + puts_bought.
+    return {'confidence':'MEDIUM','source_timestamp':NOW.isoformat(),'evidence':{
+        'classified_contract_fraction':fraction,
+        'buckets':{'0dte':{'calls_bought':{'contracts':1,'premium':calls_bought},'calls_sold':{'contracts':1,'premium':calls_sold},
+                            'puts_bought':{'contracts':1,'premium':puts_bought},'puts_sold':{'contracts':1,'premium':puts_sold}}}}}
+
+def test_price_vix_confirmation_confirms_conflicts_and_abstains():
+    current=core()
+    current['flow']={'SPY':flow_row_directional(.8,100.,5000.,100.,100.),  # bearish-leaning flow (calls_sold dominant)
+                      'QQQ':flow_row_directional(.8,5000.,100.,100.,100.)}  # bullish-leaning flow (calls_bought dominant)
+    current['cross_asset']={'assets':{'SPY':{'price':101,'prev_close':100,'source_timestamp':NOW.isoformat(),'fresh':True},
+                                       'QQQ':{'price':99,'prev_close':100,'source_timestamp':NOW.isoformat(),'fresh':True}}}
+    blocks=report.report_blocks(current,{},{},{},ledger_empty(),{},{},[],NOW)
+    pv=blocks['flow']['price_vix_confirmation']['value']
+    assert pv['SPY']['flow_lean']=='downside' and pv['SPY']['price_direction']=='up' and pv['SPY']['read']=='conflicts'
+    assert pv['QQQ']['flow_lean']=='upside' and pv['QQQ']['price_direction']=='down' and pv['QQQ']['read']=='conflicts'
+
+def test_price_vix_confirmation_agrees_when_flow_and_price_align():
+    current=core()
+    current['flow']={'SPY':flow_row_directional(.8,5000.,100.,100.,100.)}  # bullish-leaning flow
+    current['cross_asset']={'assets':{'SPY':{'price':101,'prev_close':100,'source_timestamp':NOW.isoformat(),'fresh':True}}}
+    blocks=report.report_blocks(current,{},{},{},ledger_empty(),{},{},[],NOW)
+    assert blocks['flow']['price_vix_confirmation']['value']['SPY']['read']=='confirms'
+
 def test_forward_control_outlook_unavailable_without_control_side():
     base={'market_control':{'control_side':{'status':'unavailable'},'forward_control_outlook':{}},'forward_strategy':{'thesis':{}}}
     report.forward_control_outlook(base,NOW)
