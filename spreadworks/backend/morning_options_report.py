@@ -984,6 +984,11 @@ async def run_morning_options_report(app: Any, *, now: datetime | None = None,
     )
     payload.update(result)
     posted = await asyncio.to_thread(_send_discord, payload)
+    try:
+        from .report_email import send_report_email_sync
+        await asyncio.to_thread(send_report_email_sync, payload, "morning")
+    except Exception:
+        logger.exception("[MorningOptions] email delivery failed; Discord delivery unaffected")
     await asyncio.to_thread(_update_delivery, trading_date, posted=posted, attempted_at=datetime.now(UTC))
     finished = datetime.now(UTC)
     _LAST_RUN.update(
