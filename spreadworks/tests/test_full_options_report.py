@@ -147,6 +147,9 @@ async def test_full_assembly_all_fields_dark_png_embed_and_durable_view(db,monke
     view=report.report_view(result['report_id'])
     assert 'src="data:image/png;base64,' in view
     assert 'src="https://' not in view
+    assert all(x in view for x in ('Market story','Edge board','Biggest traps','If/then day plan'))
+    assert 'Section summary' in view and 'What it means for the day' in view
+    assert 'class="field decision"' in view
     assets=report.get_assets(result['report_id'])
     assert assets['complete'];assert len(assets['images'])==11
     assert all(row['validated'] and row['sha256'][:32]==row['chart_id'] for row in assets['images'])

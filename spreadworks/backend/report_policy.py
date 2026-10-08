@@ -484,4 +484,12 @@ def render_opening_html(payload):
     out="<h2>🎯 Today’s mission</h2><p>"+escape(display(blocks.get("risk_on_defensive",{}).get("verdict",{})))+"</p><h2>🚦 30-second scoreboard</h2><table>"+rows+"</table><h2>Today vs forward</h2><table>"
     for name in ("day_strategy","near_forward_strategy","forward_strategy"):
         row=blocks.get(name) or {};out+="<tr><th>"+escape(name.replace("_"," "))+"</th><td>"+escape(display(row.get("thesis",{})))+"<br>"+escape(display(row.get("status",{})))+"</td></tr>"
-    return out+"</table>"
+    out+="</table>"
+    out+="<h2>🧭 Market story</h2><p>"+escape(market_story(blocks))+"</p>"
+    out+="<h2>🧩 Edge board</h2><table><tr><th>Horizon</th><th>Trigger</th><th>Invalidation</th><th>Status</th></tr>"
+    for horizon,trigger,invalid,status in edge_board(blocks):
+        out+="<tr><th>"+escape(horizon)+"</th><td>"+escape(trigger)+"</td><td>"+escape(invalid)+"</td><td>"+escape(status)+"</td></tr>"
+    out+="</table>"
+    out+="<h2>⚠️ Biggest traps</h2><ul>"+"".join("<li>"+escape(t)+"</li>" for t in biggest_traps(blocks))+"</ul>"
+    out+="<h2>🧮 If/then day plan</h2><table>"+"".join("<tr><th>"+escape(k)+"</th><td>"+escape(v)+"</td></tr>" for k,v in if_then_day_plan(blocks))+"</table>"
+    return out

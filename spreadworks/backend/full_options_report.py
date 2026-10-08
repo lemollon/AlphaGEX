@@ -773,6 +773,7 @@ def _field_row(field,item):
 
 @router.get('/{report_id}/view',response_class=HTMLResponse)
 def report_view(report_id:str):
+    from .report_policy import SECTION_SUMMARY_SECTIONS,section_summary,section_meaning
     payload=stored_report(report_id);parts=[];nav=[]
     images=payload.get('chart_urls') or {}
     assets,failures=stored_chart_assets(images)
@@ -786,6 +787,11 @@ def report_view(report_id:str):
         title=name.replace('_',' ').title()
         nav.append(f'<a href="#{anchor}">{html.escape(title)}</a>')
         fields_html=''.join(_field_row(field,item) for field,item in block.items())
+        if name in SECTION_SUMMARY_SECTIONS:
+            fields_html+=(f'<div class="field decision"><div class="fieldname">Section summary</div>'
+                          f'<div class="fieldval">{html.escape(section_summary(name,block))}</div></div>'
+                          f'<div class="field decision"><div class="fieldname">What it means for the day</div>'
+                          f'<div class="fieldval">{html.escape(section_meaning(name,block))}</div></div>')
         chart_names=[groups.get(name)]
         if name=='surface':chart_names+=['term_structure']
         image=''.join(f'<img src="{inline[n]}" alt="{html.escape(n)} chart" decoding="async">' if n in inline
@@ -831,6 +837,8 @@ h1,h2{font-weight:700}
 .fields{display:flex;flex-direction:column}
 .field{padding:10px 0;border-top:1px solid var(--border)}
 .field:first-child{border-top:none;padding-top:0}
+.field.decision{border-left:2px solid var(--accent);padding-left:10px}
+.field.decision .fieldname{color:var(--accent)}
 .fieldtop{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px}
 .fieldname{font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
 .fieldval{font-size:.92rem;overflow-wrap:anywhere}
