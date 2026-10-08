@@ -697,26 +697,42 @@ def _fmt_primitive(v):
     if isinstance(v,float):return html.escape(f'{v:.4g}' if abs(v)<1e6 else str(v))
     return html.escape(str(v))
 
+_MAX_KV_FIELDS=8
+_MAX_SCALAR_ITEMS=8
+_MAX_DICT_ITEMS=5
+
 def _fmt_value(v,depth=0):
     """Render a field's raw value for a human: per-symbol lines, small key/value blocks for
-    structured data, and a contained scrollable JSON block only as a last resort for shapes
-    too irregular to summarize — never a bare, unformatted json.dumps() wall of text."""
+    structured data, and a bounded "+N more" preview for large collections — never an
+    unbounded json.dumps() wall of text. Truncation only changes the display; counts shown
+    for the hidden remainder are always real, never fabricated."""
     if v is None:return '<span class="muted">&mdash;</span>'
     if isinstance(v,dict):
         if v and all(isinstance(k,str) and _SYM_KEY_RE.match(k) for k in v):
             return ' <span class="sep">&middot;</span> '.join(
                 f'<b>{html.escape(sym)}</b>: {_fmt_value(sv,depth+1)}' for sym,sv in v.items())
-        if v and len(v)<=10 and depth<3:
+        if v and depth<3:
+            items=list(v.items());shown=items[:_MAX_KV_FIELDS]
             rows=''.join(f'<div class="kv"><span class="k">{html.escape(str(k).replace("_"," "))}</span>'
-                         f'<span class="v">{_fmt_value(vv,depth+1)}</span></div>' for k,vv in v.items())
+                         f'<span class="v">{_fmt_value(vv,depth+1)}</span></div>' for k,vv in shown)
+            if len(items)>_MAX_KV_FIELDS:
+                rows+=f'<div class="kv more">&hellip; +{len(items)-_MAX_KV_FIELDS} more fields</div>'
             return f'<div class="kvblock">{rows}</div>'
         return f'<pre class="raw">{html.escape(json.dumps(v,indent=2,ensure_ascii=False))}</pre>'
     if isinstance(v,list):
         if not v:return '<span class="muted">none</span>'
-        if len(v)<=12 and all(not isinstance(x,(dict,list)) for x in v):
-            return ', '.join(_fmt_value(x,depth+1) for x in v)
-        if len(v)<=8 and depth<2 and all(isinstance(x,dict) and len(x)<=6 for x in v):
-            return ''.join(f'<div class="kvblock listitem">{_fmt_value(x,depth+1)}</div>' for x in v)
+        if all(not isinstance(x,(dict,list)) for x in v):
+            shown=v[:_MAX_SCALAR_ITEMS]
+            text=', '.join(_fmt_value(x,depth+1) for x in shown)
+            if len(v)>_MAX_SCALAR_ITEMS:
+                text+=f' <span class="muted">&hellip; +{len(v)-_MAX_SCALAR_ITEMS} more</span>'
+            return text
+        if depth<2 and all(isinstance(x,dict) for x in v):
+            shown=v[:_MAX_DICT_ITEMS]
+            out=''.join(f'<div class="kvblock listitem">{_fmt_value(x,depth+1)}</div>' for x in shown)
+            if len(v)>_MAX_DICT_ITEMS:
+                out+=f'<div class="muted">&hellip; +{len(v)-_MAX_DICT_ITEMS} more items</div>'
+            return out
         return f'<pre class="raw">{html.escape(json.dumps(v,indent=2,ensure_ascii=False))}</pre>'
     return _fmt_primitive(v)
 
