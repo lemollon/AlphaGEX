@@ -670,9 +670,74 @@ def get_portable_report(report_id:str):
     return Response(portable_zip(payload,assets['images'],report_view(report_id)),media_type='application/zip',
                     headers={'Content-Disposition':f'attachment; filename="options-report-{report_id}.zip"'})
 
+_SYM_KEY_RE=re.compile(r'^[A-Z]{1,5}$')
+
+def _fmt_primitive(v):
+    if isinstance(v,bool):return '<span class="bool-'+('yes' if v else 'no')+'">'+('yes' if v else 'no')+'</span>'
+    if isinstance(v,float):return html.escape(f'{v:.4g}' if abs(v)<1e6 else str(v))
+    return html.escape(str(v))
+
+def _fmt_value(v,depth=0):
+    """Render a field's raw value for a human: per-symbol lines, small key/value blocks for
+    structured data, and a contained scrollable JSON block only as a last resort for shapes
+    too irregular to summarize — never a bare, unformatted json.dumps() wall of text."""
+    if v is None:return '<span class="muted">&mdash;</span>'
+    if isinstance(v,dict):
+        if v and all(isinstance(k,str) and _SYM_KEY_RE.match(k) for k in v):
+            return ' <span class="sep">&middot;</span> '.join(
+                f'<b>{html.escape(sym)}</b>: {_fmt_value(sv,depth+1)}' for sym,sv in v.items())
+        if v and len(v)<=10 and depth<3:
+            rows=''.join(f'<div class="kv"><span class="k">{html.escape(str(k).replace("_"," "))}</span>'
+                         f'<span class="v">{_fmt_value(vv,depth+1)}</span></div>' for k,vv in v.items())
+            return f'<div class="kvblock">{rows}</div>'
+        return f'<pre class="raw">{html.escape(json.dumps(v,indent=2,ensure_ascii=False))}</pre>'
+    if isinstance(v,list):
+        if not v:return '<span class="muted">none</span>'
+        if len(v)<=12 and all(not isinstance(x,(dict,list)) for x in v):
+            return ', '.join(_fmt_value(x,depth+1) for x in v)
+        if len(v)<=8 and depth<2 and all(isinstance(x,dict) and len(x)<=6 for x in v):
+            return ''.join(f'<div class="kvblock listitem">{_fmt_value(x,depth+1)}</div>' for x in v)
+        return f'<pre class="raw">{html.escape(json.dumps(v,indent=2,ensure_ascii=False))}</pre>'
+    return _fmt_primitive(v)
+
+_STATUS_PILL={'live':('live','LIVE'),'historical':('hist','LAST KNOWN'),'unavailable':('unavail','UNAVAILABLE')}
+
+# Display order only — never changes REQUIREMENTS/the data contract. A day/swing options
+# trader reads this top to bottom for "what's the regime, who's in control, what's the
+# trade" first; supporting evidence and bookkeeping sections follow. Any block not listed
+# here (e.g. a future contract addition) still renders, just after everything listed.
+_SECTION_DISPLAY_ORDER=[
+    'risk_on_defensive','market_control','gamma','flow','premium_selling',
+    'day_strategy','near_forward_strategy','forward_strategy','contract_packages','entry_watches',
+    'expected_move','smile','surface','forward_strikes',
+    'range_stall','breadth','profile','sector_credit','macro','futures_context','event_calendar','candidate_analysis',
+    'position_management','trigger_accountability','paper_scorecard','scanner','event_study','engine_consensus',
+    'morning_comparison','horizon_comparison','adaptation_rules',
+    'visuals','data_integrity',
+]
+def _ordered_blocks(report_blocks):
+    rank={name:i for i,name in enumerate(_SECTION_DISPLAY_ORDER)}
+    return sorted(report_blocks.items(),key=lambda kv:rank.get(kv[0],len(_SECTION_DISPLAY_ORDER)))
+
+def _field_row(field,item):
+    status=item.get('status','unavailable')
+    value=item.get('value')
+    pill_cls,pill_label=_STATUS_PILL.get(status,('unavail',status.upper()))
+    content=_fmt_value(value) if value is not None else f'<span class="muted">{html.escape(item.get("reason") or "No verified observation")}</span>'
+    meta=[]
+    if item.get('source'):meta.append(html.escape(str(item['source'])))
+    if item.get('source_timestamp'):meta.append(html.escape(str(item['source_timestamp'])))
+    age=item.get('age_seconds')
+    if isinstance(age,(int,float)):meta.append(f'age {age:.0f}s' if age<120 else f'age {age/60:.1f}m')
+    meta_html=f'<div class="meta">{" &middot; ".join(meta)}</div>' if meta else ''
+    reason_html=f'<div class="reason">{html.escape(item["reason"])}</div>' if status=='unavailable' and item.get('reason') and value is not None else ''
+    return (f'<div class="field"><div class="fieldtop"><span class="fieldname">{html.escape(field.replace("_"," "))}</span>'
+            f'<span class="pill {pill_cls}">{pill_label}</span></div>'
+            f'<div class="fieldval">{content}</div>{meta_html}{reason_html}</div>')
+
 @router.get('/{report_id}/view',response_class=HTMLResponse)
 def report_view(report_id:str):
-    payload=stored_report(report_id);parts=[]
+    payload=stored_report(report_id);parts=[];nav=[]
     images=payload.get('chart_urls') or {}
     assets,failures=stored_chart_assets(images)
     inline={asset['name']:'data:image/png;base64,'+asset['png_base64'] for asset in assets}
@@ -680,24 +745,95 @@ def report_view(report_id:str):
             'surface':'surface',
             'sector_credit':'sector_credit','event_calendar':'event_risk','paper_scorecard':'paper_equity_drawdown',
             'morning_comparison':'baseline_comparison','profile':'volume_profile'}
-    for name,block in payload['report_blocks'].items():
-        rows=[]
-        for field,item in block.items():
-            val=item.get('value')
-            content=json.dumps(val,indent=2,ensure_ascii=False) if isinstance(val,(dict,list)) else str(val) if val is not None else item.get('reason') or 'Unavailable'
-            clock=item.get('source_timestamp') or ''
-            if item.get('status')=='historical':clock='LAST KNOWN — updated '+clock+'; age '+str(item.get('age_seconds'))+'s; context only'
-            rows.append(f'<details><summary>{html.escape(field.replace("_"," "))} <small>{html.escape(item["status"].upper())}</small></summary><pre>{html.escape(content)}</pre><p>{html.escape(str(item.get("source") or ""))} {html.escape(clock)} | age {item.get("age_seconds","n/a")}s</p></details>')
+    for name,block in _ordered_blocks(payload['report_blocks']):
+        anchor='sec-'+name.replace('_','-')
+        title=name.replace('_',' ').title()
+        nav.append(f'<a href="#{anchor}">{html.escape(title)}</a>')
+        fields_html=''.join(_field_row(field,item) for field,item in block.items())
         chart_names=[groups.get(name)]
         if name=='surface':chart_names+=['term_structure']
         image=''.join(f'<img src="{inline[n]}" alt="{html.escape(n)} chart" decoding="async">' if n in inline
                       else f'<p role="alert">VISUAL DELIVERY FAILED: {html.escape(n or "chart")}. {html.escape(failures.get(n,""))}</p>'
                       for n in chart_names if n in images)
-        parts.append(f'<section><h2>{html.escape(name.replace("_"," ").title())}</h2>{image}{"".join(rows)}</section>')
+        parts.append(f'<section class="card" id="{anchor}"><h2>{html.escape(title)}</h2>'
+                     f'{"<div class=\'chart\'>"+image+"</div>" if image else ""}'
+                     f'<div class="fields">{fields_html}</div></section>')
     from .report_policy import display
-    bottom='<section><h2>BOTTOM LINE</h2>'+''.join('<p>'+html.escape(line)+'</p>' for line in ['Regime: '+display(payload['report_blocks']['risk_on_defensive']['verdict']),'Opportunity / premium: '+display(payload['report_blocks']['premium_selling']['suitability']),'Next test: recorded entry confirmation plus fresh per-leg BBO; dated context alone cannot activate a trade.'])+'</section>'
-    downloads=f'<p><a href="{PUBLIC_BASE}/{report_id}/charts.pdf">Download chart PDF</a> · <a href="{PUBLIC_BASE}/{report_id}/portable.zip">Download offline report</a></p>'
-    return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Full Options Report</title><style>body{background:#0B1220;color:#E5E7EB;font:16px/1.6 system-ui;max-width:1000px;margin:auto;padding:24px}section{padding:20px 0;margin:20px 0}h1,h2{color:#E5E7EB}table{width:100%;table-layout:fixed;border-collapse:collapse}td,th{padding:12px 8px;border-bottom:1px solid #374151;text-align:left;overflow-wrap:anywhere;vertical-align:top}th{width:32%}img{max-width:100%}details{border-top:1px solid #374151;padding:12px 0}summary{cursor:pointer;overflow-wrap:anywhere}small{color:#FBBF24}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#E5E7EB}p{color:#AEB8CB}a{color:#22D3EE}</style></head><body>'+f'<h1>{html.escape(payload["kind"].title())} Options Sentiment</h1><p>{html.escape(payload["generated_at"])} | {payload["report_completeness"]} | Immutable snapshot; clocks are as of generation.</p><a href="{payload["markdown_url"]}">Download complete report</a>'+downloads+render_opening_html(payload)+''.join(parts)+bottom+'</body></html>'
+    bottom=('<section class="card bottomline"><h2>Bottom line</h2>'
+           +''.join('<p>'+html.escape(line)+'</p>' for line in [
+               'Regime: '+display(payload['report_blocks']['risk_on_defensive']['verdict']),
+               'Opportunity / premium: '+display(payload['report_blocks']['premium_selling']['suitability']),
+               'Next test: recorded entry confirmation plus fresh per-leg BBO; dated context alone cannot activate a trade.'])
+           +'</section>')
+    downloads=(f'<a href="{PUBLIC_BASE}/{report_id}/charts.pdf">Chart PDF</a>'
+              f'<a href="{PUBLIC_BASE}/{report_id}/portable.zip">Offline ZIP</a>'
+              f'<a href="{payload["markdown_url"]}">Markdown</a>')
+    style='''
+:root{--bg:#0b0e13;--surface:#141a23;--surface2:#1b2330;--border:#2a3341;--fg:#e8ecf1;--muted:#8b97a8;
+--accent:#35d0ba;--call:#34d399;--put:#f87171;--warn:#fbbf24}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+margin:0;padding:0}
+.wrap{max-width:900px;margin:0 auto;padding:16px}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--border);
+padding:14px 16px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:baseline}
+header.top h1{font-size:1.05rem;margin:0}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+.chip{font-size:.7rem;border:1px solid var(--border);border-radius:999px;padding:3px 10px;color:var(--muted);white-space:nowrap}
+.chip.warn{color:var(--warn);border-color:var(--warn)}
+.downloads{display:flex;gap:10px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--border)}
+.downloads a{color:var(--accent);text-decoration:none;font-size:.82rem;border:1px solid var(--border);border-radius:6px;padding:4px 10px}
+nav.jump{display:flex;flex-wrap:wrap;gap:6px 10px;padding:14px 0;margin-bottom:8px;border-bottom:1px solid var(--border)}
+nav.jump a{color:var(--muted);text-decoration:none;font-size:.78rem;border:1px solid var(--border);border-radius:5px;padding:3px 8px}
+nav.jump a:hover{color:var(--accent);border-color:var(--accent)}
+h1,h2{font-weight:700}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin:14px 0}
+.card h2{font-size:1.02rem;margin:0 0 12px}
+.chart{margin-bottom:14px}
+.chart img{max-width:100%;border-radius:6px;display:block;background:#0b0e13}
+.chart p[role=alert]{color:var(--warn);font-size:.85rem}
+.fields{display:flex;flex-direction:column}
+.field{padding:10px 0;border-top:1px solid var(--border)}
+.field:first-child{border-top:none;padding-top:0}
+.fieldtop{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px}
+.fieldname{font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.fieldval{font-size:.92rem;overflow-wrap:anywhere}
+.pill{font-size:.65rem;border-radius:5px;padding:2px 7px;letter-spacing:.03em;white-space:nowrap;flex-shrink:0}
+.pill.unavail{background:rgba(139,151,168,.18);color:var(--muted);border:1px solid var(--border)}
+.pill.hist{background:rgba(251,191,36,.16);color:var(--warn);border:1px solid rgba(251,191,36,.45)}
+.pill.live{background:rgba(52,211,153,.16);color:var(--call);border:1px solid rgba(52,211,153,.45)}
+.meta{color:var(--muted);font-size:.74rem;margin-top:4px;overflow-wrap:anywhere}
+.reason{color:var(--muted);font-size:.82rem;margin-top:4px}
+.muted{color:var(--muted)}
+.sep{color:var(--muted)}
+.kvblock{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-top:4px}
+.kvblock.listitem{margin-bottom:6px}
+.kv{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:.85rem}
+.kv .k{color:var(--muted)}
+pre.raw{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px;
+overflow-x:auto;font-size:.78rem;color:var(--fg);white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
+.bool-yes{color:var(--call)}
+.bool-no{color:var(--put)}
+table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+th,td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:left;overflow-wrap:anywhere;vertical-align:top;font-size:.85rem}
+th{width:34%;color:var(--muted);font-weight:600}
+tr:last-child td,tr:last-child th{border-bottom:none}
+p{color:var(--muted)}
+a{color:var(--accent)}
+.bottomline p{color:var(--fg);font-size:.92rem;margin:6px 0}
+@media (max-width:600px){.wrap{padding:12px}}
+'''
+    head=(f'<!doctype html><html><head><meta charset="utf-8">'
+          f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+          f'<title>{html.escape(payload["kind"].title())} Options Report</title><style>{style}</style></head><body>')
+    header=(f'<header class="top"><h1>{html.escape(payload["kind"].title())} Options Report</h1>'
+           f'<div class="chips"><span class="chip">{html.escape(payload["generated_at"])}</span>'
+           f'<span class="chip {"warn" if payload["report_completeness"]=="INCOMPLETE" else ""}">{html.escape(payload["report_completeness"])}</span>'
+           f'<span class="chip">immutable snapshot</span></div></header>'
+           f'<div class="downloads">{downloads}</div>')
+    body=(f'<div class="wrap"><nav class="jump">{"".join(nav)}</nav>'
+         f'{render_opening_html(payload)}{"".join(parts)}{bottom}</div>')
+    return head+header+body+'</body></html>'
 
 def claim_delivery(kind,now):
     """Atomic per-checkpoint lease. Successful sends are never normally resent."""
