@@ -10,7 +10,7 @@ from backend.report_contract import REQUIREMENTS, validate_report, prepare_repor
 from backend.report_policy import (normalize_blocks, observed, policy_identity, build_strategy_blocks,
                                    validate_semantics, section_summary, section_meaning, market_story,
                                    edge_board, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
-                                   render_markdown)
+                                   render_markdown, render_opening_html)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -256,6 +256,18 @@ def test_render_markdown_adds_decision_lines_only_for_included_sections():
     assert 'Section summary:' not in paper_section and 'What it means for the day:' not in paper_section
     assert set(SECTION_SUMMARY_SECTIONS) <= set(REQUIREMENTS)
     assert 'paper_scorecard' not in SECTION_SUMMARY_SECTIONS
+
+def test_render_opening_html_carries_decision_first_panels():
+    """This is the function the live /view page and the email body actually render from —
+    unlike render_markdown (Discord-only), a gap this catches by construction."""
+    blocks=empty_blocks()
+    blocks['risk_on_defensive']['verdict']=item('Defensive price confirmation')
+    blocks['adaptation_rules']['activate']=item('Require the registered trigger')
+    opening=render_opening_html({'report_blocks':blocks})
+    assert '<h2>🧭 Market story</h2>' in opening and 'Defensive price confirmation' in opening
+    assert '<h2>🧩 Edge board</h2>' in opening
+    assert '<h2>⚠️ Biggest traps</h2>' in opening
+    assert '<h2>🧮 If/then day plan</h2>' in opening and 'Require the registered trigger' in opening
 
 def test_optional_collector_failure_preserves_other_core_sources(monkeypatch):
     from backend import market_structure as ms
