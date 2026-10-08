@@ -740,6 +740,11 @@ async def scheduled_intraday(app,kind='intraday'):
         if not posted:error='Notification transport returned failure'
     except Exception as exc:
         error=type(exc).__name__;logger.exception('[FullReport] notification delivery failed')
+    try:
+        from .report_email import send_report_email_sync
+        await asyncio.to_thread(send_report_email_sync,report,kind)
+    except Exception:
+        logger.exception('[FullReport] email delivery failed; Discord lease unaffected')
     await asyncio.to_thread(finish_delivery,slot,report['report_id'],bool(posted),error)
     save_evidence('intraday_delivery',{'posted':bool(posted),'report_id':report['report_id']},datetime.now(UTC))
     return report

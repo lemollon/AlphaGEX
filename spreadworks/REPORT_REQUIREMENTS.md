@@ -131,6 +131,21 @@ but before the database records success can still duplicate delivery because the
 external webhook has no transaction/idempotency key. No exactly-once guarantee
 is made. Morning retains its existing immutable-plan notification recovery.
 
+## Email delivery (2026-10-08.1)
+
+`backend/report_email.py` adds SendGrid email as a second, independent
+destination for morning and intraday/market-open reports, alongside the
+existing Discord webhooks — additive only; it never blocks or replaces
+Discord delivery, and a failed/disabled send is swallowed, never raised, so
+it cannot cost a Discord delivery lease. Gated on three environment
+variables all being set: `REPORT_EMAIL_ENABLED=true`, `SENDGRID_API_KEY`,
+and `REPORT_EMAIL_TO` (comma-separated recipients); optional
+`REPORT_EMAIL_FROM` overrides the default sender, which must be a verified
+SendGrid sender identity. The email body reuses `render_opening_html` (the
+same mission/scoreboard/today-vs-forward summary the web view renders) and
+attaches the same verified chart PDF `/charts.pdf` serves, built from the
+already-persisted, already-checked image evidence — never a re-render.
+
 ## Regression gate
 
 From the repository root:
@@ -140,7 +155,7 @@ python -m pytest spreadworks/tests/test_report_policy.py \
   spreadworks/tests/test_full_options_report.py \
   spreadworks/tests/test_report_evidence_integrity.py \
   spreadworks/tests/test_morning_options_report.py \
-  spreadworks/tests/test_market_structure.py spreadworks/tests/test_report_refresh.py spreadworks/tests/test_tradier_report_source.py spreadworks/tests/test_intraday_watch.py spreadworks/tests/test_theta_flow.py spreadworks/tests/test_thetadata_proxy.py -q
+  spreadworks/tests/test_market_structure.py spreadworks/tests/test_report_refresh.py spreadworks/tests/test_tradier_report_source.py spreadworks/tests/test_intraday_watch.py spreadworks/tests/test_theta_flow.py spreadworks/tests/test_thetadata_proxy.py spreadworks/tests/test_report_email.py -q
 ```
 
 The independent strict report-policy CI job must pass without `|| true`.
