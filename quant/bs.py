@@ -112,16 +112,26 @@ def bs_charm(
     sigma: float,
     r: float = DEFAULT_R,
 ) -> float:
-    """∂Δ/∂T (per year). Same value for calls and puts under no dividends.
+    """∂Δ/∂t, per year, where t is elapsed CALENDAR time (t_years is the
+    remaining time to expiry, which decreases as t increases). Same value
+    for calls and puts under no dividends.
 
     Returns 0 at/past expiry or when sigma is non-positive (undefined region).
     Sign convention: positive charm means delta increases as time passes.
+
+    Verified numerically against a finite-difference of delta with respect
+    to calendar time (see tests/skew_signal/test_bs_charm.py) -- a prior
+    version of this function returned ∂Δ/∂t_years (i.e. the derivative with
+    respect to time REMAINING, not time ELAPSED) without the sign flip that
+    conversion needs, which silently inverted every charm-based signal
+    decision downstream (see docs/superpowers/reports/2026-05-10-skew-charm-final.md,
+    whose NO-GO verdict was computed with the inverted sign and is unreliable).
     """
     if t_years <= 0 or sigma <= 0 or spot <= 0:
         return 0.0
     sqrt_t = math.sqrt(t_years)
     d1 = (math.log(spot / strike) + (r + 0.5 * sigma * sigma) * t_years) / (sigma * sqrt_t)
-    return _norm_pdf(d1) * ((r + 0.5 * sigma * sigma) / (sigma * sqrt_t) - d1 / (2.0 * t_years))
+    return -_norm_pdf(d1) * ((r + 0.5 * sigma * sigma) / (sigma * sqrt_t) - d1 / (2.0 * t_years))
 
 
 def implied_vol(
