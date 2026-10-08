@@ -841,7 +841,7 @@ def summarize_flow_evidence(rows: list[dict[str, Any]], session_now: datetime,
         "unclassified_premium": total_premium - classified_premium,
         "concentrations": sorted(concentrations.values(), key=lambda x: x["premium"], reverse=True)[:40],
         "rejected_rows": rejected,
-        "coverage_scope": "Up to four sampled listed expirations <=60DTE, three listed strikes nearest spot per expiration, calls/puts; recent 120-second window; not all strikes/expirations, whole-market or full-session flow",
+        "coverage_scope": "Up to four sampled listed expirations <=60DTE, six listed strikes nearest spot per expiration, calls/puts; recent 120-second window; not all strikes/expirations, whole-market or full-session flow",
         "classification_method": "Likely initiation from regular/auto prints at preceding NBBO <=1s; midpoint/complex/unknown conditions unclassified",
         "guardrail": "No opening/closing, institutional identity, or multi-leg intent inferred",
     }
@@ -862,7 +862,12 @@ def fetch_trade_quote_flow(symbol, now=None):
     evidence = {}
     if session_now.weekday() < 5 and dtime(9, 30) <= session_now.time() < dtime(16):
         try:
-            deadline = time.monotonic() + 25
+            # 2026-10-08: widened 3->6 strikes/expiration after confirming via logs this
+            # budget was never actually exhausted at the old 3-strike scope (zero
+            # "collection time budget exhausted" events in 3 days of production runs) and
+            # the proxy's single-client lock saw zero 429 contention over the same window --
+            # real headroom, not a guess. 25s->40s keeps a safety margin for the ~2x request count.
+            deadline = time.monotonic() + 40
             spot = fetch_spot(symbol.upper(), requested_at, timeout=5)
             if not spot.get("fresh") or not spot.get("price"):
                 raise RuntimeError("fresh underlying spot unavailable for contract selection")
@@ -881,7 +886,7 @@ def fetch_trade_quote_flow(symbol, now=None):
                                                 timeout=min(5, remaining))
                     strikes = {_f(row, "strike") for row in listed_strikes}
                     strikes = sorted((s for s in strikes if s is not None and math.isfinite(s) and s > 0),
-                                     key=lambda s: (abs(s - spot['price']), s))[:3]
+                                     key=lambda s: (abs(s - spot['price']), s))[:6]
                     if not strikes:
                         raise RuntimeError("no listed strikes")
                     expiry_complete = True

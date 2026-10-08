@@ -73,14 +73,14 @@ def test_contract_requests_sample_nearest_listed_strikes_and_never_bulk(monkeypa
     contracts=[]
     def theta(path,params,**kwargs):
         if path.endswith('/expirations'):return [{'expiration':'2026-10-09'}]
-        if path.endswith('/strikes'):return [{'strike':s} for s in [760,765,770,775,780]]
+        if path.endswith('/strikes'):return [{'strike':s} for s in [755,760,765,770,775,780,785]]
         contracts.append(params)
         row=tape();row['strike']=params['strike'];return [row]
     monkeypatch.setattr(ms,'_theta_rows',theta)
     flow=ms.fetch_trade_quote_flow('SPY',NOW)
-    assert flow['available'] and flow['n_trades']==3
-    assert [r['strike'] for r in contracts]==['770.000','765.000','775.000']
-    assert len(flow['evidence']['completed_contracts'])==3
+    assert flow['available'] and flow['n_trades']==6
+    assert [r['strike'] for r in contracts]==['770.000','765.000','775.000','760.000','780.000','755.000']
+    assert len(flow['evidence']['completed_contracts'])==6
 
 
 def test_missing_selection_spot_fails_without_requesting_option_contracts(monkeypatch):
