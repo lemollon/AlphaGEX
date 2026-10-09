@@ -10,7 +10,7 @@ from backend.report_contract import REQUIREMENTS, validate_report, prepare_repor
 from backend.report_policy import (normalize_blocks, observed, policy_identity, build_strategy_blocks,
                                    validate_semantics, section_summary, section_meaning, market_story,
                                    edge_board, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
-                                   render_markdown, render_opening_html, plain_value)
+                                   render_markdown, render_opening_html, plain_value, field_label, display)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -231,6 +231,93 @@ def test_section_meaning_falls_back_to_static_role_for_generic_sections():
     assert 'sizing tool' in section_meaning('expected_move',empty_blocks()['expected_move'])
     assert 'not a standalone signal' in section_meaning('unknown_future_section',empty_blocks()['surface'])
 
+def test_field_label_formats_dte_buckets_not_blind_underscore_replace():
+    """A blind `_` -> ` ` replace turned "1_5dte" into "1 5dte" (reads as a typo) instead of
+    "1-5 DTE". Confirmed live on multiple sections (control side, gamma/flow buckets, smile
+    term fields) plus the gamma_expiry chart's own x-axis tick labels, 2026-10-09."""
+    assert field_label('0dte')=='0 DTE'
+    assert field_label('1_5dte')=='1-5 DTE'
+    assert field_label('6_20dte')=='6-20 DTE'
+    assert field_label('21_365dte')=='21-365 DTE'
+    assert field_label('net_gex')=='net gex'  # ordinary fields unaffected
+
+def test_display_compact_drops_repeated_provenance_suffix_keeps_reliability_tag():
+    """Edge board/scoreboard call display() once per cell; when 3 cells in one row share the
+    exact same source timestamp (the common case — a registered-rule constant stamped once per
+    report), the full "[LIVE NOW; updated ...; age ...]" suffix repeated 3x turned a '30-second
+    scoreboard' into a wall of identical timestamps. compact=True keeps the LIVE/LAST KNOWN
+    reliability signal (this report never hides staleness) but drops the verbose repeat."""
+    live=item('WATCH')
+    full=display(live);compact=display(live,compact=True)
+    assert 'updated' in full and 'age' in full
+    assert 'updated' not in compact and 'age' not in compact
+    assert 'LIVE NOW' in compact and 'WATCH' in compact
+
+def test_evidence_no_longer_embeds_futures_context():
+    """evidence used to embed blocks["futures_context"] wholesale, inside all three strategy
+    sections. futures_context.basis is ALWAYS unavailable by design (same-time futures-vs-cash
+    basis cannot be computed), and normalize_item()'s "any nested dependency unavailable ->
+    mark this unavailable too" rule meant EVIDENCE could never report live/historical no matter
+    how complete its own real chain data was. Live bug, confirmed 2026-10-09: EVIDENCE showed
+    UNAVAILABLE directly above hundreds of lines of real strike/print data. It also tripled the
+    page's futures_context weight for zero new information (the section has its own place)."""
+    blocks=empty_blocks()
+    core={'surface':{'SPY':{'confidence':'HIGH','source_timestamp':NOW.isoformat(),
+            'surface_points':[{'expiration':NOW.date().isoformat(),'strike':774,'right':'call','iv':0.12,'dte':0}]}},
+          'flow':{}}
+    build_strategy_blocks(blocks,core,{},{},{'trade_details':[]},{},{},NOW)
+    for name in ('day_strategy','near_forward_strategy','forward_strategy'):
+        value=blocks[name]['evidence'].get('value')
+        if isinstance(value,dict):assert 'futures_context' not in value
+
+def test_catalysts_filtered_to_each_horizons_own_date_window():
+    """The same full catalyst list used to repeat identically across all three horizons — a
+    CPI release 6 days out showed under "today"'s catalysts. Each horizon now only carries
+    catalysts whose date actually falls inside its own [from,through] window."""
+    blocks=empty_blocks()
+    blocks['event_calendar']['catalysts']=item([
+        {'name':'Today event','impact':'MEDIUM','datetime':NOW.isoformat()},
+        {'name':'CPI Report','impact':'HIGH','datetime':(NOW+timedelta(days=20)).isoformat()}])
+    build_strategy_blocks(blocks,{'surface':{},'flow':{}},{},{},{'trade_details':[]},{},{},NOW)
+    day_names={c['name'] for c in blocks['day_strategy']['catalysts']['value']}
+    forward_names={c['name'] for c in blocks['forward_strategy']['catalysts']['value']}
+    assert 'Today event' in day_names and 'CPI Report' not in day_names
+    assert 'CPI Report' in forward_names
+
+def test_catalysts_not_double_wrapped_after_horizon_filtering():
+    """catalysts was already a fully observed()-wrapped dict (status/value/source/...); the
+    generic per-field re-wrap loop wrapped it a second time, producing a field whose own
+    "value" contained another full status/source/source_timestamp/age_seconds/reason block
+    instead of the plain catalyst list. Live bug, confirmed 2026-10-09."""
+    blocks=empty_blocks()
+    blocks['event_calendar']['catalysts']=item([{'name':'Today event','impact':'MEDIUM','datetime':NOW.isoformat()}])
+    build_strategy_blocks(blocks,{'surface':{},'flow':{}},{},{},{'trade_details':[]},{},{},NOW)
+    value=blocks['day_strategy']['catalysts']['value']
+    assert isinstance(value,list)
+    assert all(isinstance(c,dict) and 'status' not in c for c in value)
+
+def test_risk_exit_rules_points_to_position_management_not_duplicated_verbatim():
+    """The same ~400-char fill/target/stop paragraph used to repeat verbatim in all three
+    strategy sections plus a 4th time in Position Management (its canonical home)."""
+    blocks=empty_blocks()
+    paper={'trade_details':[],'fill_rules':'Enter at fresh executable natural BBO... (long paragraph)'}
+    build_strategy_blocks(blocks,{'surface':{},'flow':{}},{},{},paper,{},{},NOW)
+    for name in ('day_strategy','near_forward_strategy','forward_strategy'):
+        rules=blocks[name]['risk_exit_rules']['value']
+        assert rules!=paper['fill_rules']
+        assert 'Position Management' in rules
+
+def test_market_story_separates_fragments_with_sentence_stops():
+    """Three independent fragments joined with bare spaces produced a run-on when a fragment
+    was itself an UNAVAILABLE disclosure with no trailing punctuation: "...UNAVAILABLE — No
+    timestamped observation Gamma sign is mixed..." reads as one broken sentence. Live bug,
+    confirmed on the real intraday report 2026-10-09."""
+    blocks=empty_blocks()
+    blocks['gamma']['net_gex']=item({'SPY':0.5})
+    story=market_story(blocks)
+    assert 'observation Gamma sign' not in story  # the exact run-on seen live
+    assert '. ' in story or story.count('.')>=2
+
 def test_market_story_edge_board_traps_and_plan_use_real_block_values():
     blocks=empty_blocks()
     blocks['risk_on_defensive']['verdict']=item('Defensive price confirmation')
@@ -247,7 +334,11 @@ def test_market_story_edge_board_traps_and_plan_use_real_block_values():
         'value':[{'name':'CPI Report','impact':'HIGH','datetime':'2026-10-14T07:30:00-05:00'}]}
     blocks['data_integrity']['unavailable_fields']=item([{'field':'x','reason':'y'}])
     traps=biggest_traps(blocks)
-    assert any('CPI Report' in t for t in traps) and any('unavailable this checkpoint' in t for t in traps)
+    # A data-completeness count is a different kind of fact than a market-risk event and no
+    # longer belongs in the traps a trader scans (it stays in Data Integrity, not duplicated
+    # here) — biggest_traps is market-risk catalysts only now.
+    assert any('CPI Report' in t for t in traps)
+    assert not any('unavailable this checkpoint' in t for t in traps)
     blocks['adaptation_rules']['activate']=item('Require the registered trigger')
     plan=if_then_day_plan(blocks)
     assert any(k=='Activate' and 'Require the registered trigger' in v for k,v in plan)

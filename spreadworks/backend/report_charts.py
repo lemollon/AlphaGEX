@@ -2,7 +2,7 @@
 import io, threading, textwrap
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-from .report_policy import parse_clock
+from .report_policy import parse_clock, field_label
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from .report_producers import number
@@ -67,7 +67,7 @@ def chart_png(kind,evidence):
             for symbol,row in (evidence.get('gamma') or {}).items():
                 for bucket,value in (row.get('buckets') or {}).items():
                     v=number(value.get('net_gex_b') if isinstance(value,dict) else value)
-                    if v is not None:labels.append(symbol+' '+bucket);values.append(v)
+                    if v is not None:labels.append(symbol+' '+field_label(bucket));values.append(v)
             if labels:ax.bar(labels,values,color=[GREEN if v>=0 else RED for v in values]);ax.tick_params(axis='x',rotation=30);ax.set_ylabel('Estimated net GEX ($ billions / 1% move)');plotted=True
         elif kind=='sector_credit':
             labels=[];values=[]

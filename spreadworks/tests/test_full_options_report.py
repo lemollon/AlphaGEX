@@ -300,6 +300,22 @@ def test_price_vix_confirmation_agrees_when_flow_and_price_align():
     blocks=report.report_blocks(current,{},{},{},ledger_empty(),{},{},[],NOW)
     assert blocks['flow']['price_vix_confirmation']['value']['SPY']['read']=='confirms'
 
+def test_risk_on_defensive_populates_on_stale_but_valid_cross_asset_quotes():
+    """The flagship 'Today's mission' verdict used to require BOTH SPY and QQQ quotes to be
+    live-fresh (<90s old) simultaneously — the same bar sector_credit does NOT apply, so this
+    field could show hundreds of lines of real sector_credit data while its own verdict stayed
+    permanently blank. Live bug, found 2026-10-09 on the actual intraday report: 'Today's
+    mission' read UNAVAILABLE while every sibling section had real numbers. A stale-but-valid
+    quote (fresh=False, real price/prev_close) must still populate the verdict, same bar as
+    sector_credit, with its own real age reflected normally (not silently dropped)."""
+    current=core()
+    current['cross_asset']={'assets':{'SPY':{'price':102,'prev_close':100,'source_timestamp':NOW.isoformat(),'fresh':False},
+                                       'QQQ':{'price':101,'prev_close':100,'source_timestamp':NOW.isoformat(),'fresh':False}}}
+    blocks=report.report_blocks(current,{},{},{},ledger_empty(),{},{},[],NOW)
+    verdict=blocks['risk_on_defensive']['verdict']
+    assert verdict['status']!='unavailable'
+    assert verdict['value']=='Risk-on price confirmation'
+
 def test_forward_control_outlook_unavailable_without_control_side():
     base={'market_control':{'control_side':{'status':'unavailable'},'forward_control_outlook':{}},'forward_strategy':{'thesis':{}}}
     report.forward_control_outlook(base,NOW)
@@ -328,6 +344,30 @@ def test_fmt_value_caps_nested_per_symbol_chain_dump():
     assert html.count('"expiration"')<30  # no unbounded per-item raw json.dumps
     assert '+115 more items' in html
     assert '<pre class="raw">' not in html or html.count('2026-10-08')<30
+
+def test_fmt_primitive_never_scientific_notation():
+    """%g silently switches to exponential once a float needs more than 4 significant digits
+    before the decimal (anything >=10000) — "8.231e+04" for an $82,313 premium reads as a
+    typo, not a dollar figure. Live bug, confirmed on the real intraday report 2026-10-09."""
+    assert report._fmt_primitive(82313.0)=='82,313'
+    assert report._fmt_primitive(239000.0)=='239,000'
+    assert report._fmt_primitive(999999.0)=='999,999'
+    assert report._fmt_primitive(773.97)=='773.97'  # cents precision preserved, not rounded to "774"
+    assert report._fmt_primitive(-0.040187857052636146)=='-0.0402'
+
+def test_fmt_value_latest_print_nested_object_no_longer_raw_dumps():
+    """Same class of bug as the per-symbol chain arrays, one level deeper: evidence ->
+    observed_expiry_prints -> SPY -> [print, ...] -> latest_print is a plain dict at depth 4,
+    one level past the old depth<4 cutoff. Live bug, confirmed 2026-10-09: every single
+    observed_expiry_prints row still showed a raw { "price": ..., "bid": ... } JSON block."""
+    prints={'SPY':[{'expiration':'2026-10-08','strike':773.0,'right':'call','initiation':'unclassified',
+             'contracts':2464,'premium':239000.0,'print_count':330,
+             'latest_print':{'price':1.03,'bid':1.02,'ask':1.04,'timestamp':NOW.isoformat(),
+                              'condition':18.0,'exchange':'7','sequence':'-1228952309','side':'unclassified'}}]}
+    html=report._fmt_value({'observed_expiry_prints':prints})
+    assert '<pre class="raw">' not in html
+    assert '"price": 1.03' not in html
+    assert 'kvblock' in html and '1.03' in html
 
 def test_fmt_value_item_fields_still_render_as_kv_not_raw_json():
     evidence={'observed_expiry_points':{'SPY':[{'expiration':'2026-10-08','strike':700.0,

@@ -15,7 +15,7 @@ from . import market_structure as ms
 from .report_contract import REQUIREMENTS, prepare_report_delivery, validate_rendered_report, FLOW_SOURCE
 from .report_producers import observation, unavailable, number, collect_breadth, collect_profile, collect_macro, collect_study, stored_futures, UTC, ET
 from .report_ledger import scorecard, qualify_package, mark_open_positions
-from .report_policy import build_strategy_blocks, finite_tree, render_opening_html
+from .report_policy import build_strategy_blocks, finite_tree, render_opening_html, field_label
 from .report_assets import DELIVERY_VERSION, inspect_png, chart_id_from_ref, portable_pdf, portable_zip
 logger=logging.getLogger(__name__)
 router=APIRouter(prefix='/api/spreadworks/reports',tags=['Full Options Reports'])
@@ -309,14 +309,21 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
     blocks['macro']['curve']=observation({'10y_minus_2y_basis_points':curve} if curve is not None else None,'FRED daily Treasury 10y minus 2y yield',macro.get('rates_2y',{}).get('source_timestamp'),now,delayed=True)
     put('macro','proxy_labels','Delayed indicative rates/FX/commodity context. No ETF stand-in for MOVE; absent MOVE remains disclosed.')
     for field,names in {'es_mes':['es'],'nq':['nq'],'overnight_range':['es','nq']}.items():
-        vals={n:macro[n] for n in names if macro.get(n,{}).get('value')};times=[ms._parse_ts(r['source_timestamp']) for r in vals.values()]
+        # macro[n] is already a full observation() wrapper (status/source/source_timestamp/...);
+        # packaging it as-is into vals and wrapping again in observation() below double-wrapped
+        # every field's metadata and rendered as nested raw JSON. Unwrap .value first.
+        present={n:macro[n] for n in names if macro.get(n,{}).get('value')}
+        vals={n:r['value'] for n,r in present.items()};times=[ms._parse_ts(r['source_timestamp']) for r in present.values()]
         blocks['futures_context'][field]=observation(vals or None,'Delayed ES/NQ continuous futures; ES price is MES reference, not an MES execution quote',min(times) if times else None,now,delayed=True)
     futures=core.get('futures') or {}
     for field,roots in {'es_mes':('MES','ES'),'nq':('MNQ','NQ'),'overnight_range':('MES','ES','MNQ','NQ')}.items():
-        observed={r:futures[r] for r in roots if futures.get(r,{}).get('value')}
-        if observed:
-            times=[ms._parse_ts(r['source_timestamp']) for r in observed.values()]
-            blocks['futures_context'][field]=observation(observed,'Persisted broker futures quote events; actual contract symbols retained',min(times),now)
+        # futures[r] is already a full observation() wrapper from stored_futures() — same
+        # double-wrap bug as the es/nq block above; unwrap .value before re-wrapping.
+        present={r:futures[r] for r in roots if futures.get(r,{}).get('value')}
+        if present:
+            vals={r:row['value'] for r,row in present.items()}
+            times=[ms._parse_ts(row['source_timestamp']) for row in present.values()]
+            blocks['futures_context'][field]=observation(vals,'Persisted broker futures quote events; actual contract symbols retained',min(times),now)
     blocks['futures_context']['basis']=unavailable('Exact same-time futures vs cash-index basis unavailable; SPY is not substituted for SPX')
     blocks['futures_context']['index_confirmation']=merge_symbols(surface,['spot','source_timestamp'],now)
     for field in ('next_five_trading_days','catalysts','times','sources','risk_classes'):
@@ -398,12 +405,15 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
     put('position_management','hold_exit_conditions',paper['fill_rules'])
     put('position_management','chain_qualification',{'rule':'Fresh executable BBO required for every entry/exit; missing quotes leave unresolved positions','exceptions':paper['exceptions']})
     # Directional inference uses only current evidence. Historical context stays visible separately.
-    fresh_returns={s:r for s,r in relative.items() if (assets.get(s) or {}).get('fresh')}
-    if 'SPY' in fresh_returns and 'QQQ' in fresh_returns:
-        risk=all(fresh_returns[s]>0 for s in ('SPY','QQQ'))
-        defensive=all(fresh_returns[s]<0 for s in ('SPY','QQQ'))
+    # Same bar as sector_credit (valid price+prev_close) — not an extra live-only "fresh" gate,
+    # which silently dropped this entire headline field whenever either quote aged past 90s
+    # mid-collection, even though every other section downgrades gracefully to LAST KNOWN instead
+    # of disappearing. cross_ts still carries the real timestamp, so staleness is labeled normally.
+    if 'SPY' in relative and 'QQQ' in relative:
+        risk=all(relative[s]>0 for s in ('SPY','QQQ'))
+        defensive=all(relative[s]<0 for s in ('SPY','QQQ'))
         verdict='Risk-on price confirmation' if risk else 'Defensive price confirmation' if defensive else 'Mixed price confirmation'
-        inputs={'returns':fresh_returns,'breadth':breadth if breadth.get('covered') else None,'flow':'Side estimates; not opening/closing inventory'}
+        inputs={'returns':relative,'breadth':breadth if breadth.get('covered') else None,'flow':'Side estimates; not opening/closing inventory'}
         for field,value in {'verdict':verdict,'evidence':inputs,'conflicts':'Sector, breadth, volatility and flow may diverge; verdict is conditional price evidence, not a prediction','change_vs_baselines':comparison}.items():put('risk_on_defensive',field,value,source='Deterministic interpretation of current observed returns',ts=cross_ts)
     for field in REQUIREMENTS['premium_selling']:
         values={};stamps=[]
@@ -691,17 +701,42 @@ def get_portable_report(report_id:str):
                     headers={'Content-Disposition':f'attachment; filename="options-report-{report_id}.zip"'})
 
 _SYM_KEY_RE=re.compile(r'^[A-Z]{1,5}$')
+_PNG_URL_RE=re.compile(r'^https?://\S+\.png$')
 
-def _fmt_primitive(v):
+def _fmt_primitive(v,img_map=None):
+    """Never scientific notation — %g silently switches to exponential past ~5 significant
+    digits (e.g. 82313.0 -> "8.231e+04"), which reads as a typo on a dollar premium. Fixed
+    decimals by magnitude instead: comma-grouped whole numbers >=1000, cents-precision for
+    price-like values, 4 decimals for small fractions (IV, delta, net GEX in $B).
+
+    A chart PNG url (the Visuals section's own fields — every other section embeds its chart
+    via the separate `inline` mechanism at the section header, never through this generic
+    field path) used to render as a bare clickable URL string instead of the image it points
+    to. img_map (url -> base64 data: URI, built once in report_view from the same `inline`
+    dict every other chart on the page already uses) lets this embed the real image too,
+    without ever putting an external https:// url in an <img src> — the whole report must
+    stay a self-contained "immutable snapshot" that works offline from the portable ZIP."""
     if isinstance(v,bool):return '<span class="bool-'+('yes' if v else 'no')+'">'+('yes' if v else 'no')+'</span>'
-    if isinstance(v,float):return html.escape(f'{v:.4g}' if abs(v)<1e6 else str(v))
+    if isinstance(v,float):
+        a=abs(v)
+        if a>=1e6:return html.escape(str(v))
+        decimals=0 if a>=1000 else 2 if a>=1 else 4
+        return html.escape(f'{v:,.{decimals}f}')
+    if isinstance(v,str) and _PNG_URL_RE.match(v):
+        href=html.escape(v,quote=True)
+        data_uri=(img_map or {}).get(v)
+        if data_uri:
+            safe=html.escape(data_uri,quote=True)
+            return (f'<a href="{href}" target="_blank" rel="noopener">'
+                    f'<img src="{safe}" alt="chart" loading="lazy" style="max-width:100%;border-radius:6px;border:1px solid var(--border)"></a>')
+        return f'<a href="{href}" target="_blank" rel="noopener">{href}</a>'
     return html.escape(str(v))
 
 _MAX_KV_FIELDS=8
 _MAX_SCALAR_ITEMS=8
 _MAX_DICT_ITEMS=5
 
-def _fmt_value(v,depth=0):
+def _fmt_value(v,depth=0,img_map=None):
     """Render a field's raw value for a human: per-symbol lines, small key/value blocks for
     structured data, and a bounded "+N more" preview for large collections — never an
     unbounded json.dumps() wall of text. Truncation only changes the display; counts shown
@@ -710,11 +745,11 @@ def _fmt_value(v,depth=0):
     if isinstance(v,dict):
         if v and all(isinstance(k,str) and _SYM_KEY_RE.match(k) for k in v):
             return ' <span class="sep">&middot;</span> '.join(
-                f'<b>{html.escape(sym)}</b>: {_fmt_value(sv,depth+1)}' for sym,sv in v.items())
-        if v and depth<4:
+                f'<b>{html.escape(sym)}</b>: {_fmt_value(sv,depth+1,img_map)}' for sym,sv in v.items())
+        if v and depth<6:
             items=list(v.items());shown=items[:_MAX_KV_FIELDS]
-            rows=''.join(f'<div class="kv"><span class="k">{html.escape(str(k).replace("_"," "))}</span>'
-                         f'<span class="v">{_fmt_value(vv,depth+1)}</span></div>' for k,vv in shown)
+            rows=''.join(f'<div class="kv"><span class="k">{html.escape(field_label(k))}</span>'
+                         f'<span class="v">{_fmt_value(vv,depth+1,img_map)}</span></div>' for k,vv in shown)
             if len(items)>_MAX_KV_FIELDS:
                 rows+=f'<div class="kv more">&hellip; +{len(items)-_MAX_KV_FIELDS} more fields</div>'
             return f'<div class="kvblock">{rows}</div>'
@@ -723,18 +758,18 @@ def _fmt_value(v,depth=0):
         if not v:return '<span class="muted">none</span>'
         if all(not isinstance(x,(dict,list)) for x in v):
             shown=v[:_MAX_SCALAR_ITEMS]
-            text=', '.join(_fmt_value(x,depth+1) for x in shown)
+            text=', '.join(_fmt_value(x,depth+1,img_map) for x in shown)
             if len(v)>_MAX_SCALAR_ITEMS:
                 text+=f' <span class="muted">&hellip; +{len(v)-_MAX_SCALAR_ITEMS} more</span>'
             return text
-        if depth<3 and all(isinstance(x,dict) for x in v):
+        if depth<5 and all(isinstance(x,dict) for x in v):
             shown=v[:_MAX_DICT_ITEMS]
-            out=''.join(f'<div class="kvblock listitem">{_fmt_value(x,depth+1)}</div>' for x in shown)
+            out=''.join(f'<div class="kvblock listitem">{_fmt_value(x,depth+1,img_map)}</div>' for x in shown)
             if len(v)>_MAX_DICT_ITEMS:
                 out+=f'<div class="muted">&hellip; +{len(v)-_MAX_DICT_ITEMS} more items</div>'
             return out
         return f'<pre class="raw">{html.escape(json.dumps(v,indent=2,ensure_ascii=False))}</pre>'
-    return _fmt_primitive(v)
+    return _fmt_primitive(v,img_map)
 
 _STATUS_PILL={'live':('live','LIVE'),'historical':('hist','LAST KNOWN'),'unavailable':('unavail','UNAVAILABLE')}
 
@@ -755,11 +790,11 @@ def _ordered_blocks(report_blocks):
     rank={name:i for i,name in enumerate(_SECTION_DISPLAY_ORDER)}
     return sorted(report_blocks.items(),key=lambda kv:rank.get(kv[0],len(_SECTION_DISPLAY_ORDER)))
 
-def _field_row(field,item):
+def _field_row(field,item,img_map=None):
     status=item.get('status','unavailable')
     value=item.get('value')
     pill_cls,pill_label=_STATUS_PILL.get(status,('unavail',status.upper()))
-    content=_fmt_value(value) if value is not None else f'<span class="muted">{html.escape(item.get("reason") or "No verified observation")}</span>'
+    content=_fmt_value(value,img_map=img_map) if value is not None else f'<span class="muted">{html.escape(item.get("reason") or "No verified observation")}</span>'
     meta=[]
     if item.get('source'):meta.append(html.escape(str(item['source'])))
     if item.get('source_timestamp'):meta.append(html.escape(str(item['source_timestamp'])))
@@ -767,7 +802,7 @@ def _field_row(field,item):
     if isinstance(age,(int,float)):meta.append(f'age {age:.0f}s' if age<120 else f'age {age/60:.1f}m')
     meta_html=f'<div class="meta">{" &middot; ".join(meta)}</div>' if meta else ''
     reason_html=f'<div class="reason">{html.escape(item["reason"])}</div>' if status=='unavailable' and item.get('reason') and value is not None else ''
-    return (f'<div class="field"><div class="fieldtop"><span class="fieldname">{html.escape(field.replace("_"," "))}</span>'
+    return (f'<div class="field"><div class="fieldtop"><span class="fieldname">{html.escape(field_label(field))}</span>'
             f'<span class="pill {pill_cls}">{pill_label}</span></div>'
             f'<div class="fieldval">{content}</div>{meta_html}{reason_html}</div>')
 
@@ -778,6 +813,10 @@ def report_view(report_id:str):
     images=payload.get('chart_urls') or {}
     assets,failures=stored_chart_assets(images)
     inline={asset['name']:'data:image/png;base64,'+asset['png_base64'] for asset in assets}
+    # Reverse lookup (chart url -> same base64 data: URI) so the Visuals section's own *_png
+    # fields can embed the real image through the generic field renderer, same as every other
+    # chart on the page — never a bare external https:// src.
+    img_map={images[n]:inline[n] for n in images if n in inline}
     groups={'expected_move':'market_map','smile':'smile_term','flow':'flow','gamma':'gamma_expiry',
             'surface':'surface',
             'sector_credit':'sector_credit','event_calendar':'event_risk','paper_scorecard':'paper_equity_drawdown',
@@ -786,7 +825,7 @@ def report_view(report_id:str):
         anchor='sec-'+name.replace('_','-')
         title=name.replace('_',' ').title()
         nav.append(f'<a href="#{anchor}">{html.escape(title)}</a>')
-        fields_html=''.join(_field_row(field,item) for field,item in block.items())
+        fields_html=''.join(_field_row(field,item,img_map) for field,item in block.items())
         if name in SECTION_SUMMARY_SECTIONS:
             fields_html+=(f'<div class="field decision"><div class="fieldname">Section summary</div>'
                           f'<div class="fieldval">{html.escape(section_summary(name,block))}</div></div>'
@@ -850,10 +889,11 @@ h1,h2{font-weight:700}
 .reason{color:var(--muted);font-size:.82rem;margin-top:4px}
 .muted{color:var(--muted)}
 .sep{color:var(--muted)}
-.kvblock{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-top:4px}
+.kvblock{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-top:4px;min-width:0}
 .kvblock.listitem{margin-bottom:6px}
-.kv{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:.85rem}
-.kv .k{color:var(--muted)}
+.kv{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:.85rem;flex-wrap:wrap}
+.kv .k{color:var(--muted);flex:0 0 auto;white-space:nowrap}
+.kv .v{flex:1 1 auto;min-width:0;text-align:right;overflow-wrap:anywhere}
 pre.raw{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px;
 overflow-x:auto;font-size:.78rem;color:var(--fg);white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
 .bool-yes{color:var(--call)}
