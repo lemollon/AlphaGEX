@@ -331,6 +331,24 @@ _SECTION_ROLE = {
     "event_calendar": "Known catalysts ahead; a confirmed HIGH-impact event inside the holding period should shrink size or widen the structure.",
 }
 
+def _per_symbol_floats(value):
+    """Pull the real numeric reading out of a per-symbol field, regardless of whether the
+    producer nested it one level deeper (e.g. gamma.net_gex is {"SPY": {"net_gex_b": x}},
+    not {"SPY": x}). Tries the symbol value itself first, then its first numeric child.
+    """
+    out = []
+    if not isinstance(value, dict):
+        return out
+    for sym_value in value.values():
+        if isinstance(sym_value, (int, float)):
+            out.append(float(sym_value))
+        elif isinstance(sym_value, dict):
+            for v in sym_value.values():
+                if isinstance(v, (int, float)):
+                    out.append(float(v))
+                    break
+    return out
+
 def section_meaning(name, block):
     """Deterministic "what it means for the day" line — a lookup on the section's own
     already-computed field values, never new analysis or a fabricated number. Strategy-
@@ -359,8 +377,7 @@ def section_meaning(name, block):
             return "Put sellers dominate where classified — a sign of downside support being sold."
         return "Call- and put-selling are evenly split where classified; no net control."
     if name == "gamma":
-        net = val("net_gex") or {}
-        signs = [float(v) for v in (net.values() if isinstance(net, dict) else []) if isinstance(v, (int, float))]
+        signs = _per_symbol_floats(val("net_gex"))
         if not signs:
             return "No verified net gamma reading this checkpoint."
         if all(s >= 0 for s in signs):
@@ -369,8 +386,7 @@ def section_meaning(name, block):
             return "Negative gamma amplifies moves — expect larger swings away from the flip."
         return "Gamma sign is mixed across symbols — dampening in one, amplifying in the other."
     if name == "flow":
-        coverage = val("classified_coverage") or {}
-        covs = [float(v) for v in (coverage.values() if isinstance(coverage, dict) else []) if isinstance(v, (int, float))]
+        covs = _per_symbol_floats(val("classified_coverage"))
         if covs and max(covs) < 0.5:
             return "Classified coverage is below half the tape — too thin to read directional conviction from flow alone."
         return "Classified coverage supports a directional read; compare calls-bought/sold vs puts-bought/sold above."

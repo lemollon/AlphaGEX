@@ -189,13 +189,21 @@ def test_section_meaning_market_control_reads_dominant_side():
     assert 'Put sellers dominate' in section_meaning('market_control',blocks['market_control'])
 
 def test_section_meaning_gamma_reads_sign():
+    """Real shape from merge_symbols(gamma,['net_gex_b'],now) is {"SPY":{"net_gex_b":x}},
+    not {"SPY":x} — a flat fixture here passed against buggy code once already (live bug,
+    caught visually 2026-10-09: "what it means" read blank despite a real net_gex value
+    rendering right above it). Exercise the real nested shape, not a simplified one.
+    """
     blocks=empty_blocks()
+    blocks['gamma']['net_gex']=item({'SPY':{'net_gex_b':0.5},'QQQ':{'net_gex_b':1.2}})
+    assert 'Positive gamma dampens' in section_meaning('gamma',blocks['gamma'])
+    blocks['gamma']['net_gex']=item({'SPY':{'net_gex_b':-0.5},'QQQ':{'net_gex_b':-1.2}})
+    assert 'Negative gamma amplifies' in section_meaning('gamma',blocks['gamma'])
+    blocks['gamma']['net_gex']=item({'SPY':{'net_gex_b':0.5},'QQQ':{'net_gex_b':-1.2}})
+    assert 'mixed' in section_meaning('gamma',blocks['gamma'])
+    # Flat shape must still work (back-compat / defensive, not the only shape relied on).
     blocks['gamma']['net_gex']=item({'SPY':0.5,'QQQ':1.2})
     assert 'Positive gamma dampens' in section_meaning('gamma',blocks['gamma'])
-    blocks['gamma']['net_gex']=item({'SPY':-0.5,'QQQ':-1.2})
-    assert 'Negative gamma amplifies' in section_meaning('gamma',blocks['gamma'])
-    blocks['gamma']['net_gex']=item({'SPY':0.5,'QQQ':-1.2})
-    assert 'mixed' in section_meaning('gamma',blocks['gamma'])
 
 def test_section_meaning_flow_reads_classified_coverage():
     blocks=empty_blocks()
