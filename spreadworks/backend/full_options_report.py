@@ -711,7 +711,7 @@ def _fmt_value(v,depth=0):
         if v and all(isinstance(k,str) and _SYM_KEY_RE.match(k) for k in v):
             return ' <span class="sep">&middot;</span> '.join(
                 f'<b>{html.escape(sym)}</b>: {_fmt_value(sv,depth+1)}' for sym,sv in v.items())
-        if v and depth<3:
+        if v and depth<4:
             items=list(v.items());shown=items[:_MAX_KV_FIELDS]
             rows=''.join(f'<div class="kv"><span class="k">{html.escape(str(k).replace("_"," "))}</span>'
                          f'<span class="v">{_fmt_value(vv,depth+1)}</span></div>' for k,vv in shown)
@@ -727,7 +727,7 @@ def _fmt_value(v,depth=0):
             if len(v)>_MAX_SCALAR_ITEMS:
                 text+=f' <span class="muted">&hellip; +{len(v)-_MAX_SCALAR_ITEMS} more</span>'
             return text
-        if depth<2 and all(isinstance(x,dict) for x in v):
+        if depth<3 and all(isinstance(x,dict) for x in v):
             shown=v[:_MAX_DICT_ITEMS]
             out=''.join(f'<div class="kvblock listitem">{_fmt_value(x,depth+1)}</div>' for x in shown)
             if len(v)>_MAX_DICT_ITEMS:

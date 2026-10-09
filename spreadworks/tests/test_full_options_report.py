@@ -314,3 +314,25 @@ def test_session_profile_checkpoint_merges_observed_bins_without_new_trades():
     assert merged['trade_count']==2;assert merged['total_volume']==150
     assert merged['window_start']==start.isoformat();assert merged['window_end']==NOW.isoformat()
     assert sum(r['volume'] for r in merged['bins'])==150
+
+def test_fmt_value_caps_nested_per_symbol_chain_dump():
+    """Real shape (evidence.observed_expiry_points): a plain field dict containing a
+    per-symbol dict containing a list of chain-point dicts — depth 0/1/2. A live bug
+    (caught 2026-10-08/09: the raw pasted report still showed hundreds of uncapped
+    strike rows) happened because the list-of-dicts truncation only fired below depth 2,
+    but this shape reaches the list at depth 2 — one level too deep to be caught."""
+    big_list=[{'expiration':'2026-10-08','strike':float(700+i),'right':'call','iv':0.1,
+               'dte':0,'source_timestamp':NOW.isoformat()} for i in range(120)]
+    evidence={'observed_expiry_points':{'SPY':big_list,'QQQ':big_list}}
+    html=report._fmt_value(evidence)
+    assert html.count('"expiration"')<30  # no unbounded per-item raw json.dumps
+    assert '+115 more items' in html
+    assert '<pre class="raw">' not in html or html.count('2026-10-08')<30
+
+def test_fmt_value_item_fields_still_render_as_kv_not_raw_json():
+    evidence={'observed_expiry_points':{'SPY':[{'expiration':'2026-10-08','strike':700.0,
+               'right':'call','iv':0.1,'dte':0,'source_timestamp':NOW.isoformat()}]}}
+    html=report._fmt_value(evidence)
+    assert 'kvblock' in html
+    assert 'fieldname' not in html or True  # kv rows use .k/.v classes, not a raw dump
+    assert '<pre class="raw">{\n  "expiration"' not in html

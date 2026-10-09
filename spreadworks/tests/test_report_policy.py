@@ -10,7 +10,7 @@ from backend.report_contract import REQUIREMENTS, validate_report, prepare_repor
 from backend.report_policy import (normalize_blocks, observed, policy_identity, build_strategy_blocks,
                                    validate_semantics, section_summary, section_meaning, market_story,
                                    edge_board, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
-                                   render_markdown, render_opening_html)
+                                   render_markdown, render_opening_html, plain_value)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -288,3 +288,13 @@ def test_optional_collector_failure_preserves_other_core_sources(monkeypatch):
     core=report.cached_core(NOW)
     assert core['failures']['volatility']=='TimeoutError'
     assert core['surface']['SPY']['confidence']=='MEDIUM'
+
+def test_plain_value_caps_per_symbol_chain_list_not_raw_dump():
+    """Same nested shape as the HTML _fmt_value fix (evidence.observed_expiry_points):
+    field dict -> per-symbol dict -> list of ~100 chain-point dicts. Markdown/Discord
+    rendering had no truncation at all for this shape (straight to json.dumps)."""
+    big_list=[{'expiration':'2026-10-08','strike':float(700+i),'right':'call'} for i in range(80)]
+    text=plain_value({'observed_expiry_points':{'SPY':big_list}})
+    assert text.count('"expiration"')==0  # readable "key value" pairs, not raw json.dumps
+    assert text.count('strike')==5  # exactly the 5 shown chain points, not all 80
+    assert '+75 more' in text
