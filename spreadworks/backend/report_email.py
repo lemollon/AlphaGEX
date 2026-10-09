@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from .report_policy import display, render_opening_html
+from .report_policy import display, render_opening_html, ct_str
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
@@ -62,7 +62,7 @@ def _email_html(payload: dict, kind: str) -> str:
     )
     return (
         f"<h1>{html.escape(kind.title())} Options Report</h1>"
-        f'<p>{html.escape(str(payload.get("generated_at") or ""))} | '
+        f'<p>{html.escape(ct_str(payload.get("generated_at")))} | '
         f'{html.escape(str(payload.get("report_completeness") or "UNKNOWN"))}</p>'
         f"<p>{links}</p>" + opening + bottom
     )

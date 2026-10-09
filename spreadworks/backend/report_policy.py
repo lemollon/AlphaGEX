@@ -29,6 +29,15 @@ def parse_clock(value):
     except (ValueError, TypeError):
         return None
 
+def ct_str(iso_value):
+    """Render a raw ISO timestamp string in Central Time, matching display()'s house
+    convention. For the handful of spots (horizon_comparison's cross-report timestamps)
+    that embed a raw timestamp as a plain dict value instead of going through observed()/
+    display() — those rendered the bare UTC ISO string unconverted, inconsistent with every
+    other date on the page and read as a different, unlabeled hour to a Central-Time reader."""
+    clock = parse_clock(iso_value)
+    return clock.astimezone(CT).strftime("%Y-%m-%d %I:%M:%S %p CT") if clock else str(iso_value or "")
+
 def finite_tree(value):
     if isinstance(value, float):
         return math.isfinite(value)
@@ -47,6 +56,13 @@ _SYM_KEY_RE = re.compile(r"^[A-Z]{1,5}$")
 # not just the bare bucket ("1_5dte" in Gamma/Flow/Control). Re-checked live 2026-10-09: the
 # first fix only handled the bare form; every "term "/"iv " prefixed field still read "1 5dte".
 _DTE_BUCKET_RE = re.compile(r"(\d+)(?:_(\d+))?dte$", re.IGNORECASE)
+# Raw timestamps embedded as plain dict values anywhere inside a field's own data (a chain
+# point's latest_print, futures_context.index_confirmation's per-symbol spot/source_timestamp,
+# section_summary's recap prose) bypass the page header and per-field .meta footer fixes,
+# since those go through this generic key/value path instead. One canonical pattern, shared
+# by plain_value() here and _fmt_value() in full_options_report.py, so both surfaces (the HTML
+# page and the markdown/Discord/email text) stay consistent.
+TIMESTAMP_KEY_RE = re.compile(r"(^|_)(timestamp|generated_at|created_at|attempted_at|observed_at|entered_at|updated_at)$")
 
 def field_label(key):
     """Human label for a field/bucket name. A blind `_` -> ` ` replace turns a DTE bucket
@@ -75,7 +91,11 @@ def plain_value(v, depth=0):
         if v and all(isinstance(k, str) and _SYM_KEY_RE.match(k) for k in v):
             return "; ".join(f"{k}: {plain_value(sv, depth + 1)}" for k, sv in v.items())
         if v and len(v) <= 10 and depth < 4:
-            return ", ".join(f"{field_label(k)} {plain_value(vv, depth + 1)}" for k, vv in v.items())
+            def _kv(k, vv):
+                if isinstance(vv, str) and TIMESTAMP_KEY_RE.search(k):
+                    return ct_str(vv)
+                return plain_value(vv, depth + 1)
+            return ", ".join(f"{field_label(k)} {_kv(k, vv)}" for k, vv in v.items())
         return json.dumps(v, ensure_ascii=False, default=str)
     if isinstance(v, list):
         if not v:
@@ -294,8 +314,8 @@ def build_strategy_blocks(blocks, core, plan, runtime, paper, morning, prior, no
         # metadata nested inside its own "value").
         target["catalysts"]=catalysts_for_horizon
         blocks[name]=target
-    comparisons={"morning_baseline":{"report_id":morning.get("report_id"),"timestamp":morning.get("generated_at"),"thesis":morning.get("report_blocks",{}).get("risk_on_defensive")},
-        "prior_checkpoint":{"report_id":prior.get("report_id"),"timestamp":prior.get("generated_at")},
+    comparisons={"morning_baseline":{"report_id":morning.get("report_id"),"timestamp":ct_str(morning.get("generated_at")) if morning.get("generated_at") else None,"thesis":morning.get("report_blocks",{}).get("risk_on_defensive")},
+        "prior_checkpoint":{"report_id":prior.get("report_id"),"timestamp":ct_str(prior.get("generated_at")) if prior.get("generated_at") else None},
         "current":blocks["risk_on_defensive"],"forward_options":{n:blocks[n]["thesis"] for n in ("near_forward_strategy","forward_strategy")},
         "futures_confirmation":blocks["futures_context"],"alignment":"Compare the displayed dated evidence; futures prices alone do not supply directional change or forward option sentiment.",
         "changes":{"morning":core.get("comparison") or {},"prior_hour":core.get("prior_comparison") or {},"rule":"Missing comparable baselines stay explicit; old reports are not today's morning baseline."}}
@@ -502,9 +522,9 @@ def if_then_day_plan(blocks):
 
 def render_markdown(payload):
     from .report_contract import REQUIREMENTS
-    blocks=payload["report_blocks"];clock=parse_clock(payload.get("generated_at"))
+    blocks=payload["report_blocks"]
     title="☀️ Morning Options Sentiment" if payload.get("kind")=="morning" else "📡 Intraday Options Sentiment"
-    lines=["# "+title,(clock.astimezone(CT).isoformat() if clock else "Timestamp unavailable")+" · "+str(payload.get("kind","report"))+" · "+payload["report_completeness"],
+    lines=["# "+title,ct_str(payload.get("generated_at"))+" · "+str(payload.get("kind","report"))+" · "+payload["report_completeness"],
         "## 🎯 Today’s mission",display(blocks["risk_on_defensive"]["verdict"]),
         "Day and forward plans are separate. Execute no strategy from historical or unqualified quotes; use the recorded triggers and conflicts below.",
         "## 🚦 30-second scoreboard","| Decision | Current read |","|---|---|"]
