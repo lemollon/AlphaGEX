@@ -10,7 +10,8 @@ from backend.report_contract import REQUIREMENTS, validate_report, prepare_repor
 from backend.report_policy import (normalize_blocks, observed, policy_identity, build_strategy_blocks,
                                    validate_semantics, section_summary, section_meaning, market_story,
                                    edge_board, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
-                                   render_markdown, render_opening_html, plain_value, field_label, display)
+                                   render_markdown, render_opening_html, plain_value, field_label, display,
+                                   ct_str)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -352,6 +353,36 @@ def test_market_story_edge_board_traps_and_plan_use_real_block_values():
     assert any(k=='Activate' and 'Require the registered trigger' in v for k,v in plan)
 
 @freeze_time(NOW)
+def test_ct_str_converts_raw_utc_to_central_time_not_bare_iso():
+    """Leron (Texas, Central Time) read a report's top-of-page timestamp
+    ("2026-10-09T15:10:43.895470+00:00") as a different, unlabeled hour and thought the report
+    was stale/wrong-day — every OTHER timestamp on the page already converts to CT via
+    display(), this was the one place still showing bare UTC. NOW=2026-10-06 16:05 UTC = 2026-10-06
+    11:05 AM CT (October, CDT)."""
+    assert ct_str(NOW.isoformat()) == '2026-10-06 11:05:00 AM CT'
+    assert ct_str(None) == ''
+    assert ct_str('not a timestamp') == 'not a timestamp'  # never crash, never fabricate
+
+def test_render_markdown_title_line_shows_central_time_not_bare_utc():
+    blocks=empty_blocks()
+    payload={'generated_at':NOW.isoformat(),'kind':'intraday','report_blocks':blocks,'report_completeness':'INCOMPLETE'}
+    markdown=render_markdown(payload)
+    assert '2026-10-06 11:05:00 AM CT' in markdown
+    assert NOW.isoformat() not in markdown
+
+def test_horizon_comparison_cross_report_timestamps_are_central_time():
+    """morning_baseline/prior_checkpoint embed another report's generated_at as a raw dict
+    value (not through observed()/display()) — same bare-UTC bug as the page header, found
+    live 2026-10-09 right after Leron flagged the header chip."""
+    blocks=empty_blocks()
+    morning={'report_id':'abc123','generated_at':NOW.isoformat(),'report_blocks':{}}
+    prior={'report_id':'def456','generated_at':(NOW-timedelta(hours=1)).isoformat()}
+    build_strategy_blocks(blocks,{'surface':{},'flow':{}},{},{},{'trade_details':[]},morning,prior,NOW)
+    hc=blocks['horizon_comparison']
+    assert hc['morning_baseline']['value']['timestamp']=='2026-10-06 11:05:00 AM CT'
+    assert hc['prior_checkpoint']['value']['timestamp']=='2026-10-06 10:05:00 AM CT'
+    assert NOW.isoformat() not in str(hc['morning_baseline']['value'])
+
 def test_render_markdown_adds_decision_lines_only_for_included_sections():
     blocks=empty_blocks()
     blocks['gamma']['net_gex']=item({'SPY':0.12})

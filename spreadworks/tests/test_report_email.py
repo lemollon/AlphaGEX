@@ -33,6 +33,15 @@ def clear_env(monkeypatch):
         monkeypatch.delenv(key, raising=False)
 
 
+def test_email_header_shows_central_time_not_bare_utc():
+    """Same bare-UTC-timestamp bug as the /view page header, in the email surface — Leron
+    reads these on his phone in Texas (Central Time); "2026-10-08T13:00:00+00:00" read as a
+    different, unlabeled hour. 13:00 UTC on 2026-10-08 (CDT) = 08:00 AM CT."""
+    html = re_mod._email_html(minimal_payload(), "intraday")
+    assert "2026-10-08 08:00:00 AM CT" in html
+    assert "2026-10-08T13:00:00+00:00" not in html
+
+
 def test_disabled_by_default_never_touches_the_network(monkeypatch):
     clear_env(monkeypatch)
     def boom(*a, **k): raise AssertionError("must not call Resend when disabled")

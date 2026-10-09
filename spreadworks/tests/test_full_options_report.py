@@ -147,6 +147,11 @@ async def test_full_assembly_all_fields_dark_png_embed_and_durable_view(db,monke
     view=report.report_view(result['report_id'])
     assert 'src="data:image/png;base64,' in view
     assert 'src="https://' not in view
+    # Live bug, found 2026-10-09: the top-of-page header chip was the one timestamp on the
+    # page still shown as bare UTC ("2026-10-02T15:00:00+00:00") instead of Central Time like
+    # every other date on the page -- read as a different, unlabeled hour and looked stale.
+    assert '2026-10-02 10:00:00 AM CT' in view
+    assert "2026-10-02T15:00:00" not in view
     assert all(x in view for x in ('Market story','Edge board','Biggest traps','If/then day plan'))
     assert 'Section summary' in view and 'What it means for the day' in view
     assert 'class="field decision"' in view

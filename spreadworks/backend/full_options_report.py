@@ -15,7 +15,7 @@ from . import market_structure as ms
 from .report_contract import REQUIREMENTS, prepare_report_delivery, validate_rendered_report, FLOW_SOURCE
 from .report_producers import observation, unavailable, number, collect_breadth, collect_profile, collect_macro, collect_study, stored_futures, UTC, ET
 from .report_ledger import scorecard, qualify_package, mark_open_positions
-from .report_policy import build_strategy_blocks, finite_tree, render_opening_html, field_label
+from .report_policy import build_strategy_blocks, finite_tree, render_opening_html, field_label, ct_str, TIMESTAMP_KEY_RE
 from .report_assets import DELIVERY_VERSION, inspect_png, chart_id_from_ref, portable_pdf, portable_zip
 logger=logging.getLogger(__name__)
 router=APIRouter(prefix='/api/spreadworks/reports',tags=['Full Options Reports'])
@@ -748,8 +748,11 @@ def _fmt_value(v,depth=0,img_map=None):
                 f'<b>{html.escape(sym)}</b>: {_fmt_value(sv,depth+1,img_map)}' for sym,sv in v.items())
         if v and depth<6:
             items=list(v.items());shown=items[:_MAX_KV_FIELDS]
+            def _kv_value(k,vv):
+                if isinstance(vv,str) and TIMESTAMP_KEY_RE.search(k):return html.escape(ct_str(vv))
+                return _fmt_value(vv,depth+1,img_map)
             rows=''.join(f'<div class="kv"><span class="k">{html.escape(field_label(k))}</span>'
-                         f'<span class="v">{_fmt_value(vv,depth+1,img_map)}</span></div>' for k,vv in shown)
+                         f'<span class="v">{_kv_value(k,vv)}</span></div>' for k,vv in shown)
             if len(items)>_MAX_KV_FIELDS:
                 rows+=f'<div class="kv more">&hellip; +{len(items)-_MAX_KV_FIELDS} more fields</div>'
             return f'<div class="kvblock">{rows}</div>'
@@ -795,9 +798,13 @@ def _field_row(field,item,img_map=None):
     value=item.get('value')
     pill_cls,pill_label=_STATUS_PILL.get(status,('unavail',status.upper()))
     content=_fmt_value(value,img_map=img_map) if value is not None else f'<span class="muted">{html.escape(item.get("reason") or "No verified observation")}</span>'
+    # This per-field footer (source/timestamp/age), not the header chip, is the one that
+    # actually appears hundreds of times per page — every field with a source_timestamp shows
+    # its own raw UTC ISO string here. Same bug, far more pervasive: a Central-Time reader sees
+    # a different, unlabeled hour on nearly every field on the page, not just once at the top.
     meta=[]
     if item.get('source'):meta.append(html.escape(str(item['source'])))
-    if item.get('source_timestamp'):meta.append(html.escape(str(item['source_timestamp'])))
+    if item.get('source_timestamp'):meta.append(html.escape(ct_str(item['source_timestamp'])))
     age=item.get('age_seconds')
     if isinstance(age,(int,float)):meta.append(f'age {age:.0f}s' if age<120 else f'age {age/60:.1f}m')
     meta_html=f'<div class="meta">{" &middot; ".join(meta)}</div>' if meta else ''
@@ -911,8 +918,12 @@ a{color:var(--accent)}
     head=(f'<!doctype html><html><head><meta charset="utf-8">'
           f'<meta name="viewport" content="width=device-width,initial-scale=1">'
           f'<title>{html.escape(payload["kind"].title())} Options Report</title><style>{style}</style></head><body>')
+    # Every other timestamp on the page is shown in Central Time (the house convention,
+    # "2026-10-08 03:05:05 PM CT" via display()) — this top banner chip was the one place
+    # still showing a bare UTC ISO string ("2026-10-09T15:10:43.895470+00:00"), which read
+    # as a different, unlabeled hour to a CT reader and looked like a stale/wrong-day report.
     header=(f'<header class="top"><h1>{html.escape(payload["kind"].title())} Options Report</h1>'
-           f'<div class="chips"><span class="chip">{html.escape(payload["generated_at"])}</span>'
+           f'<div class="chips"><span class="chip">{html.escape(ct_str(payload.get("generated_at")))}</span>'
            f'<span class="chip {"warn" if payload["report_completeness"]=="INCOMPLETE" else ""}">{html.escape(payload["report_completeness"])}</span>'
            f'<span class="chip">immutable snapshot</span></div></header>'
            f'<div class="downloads">{downloads}</div>')
