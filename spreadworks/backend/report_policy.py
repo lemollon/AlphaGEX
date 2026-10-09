@@ -55,7 +55,7 @@ def plain_value(v, depth=0):
     if isinstance(v, dict):
         if v and all(isinstance(k, str) and _SYM_KEY_RE.match(k) for k in v):
             return "; ".join(f"{k}: {plain_value(sv, depth + 1)}" for k, sv in v.items())
-        if v and len(v) <= 10 and depth < 3:
+        if v and len(v) <= 10 and depth < 4:
             return ", ".join(f"{str(k).replace('_', ' ')} {plain_value(vv, depth + 1)}" for k, vv in v.items())
         return json.dumps(v, ensure_ascii=False, default=str)
     if isinstance(v, list):
@@ -63,6 +63,12 @@ def plain_value(v, depth=0):
             return "none"
         if len(v) <= 12 and all(not isinstance(x, (dict, list)) for x in v):
             return ", ".join(plain_value(x, depth + 1) for x in v)
+        if depth < 3 and all(isinstance(x, dict) for x in v):
+            shown = v[:5]
+            text = "; ".join(plain_value(x, depth + 1) for x in shown)
+            if len(v) > 5:
+                text += f" (+{len(v) - 5} more)"
+            return text
         return json.dumps(v, ensure_ascii=False, default=str)
     return str(v)
 
