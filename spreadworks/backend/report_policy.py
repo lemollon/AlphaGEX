@@ -486,7 +486,7 @@ def render_opening_html(payload):
         row=blocks.get(name) or {};out+="<tr><th>"+escape(name.replace("_"," "))+"</th><td>"+escape(display(row.get("thesis",{})))+"<br>"+escape(display(row.get("status",{})))+"</td></tr>"
     out+="</table>"
     out+="<h2>🧭 Market story</h2><p>"+escape(market_story(blocks))+"</p>"
-    out+="<h2>🧩 Edge board</h2><table><tr><th>Horizon</th><th>Trigger</th><th>Invalidation</th><th>Status</th></tr>"
+    out+='<h2>🧩 Edge board</h2><table class="wide"><tr><th>Horizon</th><th>Trigger</th><th>Invalidation</th><th>Status</th></tr>'
     for horizon,trigger,invalid,status in edge_board(blocks):
         out+="<tr><th>"+escape(horizon)+"</th><td>"+escape(trigger)+"</td><td>"+escape(invalid)+"</td><td>"+escape(status)+"</td></tr>"
     out+="</table>"
