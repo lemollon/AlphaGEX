@@ -56,13 +56,6 @@ _SYM_KEY_RE = re.compile(r"^[A-Z]{1,5}$")
 # not just the bare bucket ("1_5dte" in Gamma/Flow/Control). Re-checked live 2026-10-09: the
 # first fix only handled the bare form; every "term "/"iv " prefixed field still read "1 5dte".
 _DTE_BUCKET_RE = re.compile(r"(\d+)(?:_(\d+))?dte$", re.IGNORECASE)
-# Raw timestamps embedded as plain dict values anywhere inside a field's own data (a chain
-# point's latest_print, futures_context.index_confirmation's per-symbol spot/source_timestamp,
-# section_summary's recap prose) bypass the page header and per-field .meta footer fixes,
-# since those go through this generic key/value path instead. One canonical pattern, shared
-# by plain_value() here and _fmt_value() in full_options_report.py, so both surfaces (the HTML
-# page and the markdown/Discord/email text) stay consistent.
-TIMESTAMP_KEY_RE = re.compile(r"(^|_)(timestamp|generated_at|created_at|attempted_at|observed_at|entered_at|updated_at)$")
 
 def field_label(key):
     """Human label for a field/bucket name. A blind `_` -> ` ` replace turns a DTE bucket
@@ -91,11 +84,7 @@ def plain_value(v, depth=0):
         if v and all(isinstance(k, str) and _SYM_KEY_RE.match(k) for k in v):
             return "; ".join(f"{k}: {plain_value(sv, depth + 1)}" for k, sv in v.items())
         if v and len(v) <= 10 and depth < 4:
-            def _kv(k, vv):
-                if isinstance(vv, str) and TIMESTAMP_KEY_RE.search(k):
-                    return ct_str(vv)
-                return plain_value(vv, depth + 1)
-            return ", ".join(f"{field_label(k)} {_kv(k, vv)}" for k, vv in v.items())
+            return ", ".join(f"{field_label(k)} {plain_value(vv, depth + 1)}" for k, vv in v.items())
         return json.dumps(v, ensure_ascii=False, default=str)
     if isinstance(v, list):
         if not v:
@@ -109,6 +98,12 @@ def plain_value(v, depth=0):
                 text += f" (+{len(v) - 5} more)"
             return text
         return json.dumps(v, ensure_ascii=False, default=str)
+    if isinstance(v, str):
+        # Shape-based, not key-name-based: ct_str() only converts strings that actually parse
+        # as a timezone-aware instant (a bare calendar date like an option expiration has no
+        # tzinfo and passes through unchanged) — this subsumes the former per-key-name check,
+        # which kept missing new field names (heartbeat, alert_time, requested_at, ...).
+        return ct_str(v)
     return str(v)
 
 def observed(value, source, stamp, now):

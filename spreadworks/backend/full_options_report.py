@@ -15,7 +15,7 @@ from . import market_structure as ms
 from .report_contract import REQUIREMENTS, prepare_report_delivery, validate_rendered_report, FLOW_SOURCE
 from .report_producers import observation, unavailable, number, collect_breadth, collect_profile, collect_macro, collect_study, stored_futures, UTC, ET
 from .report_ledger import scorecard, qualify_package, mark_open_positions
-from .report_policy import build_strategy_blocks, finite_tree, render_opening_html, field_label, ct_str, TIMESTAMP_KEY_RE
+from .report_policy import build_strategy_blocks, finite_tree, render_opening_html, field_label, ct_str
 from .report_assets import DELIVERY_VERSION, inspect_png, chart_id_from_ref, portable_pdf, portable_zip
 logger=logging.getLogger(__name__)
 router=APIRouter(prefix='/api/spreadworks/reports',tags=['Full Options Reports'])
@@ -730,6 +730,14 @@ def _fmt_primitive(v,img_map=None):
             return (f'<a href="{href}" target="_blank" rel="noopener">'
                     f'<img src="{safe}" alt="chart" loading="lazy" style="max-width:100%;border-radius:6px;border:1px solid var(--border)"></a>')
         return f'<a href="{href}" target="_blank" rel="noopener">{href}</a>'
+    if isinstance(v,str):
+        # Shape-based, not key-name-based: key names for a bare timestamp VALUE varied too
+        # much to enumerate (heartbeat, alert_time, requested_at, completed_at, prior_hour_
+        # timestamp, ...) and kept surfacing new raw-UTC leaks one at a time. ct_str() only
+        # converts strings that actually parse as a timezone-aware instant — a bare calendar
+        # date like "2026-10-08" (an expiration, no time/offset) has no tzinfo and parse_clock
+        # returns None for it, so it passes through unchanged; only real UTC timestamps shift.
+        return html.escape(ct_str(v))
     return html.escape(str(v))
 
 _MAX_KV_FIELDS=8
@@ -748,11 +756,8 @@ def _fmt_value(v,depth=0,img_map=None):
                 f'<b>{html.escape(sym)}</b>: {_fmt_value(sv,depth+1,img_map)}' for sym,sv in v.items())
         if v and depth<6:
             items=list(v.items());shown=items[:_MAX_KV_FIELDS]
-            def _kv_value(k,vv):
-                if isinstance(vv,str) and TIMESTAMP_KEY_RE.search(k):return html.escape(ct_str(vv))
-                return _fmt_value(vv,depth+1,img_map)
             rows=''.join(f'<div class="kv"><span class="k">{html.escape(field_label(k))}</span>'
-                         f'<span class="v">{_kv_value(k,vv)}</span></div>' for k,vv in shown)
+                         f'<span class="v">{_fmt_value(vv,depth+1,img_map)}</span></div>' for k,vv in shown)
             if len(items)>_MAX_KV_FIELDS:
                 rows+=f'<div class="kv more">&hellip; +{len(items)-_MAX_KV_FIELDS} more fields</div>'
             return f'<div class="kvblock">{rows}</div>'

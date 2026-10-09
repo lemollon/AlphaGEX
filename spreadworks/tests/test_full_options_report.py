@@ -350,6 +350,21 @@ def test_fmt_value_caps_nested_per_symbol_chain_dump():
     assert '+115 more items' in html
     assert '<pre class="raw">' not in html or html.count('2026-10-08')<30
 
+def test_fmt_value_converts_any_timestamp_shaped_string_regardless_of_key_name():
+    """Key-name matching (source_timestamp, generated_at, ...) kept missing new field names as
+    they turned up live one at a time: "heartbeat", "alert_time", "requested_at", "completed_at",
+    "prior_hour_timestamp" all leaked raw UTC under names the enumerated pattern didn't cover.
+    Switched to shape-based detection (does the string actually parse as a tz-aware instant?)
+    instead of a key-name allowlist — covers any field name, present or future, by construction.
+    A bare calendar date (an option expiration, no time/offset) must NOT shift: it has no tzinfo,
+    so parse_clock returns None and ct_str leaves it untouched."""
+    html=report._fmt_value({'heartbeat':NOW.isoformat(),'alert_time':NOW.isoformat(),
+                             'requested_at':NOW.isoformat(),'some_totally_new_field_name':NOW.isoformat(),
+                             'expiration':'2026-10-08'})
+    assert NOW.isoformat() not in html
+    assert html.count('AM CT</span>')+html.count('PM CT</span>')==4  # the 4 real timestamps
+    assert '2026-10-08</span>' in html  # bare date untouched, not shifted to the previous day
+
 def test_fmt_primitive_never_scientific_notation():
     """%g silently switches to exponential once a float needs more than 4 significant digits
     before the decimal (anything >=10000) — "8.231e+04" for an $82,313 premium reads as a
