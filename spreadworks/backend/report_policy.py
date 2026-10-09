@@ -42,6 +42,19 @@ def missing(reason):
     return {"status": "unavailable", "reason": reason}
 
 _SYM_KEY_RE = re.compile(r"^[A-Z]{1,5}$")
+_DTE_BUCKET_RE = re.compile(r"^(\d+)(?:_(\d+))?dte$", re.IGNORECASE)
+
+def field_label(key):
+    """Human label for a field/bucket name. A blind `_` -> ` ` replace turns a DTE bucket
+    key like "1_5dte" into the typo-looking "1 5dte" instead of "1-5 DTE" — special-case
+    that shape (shared by kv rows, field headers, chart tick labels) before the generic
+    underscore replace."""
+    key = str(key)
+    m = _DTE_BUCKET_RE.match(key)
+    if m:
+        lo, hi = m.groups()
+        return f"{lo}-{hi} DTE" if hi else f"{lo} DTE"
+    return key.replace("_", " ")
 
 def plain_value(v, depth=0):
     """Plain-text (markdown/Discord-safe, no HTML) rendering of a field value for display().
@@ -56,7 +69,7 @@ def plain_value(v, depth=0):
         if v and all(isinstance(k, str) and _SYM_KEY_RE.match(k) for k in v):
             return "; ".join(f"{k}: {plain_value(sv, depth + 1)}" for k, sv in v.items())
         if v and len(v) <= 10 and depth < 4:
-            return ", ".join(f"{str(k).replace('_', ' ')} {plain_value(vv, depth + 1)}" for k, vv in v.items())
+            return ", ".join(f"{field_label(k)} {plain_value(vv, depth + 1)}" for k, vv in v.items())
         return json.dumps(v, ensure_ascii=False, default=str)
     if isinstance(v, list):
         if not v:
@@ -210,8 +223,14 @@ def build_strategy_blocks(blocks, core, plan, runtime, paper, morning, prior, no
             pressure[symbol]={"upside_initiation_premium":up,"downside_initiation_premium":down,
                 "read":"upside pressure" if up>down else "downside pressure" if down>up else "balanced or unclassified",
                 "scope":"Observed retained strike concentrations only; not full flow totals or opening inventory"}
+        # futures_context is NOT embedded here (it used to be, verbatim, in all three strategy
+        # sections): it has its own dedicated section, so duplicating it tripled page weight for
+        # zero new information, and because futures_context.basis is permanently unavailable by
+        # design (same-time futures-vs-cash basis cannot be computed), embedding it meant this
+        # evidence field could never report live/historical no matter how complete its own real
+        # data was — normalize_item() marks a field unavailable if ANY nested dependency is.
         evidence={"observed_expiry_points":points,"observed_expiry_prints":prints,"pressure":pressure,
-                  "futures_context":blocks["futures_context"],"guardrail":"Futures context and forward options are separate evidence."}
+                  "guardrail":"See the Futures Context section for overnight ES/NQ positioning; forward options evidence here is priced, not futures-derived."}
         # Never turn a freshly computed summary into freshly observed market data.
         clock=min(stamps) if stamps else None
         thesis=pressure or (blocks["risk_on_defensive"]["verdict"].get("value") if not forward else None)
@@ -236,18 +255,38 @@ def build_strategy_blocks(blocks, core, plan, runtime, paper, morning, prior, no
             and len(r.get("confirmation_evidence") or [])>=2
             for r in state_rows for p in matched)
         status="OPEN PAPER" if any(t.get("state")=="OPEN" for t in paper.get("trade_details",[])) and not forward else "ENTRY_READY" if confirmed else "WATCH" if thesis else "PENDING EVIDENCE"
+        # Same full catalyst list used to repeat identically across all three horizons (CPI on
+        # the 14th shown under "today" when today is the 8th). Narrow to this section's own
+        # [lo,hi] window so each horizon only carries the events that actually fall inside it.
+        raw_catalysts=blocks["event_calendar"]["catalysts"];cv=raw_catalysts.get("value")
+        if isinstance(cv,list):
+            def _in_window(c,lo=lo,hi=hi):
+                try:d=datetime.fromisoformat(str(c.get("datetime"))).date()
+                except (TypeError,ValueError):return False
+                return lo<=d<=hi
+            catalysts_for_horizon=dict(raw_catalysts,value=[c for c in cv if _in_window(c)])
+        else:catalysts_for_horizon=raw_catalysts
         values={"horizon":{"from":lo.isoformat(),"through":hi.isoformat(),"unit":"Trading-session dates" if name=="near_forward_strategy" else "Calendar dates"},
             "conflicts":{"market_conflicts":blocks["risk_on_defensive"].get("conflicts"),"source_limits":"Prior OI, representative flow, partial calendars; fresh quotes do not prove predictive edge."},
             "structure":"Use the matching registered, freshly qualified defined-risk package; no structure invented from directional pressure.",
             "trigger":setup_list or "No registered trigger; wait for a recorded rule and observed confirmation.",
             "invalidation":[{"setup_id":s.get("setup_id"),"invalidation":s.get("invalidation")} for s in setup_list] or "No observed setup; no inferred invalidation level.",
             "status":status,"quote_qualification":"Every selected leg requires source BBO ≤90s and valid executable side; historical chains are watch-only.",
-            "risk_exit_rules":paper.get("fill_rules") or "Defined-risk package and observed exit rule required before any simulated entry.",
-            "catalysts":blocks["event_calendar"]["catalysts"]}
+            # Same fixed text regardless of horizon (it's one global fill/target/stop rule, not
+            # day/near/forward-specific) — used to repeat the full ~400-char paragraph 3x across
+            # these sections plus a 4th time in Position Management, which is its canonical home.
+            "risk_exit_rules":("Same fixed rule for every horizon — see Position Management for the full fill/target/stop text."
+                               if paper.get("fill_rules") else "Defined-risk package and observed exit rule required before any simulated entry.")}
         target={k:observed(v,source,now,now) for k,v in values.items()}
         target["thesis"]=observed(thesis,"Expiry-specific observed sentiment" if forward else "Current observed day sentiment",clock if forward else blocks["risk_on_defensive"]["verdict"].get("source_timestamp"),now)
         target["evidence"]=observed(evidence if points or prints else None,"Expiry-specific observed surface / flow",clock,now)
         target["contracts"]=quotes
+        # catalysts_for_horizon is already a full observed()-style dict (it's a narrowed copy of
+        # blocks["event_calendar"]["catalysts"], itself already observed()-wrapped) — assigning it
+        # directly here, like thesis/evidence/contracts above, avoids re-wrapping an already-wrapped
+        # dict through the generic values-loop (which produced doubled status/source/timestamp
+        # metadata nested inside its own "value").
+        target["catalysts"]=catalysts_for_horizon
         blocks[name]=target
     comparisons={"morning_baseline":{"report_id":morning.get("report_id"),"timestamp":morning.get("generated_at"),"thesis":morning.get("report_blocks",{}).get("risk_on_defensive")},
         "prior_checkpoint":{"report_id":prior.get("report_id"),"timestamp":prior.get("generated_at")},
@@ -264,21 +303,29 @@ def build_strategy_blocks(blocks, core, plan, runtime, paper, morning, prior, no
         "existing_positions":paper.get("trade_details") or [],"reassessment":"Recheck all horizons and recorded baselines every report; maintain frozen morning expected-move bands and explicit current IV separately."}
     blocks["adaptation_rules"]={k:observed(v,source,now,now) for k,v in rules.items()}
 
-def display(item):
+def display(item, compact=False):
+    """compact=True drops the per-value "[updated ...; age ...]" provenance suffix, keeping
+    only a short reliability tag. Full display() repeats that suffix verbatim on every cell
+    of a row (edge_board, scoreboard), which is correct for a standalone field but turns a
+    "30-second scoreboard" into a wall of identical timestamps when 3 cells share one source.
+    The reliability tag itself (LIVE vs LAST KNOWN) is kept even in compact mode — this report
+    never hides staleness, it just stops repeating the same clock three times in one row."""
     if not isinstance(item,dict):return "Unavailable"
     value=item.get("value")
     if item.get("status")=="unavailable":
         return "UNAVAILABLE — "+str(item.get("reason") or "No verified observation")+("; unverified estimate: "+plain_value(value) if value is not None else "")
     text=plain_value(value) if isinstance(value,(dict,list)) else str(value)
+    age=float(item.get('age_seconds') or 0)
+    label='LIVE NOW' if item['status']=='live' else 'LAST KNOWN — CONTEXT ONLY ('+('MEDIUM' if age<3600 else 'LOW')+' contextual reliability)'
+    if compact:
+        return text+' ['+label+']'
     stamp=parse_clock(item.get('source_timestamp'))
     clock=stamp.astimezone(CT).strftime('%Y-%m-%d %I:%M:%S %p CT') if stamp else str(item.get('source_timestamp'))
-    age=float(item.get('age_seconds') or 0)
     age_text=f'{age:.0f}s' if age<120 else f'{age/60:.1f} min' if age<7200 else f'{age/3600:.1f} hours' if age<172800 else f'{age/86400:.1f} days'
-    label='LIVE NOW' if item['status']=='live' else 'LAST KNOWN — CONTEXT ONLY ('+('MEDIUM' if age<3600 else 'LOW')+' contextual reliability)'
     return text+' ['+label+'; updated '+clock+'; age '+age_text+']'
 
 def scoreboard(blocks):
-    def get(name,field):return display(blocks.get(name,{}).get(field,{}))
+    def get(name,field):return display(blocks.get(name,{}).get(field,{}),compact=True)
     return [("Regime / trend",get("risk_on_defensive","verdict")),("Chop / breakout risk",get("range_stall","breakout_ends_chop")),
         ("Premium / volatility buying",get("premium_selling","suitability")),("Confidence / data quality","See the source clocks and explicit historical/unavailable fields below; no inferred high confidence."),
         ("Flow / gamma",get("flow","classified_coverage")+"; "+get("gamma","net_gex")),("Best underlying / structure",get("day_strategy","contracts"))]
@@ -410,18 +457,28 @@ def section_meaning(name, block):
     return _SECTION_ROLE.get(name, "Supporting evidence for the sections above; not a standalone signal.")
 
 def market_story(blocks):
-    return (display(blocks["risk_on_defensive"]["verdict"]) + " "
-            + display(blocks["premium_selling"]["suitability"]) + " "
-            + section_meaning("gamma", blocks["gamma"]))
+    """Three independent fragments (regime verdict, premium suitability, gamma read) joined
+    into one paragraph. A blind join produced run-ons like "...UNAVAILABLE — no timestamped
+    observation Gamma sign is mixed..." when a fragment is itself an UNAVAILABLE disclosure
+    with no trailing punctuation — each fragment now ends with its own sentence stop."""
+    parts = [display(blocks["risk_on_defensive"]["verdict"], compact=True),
+             display(blocks["premium_selling"]["suitability"], compact=True),
+             section_meaning("gamma", blocks["gamma"])]
+    return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts if p)
 
 def edge_board(blocks):
     rows = []
     for name in ("day_strategy", "near_forward_strategy", "forward_strategy"):
         row = blocks[name]
-        rows.append((name.replace("_", " "), display(row["trigger"]), display(row["invalidation"]), display(row["status"])))
+        rows.append((name.replace("_", " "), display(row["trigger"], compact=True),
+                     display(row["invalidation"], compact=True), display(row["status"], compact=True)))
     return rows
 
 def biggest_traps(blocks):
+    """Market-risk events only — a data-completeness count ("N fields unavailable") is a
+    different kind of fact than "CPI drops Tuesday" and reads as a trading trap when it is
+    really a meta note about this checkpoint's coverage. That count still lives in Data
+    Integrity; it does not belong in the list a trader scans for what could move the market."""
     traps = []
     catalysts = (blocks.get("event_calendar") or {}).get("catalysts") or {}
     cv = catalysts.get("value")
@@ -429,12 +486,8 @@ def biggest_traps(blocks):
         for c in cv:
             if isinstance(c, dict) and str(c.get("impact")).upper() == "HIGH":
                 traps.append(str(c.get("name")) + " on " + str(c.get("datetime")))
-    unavailable = (blocks.get("data_integrity") or {}).get("unavailable_fields") or {}
-    uv = unavailable.get("value")
-    if isinstance(uv, list) and uv:
-        traps.append(str(len(uv)) + " fields unavailable this checkpoint — known blind spots, not zeros.")
     if not traps:
-        traps.append("No flagged high-impact catalysts or unresolved blind spots this checkpoint.")
+        traps.append("No flagged high-impact catalysts this checkpoint.")
     return traps
 
 def if_then_day_plan(blocks):
