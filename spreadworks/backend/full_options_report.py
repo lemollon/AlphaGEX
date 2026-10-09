@@ -861,6 +861,7 @@ overflow-x:auto;font-size:.78rem;color:var(--fg);white-space:pre-wrap;overflow-w
 table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden}
 th,td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:left;overflow-wrap:anywhere;vertical-align:top;font-size:.85rem}
 th{width:34%;color:var(--muted);font-weight:600}
+table.wide th{width:auto}
 tr:last-child td,tr:last-child th{border-bottom:none}
 p{color:var(--muted)}
 a{color:var(--accent)}
