@@ -240,6 +240,14 @@ def test_field_label_formats_dte_buckets_not_blind_underscore_replace():
     assert field_label('6_20dte')=='6-20 DTE'
     assert field_label('21_365dte')=='21-365 DTE'
     assert field_label('net_gex')=='net gex'  # ordinary fields unaffected
+    # Prefixed buckets (Surface section's real field names) — the first version of this fix
+    # only handled the bare bucket; re-checked live 2026-10-09 and every "term "/"iv " prefixed
+    # field on the actual Surface section still read "term 1 5dte" / "iv 6 20dte".
+    assert field_label('term_1_5dte')=='term 1-5 DTE'
+    assert field_label('term_6_20dte')=='term 6-20 DTE'
+    assert field_label('iv_21_365dte')=='iv 21-365 DTE'
+    assert field_label('iv_0dte')=='iv 0 DTE'
+    assert field_label('term_21plus')=='term 21plus'  # not a dte-bucket shape, left alone
 
 def test_display_compact_drops_repeated_provenance_suffix_keeps_reliability_tag():
     """Edge board/scoreboard call display() once per cell; when 3 cells in one row share the

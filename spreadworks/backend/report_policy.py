@@ -42,18 +42,24 @@ def missing(reason):
     return {"status": "unavailable", "reason": reason}
 
 _SYM_KEY_RE = re.compile(r"^[A-Z]{1,5}$")
-_DTE_BUCKET_RE = re.compile(r"^(\d+)(?:_(\d+))?dte$", re.IGNORECASE)
+# Matches the bucket suffix anywhere a key ENDS in it (search, not match on the whole key) —
+# real field names carry a prefix before the bucket ("term_1_5dte", "iv_6_20dte" in Surface),
+# not just the bare bucket ("1_5dte" in Gamma/Flow/Control). Re-checked live 2026-10-09: the
+# first fix only handled the bare form; every "term "/"iv " prefixed field still read "1 5dte".
+_DTE_BUCKET_RE = re.compile(r"(\d+)(?:_(\d+))?dte$", re.IGNORECASE)
 
 def field_label(key):
     """Human label for a field/bucket name. A blind `_` -> ` ` replace turns a DTE bucket
-    key like "1_5dte" into the typo-looking "1 5dte" instead of "1-5 DTE" — special-case
-    that shape (shared by kv rows, field headers, chart tick labels) before the generic
-    underscore replace."""
+    key like "1_5dte" (or prefixed, "term_1_5dte") into the typo-looking "1 5dte" / "term 1
+    5dte" instead of "1-5 DTE" / "term 1-5 DTE" — special-case that shape (shared by kv rows,
+    field headers, chart tick labels) before the generic underscore replace."""
     key = str(key)
-    m = _DTE_BUCKET_RE.match(key)
-    if m:
+    m = _DTE_BUCKET_RE.search(key)
+    if m and (m.start() == 0 or key[m.start() - 1] == "_"):
         lo, hi = m.groups()
-        return f"{lo}-{hi} DTE" if hi else f"{lo} DTE"
+        bucket = f"{lo}-{hi} DTE" if hi else f"{lo} DTE"
+        prefix = key[:m.start()].rstrip("_").replace("_", " ")
+        return f"{prefix} {bucket}" if prefix else bucket
     return key.replace("_", " ")
 
 def plain_value(v, depth=0):
