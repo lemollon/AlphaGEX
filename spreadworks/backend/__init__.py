@@ -944,7 +944,7 @@ def _start_scheduler(app: FastAPI):
             )
             # Web search keeps the synthesis grounded in TODAY's news flow.
             # web_search_20260209 has dynamic filtering built in (no separate
-            # code_execution tool needed). Supported on Sonnet 4.6.
+            # code_execution tool needed). Supported on Sonnet 5.5.
             tools = [{"type": "web_search_20260209", "name": "web_search"}]
             messages = [{"role": "user", "content": prompt}]
 
@@ -953,7 +953,7 @@ def _start_scheduler(app: FastAPI):
             text = ""
             for _ in range(3):
                 msg = client.messages.create(
-                    model="claude-sonnet-4-6",
+                    model="claude-sonnet-5-5",
                     max_tokens=1500,  # web search blocks consume tokens
                     tools=tools,
                     messages=messages,

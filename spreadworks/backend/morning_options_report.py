@@ -320,7 +320,7 @@ def _claude_request(prompt: str) -> dict[str, Any]:
     )
     max_continuations = 4
     client = anthropic.Anthropic(api_key=api_key, timeout=timeout, max_retries=max_retries)
-    model = os.getenv("MORNING_OPTIONS_MODEL", "claude-sonnet-4-6")
+    model = os.getenv("MORNING_OPTIONS_MODEL", "claude-sonnet-5-5")
 
     # First try the richer request with web search. Some provider/model
     # combinations reject the web-search tool schema, so fall back immediately
