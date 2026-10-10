@@ -93,6 +93,8 @@ const {
   settleFlintExpired,
   assignmentGuardWindow,
   notifyBigMove,
+  getFlintCumulativeRealizedPnl,
+  FLINT_TABLE,
 } = _testing
 
 /* ------------------------------------------------------------------ */
@@ -1200,6 +1202,44 @@ describe('Config loading resilience', () => {
   it('syncPaperAccountCapital exists and has error handling', () => {
     expect(src).toMatch(/syncPaperAccountCapital/)
     expect(src).toMatch(/capital sync error/i)
+  })
+
+  it('syncPaperAccountCapital nets FLINT pnl out of the floor too, not just this bot\'s own', () => {
+    // 2026-10-10 fix: starting_capital used to be derived from
+    // (broker_equity - cumulative_pnl) alone, which silently folded FLINT's
+    // own realized P&L on the SAME real account into the protected floor
+    // instead of counting it against rule R1's cushion.
+    expect(src).toMatch(/getFlintCumulativeRealizedPnl/)
+    expect(src).toMatch(/alloc\.allocated - pnl - flintPnl/)
+  })
+})
+
+describe('getFlintCumulativeRealizedPnl', () => {
+  beforeEach(() => { (query as any).mockReset() })
+
+  it('sums only this bot+person+production\'s own closed/expired FLINT rows', async () => {
+    // ensureFlintTable's CREATE/ALTER both go through dbExecute, never query —
+    // this one mocked resolved value is the SELECT SUM itself.
+    (query as any).mockResolvedValueOnce([{ total: '-123.45' }])
+    const result = await getFlintCumulativeRealizedPnl('flame', 'Flame')
+    expect(result).toBe(-123.45)
+    const sql = (query as any).mock.calls[0][0] as string
+    expect(sql).toContain(FLINT_TABLE)
+    expect(sql).toContain("account_type = 'production'")
+    expect(sql).toContain("status IN ('closed', 'expired')")
+    expect((query as any).mock.calls[0][1]).toEqual(['flame', 'Flame'])
+  })
+
+  it('fails closed to 0 on a DB error — never blocks the floor sync, never throws', async () => {
+    (query as any).mockRejectedValueOnce(new Error('relation does not exist'))
+    const result = await getFlintCumulativeRealizedPnl('flame', 'Flame')
+    expect(result).toBe(0)
+  })
+
+  it('returns 0 when FLINT has never settled a production trade on this account (today\'s reality)', async () => {
+    (query as any).mockResolvedValueOnce([{ total: '0' }])
+    const result = await getFlintCumulativeRealizedPnl('flame', 'Flame')
+    expect(result).toBe(0)
   })
 })
 
