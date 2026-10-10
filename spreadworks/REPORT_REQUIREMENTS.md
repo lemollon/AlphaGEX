@@ -17,6 +17,17 @@ surfaces the result as a Plan status line (HOLDING / CHANGED since this
 morning / first read of the day), so an intraday reversal of the morning call
 is stated explicitly instead of requiring the reader to notice it by comparing
 two separate reports: **33 sections and 243 required fields**.
+
+Version `2026-10-10.2`: Leron — "make the read detailed and fun to read... each
+section should flow into each [other]." Every section now carries the "Section
+summary" / "What it means for the day" pair, not just the 19 originally judged
+decision-relevant; the 14 bookkeeping sections get an honest line describing
+their real role (several explicitly say "not a market read" rather than
+inventing one). `market_control`'s line additionally calls back to Today's
+Mission's verdict — agreeing or in tension with it — the one section with its
+own genuine bull/bear-leaning read; no other section's line claims a direction
+it doesn't actually carry. No new REQUIREMENTS fields.
+
 Every delivered report carries its policy version and SHA-256 schema/rule hash.
 
 ## Reader experience
@@ -26,26 +37,23 @@ a 30-second scoreboard, a Today vs forward table, four decision-first opening
 panels (Market story, Edge board, Biggest traps, If/then day plan), the entire
 required contract, and eleven PNG panels. HTML shows the charts beside their
 corresponding topics. The original panels and data points remain present.
-Within the 19 sections most relevant to a same-day/forward trading decision
-(§§ risk_on_defensive, market_control, gamma, flow, premium_selling,
-day/near-forward/forward strategy, expected_move, smile, surface,
-forward_strikes, range_stall, breadth, profile, sector_credit, macro,
-futures_context, event_calendar — `SECTION_SUMMARY_SECTIONS` in
-`report_policy.py`), each section's required fields are followed by a
-"Section summary" line (a mechanical recap of up to three of that section's
-own populated field:value pairs) and a "What it means for the day" line (a
-deterministic lookup against that section's own field values — never a new
-number, never a specific structure/strategy recommendation, since the trader
-this serves runs every options strategy, not credit spreads alone). Bookkeeping
-sections (contract_packages, entry_watches, candidate_analysis,
-position_management, trigger_accountability, paper_scorecard, scanner,
-event_study, engine_consensus, morning_comparison, horizon_comparison,
-adaptation_rules, visuals, data_integrity) are deliberately excluded from this
-layer; they remain raw evidence only. Missing observations have source-specific
-reasons; dated last-known observations retain their clocks. Arbitrary model
-narrative is stored only for diagnosis and cannot introduce facts into the
-canonical rendered report — the decision-first lines above are templated code,
-not model output, and are covered by the same no-model-prose rule.
+Every one of the 33 sections (`SECTION_SUMMARY_SECTIONS` in `report_policy.py`)
+has its required fields followed by a "Section summary" line (a mechanical
+recap of up to three of that section's own populated field:value pairs) and a
+"What it means for the day" line (a deterministic lookup against that
+section's own field values — never a new number, never a specific
+structure/strategy recommendation, since the trader this serves runs every
+options strategy, not credit spreads alone). For the 14 sections that are
+honestly bookkeeping or audit trail (contract_packages, entry_watches,
+candidate_analysis, position_management, trigger_accountability,
+paper_scorecard, scanner, event_study, engine_consensus, morning_comparison,
+horizon_comparison, adaptation_rules, visuals, data_integrity), that line says
+so plainly rather than forcing a trading signal onto evidence that doesn't
+carry one. Missing observations have source-specific reasons; dated
+last-known observations retain their clocks. Arbitrary model narrative is
+stored only for diagnosis and cannot introduce facts into the canonical
+rendered report — the decision-first lines above are templated code, not
+model output, and are covered by the same no-model-prose rule.
 
 ## Website and historical archive
 

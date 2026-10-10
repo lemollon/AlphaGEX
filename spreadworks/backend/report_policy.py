@@ -409,6 +409,13 @@ SECTION_SUMMARY_SECTIONS = (
     "day_strategy", "near_forward_strategy", "forward_strategy",
     "expected_move", "smile", "surface", "forward_strikes",
     "range_stall", "breadth", "profile", "sector_credit", "macro", "futures_context", "event_calendar",
+    # Leron, 2026-10-10: "make the read detailed and fun to read... each section should flow
+    # into each [other]" -- every section on the page gets this treatment now, not just the
+    # 19 originally judged "decision-relevant." The ones below are honestly bookkeeping/audit,
+    # so their line says that plainly instead of inventing a trading signal that isn't there.
+    "contract_packages", "entry_watches", "candidate_analysis", "position_management",
+    "trigger_accountability", "paper_scorecard", "scanner", "event_study", "engine_consensus",
+    "morning_comparison", "horizon_comparison", "adaptation_rules", "visuals", "data_integrity",
 )
 
 def section_summary(name, block):
@@ -422,7 +429,9 @@ def section_summary(name, block):
         if not isinstance(item, dict) or item.get("status") == "unavailable":
             continue
         value = item.get("value")
-        if value is None:
+        # A raw chart URL/data-URI is never a meaningful "field: value" recap line (it's the
+        # same image already embedded on the page) — skip it rather than echo the URL as prose.
+        if value is None or (isinstance(value, str) and (value.startswith("http") or value.startswith("data:"))):
             continue
         parts.append(field.replace("_", " ") + ": " + plain_value(value))
     if not parts:
@@ -456,6 +465,20 @@ _SECTION_ROLE = {
     "macro": "Delayed rates/FX/commodity backdrop; context only, never a same-session trading signal.",
     "futures_context": "Overnight futures positioning on delayed data; use only to frame the open, not to time entries.",
     "event_calendar": "Known catalysts ahead; a confirmed HIGH-impact event inside the holding period should shrink size or widen the structure.",
+    "contract_packages": "The qualified option structures behind the day/forward plans above — execution detail, not a new signal.",
+    "entry_watches": "Where each registered setup sits in its own trigger lifecycle — confirms whether a plan above is still a watch or already confirmed.",
+    "candidate_analysis": "The roster of symbols and surfaces being tracked — shows what's being watched, not a ranked recommendation.",
+    "position_management": "Open simulated risk and exit rules for this report's own paper trades — managing an existing paper position, not a new entry signal.",
+    "trigger_accountability": "Audit trail of past triggers and their outcomes — a track record for this system, not today's signal.",
+    "paper_scorecard": "Performance of this report's own simulated paper trades — bookkeeping on the system itself, not advice on your account.",
+    "scanner": "Scanner heartbeat and delivery health — confirms the pipeline is alive, not a market read.",
+    "event_study": "Frozen historical holding-period statistics — describes past behavior only; never treat it as today's expected outcome.",
+    "engine_consensus": "Cross-check against the squeeze and TradingVolatility engines — agreement adds confidence to the regime call above, disagreement is a reason to slow down.",
+    "morning_comparison": "How price, range and setups have drifted since this morning's baseline — the regime's own HOLDING/CHANGED verdict lives in Positioning & Levels above; this is the supporting detail.",
+    "horizon_comparison": "Cross-report consistency check between today's read and the morning/prior checkpoint — a sanity check, not a new signal.",
+    "adaptation_rules": "The explicit rules for activating, cancelling or switching a plan — same rules as the If/Then Day Plan above, in full.",
+    "visuals": "Chart delivery and integrity status — confirms the panels above are genuine renders, not decoration.",
+    "data_integrity": "Report pipeline health and source-clock audit — confirms what you're reading is real and current; never itself a market signal.",
 }
 
 def _per_symbol_floats(value):
@@ -476,11 +499,18 @@ def _per_symbol_floats(value):
                     break
     return out
 
-def section_meaning(name, block):
+def section_meaning(name, block, mission_side=None):
     """Deterministic "what it means for the day" line — a lookup on the section's own
     already-computed field values, never new analysis or a fabricated number. Strategy-
     neutral: states what the evidence favors (sellers vs buyers, which side), not which
     specific structure (spread/condor/single) to use.
+
+    Leron, 2026-10-10: "each section should flow into each [other]" -- market_control is the
+    one section below Today's Mission with its own real bull/bear-leaning read (call sellers
+    capping upside vs put sellers supporting downside), so it's the one place a grounded
+    agree/conflict callback to the mission verdict belongs; everywhere else that comparison
+    would be forcing a direction onto evidence that genuinely has none (vol pricing, pipeline
+    health, audit trails), which is exactly the fabrication this file's rules forbid.
     """
     def val(field):
         item = block.get(field) or {}
@@ -499,9 +529,17 @@ def section_meaning(name, block):
         if not sides or all(s == "inconclusive" for s in sides):
             return "Dealer positioning is unclear today; classified flow coverage is too thin to say who's in control."
         if sides.count("call_sellers") > sides.count("put_sellers"):
-            return "Call sellers dominate where classified — a sign of capped upside expectations."
+            # Capped-upside expectation agrees with a defensive mission call, conflicts with risk-on.
+            tie_in=({"risk-on":" That tension with the risk-on mission call above is worth a second look before leaning on either one alone.",
+                     "defensive":" That lines up with the defensive mission call above — two independent reads agreeing.",
+                     "neutral":""}.get(mission_side,"") if mission_side else "")
+            return "Call sellers dominate where classified — a sign of capped upside expectations."+tie_in
         if sides.count("put_sellers") > sides.count("call_sellers"):
-            return "Put sellers dominate where classified — a sign of downside support being sold."
+            # Downside-support-being-sold agrees with a risk-on mission call, conflicts with defensive.
+            tie_in=({"defensive":" That tension with the defensive mission call above is worth a second look before leaning on either one alone.",
+                     "risk-on":" That lines up with the risk-on mission call above — two independent reads agreeing.",
+                     "neutral":""}.get(mission_side,"") if mission_side else "")
+            return "Put sellers dominate where classified — a sign of downside support being sold."+tie_in
         return "Call- and put-selling are evenly split where classified; no net control."
     if name == "gamma":
         signs = _per_symbol_floats(val("net_gex"))
@@ -598,12 +636,13 @@ def render_markdown(payload):
     lines.extend("- "+t for t in biggest_traps(blocks))
     lines.append("## 🧮 If/then day plan")
     lines.extend("- **"+k+"**: "+v for k,v in if_then_day_plan(blocks))
+    mission_side=_side_label((blocks["risk_on_defensive"]["verdict"] or {}).get("value"))
     for name,fields in REQUIREMENTS.items():
         lines.append("### "+name.replace("_"," ").title())
         for field in fields:lines.append("- **"+field+"**: "+display(blocks[name][field]))
         if name in SECTION_SUMMARY_SECTIONS:
             lines.append("Section summary: "+section_summary(name,blocks[name]))
-            lines.append("What it means for the day: "+section_meaning(name,blocks[name]))
+            lines.append("What it means for the day: "+section_meaning(name,blocks[name],mission_side))
     for name,url in (payload.get("chart_urls") or {}).items():lines.append("!["+name.replace("_"," ").title()+"]("+url+")")
     lines.extend(['**BOTTOM LINE**',
         'Regime: '+display(blocks['risk_on_defensive']['verdict']),
