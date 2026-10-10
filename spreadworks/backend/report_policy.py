@@ -50,6 +50,19 @@ def finite_tree(value):
 def missing(reason):
     return {"status": "unavailable", "reason": reason}
 
+def fmt_number(v):
+    """Magnitude-tiered decimal precision -- a raw float repr like 0.15139485927028395
+    (median_iv) or -0.04018785705263146 (net_gex_b) is noise past a few significant decimals,
+    not information. Leron, 2026-10-10: "There is to many decimal places in the number it's
+    need to be rounded." Matches full_options_report._fmt_primitive's convention so a number
+    reads the same whether it came through the detailed per-field sections or the opening
+    summary / markdown path."""
+    a = abs(v)
+    if a >= 1e6:
+        return str(v)
+    decimals = 0 if a >= 1000 else 2 if a >= 1 else 4
+    return f"{v:,.{decimals}f}"
+
 _SYM_KEY_RE = re.compile(r"^[A-Z]{1,5}$")
 # Matches the bucket suffix anywhere a key ENDS in it (search, not match on the whole key) —
 # real field names carry a prefix before the bucket ("term_1_5dte", "iv_6_20dte" in Surface),
@@ -119,6 +132,8 @@ def plain_value(v, depth=0):
         # tzinfo and passes through unchanged) — this subsumes the former per-key-name check,
         # which kept missing new field names (heartbeat, alert_time, requested_at, ...).
         return ct_str(v)
+    if isinstance(v, float):
+        return fmt_number(v)
     return str(v)
 
 def observed(value, source, stamp, now):
@@ -354,7 +369,7 @@ def _value_text(item):
     # leaking raw UTC "+00:00" even though the SAME line's own provenance suffix below already
     # converts source_timestamp to CT -- the value and its own metadata showed different, both
     # unlabeled, times.
-    return plain_value(value) if isinstance(value,(dict,list)) else (ct_str(value) if isinstance(value,str) else str(value))
+    return plain_value(value) if isinstance(value,(dict,list)) else (ct_str(value) if isinstance(value,str) else fmt_number(value) if isinstance(value,float) else str(value))
 
 def display(item, compact=False):
     """compact=True drops the per-value "[updated ...; age ...]" provenance suffix, keeping
@@ -686,6 +701,8 @@ def narrative_html(value, depth=0):
         return out
     if isinstance(value, str):
         return html.escape(ct_str(value))
+    if isinstance(value, float):
+        return html.escape(fmt_number(value))
     return html.escape(str(value))
 
 def item_cell_html(item):
