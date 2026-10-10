@@ -10405,6 +10405,35 @@ const VOL_ALERTS_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
 const VOL_NOTIFY_COOLDOWN_MIN = 60
 let _volAlertsIntervalId: ReturnType<typeof setInterval> | null = null
 
+// 🚨 SCANNER HEARTBEAT WATCHDOG — own interval, independent of the trade loop.
+//
+// 2026-10-10 audit finding: `bot_heartbeats.last_heartbeat` is checked read-only
+// in two places (diagnose-trade's scanner_alive gate, preflight-live's one-shot
+// check #8) — both require a HUMAN to open a page. Nothing proactively watches
+// it. A hung scanBot() call (e.g. an un-timed-out Tradier fetch) would let the
+// scan loop go silently stuck for hours before anyone noticed — exactly the
+// same failure shape the "assignment guard failed" and "expired position"
+// alerts above exist to catch, just one layer further up.
+//
+// Runs as its own setInterval so it keeps ticking even if runAllScans/scanBot is
+// wedged on a hung await (Node's event loop is single-threaded but not blocked
+// by a pending promise — only a genuine process crash would silence this too,
+// and no in-process code can alert on that). writeOffHoursHeartbeats() refreshes
+// every bot's row every minute even when markets are closed specifically so
+// staleness is a true signal 24/7 — this watchdog does NOT gate on market hours.
+const HEARTBEAT_WATCHDOG_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
+const HEARTBEAT_WATCHDOG_STALE_SEC = 300 // matches preflight-live's HEARTBEAT_STALE_SEC
+// FLAME and SPARK can both carry real money (SPARK always; FLAME when armed) —
+// a stuck scanner there pages a phone. INFERNO/FORGE are paper-only/disarmed —
+// still worth a Discord record, never worth waking anyone up.
+const HEARTBEAT_WATCHDOG_CRITICAL_BOTS = new Set(['flame', 'spark'])
+let _heartbeatWatchdogIntervalId: ReturnType<typeof setInterval> | null = null
+let _heartbeatWatchdogRunning = false
+// Per-bot debounce: alert once on the healthy->stale transition, not once
+// per 3-minute tick for as long as it stays stale; post a short recovery note
+// on the stale->healthy transition so "fixed itself" is also visible.
+const _heartbeatStaleAlerted: Record<string, boolean> = {}
+
 // Attio CRM retry drain — re-attempts signups that failed to sync to Attio
 // (sub-project E). Fully isolated from the trade loop; this IS the retry "cron".
 const ATTIO_RETRY_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
@@ -10673,6 +10702,77 @@ function safeCheckVolAlerts(): void {
       console.warn(`[scanner] safeCheckVolAlerts error: ${msg}`)
     })
     .finally(() => { _volAlertsRunning = false })
+}
+
+/**
+ * Check every bot's `bot_heartbeats` row for staleness and page/post on the
+ * healthy->stale transition (and post a recovery note on stale->healthy).
+ * Read-only, never throws, never touches positions/orders.
+ */
+async function checkScannerHeartbeats(): Promise<void> {
+  const rows = await query(
+    `SELECT bot_name, last_heartbeat, status FROM bot_heartbeats`,
+  )
+  const byName = new Map<string, { last_heartbeat: string | Date | null; status: string | null }>()
+  for (const r of rows) {
+    byName.set(String(r.bot_name).toUpperCase(), { last_heartbeat: r.last_heartbeat, status: r.status })
+  }
+
+  for (const bot of BOTS) {
+    const key = bot.name.toUpperCase()
+    const hb = byName.get(key)
+    const ageSec = hb?.last_heartbeat
+      ? Math.round((Date.now() - new Date(hb.last_heartbeat).getTime()) / 1000)
+      : null
+    const stale = ageSec === null || ageSec > HEARTBEAT_WATCHDOG_STALE_SEC
+    const severity: 'info' | 'critical' = HEARTBEAT_WATCHDOG_CRITICAL_BOTS.has(bot.name) ? 'critical' : 'info'
+
+    if (stale && !_heartbeatStaleAlerted[key]) {
+      _heartbeatStaleAlerted[key] = true
+      const body = hb?.last_heartbeat
+        ? `No heartbeat in ${ageSec}s (status=${hb.status ?? 'unknown'}). Scanner appears stuck — ` +
+          `check Render logs; a webapp restart resumes it.`
+        : `No heartbeat row found for ${key} at all — scanner may never have started for this bot.`
+      console.error(`[scanner] *** HEARTBEAT WATCHDOG: ${key} STALE *** ${body}`)
+      void sendOpsPush({
+        title: `${key} scanner heartbeat is STALE`,
+        body,
+        severity,
+      }).catch(() => { /* an alert must never take the watchdog down */ })
+      void postOpsAlert({
+        botName: bot.name,
+        title: 'Scanner heartbeat stale',
+        body,
+        severity,
+      }).catch(() => { /* a Discord outage must never take the watchdog down */ })
+    } else if (!stale && _heartbeatStaleAlerted[key]) {
+      _heartbeatStaleAlerted[key] = false
+      const body = `Heartbeat is current again (${ageSec}s old, status=${hb?.status ?? 'unknown'}).`
+      console.log(`[scanner] HEARTBEAT WATCHDOG: ${key} recovered — ${body}`)
+      void sendOpsPush({
+        title: `${key} scanner heartbeat recovered`,
+        body,
+        severity: 'info',
+      }).catch(() => { /* never take the watchdog down */ })
+      void postOpsAlert({
+        botName: bot.name,
+        title: 'Scanner heartbeat recovered',
+        body,
+        severity: 'info',
+      }).catch(() => { /* never take the watchdog down */ })
+    }
+  }
+}
+
+function safeCheckScannerHeartbeats(): void {
+  if (_heartbeatWatchdogRunning) return
+  _heartbeatWatchdogRunning = true
+  checkScannerHeartbeats()
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] safeCheckScannerHeartbeats error: ${msg}`)
+    })
+    .finally(() => { _heartbeatWatchdogRunning = false })
 }
 
 /**
@@ -10978,6 +11078,13 @@ function startScannerLocked(): void {
   _volAlertsIntervalId = setInterval(safeCheckVolAlerts, VOL_ALERTS_INTERVAL_MS)
   setTimeout(safeCheckVolAlerts, 10_000)
 
+  // Scanner heartbeat watchdog — own 3-min interval, isolated from the trade
+  // loop (see the comment on HEARTBEAT_WATCHDOG_INTERVAL_MS above for why this
+  // has to be its own interval). Kick one run shortly after startup so a
+  // scanner that never came up at all pages within minutes, not up to 3.
+  _heartbeatWatchdogIntervalId = setInterval(safeCheckScannerHeartbeats, HEARTBEAT_WATCHDOG_INTERVAL_MS)
+  setTimeout(safeCheckScannerHeartbeats, 60_000)
+
   // Attio CRM retry drain — own 10-min interval, isolated from the trade loop.
   // Kick one run shortly after startup so a backlog clears without a full wait.
   _attioRetryIntervalId = setInterval(safeDrainAttioQueue, ATTIO_RETRY_INTERVAL_MS)
@@ -11037,6 +11144,7 @@ function startScannerLocked(): void {
   console.log('[scanner] SPARK fast monitor registered (20s), id:', _sparkFastMonitorIntervalId)
   console.log('[scanner] INFERNO fast monitor registered (20s), id:', _infernoFastMonitorIntervalId)
   console.log('[scanner] vol-alerts checker registered (5m), id:', _volAlertsIntervalId)
+  console.log('[scanner] heartbeat watchdog registered (3m), id:', _heartbeatWatchdogIntervalId)
   console.log('[scanner] attio retry drain registered (10m), id:', _attioRetryIntervalId)
   console.log('[scanner] pending moderation retry registered (5m), id:', _pendingModerationRetryIntervalId)
   console.log('[scanner] crm outbox drain registered (30s), id:', _crmOutboxIntervalId)
