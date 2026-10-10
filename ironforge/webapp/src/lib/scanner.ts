@@ -5954,19 +5954,17 @@ async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}
   // (FLAME_V2_CALL_SPREAD_MODE=live): runFlameV2CallSpreadEntryTick places the
   // paper/sandbox ledger row always, and a real order IF canPlaceLiveOrders
   // ('flame') is also true — see flame-v2/call-spread-live.ts. Runs only for
-  // the SPY book, after the put side has already been fully decided above, so
-  // it can never affect the put spread's own result. Never throws into this
-  // function — see that module's own safety-invariant header comment.
-  // 🚨 2026-10-02 audit: the call spread is a MIRROR of the put trade, never an
-  // independent bet. Only run it when the SPY put book opened this tick
-  // ('traded@') or already holds today's trade ('traded_today'). Any skip —
-  // credit floor, no room, stand-down, ladder, weekday skip — skips the call too.
-  const spyPutResult = out.find((s) => s.startsWith('SPY=')) ?? ''
-  const putOpenedToday = spyPutResult.startsWith('SPY=traded@') || spyPutResult === 'SPY=traded_today'
-  if (bot.name === 'flame' && !putOpenedToday) {
-    console.log(`[flame-v2] call_spread skipped: put side did not open (${spyPutResult || 'no_spy_result'})`)
-  }
-  if (bot.name === 'flame' && putOpenedToday) {
+  // the SPY book, inside the same entry window as the put side above, but
+  // 🚨 2026-10-10 (Leron: "i want it independent and ungated") — INDEPENDENT
+  // of the put side's result. It used to only fire when the put book opened
+  // that tick, which meant it could never add a trade beyond what the put
+  // side already produced; the point of this leg is to add volume on its own,
+  // so it now runs every tick regardless of whether the put opened, was
+  // skipped, or stood down. It still has its own credit floor, own idempotency
+  // guard (one row per day), and own mode/arm switches — see that module.
+  // Never throws into this function — see that module's own safety-invariant
+  // header comment.
+  if (bot.name === 'flame') {
     try {
       const spyQuote = await getQuote('SPY')
       const spySpot = spyQuote?.last ?? 0
