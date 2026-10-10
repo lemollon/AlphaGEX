@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, isSettleAtExpiryBot, CT_TODAY } from '@/lib/db'
+import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT, isProductionBot, canReadProductionBalance, getProductionAccountsForBot, getTradierBalanceDetail, getTradierOrders, getSandboxAccountPositions, getLoadedSandboxAccountsAsync, getAccountIdForKey, getVerticalMarkToMarket, calculateVerticalUnrealizedPnl } from '@/lib/tradier'
 
 import { scopedStartingCapital } from '@/lib/account-basis'
@@ -527,14 +527,19 @@ export async function GET(
     // which reported the wrong DTE on the page a customer reads. dteMode
     // already knew the right answer for every bot.
     const dteNum = Number((dteMode(bot) ?? '0DTE').replace('DTE', '')) || 0
-    // 🚨 "Live" describes where the ORDERS GO, not which bot is allowlisted for
-    // production. SPARK is PRODUCTION_BOT, but since the EBB cutover it routes
-    // through tryOpenFlamePutSpread, which writes account_type 'sandbox' and
-    // never calls the broker on open — so a live order is unreachable from the
-    // scanner. It read "0DTE Live Put Credit Spread" on a customer-facing page
-    // for a bot that cannot place a live trade. Settle-at-expiry bots are paper
-    // by construction until the assignment/capital question is settled.
-    const tradeMode = bot === PRODUCTION_BOT && !isSettleAtExpiryBot(bot) ? 'Live' : 'Paper'
+    // 🚨 2026-10-10 correction: the comment this replaced claimed SPARK's EBB
+    // put side "never calls the broker on open" because it's settle-at-expiry
+    // -- traced directly and that's false. tryOpenFlamePutSpread's SPARK
+    // branch calls placeIcOrderAllAccounts(..., {productionOnly: true})
+    // unconditionally whenever isProductionBot('spark') (always true) and
+    // entry gates pass; SPARK has had a real, funded production account
+    // (Logan/"Iron Viper", $4,196.03) this whole time. isSettleAtExpiryBot
+    // was never evidence of "cannot place a live trade" -- it's an unrelated
+    // settlement-timing flag. "Live" now means exactly what it should: this
+    // bot is eligible to place production orders (same test the actual order
+    // path uses, isProductionBot) AND the view being shown is scoped to that
+    // production account specifically, not sandbox/paper.
+    const tradeMode = isProductionBot(bot) && accountTypeParam === 'production' ? 'Live' : 'Paper'
     const strategyName = bot === 'flame' || bot === 'spark'
       ? 'Put Credit Spread'
       : bot === 'blaze'
