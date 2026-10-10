@@ -383,6 +383,31 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
             elif field=='chop_status':values[symbol]={'morning':old,'prior_hour':prior,'now':{k:blocks['range_stall'][k].get('value',{}).get(symbol) for k in ('chop_low','midpoint','chop_high','first_touch_watch')}}
             elif field=='stall_risk':values[symbol]={'morning':old,'prior_hour':prior,'now':states.get(symbol),'confirmation':'Touch alone remains WATCH; no validated probability is inferred'}
             elif field=='setup_status':values[symbol]={'morning':old,'prior_hour':prior,'now':[{'setup_id':r.get('setup_id'),'state':r.get('state')} for r in (runtime.get('per_symbol_state') or {}).get(symbol,[])]}
+            elif field=='regime_shift':
+                now_net_gex=(blocks['gamma']['net_gex'].get('value') or {}).get(symbol)
+                now_net_gex=now_net_gex.get('net_gex_b') if isinstance(now_net_gex,dict) else now_net_gex if isinstance(now_net_gex,(int,float)) else None
+                now_control=(blocks['market_control']['control_side'].get('value') or {}).get(symbol)
+                now_suitability=(blocks['premium_selling']['suitability'].get('value') or {}).get(symbol)
+                def _sign(x):return None if not isinstance(x,(int,float)) else ('positive' if x>0 else 'negative' if x<0 else 'flat')
+                def _dominant(side):
+                    # control_side's value is {expiry_bucket: 'call_sellers'|'put_sellers'|'mixed'|'inconclusive'},
+                    # never a single scalar; reduce to one label so a bucket flip is comparable.
+                    if not isinstance(side,dict) or not side:return None
+                    conclusive={v for v in side.values() if v not in (None,'inconclusive')}
+                    if len(conclusive)==1:return next(iter(conclusive))
+                    return 'mixed' if conclusive else 'inconclusive'
+                changed=[]
+                if old:
+                    old_sign,now_sign=_sign(old.get('net_gex_b')),_sign(now_net_gex)
+                    if old_sign and now_sign and old_sign!=now_sign:changed.append(f'net GEX flipped {old_sign} to {now_sign}')
+                    old_side,now_side=_dominant(old.get('control_side')),_dominant(now_control)
+                    if old_side and now_side and old_side!=now_side and 'inconclusive' not in (old_side,now_side):
+                        changed.append(f'control shifted from {old_side} to {now_side}')
+                    old_suit,now_suit=old.get('suitability'),now_suitability
+                    if old_suit and now_suit and old_suit!=now_suit:
+                        changed.append(f'premium suitability changed from {old_suit} to {now_suit}')
+                values[symbol]={'morning':old,'now':{'net_gex_b':now_net_gex,'control_side':now_control,'suitability':now_suitability},
+                    'status':'FIRST_REPORT' if not old else ('CHANGED' if changed else 'HOLDING'),'changed':changed}
         stamps=[ms._parse_ts(r.get('current_source_timestamp')) for r in comparison.values()];stamps=[s for s in stamps if s]
         put('morning_comparison',field,values or None,source='Distinct persisted baseline-to-now observations',ts=min(stamps) if stamps else None,reason='First report: no earlier comparable baseline')
     for field in REQUIREMENTS['scanner']:
@@ -515,6 +540,17 @@ async def assemble_report(app,*,kind='intraday',plan=None,now=None):
             item=b.get(section,{}).get(key,{});value=item.get('value')
             if isinstance(value,list) and all(isinstance(r,dict) and r.get('symbol') for r in value):result[field]={symbol:[r for r in value if r['symbol']==symbol] for symbol in ('SPY','QQQ')}
             else:result[field]=value if isinstance(value,dict) else {'SPY':value,'QQQ':value}
+        # Leron, 2026-10-10: "it needs to be more nimble... the plan for the day but nimble to
+        # change intraday" -- captures the morning's gamma regime/control/premium read so the
+        # intraday report can declare whether today's plan still holds, not just repeat the data.
+        net_gex=(b.get('gamma',{}).get('net_gex') or {}).get('value') or {}
+        control_side=(b.get('market_control',{}).get('control_side') or {}).get('value') or {}
+        suitability=(b.get('premium_selling',{}).get('suitability') or {}).get('value') or {}
+        def _net_gex_b(symbol):
+            raw=net_gex.get(symbol)
+            return raw.get('net_gex_b') if isinstance(raw,dict) else raw if isinstance(raw,(int,float)) else None
+        result['regime_shift']={symbol:{'net_gex_b':_net_gex_b(symbol),'control_side':control_side.get(symbol),
+            'suitability':suitability.get(symbol)} for symbol in ('SPY','QQQ')}
         return result
     core.update(comparison=comparison,prior_comparison=prior_comparison,baseline_blocks=comparable(morning),prior_blocks=comparable(prior))
     blocks=report_blocks(core,context,plan,runtime,paper,context['study'],comparison,events,now)

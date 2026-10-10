@@ -163,7 +163,8 @@ REQUIREMENTS = {
         "move_usage",
         "chop_status",
         "stall_risk",
-        "setup_status"
+        "setup_status",
+        "regime_shift"
     ],
     "range_stall": [
         "chop_low",
@@ -230,7 +231,7 @@ REQUIREMENTS["adaptation_rules"] = ["activate", "cancel", "switch", "stand_aside
 REQUIREMENTS["data_integrity"] = ["contract", "source_clocks", "coverage", "historical_fields",
     "unavailable_fields", "producer_failures", "model_prose_policy", "execution_scope", "format", "refresh_attempts"]
 REQUIRED_BLOCKS = tuple(REQUIREMENTS)
-CONTRACT_VERSION = "2026-10-08.3"
+CONTRACT_VERSION = "2026-10-10.1"
 FLOW_SOURCE = "ThetaData Pro trade-time NBBO flow v1"
 LIVE_MAX_AGE_SECONDS = 90
 CHART_FORMAT = "PNG"

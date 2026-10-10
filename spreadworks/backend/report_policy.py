@@ -733,8 +733,15 @@ def positioning_panel_html(blocks):
     put sellers are... Should I be playing long or should I be selling premium? And which
     strikes?" -- every input here already exists under gamma.net_gex/walls, market_control.
     control_side, and premium_selling.suitability; this only moves it to the top of the page
-    instead of leaving it buried in the Gamma/Market Control sections below. No new producer,
-    no new data collection, no new REQUIREMENTS field."""
+    instead of leaving it buried in the Gamma/Market Control sections below.
+
+    Leron, 2026-10-10 (same day): "it needs to be more nimble... the plan for the day but
+    nimble to change intraday." The regime read above told him WHAT today looks like, but
+    never said whether that read was still the same one this morning gave him. The
+    morning_comparison.regime_shift field (added this change) carries the morning's
+    net_gex/control_side/suitability snapshot; the Plan status line below compares it to
+    the current read and declares HOLDING/CHANGED/first-report, so an intraday regime flip
+    is announced instead of silently sitting in two separately-rendered reports."""
     gamma=blocks.get("gamma") or {}
     mc=blocks.get("market_control") or {}
     ps=blocks.get("premium_selling") or {}
@@ -743,10 +750,21 @@ def positioning_panel_html(blocks):
     suitability_item=ps.get("suitability") or {}
     suitability=suitability_item.get("value") or {}
     control_side=(mc.get("control_side") or {}).get("value") or {}
+    regime_shift=((blocks.get("morning_comparison") or {}).get("regime_shift") or {}).get("value") or {}
     symbols=sorted(set(net_gex) | set(walls) | set(suitability) | set(control_side))
     rows=[]
     for sym in symbols:
         bits=[]
+        rs=regime_shift.get(sym)
+        if isinstance(rs,dict):
+            status=rs.get("status")
+            if status=="FIRST_REPORT":
+                bits.append('<div style="margin:4px 0;color:#8b97a8"><b>Plan status:</b> first read of the day — no earlier baseline yet</div>')
+            elif status=="CHANGED":
+                bits.append('<div style="margin:4px 0"><b style="color:#e0a339">Plan status: CHANGED since this morning</b> — '
+                             +html.escape('; '.join(rs.get("changed") or []))+'</div>')
+            elif status=="HOLDING":
+                bits.append('<div style="margin:4px 0"><b style="color:#4caf7d">Plan status: HOLDING</b> — still matches this morning\'s read</div>')
         ng_raw=net_gex.get(sym)
         ng=ng_raw.get("net_gex_b") if isinstance(ng_raw,dict) else ng_raw if isinstance(ng_raw,(int,float)) else None
         if isinstance(ng,(int,float)):

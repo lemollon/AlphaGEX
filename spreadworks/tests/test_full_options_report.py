@@ -252,6 +252,29 @@ def test_market_control_dominance_gated_on_classified_coverage():
     evidence=blocks['market_control']['control_evidence']['value']
     assert evidence['SPY']['0dte']['call_sell_premium']==5000.
 
+def test_regime_shift_flags_changed_held_and_first_report():
+    """Leron, 2026-10-10: "it needs to be more nimble... the plan for the day but nimble to
+    change intraday" -- regime_shift diffs the morning's gamma/control/suitability snapshot
+    against the current read and must say HOLDING/CHANGED/FIRST_REPORT, not just repeat data."""
+    current=core()
+    current['gamma']={'SPY':{'net_gex_b':-9.2,'confidence':'MEDIUM','source_timestamp':NOW.isoformat()}}
+    current['flow']={'SPY':flow_row(.8,5000.,500.)}  # call_sellers dominant at 0dte
+    current['baseline_blocks']={'regime_shift':{'SPY':{'net_gex_b':5.0,'control_side':{'0dte':'put_sellers'},'suitability':None}}}
+    comparison=report.market_comparison(current,{'generated_at':NOW.isoformat(),'evidence':{'surface':{}}})
+    blocks=report.report_blocks(current,{},{},{},ledger_empty(),{},comparison,[],NOW)
+    rs=blocks['morning_comparison']['regime_shift']['value']['SPY']
+    assert rs['status']=='CHANGED'
+    assert any('net GEX flipped positive to negative' in c for c in rs['changed'])
+    assert any('control shifted from put_sellers to call_sellers' in c for c in rs['changed'])
+    # Unchanged morning snapshot (same sign, same dominant side) -> HOLDING, not CHANGED.
+    current['baseline_blocks']={'regime_shift':{'SPY':{'net_gex_b':-3.0,'control_side':{'0dte':'call_sellers'},'suitability':None}}}
+    held=report.report_blocks(current,{},{},{},ledger_empty(),{},comparison,[],NOW)['morning_comparison']['regime_shift']['value']['SPY']
+    assert held['status']=='HOLDING' and held['changed']==[]
+    # No earlier baseline at all -> FIRST_REPORT, never a false CHANGED/HOLDING claim.
+    current['baseline_blocks']={}
+    first=report.report_blocks(current,{},{},{},ledger_empty(),{},comparison,[],NOW)['morning_comparison']['regime_shift']['value']['SPY']
+    assert first['status']=='FIRST_REPORT'
+
 def test_market_control_without_flow_is_unavailable():
     blocks=report.report_blocks(core(),{},{},{},ledger_empty(),{},{},[],NOW)
     assert blocks['market_control']['control_side']['status']=='unavailable'
