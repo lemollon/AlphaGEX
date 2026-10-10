@@ -32,6 +32,8 @@
 import { query, dbExecute } from '@/lib/db'
 import flameCalmSeedRaw from './seed/flame_calm_seed.json'
 import sparkCalmSeedRaw from './seed/spark_calm_seed.json'
+import flameBandSeedRaw from './seed/flame_band_seed.json'
+import sparkBandSeedRaw from './seed/spark_band_seed.json'
 
 export type BotKey = 'flame' | 'spark'
 
@@ -223,6 +225,101 @@ export async function priorCalmMeasures(bot: BotKey, beforeDate: string, limit =
   }
 }
 
+/**
+ * One-time (per process) load of the committed band-eligible-day seed
+ * (C:\Users\lemol\dev\meltup\dump_band_eligible_seed.py's output,
+ * seed/{bot}_band_seed.json) into flame_v2_signal_history — the real
+ * honest-engine R0/R1/R2/R3 hypothetical pnl for every historical day the
+ * relaxed VIX band applied (band_eligible_table/run_d1/run_d2 in
+ * signal_on_flame_spark.py, FROZEN 2026-10-02), covering 2023-01-03 through
+ * the igex_net coverage cutoff.
+ *
+ * 🚨 2026-10-10: without this, `priorBandEligibleRows` returns 0 rows
+ * forever — nothing else in this codebase writes band_eligible/r0_pnl/r1_pnl
+ * (recordDailySignal's only caller, engine.ts's finishSnapshot, only ever
+ * writes calm/longg). D1 (SPARK, needs >=20) and D2 (FLAME, needs >=40) were
+ * permanently stuck on "insufficient_training_rows" as a result. This seed
+ * alone clears both floors (209 FLAME / 171 SPARK rows); see
+ * ensureCalmSeedLoaded's header for the retry/idempotency contract this
+ * mirrors exactly.
+ */
+type BandSeedRow = {
+  trade_date: string; ratio: number | null; prior_spy_up: boolean
+  r0_pnl: number; r1_pnl: number; r2_pnl: number; r3_pnl: number
+  vix_level: number | null; vix_1y_pct: number | null; vix_20d_chg: number | null
+  ts_ratio_l: number | null; ret20: number | null; ret60: number | null; above_50dma: number | null
+}
+const BAND_SEED_BY_BOT: Record<BotKey, BandSeedRow[]> = {
+  flame: flameBandSeedRaw as BandSeedRow[],
+  spark: sparkBandSeedRaw as BandSeedRow[],
+}
+const _bandSeedLoaded: Partial<Record<BotKey, boolean>> = {}
+const _bandSeedLastAttemptMs: Partial<Record<BotKey, number>> = {}
+
+export async function ensureBandSeedLoaded(bot: BotKey): Promise<void> {
+  if (_bandSeedLoaded[bot]) return
+  const now = Date.now()
+  if (now - (_bandSeedLastAttemptMs[bot] ?? 0) < SEED_RETRY_MS) return
+  _bandSeedLastAttemptMs[bot] = now
+  await ensureSignalHistoryTable()
+  const rows = BAND_SEED_BY_BOT[bot]
+  if (!rows || rows.length === 0) { _bandSeedLoaded[bot] = true; return }
+  try {
+    const COLS = [
+      'bot', 'trade_date', 'band_eligible', 'ratio', 'prior_spy_up',
+      'r0_pnl', 'r1_pnl', 'r2_pnl', 'r3_pnl',
+      'vix_level', 'vix_1y_pct', 'vix_20d_chg', 'ts_ratio_l', 'ret20', 'ret60', 'above_50dma', 'source',
+    ]
+    const CHUNK = 100
+    let inserted = 0
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const chunk = rows.slice(i, i + CHUNK)
+      const params: unknown[] = []
+      const tuples = chunk.map((r, j) => {
+        params.push(
+          bot, r.trade_date, true, r.ratio, r.prior_spy_up,
+          r.r0_pnl, r.r1_pnl, r.r2_pnl, r.r3_pnl,
+          r.vix_level, r.vix_1y_pct, r.vix_20d_chg, r.ts_ratio_l, r.ret20, r.ret60, r.above_50dma, 'seed',
+        )
+        const base = j * COLS.length
+        return `(${COLS.map((_, k) => `$${base + k + 1}`).join(', ')})`
+      })
+      // DO UPDATE, not DO NOTHING: every one of these dates already has a
+      // row from the CALM seed (same trade_date, band_eligible defaulted to
+      // FALSE) -- a DO NOTHING here would silently skip every single band
+      // row forever. COALESCE(existing, EXCLUDED) so this can only ever
+      // fill a gap, never clobber a value a (future) live write already
+      // recorded for that date.
+      const n = await dbExecute(
+        `INSERT INTO flame_v2_signal_history (${COLS.join(', ')})
+         VALUES ${tuples.join(', ')}
+         ON CONFLICT (bot, trade_date) DO UPDATE SET
+           band_eligible = flame_v2_signal_history.band_eligible OR EXCLUDED.band_eligible,
+           ratio         = COALESCE(flame_v2_signal_history.ratio, EXCLUDED.ratio),
+           prior_spy_up  = COALESCE(flame_v2_signal_history.prior_spy_up, EXCLUDED.prior_spy_up),
+           r0_pnl        = COALESCE(flame_v2_signal_history.r0_pnl, EXCLUDED.r0_pnl),
+           r1_pnl        = COALESCE(flame_v2_signal_history.r1_pnl, EXCLUDED.r1_pnl),
+           r2_pnl        = COALESCE(flame_v2_signal_history.r2_pnl, EXCLUDED.r2_pnl),
+           r3_pnl        = COALESCE(flame_v2_signal_history.r3_pnl, EXCLUDED.r3_pnl),
+           vix_level     = COALESCE(flame_v2_signal_history.vix_level, EXCLUDED.vix_level),
+           vix_1y_pct    = COALESCE(flame_v2_signal_history.vix_1y_pct, EXCLUDED.vix_1y_pct),
+           vix_20d_chg   = COALESCE(flame_v2_signal_history.vix_20d_chg, EXCLUDED.vix_20d_chg),
+           ts_ratio_l    = COALESCE(flame_v2_signal_history.ts_ratio_l, EXCLUDED.ts_ratio_l),
+           ret20         = COALESCE(flame_v2_signal_history.ret20, EXCLUDED.ret20),
+           ret60         = COALESCE(flame_v2_signal_history.ret60, EXCLUDED.ret60),
+           above_50dma   = COALESCE(flame_v2_signal_history.above_50dma, EXCLUDED.above_50dma)
+         WHERE flame_v2_signal_history.band_eligible = FALSE`,
+        params as any[],
+      )
+      inserted += Number(n) || 0
+    }
+    console.log(`[flame-v2] band-eligible seed check for ${bot}: ${inserted}/${rows.length} row(s) filled in (rest already band_eligible)`)
+    _bandSeedLoaded[bot] = true
+  } catch (e) {
+    console.error(`[flame-v2] ensureBandSeedLoaded(${bot}) failed (non-fatal, D1/D2 accumulate from live days only):`, e)
+  }
+}
+
 export type BandDayRow = {
   tradeDate: string
   ratio: number | null
@@ -236,6 +333,7 @@ export type BandDayRow = {
  *  window and D2's monthly refit training set). */
 export async function priorBandEligibleRows(bot: BotKey, beforeDate: string, limit = 2000): Promise<BandDayRow[]> {
   await ensureSignalHistoryTable()
+  await ensureBandSeedLoaded(bot)
   try {
     const rows = await query<Record<string, unknown>>(
       `SELECT trade_date, ratio, prior_spy_up, r0_pnl, r1_pnl, r2_pnl, r3_pnl,
