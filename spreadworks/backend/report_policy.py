@@ -71,6 +71,21 @@ def field_label(key):
         return f"{prefix} {bucket}" if prefix else bucket
     return key.replace("_", " ")
 
+def _ct_safe_tree(v):
+    """Walk an arbitrary JSON-able structure converting timestamp-shaped strings to Central
+    Time before an irregular shape falls back to raw json.dumps. Live bug, found 2026-10-09:
+    a dict with >10 keys (breadth, 18 fields including a nested per-symbol vwap.rows with its
+    own source_timestamp) skipped every per-field ct_str() call below and dumped the whole
+    tree — including its embedded UTC timestamps — as one raw JSON blob. ct_str() still
+    no-ops on non-timestamp strings and bare dates, so this is safe to apply unconditionally."""
+    if isinstance(v, str):
+        return ct_str(v)
+    if isinstance(v, dict):
+        return {k: _ct_safe_tree(vv) for k, vv in v.items()}
+    if isinstance(v, list):
+        return [_ct_safe_tree(x) for x in v]
+    return v
+
 def plain_value(v, depth=0):
     """Plain-text (markdown/Discord-safe, no HTML) rendering of a field value for display().
 
@@ -85,7 +100,7 @@ def plain_value(v, depth=0):
             return "; ".join(f"{k}: {plain_value(sv, depth + 1)}" for k, sv in v.items())
         if v and len(v) <= 10 and depth < 4:
             return ", ".join(f"{field_label(k)} {plain_value(vv, depth + 1)}" for k, vv in v.items())
-        return json.dumps(v, ensure_ascii=False, default=str)
+        return json.dumps(_ct_safe_tree(v), ensure_ascii=False, default=str)
     if isinstance(v, list):
         if not v:
             return "none"
@@ -97,7 +112,7 @@ def plain_value(v, depth=0):
             if len(v) > 5:
                 text += f" (+{len(v) - 5} more)"
             return text
-        return json.dumps(v, ensure_ascii=False, default=str)
+        return json.dumps(_ct_safe_tree(v), ensure_ascii=False, default=str)
     if isinstance(v, str):
         # Shape-based, not key-name-based: ct_str() only converts strings that actually parse
         # as a timezone-aware instant (a bare calendar date like an option expiration has no
