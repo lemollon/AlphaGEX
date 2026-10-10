@@ -23,7 +23,8 @@ def item(value=1,age=0):
 
 def test_schema_retains_all_legacy_fields_and_new_strategy_policy():
     assert len(REQUIREMENTS)==33
-    assert sum(map(len,REQUIREMENTS.values()))==242
+    assert sum(map(len,REQUIREMENTS.values()))==243
+    assert 'regime_shift' in REQUIREMENTS['morning_comparison']
     assert 'delivery_manifest' in REQUIREMENTS['visuals']
     assert all(n in REQUIREMENTS for n in ('day_strategy','near_forward_strategy','forward_strategy','horizon_comparison','adaptation_rules','data_integrity','market_control'))
     assert len(REQUIREMENTS['visuals'])==14
@@ -553,6 +554,21 @@ def test_positioning_panel_tolerates_flat_scalar_net_gex_shape():
 def test_positioning_panel_empty_when_no_data_available():
     blocks=empty_blocks()
     assert positioning_panel_html(blocks) == ''
+
+def test_positioning_panel_shows_plan_status_changed_holding_and_first_report():
+    """Leron, 2026-10-10: "it needs to be more nimble... the plan for the day but nimble to
+    change intraday." Plan status must lead the panel so a regime flip since the morning
+    report is announced, not left for the reader to notice by comparing two reports."""
+    blocks=empty_blocks()
+    blocks['gamma']['net_gex']=item({'SPY':{'net_gex_b':-9.2},'QQQ':{'net_gex_b':0.5},'IWM':{'net_gex_b':0.5}})
+    blocks['morning_comparison']['regime_shift']=item({
+        'SPY':{'status':'CHANGED','changed':['net GEX flipped positive to negative']},
+        'QQQ':{'status':'HOLDING','changed':[]},
+        'IWM':{'status':'FIRST_REPORT','changed':[]}})
+    panel=positioning_panel_html(blocks)
+    assert 'Plan status: CHANGED since this morning' in panel and 'net GEX flipped positive to negative' in panel
+    assert 'Plan status: HOLDING' in panel
+    assert 'first read of the day' in panel
 
 def test_render_opening_html_includes_positioning_panel_after_mission():
     blocks=empty_blocks()

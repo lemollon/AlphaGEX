@@ -7,9 +7,16 @@ integrity, persisted visual delivery and market control, drops `risk`/
 `session`/`hunt` from engine consensus (redundant with `risk_on_defensive`
 and `candidate_analysis`, and never actually used), adds flow's
 `price_vix_confirmation`, and adds the decision-first narrative layer (opening
-pieces + per-section "what it means for the day"): **33 sections and 242
-required fields**, unchanged by the narrative layer since it renders from
-existing field values, not new requirements.
+pieces + per-section "what it means for the day"), unchanged by the narrative
+layer since it renders from existing field values, not new requirements.
+
+Version `2026-10-10.1` adds `morning_comparison.regime_shift`: the morning
+report's gamma/control/premium-suitability snapshot per symbol, diffed against
+the current read every time the report renders. The Positioning & Levels panel
+surfaces the result as a Plan status line (HOLDING / CHANGED since this
+morning / first read of the day), so an intraday reversal of the morning call
+is stated explicitly instead of requiring the reader to notice it by comparing
+two separate reports: **33 sections and 243 required fields**.
 Every delivered report carries its policy version and SHA-256 schema/rule hash.
 
 ## Reader experience
