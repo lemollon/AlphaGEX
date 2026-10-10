@@ -131,7 +131,17 @@ export async function flameRegimeBrainDecision(
       return { available: false, rule: 0, admits: todaysPriorSpyUpRule, reason: `insufficient_training_rows(${trainRows.length}<40)_fallback_R0` }
     }
     const rule = predictDepth2Tree(tree, features)
-    const admits = rule === 1 // R1 = BEST admits; D2's action space is {R0,R1} per spec
+    // 🚨 2026-10-10 fix: this used to be `rule === 1`, which treats a
+    // predicted R0 as an unconditional SKIP. That's wrong per this very
+    // function's own rule comment above ("0=R0 (today's prior-SPY-up)")
+    // and per the frozen research script's run_d2 (`row["R1_pnl"] if
+    // pred==1 else row["R0_pnl"]`, where R0_pnl is itself conditional on
+    // prior_up, not always zero). "Predicted R0" means "defer to today's
+    // actual prior-SPY-up rule", which can be admit OR skip depending on
+    // todaysPriorSpyUpRule -- only "predicted R1" is an unconditional
+    // admit. Was latent and inert: the tree never trained (0 rows) until
+    // today's seed fix, so this never changed a live decision before now.
+    const admits = rule === 1 ? true : todaysPriorSpyUpRule
     const log = `[flame-v2] FLAME regime_brain(${mode}) date=${dateStr} rule=R${rule} admits=${admits} ` +
       `vs_today_prior_spy_up_rule=${todaysPriorSpyUpRule} trained_on=${trainRows.length}_rows`
     console.log(log)
@@ -225,6 +235,81 @@ export async function flameCallSpreadDecision(
   // flame-v2/call-spread-live.ts, which calls this function for the decision
   // and then executes it — this function stays pure/decision-only.
   return { available: true, tier, contracts, shortStrike: short, longStrike: long, reason: isLive(mode) ? 'ok_live' : 'ok_shadow' }
+}
+
+// ---------------------------------------------------------------------------
+// Go-forward D1/D2 training recorder. Keeps flame_v2_signal_history's
+// band_eligible/r0-r3_pnl columns fresh from live trading days (the seed
+// loaded by ensureBandSeedLoaded only covers history through the research
+// cutoff) WITHOUT ever fabricating a number.
+//
+// R0_pnl/R1_pnl's own definitions (band_eligible_table in the frozen
+// signal_on_flame_spark.py) mean most of a band-eligible day's outcome is
+// derivable with ZERO new data:
+//   - R0_pnl = pnl_if_enter if prior_spy_up else 0   -- exactly 0 when
+//     prior_spy_up is false, no trade or quote needed to know that.
+//   - R1_pnl = pnl_if_enter if best(calm|longg) else 0 -- exactly 0 when
+//     best is false, same reasoning.
+//   - R2_pnl = pnl_if_enter if (prior_spy_up AND best) else 0.
+//   - R3_pnl = 0 always (R3 = skip, by definition never trades).
+// `pnl_if_enter` itself is only needed — and only knowable — when the live
+// bot actually opened the SPY book's trade that day, in which case it's the
+// real realized_pnl, read back after settlement. The one case this can
+// NEVER resolve without a shadow quote during the entry window (not built):
+// prior_spy_up=false AND best=true, where neither rule's condition for 0
+// applies but no real trade exists to read a pnl from. That day is recorded
+// as `skip:unobservable_pnl_no_shadow_quote` -- NOTHING is written for it,
+// rather than guessing, so trainDepth2Tree's finite-feature filter and
+// pickTrailingWinner's pnl sums never see a fabricated number.
+// ---------------------------------------------------------------------------
+
+export type BandOutcomeInput = {
+  bot: BotKey
+  dateStr: string
+  ratio: number
+  priorSpyUp: boolean
+  /** The SPY book's real realized_pnl for this date if the live bot actually
+   *  opened a trade that day, else null (admission denied / no trade). */
+  realizedPnl: number | null
+  /** FLAME only -- D2's 7 features for this date; omit/null for SPARK. */
+  features?: D2Features | null
+}
+
+export async function recordBandOutcome(input: BandOutcomeInput): Promise<string> {
+  const { bot, dateStr, ratio, priorSpyUp, realizedPnl } = input
+  try {
+    const snap = await computeSignalSnapshot(bot, dateStr)
+    if (!snap.calm.available || !snap.longg.available) {
+      return `skip:signals_unavailable(calm=${snap.calm.reason ?? 'ok'} longg=${snap.longg.reason ?? 'ok'})`
+    }
+    const best = snap.calm.isCalm || snap.longg.isLongg
+
+    let r0Pnl: number
+    let r1Pnl: number
+    let r2Pnl: number
+    const r3Pnl = 0
+    if (realizedPnl !== null) {
+      r0Pnl = priorSpyUp ? realizedPnl : 0
+      r1Pnl = best ? realizedPnl : 0
+      r2Pnl = priorSpyUp && best ? realizedPnl : 0
+    } else if (!priorSpyUp && !best) {
+      r0Pnl = 0
+      r1Pnl = 0
+      r2Pnl = 0
+    } else {
+      return 'skip:unobservable_pnl_no_shadow_quote'
+    }
+
+    const f = input.features ?? null
+    await recordDailySignal(bot, dateStr, {
+      bandEligible: true, ratio, priorSpyUp, r0Pnl, r1Pnl, r2Pnl, r3Pnl,
+      vixLevel: f?.vixLevel ?? null, vix1yPct: f?.vix1yPct ?? null, vix20dChg: f?.vix20dChg ?? null,
+      tsRatioL: f?.tsRatioL ?? null, ret20: f?.ret20 ?? null, ret60: f?.ret60 ?? null, above50dma: f?.above50dma ?? null,
+    })
+    return `recorded(r0=${r0Pnl.toFixed(2)} r1=${r1Pnl.toFixed(2)} best=${best} prior_up=${priorSpyUp})`
+  } catch (e) {
+    return `error(${e instanceof Error ? e.message.slice(0, 80) : 'error'})`
+  }
 }
 
 /** Mirrored assignment guard for an (eventually) live call leg: close if spot
